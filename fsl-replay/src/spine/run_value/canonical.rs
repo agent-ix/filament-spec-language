@@ -305,7 +305,8 @@ impl Forms<'_> {
                 closed(object, &["type", "name", "member"], path)?;
                 let (name, members) = self.enum_cases(shape)?;
                 let owner = members
-                    .first()
+                    .variants()
+                    .next()
                     .ok_or(ReadStop::Fault("enum-has-members"))?
                     .owner();
                 if object["name"] != declaration_form(owner)? {

@@ -366,6 +366,9 @@ pub enum RunRefusal {
     /// The original reference catalog admission or resource refusal.
     #[error(transparent)]
     ReferenceCatalog(Box<fsl_package::ReferenceCatalogError>),
+    /// The original admitted enum scope, identity or native resource refusal.
+    #[error(transparent)]
+    SourceEnum(Box<fsl_package::SourceEnumCatalogError>),
     /// An original shared reference admission, resource or cancellation result.
     #[error(transparent)]
     Reference(Box<crate::reference_codec::ReferenceCodecError>),
@@ -512,6 +515,20 @@ pub enum RunRefusal {
 }
 
 impl RunRefusal {
+    pub(crate) fn source_enum_cause(
+        error: &fsl_package::SourceEnumCatalogError,
+    ) -> Option<&'static str> {
+        use fsl_package::SourceEnumCatalogError;
+        Some(match error {
+            SourceEnumCatalogError::Native(error) => error.code().as_str(),
+            SourceEnumCatalogError::Allocation => "allocation",
+            SourceEnumCatalogError::InvalidJoinedInvariant { .. } => "invalid-joined-enum",
+            SourceEnumCatalogError::ConflictingMember { .. } => "conflicting-enum-member",
+            SourceEnumCatalogError::UnsupportedSourceScope(_) => "unsupported-source-enum-scope",
+            SourceEnumCatalogError::MissingNativePermission => "missing-native-permission",
+            SourceEnumCatalogError::MissingIdentityWitness => "missing-enum-identity-witness",
+        })
+    }
     pub(crate) fn catalog_cause(
         error: &fsl_package::ReferenceCatalogError,
     ) -> Option<&'static str> {
@@ -533,7 +550,7 @@ impl RunRefusal {
             return None;
         }
         Some(match self {
-            Self::Reference(_) | Self::ReferenceCatalog(_) => "call",
+            Self::Reference(_) | Self::ReferenceCatalog(_) | Self::SourceEnum(_) => "call",
             Self::Compile(refusal) => refusal.stage().as_str(),
             Self::MissingDeclaration { .. }
             | Self::UnsupportedResult { .. }
@@ -562,7 +579,7 @@ impl RunRefusal {
     /// the call, or a supplied-value phase.
     pub fn cancel_cause(&self) -> Option<CancelCause> {
         match self {
-            Self::ReferenceCatalog(_) => None,
+            Self::ReferenceCatalog(_) | Self::SourceEnum(_) => None,
             Self::Reference(error) => super::run_value::reference_cancel_cause(error),
             Self::Cancelled(cause) => Some(*cause),
             Self::Supplied(stop) => match stop.cause {
@@ -601,6 +618,23 @@ impl RunRefusal {
     pub fn code(&self) -> Code {
         match self {
             Self::ReferenceCatalog(error) => super::run_value::catalog_error_code(error),
+            Self::SourceEnum(error) => match error.as_ref() {
+                fsl_package::SourceEnumCatalogError::Native(error) => match error.code() {
+                    fsl_package::NativeRowErrorCode::WorkLimit
+                    | fsl_package::NativeRowErrorCode::StorageLimit => Code::StageLimitExceeded,
+                    fsl_package::NativeRowErrorCode::IncompleteEnum => Code::InvalidPackage,
+                },
+                fsl_package::SourceEnumCatalogError::Allocation => Code::StageLimitExceeded,
+                fsl_package::SourceEnumCatalogError::UnsupportedSourceScope(_)
+                | fsl_package::SourceEnumCatalogError::MissingNativePermission => {
+                    Code::UnknownRequiredFeature
+                }
+                fsl_package::SourceEnumCatalogError::MissingIdentityWitness
+                | fsl_package::SourceEnumCatalogError::InvalidJoinedInvariant { .. }
+                | fsl_package::SourceEnumCatalogError::ConflictingMember { .. } => {
+                    Code::InvalidPackage
+                }
+            },
             Self::Reference(error) => super::run_value::reference_error_code(error),
             Self::Compile(refusal) => refusal.code(),
             Self::RelationshipRequest { .. } => Code::InvalidRequest,
@@ -648,6 +682,28 @@ impl RunRefusal {
         };
         match self {
             Self::ReferenceCatalog(_) => None,
+            Self::SourceEnum(error) => match error.as_ref() {
+                fsl_package::SourceEnumCatalogError::UnsupportedSourceScope(scope) => {
+                    object(json!({
+                        "declaration": scope.declaration(),
+                        "qualified_declaration": scope.qualified_declaration(),
+                    }))
+                }
+                fsl_package::SourceEnumCatalogError::Native(error) => {
+                    let denied = error.denied();
+                    object(json!({
+                        "kind": denied.map(|denied| match denied.kind { filament_contract_model::NativeJoinChargeKind::Work => "Work", filament_contract_model::NativeJoinChargeKind::Storage => "Storage" }),
+                        "amount": denied.map(|denied| denied.amount.to_string()),
+                        "configured_bound": error.configured_bound(),
+                        "locus": error.locus().map(|locus| format!("{locus:?}")),
+                    }))
+                }
+                fsl_package::SourceEnumCatalogError::Allocation
+                | fsl_package::SourceEnumCatalogError::InvalidJoinedInvariant { .. }
+                | fsl_package::SourceEnumCatalogError::ConflictingMember { .. }
+                | fsl_package::SourceEnumCatalogError::MissingNativePermission
+                | fsl_package::SourceEnumCatalogError::MissingIdentityWitness => None,
+            },
             Self::Reference(error) => {
                 object(json!({"path": super::run_value::reference_error_pointer(error)}))
             }

@@ -3557,6 +3557,9 @@ impl Disposition {
                     return Ok(result);
                 }
                 let cause = match refusal.as_ref() {
+                    super::RunRefusal::SourceEnum(error) => {
+                        super::RunRefusal::source_enum_cause(error)
+                    }
                     super::RunRefusal::ReferenceCatalog(error) => {
                         super::run_value::catalog_error_cause(error)
                     }
@@ -3587,6 +3590,22 @@ impl Disposition {
                 };
                 let mut record = RefusalWire::new(refusal.code().as_str(), cause);
                 match refusal.as_ref() {
+                    super::RunRefusal::SourceEnum(_) => {
+                        if let Some(details) = refusal.details() {
+                            record = record.fields(
+                                details
+                                    .into_iter()
+                                    .map(|(name, value)| {
+                                        let text = match value {
+                                            serde_json::Value::String(text) => text,
+                                            other => other.to_string(),
+                                        };
+                                        (name, text)
+                                    })
+                                    .collect(),
+                            );
+                        }
+                    }
                     super::RunRefusal::ReferenceCatalog(error) => {
                         if let fsl_package::ReferenceCatalogError::Denied(denial) = error.as_ref() {
                             record = record.fields(BTreeMap::from([

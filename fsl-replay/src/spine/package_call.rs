@@ -97,6 +97,33 @@ pub fn run_package_with_sources(
     }
 }
 
+/// Run a package call with the caller's cumulative native allowance, without
+/// requiring snapshot views. Enum form lookup spends this same allowance.
+pub fn run_package_with_sources_and_budget(
+    package: &BarePackage<'_>,
+    call: &Call,
+    objects: &ObjectEnvironment,
+    joins: &mut filament_contract_model::NativeJoinBudget,
+    sources: &[fsl_foundation::Source],
+    cancel: &Cancel,
+) -> PackageCallResult {
+    let attribution = std::cell::RefCell::new(None);
+    let outcome = run_package_resolving(
+        package,
+        call,
+        objects,
+        None,
+        Some(joins),
+        sources,
+        cancel,
+        &attribution,
+    );
+    PackageCallResult {
+        outcome,
+        attribution: attribution.into_inner(),
+    }
+}
+
 /// Run a package call using the effective views retained by its snapshot
 /// admission. Population arguments bind against those same views, preserving
 /// their declared maxima without normalizing the selected models again.
@@ -131,7 +158,7 @@ fn run_package_resolving(
     call: &Call,
     objects: &ObjectEnvironment,
     views: Option<&[fsl_semantics::model::intake::NormalizedModel]>,
-    joins: Option<&mut filament_contract_model::NativeJoinBudget>,
+    mut joins: Option<&mut filament_contract_model::NativeJoinBudget>,
     sources: &[fsl_foundation::Source],
     cancel: &Cancel,
     attribution: &std::cell::RefCell<Option<PackageSourceAttributionFailure>>,
@@ -196,13 +223,10 @@ fn run_package_resolving(
         }
         _ => objects,
     };
-    // FR-533 "Types the bytes cannot project": the bytes carry no source
-    // `enum` declaration, so the forms read no source enumeration by name; a
-    // selected model enumeration is read from its rows (FR-531).
     let universe_of = |declared: &filament_exact::EffectiveId| {
         objects.population_universe_for_type(declared).cloned()
     };
-    let catalog = match (call.canonical_values, views, joins) {
+    let catalog = match (call.canonical_values, views, joins.as_deref_mut()) {
         (true, Some(models), Some(joins)) => Some(
             fsl_package::ReferenceCatalog::from_admitted_call(package.package(), models, joins)
                 .map_err(|cause| {
@@ -282,9 +306,16 @@ fn run_package_resolving(
                     -> Result<filament_exact::ObjectReference, super::run_value::ReadStop>
         }),
     });
-    let forms = Forms::new(world.types(), &[])
+    let enum_budget = std::cell::RefCell::new(joins.as_deref_mut());
+    let forms = Forms::from_admitted(world.types(), world.source_enums(), &enum_budget)
         .with_canonical_writer(&encode)
         .in_world(package.package().name(), object_world.as_ref());
+    // Enum scope is admitted before arguments. Existing form and argument
+    // refusals retain their original validation points below.
+    for (_, value_type) in &parameters {
+        forms.has_form_scoped(value_type)?;
+    }
+    forms.has_form_scoped(selected.result_type)?;
     let supplied = admit_wire_arguments(&forms, &parameters, call, &supplied_run)?;
     let arguments = bind_arguments(&parameters, &supplied)?;
     let mut meter = Meter::new(call.accounting).with_cancel(cancel.clone());
