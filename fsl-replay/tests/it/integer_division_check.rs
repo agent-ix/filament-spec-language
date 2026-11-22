@@ -81,7 +81,9 @@ fn check_operation_takes_the_supplied_law() {
     let refusal = spine::refusal_or_fault(error).unwrap();
     assert_eq!(refusal.code(), fsl_foundation::Code::MissingDeclaration);
     assert_eq!(refusal.cause(), Some("missing-selection"));
-    let spine::CompileRefusal::Check { refusals, .. } = *refusal else {
+    let (spine::CompileRefusal::Check { refusals, .. }
+    | spine::CompileRefusal::CheckDiagnostics { refusals, .. }) = *refusal
+    else {
         panic!("expected both operator check refusals");
     };
     assert_eq!(refusals.len(), 2);
@@ -175,7 +177,9 @@ fn multi_unit_checker_takes_one_caller_selection() {
     )
     .unwrap_err();
     let refusal = spine::refusal_or_fault(refusal).unwrap();
-    let spine::CompileRefusal::Check { refusals, .. } = *refusal else {
+    let (spine::CompileRefusal::Check { refusals, .. }
+    | spine::CompileRefusal::CheckDiagnostics { refusals, .. }) = *refusal
+    else {
         panic!("expected every unit's missing-selection refusals");
     };
     assert_eq!(refusals.len(), 4);

@@ -319,7 +319,7 @@ fn missing_fairness_and_window_limit_judgments_write_complete_rows() {
             "outcome": {
                 "kind": "window-limit-reached",
                 "limit": "max_window_values",
-                "value": 16,
+                "value": "16",
                 "setting": "monitor.max_window_values"
             },
             "undefined_locus": null,

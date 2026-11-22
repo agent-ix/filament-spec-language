@@ -94,6 +94,7 @@ impl Builder<'_> {
                     | Terminal::Literal(word)
                     | Terminal::ContextualWord(word) => (*word).to_owned(),
                     Terminal::TextValue(value) => format!("{value:?}"),
+                    Terminal::EmptyCallEnd { .. } => ")".to_owned(),
                     Terminal::Text => "\"x\"".to_owned(),
                     Terminal::UnsignedInteger | Terminal::Bound => "1".to_owned(),
                     Terminal::DecimalLiteral => "1.0".to_owned(),

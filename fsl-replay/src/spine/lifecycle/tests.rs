@@ -900,13 +900,10 @@ fn spine_refuses_a_same_spelled_binder_and_an_other_protocol_read() {
     );
 }
 
-/// FR-048-AC-4 / FR-513-AC-12 / TC-1308 successor: the spine retains the
-/// typed refusal for a repeat guard that reads a body-produced binder.
-#[trace("FR-048-AC-4", "FR-513-AC-12", "TC-1308")]
+/// A guard reading the repeat body's binder checks as a post-test repeat.
+#[trace("FR-880-AC-8", "FR-218-AC-33", "TC-1308")]
 #[test]
 fn spine_refuses_post_test_repeat_guard_with_typed_construct_evidence() {
-    use fsl_semantics::check::{CheckCause, ProtocolConstruct};
-
     let source = format!(
         "{HEADER}model M = \"acme/orders\";\n\
          record Plain {{ ready: Boolean; }}\n\
@@ -920,20 +917,19 @@ fn spine_refuses_post_test_repeat_guard_with_typed_construct_evidence() {
            finish End as (outcome: Boolean) {{ true }};\n\
          }}"
     );
-    let failure = protocol_check_stage(source.as_bytes(), CheckingLimits::default())
-        .expect_err("post-test repeat is refused by the spine");
-    let refusal = refusal_or_fault(failure).expect("typed S3 refusal");
-    let CompileRefusal::Check { refusals, .. } = *refusal else {
-        panic!("the spine reaches protocol checking: {refusal:?}");
-    };
-    assert!(
-        refusals.iter().any(|refusal| matches!(
-            &refusal.cause,
-            CheckCause::ProtocolReference(cause)
-                if cause.construct() == Some(ProtocolConstruct::PostTestRepeat)
-        )),
-        "the repeat refusal retains its typed construct identity: {refusals:?}"
-    );
+    let checked = protocol_check_stage(source.as_bytes(), CheckingLimits::default())
+        .expect("post-test repeat checks through the spine");
+    let protocol = checked
+        .value()
+        .package()
+        .graph()
+        .protocol("Flow")
+        .expect("the declared protocol checks");
+    let repeat = protocol.slots.repeats.first().expect("the checked repeat");
+    assert_eq!(protocol.slots.repeats.len(), 1);
+    assert!(repeat.post_test);
+    assert_eq!(repeat.max, Some(1));
+    assert!(repeat.decisions_read_body);
 }
 
 /// FR-048-AC-4 successor: repeat guards refuse a sibling-branch binder at

@@ -46,6 +46,12 @@ pub(super) enum Terminal {
         /// The built-in's spelling, which no declared type may take.
         except: &'static str,
     },
+    /// The end of a qualified empty call, except for intrinsic names that
+    /// require an argument before `)` (FR-397-AC-16/25).
+    EmptyCallEnd {
+        namespace: &'static [&'static str],
+        names: &'static [&'static str],
+    },
     /// A selected extension's leading keyword (FR-354): this spelling,
     /// compared as a word. Not a reserved word of the core grammar, so the
     /// same spelling stays an ordinary identifier everywhere else.
@@ -1671,7 +1677,14 @@ fn expressions(g: &mut Grammar) {
             // `EnumValue`, which would otherwise take the name and leave the
             // `(`; no alternative between `TupleValue` and here admits a
             // name followed by `::`, so `EnumValue` keeps every match it had.
-            s(vec![r(P::QualifiedName), x("("), x(")")]),
+            s(vec![
+                r(P::QualifiedName),
+                x("("),
+                Rule::Terminal(Terminal::EmptyCallEnd {
+                    namespace: &["filament", "::", "value", "::", "ieee", "::"],
+                    names: &["sqrt", "fma", "numericEqual", "totalOrder", "bitIdentical"],
+                }),
+            ]),
             r(P::EnumValue),
             r(P::QualifiedName),
         ]),

@@ -51,12 +51,35 @@ fn diagnostic(refusal: &CompileRefusal) -> Value {
             "end": region.end()
         })
     });
-    json!({
+    let mut expected = json!({
         "cause": refusal.cause(),
         "code": refusal.code().as_str(),
         "locus": locus,
         "details": null,
         "message": refusal.to_string()
+    });
+    if let Some(hint) = fsl_replay::outcome::hint::hint_for(refusal.code(), refusal.cause()) {
+        expected["hint"] = json!(hint);
+    }
+    expected
+}
+
+fn parsed_report(report: &fsl_replay::spine::ParseReport) -> Value {
+    json!({
+        "kind": "parsed",
+        "source": report.source,
+        "path": report.path,
+        "bytes": report.bytes.to_string(),
+        "usage": [
+            {"setting": "s1.input_bytes", "bound": report.limits.source_bytes.to_string(),
+                "used": report.bytes.to_string()},
+            {"setting": "s1.tokens", "bound": report.limits.tokens.to_string(),
+                "used": report.tokens.to_string()},
+            {"setting": "s1.nodes", "bound": report.limits.nodes.to_string(),
+                "used": report.nodes.to_string()},
+            {"setting": "s1.work_units", "bound": report.limits.work_units.to_string(),
+                "used": report.work_units.to_string()},
+        ],
     })
 }
 
@@ -81,13 +104,21 @@ fn a_driver_serializes_parse_success_at_s2_without_artifacts() {
     let document = OutcomeDocument::from_parse(&result);
     assert_eq!(document.category(), Category::Success);
     assert_eq!(document.category().exit_code(), 0);
-    assert_eq!(
-        document_json(&document),
-        expected(json!("S2"), "success", json!([]))
-    );
+    let syntax = parsed.value().syntax();
+    let mut wanted = expected(json!("S2"), "success", json!([]));
+    wanted["result"] = parsed_report(&fsl_replay::spine::ParseReport {
+        source: syntax.source().reference().clone(),
+        path: "unit.native".to_owned(),
+        bytes: FIXTURE.len(),
+        limits: SpineLimits::default().source,
+        tokens: syntax.cst().tokens().len(),
+        nodes: syntax.cst().nodes().len(),
+        work_units: parsed.work().s1,
+    });
+    assert_eq!(document_json(&document), wanted);
 }
 
-/// Both S1 syntax refusal and S2 unsupported forms retain the actual
+/// Both S1 syntax refusal and an unselected extension retain the actual
 /// producer's code, cause, message and located source region.
 #[trace("FR-278-AC-2", "FR-286-AC-3")]
 #[trace("TC-015", "FR-010-AC-2", "FR-010-AC-9")]
@@ -105,10 +136,10 @@ fn a_driver_serializes_parse_refusals_with_the_original_locus() {
             20,
         ),
         (
-            "function f using v(): Boolean pure { null }",
+            "retention Audit { subject: \"audit\", days: 30 }",
             "unsupported_construct",
-            SpineStage::Forms,
-            "S2",
+            SpineStage::Source,
+            "S1",
             Category::Unsupported,
             "unsupported",
             21,
@@ -125,10 +156,14 @@ fn a_driver_serializes_parse_refusals_with_the_original_locus() {
             SpineLimits::default().source,
             &Cancel::new(),
         );
-        let StageFailure::Refused(refusal) = result.as_ref().expect_err("the source refuses")
-        else {
-            panic!("the source must produce a typed refusal");
-        };
+        let (refusal, report): (&CompileRefusal, Option<&fsl_replay::spine::ParseReport>) =
+            match result.as_ref().expect_err("the source refuses") {
+                StageFailure::Refused(refusal) => (refusal.as_ref(), None),
+                StageFailure::RefusedWithPayload(refusal, payload) => {
+                    (refusal.as_ref().as_ref(), payload.parsed.as_deref())
+                }
+                other => panic!("the source must produce a typed refusal: {other:?}"),
+            };
         assert_eq!(refusal.code().as_str(), code);
         assert_eq!(refusal.stage(), stage);
         let region = refusal.region().expect("the actual refusal is located");
@@ -137,14 +172,19 @@ fn a_driver_serializes_parse_refusals_with_the_original_locus() {
         let document = OutcomeDocument::from_parse(&result);
         assert_eq!(document.category(), category);
         assert_eq!(document.category().exit_code(), exit);
-        assert_eq!(
-            document_json(&document),
-            expected(
-                json!(wire_stage),
-                wire_category,
-                json!([diagnostic(refusal)])
-            )
+        let mut wanted = expected(
+            json!(wire_stage),
+            wire_category,
+            json!([diagnostic(refusal)]),
         );
+        if let Some(report) = report {
+            assert_eq!(report.bytes, text.len());
+            assert_eq!(report.source.authority(), source.authority.as_str());
+            assert_eq!(report.source.identity(), source.identity.as_str());
+            assert_eq!(report.path, "unit.native");
+            wanted["result"] = parsed_report(report);
+        }
+        assert_eq!(document_json(&document), wanted);
     }
 }
 
@@ -202,12 +242,29 @@ fn a_driver_serializes_each_reached_parse_limit() {
         assert_eq!(limit.configured_bound(), 0, "{field}");
         assert!(limit.actual() > 0, "{field}");
         let refusal = CompileRefusal::Limit(limit.clone());
+        // FR-255, FR-869: parse names the setting on its own entry point;
+        // request stage_limits belongs to replay.
+        let mut message = format!(
+            "S1 {} limit {} reached ({})",
+            limit.kind().noun(),
+            limit.configured_bound(),
+            limit.actual()
+        );
+        if let Some(locus) = limit.locus() {
+            message.push_str(&format!(" at {locus}"));
+        }
+        message.push_str(&format!(
+            "; raise it with `--limit {}=<n>`",
+            limit.setting().name()
+        ));
+        let mut expected_diagnostic = diagnostic(&refusal);
+        expected_diagnostic["message"] = json!(message);
         let document = OutcomeDocument::from_parse(&result);
         assert_eq!(document.category(), Category::Incomplete);
         assert_eq!(document.category().exit_code(), 22);
         assert_eq!(
             document_json(&document),
-            expected(json!("S1"), "incomplete", json!([diagnostic(&refusal)])),
+            expected(json!("S1"), "incomplete", json!([expected_diagnostic])),
             "{field}"
         );
     }

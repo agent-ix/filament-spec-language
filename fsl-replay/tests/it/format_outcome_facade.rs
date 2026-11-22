@@ -56,13 +56,19 @@ fn diagnostic_json(diagnostic: &CompleteDiagnostic) -> Value {
             "end": region.end()
         })
     });
-    json!({
+    let mut expected = json!({
         "cause": diagnostic.cause.as_str(),
         "code": diagnostic.code.as_str(),
         "locus": locus,
         "details": null,
         "message": diagnostic.message
-    })
+    });
+    if let Some(hint) =
+        fsl_replay::outcome::hint::hint_for(diagnostic.code, Some(diagnostic.cause.as_str()))
+    {
+        expected["hint"] = json!(hint);
+    }
+    expected
 }
 
 fn assert_refusal(

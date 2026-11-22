@@ -798,6 +798,17 @@ fn header_span(unit: &ParsedUnitSource) -> fsl_foundation::Span {
     fsl_foundation::Span { start: 0, end }
 }
 
+fn language_header_span(unit: &ParsedUnitSource) -> fsl_foundation::Span {
+    let end = unit
+        .syntax()
+        .cst()
+        .nodes()
+        .iter()
+        .find(|node| node.production() == fsl_cst::Production::Header)
+        .map_or(0, |node| node.span().end);
+    fsl_foundation::Span { start: 0, end }
+}
+
 fn headers_match(
     first_edition: Option<&str>,
     first_profiles: &[&str],
@@ -4360,8 +4371,12 @@ impl<'a> Resolution<'a> {
                 }
             }
             let mut refusals = refusals;
-            let region = refusals.first().and_then(|refusal| {
-                regions
+            let region = refusals.first().and_then(|refusal| match &refusal.cause {
+                CheckCause::EmptyPackage { .. } => frame
+                    .source_units
+                    .first()
+                    .and_then(|unit| region(unit.source().reference(), language_header_span(unit))),
+                _ => regions
                     .refusal_region(refusal)
                     .or_else(|| match &refusal.cause {
                         CheckCause::MissingName(name)
@@ -4369,12 +4384,8 @@ impl<'a> Resolution<'a> {
                         {
                             SourceRegion::new(frame.raw.clone(), 0, 0).ok()
                         }
-                        CheckCause::EmptyPackage { .. } => frame
-                            .source_units
-                            .first()
-                            .and_then(|unit| region(unit.source().reference(), header_span(unit))),
                         _ => None,
-                    })
+                    }),
             });
             name_operand(&mut refusals, region.as_ref(), &frame.source_units);
             let mut refusal_regions: Vec<_> = refusals

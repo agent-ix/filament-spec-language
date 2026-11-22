@@ -153,13 +153,19 @@ fn other_source_causes_omit_label_and_preserve_the_original_region_and_detail() 
             },
             19,
         );
-        let expected = json!({
+        let mut expected = json!({
             "cause": tag,
             "code": code,
             "locus": expected_locus,
             "details": null,
             "message": detail
         });
+        if let Some(hint) = fsl_replay::outcome::hint::hint_for(
+            fsl_foundation::Code::from_code(code).expect("catalog code"),
+            Some(tag),
+        ) {
+            expected["hint"] = json!(hint);
+        }
         assert_projections(&diagnostic, &expected);
     }
     let ordinary = OutcomeDiagnostic::new(None, "cancelled", None, "ordinary diagnostic");

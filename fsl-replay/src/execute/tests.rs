@@ -706,7 +706,7 @@ fn tc_444_a_domain_package_comes_from_the_byte_provision() {
     let ReplayRefusal::Recompile { refusal, .. } = &refused else {
         panic!("expected a recompile refusal, got {refused:?}");
     };
-    assert_eq!(refusal.stage(), SpineStage::Intake);
+    assert_eq!(refusal.stage(), SpineStage::Compile);
     assert_eq!(refusal.code(), Code::MissingImport);
 }
 
