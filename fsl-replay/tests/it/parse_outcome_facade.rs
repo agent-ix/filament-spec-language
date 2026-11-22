@@ -242,12 +242,29 @@ fn a_driver_serializes_each_reached_parse_limit() {
         assert_eq!(limit.configured_bound(), 0, "{field}");
         assert!(limit.actual() > 0, "{field}");
         let refusal = CompileRefusal::Limit(limit.clone());
+        // FR-255, FR-869: parse names the setting on its own entry point;
+        // request stage_limits belongs to replay.
+        let mut message = format!(
+            "S1 {} limit {} reached ({})",
+            limit.kind().noun(),
+            limit.configured_bound(),
+            limit.actual()
+        );
+        if let Some(locus) = limit.locus() {
+            message.push_str(&format!(" at {locus}"));
+        }
+        message.push_str(&format!(
+            "; raise it with `--limit {}=<n>`",
+            limit.setting().name()
+        ));
+        let mut expected_diagnostic = diagnostic(&refusal);
+        expected_diagnostic["message"] = json!(message);
         let document = OutcomeDocument::from_parse(&result);
         assert_eq!(document.category(), Category::Incomplete);
         assert_eq!(document.category().exit_code(), 22);
         assert_eq!(
             document_json(&document),
-            expected(json!("S1"), "incomplete", json!([diagnostic(&refusal)])),
+            expected(json!("S1"), "incomplete", json!([expected_diagnostic])),
             "{field}"
         );
     }
