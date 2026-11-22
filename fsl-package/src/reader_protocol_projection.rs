@@ -3505,7 +3505,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             }
             _ => None,
         };
-        if let Some(owner) = object_owner {
+        if object_owner.is_some() {
             // A model attribute reads the reference under its `model.deref`.
             let operand = self.node(operand_id)?;
             let explicit_deref = matches!(
@@ -3531,11 +3531,28 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 .admitted()
                 .model_object_fields(field_declaration)
                 .map_err(|_| fault("reader-field-declaration-is-admitted"))?;
+            let field = fields
+                .field(field_name)
+                .ok_or_else(|| fault("reader-field-member-is-admitted"))?;
+            let declaring = self
+                .admitted()
+                .structural_key(field.declaring_node_id())
+                .ok_or_else(|| fault("reader-field-declaration-is-admitted"))?;
+            let owner = match self
+                .index
+                .identities
+                .declaration_rows()
+                .find(|row| row.structural_node == *declaring)
+                .map(|row| &row.exact_identity)
+            {
+                Some(filament_contract_model::SelectedExactIdentity::Object(owner)) => {
+                    owner.clone()
+                }
+                None if self.index.print => print_effective_id(&self.index.key(declaring)?),
+                _ => return Err(fault("reader-field-declaration-is-admitted").into()),
+            };
             let optional = matches!(
-                fields
-                    .field(field_name)
-                    .ok_or_else(|| fault("reader-field-member-is-admitted"))?
-                    .member_type(),
+                field.member_type(),
                 Some(filament_contract_model::CheckedMemberType::Option(_))
             );
             let child = self.project_argument(id, &reference, context, locals)?;
@@ -3905,6 +3922,18 @@ pub(crate) fn node_value_type(
             }
             if has_form(declaration, WireTag::CompositeType, WireForm::Reference) {
                 return reference_node_type(index, &declaration.node_id);
+            }
+            // An optional lookup result retains its reference's selected object identity.
+            if has_form(declaration, WireTag::CompositeType, WireForm::Option) {
+                if let CheckedTerm::Aggregate { members } = &declaration.body {
+                    if let [CheckedTerm::Reference { target }] = members.as_slice() {
+                        if index.node(target).is_some_and(|node| {
+                            has_form(node, WireTag::CompositeType, WireForm::Reference)
+                        }) {
+                            return reference_node_type(index, target).map(ValueType::option);
+                        }
+                    }
+                }
             }
         }
     }

@@ -129,6 +129,7 @@ pub(super) fn behaviour_payload(
         blocked: Vec::new(),
         refinement: None,
         final_delay: None,
+        closure_stutters: Vec::new(),
     }
 }
 

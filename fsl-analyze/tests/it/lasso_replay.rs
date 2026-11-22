@@ -59,6 +59,7 @@ pub(crate) fn subject_of(fixture: &Fixture) -> ModelTraceSubject {
         expansion: ExpansionLimits {
             max_candidates: 1_000_000,
         },
+        stutter_closure: false,
     }
 }
 
@@ -766,6 +767,7 @@ fn a_bounded_prefix_that_is_cut_short_refuses_and_a_covering_one_reproduces() {
         blocked: Vec::new(),
         refinement: None,
         final_delay: None,
+        closure_stutters: Vec::new(),
     };
     let (cause, code, tag) = refusal(replay_with(&holds, empty, |value| Some(value >= 0)));
     assert!(

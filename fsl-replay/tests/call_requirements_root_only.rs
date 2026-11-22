@@ -38,6 +38,7 @@ fn run(source: &str, cancel: &Cancel) -> Result<fsl_replay::RunWithRequirements,
     let call = Call {
         clocks: Default::default(),
         wire_arguments: Vec::new(),
+        canonical_values: false,
         snapshot: None,
         function: "inc".to_owned(),
         arguments: vec![CallArgument {

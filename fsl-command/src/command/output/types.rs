@@ -111,6 +111,12 @@ pub(super) enum Details<'a> {
         path: &'a str,
         span: Option<LocatedSpan>,
     },
+    ImportedSpine {
+        path: &'a str,
+        span: fsl_foundation::SourceCoordinates,
+        #[serde(rename = "sourceIdentity")]
+        source_identity: &'a str,
+    },
     /// FR-640: a `clocks` selection that does not fit the program, naming
     /// the cause, the clock and, where one declaration is at fault, its
     /// name and profile, with the program locus.

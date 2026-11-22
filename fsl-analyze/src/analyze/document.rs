@@ -37,6 +37,8 @@ use super::{
 };
 use fsl_eval::simulation::model::PopulationUniverse;
 
+pub mod effect_decision;
+
 /// The request document format FR-620 reads.
 pub const REQUEST_FORMAT: &str = "native-analyze/1";
 
@@ -810,6 +812,9 @@ pub struct ItemSelection {
     /// A `global-conformance` item's supplied FR-737 recording.
     #[serde(default)]
     pub recording: Option<DocumentSelection>,
+    /// FR-1046 receipt selectors, validated before document intake.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub effect_decisions: Option<Value>,
     /// The activated population used to close a recording's fan-out scope.
     #[serde(default, deserialize_with = "present_json_value")]
     pub population: Option<Value>,
@@ -853,6 +858,8 @@ struct ItemSelectionWire {
     traces: Option<DocumentSelection>,
     #[serde(default)]
     recording: Option<DocumentSelection>,
+    #[serde(default, deserialize_with = "present_json_value")]
+    effect_decisions: Option<Value>,
     #[serde(default, deserialize_with = "present_json_value")]
     population: Option<Value>,
     #[serde(default)]
@@ -909,6 +916,7 @@ impl TryFrom<ItemSelectionWire> for ItemSelection {
             trace: wire.trace,
             traces: wire.traces,
             recording: wire.recording,
+            effect_decisions: wire.effect_decisions,
             population: wire.population,
             simulation: wire.simulation,
         })
@@ -1650,6 +1658,7 @@ pub fn resolve_items(
                 subject,
                 registry,
                 binding,
+                limits,
             };
             let mut resolved = Vec::with_capacity(selections.len());
             let mut premises = Vec::new();
@@ -3095,6 +3104,7 @@ fn default_items(
         subject,
         registry,
         binding,
+        limits,
     };
     let mut premises = Vec::new();
     for node in &nodes {
@@ -4062,7 +4072,7 @@ fn negotiate_items(
     let mut components = BTreeMap::new();
     let mut gates = BTreeMap::new();
     for resolved in items {
-        let (claim, owner, before, required) = match resolved {
+        let (claim, owner, before, required, named) = match resolved {
             ResolvedItem::Simulation(item) => {
                 simulations.push(*item);
                 continue;
@@ -4071,15 +4081,16 @@ fn negotiate_items(
                 settled.insert(record.request_index(), (claim_name, *record));
                 continue;
             }
-            ResolvedItem::Claim(claim) => (*claim, None, None, Vec::new()),
+            ResolvedItem::Claim(claim) => (*claim, None, None, Vec::new(), Default::default()),
             ResolvedItem::Composition(derived) => {
                 let CompositionClaim {
                     claim,
                     package,
                     settled,
                     required,
+                    components: named,
                 } = *derived;
-                (claim, package, settled, required)
+                (claim, package, settled, required, named)
             }
         };
         let ResolvedClaim {
@@ -4113,6 +4124,7 @@ fn negotiate_items(
                 dependency: owner
                     .as_ref()
                     .map(|package| package.graph().package_name().to_owned()),
+                components: named,
             },
         );
         if let Some(record) = before {
@@ -4476,16 +4488,20 @@ fn hold_item(
     }
     .as_ref()
     .map_err(|cause| held_identity::HeldIdentityError::NoGraph(cause.clone()))?;
-    // FSpec FR-322 has no segment for a node of a dependency's graph: a
-    // composition item over the request's own package keeps those ids
-    // structural (FR-621 "Node ids in an item").
-    let composition = (dependency.is_none() && item["request"]["kind"] == "composition")
-        .then_some(&graphs.dependencies);
+    // FSpec FR-322 "Scope": a composition item over the request's own
+    // package writes the ids of a component slot in the component's graph
+    // (FR-621 "Node ids in an item").
+    let scope = echo
+        .filter(|_| dependency.is_none() && item["request"]["kind"] == "composition")
+        .map(|echo| held_identity::ComponentScope {
+            components: &echo.components,
+            graphs: &graphs.dependencies,
+        });
     let model = echo
         .and_then(|echo| echo.identity.as_ref())
         .and_then(|identity| identity["model"].as_str())
         .map(str::to_owned);
-    *item = held_identity::hold(item, graph, composition, model.as_deref())?;
+    *item = held_identity::hold(item, graph, scope.as_ref(), model.as_deref())?;
     Ok(())
 }
 
@@ -4509,6 +4525,9 @@ struct Echo {
     /// (a composition's component-guarantee premise); `None` for an item
     /// over the request's own package.
     dependency: Option<String>,
+    /// For a composition item, the package of each `components` entry by
+    /// name (FSpec FR-322 "Scope"); empty for every other item.
+    components: fsl_semantics::check::ComponentPackages,
 }
 
 /// The FR-621 members [`item_document`] adds to an FR-286 item.

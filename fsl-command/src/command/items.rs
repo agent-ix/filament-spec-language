@@ -228,9 +228,27 @@ pub(super) fn run_bytes(
     let accounting = items.get("accounting").cloned();
     let observation_limits = items.get("observation_limits").cloned();
     let mut expanded = Vec::<(usize, String, Value, Option<Value>, Option<String>)>::new();
+    let mut population_parameters = std::collections::BTreeMap::new();
     let mut selection_counts = Vec::with_capacity(normalized.len());
     for (index, kind, value) in normalized {
         let selector = find_selector_for(&kind, &value).map(str::to_owned);
+        if selector.is_some() && kind == "call" {
+            let parameter = value
+                .get("arguments")
+                .and_then(Value::as_array)
+                .and_then(|arguments| {
+                    arguments.iter().find(|argument| {
+                        argument
+                            .get("value")
+                            .and_then(|value| value.get("each"))
+                            .is_some()
+                    })
+                })
+                .and_then(|argument| argument.get("parameter"))
+                .and_then(Value::as_str)
+                .ok_or_else(|| refused("parameter", "a selected argument names its parameter"))?;
+            population_parameters.insert(index, parameter.to_owned());
+        }
         if selector.is_some()
             && !matches!(kind.as_str(), "clause" | "temporal" | "call" | "function")
         {
@@ -426,7 +444,12 @@ pub(super) fn run_bytes(
                 }
                 Ok(super::PreparedRun::Function(prepared_function)) => {
                     let requirements = prepared_function.requirements().cloned();
-                    let input = prepared_function.into_input();
+                    let mut input = prepared_function.into_input();
+                    if let (Some(parameter), Some(object)) =
+                        (population_parameters.get(&index), object.as_ref())
+                    {
+                        bind_population_argument(&mut input.call, parameter, object)?;
+                    }
                     let candidate = compilation_from_function(&input);
                     set_compilation(&mut compilation, candidate)?;
                     let call_output = Some(CallOutput {
@@ -449,11 +472,16 @@ pub(super) fn run_bytes(
                         "tl_lowering is not an item selection",
                     ));
                 }
-                Ok(super::PreparedRun::Package(package)) if kind == "call" => {
+                Ok(super::PreparedRun::Package(mut package)) if kind == "call" => {
                     // FR-1039: each call selection executes from the admitted
                     // package bytes. The package route owns admission and
                     // evaluation; this batch layer only preserves selection
                     // order and result framing.
+                    if let (Some(parameter), Some(object)) =
+                        (population_parameters.get(&index), object.as_ref())
+                    {
+                        package.bind_population_argument(parameter, selected_object(object)?)?;
+                    }
                     ItemExecution::Run(Box::new(super::package_run::execute(*package)))
                 }
                 Ok(super::PreparedRun::Package(_)) => {
@@ -981,6 +1009,35 @@ fn set_clause_self(value: &mut Value, self_object: Value) -> Result<()> {
         return Err(refused("clause", "expected a clause selection object"));
     };
     object.insert("self".to_owned(), self_object);
+    Ok(())
+}
+
+fn selected_object(object: &Value) -> Result<fsl_semantics::model::observation::SelectedObject> {
+    let population = object
+        .get("population")
+        .and_then(Value::as_str)
+        .ok_or_else(|| refused("population", "the expanded object names its population"))?;
+    let key = object
+        .get("key")
+        .and_then(Value::as_str)
+        .ok_or_else(|| refused("key", "the expanded object names its key"))?;
+    Ok(fsl_semantics::model::observation::SelectedObject {
+        population: population.to_owned(),
+        key: key.to_owned(),
+    })
+}
+
+fn bind_population_argument(
+    call: &mut fsl_replay::spine::Call,
+    parameter: &str,
+    object: &Value,
+) -> Result<()> {
+    let argument = call
+        .wire_arguments
+        .iter_mut()
+        .find(|argument| argument.parameter == parameter)
+        .ok_or_else(|| refused("parameter", "the expanded argument names its parameter"))?;
+    argument.selected_object = Some(selected_object(object)?);
     Ok(())
 }
 

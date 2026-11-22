@@ -468,7 +468,7 @@ impl ReferenceScope<'_, '_, '_, '_> {
     ) -> Result<Json, ReferenceCodecError> {
         let mut race = None;
         let mut loop_proof = None;
-        let kind = match &counterexample.kind {
+        let mut kind = match &counterexample.kind {
             CounterexampleKind::Formula => self.text("formula")?,
             CounterexampleKind::Deadlock => self.text("deadlock")?,
             CounterexampleKind::TimeLock => self.text("time-lock")?,
@@ -498,6 +498,22 @@ impl ReferenceScope<'_, '_, '_, '_> {
                 self.text("loop-proof")?
             }
         };
+        self.work(counterexample.closure_stutters.len())?;
+        if matches!(
+            counterexample.kind,
+            CounterexampleKind::UndefinedEvaluation(_)
+        ) {
+            if let Some(position) = kind
+                .get("where")
+                .and_then(|site| site.get("position"))
+                .and_then(Json::as_u64)
+            {
+                let position = counterexample.written_position(position);
+                if let Some(site) = kind.get_mut("where") {
+                    self.put(site, "position", Json::from(position))?;
+                }
+            }
+        }
         let len = counterexample.prefix.len();
         let split = counterexample
             .lasso
@@ -581,6 +597,22 @@ impl ReferenceScope<'_, '_, '_, '_> {
             })?;
             // Reserve the additional slot before extending the loop vector.
             self.append(&mut looped, out)?;
+        }
+        self.work(counterexample.closure_stutters.len())?;
+        if let Some(closure) = counterexample.closure_loop() {
+            let index = looped.len();
+            let written = self.at_index("/loop", index, |s| {
+                let tag = s.text("closure-stutter")?;
+                let transition = s.record([("type", tag)])?;
+                let state = s.at_pointer("/post_state", |s| s.state(&closure.post_state))?;
+                let mut written = s.record([("transition", transition), ("post_state", state)])?;
+                if let Some(delay) = &closure.delay {
+                    let delay = s.at_pointer("/delay", |s| s.rational(delay))?;
+                    s.put(&mut written, "delay", delay)?;
+                }
+                Ok(written)
+            })?;
+            self.append(&mut looped, written)?;
         }
         let over = match (&counterexample.over_binding, over) {
             (None, _) => Json::Null,

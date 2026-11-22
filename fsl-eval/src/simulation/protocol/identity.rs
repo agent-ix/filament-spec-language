@@ -1670,6 +1670,47 @@ impl ProtocolTransition {
         })
     }
 
+    /// The complete FR-822 recommendation in canonical JSON, when this is
+    /// a recommendation step. Uses the same projection as the trace writer.
+    ///
+    /// # Errors
+    /// Returns the canonical writer's refusal for an unencodable transition.
+    pub fn recommendation_document(&self) -> Result<Option<Vec<u8>>, Error> {
+        self.recommendation_enc()
+            .map(|record| quire_canonical::to_vec(&record, quire_canonical::Limits::new(u64::MAX)))
+            .transpose()
+    }
+
+    fn recommendation_enc(&self) -> Option<Enc> {
+        let Members::Recommendation {
+            role,
+            operation,
+            receiver,
+            arguments,
+        } = &self.members
+        else {
+            return None;
+        };
+        let mut record = vec![
+            ("node", Enc::Str(self.node.clone().unwrap_or_default())),
+            ("role", Enc::Str(role.clone())),
+            (
+                "instance",
+                self.thread
+                    .as_ref()
+                    .map(|thread| Enc::Str(thread.instance.to_string()))
+                    .unwrap_or(Enc::Unencodable("a-recommendation-has-a-thread")),
+            ),
+            ("operation", Enc::Str(operation.clone())),
+            ("receiver", receiver.clone()),
+            ("arguments", Enc::Array(arguments.clone())),
+        ];
+        if let Some(actor) = &self.actor {
+            record.push(("actor", reference_enc(&actor.object)));
+        }
+        Some(Enc::tagged("protocol-recommendation", record))
+    }
+
     /// The per-attempt compensation outcome named by this transition.
     /// Aggregate recovery labels are carried by registration state and are
     /// intentionally not inferred from a successful attempt.
@@ -1838,33 +1879,10 @@ impl ProtocolTransition {
                     members.push(("memory_choice", choice.enc()));
                 }
             }
-            Members::Recommendation {
-                role,
-                operation,
-                receiver,
-                arguments,
-            } => {
-                let mut record = vec![
-                    ("node", Enc::Str(self.node.clone().unwrap_or_default())),
-                    ("role", Enc::Str(role.clone())),
-                    (
-                        "instance",
-                        self.thread
-                            .as_ref()
-                            .map(|thread| Enc::Str(thread.instance.to_string()))
-                            .unwrap_or(Enc::Unencodable("a-recommendation-has-a-thread")),
-                    ),
-                    ("operation", Enc::Str(operation.clone())),
-                    ("receiver", receiver.clone()),
-                    ("arguments", Enc::Array(arguments.clone())),
-                ];
-                if let Some(actor) = &self.actor {
-                    record.push(("actor", reference_enc(&actor.object)));
+            Members::Recommendation { .. } => {
+                if let Some(record) = self.recommendation_enc() {
+                    members.push(("recommendation", record));
                 }
-                members.push((
-                    "recommendation",
-                    Enc::tagged("protocol-recommendation", record),
-                ));
             }
             Members::Control => {}
             Members::Record {

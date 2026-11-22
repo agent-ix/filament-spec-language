@@ -217,7 +217,8 @@ that object that the guard may read, as a hybrid claim's guard reads its
   }` with no guard, and `on each (q: T) when (true)` to `Activation::Each {
   guarded: true }` with the guard `true`. They are different checked
   clauses, as the protocol activation forms are (FR-381 "Activation"):
-  FR-338 keys the first with activation `"each"` and the second with
+  FR-338 keys the first with activation `"each"` (a bounded or TP-4 clause)
+  or `"infinite"` (an infinite-trace TP-1 or TP-3 clause) and the second with
   `"each-when"`.
 - The checked clause SHALL keep the typed guard, with its evaluation slot
   count, beside its `holds` conditions, so the letter seam (FR-125) and the

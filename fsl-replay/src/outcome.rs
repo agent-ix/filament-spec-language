@@ -39,6 +39,7 @@ pub use counterexample::{
 };
 
 use crate::hybrid::{BoundDimension, SolverHorizon};
+pub use crate::spine::{read_outcome_diagnostics, OutcomeDiagnosticRead};
 use filament_exact::{CancelCause, Integer, NodeKey};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::location::ExpressionLocation;
@@ -418,6 +419,9 @@ enum ItemWhere {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ItemDiagnostic {
     code: &'static str,
+    /// The catalog cause; empty for a code FSpec FR-272 gives no cause
+    /// (`malformed_wire`), which writes no `cause` member.
+    #[serde(skip_serializing_if = "str::is_empty")]
     cause: &'static str,
     detail: serde_json::Map<String, serde_json::Value>,
 }
@@ -2282,6 +2286,17 @@ pub enum OutcomeLocus {
         /// The region's span.
         span: LocatedSpan,
     },
+    /// Imported source coordinates, whose origin supplies no byte offsets.
+    #[serde(rename = "located")]
+    ImportedLocated {
+        /// Exact authored path.
+        file: String,
+        /// Exact admitted FCD source identity, without native labels.
+        #[serde(rename = "sourceIdentity")]
+        source_identity: String,
+        /// Authored coordinates with no asserted byte offsets.
+        span: fsl_foundation::SourceCoordinates,
+    },
     /// A kernel occurrence key, as its display form.
     Occurrence {
         /// The occurrence key's display form.
@@ -2533,6 +2548,13 @@ impl OutcomeDiagnostic {
                 .map(|region| OutcomeLocus::from(&Locus::Region(region.clone()))),
             refusal.to_string(),
         );
+        if let Some(origin) = refusal.unbounded_parameter_origin() {
+            diagnostic.locus = origin.map(|origin| OutcomeLocus::ImportedLocated {
+                file: origin.path.clone(),
+                source_identity: origin.artifact.clone(),
+                span: origin.span,
+            });
+        }
         if let CompileRefusal::Forms { failure, .. } = refusal {
             match &failure.cause {
                 fsl_forms::FormsCause::NoDispatchEntry {
@@ -3289,7 +3311,21 @@ impl OutcomeDocument {
             refusal.code().as_str(),
             locus,
             refusal.to_string(),
-        )])
+        )
+        .with_details(match refusal {
+            ReplayRefusal::Admission(
+                AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record),
+            ) if record.catalog == fsl_foundation::diagnostic::ALLOCATION_FAILED => Some(
+                record
+                    .fields
+                    .iter()
+                    .map(|(name, value)| {
+                        ((*name).to_owned(), serde_json::Value::String(value.clone()))
+                    })
+                    .collect(),
+            ),
+            _ => None,
+        })])
     }
 
     fn from_replay_row(
@@ -3379,6 +3415,29 @@ impl OutcomeDocument {
             }
             RunRefusal::Cancelled(cause) => Self::cancelled(operation, *cause),
             RunRefusal::Fault(fault) => Self::faulted(operation, fault),
+            RunRefusal::ReferenceCatalog(error) => {
+                Self::new(operation, Some(OutcomeStage::S6a), refusal.category()).with_diagnostics(
+                    vec![OutcomeDiagnostic::new(
+                        RunRefusal::catalog_cause(error),
+                        refusal.code().as_str(),
+                        None,
+                        error.to_string(),
+                    )],
+                )
+            }
+            RunRefusal::Reference(error) => {
+                if let Some(cause) = refusal.cancel_cause() {
+                    return Self::cancelled(operation, cause);
+                }
+                Self::new(operation, Some(OutcomeStage::S6a), refusal.category()).with_diagnostics(
+                    vec![OutcomeDiagnostic::new(
+                        RunRefusal::reference_cause(error),
+                        refusal.code().as_str(),
+                        None,
+                        error.to_string(),
+                    )],
+                )
+            }
             // FR-277: a supplied-phase stop is phase-marked, not a
             // catalog record. Its category is the document's; the shared
             // result contract has no field for the phase context yet, so
@@ -4877,6 +4936,7 @@ mod tests {
             let call = Call {
                 clocks: Default::default(),
                 wire_arguments: Vec::new(),
+                canonical_values: false,
                 snapshot: None,
                 function: "seven".to_owned(),
                 arguments: Vec::new(),
@@ -4921,6 +4981,7 @@ mod tests {
         let call = Call {
             clocks: Default::default(),
             wire_arguments: Vec::new(),
+            canonical_values: false,
             snapshot: None,
             function: "seven".to_owned(),
             arguments: Vec::new(),
@@ -5288,6 +5349,7 @@ mod tests {
             &Call {
                 clocks: Default::default(),
                 wire_arguments: Vec::new(),
+                canonical_values: false,
                 snapshot: None,
                 function: function.to_owned(),
                 arguments: Vec::new(),

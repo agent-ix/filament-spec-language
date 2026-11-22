@@ -957,6 +957,8 @@ pub struct VariantRecord {
     pub case: String,
     /// Its single resolved value payload, or `None` for a nullary member.
     pub payload_type: Option<ValueTypeRef>,
+    /// The case's authored index among the selected document's `variants`.
+    pub position: usize,
 }
 
 impl VariantRecord {

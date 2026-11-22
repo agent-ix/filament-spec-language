@@ -1021,6 +1021,7 @@ fn a_prefix_through_a_compensation_replays() {
         blocked,
         refinement: None,
         final_delay: None,
+        closure_stutters: Vec::new(),
     };
     let graph = subject
         .model

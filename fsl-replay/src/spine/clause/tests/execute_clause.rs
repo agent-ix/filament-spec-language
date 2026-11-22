@@ -8,6 +8,7 @@ use filament_eval::{
     ExecutionBackendChoice, UnsupportedCause, UnsupportedEntry, UntranslatableConstruct,
 };
 use filament_exact::{Cancel, CancelCause, ScalarLimits};
+use filament_semantic_value::supplied_stop::{SuppliedLimits, SuppliedRun};
 use fsl_eval::execution::{
     execute, CallLimits, EntrySelection, ExecuteLimits, ExecuteRequest, ExecuteSelection,
     ExecutionBackend, Interpreter, PrepareFailure, PrepareLimits, PreparedEntries,
@@ -74,7 +75,6 @@ fn accounting() -> ScalarLimits {
 fn limits() -> ExecuteLimits {
     ExecuteLimits {
         accounting: accounting(),
-        supplied: Default::default(),
         prepare: PrepareLimits::default(),
         session: Default::default(),
     }
@@ -113,6 +113,7 @@ fn reference(
 #[trace("TC-760", "FR-279-AC-2")]
 #[test]
 fn execute_a_clause_returns_what_evaluate_clause_returns() {
+    let cancel = Cancel::new();
     let compiled = compiled();
     for (root, healthy) in [(1, true), (3, false)] {
         let input = admitted(&compiled, "ParentOrder", root, 2);
@@ -121,7 +122,9 @@ fn execute_a_clause_returns_what_evaluate_clause_returns() {
             &clause_request("ParentOrder", input.clone()),
             &SuppliedBackends::default(),
             &limits(),
-            &Cancel::new(),
+            &mut SuppliedRun::new(SuppliedLimits::default(), cancel.clone())
+                .expect("existing supplied limits initialize"),
+            &cancel,
         );
         let expected = reference(&compiled, "ParentOrder", &input);
         assert_eq!(format!("{through:?}"), format!("{expected:?}"), "{root}");
@@ -269,6 +272,7 @@ impl PreparedEntries for RefusesPrepared {
         _arguments: &[Value],
         _environment: &ObjectEnvironment,
         _limits: &CallLimits,
+        _run: &mut SuppliedRun,
         _cancel: &Cancel,
     ) -> Result<filament_eval::Evaluation, CallFailure> {
         unreachable!("only clauses are selected")
@@ -295,6 +299,7 @@ impl PreparedEntries for RefusesPrepared {
 #[trace("TC-778", "FR-294-AC-3")]
 #[test]
 fn a_clause_the_backend_lists_unsupported_is_returned() {
+    let cancel = Cancel::new();
     let compiled = compiled();
     let input = admitted(&compiled, "ParentOrder", 1, 2);
     let jit = Refuses;
@@ -308,7 +313,9 @@ fn a_clause_the_backend_lists_unsupported_is_returned() {
             jit: Some(&jit),
         },
         &limits(),
-        &Cancel::new(),
+        &mut SuppliedRun::new(SuppliedLimits::default(), cancel.clone())
+            .expect("existing supplied limits initialize"),
+        &cancel,
     )
     .expect_err("the stand-in lists the clause unsupported");
     assert!(

@@ -110,7 +110,7 @@ fn transitive_library_calls_run_with_only_handoff_artifacts() {
     assert_eq!(exit, 0, "{result}");
     assert_eq!(
         result["outcome"]["value"],
-        json!({"integer": "42"}),
+        json!({"type":"integer", "value":"42"}),
         "{result}"
     );
     let (exit, result) = run(
@@ -141,7 +141,7 @@ fn diamond_closure_shares_one_artifact_and_missing_transitive_supply_refuses() {
     assert_eq!(source_exit, 0, "{source_result}");
     assert_eq!(
         source_result["outcome"]["value"],
-        json!({"integer": "42"}),
+        json!({"type":"integer", "value":"42"}),
         "{source_result}"
     );
     for file in [
@@ -1025,7 +1025,7 @@ fn nested_library_composites_keep_source_values_after_source_deletion() {
     assert_eq!(source_exit, 0, "{source_result}");
     assert_eq!(
         source_result["outcome"]["value"],
-        json!({"integer": "42"}),
+        json!({"type":"integer", "value":"42"}),
         "{source_result}"
     );
     for file in ["a.native", "z.native", "unit.native"] {

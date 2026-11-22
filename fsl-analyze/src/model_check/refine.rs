@@ -1830,6 +1830,7 @@ impl Run<'_, '_> {
             }),
             blocked: Vec::new(),
             final_delay: None,
+            closure_stutters: Vec::new(),
         }))
     }
 
@@ -2401,6 +2402,7 @@ impl Run<'_, '_> {
             refinement: Some(failure.failure),
             blocked: Vec::new(),
             final_delay: None,
+            closure_stutters: Vec::new(),
         }
     }
 }
@@ -3214,6 +3216,7 @@ impl Run<'_, '_> {
                 refinement: Some(RefinementFailure::HiddenUnfair { constraint }),
                 blocked: Vec::new(),
                 final_delay: None,
+                closure_stutters: Vec::new(),
             }),
             stats: self.stats(),
         })
@@ -3392,6 +3395,7 @@ impl Run<'_, '_> {
                 refinement: Some(failure),
                 blocked: Vec::new(),
                 final_delay: None,
+                closure_stutters: Vec::new(),
             }),
             stats: self.stats(),
         })

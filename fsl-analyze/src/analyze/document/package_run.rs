@@ -190,6 +190,17 @@ pub enum PackageRunError {
     /// An item, or the package, names a family with no package form yet.
     #[error("unsupported_construct/not-yet-implemented{}", .0.detail())]
     Pending(PendingPackageFamily),
+    /// The package's model-check input retained its typed refusal.
+    #[error(transparent)]
+    Input(#[from] PendingPackageForm),
+    /// A selected clause's admitted facts could not rebuild its checked form.
+    #[error("package clause at {node:?} could not rebuild: {refusal}")]
+    ClauseBuild {
+        /// The selected clause node.
+        node: CheckedNodeId,
+        /// The builder's original refusal, including any reached limit.
+        refusal: fsl_semantics::check::PackageClauseRefusal,
+    },
     /// The run was refused or faulted as the source route's is.
     #[error(transparent)]
     Document(#[from] AnalyzeDocumentError),
@@ -339,7 +350,7 @@ pub fn settle_package_run(
                     node: Some(node),
                 })
             }
-            PendingPackageForm::World(_)
+            refusal @ (PendingPackageForm::World(_)
             | PendingPackageForm::Model(_)
             | PendingPackageForm::Operations(_)
             | PendingPackageForm::ProbabilisticNodes(_)
@@ -347,9 +358,7 @@ pub fn settle_package_run(
             | PendingPackageForm::Reward(_)
             // Only `source_object_probabilistic_model` reads the source-object
             // rows, so `of` never gives this one.
-            | PendingPackageForm::SourceModel(_) => {
-                PackageRunError::Document(AnalyzeDocumentError::Fault)
-            }
+            | PendingPackageForm::SourceModel(_)) => PackageRunError::Input(refusal),
         })?;
     let mut registry = Registry::new();
     for descriptor in engines.registrations() {
@@ -1105,6 +1114,10 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             },
         )
         .map_err(|refusal| match refusal {
+            ClauseItemRefusal::Build(refusal) => PackageRunError::ClauseBuild {
+                node: fsl_semantics::check::wire_id::structural_id(claim.node()),
+                refusal,
+            },
             ClauseItemRefusal::Pending { fact, node } => {
                 PackageRunError::Pending(PendingPackageFamily {
                     request_index: Some(index),

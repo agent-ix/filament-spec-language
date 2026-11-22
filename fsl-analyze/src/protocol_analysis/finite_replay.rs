@@ -369,6 +369,7 @@ fn behaviour(
         blocked: Vec::new(),
         refinement: None,
         final_delay: None,
+        closure_stutters: Vec::new(),
     }
 }
 
@@ -929,6 +930,7 @@ impl Run<'_, '_> {
                 expansion: ExpansionLimits {
                     max_candidates: u64::MAX,
                 },
+                stutter_closure: false,
             },
             protocol: self.protocol.name.clone(),
             over: over.clone(),
@@ -1015,13 +1017,19 @@ impl Run<'_, '_> {
             counterexample: Box::new(counterexample),
             stats: Default::default(),
         };
+        let allocation = crate::analyze::document::effect_decision::ReplayAllocation::default();
         let record = settle_protocol_check(
             &outcome,
             &ModelCheckLimits::default(),
             &certificate,
             cancel,
-            move |payload| replay_protocol_over(&inputs, shape, payload, letters),
+            |payload| allocation.capture(replay_protocol_over(&inputs, shape, payload, letters)),
         );
+        if let Some(record) = allocation.take() {
+            return Err(ReplayFault::Admission(Box::new(
+                fsl_semantics::model::observation::AdmissionFailure::Incomplete(record),
+            )));
+        }
         let on_each = self.protocol_activates_on_each();
         let wire = record.counterexample.as_ref().and_then(|_| {
             over_reference(self.subject.simulation(), &self.protocol.name, &over).map(|over| {
@@ -1049,6 +1057,14 @@ impl Run<'_, '_> {
 fn report_fault(error: ReplayFault) -> EngineReport {
     match error {
         ReplayFault::Admission(failure) => {
+            if let fsl_semantics::model::observation::AdmissionFailure::Refused(record)
+            | fsl_semantics::model::observation::AdmissionFailure::Incomplete(record) =
+                failure.as_ref()
+            {
+                if record.catalog == fsl_foundation::diagnostic::ALLOCATION_FAILED {
+                    return crate::analyze::document::effect_decision::allocation_report(record);
+                }
+            }
             EngineReport::Refused(crate::analyze::admission(&failure))
         }
         ReplayFault::Stopped(stop) => EngineReport::Refused(Refusal::Failed(stop.cause)),

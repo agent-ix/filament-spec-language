@@ -144,6 +144,26 @@ pub struct LocatedSpan {
     pub end: Position,
 }
 
+/// Authored source coordinates whose byte offsets are unavailable.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceCoordinates {
+    /// First authored position.
+    pub start: SourcePoint,
+    /// Last authored position, or the start when no complete end is known.
+    pub end: SourcePoint,
+}
+
+/// An authored one-based line and column, with no asserted byte offset.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourcePoint {
+    /// One-based line number.
+    pub line: core::num::NonZeroU64,
+    /// One-based column number.
+    pub column: core::num::NonZeroU64,
+}
+
 #[derive(Debug)]
 struct Document {
     identity: SourceIdentity,

@@ -1065,7 +1065,7 @@ fn unfair_trace(
                         .into_iter()
                         .map(|(transition, _)| transition)
                         .collect(),
-                    taken: transition.clone(),
+                    taken: Some(transition.clone()),
                 });
             }
         }

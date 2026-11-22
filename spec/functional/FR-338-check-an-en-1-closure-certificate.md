@@ -279,7 +279,9 @@ No absent/default binding is synthesized. The property state is separate
 from the model state; its context does not copy the model subject. The certificate request still binds that
 subject through O-09 and FR-125. `profile` is the exact admitted temporal profile identity;
 `activation` is `"origin"` or `"each"` for a bounded monitor, and
-`"infinite"` for an infinite-trace `on origin` property. An unguarded
+`"infinite"` for an infinite-trace `on origin` property and for an unguarded
+infinite-trace TP-1 or TP-3 clause with `on each` ("Unguarded `on each` TP-1
+and TP-3 clause" below). An unguarded
 infinite-trace TP-4 clause with `on each` uses `"each"`; a clause whose
 `on each` activation has a `when` condition uses `"each-when"` for every property form
 (TP-1 to TP-4; "Guarded `on each` activation" below), and an `on origin` clause
@@ -658,6 +660,67 @@ from the context alone without reading the undefined letter. Every other
 outcome of the reading, an evaluation-meter stop included, follows the rule
 this requirement states for an atom of the letter.
 
+#### Unguarded `on each` TP-1 and TP-3 clause
+
+An infinite-trace TP-1 or TP-3 clause whose `on each (q: T)` activation has
+no `when` condition (`Activation::Each { guarded: false }`, FR-337), checked
+over a model subject, SHALL use the guarded algebra above ("Guarded `on each`
+activation") with the condition read true at every activation position.
+Its state is `["safety", branches]`, and its activation is `"infinite"`. The
+context's root names the clause node, whose content identity covers the
+`on each` activation, so the root binds it and a key of an `on each` clause
+never equals a key of an `on origin` clause with the same body. Every model
+position and every terminal stutter position is an activation position, and
+past memory runs from the authoritative origin, so a previous or past-interval
+operand at an activation reads the positions before it. The checker SHALL
+rebuild the automaton from the recompiled clause and recompute every
+successor as for an `on origin` TP-3 clause, taking nothing from the engine.
+This adds no state alternative, no context member and no certificate member.
+The key of an unguarded infinite-trace TP-4 clause keeps `["each-buchi", ..]`
+under `"each"`.
+
+#### TP-3 clause over a protocol subject
+
+An infinite-trace TP-3 clause over a protocol subject, `on origin`, or with
+`on each (q: T)` guarded or not, carries a `ClosureCertificate` that
+`check_protocol_closure` checks. It adds no state alternative, context member,
+certificate member or request member: its keys are the `["safety", branches]`
+bodies of the sections above, with the `distance-history` form for general
+past windows, under the context rules above (`"infinite"`, or `"each-when"` for
+a guarded clause), and its protocol component is the cycle key of the request's
+item. Every protocol step reads a letter and updates past memory, and only
+counted steps advance a distance (FR-213); the terminal stutter counts. The
+memory bounds and the instance bound are the request's, as for every protocol
+item.
+
+The checker SHALL decide acceptance as follows, reusing the constructions
+above and no other:
+
+- A TP-3 clause with no future interval keeps pure bad-prefix closure: the
+  certificate is accepted exactly when it contains every initial product
+  state, is closed under recomputed expansion and holds no `["safety",[]]`
+  state.
+- For an unguarded `on each` clause the auxiliary construction selects its
+  violating activation at any activation position, with phase `"waiting"` or
+  `"active"` and the activation set, exactly as for `"each-when"` with the
+  condition read true; so a fair zero-distance cycle that keeps open the debt of
+  an activation later than the origin is found, whatever the origin's own debt.
+- A TP-3 clause with any future interval additionally passes "Protocol
+  non-progress acceptance and closure classification": the checker retains the
+  paired product and auxiliary states of the negated clause and rejects the
+  certificate with `WitnessFails` when a zero-distance cycle that satisfies
+  the request's resolved fairness constraints keeps an interval debt open. No
+  fairness is added, and a clause whose counted steps are all that move is
+  never accepted by first-phase closure alone.
+- A limit or a cancel returns `Stopped`, which FR-127 settles `incomplete`; an
+  undefined letter or atom rejects `BadState`; a malformed, foreign or
+  tampered key refuses as an admission negative; none settles `proved`.
+
+The engine SHALL settle such a clause `Holds` with the certificate only when
+its search found no violating prefix and no fair non-progress cycle. A
+violating cycle is returned as a counterexample that FR-128 replays, and the
+engine's `Holds` alone never settles `proved` (FR-127).
+
 #### Guarded TP-4 clause
 
 A TP-4 clause whose `on each` activation has a `when` condition SHALL use
@@ -811,7 +874,11 @@ the request's checked formula, without trusting a producer's cycle claim.
 
 An auxiliary configuration is exactly `[phase,branch]`, where branch is
 the closed elementary configuration above for the **negated** checked
-formula. For origin or infinite activation phase is `"active"` throughout.
+formula. For an `on origin` activation (`"origin"` or `"infinite"` of an `on origin`
+clause) phase is `"active"` throughout; an unguarded infinite-trace `on each`
+clause, whose activation is also `"infinite"` and whose root is its own clause
+node, takes the `each` rule below, so the negated root may start at any
+activation position and not only at the origin.
 For each
 activation phase is `"waiting"` or `"active"`: waiting updates the complete
 past closure at every letter and may choose that position as the start of
@@ -830,7 +897,8 @@ The membership rule above applies. Also derive one activation set consisting
 exactly of active configurations, so an infinitely waiting run cannot
 witness a violation. These auxiliary set identities are `[o,s]` and
 `["activation"]`, sorted by complete canonical element bytes; the activation
-set is present for both origin and each and is always met for origin.
+set is present for origin, each, `each-when` and an unguarded `on each` clause,
+and is always met for origin.
 It is derived from phase, never an extra Boolean supplied by the producer.
 Auxiliary configurations compare by complete canonical bytes of this closed
 array. They are checker work, not additional certificate members or a new
@@ -1124,7 +1192,9 @@ Note: a rejected certificate settles `inconclusive`, `CertificateRejected`
 | FR-338-AC-26 | Protocol cycle keys. Over FR-205-AC-10's `Echo` subject and the claim `always holds(c.v = 0)`, `check_protocol_closure` accepts the certificate whose protocol states are cycle keys, `s1`'s among them. The same certificate with `s1`'s cycle key replaced by `s2`'s raw `ProtocolKey` (delivery 1 queued, `next-delivery` 2) is rejected `SuccessorMissing` at the product state of `Echo`'s initial state, because the checker canonicalises the recomputed `send` successor to `s1`'s cycle key, which the certificate no longer holds. | Test (TC-525) |
 | FR-338-AC-27 | Capture vectors. FR-337-AC-12's `on origin` monitor `always holds(c.value >= n)` with `capture n: Int[0, 3] = c.value;` returns `Holds` with a certificate whose every obligation ends in `["captures", [[<n node>, <Int 0>]], null]`, accepted by the checker; the same certificate with that vector replaced by one holding 1, with the vector omitted, or with a second member for an unread capture is rejected `ShapeMismatch` at the first such `ProductState`. Over FSpec FR-828-AC-8's `Once` protocol, the message obligation's keys carry `bound` `["instance","0","live"]` until the step that removes the first instance and `["instance","0","removed"]` with the captured message replaced by `null` after it, so the states after the two lifetimes' removals coincide; a certificate keeping the dead message is rejected `ShapeMismatch`. A clause reading no capture yields keys byte-equal to those it yielded before capture vectors existed. FSpec FR-828-AC-8's `on origin` variant over an `on each` `Once` has context `activation` `"each-activate"`. | Test (TC-525) |
 | FR-338-AC-28 | Bounded `on each` windows. Over the Counter subject (values 0 to 3, then the terminal state), `on each eventually[0,2] holds(c.value >= 2)` returns `Holds` whose certificate holds value 0 with body `["bounded",["each"],[[[],[],[[[],"positive","deadline","2"]],[]]]]`, value 1 with deadline `"1"` (the older deadline of two live activations) and values 2 and 3 with body `["bounded",["each"],[[[],[],[],[]]]]`, and `check_closure` accepts it; the same certificate with the value-1 state under deadline `"2"`, with a clock `["each","1"]` or `["origin","1"]` or with a second window or branch in any state is rejected (`SuccessorMissing` at the value-1 product state for the first, `ShapeMismatch` at the least refused state for the others). `on each always[0,0] holds(c.value <= 3)` is accepted with every value under extent `"0"`, and the same certificate with an extent of `"1"` is rejected `ShapeMismatch`. `on each always[0,1] holds(c.value <= 3)` is refuted, a certificate of the extent states being rejected `BadState` at the terminal state. | Test (TC-525) |
-| FR-338-AC-29 | TP-3 safety branches. Over the Counter subject (values 0 to 3, then the terminal stutter), an infinite-trace `on origin` TP-3 clause returns `Holds` whose certificate keys each explored model state with the `["safety", branches]` body of the bad-prefix monitor state it was read to, and `check_closure` accepts it. For `always (holds(p) implies once[1,1] holds(q))` the state after a position at which `q` holds has body `["safety",[[[[[],"positive"]],[[["0","1"],"history",[[["0","1","0"],["1"]]]]],[],[]]]]`, and after a further position at which `q` is false the offsets are `[]`; for `always (holds(p) implies eventually[0,2] holds(q))` the state after a position at which `p` holds and `q` does not has the window `[["0","1"],"positive","deadline","2"]`, then `"1"`, and a position at which `q` holds clears it. The certificate with one reached product state removed is rejected `SuccessorMissing` at it, and with that state's key replaced by another reached state's key, `SuccessorMissing` at the reached state; the empty certificate offered for a clause violated at the origin, or whose atom is undefined there, is rejected `BadState` at the origin under `["safety",[]]`; a certificate offered for a clause violated later, or whose atom is undefined at a later model state, is rejected `BadState` at that model state under `["safety",[]]`. A TP-3 clause under `on each`, or over a protocol subject, has no certificate: its proof carries an empty one and settles `failed`. | Test (TC-525) |
+| FR-338-AC-29 | TP-3 safety branches. Over the Counter subject (values 0 to 3, then the terminal stutter), an infinite-trace `on origin` TP-3 clause returns `Holds` whose certificate keys each explored model state with the `["safety", branches]` body of the bad-prefix monitor state it was read to, and `check_closure` accepts it. For `always (holds(p) implies once[1,1] holds(q))` the state after a position at which `q` holds has body `["safety",[[[[[],"positive"]],[[["0","1"],"history",[[["0","1","0"],["1"]]]]],[],[]]]]`, and after a further position at which `q` is false the offsets are `[]`; for `always (holds(p) implies eventually[0,2] holds(q))` the state after a position at which `p` holds and `q` does not has the window `[["0","1"],"positive","deadline","2"]`, then `"1"`, and a position at which `q` holds clears it. The certificate with one reached product state removed is rejected `SuccessorMissing` at it, and with that state's key replaced by another reached state's key, `SuccessorMissing` at the reached state; the empty certificate offered for a clause violated at the origin, or whose atom is undefined there, is rejected `BadState` at the origin under `["safety",[]]`; a certificate offered for a clause violated later, or whose atom is undefined at a later model state, is rejected `BadState` at that model state under `["safety",[]]`. | Test (TC-525) |
+| FR-338-AC-30 | Unguarded `on each` TP-3. Over the Counter subject (values 0 to 3, then the terminal stutter), the infinite-trace clause `on each (q: Counter)` with the body `holds(c.value = 1) implies once[1,1] holds(c.value = 0)` returns `Holds` whose certificate keys every product state with activation `"infinite"` and a `["safety", branches]` body, and `check_closure` accepts it, so FR-127 settles `proved`, `Certified`. Each of these clauses, `on each (q: Counter)`, returns `Violated`, and a certificate keyed under that clause's own context that holds the states its engine walk reached is rejected `BadState` at the stated model state under `["safety",[]]`: the body `holds(c.value = 2) implies once[1,1] holds(c.value = 0)`, prefix `0 -inc-> 1 -inc-> 2`, at model state 2, since the activation at position 2 reads position 1; the body `holds(c.value = 3) implies once[1,1] holds(c.value = 2)`, at the terminal stutter at model state 3, whose previous position holds 3 (FR-1030-AC-5); and the body `holds(c.value <= 1) implies eventually[0,2] holds(c.value = 3)`, prefix `0 -inc-> 1 -inc-> 2`, at model state 2, because the activation at position 0 keeps its earlier deadline `"2"` although the newer activation at position 1 would be satisfied at position 3, so a checker that keeps only the newest activation's window accepts it wrongly. The accepted clause's certificate offered under the root of any of these other clauses is a foreign context and is rejected `ShapeMismatch` at the least refused product state, never `BadState`. The accepted certificate with one reached product state removed is rejected `SuccessorMissing` at it, and with every key's activation replaced by `"each"`, `ShapeMismatch` at the least refused product state. With the guard `when (c.value >= 2)` (activation `"each-when"`, FR-337-AC-6's package form) and the body `holds(c.value = 2) implies once[1,1] holds(c.value = 1)`, `Holds` carries a certificate that `check_closure` accepts. Failure domain, over the accepted clause: with `max_states` one below the product states its closure holds, the check returns `Stopped(LimitReached{MaxStates, value, setting})` with the consumed value and the request's setting (FR-339-AC-6), which FR-127 settles `incomplete`; cancelled with source `Requested` after its first charge it returns `Stopped(Cancelled{source: Requested})`, settled `incomplete`; neither is `Rejected` nor `Accepted`. With the atom `c.value = 1` read undefined at model state 2 by the test's letter seam (FR-126-AC-16's form), the engine ends the run with `kind: UndefinedEvaluation` at position 2 and a certificate under the clause's own context is rejected `BadState` at model state 2 under `["safety",[]]`, as an undefined atom is under `on origin` (AC-29). | Test (TC-525) |
+| FR-338-AC-31 | TP-3 over a protocol subject, from a source run and from the S4 checked package, with the same value, certification and checker verdict. Over ADR-027 §7's repaired `Fill`, whose counted steps are `attempt(B)` and `attempt(A)` and whose `fork`, `join` and `finish` are uncounted (FR-213-AC-1): (past) the clause `always (holds(k.v = 0) implies not once[1,2] holds(k.v >= 1))` returns `Holds` with a certificate whose keys carry a `[o,"distance-history",buckets,null]` entry for `once[1,2]` in the `past` member, whose protocol components are cycle keys, and `check_protocol_closure` accepts it, so FR-127 settles `proved`, `Certified`; the key after `fork` keeps every bucket distance of the key before it, and the key after an `attempt` raises each bucket distance by one and adds a distance-zero bucket (counted steps only); the certificate with that post-`attempt` key replaced by the pre-`attempt` key is rejected `SuccessorMissing` at the reached state. (future) `always (holds(k.v = 0) implies eventually[0,2] holds(k.v >= 2))` returns `Holds` whose key after `fork` carries the `deadline` window `"2"` of its older activation, equal to the initial key's, accepted, and the clause with `eventually[0,1] holds(k.v = 3)` in its place returns `Violated` with a prefix on which no position at counted distance 0 or 1 from position 0 has `k.v = 3` (FR-213-AC-3), an offered certificate under that clause's own context being rejected `BadState` under `["safety",[]]`; the accepted certificate with every key's activation replaced by `"each"` is rejected `ShapeMismatch`. Over FR-205-AC-10's `Echo`, whose `duplicate` and `lose` steps are uncounted and whose atoms are constant: the clause `over (c: M::Cell)` `on each (q: M::Cell)` with the body `holds(c.v = 0) implies eventually[1,2] holds(c.v = 0)` has open debt only at an activation after the origin, since the origin's debt is discharged by the counted `send`; the certificate holding every reached product state of the run, with cycle keys, is offered under two requests. Over the default package, whose root scheduler constraint the `duplicate`, `lose` loop never takes while `Rcv` stays enabled (FR-329-AC-10), the loop is unfair, so `check_protocol_closure` accepts it and FR-127 settles `proved`, `Certified`. Over the package that declares `scheduling adversarial` the loop is fair, the engine returns `Violated` with prefix `send(Snd)` and loop `duplicate(ch, delivery 0)`, `lose(ch, delivery 0)` that FR-128 replays, and the same certificate is rejected `WitnessFails` at the canonical first product-state locus of the first passing auxiliary component, ordered by complete product-state then auxiliary bytes (not at the origin); a checker that starts the negated root only at the origin accepts it wrongly. A request whose `max_store_buffer`, `max_messages` or `max_live_instances` differs from the run's is checked as FR-338-AC-21 and AC-22 state; `max_states` one below the closure's product states stops `LimitReached{MaxStates, ..}`, settled `incomplete`. | Test (TC-525) |
 
 ## Dependencies
 

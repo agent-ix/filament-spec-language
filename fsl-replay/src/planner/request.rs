@@ -10,11 +10,13 @@
 //! (6) each environment record against its declaration member; (7) each
 //! discharge entry.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::NodeKey;
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 use fsl_package::CheckedPackage;
+use fsl_semantics::check::wire_id::WireGraph;
+use fsl_semantics::check::{ComponentPackages, CompositionSlot, CompositionSlotKey};
 use serde_json::{Map, Value};
 
 use super::declaration::{
@@ -302,6 +304,7 @@ type Refusal = RequestRefusal;
 #[ix_trace_rs::string_edge]
 pub fn read_settlement_request(
     package: &CheckedPackage,
+    dependencies: &DependencyGraphs,
     bytes: &[u8],
     limits: &ReadLimits,
 ) -> Result<SettlementRequest, RequestRefusal> {
@@ -317,7 +320,8 @@ pub fn read_settlement_request(
         == Some(ItemRole::Composition);
     admit_header(composition, top, package.graph().package_name())?;
     let declaration = declare(package, top)?;
-    admit_parsed(&declaration, top)
+    let scope = held_scope(package, &declaration, dependencies);
+    admit_parsed(&declaration, top, scope.as_ref())
 }
 
 /// Read and admit one settlement request for `declaration`.
@@ -332,7 +336,7 @@ pub(crate) fn read_declared(
     let Value::Object(top) = &document else {
         return Err(Fault::new(Cause::MalformedJson, "").into());
     };
-    admit_parsed(declaration, top)
+    admit_parsed(declaration, top, None)
 }
 
 fn parse_document(bytes: &[u8], limits: &ReadLimits) -> Result<Value, Refusal> {
@@ -381,6 +385,7 @@ fn declare(
 fn admit_parsed(
     declaration: &PlannerDeclaration,
     top: &Map<String, Value>,
+    held: Option<&HeldScope<'_>>,
 ) -> Result<SettlementRequest, RequestRefusal> {
     // Steps 1 and 2: members, kinds, format, package, item.
     admit_header(
@@ -391,8 +396,17 @@ fn admit_parsed(
     let item = admit_item(declaration, top)?;
     let max_work = admit_limits(top)?;
 
-    // Step 3: the slots are exactly the derived slots.
+    // Step 3: the slots are exactly the derived slots, a held component slot
+    // identity read in its structural form first.
     let slots = array(require(top, "slots", "")?, "/slots")?;
+    let resolved;
+    let slots = match held {
+        Some(scope) => {
+            resolved = resolve_held_slots(scope, slots)?;
+            &resolved
+        }
+        None => slots,
+    };
     admit_slot_keys(declaration, slots)?;
 
     // Step 4: which slots are filled.
@@ -878,4 +892,416 @@ fn admit_discharges(
         discharges.push(Discharge { slot, by });
     }
     Ok(discharges)
+}
+
+/// The graphs of the admitted packages of a checked package's dependency
+/// closure, by package identity: the graphs the node ids of a composition's
+/// component slots resolve against (FSpec FR-492 "Inputs", FR-322 "Scope").
+pub type DependencyGraphs = BTreeMap<String, WireGraph>;
+
+/// Why the graphs of a package's dependency closure could not be built.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub enum DependencyGraphsRefusal {
+    /// A dependency did not emit; the emit limit is
+    /// [`fsl_package::EmitRefusal::OutputLimit`].
+    #[error("the dependency {package} did not emit: {refusal}")]
+    Emission {
+        /// The dependency's package identity.
+        package: String,
+        /// Why it did not emit.
+        refusal: fsl_package::EmitRefusal,
+    },
+    /// A dependency's emission holds no readable `semantic_graph`.
+    #[error("the dependency {package} holds no readable graph: {message}")]
+    Unreadable {
+        /// The dependency's package identity.
+        package: String,
+        /// The reader's message.
+        message: String,
+    },
+}
+
+/// The graphs of `package`'s dependency closure, each emitted under its own
+/// `emit` limit (`emit.output_bytes`), never the request's `input_bytes`.
+///
+/// # Errors
+///
+/// [`DependencyGraphsRefusal`] for the first dependency that has no graph.
+pub fn dependency_graphs(
+    package: &CheckedPackage,
+    emit: fsl_package::EmitLimits,
+) -> Result<DependencyGraphs, DependencyGraphsRefusal> {
+    let mut graphs = DependencyGraphs::new();
+    for dependency in package.dependencies().values() {
+        let name = dependency.graph().package_name().to_owned();
+        let emission = fsl_package::emit_checked(dependency, emit).map_err(|refusal| {
+            DependencyGraphsRefusal::Emission {
+                package: name.clone(),
+                refusal,
+            }
+        })?;
+        let graph = WireGraph::of_package_bytes(emission.package().bytes()).map_err(|message| {
+            DependencyGraphsRefusal::Unreadable {
+                package: name.clone(),
+                message,
+            }
+        })?;
+        graphs.insert(name, graph);
+    }
+    Ok(graphs)
+}
+
+/// What a request's held component slot identities resolve against.
+struct HeldScope<'a> {
+    packages: ComponentPackages,
+    slots: Vec<CompositionSlot>,
+    graphs: &'a DependencyGraphs,
+}
+
+/// The scope of the composition `declaration` names in `package`, when it
+/// names one.
+fn held_scope<'a>(
+    package: &CheckedPackage,
+    declaration: &PlannerDeclaration,
+    graphs: &'a DependencyGraphs,
+) -> Option<HeldScope<'a>> {
+    let composition = package
+        .graph()
+        .compositions()
+        .iter()
+        .find(|composition| composition.node() == declaration.node())?;
+    Some(HeldScope {
+        packages: composition.component_packages(),
+        slots: composition.item().premises,
+        graphs,
+    })
+}
+
+/// FSpec FR-322 "Scope", FR-492 "Request": the `identity` of a
+/// `component-guarantee` slot holds its node ids as index segments of the
+/// graph of the package of the slot's component, a dependency of the checked
+/// package; a peer clause id of its `assumptions` holds them as index
+/// segments of the graph of the package of the component of the peer
+/// guarantee the declaration's assumption set names at that position. Write
+/// each such identity in its structural form, so that step 3 compares the form
+/// the declaration derives.
+///
+/// # Errors
+///
+/// `invalid-value` at `/slots/{i}` (as step 3 refuses a slot that is not the
+/// derived one) for an identity of another package than its component's,
+/// whose component package has no graph among `graphs`, or whose ids do not
+/// resolve in it.
+fn resolve_held_slots(scope: &HeldScope<'_>, slots: &[Value]) -> Result<Vec<Value>, Fault> {
+    use fsl_semantics::check::wire_id::{
+        check_component_key_package, component_key_structural, key_holds_index_segment,
+    };
+    let mut resolved = slots.to_vec();
+    for (at, slot) in resolved.iter_mut().enumerate() {
+        let pointer = format!("/slots/{at}");
+        let Some(derived) = scope.slots.get(at) else {
+            continue;
+        };
+        let Some(identity) = slot
+            .as_object_mut()
+            .filter(|slot| {
+                slot.get("role").and_then(Value::as_str)
+                    == Some(SlotRole::ComponentGuarantee.as_str())
+            })
+            .and_then(|slot| slot.get_mut("identity"))
+        else {
+            continue;
+        };
+        let package = derived
+            .guarantee
+            .as_ref()
+            .and_then(|clause| scope.packages.of_component(&clause.component));
+        check_component_key_package(package, identity)
+            .map_err(|_| Fault::invalid(pointer.clone()))?;
+        let Some(package) = package else {
+            return Err(Fault::invalid(pointer));
+        };
+        if !key_holds_index_segment(identity) {
+            continue;
+        }
+        let graph = scope
+            .graphs
+            .get(package)
+            .ok_or_else(|| Fault::invalid(pointer.clone()))?;
+        let assumed: &[NodeKey] = match &derived.key {
+            Some(CompositionSlotKey::ComponentGuarantee(guarantee)) => &guarantee.assumptions,
+            _ => &[],
+        };
+        let peers = assumed
+            .iter()
+            .map(|node| {
+                scope
+                    .packages
+                    .of_clause(node)
+                    .and_then(|p| scope.graphs.get(p))
+            })
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| Fault::invalid(pointer.clone()))?;
+        *identity = component_key_structural(graph, Some(package), identity, &peers)
+            .map_err(|_| Fault::invalid(pointer))?;
+    }
+    Ok(resolved)
+}
+
+#[cfg(test)]
+mod held_slot_tests {
+    //! FSpec FR-322 "Scope", FR-492 "Admission": a held `component-guarantee`
+    //! slot identity is read in its structural form at step 3, after the
+    //! step 1 shape checks.
+
+    use filament_exact::{Origin, Role};
+    use fsl_foundation::node_wire::node_key_from_json;
+    use fsl_foundation::source::provenance::OccurrenceKey;
+    use fsl_semantics::check::{
+        ClauseRef, CompositionSlot, SlotBacking as SemBacking, SlotRole as SemRole,
+    };
+    use ix_trace_rs::trace;
+    use serde_json::{json, Value};
+
+    use super::super::key::{ClaimKind, ExtentClass, TemporalItemKind, TemporalKey};
+    use super::super::tests::{item_json, proved_entry, slot as derived_slot, PACKAGE};
+    use super::*;
+
+    const PRODUCER: &str = "producer@1";
+    const CONSUMER: &str = "consumer@1";
+
+    /// `label` of `package`, wrapped: an id with one operand segment.
+    fn wrapped(package: &str, label: &str) -> Value {
+        json!({"package": package, "ordinal": 0, "path": [
+            "wrap", {"package": package, "path": [label], "ordinal": 0}]})
+    }
+
+    /// The graph of `package`: `label`, then its wrapper holding `{"node": 0}`.
+    fn graph(package: &str, label: &str) -> WireGraph {
+        WireGraph::of_package_value(&json!({"semantic_graph": {"nodes": [
+            {"node_id": {"package": package, "path": [label], "ordinal": 0}},
+            {"node_id": {"package": package, "path": ["wrap", {"node": 0}], "ordinal": 0}}
+        ]}}))
+        .expect("a graph")
+    }
+
+    fn key(package: &str, label: &str) -> ItemKey {
+        let node = node_key_from_json(&wrapped(package, label)).expect("a node key");
+        ItemKey {
+            claim: OccurrenceKey::new(node, Origin::new(Role::new("claim"), 0)),
+            kind: ClaimKind::TemporalSatisfaction,
+            temporal: Some(TemporalKey {
+                subject: super::super::json::canonical_text(
+                    &json!({"identity": format!("{package} using Model")}),
+                ),
+                item_kind: TemporalItemKind::Formula,
+                fairness: Vec::new(),
+                stutter_closure: true,
+            }),
+            correspondence: None,
+            premises: Vec::new(),
+            extent: ExtentClass::Unbounded,
+        }
+    }
+
+    fn declaration() -> PlannerDeclaration {
+        let slot = |package, label, start| {
+            derived_slot(
+                SlotRole::ComponentGuarantee,
+                SlotKey::Item(key(package, label)),
+                SlotBacking::Item,
+                start,
+            )
+        };
+        PlannerDeclaration {
+            role: ItemRole::Composition,
+            node: super::super::tests::node("S"),
+            package: PACKAGE.to_owned(),
+            rule: Some("assume-guarantee".to_owned()),
+            clause: None,
+            relation_sources: Vec::new(),
+            relation_node: None,
+            environment: Vec::new(),
+            mismatch: None,
+            slots: vec![slot(PRODUCER, "Sends", 0), slot(CONSUMER, "Done", 10)],
+            supplies: Vec::new(),
+        }
+    }
+
+    fn clause_slot(index: usize, component: &str, package: &str, label: &str) -> CompositionSlot {
+        CompositionSlot {
+            index,
+            role: SemRole::ComponentGuarantee,
+            backing: SemBacking::Item,
+            key: None,
+            guarantee: Some(ClauseRef {
+                component: component.to_owned(),
+                name: label.to_owned(),
+                node: super::super::tests::node_in(package, label),
+            }),
+            on: None,
+            constraint: None,
+            environment: None,
+            source: fsl_foundation::Span { start: 0, end: 0 },
+        }
+    }
+
+    fn scope(graphs: &DependencyGraphs) -> HeldScope<'_> {
+        HeldScope {
+            packages: ComponentPackages::new(
+                BTreeMap::from([
+                    ("Producer".to_owned(), PRODUCER.to_owned()),
+                    ("Consumer".to_owned(), CONSUMER.to_owned()),
+                ]),
+                BTreeMap::new(),
+            ),
+            slots: vec![
+                clause_slot(0, "Producer", PRODUCER, "Sends"),
+                clause_slot(1, "Consumer", CONSUMER, "Done"),
+            ],
+            graphs,
+        }
+    }
+
+    fn graphs() -> DependencyGraphs {
+        BTreeMap::from([
+            (PRODUCER.to_owned(), graph(PRODUCER, "Sends")),
+            (CONSUMER.to_owned(), graph(CONSUMER, "Done")),
+        ])
+    }
+
+    /// The request for `declaration`, each slot's identity held in its
+    /// component's graph and its result proved.
+    fn held_request(declaration: &PlannerDeclaration, graphs: &DependencyGraphs) -> Value {
+        let slots: Vec<Value> = declaration
+            .slots
+            .iter()
+            .enumerate()
+            .map(|(at, derived)| {
+                let SlotKey::Item(key) = &derived.key else {
+                    panic!("an item slot");
+                };
+                let identity = derived.key.to_wire().expect("an identity");
+                let package = if at == 0 { PRODUCER } else { CONSUMER };
+                json!({
+                    "role": derived.role.as_str(),
+                    "identity": graphs[package].document_value(&identity).expect("held"),
+                    "result": {"request": item_json(key, at), "result": proved_entry(key, at)},
+                })
+            })
+            .collect();
+        json!({
+            "format": FORMAT,
+            "package": PACKAGE,
+            "item": {"role": "composition",
+                "node": super::super::tests::node_key_json(&declaration.node)},
+            "slots": slots,
+        })
+    }
+
+    fn read_held(
+        declaration: &PlannerDeclaration,
+        graphs: &DependencyGraphs,
+        request: &Value,
+    ) -> Result<SettlementRequest, RequestRefusal> {
+        let bytes = serde_json::to_vec(request).expect("bytes");
+        let document = parse_document(&bytes, &ReadLimits::default())?;
+        let Value::Object(top) = &document else {
+            panic!("an object");
+        };
+        admit_parsed(declaration, top, Some(&scope(graphs)))
+    }
+
+    fn refusal(
+        declaration: &PlannerDeclaration,
+        graphs: &DependencyGraphs,
+        request: &Value,
+    ) -> (&'static str, &'static str, String) {
+        let refusal = read_held(declaration, graphs, request).expect_err("refused");
+        (refusal.code(), refusal.cause(), refusal.pointer())
+    }
+
+    fn invalid(pointer: &str) -> (&'static str, &'static str, String) {
+        ("invalid_runtime_input", "invalid-value", pointer.to_owned())
+    }
+
+    /// FR-492 "Request": held component slot identities, written in the
+    /// graphs of their components' packages, are admitted as the derived
+    /// slots.
+    #[trace("FSpec-TC-233", "FSpec-FR-322-AC-520")]
+    #[test]
+    fn a_held_component_slot_identity_round_trips() {
+        let (declaration, graphs) = (declaration(), graphs());
+        let request = held_request(&declaration, &graphs);
+        assert_eq!(
+            request["slots"][0]["identity"]["claim"]["node"]["path"][1],
+            json!({"node": 0})
+        );
+        read_held(&declaration, &graphs, &request).expect("admitted");
+    }
+
+    /// NI-27: an index the component's graph does not hold refuses at the
+    /// slot.
+    #[trace("FSpec-TC-233", "FSpec-FR-322-AC-520")]
+    #[test]
+    fn a_held_slot_identity_index_out_of_range_refuses_at_the_slot() {
+        let (declaration, graphs) = (declaration(), graphs());
+        let mut request = held_request(&declaration, &graphs);
+        request["slots"][1]["identity"]["claim"]["node"]["path"][1] = json!({"node": 99});
+        assert_eq!(
+            refusal(&declaration, &graphs, &request),
+            invalid("/slots/1")
+        );
+    }
+
+    /// NI-28: an identity of another package refuses at the slot.
+    #[trace("FSpec-TC-233", "FSpec-FR-322-AC-520")]
+    #[test]
+    fn a_held_slot_identity_of_a_foreign_package_refuses_at_the_slot() {
+        let (declaration, graphs) = (declaration(), graphs());
+        let mut request = held_request(&declaration, &graphs);
+        request["slots"][0]["identity"]["temporal"]["subject"]["identity"] =
+            json!("other@1 using Model");
+        assert_eq!(
+            refusal(&declaration, &graphs, &request),
+            invalid("/slots/0")
+        );
+    }
+
+    /// FR-492 "Admission": step 1's shape checks precede the identity
+    /// resolution, so a foreign identity in slot 0 does not mask a later
+    /// slot's wrong value kind.
+    #[trace("FSpec-TC-233", "FSpec-FR-322-AC-520")]
+    #[test]
+    fn a_foreign_identity_does_not_mask_a_later_wrong_value_kind() {
+        let (declaration, graphs) = (declaration(), graphs());
+        let mut request = held_request(&declaration, &graphs);
+        request["slots"][0]["identity"]["temporal"]["subject"]["identity"] =
+            json!("other@1 using Model");
+        request["slots"][1]["result"] = json!(true);
+        assert_eq!(
+            refusal(&declaration, &graphs, &request),
+            (
+                "invalid_runtime_input",
+                "wrong-value-kind",
+                "/slots/1/result".to_owned()
+            )
+        );
+    }
+
+    /// FR-492 "Admission" 3: a foreign identity in an earlier slot is the
+    /// first defect, ahead of a later slot's wrong identity.
+    #[trace("FSpec-TC-233", "FSpec-FR-322-AC-520")]
+    #[test]
+    fn the_first_differing_slot_is_named() {
+        let (declaration, graphs) = (declaration(), graphs());
+        let mut request = held_request(&declaration, &graphs);
+        request["slots"][0]["identity"]["temporal"]["subject"]["identity"] =
+            json!("other@1 using Model");
+        request["slots"][1]["identity"]["claim"]["node"]["path"][1] = json!({"node": 99});
+        assert_eq!(
+            refusal(&declaration, &graphs, &request),
+            invalid("/slots/0")
+        );
+    }
 }

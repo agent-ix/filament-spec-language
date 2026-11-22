@@ -31,6 +31,76 @@ fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
     }
 }
 
+fn receipt_failure(
+    error: fsl_analyze::analyze::document::effect_decision::ReceiptError,
+) -> RunCause {
+    match error.into_analyze_error() {
+        AnalyzeDocumentError::Refused(refusal) => RunCause::AnalyzeRefused(Box::new(refusal)),
+        AnalyzeDocumentError::Fault => RunCause::AnalyzeFault,
+        AnalyzeDocumentError::Identity(error) => super::identity_cause(error),
+    }
+}
+
+fn receipt_identity(
+    node: quire_canonical::NodeRef<'_>,
+    pointer: &str,
+) -> std::result::Result<fsl_analyze::analyze::document::DocumentSelection, RunCause> {
+    let malformed = || invalid(pointer, "document identity is malformed");
+    let quire_canonical::Node::Object(members) = node.node() else {
+        return Err(malformed());
+    };
+    // DocumentSelection is a closed pair of strings. Extract only that
+    // fixed-depth shape; opaque receipt objects never enter serde's walker
+    // or an encoder with a pre-canonical, input-derived ceiling.
+    let mut value = serde_json::Map::new();
+    for (name, node) in members {
+        if !matches!(name, "authority" | "identity") {
+            return Err(malformed());
+        }
+        let quire_canonical::Node::String(text) = node.node() else {
+            return Err(malformed());
+        };
+        value.insert(name.to_owned(), serde_json::Value::String(text.to_owned()));
+    }
+    serde_json::from_value(serde_json::Value::Object(value)).map_err(|_| malformed())
+}
+
+#[cfg(test)]
+mod receipt_failure_tests {
+    use super::*;
+    use ix_trace_rs::trace;
+
+    #[test]
+    #[trace("FR-259", "FR-1046-AC-7")]
+    fn receipt_resource_and_invariant_errors_keep_public_command_categories() {
+        use fsl_analyze::analyze::document::effect_decision::ReceiptError;
+        // Typed failure-boundary projection; host allocator exhaustion is
+        // deliberately not induced. This is the actual intake error adapter.
+        let error = RunError {
+            cause: receipt_failure(ReceiptError::Allocation { requested: 8193 }),
+            sources: crate::Sources::default(),
+        };
+        assert_eq!(error.category().exit_code(), 22);
+        let document =
+            serde_json::to_value(error.outcome_document(fsl_replay::Operation::Analyze)).unwrap();
+        assert_eq!(document["diagnostics"][0]["code"], "resource_exhausted");
+        assert_eq!(document["diagnostics"][0]["cause"], "allocation-failed");
+        assert_eq!(
+            document["diagnostics"][0]["details"],
+            serde_json::json!({"requested": "8193"})
+        );
+        assert_eq!(document["last_stage"], serde_json::Value::Null);
+        let error = RunError {
+            cause: receipt_failure(ReceiptError::Fault),
+            sources: crate::Sources::default(),
+        };
+        assert_eq!(error.category().exit_code(), 30);
+        let document =
+            serde_json::to_value(error.outcome_document(fsl_replay::Operation::Analyze)).unwrap();
+        assert_eq!(document["diagnostics"][0]["code"], "runtime_invariant");
+    }
+}
+
 fn validate_activated_population(
     position: usize,
     population: &serde_json::Value,
@@ -346,10 +416,12 @@ fn run_package(
         engines: &engines,
         limits,
     };
-    let settled = with_deadline(cancel, deadline_ms, || {
+    let mut settled = with_deadline(cancel, deadline_ms, || {
         settle_package_run(run, negotiate, cancel)
     })
     .map_err(|failure| match failure {
+        PackageRunError::Input(refusal) => package_input_refusal(refusal, package.package().name()),
+        PackageRunError::ClauseBuild { node, refusal } => package_clause_refusal(node, refusal),
         PackageRunError::Pending(pending) => RunCause::AnalyzeNotYetImplemented {
             member: "package",
             detail: pending.detail(),
@@ -363,6 +435,13 @@ fn run_package(
             super::identity_cause(error)
         }
     })?;
+    settled
+        .bind_effect_decisions(items.as_deref().unwrap_or_default(), &documents)
+        .map_err(|failure| match failure {
+            AnalyzeDocumentError::Refused(refusal) => RunCause::AnalyzeRefused(Box::new(refusal)),
+            AnalyzeDocumentError::Fault => RunCause::AnalyzeFault,
+            AnalyzeDocumentError::Identity(error) => super::identity_cause(error),
+        })?;
     Ok(RunResult {
         exit_code: settled.exit_code,
         value: NativeResult::analyze_document(settled.document),
@@ -370,6 +449,270 @@ fn run_package(
         requirements: None,
         sources: crate::Sources::default(),
     })
+}
+
+/// Retain the original admission, limit or invariant class of an input that
+/// could not rebuild from the admitted package.
+fn package_input_refusal(
+    refusal: fsl_eval::simulation::model::PendingPackageForm,
+    package: &str,
+) -> RunCause {
+    use fsl_eval::simulation::model::PendingPackageForm;
+    let message = refusal.to_string();
+    match refusal {
+        PendingPackageForm::Model(failure) => RunCause::AnalyzeRefused(Box::new(
+            fsl_analyze::analyze::AnalyzeRefusal::Binding(failure),
+        )),
+        PendingPackageForm::World(failure) | PendingPackageForm::Reward(failure) => {
+            let (code, cause) = match failure.into_view(package) {
+                Ok(view) => {
+                    let (code, cause) = view.catalog();
+                    (
+                        fsl_foundation::Code::from_code(code)
+                            .unwrap_or(fsl_foundation::Code::RuntimeInvariant),
+                        cause,
+                    )
+                }
+                Err(fsl_package::SlotSelectionFailure::Fault(fault)) => {
+                    let catalog = fault.catalog_code();
+                    (fsl_foundation::Code::RuntimeInvariant, catalog.cause())
+                }
+                Err(
+                    fsl_package::SlotSelectionFailure::MissingNode(_)
+                    | fsl_package::SlotSelectionFailure::MalformedNode(_)
+                    | fsl_package::SlotSelectionFailure::MissingMember { .. },
+                ) => (
+                    fsl_foundation::Code::RuntimeInvariant,
+                    "established-invariant-broken",
+                ),
+            };
+            RunCause::AnalyzePackage {
+                code,
+                cause: Some(cause.to_owned()),
+                pointer: None,
+                message,
+            }
+        }
+        PendingPackageForm::Operations(failure) => {
+            let catalog = failure
+                .errors
+                .first()
+                .map(|error| error.cause.catalog_code());
+            RunCause::AnalyzePackage {
+                code: catalog
+                    .and_then(|catalog| fsl_foundation::Code::from_code(catalog.code()))
+                    .unwrap_or(fsl_foundation::Code::RuntimeInvariant),
+                cause: catalog.map(|catalog| catalog.cause().to_owned()),
+                pointer: None,
+                message,
+            }
+        }
+        PendingPackageForm::Form { form, node } => RunCause::AnalyzeNotYetImplemented {
+            member: "package",
+            detail: format!(
+                ": the {} form at {node:?} has no package form yet",
+                form.name()
+            ),
+            locus: None,
+        },
+        refusal @ (PendingPackageForm::ProbabilisticNodes(_)
+        | PendingPackageForm::Probabilistic(_)
+        | PendingPackageForm::SourceModel(_)) => RunCause::AnalyzePackage {
+            code: fsl_foundation::Code::RuntimeInvariant,
+            cause: Some("established-invariant-broken".to_owned()),
+            pointer: None,
+            message: refusal.to_string(),
+        },
+    }
+}
+
+/// A selected clause is distinct from an absent claim name, including when
+/// its checked form reaches a stage limit.
+fn package_clause_refusal(
+    node: fsl_package::CheckedNodeId,
+    refusal: fsl_semantics::check::PackageClauseRefusal,
+) -> RunCause {
+    use fsl_semantics::check::PackageClauseRefusal;
+    let message = format!("the selected package clause at {node:?} could not rebuild: {refusal:?}");
+    let (code, cause) = match refusal {
+        PackageClauseRefusal::Profile(_) => {
+            return RunCause::AnalyzeNotYetImplemented {
+                member: "package",
+                detail: format!(": {message}"),
+                locus: None,
+            }
+        }
+        PackageClauseRefusal::Horizon(limit)
+        | PackageClauseRefusal::Domains(fsl_semantics::family::ClassifyFailure::Limit(limit)) => (
+            fsl_foundation::Code::StageLimitExceeded,
+            limit.kind().catalog_cause(),
+        ),
+        PackageClauseRefusal::Domains(fsl_semantics::family::ClassifyFailure::Fault(fault)) => (
+            fsl_foundation::Code::RuntimeInvariant,
+            fault.catalog_code().cause(),
+        ),
+        PackageClauseRefusal::Arena
+        | PackageClauseRefusal::Shape
+        | PackageClauseRefusal::ClockBinding => (
+            fsl_foundation::Code::RuntimeInvariant,
+            "established-invariant-broken",
+        ),
+    };
+    RunCause::AnalyzePackage {
+        code,
+        cause: Some(cause.to_owned()),
+        pointer: None,
+        message,
+    }
+}
+
+#[cfg(test)]
+mod package_intake_tests {
+    use super::*;
+    use filament_semantic_value::catalog::{CatalogCode, InternalFault};
+    use fsl_eval::simulation::model::PendingPackageForm;
+    use fsl_foundation::diagnostic::LimitExceeded;
+    use fsl_foundation::setting::Setting;
+    use fsl_foundation::Span;
+    use fsl_semantics::check::{
+        AssemblyCause, AssemblyError, AssemblyRefusal, PackageClauseRefusal,
+    };
+    use fsl_semantics::model::observation::{AdmissionFailure, AdmissionRecord};
+    use ix_trace_rs::trace;
+
+    /// Input admission retains its own class rather than becoming an unnamed fault.
+    #[trace("FR-850-AC-3", "FR-940-AC-6")]
+    #[test]
+    fn package_input_failures_preserve_the_typed_form() {
+        let slot = || {
+            fsl_package::BareSelectionFailure::Slot(fsl_package::SlotSelectionFailure::Fault(
+                InternalFault::new("test", "world-invariant"),
+            ))
+        };
+        let record = || AdmissionRecord {
+            catalog: CatalogCode::new("invalid_model_binding", "wrong-model-selection"),
+            fields: Default::default(),
+            path: Vec::new(),
+            kernel: None,
+        };
+        let failures = [
+            (PendingPackageForm::World(slot()), "runtime_invariant"),
+            (
+                PendingPackageForm::Model(AdmissionFailure::Refused(Box::new(record()))),
+                "invalid_model_binding",
+            ),
+            (
+                PendingPackageForm::Operations(AssemblyRefusal {
+                    errors: vec![AssemblyError {
+                        cause: AssemblyCause::TypeLimit(LimitExceeded::new(Setting::S3Nodes, 7, 8)),
+                        span: Span { start: 0, end: 0 },
+                    }],
+                }),
+                "stage_limit_exceeded",
+            ),
+            (
+                PendingPackageForm::ProbabilisticNodes(fsl_package::ProbabilisticReadFault(
+                    "node-invariant",
+                )),
+                "runtime_invariant",
+            ),
+            (
+                PendingPackageForm::Probabilistic(
+                    fsl_semantics::check::PackageProbabilisticRefusal::UnknownOperation(
+                        "step".to_owned(),
+                    ),
+                ),
+                "runtime_invariant",
+            ),
+            (PendingPackageForm::Reward(slot()), "runtime_invariant"),
+        ];
+        for (failure, code) in failures {
+            let cause = package_input_refusal(failure, "test");
+            assert_eq!(cause.code().as_str(), code, "{cause:?}");
+            assert!(!matches!(
+                cause,
+                RunCause::AnalyzeFault | RunCause::AnalyzeNotYetImplemented { .. }
+            ));
+        }
+        let cause = package_input_refusal(
+            PendingPackageForm::Model(AdmissionFailure::Incomplete(Box::new(AdmissionRecord {
+                catalog: CatalogCode::new("incomplete_population", "incomplete-scope"),
+                ..record()
+            }))),
+            "test",
+        );
+        assert_eq!(cause.code().as_str(), "incomplete_population");
+    }
+
+    /// A real builder domain limit retains its configured bound and limit class.
+    #[trace("FR-850-AC-3", "FR-940-AC-6")]
+    #[test]
+    fn a_known_package_clause_retains_its_build_refusal() {
+        let form = fsl_semantics::check::PackageClauseForm {
+            name: "C".to_owned(),
+            span: Span { start: 0, end: 0 },
+            profile: fsl_semantics::check::TemporalProfile::InfiniteTrace,
+            package_name: "test".to_owned(),
+            over: ("x".to_owned(), filament_exact::ValueType::Boolean),
+            clock: "events".to_owned(),
+            activation: fsl_semantics::check::Activation::Origin,
+            trigger: None,
+            captures: Vec::new(),
+            populations: Vec::new(),
+            formula: vec![fsl_semantics::check::PackageFormulaNode::Constant(true)],
+        };
+        let types = filament_semantic_value::declaration::TypeEnvironment::default();
+        assert!(
+            fsl_semantics::check::CheckedTemporalClause::of_package_form(form.clone(), &types, 1)
+                .is_ok()
+        );
+        let refusal = fsl_semantics::check::CheckedTemporalClause::of_package_form(form, &types, 0)
+            .expect_err("a real domain traversal exceeds its configured bound");
+        let PackageClauseRefusal::Domains(fsl_semantics::family::ClassifyFailure::Limit(limit)) =
+            &refusal
+        else {
+            panic!("the domain limit remains typed: {refusal:?}");
+        };
+        assert_eq!(limit.configured_bound(), 0);
+        assert_eq!(limit.actual(), 1);
+        let node = fsl_semantics::check::wire_id::structural_id(
+            &filament_exact::NodeKey::new(
+                "test",
+                vec![filament_exact::PathSegment::Text("C".to_owned())],
+                0,
+            )
+            .expect("node"),
+        );
+        for (refusal, bound) in [
+            (
+                PackageClauseRefusal::Horizon(LimitExceeded::new(Setting::S3WorkUnits, 7, 8)),
+                7,
+            ),
+            (refusal, 0),
+        ] {
+            let fsl_analyze::analyze::ClauseItemRefusal::Build(refusal) =
+                fsl_analyze::analyze::ClauseItemRefusal::from(
+                    fsl_eval::simulation::model::PendingClauseForm::Build(refusal),
+                )
+            else {
+                panic!("a selected clause keeps its builder refusal rather than becoming unknown");
+            };
+            let cause = package_clause_refusal(node.clone(), refusal);
+            assert_eq!(cause.code().as_str(), "stage_limit_exceeded");
+            assert_eq!(cause.category().exit_code(), 22);
+            let RunCause::AnalyzePackage { message, cause, .. } = cause else {
+                panic!("typed limit");
+            };
+            assert!(
+                message.contains(&format!("configured_bound: {bound}")),
+                "{message}"
+            );
+            assert!(matches!(
+                cause.as_deref(),
+                Some("work-budget-exceeded" | "node-count-exceeded")
+            ));
+        }
+    }
 }
 
 /// The request's inputs and the intake that read them, which still charges
@@ -702,14 +1045,25 @@ pub(super) fn settle_items<'u>(
         engines: settle.engines,
         limits: routed.limits,
     };
-    with_deadline(settle.cancel, routed.deadline_ms, || {
+    let mut settled = with_deadline(settle.cancel, routed.deadline_ms, || {
         settle_run(run, settle.negotiate, settle.cancel)
     })
     .map_err(|error| match error {
         AnalyzeDocumentError::Refused(refusal) => RunCause::AnalyzeRefused(Box::new(refusal)),
         AnalyzeDocumentError::Fault => RunCause::AnalyzeFault,
         AnalyzeDocumentError::Identity(error) => super::identity_cause(error),
-    })
+    })?;
+    settled
+        .bind_effect_decisions(
+            routed.items.as_deref().unwrap_or_default(),
+            &routed.documents,
+        )
+        .map_err(|error| match error {
+            AnalyzeDocumentError::Refused(refusal) => RunCause::AnalyzeRefused(Box::new(refusal)),
+            AnalyzeDocumentError::Fault => RunCause::AnalyzeFault,
+            AnalyzeDocumentError::Identity(error) => super::identity_cause(error),
+        })?;
+    Ok(settled)
 }
 
 /// Run `work` with `cancel` cancelled for `deadline` once `deadline_ms`
@@ -771,6 +1125,9 @@ fn admit_package<'d>(
     }
     if request.integer_division.is_some() {
         return Err(invalid("integer_division", "a package is already compiled"));
+    }
+    if !request.clocks.is_empty() {
+        return Err(invalid("clocks", "a package already records its clocks"));
     }
     let mut intake = intake_with_bytes(
         directory,
@@ -1036,6 +1393,8 @@ fn read_run_members(
 /// `population` belong to a global-conformance item, and FR-634's
 /// `simulation` member to a simulation item alone.
 pub(super) fn validate_items(items: Option<&[ItemSelection]>) -> Result<()> {
+    fsl_analyze::analyze::document::effect_decision::selections(items.unwrap_or_default())
+        .map_err(|error| invalid(&error.pointer, error.message))?;
     for (position, item) in items.unwrap_or_default().iter().enumerate() {
         if item.kind.as_deref() == Some(fsl_semantics::check::Capability::Composition.to_wire()) {
             if let Some(premises) = &item.premises {
@@ -1126,28 +1485,78 @@ pub(super) fn read_documents(
 ) -> Result<DocumentProvision> {
     let mut documents = DocumentProvision::new();
     let mut recording_documents = std::collections::BTreeSet::new();
+    let selected =
+        fsl_analyze::analyze::document::effect_decision::selections(items.unwrap_or_default())
+            .map_err(|error| invalid(&error.pointer, error.message))?;
+    let mut receipt_documents = std::collections::BTreeMap::new();
+    for (item, entries) in selected.iter().enumerate() {
+        for (position, reference) in entries.iter().enumerate() {
+            receipt_documents
+                .entry(reference)
+                .or_insert((item, position));
+        }
+    }
     for (position, document) in selections.iter().enumerate() {
         let bytes = intake.file(&document.file, intake.remaining)?;
-        let parsed: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
-            invalid(
-                &format!("/documents/{position}"),
-                format!("{} is not a JSON document: {error}", document.file),
+        // Receipt identities are provision metadata, so even malformed JSON
+        // reaches the receipt reader without an uncharged second file read.
+        let wrapper = document.identity.as_ref().and_then(|value| {
+            serde_json::from_value::<fsl_analyze::analyze::document::DocumentSelection>(
+                value.clone(),
             )
-        })?;
-        let format = parsed.get("format").and_then(serde_json::Value::as_str);
-        let declared_identity = match parsed.get("identity") {
-            Some(value) => Some(
-                serde_json::from_value::<fsl_analyze::analyze::document::DocumentSelection>(
-                    value.clone(),
+            .ok()
+        });
+        if let Some((reference, (item, selector))) = wrapper
+            .as_ref()
+            .and_then(|reference| receipt_documents.get_key_value(reference))
+        {
+            fsl_analyze::analyze::document::effect_decision::validate(
+                &bytes, *item, *selector, reference,
+            )
+            .map_err(receipt_failure)?;
+        }
+        let (format, declared_identity) = if let Some(arena) =
+            fsl_analyze::analyze::document::effect_decision::receipt_document(&bytes)
+                .map_err(receipt_failure)?
+        {
+            // Opaque receipt objects never enter a recursive Value parser,
+            // even when no item selected this provisioned receipt.
+            let root = arena.root();
+            let format = root.get("format").and_then(|node| match node.node() {
+                quire_canonical::Node::String(value) => Some(value.to_owned()),
+                _ => None,
+            });
+            let identity = root
+                .get("identity")
+                .map(|node| receipt_identity(node, &format!("/documents/{position}/identity")))
+                .transpose()?;
+            (format, identity)
+        } else {
+            let parsed: serde_json::Value = serde_json::from_slice(&bytes).map_err(|error| {
+                invalid(
+                    &format!("/documents/{position}"),
+                    format!("{} is not a JSON document: {error}", document.file),
                 )
+            })?;
+            let format = parsed
+                .get("format")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            let identity = parsed
+                .get("identity")
+                .map(|value| {
+                    serde_json::from_value::<fsl_analyze::analyze::document::DocumentSelection>(
+                        value.clone(),
+                    )
+                })
+                .transpose()
                 .map_err(|error| {
                     invalid(
                         &format!("/documents/{position}/identity"),
                         format!("document identity is malformed: {error}"),
                     )
-                })?,
-            ),
-            None => None,
+                })?;
+            (format, identity)
         };
         let stated_identity = match &document.identity {
             Some(value) => Some(
@@ -1163,7 +1572,7 @@ pub(super) fn read_documents(
             ),
             None => None,
         };
-        if format == Some("filament.state.snapshot/v1") && document.identity.is_some() {
+        if format.as_deref() == Some("filament.state.snapshot/v1") && document.identity.is_some() {
             return Err(invalid(
                 &format!("/documents/{position}/identity"),
                 "a supplied snapshot uses its declared identity and cannot state a wrapper identity",
@@ -1190,7 +1599,7 @@ pub(super) fn read_documents(
             authority: identity.authority.clone(),
             identity: identity.identity.clone(),
         };
-        if format == Some("filament.protocol-recording/1") {
+        if format.as_deref() == Some("filament.protocol-recording/1") {
             recording_documents.insert((reference.authority.clone(), reference.identity.clone()));
         }
         if documents.insert(reference, bytes).is_some() {
@@ -1236,6 +1645,14 @@ pub(super) fn read_documents(
                     "recording {{{}, {}}} does not name a provisioned protocol recording",
                     recording.authority, recording.identity,
                 ),
+            ));
+        }
+    }
+    for (reference, (item, selector)) in receipt_documents {
+        if !documents.contains_key(&reference.reference()) {
+            return Err(invalid(
+                &format!("/items/{item}/effect_decisions/{selector}"),
+                "effect decision names no provisioned document",
             ));
         }
     }

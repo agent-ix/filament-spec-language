@@ -3002,6 +3002,27 @@ pub enum NavigationBound {
     Ordered,
 }
 
+/// The retained authored position of a model operation parameter.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PlanParameterOrigin {
+    /// The exact imported source artifact identity URI.
+    pub artifact: String,
+    /// The original model source path.
+    pub path: String,
+    /// The authored line and column; FCD origins do not supply byte offsets.
+    pub span: fsl_foundation::SourceCoordinates,
+    /// The complete retained origin, including any partial end coordinates.
+    pub original: serde_json::Value,
+}
+
+impl std::hash::Hash for PlanParameterOrigin {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.artifact.hash(state);
+        self.path.hash(state);
+        self.span.hash(state);
+    }
+}
+
 /// The typed cause of a checking refusal.
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum CheckCause {
@@ -3094,6 +3115,17 @@ pub enum CheckCause {
         component: String,
         /// The authored `domain` name.
         span: Span,
+    },
+    /// A native operation parameter whose value extent is unbounded.
+    PlanUnboundedParameter {
+        /// The declared operation.
+        operation: String,
+        /// The parameter with no finite domain.
+        parameter: String,
+        /// The first unbounded type component.
+        component: String,
+        /// The parameter's authored model path and position, when supplied.
+        origin: Option<Box<PlanParameterOrigin>>,
     },
     /// A completed model conformance stage retains every axis failure.
     ModelConformance(Box<super::model_conformance::ModelConformanceFailure>),
@@ -3522,6 +3554,13 @@ pub enum KeyFault {
     UnknownDeclaration(filament_checked::key::DeclarationKey),
     /// A domain package record of a kind no checked node names.
     UnnamedRecordKind(filament_checked::key::DeclarationKey),
+    /// A selected model union case whose authored `VariantRecord` the admitted
+    /// package does not hold under the union's declaration.
+    MissingUnionVariant(filament_checked::key::DeclarationKey),
+    /// A selected model union case, named by its variant declaration, whose
+    /// payload has no model-union IR form: a collection over `Clock`, or a
+    /// payload with several data positions.
+    UnsupportedUnionPayload(filament_checked::key::DeclarationKey),
     /// A compound `UnitId` the check stage's unit scope does not hold.
     UnheldUnit(filament_exact::UnitId),
     /// An enum shape member has no unique exact source or admitted-model identity.
@@ -3621,6 +3660,8 @@ impl KeyFault {
             Self::EmptyNode(_) => "declaration-node-nonempty",
             Self::UnknownDeclaration(_) => "declaration-record-present",
             Self::UnnamedRecordKind(_) => "record-kind-named",
+            Self::MissingUnionVariant(_) => "union-case-variant-retained",
+            Self::UnsupportedUnionPayload(_) => "union-payload-has-ir-form",
             Self::UnheldUnit(_) => "compound-unit-held",
             Self::MissingEnumMember(_) => "enum-member-identity-retained",
             Self::UnheldNominal(_) => "unit-nominal-preimage-held",
@@ -3881,7 +3922,9 @@ impl CheckCause {
             Self::TerminalWithoutObjectType { .. }
             | Self::RefinementNotEmitted { .. }
             | Self::TimedNotChecked { .. } => Code::UnsupportedConstruct,
-            Self::SynthesisUnboundedDomain { .. } => Code::UnsupportedProjection,
+            Self::SynthesisUnboundedDomain { .. } | Self::PlanUnboundedParameter { .. } => {
+                Code::UnsupportedProjection
+            }
             Self::PlanUnsupported { .. } => Code::UnsupportedConstruct,
             Self::PlanUnknownField { .. } => Code::MissingDeclaration,
             Self::Refinement(cause) => cause.cause.code(),
@@ -3975,7 +4018,9 @@ impl CheckCause {
             Self::RefinementNotEmitted { .. } | Self::TimedNotChecked { .. } => {
                 Some("not-yet-implemented")
             }
-            Self::SynthesisUnboundedDomain { .. } => Some("unbounded-extent"),
+            Self::SynthesisUnboundedDomain { .. } | Self::PlanUnboundedParameter { .. } => {
+                Some("unbounded-extent")
+            }
             Self::PlanUnsupported { .. } => Some("not-yet-implemented"),
             Self::PlanUnknownField { .. } => Some("missing-name"),
             Self::Refinement(cause) => cause.cause.cause(),

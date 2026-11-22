@@ -261,6 +261,7 @@ fn a_related_by_clause_enables_only_related_steps_and_refuses_an_unrelated_repla
                 expansion: ExpansionLimits {
                     max_candidates: 1_000_000,
                 },
+                stutter_closure: false,
             },
             protocol: "P".to_owned(),
             over: instance("c"),
@@ -340,6 +341,7 @@ fn replay_does_not_call_a_false_node_constraint_a_related_by_failure() {
                 expansion: ExpansionLimits {
                     max_candidates: 1_000_000,
                 },
+                stutter_closure: false,
             },
             protocol: "P".to_owned(),
             over: instance("c"),
@@ -433,6 +435,7 @@ fn replay_names_a_failed_relation_on_an_attempt_result_binder() {
                 expansion: ExpansionLimits {
                     max_candidates: 1_000_000,
                 },
+                stutter_closure: false,
             },
             protocol: "P".to_owned(),
             over: instance("c"),

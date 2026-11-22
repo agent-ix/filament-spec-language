@@ -230,9 +230,7 @@ impl ReferenceScope<'_, '_, '_, '_> {
                 .decode_slice(text, &mut bytes)
                 .map_err(|_| scope.fail(ReferenceFailure::MalformedWire))?;
             bytes.truncate(decoded);
-            Ok(fsl_eval::simulation::StateKey::from_canonical_bytes(
-                bytes,
-            ))
+            Ok(fsl_eval::simulation::StateKey::from_canonical_bytes(bytes))
         })
     }
     pub(crate) fn metadata_text(&mut self, value: &Value) -> Result<String, ReferenceCodecError> {
@@ -3215,6 +3213,7 @@ mod tests {
             blocked: Vec::new(),
             refinement: None,
             final_delay: None,
+            closure_stutters: Vec::new(),
         };
         let subject = crate::ProtocolWire {
             protocol: "real-runtime-projection".to_owned(),
@@ -3257,6 +3256,7 @@ mod tests {
             blocked: Vec::new(),
             refinement: None,
             final_delay: None,
+            closure_stutters: Vec::new(),
         };
         let written = scope
             .temporal_wire(&witness, Some(&native), None, Some(&terminal))

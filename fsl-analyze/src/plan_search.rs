@@ -219,10 +219,34 @@ pub enum MonitorStep {
 
 /// A plan-owned invocation identity plus its canonical runtime outcome.
 /// Native ModelTransition remains unchanged for every other model caller.
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug)]
 pub struct PlanStep {
     invocation: ModelTransition,
     outcome_ordinal: Option<u64>,
+    native: Option<std::sync::Arc<NativeInvocation>>,
+}
+
+#[derive(Debug)]
+struct NativeInvocation {
+    receiver: filament_exact::ObjectReference,
+    arguments: Vec<filament_exact::Value>,
+}
+
+impl PartialEq for PlanStep {
+    fn eq(&self, other: &Self) -> bool {
+        self.invocation == other.invocation && self.outcome_ordinal == other.outcome_ordinal
+    }
+}
+impl Eq for PlanStep {}
+impl PartialOrd for PlanStep {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for PlanStep {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        (&self.invocation, self.outcome_ordinal).cmp(&(&other.invocation, other.outcome_ordinal))
+    }
 }
 impl PlanStep {
     /// Bind an invocation to an ordinal, present only for multiple outcomes.
@@ -230,7 +254,55 @@ impl PlanStep {
         Self {
             invocation,
             outcome_ordinal,
+            native: None,
         }
+    }
+
+    /// Retain the values supplied by the native runtime's Completed event.
+    /// The runtime constructs the transition from these same admitted values.
+    pub(crate) fn from_native(
+        invocation: ModelTransition,
+        outcome_ordinal: Option<u64>,
+        receiver: &filament_exact::ObjectReference,
+        arguments: &[filament_exact::Value],
+        system: &ModelSystem<'_>,
+    ) -> Result<Self, RuleStop> {
+        use filament_exact::{Charge, ChargePoint, Integer};
+        let occurrences = arguments
+            .iter()
+            .fold(Integer::from(2_i64), |count, value| count.add(&value.occ()));
+        system
+            .evaluation_meter()
+            .charge(
+                Charge::new(ChargePoint::CollectionResultRetain)
+                    .exact_size(LimitKind::ValueOccurrences, occurrences.clone())
+                    .exact_results(occurrences),
+            )
+            .map_err(|incomplete| match system.plan_cancel_cause() {
+                Some(cause) => RuleStop::Cancelled(cause),
+                None => RuleStop::Accounting {
+                    counter: incomplete.limit_kind.as_str(),
+                    value: incomplete.limit,
+                },
+            })?;
+        Ok(Self {
+            invocation,
+            outcome_ordinal,
+            native: Some(std::sync::Arc::new(NativeInvocation {
+                receiver: receiver.clone(),
+                arguments: arguments.to_vec(),
+            })),
+        })
+    }
+
+    /// The native receiver and argument values that produced this invocation.
+    /// Library-created identities acquire these values only by native replay.
+    pub fn native_values(
+        &self,
+    ) -> Option<(&filament_exact::ObjectReference, &[filament_exact::Value])> {
+        self.native
+            .as_ref()
+            .map(|native| (&native.receiver, native.arguments.as_slice()))
     }
     /// The ordinary native invocation.
     pub fn invocation(&self) -> &ModelTransition {
@@ -332,7 +404,11 @@ pub trait PlanRules {
     fn merges_prefixes(&self) -> bool;
 
     /// The FR-804 order key of `step`.
-    fn step_key(&self, step: &ModelTransition) -> Self::StepKey;
+    ///
+    /// # Errors
+    /// [`RuleStop`] if the admitted invocation values cannot be retained or
+    /// validated under the request's evaluation meter.
+    fn step_key(&mut self, step: &PlanStep) -> Result<Self::StepKey, RuleStop>;
 
     /// The admitted native operation order when this rule uses the gated
     /// source cursor. Other model integrations retain their native interface.
@@ -1009,7 +1085,7 @@ impl<R: PlanRules> Search<'_, '_, R> {
 
     /// Every candidate invocation of `state`, enabled or not, in FSpec
     /// FR-804's step order.
-    fn candidates(&self, state: &ModelSimState) -> Result<Vec<Candidate<R::StepKey>>, Stop> {
+    fn candidates(&mut self, state: &ModelSimState) -> Result<Vec<Candidate<R::StepKey>>, Stop> {
         let expansion = self
             .system
             .successors(state)
@@ -1021,21 +1097,25 @@ impl<R: PlanRules> Search<'_, '_, R> {
         let mut candidates: Vec<_> = expansion
             .successors
             .into_iter()
-            .map(|(step, post)| Candidate {
-                key: (self.rules.step_key(&step), None),
-                step: step.into(),
-                post: Some(post),
+            .map(|(step, post)| {
+                let step = PlanStep::from(step);
+                Ok(Candidate {
+                    key: (self.rules.step_key(&step)?, None),
+                    step,
+                    post: Some(post),
+                })
             })
-            .collect();
+            .collect::<Result<_, RuleStop>>()?;
         let enabled: BTreeSet<PlanStep> = candidates
             .iter()
             .map(|candidate| candidate.step.clone())
             .collect();
         for step in identities {
             if !enabled.contains(&PlanStep::from(step.clone())) {
+                let step = PlanStep::from(step);
                 candidates.push(Candidate {
-                    key: (self.rules.step_key(&step), None),
-                    step: step.into(),
+                    key: (self.rules.step_key(&step)?, None),
+                    step,
                     post: None,
                 });
             }
@@ -1058,18 +1138,32 @@ impl<R: PlanRules> Search<'_, '_, R> {
                     Event::Begin(_) => self.charge(PlanLimit::MaxWork),
                     Event::Completed {
                         transition,
+                        receiver,
+                        arguments,
                         state,
                         outcome,
-                    } => {
-                        let key = (self.rules.step_key(transition), outcome);
-                        self.admit_candidate(
-                            parent,
-                            next,
-                            key,
-                            PlanStep::new(transition.clone(), outcome),
-                            Some(state.clone()),
-                        )
-                    }
+                    } => PlanStep::from_native(
+                        transition.clone(),
+                        outcome,
+                        receiver,
+                        arguments,
+                        system,
+                    )
+                    .map_err(Stop::from)
+                    .and_then(|step| {
+                        self.rules
+                            .step_key(&step)
+                            .map_err(Stop::from)
+                            .and_then(|key| {
+                                self.admit_candidate(
+                                    parent,
+                                    next,
+                                    (key, outcome),
+                                    step,
+                                    Some(state.clone()),
+                                )
+                            })
+                    }),
                     Event::Disabled(_) => Ok(()),
                     Event::Undetermined { outcome, .. } => match outcome {
                         fsl_eval::simulation::model::ClauseOutcome::KernelUndefined(_)
@@ -1111,7 +1205,8 @@ impl<R: PlanRules> Search<'_, '_, R> {
             self.nodes[parent].expanded = true;
             return Ok(());
         }
-        let candidates = self.candidates(&self.nodes[parent].state)?;
+        let state = self.nodes[parent].state.clone();
+        let candidates = self.candidates(&state)?;
         self.nodes[parent].expanded = true;
         for Candidate { key, step, post } in candidates {
             self.charge(PlanLimit::MaxWork)?;

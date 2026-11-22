@@ -220,6 +220,8 @@ pub(super) fn settle_model_item(item: ModelItem<'_>, cancel: &Cancel) -> EngineR
     let limits = request.limits;
     match check_model_with_stutter_closure(request, cancel, stutter_closure) {
         Ok(outcome) => {
+            let allocation = super::document::effect_decision::ReplayAllocation::default();
+            let replay = |payload: &TemporalCounterexample| allocation.capture(replay(payload));
             let record = if stutter_closure {
                 fsl_replay::settle_model_check_over_stutter_closure(
                     &outcome,
@@ -231,6 +233,9 @@ pub(super) fn settle_model_item(item: ModelItem<'_>, cancel: &Cancel) -> EngineR
             } else {
                 fsl_replay::settle_model_check(&outcome, &limits, &certificate, cancel, replay)
             };
+            if let Some(report) = allocation.report() {
+                return report;
+            }
             EngineReport::Model(Box::new(record))
         }
         Err(refusal) => EngineReport::Refused(model_refusal(&refusal)),
@@ -336,8 +341,17 @@ pub(super) fn settle_protocol_item(
     let simulation = request.subject.model.simulation.clone();
     match check_protocol_constrained(request, constraint, cancel) {
         Ok(outcome) => {
-            let record =
-                fsl_replay::settle_protocol_check(&outcome, &limits, &certificate, cancel, replay);
+            let allocation = super::document::effect_decision::ReplayAllocation::default();
+            let record = fsl_replay::settle_protocol_check(
+                &outcome,
+                &limits,
+                &certificate,
+                cancel,
+                |payload| allocation.capture(replay(payload)),
+            );
+            if let Some(report) = allocation.report() {
+                return report;
+            }
             // The model system is rebuilt only for a counterexample.
             let subject = record
                 .counterexample
@@ -463,6 +477,7 @@ pub(super) fn settle_zone_item<S: Clone + Eq>(
     };
     match check_timed_model(request, cancel) {
         Ok(outcome) => {
+            let allocation = super::document::effect_decision::ReplayAllocation::default();
             let record = settle_zone_check(
                 ZoneItem::Outcome(&outcome),
                 cancel,
@@ -476,8 +491,11 @@ pub(super) fn settle_zone_item<S: Clone + Eq>(
                         cancel,
                     )
                 },
-                replay,
+                |payload| allocation.capture(replay(payload)),
             );
+            if let Some(report) = allocation.report() {
+                return report;
+            }
             let over = record
                 .counterexample
                 .as_ref()
@@ -1155,7 +1173,16 @@ fn symmetry() -> Refusal {
 /// `unsupported_projection`, `failed` for every other one.
 pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
     match refusal {
-        ModelCheckRefusal::Admission(failure) => admission(failure),
+        ModelCheckRefusal::Admission(failure) => {
+            if let AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record) =
+                failure.as_ref()
+            {
+                if record.catalog == fsl_foundation::diagnostic::ALLOCATION_FAILED {
+                    return super::document::effect_decision::allocation_refusal(record);
+                }
+            }
+            admission(failure)
+        }
         ModelCheckRefusal::RequiresBound(_) | ModelCheckRefusal::UnboundCapacity(_) => {
             Refusal::RequiresBound
         }
@@ -1181,7 +1208,6 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         ModelCheckRefusal::StateUnobservable(stop) => Refusal::Failed(stop.cause),
         // The forms and subjects EN-1 does not decide yet.
         ModelCheckRefusal::ProtocolRefinement
-        | ModelCheckRefusal::Liveness(LivenessRefusal::ClosureStutterLoop)
         | ModelCheckRefusal::FormNotDecided { .. }
         | ModelCheckRefusal::CaptureRead { .. }
         | ModelCheckRefusal::WeakLiveness
@@ -1336,7 +1362,8 @@ mod tests {
             | Refusal::InvalidOptionValue { .. }
             | Refusal::NotEmitted
             | Refusal::UnsupportedConstruct(_)
-            | Refusal::Incomplete(_) => None,
+            | Refusal::Incomplete(_)
+            | Refusal::Allocation(_) => None,
         }
     }
 
@@ -1485,12 +1512,6 @@ mod tests {
         assert_eq!(
             unsupported(ModelCheckRefusal::Hyper(
                 HyperRefusal::NotSingleExistential { form: None }
-            )),
-            not_yet
-        );
-        assert_eq!(
-            unsupported(ModelCheckRefusal::Liveness(
-                LivenessRefusal::ClosureStutterLoop
             )),
             not_yet
         );

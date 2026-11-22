@@ -780,6 +780,7 @@ pub(super) struct RetainedRows {
         Vec<filament_contract_model::SelectedSourceOperationRow>,
     pub(super) selected_source_tuple_rows: Vec<filament_contract_model::SelectedSourceTupleRow>,
     pub(super) selected_model_enum_shape_rows: Vec<super::SelectedModelEnumShapeRow>,
+    pub(super) selected_model_union_rows: Vec<filament_contract_model::SelectedModelUnionRow>,
     pub(super) selected_source_collection_rows: Vec<super::SelectedSourceCollectionRow>,
     pub(super) selected_exact_declaration_rows:
         Vec<filament_contract_model::SelectedExactDeclarationRow>,
@@ -1052,6 +1053,24 @@ pub(super) fn carry_rows(
             rekey.id(structural_node);
         }
     }
+    let mut model_unions = retained.selected_model_union_rows.clone();
+    for row in &mut model_unions {
+        let filament_contract_model::SelectedModelUnionRow {
+            structural_node,
+            selected_document: _,
+            type_handle: _,
+            settled_key: _,
+            cases,
+        } = row;
+        rekey.id(structural_node);
+        for case in cases {
+            if let filament_contract_model::SelectedModelUnionPayload::Data { node, .. } =
+                &mut case.payload
+            {
+                rekey.id(node);
+            }
+        }
+    }
     let mut source_collections = retained.selected_source_collection_rows.clone();
     for row in &mut source_collections {
         let super::SelectedSourceCollectionRow {
@@ -1179,6 +1198,7 @@ pub(super) fn carry_rows(
         selected_source_operation_rows: source_operations,
         selected_source_tuple_rows: source_tuples,
         selected_model_enum_shape_rows: model_enum_shapes,
+        selected_model_union_rows: model_unions,
         selected_source_collection_rows: source_collections,
         selected_exact_declaration_rows: exact_declarations,
         selected_exact_field_rows: exact_fields,
@@ -1435,6 +1455,7 @@ pub(super) fn finish(
         selected_source_operation_rows: rows.selected_source_operation_rows,
         selected_source_tuple_rows: rows.selected_source_tuple_rows,
         selected_model_enum_shape_rows: rows.selected_model_enum_shape_rows,
+        selected_model_union_rows: rows.selected_model_union_rows,
         selected_source_collection_rows: rows.selected_source_collection_rows,
         selected_exact_declaration_rows: rows.selected_exact_declaration_rows,
         selected_exact_field_rows: rows.selected_exact_field_rows,

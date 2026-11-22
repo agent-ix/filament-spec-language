@@ -226,6 +226,7 @@ impl Case {
                     expansion: ExpansionLimits {
                         max_candidates: 1_000_000,
                     },
+                    stutter_closure: false,
                 },
                 protocol: protocol.to_owned(),
                 over: instance("c"),
@@ -1425,6 +1426,74 @@ fn a_protocol_deadlock_is_spelled_with_its_blocked_list_through_analyze() {
         assert!(thread["cause"]["type"].is_string());
     }
     assert_eq!(wire["subject"]["protocol"], "Fill");
+}
+
+#[test]
+#[trace("FR-259", "FR-1046-AC-7")]
+fn a_protocol_replay_allocation_keeps_the_actual_item_resource_evidence() {
+    use crate::derived_request::items_of_kind;
+    use fsl_analyze::analyze::{
+        analyze_items, derived_protocol_item, split_records, Engines, ProtocolItem,
+    };
+    use fsl_replay::ProtocolCertificateRequest;
+    let case = Case::new(&fill_unit("self.v = 0", ""), &[0]);
+    let protocol = case.checked.graph().protocol("Fill").unwrap();
+    let occurrence = protocol_anchor(&case.checked, "Fill").1;
+    let models: Vec<_> = case
+        .subject("Fill")
+        .memory
+        .parallels()
+        .iter()
+        .map(|resolved| (resolved.parallel.clone(), resolved.model))
+        .collect();
+    let subject = case.subject("Fill");
+    let items = [ProtocolTemporalItem {
+        occurrence: &occurrence,
+        subject: &subject.protocol,
+        protocol,
+        models: &models,
+        non_atomic_access: false,
+    }];
+    let written = protocol_request(&items);
+    let [(derived, obligation)] = &items_of_kind(&written, ItemKind::DeadlockFreedom)[..] else {
+        panic!("one native item")
+    };
+    let calls = std::cell::Cell::new(0);
+    let item = ProtocolItem {
+        request: ProtocolCheckRequest {
+            temporal_clock_selections: &[],
+            subject: case.subject("Fill"),
+            item: ModelCheckItem::DeadlockFreedom,
+            max_depth: None,
+            max_store_buffer: None,
+            max_messages: None,
+            max_live_instances: None,
+            limits: ModelCheckLimits::default(),
+            ignore_memory_constraints: false,
+        },
+        certificate: ProtocolCertificateRequest {
+            temporal_clock_selections: &[],
+            subject: case.subject("Fill"),
+            item: ModelCheckItem::DeadlockFreedom,
+            max_store_buffer: None,
+            max_messages: None,
+            max_live_instances: None,
+        },
+        replay: Box::new(|payload| {
+            assert!(!payload.prefix.is_empty(), "actual native counterexample");
+            calls.set(calls.get() + 1);
+            Err(crate::model_settle::allocation_refusal(7332))
+        }),
+    };
+    let records = analyze_items(
+        &Engines::fsl().unwrap(),
+        vec![derived_protocol_item(derived, obligation, item).unwrap()],
+        &Cancel::new(),
+    );
+    let (records, found) = split_records(records, &case.checked);
+    assert!(found.is_empty());
+    assert_eq!(calls.get(), 1);
+    crate::model_settle::assert_allocation_outcome(&records, 7332);
 }
 
 /// Part of FR-211-AC-5 (TC-656, ADR-027 PD-4): each channel wait cause is reported

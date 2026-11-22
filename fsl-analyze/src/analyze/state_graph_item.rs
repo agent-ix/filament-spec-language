@@ -467,6 +467,13 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         if let Some(evidence) = evidence.as_ref() {
             match replay_instance(read, evidence.clone(), None, true) {
                 Ok(replay) if replay.settlement == GraphReplaySettlement::Reproduced => {}
+                Err(refusal) => {
+                    let allocation = super::document::effect_decision::ReplayAllocation::default();
+                    let _: Result<(), _> = allocation.capture(Err(*refusal));
+                    return allocation.report().unwrap_or_else(|| {
+                        EngineReport::Refused(Refusal::Failed(super::items::BROKEN))
+                    });
+                }
                 _ => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
             }
         }
@@ -1187,6 +1194,13 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         if let Some(evidence) = evidence.as_ref() {
             match replay_instance(read, evidence.clone(), Some(&certificate), false) {
                 Ok(replay) if replay.settlement == GraphReplaySettlement::Reproduced => {}
+                Err(refusal) => {
+                    let allocation = super::document::effect_decision::ReplayAllocation::default();
+                    let _: Result<(), _> = allocation.capture(Err(*refusal));
+                    return allocation.report().unwrap_or_else(|| {
+                        EngineReport::Refused(Refusal::Failed(super::items::BROKEN))
+                    });
+                }
                 _ => {
                     return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
                 }
@@ -1534,13 +1548,7 @@ fn replay_instance(
         object_environment: None,
         declared_domains: Vec::new(),
         byte_provision,
-        documents: read
-            .binding
-            .packages
-            .values()
-            .chain(read.binding.snapshots.values())
-            .cloned()
-            .collect(),
+        documents: read.binding.replay_documents()?,
     };
     let timed = (digital || certificate.is_some())
         .then(|| read.package().and_then(super::timed_item::timed_model))
@@ -1561,6 +1569,7 @@ fn replay_instance(
         expansion: ExpansionLimits {
             max_candidates: read.form.max_candidates,
         },
+        stutter_closure: false,
     };
     let replayed = match read.source {
         Source::Checked { .. } => {

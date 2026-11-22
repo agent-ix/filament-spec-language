@@ -168,6 +168,7 @@ pub fn deadlock_model_item<'a>(
                     provision,
                     max_candidates: form.max_candidates,
                     timed: None,
+                    stutter_closure: false,
                 },
                 &claim,
                 &target,
@@ -352,6 +353,7 @@ impl<'a> PackageDeadlockSubject<'a> {
                 expansion: ExpansionLimits {
                     max_candidates: self.form.max_candidates,
                 },
+                stutter_closure: false,
             },
             &envelope,
             &NoLetters,

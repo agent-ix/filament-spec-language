@@ -310,6 +310,7 @@ fn task_counterexample(
             blocked: Vec::new(),
             refinement: None,
             final_delay: None,
+            closure_stutters: Vec::new(),
         };
         // FR-237 re-admission: rebuild the internal task trace from the typed
         // FR-364 counterexample, replay it against the checked product, and

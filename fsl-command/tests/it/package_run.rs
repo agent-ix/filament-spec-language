@@ -81,7 +81,7 @@ fn a_package_only_call_runs_under_the_recorded_law_without_source() {
         assert_eq!(exit, 0, "{value}");
         assert_eq!(
             value["outcome"]["value"],
-            json!({"integer": "-4"}),
+            json!({"type":"integer", "value":"-4"}),
             "{value}"
         );
         assert_eq!(value["package"], package, "{value}");
@@ -90,12 +90,12 @@ fn a_package_only_call_runs_under_the_recorded_law_without_source() {
     let (exit, value) = run(
         directory.path(),
         json!({"models": [], "package": {"file": "package.json"},
-            "call": {"function": "twice", "arguments": [{"parameter": "a", "value": -7}]}}),
+            "call": {"function": "twice", "arguments": [{"parameter": "a", "value": {"type":"integer","value":"-7"}}]}}),
     );
     assert_eq!(exit, 0, "{value}");
     assert_eq!(
         value["outcome"]["value"],
-        json!({"integer": "-14"}),
+        json!({"type":"integer", "value":"-14"}),
         "{value}"
     );
 
@@ -134,19 +134,19 @@ fn package_call_items_run_from_the_checked_artifact_without_source() {
         "items": {"selections": [
             {"call": {"function": "half", "arguments": []}},
             {"call": {"function": "twice", "arguments": [
-                {"parameter": "a", "value": -7}
+                {"parameter": "a", "value": {"type":"integer","value":"-7"}}
             ]}}
         ]}}),
     );
     assert_eq!(exit, 0, "{value}");
     assert_eq!(
         value["items"][0]["result"]["outcome"]["value"],
-        json!({"integer": "-4"}),
+        json!({"type":"integer", "value":"-4"}),
         "{value}"
     );
     assert_eq!(
         value["items"][1]["result"]["outcome"]["value"],
-        json!({"integer": "-14"}),
+        json!({"type":"integer", "value":"-14"}),
         "{value}"
     );
 }
@@ -302,7 +302,7 @@ fn package_call_snapshot_is_admitted_by_the_v2_package_owner() {
     assert_eq!(exit, 0, "{value}");
     assert_eq!(
         value["outcome"]["value"],
-        json!({"integer": "-4"}),
+        json!({"type":"integer", "value":"-4"}),
         "{value}"
     );
     assert!(value.get("source").is_none(), "{value}");
@@ -409,7 +409,7 @@ fn a_prepared_package_call_runs_through_its_executor() {
     assert_eq!(result.exit_code, 0);
     assert_eq!(
         result.value.as_value()["outcome"]["value"],
-        json!({"integer": "-4"}),
+        json!({"type":"integer", "value":"-4"}),
         "{}",
         result.value
     );

@@ -109,6 +109,18 @@ pub(super) fn run_bytes(
             reason: "a verification plan run is the request's one run selection".to_owned(),
         });
     }
+    let requirements = request
+        .requirements
+        .as_ref()
+        .map(|value| super::requirements::read(value, "/requirements"))
+        .transpose()?
+        .unwrap_or_default();
+    if !requirements.items.is_empty() {
+        return Err(RunCause::ClauseRequest {
+            member: "/requirements/items".to_owned(),
+            reason: "per-claim call selectors do not select verification-plan steps".to_owned(),
+        });
+    }
     let integer_division = request_integer_division(request.integer_division.take())?;
     let program = super::required_program(&request)?;
     let mut intake = intake_with_bytes(
@@ -201,6 +213,8 @@ pub(super) fn run_bytes(
                 );
             }
             let inputs = PlanInputs {
+                backend: requirements.call.backend.clone(),
+                backend_options: requirements.call.options.clone(),
                 bindings: plan
                     .nodes
                     .iter()

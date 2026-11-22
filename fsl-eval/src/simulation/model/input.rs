@@ -467,8 +467,33 @@ impl ProbabilisticParts {
             normalization,
         )
         .map_err(PendingPackageForm::Model)?;
+        let declared = package
+            .supply()
+            .and_then(|supply| supply.equality)
+            .map_or(&[][..], |equality| equality.source_units());
+        let units = world.types().units();
+        let unit_names = units
+            .ids()
+            .filter(|id| declared.iter().any(|row| row.unit_id == *id))
+            .filter_map(|id| {
+                let filament_semantic_value::quantity::QuantityUnit::Declared(unit) =
+                    units.get(id.clone())?
+                else {
+                    return None;
+                };
+                match units
+                    .nominal_node(&unit.key())?
+                    .declaration
+                    .qualified_declaration
+                    .as_slice()
+                {
+                    [name] => Some((name.clone(), id)),
+                    _ => None,
+                }
+            })
+            .collect();
         let operations = model
-            .operation_table(&std::collections::BTreeMap::new())
+            .operation_table(&unit_names)
             .map_err(PendingPackageForm::Operations)?;
         let nodes = package
             .probabilistic()
@@ -574,9 +599,11 @@ impl<'p> PackageModelInput<'p> {
     /// from the nodes and identity rows;
     /// [`PendingPackageForm::Model`] when the supplied packages do not re-admit
     /// against the package's types; [`PendingPackageForm::Operations`] when
-    /// their operations are not typed. A type that names a unit is typed
-    /// against no unit names: the package route reads none yet, so such an
-    /// operation refuses rather than being left out.
+    /// their operations are not typed. Unit names are reconstructed from
+    /// authenticated source-unit witness rows and admitted nominal declarations
+    /// with single-segment names. Units outside that reconstruction are not
+    /// supplied by this bridge; an operation that cannot be typed still refuses
+    /// rather than being left out.
     pub fn of(
         package: &'p BarePackage<'p>,
         packages: &fsl_semantics::model::intake::PackageInput,
@@ -983,10 +1010,14 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     ) -> Result<Evaluation, CallFailure>;
 
     /// Evaluate a model behaviour's holds condition with FR-107 model-read accounting.
+    /// With `absent_population`, `over` is the real instance key of a population
+    /// holding no conforming object: only a read through it is undefined (FR-125).
+    #[allow(clippy::too_many_arguments)] // each value is an explicit evaluation input
     fn evaluate_model_holds(
         &self,
         atom: &crate::value::HoldsAtom,
         over: Value,
+        absent_population: Option<&str>,
         captures: &[Value],
         objects: &ObjectEnvironment,
         reference_bindings: &crate::simulation::model::ReferenceBindings,
@@ -1008,10 +1039,13 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     ) -> Result<Evaluation, CallFailure>;
 
     /// Evaluate a model behaviour's activation guard with FR-107 model-read accounting.
+    /// `absent_population` marks both the over and trigger binders absent;
+    /// lookup provenance can still read their real key (FR-125).
     fn evaluate_model_guard(
         &self,
         clause: &NodeKey,
         over: Value,
+        absent_population: Option<&str>,
         objects: &ObjectEnvironment,
         reference_bindings: &crate::simulation::model::ReferenceBindings,
         meter: &mut Meter,
@@ -1579,10 +1613,12 @@ impl ModelEvaluator for CheckedPackage {
         CheckedPackageEvaluation::evaluate_holds(self, atom, over, captures, objects, meter)
     }
 
+    #[allow(clippy::too_many_arguments)] // each value is an explicit evaluation input
     fn evaluate_model_holds(
         &self,
         atom: &crate::value::HoldsAtom,
         over: Value,
+        absent_population: Option<&str>,
         captures: &[Value],
         objects: &ObjectEnvironment,
         reference_bindings: &crate::simulation::model::ReferenceBindings,
@@ -1592,6 +1628,7 @@ impl ModelEvaluator for CheckedPackage {
             self,
             atom,
             over,
+            absent_population,
             captures,
             objects,
             reference_bindings,
@@ -1613,6 +1650,7 @@ impl ModelEvaluator for CheckedPackage {
         &self,
         clause: &NodeKey,
         over: Value,
+        absent_population: Option<&str>,
         objects: &ObjectEnvironment,
         reference_bindings: &crate::simulation::model::ReferenceBindings,
         meter: &mut Meter,
@@ -1621,6 +1659,7 @@ impl ModelEvaluator for CheckedPackage {
             self,
             clause,
             over,
+            absent_population,
             objects,
             reference_bindings,
             meter,
@@ -2092,10 +2131,12 @@ impl ModelEvaluator for BarePackage<'_> {
         CheckedPackageEvaluation::evaluate_holds(self, atom, over, captures, objects, meter)
     }
 
+    #[allow(clippy::too_many_arguments)] // each value is an explicit evaluation input
     fn evaluate_model_holds(
         &self,
         atom: &crate::value::HoldsAtom,
         over: Value,
+        absent_population: Option<&str>,
         captures: &[Value],
         objects: &ObjectEnvironment,
         reference_bindings: &crate::simulation::model::ReferenceBindings,
@@ -2105,6 +2146,7 @@ impl ModelEvaluator for BarePackage<'_> {
             self,
             atom,
             over,
+            absent_population,
             captures,
             objects,
             reference_bindings,
@@ -2126,6 +2168,7 @@ impl ModelEvaluator for BarePackage<'_> {
         &self,
         clause: &NodeKey,
         over: Value,
+        absent_population: Option<&str>,
         objects: &ObjectEnvironment,
         reference_bindings: &crate::simulation::model::ReferenceBindings,
         meter: &mut Meter,
@@ -2134,6 +2177,7 @@ impl ModelEvaluator for BarePackage<'_> {
             self,
             clause,
             over,
+            absent_population,
             objects,
             reference_bindings,
             meter,

@@ -90,7 +90,8 @@ pub use abstraction::{
 };
 pub use abstraction::{AbstractionNodeRefusal, AbstractionNodes};
 pub use composition::{
-    CheckedComponent, CheckedComposition, ClauseRef, ComponentGuaranteeKey, ComponentSubject,
+    CheckedComponent, CheckedComposition, ClauseRef, ComponentGuaranteeKey, ComponentPackages,
+    ComponentSubject,
     CompositionClauseFacts, CompositionCycle, CompositionGuarantee, CompositionItem,
     CompositionName, CompositionPremise, CompositionRefusal, CompositionSlot, CompositionSlotKey,
     CompositionSpans, CompositionSupply, ItemPlacement, MalformedMember, ReadClause, ReadComponent,
@@ -193,6 +194,7 @@ pub use source_model::{
     object_types_of_source_rows, package_of_source_rows, source_identity, source_type_node_key,
     SourceRowObject, SourceRowOperation, SourceRowParameter,
 };
+mod finite_domain;
 mod plan_value;
 pub(crate) mod state_clause;
 mod state_graph_claim;
@@ -593,12 +595,12 @@ pub use refusal::{
     CheckingLimitKind, CheckingStage, ClockSelectionFault, DispatchFunctionRole, DispatchLinkCause,
     DispatchSubtypeFailure, ExcludedClauseForm, ExecutionPointRefusal, IdentityForm, IdentityNode,
     IdentityObserving, InvalidDispatchDeclaration, JoinFault, KeyFault, MeasureObligation,
-    MemberCandidate, NavigationBound, Obligation, ObservationReason, OperandText, PredicateRole,
-    ProtocolAnchorCause, ProtocolCheckRefusal, ProtocolConstruct, ProtocolReferenceCause,
-    ProvedInterval, QualifiedCandidate, RefusedProtocolDependency, RelatedEnd, ReservedSlotName,
-    ShadowedDeclaration, SlotKind, SlotTag, StageLimitCause, StateGraphCause, TaskSetDefect,
-    TaskTimeMember, TemporalCause, TimeUnitCause, TimedConstruct, TimedOmission,
-    UnwrittenTimedMember,
+    MemberCandidate, NavigationBound, Obligation, ObservationReason, OperandText,
+    PlanParameterOrigin, PredicateRole, ProtocolAnchorCause, ProtocolCheckRefusal,
+    ProtocolConstruct, ProtocolReferenceCause, ProvedInterval, QualifiedCandidate,
+    RefusedProtocolDependency, RelatedEnd, ReservedSlotName, ShadowedDeclaration, SlotKind,
+    SlotTag, StageLimitCause, StateGraphCause, TaskSetDefect, TaskTimeMember, TemporalCause,
+    TimeUnitCause, TimedConstruct, TimedOmission, UnwrittenTimedMember,
 };
 pub use state_graph_claim::{
     state_graph_predicate_site, CheckedPredicateBody, CheckedStateGraphClaim,
@@ -610,7 +612,10 @@ pub use state_graph_claim::{
 pub use temporal_clause::check_clauses;
 
 pub use fsl_forms::AggregateComparison;
-pub use lowering::{collection_kind, CollectionShape, PlaceRow, PlaceStep};
+pub use lowering::{
+    collection_kind, CollectionShape, PlaceRow, PlaceStep, SelectedModelUnion,
+    SelectedModelUnionCase, SelectedModelUnionPayload,
+};
 pub use temporal_clause::{
     Activation, AggregateKind, AggregateWindow, BinaryTemporal, CaptureSite, CheckedAggregate,
     CheckedFormula, CheckedInterval, CheckedOperator, CheckedProtocolFairness,

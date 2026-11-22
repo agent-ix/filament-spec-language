@@ -268,6 +268,7 @@ fn fixed_work_release_completes_or_emits_a_deadline_miss() {
         blocked: Vec::new(),
         refinement: None,
         final_delay: None,
+        closure_stutters: Vec::new(),
     };
     let wire = task_temporal_wire(&counterexample, None, None).expect("FR-364 spelling");
     assert_eq!(wire["prefix"][0]["transition"]["type"], "task-transition");
@@ -523,6 +524,7 @@ fn periodic_overload_keeps_queue_overflow_as_an_open_frontier() {
 /// FR-249-AC-9/FR-364: a miss is not a refutation until its same-path lasso
 /// repeats the product state with positive elapsed time.
 #[trace("TC-3008", "FR-249-AC-9", "FR-237-AC-8")]
+#[trace("TC-523", "FR-128-AC-11")]
 #[test]
 fn missed_deadline_settles_only_with_a_replayed_positive_time_lasso() {
     let world = world_with_task(2, 1);
@@ -598,9 +600,38 @@ fn missed_deadline_settles_only_with_a_replayed_positive_time_lasso() {
         blocked: Vec::new(),
         refinement: None,
         final_delay: None,
+        closure_stutters: Vec::new(),
     };
     fsl_replay::replay_task_product_trace(&product, &typed_counterexample)
         .expect("the typed task trace independently replays");
+
+    // FR-128-AC-11: the task alphabet has no `closure-stutter` step, so the
+    // typed entry refuses a listed one at its `/transition/type` before the
+    // product expands: a first step whose key is wrong would otherwise
+    // refuse at its `/post_state`.
+    for site in [
+        fsl_replay::StepSite::Prefix(0),
+        fsl_replay::StepSite::Loop(0),
+    ] {
+        let mut closure = typed_counterexample.clone();
+        closure.prefix[0].post_state =
+            fsl_eval::simulation::StateKey::from_canonical_bytes(b"{}".to_vec());
+        assert!(
+            fsl_replay::replay_task_product_trace(&product, &closure).is_err(),
+            "the control: the wrong key alone refuses"
+        );
+        closure.closure_stutters = vec![fsl_replay::ClosureStutter {
+            site,
+            post_state: closure.prefix[0].post_state.clone(),
+            delay: None,
+        }];
+        assert_eq!(
+            fsl_replay::replay_task_product_trace(&product, &closure),
+            Err(fsl_replay::TaskProductTraceReplayRefusal::TraceAlphabet {
+                pointer: format!("{}/transition/type", site.pointer()),
+            })
+        );
+    }
 
     let initial = product.initial().into_iter().next().expect("initial state");
     let source_step = product
@@ -627,6 +658,7 @@ fn missed_deadline_settles_only_with_a_replayed_positive_time_lasso() {
         blocked: Vec::new(),
         refinement: None,
         final_delay: None,
+        closure_stutters: Vec::new(),
     };
     assert_eq!(
         fsl_replay::replay_task_product_trace(&product, &model_alphabet),
@@ -1245,6 +1277,7 @@ fn refutation_of(
         blocked: Vec::new(),
         refinement: None,
         final_delay: None,
+        closure_stutters: Vec::new(),
     }
 }
 
@@ -1476,6 +1509,7 @@ fn a_model_alphabet_payload_for_a_task_item_refuses_trace_alphabet() {
         blocked: Vec::new(),
         refinement: None,
         final_delay: None,
+        closure_stutters: Vec::new(),
     };
     let claim = &world.package.graph().task_sets().claims()[0];
     let occurrence = claim.occurrence().expect("the claim has an occurrence");
@@ -1498,6 +1532,7 @@ fn a_model_alphabet_payload_for_a_task_item_refuses_trace_alphabet() {
             initial: request.initial.clone(),
             universes: request.universes.clone(),
             expansion: request.expansion,
+            stutter_closure: false,
         },
         &crate::model_settle::envelope_at(
             projection,

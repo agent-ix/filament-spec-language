@@ -472,6 +472,7 @@ impl World {
             expansion: ExpansionLimits {
                 max_candidates: 1_000_000,
             },
+            stutter_closure: false,
         };
         let ReplayResult::ModelGraph(replayed) =
             fsl_replay::replay_model_graph_with_temporal_selections(

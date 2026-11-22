@@ -87,6 +87,26 @@ pub(super) struct AdmittedPackage {
 }
 
 impl PreparedPackageRun {
+    pub(super) fn bind_population_argument(
+        &mut self,
+        parameter: &str,
+        object: fsl_semantics::model::observation::SelectedObject,
+    ) -> Result<()> {
+        let Work::Call(call) = &mut self.work else {
+            return Err(invalid(
+                "call",
+                "a population argument belongs to a call selection",
+            ));
+        };
+        let argument = call
+            .wire_arguments
+            .iter_mut()
+            .find(|argument| argument.parameter == parameter)
+            .ok_or_else(|| invalid("parameter", "the expanded argument names its parameter"))?;
+        argument.selected_object = Some(object);
+        Ok(())
+    }
+
     pub(super) fn sources(&self) -> crate::Sources {
         crate::Sources::from_sources(self.models.iter().chain(&self.sources).cloned())
     }
@@ -969,7 +989,7 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
             snapshot.observation.reference.clone(),
             snapshot.observation.bytes.clone(),
         )]);
-        bare.admit_call_snapshot_with_views(
+        bare.admit_call_snapshot_with_provenance(
             &packages,
             model_limits,
             &provision,
@@ -999,7 +1019,13 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
     let cancel = filament_exact::Cancel::new();
     let called = match &snapshot_views {
         Some(views) => fsl_replay::spine::run_package_with_snapshot_views(
-            &bare, &call, &objects, views, &sources, &cancel,
+            &bare,
+            &call,
+            &objects,
+            views,
+            &mut budget,
+            &sources,
+            &cancel,
         ),
         None => {
             fsl_replay::spine::run_package_with_sources(&bare, &call, &objects, &sources, &cancel)

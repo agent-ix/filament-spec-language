@@ -111,6 +111,14 @@ pub enum NativeRunReadError {
         /// The cumulative working bytes including the refused growth.
         required: u64,
     },
+    /// The allocator refused a checked, bounded reader reservation.
+    #[error("cannot allocate {requested} diagnostic entries for {member}")]
+    Allocation {
+        /// Member whose allocation failed.
+        member: &'static str,
+        /// Number of entries requested after the working-budget check.
+        requested: usize,
+    },
     /// A report member contradicts another report member.
     #[error("invalid member {member}: {reason}")]
     Invalid {
@@ -1046,12 +1054,7 @@ pub enum RefusalLocusRead {
         end: u64,
     },
     /// Source path and line-column span.
-    Located {
-        /// Source path.
-        file: String,
-        /// Source span.
-        span: SpanRead,
-    },
+    Located(LocatedRead),
     /// Named occurrence.
     Occurrence {
         /// Occurrence identifier.
@@ -1092,6 +1095,42 @@ pub enum RefusalLocusRead {
         #[serde(default, deserialize_with = "present")]
         member: Option<Option<String>>,
     },
+}
+
+/// The two closed located forms: native bytes or imported coordinates.
+#[derive(Deserialize)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum LocatedRead {
+    /// A native source span with real byte offsets and no imported URI.
+    Native {
+        /// Authored path.
+        file: String,
+        /// Native byte-bearing span.
+        span: SpanRead,
+    },
+    /// An imported origin, without any native label pair or byte offsets.
+    Imported {
+        /// Authored path.
+        file: String,
+        /// Exact admitted FCD source identity URI.
+        #[serde(rename = "sourceIdentity", deserialize_with = "source_identity_uri")]
+        source_identity: String,
+        /// Byte-free authored coordinates.
+        span: fsl_foundation::SourceCoordinates,
+    },
+}
+
+fn source_identity_uri<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<String, D::Error> {
+    let value = String::deserialize(deserializer)?;
+    if fsl_semantics::model::intake::is_source_identity_uri(&value) {
+        Ok(value)
+    } else {
+        Err(serde::de::Error::custom(
+            "an admitted FCD source identity URI",
+        ))
+    }
 }
 
 #[derive(Deserialize)]
@@ -1867,7 +1906,20 @@ fn validate_refusal_locus(value: &RefusalLocusRead) -> Result<(), NativeRunReadE
                 return Err(invalid());
             }
         }
-        RefusalLocusRead::Located { .. } | RefusalLocusRead::Occurrence { .. } => {}
+        RefusalLocusRead::Located(LocatedRead::Native { span, .. }) => {
+            if [
+                span.start.line,
+                span.start.column,
+                span.end.line,
+                span.end.column,
+            ]
+            .contains(&0)
+            {
+                return Err(invalid());
+            }
+        }
+        RefusalLocusRead::Located(LocatedRead::Imported { .. })
+        | RefusalLocusRead::Occurrence { .. } => {}
     }
     Ok(())
 }
@@ -1905,6 +1957,229 @@ mod refusal_locus_tests {
                 }
             }
         })
+    }
+
+    fn diagnostic_document(locus: Value) -> Value {
+        json!({"format":"filament-outcome/1","diagnostics":[{
+            "code":"unsupported_projection","cause":"unbounded-extent","details":null,
+            "locus":locus,"message":"operation move parameter n: Integer"}]})
+    }
+
+    fn imported_locus() -> Value {
+        json!({"kind":"located","file":"Invoice.model","sourceIdentity":"ix://example/Invoice:Model_V1",
+            "span":{"start":{"line":17,"column":9},"end":{"line":21,"column":14}}})
+    }
+
+    #[test]
+    #[trace("TC-3081", "FR-267-AC-33")]
+    fn imported_loci_and_native_controls_preserve_distinct_wire_forms() {
+        use super::{read_outcome_diagnostics, LocatedRead, NativeRunLimits};
+        for identity in [
+            "ix://example/Invoice:Model_V1",
+            "ix://example/invoice:model_v1",
+        ] {
+            let locus = OutcomeLocus::ImportedLocated {
+                file: "Invoice.model".to_owned(),
+                source_identity: identity.to_owned(),
+                span: serde_json::from_value(imported_locus()["span"].clone()).unwrap(),
+            };
+            let wire = serde_json::to_value(&locus).unwrap();
+            assert_eq!(wire["sourceIdentity"], identity);
+            assert!(wire["span"]["start"].get("byte").is_none());
+            assert!(wire["span"]["end"].get("byte").is_none());
+            let NativeRunResult::Clause(record) = read_native_run_result(
+                &serde_json::to_vec(&clause_document(wire.clone())).unwrap(),
+            )
+            .unwrap() else {
+                panic!("a clause record")
+            };
+            assert!(
+                matches!(record.refusal_locus(),Some(RefusalLocusRead::Located(LocatedRead::Imported{file,source_identity,span})) if file=="Invoice.model" && source_identity==identity && span.start.line.get()==17 && span.end.line.get()==21 && span.end.column.get()==14)
+            );
+            let decoded = read_outcome_diagnostics(
+                &serde_json::to_vec(&diagnostic_document(wire)).unwrap(),
+                NativeRunLimits::UNBOUNDED,
+            )
+            .unwrap();
+            assert!(
+                matches!(decoded[0].locus(),Some(RefusalLocusRead::Located(LocatedRead::Imported{source_identity,..})) if source_identity==identity)
+            );
+        }
+        let native = OutcomeLocus::Located {
+            file: "unit.native".to_owned(),
+            span: fsl_foundation::LocatedSpan {
+                start: fsl_foundation::Position {
+                    byte: 14,
+                    line: 2,
+                    column: 3,
+                },
+                end: fsl_foundation::Position {
+                    byte: 18,
+                    line: 2,
+                    column: 7,
+                },
+            },
+        };
+        let wire = serde_json::to_value(native).unwrap();
+        assert!(wire.get("sourceIdentity").is_none());
+        let NativeRunResult::Clause(record) =
+            read_native_run_result(&serde_json::to_vec(&clause_document(wire.clone())).unwrap())
+                .unwrap()
+        else {
+            panic!("a clause record")
+        };
+        assert!(
+            matches!(record.refusal_locus(),Some(RefusalLocusRead::Located(LocatedRead::Native{span,..})) if span.start.byte==14 && span.end.byte==18)
+        );
+        let decoded = read_outcome_diagnostics(
+            &serde_json::to_vec(&diagnostic_document(wire)).unwrap(),
+            NativeRunLimits::UNBOUNDED,
+        )
+        .unwrap();
+        assert!(
+            matches!(decoded[0].locus(),Some(RefusalLocusRead::Located(LocatedRead::Native{span,..})) if span.start.byte==14)
+        );
+    }
+
+    #[test]
+    #[trace("TC-3081", "FR-267-AC-34")]
+    fn imported_loci_refuse_mixed_missing_and_malformed_members() {
+        use super::{read_outcome_diagnostics, NativeRunLimits};
+        let original = imported_locus();
+        let mut mutations = Vec::new();
+        for member in ["sourceIdentity", "file", "span"] {
+            let mut bad = original.clone();
+            bad.as_object_mut().unwrap().remove(member);
+            mutations.push(bad);
+        }
+        for identity in [
+            Value::Null,
+            json!("urn:example:Invoice"),
+            json!("ix://example/Invoice%20Model"),
+            json!("ix://example/Invóice"),
+        ] {
+            let mut bad = original.clone();
+            bad["sourceIdentity"] = identity;
+            mutations.push(bad);
+        }
+        for (start, end) in [
+            (json!(0), None),
+            (json!(0), Some(json!(0))),
+            (Value::Null, Some(Value::Null)),
+        ] {
+            let mut bad = original.clone();
+            bad["span"]["start"]["byte"] = start;
+            if let Some(end) = end {
+                bad["span"]["end"]["byte"] = end;
+            }
+            mutations.push(bad);
+        }
+        let mut bad = original.clone();
+        bad["source"] = json!({"authority":"program","identity":"unit"});
+        mutations.push(bad);
+        let mut bad = original.clone();
+        bad["extra"] = json!(true);
+        mutations.push(bad);
+        let mut bad = original.clone();
+        bad["span"]["start"]["line"] = json!(0);
+        mutations.push(bad);
+        for bad in mutations {
+            assert!(
+                read_native_run_result(&serde_json::to_vec(&clause_document(bad.clone())).unwrap())
+                    .is_err(),
+                "{bad}"
+            );
+            assert!(
+                read_outcome_diagnostics(
+                    &serde_json::to_vec(&diagnostic_document(bad.clone())).unwrap(),
+                    NativeRunLimits::UNBOUNDED
+                )
+                .is_err(),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    #[trace("TC-1746", "FR-663-AC-4", "FR-267-AC-34")]
+    fn imported_command_details_are_closed_without_native_labels_or_bytes() {
+        let locus = imported_locus();
+        let details = json!({"path":locus["file"],"sourceIdentity":locus["sourceIdentity"],"span":locus["span"]});
+        let document = |details| json!({"format":"native-run-result/2","stage":"check","code":"unsupported_projection","cause":"unbounded-extent","message":"parameter n: Integer","basis":"unavailable","details":details});
+        let NativeRunResult::CommandError(record) =
+            read_native_run_result(&serde_json::to_vec(&document(details.clone())).unwrap())
+                .unwrap()
+        else {
+            panic!("command error")
+        };
+        assert!(matches!(
+            record.details().get("sourceIdentity").unwrap().node(),
+            quire_canonical::Node::String("ix://example/Invoice:Model_V1")
+        ));
+        let mut mutations = Vec::new();
+        for member in ["path", "span", "sourceIdentity"] {
+            let mut bad = details.clone();
+            bad.as_object_mut().unwrap().remove(member);
+            mutations.push(bad);
+        }
+        let mut bad = details.clone();
+        bad["source"] = json!({"authority":"program","identity":"unit"});
+        mutations.push(bad);
+        let mut bad = details.clone();
+        bad["span"]["start"]["byte"] = json!(0);
+        bad["span"]["end"]["byte"] = json!(0);
+        mutations.push(bad);
+        let mut bad = details.clone();
+        bad["sourceIdentity"] = Value::Null;
+        mutations.push(bad);
+        for bad in mutations {
+            assert!(
+                read_native_run_result(&serde_json::to_vec(&document(bad.clone())).unwrap())
+                    .is_err(),
+                "{bad}"
+            );
+        }
+    }
+
+    #[test]
+    #[trace("TC-3081", "FR-267-AC-33", "FR-267-AC-34")]
+    fn outcome_diagnostic_reader_limits_its_claim_and_rejects_invalid_diagnostics() {
+        use super::{read_outcome_diagnostics, NativeRunLimits};
+        let mut document = diagnostic_document(imported_locus());
+        document["result"] = json!("this payload is deliberately outside the diagnostic-only seam");
+        let bytes = serde_json::to_vec(&document).unwrap();
+        assert_eq!(
+            read_outcome_diagnostics(&bytes, NativeRunLimits::UNBOUNDED)
+                .unwrap()
+                .len(),
+            1
+        );
+        for limits in [
+            NativeRunLimits {
+                max_input_bytes: 0,
+                ..NativeRunLimits::UNBOUNDED
+            },
+            NativeRunLimits {
+                max_working_bytes: 0,
+                ..NativeRunLimits::UNBOUNDED
+            },
+        ] {
+            assert!(read_outcome_diagnostics(&bytes, limits).is_err());
+        }
+        let mut bad = document.clone();
+        bad["diagnostics"][0]["unknown"] = json!(true);
+        assert!(read_outcome_diagnostics(
+            &serde_json::to_vec(&bad).unwrap(),
+            NativeRunLimits::UNBOUNDED
+        )
+        .is_err());
+        let mut bad = document;
+        bad["format"] = json!("native-run-result/2");
+        assert!(read_outcome_diagnostics(
+            &serde_json::to_vec(&bad).unwrap(),
+            NativeRunLimits::UNBOUNDED
+        )
+        .is_err());
     }
 
     #[trace("TC-3081", "FR-267-AC-25", "FR-267-AC-26")]
@@ -2050,8 +2325,30 @@ fn validate_command_details(
     document: &CommandErrorRead,
     details: NodeRef<'_>,
     code: Code,
+    budget: &mut WorkingBudget,
 ) -> Result<(), NativeRunReadError> {
     let invalid = |member, reason| NativeRunReadError::Invalid { member, reason };
+    if code == Code::UnsupportedProjection
+        && document.stage == "check"
+        && document.cause.as_deref() == Some("unbounded-extent")
+    {
+        if matches!(details.node(), Node::Null) {
+            return Ok(());
+        }
+        // The shallow envelope splices details out. Validate the original
+        // retained arena member, rather than its empty placeholder.
+        let encoded = budget
+            .canonical(&details)
+            .map_err(|_| budget.copy_failure("details", "cannot copy imported-source details"))?;
+        budget.charge(u64::try_from(encoded.len()).unwrap_or(u64::MAX))?;
+        let _: ImportedCommandDetails = serde_json::from_slice(&encoded).map_err(|_| {
+            invalid(
+                "details",
+                "closed imported-source details without bytes or native labels",
+            )
+        })?;
+        return Ok(());
+    }
     let Node::Object(members) = details.node() else {
         return Err(invalid("details", "expected an object"));
     };
@@ -2200,6 +2497,17 @@ fn validate_command_details(
     Ok(())
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ImportedCommandDetails {
+    #[serde(rename = "path")]
+    _path: String,
+    #[serde(rename = "span")]
+    _span: fsl_foundation::SourceCoordinates,
+    #[serde(rename = "sourceIdentity", deserialize_with = "source_identity_uri")]
+    _source_identity: String,
+}
+
 /// Keep the potentially deep deciding element in the canonical arena while
 /// serde reads the fixed-depth `/2` envelope. The original node is validated
 /// and retained separately; the placeholder is never exposed to consumers.
@@ -2283,6 +2591,150 @@ impl Encode for WitnessSplice<'_> {
 #[ix_trace_rs::string_edge]
 pub fn read_native_run_result(bytes: &[u8]) -> Result<NativeRunResult, NativeRunReadError> {
     read_native_run_result_bounded(bytes, NativeRunLimits::UNBOUNDED)
+}
+
+/// A strictly decoded diagnostic, without admitting the surrounding outcome payload.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OutcomeDiagnosticRead {
+    code: String,
+    #[serde(default, deserialize_with = "present")]
+    cause: Option<Option<String>>,
+    #[serde(default, deserialize_with = "present")]
+    locus: Option<Option<RefusalLocusRead>>,
+    message: String,
+    #[serde(default, rename = "details", deserialize_with = "present")]
+    _details: Option<Option<Box<RawValue>>>,
+    #[serde(default, rename = "construct", deserialize_with = "present")]
+    _construct: Option<String>,
+    #[serde(default, rename = "declaration", deserialize_with = "present")]
+    _declaration: Option<String>,
+    #[serde(default, rename = "hint", deserialize_with = "present")]
+    _hint: Option<String>,
+    #[serde(default, rename = "label", deserialize_with = "present")]
+    _label: Option<String>,
+    #[serde(default, rename = "profile", deserialize_with = "present")]
+    _profile: Option<String>,
+    #[serde(default, rename = "text", deserialize_with = "present")]
+    _text: Option<String>,
+}
+
+impl OutcomeDiagnosticRead {
+    /// The diagnostic's catalog code, as written.
+    pub fn code(&self) -> &str {
+        &self.code
+    }
+    /// The diagnostic's cause, absent when written as null.
+    pub fn cause(&self) -> Option<&str> {
+        self.cause.as_ref().and_then(Option::as_deref)
+    }
+    /// The strictly decoded locus, absent when written as null.
+    pub fn locus(&self) -> Option<&RefusalLocusRead> {
+        self.locus.as_ref().and_then(Option::as_ref)
+    }
+    /// The original human-readable message.
+    pub fn message(&self) -> &str {
+        &self.message
+    }
+}
+
+/// Read only the diagnostics of `filament-outcome/1`, under explicit input
+/// and working-byte bounds. Loci use the same closed decoder as native results.
+/// This does not validate or admit items, results, registry or other payloads,
+/// and does not construct an admitted [`crate::OutcomeDocument`].
+///
+/// # Errors
+/// Existing codec errors identify malformed format/diagnostic/locus data or
+/// an exhausted reader bound. No partial diagnostic list is returned.
+pub fn read_outcome_diagnostics(
+    bytes: &[u8],
+    limits: NativeRunLimits,
+) -> Result<Vec<OutcomeDiagnosticRead>, NativeRunReadError> {
+    let mut budget = WorkingBudget::new(limits.max_working_bytes);
+    let tree =
+        match quire_canonical::read_with_reservation(bytes, limits.max_input_bytes, &mut budget) {
+            Err(quire_canonical::ReadError::ReservationDenied { .. }) => {
+                return Err(budget.denied())
+            }
+            other => other?,
+        };
+    let root = tree.root();
+    let format = root
+        .get("format")
+        .and_then(|node| match node.node() {
+            Node::String(value) => Some(value),
+            _ => None,
+        })
+        .unwrap_or("<missing>");
+    if format != crate::outcome::OUTCOME_FORMAT {
+        return Err(NativeRunReadError::UnsupportedFormat(format.to_owned()));
+    }
+    let diagnostics = root.get("diagnostics").ok_or(NativeRunReadError::Invalid {
+        member: "diagnostics",
+        reason: "a diagnostic array is required",
+    })?;
+    let Node::Array(entries) = diagnostics.node() else {
+        return Err(NativeRunReadError::Invalid {
+            member: "diagnostics",
+            reason: "a diagnostic array is required",
+        });
+    };
+    let count = entries.len();
+    budget.charge(
+        u64::try_from(entries.len())
+            .unwrap_or(u64::MAX)
+            .saturating_mul(
+                u64::try_from(core::mem::size_of::<OutcomeDiagnosticRead>()).unwrap_or(u64::MAX),
+            ),
+    )?;
+    let mut decoded = Vec::new();
+    decoded
+        .try_reserve_exact(count)
+        .map_err(|_| NativeRunReadError::Allocation {
+            member: "diagnostics",
+            requested: count,
+        })?;
+    for (index, entry) in entries.enumerate() {
+        let details = entry.get("details");
+        if !details.is_some_and(|details| matches!(details.node(), Node::Object(_) | Node::Null)) {
+            return Err(NativeRunReadError::Invalid {
+                member: "diagnostics.details",
+                reason: "an object or null is required",
+            });
+        }
+        let encoded = budget
+            .canonical(&entry)
+            .map_err(|_| budget.copy_failure("diagnostics", "cannot copy a diagnostic"))?;
+        budget.charge(u64::try_from(encoded.len()).unwrap_or(u64::MAX))?;
+        let diagnostic: OutcomeDiagnosticRead =
+            read_typed(&encoded).map_err(|error| match error {
+                NativeRunReadError::MalformedMember { member, source } => {
+                    NativeRunReadError::MalformedMember {
+                        member: format!("diagnostics[{index}].{member}"),
+                        source,
+                    }
+                }
+                other => other,
+            })?;
+        if diagnostic.cause.is_none() || diagnostic.locus.is_none() || diagnostic._details.is_none()
+        {
+            return Err(NativeRunReadError::Invalid {
+                member: "diagnostics",
+                reason: "cause, details and locus must be present, possibly null",
+            });
+        }
+        if let Some(locus) = diagnostic.locus() {
+            validate_refusal_locus(locus).map_err(|error| match error {
+                NativeRunReadError::Invalid { reason, .. } => NativeRunReadError::Invalid {
+                    member: "diagnostics.locus",
+                    reason,
+                },
+                other => other,
+            })?;
+        }
+        decoded.push(diagnostic);
+    }
+    Ok(decoded)
 }
 
 /// FR-535: [`read_native_run_result`] under the caller's encoded-input and
@@ -2500,7 +2952,7 @@ pub fn read_native_run_result_bounded(
                 reason: "unknown catalog code",
             });
         };
-        validate_command_details(&document, details, code)?;
+        validate_command_details(&document, details, code, &mut budget)?;
         Ok(NativeRunResult::CommandError(Box::new(CommandErrorRecord(
             document, tree,
         ))))
@@ -3105,6 +3557,12 @@ impl Disposition {
                     return Ok(result);
                 }
                 let cause = match refusal.as_ref() {
+                    super::RunRefusal::ReferenceCatalog(error) => {
+                        super::run_value::catalog_error_cause(error)
+                    }
+                    super::RunRefusal::Reference(error) => {
+                        super::run_value::reference_error_cause(error)
+                    }
                     super::RunRefusal::Compile(compile) => compile.cause(),
                     super::RunRefusal::Fault(_) => None,
                     super::RunRefusal::SourceNotSupplied { .. } => Some("missing-member"),
@@ -3128,6 +3586,53 @@ impl Disposition {
                 };
                 let mut record = RefusalWire::new(refusal.code().as_str(), cause);
                 match refusal.as_ref() {
+                    super::RunRefusal::ReferenceCatalog(error) => {
+                        if let fsl_package::ReferenceCatalogError::Denied(denial) = error.as_ref() {
+                            record = record.fields(BTreeMap::from([
+                                ("kind", format!("{:?}", denial.kind)),
+                                ("amount", denial.amount.to_string()),
+                            ]));
+                        }
+                    }
+                    super::RunRefusal::Reference(error) => {
+                        let fields = match error.as_ref() {
+                            crate::reference_codec::ReferenceCodecError::Normalization {
+                                cause,
+                                ..
+                            } => {
+                                fsl_semantics::model::observation::normalization_limit_record(cause)
+                                    .fields
+                            }
+                            crate::reference_codec::ReferenceCodecError::Native {
+                                cause, ..
+                            } => match cause {
+                                fsl_semantics::model::observation::AdmissionFailure::Refused(
+                                    admission,
+                                )
+                                | fsl_semantics::model::observation::AdmissionFailure::Incomplete(
+                                    admission,
+                                ) => admission.fields.clone(),
+                                fsl_semantics::model::observation::AdmissionFailure::Fault(_) => {
+                                    BTreeMap::new()
+                                }
+                            },
+                            crate::reference_codec::ReferenceCodecError::IdentityCopy {
+                                ..
+                            }
+                            | crate::reference_codec::ReferenceCodecError::Universe { .. }
+                            | crate::reference_codec::ReferenceCodecError::Transition { .. }
+                            | crate::reference_codec::ReferenceCodecError::Refused { .. }
+                            | crate::reference_codec::ReferenceCodecError::Key { .. } => {
+                                BTreeMap::new()
+                            }
+                        };
+                        let mut fields = fields;
+                        fields.insert(
+                            "path",
+                            super::run_value::reference_error_pointer(error).to_owned(),
+                        );
+                        record = record.fields(fields);
+                    }
                     super::RunRefusal::Compile(compile) => {
                         record.locus = compile.region().map(|region| {
                             crate::outcome::OutcomeLocus::from(&Locus::Region(region.clone()))

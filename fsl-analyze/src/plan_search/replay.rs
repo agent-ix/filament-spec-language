@@ -56,17 +56,23 @@ pub fn replay<R: PlanRules>(
             "the plan does not start at the initial state",
         ));
     }
+    let mut validated_steps = Vec::with_capacity(plan.steps.len());
     for (index, step) in plan.steps.iter().enumerate() {
         let expected = key(&plan.states[index + 1])?;
         let reached = if let Some(operations) = rules.native_operations() {
-            selected_outcome(
+            let selected = selected_outcome(
                 system,
                 &plan.states[index],
                 &operations,
                 |candidate| candidate == step.invocation(),
                 |ordinal, state| Ok(ordinal == step.outcome_ordinal() && key(state)? == expected),
-            )?
-            .is_some()
+            )?;
+            if let Some((validated, _)) = selected {
+                validated_steps.push(validated);
+                true
+            } else {
+                false
+            }
         } else {
             if step.outcome_ordinal().is_some() {
                 return Err(PlanSearchError::ReplayRejected(
@@ -82,6 +88,9 @@ pub fn replay<R: PlanRules>(
                     reached = true;
                     break;
                 }
+            }
+            if reached {
+                validated_steps.push(step.clone());
             }
             reached
         };
@@ -108,13 +117,17 @@ pub fn replay<R: PlanRules>(
             }
         }
     }
-    check_rules(rules, plan)?;
+    let validated = ReportedPlan {
+        states: plan.states.clone(),
+        steps: validated_steps,
+    };
+    check_rules(rules, &validated)?;
     if !u64::try_from(plan.steps.len()).is_ok_and(|length| lengths.contains(length)) {
         return Err(PlanSearchError::ReplayRejected(
             "the plan length is not a value of the domain",
         ));
     }
-    objective_value(rules, plan, kind)
+    objective_value(rules, &validated, kind)
 }
 
 /// FR-755's plan substitution seam: build the plan `operations` names, each
@@ -158,13 +171,17 @@ pub fn substitute<R: PlanRules>(
                 .successors
                 .into_iter()
                 .filter(|(step, _)| operation_name(system, step) == Some(name.as_str()))
-                .map(|(step, state)| (rules.step_key(&step), step, state))
-                .collect();
+                .map(|(step, state)| {
+                    let step = PlanStep::from(step);
+                    Ok((rules.step_key(&step)?, step, state))
+                })
+                .collect::<Result<_, super::RuleStop>>()
+                .map_err(PlanSearchError::RuleStopped)?;
             candidates.sort_by(|left, right| left.0.cmp(&right.0));
             candidates
                 .into_iter()
                 .next()
-                .map(|(_, step, state)| (PlanStep::from(step), state))
+                .map(|(_, step, state)| (step, state))
         };
         let Some((step, state)) = selected else {
             return Err(PlanSearchError::ReplayFailed {
@@ -205,11 +222,22 @@ fn selected_outcome(
             }
             Event::Completed {
                 transition,
+                receiver,
+                arguments,
                 state,
                 outcome: ordinal,
             } => match outcome(ordinal, state) {
                 Ok(true) => {
-                    selected = Some((PlanStep::new(transition.clone(), ordinal), state.clone()));
+                    match PlanStep::from_native(
+                        transition.clone(),
+                        ordinal,
+                        receiver,
+                        arguments,
+                        system,
+                    ) {
+                        Ok(step) => selected = Some((step, state.clone())),
+                        Err(stop) => failure = Some(PlanSearchError::RuleStopped(stop)),
+                    }
                     Control::Stop
                 }
                 Ok(false) => Control::Continue,

@@ -3,7 +3,7 @@
 
 use filament_checked::node::NodeKind;
 use filament_exact::{IllTypedCause, ValueType};
-use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
+use filament_semantic_value::declaration::TypeEnvironment;
 use filament_semantic_value::location::ExpressionLocation as Location;
 
 use super::check::NamedScope;
@@ -382,105 +382,11 @@ pub(crate) fn first_unbounded_component(
     types: &TypeEnvironment,
     value_type: &ValueType,
 ) -> Option<String> {
-    fn visit(
-        types: &TypeEnvironment,
-        value_type: &ValueType,
-        path: &str,
-        composites: &mut Vec<filament_exact::NodeKey>,
-    ) -> Option<String> {
-        match value_type {
-            ValueType::Boolean
-            | ValueType::Int(_)
-            | ValueType::Decimal(_)
-            | ValueType::Float(_)
-            | ValueType::Text(_)
-            | ValueType::Uuid
-            | ValueType::Timestamp
-            | ValueType::Enum(_) => None,
-            ValueType::Integer => Some(component(path, "Integer")),
-            ValueType::Rational(_) => Some(component(path, "Rational")),
-            ValueType::Quantity(_) | ValueType::CarriedQuantity(_) => {
-                Some(component(path, "Quantity"))
-            }
-            ValueType::BoundedQuantity(_) => Some(component(path, "Quantity")),
-            ValueType::String => Some(component(path, "String")),
-            ValueType::Bytes => Some(component(path, "Bytes")),
-            ValueType::JsonObject => Some(component(path, "JsonObject")),
-            ValueType::Reference(_) | ValueType::Population(None) => {
-                Some(component(path, "unbounded population"))
-            }
-            ValueType::Population(Some(_)) => None,
-            ValueType::Option(inner) => visit(types, inner, &component(path, "some"), composites),
-            ValueType::Collection(collection) => {
-                if collection.bound().is_none() {
-                    return Some(component(path, "unbounded collection"));
-                }
-                visit(
-                    types,
-                    collection.element(),
-                    &component(path, "element"),
-                    composites,
-                )
-            }
-            ValueType::Map(map) => {
-                if map.bound().is_none() {
-                    return Some(component(path, "unbounded map"));
-                }
-                visit(types, map.key(), &component(path, "key"), composites)
-                    .or_else(|| visit(types, map.values(), &component(path, "value"), composites))
-            }
-            ValueType::Composite(key) => {
-                if composites.contains(key) {
-                    return Some(component(path, "recursive composite"));
-                }
-                let Some(declaration) = types.composite(key.clone()) else {
-                    return Some(component(path, "unknown composite"));
-                };
-                composites.push(key.clone());
-                let result = match declaration.shape() {
-                    CompositeShape::Record(fields) => fields.iter().find_map(|field| {
-                        visit(
-                            types,
-                            field.value_type(),
-                            &component(path, field.name()),
-                            composites,
-                        )
-                    }),
-                    CompositeShape::Tuple(items) => {
-                        items.iter().enumerate().find_map(|(index, ty)| {
-                            visit(types, ty, &component(path, &format!("{index}")), composites)
-                        })
-                    }
-                    CompositeShape::Union(members) => members.iter().find_map(|member| {
-                        member
-                            .positions()
-                            .iter()
-                            .enumerate()
-                            .find_map(|(index, ty)| {
-                                visit(
-                                    types,
-                                    ty,
-                                    &component(path, &format!("{}[{index}]", member.identifier())),
-                                    composites,
-                                )
-                            })
-                    }),
-                };
-                composites.pop();
-                result
-            }
-        }
-    }
-
-    visit(types, value_type, "domain", &mut Vec::new())
-}
-
-fn component(parent: &str, name: &str) -> String {
-    if parent.is_empty() {
-        name.to_owned()
-    } else {
-        format!("{parent}.{name}")
-    }
+    super::finite_domain::first_unbounded_component(
+        types,
+        value_type,
+        super::finite_domain::DomainContext::ValueSynthesis,
+    )
 }
 
 #[cfg(test)]

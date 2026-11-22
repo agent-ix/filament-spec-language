@@ -1,0 +1,26 @@
+   Compiling fsl-replay v0.3.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-replay)
+error[E0365]: `NormalizationReferenceBudget` is only public within the crate, and cannot be re-exported outside
+   --> fsl-replay/src/spine.rs:241:9
+    |
+241 | pub use run_value::NormalizationReferenceBudget;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ re-export of crate public `NormalizationReferenceBudget`
+    |
+    = note: consider declaring type or module `NormalizationReferenceBudget` with `pub`
+
+warning: unused import: `identity_form::is_effective_form`
+   --> fsl-replay/src/spine.rs:234:16
+    |
+234 | pub(crate) use identity_form::is_effective_form;
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `run_value::NormalizationReferenceBudget`
+   --> fsl-replay/src/spine.rs:241:9
+    |
+241 | pub use run_value::NormalizationReferenceBudget;
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+For more information about this error, try `rustc --explain E0365`.
+warning: `fsl-replay` (lib test) generated 2 warnings
+error: could not compile `fsl-replay` (lib test) due to 1 previous error; 2 warnings emitted

@@ -1295,6 +1295,12 @@ impl RunCause {
             | Self::ExportOutput { .. }
             | Self::TlFault(_) => filament_semantic_value::catalog::Category::InternalFailure,
             Self::SpineRun(refusal) => refusal.category(),
+            // FR-663/TC-1746: an unbounded plan parameter is a check-time
+            // admission refusal. Other unsupported projections retain their
+            // existing catalog category.
+            Self::Spine(failure) if failure.refusal.unbounded_parameter_origin().is_some() => {
+                filament_semantic_value::catalog::Category::Refusal
+            }
             Self::AnalyzeRefused(refusal) => refusal.document().category(),
             Self::MonitorRefused(refusal) => refusal.document().category(),
             Self::AnalyzeFault => filament_semantic_value::catalog::Category::InternalFailure,
@@ -1871,6 +1877,11 @@ pub fn run_with_limits(
 /// Run with explicit byte ceilings and request members supplied beside the
 /// request file (FR-640): [`run_with_providers`] with no provider, the
 /// default [`ProviderOptions`] and a handle that is never cancelled.
+/// Function calls use FR-181's canonical argument and completed-value forms.
+/// Verification plans and independent selections run through their existing
+/// coordinators, preserving their dispositions and aggregate exit category.
+/// Drivers dispatch the run verb here rather than through function-only
+/// preparation and execution.
 pub fn run_with_limits_and_overrides(
     path: &Path,
     limits: RunLimits,
@@ -4466,7 +4477,7 @@ fn prepare_complete_run(
     let requirements = call
         .requirements
         .as_ref()
-        .map(requirements::read)
+        .map(|value| requirements::read(value, "/call/requirements"))
         .transpose()?;
     let documents = request
         .models
@@ -4788,23 +4799,23 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
 /// FR-100, FR-650: the spine call a request's `call` names, its arguments in
 /// the run value form, before any snapshot is read.
 fn read_call(call: &wire::Call, request: &wire::Request) -> Result<fsl_replay::spine::Call> {
-    // FR-650: a `value` is a JSON integer in the signed 64-bit range or a JSON
-    // object; the run reads it against its parameter's declared type.
+    // Canonical run values are objects; the typed reader closes their
+    // member sets against each parameter after the program is checked.
     let wire_arguments = call
         .arguments
         .iter()
         .enumerate()
         .map(|(index, argument)| {
-            if !(argument.value.is_object() || argument.value.as_i64().is_some()) {
+            if !argument.value.is_object() {
                 return Err(RunCause::ClauseRequest {
                     member: format!("/call/arguments/{index}/value"),
-                    reason: "expected a JSON integer in the signed 64-bit range or an object"
-                        .to_owned(),
+                    reason: "expected a typed canonical value object".to_owned(),
                 });
             }
             Ok(fsl_replay::spine::WireArgument {
                 parameter: argument.parameter.clone(),
                 value: argument.value.clone(),
+                selected_object: None,
             })
         })
         .collect::<Result<Vec<_>>>()?;
@@ -4815,6 +4826,7 @@ fn read_call(call: &wire::Call, request: &wire::Request) -> Result<fsl_replay::s
         request.limits.supplied.unwrap_or_default(),
     );
     spine_call.wire_arguments = wire_arguments;
+    spine_call.canonical_values = true;
     spine_call.live_occurrences = call.evaluation.live_occurrences();
     Ok(spine_call)
 }
@@ -4922,12 +4934,20 @@ mod tests {
     fn a_package_without_a_graph_ends_the_run_with_the_typed_emission_cause() {
         use fsl_analyze::analyze::document::HeldIdentityError;
         use fsl_analyze::analyze::GraphUnavailable;
-        let cause = identity_cause(HeldIdentityError::NoGraph(GraphUnavailable::NotEmitted));
+        let cause = identity_cause(HeldIdentityError::NoGraph(GraphUnavailable::EmitRefused(
+            Box::new(fsl_package::EmitRefusal::OutputLimit(
+                fsl_foundation::diagnostic::LimitExceeded::new(
+                    fsl_foundation::Setting::EmitOutputBytes,
+                    1,
+                    2,
+                ),
+            )),
+        )));
         assert!(matches!(
             cause,
-            RunCause::AnalyzeEmission(GraphUnavailable::NotEmitted)
+            RunCause::AnalyzeEmission(GraphUnavailable::EmitRefused(_))
         ));
-        assert_eq!(cause.code(), Code::ResourceExhausted);
+        assert_eq!(cause.code(), Code::StageLimitExceeded);
         assert_ne!(
             cause.category(),
             filament_semantic_value::catalog::Category::InternalFailure

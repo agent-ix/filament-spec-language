@@ -1,0 +1,31 @@
+   Compiling filament-exact v0.3.0 (https://github.com/agent-ix/filament-exact?rev=b26a8e4c592503fccdc4a0e3d2cce23dd8487616#b26a8e4c)
+   Compiling proc-macro2 v1.0.107
+   Compiling jsonschema v0.17.1
+   Compiling quote v1.0.47
+   Compiling filament-specification-qualification v0.1.1 (https://github.com/agent-ix/filament-specification?rev=2bec0061eaaa91f095eb1cafe6de11519302d337#2bec0061)
+   Compiling syn v2.0.119
+   Compiling filament-semantic-value v0.1.5 (https://github.com/agent-ix/filament-semantic-value?rev=fa5e78aa71fcea5418492b67f13a33124af84459#fa5e78aa)
+   Compiling fsl-foundation v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-foundation)
+   Compiling filament-checked v0.1.6 (https://github.com/agent-ix/filament-eval?rev=a0e8e1254827de71738cbf87646e09ef68531692#a0e8e125)
+   Compiling filament-contract-model v0.1.2 (https://github.com/agent-ix/filament-contract-ir?rev=a03c86b3bcb639c0f029bfc5d983803ef66124c3#a03c86b3)
+   Compiling filament-eval v0.1.6 (https://github.com/agent-ix/filament-eval?rev=a0e8e1254827de71738cbf87646e09ef68531692#a0e8e125)
+   Compiling fsl-cst v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-cst)
+   Compiling filament-observation v0.1.1 (https://github.com/agent-ix/filament-observation?rev=a583c51260420829c0cd99b24c3af96311de05b2#a583c512)
+   Compiling fsl-forms v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-forms)
+   Compiling fsl-semantics v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-semantics)
+   Compiling fsl-package v0.3.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-package)
+error[E0433]: cannot find type `SelectedExactIdentities` in this scope
+   --> fsl-package/src/reference_catalog.rs:367:26
+    |
+367 |         let identities = SelectedExactIdentities::from_stage_rows(
+    |                          ^^^^^^^^^^^^^^^^^^^^^^^ use of undeclared type `SelectedExactIdentities`
+    |
+help: an enum with a similar name exists
+    |
+367 -         let identities = SelectedExactIdentities::from_stage_rows(
+367 +         let identities = SelectedExactIdentity::from_stage_rows(
+    |
+
+For more information about this error, try `rustc --explain E0433`.
+error: could not compile `fsl-package` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...

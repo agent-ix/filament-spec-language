@@ -284,10 +284,10 @@ pub use identity::{
 };
 pub use limits::{AccountingLimits, CallerLimits, EngineLimits, RenderLimits};
 pub use model_check::counterexample::{
-    undefined_finding, ClaimPredicate, ClauseRunCounterexample, CounterexampleKind, Lasso,
-    LoopProofCounterexample, LoopProofFailure, LoopProofObligation, MappingSite,
+    undefined_finding, ClaimPredicate, ClauseRunCounterexample, ClosureStutter, CounterexampleKind,
+    Lasso, LoopProofCounterexample, LoopProofFailure, LoopProofObligation, MappingSite,
     ModelClauseCounterexample, ModelStep, ObservedTemporalCounterexample, ObservedTemporalKind,
-    ObservedTemporalStep, Race, TemporalCounterexample, TimedPoint, UndefinedEvaluation,
+    ObservedTemporalStep, Race, StepSite, TemporalCounterexample, TimedPoint, UndefinedEvaluation,
     UndefinedLocus, UndefinedSite,
 };
 pub use model_check::existential_outcome::{ExistentialInstanceOutcome, ExistentialOutcome};
@@ -357,8 +357,8 @@ pub use model_check::replay::{
     replay_checked_source_model_trace, replay_model_trace, replay_model_trace_from_package,
     replay_model_trace_with_temporal_selections, replay_protocol_trace,
     replay_protocol_trace_from_package, replay_protocol_trace_with_temporal_selections,
-    BehaviourValuationEnd, BehaviourValuations, DelayBar, HandoffSupply, ModelTraceEnd,
-    ModelTraceRefusal, ModelTraceReplayResult, ModelTraceRun, ModelTraceSettlement,
+    BehaviourValuationEnd, BehaviourValuations, ClosureRule, DelayBar, HandoffSupply,
+    ModelTraceEnd, ModelTraceRefusal, ModelTraceReplayResult, ModelTraceRun, ModelTraceSettlement,
     ModelTraceSubject, ModelTraceValue, ProtocolTraceEnd, ProtocolTraceRun, ProtocolTraceSubject,
     StrongFairnessHint, TimedReplay,
 };

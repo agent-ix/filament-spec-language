@@ -17,8 +17,8 @@ use filament_semantic_value::fairness::FairnessConstraint;
 use fsl_foundation::node_wire::node_key_to_json;
 use fsl_package::CheckedPackage;
 use fsl_replay::planner::{
-    read_settlement_request, settle, subject_text, Budget, PlannerDeclaration, PlannerResult,
-    ReadLimits, RequestRefusal, SettlementRequest,
+    dependency_graphs, read_settlement_request, settle, subject_text, Budget, PlannerDeclaration,
+    PlannerResult, ReadLimits, RequestRefusal, SettlementRequest,
 };
 use fsl_route::declaration::{DeclaredItem, ItemPremise};
 use fsl_route::request::RequestItem;
@@ -313,8 +313,11 @@ impl Chain {
         request: &Value,
         limits: &ReadLimits,
     ) -> Result<SettlementRequest, RequestRefusal> {
+        let dependencies = dependency_graphs(&self.package, fsl_package::EmitLimits::new(1 << 26))
+            .expect("the dependency closure has graphs");
         read_settlement_request(
             &self.package,
+            &dependencies,
             &serde_json::to_vec(request).expect("bytes"),
             limits,
         )

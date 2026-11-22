@@ -18,14 +18,17 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use filament_semantic_value::catalog::CatalogCode;
+use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
 use fsl_package::CheckedPackage;
-use fsl_replay::planner::{composition_premises, CompositionPremise, ItemKey, SlotKey};
-use fsl_replay::TerminalRecord;
+use fsl_replay::planner::{composition_premises, CompositionPremise, ItemKey, SlotKey, SlotRole};
+use fsl_replay::{DeclineCode, ProofRefusalCause, TerminalRecord};
 use fsl_route::request::{ExtentClassification, ItemKind};
 use fsl_route::Registry;
-use fsl_semantics::check::{Capability, CheckedComposition, ClauseRef, CompositionSlotKey};
+use fsl_semantics::check::{
+    Capability, CheckedComposition, ClauseRef, ComponentPackages, CompositionSlotKey,
+};
 use fsl_semantics::library::LibraryName;
 use serde_json::{json, Map, Value};
 
@@ -34,7 +37,8 @@ use super::{
     ResolvedItem, SubjectSelection,
 };
 use crate::analyze::{
-    ClaimItem, CompositionItem, Diagnostic, ItemForm, ItemOptions, Payload, SubjectBinding,
+    AnalyzeLimits, ClaimItem, CompositionItem, Diagnostic, GraphUnavailable, ItemForm, ItemOptions,
+    Payload, SubjectBinding,
 };
 
 /// A claim item the composition selection derives or settles (FR-1044),
@@ -55,6 +59,11 @@ pub struct CompositionClaim {
     /// whose own settlements decide whether a provider's `proved` for the
     /// composition stands. Empty for every other claim.
     pub required: Vec<Guarantee>,
+    /// For a composition, the package of each of its `components` entries by
+    /// name and of the component of each guarantee clause: the graphs the ids
+    /// of its component slots index (FSpec FR-322 "Scope"). Empty for every
+    /// other claim.
+    pub components: ComponentPackages,
 }
 
 /// A component-guarantee entry of a composition's `premises` and the item
@@ -106,6 +115,7 @@ pub(super) struct Context<'a> {
     pub subject: &'a SubjectSelection,
     pub registry: &'a Registry,
     pub binding: &'a SubjectBinding<'a>,
+    pub limits: &'a AnalyzeLimits,
 }
 
 fn composition_named<'p>(
@@ -241,7 +251,11 @@ pub(super) fn resolve(
         return settled(failed(index, name));
     };
     if let Some(caller) = selection.premises.as_ref() {
-        if *caller != Value::Array(listed.clone()) {
+        let restated = match restate(ctx, composition, &slots, index, caller) {
+            Ok(restated) => restated,
+            Err(refused) => return settled(*refused),
+        };
+        if restated != Value::Array(listed.clone()) {
             let mut detail = Map::new();
             detail.insert("member".to_owned(), json!("premises"));
             detail.insert(
@@ -314,6 +328,7 @@ fn routed(
         CompositionItem {
             premises: listed,
             assumptions: composition.item().assumptions,
+            components: composition.component_packages(),
         },
         unrouted,
     )
@@ -332,6 +347,7 @@ fn claim_item(
     let candidates = ctx
         .registry
         .candidates(Capability::Composition, named.as_ref());
+    let components = form.components.clone();
     let item = ClaimItem {
         request_index: index,
         claim: occurrence(node),
@@ -366,6 +382,7 @@ fn claim_item(
         package: None,
         settled: None,
         required: Vec::new(),
+        components,
     }))
 }
 
@@ -497,7 +514,336 @@ fn premise_item(ctx: &Context<'_>, index: RequestIndex, premise: Premise) -> Res
                 package: Some(component),
                 settled,
                 required: Vec::new(),
+                components: ComponentPackages::default(),
             }))
         }
+    }
+}
+
+/// Why a component package has no graph to resolve a key against.
+enum Unavailable {
+    /// The strict reader refused the package the run emitted for it.
+    Refused(fsl_package::PackageAdmissionRefusal),
+    /// The package emitted no complete admitted bytes, or they hold no
+    /// readable graph.
+    Emission(GraphUnavailable),
+    /// The component's package is no dependency of the request's package, so
+    /// there is none to emit.
+    NotDependency,
+}
+
+/// A code FSpec FR-272-AC-22 gives no cause: the cause is the empty string,
+/// which writes no `cause` member.
+fn without_cause(code: &'static str) -> CatalogCode {
+    CatalogCode::new(code, "")
+}
+
+/// The settled item that reports the typed cause of an unavailable component
+/// graph: the emit limit is the limit cause, every other failure its own
+/// (FSL FR-621-AC-17).
+fn unavailable(index: RequestIndex, name: &str, failure: &Unavailable) -> Box<ResolvedItem> {
+    let record = match failure {
+        Unavailable::Refused(refusal) => TerminalRecord::disposition_declined(
+            index,
+            if refusal.code == Code::ResourceExhausted {
+                ProofRefusalCause::IncompleteInput
+            } else {
+                ProofRefusalCause::InvalidInput
+            },
+            DeclineCode::Fsl(refusal.code),
+            // FSpec FR-272-AC-22: only the reader-vocabulary codes carry no
+            // cause, and `Code` names none of them, so a reader refusal keeps
+            // its catalog cause.
+            CatalogCode::new(refusal.code.as_str(), refusal.catalog_cause()),
+        ),
+        Unavailable::Emission(GraphUnavailable::EmitRefused(refusal)) => {
+            TerminalRecord::disposition_declined(
+                index,
+                if refusal.code() == Code::StageLimitExceeded {
+                    ProofRefusalCause::IncompleteInput
+                } else {
+                    ProofRefusalCause::InvalidInput
+                },
+                DeclineCode::Fsl(refusal.code()),
+                refusal.cause().map_or_else(
+                    || without_cause(refusal.code().as_str()),
+                    |cause| CatalogCode::new(refusal.code().as_str(), cause),
+                ),
+            )
+        }
+        Unavailable::Emission(GraphUnavailable::NotEmitted) => {
+            TerminalRecord::disposition_declined(
+                index,
+                ProofRefusalCause::InvalidInput,
+                DeclineCode::Fsl(Code::InvalidPackage),
+                CatalogCode::new("invalid_package", "invalid-value"),
+            )
+        }
+        Unavailable::NotDependency => TerminalRecord::disposition_declined(
+            index,
+            ProofRefusalCause::InvalidInput,
+            DeclineCode::Fsl(Code::MissingImport),
+            CatalogCode::new("missing_import", "missing-selection"),
+        ),
+        Unavailable::Emission(GraphUnavailable::Unreadable(_)) => {
+            TerminalRecord::disposition_declined(
+                index,
+                ProofRefusalCause::InvalidInput,
+                DeclineCode::Fsl(Code::InvalidPackage),
+                CatalogCode::new("invalid_package", "invalid-value"),
+            )
+        }
+    };
+    Box::new(ResolvedItem::Settled {
+        claim_name: Some(name.to_owned()),
+        record: Box::new(record),
+    })
+}
+
+/// The caller's `premises` with the node ids of each `component-guarantee`
+/// key that holds index segments resolved to their structural form against
+/// the graph of the slot's component package (FSpec FR-322 "Scope"), so that
+/// the list a result wrote can be restated as written. A peer clause id of the
+/// key's `assumptions` resolves against the graph of the package of the
+/// component of the peer guarantee the declaration's assumption set names at
+/// that position.
+///
+/// # Errors
+///
+/// The settled item that refuses the key: `invalid_runtime_input`
+/// `invalid-value` at the key for a key of another package or of a guarantee
+/// naming no component (every `component-guarantee` key, with or without an
+/// index segment), `malformed_wire`, with no cause, at the `node` member of an
+/// index segment the component graph does not hold; or the typed cause of a
+/// component package that has no graph.
+fn restate(
+    ctx: &Context<'_>,
+    composition: &CheckedComposition,
+    slots: &[CompositionPremise],
+    index: RequestIndex,
+    caller: &Value,
+) -> Result<Value, Box<ResolvedItem>> {
+    use fsl_semantics::check::wire_id::{
+        check_component_key_package, component_key_structural, key_holds_index_segment,
+        ComponentKeyRefusal, WireGraph,
+    };
+    let Value::Array(entries) = caller else {
+        return Ok(caller.clone());
+    };
+    let packages = composition.component_packages();
+    let refuse = |code: CatalogCode, pointer: String| {
+        let mut detail = Map::new();
+        detail.insert("member".to_owned(), json!("premises"));
+        detail.insert("pointer".to_owned(), json!(pointer));
+        Box::new(ResolvedItem::Settled {
+            claim_name: Some(composition.name().to_owned()),
+            record: Box::new(TerminalRecord::disposition_invalid_request(
+                index, code, detail,
+            )),
+        })
+    };
+    let mut restated = entries.clone();
+    let mut graphs: Option<BTreeMap<String, Result<WireGraph, Unavailable>>> = None;
+    for (at, entry) in restated.iter_mut().enumerate() {
+        let key_pointer = format!("/items/{}/premises/{at}/key", index.get());
+        let invalid = || {
+            refuse(
+                CatalogCode::new("invalid_runtime_input", "invalid-value"),
+                key_pointer.clone(),
+            )
+        };
+        if entry.get("role").and_then(Value::as_str) != Some(SlotRole::ComponentGuarantee.as_str())
+        {
+            continue;
+        }
+        let Some(key) = entry.get_mut("key") else {
+            continue;
+        };
+        let slot = slots.get(at).map(|premise| &premise.slot);
+        let package = slot
+            .and_then(|slot| slot.guarantee.as_ref())
+            .and_then(|clause| packages.of_component(&clause.component));
+        check_component_key_package(package, key).map_err(|_| invalid())?;
+        let Some(package) = package else {
+            return Err(invalid());
+        };
+        if !key_holds_index_segment(key) {
+            continue;
+        }
+        let graphs = graphs.get_or_insert_with(|| component_graphs(ctx, composition));
+        let graph_of = |package: &str| match graphs.get(package) {
+            Some(Ok(graph)) => Ok(Some(graph)),
+            Some(Err(failure)) => Err(unavailable(index, composition.name(), failure)),
+            None => Ok(None),
+        };
+        let Some(graph) = graph_of(package)? else {
+            return Err(invalid());
+        };
+        let assumed: &[filament_exact::NodeKey] = match slot.and_then(|slot| slot.key.as_ref()) {
+            Some(CompositionSlotKey::ComponentGuarantee(guarantee)) => &guarantee.assumptions,
+            _ => &[],
+        };
+        let mut peers = Vec::with_capacity(assumed.len());
+        for node in assumed {
+            let peer = match packages.of_clause(node) {
+                Some(package) => graph_of(package)?,
+                None => None,
+            };
+            peers.extend(peer);
+        }
+        let carried = key
+            .pointer("/temporal/subject/assumptions")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        if peers.len() != assumed.len() || carried != assumed.len() {
+            // Another assumption set than the declaration derives: the
+            // comparison refuses the list at `/premises`.
+            continue;
+        }
+        match component_key_structural(graph, Some(package), key, &peers) {
+            Ok(structural) => *key = structural,
+            Err(ComponentKeyRefusal::IndexOutOfRange { pointer, .. }) => {
+                // FSpec FR-272: `malformed_wire` carries no cause.
+                return Err(refuse(
+                    without_cause("malformed_wire"),
+                    format!("{key_pointer}{pointer}"),
+                ));
+            }
+            Err(_) => return Err(invalid()),
+        }
+    }
+    Ok(Value::Array(restated))
+}
+
+/// The graph of each component package of `composition`, by package identity:
+/// the graph the ids of the component's slots index (FSpec FR-322 "Scope"),
+/// or why it has none.
+fn component_graphs(
+    ctx: &Context<'_>,
+    composition: &CheckedComposition,
+) -> BTreeMap<String, Result<fsl_semantics::check::wire_id::WireGraph, Unavailable>> {
+    composition
+        .components()
+        .iter()
+        .map(|component| {
+            let package = component.subject.package.as_str();
+            let graph = match LibraryName::new(package)
+                .ok()
+                .and_then(|library| ctx.package.dependencies().get(&library).cloned())
+            {
+                None => Err(Unavailable::NotDependency),
+                Some(dependency) => {
+                    match crate::provider::read_package(
+                        &dependency,
+                        ctx.binding.packages,
+                        ctx.limits.emit,
+                    ) {
+                        Ok(read) => crate::analyze::DocumentGraphs::of_bytes(
+                            read.emission().package().bytes(),
+                        )
+                        .map_err(Unavailable::Emission),
+                        Err(crate::provider::NotAdmitted::Refused(refusal)) => {
+                            Err(Unavailable::Refused(refusal))
+                        }
+                        Err(crate::provider::NotAdmitted::Other(refusal)) => Err(
+                            Unavailable::Emission(GraphUnavailable::of_not_admitted(refusal)),
+                        ),
+                    }
+                }
+            };
+            (package.to_owned(), graph)
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fsl_package::{EmitRefusal, PackageAdmissionRefusal};
+    use ix_trace_rs::trace;
+
+    /// The code and cause the item settled with.
+    fn settled(failure: &Unavailable) -> (&'static str, &'static str) {
+        let item = unavailable(RequestIndex::new(0), "Sys", failure);
+        let ResolvedItem::Settled { record, .. } = *item else {
+            panic!("an unavailable graph settles the item");
+        };
+        let code = record.diagnostic().expect("a typed diagnostic");
+        (code.code(), code.cause())
+    }
+
+    fn reader_refusal(code: Code, cause: Option<&str>) -> PackageAdmissionRefusal {
+        PackageAdmissionRefusal {
+            limit: None,
+            code,
+            cause: cause.map(str::to_owned),
+            pointer: None,
+            identity: None,
+        }
+    }
+
+    /// FR-1044-AC-15, no-graph clause: a component package whose emission
+    /// reaches the emit limit settles with the emitter's own
+    /// `stage_limit_exceeded` and the limit kind's cause; no other cause is
+    /// written (FSpec FR-272's `insufficient-next-charge` has a payload the
+    /// record does not carry).
+    #[trace("TC-3155", "FR-1044-AC-15")]
+    #[test]
+    fn a_component_package_over_the_emit_limit_settles_with_the_emitters_limit_cause() {
+        let limit = fsl_foundation::diagnostic::LimitExceeded::new(
+            fsl_foundation::Setting::EmitOutputBytes,
+            1,
+            2,
+        );
+        let kind_cause = limit.kind().catalog_cause();
+        let refusal = EmitRefusal::OutputLimit(limit);
+        let failure = Unavailable::Emission(GraphUnavailable::of_not_admitted(Some(Box::new(
+            refusal.clone(),
+        ))));
+        let (code, cause) = settled(&failure);
+        assert_eq!(code, "stage_limit_exceeded");
+        assert_eq!(cause, kind_cause);
+        assert_eq!(refusal.cause(), Some(kind_cause));
+        assert_ne!(cause, "insufficient-next-charge");
+    }
+
+    /// FR-1044-AC-15: an emission that ended with no refusal of its own is no
+    /// limit stop and writes no cause.
+    #[trace("TC-3155", "FR-1044-AC-15")]
+    #[test]
+    fn an_emission_without_a_refusal_is_no_limit_stop() {
+        let (code, cause) = settled(&Unavailable::Emission(GraphUnavailable::of_not_admitted(
+            None,
+        )));
+        assert_eq!(code, "invalid_package");
+        assert_eq!(cause, "invalid-value");
+    }
+
+    /// FR-1044-AC-15: an `invalid_package` reader refusal without a cause keeps
+    /// `invalid-value`; a reader cause is written as read.
+    #[trace("TC-3155", "FR-1044-AC-15")]
+    #[test]
+    fn a_reader_refusal_without_a_cause_keeps_its_catalog_cause() {
+        let none = reader_refusal(Code::InvalidPackage, None);
+        assert_eq!(
+            settled(&Unavailable::Refused(none)),
+            ("invalid_package", "invalid-value")
+        );
+        let named = reader_refusal(Code::InvalidPackage, Some("ambiguous-name"));
+        assert_eq!(
+            settled(&Unavailable::Refused(named)),
+            ("invalid_package", "ambiguous-name")
+        );
+    }
+
+    /// FR-1044-AC-15: a component package that is no dependency of the
+    /// request's package is the catalog's `missing_import`/`missing-selection`.
+    #[trace("TC-3155", "FR-1044-AC-15")]
+    #[test]
+    fn a_component_package_that_is_no_dependency_settles_missing_import() {
+        assert_eq!(
+            settled(&Unavailable::NotDependency),
+            ("missing_import", "missing-selection")
+        );
     }
 }

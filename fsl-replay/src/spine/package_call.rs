@@ -81,8 +81,16 @@ pub fn run_package_with_sources(
     cancel: &Cancel,
 ) -> PackageCallResult {
     let attribution = std::cell::RefCell::new(None);
-    let outcome =
-        run_package_resolving(package, call, objects, None, sources, cancel, &attribution);
+    let outcome = run_package_resolving(
+        package,
+        call,
+        objects,
+        None,
+        None,
+        sources,
+        cancel,
+        &attribution,
+    );
     PackageCallResult {
         outcome,
         attribution: attribution.into_inner(),
@@ -96,7 +104,8 @@ pub fn run_package_with_snapshot_views(
     package: &BarePackage<'_>,
     call: &Call,
     objects: &ObjectEnvironment,
-    views: &[fsl_semantics::model::normalize::EffectiveView],
+    views: &[fsl_semantics::model::intake::NormalizedModel],
+    joins: &mut filament_contract_model::NativeJoinBudget,
     sources: &[fsl_foundation::Source],
     cancel: &Cancel,
 ) -> PackageCallResult {
@@ -106,6 +115,7 @@ pub fn run_package_with_snapshot_views(
         call,
         objects,
         Some(views),
+        Some(joins),
         sources,
         cancel,
         &attribution,
@@ -120,7 +130,8 @@ fn run_package_resolving(
     package: &BarePackage<'_>,
     call: &Call,
     objects: &ObjectEnvironment,
-    views: Option<&[fsl_semantics::model::normalize::EffectiveView]>,
+    views: Option<&[fsl_semantics::model::intake::NormalizedModel]>,
+    joins: Option<&mut filament_contract_model::NativeJoinBudget>,
     sources: &[fsl_foundation::Source],
     cancel: &Cancel,
     attribution: &std::cell::RefCell<Option<PackageSourceAttributionFailure>>,
@@ -175,8 +186,12 @@ fn run_package_resolving(
     let bound_objects;
     let objects = match (call.snapshot.as_ref(), views) {
         (Some(_), Some(views)) => {
-            bound_objects =
-                super::call::bind_snapshot_populations(objects, views.iter(), &parameters, call)?;
+            bound_objects = super::call::bind_snapshot_populations(
+                objects,
+                views.iter().map(|model| model.view()),
+                &parameters,
+                call,
+            )?;
             &bound_objects
         }
         _ => objects,
@@ -186,20 +201,102 @@ fn run_package_resolving(
     let universe_of = |declared: &filament_exact::EffectiveId| {
         objects.population_universe_for_type(declared).cloned()
     };
+    let catalog = match (call.canonical_values, views, joins) {
+        (true, Some(models), Some(joins)) => Some(
+            fsl_package::ReferenceCatalog::from_admitted_call(package.package(), models, joins)
+                .map_err(|cause| {
+                    cancel.poll();
+                    match cancel.tripped() {
+                        Some(cause) => Box::new(RunRefusal::Cancelled(cause)),
+                        None => super::run_value::catalog_refusal(cause),
+                    }
+                })?,
+        ),
+        _ => None,
+    };
+    let references = match (&catalog, views) {
+        (Some(catalog), Some(models)) => Some(
+            crate::reference_codec::ReferenceCodec::for_admitted_call(
+                catalog,
+                package.package(),
+                models,
+                objects,
+            )
+            .map_err(super::run_value::reference_refusal)?,
+        ),
+        _ => None,
+    };
+    let supplied_run = std::sync::Mutex::new(
+        SuppliedRun::new(call.supplied, cancel.clone())
+            .map_err(|stop| Box::new(RunRefusal::Supplied(stop)))?,
+    );
+    let restore = |value: &serde_json::Value, argument: usize, node: u64| {
+        let mut run = supplied_run.lock().expect("conversion does not unwind");
+        let mut admission =
+            super::run_value::SuppliedReferenceAdmission::new(&mut run, argument, node);
+        let restored = references
+            .as_ref()
+            .ok_or(super::run_value::ReadStop::Fault(
+                "admitted-call-has-reference-catalog",
+            ))?
+            .restore_reference(value, &mut admission, cancel, usize::MAX)
+            .map_err(|cause| {
+                super::run_value::ReadStop::Refusal(Box::new(RunRefusal::Reference(Box::new(
+                    cause,
+                ))))
+            });
+        match admission.stopped {
+            Some(stop) => Err(super::run_value::ReadStop::Refusal(Box::new(
+                RunRefusal::Supplied(stop),
+            ))),
+            None => restored,
+        }
+    };
+    let encode = |value: &Value| {
+        let mut admission = match &catalog {
+            Some(catalog) => super::run_value::NormalizationReferenceBudget::snapshot(catalog),
+            None => super::run_value::NormalizationReferenceBudget::physical(),
+        };
+        super::run_value::write_run_value(
+            value,
+            world.types(),
+            &[],
+            &[],
+            references.as_ref(),
+            &mut admission,
+            cancel,
+        )
+    };
     let object_world = call.snapshot.as_ref().map(|_| super::run_value::World {
         objects,
         universe_of: &universe_of,
+        restore_reference: references.as_ref().map(|_| {
+            &restore
+                as &dyn Fn(
+                    &serde_json::Value,
+                    usize,
+                    u64,
+                )
+                    -> Result<filament_exact::ObjectReference, super::run_value::ReadStop>
+        }),
     });
-    let forms =
-        Forms::new(world.types(), &[]).in_world(package.package().name(), object_world.as_ref());
-    let supplied = admit_wire_arguments(&forms, &parameters, call)?;
+    let forms = Forms::new(world.types(), &[])
+        .with_canonical_writer(&encode)
+        .in_world(package.package().name(), object_world.as_ref());
+    let supplied = admit_wire_arguments(&forms, &parameters, call, &supplied_run)?;
     let arguments = bind_arguments(&parameters, &supplied)?;
     let mut meter = Meter::new(call.accounting).with_cancel(cancel.clone());
     // One run for the whole invocation: both helper budgets and the caller's
     // original handle (FR-277).
-    let mut run = SuppliedRun::new(call.supplied, cancel.clone())
-        .map_err(|stop| Box::new(RunRefusal::Supplied(stop)))?;
-    let evaluation = package.call_supplied(&name, arguments, objects, &mut meter, &mut run);
+    let evaluation = package.call_supplied(
+        &name,
+        arguments,
+        objects,
+        &mut meter,
+        &mut supplied_run
+            .lock()
+            .expect("conversion and execution do not unwind"),
+    );
     if let Some(cause) = cancel.tripped() {
         return Err(Box::new(RunRefusal::Cancelled(cause)));
     }
@@ -209,12 +306,17 @@ fn run_package_resolving(
     })?;
     match &evaluation.outcome {
         FamilyOutcome::Evaluated(Outcome::Completed(value))
-            if !matches!(
-                value,
-                Value::Boolean(_) | Value::Integer(_) | Value::Reference(_)
-            ) =>
+            if call.canonical_values
+                || !matches!(
+                    value,
+                    Value::Boolean(_) | Value::Integer(_) | Value::Reference(_)
+                ) =>
         {
-            match forms.write(value) {
+            match if call.canonical_values {
+                forms.write_canonical(value)
+            } else {
+                forms.write(value)
+            } {
                 Ok(form) => Ok(CallOutcome::Completed(CallValue::Written(form))),
                 Err(WriteStop::NoForm) => Err(Box::new(RunRefusal::UnsupportedResult {
                     function: call.function.clone(),
@@ -222,6 +324,7 @@ fn run_package_resolving(
                 Err(WriteStop::Fault(invariant)) => Err(Box::new(RunRefusal::Fault(
                     InternalFault::new("call", invariant),
                 ))),
+                Err(WriteStop::Refusal(refusal)) => Err(refusal),
             }
         }
         _ => convert_outcome_resolving(

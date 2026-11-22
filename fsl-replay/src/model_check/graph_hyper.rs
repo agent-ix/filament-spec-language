@@ -296,7 +296,7 @@ fn replay_lasso(
                     .into_iter()
                     .map(|(transition, _)| transition)
                     .collect(),
-                taken: step.transition.clone(),
+                taken: Some(step.transition.clone()),
             });
         }
     }

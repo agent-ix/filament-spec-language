@@ -98,6 +98,7 @@ pub(super) fn invariant_item<'a>(
                     provision,
                     max_candidates,
                     timed: None,
+                    stutter_closure: false,
                 },
                 ReplayShape {
                     target: RequestTargetWire::state_clause(name.clone()),
@@ -280,6 +281,7 @@ impl<'a> PackageInvariantSubject<'a> {
                 expansion: ExpansionLimits {
                     max_candidates: self.form.max_candidates,
                 },
+                stutter_closure: false,
             },
             &envelope,
             &NoLetters,

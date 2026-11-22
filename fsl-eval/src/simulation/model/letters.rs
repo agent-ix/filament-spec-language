@@ -286,9 +286,12 @@ impl ClauseLetters<'_, '_> {
             ClauseSource::Source(node) => node,
             ClauseSource::Package { key, .. } => {
                 let observed = self.observe(state)?;
-                let bound = self
-                    .bound(&observed.rows, instance)
-                    .ok_or_else(|| fault("package-form-reads-a-bound-instance"))?;
+                let bound = self.bound(&observed.rows, instance);
+                let absent = bound.is_none().then_some(instance.population.node.as_str());
+                let over = match bound {
+                    Some(bound) => bound,
+                    None => self.key_reference(instance)?,
+                };
                 return reading(
                     &self
                         .system
@@ -298,7 +301,8 @@ impl ClauseLetters<'_, '_> {
                                 clause: key.clone(),
                                 position: atom.index(),
                             },
-                            Value::Reference(bound),
+                            Value::Reference(over),
+                            absent,
                             captures,
                             &observed.observation.environment,
                             &self.reference_bindings,
@@ -638,16 +642,20 @@ impl ModelLetters for ClauseLetters<'_, '_> {
             ClauseSource::Source(node) => node,
             ClauseSource::Package { key, .. } => {
                 let observed = self.observe(state)?;
-                let bound = self
-                    .bound(&observed.rows, instance)
-                    .ok_or_else(|| fault("package-form-reads-a-bound-instance"))?;
+                let bound = self.bound(&observed.rows, instance);
+                let absent = bound.is_none().then_some(instance.population.node.as_str());
+                let over = match bound {
+                    Some(bound) => bound,
+                    None => self.key_reference(instance)?,
+                };
                 return reading(
                     &self
                         .system
                         .evaluator()
                         .evaluate_model_guard(
                             key,
-                            Value::Reference(bound),
+                            Value::Reference(over),
+                            absent,
                             &observed.observation.environment,
                             &self.reference_bindings,
                             meter,

@@ -438,6 +438,7 @@ impl DeclarationRegions {
             CheckCause::PlanUnknownField { span, .. } => span
                 .and_then(|span| region(&self.source, self.embedding.as_deref(), span))
                 .or_else(|| self.region(&refusal.location)),
+            CheckCause::PlanUnboundedParameter { .. } => None,
             CheckCause::RefinementNotEmitted { span, .. } => {
                 region(&self.source, self.embedding.as_deref(), *span)
             }

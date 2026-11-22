@@ -744,6 +744,10 @@ pub enum NativeCandidateEvent<'a> {
     Completed {
         /// The exact invocation identity.
         transition: &'a ModelTransition,
+        /// The admitted runtime receiver, retaining its full reference identity.
+        receiver: &'a ObjectReference,
+        /// The admitted runtime arguments, in parameter declaration order.
+        arguments: &'a [filament_exact::Value],
         /// The runtime post-state, not yet admitted by the search.
         state: &'a ModelSimState,
         /// Present exactly when this invocation has several outcomes; zero based.
@@ -847,7 +851,7 @@ pub struct ModelSystem<'a> {
 /// An expression meter, shared across a source-plan request when enabled.
 pub enum EvaluationMeter<'a> {
     /// The existing independent evaluation contract outside source planning.
-    Local(filament_exact::Meter),
+    Local(Box<filament_exact::Meter>),
     /// The request's serialized accounting session.
     Shared(std::sync::MutexGuard<'a, filament_exact::Meter>),
 }
@@ -975,7 +979,7 @@ impl ModelSystem<'_> {
         if self.shares_evaluation_meter() {
             EvaluationMeter::Shared(self.shared_meter.lock().expect("evaluation meter lock"))
         } else {
-            EvaluationMeter::Local(filament_exact::Meter::new(self.meter))
+            EvaluationMeter::Local(Box::new(filament_exact::Meter::new(self.meter)))
         }
     }
 }

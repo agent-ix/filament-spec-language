@@ -2718,8 +2718,8 @@ pub enum PackageClauseRefusal {
     #[error("the package formula's horizon exceeds the work-unit limit")]
     Horizon(LimitExceeded),
     /// The parameter types do not classify within the position limit.
-    #[error("the clause's parameter domains do not classify")]
-    Domains,
+    #[error("the clause's parameter domains do not classify: {0:?}")]
+    Domains(crate::family::ClassifyFailure),
     /// The package form's predicates do not fit its state-graph form.
     #[error("the package state-graph predicates do not fit the claim form")]
     Shape,
@@ -2919,7 +2919,7 @@ impl CheckedTemporalClause {
         roots.extend(form.trigger.iter().map(|(_, value_type)| value_type));
         roots.extend(form.captures.iter().map(|(_, value_type)| value_type));
         let parameter_domains = classify_domains(&roots, types, position_limit)
-            .map_err(|_| PackageClauseRefusal::Domains)?;
+            .map_err(PackageClauseRefusal::Domains)?;
         let model_subject = matches!(form.over.1, ValueType::Reference(_));
         let property_form = property_form(form.profile, model_subject, &formula);
         let clock_binding = clock_binding(&form.package_name, &form.clock, MODEL_STEPS, None)

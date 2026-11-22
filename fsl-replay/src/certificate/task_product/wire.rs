@@ -102,6 +102,20 @@ pub enum TaskProductReferenceError {
     Reference(#[from] crate::ReferenceCodecError),
 }
 
+/// A task-product carrier failure retaining its reference/resource cause.
+#[derive(Debug, thiserror::Error)]
+pub enum TaskProductReferenceError {
+    /// Closed certificate metadata was refused.
+    #[error(transparent)]
+    Shape(#[from] TaskProductShapeRefusal),
+    /// The native certificate has no wire spelling.
+    #[error(transparent)]
+    Wire(#[from] TaskProductWireError),
+    /// Canonical conversion stopped under the original caller's resources.
+    #[error(transparent)]
+    Reference(#[from] crate::ReferenceCodecError),
+}
+
 pub(crate) fn refuse<T>(
     pointer: &str,
     reason: TaskProductShapeReason,
@@ -342,13 +356,38 @@ fn typed_value(value: &Value, pointer: &str, depth: usize) -> Result<(), TaskPro
             text(member(map, "member"), &at("member"))?;
             list(map, "components")
         }
-        "reference" => refuse(pointer, TaskProductShapeReason::ReferenceContextRequired),
+        "reference" => {
+            let map = object(
+                value,
+                pointer,
+                &["type", "universe", "object_type", "identity"],
+                &[],
+            )?;
+            node_id(member(map, "universe"), &at("universe"))?;
+            effective_id(member(map, "object_type"), &at("object_type"))?;
+            text(member(map, "identity"), &at("identity")).map(drop)
+        }
         _ => refuse(&at("type"), TaskProductShapeReason::UnknownVariant),
     }
 }
 
 fn member_str<'v>(value: &'v Value, name: &str) -> Option<&'v str> {
     value.get(name).and_then(Value::as_str)
+}
+
+fn effective_id(value: &Value, pointer: &str) -> Result<(), TaskProductShapeRefusal> {
+    if crate::spine::is_effective_form(value) {
+        Ok(())
+    } else {
+        refuse(pointer, TaskProductShapeReason::WrongKind)
+    }
+}
+
+fn node_id(value: &Value, pointer: &str) -> Result<(), TaskProductShapeRefusal> {
+    let map = object(value, pointer, &["ordinal", "package", "path"], &[])?;
+    count(member(map, "ordinal"), &child(pointer, "ordinal"))?;
+    text(member(map, "package"), &child(pointer, "package"))?;
+    array(member(map, "path"), &child(pointer, "path")).map(drop)
 }
 
 /// Whether two source transitions have one wire spelling. The FR-331 wire

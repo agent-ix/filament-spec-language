@@ -76,12 +76,14 @@ pub fn inspect_outcome<'a>(
             }
             (Some(fsl_replay::OutcomeLocus::Artifact { .. }), None)
             | (Some(fsl_replay::OutcomeLocus::Located { .. }), None)
+            | (Some(fsl_replay::OutcomeLocus::ImportedLocated { .. }), None)
             | (Some(fsl_replay::OutcomeLocus::Input { .. }), None)
             | (Some(fsl_replay::OutcomeLocus::Document { .. }), None)
             | (None, None) => Vec::new(),
             (Some(fsl_replay::OutcomeLocus::Region { .. }), Some(_))
             | (Some(fsl_replay::OutcomeLocus::Artifact { .. }), Some(_))
             | (Some(fsl_replay::OutcomeLocus::Located { .. }), Some(_))
+            | (Some(fsl_replay::OutcomeLocus::ImportedLocated { .. }), Some(_))
             | (Some(fsl_replay::OutcomeLocus::Input { .. }), Some(_))
             | (Some(fsl_replay::OutcomeLocus::Document { .. }), Some(_))
             | (None, Some(_)) => {
@@ -477,6 +479,46 @@ mod tests {
         };
         assert_eq!(view.loci[0].0, document.diagnostics()[0].locus().cloned());
         assert_eq!(view.loci[0].1, vec![region]);
+    }
+
+    #[test]
+    #[trace("TC-3081", "FR-267-AC-33")]
+    fn imported_source_locus_stays_byte_free_in_inspection() {
+        let locus = fsl_replay::OutcomeLocus::ImportedLocated {
+            file: "Invoice.model".to_owned(),
+            source_identity: "ix://example/Invoice:Model_V1".to_owned(),
+            span: serde_json::from_value(serde_json::json!({
+                "start":{"line":17,"column":9},"end":{"line":21,"column":14}
+            }))
+            .unwrap(),
+        };
+        let document = fsl_replay::OutcomeDocument::new(
+            fsl_replay::Operation::Check,
+            None,
+            filament_semantic_value::catalog::Category::Refusal,
+        )
+        .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
+            Some("unbounded-extent"),
+            "unsupported_projection",
+            Some(locus.clone()),
+            "parameter n",
+        )]);
+        let result = inspect_outcome(
+            &document,
+            &[None],
+            None,
+            InspectLimits::default(),
+            &Cancel::new(),
+        )
+        .unwrap();
+        let View::Outcome(view) = result.value() else {
+            panic!("an outcome view")
+        };
+        assert_eq!(view.loci[0].0.as_ref(), Some(&locus));
+        assert!(
+            view.loci[0].1.is_empty(),
+            "no source region can be fabricated without bytes"
+        );
     }
 
     #[test]

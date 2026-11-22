@@ -257,7 +257,7 @@ impl Walk<'_, '_> {
         let meter = self.system.evaluation_meter();
         match (meter, &self.cancel) {
             (super::EvaluationMeter::Local(meter), Some(cancel)) => {
-                super::EvaluationMeter::Local(meter.with_cancel(cancel.clone()))
+                super::EvaluationMeter::Local(Box::new((*meter).with_cancel(cancel.clone())))
             }
             (meter, _) => meter,
         }

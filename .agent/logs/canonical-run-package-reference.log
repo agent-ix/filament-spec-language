@@ -1,0 +1,32 @@
+warning: unused import: `identity_form::is_effective_form`
+   --> fsl-replay/src/spine.rs:234:16
+    |
+234 | pub(crate) use identity_form::is_effective_form;
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `is_effective_form` is never used
+   --> fsl-replay/src/spine/identity_form.rs:160:15
+    |
+160 | pub(crate) fn is_effective_form(form: &Json) -> bool {
+    |               ^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `sample_fingerprint` is never used
+   --> fsl-replay/src/spine/clause/temporal.rs:335:15
+    |
+335 | pub(crate) fn sample_fingerprint(
+    |               ^^^^^^^^^^^^^^^^^^
+
+warning: `fsl-replay` (lib) generated 3 warnings (run `cargo fix --lib -p fsl-replay` to apply 1 suggestion)
+   Compiling fsl-command v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-command)
+    Finished `test` profile [unoptimized] target(s) in 4.58s
+     Running tests/it/main.rs (target/debug/deps/it-13478c0a8a0f3e03)
+
+running 1 test
+test cli_contract::run::canonical_run_package_reference_roundtrip_uses_retained_snapshot_owners ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 199 filtered out; finished in 0.11s
+

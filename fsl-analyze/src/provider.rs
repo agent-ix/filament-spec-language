@@ -91,6 +91,10 @@ pub fn run(
         }
         Err(failure) => {
             let (cause, diagnostic) = match failure {
+                StageFailure::Refused(AnalyzeRefusal::EffectDecision(refusal)) => (
+                    Some(ProofRefusalCause::InvalidInput),
+                    CatalogCode::new("invalid_runtime_input", refusal.cause().as_str()),
+                ),
                 StageFailure::Refused(AnalyzeRefusal::Provision(refusal)) => (
                     Some(ProofRefusalCause::IncompleteInput),
                     refusal.catalog_code(),
@@ -103,7 +107,9 @@ pub fn run(
                     }),
                     CatalogCode::new(refusal.code.as_str(), refusal.catalog_cause()),
                 ),
-                StageFailure::Refused(AnalyzeRefusal::Binding(failure)) => match failure {
+                StageFailure::Refused(
+                    AnalyzeRefusal::Binding(failure) | AnalyzeRefusal::Document(failure),
+                ) => match failure {
                     fsl_semantics::model::observation::AdmissionFailure::Refused(record) => {
                         (Some(ProofRefusalCause::InvalidInput), record.catalog)
                     }
@@ -336,20 +342,24 @@ pub struct CompositionTarget {
     claim: OccurrenceKey,
     premises: Vec<serde_json::Value>,
     assumptions: Vec<Vec<usize>>,
+    components: fsl_semantics::check::ComponentPackages,
 }
 
 impl CompositionTarget {
     /// The composition at `claim` over the derived `premises` and the
-    /// derived `assumptions` beside them.
+    /// derived `assumptions` beside them, whose slots' node ids index the
+    /// graphs `components` names.
     pub fn new(
         claim: OccurrenceKey,
         premises: Vec<serde_json::Value>,
         assumptions: Vec<Vec<usize>>,
+        components: fsl_semantics::check::ComponentPackages,
     ) -> Self {
         Self {
             claim,
             premises,
             assumptions,
+            components,
         }
     }
 
@@ -358,6 +368,11 @@ impl CompositionTarget {
     /// it assumes.
     pub fn assumptions(&self) -> &[Vec<usize>] {
         &self.assumptions
+    }
+
+    /// The packages whose graphs the ids of the premise slots index.
+    pub fn components(&self) -> &fsl_semantics::check::ComponentPackages {
+        &self.components
     }
 
     /// The composition's claim occurrence.
@@ -386,11 +401,21 @@ impl serde::Serialize for ProviderRequest<'_> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use base64::Engine as _;
         use serde::ser::{Error as _, SerializeMap as _};
+        let component_graphs: BTreeMap<String, WireGraph> = self
+            .dependencies
+            .iter()
+            .filter_map(|dependency| {
+                Some((
+                    dependency.identity.clone(),
+                    WireGraph::of_package_bytes(&dependency.package).ok()?,
+                ))
+            })
+            .collect();
         let items = self
             .items
             .iter()
             .zip(&self.targets)
-            .map(|(item, target)| request_item_wire(&self.graph, item, target))
+            .map(|(item, target)| request_item_wire(&self.graph, &component_graphs, item, target))
             .collect::<Result<Vec<_>, _>>()
             .map_err(S::Error::custom)?;
         let mut dependencies: Vec<&fsl_replay::HybridProcessDependency> =
@@ -486,6 +511,7 @@ fn proof_bound_wire(
 /// (FR-331 "Identity and validation").
 fn request_item_wire(
     graph: &WireGraph,
+    components: &BTreeMap<String, WireGraph>,
     item: &RequirementItem,
     target: &ProviderTarget<'_>,
 ) -> Result<serde_json::Value, serde_json::Error> {
@@ -553,7 +579,11 @@ fn request_item_wire(
         if let ProviderTarget::Composition(composition) = target {
             members.insert(
                 "premises".to_owned(),
-                serde_json::Value::Array(composition.premises().to_vec()),
+                serde_json::Value::Array(component_premises(
+                    components,
+                    composition.components(),
+                    composition.premises(),
+                )?),
             );
             members.insert(
                 "assumptions".to_owned(),
@@ -986,8 +1016,8 @@ pub(crate) enum NotAdmitted {
     /// refusal, with the reader's code, cause and pointer.
     Refused(fsl_package::PackageAdmissionRefusal),
     /// The package did not emit, or the read failed for a reason that is no
-    /// admission refusal.
-    Other,
+    /// admission refusal: the emitter's own refusal when it named one.
+    Other(Option<Box<fsl_package::EmitRefusal>>),
 }
 
 /// `package` emitted and read back through the strict reader against
@@ -998,7 +1028,7 @@ pub(crate) fn read_package<'p>(
     emit: EmitLimits,
 ) -> Result<fsl_package::AdmittedPackageRead<'p>, NotAdmitted> {
     let identity =
-        LibraryName::new(package.graph().package_name()).map_err(|_| NotAdmitted::Other)?;
+        LibraryName::new(package.graph().package_name()).map_err(|_| NotAdmitted::Other(None))?;
     fsl_package::read_evaluation_package(
         package,
         identity,
@@ -1021,7 +1051,15 @@ pub(crate) fn read_package<'p>(
             }
             other => other,
         };
-        typed.map_or(NotAdmitted::Other, NotAdmitted::Refused)
+        typed.map_or_else(
+            || {
+                NotAdmitted::Other(match &refusal {
+                    fsl_package::ImportViewRefusal::Emission { refusal, .. } => refusal.clone(),
+                    _ => None,
+                })
+            },
+            NotAdmitted::Refused,
+        )
     })
 }
 
@@ -1377,4 +1415,39 @@ pub(crate) fn settle_record(
             Some(ProviderCounterexample::Mismatch(Box::new(found))),
         ),
     }
+}
+
+/// FSpec FR-322 "Scope": `premises` with the ids of each `component-guarantee`
+/// key written against the graph of that slot's component package, which the
+/// request's `dependencies` carry. A peer clause id of the key's `assumptions`
+/// is written against the graph of the package of the component of the peer
+/// guarantee it names (`packages`), never the graph its own `package` member
+/// names.
+fn component_premises(
+    graphs: &BTreeMap<String, WireGraph>,
+    packages: &fsl_semantics::check::ComponentPackages,
+    premises: &[serde_json::Value],
+) -> Result<Vec<serde_json::Value>, serde_json::Error> {
+    use fsl_semantics::check::wire_id::{component_key_held, key_subject_package, peer_graphs};
+    use serde::ser::Error as _;
+    let peers = |clause: &NodeKey| graphs.get(packages.of_clause(clause)?);
+    premises
+        .iter()
+        .map(|premise| {
+            let mut premise = premise.clone();
+            if premise["role"] != "component-guarantee" {
+                return Ok(premise);
+            }
+            let key = premise["key"].clone();
+            let graph = key_subject_package(&key)
+                .and_then(|package| graphs.get(package))
+                .ok_or_else(|| {
+                    serde_json::Error::custom("a component-guarantee key names no dependency")
+                })?;
+            premise["key"] = peer_graphs(&key, &peers)
+                .and_then(|peers| component_key_held(graph, &key, &peers))
+                .map_err(serde_json::Error::custom)?;
+            Ok(premise)
+        })
+        .collect()
 }

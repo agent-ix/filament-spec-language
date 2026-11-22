@@ -3539,6 +3539,7 @@ impl<S: SubjectSystem> Run<'_, S> {
             blocked,
             refinement: None,
             final_delay: None,
+            closure_stutters: Vec::new(),
         })
     }
 }

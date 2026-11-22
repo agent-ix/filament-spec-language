@@ -478,6 +478,7 @@ impl Exploration<'_, '_, '_> {
                     blocked: Vec::new(),
                     refinement: None,
                     final_delay: None,
+                    closure_stutters: Vec::new(),
                 }),
                 stats,
             },

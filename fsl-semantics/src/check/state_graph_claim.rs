@@ -867,7 +867,7 @@ impl CheckedStateGraphClaim {
         if let Some((_, object)) = &form.over {
             let over = ValueType::Reference(object.clone());
             crate::family::requirements::classify_domains(&[&over], types, position_limit)
-                .map_err(|_| Domains)?;
+                .map_err(Domains)?;
         }
         let roles: Vec<PredicateRole> = form.predicates.iter().map(|p| p.role()).collect();
         let mut predicates = form.predicates.iter().map(PackageStatePredicate::checked);

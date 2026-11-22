@@ -1,0 +1,37 @@
+   Compiling filament-exact v0.3.0 (https://github.com/agent-ix/filament-exact?rev=a58474cc105a86f3307a11def3fc001e2459679f#a58474cc)
+   Compiling filament-semantic-value v0.1.5 (https://github.com/agent-ix/filament-semantic-value?rev=31d807ccb8ffd5a88beb0b1a570b80acb099f5e9#31d807cc)
+   Compiling fsl-foundation v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-foundation)
+   Compiling fsl-cst v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-cst)
+   Compiling filament-contract-model v0.1.2 (https://github.com/agent-ix/filament-contract-ir?rev=c46c29a5ccd8d4079b092e37662817bf8cd95c0b#c46c29a5)
+   Compiling fsl-forms v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-forms)
+   Compiling filament-checked v0.1.6 (https://github.com/agent-ix/filament-eval?rev=79b8c42b60f43c936e8e50a7fc6519da030c978d#79b8c42b)
+   Compiling fsl-semantics v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-semantics)
+   Compiling filament-observation v0.1.1 (https://github.com/agent-ix/filament-observation?rev=004c7c4f934d15022d2a80b98c451d436109b44b#004c7c4f)
+   Compiling fsl-package v0.3.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-package)
+   Compiling filament-eval v0.1.6 (https://github.com/agent-ix/filament-eval?rev=79b8c42b60f43c936e8e50a7fc6519da030c978d#79b8c42b)
+   Compiling fsl-eval v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-eval)
+   Compiling fsl-source v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-source)
+   Compiling fsl-route v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-route)
+   Compiling fsl-replay v0.3.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-replay)
+warning: function `sample_fingerprint` is never used
+   --> fsl-replay/src/spine/clause/temporal.rs:335:15
+    |
+335 | pub(crate) fn sample_fingerprint(
+    |               ^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `fsl-replay` (lib) generated 1 warning
+   Compiling fsl-hybrid-reference v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-hybrid-reference)
+   Compiling fsl-analyze v0.3.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-analyze)
+   Compiling fsl-inspect v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-inspect)
+   Compiling filament-mltl v0.1.0 (https://github.com/agent-ix/filament-mltl?rev=b3881775908e0f17ac32e8a4d13f07e49b82edf9#b3881775)
+   Compiling fsl-command v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-command)
+    Finished `test` profile [unoptimized] target(s) in 20m 00s
+     Running tests/it/main.rs (target/debug/deps/it-05e6ea5b8014b0ef)
+
+running 1 test
+test cli_contract::run::review_fix_deep_completed_values_use_actual_depth_policy ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 207 filtered out; finished in 0.77s
+

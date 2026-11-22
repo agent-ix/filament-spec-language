@@ -377,15 +377,33 @@ pub(crate) fn check<R: PlanRules>(
                     Event::Begin(_) | Event::Disabled(_) => Control::Continue,
                     Event::Completed {
                         transition,
+                        receiver,
+                        arguments,
                         state,
                         outcome,
                     } => match meter.charge() {
                         Ok(()) => {
-                            derived.push((
-                                (rules.step_key(transition), outcome),
-                                super::PlanStep::new(transition.clone(), outcome),
-                                state.clone(),
-                            ));
+                            let step = match super::PlanStep::from_native(
+                                transition.clone(),
+                                outcome,
+                                receiver,
+                                arguments,
+                                system,
+                            ) {
+                                Ok(step) => step,
+                                Err(stop) => {
+                                    denied = Some(super::stop_cause(stop));
+                                    return Control::Stop;
+                                }
+                            };
+                            let key = match rules.step_key(&step) {
+                                Ok(key) => key,
+                                Err(stop) => {
+                                    denied = Some(super::stop_cause(stop));
+                                    return Control::Stop;
+                                }
+                            };
+                            derived.push(((key, outcome), step, state.clone()));
                             Control::Continue
                         }
                         Err(stop) => {
@@ -425,7 +443,7 @@ pub(crate) fn check<R: PlanRules>(
                 match super::expansion_stop(stop, system) {
                     super::Stop::Cause(cause) => return Err(cause),
                     super::Stop::Error(_) | super::Stop::Negative(_) => {
-                        return reject(CertificateRule::Closure, index)
+                        return reject(CertificateRule::Closure, index);
                     }
                 }
             }
@@ -441,13 +459,11 @@ pub(crate) fn check<R: PlanRules>(
                 .successors
                 .into_iter()
                 .map(|(step, state)| {
-                    (
-                        (rules.step_key(&step), None),
-                        super::PlanStep::from(step),
-                        state,
-                    )
+                    let step = super::PlanStep::from(step);
+                    Ok(((rules.step_key(&step)?, None), step, state))
                 })
-                .collect();
+                .collect::<Result<_, super::RuleStop>>()
+                .map_err(super::stop_cause)?;
             derived.sort_by(|left, right| left.0.cmp(&right.0));
         }
         let prefix_total = if certificate.objective == ObjectiveKind::StepSum {

@@ -57,6 +57,7 @@ impl PreparedEntries for FaultInjectingPrepared {
         _arguments: &[Value],
         _environment: &ObjectEnvironment,
         _limits: &CallLimits,
+        _run: &mut filament_semantic_value::supplied_stop::SuppliedRun,
         _cancel: &Cancel,
     ) -> Result<Evaluation, CallFailure> {
         Err(fault())

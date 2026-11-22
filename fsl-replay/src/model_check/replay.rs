@@ -82,8 +82,8 @@ pub(super) use self::timed::timed_prefix;
 use crate::bounds::ReplayLimits;
 use crate::execute::{recompile_with_temporal_selections, request_limits, ReplayRefusal};
 use crate::model_check::counterexample::{
-    undefined_finding, CounterexampleKind, Lasso, TemporalCounterexample, UndefinedEvaluation,
-    UndefinedLocus, UndefinedSite,
+    undefined_finding, ClosureStutter, CounterexampleKind, Lasso, StepSite, TemporalCounterexample,
+    UndefinedEvaluation, UndefinedLocus, UndefinedSite,
 };
 use crate::model_check::hyper_counterexample::HyperUndefined;
 use crate::model_check::limits::ReachedLimit;
@@ -106,6 +106,12 @@ pub struct ModelTraceSubject {
     /// FR-237: the timed reading the counterexample was found under; `None`
     /// for an untimed subject, whose replay refuses every delay.
     pub timed: Option<TimedReplay>,
+    /// The item's selected `stutter_closure` (FSpec FR-368), read from the
+    /// admitted item's obligation identity: the only authority for accepting
+    /// FSpec FR-364's `closure-stutter` step. An untimed ordinary model
+    /// subject of a liveness item sets it; every other subject leaves it
+    /// `false`.
+    pub stutter_closure: bool,
 }
 
 /// FR-237: the timed reading of a model subject a replay re-executes.
@@ -148,6 +154,76 @@ impl std::fmt::Display for DelayBar {
             Self::TimeInvariant(name) => write!(f, "time invariant `{name}`"),
         }
     }
+}
+
+/// The rule of FSpec FR-364 "Closure stutter" a refused step breaks, in the
+/// order the replay checks them.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ClosureRule {
+    /// The item does not select `stutter_closure`, or the subject has no
+    /// closure alphabet.
+    Alphabet,
+    /// The step is in the prefix or in a loop of more than one step.
+    Placement,
+    /// The counterexample is not a formula one.
+    Kind,
+    /// The step carries a `delay` member.
+    Delay,
+    /// The loop's state is terminal, where `terminal-stutter` applies.
+    Terminal,
+    /// The step's `post_state` is not the loop entry's key.
+    PostState,
+}
+
+impl std::fmt::Display for ClosureRule {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Alphabet => "alphabet",
+            Self::Placement => "placement",
+            Self::Kind => "kind",
+            Self::Delay => "delay",
+            Self::Terminal => "terminal state",
+            Self::PostState => "post-state",
+        })
+    }
+}
+
+/// FSpec FR-364 "Closure stutter", before any step is re-executed: each
+/// listed closure step, in wire order, must be in its item's alphabet
+/// (`selected`), be the sole step of the loop, belong to a formula
+/// counterexample and carry no `delay`. The first step to fail is refused at
+/// the pointer of the first rule it breaks.
+pub(super) fn check_closure_stutters<T: SubjectTransition>(
+    payload: &TemporalCounterexample<T>,
+    selected: bool,
+) -> Result<(), ReplayRefusal> {
+    let sole = payload.closure_loop().is_some();
+    for step in &payload.closure_stutters {
+        let site = step.site.pointer();
+        let broken = if !selected {
+            Some((ClosureRule::Alphabet, format!("{site}/transition/type")))
+        } else if !(sole && step.site == StepSite::Loop(0)) {
+            Some((ClosureRule::Placement, format!("{site}/transition/type")))
+        } else if !matches!(payload.kind, CounterexampleKind::Formula) {
+            Some((ClosureRule::Kind, format!("{site}/transition/type")))
+        } else if step.delay.is_some() {
+            Some((ClosureRule::Delay, format!("{site}/delay")))
+        } else {
+            None
+        };
+        if let Some((rule, pointer)) = broken {
+            return Err(refused(ModelTraceRefusal::ClosureStutter { pointer, rule }));
+        }
+    }
+    Ok(())
+}
+
+/// A subject whose alphabet has no `closure-stutter` step refuses a listed
+/// one at its `/transition/type` (FSpec FR-364 "Closure stutter").
+pub(super) fn refuse_closure_alphabet<T: SubjectTransition>(
+    payload: &TemporalCounterexample<T>,
+) -> Result<(), ReplayRefusal> {
+    check_closure_stutters(payload, false)
 }
 
 /// FR-217's subject members beside FR-098's: the model subject's, the
@@ -285,6 +361,16 @@ pub enum ModelTraceRefusal {
     /// (FR-231).
     #[error("invalid_runtime_input/invalid-value: the timed subject does not build: {0}")]
     TimedSubject(fsl_eval::simulation::model::TimedSubjectRefusal),
+    /// A `closure-stutter` step the item does not admit there (FSpec FR-364
+    /// "Closure stutter"), refused at the JSON pointer of the member it
+    /// names.
+    #[error("invalid_runtime_input/invalid-value: the closure-stutter step is refused at {pointer} ({rule})")]
+    ClosureStutter {
+        /// The refused member's JSON pointer.
+        pointer: String,
+        /// The rule the step breaks.
+        rule: ClosureRule,
+    },
     /// `initial_state` is not an index of the subject's initial states.
     #[error("invalid_runtime_input/invalid-value: initial state {index} of {count}")]
     InitialState {
@@ -574,6 +660,7 @@ impl ModelTraceRefusal {
             | Self::LoopOpen { .. }
             | Self::LoopDrifts { .. }
             | Self::StutterNotTerminal { .. }
+            | Self::ClosureStutter { .. }
             | Self::HyperShape { .. }
             | Self::HyperUnmatched { .. }
             | Self::HyperUnfair { .. }
@@ -628,6 +715,7 @@ impl ModelTraceRefusal {
             | Self::LoopOpen { .. }
             | Self::LoopDrifts { .. }
             | Self::StutterNotTerminal { .. }
+            | Self::ClosureStutter { .. }
             | Self::HyperShape { .. }
             | Self::HyperUnmatched { .. }
             | Self::HyperUnfair { .. }
@@ -993,7 +1081,7 @@ pub fn replay_model_trace_from_package(
                 expected_key: Box::new(expected),
             }));
         }
-        let (settlement, hints) = settle(&system, payload, None)?;
+        let (settlement, hints) = settle(&system, payload, None, false)?;
         return Ok(ModelTraceReplayResult {
             settlement,
             hints,
@@ -1045,6 +1133,7 @@ pub fn replay_model_trace_from_package(
             letters,
             meter,
         }),
+        subject.stutter_closure,
     )?;
     Ok(ModelTraceReplayResult {
         settlement,
@@ -1107,7 +1196,12 @@ pub fn replay_model_trace_with_temporal_selections(
                     formula,
                     &reading.exploration,
                 ),
-                None => settle(&system, envelope.family_payload(), formula),
+                None => settle(
+                    &system,
+                    envelope.family_payload(),
+                    formula,
+                    subject.stutter_closure,
+                ),
             }
         },
     )
@@ -1134,6 +1228,7 @@ pub fn replay_checked_source_model_trace(
     envelope: &WitnessEnvelope<TemporalCounterexample>,
     letters: &dyn ModelLetters,
     meter: ScalarLimits,
+    stutter_closure: bool,
 ) -> Result<ModelTraceReplayResult, ReplayRefusal> {
     let expected_key = OccurrenceKey::new(node.identity(), node.claim().clone());
     if envelope.clause_node() != &node.identity() || envelope.occurrence_key() != &expected_key {
@@ -1157,7 +1252,7 @@ pub fn replay_checked_source_model_trace(
         letters,
         meter,
     });
-    let (settlement, hints) = settle(system, payload, formula)?;
+    let (settlement, hints) = settle(system, payload, formula, stutter_closure)?;
     Ok(ModelTraceReplayResult {
         settlement,
         hints,
@@ -1591,6 +1686,7 @@ impl ProtocolReplay<'_> {
         system: &ProtocolSystem<'_, M>,
     ) -> Result<ModelTraceSettlement, ReplayRefusal> {
         let payload = self.payload;
+        refuse_closure_alphabet(payload)?;
         let fairness = match self.clause {
             Some(clause) => {
                 let protocol_fairness: Vec<_> = clause
@@ -2039,6 +2135,7 @@ fn invariant(
     payload: &TemporalCounterexample,
     clause: &fsl_semantics::check::CheckedStateClause,
 ) -> Result<ModelTraceSettlement, ReplayRefusal> {
+    refuse_closure_alphabet(payload)?;
     if payload.lasso.is_some()
         || !matches!(
             payload.kind,
@@ -2224,11 +2321,15 @@ fn settle(
     system: &ModelSystem<'_>,
     payload: &TemporalCounterexample,
     formula: Option<FormulaReplay<'_>>,
+    stutter_closure: bool,
 ) -> Result<(ModelTraceSettlement, Vec<StrongFairnessHint>), ReplayRefusal> {
+    check_closure_stutters(payload, stutter_closure)?;
     let Some((positions, steps)) = replay_prefix(system, payload, &MODEL_STEPS)? else {
         return Ok((no_value(), Vec::new()));
     };
-    if let Some(lasso) = payload.lasso.as_ref() {
+    if let Some(closure) = payload.closure_loop() {
+        close_closure_loop(system, &positions, closure)?;
+    } else if let Some(lasso) = payload.lasso.as_ref() {
         close_loop(system, &positions, lasso.clone())?;
     }
     match (&payload.kind, formula) {
@@ -2453,6 +2554,33 @@ fn replay_prefix_stopped_with_mismatch_explanation<S: SubjectSystem>(
     Ok(Ok((positions, steps)))
 }
 
+/// FSpec FR-364 "Closure stutter": the closure-stutter loop stands at the
+/// prefix's last state, which must not be terminal (a terminal state's
+/// stutter is `terminal-stutter`), and its recorded key must be that state's.
+/// An expansion that stops is not a terminal state.
+pub(super) fn close_closure_loop<S: SubjectSystem>(
+    system: &S,
+    positions: &[Position<S::State>],
+    closure: &ClosureStutter,
+) -> Result<(), ReplayRefusal> {
+    let last = positions.last().ok_or_else(|| fault("a-position-exists"))?;
+    let site = closure.site.pointer();
+    let terminal = matches!(expand(system, &last.state)?, Ok(e) if e.successors.is_empty());
+    if terminal {
+        return Err(refused(ModelTraceRefusal::ClosureStutter {
+            pointer: format!("{site}/transition"),
+            rule: ClosureRule::Terminal,
+        }));
+    }
+    if closure.post_state != last.state_key {
+        return Err(refused(ModelTraceRefusal::ClosureStutter {
+            pointer: format!("{site}/post_state"),
+            rule: ClosureRule::PostState,
+        }));
+    }
+    Ok(())
+}
+
 /// FR-128: the lasso's loop must end at its entry state; a
 /// `terminal-stutter` loop must stand at a state that enables no transition
 /// identity (FR-124, ADR-018 SM-4), and a loop of steps must hold one.
@@ -2635,7 +2763,11 @@ fn check_formula<S: SubjectSystem>(
                 Ok(states) => loop_states = states,
                 Err(settlement) => return Ok((settlement, Vec::new())),
             }
-            trace_of(lasso.clone(), positions.len())
+            trace_of(
+                lasso.clone(),
+                payload.closure_loop().is_some(),
+                positions.len(),
+            )
         }
         None => TemporalTrace::Finite {
             len: position_of(positions.len()),
@@ -2743,6 +2875,10 @@ pub fn evaluate_model_trace(
     letters: &ClauseLetters<'_, '_>,
     limits: ScalarLimits,
 ) -> Result<ModelTraceEnd, ReplayRefusal> {
+    // FR-330's admit reads the closed native alphabet: no item selects
+    // `stutter_closure` here, so a listed closure step is refused at its
+    // `/transition/type` before any step runs (FSpec FR-364).
+    refuse_closure_alphabet(payload)?;
     let positions = match replay_prefix_stopped(system, payload, &MODEL_STEPS)? {
         Ok((positions, _)) => positions,
         Err(stop) => return Ok(ModelTraceEnd::Stopped(stop)),
@@ -2768,7 +2904,11 @@ pub fn evaluate_model_trace(
             {
                 return Err(ReplayRefusal::UnfairLasso { constraint });
             }
-            trace_of(lasso.clone(), positions.len())
+            trace_of(
+                lasso.clone(),
+                false,
+                positions.len(),
+            )
         }
         None => TemporalTrace::Finite {
             len: position_of(positions.len()),
@@ -3001,6 +3141,7 @@ pub fn evaluate_protocol_trace<M: MemoryModel>(
     letters: &dyn ModelLetters,
     limits: ScalarLimits,
 ) -> Result<ProtocolTraceEnd, ReplayRefusal> {
+    refuse_closure_alphabet(payload)?;
     if payload.lasso.is_some() {
         return Err(fault("a-finite-behaviour-has-no-loop"));
     }
@@ -3040,7 +3181,7 @@ fn replayed_letters<'a, S: SubjectSystem>(
         positions,
         prefix: &payload.prefix,
         loop_edge_counts: match payload.lasso.as_ref() {
-            Some(lasso) if !lasso.terminal_stutter => payload
+            Some(lasso) if !lasso.terminal_stutter && payload.closure_loop().is_none() => payload
                 .prefix
                 .last()
                 .is_none_or(|step| system.counts_step(&step.transition)),
@@ -3052,11 +3193,11 @@ fn replayed_letters<'a, S: SubjectSystem>(
 
 /// The lasso `lasso` over a prefix of `positions` positions, as the
 /// evaluator reads it.
-fn trace_of(lasso: Lasso, positions: usize) -> TemporalTrace {
+fn trace_of(lasso: Lasso, closure: bool, positions: usize) -> TemporalTrace {
     let steps = positions.saturating_sub(1);
     TemporalTrace::Lasso {
         prefix: position_of(lasso.entry),
-        loop_len: if lasso.terminal_stutter {
+        loop_len: if lasso.terminal_stutter || closure {
             1
         } else {
             position_of(steps.saturating_sub(lasso.entry))
@@ -3079,7 +3220,11 @@ fn undefined_letter<S: SubjectSystem>(
     let mut letters = replayed_letters(system, payload, positions, formula.letters)?;
     let mut meter = Meter::new(formula.meter);
     let trace = match payload.lasso.as_ref() {
-        Some(lasso) => trace_of(lasso.clone(), positions.len()),
+        Some(lasso) => trace_of(
+            lasso.clone(),
+            payload.closure_loop().is_some(),
+            positions.len(),
+        ),
         None => TemporalTrace::Finite {
             len: position_of(positions.len()),
         },
@@ -3143,7 +3288,9 @@ pub(super) struct LoopState<T = ModelTransition> {
     /// The step's position in the loop, from its entry.
     pub(super) position: usize,
     pub(super) enabled: Vec<T>,
-    pub(super) taken: T,
+    /// The identity the step takes; `None` for a closure stutter, which
+    /// takes no transition and satisfies no constraint.
+    pub(super) taken: Option<T>,
 }
 
 /// A lasso's loop steps with their enabled identities.
@@ -3177,6 +3324,25 @@ pub(super) fn loop_states_stopped<S: SubjectSystem>(
     if lasso.terminal_stutter {
         return Ok(Ok(states));
     }
+    if payload.closure_loop().is_some() {
+        // The loop's one step stands at the prefix's last state and takes
+        // nothing; its enabledness is the model's own there (FSpec FR-362).
+        let last = positions.last().ok_or_else(|| fault("a-position-exists"))?;
+        let expansion = match expand(system, &last.state)? {
+            Ok(expansion) => expansion,
+            Err(stop) => return Ok(Err(stop)),
+        };
+        states.push(LoopState {
+            position: 0,
+            enabled: expansion
+                .successors
+                .into_iter()
+                .map(|(transition, _)| transition)
+                .collect(),
+            taken: None,
+        });
+        return Ok(Ok(states));
+    }
     for (index, (position, step)) in positions
         .iter()
         .zip(&payload.prefix)
@@ -3194,7 +3360,7 @@ pub(super) fn loop_states_stopped<S: SubjectSystem>(
                 .into_iter()
                 .map(|(transition, _)| transition)
                 .collect(),
-            taken: step.transition.clone(),
+            taken: Some(step.transition.clone()),
         });
     }
     Ok(Ok(states))
@@ -3223,10 +3389,11 @@ pub(super) fn unfair_constraint(
     }
     for state in states {
         let enabled: Vec<Identity> = state.enabled.iter().map(&mut number).collect();
-        steps.push(LoopStep::new(
-            enabled,
-            EdgeLabel::Transition(number(&state.taken)),
-        ));
+        let label = match &state.taken {
+            Some(taken) => EdgeLabel::Transition(number(taken)),
+            None => EdgeLabel::Stutter,
+        };
+        steps.push(LoopStep::new(enabled, label));
     }
     // The constraints, each remembering the authored constraint it came from.
     let mut constraints = Vec::new();
@@ -3275,7 +3442,7 @@ fn unfair_member<M: MemoryModel>(
 ) -> Result<Option<ProtocolFairness>, ReplayRefusal> {
     let mut numbered: BTreeMap<Vec<u8>, (Identity, ProtocolTransition)> = BTreeMap::new();
     for state in states {
-        for transition in state.enabled.iter().chain(std::iter::once(&state.taken)) {
+        for transition in state.enabled.iter().chain(state.taken.as_ref()) {
             let key = system
                 .transition_key(transition)
                 .map_err(|_| fault("every-loop-transition-encodes"))?;
@@ -3302,10 +3469,11 @@ fn unfair_member<M: MemoryModel>(
             .iter()
             .map(identity)
             .collect::<Result<Vec<_>, _>>()?;
-        steps.push(LoopStep::new(
-            enabled,
-            EdgeLabel::Transition(identity(&state.taken)?),
-        ));
+        let label = match &state.taken {
+            Some(taken) => EdgeLabel::Transition(identity(taken)?),
+            None => EdgeLabel::Stutter,
+        };
+        steps.push(LoopStep::new(enabled, label));
     }
     let transitions: Vec<ProtocolTransition> = numbered
         .values()
@@ -3338,7 +3506,7 @@ fn strong_hints(system: &ModelSystem<'_>, states: &[LoopState]) -> Vec<StrongFai
         .map(|state| HintState {
             position: state.position,
             enabled: &state.enabled,
-            taken: Some(&state.taken),
+            taken: state.taken.as_ref(),
         })
         .collect();
     hints_of(system, &states)
@@ -3677,5 +3845,70 @@ mod automaton_refusal_tests {
         });
         assert_eq!(invariant.code(), Code::RuntimeInvariant);
         assert_eq!(invariant.cause(), "established-invariant-broken");
+    }
+}
+
+#[cfg(test)]
+mod closure_alphabet_tests {
+    use super::*;
+    use filament_exact::Integer;
+    use fsl_eval::simulation::StateKey;
+    use ix_trace_rs::trace;
+
+    fn payload(sites: &[StepSite]) -> TemporalCounterexample {
+        TemporalCounterexample {
+            initial_state: 0,
+            prefix: Vec::new(),
+            over_binding: None,
+            fairness: Vec::new(),
+            kind: CounterexampleKind::Formula,
+            lasso: None,
+            blocked: Vec::new(),
+            refinement: None,
+            final_delay: None,
+            closure_stutters: sites
+                .iter()
+                .map(|site| ClosureStutter {
+                    site: *site,
+                    post_state: StateKey::from_canonical_bytes(Vec::new()),
+                    delay: Some(
+                        Rational::new(Integer::from(0_i64), Integer::from(1_i64))
+                            .expect("a nonzero denominator"),
+                    ),
+                })
+                .collect(),
+        }
+    }
+
+    /// FR-128-AC-11: a subject with no closure alphabet (timed, task-derived,
+    /// hybrid, protocol, invariant, derived or refinement) refuses a listed
+    /// closure step at that step's `/transition/type`, whatever its
+    /// placement or its `delay`, and names the first step in wire order.
+    #[trace("TC-523", "FR-128-AC-11")]
+    #[test]
+    fn a_subject_without_the_closure_alphabet_refuses_the_step_at_its_type() {
+        for (sites, pointer) in [
+            (vec![StepSite::Prefix(2)], "/prefix/2/transition/type"),
+            (vec![StepSite::Loop(0)], "/loop/0/transition/type"),
+            (
+                vec![StepSite::Prefix(0), StepSite::Loop(0)],
+                "/prefix/0/transition/type",
+            ),
+        ] {
+            let Err(ReplayRefusal::ModelTrace(refusal)) = refuse_closure_alphabet(&payload(&sites))
+            else {
+                panic!("{sites:?}: a closure step has no place in this alphabet");
+            };
+            assert_eq!(
+                *refusal,
+                ModelTraceRefusal::ClosureStutter {
+                    pointer: pointer.to_owned(),
+                    rule: ClosureRule::Alphabet,
+                }
+            );
+            assert_eq!(refusal.code(), Code::InvalidRuntimeInput);
+            assert_eq!(refusal.cause(), "invalid-value");
+        }
+        assert!(refuse_closure_alphabet(&payload(&[])).is_ok());
     }
 }

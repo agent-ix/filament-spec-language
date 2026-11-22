@@ -47,6 +47,65 @@ mod replay_contracts;
 /// none.
 const NO_ATOMS: Letters = Letters { atom: |_| None };
 
+/// Typed allocator boundary failure, without forcing host OOM or mocking a run.
+pub(crate) fn allocation_refusal(requested: usize) -> ReplayRefusal {
+    use fsl_semantics::model::observation::{AdmissionFailure, AdmissionRecord};
+    ReplayRefusal::Admission(AdmissionFailure::Incomplete(Box::new(AdmissionRecord {
+        catalog: fsl_foundation::diagnostic::ALLOCATION_FAILED,
+        fields: std::collections::BTreeMap::from([("requested", requested.to_string())]),
+        path: Vec::new(),
+        kernel: None,
+    })))
+}
+
+pub(crate) fn assert_allocation_outcome(records: &[fsl_replay::TerminalRecord], requested: usize) {
+    let document = fsl_analyze::analyze::analyze_document(records, &[]).unwrap();
+    assert_eq!(document.category().exit_code(), 22);
+    assert_eq!(
+        records[0].diagnostic(),
+        Some(fsl_foundation::diagnostic::ALLOCATION_FAILED)
+    );
+    assert_eq!(
+        records[0].diagnostic_detail(),
+        Some(&serde_json::Map::from_iter([(
+            "requested".to_owned(),
+            serde_json::json!(requested.to_string())
+        )]))
+    );
+    let document = serde_json::to_value(document).unwrap();
+    assert_eq!(
+        document["items"][0]["diagnostic"]["cause"],
+        "allocation-failed"
+    );
+    assert_eq!(
+        document["items"][0]["diagnostic"]["detail"],
+        serde_json::json!({"requested": requested.to_string()})
+    );
+}
+
+#[test]
+#[trace("FR-259", "FR-1046-AC-7")]
+fn a_model_replay_allocation_keeps_the_actual_item_resource_evidence() {
+    use fsl_analyze::analyze::{analyze_items, split_records, Engines};
+    let case = case(&crate::derived_request::counter_body(""), &[0]);
+    let mut item = case.model_item();
+    let calls = std::cell::Cell::new(0);
+    item.replay = Box::new(|payload| {
+        assert!(!payload.prefix.is_empty(), "actual native counterexample");
+        calls.set(calls.get() + 1);
+        Err(allocation_refusal(7331))
+    });
+    let records = analyze_items(
+        &Engines::fsl().unwrap(),
+        vec![crate::derived_request::derived_deadlock(item)],
+        &Cancel::new(),
+    );
+    let (records, found) = split_records(records, case.checked());
+    assert!(found.is_empty());
+    assert_eq!(calls.get(), 1);
+    assert_allocation_outcome(&records, 7331);
+}
+
 /// A compiled Counter unit with its documents, initial snapshots and the
 /// engine's deadlock-freedom outcome over universe `{c}`.
 pub(crate) struct Case {
@@ -306,6 +365,7 @@ fn trace_subject(case: &Case) -> ModelTraceSubject {
         expansion: ExpansionLimits {
             max_candidates: 1_000_000,
         },
+        stutter_closure: false,
     }
 }
 
@@ -1115,6 +1175,31 @@ fn an_invariant_counterexample_replays_by_the_invariant_rule() {
         ),
         "{settlement:?}"
     );
+
+    // FR-128-AC-11: the invariant alphabet has no closure step either, so a
+    // listed one refuses at its `/transition/type` ahead of the shape
+    // refusal a looped payload would otherwise get.
+    let mut closure = payload.clone();
+    closure.lasso = Some(fsl_replay::Lasso {
+        entry: 0,
+        terminal_stutter: false,
+        terminal_stutter_delay: None,
+    });
+    closure.closure_stutters = vec![fsl_replay::ClosureStutter {
+        site: fsl_replay::StepSite::Loop(0),
+        post_state: closure.prefix[0].post_state.clone(),
+        delay: None,
+    }];
+    match run(closure) {
+        Err(ReplayRefusal::ModelTrace(refusal)) => assert_eq!(
+            *refusal,
+            ModelTraceRefusal::ClosureStutter {
+                pointer: "/loop/0/transition/type".to_owned(),
+                rule: fsl_replay::ClosureRule::Alphabet,
+            }
+        ),
+        other => panic!("expected the alphabet refusal, got {other:?}"),
+    }
 
     let mut looped = payload.clone();
     looped.lasso = Some(fsl_replay::Lasso {

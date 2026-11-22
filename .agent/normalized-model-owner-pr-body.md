@@ -1,0 +1,7 @@
+Consumers that retain admitted model provenance need the genuine normalized view, exact declaration/field/tuple rows and original normalization meter together. This extracts that shared owner API from the reviewed run work so composition and hyper consumers can use it independently.
+
+`NormalizedModel` exposes the admitted view, exact identity rows, consumed counters and `charge_reference_work`. The snapshot provenance APIs return these actual owners alongside the existing object environment and admission usage. Unit intake and snapshot provenance use the same alias-free normalization producer; existing view-only admission keeps its existing work. Reference catalog/result work uses the existing normalization `work_units` dimension and typed `NormalizationIncomplete` at the real charge point.
+
+The retained meter uses a `Mutex` because immutable view borrows coexist with charging; an exclusive mutable owner borrow cannot coexist with those views. Only fixed meter operations hold the lock. Existing SelectedModels cloning keeps its deep-copy counter semantics.
+
+Changed crates: `fsl-semantics`, `fsl-package`. The source slice is the five owner/provenance files from `639a3945`, applied to current main `ad79956e5`. Accepted focused evidence is reused from the reviewed run branch: genuine package snapshot-owner roundtrip, source population/reference roundtrip, normalization-owner denial, and real depth-100 reference output. Exact receipt links and their limits are in [focused validation](reviews/normalized-model-owner-focused-validation.md).

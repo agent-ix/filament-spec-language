@@ -428,10 +428,18 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                     path: &failure.path,
                     span: failure.span,
                 },
-                None => types::Details::Spine {
-                    source: &failure.source,
-                    path: &failure.path,
-                    span: failure.span,
+                None => match failure.refusal.unbounded_parameter_origin() {
+                    Some(Some(origin)) => types::Details::ImportedSpine {
+                        path: &origin.path,
+                        span: origin.span,
+                        source_identity: &origin.artifact,
+                    },
+                    Some(None) => types::Details::None,
+                    None => types::Details::Spine {
+                        source: &failure.source,
+                        path: &failure.path,
+                        span: failure.span,
+                    },
                 },
             },
         ),
@@ -652,10 +660,14 @@ fn extraction_regions_for_locus(
             };
             fsl_foundation::Span { start, end }
         }
-        RefusalLocusRead::Located { file, span } if file == body.path() => fsl_foundation::Span {
-            start: span.start.byte,
-            end: span.end.byte,
-        },
+        RefusalLocusRead::Located(fsl_replay::spine::LocatedRead::Native { file, span })
+            if file == body.path() =>
+        {
+            fsl_foundation::Span {
+                start: span.start.byte,
+                end: span.end.byte,
+            }
+        }
         _ => return Ok(None),
     };
     let Some(regions) = map.map_regions(body, span) else {

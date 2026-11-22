@@ -49,6 +49,7 @@ use fsl_semantics::check::footprint::SymbolicLocation;
 use fsl_semantics::check::{
     CheckedStateGraphClaim, CheckedStatePredicate, PredicateRole, StateGraphForm,
 };
+use fsl_semantics::model::observation::AdmissionFailure;
 
 use super::check::{fault, BOUND_POSITIONS};
 use super::ModelCheckRefusal;
@@ -856,6 +857,16 @@ pub enum StateGraphPipelineRefusal {
 pub fn check_and_settle_state_graph(
     request: StateGraphRequest<'_>,
     cancel: &Cancel,
+    replay: impl FnMut(&StateGraphInstanceOutcome) -> Result<GraphReplayResult, ReplayRefusal>,
+) -> Result<SettledStateGraphRun, StateGraphPipelineRefusal> {
+    check_and_settle_state_graph_until(request, cancel, replay)
+}
+
+/// The native item's local resource stop ends settlement immediately after
+/// the failing replay callback. No partial instance result escapes as success.
+fn check_and_settle_state_graph_until(
+    request: StateGraphRequest<'_>,
+    cancel: &Cancel,
     mut replay: impl FnMut(&StateGraphInstanceOutcome) -> Result<GraphReplayResult, ReplayRefusal>,
 ) -> Result<SettledStateGraphRun, StateGraphPipelineRefusal> {
     let max_depth = request
@@ -882,26 +893,41 @@ pub fn check_and_settle_state_graph(
         max_depth,
         seed: run.seed,
     };
-    let records = claims
-        .into_iter()
-        .zip(&run.items)
-        .map(|(claim, instances)| {
-            instances
-                .iter()
-                .map(|instance| {
-                    settle_state_graph(
-                        instance,
-                        &method,
-                        &subject,
-                        claim,
-                        &temporal_clock_selections,
-                        cancel,
-                        &mut replay,
-                    )
-                })
-                .collect()
-        })
-        .collect();
+    let mut records = Vec::new();
+    for (claim, instances) in claims.into_iter().zip(&run.items) {
+        let mut settled = Vec::new();
+        for instance in instances {
+            let mut allocation = None;
+            let record = settle_state_graph(
+                instance,
+                &method,
+                &subject,
+                claim,
+                &temporal_clock_selections,
+                cancel,
+                |instance| {
+                    let result = replay(instance);
+                    if let Err(ReplayRefusal::Admission(
+                        AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record),
+                    )) = &result
+                    {
+                        if record.catalog == fsl_foundation::diagnostic::ALLOCATION_FAILED {
+                            allocation = Some(record.clone());
+                        }
+                    }
+                    result
+                },
+            );
+            if let Some(record) = allocation {
+                return Err(
+                    ModelCheckRefusal::Admission(Box::new(AdmissionFailure::Incomplete(record)))
+                        .into(),
+                );
+            }
+            settled.push(record);
+        }
+        records.push(settled);
+    }
     Ok(SettledStateGraphRun { run, records })
 }
 

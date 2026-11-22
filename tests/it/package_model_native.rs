@@ -340,6 +340,7 @@ fn replay_read_witness(
         blocked: Vec::new(),
         refinement: None,
         final_delay: None,
+        closure_stutters: Vec::new(),
     };
     fsl_replay::evaluate_model_trace(
         &system,

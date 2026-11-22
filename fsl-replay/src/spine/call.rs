@@ -92,6 +92,9 @@ pub struct WireArgument {
     pub parameter: String,
     /// A JSON integer in the signed 64-bit range, or a JSON object.
     pub value: serde_json::Value,
+    /// A coordinator-owned population selection. Request decoding never
+    /// populates this field; it is admitted against the call's object world.
+    pub selected_object: Option<fsl_semantics::model::observation::SelectedObject>,
 }
 
 /// A call's snapshot document, as the command path admitted its bytes, and
@@ -125,6 +128,9 @@ pub struct Call {
     /// The call's arguments as a request wrote them (FR-650); they bind with
     /// [`Self::arguments`], one per parameter.
     pub wire_arguments: Vec<WireArgument>,
+    /// Read request arguments and write completed values in FR-181's
+    /// canonical form. The public command boundary always selects this form.
+    pub canonical_values: bool,
     /// FR-650 "Arguments": the one current snapshot whose object world a
     /// Reference or Population argument resolves against; `None` for a call
     /// with an empty object world.
@@ -161,6 +167,7 @@ impl Call {
             function,
             arguments,
             wire_arguments: Vec::new(),
+            canonical_values: false,
             snapshot: None,
             accounting,
             supplied,
@@ -340,6 +347,12 @@ impl CallOutcome {
 /// naming no supplied source).
 #[derive(Debug, thiserror::Error)]
 pub enum RunRefusal {
+    /// The original reference catalog admission or resource refusal.
+    #[error(transparent)]
+    ReferenceCatalog(Box<fsl_package::ReferenceCatalogError>),
+    /// An original shared reference admission, resource or cancellation result.
+    #[error(transparent)]
+    Reference(Box<crate::reference_codec::ReferenceCodecError>),
     /// The spine compile refused, at its own stage and cause code.
     #[error("{0}")]
     Compile(Box<CompileRefusal>),
@@ -476,6 +489,16 @@ pub enum RunRefusal {
 }
 
 impl RunRefusal {
+    pub(crate) fn catalog_cause(
+        error: &fsl_package::ReferenceCatalogError,
+    ) -> Option<&'static str> {
+        super::run_value::catalog_error_cause(error)
+    }
+    pub(crate) fn reference_cause(
+        error: &crate::reference_codec::ReferenceCodecError,
+    ) -> Option<&'static str> {
+        super::run_value::reference_error_cause(error)
+    }
     /// The stage FR-100's refusal table names: the wrapped compile
     /// refusal's own stage, or `call` for every refusal this module raises
     /// itself, including [`Self::Fault`] (the internal-failure envelope's
@@ -483,7 +506,11 @@ impl RunRefusal {
     /// `last_stage` is null whichever stage it stopped), so this is `None`
     /// for [`Self::Cancelled`].
     pub fn stage(&self) -> Option<&'static str> {
+        if self.cancel_cause().is_some() {
+            return None;
+        }
         Some(match self {
+            Self::Reference(_) | Self::ReferenceCatalog(_) => "call",
             Self::Compile(refusal) => refusal.stage().as_str(),
             Self::MissingDeclaration { .. }
             | Self::UnsupportedResult { .. }
@@ -511,6 +538,8 @@ impl RunRefusal {
     /// the call, or a supplied-value phase.
     pub fn cancel_cause(&self) -> Option<CancelCause> {
         match self {
+            Self::ReferenceCatalog(_) => None,
+            Self::Reference(error) => super::run_value::reference_cancel_cause(error),
             Self::Cancelled(cause) => Some(*cause),
             Self::Supplied(stop) => match stop.cause {
                 filament_semantic_value::supplied_stop::SuppliedCause::Cancelled(cause) => {
@@ -546,6 +575,8 @@ impl RunRefusal {
     /// `runtime_invariant`.
     pub fn code(&self) -> Code {
         match self {
+            Self::ReferenceCatalog(error) => super::run_value::catalog_error_code(error),
+            Self::Reference(error) => super::run_value::reference_error_code(error),
             Self::Compile(refusal) => refusal.code(),
             Self::MissingDeclaration { .. } => Code::MissingDeclaration,
             Self::UnsupportedResult { .. } | Self::UnsupportedParameter { .. } => {
@@ -590,6 +621,10 @@ impl RunRefusal {
             _ => None,
         };
         match self {
+            Self::ReferenceCatalog(_) => None,
+            Self::Reference(error) => {
+                object(json!({"path": super::run_value::reference_error_pointer(error)}))
+            }
             Self::MissingDeclaration { function } | Self::UnsupportedResult { function } => {
                 object(json!({"function": function}))
             }
@@ -1040,16 +1075,96 @@ pub(crate) fn run_compiled(
         )
         .ok()
     };
+    let mut reference_joins = super::run_value::NormalizationReferenceBudget::source(
+        models.selected_models(),
+        fsl_semantics::model::accounting::ChargePoint::ReferenceCatalog,
+    );
+    let catalog_result = if call.canonical_values && call.snapshot.is_some() {
+        Some(fsl_package::ReferenceCatalog::from_checked_call(
+            package,
+            models.selected_models(),
+            &mut reference_joins,
+        ))
+    } else {
+        None
+    };
+    cancel.poll();
+    if let Some(cause) = cancel.tripped() {
+        return Err(Box::new(RunRefusal::Cancelled(cause)));
+    }
+    if let Some(refusal) = super::run_value::take_normalization_refusal(&mut reference_joins) {
+        return Err(refusal);
+    }
+    let reference_catalog = catalog_result
+        .transpose()
+        .map_err(super::run_value::catalog_refusal)?;
+    let references = reference_catalog
+        .as_ref()
+        .map(|catalog| {
+            crate::reference_codec::ReferenceCodec::for_checked_call(
+                catalog,
+                package,
+                models.selected_models(),
+                objects,
+            )
+        })
+        .transpose()
+        .map_err(super::run_value::reference_refusal)?;
+    let supplied_run = std::sync::Mutex::new(
+        filament_semantic_value::supplied_stop::SuppliedRun::new(call.supplied, cancel.clone())
+            .map_err(|stop| Box::new(RunRefusal::Supplied(stop)))?,
+    );
+    let restore_reference = |value: &serde_json::Value, argument: usize, node: u64| {
+        let mut run = supplied_run.lock().expect("conversion does not unwind");
+        let mut admission =
+            super::run_value::SuppliedReferenceAdmission::new(&mut run, argument, node);
+        let restored = references
+            .as_ref()
+            .ok_or(ReadStop::Fault("call-has-reference-catalog"))?
+            .restore_reference(value, &mut admission, cancel, usize::MAX)
+            .map_err(|error| ReadStop::Refusal(super::run_value::reference_refusal(error)));
+        match admission.stopped {
+            Some(stop) => Err(ReadStop::Refusal(Box::new(RunRefusal::Supplied(stop)))),
+            None => restored,
+        }
+    };
+    let encode_value = |value: &Value| {
+        let mut admission = match &reference_catalog {
+            Some(_) => super::run_value::NormalizationReferenceBudget::source(
+                models.selected_models(),
+                fsl_semantics::model::accounting::ChargePoint::ReferenceResult,
+            ),
+            None => super::run_value::NormalizationReferenceBudget::physical(),
+        };
+        super::run_value::write_run_value(
+            value,
+            package.graph().scope().types(),
+            package.graph().scope().enums(),
+            package.graph().scope().variant_types(),
+            references.as_ref(),
+            &mut admission,
+            cancel,
+        )
+    };
     let world = call.snapshot.as_ref().map(|_| super::run_value::World {
         objects,
         universe_of: &universe_of,
+        restore_reference: references.as_ref().map(|_| {
+            &restore_reference
+                as &dyn Fn(
+                    &serde_json::Value,
+                    usize,
+                    u64,
+                ) -> Result<filament_exact::ObjectReference, ReadStop>
+        }),
     });
     let forms = Forms::new(
         package.graph().scope().types(),
         package.graph().scope().enums(),
     )
+    .with_canonical_writer(&encode_value)
     .in_world(own_package, world.as_ref());
-    let supplied = admit_wire_arguments(&forms, selected.parameters, call)?;
+    let supplied = admit_wire_arguments(&forms, selected.parameters, call, &supplied_run)?;
     let arguments = bind_arguments(selected.parameters, &supplied)?;
     admit_model_arguments(
         models.models(),
@@ -1071,13 +1186,15 @@ pub(crate) fn run_compiled(
         backends,
         &ExecuteLimits {
             accounting: call.accounting,
-            supplied: call.supplied,
             prepare: *prepare,
             session: SessionLimits {
                 live_occurrences: call.live_occurrences,
                 held: 0,
             },
         },
+        &mut supplied_run
+            .lock()
+            .expect("conversion and execution do not unwind"),
         cancel,
     )
     .map_err(|failure| match failure {
@@ -1094,12 +1211,17 @@ pub(crate) fn run_compiled(
     sources.extend(checked.libraries().iter().cloned());
     let outcome = match &evaluation.outcome {
         FamilyOutcome::Evaluated(Outcome::Completed(value))
-            if !matches!(
-                value,
-                Value::Boolean(_) | Value::Integer(_) | Value::Reference(_)
-            ) =>
+            if call.canonical_values
+                || !matches!(
+                    value,
+                    Value::Boolean(_) | Value::Integer(_) | Value::Reference(_)
+                ) =>
         {
-            match forms.write(value) {
+            match if call.canonical_values {
+                forms.write_canonical(value)
+            } else {
+                forms.write(value)
+            } {
                 Ok(form) => CallOutcome::Completed(CallValue::Written(form)),
                 Err(super::run_value::WriteStop::NoForm) => {
                     return Err(Box::new(RunRefusal::UnsupportedResult {
@@ -1111,6 +1233,7 @@ pub(crate) fn run_compiled(
                         "call", invariant,
                     ))));
                 }
+                Err(super::run_value::WriteStop::Refusal(refusal)) => return Err(refusal),
             }
         }
         _ => convert_outcome(evaluation, package.graph(), &sources)?,
@@ -1320,6 +1443,7 @@ pub(crate) fn admit_wire_arguments(
     forms: &Forms<'_>,
     parameters: &[(String, ValueType)],
     call: &Call,
+    run: &std::sync::Mutex<filament_semantic_value::supplied_stop::SuppliedRun>,
 ) -> Result<Vec<CallArgument>, Box<RunRefusal>> {
     if call.wire_arguments.is_empty() {
         return Ok(call.arguments.clone());
@@ -1367,16 +1491,22 @@ pub(crate) fn admit_wire_arguments(
         if !forms.has_form(value_type) {
             return Err(Box::new(RunRefusal::UnsupportedParameter { position }));
         }
-        let read = match &wire.value {
-            serde_json::Value::Number(number) => match number.as_i64() {
-                Some(number) => forms.bare_integer(number, value_type),
-                None => Err(ReadStop::Defect(ArgumentDefect {
-                    code: Code::InvalidRuntimeInput,
-                    cause: "wrong-value-kind",
-                    path: String::new(),
-                })),
-            },
-            form => forms.read(form, value_type),
+        let read = if let Some(selected) = &wire.selected_object {
+            forms.read(&serde_json::json!({"reference": {"population": selected.population, "key": selected.key}}), value_type)
+        } else if call.canonical_values {
+            forms.read_canonical(&wire.value, value_type, position, run)
+        } else {
+            match &wire.value {
+                serde_json::Value::Number(number) => match number.as_i64() {
+                    Some(number) => forms.bare_integer(number, value_type),
+                    None => Err(ReadStop::Defect(ArgumentDefect {
+                        code: Code::InvalidRuntimeInput,
+                        cause: "wrong-value-kind",
+                        path: String::new(),
+                    })),
+                },
+                form => forms.read(form, value_type),
+            }
         };
         let value = read.map_err(|stop| {
             Box::new(match stop {
@@ -1384,8 +1514,19 @@ pub(crate) fn admit_wire_arguments(
                 ReadStop::Fault(invariant) => {
                     RunRefusal::Fault(InternalFault::new("call", invariant))
                 }
+                ReadStop::Refusal(refusal) => return refusal,
             })
         })?;
+        if call.canonical_values {
+            forms
+                .admit_supplied(
+                    &mut run.lock().expect("supplied admission does not unwind"),
+                    position,
+                    value_type,
+                    &value,
+                )
+                .map_err(|failure| convert_call_failure(failure.into()))?;
+        }
         supplied.push(CallArgument {
             parameter: name.clone(),
             value,

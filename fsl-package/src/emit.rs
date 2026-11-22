@@ -811,6 +811,9 @@ pub struct Emission {
     pub(crate) selected_source_tuple_rows: Vec<filament_contract_model::SelectedSourceTupleRow>,
     /// FSL-stage checked variant shapes of emitted model-owned enums.
     pub(crate) selected_model_enum_shape_rows: Vec<SelectedModelEnumShapeRow>,
+    /// FSL-stage witnesses of emitted model-owned unions: case ranks,
+    /// authored positions, sealed members and payload nodes.
+    pub(crate) selected_model_union_rows: Vec<filament_contract_model::SelectedModelUnionRow>,
     /// FSL-stage collection type facts for emitted collection nodes.
     pub(crate) selected_source_collection_rows: Vec<SelectedSourceCollectionRow>,
     /// The checking stage's selected model declaration rows (record, object,
@@ -1086,6 +1089,7 @@ impl DebugWith for Emission {
             selected_source_operation_rows,
             selected_source_tuple_rows,
             selected_model_enum_shape_rows,
+            selected_model_union_rows,
             selected_source_collection_rows,
             selected_exact_declaration_rows,
             selected_exact_field_rows,
@@ -1139,6 +1143,7 @@ impl DebugWith for Emission {
                 "selected_model_enum_shape_rows",
                 selected_model_enum_shape_rows,
             )
+            .field("selected_model_union_rows", selected_model_union_rows)
             .field(
                 "selected_source_collection_rows",
                 selected_source_collection_rows,
@@ -1492,6 +1497,13 @@ impl Emission {
     /// ascending declaration-key order.
     pub fn selected_model_enum_shape_rows(&self) -> &[SelectedModelEnumShapeRow] {
         &self.selected_model_enum_shape_rows
+    }
+
+    /// Model-owned union rows carried by this emission: each names the
+    /// emitted union node, its cases in canonical order and each case's
+    /// payload.
+    pub fn selected_model_union_rows(&self) -> &[filament_contract_model::SelectedModelUnionRow] {
+        &self.selected_model_union_rows
     }
 
     /// Collection type rows carried by this emission, ascending by the
@@ -6670,6 +6682,7 @@ pub fn emit_timed_models(
         selected_source_operation_rows: Vec::new(),
         selected_source_tuple_rows: Vec::new(),
         selected_model_enum_shape_rows: Vec::new(),
+        selected_model_union_rows: Vec::new(),
         selected_source_collection_rows: Vec::new(),
         selected_exact_declaration_rows: Vec::new(),
         selected_exact_field_rows: Vec::new(),
@@ -7743,6 +7756,7 @@ fn emit_package_inner(
     let (selected_enum_declaration_rows, selected_enum_member_rows) =
         source_enum_rows(graph, &emitted_node_ids)?;
     let selected_model_enum_shape_rows = model_enum_shape_rows(graph, &emitted_node_ids)?;
+    let selected_model_union_rows = model_union_rows(graph, &emitted_node_ids)?;
     let selected_source_union_rows = source_union_rows(graph, &emitted_node_ids)?;
     let selected_source_record_rows = source_record_rows(graph, &emitted_node_ids)?;
     let (selected_source_object_rows, source_object_member_facts, source_object_operations) =
@@ -7822,6 +7836,7 @@ fn emit_package_inner(
         selected_source_operation_rows,
         selected_source_tuple_rows,
         selected_model_enum_shape_rows,
+        selected_model_union_rows,
         selected_source_collection_rows,
         selected_exact_declaration_rows: graph.selected_exact_declaration_rows().to_vec(),
         selected_exact_field_rows: graph.selected_exact_field_rows().to_vec(),
@@ -7968,6 +7983,88 @@ fn source_union_rows(
             settled_key,
             members,
         ));
+    }
+    Ok(rows)
+}
+
+/// One row per emitted selected model union (a payload-bearing variant
+/// type), joined to its final structural id. The sealed members are the ones
+/// the check minted, read from the checked type environment and never
+/// rebuilt; ranks are the cases' canonical byte order; positions, original
+/// case identities and payload nodes are the lowering's retained facts. A
+/// union whose composite, sealed members or payload nodes cannot be joined is
+/// a writer fault; a union no emitted node names has no row.
+fn model_union_rows(
+    graph: &CheckedGraph,
+    emitted: &HashMap<NodeKey, CheckedNodeId>,
+) -> Result<Vec<filament_contract_model::SelectedModelUnionRow>, EmitRefusal> {
+    use filament_contract_model::{
+        SelectedModelUnionCaseRow as CaseRow, SelectedModelUnionPayload as Payload,
+    };
+    use filament_semantic_value::declaration::CompositeShape;
+    use fsl_semantics::check::SelectedModelUnionPayload as Retained;
+
+    let semantic = graph.semantic_graph();
+    let mut rows = Vec::new();
+    for (node_key, selected) in semantic.selected_model_unions() {
+        let Some(structural_node) = emitted.get(node_key) else {
+            continue;
+        };
+        let declaration = graph
+            .scope()
+            .types()
+            .composite(node_key.clone())
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
+        let CompositeShape::Union(declared) = declaration.shape() else {
+            return Err(EmitRefusal::SourceMapInvariant);
+        };
+        if declared.len() != selected.cases.len() {
+            return Err(EmitRefusal::SourceMapInvariant);
+        }
+        let mut settled_key = None;
+        let mut cases = Vec::with_capacity(declared.len());
+        for (rank, (member, case)) in declared.iter().zip(&selected.cases).enumerate() {
+            let sealed = member.member().ok_or(EmitRefusal::SourceMapInvariant)?;
+            if sealed.identifier() != case.name.as_ref() {
+                return Err(EmitRefusal::SourceMapInvariant);
+            }
+            settled_key.get_or_insert_with(|| sealed.declaration().clone());
+            let payload = match &case.payload {
+                Retained::None => Payload::None,
+                Retained::Clock => Payload::Clock {
+                    payload_type: "ix://filament/native/Clock".into(),
+                },
+                Retained::Data {
+                    node,
+                    original_type,
+                } => Payload::Data {
+                    node: emitted
+                        .get(node)
+                        .cloned()
+                        .ok_or(EmitRefusal::SourceMapInvariant)?,
+                    original_type: original_type.clone(),
+                },
+            };
+            cases.push(CaseRow {
+                rank: u64::try_from(rank).map_err(|_| EmitRefusal::SourceMapInvariant)?,
+                position: u64::try_from(case.position)
+                    .map_err(|_| EmitRefusal::SourceMapInvariant)?,
+                name: case.name.clone(),
+                original_case: filament_exact::OriginalDeclarationKey::new(
+                    selected.selected_document.as_ref(),
+                    case.original_identity.as_ref(),
+                ),
+                member: sealed.clone(),
+                payload,
+            });
+        }
+        rows.push(filament_contract_model::SelectedModelUnionRow {
+            structural_node: structural_node.clone(),
+            selected_document: selected.selected_document.clone(),
+            type_handle: declaration.key(),
+            settled_key: settled_key.ok_or(EmitRefusal::SourceMapInvariant)?,
+            cases,
+        });
     }
     Ok(rows)
 }

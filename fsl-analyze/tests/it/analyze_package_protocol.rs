@@ -441,6 +441,7 @@ fn package_workflow_roles_replay_refuses_forged_actors() {
             expansion: ExpansionLimits {
                 max_candidates: 1_000_000,
             },
+            stutter_closure: false,
         },
         protocol: subject.protocol.clone(),
         over: subject.over.clone(),
