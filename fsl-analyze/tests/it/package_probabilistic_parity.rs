@@ -74,12 +74,124 @@ fn an_unimplemented_probability_package_form_keeps_its_typed_refusal() {
     assert!(
         document["diagnostics"][0]["message"]
             .as_str()
-            .is_some_and(|message| message.contains("probabilistic-exact-eventual-form")),
+            .is_some_and(|message| message.contains("missing-claim-profile")),
         "{document}"
     );
     assert_eq!(document["items"], json!([]));
     assert!(document.get("certificate").is_none());
     assert!(document.get("counterexample").is_none());
+}
+
+fn assert_missing_profile_without_sources(ws: &Workspace, members: &serde_json::Value) {
+    let (members, _) = package_selection(ws, members);
+    std::fs::remove_file(ws.path("program.fsl")).expect("delete source program");
+    std::fs::remove_dir_all(ws.path(&format!("{HANDOFF}/sources")))
+        .expect("delete retained sources");
+    let package = analyze(
+        &ws.write(
+            "excluded-package.json",
+            json!({"format": "native-analyze/1", "request": members})
+                .to_string()
+                .as_bytes(),
+        ),
+    );
+    let document = package.document();
+    assert_eq!(package.exit, 21, "{document}");
+    assert_eq!(document["diagnostics"][0]["code"], "unsupported_construct");
+    assert_eq!(document["diagnostics"][0]["cause"], "not-yet-implemented");
+    assert!(
+        document["diagnostics"][0]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("missing-claim-profile")),
+        "{document}"
+    );
+    assert_eq!(document["items"], json!([]));
+    assert!(document.get("certificate").is_none());
+    assert!(document.get("counterexample").is_none());
+}
+
+/// The unbounded exact-form derivation never authorizes a statistical item.
+#[trace("FR-940-AC-6", "FR-741-AC-4", "FSpec-FR-641-AC-3")]
+#[test]
+fn a_statistical_package_item_refuses_the_missing_claim_profile() {
+    let ws = Workspace::new("probabilistic-package-statistical-refusal");
+    let path = request_over(
+        &ws,
+        &format!("{LINK_UNIT}\n{EVENTUALLY}\n"),
+        LINK_MODEL,
+        &[LINK_START.to_vec()],
+        json!({"items": [{"claim": "Eventually", "kind": "probabilistic-satisfaction",
+            "probabilistic": {"evidence": "statistical", "method": {"type": "okamoto"},
+                "seed": "0", "max_witnesses": 0}}]}),
+    );
+    let source = analyze(&path);
+    assert_eq!(source.exit, 21, "{}", source.document());
+    assert_eq!(label(&source.item(0)), "unsupported");
+    assert!(source.item(0).to_string().contains("exact-only-form"));
+    assert!(source.item(0).get("measurement").is_none());
+    let request: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("source request"))
+            .expect("request JSON");
+    assert_missing_profile_without_sources(&ws, &request["request"]);
+}
+
+/// Every other profile-dependent projection category is refused even when
+/// the source engine proves it: a bounded comparison event, a quantile,
+/// a mean fraction and a long-run fraction. The bounded formula is the
+/// separate finite-window control above.
+#[trace("FR-940-AC-6", "FR-741-AC-2")]
+#[test]
+fn other_probability_forms_refuse_the_missing_claim_profile() {
+    for (name, profile, body) in [
+        (
+            "Compare",
+            "ev",
+            "probability >= 0.5 [ steps from holds(true) until holds(m.delivered) within 2 <= 2 ]",
+        ),
+        (
+            "Quantile",
+            "ev",
+            "quantile 0.4 of (steps from holds(true) until holds(m.delivered) within 4) <= 3",
+        ),
+        (
+            "Mean",
+            "ev",
+            "mean of (fraction holds(m.delivered) over [0, 2]) >= 0.1",
+        ),
+        (
+            "LongRun",
+            "inf",
+            "long_run_fraction holds(m.delivered) >= rational(391, 400)",
+        ),
+    ] {
+        let ws = Workspace::new(&format!("probabilistic-package-excluded-{name}"));
+        let unit = LINK_UNIT.replace(
+            "profile inf = \"filament.temporal.infinite-trace/v1\";",
+            "profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+             profile ev = \"filament.temporal.event-position.false-extension/v1\";",
+        );
+        let path = request_over(
+            &ws,
+            &format!("{unit}\nprobabilistic {name} using {profile} on M over (m: M::Msg) under Even on origin {{ {body} }}\n"),
+            LINK_MODEL, &[LINK_START.to_vec()],
+            json!({"items": [{"claim": name, "kind": "probabilistic-satisfaction",
+                "probabilistic": {"evidence": "exact"}}]}),
+        );
+        let source = analyze(&path);
+        assert_eq!(source.exit, 0, "{name}: {}", source.document());
+        assert_eq!(
+            label(&source.item(0)),
+            "proved",
+            "{name}: {}",
+            source.document()
+        );
+        assert_eq!(source.item(0)["record"]["backend"], "en-5", "{name}");
+        assert_eq!(source.item(0)["certificate"]["accepted"], true, "{name}");
+        let request: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("source request"))
+                .expect("request JSON");
+        assert_missing_profile_without_sources(&ws, &request["request"]);
+    }
 }
 
 /// EN-5's exact probability is 391/400, with a checked certificate. The

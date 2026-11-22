@@ -27,20 +27,6 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             node,
             filament_exact::Origin::new(filament_exact::Role::new("claim"), ordinal),
         );
-        let form = input
-            .package()
-            .probability_claim_form(&occurrence)
-            .map_err(|failure| match failure {
-                fsl_package::BareClauseRefusal::Pending { fact, node } => {
-                    PackageRunError::Pending(super::PendingPackageFamily {
-                        request_index: Some(index),
-                        family: super::PendingFamily::ProbabilityForm(fact),
-                        node: Some(node),
-                        note: None,
-                    })
-                }
-                fsl_package::BareClauseRefusal::Selection(_) => fault(),
-            })?;
         let kind = match selection.kind.as_deref() {
             Some(label) => match Capability::from_wire(label) {
                 Ok(kind) => kind,
@@ -76,6 +62,28 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                     )))
                 }
             };
+        if probability.evidence == EvidenceKind::Statistical {
+            return Err(PackageRunError::Pending(super::PendingPackageFamily {
+                request_index: Some(index),
+                family: super::PendingFamily::ProbabilityForm("missing-claim-profile"),
+                node: Some(declaration.clone()),
+                note: None,
+            }));
+        }
+        let form = input
+            .package()
+            .probability_claim_form(&occurrence)
+            .map_err(|failure| match failure {
+                fsl_package::BareClauseRefusal::Pending { fact, node } => {
+                    PackageRunError::Pending(super::PendingPackageFamily {
+                        request_index: Some(index),
+                        family: super::PendingFamily::ProbabilityForm(fact),
+                        node: Some(node),
+                        note: None,
+                    })
+                }
+                fsl_package::BareClauseRefusal::Selection(_) => fault(),
+            })?;
         let named = selection.backend.as_deref().map(BackendId::new);
         let backend_options = selection.options.clone().unwrap_or_default();
         if kind.applies_to_declaration(fsl_semantics::check::DeclarationFamily::Probabilistic) {

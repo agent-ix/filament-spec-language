@@ -69,41 +69,47 @@ impl BarePackage<'_> {
             BareSelectionFailure::from(SlotSelectionFailure::MalformedNode(claim.node().clone()))
         };
         let (node, read, row) = self.probability_claim_read(claim)?;
-        let pending = || BareClauseRefusal::Pending {
-            fact: "probabilistic-exact-eventual-form",
+        let pending = |fact| BareClauseRefusal::Pending {
+            fact,
             node: node.node_id.clone(),
         };
-        let ProbabilisticClaimForm::Reach {
-            target: ProbabilisticReachTarget::Eventually(predicate),
-            bound,
-        } = &read.form
-        else {
-            return Err(pending());
+        let (predicate, bound) = match &read.form {
+            ProbabilisticClaimForm::Reach {
+                target: ProbabilisticReachTarget::Eventually(predicate),
+                bound,
+            } => (predicate, bound),
+            ProbabilisticClaimForm::Reach {
+                target: ProbabilisticReachTarget::Always(_) | ProbabilisticReachTarget::Until(..),
+                ..
+            }
+            | ProbabilisticClaimForm::ExpectedReward { .. }
+            | ProbabilisticClaimForm::ExpectedElapsed { .. } => {
+                return Err(pending("probabilistic-exact-eventual-form"));
+            }
+            ProbabilisticClaimForm::Probability { .. }
+            | ProbabilisticClaimForm::Quantile { .. }
+            | ProbabilisticClaimForm::MeanOfFraction { .. }
+            | ProbabilisticClaimForm::LongRunFraction { .. } => {
+                return Err(pending("missing-claim-profile"));
+            }
         };
         let ProbabilisticScheduler::Workload(workload) = &read.scheduler else {
-            return Err(pending());
+            return Err(pending("probabilistic-exact-eventual-form"));
         };
         if !matches!(read.activation, ProbabilisticActivation::Origin)
             || !read.rewards.is_empty()
             || !read.delays.is_empty()
             || read.confidence.is_some()
         {
-            return Err(pending());
+            return Err(pending("probabilistic-exact-eventual-form"));
         }
-        let profile = self
-            .package()
-            .lock()
-            .profile_selections
-            .iter()
-            .find(|selection| {
-                selection.definition.identity.as_ref() == TemporalProfile::InfiniteTrace.identity()
-            })
-            .ok_or_else(pending)?;
-        let profile = DefinitionRef::new(
-            profile.definition.authority.to_string(),
-            profile.definition.identity.to_string(),
-        )
-        .map_err(|_| malformed())?;
+        // FSpec FR-641 "Wording of an unbounded exact claim" fixes the
+        // interval-less exact eventuality to infinite-trace semantics;
+        // FR-407 refuses its use under a bounded profile before admission.
+        // No unrelated package profile selection supplies this fact.
+        let definition = TemporalProfile::InfiniteTrace.definition();
+        let profile = DefinitionRef::new(definition.authority, definition.identity)
+            .map_err(|_| malformed())?;
         let workload = self.node_key(workload).ok_or_else(malformed)?;
         let workload = self
             .node_by_key(&workload)?
@@ -148,7 +154,9 @@ impl BarePackage<'_> {
                 value.denominator.parse().map_err(|_| malformed())?,
             )
             .map_err(|_| malformed())?,
-            ProbabilisticExact::Quantity { .. } => return Err(pending()),
+            ProbabilisticExact::Quantity { .. } => {
+                return Err(pending("probabilistic-exact-eventual-form"));
+            }
         };
         let bound = match bound.direction {
             BoundDirection::AtLeast => Bound::AtLeast(rational),
