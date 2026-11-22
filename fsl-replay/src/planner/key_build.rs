@@ -243,6 +243,22 @@ pub(super) fn subject_text(
     )
     .map_err(|_| KeyWireError)
 }
+pub(super) fn subject_text_with_budget(
+    identity: &str,
+    assumptions: &[NodeKey],
+    budget: &mut NativeJoinBudget,
+) -> Result<String, KeyBuildRefusal> {
+    let scope = Scope::new(Some(budget), locus())?;
+    encode(
+        &Subject {
+            identity,
+            assumptions,
+            scope: &scope,
+        },
+        &scope,
+    )
+}
+
 fn locus() -> NativeJoinLocus {
     NativeJoinLocus {
         source: filament_contract_model::NativeJoinLocusSource::Package,

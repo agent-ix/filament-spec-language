@@ -255,6 +255,9 @@ fn composition_views_keep_member_regions_and_owner_bound_targets() {
                         })
                     );
                 }
+                // A mixed common-value request over two genuine DIFFERENT
+                // object rows is a defensive API control. Strict admission
+                // need not permit this candidate set for one supply member.
                 let different = witnesses[0]
                     .declaration_rows()
                     .find(|row| {

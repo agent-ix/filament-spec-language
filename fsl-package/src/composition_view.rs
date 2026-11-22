@@ -162,6 +162,12 @@ pub struct CompositionMember<'p> {
 }
 
 impl<'p> CompositionMember<'p> {
+    /// Move the already paid member facts and exact source attribution out
+    /// without copying their owned source strings or occurrence identity.
+    pub fn into_parts(self) -> (CompositionMemberValue<'p>, OccurrenceSource) {
+        (self.value, self.source)
+    }
+
     /// The admitted typed member, without a second body representation.
     pub fn value(&self) -> CompositionMemberValue<'p> {
         self.value
@@ -219,6 +225,24 @@ impl<'p> CompositionView<'p> {
     /// The admitted composition rule spelling.
     pub fn rule(&self) -> &'p str {
         self.rule
+    }
+
+    /// The number of admitted members across the six canonical channels.
+    ///
+    /// # Errors
+    /// Refuses a member coordinate that cannot be represented on this target.
+    pub fn member_count(&self) -> Result<usize, CompositionViewRefusal> {
+        [
+            self.components.len(),
+            self.guarantees.len(),
+            self.relies.len(),
+            self.liveness_dependencies.len(),
+            self.supplies.len(),
+            self.environment.len(),
+        ]
+        .into_iter()
+        .try_fold(0usize, |sum, count| sum.checked_add(count))
+        .ok_or(CompositionViewRefusal::MemberOrdinal)
     }
 
     /// The six typed arrays in canonical concatenation order. This is not
@@ -472,6 +496,44 @@ impl<'p> CompositionView<'p> {
             return Err(CompositionViewRefusal::UnknownTarget);
         }
         Ok(owners)
+    }
+
+    /// Resolve this declaration's actual environment assumption in its root
+    /// predicate scope, without substituting a foreign or name-derived target.
+    pub fn environment_assumption_with_budget(
+        &self,
+        environment: &CheckedEnvironmentEntry,
+        budget: &mut NativeJoinBudget,
+    ) -> Result<OwnedNodeRef<'p>, CompositionViewRefusal> {
+        let mut work = ProjectionWork::metered(budget)?;
+        let mut authentic = false;
+        for candidate in self.environment {
+            work.visit()?;
+            if std::ptr::eq(candidate, environment) {
+                authentic = true;
+                break;
+            }
+        }
+        if !authentic {
+            return Err(CompositionViewRefusal::UnknownTarget);
+        }
+        let CheckedEnvironmentSupplies::Assumption(target) = &environment.supplies else {
+            return Err(CompositionViewRefusal::UnknownTarget);
+        };
+        let reference = self.resolve_reference(target, &mut work)?;
+        work.visit()?;
+        if self.package.node_kind(&reference)
+            != Some(filament_contract_model::CheckedNodeKind::Function(
+                filament_contract_model::FunctionForm::Predicate,
+            ))
+        {
+            return Err(CompositionViewRefusal::UnknownTarget);
+        }
+        Ok(OwnedNodeRef {
+            owner: self.package,
+            node: reference,
+            name: None,
+        })
     }
 
     fn target(

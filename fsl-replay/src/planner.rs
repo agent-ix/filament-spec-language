@@ -26,6 +26,7 @@ mod compose;
 mod composition_graph;
 mod declaration;
 mod entry;
+mod from_admitted;
 mod from_package;
 mod item;
 mod json;
@@ -58,6 +59,10 @@ pub use declaration::{
 pub use entry::{
     read_result_entry, EntryCause, EntryOrigin, LimitFacts, ResultEntry, ResultEntryRefusal,
     TaskSearchEdge, TaskSearchEvidence, TaskSearchFrontier, TaskSearchNode,
+};
+pub use from_admitted::{
+    PackageComposition, PackageCompositionClause, PackageCompositionCycle,
+    PackageCompositionRefusal, PackageCompositionSlot,
 };
 pub use from_package::{
     composition_premises, subject_text, CompositionPremise, DeclarationRefusal,
