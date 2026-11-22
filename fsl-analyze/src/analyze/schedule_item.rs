@@ -52,18 +52,38 @@ pub(super) fn schedule_item<'a>(
     let (subject, name, unit) = match subject_of(package, claim) {
         Ok(found) => found,
         Err(Lowering::Absent) => return None,
-        Err(Lowering::Refused(refusal)) => {
-            let diagnostic = CatalogCode::new(refusal.code().as_str(), refusal.cause());
-            return Some(item(request_index, move |_| {
-                EngineReport::Refused(Refusal::Declined(
-                    ProofRefusalCause::InvalidInput,
-                    DeclineCode::Fsl(refusal.code()),
-                    diagnostic,
-                ))
-            }));
-        }
+        Err(Lowering::Refused(refusal)) => return Some(refused_item(request_index, refusal)),
     };
-    Some(item(request_index, move |cancel| {
+    Some(subject_item(request_index, subject, name, unit))
+}
+
+/// The EN-7 item of a checked task set's `refusal`: the declined item the
+/// source and the package routes both settle a task set the subject refuses.
+pub(super) fn refused_item<'a>(
+    request_index: RequestIndex,
+    refusal: TaskSetRefusal,
+) -> AnalyzeItem<'a> {
+    let diagnostic = CatalogCode::new(refusal.code().as_str(), refusal.cause());
+    item(request_index, move |_| {
+        EngineReport::Refused(Refusal::Declined(
+            ProofRefusalCause::InvalidInput,
+            DeclineCode::Fsl(refusal.code()),
+            diagnostic,
+        ))
+    })
+}
+
+/// The EN-7 item over the closed-form `subject` of the claim `name`, whose
+/// task set's time unit is `unit`. Both routes build their item here, so a
+/// task set settles identically from the source's checked rows and from a
+/// package's admitted rows.
+pub(super) fn subject_item<'a>(
+    request_index: RequestIndex,
+    subject: ScheduleSubject,
+    name: String,
+    unit: String,
+) -> AnalyzeItem<'a> {
+    item(request_index, move |cancel| {
         let outcome = schedulability::analyze(&subject, &ScheduleLimits::default(), cancel);
         let value = fsl_replay::settle(&subject, &outcome, cancel);
         let miss = miss_wire(&name, &unit, &subject, &outcome);
@@ -72,7 +92,7 @@ pub(super) fn schedule_item<'a>(
             outcome,
             miss,
         }))
-    }))
+    })
 }
 
 fn item<'a>(

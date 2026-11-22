@@ -37,6 +37,8 @@ use super::super::{
     ItemOptions, NegotiatedItem, PackageClauseSubject, PackageDeadlockSubject,
     PackageInvariantSubject, PackageItemInputs, PackageStateGraphSubject, SubjectBinding,
 };
+mod schedule;
+
 use super::{
     candidate_list, invalid_kind, negotiate_items, negotiated_routes, temporal_settings,
     unknown_claim, unknown_option, write_run, AnalyzeDocumentError, ItemReads, ItemSelection,
@@ -142,6 +144,9 @@ fn node_words(node: &CheckedNodeId) -> String {
 pub enum PendingFamily {
     /// A claimless `simulation` item (FR-634).
     Simulation,
+    /// A schedulability item an EN-6 task-product engine decides: the package
+    /// route reads no task-product input yet.
+    TaskProduct,
     /// A derived item other than a model subject's deadlock-freedom item
     /// (FSpec FR-368).
     Derived,
@@ -180,6 +185,7 @@ impl PendingFamily {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Simulation => "simulation",
+            Self::TaskProduct => "task-product",
             Self::Derived => "derived",
             Self::LoopInvariant => "loop-invariant",
             Self::LoopTermination => "loop-termination",
@@ -290,6 +296,14 @@ enum Named<'s> {
         name: &'s str,
         selection: &'s ItemSelection,
     },
+    /// A `schedulability` item over a task-set claim (FR-246, FR-633).
+    Schedule {
+        index: RequestIndex,
+        name: &'s str,
+        declaration: CheckedNodeId,
+        ordinal: u64,
+        selection: &'s ItemSelection,
+    },
 }
 
 /// How a resolved package-route claim item runs.
@@ -305,6 +319,7 @@ enum Route<'a> {
     StateGraph(Box<PackageStateGraphSubject<'a>>),
     Relation(Box<PackageRelationSubject<'a>>),
     Value(Box<PackageValue<'a>>),
+    Schedule(Box<schedule::ScheduleRoute>),
 }
 
 /// A Boolean value clause's target over the package and the semantic type of
@@ -532,6 +547,19 @@ pub fn settle_package_run(
                     resolved.push(ResolvedItem::Claim(claim));
                 }
             },
+            Named::Schedule {
+                index,
+                name,
+                declaration,
+                ordinal,
+                selection,
+            } => match reads.schedule(index, name, &declaration, ordinal, selection)? {
+                Resolution::Settled(settled) => resolved.push(settled),
+                Resolution::Claim(claim, route) => {
+                    routes.insert(index, Route::Schedule(Box::new(route)));
+                    resolved.push(ResolvedItem::Claim(claim));
+                }
+            },
             Named::StateGraph {
                 index,
                 name,
@@ -640,6 +668,22 @@ pub fn settle_package_run(
                     .collect(),
             })
         });
+        // EN-6 decides a task set over a task-product input the package
+        // route does not read yet.
+        for item in &negotiated {
+            let zone = matches!(routes.get(&item.item.request_index), Some(Route::Schedule(_)))
+                && item.disposition.target().is_some_and(|backend| {
+                    backend.id().as_str() == crate::zone_check::manifest::BACKEND_ID
+                });
+            if zone {
+                return Err(PackageRunError::Pending(PendingPackageFamily {
+                    request_index: Some(item.item.request_index),
+                    note: None,
+                    family: PendingFamily::TaskProduct,
+                    node: None,
+                }));
+            }
+        }
         let work = WorkInputs {
             engines,
             admitted,
@@ -989,6 +1033,15 @@ fn resolve_names<'s>(
                     node.node_id == found.declaration && node.step_relation_body().is_some()
                 }) {
                     return Ok(Named::Relation {
+                        index,
+                        name,
+                        declaration: found.declaration,
+                        ordinal: found.occurrence.ordinal,
+                        selection,
+                    });
+                }
+                if is_schedulability(view, &found.declaration) {
+                    return Ok(Named::Schedule {
                         index,
                         name,
                         declaration: found.declaration,
@@ -2499,6 +2552,9 @@ impl<'a> WorkInputs<'_, 'a> {
                     |subject| subject.item(item.request_index),
                 )
             }
+            (_, Some(Route::Schedule(route))) if item.kind == Capability::Schedulability => {
+                route.item(item.request_index)
+            }
             (_, Some(Route::Value(value))) if item.kind == Capability::ValueValidity => {
                 let PackageValue {
                     target,
@@ -2712,4 +2768,15 @@ fn is_schedulability(view: &dyn AnalysisView, node: &CheckedNodeId) -> bool {
         .is_some_and(|candidate| {
             &*candidate.node_tag == "claim" && candidate.semantic_form.as_ref() == "schedulability"
         })
+}
+
+/// The refusal of a declaration whose package rows the route cannot read as
+/// a closed-form subject: typed, naming the declaration.
+fn pending_declaration(index: RequestIndex, declaration: &CheckedNodeId) -> PackageRunError {
+    PackageRunError::Pending(PendingPackageFamily {
+        request_index: Some(index),
+        note: None,
+        family: PendingFamily::Declaration,
+        node: Some(declaration.clone()),
+    })
 }

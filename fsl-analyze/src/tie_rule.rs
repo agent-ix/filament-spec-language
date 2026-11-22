@@ -81,7 +81,7 @@ pub fn resolve_tie(
 
 /// FR-962: among exactly EN-6 and EN-7, an unnamed schedulability item
 /// selects EN-7. Additional matching registrations leave the tie untouched.
-fn narrow_task_product_default(candidates: CandidateOutcome) -> CandidateOutcome {
+pub(crate) fn narrow_task_product_default(candidates: CandidateOutcome) -> CandidateOutcome {
     let CandidateOutcome::Candidates(set) = &candidates else {
         return candidates;
     };
