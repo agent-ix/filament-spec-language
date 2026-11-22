@@ -809,7 +809,7 @@ impl<'a> PackageClauseSubject<'a> {
     ) -> Result<Self, ClauseItemRefusal> {
         let key = claim.node();
         let input = package.input();
-        let admitted = input
+        input
             .admitted_package()
             .ok_or(ClauseItemRefusal::UnknownClause)?;
         let clause = package
@@ -818,7 +818,7 @@ impl<'a> PackageClauseSubject<'a> {
                 filament_semantic_value::checking::CheckingLimits::default().nodes(),
             )
             .map_err(ClauseItemRefusal::from)?;
-        let identity = fsl_replay::ClauseIdentity::of_admitted(admitted, &clause)
+        let identity = fsl_replay::ClauseIdentity::of_admitted(package.package(), &clause)
             .map_err(|_| ClauseItemRefusal::UnknownClause)?;
         named(&clause)?;
         Ok(Self {

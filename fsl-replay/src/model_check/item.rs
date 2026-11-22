@@ -325,7 +325,10 @@ impl ModelCheckItem<'_> {
                         cancel,
                         subject.simulation.emit,
                     )?,
-                    (None, Some(admitted)) => ClauseIdentity::of_admitted(admitted, clause)?,
+                    (None, Some(admitted)) => ClauseIdentity::of_admitted(
+                        &fsl_package::BarePackage::new(admitted),
+                        clause,
+                    )?,
                     (None, None) => {
                         return Err(ItemRefusal::Fault(InternalFault::new(
                             "model-check-item",

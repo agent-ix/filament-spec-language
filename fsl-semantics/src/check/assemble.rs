@@ -1429,7 +1429,7 @@ struct ModelTypes {
     variant_types: Vec<VariantTypeDeclaration>,
     /// Each model alias type's `alias::T` name and its declaration (FSpec
     /// FR-322 "Named type arguments"); a model scalar names no alias.
-    model_aliases: Vec<(String, crate::value::TypeArgumentAlias)>,
+    model_aliases: Vec<(String, crate::value::member::TypeArgumentAlias)>,
     /// Each scalar or alias type's `alias::T` name and its admitted kernel type.
     scalars: Vec<(String, ValueType)>,
     model_records: ModelRecords,
@@ -2366,7 +2366,7 @@ fn model_object_types(
         ordered: false,
         unique: true,
     };
-    let model_aliases: Vec<(String, crate::value::TypeArgumentAlias)> = package
+    let model_aliases: Vec<(String, crate::value::member::TypeArgumentAlias)> = package
         .records
         .iter()
         .filter_map(|record| match record {
@@ -2375,7 +2375,7 @@ fn model_object_types(
                 let artifact = type_identity_segment(&key.package, &key.node)?;
                 Some((
                     super::source_model::qualified(alias, artifact),
-                    crate::value::TypeArgumentAlias {
+                    crate::value::member::TypeArgumentAlias {
                         package: key.package.clone(),
                         node: key.node.clone(),
                     },
@@ -5148,8 +5148,9 @@ impl PackageDeclarations {
                                     alias: using.alias.clone(),
                                     identity_span: using.span,
                                     selected: profile.identity.clone(),
-                                    required_role: crate::value::DefinitionRole::Root,
-                                    root: crate::value::DefinitionRole::Root.reference(),
+                                    required_role: crate::value::definition::DefinitionRole::Root,
+                                    root: crate::value::definition::DefinitionRole::Root
+                                        .reference(),
                                     cause: super::ProfileCause::WrongSelectionRole,
                                     supplied_by: None,
                                 })),

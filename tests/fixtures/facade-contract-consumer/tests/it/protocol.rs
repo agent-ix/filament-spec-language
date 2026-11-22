@@ -37,7 +37,7 @@ fn protocol_emission(model: &[u8]) -> fsl_package::Emission {
     .check(
         CheckMode::Linked,
         CheckingLimits::default(),
-        &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        &fsl_eval::value::S6aRewardEvaluator,
     )
     .expect("protocol checks");
     let source = graph.source().clone();

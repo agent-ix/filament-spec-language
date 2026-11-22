@@ -57,7 +57,7 @@ impl RegistrySnapshot {
 
     /// The FR-075 candidate set for one witness kind.
     pub fn candidates(&self, kind: Capability) -> CandidateOutcome {
-        self.registry.candidates(kind, None)
+        fsl_route::tie::exclude_en1(self.registry.candidates(kind, None), kind, None, false)
     }
 
     /// The FR-075-AC-13 candidate set for one probabilistic evidence kind.

@@ -570,7 +570,7 @@ function increment using v(x: Integer): Integer pure { x + 1 }\n";
                 .check(
                     CheckMode::Linked,
                     CheckingLimits::default(),
-                    &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+                    &fsl_eval::value::S6aRewardEvaluator,
                 )
                 .expect("library checks"),
         );

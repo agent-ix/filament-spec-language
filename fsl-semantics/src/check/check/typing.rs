@@ -935,7 +935,10 @@ fn exact_rational_literal_type(expression: ExprRef<'_>) -> Option<ValueType> {
 
 impl<'a> Typer<'a> {
     /// The alias a type argument written as `written` names, when it names one.
-    fn type_argument_alias(&self, written: &str) -> Option<crate::value::TypeArgumentAlias> {
+    fn type_argument_alias(
+        &self,
+        written: &str,
+    ) -> Option<crate::value::member::TypeArgumentAlias> {
         self.scope.alias_declaration(written)
     }
 

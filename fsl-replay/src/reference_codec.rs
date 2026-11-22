@@ -1069,7 +1069,7 @@ impl<'c, 'm, 'r> ReferenceCodec<'c, 'm, 'r> {
     ///
     /// # Errors
     /// Refuses a catalog from another package or model-admission operation.
-    pub fn for_admitted_call(
+    pub(crate) fn for_admitted_call(
         catalog: &'c ReferenceCatalog<'m>,
         package: &CheckedPackageV2,
         models: &[fsl_semantics::model::intake::NormalizedModel],

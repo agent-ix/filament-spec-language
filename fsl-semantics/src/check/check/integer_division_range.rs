@@ -224,11 +224,13 @@ mod tests {
         for law in DivisionProfile::ALL {
             let role = match law {
                 DivisionProfile::Truncating => {
-                    crate::value::DefinitionRole::IntegerDivisionTruncating
+                    crate::value::definition::DefinitionRole::IntegerDivisionTruncating
                 }
-                DivisionProfile::Floor => crate::value::DefinitionRole::IntegerDivisionFloor,
+                DivisionProfile::Floor => {
+                    crate::value::definition::DefinitionRole::IntegerDivisionFloor
+                }
                 DivisionProfile::Euclidean => {
-                    crate::value::DefinitionRole::IntegerDivisionEuclidean
+                    crate::value::definition::DefinitionRole::IntegerDivisionEuclidean
                 }
             };
             let selected = crate::value::admit_integer_division(&[role.reference()], None).unwrap();
