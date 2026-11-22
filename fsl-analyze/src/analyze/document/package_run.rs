@@ -60,9 +60,8 @@ pub struct PendingPackageFamily {
     pub family: PendingFamily,
     /// The package node that carries the pending fact, when one does.
     pub node: Option<CheckedNodeId>,
-    /// The words that name the claim a probabilistic refusal is at and, for
-    /// an unresolved claim, why it does not resolve; `None` for every other
-    /// family.
+    /// The selected claim's context for a probabilistic or operation-contract
+    /// refusal, including why an unresolved probabilistic claim does not resolve.
     pub note: Option<String>,
 }
 
@@ -102,6 +101,11 @@ impl PendingPackageFamily {
             (Some(index), PendingFamily::ClauseFact(fact)) => format!(
                 ": items[{}] names a temporal clause whose {fact} has no package form yet{at}",
                 index.get()
+            ),
+            (Some(index), PendingFamily::OperationContractRequirementRecord) => format!(
+                ": items[{}] names the operation-contract claim {}, whose operation-contract requirement record has no package form yet{at}",
+                index.get(),
+                self.note.as_deref().unwrap_or_default()
             ),
             (Some(index), PendingFamily::CompositionOwningWorkPermission) => format!(
                 ": items[{}] composition owning execution is pending missing native before-work permission{at}",
@@ -156,6 +160,9 @@ pub enum PendingFamily {
     LoopTermination,
     /// A named declaration.
     Declaration,
+    /// A selected operation contract needs the source requirement record,
+    /// whose operation-contract form the package wire contract does not carry.
+    OperationContractRequirementRecord,
     /// A name the package carries no row for while it holds a claim whose
     /// name it does not carry ([`fsl_package::AnalysisView::unnamed_claims`]):
     /// the name may be that claim's, so it is not settled `unknown-claim`.
@@ -190,6 +197,7 @@ impl PendingFamily {
             Self::LoopInvariant => "loop-invariant",
             Self::LoopTermination => "loop-termination",
             Self::Declaration => "declaration",
+            Self::OperationContractRequirementRecord => "operation-contract-requirement-record",
             Self::UnnamedClaim => "unnamed-claim",
             Self::Composition => "composition",
             Self::CompositionOwningWorkPermission => "composition-owning-work-permission",
@@ -373,6 +381,7 @@ pub fn settle_package_run(
             }));
         }
     }
+    let explicit_items = items.is_some();
     let defaults = items.is_none().then(|| default_selections(package));
     let items: &[ItemSelection] = items.or(defaults.as_deref()).unwrap_or_default();
     if let Some(refusal) =
@@ -441,6 +450,7 @@ pub fn settle_package_run(
         limits,
         subject: &subject,
         registry: &registry,
+        explicit_items,
     };
     let mut resolved = Vec::with_capacity(named.len());
     let mut routes: BTreeMap<RequestIndex, Route<'_>> = BTreeMap::new();
@@ -1246,6 +1256,7 @@ struct ClaimReads<'r, 'a> {
     limits: AnalyzeLimits,
     subject: &'r SubjectSelection,
     registry: &'r Registry,
+    explicit_items: bool,
 }
 
 impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
@@ -2334,7 +2345,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             }
         }
         let model_subject = !own_subject.initial_states.is_empty();
-        if kind == Capability::OperationContract && !model_subject {
+        if !self.explicit_items && kind == Capability::OperationContract && !model_subject {
             return Err(pending(PendingFamily::Declaration));
         }
         let candidates = state_clause_tie(
@@ -2344,6 +2355,21 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             model_subject,
             clause.invariant,
         );
+        if self.explicit_items && kind == Capability::OperationContract {
+            if let CandidateOutcome::Candidates(set) = &candidates {
+                let native_invariant = clause.invariant
+                    && model_subject
+                    && matches!(set.candidates(), [candidate] if candidate.id().as_str() == crate::model_check::manifest::BACKEND_ID);
+                if matches!(set.candidates(), [_]) && !native_invariant {
+                    return Err(PackageRunError::Pending(PendingPackageFamily {
+                        request_index: Some(index),
+                        family: PendingFamily::OperationContractRequirementRecord,
+                        node: Some(declaration.clone()),
+                        note: Some(format!("`{name}` (claim occurrence {ordinal})")),
+                    }));
+                }
+            }
+        }
         let temporal = selection.temporal.clone().unwrap_or_default();
         let item = ClaimItem {
             request_index: index,

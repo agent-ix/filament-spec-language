@@ -50,6 +50,13 @@ impl ExternalProvider for Spy {
 }
 
 fn spy(verdict: ProviderVerdict) -> (Engine, Arc<Mutex<Vec<Json>>>) {
+    spy_for(verdict, fsl_semantics::check::Capability::ValueValidity)
+}
+
+fn spy_for(
+    verdict: ProviderVerdict,
+    kind: fsl_semantics::check::Capability,
+) -> (Engine, Arc<Mutex<Vec<Json>>>) {
     let seen = Arc::new(Mutex::new(Vec::new()));
     let members = fsl_route::ManifestMembers {
         domains: Some(&[fsl_foundation::bound::DomainKind::Integer.to_wire()]),
@@ -61,10 +68,7 @@ fn spy(verdict: ProviderVerdict) -> (Engine, Arc<Mutex<Vec<Json>>>) {
     let descriptor = fsl_route::descriptor_from_manifest(
         fsl_route::Candidate::new(fsl_foundation::BackendId::new(SMT)),
         fsl_route::ProviderOrigin::Linked,
-        [(
-            Some(fsl_semantics::check::Capability::ValueValidity.to_wire()),
-            Some(Mode::Unbounded.to_wire()),
-        )],
+        [(Some(kind.to_wire()), Some(Mode::Unbounded.to_wire()))],
         members,
     )
     .expect("a well-formed descriptor");
@@ -97,10 +101,7 @@ fn both(
     let body = format!("{declarations}{}", bounded());
     let ws = Workspace::new(name);
     let (engine, seen) = spy(verdict.clone());
-    let source = analyze_with_providers(
-        &counter_request(&ws, &body, items.clone()),
-        vec![engine],
-    );
+    let source = analyze_with_providers(&counter_request(&ws, &body, items.clone()), vec![engine]);
     let source = Outcome {
         run: source,
         requests: seen.lock().expect("the log").clone(),
@@ -149,7 +150,12 @@ fn item(claim: &str) -> Json {
 #[trace("TC-2410", "FR-940-AC-13")]
 #[test]
 fn a_provider_proved_value_item_over_a_package_equals_the_source() {
-    let item = assert_parity("pkg-provider-proved", EVEN, &item("Even"), &ProviderVerdict::Proved);
+    let item = assert_parity(
+        "pkg-provider-proved",
+        EVEN,
+        &item("Even"),
+        &ProviderVerdict::Proved,
+    );
     assert_eq!(label(&item), "proved", "{item}");
     assert_eq!(item["record"]["backend"], SMT, "{item}");
 }
@@ -183,7 +189,12 @@ fn a_provider_counterexample_that_replays_clean_settles_alike() {
 #[trace("TC-2410", "FR-940-AC-13")]
 #[test]
 fn a_provider_unknown_value_item_over_a_package_equals_the_source() {
-    assert_parity("pkg-provider-unknown", EVEN, &item("Even"), &ProviderVerdict::Unknown);
+    assert_parity(
+        "pkg-provider-unknown",
+        EVEN,
+        &item("Even"),
+        &ProviderVerdict::Unknown,
+    );
 }
 
 /// FR-290: an item naming a backend nobody registered settles the same
@@ -192,9 +203,204 @@ fn a_provider_unknown_value_item_over_a_package_equals_the_source() {
 #[test]
 fn an_absent_provider_settles_alike_over_a_package() {
     let items = json!([{"claim": "Even", "kind": "value-validity", "backend": "fsl.absent"}]);
-    let (source, package) = both("pkg-provider-absent", EVEN, &items, &ProviderVerdict::Proved);
-    assert_eq!(package.run.document()["items"], source.run.document()["items"]);
+    let (source, package) = both(
+        "pkg-provider-absent",
+        EVEN,
+        &items,
+        &ProviderVerdict::Proved,
+    );
+    assert_eq!(
+        package.run.document()["items"],
+        source.run.document()["items"]
+    );
     assert_eq!(package.run.exit, source.run.exit);
     assert!(package.requests.is_empty() && source.requests.is_empty());
 }
 
+/// Emit an authentic package, then remove the source before the strict package
+/// intake and analysis. The selected claim and its occurrence come from the
+/// emitted name table rather than a test-authored requirement row.
+fn contract_package(name: &str, body: &str, items: Json, engines: Vec<Engine>) -> Run {
+    let ws = Workspace::new(name);
+    let _ = counter_request(&ws, body, items.clone());
+    let (members, _) = package_selection(&ws, &request_members(Some(items)));
+    std::fs::remove_file(ws.path("program.fsl")).expect("the source is removed");
+    let document = json!({"format": "native-analyze/1", "request": members});
+    analyze_with_providers(
+        &ws.write(
+            "analyze-contract-package.json",
+            document.to_string().as_bytes(),
+        ),
+        engines,
+    )
+}
+
+fn assert_contract_record_refusal(run: &Run, index: usize, name: &str) {
+    let document = run.document();
+    assert_eq!(document["items"], json!([]), "{document}");
+    let diagnostic = &document["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "unsupported_construct", "{document}");
+    assert_eq!(diagnostic["cause"], "not-yet-implemented", "{document}");
+    let message = diagnostic["message"].as_str().expect("a refusal message");
+    assert!(message.contains(&format!("items[{index}]")), "{message}");
+    assert!(
+        message.contains(&format!("`{name}` (claim occurrence 0)")),
+        "{message}"
+    );
+    assert!(
+        message.contains("operation-contract requirement record has no package form"),
+        "{message}"
+    );
+    assert!(message.contains("CheckedNodeId"), "{message}");
+    assert!(
+        !message.contains("requirement row"),
+        "no invented row index: {message}"
+    );
+}
+
+/// Trace: FR-940-AC-13, FR-950-AC-1, FR-968-AC-2.
+/// Pre/post selections carry source operation-contract records that the package
+/// does not represent, even though it can resolve their authentic claim names.
+#[trace("TC-2410", "FR-940-AC-13")]
+#[test]
+fn contract_package_refuses_missing_operation_contract_requirement_record() {
+    for name in ["CanInc", "Inc"] {
+        for backend in [None, Some("contract-checker"), Some(SMT)] {
+            let (engine, seen) = spy_for(
+                ProviderVerdict::Proved,
+                fsl_semantics::check::Capability::OperationContract,
+            );
+            let mut selection = json!({"claim": name, "kind": "operation-contract"});
+            if let Some(backend) = backend {
+                selection["backend"] = json!(backend);
+            }
+            let engines = if backend == Some(SMT) {
+                vec![engine]
+            } else {
+                vec![]
+            };
+            let run = contract_package(
+                &format!("pkg-contract-{name}-{}", backend.unwrap_or("default")),
+                &bounded(),
+                json!([selection]),
+                engines,
+            );
+            assert_contract_record_refusal(&run, 0, name);
+            assert!(seen.lock().expect("the provider log").is_empty());
+        }
+    }
+}
+
+/// Trace: FR-962-AC-1, FR-950-AC-1.
+/// A matching external contract provider leaves two candidates after EN-1 is
+/// excluded. Negotiation must report the ambiguity before requesting a form.
+#[trace("TC-2410", "FR-940-AC-13")]
+#[test]
+fn contract_package_keeps_ambiguous_contract_candidates() {
+    let (engine, seen) = spy_for(
+        ProviderVerdict::Proved,
+        fsl_semantics::check::Capability::OperationContract,
+    );
+    let run = contract_package(
+        "pkg-contract-ambiguous",
+        &bounded(),
+        json!([{"claim": "Inc", "kind": "operation-contract"}]),
+        vec![engine],
+    );
+    let item = run.item(0);
+    assert_eq!(
+        item["request"]["candidates"]["backends"],
+        json!(["contract-checker", SMT]),
+        "{item}"
+    );
+    assert!(item.to_string().contains("ambiguous-backend"), "{item}");
+    assert!(!run
+        .document()
+        .to_string()
+        .contains("operation-contract requirement record"));
+    assert!(seen.lock().expect("the provider log").is_empty());
+}
+
+/// Trace: FR-621-AC-1, FR-950-AC-2, FR-968-AC-3.
+/// An earlier provider item must not run or settle when a later contract needs
+/// an unrepresented record; the request refuses as a whole.
+#[trace("TC-2410", "FR-940-AC-13")]
+#[test]
+fn contract_package_mixed_request_refuses_before_any_provider_runs() {
+    let (engine, seen) = spy(ProviderVerdict::Proved);
+    let run = contract_package(
+        "pkg-contract-mixed",
+        &format!("{EVEN}{}", bounded()),
+        json!([
+            {"claim": "Even", "kind": "value-validity", "backend": SMT},
+            {"claim": "Inc", "kind": "operation-contract"}
+        ]),
+        vec![engine],
+    );
+    assert_contract_record_refusal(&run, 1, "Inc");
+    assert!(seen.lock().expect("the provider log").is_empty());
+}
+
+/// Trace: FR-962-AC-1, FR-940-AC-13.
+/// EN-1's invariant/model tie reads the package's invariant form and keeps its
+/// existing result. Naming EN-2 requires the missing contract record instead.
+#[trace("TC-2410", "FR-940-AC-13")]
+#[test]
+fn contract_package_keeps_the_native_invariant_tie() {
+    let body = "invariant Safe using v on M::Counter at current { self.value <= 3 }\n";
+    for backend in [None, Some("en-1"), Some("contract-checker")] {
+        let mut item = json!({"claim": "Safe", "kind": "operation-contract"});
+        if let Some(backend) = backend {
+            item["backend"] = json!(backend);
+        }
+        let run = contract_package(
+            &format!("pkg-contract-invariant-{}", backend.unwrap_or("default")),
+            body,
+            json!([item]),
+            vec![],
+        );
+        if backend == Some("contract-checker") {
+            assert_contract_record_refusal(&run, 0, "Safe");
+        } else {
+            assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
+            assert_eq!(run.item(0)["record"]["backend"], "en-1");
+        }
+    }
+}
+
+/// Trace: FR-950-AC-1, FR-968-AC-2.
+/// Name lookup and candidate failures keep their ordinary dispositions before
+/// any operation-contract form is requested.
+#[trace("TC-2410", "FR-940-AC-13")]
+#[test]
+fn contract_package_keeps_unknown_names_and_candidate_refusals() {
+    for (name, backend, expected) in [
+        ("Missing", SMT, "unknown-claim"),
+        ("Inc", "fsl.absent", "unknown-backend"),
+        ("Inc", SMT, "unsupported-requested-capability"),
+    ] {
+        // This provider advertises only value-validity: the named contract's
+        // candidate set is empty, rather than a request for a missing record.
+        let (engine, seen) = spy(ProviderVerdict::Proved);
+        let run = contract_package(
+            &format!("pkg-contract-precedence-{name}-{backend}"),
+            &bounded(),
+            json!([{"claim": name, "kind": "operation-contract", "backend": backend}]),
+            vec![engine],
+        );
+        let document = run.document();
+        assert_eq!(
+            document["items"].as_array().map(Vec::len),
+            Some(1),
+            "{document}"
+        );
+        assert!(document.to_string().contains(expected), "{document}");
+        assert!(
+            !document
+                .to_string()
+                .contains("operation-contract requirement record"),
+            "{document}"
+        );
+        assert!(seen.lock().expect("the provider log").is_empty());
+    }
+}
