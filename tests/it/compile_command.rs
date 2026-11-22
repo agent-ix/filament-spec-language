@@ -1251,9 +1251,51 @@ fn a_library_source_over_the_default_dependent_byte_ceiling_can_be_raised() {
 
     let library_size = 8_388_609 - program.len() - base_library.len();
     let padded_library = format!("{base_library}//{}", "x".repeat(library_size - 2));
+    let source_bytes = padded_library.len();
     std::fs::write(directory.path().join("geometry.native"), padded_library).unwrap();
 
-    let error = compile_in_process(directory.path()).unwrap_err();
+    let path = directory.path().join("compile.json");
+    let mut spine_limits = fsl_replay::spine::SpineLimits::default();
+    spine_limits.source.source_bytes = source_bytes - 1;
+    let s1_error = fsl_command::command::compile_outcome_with_limits_and_overrides(
+        &path,
+        fsl_command::command::RunLimits {
+            dependent_bytes: 8_388_609,
+            ..Default::default()
+        },
+        &fsl_command::command::RequestOverrides {
+            limits: Some(&spine_limits),
+            ..Default::default()
+        },
+    )
+    .err()
+    .expect("raising the aggregate ceiling does not raise the per-source S1 ceiling");
+    let s1_failure = s1_error.value().unwrap();
+    assert_eq!(s1_failure["code"], "stage_limit_exceeded", "{s1_failure}");
+    assert_eq!(
+        s1_failure["cause"], "input-bytes-exceeded",
+        "{s1_failure}"
+    );
+    assert_eq!(s1_failure["stage"], "source", "{s1_failure}");
+    assert!(
+        s1_failure["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("s1.input_bytes")),
+        "{s1_failure}"
+    );
+
+    spine_limits.source.source_bytes = source_bytes;
+    let overrides = fsl_command::command::RequestOverrides {
+        limits: Some(&spine_limits),
+        ..Default::default()
+    };
+    let error = fsl_command::command::compile_outcome_with_limits_and_overrides(
+        &path,
+        fsl_command::command::RunLimits::default(),
+        &overrides,
+    )
+    .err()
+    .expect("a fitting S1 ceiling does not raise the aggregate ceiling");
     let value = error.value().unwrap();
     assert_eq!(value["code"], "resource_exhausted", "{value}");
     assert_eq!(value["stage"], "intake", "{value}");
@@ -1261,14 +1303,13 @@ fn a_library_source_over_the_default_dependent_byte_ceiling_can_be_raised() {
     assert_eq!(value["details"]["maximum"], 8_388_608, "{value}");
     assert!(value.get("artifact").is_none(), "{value}");
 
-    let path = directory.path().join("compile.json");
     let outcome = fsl_command::command::compile_outcome_with_limits_and_overrides(
         &path,
         fsl_command::command::RunLimits {
             dependent_bytes: 8_388_609,
             ..Default::default()
         },
-        &fsl_command::command::RequestOverrides::default(),
+        &overrides,
     )
     .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
     assert!(!outcome.package_bytes().is_empty());

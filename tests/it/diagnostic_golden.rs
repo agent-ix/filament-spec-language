@@ -320,6 +320,8 @@ fn check_refusal_json_and_text_include_every_diagnostic() {
 #[trace("TC-2198", "FR-762-AC-7")]
 fn syntax_messages_match_the_diagnostic_goldens() {
     let cases = [
+        // The header and profile are already a complete unit. A bare `{`
+        // starts no declaration, so this trailing token is refused at End.
         (
             "long-expected-set",
             format!("{HEADER}{{\n"),
@@ -367,6 +369,33 @@ fn syntax_messages_match_the_diagnostic_goldens() {
             .unwrap_or_else(|| panic!("{name}: no diagnostic in {document:?}"));
         assert_eq!(message, expected.trim(), "{name}");
         assert!(rendered.contains(expected.trim()), "{name}: {rendered}");
+
+        let recovered = fsl_cst::parse(
+            SourceIdentity::new("agent-ix", "test:diagnostic-golden"),
+            "diagnostics.native",
+            source.as_bytes(),
+            Limits::default(),
+        )
+        .expect("the malformed unit retains its recovering CST");
+        assert!(!recovered.is_admissible(), "{name}");
+        assert_eq!(diagnostics.len(), recovered.diagnostics().len(), "{name}");
+        for (diagnostic, original) in diagnostics.iter().zip(recovered.diagnostics()) {
+            assert_eq!(diagnostic["code"], original.code.as_str(), "{name}");
+            assert_eq!(diagnostic["cause"], original.cause.as_str(), "{name}");
+            assert_eq!(diagnostic["message"], original.message, "{name}");
+            let span = original
+                .byte_span()
+                .expect("a syntax diagnostic's exact locus");
+            assert_eq!(diagnostic["locus"]["start"], span.start, "{name}");
+            assert_eq!(diagnostic["locus"]["end"], span.end, "{name}");
+        }
+        if name == "long-expected-set" {
+            assert_eq!(diagnostics.len(), 1);
+            assert_eq!(diagnostics[0]["code"], "invalid_syntax");
+            assert_eq!(diagnostics[0]["cause"], "unexpected-token");
+            assert_eq!(diagnostics[0]["locus"]["start"], HEADER.len());
+            assert_eq!(diagnostics[0]["locus"]["end"], HEADER.len() + 1);
+        }
     }
 }
 
