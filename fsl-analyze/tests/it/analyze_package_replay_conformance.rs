@@ -18,7 +18,20 @@ use crate::protocol_composition::{order_steps, trace_document};
 /// unit and the handoff's `sources/` directory are deleted.
 fn both_routes(name: &str, items: Value, documents: &[(&str, Value)]) -> (Run, Run) {
     let ws = Workspace::new(name);
-    let path = litmus_request(&ws, &order_protocol(true), json!({"items": items}));
+    let has_recording = documents
+        .iter()
+        .any(|(_, document)| document["format"] == "filament.protocol-recording/1");
+    let protocol = if has_recording {
+        // A checked call reads the real recorded binder and incurs the
+        // function-call charge; a plain Boolean field read has no charge.
+        format!(
+            "function observed using v(x: Boolean): Boolean pure {{ x }}\n{}",
+            order_protocol(true).replace("got.ok", "observed(got.ok)")
+        )
+    } else {
+        order_protocol(true)
+    };
+    let path = litmus_request(&ws, &protocol, json!({"items": items}));
     let mut request: Value =
         serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("json");
     for (file, document) in documents {

@@ -1239,7 +1239,7 @@ pub(crate) fn package_finite_replay_item<'a>(
                 Ok(model) => model,
                 Err(failure) => return report_fault(ReplayFault::Admission(Box::new(failure))),
             };
-            let system = match ProtocolSystem::new(model, &subject, fsl_eval::simulation::protocol::Sc) {
+            let system = match ProtocolSystem::new_package(model, &subject, fsl_eval::simulation::protocol::Sc) {
                 Ok(system) => system.with_max_live_instances(live_instance_bound(None)),
                 Err(_) => return report_fault(ReplayFault::Protocol),
             };
