@@ -3164,7 +3164,13 @@ mod tests {
                 choices.push(vec![edge(3, 1, 1)]);
             }
             let mut states = BTreeMap::new();
-            states.insert(key(0), CheckerState { terminal: None, choices });
+            states.insert(
+                key(0),
+                CheckerState {
+                    terminal: None,
+                    choices,
+                },
+            );
             for target in 1..=3 {
                 states.insert(key(target), terminal());
             }
@@ -3216,7 +3222,10 @@ mod tests {
         match check(&graph(false), rational(0), &[0]) {
             ExactProbabilityCertificateCheck::Rejected(rejection) => {
                 assert_eq!(rejection.rule, ProbabilityCertificateRule::InequalityFails);
-                assert_eq!(rejection.at, ProbabilityCertificateLocus::ProductState(key(0)));
+                assert_eq!(
+                    rejection.at,
+                    ProbabilityCertificateLocus::ProductState(key(0))
+                );
             }
             other => panic!("expected a rejection, got {other:?}"),
         }

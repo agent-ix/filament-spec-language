@@ -1041,7 +1041,10 @@ fn a_strict_guard_at_the_reset_value_is_not_an_advancing_cycle() {
          time invariant Bounded when { true } { self.x <= 1 ms }\n",
     );
     let certificate = proved(claim(&world, ZoneCheckLimits::default(), &Cancel::new()));
-    assert_eq!(verdict(&world, &certificate), ZoneCertificateVerdict::Accepted);
+    assert_eq!(
+        verdict(&world, &certificate),
+        ZoneCertificateVerdict::Accepted
+    );
     let ping = certificate
         .edges
         .iter()
@@ -1057,7 +1060,8 @@ fn a_strict_guard_at_the_reset_value_is_not_an_advancing_cycle() {
     // shortest path over the certificate's edges.
     let start = certificate.initials[0];
     let goal = certificate.edges[ping].from;
-    let mut reach: std::collections::BTreeMap<usize, Vec<usize>> = std::collections::BTreeMap::new();
+    let mut reach: std::collections::BTreeMap<usize, Vec<usize>> =
+        std::collections::BTreeMap::new();
     reach.insert(start, Vec::new());
     let mut queue = std::collections::VecDeque::from([start]);
     while let Some(node) = queue.pop_front() {

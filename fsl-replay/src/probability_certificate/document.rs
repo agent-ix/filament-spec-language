@@ -44,8 +44,8 @@ pub use long_run::{
     LongRunProbabilityDocument, WeightedLongRunProbabilityDocument,
 };
 mod timed;
-pub(super) use timed::{is_timed_deadline_claim, replay_timed_witness};
 pub use timed::digital_key_clocks;
+pub(super) use timed::{is_timed_deadline_claim, replay_timed_witness};
 mod unit;
 mod writer;
 pub(super) use key::{

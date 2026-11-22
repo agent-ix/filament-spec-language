@@ -1422,13 +1422,22 @@ fn at_most_two_invariant() -> &'static str {
 fn a_refuted_invariant_settles_over_a_package_as_from_source() {
     let items = json!([{"claim": "AtMostTwoInv"}]);
     let ws = Workspace::new("package-invariant-refuted");
-    let source = analyze(&counter_request(&ws, at_most_two_invariant(), items.clone()));
+    let source = analyze(&counter_request(
+        &ws,
+        at_most_two_invariant(),
+        items.clone(),
+    ));
     assert_eq!(label(&source.item(0)), "refuted", "{}", source.document());
     assert_eq!(source.item(0)["replay"]["reproduced"], true);
     let (members, _) = package_request(&ws, at_most_two_invariant(), items);
     let run = analyze_members(&ws, "analyze-invariant-refuted.json", &members);
     assert_eq!(label(&run.item(0)), "refuted", "{}", run.document());
-    assert_eq!(run.item(0)["replay"]["reproduced"], true, "{}", run.document());
+    assert_eq!(
+        run.item(0)["replay"]["reproduced"],
+        true,
+        "{}",
+        run.document()
+    );
     for member in ["items", "aggregate", "last_stage", "category", "registry"] {
         assert_eq!(
             run.document()[member],
