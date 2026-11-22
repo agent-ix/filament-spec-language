@@ -1367,7 +1367,9 @@ impl Translator {
                     .occurrences
                     .get(&core)
                     .ok_or_else(|| invariant("state-acceptance-has-source-occurrence"))?;
-                branch.acceptance.extend(occurrences.iter().cloned());
+                branch
+                    .acceptance
+                    .extend(occurrences.iter().map(|source| source.key.clone()));
             }
         }
         Ok(branch)
