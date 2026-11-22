@@ -1433,6 +1433,47 @@ fn reached_on_each_tp3_monitor_states_resolve_to_fr338_keys() {
     }
 }
 
+/// FR-338-AC-31: over a protocol subject a finite `F` has an acceptance set
+/// in the `["safety", branches]` key too, its membership being that the debt
+/// is not carried, so every reached counted-translation monitor state
+/// encodes a key the protocol-context reader admits as in normal form.
+#[trace("TC-525", "FR-338-AC-31")]
+#[test]
+fn reached_protocol_tp3_monitor_states_resolve_to_normal_form_keys() {
+    for body in [
+        "holds(p) implies eventually[0,2] holds(q)",
+        "holds(p) implies eventually[1,2] holds(q)",
+    ] {
+        let fixture = fixture(INFINITE, "c: Counter", "on origin", body);
+        let context = StateContext::clause(&fixture.clause, occurrence(0), Vec::new());
+        let keys = SafetyStates::clause(&fixture.clause, &context, SubjectKind::Protocol)
+            .expect("the TP-3 key context translates");
+        let automaton = fsl_eval::automaton::translate_counted(&fixture.clause, 256)
+            .expect("the clause translates");
+        let mut monitor = Monitor::bad_prefix(automaton, 256).expect("a safety automaton");
+        let initial = monitor.initial().expect("initial state fits");
+        let mut reached = BTreeSet::new();
+        let mut pending = vec![initial];
+        while let Some(from) = pending.pop() {
+            if !reached.insert(from) {
+                continue;
+            }
+            let configurations = monitor
+                .configurations(from, keys.max_key_bytes())
+                .unwrap_or_else(|error| panic!("{body}: {error:?}"));
+            let key = keys
+                .key(&configurations)
+                .unwrap_or_else(|error| panic!("{body} state {configurations:?}: {error}"));
+            keys.admit(key.as_bytes())
+                .unwrap_or_else(|error| panic!("{body}: the key is normal form: {error}"));
+            for bits in 0..4 {
+                pending.push(monitor.step(from, Letter::from_bits(bits)).expect("steps"));
+            }
+        }
+        assert!(reached.len() > 1, "{body}");
+    }
+}
+
 /// The key of the monitor state `body`'s bad-prefix monitor reaches by
 /// reading, from its initial state, one letter for each of `positions`: the
 /// atoms (by index) that hold at that position.
