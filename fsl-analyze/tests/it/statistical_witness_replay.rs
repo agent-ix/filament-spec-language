@@ -464,16 +464,17 @@ fn a_cancelled_replay_is_refused_as_cancelled() {
     );
 }
 
-/// Checks TC-628 step 5: `Service` and `Health` are each refused at S4,
-/// `emit_checked` naming `not-yet-implemented`, and the witnesses of the
-/// `2 ms` claim over `Service` and of the fault claim over `Health` replay
-/// `Reproduced` over their checked subjects all the same.
+/// Checks TC-628 step 4: supplement `Service` and `Health` with the
+/// independent `Both` workload, which S4 refuses `not-yet-implemented`.
+/// The `2 ms` and fault-claim witnesses still replay `Reproduced` over the
+/// original stochastic subjects.
 #[trace("TC-628")]
 #[test]
 fn witnesses_replay_over_a_subject_whose_package_s4_refuses() {
     let refused = |world: &World| {
         let refusal = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
             .expect_err("S4 refuses");
+        prob_world::assert_unemittable_workload(&refusal);
         (refusal.code(), refusal.cause())
     };
     let not_yet = (
@@ -481,7 +482,7 @@ fn witnesses_replay_over_a_subject_whose_package_s4_refuses() {
         Some("not-yet-implemented"),
     );
 
-    let service = World::new(&prob_world::service(&p95("Two", 2)));
+    let service = World::with_unemittable_workload(&prob_world::service(&p95("Two", 2)));
     assert_eq!(refused(&service), not_yet);
     let verdict = decide(&service, "Two", StatisticalMethod::Okamoto, 3);
     assert_eq!(verdict.witnesses.len(), 3);
@@ -495,7 +496,7 @@ fn witnesses_replay_over_a_subject_whose_package_s4_refuses() {
     let claim = "probabilistic Fault using ev on M over (n: M::Node) under Steady on origin \
          with alpha 0.01, beta 0.01, indifference 0.005 \
          { probability <= 0.01 [ eventually[0,1000] holds(not n.healthy) ] }";
-    let health = World::new(&prob_world::health(
+    let health = World::with_unemittable_workload(&prob_world::health(
         "self.healthy = (pre(self.healthy) and not fault)",
         "true: 1, false: 99",
         false,
@@ -511,7 +512,8 @@ fn witnesses_replay_over_a_subject_whose_package_s4_refuses() {
 }
 
 /// TC-761 step 4, the part of FR-280-AC-5 that holds without `analyze`: `Service`'s
-/// checked package, which `emit_checked` refuses, is served by EN-4's entry.
+/// checked unit, supplemented with the S4-refused `Both` workload, is served
+/// by EN-4's entry.
 /// The `2 ms` claim (Okamoto, seed 7, `max_witnesses` 3) settles one
 /// `measured`, rejected record naming EN-4 whose three witnesses each replay
 /// `Reproduced`; no `EmittedPackage` exists, and `emit_checked` refuses
@@ -524,10 +526,11 @@ fn the_provider_entry_serves_a_package_s4_refuses_to_emit() {
     use fsl_foundation::RequestIndex;
     use fsl_replay::TerminalValue;
 
-    let world = World::new(&prob_world::service(&p95("Two", 2)));
+    let world = World::with_unemittable_workload(&prob_world::service(&p95("Two", 2)));
     let refused = |world: &World| {
         let refusal = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
-            .expect_err("S4 refuses Service");
+            .expect_err("S4 refuses the independent Both workload");
+        prob_world::assert_unemittable_workload(&refusal);
         (refusal.code(), refusal.cause())
     };
     let before = refused(&world);

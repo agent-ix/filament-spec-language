@@ -344,9 +344,10 @@ fn changed_source_bytes_never_promote_an_unreproduced_candidate_to_refuted() {
 #[trace("TC-763", "FR-281-AC-20")]
 #[test]
 fn source_completeness_is_checked_even_when_the_package_cannot_emit() {
-    let world = prob_world::World::new(&prob_world::service(""));
-    fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
-        .expect_err("probabilistic model refuses S4 emission");
+    let world = prob_world::World::with_unemittable_workload(&prob_world::service(""));
+    let refusal = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+        .expect_err("the independent mixed workload refuses S4 emission");
+    prob_world::assert_unemittable_workload(&refusal);
     let request = AnalyzeRequest {
         binding: world.binding(),
         provision: SourceProvision::default(),

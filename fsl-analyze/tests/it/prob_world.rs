@@ -239,6 +239,22 @@ pub(crate) struct World {
     universe: PopulationUniverse,
 }
 
+/// Require the independent workload, rather than the stochastic subject,
+/// to be the declaration that prevents whole-unit emission.
+pub(crate) fn assert_unemittable_workload(refusal: &fsl_package::EmitRefusal) {
+    assert!(
+        matches!(
+            refusal,
+            fsl_package::EmitRefusal::ProbabilisticModelNotEmitted {
+                declaration,
+                feature: fsl_semantics::check::ProbabilisticFeature::Workload,
+                ..
+            } if declaration == "Both"
+        ),
+        "the independent Both workload refuses emission: {refusal:?}"
+    );
+}
+
 /// The evaluation budget: ample for every fixture.
 pub(crate) const UNLIMITED: ScalarLimits = ScalarLimits {
     integer_bits: 1 << 20,
@@ -285,6 +301,7 @@ impl World {
             false,
             CheckMode::Linked,
             evaluator,
+            false,
         )
     }
 
@@ -298,6 +315,23 @@ impl World {
             false,
             false,
         )
+    }
+
+    /// `model` with an independent, S4-refused workload. The stochastic
+    /// model, its selected workload and its initial binding are unchanged.
+    pub(crate) fn with_unemittable_workload(model: &Model) -> Self {
+        Self::try_build_with_mode_and_evaluator(
+            model,
+            &[model.key],
+            &[model.key],
+            &[&model.initial],
+            false,
+            false,
+            CheckMode::Linked,
+            &S6aRewardEvaluator,
+            true,
+        )
+        .unwrap_or_else(|refusals| panic!("the supplemented unit checks: {refusals:#?}"))
     }
 
     /// [`Self::new`] checked in `mode`, for runtime undefinedness fixtures.
@@ -440,6 +474,7 @@ impl World {
             value_profile,
             mode,
             &S6aRewardEvaluator,
+            false,
         )
     }
 
@@ -456,14 +491,28 @@ impl World {
         value_profile: bool,
         mode: CheckMode,
         evaluator: &dyn RewardEvaluator,
+        unemittable_workload: bool,
     ) -> Result<Self, Vec<CheckRefusal>> {
         let document = model.document(symmetric);
-        let packages = package_input([document.as_slice()]).unwrap();
+        let mut documents = vec![document.as_slice()];
+        if unemittable_workload {
+            documents.push(
+                include_bytes!("../../../fsl-conformance/cases/mixed-workload-package.json")
+                    .as_slice(),
+            );
+        }
+        let packages = package_input(documents).expect("the fixture model packages admit");
+        let supplement = if unemittable_workload {
+            "model Unemittable = \"test/mixed-workload\";\n\
+             workload Both on Unemittable { weight A::step = 1; weight B::step = 1; }\n"
+        } else {
+            ""
+        };
         let unit = format!(
             "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\n\
              profile ev = \"filament.temporal.event-position.false-extension/v1\";\n\
              profile inf = \"filament.temporal.infinite-trace/v1\";\n{}\
-             model M = \"{}\";\n{}\n",
+             model M = \"{}\";\n{}\n{supplement}",
             if value_profile {
                 "profile vc = \"filament.value.complete/v1\";\n"
             } else {
