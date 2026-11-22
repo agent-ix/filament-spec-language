@@ -39,9 +39,6 @@ pub enum CompositionViewRefusal {
         /// The authentic owner-held clause reference.
         clause: CheckedNodeId,
     },
-    /// More than one authenticated component package resolves a context.
-    #[error("the composition context resolves in more than one component owner")]
-    AmbiguousContext,
     /// A canonical member position cannot be represented as an occurrence.
     #[error("the composition member position is out of range")]
     MemberOrdinal,
@@ -406,14 +403,14 @@ impl<'p> CompositionView<'p> {
         Err(CompositionViewRefusal::UnknownComponent)
     }
 
-    /// Resolve an actual scheduling member's context in its unique admitted
-    /// component package. Neither the root graph nor an ID's package spelling
-    /// supplies a fallback owner.
-    pub fn supply_context_with_budget(
+    /// Resolve every authenticated component package holding this scheduling
+    /// context. A model declaration may legitimately be retained by several
+    /// libraries; callers compare their actual joined semantic identities.
+    pub fn supply_contexts_with_budget(
         &self,
         supply: &CheckedFairnessSupply,
         budget: &mut NativeJoinBudget,
-    ) -> Result<OwnedNodeRef<'p>, CompositionViewRefusal> {
+    ) -> Result<Vec<OwnedNodeRef<'p>>, CompositionViewRefusal> {
         let mut work = ProjectionWork::metered(budget)?;
         let mut authentic = false;
         for candidate in self.supplies {
@@ -438,7 +435,7 @@ impl<'p> CompositionView<'p> {
             return Err(CompositionViewRefusal::UnknownTarget);
         }
         let reference = self.resolve_reference(&supply.context, &mut work)?;
-        let mut owner = None;
+        let mut owners = Vec::new();
         for dependency in self.package.direct_dependencies() {
             work.visit()?;
             let mut selected = false;
@@ -454,17 +451,27 @@ impl<'p> CompositionView<'p> {
             }
             work.visit()?;
             if dependency.structural_key(&reference).is_some() {
-                if owner.is_some() {
-                    return Err(CompositionViewRefusal::AmbiguousContext);
+                work.node(&reference)?;
+                if owners.len() == owners.capacity() {
+                    let additional = owners.len().max(1);
+                    if let (Some(budget), Some(locus)) = (&mut work.budget, work.locus) {
+                        native_row::items(budget, locus, owners.len().saturating_add(additional))?;
+                    }
+                    owners
+                        .try_reserve_exact(additional)
+                        .map_err(|_| CompositionViewRefusal::Allocation)?;
                 }
-                owner = Some(dependency);
+                owners.push(OwnedNodeRef {
+                    owner: dependency,
+                    node: reference.clone(),
+                    name: None,
+                });
             }
         }
-        Ok(OwnedNodeRef {
-            owner: owner.ok_or(CompositionViewRefusal::UnknownTarget)?,
-            node: reference,
-            name: None,
-        })
+        if owners.is_empty() {
+            return Err(CompositionViewRefusal::UnknownTarget);
+        }
+        Ok(owners)
     }
 
     fn target(
