@@ -156,16 +156,53 @@ fn enum_draws_and_arguments_preserve_package_refutation_witness_parity() {
 #[trace("FR-940-AC-6", "FR-741-AC-3", "FR-203-AC-8")]
 #[test]
 fn every_fairness_preserves_source_package_refutation_parity() {
-    let claim = TOO_LIKELY.replace(
-        "under Even",
-        "under every scheduler fair weak M::Msg::send_a",
+    for fairness in [
+        "fair weak M::Msg::send_a",
+        "fair strong M::Msg::send_a",
+        "fair weak each M::Msg::send_a",
+        "fair strong each M::Msg::send_a",
+    ] {
+        let claim = TOO_LIKELY.replace("under Even", &format!("under every scheduler {fairness}"));
+        fairness_source_package_equality(&claim);
+    }
+}
+
+fn fairness_source_package_equality(claim: &str) {
+    let ws = Workspace::new("probabilistic-package-every-fairness-parity");
+    let source_path = request_over(
+        &ws, &format!("{LINK_UNIT}\n{claim}\n"), LINK_MODEL,
+        &[LINK_START.to_vec()],
+        json!({"items": [{"claim": "TooLikely", "kind": "probabilistic-satisfaction",
+            "probabilistic": {"evidence": "exact"}}]}),
     );
-    refutation_parity(
-        "probabilistic-package-every-fairness-parity",
-        LINK_UNIT,
-        LINK_MODEL,
-        &claim,
+    let source = analyze(&source_path);
+    let request: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&source_path).expect("source request"),
+    ).expect("request JSON");
+    let (members, _) = package_selection(&ws, &request["request"]);
+    let package = analyze(&ws.write(
+        "fairness-package.json",
+        json!({"format": "native-analyze/1", "request": members}).to_string().as_bytes(),
+    ));
+    assert_eq!(package.exit, source.exit, "{}", package.document());
+    assert_eq!(package.document(), source.document());
+    assert_ne!(
+        package.item(0)["record"]["diagnostic"]["cause"],
+        "probabilistic-exact-eventual-form",
+        "the package did not fall back to the old pending fact"
     );
+}
+
+/// Positive fairness refutation parity awaits analyzer support for fair
+/// every-scheduler eventual claims (QSL-2830).
+#[trace("FR-940-AC-6", "FR-741-AC-3", "FR-203-AC-8")]
+#[test]
+#[ignore = "QSL-2830: analyzer does not admit fair every-scheduler eventual claims yet"]
+fn a_fair_every_scheduler_refutation_replays_with_source_package_parity() {
+    let claim = TOO_LIKELY
+        .replace("under Even", "under every scheduler fair weak M::Msg::send_a")
+        .replace("probability >= rational(99, 100)", "probability <= rational(99, 100)");
+    refutation_parity("fair-every-positive-parity", LINK_UNIT, LINK_MODEL, &claim);
 }
 
 /// Workload evidence spells enum draws through the admitted package index
