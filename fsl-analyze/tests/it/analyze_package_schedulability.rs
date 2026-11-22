@@ -1,0 +1,165 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-850 "Equality with the source route", FR-940 (QSL-2785): a
+//! `schedulability` item of a `native-analyze/1` request that selects a v2
+//! checked package settles over the package's own task-set rows exactly as
+//! the item of the request over the source settles, with the source deleted,
+//! and never settles `unsupported` for a fact the source route reads.
+
+use ix_trace_rs::trace;
+use serde_json::{json, Value};
+
+use crate::analyze_cli_support::{
+    analyze, label, package_selection, request_over, Workspace,
+};
+
+/// ADR-026 section 12's task sets: `Full` fits an EDF test exactly at
+/// utilization 1, `Over` is utilized at 11/10, `Ctl` is a fixed-priority set.
+const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
+    profile t = \"filament.temporal.complete/v1\";\n\
+    dimension Time;\nunit ms : Time = rational(1, 1);\n\
+    taskset Full {\n\
+    task a periodic 10 ms deadline 10 ms wcet 5 ms priority 1 lo;\n\
+    task b periodic 20 ms deadline 20 ms wcet 10 ms priority 2 lo;\n}\n\
+    taskset Over {\n\
+    task a periodic 10 ms deadline 10 ms wcet 6 ms priority 1 lo;\n\
+    task b periodic 20 ms deadline 20 ms wcet 10 ms priority 2 lo;\n}\n\
+    taskset Ctl {\n\
+    task a periodic 4 ms deadline 4 ms wcet 1 ms priority 1 lo;\n\
+    task b periodic 6 ms deadline 6 ms wcet 2 ms priority 2 lo;\n\
+    task c periodic 12 ms deadline 12 ms wcet 5 ms priority 3 lo;\n}\n\
+    taskset Mc {\n\
+    task a periodic 4 ms deadline 4 ms wcet 1 ms priority 1 lo;\n\
+    task b periodic 6 ms deadline 6 ms wcet 1 ms priority 2 hi wcet_hi 3 ms;\n}\n\
+    schedulable FullEdf on Full under edf;\n\
+    schedulable CtlFp on Ctl under fixed_priority;\n\
+    schedulable OverEdf on Over under edf;\n\
+    schedulable McAmc on Mc under amc;\n\
+    response AResponse5 on Full.a <= 5 ms under fixed_priority;\n\
+    response AResponse4 on Full.a <= 4 ms under fixed_priority;\n";
+
+/// The source route's document and exit, and the package route's over the
+/// package compiled from the same request with the source deleted.
+fn both(name: &str, items: &Value) -> (Value, i32, Value, i32) {
+    let ws = Workspace::new(name);
+    let members = json!({"models": [], "items": items});
+    let path = request_over(
+        &ws,
+        SOURCE,
+        &crate::counter::document(false),
+        &[],
+        members,
+    );
+    let source = analyze(&path);
+    let request: Value = serde_json::from_slice(&std::fs::read(&path).expect("the request"))
+        .expect("request JSON");
+    let (selected, _) = package_selection(&ws, &request["request"]);
+    std::fs::remove_file(ws.path("program.fsl")).expect("remove the source");
+    let document = json!({"format": "native-analyze/1", "request": selected});
+    let package = analyze(&ws.write("analyze-package.json", document.to_string().as_bytes()));
+    (
+        source.document(),
+        source.exit,
+        package.document(),
+        package.exit,
+    )
+}
+
+/// The package route's whole document and exit equal the source route's.
+fn assert_parity(name: &str, claim: &str) -> Value {
+    let (source, source_exit, package, package_exit) = both(name, &json!([{"claim": claim}]));
+    assert_eq!(package, source, "{package}");
+    assert_eq!(package_exit, source_exit, "{package}");
+    package["items"][0].clone()
+}
+
+/// FR-247-AC-1: an EDF task set that fits proves with a certified closed form.
+#[trace("TC-1593", "FR-940")]
+#[test]
+fn a_package_edf_task_set_that_fits_equals_the_source() {
+    let item = assert_parity("package-sched-edf-fits", "FullEdf");
+    assert_eq!(label(&item), "proved", "{item}");
+    assert_eq!(item["record"]["basis"]["analysis"], "edf", "{item}");
+    assert_eq!(item["record"]["certification"], "certified", "{item}");
+}
+
+/// FR-247-AC-2: an over-utilized EDF task set refutes with the exact
+/// utilization 11/10.
+#[trace("TC-1593", "FR-940")]
+#[test]
+fn a_package_edf_overload_refutes_as_the_source_does() {
+    let item = assert_parity("package-sched-edf-over", "OverEdf");
+    assert_eq!(label(&item), "refuted", "{item}");
+    let miss = &item["counterexample"]["counterexample"];
+    assert_eq!(miss["type"], "schedulability-miss", "{miss}");
+    assert_eq!(miss["miss"]["utilization"]["numerator"], "11", "{miss}");
+    assert_eq!(miss["miss"]["utilization"]["denominator"], "10", "{miss}");
+}
+
+/// FR-633-AC-2: a fixed-priority response that meets its bound proves.
+#[trace("TC-1593", "FR-940")]
+#[test]
+fn a_package_fixed_priority_response_that_meets_its_bound_equals_the_source() {
+    let item = assert_parity("package-sched-fp-meets", "AResponse5");
+    assert_eq!(label(&item), "proved", "{item}");
+    assert_eq!(item["record"]["basis"]["analysis"], "fixed-priority", "{item}");
+}
+
+/// FR-633-AC-2: a response of 5 against a bound of 4 refutes with the task,
+/// job, iterates, response and bound of the source route's miss.
+#[trace("TC-1593", "FR-940")]
+#[test]
+fn a_package_fixed_priority_response_miss_refutes_as_the_source_does() {
+    let item = assert_parity("package-sched-fp-miss", "AResponse4");
+    assert_eq!(label(&item), "refuted", "{item}");
+    let miss = &item["counterexample"]["counterexample"]["miss"];
+    assert_eq!(miss["task"], "a", "{miss}");
+    assert_eq!(miss["response"]["numerator"], "5", "{miss}");
+    assert_eq!(miss["bound"]["numerator"], "4", "{miss}");
+    assert!(miss["job"].is_string() && miss["iterates"].is_array(), "{miss}");
+}
+
+/// FR-633-AC-1: a fixed-priority schedulable claim and an AMC claim settle
+/// beside the others, in the request's order.
+#[trace("TC-1593", "FR-940")]
+#[test]
+fn package_schedulability_items_keep_the_requests_order() {
+    let items = json!([{"claim": "OverEdf"}, {"claim": "CtlFp"}, {"claim": "McAmc"},
+        {"claim": "AResponse4"}]);
+    let (source, source_exit, package, package_exit) = both("package-sched-mixed", &items);
+    assert_eq!(package, source, "{package}");
+    assert_eq!(package_exit, source_exit);
+}
+
+/// FR-850-AC-3 (negative): package bytes missing the claim rows or nodes
+/// refuse the request `invalid_package`, with no internal failure.
+#[trace("TC-1593", "FR-850-AC-3")]
+#[test]
+fn malformed_package_rows_refuse_a_schedulability_item_typed() {
+    let ws = Workspace::new("package-sched-malformed");
+    let members = json!({"models": [], "items": [{"claim": "FullEdf"}]});
+    let path = request_over(&ws, SOURCE, &crate::counter::document(false), &[], members);
+    let request: Value = serde_json::from_slice(&std::fs::read(&path).expect("the request"))
+        .expect("request JSON");
+    let (selected, package) = package_selection(&ws, &request["request"]);
+    let good: Value = serde_json::from_slice(&package).expect("package JSON");
+    let mut no_rows = good.clone();
+    no_rows["schedulability_claims"] = json!([{"declaration": "x"}]);
+    let mut no_nodes = good;
+    no_nodes["nodes"] = json!([]);
+    for (name, bytes) in [
+        ("empty", b"{}".to_vec()),
+        ("bad-claim-row", no_rows.to_string().into_bytes()),
+        ("no-nodes", no_nodes.to_string().into_bytes()),
+    ] {
+        ws.write("handoff/checked-package.json", &bytes);
+        let document = json!({"format": "native-analyze/1", "request": selected});
+        let run = analyze(&ws.write("analyze-bad.json", document.to_string().as_bytes()));
+        let document = run.document();
+        assert_eq!(
+            document["diagnostics"][0]["code"], "invalid_package",
+            "{name}: {document}"
+        );
+        assert_eq!(document["items"], json!([]), "{name}");
+        assert_eq!(run.exit, 20, "{name}");
+    }
+}

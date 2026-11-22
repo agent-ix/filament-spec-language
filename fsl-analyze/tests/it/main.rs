@@ -13,6 +13,7 @@ mod analyze_liveness_cli;
 mod analyze_package_protocol;
 mod analyze_package_selection;
 mod analyze_package_provider;
+mod analyze_package_schedulability;
 mod analyze_package_value;
 mod analyze_protocol_subject;
 mod analyze_tp3_package;
