@@ -1728,57 +1728,7 @@ pub fn resolve_call_items(
 ) -> Vec<ResolvedItem> {
     items
         .iter()
-        .map(|call_item| resolve_call_item(package, function, call_item, registry, None))
-        .collect()
-}
-
-/// Resolve a source call's value records from its admitted read-back view.
-/// The source package remains available only to the source evaluator and
-/// existing non-value families.
-pub fn resolve_call_items_from_view(
-    package: &CheckedPackage,
-    view: &dyn fsl_package::AnalysisView,
-    function: &str,
-    items: &[CallItem],
-    registry: &Registry,
-) -> Result<Vec<ResolvedItem>, AnalyzeDocumentError> {
-    let bare = fsl_package::BarePackage::new(view.package());
-    let owners = view.declared_names();
-    let owners = owners
-        .iter()
-        .filter(|(name, _)| name == function)
-        .collect::<Vec<_>>();
-    let [(_, owner)] = owners.as_slice() else {
-        return Err(AnalyzeDocumentError::Fault);
-    };
-    items
-        .iter()
-        .map(|item| {
-            let rows = view
-                .value_validity_records_of(owner)
-                .iter()
-                .filter_map(|&index| view.requirement_items().get(index))
-                .filter(|row| package_value::occurrence(&bare, row).as_ref() == Some(&item.claim))
-                .collect::<Vec<_>>();
-            let [row] = rows.as_slice() else {
-                return Err(AnalyzeDocumentError::Fault);
-            };
-            let record = package_value::requirement_item(
-                &bare,
-                row,
-                item.request_index,
-                registry,
-                item.backend.as_ref(),
-            )
-            .map_err(|_| AnalyzeDocumentError::Fault)?;
-            Ok(resolve_call_item(
-                package,
-                function,
-                item,
-                registry,
-                Some(record),
-            ))
-        })
+        .map(|call_item| resolve_call_item(package, function, call_item, registry))
         .collect()
 }
 
@@ -1787,7 +1737,6 @@ fn resolve_call_item(
     function: &str,
     call_item: &CallItem,
     registry: &Registry,
-    admitted_record: Option<fsl_route::request::RequirementItem>,
 ) -> ResolvedItem {
     let index = call_item.request_index;
     let named = call_item.backend.as_ref();
@@ -1796,11 +1745,10 @@ fn resolve_call_item(
     {
         return refused;
     }
-    let Some(record) = admitted_record.or_else(|| {
-        requirement_items(package, registry, named)
-            .into_iter()
-            .find(|record| record.occurrence() == &call_item.claim)
-    }) else {
+    let Some(record) = requirement_items(package, registry, named)
+        .into_iter()
+        .find(|record| record.occurrence() == &call_item.claim)
+    else {
         return ResolvedItem::Settled {
             claim_name: Some(function.to_owned()),
             record: Box::new(TerminalRecord::disposition_failed(
