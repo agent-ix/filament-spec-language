@@ -65,7 +65,6 @@ fn refusal(package: &BarePackage<'_>, failure: BareSelectionFailure) -> CallFail
     }
 }
 
-<<<<<<< HEAD
 fn clock_declarations(
     package: &BarePackage<'_>,
 ) -> Result<fsl_semantics::model::clock_reference::normalization::ClockDeclarationTable, CallFailure>
@@ -88,7 +87,8 @@ fn clock_declarations(
                 }),
             )),
         })
-=======
+}
+
 /// Run the package atom through the same component-aware machine as a source
 /// atom, including absent-key bindings.
 fn evaluate_hyper_holds(
@@ -151,7 +151,6 @@ fn evaluate_hyper_holds(
             values,
         )
         .map_err(CallFailure::Fault)
->>>>>>> 4b199dc736 (Evaluate package hyper atoms through the reader projection)
 }
 
 fn function_projection(
