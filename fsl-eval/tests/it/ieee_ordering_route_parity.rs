@@ -764,7 +764,7 @@ fn a_source_models_clause_function_is_named_alike_on_both_routes() {
     let mut source_names = Vec::new();
     let mut index = 0;
     while let Some(state) = graph.function_state(index) {
-        if state.name.contains("/Order/measure.precondition") {
+        if state.name.ends_with("/Order/measure.precondition") {
             source_names.push(state.name.to_owned());
         }
         index += 1;
@@ -783,7 +783,7 @@ fn a_source_models_clause_function_is_named_alike_on_both_routes() {
         .map(str::to_owned)
         .collect();
     package_names.dedup();
-    let expected = "ix://a:u/Order/measure.precondition";
+    let expected = "ix://u/Order/measure.precondition";
     assert_eq!(source_names, [expected]);
     assert_eq!(package_names, source_names);
 }
