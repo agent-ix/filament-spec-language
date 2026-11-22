@@ -624,8 +624,9 @@ pub(super) fn replay_undefined(
     if workload.is_some() && !evidence.scheduler.is_empty() {
         return Err(ProbabilityWitnessError::Refused);
     }
+    let deterministic = super::deterministic_scheduler_rows(&evidence.scheduler)?;
     let scheduler = step::scheduler(
-        &evidence.scheduler,
+        &deterministic,
         limits,
         &mut meter,
         &mut storage,
@@ -1010,7 +1011,10 @@ pub(super) fn replay_subsystem(
             if let super::super::document::measure::MeanRefutationCheck::AcceptedBounds(policy) =
                 checked
             {
-                evidence.scheduler = policy;
+                evidence.scheduler = policy
+                    .into_iter()
+                    .map(|(key, action)| (key, super::super::ProbabilisticSchedulerChoice::Deterministic(action)))
+                    .collect();
             }
             poll_cancel(cancel)?;
             Ok(ProbabilityWitnessReplay::Reproduced(Box::new(
