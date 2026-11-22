@@ -158,7 +158,7 @@ pub(super) fn reference(key: &str) -> Value {
     json!({"population": RECORDS, "key": key})
 }
 
-fn canonical_argument_reference(type_identity: &str, key: &str) -> Value {
+pub(super) fn canonical_argument_reference(type_identity: &str, key: &str) -> Value {
     let identity = key
         .as_bytes()
         .iter()

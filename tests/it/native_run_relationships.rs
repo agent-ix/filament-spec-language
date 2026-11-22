@@ -2,7 +2,7 @@
 //! FR-1045: native-run relationship selection request admission.
 
 use crate::workflow_relationship_navigation::{
-    canonical_reference, instance, relationship_row, run_selected, ORDER, PAYMENTS,
+    canonical_argument_reference, instance, relationship_row, run_selected, ORDER, PAYMENTS,
     PAYMENT_ATTEMPT, SHIPMENT, SHIPMENTS,
 };
 use filament_observation::{
@@ -989,7 +989,7 @@ fn relationship_identity_is_optional_without_correlation() {
     assert_eq!(document["outcome"]["kind"], "completed", "{document}");
     assert_eq!(
         document["outcome"]["value"],
-        canonical_reference(PAYMENT_ATTEMPT, "p1")
+        canonical_argument_reference(PAYMENT_ATTEMPT, "p1")
     );
 }
 
