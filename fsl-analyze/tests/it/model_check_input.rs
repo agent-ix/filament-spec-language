@@ -192,7 +192,6 @@ fn package_direct_dense_reader_refuses_derived_units_and_timed_guards() {
 /// Real analyze model items select the timed engine on both intake routes.
 #[trace("FR-850", "FR-940-AC-6")]
 #[test]
-#[ignore = "QSL-2766: package false StateGraph claim is classified as declaration family; CLI Source/Bare parity remains unsupported"]
 fn package_direct_dense_model_items_match_source_cli_results() {
     use crate::analyze_cli_support::{analyze, label, package_selection, request_over, Workspace};
     use serde_json::json;

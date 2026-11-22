@@ -1309,6 +1309,86 @@ fn the_port_evaluates_each_state_graph_role_alike_at_each_explored_state() {
     assert_eq!(compared, 6 * 4);
 }
 
+/// FR-940-AC-11, FR-940-AC-6: the target of a state-graph claim, read from the
+/// package's bytes, evaluates at each explored state to the source route's
+/// value and location and admits the source route's ordered charges, entry
+/// for entry. The Boolean `false` literal reads no field and applies no
+/// operation, so both routes admit no charge for it; `c.value < 0` reads a
+/// field and compares, so both admit the same non-empty log.
+#[trace("TC-3034", "FR-940-AC-11")]
+#[test]
+fn a_state_graph_predicate_evaluates_and_charges_as_the_source() {
+    use fsl_eval::simulation::model::ModelEvaluator;
+    use fsl_semantics::check::PredicateRole;
+    let (_ws, handoff, mut budget) = handoff_of(
+        "package-forms-false-literal",
+        "possible NeverHolds using v over (c: M::Counter) { false }\n\
+         possible Negative using v over (c: M::Counter) { c.value < 0 }\n",
+    );
+    let bare = BarePackage::new(&handoff.admitted)
+        .with_supply(
+            BareSupply {
+                identities: &handoff.identities,
+                equality: handoff.equality.as_ref(),
+            },
+            &mut budget,
+        )
+        .expect("the handoff's supply joins the package");
+    let source: &dyn ModelEvaluator = handoff.compiled.checked();
+    let package: &dyn ModelEvaluator = &bare;
+    for (name, charges) in [("NeverHolds", false), ("Negative", true)] {
+        let claim = handoff
+            .compiled
+            .checked()
+            .graph()
+            .state_graph_claims()
+            .iter()
+            .find(|claim| claim.name() == name)
+            .expect("the claim is checked");
+        let occurrence = claim.occurrence().expect("an assembled claim");
+        for value in 0..=3 {
+            let objects = objects(&handoff, value);
+            let over = Some(counter(&objects));
+            let (mut at_source, mut at_package) = (Meter::new(UNLIMITED), Meter::new(UNLIMITED));
+            let from_source = source
+                .evaluate_state_graph_predicate(
+                    occurrence,
+                    PredicateRole::Target,
+                    &objects,
+                    over.clone(),
+                    Vec::new(),
+                    &mut at_source,
+                )
+                .expect("the source predicate evaluates");
+            let from_package = package
+                .evaluate_state_graph_predicate(
+                    occurrence,
+                    PredicateRole::Target,
+                    &objects,
+                    over,
+                    Vec::new(),
+                    &mut at_package,
+                )
+                .expect("the package predicate evaluates");
+            let at = format!("{name} at value {value}");
+            assert!(!boolean(&from_source), "{at}");
+            assert_eq!(outcome(&from_package), outcome(&from_source), "{at}");
+            assert_eq!(from_package.location, from_source.location, "{at}");
+            assert_eq!(
+                !at_source.admitted_charges().is_empty(),
+                charges,
+                "{at}: {:?}",
+                at_source.admitted_charges()
+            );
+            assert_eq!(
+                at_package.admitted_charges(),
+                at_source.admitted_charges(),
+                "{at}"
+            );
+        }
+    }
+}
+
 /// FR-940-AC-11, FR-155, FR-156: the package route's operation footprints,
 /// state-constraint reads, `holds` atom reads and activation guard reads,
 /// derived through the evaluator port from the package's own nodes, equal the
