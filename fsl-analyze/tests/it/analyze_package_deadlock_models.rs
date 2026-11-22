@@ -21,7 +21,13 @@ const OTHER: &str = "test/vault-other";
 /// The item `{claim, temporal: {item_kind: deadlock-freedom}}` over the
 /// model selection `identity`.
 fn deadlock_item(identity: &str) -> Value {
-    json!({"claim": identity, "temporal": {"item_kind": "deadlock-freedom"}})
+    derived_item(identity, "deadlock-freedom")
+}
+
+/// The item `{claim, temporal: {item_kind}}` over the model selection
+/// `identity`.
+fn derived_item(identity: &str, item_kind: &str) -> Value {
+    json!({"claim": identity, "temporal": {"item_kind": item_kind}})
 }
 
 /// Which populations the initial snapshot (hence the subject) covers.
@@ -301,4 +307,67 @@ fn a_terminal_any_of_the_read_model_opts_out_as_the_source_route() {
         );
         assert_equal(&source, &package);
     }
+}
+
+/// FR-124-AC-12, FSpec FR-368-AC-22 (QSL-2785): a derived item of the kind
+/// the model does not derive (a time-lock item over an untimed subject)
+/// settles `inapplicable-kind` on both routes, as a per-item refusal that
+/// writes no request item, not a whole-request `not-yet-implemented` one.
+#[trace("TC-519", "FR-124-AC-12")]
+#[trace("TC-2410", "FR-850-AC-2")]
+#[test]
+fn an_untimed_time_lock_item_settles_inapplicable_as_the_source_route() {
+    let (source, package) = both_routes(
+        "package-derived-time-lock-one",
+        Vault::Terminal,
+        Reads::One,
+        "",
+        &json!([derived_item(PACKAGE, "time-lock-freedom")]),
+    );
+    assert_eq!(
+        source.item(0)["record"]["diagnostic"]["cause"],
+        "inapplicable-kind",
+        "{}",
+        source.document()
+    );
+    assert!(source.item(0)["request"].is_null(), "{}", source.document());
+    assert_equal(&source, &package);
+}
+
+/// FR-124-AC-12, FSpec FR-368-AC-22: a subject that reads both models has no
+/// anchor for any derived item, so a time-lock item and a race item each
+/// settle `unsupported` on both routes, with no request item.
+#[trace("TC-519", "FR-124-AC-12")]
+#[trace("TC-2410", "FR-850-AC-2")]
+#[test]
+fn derived_items_over_a_subject_reading_both_models_settle_unsupported_as_the_source_route() {
+    let (source, package) = both_routes(
+        "package-derived-both",
+        Vault::Terminal,
+        Reads::Both,
+        "",
+        &json!([
+            derived_item(PACKAGE, "time-lock-freedom"),
+            derived_item(OTHER, "race-freedom")
+        ]),
+    );
+    let items = source.document()["items"]
+        .as_array()
+        .expect("items")
+        .clone();
+    assert_eq!(items.len(), 2, "{}", source.document());
+    for (index, item) in items.iter().enumerate() {
+        assert_eq!(
+            item["record"]["diagnostic"]["code"],
+            "unsupported_projection",
+            "item {index}: {}",
+            source.document()
+        );
+        assert!(
+            item["request"].is_null(),
+            "item {index}: {}",
+            source.document()
+        );
+    }
+    assert_equal(&source, &package);
 }
