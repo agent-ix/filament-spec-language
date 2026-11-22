@@ -130,6 +130,7 @@ pub use frames::judge::{
 pub(crate) use reference_bindings::ReferenceBinding;
 pub use reference_bindings::ReferenceBindings;
 mod hyper_letters;
+mod snapshot_scope;
 pub use hyper_letters::CheckedHyperLetters;
 pub use letters::{ClauseLetters, DecisiveObservation, LettersPreparationError, LettersRefusal};
 pub use probabilistic::{
@@ -1290,8 +1291,9 @@ impl<'a> ModelSystem<'a> {
     }
 
     /// Select an HP-1 subject by its admitted domain identity on either route.
-    /// Unlike an alias lookup, this needs no source graph. Other models'
-    /// universes are skipped as they are for a source hyper subject.
+    /// Unlike an alias lookup, this needs no source graph. Other selected
+    /// models' universes and snapshot populations are scoped out as for a
+    /// source hyper subject; undeclared populations still refuse admission.
     ///
     /// # Errors
     ///
@@ -1452,10 +1454,20 @@ impl<'a> ModelSystem<'a> {
             }
         }
 
+        let scoped_snapshots = match only {
+            [selected] if !other_models.is_empty() => Some(snapshot_scope::snapshots(
+                request.snapshots,
+                &selected.identity,
+                &populations,
+                other_models,
+                input.model_selections,
+            )),
+            _ => None,
+        };
+        let snapshots = scoped_snapshots.as_ref().unwrap_or(request.snapshots);
         let mut initial = Vec::new();
         for document in &request.initial {
-            let (state, anchor) =
-                model.admit_initial(request.snapshots, document, request.observation)?;
+            let (state, anchor) = model.admit_initial(snapshots, document, request.observation)?;
             for population in universes.keys() {
                 if !state.populations.contains_key(population) {
                     return Err(AdmissionFailure::Incomplete(Box::new(record(
