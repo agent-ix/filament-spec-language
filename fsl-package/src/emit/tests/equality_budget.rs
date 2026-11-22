@@ -158,14 +158,6 @@ fn bare_admission_retains_equality_and_reports_its_denial_after_projection() {
         .with_supply(supply, &mut measure)
         .expect("full admission");
     let full = measure.consumed();
-    let declarations = declaration_cost(&admitted, supply);
-    assert!(declarations.work > 0 && declarations.storage > 0);
-    // Equality is admitted before the declarations, so its denials are the
-    // budgets short of what precedes them.
-    let need = filament_contract_model::NativeJoinCharge {
-        work: full.work - declarations.work,
-        storage: full.storage - declarations.storage,
-    };
     let [row] = equality.applications() else {
         panic!("one original row")
     };
@@ -179,6 +171,42 @@ fn bare_admission_retains_equality_and_reports_its_denial_after_projection() {
     assert_eq!(
         expected.schedule(),
         filament_semantic_value::declaration::EqualitySchedule::Text
+    );
+    assert!(
+        equality.source_units().is_empty(),
+        "no source-unit join in this fixture"
+    );
+    // Measure the same identity and per-node projection prefix that the bare
+    // entry charges, ending immediately after the native equality read.
+    let mut equality_measure = NativeJoinBudget::new(1_000_000, 1_000_000);
+    let selected = identities
+        .selected(&admitted, &mut equality_measure)
+        .expect("the authentic identity rows join on the equality measurement budget");
+    project_every_node(&admitted, &selected, &mut equality_measure);
+    assert_eq!(
+        equality_measure.first_unpaid(),
+        None,
+        "the entire projection prefix is paid"
+    );
+    let prefix = equality_measure.consumed();
+    let decisions = admit_equality_decisions(
+        &admitted,
+        ProjectionSource::Bytes {
+            equality: Some(&equality),
+        },
+        &mut equality_measure,
+    )
+    .expect("the equality phase admits on the same finite budget");
+    let need = equality_measure.consumed();
+    assert!(need.work > prefix.work && need.storage > prefix.storage);
+    assert!(need.work < full.work && need.storage < full.storage);
+    assert_eq!(
+        decisions
+            .get(&row.application)
+            .expect("the measured phase retains equality")
+            .as_ref()
+            .expect("the native equality decision"),
+        &expected
     );
     bare.world().expect("world uses admitted projections");
     assert_eq!(measure.consumed(), full);
@@ -244,7 +272,7 @@ fn bare_admission_retains_equality_and_reports_its_denial_after_projection() {
             u128::from(consumed) + unpaid.amount
         );
     }
-    let denials: Vec<_> = [
+    for (work, storage, kind, code) in [
         (
             need.work - 1,
             full.storage,
@@ -257,33 +285,16 @@ fn bare_admission_retains_equality_and_reports_its_denial_after_projection() {
             NativeJoinChargeKind::Storage,
             Code::StorageLimit,
         ),
-    ]
-    .into_iter()
-    .map(|(work, storage, kind, code)| {
+    ] {
         let mut budget = NativeJoinBudget::new(work, storage);
-        let outcome = BarePackage::new(&admitted).with_supply(supply, &mut budget);
-        eprintln!(
-            "equality denial probe: resource={kind:?}, native={:?}, limit={:?}, \
-             ceilings=({work}, {storage}), consumed={:?}, first_unpaid={:?}, \
-             first_unpaid_locus={:?}, full={full:?}, declarations={declarations:?}, \
-             need={need:?}, admitted={}",
-            outcome.as_ref().err().map(NativeJoinFailure::native),
-            outcome.as_ref().err().and_then(NativeJoinFailure::limit),
-            budget.consumed(),
-            budget.first_unpaid(),
-            budget.first_unpaid_locus(),
-            outcome.is_ok(),
-        );
-        (work, storage, kind, code, budget, outcome)
-    })
-    .collect();
-    for (work, storage, kind, code, budget, outcome) in denials {
-        let error = outcome.expect_err("one short in equality");
+        let error = BarePackage::new(&admitted)
+            .with_supply(supply, &mut budget)
+            .expect_err("one short in equality");
         let NativeJoinFailure::Equality(native) = error.native() else {
             panic!(
                 "actual equality cause after identity/type prefix: native={:?}, limit={:?}, \
                  ceilings=({work}, {storage}), consumed={:?}, first_unpaid={:?}, \
-                 first_unpaid_locus={:?}, full={full:?}, declarations={declarations:?}, need={need:?}",
+                 first_unpaid_locus={:?}, full={full:?}, prefix={prefix:?}, need={need:?}",
                 error.native(),
                 error.limit(),
                 budget.consumed(),
@@ -443,27 +454,6 @@ fn source_evaluation_view_preserves_the_equality_denial_and_exact_stage_limit() 
         assert_eq!(denial.limit.actual(), u128::from(consumed) + unpaid.amount);
         assert_eq!(denial.catalog_code().code(), "stage_limit_exceeded");
     }
-}
-
-/// What the selected-object declaration projection, the last charge of
-/// `with_supply` (FR-533 "Observation admission"), costs on its own.
-fn declaration_cost(
-    admitted: &filament_contract_model::CheckedPackageV2,
-    supply: BareSupply<'_>,
-) -> filament_contract_model::NativeJoinCharge {
-    let bare = BarePackage::new(admitted)
-        .with_supply(supply, &mut NativeJoinBudget::new(1_000_000, 1_000_000))
-        .expect("full admission");
-    let mut budget = NativeJoinBudget::new(1_000_000, 1_000_000);
-    admitted
-        .project_selected_type_declarations(
-            bare.identities().expect("joined identities"),
-            &[],
-            supply.equality.map_or(&[], |rows| rows.source_units()),
-            &mut budget,
-        )
-        .expect("the declarations project");
-    budget.consumed()
 }
 
 /// The per-node projection that view creation charges after validation.
