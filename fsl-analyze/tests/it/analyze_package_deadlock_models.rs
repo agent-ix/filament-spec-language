@@ -12,7 +12,7 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    analyze, label, package_selection, request_members, request_over, Run, Workspace,
+    analyze, label, package_selection, request_members, request_over, Run, Workspace, HANDOFF,
 };
 use crate::hyper_world::{self, Vault, KEY, PACKAGE};
 
@@ -32,10 +32,10 @@ enum Reads {
     Both,
 }
 
-/// Both routes' runs over a unit that selects `test/vault` as `V` and
-/// `test/vault-other` as `N`, whose subject reads `reads`, for `items`; the
-/// authored unit text is deleted before the package run.
-fn both_routes(name: &str, vault: Vault, reads: Reads, items: &Value) -> (Run, Run) {
+/// The source run of a unit that selects `test/vault` as `V` and
+/// `test/vault-other` as `N`, whose subject reads `reads`, for `items`, and
+/// its package request.
+fn world(name: &str, vault: Vault, reads: Reads, items: &Value) -> World {
     let first = hyper_world::document(false, false);
     let other = hyper_world::other_document(&first);
     let unit = hyper_world::unit_text(Some(&other), vault, false, "");
@@ -78,12 +78,38 @@ fn both_routes(name: &str, vault: Vault, reads: Reads, items: &Value) -> (Run, R
     let request: Value =
         serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("JSON");
     let (members, _) = package_selection(&ws, &request["request"]);
-    for file in ["program.fsl"] {
-        std::fs::remove_file(ws.path(file)).expect("the authored file is removed");
+    std::fs::remove_file(ws.path("program.fsl")).expect("the authored unit is removed");
+    World {
+        ws,
+        source,
+        members,
     }
-    let document = json!({"format": "native-analyze/1", "request": members});
-    let package = analyze(&ws.write("analyze-package.json", document.to_string().as_bytes()));
-    (source, package)
+}
+
+/// A unit's source run, its compiled package request and its workspace.
+struct World {
+    ws: Workspace,
+    source: Run,
+    members: Value,
+}
+
+impl World {
+    fn package_run(&self) -> Run {
+        let document = json!({"format": "native-analyze/1", "request": self.members});
+        analyze(
+            &self
+                .ws
+                .write("analyze-package.json", document.to_string().as_bytes()),
+        )
+    }
+}
+
+/// Both routes' runs over `world`, the authored unit text deleted before the
+/// package run.
+fn both_routes(name: &str, vault: Vault, reads: Reads, items: &Value) -> (Run, Run) {
+    let world = world(name, vault, reads, items);
+    let package = world.package_run();
+    (world.source, package)
 }
 
 /// The package run's whole result equals the source run's.
@@ -100,29 +126,22 @@ fn assert_equal(source: &Run, package: &Run) {
 }
 
 /// FR-124-AC-12: a model's reachable deadlock is refuted with the same
-/// counterexample and a reproduced replay on both routes, whichever of the
-/// unit's two models the subject reads.
+/// counterexample and a reproduced replay on both routes when the subject
+/// reads the first of the unit's two models.
 #[trace("TC-519", "FR-124-AC-12")]
 #[trace("TC-2410", "FR-850-AC-2")]
 #[test]
 fn a_reachable_deadlock_over_one_of_two_models_refutes_as_the_source_route() {
-    for (reads, identity) in [(Reads::First, PACKAGE), (Reads::Second, OTHER)] {
-        let (source, package) = both_routes(
-            "package-deadlock-two-models-refuted",
-            Vault::Terminal,
-            reads,
-            &json!([deadlock_item(identity)]),
-        );
-        assert!(
-            source.document()["items"][0]["record"]["result"].is_string(),
-            "{identity}: {}",
-            source.document()
-        );
-        assert_eq!(label(&source.item(0)), "refuted", "{}", source.document());
-        assert_eq!(label(&package.item(0)), "refuted", "{}", package.document());
-        assert_eq!(package.item(0)["replay"]["reproduced"], true);
-        assert_equal(&source, &package);
-    }
+    let (source, package) = both_routes(
+        "package-deadlock-two-models-refuted",
+        Vault::Terminal,
+        Reads::First,
+        &json!([deadlock_item(PACKAGE)]),
+    );
+    assert_eq!(label(&source.item(0)), "refuted", "{}", source.document());
+    assert_eq!(label(&package.item(0)), "refuted", "{}", package.document());
+    assert_eq!(package.item(0)["replay"]["reproduced"], true);
+    assert_equal(&source, &package);
 }
 
 /// FR-124-AC-12: with no reachable deadlock the item is proved on both routes.
@@ -160,4 +179,55 @@ fn a_subject_reading_both_models_settles_unsupported_as_the_source_route() {
         source.document()
     );
     assert_equal(&source, &package);
+}
+
+/// A subject that reads the second model alone settles as the source route
+/// settles it (the source route declines `invalid_model_binding` for want of
+/// per-model snapshot provisions), so the package route adds no outcome.
+#[trace("TC-2410", "FR-850-AC-2")]
+#[test]
+fn a_subject_reading_the_second_model_alone_settles_as_the_source_route() {
+    let (source, package) = both_routes(
+        "package-deadlock-two-models-second",
+        Vault::Terminal,
+        Reads::Second,
+        &json!([deadlock_item(OTHER)]),
+    );
+    assert_equal(&source, &package);
+}
+
+/// FR-850-AC-3 (negative): a package that lacks the rows of one of its two
+/// models is refused `invalid_package` before any item resolves, with no
+/// internal failure.
+#[trace("TC-2410", "FR-850-AC-3")]
+#[test]
+fn a_package_missing_one_models_rows_refuses_invalid_package() {
+    let world = world(
+        "package-deadlock-two-models-missing",
+        Vault::Terminal,
+        Reads::First,
+        &json!([deadlock_item(PACKAGE)]),
+    );
+    let path = world.ws.path(&format!("{HANDOFF}/checked-package.json"));
+    let mut package: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("the package")).expect("JSON");
+    let mut removed = 0;
+    for rows in package
+        .as_object_mut()
+        .expect("a package object")
+        .values_mut()
+    {
+        if let Some(rows) = rows.as_array_mut() {
+            let before = rows.len();
+            rows.retain(|row| !row.to_string().contains("vault-other"));
+            removed += before - rows.len();
+        }
+    }
+    assert!(removed > 0, "the package carries rows of the second model");
+    std::fs::write(&path, package.to_string()).expect("the package is written");
+    let run = world.package_run();
+    let diagnostic = run.document()["diagnostics"][0].clone();
+    assert_eq!(diagnostic["code"], "invalid_package", "{}", run.document());
+    assert_eq!(run.document()["items"], json!([]));
+    assert_eq!(run.exit, 20);
 }
