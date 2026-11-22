@@ -68,6 +68,7 @@ mod hyper_settle;
 mod hyper_single;
 mod hyper_swap;
 mod hyper_wire;
+mod package_hyper_analysis;
 mod hyper_witness;
 mod hyper_world;
 mod invariant_item;
