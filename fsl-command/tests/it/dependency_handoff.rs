@@ -437,7 +437,24 @@ fn transitive_library_claim_analysis_and_replay_equal_source_after_source_deleti
             .len()
         })
         .sum();
-    let first_external_bytes = std::fs::metadata(directory.join("handoff/dependencies/0/checked-package.json")).unwrap().len();
+    // `test/a` is imported by `test/z`, so it is the first library emitted and
+    // the first package the allowance is charged for.
+    let manifest: Value = serde_json::from_slice(
+        &std::fs::read(directory.join("handoff/dependencies.json")).unwrap(),
+    )
+    .unwrap();
+    let first_directory = manifest["dependencies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["identity"] == "test/a")
+        .and_then(|row| row["directory"].as_str())
+        .expect("the manifest lists test/a");
+    let first_external_bytes = std::fs::metadata(
+        directory.join(format!("handoff/{first_directory}/checked-package.json")),
+    )
+    .unwrap()
+    .len();
     assert!(first_external_bytes < external_bytes, "a later library follows the one that crosses");
     assert!(external_bytes > 0);
     let (source_baseline, source_exact) = replay_boundary(
