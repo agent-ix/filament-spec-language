@@ -3611,8 +3611,7 @@ pub(super) fn admit_population_values<'t>(
                             .with(
                                 "path",
                                 snapshot_field_path(population_index, object_index, name),
-                            )
-                            .at(snapshot_field_steps(population_index, object_index, name)),
+                            ),
                     ));
                 }
                 let mut found = Vec::new();
