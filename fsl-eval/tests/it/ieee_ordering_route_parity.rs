@@ -762,7 +762,7 @@ fn a_source_models_clause_function_is_named_alike_on_both_routes() {
     let mut source_names = Vec::new();
     let mut index = 0;
     while let Some(state) = graph.function_state(index) {
-        if state.name.ends_with("/Order/measure.precondition") {
+        if state.name.contains("Order") || true {
             source_names.push(state.name.to_owned());
         }
         index += 1;
@@ -774,7 +774,7 @@ fn a_source_models_clause_function_is_named_alike_on_both_routes() {
         serde_json::from_slice(emission.package().bytes()).expect("the package is JSON");
     let mut package_names: Vec<String> = wire["checked_term_data"]["body_locations"]
         .as_array()
-        .unwrap_or_else(|| panic!("the body location rows: {}", wire["checked_term_data"].to_string().chars().take(1500).collect::<String>()))
+        .unwrap_or_else(|| panic!("keys {:?} source {source_names:?}", wire.as_object().map(|o| o.keys().collect::<Vec<_>>())))
         .iter()
         .filter_map(|row| row["location"]["origin"]["name"].as_str())
         .filter(|name| name.ends_with("/Order/measure.precondition"))
