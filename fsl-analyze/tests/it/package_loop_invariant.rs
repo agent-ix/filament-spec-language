@@ -155,12 +155,16 @@ fn literal_loop_invariant_source_evaluator_has_no_charges() {
     for invariant in ["true", "false"] {
         let ws = Workspace::new(&format!("literal-loop-charges-{invariant}"));
         let path = request(&ws, invariant, "1", "true", "loop-invariant");
-        // This produces the real handoff before inspecting the checked source.
         let input = fsl_command::command::prepare_analyze(
             &path,
             fsl_command::command::RunLimits::default(),
         )
-        .expect("source admits");
+        .expect("source admits")
+        .into_input();
+        let package_name = input.source.source().identity().label(SourceLabel::Identity);
+        let request: Value = serde_json::from_slice(&std::fs::read(&path).expect("source request"))
+            .expect("request JSON");
+        package_selection_named(&ws, &request["request"], package_name);
         drop(input);
         let compiled = fsl_command::checked_handoff::compile(&ws.path(HANDOFF))
             .expect("actual producer handoff compiles");
