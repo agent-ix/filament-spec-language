@@ -62,8 +62,7 @@ use crate::checked::EmitLimits;
 use crate::checked_v2::{
     CheckedClockConstraint, CheckedClockGuard, CheckedClockPlace, CheckedClockReset,
     CheckedConstraintTarget, CheckedGuardPart, CheckedGuardQuantifier, CheckedResetTarget,
-    CheckedTimeInvariant,
-    CheckedTimedModel, CheckedUrgency, ClockComparison, TimedNodeMetadata,
+    CheckedTimeInvariant, CheckedTimedModel, CheckedUrgency, ClockComparison, TimedNodeMetadata,
 };
 use crate::wire_form::{OperationSuffix, WireForm};
 
@@ -5861,12 +5860,8 @@ fn write_clauses(
                 predicate: node_id(ids, &part.predicate),
                 binders: part.binders.iter().map(|key| node_id(ids, key)).collect(),
                 quantifier: part.quantifier.map(|quantifier| match quantifier {
-                    fsl_semantics::check::GuardPartQuantifier::Each => {
-                        CheckedGuardQuantifier::Each
-                    }
-                    fsl_semantics::check::GuardPartQuantifier::Some => {
-                        CheckedGuardQuantifier::Some
-                    }
+                    fsl_semantics::check::GuardPartQuantifier::Each => CheckedGuardQuantifier::Each,
+                    fsl_semantics::check::GuardPartQuantifier::Some => CheckedGuardQuantifier::Some,
                 }),
                 constraints,
             });
@@ -6243,37 +6238,35 @@ fn timed_model_node_id(
     }
     let package = node.node_id.package.as_ref();
     let ordinal = node.node_id.ordinal;
-    let key = if let Some(declaration) = &node.declaration {
+    if let Some(declaration) = &node.declaration {
         let path = declaration
             .qualified_name
             .iter()
             .map(|part| PathSegment::Text(part.to_string()))
             .collect();
-        fsl_semantics::check::structural_node_key(package, path, ordinal)
-    } else {
-        let mut operands = Vec::new();
-        timed_body_operands(&node.body, &mut operands)?;
-        let key = fsl_semantics::check::derived_node_key(
-            package,
-            NodeTag::TimedModel,
-            &node.semantic_form,
-            operands,
-            ordinal,
-        )
-        .map_err(encoding)?;
-        match guard_family_quantifier(&node.semantic_form, &node.body)? {
-            Some((position, quantifier)) => {
-                let mut path = key.path();
-                path.extend([
-                    PathSegment::Text("quantifier".into()),
-                    PathSegment::Text(position.to_string()),
-                    PathSegment::Text(quantifier.into()),
-                ]);
-                NodeKey::new(key.package(), path, key.ordinal()).map_err(encoding)?
-            }
-            None => key,
-        }
-    };
+        let key =
+            fsl_semantics::check::structural_node_key(package, path, ordinal).map_err(encoding)?;
+        return Ok(node_id(ids, key));
+    }
+    let mut operands = Vec::new();
+    timed_body_operands(&node.body, &mut operands)?;
+    let mut key = fsl_semantics::check::derived_node_key(
+        package,
+        NodeTag::TimedModel,
+        &node.semantic_form,
+        operands,
+        ordinal,
+    )
+    .map_err(encoding)?;
+    if let Some((position, quantifier)) = guard_family_quantifier(&node.semantic_form, &node.body)? {
+        let mut path = key.path();
+        path.extend([
+            PathSegment::Text("quantifier".into()),
+            PathSegment::Text(position.to_string()),
+            PathSegment::Text(quantifier.into()),
+        ]);
+        key = NodeKey::new(key.package(), path, key.ordinal()).map_err(encoding)?;
+    }
     Ok(node_id(ids, key))
 }
 
@@ -6289,12 +6282,14 @@ fn guard_family_quantifier(
     let CheckedTerm::Aggregate { members } = body else {
         return Ok(None);
     };
-    let Some(CheckedTerm::Aggregate { members: parts }) = members.iter().find_map(|member| {
-        match member {
-            CheckedTerm::Binding { name, value, .. } if name.as_ref() == "parts" => Some(value),
+    let Some(CheckedTerm::Aggregate { members: parts }) =
+        members.iter().find_map(|member| match member {
+            CheckedTerm::Binding { name, value, .. } if name.as_ref() == "parts" => {
+                Some(value.as_ref())
+            }
             _ => None,
-        }
-    }) else {
+        })
+    else {
         return Ok(None);
     };
     for (position, part) in parts.iter().enumerate() {
@@ -6305,7 +6300,7 @@ fn guard_family_quantifier(
         };
         let Some(quantifier) = members.iter().find_map(|member| match member {
             CheckedTerm::Binding { name, value, .. } if name.as_ref() == "quantifier" => {
-                Some(value)
+                Some(value.as_ref())
             }
             _ => None,
         }) else {

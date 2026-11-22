@@ -863,8 +863,9 @@ fn unbounded_quantified_clock_guards_emit_family_parts() {
         let path = guard["node_id"]["path"]
             .as_array()
             .expect("derived identity path");
+        let suffix = [json!("quantifier"), json!("0"), json!(wire_quantifier)];
         assert!(
-            path.ends_with(&json!(["quantifier", "0", wire_quantifier])[..]),
+            path.ends_with(&suffix),
             "family quantifier suffix: {path:?}"
         );
         let [part] = member(&guard["body"], "parts")["members"]
