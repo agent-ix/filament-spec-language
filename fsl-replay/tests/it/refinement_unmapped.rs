@@ -366,7 +366,11 @@ fn the_reported_failure_does_not_depend_on_the_source_order_of_the_rows() {
             format!("{items} x = g(self.head); y = g(self.head);"),
             format!("y = g(self.head); x = g(self.head); {items}"),
         ] {
-            let world = RingWorld::with(xy, &format!("{g}\n{}", ring_is_queue(&rows)));
+            let world = RingWorld::with_mode(
+                filament_semantic_value::checking::CheckMode::Kernel,
+                xy,
+                &format!("{g}\n{}", ring_is_queue(&rows)),
+            );
             let concrete = world.concrete_system(UNLIMITED);
             let abstracted = world.abstract_system(UNLIMITED);
             let mut ring_a = ring("a", "Ring", None);

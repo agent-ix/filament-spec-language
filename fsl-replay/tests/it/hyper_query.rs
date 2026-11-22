@@ -24,7 +24,9 @@ use crate::vault_world::{
 /// is `step(0)`.
 const DIVIDED: &str = "match { a.step.op = b.step.op and \
      a.step.Vault::step.i = b.step.Vault::step.i and \
-     (if present(a.step.Vault::step.i) then 1 mod value(a.step.Vault::step.i) else 0) = 0 }";
+     (if present(a.step.Vault::step.i) then remainder(value(a.step.Vault::step.i)) else 0) = 0 }";
+
+const KERNEL_REMAINDER: &str = "function remainder using v(x: Integer): Integer pure { 1 mod x }\n";
 
 /// A third conjunct that calls a declared function, which a budget that
 /// covers the first two conjuncts of `(step(0), step(0))` does not cover.
@@ -34,6 +36,15 @@ const CALLING: &str = "match { a.step.op = b.step.op and \
 /// The vault, `matched` the `match` of its `NonInterference`.
 fn secure(matched: &str) -> World {
     World::build(&["v"], false, &non_interference(matched, ""), &SECURE)
+}
+
+fn divided() -> World {
+    World::build_with_kernel_function(
+        &["v"],
+        &non_interference(DIVIDED, ""),
+        &SECURE,
+        KERNEL_REMAINDER,
+    )
 }
 
 fn instance(key: &str) -> Vec<(String, String)> {
@@ -225,7 +236,7 @@ fn the_step_query_asserts_the_property_distinctness_and_the_violation() {
 #[trace("TC-1120", "FR-315-AC-9")]
 #[test]
 fn an_undefined_match_is_kept_and_is_a_definedness_failure() {
-    let world = secure(DIVIDED);
+    let world = divided();
     let text = script(&world, SmtQueryKind::InductionBase { depth: 1 });
     let steps = joint_steps(&text);
     assert_eq!(steps.len(), 3);
@@ -536,8 +547,13 @@ fn a_conjunct_before_the_calling_one_moves_the_refused_tuple() {
 #[trace("TC-1120", "FR-315-AC-48")]
 #[test]
 fn a_divisor_outside_the_fragment_is_refused_after_the_match_conjuncts() {
-    let body = "always holds(1 mod (1 - v.h @ a) = 1 mod (1 - v.h @ b))";
-    let world = World::build(&["v"], false, &with_body(EQUAL_INPUTS, "", body), &SECURE);
+    let body = "always holds(remainder(1 - v.h @ a) = remainder(1 - v.h @ b))";
+    let world = World::build_with_kernel_function(
+        &["v"],
+        &with_body(EQUAL_INPUTS, "", body),
+        &SECURE,
+        KERNEL_REMAINDER,
+    );
     for kind in [
         SmtQueryKind::InductionBase { depth: 1 },
         SmtQueryKind::InductionStep { depth: 1 },
@@ -555,7 +571,12 @@ fn a_divisor_outside_the_fragment_is_refused_after_the_match_conjuncts() {
             refusal_of(&world, kind, &mut Meter::new(UNLIMITED))
         );
     }
-    let exhausting = World::build(&["v"], false, &with_body(CALLING, "", body), &SECURE);
+    let exhausting = World::build_with_kernel_function(
+        &["v"],
+        &with_body(CALLING, "", body),
+        &SECURE,
+        KERNEL_REMAINDER,
+    );
     let refusal = refusal_of(
         &exhausting,
         SmtQueryKind::InductionBase { depth: 1 },
@@ -577,7 +598,7 @@ fn a_divisor_outside_the_fragment_is_refused_after_the_match_conjuncts() {
             false,
         ),
         (
-            script(&secure(DIVIDED), SmtQueryKind::InductionBase { depth: 1 }),
+            script(&divided(), SmtQueryKind::InductionBase { depth: 1 }),
             true,
         ),
         (

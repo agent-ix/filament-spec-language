@@ -482,7 +482,10 @@ fn deferred_reward_model(transient: bool, undefined: bool) -> Model {
         .parameters
         .push(("who", format!("ix://{}/Server", model.package)));
     let expression = if undefined {
-        "if who = who then (1 mod 0) else 1"
+        model
+            .body
+            .push_str("\nfunction undefined_weight using v(): Integer pure { 1 mod 0 }\n");
+        "if who = who then undefined_weight() else 1"
     } else {
         "if who = who then -1 else 1"
     };
@@ -540,7 +543,10 @@ fn admitted_object_parameter_draws_do_not_coerce_negative_weight_to_zero() {
 #[test]
 fn undefined_actual_weights_and_predicates_preserve_typed_nonacceptance() {
     for transient in [false, true] {
-        let world = World::new(&deferred_reward_model(transient, true));
+        let world = World::new_with_mode(
+            &deferred_reward_model(transient, true),
+            filament_semantic_value::checking::CheckMode::Kernel,
+        );
         let system = ModelSystem::new(world.subject().simulation)
             .expect("object-domain reward is deferred by FR187 admission");
         let identity = fsl_replay::probabilistic_claim_identity(world.claim("Fraction")).unwrap();

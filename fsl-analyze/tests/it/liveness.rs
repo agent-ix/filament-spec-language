@@ -40,8 +40,8 @@ use fsl_semantics::model::observation::{AnchorKind, DocumentRef};
 use ix_trace_rs::trace;
 
 use crate::counter::{
-    clause_text, document, document_with_ranged_parameter, key, package_with_clauses, subject,
-    unit_text, value, Documents, Letters, CONTRACT, UNLIMITED, ZERO,
+    clause_text, document, document_with_ranged_parameter, key, subject, unit_text, value,
+    Documents, Letters, CONTRACT, UNLIMITED, ZERO,
 };
 
 /// A Counter world with one declared clause.
@@ -65,7 +65,31 @@ pub(crate) fn fixture(
     formula: &str,
     starts: &[(&'static str, i64)],
 ) -> Fixture {
-    let (package, clauses) = package_with_clauses(&document, body, &[("C", fairness, formula)]);
+    fixture_in_mode(
+        document,
+        body,
+        fairness,
+        formula,
+        starts,
+        filament_semantic_value::checking::CheckMode::Linked,
+    )
+}
+
+/// A fixture with an explicit function-body mode; declared clauses stay Linked.
+pub(crate) fn fixture_in_mode(
+    document: Vec<u8>,
+    body: &str,
+    fairness: &str,
+    formula: &str,
+    starts: &[(&'static str, i64)],
+    mode: filament_semantic_value::checking::CheckMode,
+) -> Fixture {
+    let (package, clauses) = crate::counter::package_with_clauses_mode(
+        &document,
+        body,
+        &[("C", fairness, formula)],
+        mode,
+    );
     let temporal_clock_selections = crate::fill::tcb_01_event_position_selection(&package);
     let unit = unit_text(&(body.to_owned() + &clause_text("C", fairness, formula))).into_bytes();
     let mut documents = Documents::new(document);
@@ -644,8 +668,16 @@ fn each_needs_every_transition_of_the_operation_and_whole_needs_one() {
 #[trace("TC-537")]
 #[test]
 fn an_undefined_letter_refutes_a_liveness_claim_before_any_lasso() {
-    let formula = "always eventually holds(6 mod (2 - c.value) = 0)";
-    let fixture = counter(document(false), "", formula);
+    let helper = "function undefined_remainder using v(x: Integer): Integer pure { 6 mod x }\n";
+    let formula = "always eventually holds(undefined_remainder(2 - c.value) = 0)";
+    let fixture = fixture_in_mode(
+        document(false),
+        &format!("{CONTRACT}{helper}"),
+        "",
+        formula,
+        &[("c", 0)],
+        filament_semantic_value::checking::CheckMode::Kernel,
+    );
     let outcome = fixture
         .decide(|v| (v != 2).then(|| 6 % (2 - v) == 0))
         .expect("checked");
@@ -663,9 +695,17 @@ fn an_undefined_letter_refutes_a_liveness_claim_before_any_lasso() {
     );
     assert_eq!(counterexample.trace_position(), Some(2));
 
-    let guarded = "pre CanInc using v on M::Counter::inc { 6 mod (2 - self.value) >= 0 }\n\
+    let guarded =
+        "pre CanInc using v on M::Counter::inc { undefined_remainder(2 - self.value) >= 0 }\n\
                    post Inc using v on M::Counter::inc { self.value - pre(self.value) = 1 }\n";
-    let fixture = fixture_with_body(guarded, "always eventually holds(c.value = 0)");
+    let fixture = fixture_in_mode(
+        document(false),
+        &format!("{helper}{guarded}"),
+        "",
+        "always eventually holds(c.value = 0)",
+        &[("c", 0)],
+        filament_semantic_value::checking::CheckMode::Kernel,
+    );
     let outcome = fixture.decide(is_zero).expect("checked");
     let counterexample = violated(&outcome);
     assert_eq!(fixture.values(counterexample, "c"), [0, 1, 2]);
@@ -682,10 +722,6 @@ fn an_undefined_letter_refutes_a_liveness_claim_before_any_lasso() {
         format!("{:?}", evaluation.site.transition).contains("Counter/inc"),
         "the guard names inc"
     );
-}
-
-fn fixture_with_body(body: &str, formula: &str) -> Fixture {
-    fixture(document(false), body, "", formula, &[("c", 0)])
 }
 
 /// FR-126 "Explicit-state limits" for a TP-4 item over the Counter subject

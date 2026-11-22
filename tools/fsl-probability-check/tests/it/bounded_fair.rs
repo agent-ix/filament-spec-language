@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Fair bounded proof bytes checked without analyzer linkage in a fresh process.
-use super::bounded::{alter_keys, document, key, mutate, proof, request_with, run};
+use super::bounded::{
+    alter_keys, check_kernel_document, document, kernel_proof, key, mutate, proof,
+    replace_kernel_source_and_rebind, request_with, run,
+};
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
@@ -238,34 +241,47 @@ fn zero_horizon_and_legacy_bytes_keep_their_actual_context_and_closed_rows() {
         code, 0,
         "horizon zero must not waive the admitted model's unique-post-state restriction: {out}"
     );
-    let query_stops = proof(
-        &source(
-            "fair weak Msg::send_a",
-            "<=",
-            "0.5",
-            0,
-            "if m.attempts > 0 then (1 mod 0 = 0) else m.delivered",
-        ),
-        SNAPSHOT,
-    );
-    assert_eq!(
-        run(&query_stops).0,
+    let partial = "\nfunction partial_remainder using v(x: Integer): Integer pure { 1 mod x }\n";
+    let query_source = source(
+        "fair weak Msg::send_a",
+        "<=",
+        "0.5",
         0,
+        "if m.attempts > 0 then (partial_remainder(0) = 0) else m.delivered",
+    ) + partial;
+    let query_stops = kernel_proof(&query_source, SNAPSHOT);
+    let cancel = filament_exact::Cancel::new();
+    assert!(
+        matches!(
+            check_kernel_document(&query_stops, &cancel),
+            Ok(fsl_replay::ExactProbabilityCertificateCheck::Accepted(_))
+        ),
         "model admission must not evaluate P after its zero horizon"
     );
-    let mut in_horizon_undefined = proof(&zero_source, SNAPSHOT);
-    replace_source(
-        &mut in_horizon_undefined,
-        &zero_source.replace("holds(m.delivered)", "holds(1 mod m.attempts = 0)"),
+    let (code, refused) = run(&query_stops);
+    assert_ne!(
+        code, 0,
+        "the public facade retains Linked checking: {refused}"
     );
-    let (code, out) = run(&in_horizon_undefined);
-    assert_ne!(code, 0);
+    assert_eq!(refused["status"], "refused", "{refused}");
+    assert!(refused.get("value").is_none());
+    let mut in_horizon_undefined = proof(&zero_source, SNAPSHOT);
+    replace_kernel_source_and_rebind(
+        &mut in_horizon_undefined,
+        &(zero_source.replace(
+            "holds(m.delivered)",
+            "holds(partial_remainder(m.attempts) = 0)",
+        ) + partial),
+    );
+    let out = check_kernel_document(&in_horizon_undefined, &cancel);
+    assert!(matches!(
+        &out,
+        Err(fsl_replay::ProbabilityDocumentError::UndefinedPredicate(_))
+    ));
+    let reason = out.unwrap_err().to_string();
     assert!(
-        out["reason"]
-            .as_str()
-            .unwrap()
-            .starts_with("probability certificate predicate undefined:"),
-        "the original typed predicate cause must reach the process facade: {out}"
+        reason.starts_with("probability certificate predicate undefined:"),
+        "the original typed predicate cause must reach the checker: {reason}"
     );
     let bytes = ordinary["certificate"].as_str().unwrap().as_bytes();
     let decoded = fsl_replay::read_probability_proof_document(

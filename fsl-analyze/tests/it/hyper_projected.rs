@@ -405,7 +405,14 @@ fn an_incomplete_or_refused_match_is_undetermined_and_never_holds() {
 #[trace("TC-608", "FR-183-AC-7")]
 #[test]
 fn an_undefined_counterexample_of_an_align_skip_clause_is_refused_by_replay() {
-    let undefined = World::busy(Vault::Busy, &[(1, 0, 1)], &aligned(&[INVERSE]));
+    let inverse = "(if present(a.step.Vault::step.i) \
+        then remainder(value(a.step.Vault::step.i)) else 0) = 0";
+    let undefined = World::busy_with_kernel_function(
+        Vault::Busy,
+        &[(1, 0, 1)],
+        &aligned(&[inverse]),
+        "function remainder using v(x: Integer): Integer pure { 1 mod x }\n",
+    );
     let counterexample = refuted(run(&undefined));
     assert!(matches!(
         counterexample.kind,

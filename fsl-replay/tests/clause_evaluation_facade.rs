@@ -26,8 +26,6 @@ fn unit() -> String {
          model Config = {PACKAGE:?};\n\
          invariant ParentOrder using v on Config::ConfigVersion at current {{ \
          present(self.parent) implies deref(value(self.parent)).versionNumber < self.versionNumber }}\n\
-         invariant Quotient using v on Config::ConfigVersion at current {{ \
-         10 mod self.versionNumber >= 0 }}\n\
          pre ParentPresent using v on Config::ConfigVersion::attemptUpdate {{ \
          present(self.parent) }}\n"
     )
@@ -113,11 +111,20 @@ fn accounting(work_units: u64) -> ScalarLimits {
 }
 
 fn evaluate(clause: &str, observation: ClauseObservation, work_units: u64) -> ClauseEvaluation {
+    evaluate_source(unit(), clause, observation, work_units)
+}
+
+fn evaluate_source(
+    source: String,
+    clause: &str,
+    observation: ClauseObservation,
+    work_units: u64,
+) -> ClauseEvaluation {
     evaluate_clause(ClauseEvaluationRequest {
         source: SourceIdentity::new("a", "u"),
         package_name: "fixture".to_owned(),
         path: "unit.native".to_owned(),
-        bytes: unit().into_bytes(),
+        bytes: source.into_bytes(),
         packages: vec![MODEL.as_bytes().to_vec()],
         dependencies: DependencyInput::default(),
         clause: clause.to_owned(),
@@ -230,24 +237,20 @@ fn refusals_and_exhausted_limits_have_their_own_variants() {
 
 #[trace("TC-1274", "FR-491-AC-4")]
 #[test]
-fn a_clause_with_no_value_at_the_observation_is_undefined() {
-    // `10 mod self.versionNumber` is undefined at version 0.
+fn an_unproved_divisor_refuses_the_public_clause_before_evaluation() {
     let zero = [("root", 0, None)];
-    let result = evaluate("Quotient", current(&zero, "root"), 1_000_000);
+    let source = unit() + "invariant Quotient using v on Config::ConfigVersion at current { 10 mod self.versionNumber >= 0 }\n";
+    let result = evaluate_source(source, "Quotient", current(&zero, "root"), 1_000_000);
     assert!(
         matches!(
             result,
-            ClauseEvaluation::Undefined {
-                reason: "division-by-zero"
-            }
+            ClauseEvaluation::Refused(ClauseRefusal::Coded {
+                code: "undefined_expression",
+                cause: "unproved-nonzero",
+                ..
+            })
         ),
         "{result:?}"
-    );
-    let one = [("root", 1, None)];
-    let defined = evaluate("Quotient", current(&one, "root"), 1_000_000);
-    assert!(
-        matches!(defined, ClauseEvaluation::Completed(true)),
-        "{defined:?}"
     );
 }
 

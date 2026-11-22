@@ -420,7 +420,24 @@ impl World {
             None,
             declaration,
             build,
+            CheckMode::Linked,
         )
+    }
+
+    /// A world with genuine Kernel-checked function bodies; clauses remain Linked.
+    pub fn build_with_kernel_function(
+        universe: &[&str],
+        declaration: &str,
+        build: &Build<'_>,
+        function: &str,
+    ) -> Self {
+        let extra = format!("{}{function}\n", build.extra);
+        let build = Build {
+            reset: build.reset,
+            post: build.post,
+            extra: &extra,
+        };
+        Self::assemble(universe, None, None, declaration, &build, CheckMode::Kernel)
     }
 
     /// A clause over two aliases whose subjects have disjoint universes:
@@ -434,6 +451,7 @@ impl World {
             Some((&["v"], &["m"])),
             declaration,
             build,
+            CheckMode::Linked,
         )
     }
 
@@ -443,6 +461,7 @@ impl World {
         alias_n: Option<(&[&str], &[&str])>,
         declaration: &str,
         build: &Build<'_>,
+        mode: CheckMode,
     ) -> Self {
         let second = other_universe.is_some();
         let document = document(false, build.reset);
@@ -457,7 +476,7 @@ impl World {
             .map(|checked| checked.expect("the temporal clause checks"));
         let graph = assembled
             .check(
-                CheckMode::Linked,
+                mode,
                 CheckingLimits::default(),
                 &fsl_eval::value::S6aRewardEvaluator,
             )

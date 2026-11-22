@@ -31,18 +31,18 @@ use fsl_eval::hyper::{
     Property, StepLabel, StepMatch, WitnessInputs, WitnessProduct,
 };
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelSubject};
-use fsl_eval::simulation::Limits;
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelSimState, ModelSimulationRequest, ModelSystem, PopulationUniverse,
 };
+use fsl_eval::simulation::Limits;
 use fsl_eval::temporal::AtomReading;
+use fsl_foundation::diagnostic::StageFailure;
 use fsl_foundation::IdentityLimits;
 use fsl_foundation::SourceIdentity;
-use fsl_foundation::diagnostic::StageFailure;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    DEFAULT_MAX_WITNESS_SET, HyperCounterexample, HyperOutcome, HyperReplay, ModelCheckLimits,
-    ModelTraceSettlement, ReplayRefusal, replay_hyper_trace_tuple,
+    replay_hyper_trace_tuple, HyperCounterexample, HyperOutcome, HyperReplay, ModelCheckLimits,
+    ModelTraceSettlement, ReplayRefusal, DEFAULT_MAX_WITNESS_SET,
 };
 use fsl_route::reductions::Reductions;
 use fsl_semantics::check::{
@@ -627,6 +627,31 @@ impl World {
             flags,
             vec![KEY.to_owned()],
             declaration,
+        )
+    }
+
+    /// A busy world with an additional Kernel-checked helper body.
+    pub(crate) fn busy_with_kernel_function(
+        vault: Vault,
+        starts: &[(i64, i64, i64)],
+        declaration: &str,
+        function: &str,
+    ) -> Self {
+        let snapshots = starts
+            .iter()
+            .map(|(h, l, _)| vec![(KEY, (*h, *l))])
+            .collect();
+        let flags = starts.iter().map(|(_, _, busy)| *busy).collect();
+        Self::assemble_with_mode(
+            vault,
+            false,
+            snapshots,
+            None,
+            flags,
+            vec![KEY.to_owned()],
+            declaration,
+            function,
+            CheckMode::Kernel,
         )
     }
 

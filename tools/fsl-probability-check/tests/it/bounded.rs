@@ -51,6 +51,31 @@ pub(super) fn compile_source_with(
     spine::CheckedUnit,
     fsl_semantics::model::intake::PackageInput,
 ) {
+    compile_with_mode(source, domain, None)
+}
+
+pub(super) fn compile_kernel_source_with(
+    source: &str,
+    domain: &[u8],
+) -> (
+    spine::CheckedUnit,
+    fsl_semantics::model::intake::PackageInput,
+) {
+    compile_with_mode(
+        source,
+        domain,
+        Some(filament_semantic_value::checking::CheckMode::Kernel),
+    )
+}
+
+fn compile_with_mode(
+    source: &str,
+    domain: &[u8],
+    check_mode: Option<filament_semantic_value::checking::CheckMode>,
+) -> (
+    spine::CheckedUnit,
+    fsl_semantics::model::intake::PackageInput,
+) {
     let identity = SourceIdentity::new("test", "bounded-certificate-source");
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
@@ -69,9 +94,14 @@ pub(super) fn compile_source_with(
     let models = spine::select(&parsed, &packages, limits.model, &cancel)
         .unwrap()
         .into_value();
-    let checked = spine::check(
+    let checked = spine::check_with_execution_points_and_source_inputs(
         &parsed,
         "bounded-fixture".to_owned(),
+        &spine::StateClauseExecutionPoints::default(),
+        spine::SourceInputs {
+            check_mode,
+            ..spine::SourceInputs::default()
+        },
         &models,
         &DependencyInput::default(),
         limits,
@@ -96,10 +126,24 @@ pub(super) fn request_with(
     exact: ExactProbLimits,
     domain: &[u8],
 ) -> (Option<Value>, Settlement) {
+    request_with_mode(source, snapshot, exact, domain, false)
+}
+
+fn request_with_mode(
+    source: &str,
+    snapshot: &[u8],
+    exact: ExactProbLimits,
+    domain: &[u8],
+    kernel: bool,
+) -> (Option<Value>, Settlement) {
     let identity = SourceIdentity::new("test", "bounded-certificate-source");
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
-    let (checked, packages) = compile_source_with(source, domain);
+    let (checked, packages) = if kernel {
+        compile_kernel_source_with(source, domain)
+    } else {
+        compile_source_with(source, domain)
+    };
     let package = checked.package();
     let claim = package
         .graph()
@@ -221,6 +265,93 @@ pub(super) fn proof(source: &str, snapshot: &[u8]) -> Value {
             source.lines().last().unwrap_or(source)
         )
     })
+}
+
+pub(super) fn kernel_proof(source: &str, snapshot: &[u8]) -> Value {
+    let (request, settlement) =
+        request_with_mode(source, snapshot, ExactProbLimits::default(), DOMAIN, true);
+    request.unwrap_or_else(|| panic!("Kernel fixture carries no proof: {settlement:?}"))
+}
+
+fn document_limits(request: &Value) -> fsl_replay::ProbabilityDocumentLimits {
+    fsl_replay::ProbabilityDocumentLimits {
+        bytes: request["limits"]["bytes"].as_u64().unwrap(),
+        storage_bytes: request["limits"]["storage_bytes"].as_u64().unwrap(),
+        states: usize::try_from(request["limits"]["states"].as_u64().unwrap()).unwrap(),
+        edges: usize::try_from(request["limits"]["edges"].as_u64().unwrap()).unwrap(),
+        scalar_bits: request["limits"]["scalar_bits"].as_u64().unwrap(),
+        accounting: fsl_replay::AccountingLimits::default().0,
+    }
+}
+
+pub(super) fn check_kernel_document(
+    request: &Value,
+    cancel: &Cancel,
+) -> Result<fsl_replay::ExactProbabilityCertificateCheck, fsl_replay::ProbabilityDocumentError> {
+    let domain: Vec<u8> = serde_json::from_value(request["documents"][0].clone()).unwrap();
+    let snapshot: Vec<u8> = serde_json::from_value(request["documents"][1].clone()).unwrap();
+    let (checked, packages) =
+        compile_kernel_source_with(request["source"]["content"].as_str().unwrap(), &domain);
+    let initial = DocumentRef {
+        authority: request["initial"][0]["authority"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+        identity: request["initial"][0]["identity"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+    };
+    let snapshots = [(initial.clone(), snapshot)].into_iter().collect();
+    let universe = &request["universes"][0];
+    let stages = SpineLimits::default();
+    let system = fsl_eval::simulation::model::ModelSystem::new(ModelSimulationRequest {
+        input: fsl_eval::simulation::model::ModelCheckInput::source(checked.package()),
+        packages: &packages,
+        normalization: stages.model,
+        snapshots: &snapshots,
+        initial: vec![initial],
+        universes: vec![PopulationUniverse {
+            population: DeclarationKey {
+                package: universe["population"]["package"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
+                node: universe["population"]["node"].as_str().unwrap().to_owned(),
+            },
+            keys: universe["keys"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|key| key.as_str().unwrap().to_owned())
+                .collect(),
+        }],
+        observation: ObservationLimits::default(),
+        expansion: ExpansionLimits {
+            max_candidates: request["limits"]["expansion"].as_u64().unwrap(),
+        },
+        meter: fsl_replay::AccountingLimits::default().0,
+        emit: stages.package.emit(),
+    })
+    .unwrap();
+    let claims = checked.package().graph().probabilistic_model().claims();
+    let item = fsl_replay::probabilistic_claim_identity(
+        checked
+            .package()
+            .graph()
+            .probabilistic_model()
+            .claim("Likely")
+            .unwrap(),
+    )
+    .unwrap();
+    fsl_replay::check_probability_certificate_document(
+        &system,
+        claims,
+        &item,
+        request["certificate"].as_str().unwrap().as_bytes(),
+        document_limits(request),
+        cancel,
+    )
 }
 
 pub(super) fn run(request: &Value) -> (i32, Value) {
@@ -982,4 +1113,189 @@ fn bounded_wrong_source_and_nonexact_rows_never_produce_an_accepted_document() {
             );
         }
     }
+}
+
+/// Keep the offered evidence while naming the actual edited checked claim.
+/// The canonical writer preserves the profile and all numerical assertions.
+pub(super) fn replace_kernel_source_and_rebind(request: &mut Value, source: &str) {
+    let previous_source = request["source"]["content"].as_str().unwrap().to_owned();
+    let domain: Vec<u8> = serde_json::from_value(request["documents"][0].clone()).unwrap();
+    let (checked, packages) = compile_kernel_source_with(source, &domain);
+    let claim = checked
+        .package()
+        .graph()
+        .probabilistic_model()
+        .claim("Likely")
+        .unwrap();
+    let item = fsl_replay::probabilistic_claim_identity(claim).unwrap();
+    let limits = fsl_replay::ProbabilityDocumentLimits {
+        bytes: request["limits"]["bytes"].as_u64().unwrap(),
+        storage_bytes: request["limits"]["storage_bytes"].as_u64().unwrap(),
+        states: usize::try_from(request["limits"]["states"].as_u64().unwrap()).unwrap(),
+        edges: usize::try_from(request["limits"]["edges"].as_u64().unwrap()).unwrap(),
+        scalar_bits: request["limits"]["scalar_bits"].as_u64().unwrap(),
+        accounting: fsl_replay::AccountingLimits::default().0,
+    };
+    let cancel = Cancel::new();
+    let mut proof = fsl_replay::read_probability_proof_document(
+        request["certificate"].as_str().unwrap().as_bytes(),
+        limits,
+        &cancel,
+    )
+    .unwrap();
+    let document = proof.document_mut();
+    document.identity = item.clone();
+    if let fsl_semantics::check::ProbForm::Probability {
+        event: fsl_semantics::check::Event::Formula { formula, .. },
+        ..
+    } = &claim.form
+    {
+        let (previous, _) = compile_kernel_source_with(&previous_source, &domain);
+        let previous_claim = previous
+            .package()
+            .graph()
+            .probabilistic_model()
+            .claim("Likely")
+            .unwrap();
+        let fsl_semantics::check::ProbForm::Probability {
+            event:
+                fsl_semantics::check::Event::Formula {
+                    formula: previous_formula,
+                    ..
+                },
+            ..
+        } = &previous_claim.form
+        else {
+            panic!("the offered evidence names a bounded formula");
+        };
+        let initial = DocumentRef {
+            authority: request["initial"][0]["authority"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+            identity: request["initial"][0]["identity"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+        };
+        let snapshot: Vec<u8> = serde_json::from_value(request["documents"][1].clone()).unwrap();
+        let snapshots = [(initial.clone(), snapshot)].into_iter().collect();
+        let universe = &request["universes"][0];
+        let simulation = ModelSimulationRequest {
+            input: fsl_eval::simulation::model::ModelCheckInput::source(checked.package()),
+            packages: &packages,
+            normalization: SpineLimits::default().model,
+            snapshots: &snapshots,
+            initial: vec![initial],
+            universes: vec![PopulationUniverse {
+                population: DeclarationKey {
+                    package: universe["population"]["package"]
+                        .as_str()
+                        .unwrap()
+                        .to_owned(),
+                    node: universe["population"]["node"].as_str().unwrap().to_owned(),
+                },
+                keys: universe["keys"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .map(|key| key.as_str().unwrap().to_owned())
+                    .collect(),
+            }],
+            observation: ObservationLimits::default(),
+            expansion: ExpansionLimits {
+                max_candidates: request["limits"]["expansion"].as_u64().unwrap(),
+            },
+            meter: limits.accounting,
+            emit: SpineLimits::default().package.emit(),
+        };
+        let system = fsl_eval::simulation::model::ModelSystem::new(simulation).unwrap();
+        let binding = fsl_replay::claim_binding(&system, claim).unwrap().unwrap();
+        let previous_context = fsl_replay::probabilistic_formula_monitor_context(
+            previous_claim,
+            Some(&binding.reference),
+        )
+        .unwrap();
+        let context =
+            fsl_replay::probabilistic_formula_monitor_context(claim, Some(&binding.reference))
+                .unwrap();
+        let mut previous_monitor = fsl_eval::automaton::QualifiedBoundedMonitor::new(
+            previous_formula.formula(),
+            &previous_context,
+            u64::try_from(limits.states).unwrap(),
+        )
+        .unwrap();
+        let mut monitor = fsl_eval::automaton::QualifiedBoundedMonitor::new(
+            formula.formula(),
+            &context,
+            u64::try_from(limits.states).unwrap(),
+        )
+        .unwrap();
+        let mut keys = std::collections::BTreeMap::new();
+        for accepted in [false, true] {
+            keys.insert(
+                previous_monitor.decision_key(accepted).unwrap(),
+                monitor.decision_key(accepted).unwrap(),
+            );
+        }
+        let mut previous_state = previous_monitor.start(false).unwrap();
+        let mut state = monitor.start(false).unwrap();
+        loop {
+            keys.insert(
+                previous_monitor.key(previous_state).unwrap(),
+                monitor.key(state).unwrap(),
+            );
+            if !matches!(
+                previous_monitor.state(previous_state).unwrap(),
+                fsl_eval::automaton::BoundedState::Open { .. }
+            ) {
+                break;
+            }
+            previous_state = previous_monitor.step(previous_state, false).unwrap();
+            state = monitor.step(state, false).unwrap();
+        }
+        let io = fsl_replay::ProbabilityDocumentIoLimits {
+            bytes: limits.bytes,
+            storage_bytes: limits.storage_bytes,
+        };
+        let rebind = |key: &mut fsl_replay::ProbabilityProductKey| {
+            let encoded: Value = serde_json::from_slice(key.as_bytes()).unwrap();
+            let old = fsl_eval::automaton::AutomatonStateKey::imported(
+                fsl_foundation::canonical_json::encode(&encoded[5][1]).unwrap(),
+            );
+            let monitor = keys
+                .get(&old)
+                .expect("the old key is reached by the actual checked monitor");
+            let model = fsl_foundation::canonical_json::encode(&encoded[4][1]).unwrap();
+            *key = fsl_replay::ProbabilityProductKey::for_formula_state(
+                Some(&binding.reference),
+                &model,
+                monitor,
+                io,
+                &cancel,
+            )
+            .unwrap();
+        };
+        for row in &mut document.values {
+            rebind(&mut row.state);
+        }
+        for (key, _) in &mut document.ranking {
+            rebind(key);
+        }
+        for key in &mut document.targets {
+            rebind(key);
+        }
+        for key in &mut document.failures {
+            rebind(key);
+        }
+        document.values.sort_by(|a, b| a.state.cmp(&b.state));
+        document.ranking.sort_by(|a, b| a.0.cmp(&b.0));
+        document.targets.sort();
+        document.failures.sort();
+    }
+    let bytes = fsl_replay::write_probability_proof_document(&proof, limits, &cancel).unwrap();
+    request["source"]["content"] = json!(source);
+    request["byte_provision"][0][2] = json!(source.as_bytes());
+    request["item"] = json!({"node_id": fsl_foundation::node_wire::node_key_to_json(item.node()).unwrap(), "model": item.model().map(|model| model.as_str()), "ordinal": item.ordinal()});
+    request["certificate"] = json!(String::from_utf8(bytes).unwrap());
 }

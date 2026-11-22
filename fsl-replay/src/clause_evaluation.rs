@@ -457,6 +457,90 @@ mod tests {
 
     use super::*;
 
+    /// The original partial clause is evaluated only after genuine Kernel preparation.
+    #[trace("TC-1274", "FR-491-AC-4")]
+    #[test]
+    fn a_clause_with_no_value_at_the_observation_is_undefined() {
+        use filament_semantic_value::checking::CheckMode;
+        use serde_json::json;
+
+        let evaluate = |version: i64| {
+            let population = "ix://example/config-version/config_history";
+            let reference = fsl_semantics::model::observation::DocumentRef {
+                authority: "t".to_owned(),
+                identity: "ix://t/current".to_owned(),
+            };
+            let snapshot = json!({
+                "format":"filament.state.snapshot/v1",
+                "identity":{"authority":"t","identity":"ix://t/current"},
+                "observation":"current", "model":{"identity":"example/config-version"},
+                "anchor":{"kind":"handler","name":"validate"},
+                "populations":[{"population":population,"complete":true,"objects":[{
+                    "key":"root","type":"ix://example/config-version/ConfigVersion",
+                    "fields":{"versionNumber":{"integer":version.to_string()},"parent":{"absent":{}}}
+                }]}]
+            }).to_string().into_bytes();
+            let source = b"language \"ix:native\" edition \"1-draft\";\n\
+                profile v = \"filament.model.complete/v1\";\n\
+                model Config = \"example/config-version\";\n\
+                function quotient using v(x: Integer): Integer pure { 10 mod x }\n\
+                invariant Quotient using v on Config::ConfigVersion at current { quotient(self.versionNumber) >= 0 }\n";
+            let request = ClauseRunRequest {
+                clocks: Default::default(),
+                source: ClauseRunSource::Program {
+                    identity: SourceIdentity::new("a", "u"),
+                    path: "unit.native".to_owned(),
+                    bytes: source.to_vec(),
+                },
+                package_name: "fixture".to_owned(),
+                packages: package_input([include_bytes!(
+                    "../../examples/config-version/model.semantic-ir.json"
+                )
+                .as_slice()])
+                .unwrap(),
+                dependencies: DependencyInput::default(),
+                snapshots: BTreeMap::from([(reference.clone(), snapshot)]),
+                invocations: BTreeMap::new(),
+                selection: ClauseRunSelection::Clause(ClauseSelection {
+                    name: "Quotient".to_owned(),
+                    input: ClauseSelectionInput::Current {
+                        snapshot: reference,
+                        anchor: SelectedAnchor {
+                            kind: fsl_semantics::model::observation::AnchorKind::Handler,
+                            name: "validate".to_owned(),
+                        },
+                        self_object: Some(SelectedObject {
+                            population: population.to_owned(),
+                            key: "root".to_owned(),
+                        }),
+                    },
+                }),
+                limits: SpineLimits::default(),
+                observation_limits: ObservationLimits::default(),
+                accounting: crate::spine::default_accounting(1_000_000),
+            };
+            let modes = BTreeMap::from([("quotient".to_owned(), CheckMode::Kernel)]);
+            let report = crate::spine::clause::run_clause_with_function_modes(request, &[], &modes)
+                .expect("the checked clause reports its actual evaluation");
+            settle(report.disposition)
+        };
+        let result = evaluate(0);
+        assert!(
+            matches!(
+                result,
+                ClauseEvaluation::Undefined {
+                    reason: "division-by-zero"
+                }
+            ),
+            "{result:?}"
+        );
+        let defined = evaluate(1);
+        assert!(
+            matches!(defined, ClauseEvaluation::Completed(true)),
+            "{defined:?}"
+        );
+    }
+
     /// FR-491-AC-4: an S6a `Undefined` outcome of the clause is the typed
     /// `Undefined` result, carrying the reason's tabled spelling, and is
     /// neither a value nor a refusal.

@@ -29,11 +29,17 @@ fn growth() -> World {
 }
 fn undecided_model() -> Model {
     let mut model = growth_model();
-    model.body=model.body.replace("post Grown using v on M::Server::grow { self.level = 99 }","post Grown using vc on M::Server::grow { self.level = 99 or (self.level = 10 and 1 mod (self.level - 10) = 0) }");
+    model.body=model.body.replace("post Grown using v on M::Server::grow { self.level = 99 }","post Grown using vc on M::Server::grow { self.level = 99 or (self.level = 10 and undefined_remainder(self.level - 10) = 0) }");
+    model.body.push_str(
+        "\nfunction undefined_remainder using vc(x: Integer): Integer pure { 1 mod x }\n",
+    );
     model
 }
 fn undecided_candidate() -> World {
-    World::with_value_profile(&undecided_model())
+    World::new_with_mode(
+        &undecided_model(),
+        filament_semantic_value::checking::CheckMode::Kernel,
+    )
 }
 fn reward_model(mut model: Model) -> Model {
     model.body = model.body.replace(
@@ -208,7 +214,10 @@ impl ModelKeyBudget for CancelLarge<'_> {
 fn producer_cancellation_observes_real_larger_candidate_representation() {
     for world in [
         undecided_candidate(),
-        World::with_value_profile(&reward_model(undecided_model())),
+        World::new_with_mode(
+            &reward_model(undecided_model()),
+            filament_semantic_value::checking::CheckMode::Kernel,
+        ),
     ] {
         for cause in [
             None,

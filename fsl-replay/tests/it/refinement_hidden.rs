@@ -16,6 +16,8 @@ use crate::refinement_aux::{
     coin_refines, coin_refines_extended, flag, int, Unit, World, UNLIMITED,
 };
 
+const KERNEL_REMAINDER: &str = "function remainder using v(x: Integer): Integer pure { 1 mod x }\n";
+
 /// The concrete state of the one coin `r`.
 fn coin(
     world: &World<'_>,
@@ -287,9 +289,10 @@ fn an_any_row_keeps_the_candidates_with_a_matching_successor() {
 fn an_undecided_completion_leaves_the_candidate_set_unknown() {
     let unit = Unit::coin_with_contracts(
         "post SpecTossed using v on Spec::Coin::toss { self.tossed }",
-        "post SpecTossed using v on Spec::Coin::toss { self.tossed and 1 mod self.side = 0 }",
-    );
-    let world = unit.world(&coin_refines(""));
+        "post SpecTossed using v on Spec::Coin::toss { self.tossed and remainder(self.side) = 0 }",
+    )
+    .kernel();
+    let world = unit.world(&format!("{KERNEL_REMAINDER}{}", coin_refines("")));
     let start = initial(&world);
     let verdict = decide(
         &world,
@@ -432,13 +435,13 @@ fn a_set_of_one_side_that_a_reveal_contradicts_is_no_abstract_match() {
 fn an_undecided_successor_elsewhere_does_not_make_an_any_step_undetermined() {
     let unit = Unit::coin_with_contracts(
         "post SpecShown using v on Spec::Coin::show { self.shown and self.face = self.side }",
-        "post SpecShown using v on Spec::Coin::show { self.shown and self.face = self.side and 1 mod (1 - self.face) = 0 }",
-    );
+        "post SpecShown using v on Spec::Coin::show { self.shown and self.face = self.side and remainder(1 - self.face) = 0 }",
+    ).kernel();
     let rows = coin_refines("").replace(
         "step Impl::Coin::reveal -> Spec::Coin::show(self);",
         "step Impl::Coin::reveal -> any;",
     );
-    let world = unit.world(&rows);
+    let world = unit.world(&format!("{KERNEL_REMAINDER}{rows}"));
     let start = initial(&world);
     let (tossed, _) = passes(
         decide(
@@ -472,13 +475,13 @@ fn an_undecided_successor_elsewhere_does_not_make_an_any_step_undetermined() {
 fn an_undecided_matching_successor_beside_an_accepted_one_is_undetermined() {
     let unit = Unit::coin_with_contracts(
         "post SpecShown using v on Spec::Coin::show { self.shown and self.face = self.side }",
-        "post SpecShown using v on Spec::Coin::show { 1 mod (1 - self.side) = 0 and self.shown and self.face = self.side }",
-    );
+        "post SpecShown using v on Spec::Coin::show { remainder(1 - self.side) = 0 and self.shown and self.face = self.side }",
+    ).kernel();
     let rows = coin_refines("").replace(
         "step Impl::Coin::reveal -> Spec::Coin::show(self);",
         "step Impl::Coin::reveal -> any;",
     );
-    let world = unit.world(&rows);
+    let world = unit.world(&format!("{KERNEL_REMAINDER}{rows}"));
     let start = initial(&world);
     let (tossed, _) = passes(
         decide(

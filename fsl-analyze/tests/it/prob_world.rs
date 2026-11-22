@@ -839,8 +839,9 @@ pub(crate) fn undetermined(extra: &str) -> Model {
             deletes: false,
         }],
         body: format!(
-            "post Inc using vc on M::Cell::inc {{ \
-                self.v - pre(self.v) = 1 and 6 mod (2 - self.v) >= 0 }}\n\
+            "function undecided_remainder using vc(x: Integer): Integer pure {{ 6 mod (2 - x) }}\n\
+             post Inc using vc on M::Cell::inc {{ \
+                self.v - pre(self.v) = 1 and undecided_remainder(self.v) >= 0 }}\n\
              workload Even on M {{ weight Cell::inc = 1; }}\n{extra}"
         ),
         initial: json!({"v": {"integer": "0"}}),
