@@ -1078,39 +1078,24 @@ fn bounded_step_intervals_settle_from_bytes_as_from_source() {
     assert_eq!(package.exit, source.exit, "{}", package.document());
 }
 
-/// FR-940 "Package forms of the source-checked evaluators" (QSL-2406,
-/// QSL-2432): a request whose item names a family the package route has
-/// no form of yet is refused whole, typed and naming the family, never
-/// settled from source or `unsupported`: a claimless simulation item after
-/// a supported clause. A model alias settles its own item `model-alias`
-/// instead (FR-850-AC-9).
+/// A simulation after a supported clause retains its request index and
+/// coverage instead of refusing the entire package request.
 #[trace("TC-2958", "FR-940-AC-6")]
 #[test]
-fn a_pending_package_family_refuses_typed_naming_it() {
+fn a_package_simulation_follows_a_supported_clause() {
     let unit = crate::counter::unit_text(&bounded());
     {
-        let (items, expected) = (
-            json!([{"claim": "Bounded"},
-                {"kind": "simulation", "simulation": {"mode": "enumerate"}}]),
-            "items[1] names the simulation family, which has no package form yet",
-        );
-        let (_, package) = both_routes(
-            "package-route-pending",
+        let items = json!([{"claim": "Bounded"},
+            {"kind": "simulation", "simulation": {"mode": "enumerate"}}]);
+        let (source, package) = both_routes(
+            "package-route-simulation",
             &unit,
             &crate::counter::document(false),
             &items,
         );
-        let diagnostic = first_diagnostic(&package);
-        assert_eq!(package.exit, 21, "{}", package.document());
-        assert_eq!(diagnostic["code"], "unsupported_construct", "{diagnostic}");
-        assert_eq!(diagnostic["cause"], "not-yet-implemented", "{diagnostic}");
-        assert!(
-            diagnostic["message"]
-                .as_str()
-                .is_some_and(|message| message.contains(expected)),
-            "{diagnostic}"
-        );
-        assert_eq!(package.document()["items"], json!([]));
+        assert_eq!(package.exit, source.exit, "{}", package.document());
+        assert_eq!(label(&package.item(0)), "proved", "{}", package.document());
+        assert_eq!(package.item(1), source.item(1));
     }
 }
 

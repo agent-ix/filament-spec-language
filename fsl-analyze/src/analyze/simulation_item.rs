@@ -18,7 +18,6 @@ use fsl_eval::simulation::{
 };
 use fsl_foundation::selection::DefinitionRef;
 use fsl_foundation::RequestIndex;
-use fsl_package::CheckedPackage;
 use fsl_semantics::model::observation::AdmissionFailure;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
@@ -261,7 +260,7 @@ fn coverage_value(coverage: &Coverage) -> Value {
 
 /// FR-634: run `item` over the binding and write its item document.
 pub(crate) fn simulate(
-    package: &CheckedPackage,
+    input: &fsl_eval::simulation::model::ModelCheckInput<'_>,
     binding: &SubjectBinding<'_>,
     limits: &AnalyzeLimits,
     item: &SimulationItem,
@@ -272,12 +271,8 @@ pub(crate) fn simulate(
         .as_ref()
         .map(|subject| subject.binding(binding.packages, binding.snapshots));
     let binding = own.as_ref().unwrap_or(binding);
-    let system = ModelSystem::new(super::request::simulation(
-        &fsl_eval::simulation::model::ModelCheckInput::source(package),
-        binding,
-        limits,
-    ))
-    .map_err(SimulationFault::Binding)?;
+    let system = ModelSystem::new(super::request::simulation(input, binding, limits))
+        .map_err(SimulationFault::Binding)?;
     let settings = &item.settings;
     let mut document = Map::new();
     document.insert("request_index".to_owned(), json!(item.index.get()));

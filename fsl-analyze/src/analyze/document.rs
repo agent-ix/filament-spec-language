@@ -3840,7 +3840,7 @@ pub fn settle_run(
     // in the exit code.
     let mut simulated = Vec::new();
     for item in &simulations {
-        match super::simulation_item::simulate(package, &binding, &limits, item, cancel) {
+        match super::simulation_item::simulate(&source_input, &binding, &limits, item, cancel) {
             Ok(written) => simulated.push(written),
             Err(super::simulation_item::SimulationFault::Binding(failure)) => {
                 return Err(AnalyzeDocumentError::Refused(

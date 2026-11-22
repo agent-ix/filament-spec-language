@@ -254,6 +254,7 @@ pub struct PackageRun<'a> {
 
 /// One item as the package's name tables resolve it.
 enum Named<'s> {
+    Simulation(super::super::SimulationItem),
     Relation {
         index: RequestIndex,
         name: &'s str,
@@ -464,6 +465,7 @@ pub fn settle_package_run(
     let mut schedule_claims: Vec<OccurrenceKey> = Vec::new();
     for item in named {
         match item {
+            Named::Simulation(item) => resolved.push(ResolvedItem::Simulation(Box::new(item))),
             Named::Relation {
                 index,
                 name,
@@ -637,7 +639,7 @@ pub fn settle_package_run(
         unrouted_items,
         settled,
         echoes,
-        simulations: _,
+        simulations,
     } = negotiate_items(
         resolved,
         negotiate,
@@ -684,10 +686,12 @@ pub fn settle_package_run(
         // EN-6 decides a task set over a task-product input the package
         // route does not read yet.
         for item in &negotiated {
-            let zone = matches!(routes.get(&item.item.request_index), Some(Route::Schedule(_)))
-                && item.disposition.target().is_some_and(|backend| {
-                    backend.id().as_str() == crate::zone_check::manifest::BACKEND_ID
-                });
+            let zone = matches!(
+                routes.get(&item.item.request_index),
+                Some(Route::Schedule(_))
+            ) && item.disposition.target().is_some_and(|backend| {
+                backend.id().as_str() == crate::zone_check::manifest::BACKEND_ID
+            });
             if zone {
                 return Err(PackageRunError::Pending(PendingPackageFamily {
                     request_index: Some(item.item.request_index),
@@ -725,6 +729,23 @@ pub fn settle_package_run(
         .collect();
     let (records, counterexamples) = super::super::split_records_over(records, None);
     let (targets, item_routes) = negotiated_routes(&negotiated, &unrouted_items, engines);
+    let mut simulated = Vec::new();
+    if let Some(model) = model_input.as_ref() {
+        for item in &simulations {
+            match super::super::simulation_item::simulate(model, &binding, &limits, item, cancel) {
+                Ok(written) => simulated.push(written),
+                Err(super::super::simulation_item::SimulationFault::Binding(failure)) => {
+                    return Err(AnalyzeDocumentError::Refused(
+                        super::super::AnalyzeRefusal::Binding(failure),
+                    )
+                    .into());
+                }
+                Err(super::super::simulation_item::SimulationFault::Fault) => {
+                    return Err(AnalyzeDocumentError::Fault.into());
+                }
+            }
+        }
+    }
     Ok(write_run(
         SettledParts {
             records,
@@ -740,7 +761,7 @@ pub fn settle_package_run(
         &echoes,
         &targets,
         &item_routes,
-        &[],
+        &simulated,
         engines,
     )?)
 }
@@ -949,6 +970,18 @@ fn resolve_names<'s>(
                 | None => {}
             }
             let Some(name) = selection.claim.as_deref() else {
+                if let (Some(super::SIMULATION_KIND), Some(settings)) =
+                    (selection.kind.as_deref(), selection.simulation.as_ref())
+                {
+                    return Ok(Named::Simulation(super::super::SimulationItem {
+                        index,
+                        settings: settings.clone(),
+                        subject: selection
+                            .temporal
+                            .as_ref()
+                            .and_then(|temporal| temporal.subject.clone()),
+                    }));
+                }
                 return Err(pending(PendingFamily::Simulation));
             };
             let derived = item_kind.is_some_and(|kind| kind != ItemKind::Formula);
