@@ -431,7 +431,8 @@ pub use outcome::undefined_reason;
 pub use outcome::{
     assignments_wire, certificate_identity_wire, claim_locus_wire, graph_evidence_wire,
     hyper_counterexample_wire, omitted_witnesses, probabilistic_undefined_wire, probabilistic_wire,
-    protocol_temporal_wire, read_task_temporal_counterexample, read_task_temporal_document,
+    protocol_temporal_wire, read_outcome_diagnostics, read_task_temporal_counterexample,
+    read_task_temporal_document,
     read_task_temporal_document_with_source, read_temporal_counterexample,
     replay_model_trace_document, replay_task_product_trace, sampled_witness_wire, state_key_wire,
     task_product_transition_wire, task_source_transition_wire, task_temporal_wire,
@@ -439,7 +440,7 @@ pub use outcome::{
     ConformanceClosureOutput, ConformanceGlobalOutput, ConformanceMessageBoundOutput,
     ConformanceObligationOutput, ConformanceProjectionOutput, ConformanceRecordingIdentity,
     ConformanceReplayOutput, CounterexampleWireError, ExecuteResult, ItemCause, ItemLabel,
-    OmittedWitness, Operation, OutcomeDiagnostic, OutcomeDocument, OutcomeItem, OutcomeItemError,
+    OmittedWitness, Operation, OutcomeDiagnostic, OutcomeDiagnosticRead, OutcomeDocument, OutcomeItem, OutcomeItemError,
     OutcomeLocus, OutcomeStage, OutcomeWriteError, ParityReason, ProtocolConformanceOutput,
     ProtocolWire, ReadCounterexample, ResultLimit, ResultValue, TaskProductCounterexampleDocument,
     TaskProductTraceReplayRefusal, TaskTemporalReadFailure, TemporalCounterexampleReadRefusal,
