@@ -3,10 +3,10 @@
 
 use fsl_foundation::source::SourceLabel;
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    HANDOFF, Run, Workspace, analyze, label, package_selection_named, request_over,
+    analyze, label, package_selection_named, request_over, Run, Workspace, HANDOFF,
 };
 
 fn request(
@@ -79,6 +79,8 @@ fn package_after_source_deletion(ws: &Workspace, path: &std::path::Path) -> Run 
 #[trace("TC-2022", "FR-730-AC-1", "FR-850-AC-2", "FR-940-AC-6")]
 #[test]
 fn literal_loop_invariants_preserve_source_results_after_source_deletion() {
+    let mut true_guard_transitions = None;
+    let mut false_guard_transitions = None;
     for invariant in ["true", "false"] {
         for guard in ["true", "false"] {
             let ws = Workspace::new(&format!("package-loop-{invariant}-{guard}"));
@@ -98,6 +100,17 @@ fn literal_loop_invariants_preserve_source_results_after_source_deletion() {
             assert_eq!(item["record"]["backend"], "en-1", "{item}");
             if invariant == "false" {
                 assert_eq!(item["replay"]["reproduced"], true, "{item}");
+            } else {
+                let transitions = item["exploration"]["transitions"]
+                    .as_str()
+                    .expect("published transition count")
+                    .parse::<u64>()
+                    .expect("numeric transition count");
+                if guard == "true" {
+                    true_guard_transitions = Some(transitions);
+                } else {
+                    false_guard_transitions = Some(transitions);
+                }
             }
             let package = package_after_source_deletion(&ws, &path);
             assert_eq!(package.exit, source.exit, "{}", package.document());
@@ -107,6 +120,11 @@ fn literal_loop_invariants_preserve_source_results_after_source_deletion() {
             );
         }
     }
+    assert!(
+        true_guard_transitions.expect("true guard control")
+            > false_guard_transitions.expect("false guard control"),
+        "the true pretest must execute the body before exhausting"
+    );
 }
 
 /// The admitted generic variant term remains attached and unexecuted when
@@ -151,7 +169,7 @@ fn literal_loop_invariant_source_evaluator_has_no_charges() {
     use filament_exact::{Meter, ScalarLimits};
     use fsl_eval::simulation::model::ModelEvaluator;
     use fsl_semantics::model::accounting::ModelNormalizationLimits;
-    use fsl_semantics::model::observation::{ObservationLimits, admit_trace_snapshot};
+    use fsl_semantics::model::observation::{admit_trace_snapshot, ObservationLimits};
     for invariant in ["true", "false"] {
         let ws = Workspace::new(&format!("literal-loop-charges-{invariant}"));
         let path = request(&ws, invariant, "1", "true", "loop-invariant");
@@ -161,7 +179,11 @@ fn literal_loop_invariant_source_evaluator_has_no_charges() {
         )
         .expect("source admits")
         .into_input();
-        let package_name = input.source.source().identity().label(SourceLabel::Identity);
+        let package_name = input
+            .source
+            .source()
+            .identity()
+            .label(SourceLabel::Identity);
         let request: Value = serde_json::from_slice(&std::fs::read(&path).expect("source request"))
             .expect("request JSON");
         package_selection_named(&ws, &request["request"], package_name);
