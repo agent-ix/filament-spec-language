@@ -2155,7 +2155,30 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             read
         };
         match read.as_slice() {
-            [only] if *only == name => {}
+            [only] if *only == name => {
+                // FR-124: a model the subject reads that declares `terminal any`
+                // opts out of the item, so the source route writes none and
+                // settles `inapplicable-kind` (`SubjectReading::opted_out`).
+                let opted_out = self
+                    .package
+                    .terminal_declarations()
+                    .map_err(|_| AnalyzeDocumentError::Fault)?
+                    .iter()
+                    .any(|terminal| {
+                        terminal.model == name
+                            && matches!(
+                                terminal.declaration,
+                                fsl_package::BareTerminalDeclaration::Any
+                            )
+                    });
+                if opted_out {
+                    return Ok(Resolution::Settled(invalid_kind(
+                        index,
+                        Some(name),
+                        "inapplicable-kind",
+                    )));
+                }
+            }
             [_] => {
                 return Ok(Resolution::Settled(invalid_kind(
                     index,

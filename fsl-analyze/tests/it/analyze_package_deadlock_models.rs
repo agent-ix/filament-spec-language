@@ -30,19 +30,26 @@ enum Reads {
     First,
     Second,
     Both,
+    /// A unit that selects one model, which the subject reads.
+    One,
 }
 
 /// The source run of a unit that selects `test/vault` as `V` and
 /// `test/vault-other` as `N`, whose subject reads `reads`, for `items`, and
 /// its package request.
-fn world(name: &str, vault: Vault, reads: Reads, items: &Value) -> World {
+fn world(name: &str, vault: Vault, reads: Reads, terminals: &str, items: &Value) -> World {
     let first = hyper_world::document(false, false);
     let other = hyper_world::other_document(&first);
-    let unit = hyper_world::unit_text(Some(&other), vault, false, "");
+    let unit = hyper_world::unit_text(
+        (!matches!(reads, Reads::One)).then_some(&other[..]),
+        vault,
+        false,
+        terminals,
+    );
     let mut snapshots = fsl_semantics::model::observation::DocumentProvision::new();
     let at = [(KEY, (0, 0))];
     let (one, two) = match reads {
-        Reads::First => (&at[..], None),
+        Reads::First | Reads::One => (&at[..], None),
         Reads::Second => (&[][..], Some(&at[..])),
         Reads::Both => (&at[..], Some(&at[..])),
     };
@@ -62,11 +69,13 @@ fn world(name: &str, vault: Vault, reads: Reads, items: &Value) -> World {
     let ws = Workspace::new(name);
     ws.write("other.json", &other);
     let mut models = request_members(None)["models"].clone();
-    models.as_array_mut().expect("models").push(
-        json!({"format": "semantic-ir/2.0.0", "source": {"file": "other.json",
+    if !matches!(reads, Reads::One) {
+        models.as_array_mut().expect("models").push(
+            json!({"format": "semantic-ir/2.0.0", "source": {"file": "other.json",
             "authority": "test", "identity": "vault-other-model", "document": "VaultOther",
             "formal_revision": 1}}),
-    );
+        );
+    }
     let path = request_over(
         &ws,
         &unit,
@@ -106,8 +115,14 @@ impl World {
 
 /// Both routes' runs over `world`, the authored unit text deleted before the
 /// package run.
-fn both_routes(name: &str, vault: Vault, reads: Reads, items: &Value) -> (Run, Run) {
-    let world = world(name, vault, reads, items);
+fn both_routes(
+    name: &str,
+    vault: Vault,
+    reads: Reads,
+    terminals: &str,
+    items: &Value,
+) -> (Run, Run) {
+    let world = world(name, vault, reads, terminals, items);
     let package = world.package_run();
     (world.source, package)
 }
@@ -136,6 +151,7 @@ fn a_reachable_deadlock_over_one_of_two_models_refutes_as_the_source_route() {
         "package-deadlock-two-models-refuted",
         Vault::Terminal,
         Reads::First,
+        "",
         &json!([deadlock_item(PACKAGE)]),
     );
     assert_eq!(label(&source.item(0)), "refuted", "{}", source.document());
@@ -153,6 +169,7 @@ fn a_deadlock_free_model_of_two_proves_as_the_source_route() {
         "package-deadlock-two-models-proved",
         Vault::Secure,
         Reads::First,
+        "",
         &json!([deadlock_item(PACKAGE)]),
     );
     assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
@@ -170,6 +187,7 @@ fn a_subject_reading_both_models_settles_unsupported_as_the_source_route() {
         "package-deadlock-two-models-both",
         Vault::Terminal,
         Reads::Both,
+        "",
         &json!([deadlock_item(PACKAGE), deadlock_item(OTHER)]),
     );
     assert_eq!(
@@ -191,6 +209,7 @@ fn a_subject_reading_the_second_model_alone_settles_as_the_source_route() {
         "package-deadlock-two-models-second",
         Vault::Terminal,
         Reads::Second,
+        "",
         &json!([deadlock_item(OTHER)]),
     );
     assert_equal(&source, &package);
@@ -206,6 +225,7 @@ fn a_package_missing_one_models_rows_refuses_invalid_package() {
         "package-deadlock-two-models-missing",
         Vault::Terminal,
         Reads::First,
+        "",
         &json!([deadlock_item(PACKAGE)]),
     );
     let path = world.ws.path(&format!("{HANDOFF}/checked-package.json"));
@@ -230,4 +250,64 @@ fn a_package_missing_one_models_rows_refuses_invalid_package() {
     assert_eq!(diagnostic["code"], "invalid_package", "{}", run.document());
     assert_eq!(run.document()["items"], json!([]));
     assert_eq!(run.exit, 20);
+}
+
+/// FR-124: a subject that reads a model declaring `terminal any` has no
+/// deadlock-freedom item (`inapplicable-kind`) on both routes, whether the
+/// unit selects one model or two; a `terminal any` of a model the subject
+/// does not read changes nothing. The item naming a model alias settles as
+/// on the source route.
+#[trace("TC-519", "FR-124-AC-12")]
+#[trace("TC-2410", "FR-850-AC-2")]
+#[test]
+fn a_terminal_any_of_the_read_model_opts_out_as_the_source_route() {
+    let item = json!([deadlock_item(PACKAGE)]);
+    for (name, reads, terminals, expected) in [
+        (
+            "package-deadlock-any-read",
+            Reads::First,
+            "terminal Halt using v on V any;\n",
+            "inapplicable-kind",
+        ),
+        (
+            "package-deadlock-any-other",
+            Reads::First,
+            "terminal Halt using v on N any;\n",
+            "refuted",
+        ),
+        (
+            "package-deadlock-any-one",
+            Reads::One,
+            "terminal Halt using v on V any;\n",
+            "inapplicable-kind",
+        ),
+    ] {
+        let (source, package) = both_routes(name, Vault::Terminal, reads, terminals, &item);
+        let settled = |run: &Run| {
+            run.item(0)["record"]["diagnostic"]["cause"]
+                .as_str()
+                .map_or_else(|| label(&run.item(0)).to_owned(), str::to_owned)
+        };
+        assert_eq!(settled(&source), expected, "{name}: {}", source.document());
+        assert_eq!(
+            settled(&package),
+            expected,
+            "{name}: {}",
+            package.document()
+        );
+        assert!(
+            package.item(0)["request"].is_null() == (expected != "refuted"),
+            "{name}: {}",
+            package.document()
+        );
+        assert_equal(&source, &package);
+    }
+    let (source, package) = both_routes(
+        "package-deadlock-alias",
+        Vault::Terminal,
+        Reads::First,
+        "",
+        &json!([deadlock_item("V")]),
+    );
+    assert_equal(&source, &package);
 }
