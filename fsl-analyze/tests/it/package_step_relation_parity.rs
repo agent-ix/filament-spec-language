@@ -27,6 +27,7 @@ fn step_relation_package_preserves_whole_result_exit_and_tuple_charges() {
         ("reset-holds", Vault::Custom(""), true, "relation Det using v over (x: V::Vault::reset, y: V::Vault::reset) { pre(x.self.h) = pre(y.self.h) implies x.self.h = y.self.h }", json!({}), "proved"),
         ("reset-refuted", Vault::Custom(""), true, "relation Det using v over (x: V::Vault::reset, y: V::Vault::reset) { x.self.l = y.self.l }", json!({}), "refuted"),
     ] {
+        eprintln!("step-relation whole-result/exit/charge parity case: {case}");
         let ws = Workspace::new(&format!("step-relation-whole-parity-{case}"));
         let (unit, model, snapshots) =
             request_files_over_starts(vault, reset, &STARTS, relation);

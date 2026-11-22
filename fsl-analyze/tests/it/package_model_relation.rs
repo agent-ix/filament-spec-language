@@ -144,7 +144,10 @@ pub(super) fn assert_tuple_evaluator_parity(
     assert_eq!(systems.len(), 2, "the fixture has two labelled executions");
     let edges: Vec<Vec<_>> = systems
         .iter()
-        .map(|system| {
+        .zip(descriptor.executions())
+        .map(|(system, (_, operation))| {
+            let operation = fsl_semantics::check::operation_text(operation);
+            let operation = operation.as_str();
             system
                 .initial()
                 .into_iter()
@@ -154,6 +157,8 @@ pub(super) fn assert_tuple_evaluator_parity(
                         .expect("reachable edges")
                         .successors
                         .into_iter()
+                        // Each slot binds only its declared operation, as EN-1 does.
+                        .filter(move |(edge, _)| edge.transition.operation() == operation)
                         .map(move |(edge, post)| (pre.clone(), edge, post))
                 })
                 .collect()
@@ -191,7 +196,14 @@ pub(super) fn assert_tuple_evaluator_parity(
                     },
                     &mut source_meter,
                 )
-                .expect("source tuple evaluates");
+                .unwrap_or_else(|failure| {
+                    panic!(
+                        "source tuple evaluates for {}: executions {:?}, transitions {:?}: {failure:?}",
+                        ws.path("program.fsl").display(),
+                        descriptor.executions(),
+                        transitions.iter().map(|transition| transition.operation()).collect::<Vec<_>>()
+                    )
+                });
             let mut package_meter = Meter::new(UNLIMITED);
             let actual = bare
                 .evaluate_model_relation(
