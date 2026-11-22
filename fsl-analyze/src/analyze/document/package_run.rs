@@ -1363,8 +1363,8 @@ fn protocol_literal_repeat_name(view: &dyn AnalysisView, name: &str) -> Option<S
     let invariant = match invariant {
         fsl_package::CheckedTerm::Reference { target } => {
             if view.package().node_kind(target)
-                != Some(filament_contract_model::CheckedNodeKind::Value(
-                    filament_contract_model::ValueForm::Literal,
+                != Some(fsl_package::CheckedNodeKind::Value(
+                    fsl_package::ValueForm::Literal,
                 ))
             {
                 return None;
