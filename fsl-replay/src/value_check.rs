@@ -371,12 +371,10 @@ impl<'p> ValueTarget<'p> {
         })
     }
 
-    /// The target of the Boolean value clause the function `function` of the
-    /// admitted `package` is, read from the package's own rows: the claim is
-    /// the function body's `claim` or `declaration` occurrence, as
-    /// [`Self::select`] reads it from the checked graph (FSpec FR-484
-    /// "Forms"). Only the `clause` form has a package form; any other claim
-    /// selects none ([`Selection::NoForm`]).
+    /// Select a Boolean value clause or an owned scalar-operation record
+    /// from the admitted package's function, requirement and location rows.
+    /// The operation keeps its recorded result bound and exact occurrence;
+    /// a non-Boolean function's own declaration selects no form.
     ///
     /// # Errors
     ///

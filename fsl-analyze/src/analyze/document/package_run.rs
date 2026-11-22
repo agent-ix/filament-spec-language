@@ -1563,12 +1563,9 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         ))
     }
 
-    /// A `value-validity` item over the Boolean value clause the function
-    /// `name` is, as the source route's `resolve_one` resolves it: the
-    /// function body's `claim` occurrence, its extent from the parameter
-    /// domains, the arm's candidates. A function the package form does not
-    /// read (a non-Boolean one, or one whose types or body have no evaluator
-    /// form) refuses the request whole, typed.
+    /// A Boolean value clause or an explicitly selected scalar record.
+    /// Non-Boolean function names retain their declaration's inapplicable
+    /// family; unsupported parameter shapes keep their typed refusal.
     fn value(
         &self,
         index: RequestIndex,
@@ -1669,7 +1666,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 }));
             }
         };
-        // The package form spells Boolean and integer parameters only.
+        // Enum values use the admitted world's complete member identities.
         if !target.parameters().iter().all(|parameter| {
             matches!(
                 parameter.domain(),
