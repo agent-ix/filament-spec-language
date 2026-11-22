@@ -25,9 +25,11 @@ pub enum UnreadModelForm {
     TimedModel,
     /// A hybrid model.
     Hybrid,
-    /// A variant or union type, which a value's canonical form names.
+    /// A variant or union type with no complete enumeration shape row, which
+    /// a value's canonical form names. A payload-free model enumeration is
+    /// read from its rows (FR-531) and is not one.
     Variant,
-    /// An enumeration, which a value's canonical form names.
+    /// A source `enum` declaration, which the identity bytes carry no row of.
     Enumeration,
     /// An `object` declaration of the unit's own source package (FR-569).
     SourceObject,

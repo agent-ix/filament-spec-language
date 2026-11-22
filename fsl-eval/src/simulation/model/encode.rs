@@ -957,7 +957,10 @@ impl<'t> Typing<'t> {
         self,
         enum_members: Option<&'t filament_semantic_value::enumeration::EnumMemberIndex>,
     ) -> Self {
-        Self { enum_members, ..self }
+        Self {
+            enum_members,
+            ..self
+        }
     }
 
     /// These declarations with the source `enum` declarations `enums`.

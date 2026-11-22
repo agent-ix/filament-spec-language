@@ -273,7 +273,10 @@ fn malformed_enumeration_rows_refuse_invalid_package() {
         std::fs::write(&path, bad.to_string()).expect("write");
         let run = analyze_members(&ws, &format!("analyze-{name}.json"), &members);
         let diagnostic = run.document()["diagnostics"][0].clone();
-        assert_eq!(diagnostic["code"], "invalid_package", "{name}: {diagnostic}");
+        assert_eq!(
+            diagnostic["code"], "invalid_package",
+            "{name}: {diagnostic}"
+        );
         assert_eq!(run.document()["items"], json!([]), "{name}");
     }
 }
@@ -327,9 +330,7 @@ fn an_enumeration_argument_and_result_run_from_a_package_as_from_source() {
     // FR-120: the typed canonical form of an enum value names the declaration
     // by its identity text.
     let mode = json!({"node": ident("Mode"), "package": PACKAGE}).to_string();
-    let argument = |case: &str| {
-        json!([{"parameter": "a", "value": {"type": "enum", "name": mode, "member": case}}])
-    };
+    let argument = |case: &str| json!([{"parameter": "a", "value": {"type": "enum", "name": mode, "member": case}}]);
     let run_both = |function: &str, arguments: Value| {
         let call = json!({"function": function, "snapshot": "snapshot-0.json",
             "arguments": arguments});
@@ -358,13 +359,13 @@ fn an_enumeration_argument_and_result_run_from_a_package_as_from_source() {
     ] {
         let (source, package) = run_both(function, arguments);
         assert_eq!(source.0, 0, "{function}: {}", source.1);
-        assert_eq!(source.1["outcome"]["kind"], "completed", "{function}: {}", source.1);
-        assert_eq!(package.0, source.0, "{function}: {}", package.1);
         assert_eq!(
-            route_free(package.1),
-            route_free(source.1),
-            "{function}"
+            source.1["outcome"]["kind"], "completed",
+            "{function}: {}",
+            source.1
         );
+        assert_eq!(package.0, source.0, "{function}: {}", package.1);
+        assert_eq!(route_free(package.1), route_free(source.1), "{function}");
     }
     let (source, package) = run_both("pass", argument("Nope"));
     assert_eq!(source.0, 20, "{}", source.1);
