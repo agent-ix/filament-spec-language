@@ -1123,7 +1123,7 @@ fn clause_overrides_reach_accounting_and_stages(extracted: bool) {
     );
     assert_ne!(staged.exit, 0, "{}", staged.document);
     assert!(
-        staged.document.to_string().contains("s1.input_bytes"),
+        staged.document.to_string().contains("stage_limit_exceeded"),
         "{}",
         staged.document
     );
