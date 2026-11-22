@@ -116,3 +116,35 @@ Applicable methods: code-review with Rust lane; gap-analysis; spec-review/base. 
   ]
 }
 ```
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | medium | The rewritten finite universal route evaluates bodies only after collecting the whole scope and charges all siblings before visiting one, so a later budget stop discards an already reachable canonical closed counterexample. | fsl-analyze/src/model_check/hyper/closed.rs; fsl-analyze/src/model_check/hyper/closed/enumeration.rs:199-232; 144-193 |
+
+Static, not executed: one SECURE_CONSTRAINED initial (h=0,l=0), one key v, two universal variables, no reduction and no match, horizon one, body always[0,1] holds(v.l @ a = 0 and v.l @ b = 0), ample state/work/candidate limits, max_transitions=2. Canonical pairs are (step(0),step(0)) then (step(0),step(1)); the second is a complete real counterexample. Current enumeration admits those two siblings, then the third trips MaxTransitions2 before either is popped or judged. The old per-tuple route judged the second tuple and returned Violated. No runtime failure is claimed.
+
+Two independent eager barriers must be repaired: `following` charges every sibling before `open.extend` visits the first, and `decide_closed_universal` calls `judge_closed_tuple` only after `enumerate_closed_joint` has successfully exhausted the whole instance. Merely moving one loop does not repair the other.
+
+Required regression and guardrails: Add a public-API bounded-refutation regression: ample allowance and allowance2 return the same first canonical concrete horizon-one counterexample with replay Reproduced; allowance1 remains a genuine typed stop. The fix must address both sibling scheduling and whole-scope-before-judge, preserve complete-trace scope, canonical order, selected actual least-orbit representatives, constraint cuts, GraphExpand work and typed cancellation. Do not bypass resource limits or fabricate a partial prefix as a closed trace.
+
+## Dispositions
+
+### Round 1
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Initial and entering joint-prefix admission now precede descendant expansion and complete-orbit retention; the initial cut, excluded descendant failure, and excluded-completion allowance tests actually passed. |
+| FND-002 | fixed | Only admitted joint moves increment totals.edges; traversal, key and generator bookkeeping use the existing GraphExpand Meter with cancellation. Exact16/short15 joint-move controls, independent WorkUnits8 and in-flight cancellation actually passed. |
+| FND-003 | still-open | The rewritten finite universal route evaluates bodies only after collecting the whole scope and charges all siblings before visiting one, so a later budget stop discards an already reachable canonical closed counterexample. Static, not executed: one SECURE_CONSTRAINED initial (h=0,l=0), one key v, two universal variables, no reduction and no match, horizon one, body always[0,1] holds(v.l @ a = 0 and v.l @ b = 0), ample state/work/candidate limits, max_transitions=2. Canonical pairs are (step(0),step(0)) then (step(0),step(1)); the second is a complete real counterexample. Current enumeration admits those two siblings, then the third trips MaxTransitions2 before either is popped or judged. The old per-tuple route judged the second tuple and returned Violated. No runtime failure is claimed. |
+
+Frozen fix head: `5a4c944e70fd9dc28dc88b40eef76e24d1b59002`. Actual root-supplied and raw-log-verified focused integration compile exits 0; combined named run exits 0 with **34 passed, 0 failed, 0 ignored, 2800 filtered**, runtime 2.25 seconds. All six new adversarial names appear as `ok`. Logs: `/private/tmp/qsl2248-round1-5a4c94-check.log` and `/private/tmp/qsl2248-round1-5a4c94-combined.log`.
+
+This is the same original reviewer's bounded disposition round one, not a new full review or matrix. No Cargo, Titan, tracker, relay or source edits were run by this reviewer. The incoming receipt allocation/fail-fast source and Cargo.toml/Cargo.lock are unchanged relative to receipt base `2fa667`; read-only `git diff --quiet` exits 0. Worktree is clean. Root centrally publishes the prepared private comments and verifies read-back.
+
+The original scoped FND-001/FND-002 repairs are real and covered by the new six passing cases. However, the new FND-003 introduced by the rewrite remains open. **PR3366 is not merge-ready**, despite the passing 34-case run.
+
+## Latest disposition verdict
+
+**CONDITIONAL — not merge-ready.** FND-001 and FND-002 are fixed; new FND-003 is still open.

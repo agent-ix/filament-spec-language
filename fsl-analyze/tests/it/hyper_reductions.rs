@@ -620,6 +620,66 @@ fn finite_with_limits(
     .expect("the finite request has a typed outcome")
 }
 
+/// A later sibling cannot consume the allowance before the second complete
+/// canonical tuple is judged. Neither returned trace is a partial prefix.
+#[trace("TC-3011", "FR-173-AC-6", "FR-184")]
+#[test]
+fn a_finite_first_closed_refutation_precedes_later_sibling_budget_work() {
+    let world = World::new(
+        SECURE_CONSTRAINED,
+        false,
+        &[(0, 0)],
+        "hyper Bounded using ep over behaviours (v: V::Vault) \
+         forall trace a of V forall trace b of V \
+         { always [0, 1] holds(v.l @ a = 0 and v.l @ b = 0) }",
+    );
+    let run = |bound| {
+        let mut limits = ModelCheckLimits::default();
+        limits.limits.max_transitions = bound;
+        finite_with_limits(
+            &world,
+            Reductions::default(),
+            limits,
+            crate::counter::UNLIMITED,
+            &Cancel::new(),
+        )
+    };
+    let ample = refuted(run(100));
+    assert_eq!(ample.kind, fsl_replay::HyperCounterexampleKind::Closed);
+    assert_eq!(ample.traces.len(), 2);
+    assert!(ample.traces.iter().all(|trace| trace.steps.len() == 1));
+    assert!(matches!(
+        world.replay(&ample),
+        Ok(ModelTraceSettlement::Reproduced { .. })
+    ));
+    let bounded = run(2);
+    assert!(
+        matches!(bounded, HyperOutcome::Violated { .. }),
+        "the second canonical complete tuple refutes within two moves: {bounded:?}"
+    );
+    let bounded = refuted(bounded);
+    assert_eq!(bounded, ample, "the first canonical tuple is stable");
+    assert!(matches!(
+        world.replay(&bounded),
+        Ok(ModelTraceSettlement::Reproduced { .. })
+    ));
+    let short = run(1);
+    assert!(
+        matches!(
+            short,
+            HyperOutcome::Stopped {
+                limit: Some(fsl_replay::ReachedLimit {
+                    limit: fsl_replay::ModelCheckLimit::MaxTransitions,
+                    value: 1
+                }),
+                ..
+            }
+        ),
+        "the first tuple holds and a second move is still required: {short:?}"
+    );
+    assert_eq!(short.stats().product_edges, 1);
+}
+
 /// An excluded initial state contributes a boundary, without expanding its
 /// two successors or constructing their unconstrained complete-path orbits.
 #[trace("TC-3011", "FR-174-AC-7", "FR-184")]

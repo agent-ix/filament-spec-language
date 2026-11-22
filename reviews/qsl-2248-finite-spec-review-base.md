@@ -113,3 +113,13 @@ ID, relationship, criterion and link structure were checked; explicit FR-174 Qui
   ]
 }
 ```
+
+## Disposition pass 1
+
+The FR-174 paragraph and the original finding-free specification review are unchanged. **PASS for the specification text only** remains; this is not implementation acceptance. Code/Rust now has a newly recorded open FND-003. No additional spec analysis, matrix, Cargo or tracker operation was performed.
+
+Frozen fix head: `5a4c944e70fd9dc28dc88b40eef76e24d1b59002`. Actual root-supplied and raw-log-verified focused integration compile exits 0; combined named run exits 0 with **34 passed, 0 failed, 0 ignored, 2800 filtered**, runtime 2.25 seconds. All six new adversarial names appear as `ok`. Logs: `/private/tmp/qsl2248-round1-5a4c94-check.log` and `/private/tmp/qsl2248-round1-5a4c94-combined.log`.
+
+This is the same original reviewer's bounded disposition round one, not a new full review or matrix. No Cargo, Titan, tracker, relay or source edits were run by this reviewer. The incoming receipt allocation/fail-fast source and Cargo.toml/Cargo.lock are unchanged relative to receipt base `2fa667`; read-only `git diff --quiet` exits 0. Worktree is clean. Root centrally publishes the prepared private comments and verifies read-back.
+
+The original scoped FND-001/FND-002 repairs are real and covered by the new six passing cases. However, the new FND-003 introduced by the rewrite remains open. **PR3366 is not merge-ready**, despite the passing 34-case run.
