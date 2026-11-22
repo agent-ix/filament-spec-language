@@ -514,3 +514,112 @@ fn a_source_enum_and_member_carry_structural_ids_path_and_source_owner() {
         assert!(node.get("nominal_identity_preimage").is_none());
     }
 }
+
+/// FR-098-AC-34: the function ids and modes `function_check_modes` reads from
+/// the typed nodes spell exactly what the emitted bytes record, for a package
+/// with a declared function and clause functions (ids that hold operand
+/// slots), so a replay compares one id form on both sides.
+#[trace("FR-098-AC-34", "TC-1784")]
+#[test]
+fn function_check_modes_spell_the_ids_the_emitted_bytes_record() {
+    let emission = emit(&acme_dispatch_package("Order/count"));
+    let document = quire_canonical::read(emission.package().bytes(), u64::MAX).unwrap();
+    let root = document.root();
+    let nodes = match member(&root, "semantic_graph")
+        .and_then(|graph| member(&graph, "nodes"))
+        .map(|nodes| nodes.node())
+    {
+        Some(quire_canonical::Node::Array(nodes)) => nodes,
+        other => panic!("semantic_graph.nodes is an array: {other:?}"),
+    };
+    let recorded: Vec<(Vec<u8>, Option<String>)> = nodes
+        .filter(|node| {
+            matches!(
+                member(node, "node_tag").map(|tag| tag.node()),
+                Some(quire_canonical::Node::String("function"))
+            )
+        })
+        .map(|node| {
+            let id = quire_canonical::to_vec(
+                &member(&node, "node_id").expect("a node id"),
+                quire_canonical::Limits::new(u64::MAX),
+            )
+            .unwrap();
+            let mode = member(&node, "check_mode").and_then(|mode| match mode.node() {
+                quire_canonical::Node::String(mode) => Some(mode.to_owned()),
+                _ => None,
+            });
+            (id, mode)
+        })
+        .collect();
+    let typed: Vec<(Vec<u8>, Option<String>)> = emission
+        .function_check_modes(crate::EmitLimits::fixture())
+        .unwrap()
+        .into_iter()
+        .map(|(id, mode)| {
+            (
+                quire_canonical::to_vec(&id, quire_canonical::Limits::new(u64::MAX)).unwrap(),
+                mode.map(str::to_owned),
+            )
+        })
+        .collect();
+    assert!(
+        recorded.len() >= 3,
+        "a declared function and the clause functions: {}",
+        recorded.len()
+    );
+    assert_eq!(typed, recorded);
+}
+
+/// FR-098-AC-34: a function node whose id holds a document index (the form of
+/// every typed node) is keyed by its operand-slot id, the form the emitted
+/// bytes record, never by the index, and by the exact slot the emitter's own
+/// pass assigns.
+///
+/// This is the only guard of that keying. The function ids of the fixture
+/// above hold no operand segment (the typed and the emitted forms are equal
+/// there), and no other fixture reachable through `emit_package` is known to
+/// produce one, so the test above cannot fail on a wrong form by itself.
+#[trace("FR-098-AC-34", "TC-1784")]
+#[test]
+fn function_check_modes_key_an_indexed_function_id_by_its_operand_slot() {
+    use filament_contract_model::{CheckedNodePathSegment as Segment, CheckedOperandEntry};
+    let mut emission = emit(&acme_dispatch_package("Order/count"));
+    let node = std::sync::Arc::make_mut(&mut emission.wire_nodes)
+        .iter_mut()
+        .find(|node| &*node.node_tag == "function")
+        .expect("a function node");
+    node.node_id.path.push(Segment::Index(0));
+    // The expected id comes from the emitter's own pass over a clone.
+    let mut expected = [node.clone()];
+    let rows = write_operand_slots(&mut expected, crate::EmitLimits::fixture()).unwrap();
+    let slot = rows[0]
+        .iter()
+        .position(|entry| *entry == CheckedOperandEntry::Node(0))
+        .expect("the pushed index is an operand entry of the node");
+    let [expected] = expected;
+    assert_eq!(
+        expected.node_id.path.last(),
+        Some(&Segment::Operand(u64::try_from(slot).unwrap()))
+    );
+    let modes = emission
+        .function_check_modes(crate::EmitLimits::fixture())
+        .unwrap();
+    assert_eq!(modes[0].0, expected.node_id);
+    assert!(modes
+        .iter()
+        .all(|(id, _)| !id.path.iter().any(|s| matches!(s, Segment::Index(_)))));
+}
+
+fn member<'d>(
+    node: &quire_canonical::NodeRef<'d>,
+    name: &str,
+) -> Option<quire_canonical::NodeRef<'d>> {
+    match node.node() {
+        quire_canonical::Node::Object(members) => members
+            .into_iter()
+            .find(|(key, _)| *key == name)
+            .map(|(_, value)| value),
+        _ => None,
+    }
+}

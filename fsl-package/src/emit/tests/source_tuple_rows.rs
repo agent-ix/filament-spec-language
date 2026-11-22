@@ -313,7 +313,7 @@ fn the_final_tuple_node_decides_each_position_type_node() {
 
     // A writer that re-points a position changes the row with it.
     let edit = |change: &dyn Fn(&mut Vec<CheckedTerm>)| {
-        let mut nodes = emission.wire_nodes.clone();
+        let mut nodes = Vec::clone(&emission.wire_nodes);
         let tuple = nodes
             .iter_mut()
             .find(|node| node.node_id == row.structural_node)
@@ -643,7 +643,7 @@ fn a_collection_row_that_disagrees_with_its_nodes_is_a_writer_fault() {
     crate::emit::monitor_plan::follow_final_collections(&mut rows, &emission.wire_nodes)
         .expect("the emitted nodes agree");
     assert_eq!(rows, std::slice::from_ref(&bounded));
-    let mut nodes = emission.wire_nodes.clone();
+    let mut nodes = Vec::clone(&emission.wire_nodes);
     for node in &mut nodes {
         if node.node_id == bounded.base_node {
             node.body = CheckedTerm::Aggregate {
@@ -771,7 +771,7 @@ fn a_map_row_follows_its_final_key_and_value_nodes() {
     );
     let mut row = bounded.clone();
     row.key_node = Some(bounded.base_node.clone());
-    let mut nodes = emission.wire_nodes.clone();
+    let mut nodes = Vec::clone(&emission.wire_nodes);
     for node in &mut nodes {
         if node.node_id == bounded.base_node {
             node.body = map_body(&key, &value);
@@ -785,7 +785,7 @@ fn a_map_row_follows_its_final_key_and_value_nodes() {
 
     // A map row over a collection-shaped base, and a collection row over a
     // map-shaped base, are writer faults.
-    let mut unchanged = emission.wire_nodes.clone();
+    let mut unchanged = Vec::clone(&emission.wire_nodes);
     assert!(
         crate::emit::monitor_plan::follow_final_collections(&mut [row.clone()], &unchanged)
             .is_err()

@@ -2214,8 +2214,9 @@ pub(crate) fn recompile_with_temporal_selections(
         }
     }
     check_recorded_modes(
-        request.package().document(),
-        compiled.emitted.package().bytes(),
+        request.package().functions(),
+        compiled.emitted.emission(),
+        limits.spine.package.emit(),
     )?;
     request
         .package()
@@ -3195,24 +3196,42 @@ fn charges(consumed: impl IntoIterator<Item = (LimitKind, u64)>) -> ScalarLimits
     charges
 }
 
+/// FR-098-AC-34: [`verify_recorded_modes`] over the recompile's function nodes,
+/// read from its typed nodes (not its bytes) with each id spelled as the
+/// emitted bytes spell it, the form `function_records` reads from the
+/// proving package.
+fn check_recorded_modes(
+    recorded: &[crate::request::FunctionRecord],
+    recompiled: &fsl_package::Emission,
+    limits: fsl_package::EmitLimits,
+) -> Result<(), ReplayRefusal> {
+    let recompiled_modes = recompiled
+        .function_check_modes(limits)
+        .map_err(|refusal| ReplayRefusal::Recompile {
+            refusal: Box::new(CompileRefusal::Emit(refusal, None)),
+            pointer: None,
+        })?
+        .into_iter()
+        .map(|(id, mode)| {
+            (
+                quire_canonical::to_vec(&id, quire_canonical::Limits::new(u64::MAX))
+                    .unwrap_or_default(),
+                mode.map(str::to_owned),
+            )
+        })
+        .collect();
+    verify_recorded_modes(recorded, &recompiled_modes)
+}
+
 /// FR-098-AC-34: every function the proving package records is rechecked
 /// under exactly the mode it records; a function whose recompile records
-/// another mode, or none, is refused at its node.
-fn check_recorded_modes(
-    recorded: &quire_canonical::Document,
-    recompiled: &[u8],
+/// another mode, or none, is refused at its node. `recompiled_modes` is the
+/// recompile's recorded mode by canonical node id.
+fn verify_recorded_modes(
+    recorded: &[crate::request::FunctionRecord],
+    recompiled_modes: &std::collections::BTreeMap<Vec<u8>, Option<String>>,
 ) -> Result<(), ReplayRefusal> {
-    // Read the emitted side once; the recorded side already owns a flat document.
-    let recompiled_modes: std::collections::BTreeMap<Vec<u8>, Option<String>> =
-        quire_canonical::read(recompiled, u64::MAX)
-            .ok()
-            .as_ref()
-            .map(crate::ReplayPackage::function_records)
-            .unwrap_or_default()
-            .into_iter()
-            .map(|record| (record.node_id, record.mode))
-            .collect();
-    for record in crate::ReplayPackage::function_records(recorded) {
+    for record in recorded {
         if recompiled_modes.get(&record.node_id) != Some(&record.mode) {
             return Err(ReplayRefusal::Request(
                 crate::ReplayRequestRefusal::PackageMember {

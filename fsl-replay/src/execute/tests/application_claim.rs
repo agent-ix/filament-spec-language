@@ -811,14 +811,27 @@ fn tc_1784_a_recorded_mode_that_differs_from_the_recompile_is_refused() {
     let modes = BTreeMap::from([("g".to_owned(), CheckMode::Linked)]);
     let compiled = kernel_spine(&source, &modes);
     let original = compiled.emitted.bytes();
-    let recorded = quire_canonical::read(original, u64::MAX).expect("JSON");
-    check_recorded_modes(&recorded, original).expect("matching modes pass");
+    let recorded = crate::ReplayPackage::function_records(
+        &quire_canonical::read(original, u64::MAX).expect("JSON"),
+    );
+    check_recorded_modes(
+        &recorded,
+        compiled.emitted_unit.emission(),
+        fsl_package::EmitLimits::new(u64::MAX),
+    )
+    .expect("matching modes pass");
     let edited = String::from_utf8(original.to_vec())
         .expect("JSON")
         .replacen(r#""check_mode":"linked""#, r#""check_mode":"kernel""#, 1);
-    let edited = quire_canonical::read(edited.as_bytes(), u64::MAX).expect("JSON");
-    let refusal = check_recorded_modes(&edited, original)
-        .expect_err("g records kernel but recompiles linked");
+    let edited = crate::ReplayPackage::function_records(
+        &quire_canonical::read(edited.as_bytes(), u64::MAX).expect("JSON"),
+    );
+    let refusal = check_recorded_modes(
+        &edited,
+        compiled.emitted_unit.emission(),
+        fsl_package::EmitLimits::new(u64::MAX),
+    )
+    .expect_err("g records kernel but recompiles linked");
     let ReplayRefusal::Request(crate::ReplayRequestRefusal::PackageMember { pointer, cause }) =
         refusal
     else {

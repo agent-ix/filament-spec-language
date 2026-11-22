@@ -846,7 +846,7 @@ pub struct Emission {
     /// package-level index segments. IR's typed bodies (an operation anchor's
     /// bare execution point) are not decodable through serde outside its
     /// admitting reader, so protocol results read these rather than the bytes.
-    pub(crate) wire_nodes: Vec<CheckedSemanticNodeV2>,
+    pub(crate) wire_nodes: std::sync::Arc<Vec<CheckedSemanticNodeV2>>,
     /// The `temporal_bindings` rows of the checked graph's temporal and
     /// hyper clauses, keyed by the graph's own clause identity.
     pub(crate) temporal_binding_rows: TemporalBindingRows,
@@ -1556,6 +1556,35 @@ impl Emission {
         self.materialize_identity_rows(package, budget)
     }
 
+    /// The `function` nodes of the emitted graph in node order, each with its
+    /// node id as the emitted bytes spell it (operand-slot segments) and its
+    /// recorded `check_mode` spelling, taken from the typed nodes these bytes
+    /// were encoded from so no reader parses the bytes again. The typed nodes
+    /// hold document indices; each function node is rewritten to operand
+    /// slots one at a time, by the same pass that wrote the bytes, so the id
+    /// is the one `function_records` reads back from the bytes.
+    ///
+    /// # Errors
+    ///
+    /// The canonical output-limit failure or an identity invariant refusal of
+    /// the operand-slot pass.
+    pub fn function_check_modes(
+        &self,
+        limits: EmitLimits,
+    ) -> Result<Vec<(CheckedNodeId, Option<&'static str>)>, EmitRefusal> {
+        let mut modes = Vec::new();
+        for node in self.wire_nodes.iter() {
+            if CheckedNodeTag::from_wire(&node.node_tag) != Some(CheckedNodeTag::Function) {
+                continue;
+            }
+            let mut slotted = [node.clone()];
+            write_operand_slots(&mut slotted, limits)?;
+            let [slotted] = slotted;
+            modes.push((slotted.node_id, node.check_mode.map(|mode| mode.as_str())));
+        }
+        Ok(modes)
+    }
+
     /// FSL-owned identity rows keyed by equality application and occurrence.
     pub fn equality_producer_identity_rows(&self) -> &[EqualityProducerEmissionRow] {
         &self.equality_producer_identity_rows
@@ -1849,6 +1878,25 @@ struct Candidate<'g> {
     /// The occurrences `check` recorded for the node, each with the
     /// location it was recorded at.
     occurrences: Recorded<'g>,
+    /// The contiguous expression-occurrence range, ordered by ordinal.
+    expression_occurrences: std::ops::Range<usize>,
+}
+
+impl Candidate<'_> {
+    fn expression_region(
+        &self,
+        ordinal: u64,
+        regions: &impl Fn(&Location) -> Option<SourceRegion>,
+    ) -> Option<SourceRegion> {
+        let expression_occurrences = &self.occurrences[self.expression_occurrences.clone()];
+        let index = expression_occurrences
+            .binary_search_by_key(&ordinal, |(occurrence, _)| occurrence.ordinal)
+            .ok()?;
+        match &expression_occurrences[index].1 {
+                RecordedLocation::Expression(location) => regions(location),
+                RecordedLocation::Parameter(_) | RecordedLocation::Captured(_) => None,
+        }
+    }
 }
 
 impl<'g> Candidate<'g> {
@@ -1859,6 +1907,19 @@ impl<'g> Candidate<'g> {
         node: &'g SemanticNode,
         occurrences: Recorded<'g>,
     ) -> Result<Self, EmitRefusal> {
+        // `recorded_occurrences` preserves the checked occurrence table's
+        // role-then-ordinal ordering, so expression entries form one sorted
+        // slice. Record its bounds once; each generated row can then find
+        // its occurrence in logarithmic time.
+        let expression_start = occurrences
+            .iter()
+            .position(|(occurrence, _)| occurrence.role == CheckedOccurrenceRole::Expression)
+            .unwrap_or(occurrences.len());
+        let expression_end = occurrences[expression_start..]
+            .iter()
+            .position(|(occurrence, _)| occurrence.role != CheckedOccurrenceRole::Expression)
+            .map_or(occurrences.len(), |offset| expression_start + offset);
+        let expression_occurrences = expression_start..expression_end;
         let key = node.key();
         let id = node_id(ids, &key);
         // A self-typed node names itself as its semantic type (FR-322).
@@ -1927,6 +1988,7 @@ impl<'g> Candidate<'g> {
             names,
             laws,
             occurrences,
+            expression_occurrences,
         })
     }
 
@@ -5182,7 +5244,7 @@ fn emit_checked_uncached(
     let graph = package.graph();
     emit_package_inner(
         package,
-        graph.memoized_regions(),
+        |location| graph.region(location),
         |_| None,
         cancel,
         &ir_decodes,
@@ -5218,7 +5280,7 @@ pub fn emit_checked_with_protocol_results_and_temporal_selections_and_cancel(
     let graph = package.graph();
     let emission = match emit_package_inner(
         package,
-        graph.memoized_regions(),
+        |location| graph.region(location),
         |_| None,
         cancel,
         &ir_decodes,
@@ -5233,7 +5295,7 @@ pub fn emit_checked_with_protocol_results_and_temporal_selections_and_cancel(
     };
     let structural_nodes = emission
         .as_ref()
-        .map(|emission| emission.wire_nodes.clone());
+        .map(|emission| Vec::clone(&emission.wire_nodes));
     let ids = StructuralIds::default();
     let mut structural_nodes = structural_nodes;
     if let Some(nodes) = structural_nodes.as_mut() {
@@ -5362,7 +5424,7 @@ pub fn emit_checked_with_temporal_selections_and_cancel(
     let graph = package.graph();
     emit_package_inner(
         package,
-        graph.memoized_regions(),
+        |location| graph.region(location),
         |_| None,
         cancel,
         &ir_decodes,
@@ -6673,7 +6735,7 @@ pub fn emit_timed_models(
         identity_row_selection: identity_rows::IdentityRowSelection::default(),
         equality_producer_identity_rows: Vec::new(),
         equality_fact_witness_rows: Vec::new(),
-        wire_nodes: document_nodes(semantic_graph)?,
+        wire_nodes: std::sync::Arc::new(document_nodes(semantic_graph)?),
         temporal_binding_rows: TemporalBindingRows::default(),
         temporal_rows: TemporalRows::default(),
     }
@@ -6809,7 +6871,7 @@ pub fn emit_checked_with_fault(
 ) -> Result<Emission, EmitRefusal> {
     require_protocol_results_for_refusals(package)?;
     let graph = package.graph();
-    emit_package_with_fault(package, graph.memoized_regions(), fault, limits)
+    emit_package_with_fault(package, |location| graph.region(location), fault, limits)
 }
 
 /// The [`CheckedNodeId`] [`emit_checked_with_fault`]'s `fault` closure
@@ -6851,6 +6913,10 @@ impl<'g> Candidates<'g> {
 
     fn contains(&self, key: &NodeKey) -> bool {
         self.index.contains_key(key)
+    }
+
+    fn get(&self, key: &NodeKey) -> Option<&Candidate<'g>> {
+        self.index.get(key).and_then(|index| self.order.get(*index))
     }
 
     fn values(&self) -> std::slice::Iter<'_, Candidate<'g>> {
@@ -7560,8 +7626,21 @@ fn emit_package_inner(
         &mut nodes,
         &mut source_map,
     )?;
-    let value_validity_records =
-        value_validity_requirements::append(ids, graph, &mut nodes, &mut source_map)?;
+    // Use the same recorded expression placement that supplies the
+    // application's source-map occurrence; `CheckedGraph::occurrence` is
+    // not the placement source for caller-built, spanless forms.
+    let value_validity_region = |claim: &OccurrenceKey| {
+        candidates
+            .get(claim.node())?
+            .expression_region(claim.origin().ordinal(), &regions)
+    };
+    let value_validity_records = value_validity_requirements::append(
+        ids,
+        graph,
+        &mut nodes,
+        &mut source_map,
+        &value_validity_region,
+    )?;
     let (mut profile_selections, mut laws) = split_laws(&order);
     for refinement in emitted_refinements {
         let selection = CheckedSelection {
@@ -7839,7 +7918,7 @@ fn emit_package_inner(
         identity_row_selection: identity_rows::IdentityRowSelection::default(),
         equality_producer_identity_rows,
         equality_fact_witness_rows,
-        wire_nodes: document_nodes(semantic_graph)?,
+        wire_nodes: std::sync::Arc::new(document_nodes(semantic_graph)?),
         temporal_binding_rows,
         temporal_rows: TemporalRows {
             clauses: temporal_clause_refs,

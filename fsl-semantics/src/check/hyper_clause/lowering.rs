@@ -305,7 +305,7 @@ pub(crate) type Locate<'a> = &'a dyn Fn(&Location) -> Span;
 
 /// The span of the node `location` reaches in the expression `spans` locates.
 pub(crate) fn span_at(spans: &ExpressionSpans, location: &Location) -> Span {
-    spans.at(&location.path()).unwrap_or_else(|| {
+    spans.span_at(location).unwrap_or_else(|| {
         spans
             .span(spans.root())
             .unwrap_or(Span { start: 0, end: 0 })

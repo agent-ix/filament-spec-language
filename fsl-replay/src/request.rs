@@ -31,6 +31,7 @@ use fsl_semantics::library::LibraryName;
 mod package;
 use filament_contract_model::CheckedRefinementInternal;
 pub use package::{ReplayPackage, ReplayPackageAdmissionRefusal};
+pub(crate) use package::FunctionRecord;
 
 /// The `filament.value.accounting/v1` scalar environment a replay starts from
 /// (FR-071's "state environment"). Opaque to #231: only the executor (#243)
