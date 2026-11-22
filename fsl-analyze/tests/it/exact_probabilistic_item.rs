@@ -1413,6 +1413,7 @@ fn external_always_path_set_remains_unsupported() {
 /// FR-281 "Engine refusals": a bounded claim whose values outgrow
 /// `max_rational_bits` is `incomplete` naming that limit, not
 /// `unsupported`/`not-yet-implemented`.
+// QSL-2880 changes the expected outcome: a decided interval will then prove with ValueBounds.
 #[trace("TC-763", "FR-281-AC-6")]
 #[test]
 fn a_bounded_claim_past_the_rational_budget_settles_incomplete_naming_the_limit() {

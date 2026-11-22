@@ -1544,6 +1544,7 @@ fn settle_with_rational_bits(world: &World, claim: &str, bits: u64) -> AnalyzeRe
 /// FR-281 "Engine refusals": a timed bounded claim whose values outgrow
 /// `max_rational_bits` is `incomplete` naming that limit, not
 /// `unsupported`/`not-yet-implemented`.
+// QSL-2880 changes the expected outcome: a decided interval will then prove with ValueBounds.
 #[trace("TC-2489", "FR-281-AC-6")]
 #[test]
 fn a_timed_deadline_past_the_rational_budget_settles_incomplete_naming_the_limit() {
@@ -1562,6 +1563,7 @@ fn a_timed_deadline_past_the_rational_budget_settles_incomplete_naming_the_limit
 /// FR-281 "Engine refusals": a timed bound that equals the exact value stays
 /// inside the interval at every precision, which is `incomplete` with the
 /// precision budget, not `unsupported`/`not-yet-implemented`.
+// QSL-2880 may change the expected outcome once ValueBounds production exists.
 #[trace("TC-2489", "FR-281-AC-6")]
 #[test]
 fn a_timed_deadline_at_its_exact_value_past_the_rational_budget_settles_precision_budget() {
@@ -1579,9 +1581,12 @@ fn a_timed_deadline_at_its_exact_value_past_the_rational_budget_settles_precisio
 /// FR-281 "Engine refusals": cancelling a timed refutation at any poll
 /// settles `incomplete` with the cancel's source, or finishes `refuted`; no
 /// poll turns it into `unsupported`/`not-yet-implemented`.
+///
+/// This guards the whole run; it also passes before the QSL-2850 change, so it
+/// does not by itself reach the witness-replay expansion exit.
 #[trace("TC-2492", "FR-281-AC-6")]
 #[test]
-fn cancelling_a_timed_refutation_at_any_poll_is_cancelled_never_unsupported() {
+fn cancelling_a_timed_refutation_at_any_poll_settles_cancelled_or_refuted() {
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::{Arc, OnceLock};
 
