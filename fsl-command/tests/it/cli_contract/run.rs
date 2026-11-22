@@ -610,7 +610,7 @@ fn review_fix_deep_completed_values_use_actual_depth_policy() {
 /// Run the owner-maintained corpus in place; the source checkout is never
 /// copied into this repository and its refusal snapshots are not the oracle.
 #[test]
-#[ignore = "external acceptance lane: FSL_RUN_INPUTS_FIXTURES names the authoritative examples/run-inputs directory"]
+#[ignore = "QSL-2852: external acceptance lane: FSL_RUN_INPUTS_FIXTURES names the authoritative examples/run-inputs directory"]
 #[trace("FSpec-FR-550-AC-1", "FR-650-AC-18")]
 fn canonical_run_acceptance_values_from_authoritative_examples() {
     let directory = std::path::PathBuf::from(
@@ -666,7 +666,7 @@ fn canonical_run_acceptance_values_from_authoritative_examples() {
 /// The public command entry uses the existing plan coordinator and retains
 /// distinct passed, refuted and blocked outcomes.
 #[test]
-#[ignore = "external acceptance lane: FSL_RUN_INPUTS_FIXTURES names the authoritative examples/run-inputs directory"]
+#[ignore = "QSL-2852: external acceptance lane: FSL_RUN_INPUTS_FIXTURES names the authoritative examples/run-inputs directory"]
 #[trace("FSpec-FR-824-AC-1", "FSpec-FR-824-AC-6", "FR-1038-AC-1")]
 fn canonical_run_acceptance_plans_retain_dispositions_and_severity() {
     let directory = std::path::PathBuf::from(

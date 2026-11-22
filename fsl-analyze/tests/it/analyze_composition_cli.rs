@@ -1570,7 +1570,7 @@ fn a_package_item_naming_a_local_clause_beside_a_composition_settles() {
 /// FR-1044-AC-10, second half, once the package route reads a composition:
 /// the same items, records and exit code as the source request.
 #[test]
-#[ignore = "FR-1044-AC-10 execution remainder: owning worlds require the next library cohort's native before-work permission hook"]
+#[ignore = "QSL-2852: FR-1044-AC-10 execution remainder: owning worlds require the next library cohort's native before-work permission hook"]
 fn the_package_route_settles_the_same_items() {
     let ws = Workspace::new("compose-ac10-package-equal");
     let body = format!(

@@ -88,7 +88,7 @@ fn timestamped_clause(formula: &str) -> String {
 /// `ill_typed`/`type-mismatch`.
 #[trace("TC-2777", "FR-982-AC-4", "FSpec-TC-1901", "FSpec-FR-784-AC-3")]
 #[test]
-#[ignore = "Superseded FR-982-AC-4 fixture; W19 errata records that interval-less always is invalid under this profile"]
+#[ignore = "QSL-2852: superseded FR-982-AC-4 fixture; W19 errata records that interval-less always is invalid under this profile"]
 fn superseded_fr982_ac4_unbounded_always_fixture_refuses_missing_interval() {
     let numeric =
         clause("always (count where holds(s.ok) over past[0,1] >= (s.k + 1) and holds(s.done))");
