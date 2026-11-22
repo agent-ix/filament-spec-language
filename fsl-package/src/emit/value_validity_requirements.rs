@@ -419,7 +419,7 @@ pub(super) fn carry_rows(
     let finals = nodes
         .get(..base_nodes.len())
         .ok_or(EmitRefusal::SourceMapInvariant)?;
-    let renamed: HashMap<&CheckedNodeId, &CheckedNodeId> = base_nodes
+    let renamed: BTreeMap<&CheckedNodeId, &CheckedNodeId> = base_nodes
         .iter()
         .zip(finals)
         .filter(|(old, new)| old.node_id != new.node_id)
