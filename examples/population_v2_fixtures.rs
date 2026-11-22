@@ -9,7 +9,10 @@ fn main() -> std::process::ExitCode {
         eprintln!("usage: population_v2_fixtures <new-output-directory>");
         return std::process::ExitCode::FAILURE;
     };
-    match population_fixtures::write(std::path::Path::new(&directory)) {
+    match population_fixtures::write(
+        std::path::Path::new(&directory),
+        &fsl_eval::value::S6aRewardEvaluator,
+    ) {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("{error}");
