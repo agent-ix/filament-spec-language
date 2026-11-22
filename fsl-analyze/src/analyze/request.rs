@@ -1065,6 +1065,7 @@ fn work<'a>(
                                     crate::protocol_analysis::conformance::global_recording_item(
                                         item.request_index,
                                         package,
+                                        protocol.name.clone(),
                                         None,
                                         recording_identity,
                                         Some(recording),

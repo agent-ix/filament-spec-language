@@ -12,6 +12,7 @@ mod analyze_last_stage;
 mod analyze_liveness_cli;
 mod analyze_package_deadlock_models;
 mod analyze_package_protocol;
+mod analyze_package_replay_conformance;
 mod analyze_package_selection;
 mod analyze_package_provider;
 mod analyze_package_schedulability;

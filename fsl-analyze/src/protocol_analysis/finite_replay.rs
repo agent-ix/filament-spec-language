@@ -1190,3 +1190,71 @@ pub(crate) fn finite_replay_item<'a>(
         },
     )
 }
+
+/// Replay a supplied trace over an admitted package-native protocol. The
+/// caller admits the recording slice's shapes before constructing this item;
+/// required temporal clauses and negative-witness replay remain pending.
+pub(crate) fn package_finite_replay_item<'a>(
+    index: RequestIndex,
+    input: fsl_eval::simulation::model::ModelCheckInput<'a>,
+    binding: SubjectBinding<'a>,
+    limits: AnalyzeLimits,
+    protocol: String,
+    trace: Result<SuppliedTrace, TraceDefect>,
+) -> AnalyzeItem<'a> {
+    AnalyzeItem::new(index, Capability::FiniteReplay, Some(DeclarationFamily::Protocol), Mode::Bounded, BACKEND_ID, move |_cancel| {
+        let trace = match trace {
+            Ok(trace) => trace,
+            Err(defect) => return declined(defect.cause(), defect.position(), Some(defect.path().to_owned()).filter(|path| !path.is_empty())),
+        };
+        let Some(form) = input.evaluator.package_protocol(&protocol) else { return fault(); };
+        let memory = match ResolvedMemory::resolve_package(&form, &[]) { Ok(memory) => memory, Err(_) => return fault() };
+        let program = match fsl_eval::simulation::protocol::PackageProtocolProgram::with_memory(&input, form, memory.clone()) {
+            Ok(program) => program,
+            Err(_) => return fault(),
+        };
+        let simulation = || ModelSimulationRequest {
+            input: input.clone(), packages: binding.packages, normalization: limits.normalization,
+            snapshots: binding.snapshots, initial: binding.initial.clone(), universes: binding.universes.clone(),
+            observation: limits.observation, expansion: ExpansionLimits { max_candidates: u64::MAX },
+            meter: limits.accounting, emit: limits.emit,
+        };
+        let model = match ModelSystem::new(simulation()) {
+            Ok(model) => model,
+            Err(failure) => return report_fault(ReplayFault::Admission(Box::new(failure))),
+        };
+        let instances = match model.instances(&program.over_type) { Ok(instances) => instances, Err(_) => return fault() };
+        let selected = binding.universes.iter().map(|universe| universe.population.package.as_str()).collect::<std::collections::BTreeSet<_>>();
+        let roles = program.roles.iter().filter(|role| !role.replicated).filter_map(|role| {
+            let model = role.model_identity.original().package();
+            selected.contains(model).then(|| RoleBinding { role: role.name.clone(), model: model.to_owned() })
+        }).collect::<Vec<_>>();
+        let mut furthest = None;
+        for instance in instances {
+            let subject = ProtocolSubject {
+                model: ModelSubject { simulation: simulation(), proof_bounds: Vec::new() },
+                protocol: protocol.clone(), over: instance.clone(), roles: roles.clone(), capacities: Vec::new(), memory: memory.clone(),
+            };
+            let model = match ModelSystem::new(simulation()) {
+                Ok(model) => model,
+                Err(failure) => return report_fault(ReplayFault::Admission(Box::new(failure))),
+            };
+            let system = match ProtocolSystem::new_package(model, &subject, fsl_eval::simulation::protocol::Sc) {
+                Ok(system) => system.with_max_live_instances(live_instance_bound(None)),
+                Err(_) => return report_fault(ReplayFault::Protocol),
+            };
+            let formula = Formula { required: &[], instance: &instance, accounting: limits.accounting };
+            match replay_steps(&system, &trace, &formula) {
+                Ok(ReplayVerdict::Replayed(steps)) => return finite_report(FiniteReplayReport::Replayed(u64::try_from(steps).unwrap_or(u64::MAX))),
+                Ok(ReplayVerdict::StaleStep(position)) => furthest = Some(furthest.map_or(position, |held: usize| held.max(position))),
+                Ok(ReplayVerdict::NoInitialState) => {},
+                Ok(ReplayVerdict::Undefined(_) | ReplayVerdict::Claimed(_)) => return EngineReport::Refused(Refusal::Unsupported(CatalogCode::new("unsupported_construct", "not-yet-implemented"))),
+                Err(error) => return report_fault(error),
+            }
+        }
+        match furthest {
+            Some(position) => declined("invalid-value", Some(position), None),
+            None => declined("invalid-value", None, Some("/initial_state".to_owned())),
+        }
+    })
+}

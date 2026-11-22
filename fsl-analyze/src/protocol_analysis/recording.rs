@@ -10,8 +10,7 @@ use filament_eval::FamilyOutcome;
 use filament_exact::{FieldValue, Integer, Meter, Outcome, ScalarLimits, Value, ValueType};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_forms::ChannelDelivery;
-use fsl_package::CheckedPackage;
-use fsl_semantics::check::CheckedProtocol;
+use super::recording_input::{Body, Input as CheckedPackage, Ordering, Protocol as CheckedProtocol};
 use fsl_semantics::check::ProtocolNodeId;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use serde::{Deserialize, Serialize};
@@ -390,7 +389,7 @@ struct ClosureDocument {
 /// protocol, names an undeclared role or node, has invalid local-order or
 /// correlation references, or contradicts a runtime identity.
 pub fn assess_recording(
-    package: &CheckedPackage,
+    package: &fsl_package::CheckedPackage,
     bytes: &[u8],
 ) -> Result<RecordingAssessment, RecordingRefusal> {
     assess_recording_with_population(package, bytes, None)
@@ -398,7 +397,31 @@ pub fn assess_recording(
 
 /// Assess a recording with its optional activated role population.
 pub fn assess_recording_with_population(
-    package: &CheckedPackage,
+    package: &fsl_package::CheckedPackage,
+    bytes: &[u8],
+    population: Option<&[ActivatedRolePopulation]>,
+) -> Result<RecordingAssessment, RecordingRefusal> {
+    assess_with_input(&CheckedPackage::Source(package), None, bytes, population)
+}
+
+/// Assess the selected protocol using source or admitted package facts.
+pub(super) fn assess_selected_recording(
+    input: &CheckedPackage<'_>,
+    selected_protocol: &str,
+    bytes: &[u8],
+    population: Option<&[ActivatedRolePopulation]>,
+) -> Result<RecordingAssessment, RecordingRefusal> {
+    assess_with_input(input, Some(selected_protocol), bytes, population)
+}
+
+/// Whether the selected declaration belongs to the implemented supplied-protocol slice.
+pub(crate) fn package_recording_supported(input: &fsl_eval::simulation::model::ModelCheckInput<'_>, name: &str) -> bool {
+    CheckedProtocol::package(input, name).is_some()
+}
+
+fn assess_with_input(
+    package: &CheckedPackage<'_>,
+    selected_protocol: Option<&str>,
     bytes: &[u8],
     population: Option<&[ActivatedRolePopulation]>,
 ) -> Result<RecordingAssessment, RecordingRefusal> {
@@ -411,9 +434,22 @@ pub fn assess_recording_with_population(
             None,
         ));
     }
-    let protocol = package
-        .graph()
-        .protocol(&document.protocol)
+    if let Some(selected) = selected_protocol {
+        if document.protocol != selected {
+            return Err(RecordingRefusal::new(
+                "invalid-value",
+                format!(
+                    "recording names protocol `{}` instead of selected protocol `{selected}`",
+                    document.protocol
+                ),
+                None,
+            ));
+        }
+    }
+    let protocol = match package {
+        CheckedPackage::Source(package) => package.graph().protocol(&document.protocol).map(CheckedProtocol::source),
+        CheckedPackage::Package(input) => CheckedProtocol::package(input, &document.protocol),
+    }
         .ok_or_else(|| {
             RecordingRefusal::new(
                 "invalid-value",
@@ -424,6 +460,7 @@ pub fn assess_recording_with_population(
                 None,
             )
         })?;
+    let protocol = &protocol;
     if !matches!(
         document.closure.state.as_str(),
         "open" | "closed" | "incomplete" | "contradicted"
@@ -585,8 +622,8 @@ fn validate_population(
         return Ok(());
     };
     let on_each = matches!(
-        protocol.obligations.activation,
-        fsl_semantics::check::CheckedActivation::OnEach { .. }
+        protocol.on_each,
+        true
     );
     let mut groups = BTreeSet::new();
     for group in population {
@@ -811,8 +848,8 @@ fn validate_closure_premises(
         return Ok(!(population.is_none() && has_fanout_scope(protocol)));
     }
     let on_each = matches!(
-        protocol.obligations.activation,
-        fsl_semantics::check::CheckedActivation::OnEach { .. }
+        protocol.on_each,
+        true
     );
     let instances = if on_each {
         document
@@ -1920,6 +1957,7 @@ fn assess_obligations(
                                 })
                                 .collect::<Option<Vec<_>>>();
                             arguments.and_then(|arguments| {
+                                let CheckedPackage::Source(package) = package else { return None; };
                                 fsl_eval::value::evaluate_join_predicate(
                                     package,
                                     function,
@@ -2264,9 +2302,11 @@ fn assess_obligations(
     }
 
     for requirement in &protocol.requirements {
-        let temporal = package.graph().temporal_clauses().get(requirement.temporal);
+        let source = match package { CheckedPackage::Source(source) => Some(*source), CheckedPackage::Package(_) => None };
+        let temporal = source.and_then(|package| package.graph().temporal_clauses().get(requirement.temporal));
         let result = temporal.and_then(|clause| {
             let subject = clause.clause().over().1.clone();
+            let package = source?;
             let types = package.graph().scope().types();
             let samples = causal_topological_order(protocol, document)
                 .into_iter()
@@ -2396,7 +2436,7 @@ fn assess_obligations(
             ChannelDelivery::Between { lower, upper } => (Some(lower), Some(upper)),
         };
         if violated.is_none() {
-            if let fsl_semantics::check::CheckedOrdering::Fifo { key, .. } = &channel.ordering {
+            if let Ordering::Fifo { key } = &channel.ordering {
                 let mut keyed_pairs = BTreeMap::<String, Vec<(usize, usize)>>::new();
                 for (send, delivered_receives) in &delivered {
                     let value = evaluate_body_value(
@@ -2739,8 +2779,8 @@ fn add_fanout_control_obligations(
     obligations: &mut Vec<RecordingObligation>,
 ) {
     let on_each = matches!(
-        protocol.obligations.activation,
-        fsl_semantics::check::CheckedActivation::OnEach { .. }
+        protocol.on_each,
+        true
     );
     let instances = recording_instances(document);
     for control in &protocol.controls.controls {
@@ -3010,17 +3050,33 @@ fn recording_meter() -> Meter {
     clippy::too_many_arguments,
     reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
 )]
-fn evaluate_body_value(
+fn evaluate_body_value<'a>(
     package: &CheckedPackage,
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
-    body: &fsl_semantics::check::CheckedBody,
+    body: impl Into<Body<'a>>,
     instance: Option<&str>,
     role: &str,
     role_instance: Option<&RecordingRoleInstance>,
     before: usize,
 ) -> Option<Value> {
-    let types = package.graph().scope().types();
+    let mut meter = recording_meter();
+    evaluate_body_value_with_meter(package, protocol, document, body, instance, role, role_instance, before, &mut meter)
+}
+
+#[allow(clippy::too_many_arguments, reason = "one recording predicate binds its causal position, protocol frame and evaluator meter")]
+fn evaluate_body_value_with_meter<'a>(
+    package: &CheckedPackage,
+    protocol: &CheckedProtocol,
+    document: &RecordingDocument,
+    body: impl Into<Body<'a>>,
+    instance: Option<&str>,
+    role: &str,
+    role_instance: Option<&RecordingRoleInstance>,
+    before: usize,
+    meter: &mut Meter,
+) -> Option<Value> {
+    let types = package.types();
     let order = causal_topological_order(protocol, document);
     let ranks = order
         .iter()
@@ -3069,41 +3125,86 @@ fn evaluate_body_value(
         };
         frame[slot] = recording_value(record, &binder.value_type, types);
     }
-    let mut meter = Meter::new(ScalarLimits {
-        integer_bits: u64::MAX,
-        decimal_digits: u64::MAX,
-        scale_expansion: u64::MAX,
-        text_input_bytes: u64::MAX,
-        text_scalars: u64::MAX,
-        normalized_scalars: u64::MAX,
-        unit_edges: u64::MAX,
-        value_occurrences: u64::MAX,
-        work_units: u64::MAX,
-        result_units: u64::MAX,
-    });
-    let evaluation = fsl_eval::value::evaluate_protocol_slot(
-        package,
-        body,
-        frame,
-        &ObjectEnvironment::default(),
-        &mut meter,
-    )
-    .ok()?;
+    let body = body.into();
+    let evaluation = match (package, body) {
+        (CheckedPackage::Source(package), Body::Source(body)) => fsl_eval::value::evaluate_protocol_slot(
+            package, body, frame, &ObjectEnvironment::default(), meter,
+        ).ok()?,
+        (CheckedPackage::Package(input), Body::Package(slot)) => {
+            use fsl_eval::value::{ProtocolSlotEvaluation, ProtocolSuppliedValue, ProtocolSupply, SuppliedValue};
+            let required = input.evaluator.package_protocol_slot_binders(&slot)?;
+            let binders = protocol.slots.package_binders.iter().zip(frame).filter_map(|(node, value)| {
+                let key = input.evaluator.package_node_key(node)?;
+                required.contains(&key).then(|| (key, ProtocolSuppliedValue::from(match value {
+                    Some(value) => SuppliedValue::Value(value),
+                    None => SuppliedValue::Unavailable(CatalogCode::new("missing_declaration", "missing-name")),
+                })))
+            }).collect();
+            match input.evaluator.evaluate_package_protocol_slot(&slot, &ProtocolSupply { binders, observation: None }, meter).ok()? {
+                ProtocolSlotEvaluation::Evaluated(evaluation, _) => evaluation,
+                ProtocolSlotEvaluation::Unavailable { .. } => return None,
+            }
+        }
+        _ => return None,
+    };
     match evaluation.outcome {
         FamilyOutcome::Evaluated(Outcome::Completed(value)) => Some(value),
         _ => None,
     }
 }
 
+/// Read one recording predicate through the source assessment's real frame
+/// construction and evaluator, exposing its caller-owned meter for parity tests.
+#[cfg(feature = "test-support")]
+pub fn recording_predicate_source(
+    package: &fsl_package::CheckedPackage,
+    bytes: &[u8],
+    node: &str,
+    position: usize,
+    meter: &mut Meter,
+) -> Option<Value> {
+    recording_predicate(&CheckedPackage::Source(package), bytes, node, position, meter)
+}
+
+/// Read the same predicate from admitted package slots, with no source graph.
+#[cfg(feature = "test-support")]
+pub fn recording_predicate_package(
+    input: &fsl_eval::simulation::model::ModelCheckInput<'_>,
+    bytes: &[u8],
+    node: &str,
+    position: usize,
+    meter: &mut Meter,
+) -> Option<Value> {
+    recording_predicate(&CheckedPackage::Package(input.clone()), bytes, node, position, meter)
+}
+
+#[cfg(feature = "test-support")]
+fn recording_predicate(
+    input: &CheckedPackage<'_>, bytes: &[u8], node: &str, position: usize, meter: &mut Meter,
+) -> Option<Value> {
+    let document: RecordingDocument = serde_json::from_slice(bytes).ok()?;
+    let protocol = match input {
+        CheckedPackage::Source(package) => CheckedProtocol::source(package.graph().protocol(&document.protocol)?),
+        CheckedPackage::Package(package) => CheckedProtocol::package(package, &document.protocol)?,
+    };
+    let observation = document.observations.get(position)?;
+    let body = protocol.slots.bodies.iter().find(|body| protocol_node_name(&protocol, body.node.0) == node).map(|body| &body.body)
+        .or_else(|| protocol.slots.choices.iter().find_map(|choice| {
+            let name = protocol_node_name(&protocol, choice.node.0);
+            choice.cases.iter().find(|case| format!("{name}::{}", case.name) == node).map(|case| &case.guard)
+        }))?;
+    evaluate_body_value_with_meter(input, &protocol, &document, body, observation.instance.as_deref(), &observation.role, observation.role_instance.as_ref(), position, meter)
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "mirrors the existing wide signature; a parameter struct is a separate refactor"
 )]
-fn evaluate_body(
+fn evaluate_body<'a>(
     package: &CheckedPackage,
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
-    body: &fsl_semantics::check::CheckedBody,
+    body: impl Into<Body<'a>>,
     instance: Option<&str>,
     role: &str,
     role_instance: Option<&RecordingRoleInstance>,
@@ -3132,8 +3233,8 @@ fn branch_completion(
     instance: Option<&str>,
 ) -> Option<bool> {
     let premise_instance = matches!(
-        protocol.obligations.activation,
-        fsl_semantics::check::CheckedActivation::OnEach { .. }
+        protocol.on_each,
+        true
     )
     .then_some(instance)
     .flatten();

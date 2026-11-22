@@ -43,7 +43,8 @@ fn recording_payload(bytes: &[u8]) -> Result<Vec<u8>, String> {
 )]
 fn recording_result(
     index: fsl_foundation::RequestIndex,
-    package: &fsl_package::CheckedPackage,
+    package: &super::recording_input::Input<'_>,
+    selected_protocol: &str,
     subject: Option<&fsl_eval::model_subject::ProtocolSubject<'_>>,
     recording_identity: Option<&fsl_semantics::model::observation::DocumentRef>,
     recording: &[u8],
@@ -97,8 +98,9 @@ fn recording_result(
         },
         None => None,
     };
-    let assessment = match super::recording::assess_recording_with_population(
+    let assessment = match super::recording::assess_selected_recording(
         package,
+        selected_protocol,
         &recording,
         population.as_deref(),
     ) {
@@ -241,9 +243,62 @@ fn recording_result(
 }
 
 /// The recording arm of one global-conformance request.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one recording binds its selected protocol, subject, document, population, and replay limits"
+)]
 pub(crate) fn global_recording_item<'a>(
     index: fsl_foundation::RequestIndex,
     package: &'a fsl_package::CheckedPackage,
+    selected_protocol: String,
+    subject: Option<fsl_eval::model_subject::ProtocolSubject<'a>>,
+    recording_identity: Option<fsl_semantics::model::observation::DocumentRef>,
+    recording: Option<&'a [u8]>,
+    population: Option<serde_json::Value>,
+    replay_limits: ReplayLimits,
+) -> crate::analyze::AnalyzeItem<'a> {
+    global_recording_item_in(
+        index,
+        super::recording_input::Input::Source(package),
+        selected_protocol,
+        subject,
+        recording_identity,
+        recording,
+        population,
+        replay_limits,
+    )
+}
+
+/// Recording settlement over authenticated admitted protocol facts.
+pub(crate) fn package_global_recording_item<'a>(
+    index: fsl_foundation::RequestIndex,
+    input: fsl_eval::simulation::model::ModelCheckInput<'a>,
+    selected_protocol: String,
+    recording_identity: Option<fsl_semantics::model::observation::DocumentRef>,
+    recording: Option<&'a [u8]>,
+    population: Option<serde_json::Value>,
+    replay_limits: ReplayLimits,
+) -> crate::analyze::AnalyzeItem<'a> {
+    global_recording_item_in(
+        index,
+        super::recording_input::Input::Package(input),
+        selected_protocol,
+        None,
+        recording_identity,
+        recording,
+        population,
+        replay_limits,
+    )
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one recording binds its selected protocol, subject, document, population, and replay limits"
+)]
+fn global_recording_item_in<'a>(
+    index: fsl_foundation::RequestIndex,
+    package: super::recording_input::Input<'a>,
+    selected_protocol: String,
     subject: Option<fsl_eval::model_subject::ProtocolSubject<'a>>,
     recording_identity: Option<fsl_semantics::model::observation::DocumentRef>,
     recording: Option<&'a [u8]>,
@@ -259,7 +314,8 @@ pub(crate) fn global_recording_item<'a>(
         move |cancel| match recording {
             Some(recording) => recording_result(
                 index,
-                package,
+                &package,
+                &selected_protocol,
                 subject.as_ref(),
                 recording_identity.as_ref(),
                 recording,
@@ -1105,7 +1161,12 @@ pub fn replay_counterexample(
                 .simulation
                 .source_package()
                 .ok_or_else(ConformanceReplayRefusal::package_route)?;
-            let assessment = super::recording::assess_recording(package, recording)
+            let assessment = super::recording::assess_selected_recording(
+                &super::recording_input::Input::Source(package),
+                &subject.protocol,
+                recording,
+                None,
+            )
                 .map_err(ConformanceReplayRefusal::recording)?;
             if assessment.global.label == "refuted"
                 && assessment.trace_position == Some(*trace_position)
