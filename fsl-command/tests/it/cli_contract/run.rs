@@ -1038,6 +1038,19 @@ fn odd_operands_and_malformed_requests_refuse() {
     }
 }
 
+/// The single-invariant body an extracted Markdown clause carries.
+fn extracted_body() -> String {
+    format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         model Config = {:?};\n\
+         invariant ParentOrder using v on Config::ConfigVersion at current {{\n\
+         present(self.parent) implies deref(value(self.parent)).versionNumber < self.versionNumber\n\
+         }}\n",
+        config_domain::PACKAGE_IDENTITY
+    )
+}
+
 /// A closed `ParentOrder` clause run over the genuine config-version spine,
 /// either from a native program or from an extracted Markdown clause.
 fn spine_clause(case: &Case, extracted: bool) -> (Value, std::path::PathBuf) {
@@ -1051,14 +1064,14 @@ fn spine_clause(case: &Case, extracted: bool) -> (Value, std::path::PathBuf) {
         case.write(
             "spec.md",
             format!(
-                "# Doc\n\n## Invariants\n\n### ParentOrder\n```ix:native\n{}```\n",
-                spine::unit_text()
+                "# Doc\n\n## Invariants\n\n### parent_order\n```ix:native\n{}```\n",
+                extracted_body()
             )
             .as_bytes(),
         );
         json!({"source": source("spec.md", "ix://agent-ix/spec", "Doc"),
             "extraction": {"body": {"authority": "agent-ix", "identity": "body", "document": "Body"}},
-            "clauses": [{"clause": "ParentOrder", "package": spine::PACKAGE_IDENTITY}]})
+            "clauses": [{"clause": "parent_order", "package": spine::PACKAGE_IDENTITY}]})
     } else {
         case.write("program.native", spine::unit_text().as_bytes());
         json!({"source": source("program.native", "ix://agent-ix/spec", "Doc")})
