@@ -18,7 +18,7 @@ use crate::analyze_cli_support::{analyze, label, litmus_request, order_protocol,
 /// initial state, spelled as FSpec FR-433 spells a counterexample's steps:
 /// each step's transition identity, the key of its post-state and, for a
 /// `send`, its send record.
-fn order_steps(kinds: &[StepKind]) -> Vec<Value> {
+pub(crate) fn order_steps(kinds: &[StepKind]) -> Vec<Value> {
     let package = crate::litmus::package_called("analyze-unit", &order_protocol(true));
     order_steps_over(&package, kinds)
 }
@@ -60,7 +60,7 @@ fn order_steps_over(package: &fsl_package::CheckedPackage, kinds: &[StepKind]) -
     steps
 }
 
-fn trace_document(identity: &str, steps: &[Value]) -> Value {
+pub(crate) fn trace_document(identity: &str, steps: &[Value]) -> Value {
     json!({"format": "filament.protocol-trace/v1",
         "identity": {"authority": "test", "identity": identity},
         "prefix": steps})
