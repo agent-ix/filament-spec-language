@@ -435,7 +435,9 @@ pub fn replay_model_graph_from_package(
             })
         })
         .transpose()?;
-    if timed.is_some() != !input.input().time_sources.is_empty() {
+    if timed.is_some() != !input.input().time_sources.is_empty()
+        || (timed.is_none() && envelope.zone_certificate().is_some())
+    {
         return Err(ReplayRefusal::ModelGraphMismatch { member: "timing" });
     }
     let state_graph_truth = if let Some(timing) = subject.timed.as_ref() {
