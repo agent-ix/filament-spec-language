@@ -248,3 +248,47 @@ findings:
     counter, configured bound and accounting.work_units incomplete settlement.
 bindings: []
 ```
+
+## Dispositions
+
+Round 1, within the sole authorized fix round. Original findings and review records above remain historical and unchanged.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The scoped constructor preserves original owner Incomplete; EN-4 uses its existing PredicateRefused incomplete settlement and EN-5 its existing Expansion stop. Ordinary constructors retain AdmissionFailure. Existing tripped-cancel override preserves native cancellation. |
+
+## Disposition round 1 evidence
+
+Current frozen implementation/test head: `958bcae4d1c0601d9a2796bb7f73b535fd3e3a05`. Actual ARCH/Titan exact two-test rerun: exit 0, 2 passed, 0 failed, 0 ignored. Full focused qualification (20 eval + 18 analyze tests) is PENDING; no final PASS or mergeability claim. Earlier 5071 compile success with 15/4 eval and later fixture failures are historical failures, not green evidence for this head.
+
+Bounded fixture repairs were inspected within the same fix round: charged arithmetic `1 + 0` supplies real owner work instead of assuming a literal charges; unrelated terminal declaration is omitted before checking/emitting both routes; equality rows are materialized by authenticated emission for the same admitted package, joined through standard BareSupply, with legacy absent-equality helper unchanged. Full source-body probability claim predicates remain source-only, matching BarePackage's explicit SOURCE_FORM refusal. Supported source and BarePackage routes exercise real candidate expansion, canonical current clauses and rewards with positive controls, original WorkUnits/B/prefix/next-charge and no-debit assertions. These fixture repairs do not change production budgets, APIs, wire forms or assertions into algorithm mirrors.
+
+Original blocking wrong-refusal finding: fixed by source inspection; final execution qualification pending. All original trace/gap findings are also fixed. No new blocking finding was found in the bounded fix/fixture diffs. No additional formal review round was performed.
+
+The scoped engine matrix at 7b3c095 computed six owned criteria tagged and none untagged, including three FR-203-AC-13 and nine FR-203-AC-14 binders. Subsequent test-only repairs retain those corrected trace tags; latest added shared-clause test binds FR-120-AC-35. This does not claim a fresh matrix computation on 958bcae or parallel-worker execution.
+
+```yaml
+dispositions:
+- fnd: FND-001
+  outcome: fixed
+  after_excerpt: "            Verdict::Undecided(ClauseOutcome::Incomplete(incomplete)) => {\n                Err(super::ProbabilityAdmissionFailure::Evaluation(incomplete))\n\
+    \            }"
+```
+
+## Final disposition
+
+**PASS — all original findings fixed; no remaining blocking review finding.** Sole review/fix round closed at implementation/test head `4d2efb19881512683d148e5736d2d079a2702186`. This final section supersedes the earlier pending qualification checkpoints; their historical text and original findings remain unchanged.
+
+Actual lead-supplied execution evidence: 20 eval tests passed at `958bcae4d1c0601d9a2796bb7f73b535fd3e3a05`; 16 other analyze tests passed at that same head; `native_probability_reward_admission_preserves_accounting_stop` passed at `4025b66b58082f1b17e20173cdffdab0587cf470`; `untimed_exact_counts_distinct_pending_keys_and_reuses_full_state_capacity` passed at `4d2efb19881512683d148e5736d2d079a2702186` (last affected-test command exit 0, 1 passed). These are **38 unique focused tests passing across fix heads**, not 38 tests run together on one head. The earlier 958bcae exact two-test command also passed. No local Cargo, broad rerun, new review cycle or parallel-worker qualification was performed.
+
+The approved preflight split requires a nonempty requested list and every item to have both ProbabilisticSatisfaction capability and Probabilistic form. Structural validation runs the existing complete structural admission and returns unit, exposing no unchecked executable system; each item still evaluates rewards through its scoped constructor. Mixed, nonprobability and empty requests retain ordinary ModelSystem::new. The last head changes only the test threshold from >=0 to >=0.5, preserving graph/capacity assertions. Full claim-predicate coverage is source-only because BarePackage deliberately refuses that source-form port; supported source/BarePackage candidate, current-clause and reward paths use the real authenticated supply and retain the strong budget assertions.
+
+The review disposition permits MERGE-READY. The lead still owns the final current-main rebase, exact latest-artifact-head compile/check and timed match-head merge gate; this disposition does not claim those later gates have already run. Extra tests, wording, style or refactoring do not trigger another review cycle under the updated owner rule.
+
+```yaml
+dispositions:
+- fnd: FND-001
+  outcome: fixed
+  after_excerpt: "    let admission = if probability_only {\n        fsl_eval::simulation::model::ModelSystem::validate_probability_binding(simulation)\n\
+    \    } else {\n        fsl_eval::simulation::model::ModelSystem::new(simulation).map(|_| ())\n    };"
+```

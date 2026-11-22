@@ -356,3 +356,92 @@ bindings:
   ac_id: FR-107-AC-1
   trace: wrong
 ```
+
+## Dispositions
+
+Round 1, within the sole authorized fix round. Original findings and review records above remain historical and unchanged.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The native cumulative test now binds FR-203-AC-13; reward-admission and cancellation tests bind it as well. |
+| FND-002 | fixed | The untimed edge-construction test now binds its actual FR-203-AC-14 behavior; AC-7 removed. |
+| FND-003 | fixed | The untimed pending-key/state-capacity test now binds FR-203-AC-14; AC-7 removed. |
+| FND-004 | fixed | The unrelated FR-107-AC-1 binding was removed; no blind replacement with corpus tags. |
+
+## Disposition round 1 evidence
+
+Current frozen implementation/test head: `958bcae4d1c0601d9a2796bb7f73b535fd3e3a05`. Actual ARCH/Titan exact two-test rerun: exit 0, 2 passed, 0 failed, 0 ignored. Full focused qualification (20 eval + 18 analyze tests) is PENDING; no final PASS or mergeability claim. Earlier 5071 compile success with 15/4 eval and later fixture failures are historical failures, not green evidence for this head.
+
+Bounded fixture repairs were inspected within the same fix round: charged arithmetic `1 + 0` supplies real owner work instead of assuming a literal charges; unrelated terminal declaration is omitted before checking/emitting both routes; equality rows are materialized by authenticated emission for the same admitted package, joined through standard BareSupply, with legacy absent-equality helper unchanged. Full source-body probability claim predicates remain source-only, matching BarePackage's explicit SOURCE_FORM refusal. Supported source and BarePackage routes exercise real candidate expansion, canonical current clauses and rewards with positive controls, original WorkUnits/B/prefix/next-charge and no-debit assertions. These fixture repairs do not change production budgets, APIs, wire forms or assertions into algorithm mirrors.
+
+Original blocking wrong-refusal finding: fixed by source inspection; final execution qualification pending. All original trace/gap findings are also fixed. No new blocking finding was found in the bounded fix/fixture diffs. No additional formal review round was performed.
+
+The scoped engine matrix at 7b3c095 computed six owned criteria tagged and none untagged, including three FR-203-AC-13 and nine FR-203-AC-14 binders. Subsequent test-only repairs retain those corrected trace tags; latest added shared-clause test binds FR-120-AC-35. This does not claim a fresh matrix computation on 958bcae or parallel-worker execution.
+
+```yaml
+dispositions:
+- fnd: FND-001
+  outcome: fixed
+  after_excerpt: "#[trace(\n    \"TC-2066\",\n    \"FR-120-AC-35\",\n    \"FR-191-AC-8\",\n    \"FR-192-AC-1\",\n\
+    \    \"FR-203-AC-13\"\n)]\n#[test]\nfn native_probability_items_share_work_across_expansions_and_start_fresh_per_item()"
+- fnd: FND-002
+  outcome: fixed
+  after_excerpt: '#[trace("TC-631", "FR-203-AC-14")]
+
+    #[test]
+
+    fn untimed_exact_admits_edges_before_relation_and_target_construction()'
+- fnd: FND-003
+  outcome: fixed
+  after_excerpt: '#[trace("TC-631", "FR-203-AC-14")]
+
+    #[test]
+
+    fn untimed_exact_counts_distinct_pending_keys_and_reuses_full_state_capacity()'
+- fnd: FND-004
+  outcome: fixed
+  after_excerpt: '#[trace("FR-120-AC-35")]
+
+    #[test]
+
+    fn probability_clause_factory_preserves_precondition_short_circuit_and_whole_set_refusal()'
+```
+
+## Final disposition
+
+**PASS — all original findings fixed; no remaining blocking review finding.** Sole review/fix round closed at implementation/test head `4d2efb19881512683d148e5736d2d079a2702186`. This final section supersedes the earlier pending qualification checkpoints; their historical text and original findings remain unchanged.
+
+Actual lead-supplied execution evidence: 20 eval tests passed at `958bcae4d1c0601d9a2796bb7f73b535fd3e3a05`; 16 other analyze tests passed at that same head; `native_probability_reward_admission_preserves_accounting_stop` passed at `4025b66b58082f1b17e20173cdffdab0587cf470`; `untimed_exact_counts_distinct_pending_keys_and_reuses_full_state_capacity` passed at `4d2efb19881512683d148e5736d2d079a2702186` (last affected-test command exit 0, 1 passed). These are **38 unique focused tests passing across fix heads**, not 38 tests run together on one head. The earlier 958bcae exact two-test command also passed. No local Cargo, broad rerun, new review cycle or parallel-worker qualification was performed.
+
+The approved preflight split requires a nonempty requested list and every item to have both ProbabilisticSatisfaction capability and Probabilistic form. Structural validation runs the existing complete structural admission and returns unit, exposing no unchecked executable system; each item still evaluates rewards through its scoped constructor. Mixed, nonprobability and empty requests retain ordinary ModelSystem::new. The last head changes only the test threshold from >=0 to >=0.5, preserving graph/capacity assertions. Full claim-predicate coverage is source-only because BarePackage deliberately refuses that source-form port; supported source/BarePackage candidate, current-clause and reward paths use the real authenticated supply and retain the strong budget assertions.
+
+The review disposition permits MERGE-READY. The lead still owns the final current-main rebase, exact latest-artifact-head compile/check and timed match-head merge gate; this disposition does not claim those later gates have already run. Extra tests, wording, style or refactoring do not trigger another review cycle under the updated owner rule.
+
+```yaml
+dispositions:
+- fnd: FND-001
+  outcome: fixed
+  after_excerpt: "#[trace(\n    \"TC-2066\",\n    \"FR-120-AC-35\",\n    \"FR-191-AC-8\",\n    \"FR-192-AC-1\",\n\
+    \    \"FR-203-AC-13\"\n)]\n#[test]\nfn native_probability_items_share_work_across_expansions_and_start_fresh_per_item()"
+- fnd: FND-002
+  outcome: fixed
+  after_excerpt: '#[trace("TC-631", "FR-203-AC-14")]
+
+    #[test]
+
+    fn untimed_exact_admits_edges_before_relation_and_target_construction()'
+- fnd: FND-003
+  outcome: fixed
+  after_excerpt: '#[trace("TC-631", "FR-203-AC-14")]
+
+    #[test]
+
+    fn untimed_exact_counts_distinct_pending_keys_and_reuses_full_state_capacity()'
+- fnd: FND-004
+  outcome: fixed
+  after_excerpt: '#[trace("FR-120-AC-35")]
+
+    #[test]
+
+    fn probability_clause_factory_preserves_precondition_short_circuit_and_whole_set_refusal()'
+```
