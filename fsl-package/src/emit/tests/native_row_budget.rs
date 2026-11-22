@@ -435,7 +435,7 @@ fn final_row_membership_matches_the_original_filter_after_carry_and_rekey() {
     };
     let mut carried =
         super::super::monitor_plan::carry_rows(&retained, &[(omitted.clone(), renamed.clone())]);
-    let mut final_nodes = emission.wire_nodes.clone();
+    let mut final_nodes = Vec::clone(&emission.wire_nodes);
     for node in &mut final_nodes {
         if node.node_id == omitted {
             node.node_id = renamed.clone();

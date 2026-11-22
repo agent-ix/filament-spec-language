@@ -1252,7 +1252,7 @@ pub struct AdmittedPackageRead<'package> {
     witnesses: Box<dyn EvaluationWitnessSupplier + 'package>,
     read: V2Read,
     dependencies: AdmittedPackages,
-    reader_nodes: BTreeSet<NodeKey>,
+    reader_nodes: std::collections::HashSet<NodeKey>,
     /// The admitted package's identity, read from its `name()` and never
     /// from the source package (FR-940 `identity`).
     identity: LibraryName,
@@ -1484,7 +1484,9 @@ impl AdmittedPackageRead<'_> {
     }
 }
 
-fn reader_node_keys(package: &CheckedPackageV2) -> Result<BTreeSet<NodeKey>, WireIdError> {
+fn reader_node_keys(
+    package: &CheckedPackageV2,
+) -> Result<std::collections::HashSet<NodeKey>, WireIdError> {
     let graph = wire_graph(package)?;
     package
         .resolved_graph()
