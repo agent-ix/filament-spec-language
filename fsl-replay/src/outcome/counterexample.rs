@@ -844,9 +844,17 @@ fn read_document(
     let position = required(document, "trace_position", "")?;
     let expected_position = if queue_growth.is_some() {
         task_miss_position(&counterexample).map(Json::from)
-    } else if closure_alphabet && counterexample.lasso.is_some() {
-        // A model formula lasso is decided at its origin, which the task
-        // alphabet's rule (the recorded deadline miss) does not name.
+    } else if closure_alphabet
+        && counterexample.lasso.is_some()
+        && !counterexample
+            .prefix
+            .iter()
+            .any(|step| matches!(&step.transition, TaskProductTransition::Task(_)))
+    {
+        // A plain model formula lasso is decided at its origin. A payload
+        // holding scheduler steps retains its task miss position even when
+        // the caller requests the model alphabet, so a valid foreign step
+        // reaches the alphabet refusal after the whole shape is checked.
         Some(Json::from(0))
     } else {
         counterexample.trace_position().map(Json::from)
@@ -2783,6 +2791,152 @@ mod tests {
             0,
         )
         .is_err());
+    }
+
+    /// A foreign task lasso keeps its own miss position during shape checks.
+    #[trace("FR-237-AC-10", "FR-237-AC-11")]
+    #[test]
+    fn foreign_task_lasso_validates_its_miss_position_before_alphabet_refusal() {
+        let miss = TaskTransitionIdentity {
+            action: crate::TaskTransitionAction::DeadlineMiss,
+            task_set: "S".to_owned(),
+            task: "t".to_owned(),
+            job: 0,
+            slot: 0,
+            generation: 0,
+            release: step(1).transition,
+            source_transition: None,
+            demand: rational(2, 1),
+            jitter: rational(0, 1),
+            deadline: rational(1, 1),
+            priority: Some(1),
+            budget_delta: None,
+        };
+        let mut activation = miss.clone();
+        activation.action = crate::TaskTransitionAction::Activate;
+        let task = TemporalCounterexample {
+            initial_state: 0,
+            prefix: vec![
+                ModelStep {
+                    transition: TaskProductTransition::Task(Box::new(activation)),
+                    post_state: key(0),
+                    delay: Some(rational(0, 1)),
+                },
+                ModelStep {
+                    transition: TaskProductTransition::Task(Box::new(miss)),
+                    post_state: key(1),
+                    delay: Some(rational(1, 1)),
+                },
+                ModelStep {
+                    transition: TaskProductTransition::Source(step(2).transition),
+                    post_state: key(2),
+                    delay: Some(rational(1, 1)),
+                },
+            ],
+            over_binding: None,
+            fairness: Vec::new(),
+            kind: CounterexampleKind::Formula,
+            lasso: Some(Lasso {
+                entry: 2,
+                terminal_stutter: false,
+                terminal_stutter_delay: None,
+            }),
+            blocked: Vec::new(),
+            refinement: None,
+            final_delay: None,
+            closure_stutters: Vec::new(),
+        };
+        let wire = task_temporal_wire(&task, None, None).expect("task lasso spelling");
+        assert_eq!(wire["trace_position"], 1);
+        let read = read_temporal_counterexample::<TaskProductTransition>(&wire)
+            .expect("the task lasso reads with its actual alphabet");
+        assert_eq!(
+            task_temporal_wire(&read, None, None).expect("task lasso rewrites"),
+            wire
+        );
+        assert_eq!(
+            read_temporal_counterexample::<ModelTransition>(&wire),
+            Err(TemporalCounterexampleReadRefusal::TraceAlphabet {
+                pointer: "/prefix/0/transition/type".to_owned(),
+            })
+        );
+        let mut wrong_position = wire.clone();
+        wrong_position["trace_position"] = json!(0);
+        for refusal in [
+            read_temporal_counterexample::<ModelTransition>(&wrong_position).unwrap_err(),
+            read_temporal_counterexample::<TaskProductTransition>(&wrong_position).unwrap_err(),
+        ] {
+            assert_eq!(
+                refusal,
+                TemporalCounterexampleReadRefusal::MalformedWire {
+                    cause: "invalid-value",
+                    pointer: "/trace_position".to_owned(),
+                }
+            );
+        }
+        let mut later_shape_fault = wire;
+        later_shape_fault["loop"][0]["transition"]["phase"] = json!("hi");
+        assert_eq!(
+            read_temporal_counterexample::<ModelTransition>(&later_shape_fault),
+            Err(TemporalCounterexampleReadRefusal::MalformedWire {
+                cause: "unknown-member",
+                pointer: "/loop/0/transition/phase".to_owned(),
+            })
+        );
+    }
+
+    /// Plain and closure-only model lassos retain origin-position validation.
+    #[trace("FR-237-AC-10", "FR-128-AC-14")]
+    #[test]
+    fn model_lassos_validate_origin_position_with_and_without_closure_steps() {
+        for closure in [false, true] {
+            let mut model = counterexample(2, CounterexampleKind::Formula);
+            model.lasso = Some(Lasso {
+                entry: if closure { 2 } else { 1 },
+                terminal_stutter: false,
+                terminal_stutter_delay: None,
+            });
+            if closure {
+                model.closure_stutters.push(ClosureStutter {
+                    site: StepSite::Loop(0),
+                    post_state: key(2),
+                    delay: None,
+                });
+            }
+            let wire = temporal_wire(&model, None, None).expect("model lasso spelling");
+            assert_eq!(wire["trace_position"], 0);
+            let read = read_temporal_counterexample::<ModelTransition>(&wire)
+                .expect("model lasso reads at its origin");
+            assert_eq!(
+                temporal_wire(&read, None, None).expect("model lasso rewrites"),
+                wire
+            );
+            let mut wrong_position = wire.clone();
+            wrong_position["trace_position"] = json!(1);
+            assert_eq!(
+                read_temporal_counterexample::<ModelTransition>(&wrong_position),
+                Err(TemporalCounterexampleReadRefusal::MalformedWire {
+                    cause: "invalid-value",
+                    pointer: "/trace_position".to_owned(),
+                })
+            );
+            let mut misplaced_stutter = wire;
+            misplaced_stutter["loop"]
+                .as_array_mut()
+                .unwrap()
+                .push(json!({
+                    "transition": {"type": "terminal-stutter"},
+                    "post_state": state(&key(2)).expect("terminal state key"),
+                    "delay": {"numerator": "1", "denominator": "1"},
+                }));
+            assert_eq!(
+                read_temporal_counterexample::<ModelTransition>(&misplaced_stutter),
+                Err(TemporalCounterexampleReadRefusal::MalformedWire {
+                    cause: "invalid-value",
+                    pointer: "/loop/0/transition/type".to_owned(),
+                })
+            );
+        }
     }
 
     /// FSpec FR-364-AC-15: task-transition spelling preserves a checked
