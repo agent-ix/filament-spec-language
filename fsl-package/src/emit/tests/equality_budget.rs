@@ -263,25 +263,46 @@ fn bare_admission_retains_equality_and_reports_its_denial_after_projection() {
             .with_supply(supply, &mut budget)
             .expect_err("one short in equality");
         let NativeJoinFailure::Equality(native) = error.native() else {
-            panic!("actual equality cause after identity/type prefix")
+            panic!(
+                "actual equality cause after identity/type prefix: native={:?}, limit={:?}, \
+                 ceilings=({work}, {storage}), consumed={:?}, first_unpaid={:?}, \
+                 first_unpaid_locus={:?}, full={full:?}, declarations={declarations:?}, need={need:?}",
+                error.native(),
+                error.limit(),
+                budget.consumed(),
+                budget.first_unpaid(),
+                budget.first_unpaid_locus(),
+            )
         };
-        assert_eq!(native.code, code);
+        assert_eq!(native.code, code, "native={native:?}, budget={budget:?}");
         let diagnostic = error
             .limit()
-            .expect("bare entry retains the stage diagnostic");
+            .unwrap_or_else(|| panic!("bare entry retains the stage diagnostic: {error:?}"));
         let (bound, consumed) = if kind == NativeJoinChargeKind::Work {
             (work, budget.consumed().work)
         } else {
             (storage, budget.consumed().storage)
         };
-        assert_eq!(diagnostic.configured_bound(), bound);
+        assert_eq!(diagnostic.configured_bound(), bound, "{error:?}");
         assert_eq!(
             diagnostic.actual(),
-            u128::from(consumed) + budget.first_unpaid().expect("unpaid").amount
+            u128::from(consumed) + budget.first_unpaid().expect("unpaid").amount,
+            "native={native:?}, budget={budget:?}"
         );
-        assert_eq!(native.consumed_work, budget.consumed().work);
-        assert!(budget.consumed().work > 0 && budget.consumed().storage > 0);
-        assert_eq!(budget.first_unpaid().expect("first unpaid").kind, kind);
+        assert_eq!(
+            native.consumed_work,
+            budget.consumed().work,
+            "native={native:?}, budget={budget:?}"
+        );
+        assert!(
+            budget.consumed().work > 0 && budget.consumed().storage > 0,
+            "native={native:?}, budget={budget:?}"
+        );
+        assert_eq!(
+            budget.first_unpaid().expect("first unpaid").kind,
+            kind,
+            "native={native:?}, budget={budget:?}"
+        );
     }
 }
 
