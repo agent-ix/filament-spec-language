@@ -18,7 +18,7 @@ use filament_contract_model::{
     CheckedNodeKind, CheckedOperationMember, CheckedSemanticNodeV2, CheckedTerm, NativeJoinBudget,
     NativeJoinLocus, SelectedExactIdentity, TemporalForm,
 };
-use filament_exact::{EffectiveId, NodeKey};
+use filament_exact::{EffectiveId, Identifier, NodeKey};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{
     FairnessConstraint, FairnessGranularity, FairnessKind, FairnessOperation,
@@ -106,6 +106,12 @@ pub enum BareFairnessRefusal {
     /// The existing native allowance was exhausted before the read or copy.
     #[error(transparent)]
     Native(#[from] NativeRowError),
+    /// The admitted structural identity could not be materialized.
+    #[error(transparent)]
+    Structural(#[from] fsl_semantics::check::wire_id::WireIdError),
+    /// A prepaid structural-key reservation failed.
+    #[error(transparent)]
+    Allocation(#[from] std::collections::TryReserveError),
 }
 
 impl From<BareClauseRefusal> for BareFairnessRefusal {
@@ -285,12 +291,76 @@ impl<'p> BarePackage<'p> {
         self.read_clause_fairness(declaration, term, &mut work)
     }
 
+    /// Read complete operation fairness facts from the actual owning clause.
+    /// Context identities and operation names come from admitted fairness
+    /// targets, alongside the exact joined object identity. Every conversion
+    /// and retained copy consumes the caller's existing native allowance.
+    pub fn temporal_clause_constraints_with_budget(
+        &self,
+        declaration: &CheckedNodeId,
+        budget: &mut NativeJoinBudget,
+    ) -> Result<Vec<fsl_semantics::check::ClauseConstraint>, BareFairnessRefusal> {
+        use fsl_semantics::check::wire_id::{StructuralKeyMaterializationError, StructuralKeys};
+        let locus = native_row::start(budget, "temporal_clause_constraints")?;
+        let mut work = MeteredFairness { budget, locus };
+        work.visit()?;
+        if self.package().node_kind(declaration)
+            != Some(CheckedNodeKind::Temporal(TemporalForm::TemporalClause))
+        {
+            return Err(BareClauseRefusal::from(fault("fairness-clause-is-admitted")).into());
+        }
+        let term = self
+            .package()
+            .term(declaration)
+            .ok_or_else(|| BareClauseRefusal::from(fault("fairness-clause-is-admitted")))?;
+        let mut keys = StructuralKeys::default();
+        self.read_clause_fairness_with(
+            declaration,
+            term,
+            &mut work,
+            |context, name, constraint, work| {
+                let node = match keys.try_key(context, work.budget, work.locus) {
+                    Ok(node) => node,
+                    Err(StructuralKeyMaterializationError::Wire(error)) => return Err(error.into()),
+                    Err(StructuralKeyMaterializationError::Allocation(error)) => {
+                        return Err(error.into())
+                    }
+                    Err(StructuralKeyMaterializationError::Budget { denied, .. }) => {
+                        return Err(NativeRowError::exhausted(denied, work.budget).into())
+                    }
+                };
+                // Identifier owns a separate copy from FairnessOperation.
+                work.text(name)?;
+                let operation = Identifier::new(name.to_owned()).map_err(|_| {
+                    BareClauseRefusal::from(fault("fairness-operation-name-is-admitted"))
+                })?;
+                Ok(fsl_semantics::check::ClauseConstraint {
+                    constraint,
+                    context: node,
+                    operation,
+                })
+            },
+        )
+    }
+
     fn read_clause_fairness<W: FairnessWork>(
         &self,
         declaration: &CheckedNodeId,
         term: &CheckedTerm,
         work: &mut W,
     ) -> Result<Vec<FairnessConstraint>, W::Error> {
+        self.read_clause_fairness_with(declaration, term, work, |_, _, constraint, _| {
+            Ok(constraint)
+        })
+    }
+
+    fn read_clause_fairness_with<W: FairnessWork, T>(
+        &self,
+        declaration: &CheckedNodeId,
+        term: &CheckedTerm,
+        work: &mut W,
+        mut retain: impl FnMut(&CheckedNodeId, &str, FairnessConstraint, &mut W) -> Result<T, W::Error>,
+    ) -> Result<Vec<T>, W::Error> {
         let malformed = || BareClauseRefusal::from(fault("fairness-member-is-admitted"));
         let (_, identities) = self.witness().map_err(BareClauseRefusal::from)?;
         let CheckedTerm::Application { arguments, .. } = term else {
@@ -349,7 +419,7 @@ impl<'p> BarePackage<'p> {
             let declaring = declaring.ok_or_else(malformed)?;
             work.effective(declaring)?;
             work.text(name)?;
-            fairness.push(FairnessConstraint::new(
+            let constraint = FairnessConstraint::new(
                 match fairness_kind {
                     CheckedFairnessKind::Weak => FairnessKind::Weak,
                     CheckedFairnessKind::Strong => FairnessKind::Strong,
@@ -359,7 +429,8 @@ impl<'p> BarePackage<'p> {
                     CheckedFairnessGranularity::Whole => FairnessGranularity::Whole,
                     CheckedFairnessGranularity::Each => FairnessGranularity::Each,
                 },
-            ));
+            );
+            fairness.push(retain(structural, name, constraint, work)?);
         }
         Ok(fairness)
     }

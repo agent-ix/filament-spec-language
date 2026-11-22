@@ -46,6 +46,8 @@ pub struct PackageCompositionClause<'a, 'p> {
     pub form: Option<PackageClauseForm>,
     /// Source property classification, absent only before cyclic refusal.
     pub property: Option<PropertyForm>,
+    /// Actual owning fairness targets, with structural context and operation identity.
+    pub fairness: Vec<fsl_semantics::check::ClauseConstraint>,
 }
 /// An admitted premise and the actual clauses it links, without source slot objects.
 pub struct PackageCompositionSlot {
@@ -244,6 +246,22 @@ impl Work<'_> {
         }
     }
 }
+fn fairness_error(error: fsl_package::BareFairnessRefusal) -> PackageCompositionRefusal {
+    match error {
+        fsl_package::BareFairnessRefusal::Clause(error) => {
+            PackageCompositionRefusal::Form(BareClauseFormRefusal::Form(error))
+        }
+        fsl_package::BareFairnessRefusal::Native(error) => {
+            PackageCompositionRefusal::Form(BareClauseFormRefusal::Native(error))
+        }
+        fsl_package::BareFairnessRefusal::Structural(error) => {
+            PackageCompositionRefusal::Structural(error)
+        }
+        fsl_package::BareFairnessRefusal::Allocation(error) => {
+            PackageCompositionRefusal::Allocation(error)
+        }
+    }
+}
 fn key_error(error: KeyBuildRefusal) -> PackageCompositionRefusal {
     match error {
         KeyBuildRefusal::Native {
@@ -356,6 +374,7 @@ fn clause<'a, 'p>(
         subject,
         form: None,
         property: None,
+        fairness: Vec::new(),
     });
     Ok(at)
 }
@@ -653,6 +672,12 @@ impl<'a, 'p> PackageComposition<'a, 'p> {
                         clause: work.text(result.clauses[at].name.name.as_ref())?,
                     });
                 }
+                let clause = &result.clauses[at];
+                let fairness = clause
+                    .owner
+                    .temporal_clause_constraints_with_budget(&clause.name.declaration, work.budget)
+                    .map_err(fairness_error)?;
+                result.clauses[at].fairness = fairness;
                 result.clauses[at].property = property;
                 result.clauses[at].form = Some(form);
             }
@@ -777,14 +802,7 @@ impl<'a, 'p> PackageComposition<'a, 'p> {
             let constraints = clause
                 .owner
                 .temporal_clause_fairness_with_budget(&clause.name.declaration, work.budget)
-                .map_err(|error| match error {
-                    fsl_package::BareFairnessRefusal::Clause(e) => {
-                        PackageCompositionRefusal::Form(BareClauseFormRefusal::Form(e))
-                    }
-                    fsl_package::BareFairnessRefusal::Native(e) => {
-                        PackageCompositionRefusal::Form(BareClauseFormRefusal::Native(e))
-                    }
-                })?;
+                .map_err(fairness_error)?;
             let keys = key_build::fairness_keys_with_budget(&constraints, work.budget)
                 .map_err(key_error)?;
             for (constraint, key) in constraints.into_iter().zip(keys) {
@@ -973,6 +991,20 @@ mod tests {
         assert_eq!(projected.node(), source.node());
         assert_eq!(projected.rule(), source.rule());
         assert_eq!(projected.assumptions(), source.item().assumptions);
+        for actual in projected.clauses() {
+            let expected = source
+                .clauses()
+                .iter()
+                .find(|fact| {
+                    fact.reference.component == actual.component
+                        && fact.reference.node == actual.node
+                })
+                .expect("same authenticated source clause");
+            assert_eq!(
+                actual.fairness, expected.fairness,
+                "actual context/operation/declaring identity and source order"
+            );
+        }
         let expected = super::super::composition_premises(&fixture.source, source.node())
             .expect("actual source slots");
         assert_eq!(projected.slots().len(), expected.len());
