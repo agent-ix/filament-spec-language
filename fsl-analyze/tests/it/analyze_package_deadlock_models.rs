@@ -47,7 +47,17 @@ fn both_routes(name: &str, vault: Vault, reads: Reads, items: &Value) -> (Run, R
         Reads::Both => (&at[..], Some(&at[..])),
     };
     hyper_world::snapshot(&mut snapshots, "s0", one, None, two);
-    let snapshot = snapshots.into_values().next().expect("one snapshot");
+    let mut snapshot = snapshots.into_values().next().expect("one snapshot");
+    if matches!(reads, Reads::Second) {
+        // The subject reads `test/vault-other` alone: its snapshot holds no
+        // population of `test/vault`.
+        let mut body: Value = serde_json::from_slice(&snapshot).expect("snapshot JSON");
+        body["populations"]
+            .as_array_mut()
+            .expect("populations")
+            .remove(0);
+        snapshot = body.to_string().into_bytes();
+    }
 
     let ws = Workspace::new(name);
     ws.write("other.json", &other);
