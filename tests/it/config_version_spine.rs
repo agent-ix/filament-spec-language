@@ -240,6 +240,73 @@ fn run_clause_file(path: &Path, request: &Value) -> Output {
     run_file(&path.join("request.json"))
 }
 
+/// ParentOrder's authored `implies` root and right-hand `<`, resolved from
+/// the same checked source and model owner as the command request.
+fn parent_order_decision_path(
+    request: &ClauseRunRequest,
+) -> [fsl_foundation::source::provenance::OccurrenceKey; 2] {
+    use fsl_replay::spine::{check, parse, select, ParseRequest};
+    use fsl_semantics::check::{ApplicationTerm, BodyTerm, Operator};
+
+    let fsl_replay::spine::ClauseRunSource::Program {
+        identity,
+        path,
+        bytes,
+    } = &request.source
+    else {
+        panic!("the ConfigVersion command selects a program source");
+    };
+    let cancel = filament_exact::Cancel::new();
+    let parsed = parse(
+        &ParseRequest {
+            source: identity,
+            path,
+            bytes,
+        },
+        request.limits.source,
+        &cancel,
+    )
+    .expect("the selected unit parses")
+    .into_value();
+    let models = select(&parsed, &request.packages, request.limits.model, &cancel)
+        .expect("the selected model admits")
+        .into_value();
+    let checked = check(
+        &parsed,
+        request.package_name.clone(),
+        &models,
+        &request.dependencies,
+        request.limits,
+        &cancel,
+    )
+    .expect("the selected unit checks")
+    .into_value();
+    let graph = checked.package().graph();
+    let semantic = graph.semantic_graph();
+    [&[][..], &[1_usize][..]].map(|path| {
+        graph
+            .occurrences()
+            .find(|(key, _, location)| {
+                matches!(
+                    &location.origin,
+                    filament_semantic_value::location::ExpressionOwner::StateClause {
+                        clause, ..
+                    } if clause == "ParentOrder"
+                ) && location.path() == path
+                    && matches!(
+                        semantic.node(key.clone()).map(|node| node.body()),
+                        Some(BodyTerm::Application(ApplicationTerm {
+                            operator: Operator::Binary, ..
+                        }))
+                    )
+            })
+            .map(|(key, origin, _)| {
+                fsl_foundation::source::provenance::OccurrenceKey::new(key.clone(), origin)
+            })
+            .unwrap_or_else(|| panic!("ParentOrder has an authored binary node at {path:?}"))
+    })
+}
+
 fn rename_identity(value: &mut Value, old: &str, new: &str) {
     match value {
         Value::String(text) => {
@@ -280,11 +347,14 @@ fn emitted_model_bytes(document: &Value) -> Vec<u8> {
 
 /// FR-312-AC-1/AC-5: a request names the selected self and anchor explicitly;
 /// the snapshot alone cannot choose either for the caller.
-#[trace("TC-891", "FR-312-AC-1", "FR-312-AC-5")]
+#[trace("TC-891", "FR-312-AC-1", "FR-312-AC-5", "FR-266-AC-2")]
 #[test]
 fn clause_run_command_uses_explicit_current_self_and_anchor() {
     let directory = tempfile::tempdir().unwrap();
-    for (case, truth, exit) in [(Case::Healthy, true, 0), (Case::Violating, false, 10)] {
+    for (case, truth, exit, basis, parent_version) in [
+        (Case::Healthy, true, 0, "decisive-witness", "1"),
+        (Case::Violating, false, 10, "decisive-counterexample", "3"),
+    ] {
         let path = directory.path().join(case.id());
         let in_process = build(&path, case);
         assert_eq!(
@@ -298,22 +368,50 @@ fn clause_run_command_uses_explicit_current_self_and_anchor() {
         let value: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(value["format"], "native-run-result/2");
         assert_eq!(value["disposition"]["truth"], truth);
-        assert_eq!(value["basis"], "closed-scope");
+        assert_eq!(value["basis"], basis);
+        assert_eq!(
+            value["witness"]["operands"],
+            json!([
+                {"kind": "integer", "decimal": parent_version},
+                {"kind": "integer", "decimal": "2"}
+            ])
+        );
+        assert_eq!(
+            value["witness"]["deciding_element"],
+            json!({"kind": "boolean", "value": truth})
+        );
         let decoded =
             fsl_command::command::read_clause_run_request(&path.join("request.json")).unwrap();
-        let fsl_replay::spine::ClauseRunSelection::Clause(decoded) = decoded.selection else {
+        let expected_path = parent_order_decision_path(&decoded);
+        let fsl_replay::spine::ClauseRunSelection::Clause(selection) = &decoded.selection else {
             panic!("the wire selection must remain a state clause");
         };
         let fsl_semantics::model::observation::ClauseSelectionInput::Current {
             self_object,
             anchor,
             ..
-        } = decoded.input
+        } = &selection.input
         else {
             panic!("the current snapshot must retain its current role");
         };
-        assert_eq!(self_object.expect("a named self").key, "child");
+        assert_eq!(self_object.as_ref().expect("a named self").key, "child");
         assert_eq!(anchor.name, "validate");
+        let report = run_clause(decoded).expect("the decoded command request reports");
+        let witness = report.witness.as_ref().expect("a comparison witness");
+        assert_eq!(witness.deciding_comparison.as_ref(), Some(&expected_path[1]));
+        assert_eq!(
+            witness.decision_path.as_deref(),
+            Some(expected_path.as_slice())
+        );
+        assert!(witness.quantifier.is_none());
+        assert!(witness.index.is_none());
+        assert!(witness.trace_position.is_none());
+        assert!(witness.value_path.steps.is_empty());
+        let reported: Value = serde_json::from_slice(
+            &fsl_replay::spine::write_clause_run_result(&report).expect("the report writes"),
+        )
+        .expect("the report is JSON");
+        assert_eq!(value["witness"], reported["witness"]);
         let driver =
             fsl_command::command::run(&path.join("request.json"), &crate::negotiation::Fr290)
                 .unwrap();
@@ -588,6 +686,7 @@ fn clause_run_observation_limit_reports_its_own_bound() {
         close,
         &format!(",\"padding\":\"{}\"", "x".repeat(1_100_000)),
     );
+    let observation_bytes = document.len();
     std::fs::write(&snapshot_path, document).unwrap();
     let mut request = current_clause_request();
     request["request"]["clause"]["observation_limits"] = json!({"document_bytes":1_000_000});
@@ -604,9 +703,30 @@ fn clause_run_observation_limit_reports_its_own_bound() {
         },
     );
     assert_eq!(output.status.code(), Some(22), "{output:?}");
-    let error: Value = serde_json::from_slice(&output.stderr).unwrap();
-    assert_eq!(error["details"]["limit"], "observation.input_bytes");
-    assert_eq!(error["details"]["maximum"], 1_000_000);
+    assert!(output.stderr.is_empty(), "{output:?}");
+    let result: Value = serde_json::from_slice(&output.stdout).expect("the incomplete result");
+    assert_eq!(result["format"], "native-run-result/2", "{result}");
+    assert_eq!(result["disposition"]["stage"], "admit", "{result}");
+    assert_eq!(result["disposition"]["category"], "incomplete", "{result}");
+    assert!(result["disposition"].get("truth").is_none(), "{result}");
+    let limit = &result["disposition"]["refusal"];
+    assert_eq!(limit["code"], "stage_limit_exceeded", "{limit}");
+    assert_eq!(limit["cause"], "input-bytes-exceeded", "{limit}");
+    assert_eq!(
+        limit["fields"],
+        json!({
+            "kind": "input-bytes-exceeded",
+            "bound": "1000000",
+            "actual": observation_bytes.to_string(),
+            "setting": "observation.input_bytes"
+        }),
+        "{limit}"
+    );
+    assert!(coded(&result, "resource_exhausted").is_none(), "{result}");
+    assert!(
+        result.get("code").is_none(),
+        "no refusal envelope: {result}"
+    );
 }
 
 /// The first object anywhere in `value` whose `code` is `code`.
