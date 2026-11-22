@@ -1444,7 +1444,7 @@ mod tests {
         let mut selection = decoding_selection();
         selection["records"] = json!([]);
         selection["scope"]["required_member_identities"] = json!([]);
-        selection["scope"]["observation_sources"] = json!([]);
+        selection["scope"]["observation_sources"] = json!(["source"]);
         selection["scope"]["completeness_dependencies"] = json!([]);
         selection["scope"]["progress_dependencies"] = json!([]);
         selection["scope"]["members"] = json!([]);
@@ -1868,7 +1868,7 @@ mod tests {
             start_nanos: 0,
             end_nanos: 1,
         };
-        let anchor = filament_observation::Anchor::EventPosition(0);
+        let anchor = filament_observation::Anchor::TimestampNanos(0);
         let mut record = filament_observation::AdmittedRecord {
             identity: filament_observation::Identity::new("pending-record-identity"),
             binding_identity: request.binding.identity.clone(),
