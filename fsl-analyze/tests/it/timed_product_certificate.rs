@@ -1637,7 +1637,7 @@ fn cancelling_a_timed_refutation_at_any_poll_settles_cancelled_or_refuted() {
 /// `unsupported`/`not-yet-implemented` and never a fault.
 #[trace("TC-2492", "FR-281-AC-6")]
 #[test]
-fn a_timed_refutations_replay_stopped_by_a_storage_budget_is_never_unsupported_or_failed() {
+fn a_timed_refutation_settles_refuted_or_incomplete_at_every_storage_budget() {
     let world = retx(GUARD, true, TWO_DELAYS, &every_deadlines());
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let mut stopped = 0_u32;

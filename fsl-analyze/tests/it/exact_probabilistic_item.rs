@@ -1436,11 +1436,12 @@ fn a_bounded_claim_past_the_rational_budget_settles_incomplete_naming_the_limit(
 }
 
 /// FR-281 "Engine refusals": a document-storage budget or a cancel that stops a
-/// refutation's replay is `incomplete` naming it, at every size and every poll,
-/// never `unsupported`/`not-yet-implemented` and never a fault.
+/// refutation is `incomplete`, at every size and every poll, never
+/// `unsupported`/`not-yet-implemented` and never a fault. This guard also passes
+/// before the QSL-2850 change: its fault exits need fault injection.
 #[trace("TC-763", "FR-281-AC-6")]
 #[test]
-fn a_refutations_replay_stopped_by_a_budget_or_cancel_is_never_unsupported_or_failed() {
+fn a_refutation_settles_refuted_or_incomplete_at_every_storage_budget_and_cancel_poll() {
     let world = World::new(&prob_world::link(CLAIMS));
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let run = |storage: Option<u64>, cancel: &Cancel| {
