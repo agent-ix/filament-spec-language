@@ -4,10 +4,9 @@
 use std::collections::{BTreeMap, HashMap};
 
 use filament_contract_model::{
-    CapabilityKind, CheckedNodeId, CheckedNodeOwner, CheckedOccurrence, CheckedOccurrenceRole,
-    CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedSourceRegion, CheckedTerm, DomainKey,
-    DomainKind, LiteralKind, RequirementExtent, RequirementGuard, RequirementItemRow,
-    ValueValidityRecord,
+    CapabilityKind, CheckedNodeId, CheckedOccurrence, CheckedOccurrenceRole, CheckedSemanticNodeV2,
+    CheckedSourceMapEntry, CheckedSourceRegion, CheckedTerm, DomainKey, DomainKind, LiteralKind,
+    RequirementExtent, RequirementGuard, RequirementItemRow, ValueValidityRecord,
 };
 use filament_exact::{NodeKey, PathSegment};
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -61,26 +60,23 @@ pub(super) fn append(
     );
     let mut types_written = false;
     let mut ordinals = BTreeMap::<String, u64>::new();
-    let mut owners = HashMap::<String, (NodeKey, CheckedNodeId, Option<CheckedNodeOwner>)>::new();
+    let mut owners = HashMap::<String, (NodeKey, CheckedNodeId)>::new();
     for (claim, source) in graph.requirements().iter() {
         if source.requirements().kind() != Capability::ValueValidity {
             continue;
         }
         let owner_name = source.owner().ok_or(EmitRefusal::SourceMapInvariant)?;
-        let (owner_key, owner, owner_metadata) = match owners.entry(owner_name.to_owned()) {
+        let (owner_key, owner) = match owners.entry(owner_name.to_owned()) {
             std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
             std::collections::hash_map::Entry::Vacant(entry) => {
                 let key = graph
                     .function_identity(owner_name)
                     .ok_or(EmitRefusal::SourceMapInvariant)?;
                 let id = node_id(ids, &key);
-                let metadata = nodes
-                    .iter()
-                    .find(|node| node.node_id == id)
-                    .ok_or(EmitRefusal::SourceMapInvariant)?
-                    .owner
-                    .clone();
-                entry.insert((key, id, metadata))
+                if !nodes.iter().any(|node| node.node_id == id) {
+                    return Err(EmitRefusal::SourceMapInvariant);
+                }
+                entry.insert((key, id))
             }
         };
         let application = node_id(ids, claim.node());
@@ -219,7 +215,9 @@ pub(super) fn append(
             occurrences: vec![occurrence.clone()],
             recursion_group: None,
             declaration: None,
-            owner: owner_metadata.clone(),
+            // A generated claim has no wire owner; its function is the
+            // explicit owner reference in the record body.
+            owner: None,
             owner_model: None,
             check_mode: None,
             body,
