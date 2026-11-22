@@ -18,6 +18,42 @@ use filament_semantic_value::call::WrongSnapshotCause;
 use fsl_semantics::model::normalize::{ModelRefusal, ModelRefusalCause};
 use fsl_semantics::model::observation::AdmissionRecord;
 
+/// A missing authenticated origin is a supported, typed boundary, rather
+/// than permission to choose a population from object membership.
+#[derive(Debug)]
+pub(crate) struct ClockOriginUnavailable {
+    pub(crate) locus: Option<fsl_semantics::model::object_environment::ReferenceOriginLocus>,
+}
+
+impl CatalogCoded for ClockOriginUnavailable {
+    fn catalog_code(&self) -> CatalogCode {
+        CatalogCode::new("unknown_required_feature", "unsupported-feature")
+    }
+
+    fn catalog_fields(&self) -> Option<BTreeMap<&'static str, String>> {
+        let mut fields =
+            BTreeMap::from([("reason", "clock-owner-population-authority".to_owned())]);
+        if let Some(locus) = &self.locus {
+            fields.insert("origin", format!("{locus:?}"));
+        }
+        Some(fields)
+    }
+}
+
+/// The byte reservation refused by canonical clock-identity construction.
+#[derive(Debug)]
+pub(crate) struct ClockIdentityAllocation(pub(crate) usize);
+
+impl CatalogCoded for ClockIdentityAllocation {
+    fn catalog_code(&self) -> CatalogCode {
+        CatalogCode::new("resource_exhausted", "allocation-failed")
+    }
+
+    fn catalog_fields(&self) -> Option<BTreeMap<&'static str, String>> {
+        Some(BTreeMap::from([("requested", self.0.to_string())]))
+    }
+}
+
 /// An exact rational cannot be placed in unbounded `Integer`. Unlike a
 /// bounded target, it has no interval for a kernel domain-refusal payload.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -330,11 +366,14 @@ impl CatalogCoded for ModelQueryRefusal {
 
 #[cfg(test)]
 mod tests {
-    use super::{ModelQueryRefusal, ProtocolClauseSnapshot};
+    use super::{
+        ClockIdentityAllocation, ClockOriginUnavailable, ModelQueryRefusal, ProtocolClauseSnapshot,
+    };
     use filament_semantic_value::catalog::{CatalogCode, CatalogCoded, Category};
     use fsl_foundation::diagnostic::{category_of, Code};
     use fsl_semantics::model::normalize::{ModelRefusal, ModelRefusalCause};
     use ix_trace_rs::trace;
+    use std::collections::BTreeMap;
 
     fn wrong_anchor() -> ProtocolClauseSnapshot {
         ProtocolClauseSnapshot::WrongAnchor {
@@ -347,6 +386,52 @@ mod tests {
         ProtocolClauseSnapshot::ForbiddenPreRead {
             read: "pre(p)".to_owned(),
         }
+    }
+
+    /// Clock causes retain typed data until the caller requests catalog fields.
+    #[trace("FR-062-AC-6", "FR-096-AC-7", "FR-230")]
+    #[test]
+    fn clock_refusal_catalog_fields_preserve_typed_origin_and_allocation_size() {
+        use fsl_semantics::model::object_environment::ReferenceOriginLocus;
+
+        let origin = ClockOriginUnavailable {
+            locus: Some(ReferenceOriginLocus::Parameter("holder".to_owned())),
+        };
+        assert_eq!(
+            origin.locus,
+            Some(ReferenceOriginLocus::Parameter("holder".to_owned()))
+        );
+        assert_eq!(
+            origin.catalog_code(),
+            CatalogCode::new("unknown_required_feature", "unsupported-feature")
+        );
+        assert_eq!(
+            origin.catalog_fields(),
+            Some(BTreeMap::from([
+                ("reason", "clock-owner-population-authority".to_owned()),
+                ("origin", "Parameter(\"holder\")".to_owned()),
+            ]))
+        );
+        assert_eq!(
+            ClockOriginUnavailable { locus: None }.catalog_fields(),
+            Some(BTreeMap::from([(
+                "reason",
+                "clock-owner-population-authority".to_owned(),
+            )]))
+        );
+        let allocation = ClockIdentityAllocation(12345);
+        assert_eq!(allocation.0, 12345);
+        assert_eq!(
+            allocation.catalog_code(),
+            CatalogCode::new("resource_exhausted", "allocation-failed")
+        );
+        let record = fsl_foundation::diagnostic::refusal_record(&allocation, None)
+            .expect("the caller reads a typed allocation refusal");
+        assert_eq!(record.code(), allocation.catalog_code());
+        assert_eq!(
+            record.fields(),
+            &BTreeMap::from([("requested", "12345".to_owned())])
+        );
     }
 
     /// TC-428 (FR-096-AC-7): each cause in FR-096's key table gives exactly

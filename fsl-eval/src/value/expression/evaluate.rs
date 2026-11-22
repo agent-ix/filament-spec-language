@@ -17,8 +17,9 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
 use super::causes::{
-    HistoryUnresolved, ModelQueryRefusal, NamedPopulationIncomplete, NavigationRefusal,
-    ObjectFieldIllTyped, ProtocolClauseSnapshot, UnsupportedConstruct,
+    ClockIdentityAllocation, ClockOriginUnavailable, HistoryUnresolved, ModelQueryRefusal,
+    NamedPopulationIncomplete, NavigationRefusal, ObjectFieldIllTyped, ProtocolClauseSnapshot,
+    UnsupportedConstruct,
 };
 use super::protocol_slot::charges::{BinderCharges, ChargeRouting, Owner, Owners};
 use super::s6a::separation::{
@@ -342,56 +343,10 @@ fn invariant(identifier: &'static str) -> Halt {
     Halt::Fault(InternalFault::new("S6a", identifier))
 }
 
-/// A missing authenticated origin is a supported, typed boundary, rather
-/// than permission to choose a population from object membership.
-#[derive(Debug)]
-struct ClockOriginUnavailable {
-    locus: Option<fsl_semantics::model::object_environment::ReferenceOriginLocus>,
-}
-
-impl filament_semantic_value::catalog::CatalogCoded for ClockOriginUnavailable {
-    fn catalog_code(&self) -> filament_semantic_value::catalog::CatalogCode {
-        filament_semantic_value::catalog::CatalogCode::new(
-            "unknown_required_feature",
-            "unsupported-feature",
-        )
-    }
-
-    fn catalog_fields(&self) -> Option<std::collections::BTreeMap<&'static str, String>> {
-        let mut fields = std::collections::BTreeMap::from([(
-            "reason",
-            "clock-owner-population-authority".to_owned(),
-        )]);
-        if let Some(locus) = &self.locus {
-            fields.insert("origin", format!("{locus:?}"));
-        }
-        Some(fields)
-    }
-}
-
 fn unavailable_clock_origin(origins: &ReferenceOrigins) -> Halt {
     Halt::Family(FamilyResult::Refused(Box::new(ClockOriginUnavailable {
         locus: origins.locus().cloned(),
     })))
-}
-
-#[derive(Debug)]
-struct ClockIdentityAllocation(usize);
-
-impl filament_semantic_value::catalog::CatalogCoded for ClockIdentityAllocation {
-    fn catalog_code(&self) -> filament_semantic_value::catalog::CatalogCode {
-        filament_semantic_value::catalog::CatalogCode::new(
-            "resource_exhausted",
-            "allocation-failed",
-        )
-    }
-
-    fn catalog_fields(&self) -> Option<std::collections::BTreeMap<&'static str, String>> {
-        Some(std::collections::BTreeMap::from([(
-            "requested",
-            self.0.to_string(),
-        )]))
-    }
 }
 
 fn clock_identity_halt(
@@ -1350,10 +1305,12 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             let Value::Integer(index) = selector else {
                 return Err(invariant("place-reference-selector-is-integer"));
             };
-            let index = Decimal::new(&index.to_string())
+            let index = Decimal::try_from(&index)
                 .map_err(|_| Halt::Stop(Stop::Undefined(Undefined::NoElement)))?;
             indices.push(SlotIndex {
-                path_position: Decimal::new(&position.to_string()).map_err(clock_identity_halt)?,
+                path_position: u64::try_from(position)
+                    .map(Decimal::from)
+                    .map_err(|_| invariant("clock-path-position-fits-u64"))?,
                 index,
             });
         }

@@ -2,6 +2,7 @@
 //! FR-230's place/v2 grammar. Declaration authentication belongs to the
 //! checked-source and admitted-package adapters, not to decoded strings.
 
+use filament_exact::Integer;
 use quire_canonical::{Encode, Limits, Node, NodeRef, Sink, Writer};
 
 /// A canonical nonnegative decimal string. No JSON number conversion occurs.
@@ -29,6 +30,19 @@ impl Decimal {
 impl From<u64> for Decimal {
     fn from(value: u64) -> Self {
         Self(value.to_string())
+    }
+}
+
+impl TryFrom<&Integer> for Decimal {
+    type Error = IdentityError;
+
+    /// Retain an exact nonnegative selector without a machine-integer ceiling.
+    /// The containing identity's encoder applies its canonical byte limit.
+    fn try_from(value: &Integer) -> Result<Self, Self::Error> {
+        if value.is_negative() {
+            return Err(IdentityError::Malformed);
+        }
+        Ok(Self(value.to_string()))
     }
 }
 
@@ -641,6 +655,63 @@ mod tests {
             },
             indices: Vec::new(),
         }
+    }
+
+    /// Typed selectors retain exact integers and the identity writer's budget.
+    #[trace("TC-3084", "FR-230-AC-43", "FR-230-AC-45", "FR-062-AC-6")]
+    #[test]
+    fn typed_integer_selectors_preserve_unbounded_values_and_identity_byte_limits() {
+        assert_eq!(Decimal::try_from(&Integer::zero()).unwrap().as_str(), "0");
+        let huge = Integer::one().shifted_left(128);
+        let decimal = Decimal::try_from(&huge).expect("an unbounded nonnegative selector");
+        assert_eq!(decimal.as_str(), "340282366920938463463374607431768211456");
+        assert!(matches!(
+            Decimal::try_from(&huge.neg()),
+            Err(IdentityError::Malformed)
+        ));
+        let mut identity = vector();
+        let shape = CollectionShape {
+            kind: CollectionKind::Sequence,
+            minimum: 0.into(),
+            maximum: None,
+        };
+        let PathEntry::Field { carrier, .. } = &mut identity.template.path[0] else {
+            panic!("field vector");
+        };
+        carrier.layers.push(CarrierLayer::Collection(shape.clone()));
+        identity.template.path.push(PathEntry::Collection {
+            shape,
+            carrier: Carrier {
+                layers: Vec::new(),
+                leaf: CarrierLeaf::Clock,
+            },
+        });
+        identity.indices.push(SlotIndex {
+            path_position: 1.into(),
+            index: decimal,
+        });
+        let text = identity
+            .encode(Limits::new(4096))
+            .expect("complete identity");
+        let bytes = u64::try_from(text.len()).expect("small test identity");
+        assert_eq!(
+            identity
+                .encode(Limits::new(bytes))
+                .expect("exact byte ceiling"),
+            text
+        );
+        assert_eq!(
+            PlaceIdentity::decode(&text, Limits::new(bytes)).expect("exact selector readback"),
+            identity
+        );
+        let Err(IdentityError::Canonical(quire_canonical::Error::Limit(limit))) =
+            identity.encode(Limits::new(bytes - 1))
+        else {
+            panic!("one byte short must retain the canonical limit refusal");
+        };
+        assert_eq!(limit.kind, quire_canonical::LimitKind::CanonicalBytes);
+        assert_eq!(limit.bound, bytes - 1);
+        assert_eq!(limit.required, bytes);
     }
 
     /// The literal is the independently specified FR-230 vector, not a
