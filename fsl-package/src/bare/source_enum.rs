@@ -100,10 +100,11 @@ impl SourceEnumJson {
     }
 
     pub(super) fn row(self) -> Result<SelectedSourceEnumRow, IdentityFileRefusal> {
-        let ValueType::Enum(shape) = self.declaration.shape.value().map_err(|_| malformed())?
-        else {
+        let mut value_type = self.declaration.shape.value().map_err(|_| malformed())?;
+        let ValueType::Enum(shape) = &mut value_type else {
             return Err(malformed());
         };
+        let shape = std::mem::replace(shape, filament_exact::EnumShape::new(false, []));
         Ok(SelectedSourceEnumRow {
             declaration: SelectedEnumDeclarationRow::new(
                 self.declaration.structural_node,
