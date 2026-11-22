@@ -211,3 +211,39 @@ scope:
 Current bounded verdict: PASS — all three original findings now have fixed latest outcomes. Bounded review is mergeable subject to the lead committing these exact final SRs and completing its mandatory current-main exact-head final compile/gate before the matched-head merge. This review does not assert a single full-suite final-head run, repository-wide assurance, general weak correlation, relationship-aware POR, Effect/Event support, full FR-731 support, or QSL-2271 parent completion.
 
 Original findings and all previous dispositions, receipts and diagnosis clarifications remain unchanged.
+
+### Pass 5
+
+Targeted current-main integration review at frozen head a32ce9b7a11f39e71e9f9fdb7509d9264d2503c7 over current base ee381b0e6e23e4410bff577b337b04c6e85e1dfd. Scope is the mechanical replay-field integration, import context and preservation of the previously reviewed behavior; no full review, broad matrix or runtime rerun. Original findings and Pass 1–4 history are unchanged.
+
+The first final current-main four-crate compile actually FAILED, exit 101: E0063 at fsl-analyze/tests/it/native_correlation.rs:581, missing stutter_closure in ModelTraceSubject. Log: /home/peter/.cache/handoff/protocol-batch-2-native-correlation-final-current-main-check.log. The candidate adds the sole missing initializer stutter_closure: false. This is a reviewed source fix, not a successful compile receipt. A fresh mandatory exact-head/current-main final compile is PENDING and must run after the final D5 SR commit. No earlier failed check is represented as green.
+
+The one-line fixture adjustment preserves the prior no-closure protocol replay semantics. At 6fc the ModelTraceSubject had no stutter_closure member. Current ModelTraceSubject documentation at fsl-replay/src/model_check/replay.rs:109–114 says the admitted model-liveness item alone can select closure, while every other subject leaves false. Native correlation supplies an untimed protocol deadlock/replay subject and its genuine traces have no closure-stutter steps. Both Source and Package protocol replay still settle through ProtocolReplay::settle, which calls refuse_closure_alphabet(payload); this protocol path does not enable the new model-liveness closure route. stutter_closure: false also matches incoming related_by.rs and analyze_package_protocol.rs fixtures. Thus the field is an explicit declaration of the existing semantics, not a change to correlation evaluation or a new runtime profile.
+
+Compared with current ee381, fsl-package/src/lib.rs retains incoming SelectedModelUnionPayload and SelectedModelUnionRow while adding only this PR's CheckedNodeOwner, ProtocolCorrelationReadError, ProtocolCorrelationRow and UnavailableCorrelationProvenance exports. Incoming ReferenceCatalog exports remain present. These are import/re-export context unions, with no catalog duplication or removed incoming API. Direct comparison against 6fc shows no change in the correlation production files or fill helper and no Cargo.toml/Cargo.lock change. The only native_correlation.rs content change is stutter_closure: false. The prior five retained passing test bodies and two final local passing tests therefore retain their reviewed bounded evidence; no additional runtime broadening is needed for this semantic-equivalent initializer adjustment.
+
+All original findings were fixed before this pass; no duplicate disposition rows are appended. The already repaired compile integration is recorded above without inventing an outstanding correlation product defect. Reviewer ran no Cargo, runtime, service, relay, tracker or branch mutation. git diff --check exit 0; worktree clean at reviewed head.
+
+#### Additional examined scope in Pass 5
+
+```yaml
+scope:
+- id: fsl-analyze/tests/it/native_correlation.rs::replay_both
+  path: fsl-analyze/tests/it/native_correlation.rs
+  role: examined
+  excerpt: 'stutter_closure: false,'
+- id: fsl-package/src/lib.rs::filament_contract_model
+  path: fsl-package/src/lib.rs
+  role: examined
+  excerpt: SelectedModelUnionPayload, SelectedModelUnionRow, TemporalBinding,
+- id: fsl-replay/src/model_check/replay.rs::ModelTraceSubject
+  path: fsl-replay/src/model_check/replay.rs
+  role: context_only
+  excerpt: 'pub stutter_closure: bool,'
+- id: fsl-replay/src/model_check/replay.rs::ProtocolReplay::settle
+  path: fsl-replay/src/model_check/replay.rs
+  role: examined
+  excerpt: refuse_closure_alphabet(payload)?;
+```
+
+Current bounded verdict: PASS for this targeted integration review. All original code/gap findings retain fixed latest outcomes; no new or unresolved finding. Bounded review is mergeable CONDITIONED ON the lead committing the exact final D5 SRs and obtaining the mandatory fresh CURRENT-main, exact-head four-crate compile/gate before a matched-head merge. The final compile is PENDING. All seven unique bounded tests passed across successive pre-integration heads (initial 0/7 → FIX1 4/3 → FIX2 1/2 → FIX3 2/0); this is not a single final-head seven-test suite. No full weak correlation, POR, Effect/Event, full FR-731 or QSL-2271 parent-completion claim.
