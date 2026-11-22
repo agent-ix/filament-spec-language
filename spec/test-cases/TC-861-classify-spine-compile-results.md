@@ -15,7 +15,7 @@ and over `CompileRefusal` values built in the test for the variants a
 fixture cannot reach, including multi-cause vectors whose first cause is
 not the deciding one.
 
-Scope: FR-341-AC-1 to FR-341-AC-6.
+Scope: FR-341-AC-1 to FR-341-AC-7.
 
 ## Test Procedure
 
@@ -36,6 +36,8 @@ Scope: FR-341-AC-1 to FR-341-AC-6.
    `unsupported_projection`.
 6. Build a refusal whose causes are `unsupported_construct`/
    `declaration-form` and `unsupported_construct`/`expression-form`.
+7. Build an S4 `Emit` refusal holding `unsupported_construct`/
+   `not-yet-implemented`, then one also holding `runtime_invariant`.
 
 Every expected class below is a literal in the test. Tag the tests
 `#[trace("TC-861", "FR-341-AC-n")]`.
@@ -50,3 +52,4 @@ Every expected class below is a literal in the test. Tag the tests
   naming the type limit and value one.
 - Step 5: `unsupported`, three times.
 - Step 6: `prohibited`.
+- Step 7: `unsupported`; `tool failure`.

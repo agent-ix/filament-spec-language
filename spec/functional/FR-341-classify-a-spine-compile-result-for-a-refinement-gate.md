@@ -50,7 +50,7 @@ than an I2 read ceiling) names no limit.
 | Rule | When | Class |
 | --- | --- | --- |
 | 1 | the result is `Ok` | `admitted` |
-| 2 | any cause has code `runtime_invariant`; or the refusal is `Intake` with a cause other than its limit cause, `Profile`, `DependencyInput`, `Import` with a cause other than its limit cause (an import's own ceiling or an `i2.*` read ceiling), `Dependency`, `Link` or `Emit`; except that a `Link` or `Emit` refusal holding `unsupported_projection` is not a tool failure and takes rule 5 | `tool failure` (the case's setup is broken) |
+| 2 | any cause has code `runtime_invariant`; or the refusal is `Intake` with a cause other than its limit cause, `Profile`, `DependencyInput`, `Import` with a cause other than its limit cause (an import's own ceiling or an `i2.*` read ceiling), `Dependency`, `Link` or `Emit`; except that a `Link` or `Emit` refusal holding `unsupported_projection`, or holding `unsupported_construct` with cause `not-yet-implemented` and no `runtime_invariant` cause, takes rule 5 | `tool failure` (the case's setup is broken) |
 | 3 | the refusal is `Source`, `Forms`, `OperationClause` (a kept operation clause that does not parse), `TypeInvariant` (a type-level invariant clause that does not parse), `Assembly` or `Check`, and any cause has a typed refusal code: a code other than `stage_limit_exceeded`, `resource_exhausted`, `unsupported_construct` and `unsupported_projection` | `refused` |
 | 4 | any cause has code `stage_limit_exceeded` or `resource_exhausted` (the caller's model budget, denied at I1 or at S3), whichever stage raised it | `incomplete` |
 | 5 | the refusal is `Omitted`; or any cause has code `unsupported_projection`; or any cause is `unsupported_construct` with cause `not-yet-implemented` | `unsupported` (an FSL implementation gap) |
@@ -76,6 +76,7 @@ than an I2 read ceiling) names no limit.
 | FR-341-AC-4 | The unit compiled with an S1 source-stage limit of one (`s1.nodes`) and, separately, with a type limit of one each classifies `incomplete`, naming the limit and its value one. | Test (TC-861) |
 | FR-341-AC-5 | A `Check` refusal holding `unsupported_construct`/`not-yet-implemented` (S3's refusal of a construct it has no checker for) classifies `unsupported`; an `Omitted` refusal and a refusal holding `unsupported_projection` each classify `unsupported`. | Test (TC-861) |
 | FR-341-AC-6 | A refusal whose every cause is `unsupported_construct` with cause `declaration-form` or `expression-form` classifies `prohibited`. | Test (TC-861) |
+| FR-341-AC-7 | A Link or Emit refusal holding `unsupported_construct`/`not-yet-implemented` and no `runtime_invariant` cause classifies `unsupported`; a refusal that also holds `runtime_invariant` classifies `tool failure`. | Test (TC-861) |
 
 ## Dependencies
 
