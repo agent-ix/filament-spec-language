@@ -902,6 +902,47 @@ fn unbounded_quantified_clock_guards_emit_family_parts() {
     }
 }
 
+/// A family template without a clock constraint remains a data-only guard
+/// disjunct, while a nested family keeps the existing quantified-clause
+/// refusal.
+#[trace("FR-230-AC-70", "FSpec-FR-322-AC-484")]
+#[test]
+fn unsupported_unbounded_family_guard_shapes_keep_their_refusals() {
+    use fsl_semantics::check::{CheckCause, TemporalCause, UnwrittenTimedMember};
+
+    let document = unbounded_timer_document();
+    let (data_only, span) = excluded(
+        &document,
+        "pre NoClock using v on Config::ConfigVersion::attemptUpdate { \
+         forall(e in self.us: e.n > 0) }\n",
+    );
+    assert_eq!(
+        data_only,
+        fsl_semantics::check::ExcludedClauseForm::DataOnlyDisjunct
+    );
+    assert!(span.contains("forall(e in self.us: e.n > 0)"));
+
+    let (_, checked) = checked(
+        &document,
+        "pre Nested using v on Config::ConfigVersion::attemptUpdate { \
+         forall(e in self.us: forall(f in self.us: f.x < 5 ms) and e.x < 6 ms) }\n",
+    );
+    let refusals = checked.expect_err("nested family templates remain refused");
+    assert!(
+        refusals.iter().any(|refusal| match &refusal.cause {
+            CheckCause::Temporal(cause) => matches!(
+                &**cause,
+                TemporalCause::TimedModelNotEmitted {
+                    member: UnwrittenTimedMember::QuantifiedClause,
+                    ..
+                }
+            ),
+            _ => false,
+        }),
+        "the unsupported nested family has its existing refusal: {refusals:?}"
+    );
+}
+
 /// FR-230-AC-56, FR-393-AC-9 and FSpec FR-322-AC-295: a universal quantified
 /// invariant emits one family slot binder and an upper-bound constraint
 /// using that same binder. The family term bounds only live slots, so the

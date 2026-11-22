@@ -1572,7 +1572,14 @@ impl TimedModel {
                     || part.families.iter().any(|family| {
                         family.parts.len() != 1
                             || family.parts.iter().any(|family_part| {
-                                !family_part.elements.is_empty() || !family_part.families.is_empty()
+                                !family_part.elements.is_empty()
+                                    || !family_part.families.is_empty()
+                                    || !family_part.presences.is_empty()
+                                    || family_part.empty_collection_branch
+                                    || family_part.clocks.iter().any(|constraint| {
+                                        constraint.binding.is_none()
+                                            || !constraint.slots.contains(&SlotRef::Family)
+                                    })
                             })
                     })
                     || (!part.families.is_empty()
@@ -1583,7 +1590,20 @@ impl TimedModel {
                 {
                     return Some((Unwritten(Member::QuantifiedClause), guard.span));
                 }
-                if part.clocks.is_empty() && !guard.covered() && !part.empty_collection_branch {
+                let family_has_clock = part
+                    .families
+                    .iter()
+                    .any(|family| {
+                        family
+                            .parts
+                            .iter()
+                            .any(|family_part| !family_part.clocks.is_empty())
+                    });
+                if part.clocks.is_empty()
+                    && !family_has_clock
+                    && !guard.covered()
+                    && !part.empty_collection_branch
+                {
                     // Located at the disjunct: its data predicate's site.
                     let site = guard_part_site(&self.model, at, index);
                     let span = self
