@@ -401,16 +401,17 @@ pub fn assess_recording_with_population(
     bytes: &[u8],
     population: Option<&[ActivatedRolePopulation]>,
 ) -> Result<RecordingAssessment, RecordingRefusal> {
-    assess_with_input(&CheckedPackage::Source(package), bytes, population)
+    assess_with_input(&CheckedPackage::Source(package), None, bytes, population)
 }
 
-/// Assess only the package forms admitted by the native recording adapter.
-pub(crate) fn assess_package_recording(
-    input: &fsl_eval::simulation::model::ModelCheckInput<'_>,
+/// Assess the selected protocol using source or admitted package facts.
+pub(super) fn assess_selected_recording(
+    input: &CheckedPackage<'_>,
+    selected_protocol: &str,
     bytes: &[u8],
     population: Option<&[ActivatedRolePopulation]>,
 ) -> Result<RecordingAssessment, RecordingRefusal> {
-    assess_with_input(&CheckedPackage::Package(input.clone()), bytes, population)
+    assess_with_input(input, Some(selected_protocol), bytes, population)
 }
 
 /// Whether the selected declaration belongs to the implemented supplied-protocol slice.
@@ -420,6 +421,7 @@ pub(crate) fn package_recording_supported(input: &fsl_eval::simulation::model::M
 
 fn assess_with_input(
     package: &CheckedPackage<'_>,
+    selected_protocol: Option<&str>,
     bytes: &[u8],
     population: Option<&[ActivatedRolePopulation]>,
 ) -> Result<RecordingAssessment, RecordingRefusal> {
@@ -431,6 +433,18 @@ fn assess_with_input(
             "format must be filament.protocol-recording/1",
             None,
         ));
+    }
+    if let Some(selected) = selected_protocol {
+        if document.protocol != selected {
+            return Err(RecordingRefusal::new(
+                "invalid-value",
+                format!(
+                    "recording names protocol `{}` instead of selected protocol `{selected}`",
+                    document.protocol
+                ),
+                None,
+            ));
+        }
     }
     let protocol = match package {
         CheckedPackage::Source(package) => package.graph().protocol(&document.protocol).map(CheckedProtocol::source),

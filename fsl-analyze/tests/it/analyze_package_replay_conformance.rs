@@ -157,30 +157,7 @@ fn a_finite_replay_of_a_recorded_trace_settles_as_the_source_route() {
 #[trace("TC-2410", "FR-850-AC-2")]
 #[test]
 fn a_conformance_recording_settles_as_the_source_route() {
-    let recording = json!({
-        "format": "filament.protocol-recording/1",
-        "protocol": "Flow",
-        "observations": [
-            {"kind": "send", "node": "Flow::Main::Placed", "role": "Buyer",
-             "instance": "w-1", "keys": {"message": "m-1", "delivery": "d-1"},
-             "record": {"ok": true}},
-            {"kind": "receive", "node": "Flow::Main::Got", "role": "Seller",
-             "instance": "w-1", "keys": {"message": "m-1", "delivery": "d-1"},
-             "record": {"ok": true}},
-            {"kind": "case", "node": "Flow::Main::Decide::yes", "role": "Seller",
-             "instance": "w-1", "keys": {}},
-            {"kind": "finish", "node": "Flow::Done", "role": "Seller",
-             "instance": "w-1", "keys": {}, "record": {"zz": true}}
-        ],
-        "local_order": {"Seller": [1, 2, 3], "Buyer": [0]},
-        "correlations": [{"send": 0, "receive": 1}],
-        "identity": {"authority": "test", "identity": "recording"},
-        "closure": {"state": "closed", "premises": [
-            {"kind": "execution", "node": "Flow::Done"},
-            {"kind": "branch", "node": "Flow::Main::Decide::no"},
-            {"kind": "branch", "node": "Flow::Main::Decide::yes"}
-        ]}
-    });
+    let recording = recording_document("Flow");
     let (source, package) = both_routes(
         "package-conformance-recording",
         json!([{"claim": "Flow", "kind": "global-conformance",
@@ -190,6 +167,84 @@ fn a_conformance_recording_settles_as_the_source_route() {
     assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
     assert_eq!(source.item(0)["global"]["complete"], true);
     assert_equal(&source, &package);
+}
+
+fn recording_document(protocol: &str) -> Value {
+    json!({
+        "format": "filament.protocol-recording/1",
+        "protocol": protocol,
+        "observations": [
+            {"kind": "send", "node": format!("{protocol}::Main::Placed"), "role": "Buyer",
+             "instance": "w-1", "keys": {"message": "m-1", "delivery": "d-1"},
+             "record": {"ok": true}},
+            {"kind": "receive", "node": format!("{protocol}::Main::Got"), "role": "Seller",
+             "instance": "w-1", "keys": {"message": "m-1", "delivery": "d-1"},
+             "record": {"ok": true}},
+            {"kind": "case", "node": format!("{protocol}::Main::Decide::yes"), "role": "Seller",
+             "instance": "w-1", "keys": {}},
+            {"kind": "finish", "node": format!("{protocol}::Done"), "role": "Seller",
+             "instance": "w-1", "keys": {}, "record": {"zz": true}}
+        ],
+        "local_order": {"Seller": [1, 2, 3], "Buyer": [0]},
+        "correlations": [{"send": 0, "receive": 1}],
+        "identity": {"authority": "test", "identity": "recording"},
+        "closure": {"state": "closed", "premises": [
+            {"kind": "execution", "node": format!("{protocol}::Done")},
+            {"kind": "branch", "node": format!("{protocol}::Main::Decide::no")},
+            {"kind": "branch", "node": format!("{protocol}::Main::Decide::yes")}
+        ]}
+    })
+}
+
+/// FR-895 Admission: an admitted recording of another declared protocol
+/// cannot settle the selected claim, even when its own closed execution holds.
+#[trace("FR-895", "FR-850-AC-2", "FR-940-AC-6")]
+#[test]
+fn a_recording_of_another_declared_protocol_refuses_on_both_routes() {
+    let flow = order_protocol(true);
+    let (_, other) = flow.split_once("protocol Flow").expect("Flow declaration");
+    let body = format!("{flow}\nprotocol Other{other}");
+    let ws = Workspace::new("package-other-declared-recording");
+    let path = litmus_request(
+        &ws,
+        &body,
+        json!({"items": [{"claim": "Other", "kind": "global-conformance",
+            "recording": {"authority": "test", "identity": "recording"}}]}),
+    );
+    let mut request: Value = serde_json::from_slice(&std::fs::read(&path).expect("request"))
+        .expect("request JSON");
+    ws.write("recording.json", recording_document("Other").to_string().as_bytes());
+    request["request"]["documents"].as_array_mut().expect("documents")
+        .push(json!({"file": "recording.json"}));
+    ws.write("analyze.json", request.to_string().as_bytes());
+    let own = analyze(&path);
+    assert_eq!(own.exit, 0, "{}", own.document());
+    assert_eq!(label(&own.item(0)), "proved", "{}", own.document());
+    assert_eq!(own.item(0)["global"]["complete"], true);
+
+    request["request"]["items"][0]["claim"] = json!("Flow");
+    ws.write("analyze.json", request.to_string().as_bytes());
+    let source = analyze(&path);
+    assert_eq!(source.exit, 20, "{}", source.document());
+    let item = source.item(0);
+    assert_eq!(item["claim_name"], "Flow", "{item}");
+    assert_eq!(label(&item), "declined", "{item}");
+    assert_eq!(item["record"]["diagnostic"]["code"], "invalid_runtime_input", "{item}");
+    assert_eq!(item["record"]["diagnostic"]["cause"], "invalid-value", "{item}");
+    assert!(item.get("global").is_none(), "{item}");
+    assert!(item.get("obligations").is_none(), "{item}");
+
+    let (members, _) = package_selection(&ws, &request["request"]);
+    std::fs::remove_file(ws.path("program.fsl")).expect("delete source program");
+    let sources = ws.path(&format!("{HANDOFF}/sources"));
+    std::fs::remove_dir_all(&sources).expect("delete retained source files");
+    assert!(!ws.path("program.fsl").exists());
+    assert!(!sources.exists());
+    let package = analyze(&ws.write("other-protocol-package.json", json!({
+        "format": "native-analyze/1", "request": members,
+    }).to_string().as_bytes()));
+    assert_equal(&source, &package);
+    assert_eq!(package.stdout, source.stdout, "whole selected-protocol refusal");
 }
 
 fn refused_routes(name: &str, item: Value, file: &str, document: &Value) -> (Run, Run) {
