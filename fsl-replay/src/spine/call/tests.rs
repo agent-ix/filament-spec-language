@@ -86,9 +86,11 @@ fn resolver_incomplete_and_refusal_outcomes_keep_their_typed_payloads() {
                     record: filament_observation::Identity::new("record:missing"),
                 },
                 IncompleteReason::MissingRelationship {
-                    required: required.clone(),
+                    required: Box::new(required.clone()),
                 },
-                IncompleteReason::IncompleteRelationshipExtent { required },
+                IncompleteReason::IncompleteRelationshipExtent {
+                    required: Box::new(required),
+                },
                 IncompleteReason::MissingMembership,
                 IncompleteReason::MissingClosure,
             ],
