@@ -20,12 +20,12 @@
 
 use std::collections::BTreeMap;
 
+use super::read::{FieldMapping, ObjectMapping, PopulationMapping, RefinementRead};
 use filament_checked::key::DeclarationKey;
 use filament_exact::{CollectionKind, ObjectReference, Value, ValueType};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::simulation::model::{ClauseOutcome, ModelSystem, RowReading, StateObservation};
 use fsl_eval::temporal::UndefinedCause;
-use fsl_semantics::check::{CheckedRefinement, FieldRow, ObjectRow, PopulationRow};
 use fsl_semantics::model::state::{ModelState, StateField, StateObject};
 
 use crate::refinement::history::HistoryValues;
@@ -214,14 +214,14 @@ impl Outcomes {
     reason = "FR-140 fixes MappingFailure's shape: a row, an object and the evaluator's cause"
 )]
 pub fn map_state(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
     abstract_system: &ModelSystem<'_>,
     state: &ModelState,
     history: &HistoryValues,
 ) -> Result<MappedState, MappingFailure> {
     check_systems(refinement, concrete_system, abstract_system)?;
-    let populations = ordered_populations(refinement.populations().iter().collect());
+    let populations = ordered_populations(refinement.populations().collect());
     let mut visible = ModelState {
         populations: BTreeMap::new(),
         extents: Vec::new(),
@@ -234,18 +234,17 @@ pub fn map_state(
         let mut image = BTreeMap::new();
         for (key, object) in state
             .populations
-            .get(&row.concrete_population)
+            .get(row.concrete_population())
             .into_iter()
             .flatten()
         {
             let at = ObjectKey {
-                population: row.concrete_population.clone(),
+                population: row.concrete_population().clone(),
                 key: key.clone(),
             };
             let Some(object_row) = refinement
                 .objects()
-                .iter()
-                .find(|candidate| candidate.concrete_type == object.type_identity)
+                .find(|candidate| candidate.concrete_type() == &object.type_identity)
             else {
                 outcomes.record(unmapped(&object.type_identity, at));
                 continue;
@@ -271,10 +270,10 @@ pub fn map_state(
                 (object_row, &at),
                 &mut outcomes,
             )? {
-                for field in &object_row.hidden {
+                for field in object_row.hidden() {
                     hidden.push(HiddenSlot {
                         object: ObjectKey {
-                            population: row.abstract_population.clone(),
+                            population: row.abstract_population().clone(),
                             key: key.clone(),
                         },
                         field: field.clone(),
@@ -285,7 +284,7 @@ pub fn map_state(
         }
         visible
             .populations
-            .insert(row.abstract_population.clone(), image);
+            .insert(row.abstract_population().clone(), image);
     }
     if let Some(failure) = outcomes.first() {
         return Err(failure);
@@ -295,25 +294,18 @@ pub fn map_state(
 }
 
 /// The model-node digest order FR-140 uses for the population rows it reads.
-fn ordered_populations(mut populations: Vec<&PopulationRow>) -> Vec<&PopulationRow> {
-    populations.sort_by_key(|row| row.order_key.clone());
+fn ordered_populations(
+    mut populations: Vec<&dyn PopulationMapping>,
+) -> Vec<&dyn PopulationMapping> {
+    populations.sort_by_key(|row| row.order_key().clone());
     populations
 }
 
 /// The identities of the two domain packages `refinement` maps between,
 /// concrete first, read off the declarations its rows name; `None` for a
 /// refinement with no population or object row.
-pub(crate) fn subject_models(refinement: &CheckedRefinement) -> Option<(&str, &str)> {
-    if let Some(row) = refinement.populations().first() {
-        return Some((
-            &row.concrete_population.package,
-            &row.abstract_population.package,
-        ));
-    }
-    refinement
-        .objects()
-        .first()
-        .map(|row| (&*row.concrete_type.package, &*row.abstract_type.package))
+pub(crate) fn subject_models(refinement: &dyn RefinementRead) -> Option<(&str, &str)> {
+    refinement.subject_models()
 }
 
 /// Check that `concrete_system` is over the refinement's concrete model and
@@ -323,7 +315,7 @@ pub(crate) fn subject_models(refinement: &CheckedRefinement) -> Option<(&str, &s
     reason = "FR-140 fixes MappingFailure's shape: a row, an object and the evaluator's cause"
 )]
 fn check_systems(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
     abstract_system: &ModelSystem<'_>,
 ) -> Result<(), MappingFailure> {
@@ -382,26 +374,25 @@ fn unmapped(concrete_type: &DeclarationKey, at: ObjectKey) -> MappingFailure {
     reason = "FR-140 fixes MappingFailure's shape: a row, an object and the evaluator's cause"
 )]
 fn map_object(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
     abstract_system: &ModelSystem<'_>,
     observed: &StateObservation,
-    (object_row, at): (&ObjectRow, &ObjectKey),
+    (object_row, at): (&dyn ObjectMapping, &ObjectKey),
     outcomes: &mut Outcomes,
 ) -> Result<Option<StateObject>, MappingFailure> {
     let receiver = concrete_system
-        .object_reference(&object_row.concrete_type, &at.key)
+        .object_reference(object_row.concrete_type(), &at.key)
         .map_err(|_| MappingFailure::Fault(BROKEN_INVARIANT))?;
     let declared = abstract_system
-        .fields_of(&object_row.abstract_type)
+        .fields_of(object_row.abstract_type())
         .ok_or(MappingFailure::Fault(BROKEN_INVARIANT))?;
-    let mut rows: Vec<(&FieldRow, &StateField)> = object_row
-        .fields
-        .iter()
+    let mut rows: Vec<(&dyn FieldMapping, &StateField)> = object_row
+        .fields()
         .map(|row| {
             declared
                 .iter()
-                .find(|field| field.key == row.field)
+                .find(|field| &field.key == row.field())
                 .map(|field| (row, field))
                 .ok_or(MappingFailure::Fault(BROKEN_INVARIANT))
         })
@@ -410,9 +401,10 @@ fn map_object(
     let mut fields = BTreeMap::new();
     let mut mapped = true;
     for (row, field) in rows {
-        let reading = concrete_system
-            .read_row(
-                &row.expression,
+        let reading = row
+            .expression()
+            .read(
+                concrete_system,
                 observed,
                 vec![Value::Reference(receiver.clone())],
             )
@@ -441,7 +433,7 @@ fn map_object(
         };
         match lift_field(refinement, concrete_system, abstract_system, field, value) {
             Ok(Some(lifted)) => {
-                fields.insert(row.field.clone(), lifted);
+                fields.insert(row.field().clone(), lifted);
             }
             Ok(None) => {}
             Err(Lifting::Unmapped(concrete_type)) => {
@@ -457,21 +449,21 @@ fn map_object(
         }
     }
     Ok(mapped.then(|| StateObject {
-        type_identity: object_row.abstract_type.clone(),
+        type_identity: object_row.abstract_type().clone(),
         fields,
     }))
 }
 
-fn field_ref(object_row: &ObjectRow, row: &FieldRow) -> MappingRowRef {
+fn field_ref(object_row: &dyn ObjectMapping, row: &dyn FieldMapping) -> MappingRowRef {
     MappingRowRef::Field {
-        object_type: object_row.abstract_type.clone(),
-        field: row.field.clone(),
+        object_type: object_row.abstract_type().clone(),
+        field: row.field().clone(),
     }
 }
 
 fn undetermined(
-    object_row: &ObjectRow,
-    row: &FieldRow,
+    object_row: &dyn ObjectMapping,
+    row: &dyn FieldMapping,
     at: &ObjectKey,
     cause: EvalFailure,
 ) -> MappingFailure {
@@ -501,7 +493,7 @@ pub(super) enum Lifting {
 /// maps element by element. A reference nested in any other value is not
 /// lifted: FR-135 refuses a row whose type nests one.
 fn lift_field(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
     abstract_system: &ModelSystem<'_>,
     field: &StateField,
@@ -557,7 +549,7 @@ fn unwrap_optional(field: &StateField, value: Value) -> Option<Value> {
 }
 
 fn lift_reference(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
     abstract_system: &ModelSystem<'_>,
     reference: &ObjectReference,
@@ -567,11 +559,10 @@ fn lift_reference(
         .ok_or(Lifting::Fault)?;
     let row = refinement
         .objects()
-        .iter()
-        .find(|row| row.concrete_type == *concrete_type)
+        .find(|row| row.concrete_type() == concrete_type)
         .ok_or_else(|| Lifting::Unmapped(concrete_type.clone()))?;
     abstract_system
-        .object_reference(&row.abstract_type, reference.object().as_str())
+        .object_reference(row.abstract_type(), reference.object().as_str())
         .map_err(|_| Lifting::Fault)
 }
 
@@ -579,7 +570,7 @@ fn lift_reference(
 /// reference with the same key (RM-3), any other value is unchanged. Used for
 /// the receiver and arguments of an abstract-operation `step` row.
 pub(super) fn lift_value(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
     abstract_system: &ModelSystem<'_>,
     value: Value,
@@ -595,6 +586,7 @@ pub(super) fn lift_value(
 
 #[cfg(test)]
 mod tests {
+    use fsl_semantics::check::PopulationRow;
     use ix_trace_rs::trace;
 
     use super::*;
@@ -735,7 +727,7 @@ mod tests {
             },
         };
         let ordered = ordered_populations(vec![&later_digest, &earlier_digest]);
-        assert_eq!(ordered[0].abstract_population.node, "z");
-        assert_eq!(ordered[1].abstract_population.node, "a");
+        assert_eq!(ordered[0].abstract_population().node, "z");
+        assert_eq!(ordered[1].abstract_population().node, "a");
     }
 }

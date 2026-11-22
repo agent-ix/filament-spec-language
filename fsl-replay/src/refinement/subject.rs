@@ -9,6 +9,7 @@
 //! each abstract population's universe is the concrete universe of its
 //! source population (ADR-020 RM-2).
 
+use super::read::{RefinementRead, RefinementWorld};
 use fsl_eval::model_subject::{
     CapacityBinding, ModelInstance, ModelSubject, ProtocolSubject, RoleBinding,
 };
@@ -17,8 +18,7 @@ use fsl_eval::simulation::protocol::{
     Capacities, CapacityRefusal, ResolvedMemory, UnboundCapacity,
 };
 use fsl_eval::simulation::ExpansionStop;
-use fsl_package::CheckedPackage;
-use fsl_semantics::check::{AbstractSide, CheckedRefinement};
+use fsl_semantics::check::AbstractSide;
 
 use fsl_semantics::model::observation::{AdmissionFailure, DocumentRef, SelectedAnchor};
 use fsl_semantics::model::state::ModelState;
@@ -114,9 +114,9 @@ pub struct RefinementSystems<'a> {
 /// [`SubjectRefusal`] when a system does not admit, a universe cannot be
 /// derived or the concrete subject is a protocol.
 pub fn open_systems<'a>(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     concrete: &ModelSimulationRequest<'a>,
-    abstract_package: &'a CheckedPackage,
+    abstract_package: &'a dyn RefinementWorld,
     abstract_initial: impl Into<AbstractInitial>,
 ) -> Result<RefinementSystems<'a>, SubjectRefusal> {
     open_systems_inner(
@@ -140,9 +140,9 @@ pub fn open_systems<'a>(
 /// [`ProtocolSystemsRefusal::UnboundCapacity`] for a capacity name it leaves
 /// unbound, before the protocol system is built.
 pub fn open_protocol_systems<'a>(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     concrete: &ModelSimulationRequest<'a>,
-    abstract_package: &'a CheckedPackage,
+    abstract_package: &'a dyn RefinementWorld,
     abstract_initial: impl Into<AbstractInitial>,
     over: ModelInstance,
     capacities: &[CapacityBinding],
@@ -160,6 +160,8 @@ pub fn open_protocol_systems<'a>(
         return Err(SubjectRefusal::ProtocolAbstractSide.into());
     };
     let protocol = abstract_package
+        .source_package()
+        .ok_or(SubjectRefusal::ProtocolAbstractSide)?
         .graph()
         .protocol(clause)
         .ok_or(SubjectRefusal::ProtocolAbstractSide)?;
@@ -223,9 +225,9 @@ pub fn open_protocol_systems<'a>(
 }
 
 fn open_systems_inner<'a>(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     concrete: &ModelSimulationRequest<'a>,
-    abstract_package: &'a CheckedPackage,
+    abstract_package: &'a dyn RefinementWorld,
     abstract_initial: AbstractInitial,
     allow_protocol: bool,
 ) -> Result<RefinementSystems<'a>, SubjectRefusal> {
@@ -239,14 +241,13 @@ fn open_systems_inner<'a>(
         subject_models(refinement).ok_or(SubjectRefusal::NoModels)?;
     let universes = refinement
         .populations()
-        .iter()
         .map(|row| {
             concrete
                 .universes
                 .iter()
-                .find(|universe| universe.population == row.concrete_population)
+                .find(|universe| &universe.population == row.concrete_population())
                 .map(|universe| PopulationUniverse {
-                    population: row.abstract_population.clone(),
+                    population: row.abstract_population().clone(),
                     keys: universe.keys.clone(),
                 })
                 .ok_or(SubjectRefusal::NoUniverse)
@@ -258,7 +259,7 @@ fn open_systems_inner<'a>(
         AbstractInitial::Mapped => (Vec::new(), true),
     };
     let abstract_request = ModelSimulationRequest {
-        input: fsl_eval::simulation::model::ModelCheckInput::source(abstract_package),
+        input: abstract_package.refinement_input(),
         packages: concrete.packages,
         normalization: concrete.normalization,
         snapshots: concrete.snapshots,
@@ -294,7 +295,7 @@ fn open_systems_inner<'a>(
 /// state can give several abstract states, and none when the image violates
 /// the abstract constraint (the initial check then refutes at position 0).
 fn mapped_initial(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     concrete: &ModelSystem<'_>,
     abstract_system: &ModelSystem<'_>,
 ) -> Result<Vec<(ModelState, SelectedAnchor)>, SubjectRefusal> {

@@ -99,6 +99,29 @@ impl ModelSystem<'_> {
         reading(&evaluation.outcome)
     }
 
+    /// Read an admitted package mapping expression against this system's
+    /// generated observation, borrowing the already constructed model world.
+    ///
+    /// # Errors
+    /// Returns the same evaluator invariant fault as [`Self::read_row`].
+    pub fn read_package_refinement_row(
+        &self,
+        world: &fsl_package::BareWorld,
+        expression: &fsl_package::ReaderProtocolProjection,
+        observed: &StateObservation,
+        bindings: Vec<Value>,
+    ) -> Result<RowReading, ExpansionStop> {
+        let evaluation = crate::value::evaluate_bare_refinement_row(
+            world,
+            expression,
+            observed.environment(),
+            bindings,
+            &mut Meter::new(self.meter),
+        )
+        .map_err(|_| stop(BROKEN))?;
+        reading(&evaluation.outcome)
+    }
+
     /// The synthesized observation of `state`, built once for every row read
     /// over it.
     ///

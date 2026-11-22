@@ -44,8 +44,6 @@ use fsl_eval::simulation::model::{
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{TransitionSystem, BOUND_POSITIONS};
 use fsl_eval::temporal::UndefinedCause;
-use fsl_package::CheckedPackage;
-use fsl_semantics::check::CheckedRefinement;
 use serde::{Serialize, Serializer};
 
 use crate::certificate::check::{
@@ -380,12 +378,12 @@ fn undefined_cause_kind(cause: &UndefinedCause) -> &'static str {
 /// subjects, re-opened by the checker itself.
 pub struct SimulationCertificateRequest<'a> {
     /// The checked refinement (FR-135).
-    pub refinement: &'a CheckedRefinement,
+    pub refinement: &'a dyn crate::RefinementRead,
     /// The concrete subject's request, under the meter the check evaluates
     /// each clause with.
     pub concrete: ModelSimulationRequest<'a>,
     /// The package that holds the abstract model.
-    pub abstract_package: &'a CheckedPackage,
+    pub abstract_package: &'a dyn crate::RefinementWorld,
     /// The abstract subject's initial states: its FR-106 snapshots, or the
     /// mapping's image of the concrete initial states.
     pub abstract_initial: crate::refinement::AbstractInitial,
@@ -482,7 +480,7 @@ struct Known {
 }
 
 struct Run<'r, 'a> {
-    refinement: &'r CheckedRefinement,
+    refinement: &'r dyn crate::refinement::RefinementRead,
     concrete: &'r ModelSystem<'a>,
     abstract_system: &'r ModelSystem<'a>,
     certificate: &'r SimulationCertificate,

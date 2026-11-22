@@ -186,3 +186,121 @@ fn indexed_reads_outside_hyper_keep_the_defined_boundary_cause() {
 
 #[path = "refinement_remaining_source_routes.rs"]
 mod remaining;
+
+/// The same model-to-model refinement must retain its entire certified record
+/// when its emitted package is the only remaining program representation.
+/// This compares public records under identical default engine limits; it does
+/// not claim to measure internal charges, which these records do not expose.
+#[test]
+#[trace("FR-940", "FR-630", "FR-144", "FR-149")]
+fn identity_refinement_package_matches_source_without_source() {
+    refinement_package_matches_source_without_source("refinement");
+}
+
+/// A refinement declaration cannot stand in for a different temporal property.
+/// Both routes retain their exact refusal after all source files are removed.
+#[test]
+#[trace("FR-940", "FR-630", "FR-626")]
+fn unrelated_temporal_kinds_do_not_run_package_refinement() {
+    for item_kind in ["deadlock-freedom", "time-lock-freedom", "race-freedom"] {
+        refinement_package_matches_source_without_source(item_kind);
+    }
+}
+
+fn refinement_package_matches_source_without_source(item_kind: &str) {
+    use fsl_foundation::source::SourceLabel;
+    use serde_json::{json, Value};
+
+    let directory = tempfile::tempdir().unwrap();
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let source_path = directory.path().join("unit.native");
+    std::fs::copy(corpus().join("refinement-identity.native"), &source_path).unwrap();
+    let mut request: Value = serde_json::from_slice(
+        &std::fs::read(corpus().join("refinement-identity.analyze.json")).unwrap(),
+    )
+    .unwrap();
+    request["request"]["program"]["source"]["file"] = json!("unit.native");
+    request["request"]["models"][0]["source"]["file"] =
+        json!(root.join("fsl-conformance/cases/counter-step-package.json"));
+    request["request"]["documents"][0]["file"] =
+        json!(root.join("fsl-conformance/cases/counter-step-v0.json"));
+    request["request"]["items"][0]["temporal"]["item_kind"] = json!(item_kind);
+    let source_request = directory.path().join("source.json");
+    std::fs::write(&source_request, serde_json::to_vec(&request).unwrap()).unwrap();
+    let prepared = command::prepare_analyze(&source_request, command::RunLimits::default())
+        .expect("the actual source request prepares")
+        .into_input();
+    let package_name = prepared
+        .source
+        .source()
+        .identity()
+        .label(SourceLabel::Identity)
+        .to_owned();
+    let source = command::analyze(&source_request, &crate::negotiation::Fr290, &Cancel::new())
+        .expect("source refinement analysis settles before package comparison");
+    let source_value = source.value.as_value().clone();
+    if item_kind == "refinement" {
+        assert_eq!(source.exit_code, 0, "source fixture: {source_value}");
+        assert_eq!(source_value["items"][0]["record"]["result"], "proved");
+        assert_eq!(
+            source_value["items"][0]["record"]["certification"],
+            "certified"
+        );
+        assert_eq!(
+            source_value["items"][0]["record"]["backend"],
+            fsl_analyze::model_check::manifest::BACKEND_ID,
+            "the fixture selects EN-1's actual refinement checker: {source_value}"
+        );
+    } else {
+        let (exit, cause) = match item_kind {
+            "deadlock-freedom" | "time-lock-freedom" => (20, "unknown-claim"),
+            "race-freedom" => (21, "unsupported-requested-capability"),
+            other => panic!("uncovered temporal item kind {other}"),
+        };
+        assert_eq!(source.exit_code, exit, "{item_kind}: {source_value}");
+        let item = &source_value["items"][0];
+        assert_eq!(
+            item["record"]["diagnostic"]["cause"], cause,
+            "{source_value}"
+        );
+        assert!(item["certificate"].is_null(), "{source_value}");
+        assert!(item["counterexample"].is_null(), "{source_value}");
+        assert!(item["replay"].is_null(), "{source_value}");
+    }
+
+    let compile = json!({"format": "native-compile/1", "request": {
+        "program": request["request"]["program"],
+        "models": request["request"]["models"],
+        "output": {"package": "package.json"},
+        "handoff": {"directory": "handoff", "package_name": package_name,
+            "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}
+    }});
+    let compile_path = directory.path().join("compile.json");
+    std::fs::write(&compile_path, serde_json::to_vec(&compile).unwrap()).unwrap();
+    command::compile(&compile_path).expect("the actual refinement emits its handoff");
+    std::fs::remove_file(&source_path).unwrap();
+    let handoff_sources = directory.path().join("handoff/sources");
+    if handoff_sources.exists() {
+        std::fs::remove_dir_all(&handoff_sources).unwrap();
+    }
+    assert!(!source_path.exists());
+    assert!(!handoff_sources.exists());
+
+    request["request"]
+        .as_object_mut()
+        .unwrap()
+        .remove("program");
+    request["request"]["package"] = json!({"directory": "handoff"});
+    let package_request = directory.path().join("package-request.json");
+    std::fs::write(&package_request, serde_json::to_vec(&request).unwrap()).unwrap();
+    let (package_exit, package_value) =
+        match command::analyze(&package_request, &crate::negotiation::Fr290, &Cancel::new()) {
+            Ok(output) => (output.exit_code, output.value.as_value().clone()),
+            Err(error) => (error.category().exit_code(), error.value().unwrap()),
+        };
+    assert_eq!(
+        package_exit, source.exit_code,
+        "source: {source_value}; package: {package_value}"
+    );
+    assert_eq!(package_value, source_value);
+}

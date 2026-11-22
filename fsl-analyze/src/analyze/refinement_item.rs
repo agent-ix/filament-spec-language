@@ -106,8 +106,8 @@ pub(super) fn refinement_item<'a>(
 
 /// FR-142/FR-143's run of `refinement` and FR-144's settlement of it.
 fn run(
-    refinement: &CheckedRefinement,
-    package: &CheckedPackage,
+    refinement: &dyn fsl_replay::RefinementRead,
+    package: &dyn fsl_replay::RefinementWorld,
     concrete: &ModelSimulationRequest<'_>,
     abstract_initial: AbstractInitial,
     form: &TemporalItem,
@@ -170,7 +170,7 @@ fn run(
 /// occurrence (role `generated`, ordinal 0 for `Initial`, row position + 1
 /// for a `Step`).
 fn counterexample_steps(
-    refinement: &CheckedRefinement,
+    refinement: &dyn fsl_replay::RefinementRead,
     systems: &fsl_replay::RefinementSystems<'_>,
     mapped: &[ModelState],
 ) -> Result<Value, fsl_replay::ReplayRefusal> {
@@ -190,12 +190,84 @@ fn counterexample_steps(
         })
         .collect::<Result<Vec<_>, fsl_replay::ReplayRefusal>>()?;
     let records: Vec<Value> = refinement
-        .step_simulations()
-        .iter()
-        .map(|entry| {
-            json!({"role": entry.occurrence().origin().role().to_string(),
-                "ordinal": entry.occurrence().origin().ordinal()})
-        })
+        .step_simulation_occurrences()
+        .map(|(role, ordinal)| json!({"role": role, "ordinal": ordinal}))
         .collect();
     Ok(json!({"steps": positions, "step_simulations": records}))
+}
+
+/// A model refinement executed from its admitted byte rows and existing model input.
+pub(super) struct PackageRefinementSubject<'a> {
+    input: &'a fsl_eval::simulation::model::PackageModelInput<'a>,
+    refinement: fsl_replay::PackageRefinement<'a>,
+    binding: SubjectBinding<'a>,
+    limits: AnalyzeLimits,
+    claim: OccurrenceKey,
+    form: TemporalItem,
+}
+
+impl<'a> PackageRefinementSubject<'a> {
+    pub(super) fn new(
+        input: &'a fsl_eval::simulation::model::PackageModelInput<'a>,
+        declaration: &fsl_package::CheckedNodeId,
+        binding: SubjectBinding<'a>,
+        limits: AnalyzeLimits,
+        claim: OccurrenceKey,
+    ) -> Result<Self, fsl_replay::PackageRefinementRefusal> {
+        use fsl_package::AnalysisView;
+        let view = input
+            .package()
+            .refinement(declaration)
+            .map_err(|refusal| fsl_replay::PackageRefinementRefusal::Unsupported(refusal.fact))?;
+        let refinement = fsl_replay::PackageRefinement::read(view, input.package(), input)?;
+        Ok(Self {
+            input,
+            refinement,
+            binding,
+            limits,
+            claim,
+            form: TemporalItem::default(),
+        })
+    }
+
+    pub(super) fn configured(mut self, form: TemporalItem) -> Self {
+        self.form = form;
+        self
+    }
+
+    pub(super) fn item(self, index: RequestIndex) -> AnalyzeItem<'a> {
+        let claim = self.claim.clone();
+        AnalyzeItem::new(
+            index,
+            Capability::TemporalSatisfaction,
+            Some(DeclarationFamily::RelationClaim),
+            fsl_route::Mode::Bounded,
+            en1::BACKEND_ID,
+            move |cancel| {
+                let concrete = ModelSimulationRequest {
+                    input: self.input.input(),
+                    packages: self.binding.packages,
+                    normalization: self.limits.normalization,
+                    snapshots: self.binding.snapshots,
+                    initial: self.binding.initial.clone(),
+                    universes: self.binding.universes.clone(),
+                    observation: self.limits.observation,
+                    expansion: ExpansionLimits {
+                        max_candidates: self.form.max_candidates,
+                    },
+                    meter: self.limits.accounting,
+                    emit: self.limits.emit,
+                };
+                run(
+                    &self.refinement,
+                    self.input,
+                    &concrete,
+                    AbstractInitial::from(self.form.abstract_initial.clone()),
+                    &self.form,
+                    cancel,
+                )
+            },
+        )
+        .claimed(claim)
+    }
 }

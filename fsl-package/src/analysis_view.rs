@@ -64,6 +64,17 @@ pub trait AnalysisView: sealed::Sealed {
     /// The admitted package every other accessor reads.
     fn package(&self) -> &CheckedPackageV2;
 
+    /// Borrow the original admitted model-refinement rows of this selected node.
+    ///
+    /// # Errors
+    /// Refuses each unsupported protocol, history, fairness or external-owner form by name.
+    fn refinement<'p>(
+        &'p self,
+        node: &CheckedNodeId,
+    ) -> Result<crate::RefinementView<'p>, crate::RefinementViewRefusal> {
+        crate::refinement_view::refinement_view(self.package(), node)
+    }
+
     /// The package's identity: its admitted `name()`, which the strict
     /// reader keeps nonempty (FR-940 `identity`).
     fn identity(&self) -> &LibraryName;

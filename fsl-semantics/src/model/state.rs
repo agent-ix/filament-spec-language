@@ -1076,6 +1076,34 @@ impl StateModel {
             .find_map(|view| view.declaration_key(identity.clone()))
     }
 
+    /// The original operation member declared by `owner` under `name`.
+    /// This borrows the retained normalized domain records; it creates no
+    /// declaration, type identity or operation binding.
+    pub fn operation_declaration(
+        &self,
+        owner: &DeclarationKey,
+        name: &str,
+    ) -> Option<&crate::model::domain_package::OperationMemberRecord> {
+        let mut found = self
+            .views
+            .iter()
+            .flat_map(|view| &view.view.domain_package().records)
+            .filter_map(|record| match record {
+                DomainPackageRecord::OperationMember(operation)
+                    if &operation.owner == owner
+                        && crate::model::intake::member_identity_name(
+                            &owner.node,
+                            &operation.key.node,
+                        ) == Some(name) =>
+                {
+                    Some(operation)
+                }
+                _ => None,
+            });
+        let first = found.next()?;
+        found.next().is_none().then_some(first)
+    }
+
     /// Whether the object type `key` is declared abstract.
     pub fn is_abstract(&self, key: &DeclarationKey) -> bool {
         self.views

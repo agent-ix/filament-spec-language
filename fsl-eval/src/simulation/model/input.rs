@@ -593,6 +593,17 @@ pub struct PackageModelInput<'p> {
 }
 
 impl<'p> PackageModelInput<'p> {
+    /// Borrow the world constructed by this input's original admission.
+    /// No declaration, type environment or budget is rebuilt for mapping rows.
+    pub fn refinement_world(&self) -> &fsl_package::BareWorld {
+        &self.world
+    }
+
+    /// Borrow the normalized model retained by the original input admission.
+    pub fn refinement_model(&self) -> &StateModel {
+        &self.model
+    }
+
     /// The package route's input over `package`, whose supply was attached
     /// (FR-517 handoff identity rows, FR-531), with the domain package
     /// documents `packages` bound to its model selections (FR-850

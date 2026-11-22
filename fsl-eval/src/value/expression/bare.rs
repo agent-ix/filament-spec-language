@@ -54,6 +54,29 @@ pub fn evaluate_bare_expression(
     .run_frame(ReaderNode::root(expression), frame)
 }
 
+/// Evaluate an admitted refinement row over the existing model world's
+/// generated observation and original parameter values.
+///
+/// This borrows the world's already constructed declarations and uses the
+/// caller's meter through the same machine entry as a source refinement row.
+///
+/// # Errors
+/// Returns the evaluator's invariant fault without a fallback value.
+pub fn evaluate_bare_refinement_row(
+    world: &BareWorld,
+    expression: &fsl_package::ReaderProtocolProjection,
+    current: &ObjectEnvironment,
+    bindings: Vec<Value>,
+    meter: &mut Meter,
+) -> Result<Evaluation, InternalFault> {
+    let reads = BTreeMap::new();
+    Machine::with_world(World::Bytes(world), current, None, Some(&reads), meter, &[]).run(
+        ReaderNode::root(expression),
+        expression.frame_slots(),
+        bindings,
+    )
+}
+
 /// A selection or projection refusal as the call reports it (FR-533
 /// "Refusals and loci of the bare slot call"): a witness refusal at the
 /// `Package` locus, an unsupported projection at its `Node` locus, a missing

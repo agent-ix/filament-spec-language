@@ -17,12 +17,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use super::read::RefinementRead;
 use filament_exact::{ObjectReference, Value};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{
     operation_identity_text, ModelSimState, ModelSystem, ResolvedStep, RowReading,
 };
-use fsl_semantics::check::{CheckedRefinement, HistoryRow};
+use fsl_semantics::check::HistoryRow;
 use fsl_semantics::model::state::ModelState;
 
 use super::map::{
@@ -113,7 +114,7 @@ impl HistoryValues {
 /// The history values `state` starts with: every object of a type with a
 /// history row holds the row's initial literal.
 pub fn initial_history(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
     state: &ModelState,
 ) -> HistoryValues {
@@ -129,7 +130,7 @@ pub fn initial_history(
 /// literal for an object it does not know. An object `state` lacks loses its
 /// values.
 fn carried(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     system: &ModelSystem<'_>,
     kept: &HistoryValues,
     state: &ModelState,
@@ -189,7 +190,7 @@ fn update_of<'r>(
 /// applies, which is when a step must be resolved to its receiver and
 /// arguments.
 pub(super) fn has_update(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     transition: &ModelTransition,
 ) -> Result<bool, filament_semantic_value::catalog::CatalogCode> {
     for row in refinement.history() {
@@ -214,7 +215,7 @@ pub(super) fn has_update(
     reason = "FR-140 fixes MappingFailure's shape: a row, an object and the evaluator's cause"
 )]
 pub(super) fn advance(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     system: &ModelSystem<'_>,
     history: &HistoryValues,
     (pre, post): (&ModelState, &ModelSimState),
@@ -336,7 +337,7 @@ pub(super) fn advance(
     reason = "FR-140 fixes MappingFailure's shape: a row, an object and the evaluator's cause"
 )]
 pub fn step_history(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
     history: &HistoryValues,
     pre: &ModelState,

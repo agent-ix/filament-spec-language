@@ -35,10 +35,10 @@ pub use slot_admission::object_environment_refusal;
 use slot_supply::SourceView;
 mod value_invariants;
 
-pub use bare::evaluate_bare_expression;
 pub(crate) use bare::evaluate_generated_package_protocol_slot;
 pub use bare::evaluate_selected_protocol_slot as bare_evaluate_selected_protocol_slot;
 pub(crate) use bare::post_targets as bare_post_targets;
+pub use bare::{evaluate_bare_expression, evaluate_bare_refinement_row};
 pub use bare::{evaluate_frame as bare_evaluate_frame, PackageOperations, ProjectedReward};
 pub(crate) use bare::{
     evaluate_probability_predicate as evaluate_bare_probability_predicate,

@@ -16,6 +16,7 @@
 //! mapped post-state may take, and the set after it is the union of the
 //! accepted ones.
 
+use super::read::{MappingExpression, MappingTarget as StepTarget, RefinementRead, StepMapping};
 use filament_checked::key::DeclarationKey;
 use filament_exact::{ObjectReference, Value};
 use filament_semantic_value::catalog::InternalFault;
@@ -25,7 +26,7 @@ use fsl_eval::simulation::model::{
     ModelSystem, Rejection, ResolvedStep, RowReading,
 };
 use fsl_eval::simulation::{ExpansionLimit, ExpansionStop};
-use fsl_semantics::check::{CheckedRefinement, CheckedRow, StepClass, StepRow, StepTarget};
+use fsl_semantics::check::StepClass;
 use fsl_semantics::model::state::ModelState;
 
 use crate::model_check::counterexample::{
@@ -94,15 +95,14 @@ fn undefined(evaluation: UndefinedEvaluation) -> StepVerdict {
 
 /// `state` without its hidden fields: the part of an abstract state a
 /// mapping gives (AX-2), which every member of a candidate set shares.
-fn visible_part(refinement: &CheckedRefinement, state: &ModelState) -> ModelState {
+fn visible_part(refinement: &dyn RefinementRead, state: &ModelState) -> ModelState {
     let mut visible = state.clone();
     for objects in visible.populations.values_mut() {
         for object in objects.values_mut() {
             let hidden = refinement
                 .objects()
-                .iter()
-                .find(|row| row.abstract_type == object.type_identity)
-                .map(|row| row.hidden.as_slice())
+                .find(|row| row.abstract_type() == &object.type_identity)
+                .map(|row| row.hidden())
                 .unwrap_or_default();
             for field in hidden {
                 object.fields.remove(field);
@@ -136,7 +136,7 @@ fn sorted(
 ///
 /// `Passes` carries `Taken::Stutter`: an initial state takes no step.
 pub fn check_initial(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
     abstract_system: &ModelSystem<'_>,
     index: usize,
@@ -191,7 +191,7 @@ pub fn check_initial(
 /// The outcome also counts every abstract transition identity the check
 /// judged or expanded, which FR-142 adds to the run's `max_transitions`.
 pub fn check_step(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
     abstract_system: &ModelSystem<'_>,
     pre: &RefinementPosition,
@@ -208,7 +208,7 @@ pub fn check_step(
 }
 
 fn check_step_inner(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
     abstract_system: &ModelSystem<'_>,
     pre: &RefinementPosition,
@@ -234,7 +234,7 @@ fn check_step_inner(
 /// FR-148 PR-3: map a concrete initial state to the abstract protocol's
 /// initial roots, then close those roots over its admitted internal classes.
 pub fn check_protocol_initial(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
     abstract_system: &ModelSystem<'_>,
     protocol: &AbstractProtocolSystem<'_>,
@@ -321,7 +321,7 @@ pub fn check_protocol_initial(
 /// Model operation matching reuses FR-141's argument evaluation and contract
 /// decisions; the protocol expansion then retains matching protocol steps.
 pub fn check_protocol_step(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
     abstract_system: &ModelSystem<'_>,
     protocol: &AbstractProtocolSystem<'_>,
@@ -331,7 +331,7 @@ pub fn check_protocol_step(
     let row = step
         .transition
         .and_then(|transition| step_row(refinement, transition));
-    let protocol_node = row.is_some_and(|row| matches!(&row.target, StepTarget::Node { .. }));
+    let protocol_node = row.is_some_and(|row| matches!(row.target(), StepTarget::Node { .. }));
     let model_result = check_step_inner(
         refinement,
         concrete_system,
@@ -358,7 +358,7 @@ pub fn check_protocol_step(
     let row = step
         .transition
         .and_then(|transition| step_row(refinement, transition));
-    if row.is_some_and(|row| matches!(&row.target, StepTarget::Any)) {
+    if row.is_some_and(|row| matches!(row.target(), StepTarget::Any)) {
         return check_protocol_any_step(
             refinement,
             abstract_system,
@@ -523,7 +523,7 @@ pub fn check_protocol_step(
     reason = "this is one FR-148 step decision over the shared protocol product context"
 )]
 fn check_protocol_any_step(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     abstract_system: &ModelSystem<'_>,
     protocol: &AbstractProtocolSystem<'_>,
     pre: &RefinementPosition,
@@ -696,7 +696,7 @@ fn check_protocol_any_step(
     reason = "the node row needs both admitted systems and the concrete step context"
 )]
 fn check_protocol_node_step(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
     abstract_system: &ModelSystem<'_>,
     protocol: &AbstractProtocolSystem<'_>,
@@ -721,7 +721,7 @@ fn check_protocol_node_step(
         protocol: target_protocol,
         node,
         arguments: _,
-    } = &row.target
+    } = row.target()
     else {
         return StepResult {
             verdict: fault("a-protocol-node-row-names-a-node"),
@@ -952,7 +952,7 @@ fn protocol_node_arguments_match(
 }
 
 fn protocol_closure(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     system: &AbstractProtocolSystem<'_>,
     seeds: Vec<ProtocolCandidate>,
 ) -> Result<(Vec<ProtocolCandidate>, u64), StepVerdict> {
@@ -1008,7 +1008,7 @@ fn make_protocol_trace(
 }
 
 fn protocol_closure_traces(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     system: &AbstractProtocolSystem<'_>,
     seeds: Vec<ProtocolTrace>,
 ) -> Result<(Vec<ProtocolTrace>, u64), Box<StepVerdict>> {
@@ -1200,7 +1200,7 @@ pub(crate) fn stop_verdict(system: &ModelSystem<'_>, stop: ExpansionStop) -> Ste
 }
 
 fn decide_step(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
     abstract_system: &ModelSystem<'_>,
     pre: &RefinementPosition,
@@ -1219,10 +1219,10 @@ fn decide_step(
         },
     };
     let applies = matches!(
-        row.map(|row| &row.target),
+        row.map(|row| row.target()),
         Some(StepTarget::Abstract { .. })
     ) || (allow_protocol_node
-        && matches!(row.map(|row| &row.target), Some(StepTarget::Node { .. })));
+        && matches!(row.map(|row| row.target()), Some(StepTarget::Node { .. })));
     // The step's receiver and arguments, found when a row or an update reads
     // them.
     let mut resolved = None;
@@ -1244,7 +1244,7 @@ fn decide_step(
     // the first undetermined one.
     let mut soft = Soft::default();
     let mut arguments = None;
-    if applies && row.is_some_and(|row| matches!(&row.target, StepTarget::Abstract { .. })) {
+    if applies && row.is_some_and(|row| matches!(row.target(), StepTarget::Abstract { .. })) {
         let (Some(row), Some(resolved)) = (row, resolved.as_ref()) else {
             return fault("an-abstract-row-and-resolved-step-exist");
         };
@@ -1351,7 +1351,7 @@ fn decide_step(
             pass_with_states(taken, pre.abstract_states.clone())
         });
     };
-    match &row.target {
+    match row.target() {
         StepTarget::Stutter => {
             let taken = if hidden {
                 match candidate_stutters(abstract_system, &pre.abstract_states) {
@@ -1540,12 +1540,12 @@ fn candidate_stutters(
 
 /// The step row of the operation `transition` applies (FR-136).
 pub(crate) fn step_row<'r>(
-    refinement: &'r CheckedRefinement,
+    refinement: &'r dyn RefinementRead,
     transition: &ModelTransition,
-) -> Option<&'r StepRow> {
-    refinement.steps().iter().find(|row| {
+) -> Option<&'r dyn StepMapping> {
+    refinement.steps().find(|row| {
         // A protocol step row maps no operation transition.
-        let StepClass::Operation(operation) = &row.class else {
+        let StepClass::Operation(operation) = row.class() else {
             return false;
         };
         operation_identity_text(operation).is_ok_and(|text| text == transition.operation())
@@ -1642,7 +1642,7 @@ pub enum ProtocolRelationError {
 /// that product state; a `None` transition is the synthetic terminal stutter
 /// and is not a concrete enabled action.
 pub fn check_protocol_state_relations(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     concrete: &ModelSystem<'_>,
     protocol: &AbstractProtocolSystem<'_>,
     position: &RefinementPosition,
@@ -1651,7 +1651,6 @@ pub fn check_protocol_state_relations(
     position_index: u64,
 ) -> Result<ProtocolStateRelation, ProtocolRelationError> {
     use fsl_eval::simulation::model::TerminalClass;
-    use fsl_semantics::check::StepTarget;
     use std::collections::{BTreeMap, BTreeSet};
 
     let internal: BTreeSet<&str> = refinement
@@ -1666,7 +1665,7 @@ pub fn check_protocol_state_relations(
             continue;
         };
         let row = step_row(refinement, transition);
-        if row.is_some_and(|row| matches!(&row.target, StepTarget::Stutter | StepTarget::Any)) {
+        if row.is_some_and(|row| matches!(row.target(), StepTarget::Stutter | StepTarget::Any)) {
             concrete_stable = false;
         }
         let mut record_visible =
@@ -1876,23 +1875,21 @@ struct Arguments {
 /// arguments (FR-141 "Abstract-operation evaluation"), with the history
 /// values the pre-state holds.
 fn evaluate_arguments(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     (concrete_system, abstract_system): (&ModelSystem<'_>, &ModelSystem<'_>),
     pre: &RefinementPosition,
     step: &ConcreteStep<'_>,
-    (row, resolved): (&StepRow, &ResolvedStep),
+    (row, resolved): (&dyn StepMapping, &ResolvedStep),
 ) -> Result<(Option<Arguments>, Soft), StepVerdict> {
-    let StepRow {
-        class: StepClass::Operation(concrete_operation),
-        target:
-            StepTarget::Abstract {
-                receiver,
-                arguments,
-                binds_result,
-                ..
-            },
+    let StepClass::Operation(concrete_operation) = row.class() else {
+        return Err(fault("an-abstract-row-names-an-operation"));
+    };
+    let StepTarget::Abstract {
+        receiver,
+        arguments,
+        binds_result,
         ..
-    } = row
+    } = row.target()
     else {
         return Err(fault("an-abstract-row-names-an-operation"));
     };
@@ -1908,68 +1905,70 @@ fn evaluate_arguments(
     let mut bindings = vec![Value::Reference(resolved.receiver.clone())];
     bindings.extend(resolved.arguments.iter().cloned());
     let object = object_of(concrete_system, &pre.concrete, &resolved.receiver);
-    let evaluate =
-        |expression: &CheckedRow, argument: StepArgument| -> Result<Value, StepVerdict> {
-            let at = MappingRowRef::Argument {
-                operation: concrete_operation.clone(),
-                argument,
-            };
-            match concrete_system.read_row(expression, &observed, bindings.clone()) {
-                Err(_) => Err(fault("argument-row-evaluates")),
-                Ok(RowReading::Value(value)) => {
-                    lift_value(refinement, concrete_system, abstract_system, value).map_err(
-                        |lifting| match lifting {
-                            Lifting::Unmapped(concrete_type) => StepVerdict::Undetermined(
-                                Undetermined::Mapping(Box::new(MappingUndetermined {
-                                    row: at.clone(),
-                                    object: object.clone(),
-                                    cause: EvalFailure::UnmappedType(concrete_type),
-                                })),
-                            ),
-                            Lifting::Fault => fault("argument-lifts"),
-                        },
-                    )
-                }
-                Ok(RowReading::Undefined(cause)) => {
-                    let Ok((bytes, _)) = concrete_system.state_key_of(step.post.state()) else {
-                        return Err(fault("post-state-encodes"));
-                    };
-                    Err(undefined(UndefinedEvaluation {
-                        site: UndefinedSite {
-                            position: step.position,
-                            state_key: fsl_eval::simulation::StateKey::from_canonical_bytes(bytes),
-                            locus: UndefinedLocus::Mapping(Box::new(MappingSite {
-                                row: at,
+    let evaluate = |expression: &dyn MappingExpression,
+                    argument: StepArgument|
+     -> Result<Value, StepVerdict> {
+        let at = MappingRowRef::Argument {
+            operation: concrete_operation.clone(),
+            argument,
+        };
+        match expression.read(concrete_system, &observed, bindings.clone()) {
+            Err(_) => Err(fault("argument-row-evaluates")),
+            Ok(RowReading::Value(value)) => {
+                lift_value(refinement, concrete_system, abstract_system, value).map_err(|lifting| {
+                    match lifting {
+                        Lifting::Unmapped(concrete_type) => StepVerdict::Undetermined(
+                            Undetermined::Mapping(Box::new(MappingUndetermined {
+                                row: at.clone(),
                                 object: object.clone(),
+                                cause: EvalFailure::UnmappedType(concrete_type),
                             })),
-                            transition: None,
-                            time: None,
-                        },
-                        cause,
-                    }))
-                }
-                Ok(RowReading::Undetermined(outcome)) => Err(StepVerdict::Undetermined(
-                    Undetermined::Mapping(Box::new(MappingUndetermined {
-                        row: at,
-                        object: object.clone(),
-                        cause: EvalFailure::Evaluation(Box::new(outcome)),
-                    })),
-                )),
+                        ),
+                        Lifting::Fault => fault("argument-lifts"),
+                    }
+                })
             }
-        };
+            Ok(RowReading::Undefined(cause)) => {
+                let Ok((bytes, _)) = concrete_system.state_key_of(step.post.state()) else {
+                    return Err(fault("post-state-encodes"));
+                };
+                Err(undefined(UndefinedEvaluation {
+                    site: UndefinedSite {
+                        position: step.position,
+                        state_key: fsl_eval::simulation::StateKey::from_canonical_bytes(bytes),
+                        locus: UndefinedLocus::Mapping(Box::new(MappingSite {
+                            row: at,
+                            object: object.clone(),
+                        })),
+                        transition: None,
+                        time: None,
+                    },
+                    cause,
+                }))
+            }
+            Ok(RowReading::Undetermined(outcome)) => Err(StepVerdict::Undetermined(
+                Undetermined::Mapping(Box::new(MappingUndetermined {
+                    row: at,
+                    object: object.clone(),
+                    cause: EvalFailure::Evaluation(Box::new(outcome)),
+                })),
+            )),
+        }
+    };
     let mut soft = Soft::default();
-    let mut read =
-        |expression: &CheckedRow, argument: StepArgument| match evaluate(expression, argument) {
-            Ok(value) => Ok(Some(value)),
-            Err(verdict) => soft.record(verdict).map(|()| None),
-        };
+    let mut read = |expression: &dyn MappingExpression, argument: StepArgument| match evaluate(
+        expression, argument,
+    ) {
+        Ok(value) => Ok(Some(value)),
+        Err(verdict) => soft.record(verdict).map(|()| None),
+    };
     let receiver = read(receiver, StepArgument::Receiver)?;
     let mut supplied = Vec::with_capacity(arguments.len());
     let mut complete = receiver.is_some();
     for (index, argument) in arguments.iter().enumerate() {
         match argument {
             None => supplied.push(None),
-            Some(expression) => match read(expression, StepArgument::Parameter(index))? {
+            Some(expression) => match read(*expression, StepArgument::Parameter(index))? {
                 Some(value) => supplied.push(Some(value)),
                 None => complete = false,
             },
@@ -1979,7 +1978,7 @@ fn evaluate_arguments(
         Some(Value::Reference(receiver)) if complete => Some(Arguments {
             receiver,
             supplied,
-            result: if *binds_result {
+            result: if binds_result {
                 resolved.result.clone()
             } else {
                 None
@@ -1992,18 +1991,18 @@ fn evaluate_arguments(
 }
 
 fn evaluate_node_arguments(
-    refinement: &CheckedRefinement,
+    refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
     abstract_system: &ModelSystem<'_>,
     pre: &RefinementPosition,
     step: &ConcreteStep<'_>,
-    row: &StepRow,
+    row: &dyn StepMapping,
     resolved: &ResolvedStep,
 ) -> Result<NodeArgumentValues, StepVerdict> {
-    let StepClass::Operation(concrete_operation) = &row.class else {
+    let StepClass::Operation(concrete_operation) = row.class() else {
         return Err(fault("a-protocol-node-row-is-a-concrete-operation-row"));
     };
-    let StepTarget::Node { arguments, .. } = &row.target else {
+    let StepTarget::Node { arguments, .. } = row.target() else {
         return Err(fault("a-protocol-node-row-targets-a-node"));
     };
     let observed = pre
@@ -2030,7 +2029,7 @@ fn evaluate_node_arguments(
             operation: concrete_operation.clone(),
             argument: StepArgument::Parameter(index),
         };
-        let evaluated = match concrete_system.read_row(expression, &observed, bindings.clone()) {
+        let evaluated = match expression.read(concrete_system, &observed, bindings.clone()) {
             Err(_) => return Err(fault("node-row-argument-evaluates")),
             Ok(RowReading::Value(value)) => {
                 match lift_value(refinement, concrete_system, abstract_system, value) {
