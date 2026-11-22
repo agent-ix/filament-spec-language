@@ -845,7 +845,7 @@ fn run_timed_mean(
     };
     let included = match mean_time_reachable_before_target(&product, &target) {
         Some(included) => included,
-        None => return not_yet(),
+        None => return broken(),
     };
     let included_keys = product
         .states
@@ -871,7 +871,7 @@ fn run_timed_mean(
     targets.dedup();
     let ranking = match mean_time_ranking(&product, &target, &included, &solved.policy) {
         Some(ranking) => ranking,
-        None => return not_yet(),
+        None => return broken(),
     };
     let optimization = match objective {
         UnboundedObjective::Min => ProbabilityObjective::Minimum,
