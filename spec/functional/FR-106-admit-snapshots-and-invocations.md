@@ -453,10 +453,12 @@ origins and producing no partial place table or admitted observation.
 > One population and populations with distinct keys remain supported. This
 > partial boundary leaves the same-key population identity criteria unmet;
 > map-keyed clock identities also remain unsupported.
-> Clock-reference domain enumeration is also deferred: model construction
-> refuses `unknown_required_feature`/`unsupported-feature`, naming
-> `clock-reference-enumeration`, before reward or frame probing. Ordinary
-> native-Clock timed simulation retains its existing bounds and selectors.
+> Clock-reference runtime domain enumeration is required by
+> [FR-1040](FR-1040-check-and-lower-clock-place-references-and-presence-in-population-forms.md)
+> AC-8; it is not a deferred model-construction refusal. The runtime-domain
+> rule below does not establish raw transported Clock-data admission.
+> Ordinary native-Clock timed simulation retains its existing bounds and
+> selectors.
 > An unseeded refinement-row receiver supplies no population authority and
 > is not a v2 Clock-reference producer; seeded clause and protocol inputs
 > remain the supported authority seams.
@@ -495,6 +497,24 @@ origins and producing no partial place table or admitted observation.
 > lookup and no separate evaluation charge; reconstructing a diagnostic
 > path walks only that selected path's actual depth. Typed supplied paths
 > are consumed once into the same backing, and frames share it immutably.
+
+For model-owned runtime Clock-reference values, model construction SHALL
+retain the data domains required by
+[FR-1040](FR-1040-check-and-lower-clock-place-references-and-presence-in-population-forms.md)
+AC-8. Runtime enumeration SHALL derive its candidate place references from
+the selected model's authenticated declared clock places, retaining the
+actual owner universe, population, local key and canonical declared path
+and selectors required above.
+
+When a required finite selector bound is absent, the model bound check
+SHALL return `NotSimulated::RequiresBound`, naming the actual Clock-reference
+domain, as [FR-120](FR-120-simulate-a-checked-package-s-state-family.md)
+requires. A timed model run SHALL apply its existing caller or timed-profile
+selector bounds before enumerating that domain. Enumeration SHALL preserve
+the existing expansion, evaluation and cancellation limits and their typed
+stops; reaching a resource limit SHALL NOT publish a successful truncated
+domain. These runtime rules do not change the raw-data admission boundaries
+above or supply authority to an unseeded refinement-row receiver.
 
 A set, bag or ordered-set value is the native spelling of FSpec FR-181's
 `set`, `bag` and `ordered-set` forms, with FSpec FR-144's "Supplied
@@ -1457,6 +1477,7 @@ completeness.
 | FR-106-AC-75 | A relationship declaration absent from the selected package refuses `invalid-request` at its exact snapshot reference path after read and before resolver evaluation when `call.relationships` is selected; with no correlation selection the same reference keeps `invalid_runtime_input`/`wrong-role-mapping`. | Test (`tests/it/native_run_relationships.rs::unknown_relationship_type_in_correlation_is_invalid_request_after_snapshot_read`, `tests/it/native_run_relationships.rs::unknown_relationship_type_without_correlation_keeps_wrong_role_mapping`) |
 | FR-106-AC-76 | On source and bare checked routes, TC-464 steps 7 and 8 use the same authenticated declarations and actual evaluated references. Raw scalar, present optional and sequence values retain equal full canonical references across routes, including their outer universe; equal local owner keys in two populations remain distinct. With `x` declared before `y`, removing `x`, retaining `y` and preserving scope, population, owner and data-field declarations refuses every stored old `x` reference under AC-73, regardless of internal allocation order; none is admitted as `y`. | Test (TC-464) |
 | FR-106-AC-77 | For each route, TC-464 step 9's declared-table/admission entry over two distinct declaration origins whose normalized scope and full declared path coincide refuses `conflicting_declaration`/`duplicate-declaration`, naming both origins, and produces no partial place table, admitted observation or truth value. Two aliases of the same authenticated declaration and canonical normalized declared path instead supply one table view and admit the otherwise valid snapshot. | Test (TC-464) |
+| FR-106-AC-78 | Over FR-1040-AC-8's timed-refinement fixture with optional Clock-reference data and an unbounded sequence of clock places, model construction admits the subjects. The generic model bound check returns `NotSimulated::RequiresBound`; the timed refinement constructor applies its timed-profile selector bound before refinement gates. With `max_zone_bytes` set to `4194304`, the run returns `TimedSafetyOutcome::Stopped` with `TimedRefinementStop::Zone(ZoneStop::LimitReached(ZoneCheckLimit::MaxZoneBytes(4194304)))`, rather than a `clock-reference-enumeration` refusal. | Test |
 
 ## Dependencies
 
