@@ -290,12 +290,6 @@ fn replay_fixture() -> Fixture {
 }
 
 fn replay_fixture_source(source: &str) -> Fixture {
-    let mut fixture = Fixture::new(
-        "runtime",
-        "replay",
-        source,
-        json!({"disposition":"value","value":null}),
-    );
     let selected = fsl_replay::call_site(
         fsl_foundation::SourceIdentity::new("agent-ix", "inputs/unit.native"),
         "qualification".into(),
@@ -307,27 +301,6 @@ fn replay_fixture_source(source: &str) -> Fixture {
             .unwrap(),
     )
     .unwrap();
-    let graph = fsl_replay::WireGraph::of_package_bytes(&selected.package).unwrap();
-    let node = |key| graph.wire_value(key).unwrap();
-    let limits = fsl_replay::AccountingLimits::default()
-        .bounds()
-        .into_iter()
-        .map(|(setting, bound)| {
-            (
-                setting
-                    .name()
-                    .strip_prefix("accounting.")
-                    .unwrap()
-                    .to_owned(),
-                json!(bound.to_string()),
-            )
-        })
-        .collect::<serde_json::Map<_, _>>();
-    let request = json!({
-        "package":serde_json::from_slice::<Value>(&selected.package).unwrap(),"profile_selections":[],"dependencies":[],
-        "replay_target":{"members":{"function":"negative"},"arguments":false,"occurrence_key":{"node_id":node(&selected.site.function),"role":selected.site.declaration.origin().role().as_str(),"ordinal":selected.site.declaration.origin().ordinal().to_string()},"over":null},
-        "source":{"kind":"input","assignments":[{"parameter":node(&selected.site.parameters[0].1),"value":{"kind":"integer","decimal":"1"}}]},"obligation_identity":{"node_id":node(selected.site.obligation_identity().node()),"model":selected.site.obligation_identity().model().map(|model|model.as_str()),"ordinal":selected.site.obligation_identity().ordinal()},"backend":"fixture", "state_environment":[],"accounting_limits":limits,"stage_limits":{},"supplied_limits":null,"object_environment":null,"declared_domains":[],"byte_provision":[{"authority":"agent-ix","identity":"inputs/unit.native","bytes_path":"inputs/bytes.native"}]
-    });
     let native_request = fsl_replay::ReplayRequestWire {
         certificate: None,
         package: fsl_replay::ReplayPackage::read(
@@ -361,6 +334,116 @@ fn replay_fixture_source(source: &str) -> Fixture {
         )],
         documents: Vec::new(),
     };
+    replay_fixture_request(source, native_request)
+}
+
+fn kernel_replay_fixture_source(source: &str) -> Fixture {
+    use fsl_replay::spine;
+
+    let identity = fsl_foundation::SourceIdentity::new("agent-ix", "inputs/unit.native");
+    let limits = fsl_replay::CallerLimits::default();
+    let cancel = filament_exact::Cancel::new();
+    let parsed = spine::parse(
+        &spine::ParseRequest {
+            source: &identity,
+            path: "inputs/unit.native",
+            bytes: source.as_bytes(),
+        },
+        limits.spine.source,
+        &cancel,
+    )
+    .expect("the undefined function parses")
+    .into_value();
+    let models = spine::select(
+        &parsed,
+        &std::collections::BTreeMap::new(),
+        limits.spine.model,
+        &cancel,
+    )
+    .expect("the function has no model imports")
+    .into_value();
+    let checked = spine::check_with_execution_points_and_source_inputs(
+        &parsed,
+        "qualification".to_owned(),
+        &spine::StateClauseExecutionPoints::default(),
+        spine::SourceInputs {
+            check_mode: Some(filament_semantic_value::checking::CheckMode::Kernel),
+            ..Default::default()
+        },
+        &models,
+        &fsl_replay::DependencyInput::default(),
+        limits.spine,
+        &cancel,
+    )
+    .expect("the function body checks under Kernel")
+    .into_value();
+    let emitted = spine::package(&checked, spine::PackageLimits::default(), &cancel)
+        .expect("the Kernel-checked function packages")
+        .into_value();
+    let graph = checked.package().graph();
+    let function = graph.callable("negative").expect("the declared function");
+    let parameter = graph
+        .semantic_graph()
+        .node(function.identity.clone())
+        .and_then(|node| node.function_parameters())
+        .expect("the checked function parameters")[0]
+        .clone();
+    let declaration = fsl_replay::OccurrenceKey::new(
+        function.identity,
+        fsl_replay::Origin::new(fsl_replay::Role::new("declaration"), 0),
+    );
+    let native_request = fsl_replay::PluginReplayContext::new(&checked, &emitted, &models, limits)
+        .request(
+            &declaration,
+            &[],
+            &fsl_foundation::BackendId::new("fixture"),
+            vec![fsl_replay::CanonicalAssignment {
+                parameter,
+                value: fsl_replay::WitnessValue::Integer(1),
+            }],
+        )
+        .expect("the actual function declaration issues its replay request");
+    replay_fixture_request(source, native_request)
+}
+
+fn replay_fixture_request(source: &str, native_request: fsl_replay::ReplayRequestWire) -> Fixture {
+    let mut fixture = Fixture::new(
+        "runtime",
+        "replay",
+        source,
+        json!({"disposition":"value","value":null}),
+    );
+    let graph = fsl_replay::WireGraph::of_package_bytes(native_request.package.bytes()).unwrap();
+    let node = |key| graph.wire_value(key).unwrap();
+    let declaration = native_request.replay_target.occurrence_key.as_ref().unwrap();
+    let fsl_replay::ReplaySource::Input(assignments) = &native_request.source else {
+        panic!("the fixture starts with input assignments");
+    };
+    let limits = fsl_replay::AccountingLimits::default()
+        .bounds()
+        .into_iter()
+        .map(|(setting, bound)| {
+            (
+                setting
+                    .name()
+                    .strip_prefix("accounting.")
+                    .unwrap()
+                    .to_owned(),
+                json!(bound.to_string()),
+            )
+        })
+        .collect::<serde_json::Map<_, _>>();
+    let stage_limits = native_request
+        .stage_limits
+        .iter()
+        .map(|(setting, bound)| (setting.clone(), json!(bound.to_string())))
+        .collect::<serde_json::Map<_, _>>();
+    let obligation = &native_request.obligation_identity;
+    let request = json!({
+        "package":serde_json::from_slice::<Value>(native_request.package.bytes()).unwrap(),"profile_selections":[],"dependencies":[],
+        "replay_target":{"members":{"function":"negative"},"arguments":false,"occurrence_key":{"node_id":node(declaration.node()),"role":declaration.origin().role().as_str(),"ordinal":declaration.origin().ordinal().to_string()},"over":null},
+        "source":{"kind":"input","assignments":[{"parameter":node(&assignments[0].parameter),"value":{"kind":"integer","decimal":"1"}}]},"obligation_identity":{"node_id":node(obligation.node()),"model":obligation.model().map(|model|model.as_str()),"ordinal":obligation.ordinal()},"backend":"fixture", "state_environment":[],"accounting_limits":limits,"stage_limits":stage_limits,"supplied_limits":null,"object_environment":null,"declared_domains":[],"byte_provision":[{"authority":"agent-ix","identity":"inputs/unit.native","bytes_path":"inputs/bytes.native"}]
+    });
     let native = fsl_replay::replay(native_request.clone(), fsl_replay::ReplayLimits::default())
         .expect("the actual public function replay completes");
     let fsl_replay::ReplayResult::Input(input) = &native else {
@@ -895,7 +978,13 @@ fn use_witness(fixture: &mut Fixture) -> fsl_replay::ReplayResult {
 }
 
 #[test]
-#[trace("TC-1325", "FR-350-AC-5", "FR-350-AC-10", "FR-350-AC-11")]
+#[trace(
+    "TC-1325",
+    "FR-350-AC-5",
+    "FR-350-AC-10",
+    "FR-350-AC-11",
+    "FR-495-AC-3"
+)]
 fn genuine_witness_replay_retains_record_absence_regions_and_disagreement() {
     let mut fixture = replay_fixture();
     let native = use_witness(&mut fixture);
@@ -962,7 +1051,34 @@ fn genuine_witness_replay_retains_record_absence_regions_and_disagreement() {
     assert!(true_row.as_object().unwrap().contains_key("record"));
     assert_eq!(true_fixture.execute(&[]).outcome.code, 0);
     let undefined_source = FALSE.replace("x < 0", "10 mod (x - 1) > 0");
-    let mut undefined_fixture = replay_fixture_source(&undefined_source);
+    let linked = fsl_replay::call_site(
+        fsl_foundation::SourceIdentity::new("agent-ix", "inputs/unit.native"),
+        "qualification".into(),
+        "inputs/unit.native",
+        undefined_source.as_bytes(),
+        [],
+        &fsl_replay::DependencyInput::default(),
+        &fsl_replay::QualifiedName::new(vec![fsl_replay::Identifier::new("negative").unwrap()])
+            .unwrap(),
+    )
+    .expect_err("the public Linked facade refuses an unproved divisor");
+    let fsl_replay::CallSiteRefusal::Compile {
+        code,
+        message,
+        region,
+    } = linked.as_ref()
+    else {
+        panic!("the unproved divisor is a compile refusal: {linked}");
+    };
+    assert_eq!(*code, fsl_foundation::Code::UndefinedExpression);
+    assert_eq!(message.as_str(), "undefined_expression (unproved-nonzero)");
+    let region = region
+        .as_ref()
+        .expect("the unproved operator has a source region");
+    assert!(undefined_source
+        [usize::try_from(region.start()).unwrap()..usize::try_from(region.end()).unwrap()]
+        .contains("mod"));
+    let mut undefined_fixture = kernel_replay_fixture_source(&undefined_source);
     let undefined_native = use_witness(&mut undefined_fixture);
     let fsl_replay::ReplayResult::Witness(undefined_arm) = undefined_native else {
         panic!("witness arm")
