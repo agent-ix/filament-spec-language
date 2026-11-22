@@ -699,12 +699,11 @@ mod tests {
         let vectors = read(&directory.join("timed-clause-node-vectors.json"));
         let cases = vectors["cases"].as_array().expect("CL cases");
         replay(cases, |case| {
-            case["expected"] == "admitted"
-                || case["expected_code"] == "invalid_semantic_graph"
-                || matches!(
-                    case["id"].as_str(),
-                    Some("CL-57" | "CL-58" | "CL-59" | "CL-60" | "CL-61" | "CL-62")
-                )
+            // CL-65/CL-66 belong to FR-322-AC-484; their reader refusal is
+            // tracked by QSL-2769, outside this member-key-order probe.
+            case["rule"].as_str().is_some_and(|rule| {
+                rule.contains("FR-322-AC-265") || rule.contains("FR-322-AC-295")
+            })
         });
     }
 

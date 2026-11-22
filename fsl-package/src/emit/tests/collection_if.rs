@@ -117,7 +117,18 @@ fn an_if_is_the_element_body_or_the_collection_operand_of_a_quantifier() {
     );
     let (_, body) = quantifier(&wire, "filament.op.collection.forall");
     assert_if(body);
-    assert_eq!(node_where(&wire, "model", "variant_type").len(), 1);
+    // FR-092 retains selected unused enum declarations alongside Tier.
+    let mut variant_owners: Vec<_> = node_where(&wire, "model", "variant_type")
+        .into_iter()
+        .map(|node| node["owner"].clone())
+        .collect();
+    variant_owners.sort_by(|left, right| left["node"].as_str().cmp(&right["node"].as_str()));
+    assert_eq!(
+        variant_owners,
+        ["Grade", "Level", "Tier"].map(|name| json!({
+            "kind": "model", "identity": fixture::PACKAGE, "node": fixture::id(name),
+        }))
+    );
 
     let wire = emitted(
         "function operand using v(c: Boolean, s: Sequence<Int[0, 9]>[0, 5], \

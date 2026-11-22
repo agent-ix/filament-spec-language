@@ -22,8 +22,9 @@ fn production_sources(dir: &Path, found: &mut Vec<PathBuf>) {
     }
 }
 
-/// A source that writes the envelope's member names, or implements the
-/// canonical `Encode` trait, defines an envelope wire type of its own.
+/// A source that writes the envelope's document-type member defines an
+/// envelope wire type. An `Encode` implementation for a semantic value such
+/// as a structural node key does not define the package envelope.
 #[test]
 fn fsl_package_defines_no_envelope_wire_type() {
     let mut files = Vec::new();
@@ -36,7 +37,7 @@ fn fsl_package_defines_no_envelope_wire_type() {
         .iter()
         .filter(|path| {
             let text = fs::read_to_string(path).expect("a source file is readable");
-            text.contains("name(\"contract_version\")") || text.contains("Encode for ")
+            text.contains("\"contract_version\"")
         })
         .collect();
     assert!(

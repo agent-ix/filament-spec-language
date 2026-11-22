@@ -200,8 +200,8 @@ fn emit_output_bytes_sets_only_the_output_byte_bound() {
 /// QSL-1985: canonical emission cost for a body that holds no term row scales
 /// with its nested `let` count; the measured bytes per level stay within 5%.
 /// A body of nested terms also writes a body-location row per term, each row
-/// carrying its path from the root, so its bytes grow with the square of its
-/// depth (FR-264 Behavior 5) and are bounded by the next test.
+/// carrying a compact relative path (FR-531); the next test exercises its
+/// measured output-byte boundary.
 #[trace("FR-264-AC-6", "FR-255-AC-1")]
 #[test]
 fn nested_let_emission_bytes_are_linear_at_one_and_five_thousand_levels() {
@@ -224,10 +224,9 @@ fn nested_let_emission_bytes_are_linear_at_one_and_five_thousand_levels() {
     );
 }
 
-/// QSL-1985: the default output ceiling refuses 4,500 nested `not`s at a
-/// source occurrence, because the body-location rows of the terms hold each
-/// path from the root; raising the named setting admits the same package, and
-/// a 100-level body remains below the default ceiling.
+/// FR-264: relative body locations keep 4,500 nested `not`s below the default
+/// ceiling. An explicit ceiling one byte below their output still refuses at
+/// a source occurrence, and raising that named ceiling admits the same bytes.
 #[trace("FR-264-AC-6", "FR-255-AC-4")]
 #[test]
 fn a_deep_nested_not_names_and_obeys_the_output_byte_limit() {
@@ -237,13 +236,14 @@ fn a_deep_nested_not_names_and_obeys_the_output_byte_limit() {
         .expect("100 nested nots emit under the default output limit");
 
     let deep = nested_not_package(4_500);
-    let refusal = match crate::emit::emit_checked(&deep, EmitLimits::new(DEFAULT_OUTPUT_BYTES)) {
-        Err(refusal) => refusal,
-        Ok(emission) => panic!(
-            "4,500 nested nots emitted {} bytes under the default limit",
-            emission.package().bytes().len()
-        ),
-    };
+    let admitted = crate::emit::emit_checked(&deep, EmitLimits::new(DEFAULT_OUTPUT_BYTES))
+        .expect("relative body locations fit the default output ceiling");
+    let bytes = u64::try_from(admitted.package().bytes().len()).expect("a fixture length");
+    let refusal = crate::emit::emit_checked(
+        &deep,
+        EmitLimits::new(bytes.checked_sub(1).expect("a nonempty package")),
+    )
+    .expect_err("one byte below the emitted package refuses");
     let EmitRefusal::OutputLimit(limit) = &refusal else {
         panic!("expected emit.output_bytes refusal, got {refusal:?}");
     };
@@ -257,8 +257,9 @@ fn a_deep_nested_not_names_and_obeys_the_output_byte_limit() {
     assert!(message.contains("output byte limit"), "{message}");
     assert!(message.contains("emit.output_bytes"), "{message}");
 
-    crate::emit::emit_checked(&deep, EmitLimits::new(u64::MAX))
+    let exact = crate::emit::emit_checked(&deep, EmitLimits::new(bytes))
         .expect("raising emit.output_bytes admits the 4,500-level package");
+    assert_eq!(exact.package().bytes(), admitted.package().bytes());
 }
 
 /// FR-264-AC-6 over a body that writes body-location rows: a package of `N`

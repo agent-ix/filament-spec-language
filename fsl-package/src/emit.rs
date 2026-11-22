@@ -6114,17 +6114,41 @@ fn rekey_timed_model_nodes(
         // FR-322 "Operand index segments": a node whose own path holds a
         // rekeyed node as an operand is rekeyed with it, so every operand
         // stays a node of the graph.
-        let mut next = 0;
-        while let Some((old, new)) = changes.get(next).cloned() {
-            next += 1;
+        // Several changed operands may meet at one node (for example, a
+        // slot domain and its presence predicate). Rebuild each target from
+        // its original candidate so no first rewrite hides a later operand.
+        let seeds = changes.clone();
+        let mut settled = false;
+        for _ in 0..=nodes.len() {
+            let previous = changes.clone();
             for node in nodes.iter() {
-                if changes.iter().any(|(changed, _)| *changed == node.node_id) {
-                    continue;
+                let mut rekeyed = seeds
+                    .iter()
+                    .find(|(old, _)| *old == node.node_id)
+                    .map(|(_, new)| new)
+                    .unwrap_or(&node.node_id)
+                    .clone();
+                for (old, new) in &previous {
+                    if let Some(replacement) = with_operand(&rekeyed, old, new) {
+                        rekeyed = replacement;
+                    }
                 }
-                if let Some(rekeyed) = with_operand(&node.node_id, &old, &new) {
-                    changes.push((node.node_id.clone(), rekeyed));
+                if rekeyed != node.node_id {
+                    match changes.iter_mut().find(|(old, _)| *old == node.node_id) {
+                        Some((_, target)) => *target = rekeyed,
+                        None => changes.push((node.node_id.clone(), rekeyed)),
+                    }
                 }
             }
+            if changes == previous {
+                settled = true;
+                break;
+            }
+        }
+        if !settled {
+            return Err(EmitRefusal::TimedModelWriterInvariant(
+                "timed-node operand propagation did not converge",
+            ));
         }
         for (old, new) in changes {
             substitutions.push((

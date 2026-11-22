@@ -641,6 +641,15 @@ fn each_node_an_effect_names_omits_the_whole_member_when_the_package_lacks_it() 
 /// The wire of `package` re-encoded by IR's typed writer with every sidecar it
 /// carries except `operation_effects`.
 fn wire_without_member(package: &CheckedPackageV2) -> Value {
+    let correlation = match package.protocol_correlation_provenance() {
+        filament_contract_model::ProtocolCorrelationProvenance::Unavailable(_) => None,
+        filament_contract_model::ProtocolCorrelationProvenance::Complete(table) => Some(
+            table
+                .groups()
+                .flat_map(|group| group.clauses().iter().cloned())
+                .collect::<Vec<_>>(),
+        ),
+    };
     let schedulability_claims: Vec<_> = package
         .schedulability_claims()
         .map(
@@ -650,29 +659,32 @@ fn wire_without_member(package: &CheckedPackageV2) -> Value {
             },
         )
         .collect();
-    let bytes = filament_contract_model::encode_checked_package_v2(
-        package.name(),
-        package.lock(),
-        package.graph(),
-        filament_contract_model::CheckedPackageSourceCorrespondenceRef {
-            source_map: package.source_map(),
-            refinement_step_rows: package.refinement_step_rows(),
-        },
-        filament_contract_model::CheckedPackageSidecarsRef {
-            checked_term_data: package.checked_term_data(),
-            temporal_bindings: package.temporal_bindings(),
-            temporal_clause_names: package.temporal_clause_names(),
-            claim_names: package.claim_names(),
-            operation_effects: None,
-            operation_bodies: package.operation_body_rows(),
-            schedulability_claims: (!schedulability_claims.is_empty())
-                .then_some(schedulability_claims.as_slice()),
-        },
-        package.capability_report(),
-        package.diagnostics(),
-        ceiling().canonical(),
-    )
-    .expect("the typed writer encodes an admitted package");
+    let bytes =
+        filament_contract_model::encode_checked_package_v2_with_protocol_correlation_occurrences(
+            package.name(),
+            package.lock(),
+            package.graph(),
+            filament_contract_model::CheckedPackageSourceCorrespondenceRef {
+                source_map: package.source_map(),
+                refinement_step_rows: package.refinement_step_rows(),
+            },
+            filament_contract_model::CheckedPackageSidecarsRef {
+                checked_term_data: package.checked_term_data(),
+                temporal_bindings: package.temporal_bindings(),
+                temporal_clause_names: package.temporal_clause_names(),
+                claim_names: package.claim_names(),
+                operation_effects: None,
+                operation_bodies: package.operation_body_rows(),
+                schedulability_claims: (!schedulability_claims.is_empty())
+                    .then_some(schedulability_claims.as_slice()),
+            },
+            (!package.requirement_items().is_empty()).then_some(package.requirement_items()),
+            correlation.as_deref(),
+            package.capability_report(),
+            package.diagnostics(),
+            ceiling().canonical(),
+        )
+        .expect("the typed writer encodes an admitted package");
     let mut wire = serde_json::from_slice(&bytes).expect("the wire is JSON");
     fsl_semantics::check::wire_id::resolve_operand_slots(&mut wire)
         .expect("every operand slot names a row entry");
