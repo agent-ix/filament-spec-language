@@ -132,6 +132,16 @@ fn package_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> RunCause {
         identity,
         ..
     } = refusal;
+    // FR-1039-AC-7: a `temporal_profile` law naming a profile outside the closed
+    // set is the catalogue's `unknown_profile`, as the other profile selections
+    // of a request answer.
+    let code = if code == fsl_foundation::Code::InvalidPackage
+        && cause.as_deref() == Some("unsupported-selection")
+    {
+        fsl_foundation::Code::UnknownProfile
+    } else {
+        code
+    };
     let label = match &cause {
         Some(cause) => format!("{}/{cause}", code.as_str()),
         None => code.as_str().to_owned(),
