@@ -283,6 +283,67 @@ fn rational_bits_limit(
     )
 }
 
+/// How a failed claim-binding, claim-identity or checker-graph step settles: a
+/// cancel or a reached state or edge budget names itself; the forms the bounded
+/// graph does not build (a cycle, a multi-state draw, several initial states or
+/// bindings, another claim form) are `not-yet-implemented`; the rest are the
+/// engine's own faults.
+fn graph_failure(
+    error: ExactProbabilityGraphError,
+    limits: &crate::exact_probabilistic::ExactProbLimits,
+    subject: SubjectLimits<'_>,
+) -> EngineReport {
+    let configured = |bound: usize| u64::try_from(bound).unwrap_or(u64::MAX);
+    match error {
+        ExactProbabilityGraphError::Cancelled(cause) => {
+            settled(&ExactProbBuildIssue::Cancelled(cause), subject)
+        }
+        ExactProbabilityGraphError::LimitReached => settled(
+            &ExactProbBuildIssue::Limit {
+                limit: ModelCheckLimit::ExactProbMaxStates,
+                value: configured(limits.model.limits.max_states),
+            },
+            subject,
+        ),
+        ExactProbabilityGraphError::EdgeLimitReached | ExactProbabilityGraphError::TooManyEdges => {
+            settled(
+                &ExactProbBuildIssue::Limit {
+                    limit: ModelCheckLimit::ExactProbMaxTransitions,
+                    value: configured(limits.model.limits.max_transitions),
+                },
+                subject,
+            )
+        }
+        ExactProbabilityGraphError::Cycle
+        | ExactProbabilityGraphError::UnsupportedDraw
+        | ExactProbabilityGraphError::UnsupportedInitial
+        | ExactProbabilityGraphError::UnsupportedBinding
+        | ExactProbabilityGraphError::UnsupportedClaimForm => not_yet(),
+        ExactProbabilityGraphError::ExpansionRefused
+        | ExactProbabilityGraphError::MissingSuccessor
+        | ExactProbabilityGraphError::InvalidDigitalKey
+        | ExactProbabilityGraphError::ClaimNotBound => broken(),
+    }
+}
+
+/// How a failed qualified bounded monitor settles: a formula outside the
+/// admitted shape is `not-yet-implemented`, the monitor's state budget is the
+/// product's `max_automaton_states` (as the product build reports it), and any
+/// other refusal is the engine's.
+fn bounded_monitor_failure(
+    error: fsl_eval::automaton::QualifiedBoundedError,
+    subject: SubjectLimits<'_>,
+) -> EngineReport {
+    use fsl_eval::automaton::QualifiedBoundedError;
+    match error {
+        QualifiedBoundedError::Translation(_) => not_yet(),
+        QualifiedBoundedError::Automaton(error) => {
+            build_refusal(crate::exact_probabilistic::automaton_refusal(error), subject)
+        }
+        QualifiedBoundedError::Key(_) => broken(),
+    }
+}
+
 /// Dyadic refinement reached its maximum precision with the threshold still inside
 /// `[lower, upper]`.
 fn precision_budget(lower: Rational, upper: Rational, subject: SubjectLimits<'_>) -> EngineReport {
@@ -395,11 +456,11 @@ fn run_timed(
         .collect::<Vec<_>>();
     let identity = match fsl_replay::probabilistic_claim_identity(claim) {
         Ok(identity) => identity,
-        Err(_) => return not_yet(),
+        Err(error) => return graph_failure(error, &limits, subject),
     };
     let binding = match claim_binding(&system, claim) {
         Ok(binding) => binding,
-        Err(_) => return not_yet(),
+        Err(error) => return graph_failure(error, &limits, subject),
     };
     if !holds {
         return replay_timed_refutation(
@@ -764,7 +825,7 @@ fn run_timed_mean(
     }
     let identity = match fsl_replay::probabilistic_claim_identity(claim) {
         Ok(identity) => identity,
-        Err(_) => return not_yet(),
+        Err(error) => return graph_failure(error, &limits, subject),
     };
     let values = solved.values;
     let mut certificate = match certificate_of(
@@ -846,7 +907,7 @@ fn run_timed_mean(
     })();
     let binding = match claim_binding(&system, claim) {
         Ok(binding) => binding,
-        Err(_) => return not_yet(),
+        Err(error) => return graph_failure(error, &limits, subject),
     };
     checked_report(checked, certificate, binding, extremum, subject)
 }
@@ -939,8 +1000,9 @@ fn run(
     }
     let document_limits = ProbabilityDocumentLimits::for_exact(&limits, meter);
     let reward_system = if expected_reward {
-        let Ok(item) = fsl_replay::probabilistic_claim_identity(claim) else {
-            return not_yet();
+        let item = match fsl_replay::probabilistic_claim_identity(claim) {
+            Ok(item) => item,
+            Err(error) => return graph_failure(error, &limits, subject),
         };
         let admitted = ModelSystem::new_with_cancel(simulation.clone(), cancel);
         if let Some(cause) = cancel.tripped() {
@@ -967,7 +1029,7 @@ fn run(
         let Some(profile) =
             fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
         else {
-            return not_yet();
+            return broken();
         };
         if !fsl_eval::automaton::QualifiedBoundedMonitor::supports_observations(
             formula.formula(),
@@ -1048,7 +1110,7 @@ fn run(
         let Some(profile) =
             fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
         else {
-            return not_yet();
+            return broken();
         };
         if !fsl_eval::automaton::QualifiedBoundedMonitor::supports(formula.formula(), profile) {
             return not_yet();
@@ -1139,8 +1201,9 @@ fn run(
         Bound::AtLeast(threshold) => value >= threshold,
         Bound::AtMost(threshold) => value <= threshold,
     };
-    let Ok(item) = fsl_replay::probabilistic_claim_identity(claim) else {
-        return not_yet();
+    let item = match fsl_replay::probabilistic_claim_identity(claim) {
+        Ok(item) => item,
+        Err(error) => return graph_failure(error, &limits, subject),
     };
     let admitted = match reward_system {
         Some(system) => Ok(system),
@@ -1154,8 +1217,7 @@ fn run(
     };
     let binding = match claim_binding(&system, claim) {
         Ok(binding) => binding,
-        Err(ExactProbabilityGraphError::UnsupportedBinding) => return not_yet(),
-        Err(_) => return broken(),
+        Err(error) => return graph_failure(error, &limits, subject),
     };
     let reference = binding.as_ref().map(|bound| &bound.reference);
     if !holds {
@@ -1182,7 +1244,7 @@ fn run(
                 let context =
                     match fsl_replay::probabilistic_formula_monitor_context(claim, reference) {
                         Ok(context) => context,
-                        Err(_) => return not_yet(),
+                        Err(error) => return graph_failure(error, &limits, subject),
                     };
                 match fsl_eval::automaton::QualifiedBoundedMonitor::from_monitor(
                     formula.formula(),
@@ -1191,7 +1253,7 @@ fn run(
                     limits.model.max_automaton_states,
                 ) {
                     Ok(monitor) => Some(monitor),
-                    Err(_) => return not_yet(),
+                    Err(error) => return bounded_monitor_failure(error, subject),
                 }
             }
             (None, _) => None,
@@ -1217,7 +1279,7 @@ fn run(
             let context = match fsl_replay::probabilistic_formula_monitor_context(claim, reference)
             {
                 Ok(context) => context,
-                Err(_) => return not_yet(),
+                Err(error) => return graph_failure(error, &limits, subject),
             };
             let monitor = match fsl_eval::automaton::QualifiedBoundedMonitor::from_monitor(
                 formula.formula(),
@@ -1226,10 +1288,7 @@ fn run(
                 limits.model.max_automaton_states,
             ) {
                 Ok(monitor) => monitor,
-                Err(fsl_eval::automaton::QualifiedBoundedError::Translation(_)) => {
-                    return not_yet();
-                }
-                Err(_) => return broken(),
+                Err(error) => return bounded_monitor_failure(error, subject),
             };
             bounded_certificate_of(
                 &product,
@@ -1444,10 +1503,11 @@ fn document_failure(error: ProbabilityDocumentError, subject: SubjectLimits<'_>)
                 "mixed-infinite-coverage",
             )),
         ),
-        ProbabilityDocumentError::Unsupported | ProbabilityDocumentError::UndefinedPredicate(_) => {
-            not_yet()
-        }
-        ProbabilityDocumentError::MalformedMember(_)
+        ProbabilityDocumentError::Unsupported => not_yet(),
+        // The product build reports a first undefined read itself (`ProbBuild::Undefined`);
+        // one the checker finds after a build that saw none is a disagreement between them.
+        ProbabilityDocumentError::UndefinedPredicate(_)
+        | ProbabilityDocumentError::MalformedMember(_)
         | ProbabilityDocumentError::Malformed
         | ProbabilityDocumentError::MissingMember(_)
         | ProbabilityDocumentError::Noncanonical
@@ -2015,7 +2075,7 @@ fn replay_refutation(
     }
     let produced = match produced {
         Ok(Some(witness)) => witness,
-        Ok(None) => return not_yet(),
+        Ok(None) => return broken(),
         Err(crate::exact_probabilistic::WitnessError::Limit { limit, value }) => {
             return settled(&ExactProbBuildIssue::Limit { limit, value }, subject);
         }
@@ -2056,8 +2116,9 @@ fn replay_produced_witness(
 ) -> EngineReport {
     use crate::exact_probabilistic::ProductAction;
     let measure = claim.bounded_measure();
-    let Ok(item) = fsl_replay::probabilistic_claim_identity(claim) else {
-        return not_yet();
+    let item = match fsl_replay::probabilistic_claim_identity(claim) {
+        Ok(item) => item,
+        Err(error) => return graph_failure(error, &limits, subject),
     };
     let initials = system.initial();
     let [first] = initials.as_slice() else {
@@ -2109,7 +2170,7 @@ fn replay_produced_witness(
         }
         let action = match replay_choice(&action) {
             Ok(action) => action,
-            Err(_) => return not_yet(),
+            Err(error) => return document_failure(error, subject),
         };
         scheduler.push((key, action));
     }
@@ -2167,7 +2228,7 @@ fn replay_produced_witness(
             }
             let choice = match replay_choice(&step.action) {
                 Ok(choice) => choice,
-                Err(_) => return not_yet(),
+                Err(error) => return document_failure(error, subject),
             };
             let Some(to) = product.states.get(step.to.index()) else {
                 return broken();
@@ -2279,7 +2340,7 @@ fn replay_produced_witness(
                     }
                 }
                 if candidates.is_empty() {
-                    return not_yet();
+                    return broken();
                 }
                 for candidate in candidates {
                     if u64::try_from(next.len().saturating_add(paths.len())).unwrap_or(u64::MAX)
@@ -2464,38 +2525,7 @@ fn finish_replay(
         Err(ProbabilityWitnessError::Limit { limit, value }) => {
             settled(&ExactProbBuildIssue::Limit { limit, value }, subject)
         }
-        Err(ProbabilityWitnessError::Graph(ExactProbabilityGraphError::Cancelled(cause))) => {
-            settled(&ExactProbBuildIssue::Cancelled(cause), subject)
-        }
-        Err(ProbabilityWitnessError::Graph(ExactProbabilityGraphError::LimitReached)) => settled(
-            &ExactProbBuildIssue::Limit {
-                limit: ModelCheckLimit::ExactProbMaxStates,
-                value: u64::try_from(limits.model.limits.max_states).unwrap_or(u64::MAX),
-            },
-            subject,
-        ),
-        Err(ProbabilityWitnessError::Graph(
-            ExactProbabilityGraphError::EdgeLimitReached | ExactProbabilityGraphError::TooManyEdges,
-        )) => settled(
-            &ExactProbBuildIssue::Limit {
-                limit: ModelCheckLimit::ExactProbMaxTransitions,
-                value: u64::try_from(limits.model.limits.max_transitions).unwrap_or(u64::MAX),
-            },
-            subject,
-        ),
-        Err(ProbabilityWitnessError::Graph(
-            ExactProbabilityGraphError::Cycle
-            | ExactProbabilityGraphError::UnsupportedDraw
-            | ExactProbabilityGraphError::UnsupportedInitial
-            | ExactProbabilityGraphError::UnsupportedBinding
-            | ExactProbabilityGraphError::UnsupportedClaimForm,
-        )) => not_yet(),
-        Err(ProbabilityWitnessError::Graph(
-            ExactProbabilityGraphError::ExpansionRefused
-            | ExactProbabilityGraphError::MissingSuccessor
-            | ExactProbabilityGraphError::InvalidDigitalKey
-            | ExactProbabilityGraphError::ClaimNotBound,
-        )) => broken(),
+        Err(ProbabilityWitnessError::Graph(error)) => graph_failure(error, limits, subject),
     }
 }
 
@@ -2506,19 +2536,20 @@ fn canonical_action(
     key_of: &impl Fn(
         &crate::exact_probabilistic::ProbKey,
     ) -> Result<ProbabilityProductKey, ProbabilityDocumentError>,
-) -> Result<fsl_replay::ProductAction, ()> {
+) -> Result<fsl_replay::ProductAction, ProbabilityDocumentError> {
+    let unscheduled = |_| ProbabilityDocumentError::Malformed;
     use crate::exact_probabilistic::ProductAction as AnalyzerAction;
     Ok(match choice {
         AnalyzerAction::Identity(identity) => fsl_replay::ProductAction::Identity(
-            fsl_replay::Schedule::of(system, identity).map_err(|_| ())?,
+            fsl_replay::Schedule::of(system, identity).map_err(unscheduled)?,
         ),
         AnalyzerAction::PostState(target) => {
             let target = product
                 .states
                 .iter()
                 .find(|state| *state == target.as_ref())
-                .ok_or(())?;
-            fsl_replay::ProductAction::PostState(key_of(target).map_err(|_| ())?)
+                .ok_or(ProbabilityDocumentError::Malformed)?;
+            fsl_replay::ProductAction::PostState(key_of(target)?)
         }
         AnalyzerAction::TerminalStutter => fsl_replay::ProductAction::TerminalStutter,
         AnalyzerAction::UnitDelay => fsl_replay::ProductAction::UnitDelay,
@@ -2527,12 +2558,12 @@ fn canonical_action(
         AnalyzerAction::IdleObserve => fsl_replay::ProductAction::IdleObserve,
         AnalyzerAction::WorkloadResolve { identity, delay } => {
             fsl_replay::ProductAction::WorkloadResolve {
-                schedule: fsl_replay::Schedule::of(system, identity).map_err(|_| ())?,
+                schedule: fsl_replay::Schedule::of(system, identity).map_err(unscheduled)?,
                 delay: *delay,
             }
         }
         AnalyzerAction::FreeDelays(rows) => {
-            fsl_replay::ProductAction::free_delays(system, rows).map_err(|_| ())?
+            fsl_replay::ProductAction::free_delays(system, rows).map_err(unscheduled)?
         }
     })
 }
@@ -2687,8 +2718,9 @@ fn replay_timed_refutation(
         }
         Err(_) => return broken(),
     };
-    let Ok(item) = fsl_replay::probabilistic_claim_identity(claim) else {
-        return not_yet();
+    let item = match fsl_replay::probabilistic_claim_identity(claim) {
+        Ok(item) => item,
+        Err(error) => return graph_failure(error, &limits, subject),
     };
     let initials = system.initial();
     let [first] = initials.as_slice() else {
@@ -2703,8 +2735,9 @@ fn replay_timed_refutation(
     let Some(initial_state) = product.states.get(initial.index()) else {
         return broken();
     };
-    let Ok(initial_key) = key_of(initial_state) else {
-        return not_yet();
+    let initial_key = match key_of(initial_state) {
+        Ok(key) => key,
+        Err(error) => return document_failure(error, subject),
     };
     let mut paths = Vec::with_capacity(produced.paths.len());
     for path in produced.paths {
@@ -2720,11 +2753,13 @@ fn replay_timed_refutation(
             let Some(to) = product.states.get(step.to.index()) else {
                 return broken();
             };
-            let Ok(post_key) = key_of(to) else {
-                return not_yet();
+            let post_key = match key_of(to) {
+                Ok(key) => key,
+                Err(error) => return document_failure(error, subject),
             };
-            let Ok(choice) = canonical_action(system, product, &step.action, &key_of) else {
-                return not_yet();
+            let choice = match canonical_action(system, product, &step.action, &key_of) {
+                Ok(choice) => choice,
+                Err(error) => return document_failure(error, subject),
             };
             let (action, transition, draw, post, resume) = match &step.action {
                 ProductAction::Identity(identity)
@@ -2783,7 +2818,7 @@ fn replay_timed_refutation(
                                 &step.elapsed,
                                 wanted.as_ref(),
                             ) else {
-                                return not_yet();
+                                return broken();
                             };
                             (
                                 Some(identity.clone()),

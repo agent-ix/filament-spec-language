@@ -98,7 +98,9 @@ pub use build::build_product;
 pub(crate) use build::BudgetedProductError;
 #[cfg(feature = "test-support")]
 pub use build::{build_product_with_key_budget, BudgetedProductError};
-pub(crate) use build::{build_retaining_monitor, build_retaining_monitor_with_budget};
+pub(crate) use build::{
+    automaton_refusal, build_retaining_monitor, build_retaining_monitor_with_budget,
+};
 pub(crate) use digital::model_constraints;
 pub(crate) use digital::ELAPSED_REWARD;
 pub use fair::{
