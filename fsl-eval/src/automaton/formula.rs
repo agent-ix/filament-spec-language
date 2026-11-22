@@ -587,8 +587,8 @@ pub(super) struct Lowered {
     /// Source-occurrence paths for the selected NNF node identities. A node
     /// can have several source occurrences when the checked formula shares a
     /// node at distinct operand paths.
-    pub(super) positive_occurrences: BTreeMap<NodeId, Vec<Occurrence>>,
-    pub(super) negative_occurrences: BTreeMap<NodeId, Vec<Occurrence>>,
+    pub(super) positive_occurrences: BTreeMap<NodeId, Vec<SourceOccurrence>>,
+    pub(super) negative_occurrences: BTreeMap<NodeId, Vec<SourceOccurrence>>,
     /// Source past occurrence paths for the NNF recurrence nodes.
     pub(super) positive_past_occurrences: BTreeMap<NodeId, Vec<(Vec<u64>, PastOperator)>>,
     pub(super) negative_past_occurrences: BTreeMap<NodeId, Vec<(Vec<u64>, PastOperator)>>,
@@ -804,10 +804,18 @@ fn nested_intervals(
     Ok(cores)
 }
 
+/// An authored occurrence and the future interval its NNF core came from.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct SourceOccurrence {
+    pub(super) key: Occurrence,
+    /// The authored future window, before sharing its lower-zero NNF core.
+    pub(super) window: Option<Window>,
+}
+
 /// The source occurrences of one polarity, by the NNF node each selects.
 struct Occurrences {
     /// Every occurrence path and polarity.
-    occurrences: BTreeMap<NodeId, Vec<Occurrence>>,
+    occurrences: BTreeMap<NodeId, Vec<SourceOccurrence>>,
     /// The past-operator occurrence paths.
     past: BTreeMap<NodeId, Vec<(Vec<u64>, PastOperator)>>,
 }
@@ -832,7 +840,7 @@ fn occurrence_nodes(
         node: formula.root().index(),
         negative: root_negative,
     }];
-    let mut origins: BTreeMap<NodeId, Vec<Occurrence>> = BTreeMap::new();
+    let mut origins: BTreeMap<NodeId, Vec<SourceOccurrence>> = BTreeMap::new();
     let mut past_origins: BTreeMap<NodeId, Vec<(Vec<u64>, PastOperator)>> = BTreeMap::new();
     let mut next = 0;
     while next < pending.len() {
@@ -860,6 +868,23 @@ fn occurrence_nodes(
                 Polarity::Positive
             },
         );
+        let window = match source {
+            FormulaNode::Unary {
+                operator: UnaryTemporal::Eventually | UnaryTemporal::Always,
+                interval,
+                ..
+            }
+            | FormulaNode::Binary {
+                operator: BinaryTemporal::Until | BinaryTemporal::Release,
+                interval,
+                ..
+            } => Some(Window::of(interval.as_ref())?),
+            _ => None,
+        };
+        let occurrence = SourceOccurrence {
+            key: occurrence,
+            window,
+        };
         origins
             .entry(selected)
             .or_default()
@@ -912,13 +937,13 @@ fn occurrence_nodes(
     }
     for values in origins.values_mut() {
         values.sort_by(|left, right| {
-            left.path
-                .cmp(&right.path)
-                .then_with(|| match (left.polarity, right.polarity) {
+            left.key.path.cmp(&right.key.path).then_with(|| {
+                match (left.key.polarity, right.key.polarity) {
                     (Polarity::Positive, Polarity::Negative) => std::cmp::Ordering::Less,
                     (Polarity::Negative, Polarity::Positive) => std::cmp::Ordering::Greater,
                     _ => std::cmp::Ordering::Equal,
-                })
+                }
+            })
         });
         values.dedup();
     }

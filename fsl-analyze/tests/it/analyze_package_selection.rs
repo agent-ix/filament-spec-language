@@ -1013,6 +1013,11 @@ fn bounded_step_intervals_settle_from_bytes_as_from_source() {
             "always[1,3] holds(c.value <= 2)",
             "refuted",
         ),
+        (
+            "SharedFutureCore",
+            "eventually[0,2] holds(c.value = 2) and eventually[1,3] holds(c.value = 2)",
+            "proved",
+        ),
     ];
     let body: String = cases
         .iter()
@@ -1038,6 +1043,14 @@ fn bounded_step_intervals_settle_from_bytes_as_from_source() {
                 "{name}: {}",
                 run.document()
             );
+            if *expected == "proved" {
+                assert_eq!(
+                    run.item(index)["record"]["certification"],
+                    "certified",
+                    "{name}: {}",
+                    run.document()
+                );
+            }
         }
     }
     for member in ["items", "aggregate", "last_stage", "category", "registry"] {
