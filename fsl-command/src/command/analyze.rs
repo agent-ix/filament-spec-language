@@ -24,6 +24,10 @@ use super::{
     wire, FileCounts, FormalSource, NativeResult, Result, RunCause, RunError, RunLimits, RunResult,
 };
 
+#[cfg(test)]
+#[path = "analyze/replay_context_tests.rs"]
+mod replay_context_tests;
+
 fn invalid(member: &str, reason: impl Into<String>) -> RunCause {
     RunCause::AnalyzeRequest {
         member: member.to_owned(),

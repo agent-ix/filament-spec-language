@@ -354,7 +354,7 @@ impl ReconstructedContext {
             .iter()
             .enumerate()
             .filter(|(_, site)| site.identity == key && site.claim == origin);
-        let (position, _) = sites.next().ok_or_else(|| {
+        let (position, site) = sites.next().ok_or_else(|| {
             ContextError::invalid("/subject/claim", "claim is absent from admitted graph")
         })?;
         if sites.next().is_some() {
@@ -369,9 +369,7 @@ impl ReconstructedContext {
             .ok_or_else(|| {
                 ContextError::invalid("/subject/model", "checked model position is absent")
             })?;
-        if model.name.as_str() != subject.model
-            || context.request.obligation_identity.get("node_id") != Some(&subject.claim.node)
-        {
+        if model.name.as_str() != subject.model {
             return Err(ContextError::invalid(
                 "/subject/model",
                 "model or original obligation differs from checked claim",
@@ -398,11 +396,38 @@ impl ReconstructedContext {
             ReplaySource::Hybrid(Box::new(payload.clone())),
             context.certificate,
         )?;
-        Ok(crate::execute::replay_hybrid_with_meter(
+        let occurrence = fsl_foundation::source::provenance::OccurrenceKey::new(
+            site.identity.clone(),
+            site.claim.clone(),
+        );
+        if original.obligation_identity()
+            != fsl_package::ObligationIdentity::from_claim_occurrence(&occurrence)
+        {
+            return Err(ContextError::invalid(
+                "/request/obligation_identity",
+                "original obligation differs from the admitted claim occurrence",
+            )
+            .into());
+        }
+        let selected_target = original
+            .replay_target()
+            .and_then(|target| target.as_state_clause());
+        if !selected_target
+            .is_some_and(|target| matches!(target.segments(), [name] if name.as_str() == site.name))
+            || original.over().is_some()
+        {
+            return Err(ContextError::invalid(
+                "/request/replay_target",
+                "original target differs from the admitted claim occurrence",
+            )
+            .into());
+        }
+        Ok(crate::execute::replay_hybrid_at_claim(
             original,
             &compiled,
             &payload,
             Some(consumer.accounting()),
+            position,
         )?)
     }
 }

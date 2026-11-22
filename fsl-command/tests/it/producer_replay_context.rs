@@ -527,3 +527,77 @@ fn native_hybrid_context_refuses_foreign_admitted_node() {
         .expect_err("a genuine but foreign node must not acquire the original claim's authority");
     assert_eq!(error.code(), fsl_foundation::Code::InvalidRuntimeInput);
 }
+
+/// FR-621-AC-20: another genuine checked target and forged obligation members
+/// cannot acquire the selected Hybrid claim's authority.
+#[test]
+#[trace("FR-621-AC-20")]
+fn hybrid_context_authenticates_complete_obligation_and_target() {
+    let original = hybrid_context();
+    for member in ["ordinal", "model", "target"] {
+        let mut context: fsl_replay::replay_context::ReplayContext =
+            serde_json::from_str(original.get()).unwrap();
+        match member {
+            "ordinal" => context.request.obligation_identity["ordinal"] = serde_json::json!(1),
+            "model" => context.request.obligation_identity["model"] = serde_json::json!("Braking"),
+            "target" => {
+                // SlowEnough is a second actual checked claim in braking.native.
+                context.request.replay_target["state_clause"] = serde_json::json!("SlowEnough");
+            }
+            _ => unreachable!(),
+        }
+        let changed = context.to_raw().unwrap();
+        let error = fsl_command::replay_context::replay(&forward(&changed, "16777216"))
+            .expect_err("the entire original claim selection must authenticate");
+        assert_eq!(
+            error.code(),
+            fsl_foundation::Code::InvalidRuntimeInput,
+            "{member}: {error}"
+        );
+    }
+}
+
+/// FR-621-AC-19: an actual native reference restoration denial retains its
+/// accounting cause in the external replay diagnostic.
+#[test]
+#[trace("FR-621-AC-19")]
+fn protocol_context_preserves_native_accounting_cause() {
+    let context = counter_context(CounterFixture::Protocol);
+    let input = serde_json::to_vec(&ReplayInput {
+        format: fsl_command::replay_context::FORMAT,
+        context: &context,
+        effective_limits: EffectiveLimits {
+            replay_input_bytes: "16777216".to_owned(),
+            accounting_limits: accounting_wire(fsl_replay::AccountingLimits::default().0),
+            stage_limits: [("accounting.work_units".to_owned(), "0".to_owned())].into(),
+        },
+    })
+    .unwrap();
+    let error = fsl_command::replay_context::replay(&input).expect_err("actual native work denial");
+    assert_eq!(error.code(), fsl_foundation::Code::ResourceExhausted);
+    assert_eq!(error.cause(), Some("insufficient-next-charge"));
+    assert_eq!(
+        error.category(),
+        filament_semantic_value::catalog::Category::Incomplete
+    );
+    let outcome = serde_json::to_value(error.outcome(None)).unwrap();
+    assert_eq!(
+        outcome["diagnostics"][0]["cause"],
+        "insufficient-next-charge"
+    );
+    let original = match &error {
+        fsl_command::replay_context::ContextReplayError::Native(error) => match error.as_ref() {
+            fsl_replay::replay_context::NativeContextError::Resource(
+                fsl_replay::replay_context::RestoreStop::Accounting(incomplete),
+            ) => incomplete,
+            other => panic!("actual accounting stop, got {other:?}"),
+        },
+        other => panic!("actual native denial, got {other:?}"),
+    };
+    assert_eq!(original.limit_kind, filament_exact::LimitKind::WorkUnits);
+    assert_eq!(original.limit, 0);
+    assert!(outcome["diagnostics"][0]["message"]
+        .as_str()
+        .unwrap()
+        .contains(&format!("{original:?}")));
+}

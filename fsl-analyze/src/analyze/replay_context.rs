@@ -536,32 +536,39 @@ pub(super) fn protocol(
             },
         )
         .map_err(|cause| ContextError::invalid("/payload", format!("{cause:?}")))?;
+        // Mandatory scoped evidence survives every later optional context error.
+        spelled = Some(payload);
         let (request, source_bytes) = fsl_replay::replay_context::request_wire(wire)?;
         let graph =
             fsl_semantics::check::wire_id::WireGraph::of_package_bytes(wire.package.bytes())
                 .map_err(|error| ContextError::invalid("/request/package", error.to_string()))?;
+        let documents = documents(inputs.package, inputs.binding, inputs.provision)?;
+        let payload = spelled.as_ref().ok_or_else(|| {
+            ContextError::invalid("/payload", "scoped protocol payload was not retained")
+        })?;
+        let packet = fsl_replay::replay_context::envelope_wire(envelope, payload.clone(), &graph)?;
+        let subject = serde_json::to_value(ProtocolSubject::capture(
+            subject,
+            &super::clause_item::clock_selections(inputs.package, inputs.provision),
+        )?)?;
         let context = ReplayContext {
             request,
             source_bytes,
-            documents: documents(inputs.package, inputs.binding, inputs.provision)?,
+            documents,
             family: ReplayFamily::ProtocolTemporal,
-            envelope: Some(fsl_replay::replay_context::envelope_wire(
-                envelope,
-                payload.clone(),
-                &graph,
-            )?),
-            payload,
-            subject: serde_json::to_value(ProtocolSubject::capture(
-                subject,
-                &super::clause_item::clock_selections(inputs.package, inputs.provision),
-            )?)?,
+            envelope: Some(packet),
+            payload: spelled.take().ok_or_else(|| {
+                ContextError::invalid("/payload", "scoped protocol payload was not retained")
+            })?,
+            subject,
             certificate: wire.certificate.clone(),
         };
-        context.authenticate_packet()?;
-        let raw = context.to_raw()?;
-        spelled = Some(Box::new(context.payload));
-        Ok(raw)
+        let raw = context
+            .authenticate_packet()
+            .and_then(|()| context.to_raw());
+        spelled = Some(context.payload);
+        raw
     })();
     slot.replace(Some(CapturedReplayContext::from_raw_result(result)));
-    spelled
+    spelled.map(Box::new)
 }

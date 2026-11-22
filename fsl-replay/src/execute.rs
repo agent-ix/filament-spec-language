@@ -1533,6 +1533,24 @@ pub(crate) fn replay_hybrid_with_meter(
         clause: clause.clone(),
         package: compiled.package.clone(),
     })?;
+    replay_hybrid_at_claim(
+        request,
+        compiled,
+        counterexample,
+        consumer_accounting,
+        claim_position,
+    )
+}
+
+/// Replay this selected admitted claim without resolving another target.
+pub(crate) fn replay_hybrid_at_claim(
+    request: ReplayRequest,
+    compiled: &Recompiled,
+    counterexample: &HybridCounterexample,
+    consumer_accounting: Option<ScalarLimits>,
+    claim_position: usize,
+) -> Result<ReplayResult, ReplayRefusal> {
+    let graph = compiled.checked.package().graph();
     let claim = graph
         .hybrid_claims()
         .get(claim_position)

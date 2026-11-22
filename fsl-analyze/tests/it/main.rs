@@ -79,6 +79,7 @@ mod model_instances;
 mod model_settle;
 mod model_trace_run;
 mod model_world;
+mod native_context_stop;
 mod monitor;
 mod monitor_aggregate_rendering;
 mod monitor_authority;

@@ -95,13 +95,7 @@ fn reference_code(error: &ReferenceContextError) -> Code {
 fn readback_code(error: &TemporalReadbackError) -> Code {
     match error {
         TemporalReadbackError::TimedStop(stop) => match stop {
-            fsl_eval::simulation::model::TimedStop::Expansion(stop) => {
-                if stop.is_internal_failure() {
-                    Code::RuntimeInvariant
-                } else {
-                    Code::ResourceExhausted
-                }
-            }
+            fsl_eval::simulation::model::TimedStop::Expansion(stop) => expansion_code(stop),
             fsl_eval::simulation::model::TimedStop::MaxClocks { .. } => Code::StageLimitExceeded,
             fsl_eval::simulation::model::TimedStop::UnplacedElement { .. } => {
                 Code::RuntimeInvariant
@@ -112,13 +106,7 @@ fn readback_code(error: &TemporalReadbackError) -> Code {
         TemporalReadbackError::Context(error) => context_code(error),
         TemporalReadbackError::Reference(error) => reference_code(error),
         TemporalReadbackError::Accounting { .. } => Code::ResourceExhausted,
-        TemporalReadbackError::Expansion { stop } => {
-            if stop.is_internal_failure() {
-                Code::RuntimeInvariant
-            } else {
-                Code::ResourceExhausted
-            }
-        }
+        TemporalReadbackError::Expansion { stop } => expansion_code(stop),
         TemporalReadbackError::TemporalRefusal(fsl_eval::temporal::TemporalRefusal::Fault(_)) => {
             Code::RuntimeInvariant
         }
@@ -137,6 +125,22 @@ fn readback_code(error: &TemporalReadbackError) -> Code {
         | TemporalReadbackError::NoMatch { .. }
         | TemporalReadbackError::Ambiguous { .. }
         | TemporalReadbackError::Delay { .. } => Code::InvalidRuntimeInput,
+    }
+}
+
+fn expansion_code(stop: &fsl_eval::simulation::ExpansionStop) -> Code {
+    Code::from_code(stop.cause.code()).unwrap_or(Code::RuntimeInvariant)
+}
+
+fn readback_expansion(
+    error: &TemporalReadbackError,
+) -> Option<&fsl_eval::simulation::ExpansionStop> {
+    match error {
+        TemporalReadbackError::Expansion { stop }
+        | TemporalReadbackError::TimedStop(fsl_eval::simulation::model::TimedStop::Expansion(
+            stop,
+        )) => Some(stop),
+        _ => None,
     }
 }
 
@@ -171,6 +175,12 @@ impl NativeContextError {
     pub fn category(&self) -> Category {
         if let Some(refusal) = self.replay_refusal() {
             return crate::OutcomeDocument::from_replay_refusal(refusal).category();
+        }
+        if let Self::TemporalReadback(error) = self {
+            if let Some(stop) = readback_expansion(error) {
+                return fsl_foundation::diagnostic::category_of(&stop.cause)
+                    .unwrap_or(Category::InternalFailure);
+            }
         }
         match self {
             Self::TemporalReadback(error)
@@ -218,6 +228,11 @@ impl NativeContextError {
             return refusal.cause();
         }
         match self {
+            Self::Resource(RestoreStop::Accounting(_)) => Some("insufficient-next-charge"),
+            Self::TemporalReadback(error) => match error.as_ref() {
+                TemporalReadbackError::Accounting { .. } => Some("insufficient-next-charge"),
+                error => readback_expansion(error).map(|stop| stop.cause.cause()),
+            },
             Self::Request(error) => error.cause(),
             Self::Context(ContextError::Invalid { .. }) => Some("invalid-value"),
             Self::Context(ContextError::Allocation { .. }) => Some("allocation-failed"),
