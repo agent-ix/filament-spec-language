@@ -640,7 +640,7 @@ fn over_package_route(
 /// clause or a capture fault reached by the engine.
 #[trace("TC-2958", "FR-940-AC-6")]
 #[test]
-fn a_pending_package_clause_fact_is_refused_typed_naming_it() {
+fn package_fairness_matches_source_and_capture_remains_typed_pending() {
     let formula = "fair weak M::Counter::inc; eventually holds(c.value = 3)";
     let world = World::new(
         model_world::counter(),

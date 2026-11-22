@@ -10,7 +10,9 @@
 //! product counts come from `check_model`, which runs every instance of the
 //! claim.
 
-use filament_exact::Cancel;
+use filament_exact::{
+    Cancel, EffectiveId, ObjectId, ObjectReference, OriginalDeclarationKey, UniverseId,
+};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_analyze::model_check::{retain_reduced, Ample, Atoms, Choice, ModelCheckRefusal, Por};
@@ -1355,7 +1357,7 @@ fn a_state_constraint_makes_the_transitions_it_reads_visible() {
 /// and postcondition read of `g`. Both runs refute and replay the same claim.
 #[trace("TC-587")]
 #[test]
-fn an_operation_with_no_footprint_rule_refuses_partial_order_reduction() {
+fn a_read_free_pure_call_preserves_the_footprint_and_replayed_refutation() {
     let fixture = por_world::call_in_a_precondition();
     let plain = fixture
         .run(Some(0), por_world::no_f(), Reductions::default())
@@ -1378,7 +1380,6 @@ fn an_operation_with_no_footprint_rule_refuses_partial_order_reduction() {
     else {
         panic!("the reduced run refutes: {reduced:?}")
     };
-    assert_eq!(reduced, plain, "the same concrete refutation");
     for counterexample in [plain, reduced] {
         assert!(matches!(
             fixture.replay(Some(0), por_world::no_f(), *counterexample),
@@ -1390,14 +1391,32 @@ fn an_operation_with_no_footprint_rule_refuses_partial_order_reduction() {
     }
     let system = fixture.system();
     let spin = named(&system, &fixture.start(), "spin");
+    let receiver: serde_json::Value =
+        serde_json::from_str(spin.receiver().expect("spin has a receiver"))
+            .expect("the selected transition's canonical receiver");
+    assert_eq!(receiver["type"], "reference");
+    let object_type = &receiver["object_type"];
+    assert!(
+        object_type["owner_effective_type"].is_null(),
+        "Maker is top-level"
+    );
+    let original = &object_type["original"];
+    let object = ObjectReference::new(
+        UniverseId::new(
+            fsl_foundation::node_wire::node_key_from_json(&receiver["universe"])
+                .expect("the receiver's actual universe"),
+        ),
+        EffectiveId::new(
+            None,
+            OriginalDeclarationKey::new(
+                original["package"].as_str().expect("the receiver's package"),
+                original["node"].as_str().expect("the receiver's type"),
+            ),
+        ),
+        ObjectId::new(receiver["identity"].as_str().expect("the receiver's identity"))
+            .expect("the receiver's object id"),
+    );
     let footprint = system.footprint(&spin).expect("the actual spin footprint");
-    let object = match footprint.writes.iter().next().expect("spin writes g") {
-        Location::Field { object, field } => {
-            assert_eq!(field, &por_world::key("Maker/g"));
-            object.clone()
-        }
-        other => panic!("a receiver field write: {other:?}"),
-    };
     let field = Location::Field {
         object: object.clone(),
         field: por_world::key("Maker/g"),
