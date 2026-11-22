@@ -13,6 +13,7 @@ use fsl_foundation::diagnostic::Code;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::observation::*;
 use fsl_semantics::model::operation::OperationDeclaration;
+use ix_trace_rs::trace;
 use serde_json::json;
 
 use crate::model_operations::{
