@@ -16,8 +16,33 @@ pub(super) fn runtime_members(
     budget: &mut filament_contract_model::NativeJoinBudget,
 ) -> Result<filament_semantic_value::enumeration::EnumMemberIndex, crate::NativeJoinFailure> {
     use crate::native_row as charge;
-    use filament_semantic_value::enumeration::{EnumDeclaration, EnumMemberIndex};
     let locus = charge::start(budget, "bare_model_enum_members")?;
+    Ok(build_runtime_members(rows, budget, locus)?)
+}
+
+impl crate::SourceEnumCatalog {
+    pub(crate) fn model_runtime_members(
+        rows: &[SelectedModelEnumShapeRow],
+        budget: &mut filament_contract_model::NativeJoinBudget,
+    ) -> Result<filament_semantic_value::enumeration::EnumMemberIndex, crate::NativeRowError> {
+        build_runtime_members(
+            rows,
+            budget,
+            filament_contract_model::NativeJoinLocus {
+                source: filament_contract_model::NativeJoinLocusSource::Package,
+                form: "bare_model_enum_members",
+            },
+        )
+    }
+}
+
+fn build_runtime_members(
+    rows: &[SelectedModelEnumShapeRow],
+    budget: &mut filament_contract_model::NativeJoinBudget,
+    locus: filament_contract_model::NativeJoinLocus,
+) -> Result<filament_semantic_value::enumeration::EnumMemberIndex, crate::NativeRowError> {
+    use crate::native_row as charge;
+    use filament_semantic_value::enumeration::{EnumDeclaration, EnumMemberIndex};
     charge::items(budget, locus, rows.len())?;
     for row in rows {
         charge::enum_shape(budget, locus, &row.shape)?;
