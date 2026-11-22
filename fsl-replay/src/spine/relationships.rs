@@ -1355,7 +1355,7 @@ mod tests {
                 "required_member_identities":["m2", "m1"], "observation_sources":["source-b", "source-a"], "completeness_dependencies":["complete-b", "complete-a"], "progress_dependencies":["progress-b", "progress-a"],
                 "clock_identity":"clock", "clock_revision":"revision", "membership_complete":false, "closure_identity":null, "closure_digest":null,
                 "kind":{"kind":"window", "window_identity":"window"},
-                "range":{"clock_family":"fixed-sample", "start":"7", "end_exclusive":"9", "epoch_nanos":"-5", "period_nanos":"3"},
+                "range":{"clock_family":"timestamped-event", "start_nanos":"-20", "end_nanos":"20"},
                 "members":[
                     {"object_identity":"o1", "record_identity":"r1", "anchor":{"kind":"event-position", "position":"2"}},
                     {"object_identity":"o2", "record_identity":"r2", "anchor":{"kind":"fixed-sample", "index":"3", "epoch_nanos":"-7", "period_nanos":"5"}},
@@ -1585,11 +1585,9 @@ mod tests {
         );
         assert_eq!(
             request.scope.range,
-            filament_observation::ClockRange::FixedSample {
-                start: 7,
-                end_exclusive: 9,
-                epoch_nanos: -5,
-                period_nanos: 3,
+            filament_observation::ClockRange::Timestamp {
+                start_nanos: -20,
+                end_nanos: 20,
             }
         );
         assert_eq!(request.scope.members.len(), 3);
@@ -1854,9 +1852,9 @@ mod tests {
             valid_relationship_request(Some(&conflict), &objects_with_second_shipment());
         request.binding.subject_kind = request.expected_subject.kind().clone();
         request.binding.required = true;
-        request.scope.range = filament_observation::ClockRange::EventPosition {
-            start: 0,
-            end_exclusive: 1,
+        request.scope.range = filament_observation::ClockRange::Timestamp {
+            start_nanos: 0,
+            end_nanos: 1,
         };
         let anchor = filament_observation::Anchor::EventPosition(0);
         let mut record = filament_observation::AdmittedRecord {
