@@ -7587,7 +7587,7 @@ fn emit_package_inner(
     #[cfg(test)]
     crate::checked_v2::tphase("emit-before-L7563");
     let value_validity_records =
-        value_validity_requirements::append(ids, graph, &mut nodes, &mut source_map)?;
+        value_validity_requirements::append(ids, graph, &mut nodes, &mut source_map, &regions)?;
     #[cfg(test)]
     crate::checked_v2::tphase("emit-before-L7565");
     let (mut profile_selections, mut laws) = split_laws(&order);

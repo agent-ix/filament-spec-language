@@ -41,6 +41,7 @@ pub(super) fn append(
     graph: &CheckedGraph,
     nodes: &mut Vec<CheckedSemanticNodeV2>,
     source_map: &mut Vec<CheckedSourceMapEntry>,
+    regions: &impl Fn(&filament_semantic_value::location::ExpressionLocation) -> Option<fsl_foundation::source::provenance::SourceRegion>,
 ) -> Result<Records, EmitRefusal> {
     let mut records = HashMap::new();
     if !graph
@@ -88,8 +89,7 @@ pub(super) fn append(
         let location = graph
             .occurrence(claim.node().clone(), claim.origin())
             .ok_or(EmitRefusal::SourceMapInvariant)?;
-        let region = graph
-            .region(location)
+        let region = regions(location)
             .ok_or(EmitRefusal::SourceMapInvariant)?;
         let region = CheckedSourceRegion {
             source: source_artifact(region.source()),
