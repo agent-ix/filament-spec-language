@@ -659,15 +659,38 @@ fn package_scalar_unresolved_holder_refuses_typed_without_provider_work() {
         "{error}"
     );
     assert_eq!(seen.lock().unwrap().settle_calls, 0);
-    for (function, arguments) in [
-        ("Missing", json!([])),
+    let held = entries(&documents(&source_run).0)[0]["request"]["claim"].clone();
+    let graph = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(&bytes).unwrap();
+    let mut structural = held.clone();
+    structural["node"] = graph.structural_value(&held["node"]).unwrap();
+    assert_ne!(held, structural);
+    let mut invalid = held.clone();
+    invalid["node"]["path"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|segment| segment.get("node").is_some())
+        .unwrap()["node"] = json!(u64::MAX);
+    let mut duplicate_call = request["request"]["call"].clone();
+    duplicate_call["requirements"] = json!({"items":[{"claim":held},{"claim":structural}]});
+    let mut invalid_call = request["request"]["call"].clone();
+    invalid_call["requirements"] = json!({"items":[{"claim":invalid}]});
+    for (call, pointer) in [
         (
-            "sq",
-            json!([{"parameter":"x","value":{"type":"boolean","value":true}}]),
+            json!({"function":"Missing","arguments":[],"requirements":{"backend":PROVIDER}}),
+            None,
+        ),
+        (
+            json!({"function":"sq","arguments":[{"parameter":"x","value":{"type":"boolean","value":true}}],"requirements":{"backend":PROVIDER}}),
+            None,
+        ),
+        (duplicate_call, Some("/call/requirements/items/1")),
+        (
+            invalid_call,
+            Some("/call/requirements/items/0/claim/node/path/"),
         ),
     ] {
-        request["request"]["call"] =
-            json!({"function":function,"arguments":arguments,"requirements":{"backend":PROVIDER}});
+        request["request"]["call"] = call;
         let run = |path: &Path| {
             command::run_with_providers(
                 path,
@@ -701,6 +724,24 @@ fn package_scalar_unresolved_holder_refuses_typed_without_provider_work() {
             package_error.category().exit_code(),
             source_error.category().exit_code()
         );
+        if let Some(pointer) = pointer {
+            let command::RunCause::ClauseRequest {
+                member: source_member,
+                ..
+            } = &source_error.cause
+            else {
+                panic!("{source_error}")
+            };
+            let command::RunCause::ClauseRequest {
+                member: package_member,
+                ..
+            } = &package_error.cause
+            else {
+                panic!("{package_error}")
+            };
+            assert_eq!(package_member, source_member);
+            assert!(package_member.starts_with(pointer));
+        }
         assert_eq!(seen.lock().unwrap().settle_calls, 0);
     }
 }
