@@ -906,7 +906,7 @@ fn bare_empty_calls_and_qualified_argument_calls_keep_their_alternatives() {
 #[trace("FR-397-AC-16", "FR-397-AC-25", "FSpec-FR-339-AC-1")]
 fn only_ieee_intrinsics_require_an_argument_at_the_empty_call_boundary() {
     for intrinsic in ["sqrt", "fma", "numericEqual", "totalOrder", "bitIdentical"] {
-        for gap in ["", " /* no argument */ "] {
+        for gap in ["", " // no argument\n "] {
             refused(
                 &expression(&format!("filament::value::ieee::{intrinsic}({gap})")),
                 ")",
