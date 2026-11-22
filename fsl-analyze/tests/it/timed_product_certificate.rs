@@ -1317,7 +1317,7 @@ fn elapsed_quantile_altered_transform_value_is_rejected() {
 /// FR-877-AC-2: `<= 1 ms` is refuted.
 #[trace("TC-2494", "FR-877-AC-2")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-4")]
-#[ignore = "QSL-2156: refutation needs the timed witness replay"]
+#[ignore = "QSL-2889: refutation needs the timed witness replay"]
 #[test]
 fn elapsed_quantile_at_most_refutes() {
     let world = quantiles();
@@ -1376,7 +1376,7 @@ fn elapsed_quantile_altered_upper_value_is_rejected() {
 /// FR-877-AC-4: at a transform maximum of exactly 0 the tight search reaches
 /// the activated initial state, so the claim is refuted, never proved.
 #[trace("TC-2494", "FR-877-AC-4")]
-#[ignore = "QSL-2156: a refutation needs the timed witness replay (draco/qsl-2156-cycles)"]
+#[ignore = "QSL-2889: a refutation needs the timed witness replay (draco/qsl-2156-cycles)"]
 #[test]
 fn elapsed_quantile_tight_search_refutes() {
     let world = quantiles();
@@ -1528,4 +1528,106 @@ fn proved_value_of(record: &AnalyzeRecord) -> Option<Rational> {
         } => Some(value.value().clone()),
         _ => None,
     }
+}
+
+// --- QSL-2850: a limit or a cancel is never `not-yet-implemented` ----------
+
+/// The record of `claim` with the exact-rational budget set to `bits`.
+fn settle_with_rational_bits(world: &World, claim: &str, bits: u64) -> AnalyzeRecord {
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let mut request = request(world, claim);
+    request.limits.max_rational_bits = bits;
+    let item = exact_probabilistic_item(RequestIndex::new(0), request);
+    analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+}
+
+/// FR-281 "Engine refusals": a timed bounded claim whose values outgrow
+/// `max_rational_bits` is `incomplete` naming that limit, not
+/// `unsupported`/`not-yet-implemented`.
+// QSL-2880 changes the expected outcome: a decided interval will then prove with ValueBounds.
+#[trace("TC-2489", "FR-281-AC-6")]
+#[test]
+fn a_timed_deadline_past_the_rational_budget_settles_incomplete_naming_the_limit() {
+    let world = retx(GUARD, true, "", &every_deadlines());
+    let record = settle_with_rational_bits(&world, "Strict", 4);
+    assert_eq!(
+        record.terminal().expect("a terminal record").value(),
+        &TerminalValue::Incomplete(fsl_replay::IncompleteCause::LimitReached {
+            limit: fsl_replay::ModelCheckLimit::ExactProbMaxRationalBits,
+            value: 4,
+        }),
+        "{record:#?}"
+    );
+}
+
+/// FR-281 "Engine refusals": a timed bound that equals the exact value stays
+/// inside the interval at every precision, which is `incomplete` with the
+/// precision budget, not `unsupported`/`not-yet-implemented`.
+// QSL-2880 may change the expected outcome once ValueBounds production exists.
+#[trace("TC-2489", "FR-281-AC-6")]
+#[test]
+fn a_timed_deadline_at_its_exact_value_past_the_rational_budget_settles_precision_budget() {
+    let world = retx(GUARD, true, "", &every_deadlines());
+    let record = settle_with_rational_bits(&world, "Deadline", 4);
+    assert!(
+        matches!(
+            record.terminal().expect("a terminal record").value(),
+            TerminalValue::Incomplete(fsl_replay::IncompleteCause::PrecisionBudget { .. })
+        ),
+        "{record:#?}"
+    );
+}
+
+/// FR-281 "Engine refusals": cancelling a timed refutation at any poll
+/// settles `incomplete` with the cancel's source, or finishes `refuted`; no
+/// poll turns it into `unsupported`/`not-yet-implemented`.
+///
+/// This guards the whole run; it also passes before the QSL-2850 change, so it
+/// does not by itself reach the witness-replay expansion exit.
+#[trace("TC-2492", "FR-281-AC-6")]
+#[test]
+fn cancelling_a_timed_refutation_at_any_poll_settles_cancelled_or_refuted() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::{Arc, OnceLock};
+
+    let world = retx(GUARD, true, TWO_DELAYS, &every_deadlines());
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let run = |cancel: &Cancel| {
+        let item = exact_probabilistic_item(RequestIndex::new(0), request(&world, "Strict"));
+        analyze_items(&engines, vec![item], cancel).remove(0)
+    };
+    let live = Cancel::new();
+    let _counting = live.count_charges();
+    assert!(is_refuted(&run(&live)), "the positive control refutes");
+    let total = live.charges();
+    assert!(total > 0);
+    let cause = filament_exact::CancelCause::Requested;
+    let mut cancelled = 0_u32;
+    let stride = (total / 150).max(1);
+    for at in (1..=total).step_by(stride as usize) {
+        let slot = Arc::new(OnceLock::<Cancel>::new());
+        let weak = Arc::downgrade(&slot);
+        let polls = Arc::new(AtomicU32::new(0));
+        let seen = Arc::clone(&polls);
+        let cancel = Cancel::observing(move || {
+            if seen.fetch_add(1, Ordering::Relaxed) + 1 == at {
+                weak.upgrade()
+                    .expect("the run owns the slot")
+                    .get()
+                    .expect("the slot is initialized")
+                    .cancel(cause);
+            }
+        });
+        slot.set(cancel.clone()).expect("initialized once");
+        let record = run(&cancel);
+        match record.terminal().expect("a terminal record").value() {
+            TerminalValue::Refuted => {}
+            TerminalValue::Incomplete(fsl_replay::IncompleteCause::Cancelled { source }) => {
+                assert_eq!(*source, cause);
+                cancelled += 1;
+            }
+            other => panic!("cancel at poll {at} of {total} settled {other:?}"),
+        }
+    }
+    assert!(cancelled > 0, "some poll must land inside the run");
 }

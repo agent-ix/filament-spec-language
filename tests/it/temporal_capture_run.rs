@@ -220,7 +220,7 @@ fn each_activation_reads_its_own_capture_at_later_positions() {
 /// at its activation, never an internal failure.
 #[test]
 #[trace("TC-2440", "FR-860-AC-4")]
-#[ignore = "QSL-2001: the fixture must be checked under CheckMode::Kernel and selected as a package (FR-860-AC-4); a capture fault through `k` is reported as runtime_invariant (exit 30), not at the capture"]
+#[ignore = "QSL-2879: the fixture must be checked under CheckMode::Kernel and selected as a package (FR-860-AC-4); a capture fault through `k` is reported as runtime_invariant (exit 30), not at the capture"]
 fn an_undefined_capture_is_reported_at_the_capture() {
     let directory = tempfile::tempdir().unwrap();
     let output = run_with(
@@ -596,7 +596,7 @@ fn false_guard_deliveries_create_no_capture_obligation_on_both_routes() {
 /// through the library package entry over the same admitted snapshot.
 #[test]
 #[trace("FSpec-FR-093-AC-5", "FSpec-FR-093-AC-6")]
-#[ignore = "requires the authoritative filament-examples corpus via FSL_EXAMPLES_DIR"]
+#[ignore = "QSL-2904: requires the authoritative filament-examples corpus via FSL_EXAMPLES_DIR"]
 fn the_canonical_false_guard_capture_example_is_inactive() {
     let root = PathBuf::from(
         std::env::var_os("FSL_EXAMPLES_DIR")

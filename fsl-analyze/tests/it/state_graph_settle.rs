@@ -263,7 +263,7 @@ fn a_state_graph_replay_allocation_stops_before_the_next_real_instance() {
 /// independently selected typed clock row.
 #[trace("FR-050-AC-6")]
 #[test]
-#[ignore = "QSL-2563 completed; current blocker has no assigned owner: with the explicit clock selection, whole-package read-back now refuses the temporal clock selection as having no configured declaration instead of reaching the temporal formula reader"]
+#[ignore = "QSL-2889: with the explicit clock selection, whole-package read-back now refuses the temporal clock selection as having no configured declaration instead of reaching the temporal formula reader"]
 fn state_graph_identity_readback_uses_the_explicit_temporal_selection() {
     let world = crate::graph_world::temporal_config_world();
     let claim = world.claim("ReachesTwo");

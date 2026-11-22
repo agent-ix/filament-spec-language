@@ -849,7 +849,8 @@ fn undefined_replay_distinguishes_workload_repeated_keys_and_scheduler_choices()
             RequestIndex::new(0),
             world.request(name, ModelCheckLimits::default()),
             move |path| {
-                path.scheduler[0].1 = choice.clone();
+                path.scheduler[0].1 =
+                    fsl_replay::ProbabilisticSchedulerChoice::Deterministic(choice.clone());
             },
         );
         let record = analyze_items(&Engines::fsl().unwrap(), vec![item], &Cancel::new()).remove(0);
@@ -862,8 +863,10 @@ fn undefined_replay_distinguishes_workload_repeated_keys_and_scheduler_choices()
         assert!(record.probabilistic_counterexample.is_none());
     }
     for mut wrong in [every.clone(), bounded] {
-        wrong.path.scheduler[0].1 = fsl_replay::ProductAction::Identity(
-            fsl_replay::Schedule::of(&system, &keep.identity).unwrap(),
+        wrong.path.scheduler[0].1 = fsl_replay::ProbabilisticSchedulerChoice::Deterministic(
+            fsl_replay::ProductAction::Identity(
+                fsl_replay::Schedule::of(&system, &keep.identity).unwrap(),
+            ),
         );
         assert!(matches!(
             replay(&wrong),
@@ -1408,4 +1411,29 @@ fn external_always_path_set_remains_unsupported() {
     };
     assert_eq!(token.mass(), &ratio(1, 1));
     assert_same_horizon_zero_witness(&system, token.evidence(), &witness);
+}
+
+/// FR-281 "Engine refusals": a bounded claim whose values outgrow
+/// `max_rational_bits` is `incomplete` naming that limit, not
+/// `unsupported`/`not-yet-implemented`.
+// QSL-2880 changes the expected outcome: a decided interval will then prove with ValueBounds.
+#[trace("TC-763", "FR-281-AC-6")]
+#[test]
+fn a_bounded_claim_past_the_rational_budget_settles_incomplete_naming_the_limit() {
+    let claim = "probabilistic NoFault using ev on M over (n: M::Node) under Steady \
+         on origin { probability >= 0.999 [ always[0,1000] holds(n.healthy) ] }";
+    let world = World::new(&prob_world::no_fault(claim));
+    let mut request = world.request("NoFault", ModelCheckLimits::default());
+    request.limits.max_rational_bits = 1024;
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let item = exact_probabilistic_item(RequestIndex::new(0), request);
+    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    assert_eq!(
+        record.terminal().expect("a terminal record").value(),
+        &TerminalValue::Incomplete(IncompleteCause::LimitReached {
+            limit: ModelCheckLimit::ExactProbMaxRationalBits,
+            value: 1024,
+        }),
+        "{record:#?}"
+    );
 }

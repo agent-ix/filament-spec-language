@@ -202,11 +202,40 @@ fn semantic_mutations_cannot_obtain_a_reproduced_token() {
         Err(ProbabilityWitnessError::Refused)
     ));
     let mut changed = witness.clone();
-    changed.scheduler[0].1 = fsl_replay::ProductAction::TerminalStutter;
+    changed.scheduler[0].1 = fsl_replay::ProbabilisticSchedulerChoice::Deterministic(
+        fsl_replay::ProductAction::TerminalStutter,
+    );
     assert!(matches!(
         replay(&world, &changed, &limits, &Cancel::new()),
         Err(ProbabilityWitnessError::Refused)
     ));
+}
+#[trace("TC-637", "FR-202-AC-21")]
+#[test]
+fn randomized_scheduler_entry_without_a_fairness_set_has_no_token() {
+    let world = World::new(&prob_world::link(CLAIMS));
+    let witness = evidence(&world, "TooMuch");
+    let limits = ExactProbLimits::default();
+    assert!(replay(&world, &witness, &limits, &Cancel::new()).is_ok());
+    let fsl_replay::ProbabilisticSchedulerChoice::Deterministic(action) =
+        witness.scheduler[0].1.clone()
+    else {
+        panic!("the produced scheduler is deterministic");
+    };
+    for distribution in [
+        vec![(action.clone(), ratio(1, 1))],
+        vec![
+            (action.clone(), ratio(1, 2)),
+            (fsl_replay::ProductAction::TerminalStutter, ratio(1, 2)),
+        ],
+    ] {
+        let mut changed = witness.clone();
+        changed.scheduler[0].1 = fsl_replay::ProbabilisticSchedulerChoice::Randomized(distribution);
+        assert!(matches!(
+            replay(&world, &changed, &limits, &Cancel::new()),
+            Err(ProbabilityWitnessError::Refused)
+        ));
+    }
 }
 #[trace("TC-637", "FR-202-AC-10")]
 #[test]

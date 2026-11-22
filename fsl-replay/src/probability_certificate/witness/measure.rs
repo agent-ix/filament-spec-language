@@ -266,7 +266,8 @@ pub(super) fn replay(
     {
         return Err(ProbabilityWitnessError::Refused);
     }
-    let scheduler = step::scheduler(&witness.scheduler, limits, &mut meter, &mut storage, cancel)?;
+    let deterministic = super::deterministic_scheduler_rows(&witness.scheduler)?;
+    let scheduler = step::scheduler(&deterministic, limits, &mut meter, &mut storage, cancel)?;
     let mut used = BTreeSet::new();
     let mut seen = BTreeSet::new();
     let mut edges = 0;
@@ -623,13 +624,8 @@ pub(super) fn replay_undefined(
     if workload.is_some() && !evidence.scheduler.is_empty() {
         return Err(ProbabilityWitnessError::Refused);
     }
-    let scheduler = step::scheduler(
-        &evidence.scheduler,
-        limits,
-        &mut meter,
-        &mut storage,
-        cancel,
-    )?;
+    let deterministic = super::deterministic_scheduler_rows(&evidence.scheduler)?;
+    let scheduler = step::scheduler(&deterministic, limits, &mut meter, &mut storage, cancel)?;
     let initials = system.initial();
     let [initial] = initials.as_slice() else {
         return Err(ExactProbabilityGraphError::UnsupportedInitial.into());
@@ -981,13 +977,14 @@ pub(super) fn replay_subsystem(
     {
         return Err(ProbabilityWitnessError::Refused);
     }
-    step::scheduler(&witness.scheduler, limits, &mut meter, &mut storage, cancel)?;
+    let deterministic = super::deterministic_scheduler_rows(&witness.scheduler)?;
+    step::scheduler(&deterministic, limits, &mut meter, &mut storage, cancel)?;
     let checked = super::super::document::measure::check_mean_refutation(
         system,
         claim,
         &witness.item,
         subsystem.as_bytes(),
-        &witness.scheduler,
+        &deterministic,
         document_limits,
         cancel,
     )
@@ -1008,7 +1005,15 @@ pub(super) fn replay_subsystem(
             if let super::super::document::measure::MeanRefutationCheck::AcceptedBounds(policy) =
                 checked
             {
-                evidence.scheduler = policy;
+                evidence.scheduler = policy
+                    .into_iter()
+                    .map(|(key, action)| {
+                        (
+                            key,
+                            super::ProbabilisticSchedulerChoice::Deterministic(action),
+                        )
+                    })
+                    .collect();
             }
             poll_cancel(cancel)?;
             Ok(ProbabilityWitnessReplay::Reproduced(Box::new(

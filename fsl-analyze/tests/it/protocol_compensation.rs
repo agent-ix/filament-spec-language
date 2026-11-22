@@ -2178,7 +2178,6 @@ fn every_compensation_outcome_is_reached() {
 /// reaches 17 states over 22 transitions.
 #[trace("TC-652", "FR-207-AC-1")]
 #[test]
-#[ignore = "QSL-2414: Pay graph with the fail, timeout and expiration successors (17 states, 22 transitions) not implemented yet"]
 fn pay_reaches_its_states_with_every_compensation_outcome() {
     explore(&pay("true"), |_, explored| {
         let reached = &explored.reached;

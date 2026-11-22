@@ -417,7 +417,15 @@ fn rekey(world: &World, name: &str, witness: &mut ProbabilisticCounterexample) {
             previous = step.post_key.clone();
         }
     }
-    witness.scheduler = scheduler.into_iter().collect();
+    witness.scheduler = scheduler
+        .into_iter()
+        .map(|(key, action)| {
+            (
+                key,
+                fsl_replay::ProbabilisticSchedulerChoice::Deterministic(action),
+            )
+        })
+        .collect();
 }
 
 #[trace("TC-637", "FR-202-AC-16")]
@@ -723,9 +731,14 @@ fn interval_bounds_and_precision_budget_cannot_be_cast_into_bounded_refutations(
                     TerminalValue::Incomplete(fsl_replay::IncompleteCause::PrecisionBudget { .. })
                 ));
             } else {
-                assert!(
-                    record.terminal().is_none(),
-                    "a mere Bounds result stays unsupported"
+                // FR-202-AC-16 forbids a reproduced token for Bounds; the run stops at
+                // the rational budget, which is `incomplete` naming it.
+                assert_eq!(
+                    record.terminal().unwrap().value(),
+                    &TerminalValue::Incomplete(fsl_replay::IncompleteCause::LimitReached {
+                        limit: fsl_replay::ModelCheckLimit::ExactProbMaxRationalBits,
+                        value: 1,
+                    })
                 );
             }
             assert!(record.probabilistic_counterexample.is_none());

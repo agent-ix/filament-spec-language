@@ -390,7 +390,7 @@ fn zeno_only_unit() -> String {
 #[trace("TC-3030", "FR-244-AC-7")]
 #[trace("TC-3030", "FR-245-AC-11")]
 #[test]
-#[ignore = "QSL-2305 completed; current blocker has no assigned owner: the Replied claim is refused invalid_capability/inconsistent-candidates (contract-checker) instead of settling with a zone certificate"]
+#[ignore = "QSL-2889: the Replied claim is refused invalid_capability/inconsistent-candidates (contract-checker) instead of settling with a zone certificate"]
 fn a_state_graph_certificate_over_a_zeno_only_graph_needs_no_divergence_witness() {
     let unit = zeno_only_unit();
     assert!(unit.contains("when { true } { self.x <= 0 ms }"), "{unit}");

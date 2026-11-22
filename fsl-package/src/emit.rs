@@ -1886,6 +1886,25 @@ struct Candidate<'g> {
     /// The occurrences `check` recorded for the node, each with the
     /// location it was recorded at.
     occurrences: Recorded<'g>,
+    /// The contiguous expression-occurrence range, ordered by ordinal.
+    expression_occurrences: std::ops::Range<usize>,
+}
+
+impl Candidate<'_> {
+    fn expression_region(
+        &self,
+        ordinal: u64,
+        regions: &impl Fn(&Location) -> Option<SourceRegion>,
+    ) -> Option<SourceRegion> {
+        let expression_occurrences = &self.occurrences[self.expression_occurrences.clone()];
+        let index = expression_occurrences
+            .binary_search_by_key(&ordinal, |(occurrence, _)| occurrence.ordinal)
+            .ok()?;
+        match &expression_occurrences[index].1 {
+                RecordedLocation::Expression(location) => regions(location),
+                RecordedLocation::Parameter(_) | RecordedLocation::Captured(_) => None,
+        }
+    }
 }
 
 impl<'g> Candidate<'g> {
@@ -1896,6 +1915,19 @@ impl<'g> Candidate<'g> {
         node: &'g SemanticNode,
         occurrences: Recorded<'g>,
     ) -> Result<Self, EmitRefusal> {
+        // `recorded_occurrences` preserves the checked occurrence table's
+        // role-then-ordinal ordering, so expression entries form one sorted
+        // slice. Record its bounds once; each generated row can then find
+        // its occurrence in logarithmic time.
+        let expression_start = occurrences
+            .iter()
+            .position(|(occurrence, _)| occurrence.role == CheckedOccurrenceRole::Expression)
+            .unwrap_or(occurrences.len());
+        let expression_end = occurrences[expression_start..]
+            .iter()
+            .position(|(occurrence, _)| occurrence.role != CheckedOccurrenceRole::Expression)
+            .map_or(occurrences.len(), |offset| expression_start + offset);
+        let expression_occurrences = expression_start..expression_end;
         let key = node.key();
         let id = node_id(ids, &key);
         // A self-typed node names itself as its semantic type (FR-322).
@@ -1964,6 +1996,7 @@ impl<'g> Candidate<'g> {
             names,
             laws,
             occurrences,
+            expression_occurrences,
         })
     }
 
@@ -6890,6 +6923,10 @@ impl<'g> Candidates<'g> {
         self.index.contains_key(key)
     }
 
+    fn get(&self, key: &NodeKey) -> Option<&Candidate<'g>> {
+        self.index.get(key).and_then(|index| self.order.get(*index))
+    }
+
     fn values(&self) -> std::slice::Iter<'_, Candidate<'g>> {
         self.order.iter()
     }
@@ -7597,8 +7634,21 @@ fn emit_package_inner(
         &mut nodes,
         &mut source_map,
     )?;
-    let value_validity_records =
-        value_validity_requirements::append(ids, graph, &mut nodes, &mut source_map, &regions)?;
+    // Use the same recorded expression placement that supplies the
+    // application's source-map occurrence; `CheckedGraph::occurrence` is
+    // not the placement source for caller-built, spanless forms.
+    let value_validity_region = |claim: &OccurrenceKey| {
+        candidates
+            .get(claim.node())?
+            .expression_region(claim.origin().ordinal(), &regions)
+    };
+    let value_validity_records = value_validity_requirements::append(
+        ids,
+        graph,
+        &mut nodes,
+        &mut source_map,
+        &value_validity_region,
+    )?;
     let (mut profile_selections, mut laws) = split_laws(&order);
     for refinement in emitted_refinements {
         let selection = CheckedSelection {

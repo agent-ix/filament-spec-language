@@ -630,7 +630,15 @@ fn refute_mean(
         binding: binding.cloned(),
         initial: first.clone(),
         initial_key,
-        scheduler,
+        scheduler: scheduler
+            .into_iter()
+            .map(|(key, action)| {
+                (
+                    key,
+                    fsl_replay::ProbabilisticSchedulerChoice::Deterministic(action),
+                )
+            })
+            .collect(),
         paths: Vec::new(),
         subsystem: Some(Box::new(subsystem)),
     };
@@ -644,7 +652,10 @@ fn refute_mean(
             };
             let mut spelled = Vec::new();
             for (key, action) in &token.evidence().scheduler {
-                let fsl_replay::ProductAction::Identity(schedule) = action else {
+                let fsl_replay::ProbabilisticSchedulerChoice::Deterministic(
+                    fsl_replay::ProductAction::Identity(schedule),
+                ) = action
+                else {
                     continue;
                 };
                 let Some(state) = product.ids().find(|state| {

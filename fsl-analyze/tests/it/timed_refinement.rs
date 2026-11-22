@@ -484,6 +484,7 @@ fn a_violated_safety_half_is_reported_with_no_liveness_half() {
 /// ClockRef data, and a hidden abstract field no longer refuses the check.
 #[trace("TC-3084", "FR-1040-AC-8")]
 #[test]
+#[ignore = "QSL-2897: clock-reference domain enumeration is deferred (FR-106), so the concrete ClockRef data member is refused at model construction"]
 fn clock_reference_selectors_use_the_timed_profile_before_refinement_gates() {
     const ZONE_BYTES: u64 = 4 << 20;
     let mut concrete: Json =
@@ -571,6 +572,82 @@ fn clock_reference_selectors_use_the_timed_profile_before_refinement_gates() {
         ),
         "the run stops at the explicit zone budget: {:?}",
         outcome.safety
+    );
+}
+
+/// Concrete ClockRef data is refused at model construction as
+/// `clock-reference-enumeration` (FR-106 "Clock-reference domain enumeration is
+/// also deferred"), before any selector bound or refinement gate applies.
+#[trace("FR-106")]
+#[test]
+fn clock_reference_data_is_refused_before_timed_refinement_gates() {
+    let mut concrete: Json =
+        serde_json::from_slice(&document(&["x", "q"], &[("send", &["inflight", "r"])]))
+            .expect("JSON");
+    let mut reference = wire_type(
+        &ident("ClockRef"),
+        "unused",
+        json!({"target": "ix://filament/native/Clock"}),
+    );
+    reference["kind"] = json!("reference");
+    concrete["types"]
+        .as_array_mut()
+        .expect("types")
+        .push(reference);
+    let fields = concrete["types"][1]["fields"]
+        .as_array_mut()
+        .expect("fields");
+    let q = fields
+        .iter_mut()
+        .find(|field| field["name"] == "q")
+        .expect("q");
+    q["multiplicity"] = json!({"lower": 0, "ordered": true, "unique": false});
+    let mut r = wire_field("r", &ident("ClockRef"));
+    r["presence"] = json!("optional");
+    r["multiplicity"]["lower"] = json!(0);
+    fields.push(r);
+    let abstract_model = renamed_package(
+        &document(&["y"], &[("send", &["inflight"])]),
+        "test/abstract",
+    );
+    let world = refining(
+        &abstract_model,
+        &serde_json::to_vec(&concrete).expect("JSON"),
+        &format!(
+            "{DENSE}time A dense unit ms;\n{}",
+            refinement("self.inflight").replace(" late = self.late;", "")
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"));
+    let mut concrete_request = world.concrete_request();
+    let mut snapshots = concrete_request.snapshots.clone();
+    let initial = snapshots
+        .get_mut(&concrete_request.initial[0])
+        .expect("concrete initial snapshot");
+    let mut snapshot: Json = serde_json::from_slice(initial).expect("snapshot JSON");
+    snapshot["populations"][0]["objects"][0]["fields"]["r"] = json!({"absent": {}});
+    *initial = serde_json::to_vec(&snapshot).expect("snapshot JSON");
+    concrete_request.snapshots = &snapshots;
+    let Err(fsl_replay::SubjectRefusal::Admission(failure)) = open_systems(
+        the_refinement(&world),
+        &concrete_request,
+        &world.package,
+        world.abstract_initials.clone(),
+    ) else {
+        panic!("a concrete Clock-reference data member has an explicit typed boundary");
+    };
+    let fsl_semantics::model::observation::AdmissionFailure::Refused(record) = *failure else {
+        panic!("the boundary is a typed refusal record");
+    };
+    assert_eq!(record.catalog.code(), "unknown_required_feature");
+    assert_eq!(record.catalog.cause(), "unsupported-feature");
+    assert_eq!(
+        record.fields.get("reason").map(String::as_str),
+        Some("clock-reference-enumeration")
+    );
+    assert_eq!(
+        record.fields.get("member").map(String::as_str),
+        Some(ident("Call/r").as_str())
     );
 }
 
