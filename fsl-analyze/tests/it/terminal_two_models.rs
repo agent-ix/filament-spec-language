@@ -1316,7 +1316,7 @@ fn deadlock_of_vault() -> serde_json::Value {
 fn deadlock_items(items: &[serde_json::Value]) -> Vec<&serde_json::Value> {
     items
         .iter()
-        .filter(|item| item["temporal"]["item_kind"] == "deadlock-freedom")
+        .filter(|item| item["request"]["temporal"]["item_kind"] == "deadlock-freedom")
         .collect()
 }
 

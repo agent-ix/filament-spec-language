@@ -169,7 +169,10 @@ fn advertising(
                 .iter()
                 .any(|(_, mode)| *mode == fsl_route::Mode::Bounded)
                 .then_some(&["population"]),
-            fairness_kinds: None,
+            fairness_kinds: pairs
+                .iter()
+                .any(|(kind, _)| *kind == fsl_semantics::check::Capability::TemporalSatisfaction)
+                .then_some(fsl_route::FairnessKindsMember::List(&[])),
             evidence_kinds: None,
             memory_models: None,
             reductions: None,
