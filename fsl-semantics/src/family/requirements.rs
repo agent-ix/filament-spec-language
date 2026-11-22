@@ -58,7 +58,7 @@ use filament_semantic_value::fairness::{FairnessKind, PropertyForm};
 /// The non-empty set of an item's unbounded domains, each with its kind,
 /// in [`DomainKey`] order.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct UnboundedDomains(BTreeMap<DomainKey, DomainKind>);
+pub struct UnboundedDomains(Vec<(DomainKey, DomainKind)>);
 
 impl UnboundedDomains {
     /// Every domain and its kind, in key order.
@@ -68,7 +68,10 @@ impl UnboundedDomains {
 
     /// The kind of `key`, if it is one of these domains.
     pub fn kind(&self, key: &DomainKey) -> Option<DomainKind> {
-        self.0.get(key).copied()
+        self.0
+            .binary_search_by(|(candidate, _)| candidate.cmp(key))
+            .ok()
+            .map(|at| self.0[at].1)
     }
 
     /// How many domains there are. Never zero.
@@ -84,7 +87,7 @@ impl UnboundedDomains {
     /// Whether a finite bound can stand for every domain (ADR-014 §4
     /// "Available finite bound").
     pub fn all_boundable(&self) -> bool {
-        self.0.values().all(|kind| kind.finite_kind().is_some())
+        self.0.iter().all(|(_, kind)| kind.finite_kind().is_some())
     }
 }
 
@@ -104,7 +107,7 @@ impl ClaimExtent {
         if domains.is_empty() {
             Self::Bounded
         } else {
-            Self::Unbounded(UnboundedDomains(domains))
+            Self::Unbounded(UnboundedDomains(domains.into_iter().collect()))
         }
     }
 
@@ -381,6 +384,122 @@ pub fn classify_extent(
     classify_extent_at(&rooted, types, position_limit)
 }
 
+/// Classify exactly the admitting populations lacking a finite universe,
+/// through the same population-domain rule as [`classify_domains`]. The
+/// resulting domain order and keys equal the ordinary rooted classifier.
+///
+/// # Errors
+/// The caller's original work/reservation refusal or typed identity/storage
+/// allocation failure. A denied operation returns no partial classification.
+pub fn classify_unbounded_populations_with<E>(
+    populations: &[&filament_checked::key::DeclarationKey],
+    work: &mut impl FnMut(u64) -> Result<(), E>,
+    reserve: &mut impl FnMut(usize) -> Result<(), E>,
+) -> Result<ClaimExtent, filament_exact::NodeKeyConstructionError<E>> {
+    use filament_exact::{InvalidNodeKey, NodeKeyConstructionError as Failure};
+    fn storage<T, E>(
+        values: &mut Vec<T>,
+        count: usize,
+        reserve: &mut impl FnMut(usize) -> Result<(), E>,
+    ) -> Result<(), Failure<E>> {
+        let requested =
+            count
+                .checked_mul(std::mem::size_of::<T>())
+                .ok_or(Failure::Construction(InvalidNodeKey::Allocation {
+                    requested: usize::MAX,
+                }))?;
+        if count != 0 {
+            reserve(requested).map_err(Failure::Policy)?;
+            values
+                .try_reserve_exact(count)
+                .map_err(|_| Failure::Construction(InvalidNodeKey::Allocation { requested }))?;
+        }
+        Ok(())
+    }
+    fn text_order<E>(
+        left: &str,
+        right: &str,
+        work: &mut impl FnMut(u64) -> Result<(), E>,
+    ) -> Result<std::cmp::Ordering, E> {
+        for (left, right) in left.bytes().zip(right.bytes()) {
+            work(1)?;
+            let order = left.cmp(&right);
+            if order != std::cmp::Ordering::Equal {
+                return Ok(order);
+            }
+        }
+        work(1)?;
+        Ok(left.len().cmp(&right.len()))
+    }
+    fn order<E>(
+        left: &filament_checked::key::DeclarationKey,
+        right: &filament_checked::key::DeclarationKey,
+        work: &mut impl FnMut(u64) -> Result<(), E>,
+    ) -> Result<std::cmp::Ordering, E> {
+        work(1)?;
+        let order = text_order(&left.package, &right.package, work)?;
+        if order != std::cmp::Ordering::Equal {
+            return Ok(order);
+        }
+        text_order(&left.node, &right.node, work)
+    }
+    work(1).map_err(Failure::Policy)?;
+    if populations.is_empty() {
+        return Ok(ClaimExtent::Bounded);
+    }
+    let mut sorted = Vec::new();
+    storage(&mut sorted, populations.len(), reserve)?;
+    for population in populations {
+        work(1).map_err(Failure::Policy)?;
+        sorted.push(*population);
+    }
+    for position in 1..sorted.len() {
+        let mut at = position;
+        while at > 0
+            && order(sorted[at - 1], sorted[at], work).map_err(Failure::Policy)?
+                == std::cmp::Ordering::Greater
+        {
+            work(1).map_err(Failure::Policy)?;
+            sorted.swap(at - 1, at);
+            at -= 1;
+        }
+    }
+    let mut domains = Vec::new();
+    storage(&mut domains, sorted.len(), reserve)?;
+    let mut previous = None;
+    for population in sorted {
+        work(1).map_err(Failure::Policy)?;
+        if let Some(previous) = previous {
+            if order(previous, population, work).map_err(Failure::Policy)?
+                == std::cmp::Ordering::Equal
+            {
+                continue;
+            }
+        }
+        let node = crate::model::key::ModelNodeIdentity::new(
+            &population.package,
+            "relation",
+            "population",
+            &population.node,
+        )
+        .map_err(Failure::Construction)?
+        .try_to_node_key_with(work, reserve)?;
+        domains.push((
+            DomainKey::Node {
+                node,
+                path: Vec::new(),
+            },
+            population_domain_kind(),
+        ));
+        previous = Some(population);
+    }
+    Ok(ClaimExtent::Unbounded(UnboundedDomains(domains)))
+}
+
+fn population_domain_kind() -> DomainKind {
+    DomainKind::Population
+}
+
 /// [`classify_extent`] over roots that sit below a base child-index path in
 /// their node: a model member's domain is `{node, path}` with the member's
 /// own path first (FSpec FR-331 "Model member domain keys"), and the path
@@ -449,7 +568,7 @@ pub fn classify_domains(
                 domains.insert(key(), DomainKind::Integer);
             }
             ValueType::Population(None) => {
-                domains.insert(key(), DomainKind::Population);
+                domains.insert(key(), population_domain_kind());
             }
             ValueType::Quantity(_)
             | ValueType::BoundedQuantity(_)
@@ -552,6 +671,119 @@ mod tests {
     use fsl_foundation::bound::FiniteBoundKind;
     use fsl_foundation::diagnostic::LimitKind;
     use ix_trace_rs::trace;
+
+    /// The budgeted population path retains ordinary requires-bound keys,
+    /// order and deduplication, and returns the original denied storage charge.
+    #[test]
+    #[trace("FR-1011", "FR-125")]
+    fn budgeted_population_classification_preserves_domains_and_denial() {
+        use filament_checked::key::DeclarationKey;
+        use filament_exact::{Charge, ChargePoint, Meter, NodeKeyConstructionError};
+        use std::cell::RefCell;
+        let keys: Vec<_> = ["z", "a", "z"]
+            .into_iter()
+            .map(|name| DeclarationKey {
+                package: "P".to_owned(),
+                node: name.to_owned(),
+            })
+            .collect();
+        let populations: Vec<_> = keys.iter().collect();
+        let population = ValueType::Population(None);
+        let roots: Vec<_> = keys
+            .iter()
+            .map(|key| {
+                (
+                    crate::model::key::population_node_key(key).unwrap(),
+                    Vec::new(),
+                    &population,
+                )
+            })
+            .collect();
+        let expected = classify_extent_at(&roots, &types(), LIMIT).unwrap();
+        let meter = RefCell::new(Meter::new(crate::check::SCALAR_LIMITS_UNLIMITED));
+        let actual = classify_unbounded_populations_with(
+            &populations,
+            &mut |units| {
+                meter
+                    .borrow_mut()
+                    .charge(Charge::new(ChargePoint::ModelCandidate).work(Integer::from(units)))
+            },
+            &mut |bytes| {
+                meter.borrow_mut().charge(
+                    Charge::new(ChargePoint::ModelCandidate)
+                        .work(Integer::zero())
+                        .results(u64::try_from(bytes).unwrap()),
+                )
+            },
+        )
+        .unwrap();
+        assert_eq!(actual, expected);
+        let ClaimExtent::Unbounded(domains) = actual else {
+            panic!("population roots require a bound");
+        };
+        let expected_nodes: Vec<_> = ["a", "z"]
+            .into_iter()
+            .map(|name| {
+                NodeKey::new(
+                    "P",
+                    ["relation", "population", name]
+                        .into_iter()
+                        .map(|text| filament_exact::PathSegment::Text(text.to_owned()))
+                        .collect(),
+                    0,
+                )
+                .unwrap()
+            })
+            .collect();
+        let listed: Vec<_> = domains
+            .iter()
+            .map(|(key, kind)| (key.clone(), kind))
+            .collect();
+        let expected_domains: Vec<_> = expected_nodes
+            .into_iter()
+            .map(|node| {
+                (
+                    DomainKey::Node {
+                        node,
+                        path: Vec::new(),
+                    },
+                    DomainKind::Population,
+                )
+            })
+            .collect();
+        assert_eq!(listed, expected_domains);
+        let mut limits = crate::check::SCALAR_LIMITS_UNLIMITED;
+        limits.result_units = 0;
+        let meter = RefCell::new(Meter::new(limits));
+        let error = classify_unbounded_populations_with(
+            &populations,
+            &mut |units| {
+                meter
+                    .borrow_mut()
+                    .charge(Charge::new(ChargePoint::ModelCandidate).work(Integer::from(units)))
+            },
+            &mut |bytes| {
+                meter.borrow_mut().charge(
+                    Charge::new(ChargePoint::ModelCandidate)
+                        .work(Integer::zero())
+                        .results(u64::try_from(bytes).unwrap()),
+                )
+            },
+        )
+        .unwrap_err();
+        let NodeKeyConstructionError::Policy(denial) = error else {
+            panic!("original storage denial");
+        };
+        assert_eq!(denial.charge_point, ChargePoint::ModelCandidate);
+        assert_eq!(denial.limit_kind, filament_exact::LimitKind::ResultUnits);
+        assert_eq!(denial.limit, 0);
+        assert_eq!(
+            meter
+                .borrow()
+                .consumed(filament_exact::LimitKind::ResultUnits),
+            0
+        );
+    }
 
     const LIMIT: u64 = 1_000;
 

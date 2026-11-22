@@ -21,8 +21,11 @@ use filament_exact::{
 use filament_semantic_value::declaration::CompositeShape;
 use filament_semantic_value::model_transition::ModelTransition;
 use filament_semantic_value::stop::Stop as ValueStop;
+use fsl_eval::automaton::{PolicyContext, PolicyState, PolicyStateError, StepPolicy};
+use fsl_eval::model_subject::{AtomStop, ModelLetters};
 use fsl_eval::simulation::model::{read_clause, ClauseReading};
 use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
+use fsl_eval::temporal::AtomReading;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{
     CheckedBody, CheckedNode, CheckedPlan, CheckedSynthesis, PlanOperation, TemporalClauseNode,
@@ -135,11 +138,19 @@ pub struct SourcePlan<'a> {
     /// monitor id is used only for zero-length closed source-policy reads.
     /// Positive-length source policies refuse until canonical monitors exist.
     traces: Vec<Vec<ModelSimState>>,
+    positive_policies: bool,
+    policy_cache: Vec<StepPolicy>,
     trace_ids: BTreeMap<(usize, Vec<Vec<u8>>), usize>,
     fault: Option<String>,
 }
 
 impl<'a> SourcePlan<'a> {
+    /// Whether a checked policy has a canonical positive-length source adapter.
+    /// Model compatibility is admitted separately against the plan grammar.
+    pub fn supports_positive_policy(node: &TemporalClauseNode) -> bool {
+        node.clause().clock() == "model-steps" && StepPolicy::new(node.clause()).is_some()
+    }
+
     /// The rules of `synthesis` over `system`, evaluating under `limits`.
     ///
     /// # Errors
@@ -170,11 +181,15 @@ impl<'a> SourcePlan<'a> {
                 });
             }
         }
-        if !policies.is_empty()
-            && !matches!(synthesis.domain(), ValueType::Int(domain) if domain.upper().is_zero())
+        let positive_policies =
+            !matches!(synthesis.domain(), ValueType::Int(domain) if domain.upper().is_zero());
+        if positive_policies
+            && policies
+                .iter()
+                .any(|node| !Self::supports_positive_policy(node))
         {
             return Err(PlanSourceError::UnsupportedForm {
-                form: "positive-length temporal policy planning with canonical monitor states"
+                form: "positive-length source policy outside capture-free origin safety and bounded F/G[0,k]"
                     .to_owned(),
                 location: synthesis.satisfies().root().location().clone(),
             });
@@ -306,6 +321,8 @@ impl<'a> SourcePlan<'a> {
             objective_reads_final_attributes,
             policies,
             traces: Vec::new(),
+            positive_policies,
+            policy_cache: Vec::new(),
             trace_ids: BTreeMap::new(),
             fault: None,
         })
@@ -629,6 +646,187 @@ impl<'a> SourcePlan<'a> {
         }
     }
 
+    fn policy_stop(&mut self, error: PolicyStateError) -> RuleStop {
+        match error {
+            PolicyStateError::Accounting(incomplete) => {
+                self.evaluation_stop(incomplete.limit_kind.as_str(), incomplete.limit)
+            }
+            PolicyStateError::IdentityLimit { value } => RuleStop::IdentityLimit { value },
+            PolicyStateError::Cancelled(cause) => RuleStop::Cancelled(cause),
+            other => {
+                self.fault.get_or_insert_with(|| other.to_string());
+                RuleStop::Cancelled(filament_exact::CancelCause::Requested)
+            }
+        }
+    }
+
+    fn policy_charge(&self, charge: filament_exact::Charge) -> Result<(), RuleStop> {
+        let mut meter = self.system.evaluation_meter();
+        if let Some(cause) = meter.cancel().and_then(filament_exact::Cancel::cause) {
+            return Err(RuleStop::Cancelled(cause));
+        }
+        meter.charge(charge).map_err(|incomplete| {
+            match meter.cancel().and_then(filament_exact::Cancel::cause) {
+                Some(cause) => RuleStop::Cancelled(cause),
+                None => self.evaluation_stop(incomplete.limit_kind.as_str(), incomplete.limit),
+            }
+        })?;
+        if let Some(cause) = meter.cancel().and_then(filament_exact::Cancel::cause) {
+            return Err(RuleStop::Cancelled(cause));
+        }
+        Ok(())
+    }
+
+    fn policy_capacity<T>(&self, values: &mut Vec<T>, extra: usize) -> Result<(), RuleStop> {
+        use filament_exact::{Charge, ChargePoint};
+        let needed = values
+            .len()
+            .checked_add(extra)
+            .ok_or(RuleStop::Cancelled(filament_exact::CancelCause::Requested))?;
+        if needed > values.capacity() {
+            let bytes = needed
+                .checked_mul(std::mem::size_of::<T>())
+                .ok_or(RuleStop::Cancelled(filament_exact::CancelCause::Requested))?;
+            self.policy_charge(
+                Charge::new(ChargePoint::ModelCandidate)
+                    .work(Integer::zero())
+                    .results(u64::try_from(bytes).map_err(|_| {
+                        RuleStop::Cancelled(filament_exact::CancelCause::Requested)
+                    })?),
+            )?;
+            values
+                .try_reserve_exact(needed - values.len())
+                .map_err(|_| RuleStop::Cancelled(filament_exact::CancelCause::Requested))?;
+        }
+        Ok(())
+    }
+
+    fn compiled_policy(&mut self, index: usize) -> Result<StepPolicy, RuleStop> {
+        while self.policy_cache.len() <= index {
+            let policy = self
+                .policies
+                .get(self.policy_cache.len())
+                .and_then(|node| StepPolicy::new(node.clause()))
+                .ok_or(RuleStop::Cancelled(filament_exact::CancelCause::Requested))?;
+            let mut cache = std::mem::take(&mut self.policy_cache);
+            self.policy_capacity(&mut cache, 1)?;
+            cache.push(policy);
+            self.policy_cache = cache;
+        }
+        Ok(self.policy_cache[index])
+    }
+
+    fn canonical_policy(
+        &mut self,
+        index: usize,
+        previous: Option<&[u8]>,
+        state: &ModelSimState,
+        close: bool,
+    ) -> Result<MonitorStep, RuleStop> {
+        let policy = self.compiled_policy(index)?;
+        let node = self.policies[index];
+        let instances = self
+            .system
+            .instances_with_meter(&node.clause().over().1, &mut self.system.evaluation_meter())
+            .map_err(|error| self.policy_stop(error))?;
+        let identity = node.identity();
+        let parameter = node.over();
+        let mut contexts = Vec::new();
+        self.policy_capacity(&mut contexts, instances.len())?;
+        contexts.extend(instances.iter().map(|instance| PolicyContext {
+            node: &identity,
+            claim: node.claim(),
+            parameter: &parameter,
+            instance: &instance.key,
+        }));
+        let before = if let Some(bytes) = previous {
+            policy
+                .admit(&contexts, bytes, &mut self.system.evaluation_meter())
+                .map_err(|error| self.policy_stop(error))?
+        } else {
+            Vec::new()
+        };
+        let letters = match self
+            .system
+            .clause_letters_with_meter(node, &mut self.system.evaluation_meter())
+        {
+            Ok(letters) => letters,
+            Err(fsl_eval::simulation::model::LettersPreparationError::Policy(error)) => {
+                return Err(self.policy_stop(error))
+            }
+            Err(fsl_eval::simulation::model::LettersPreparationError::Admission(error)) => {
+                self.fault.get_or_insert_with(|| error.to_string());
+                return Ok(MonitorStep::Reject);
+            }
+        };
+        let mut after = Vec::new();
+        self.policy_capacity(&mut after, instances.len())?;
+        for (position, instance) in instances.iter().enumerate() {
+            let old = before.get(position).copied();
+            let needs_atom = if close {
+                matches!(
+                    old,
+                    Some(PolicyState::Bounded(
+                        fsl_eval::automaton::BoundedState::Open { remaining: 1.. }
+                    ))
+                )
+            } else {
+                policy.reads(old)
+            };
+            let holds = if needs_atom {
+                match letters.atom(
+                    policy.atom(),
+                    instance,
+                    state,
+                    &mut self.system.evaluation_meter(),
+                ) {
+                    Ok(AtomReading::True) => true,
+                    Ok(AtomReading::False) => false,
+                    Ok(AtomReading::Undefined(_)) => return Ok(MonitorStep::Reject),
+                    Err(AtomStop::Incomplete(incomplete)) => {
+                        return Err(
+                            self.evaluation_stop(incomplete.limit_kind.as_str(), incomplete.limit)
+                        )
+                    }
+                    Err(error) => {
+                        self.fault.get_or_insert_with(|| format!("{error:?}"));
+                        return Ok(MonitorStep::Reject);
+                    }
+                }
+            } else {
+                false
+            };
+            if close {
+                let Some(old) = old else {
+                    self.fault
+                        .get_or_insert_with(|| "a closed policy has an initial state".to_owned());
+                    return Ok(MonitorStep::Reject);
+                };
+                if !policy
+                    .terminal(old, holds, &mut self.system.evaluation_meter())
+                    .map_err(|error| self.policy_stop(error))?
+                {
+                    return Ok(MonitorStep::Reject);
+                }
+            } else {
+                let next = policy
+                    .advance(old, holds, &mut self.system.evaluation_meter())
+                    .map_err(|error| self.policy_stop(error))?;
+                if policy.rejects(next) {
+                    return Ok(MonitorStep::Reject);
+                }
+                after.push(next);
+            }
+        }
+        if close {
+            return Ok(MonitorStep::Continue(Vec::new()));
+        }
+        let encoded = policy
+            .encode(&contexts, &after, &mut self.system.evaluation_meter())
+            .map_err(|error| self.policy_stop(error))?;
+        Ok(MonitorStep::Continue(encoded))
+    }
+
     /// The states a policy monitor has read.
     fn prefix(&mut self, monitor: &[u8]) -> Result<Vec<ModelSimState>, RuleStop> {
         <[u8; 8]>::try_from(monitor)
@@ -947,6 +1145,48 @@ impl PlanRules for SourcePlan<'_> {
         Some(self.native_operations.clone())
     }
 
+    fn policy_states(&mut self) -> Result<Vec<Vec<u8>>, RuleStop> {
+        let mut states = Vec::new();
+        if self.positive_policies {
+            self.policy_capacity(&mut states, self.policies.len())?;
+        } else {
+            states.reserve_exact(self.policies.len());
+        }
+        Ok(states)
+    }
+
+    fn copy_policy_states(&mut self, monitors: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, RuleStop> {
+        if !self.positive_policies || monitors.is_empty() {
+            return Ok(monitors.to_vec());
+        }
+        StepPolicy::copy_states(monitors, &mut self.system.evaluation_meter())
+            .map_err(|error| self.policy_stop(error))
+    }
+
+    fn compare_policy_states(
+        &mut self,
+        left: &[Vec<u8>],
+        right: &[Vec<u8>],
+    ) -> Result<std::cmp::Ordering, RuleStop> {
+        if !self.positive_policies || self.policies.is_empty() {
+            return Ok(left.cmp(right));
+        }
+        StepPolicy::compare_states(left, right, &mut self.system.evaluation_meter())
+            .map_err(|error| self.policy_stop(error))
+    }
+
+    fn push_policy_index(&mut self, bucket: &mut Vec<usize>, node: usize) -> Result<(), RuleStop> {
+        if self.positive_policies && !self.policies.is_empty() {
+            self.policy_charge(
+                filament_exact::Charge::new(filament_exact::ChargePoint::ModelCandidate)
+                    .work(Integer::from(1_i64)),
+            )?;
+            self.policy_capacity(bucket, 1)?;
+        }
+        bucket.push(node);
+        Ok(())
+    }
+
     fn policy_count(&self) -> usize {
         self.policies.len()
     }
@@ -956,7 +1196,11 @@ impl PlanRules for SourcePlan<'_> {
         policy: usize,
         state: &ModelSimState,
     ) -> Result<MonitorStep, RuleStop> {
-        self.advance(policy, Vec::new(), state)
+        if self.positive_policies {
+            self.canonical_policy(policy, None, state, false)
+        } else {
+            self.advance(policy, Vec::new(), state)
+        }
     }
 
     fn policy_advance(
@@ -965,6 +1209,9 @@ impl PlanRules for SourcePlan<'_> {
         monitor: &[u8],
         state: &ModelSimState,
     ) -> Result<MonitorStep, RuleStop> {
+        if self.positive_policies {
+            return self.canonical_policy(policy, Some(monitor), state, false);
+        }
         let prefix = self.prefix(monitor)?;
         self.advance(policy, prefix, state)
     }
@@ -973,8 +1220,14 @@ impl PlanRules for SourcePlan<'_> {
         &mut self,
         policy: usize,
         monitor: &[u8],
-        _last: &ModelSimState,
+        last: &ModelSimState,
     ) -> Result<bool, RuleStop> {
+        if self.positive_policies {
+            return Ok(matches!(
+                self.canonical_policy(policy, Some(monitor), last, true)?,
+                MonitorStep::Continue(_)
+            ));
+        }
         let states = self.prefix(monitor)?;
         let Some(&node) = self.policies.get(policy) else {
             return Ok(false);

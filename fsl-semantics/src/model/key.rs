@@ -93,16 +93,68 @@ impl<'a> ModelNodeIdentity<'a> {
         self.node.project(sink)
     }
 
+    /// Construct the existing model-node identity with actual input-copy work
+    /// and pre-reservation byte requests presented to the caller.
+    ///
+    /// # Errors
+    /// The original caller refusal or the kernel's typed construction failure.
+    pub fn try_to_node_key_with<E>(
+        self,
+        work: &mut impl FnMut(u64) -> Result<(), E>,
+        reserve: &mut impl FnMut(usize) -> Result<(), E>,
+    ) -> Result<NodeKey, filament_exact::NodeKeyConstructionError<E>> {
+        use filament_exact::{NodeKeyConstructionError as Failure, PathSegment};
+        fn text<E>(
+            value: &str,
+            work: &mut impl FnMut(u64) -> Result<(), E>,
+            reserve: &mut impl FnMut(usize) -> Result<(), E>,
+        ) -> Result<String, Failure<E>> {
+            let units = u64::try_from(value.len()).map_err(|_| {
+                Failure::Construction(InvalidNodeKey::Allocation {
+                    requested: usize::MAX,
+                })
+            })?;
+            work(units).map_err(Failure::Policy)?;
+            reserve(value.len()).map_err(Failure::Policy)?;
+            let mut output = String::new();
+            output.try_reserve_exact(value.len()).map_err(|_| {
+                Failure::Construction(InvalidNodeKey::Allocation {
+                    requested: value.len(),
+                })
+            })?;
+            output.push_str(value);
+            Ok(output)
+        }
+        work(1).map_err(Failure::Policy)?;
+        let package = text(self.node.package(), work, reserve)?;
+        let requested = self
+            .node
+            .path()
+            .len()
+            .checked_mul(std::mem::size_of::<PathSegment>())
+            .ok_or(Failure::Construction(InvalidNodeKey::Allocation {
+                requested: usize::MAX,
+            }))?;
+        reserve(requested).map_err(Failure::Policy)?;
+        let mut path = Vec::new();
+        path.try_reserve_exact(self.node.path().len())
+            .map_err(|_| Failure::Construction(InvalidNodeKey::Allocation { requested }))?;
+        for segment in self.node.path() {
+            work(1).map_err(Failure::Policy)?;
+            path.push(PathSegment::Text(text(segment, work, reserve)?));
+        }
+        NodeKey::try_new_with(package, path, 0, reserve)
+    }
+
     pub(crate) fn to_node_key(self) -> Result<NodeKey, InvalidNodeKey> {
-        crate::check::declared_node_key(
-            self.node.package().to_owned(),
-            self.node
-                .path()
-                .iter()
-                .map(|segment| (*segment).to_owned())
-                .collect(),
-            0,
-        )
+        match self
+            .try_to_node_key_with(&mut |_| Ok::<(), std::convert::Infallible>(()), &mut |_| {
+                Ok::<(), std::convert::Infallible>(())
+            }) {
+            Ok(key) => Ok(key),
+            Err(filament_exact::NodeKeyConstructionError::Construction(error)) => Err(error),
+            Err(filament_exact::NodeKeyConstructionError::Policy(never)) => match never {},
+        }
     }
 }
 

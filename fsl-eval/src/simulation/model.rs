@@ -72,7 +72,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::{
-    EffectiveId, Incomplete, Integer, IntegerInterval, NodeKey, ObjectReference, Refusal,
+    EffectiveId, Incomplete, Integer, IntegerInterval, Meter, NodeKey, ObjectReference, Refusal,
     ScalarLimits, Undefined, ValueType,
 };
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
@@ -129,7 +129,7 @@ pub(crate) use reference_bindings::ReferenceBinding;
 pub use reference_bindings::ReferenceBindings;
 mod hyper_letters;
 pub use hyper_letters::CheckedHyperLetters;
-pub use letters::{ClauseLetters, DecisiveObservation, LettersRefusal};
+pub use letters::{ClauseLetters, DecisiveObservation, LettersPreparationError, LettersRefusal};
 pub use probabilistic::{
     same_rewards, same_values, Action, Draw, NotMarkov, ScheduledIdentity, TransitionId,
     UndecidedSuccessor, Unsteppable, WeightedStep,
@@ -2444,6 +2444,163 @@ impl<'a> ModelSystem<'a> {
                     })
             })
             .collect())
+    }
+
+    /// List policy instances in the existing deterministic order, charging
+    /// caller-owned traversal, ordering and full new capacities before growth.
+    /// The ordinary unmetered instance API remains unchanged.
+    ///
+    /// # Errors
+    /// The original instance admission, scalar accounting, cancellation or
+    /// allocation/encoding refusal; no partial instance list is returned.
+    pub fn instances_with_meter(
+        &self,
+        over: &ValueType,
+        meter: &mut Meter,
+    ) -> Result<Vec<ModelInstance>, crate::automaton::PolicyStateError> {
+        use crate::automaton::PolicyStateError;
+        use crate::policy_budget::{declaration_bytes, Budget};
+        let budget = Budget {
+            meter: std::cell::RefCell::new(meter),
+            stopped: std::cell::RefCell::new(None),
+        };
+        budget.work(0)?;
+        let ValueType::Reference(parameter) = over else {
+            return Ok(Vec::new());
+        };
+        let mut admitting = Vec::new();
+        for population in &self.populations {
+            budget.work(1)?;
+            if self.overlaps_with_budget(population, parameter, &budget)? {
+                let identity = declaration_bytes(&population.key, &budget)?;
+                budget.growth(&mut admitting, 1)?;
+                admitting.push((identity, &population.key));
+            }
+        }
+        let mut unbounded = Vec::new();
+        for (_, population) in &admitting {
+            budget.work(1)?;
+            if self.universe_with_budget(population, &budget)?.is_none() {
+                budget.growth(&mut unbounded, 1)?;
+                unbounded.push(*population);
+            }
+        }
+        let extent = fsl_semantics::family::classify_unbounded_populations_with(
+            &unbounded,
+            &mut |units| {
+                budget.work(usize::try_from(units).map_err(|_| PolicyStateError::Invalid)?)
+            },
+            &mut |bytes| budget.reserve(bytes),
+        )
+        .map_err(|error| match error {
+            filament_exact::NodeKeyConstructionError::Policy(error) => error,
+            filament_exact::NodeKeyConstructionError::Construction(
+                filament_exact::InvalidNodeKey::Allocation { requested },
+            ) => PolicyStateError::Encoding(quire_canonical::Error::Allocation { requested }),
+            filament_exact::NodeKeyConstructionError::Construction(_) => PolicyStateError::Invalid,
+        })?;
+        if let fsl_semantics::family::ClaimExtent::Unbounded(domains) = extent {
+            return Err(crate::simulation::NotSimulated::RequiresBound(
+                crate::simulation::RequiresBound {
+                    domains: Some(domains),
+                    capacities: Vec::new(),
+                    clock_references: Vec::new(),
+                },
+            )
+            .into());
+        }
+        // Insertion sort keeps the byte-comparison schedule caller-controlled:
+        // every inspected pair is admitted before comparison and movement.
+        for position in 1..admitting.len() {
+            let mut at = position;
+            while at > 0 {
+                let (left, right) = (&admitting[at - 1].0, &admitting[at].0);
+                let mut order = std::cmp::Ordering::Equal;
+                for (left, right) in left.iter().zip(right) {
+                    budget.work(1)?;
+                    order = left.cmp(right);
+                    if order != std::cmp::Ordering::Equal {
+                        break;
+                    }
+                }
+                if order == std::cmp::Ordering::Equal {
+                    budget.work(1)?;
+                    order = left.len().cmp(&right.len());
+                }
+                if order != std::cmp::Ordering::Greater {
+                    break;
+                }
+                budget.work(1)?;
+                admitting.swap(at - 1, at);
+                at -= 1;
+            }
+        }
+        let mut instances = Vec::new();
+        for (_, population) in admitting {
+            budget.work(1)?;
+            for key in self
+                .universe_with_budget(population, &budget)?
+                .into_iter()
+                .flatten()
+            {
+                budget.work(1)?;
+                let population = DeclarationKey {
+                    package: budget.text(&population.package)?,
+                    node: budget.text(&population.node)?,
+                };
+                let key = budget.text(key)?;
+                budget.growth(&mut instances, 1)?;
+                instances.push(ModelInstance { population, key });
+            }
+        }
+        Ok(instances)
+    }
+
+    fn universe_with_budget(
+        &self,
+        population: &DeclarationKey,
+        budget: &crate::policy_budget::Budget<'_>,
+    ) -> Result<Option<&Vec<String>>, crate::automaton::PolicyStateError> {
+        for (candidate, keys) in &self.universes {
+            budget.work(1)?;
+            if budget.compare_declarations(candidate, population)? == std::cmp::Ordering::Equal {
+                return Ok(Some(keys));
+            }
+        }
+        Ok(None)
+    }
+
+    fn overlaps_with_budget(
+        &self,
+        population: &fsl_semantics::model::state::StatePopulation,
+        parameter: &EffectiveId,
+        budget: &crate::policy_budget::Budget<'_>,
+    ) -> Result<bool, crate::automaton::PolicyStateError> {
+        for member in &population.member_types {
+            budget.work(1)?;
+            let Some(member) = self.model.type_identity_with_work(member, &mut |units| {
+                budget.work(
+                    usize::try_from(units)
+                        .map_err(|_| crate::automaton::PolicyStateError::Invalid)?,
+                )
+            })?
+            else {
+                continue;
+            };
+            // The admitted conformance API owns both arguments. Their real
+            // copies use its identity reservation hook; its internal query
+            // work still needs the owner's borrowed metered seam.
+            if self
+                .types
+                .conforms(budget.effective(member)?, budget.effective(parameter)?)
+                || self
+                    .types
+                    .conforms(budget.effective(parameter)?, budget.effective(member)?)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Whether `population` overlaps the object type `parameter` (FR-125

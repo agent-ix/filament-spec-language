@@ -298,12 +298,15 @@ pub(super) fn run(
                 ),
             });
         }
+        if lengths.max() > 0 && !SourcePlan::supports_positive_policy(node) {
+            return Err(RunCause::SynthesisRequest {
+                path: format!("{NATIVE_RUN_POINTER}/policy/{position}"),
+                code: Code::UnsupportedConstruct,
+                cause: "not-yet-implemented",
+                reason: format!("positive-length policy `{name}` is outside capture-free origin model-step safety and bounded F/G[0,k]"),
+            });
+        }
         policies.push(node);
-    }
-    if !policies.is_empty() && lengths.max() > 0 {
-        return Err(RunCause::SynthesisRequest { path: format!("{NATIVE_RUN_POINTER}/policy"),
-            code: Code::UnsupportedConstruct, cause: "not-yet-implemented",
-            reason: "positive-length temporal policy planning needs canonical monitor states; only zero-length closed policy reads are currently supported".to_owned() });
     }
     let mut rules = SourcePlan::new(package, checked, &system, policies, limits)
         .map_err(|error| source_failure(error, package, intake))?;
