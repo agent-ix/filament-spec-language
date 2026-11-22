@@ -3611,8 +3611,7 @@ pub(super) fn admit_population_values<'t>(
                             .with(
                                 "path",
                                 snapshot_field_path(population_index, object_index, name),
-                            )
-                            .at(snapshot_field_steps(population_index, object_index, name)),
+                            ),
                     ));
                 }
                 let mut found = Vec::new();
@@ -3622,7 +3621,7 @@ pub(super) fn admit_population_values<'t>(
                 };
                 let field_value =
                     admit_object_field(&mut references, raw, value_type, presence, witness)
-                        .map_err(|mut record| {
+                        .map_err(|record| {
                             let field_path =
                                 snapshot_field_path(population_index, object_index, name);
                             // The typed steps stay as the kernel gave them
@@ -3632,16 +3631,6 @@ pub(super) fn admit_population_values<'t>(
                                 "{field_path}{}",
                                 pointer_of(&refusal_steps(raw.form(), &record))
                             );
-                            let mut path =
-                                snapshot_field_steps(population_index, object_index, name);
-                            path.extend(record.path.iter().cloned());
-                            if let Some(member) = record.fields.get("member") {
-                                let named = PathStep::Field(member.clone());
-                                if path.last() != Some(&named) {
-                                    path.push(named);
-                                }
-                            }
-                            record.path = path;
                             refuse(
                                 record
                                     .with("object", object.key.clone())
