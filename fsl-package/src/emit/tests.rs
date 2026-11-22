@@ -2029,6 +2029,7 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
         ProtocolResultInvariant,
         ProtocolResultsRequired,
         NativeLiteralNotEmitted(&'static str),
+        RequirementNotEmitted(&'static str, &'static str),
     }
     fn classify(result: Result<Emission, EmitRefusal>) -> Seen {
         match result {
@@ -2087,6 +2088,9 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
             Err(EmitRefusal::ProtocolResultsRequired) => Seen::ProtocolResultsRequired,
             Err(EmitRefusal::NativeLiteralNotEmitted { construct }) => {
                 Seen::NativeLiteralNotEmitted(construct)
+            }
+            Err(EmitRefusal::RequirementNotEmitted { kind, shape }) => {
+                Seen::RequirementNotEmitted(kind, shape)
             }
             Err(EmitRefusal::OutputLimit(_)) => {
                 panic!("the fixture set emits under a ceiling no fixture reaches")

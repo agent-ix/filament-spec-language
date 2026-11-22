@@ -912,6 +912,9 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
                 .iter()
                 .map(|parameter| (parameter.name.clone(), parameter.value_type.clone()))
                 .collect::<Vec<_>>();
+            let body_location = selected
+                .body_location
+                .or_else(|| projection.location(selected.body));
             let world = self.world().map_err(|failure| refusal(self, failure))?;
             let cancel = meter.cancel().cloned().unwrap_or_default();
             let mut run = SuppliedRun::new(SuppliedLimits::default(), cancel)
@@ -920,13 +923,13 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
             if let Err(incomplete) = meter.charge(Charge::new(ChargePoint::FunctionCall)) {
                 return Ok(Evaluation {
                     outcome: FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)),
-                    location: projection.location(selected.body).cloned(),
+                    location: body_location.cloned(),
                     losses: Vec::new(),
                     frame_depth: 0,
                     peak_live_occurrences: 0,
                 });
             }
-            capture.drain(meter, projection.location(selected.body));
+            capture.drain(meter, body_location);
             if options.function_case_limit == 0 {
                 function_case_limit_reached = true;
                 return Ok(Evaluation {
@@ -939,7 +942,7 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
                             charge_point: ChargePoint::FunctionCall,
                         },
                     )),
-                    location: projection.location(selected.body).cloned(),
+                    location: body_location.cloned(),
                     losses: Vec::new(),
                     frame_depth: 0,
                     peak_live_occurrences: 0,
@@ -995,12 +998,15 @@ impl CheckedPackageEvaluation for BarePackage<'_> {
             .iter()
             .map(|parameter| (parameter.name.clone(), parameter.value_type.clone()))
             .collect::<Vec<_>>();
+        let body_location = selected
+            .body_location
+            .or_else(|| projection.location(selected.body));
         let world = self.world().map_err(|failure| refusal(self, failure))?;
         super::admit_arguments(&parameters, &arguments, objects, world.types(), run)?;
         if let Err(incomplete) = meter.charge(Charge::new(ChargePoint::FunctionCall)) {
             return Ok(Evaluation {
                 outcome: FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)),
-                location: projection.location(selected.body).cloned(),
+                location: body_location.cloned(),
                 losses: Vec::new(),
                 frame_depth: 0,
                 peak_live_occurrences: 0,

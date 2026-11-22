@@ -91,7 +91,6 @@ fn both_views_read_equal_facts_for_the_counter_package() {
 /// facts; the same package calls charge the same operation ledger.
 #[trace("FR-940-AC-13", "FR-940-AC-1")]
 #[test]
-#[ignore = "FR-940 scalar target and charge parity awaits the normal-pinned Contract IR repair of unscoped requirement-row holder references"]
 fn value_record_views_and_native_charges_equal_the_source() {
     use filament_exact::{Cancel, Meter, Value};
     use fsl_eval::value::{ApplicationObservationOptions, CheckedPackageEvaluation, QualifiedName};
@@ -248,6 +247,7 @@ fn value_record_views_and_native_charges_equal_the_source() {
             "Guarded",
             vec![Value::Integer(3_i64.into()), Value::Boolean(true)],
         ),
+        ("Other", vec![Value::Integer(3_i64.into())]),
         ("Ready", vec![enums[0].clone()]),
     ] {
         let name = QualifiedName::unqualified(name).unwrap();

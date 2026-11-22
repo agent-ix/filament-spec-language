@@ -972,6 +972,38 @@ impl CheckedGraph {
         })();
         Some(resolved.map(|()| elements))
     }
+
+    /// FR-940: the model object-type nodes recorded by a requirement item, without
+    /// re-walking its expression.
+    ///
+    /// # Errors
+    ///
+    /// An internal fault when a recorded object has no checked model node.
+    pub fn item_object_nodes(
+        &self,
+        item: &OccurrenceKey,
+    ) -> Option<Result<Vec<NodeKey>, InternalFault>> {
+        let references = self.requirements.get(item)?.references();
+        Some(
+            references
+                .objects
+                .iter()
+                .map(|identity| {
+                    self.object_types
+                        .iter()
+                        .find_map(|(declaration, known)| (known == identity).then_some(declaration))
+                        .and_then(|declaration| self.object_nodes.get(declaration))
+                        .cloned()
+                        .ok_or_else(|| {
+                            InternalFault::new(
+                                "check.item-elements",
+                                "referenced-object-has-a-model-node",
+                            )
+                        })
+                })
+                .collect(),
+        )
+    }
 }
 
 /// The nodes the emitter writes for a checked relation (FSpec FR-451,
