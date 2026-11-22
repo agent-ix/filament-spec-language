@@ -492,7 +492,13 @@ pub(crate) fn analyze_bound<'a>(
     // the one read. A package that does not emit has no read, and its items
     // settle as they do without one.
     let mut own_refusal = None;
-    let read = match crate::provider::read_package(package, binding.packages, limits.emit) {
+    let selections = super::clause_item::clock_selections(package, provision);
+    let read = match crate::provider::read_package_with_temporal_selections(
+        package,
+        binding.packages,
+        limits.emit,
+        &selections,
+    ) {
         Ok(read) => Some(read),
         Err(crate::provider::NotAdmitted::Refused(refusal)) => {
             return Err(StageFailure::Refused(super::AnalyzeRefusal::Package(

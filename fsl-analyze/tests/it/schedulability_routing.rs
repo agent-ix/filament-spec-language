@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FSL FR-246 (TC-701 step 1): each checked schedulability claim carries the
 //! FR-290 kind `schedulability`, and FR-075's request writer routes it to EN-7,
-//! the one backend whose manifest advertises that kind.
+//! the backend for claims without a checked release-backed task product.
 
 use filament_exact::{Origin, Role};
 use fsl_analyze::schedulability::manifest;
@@ -166,6 +166,12 @@ impl World {
         let kind = checked.requirements().kind();
         assert_eq!(kind, Capability::Schedulability);
         let claim = self.claim(name);
+        let routed = items_from_requirements(self.package.graph().requirements(), registry, None);
+        let candidates = routed
+            .iter()
+            .find(|item| item.occurrence() == &claim)
+            .expect("the checked claim has a requirement item")
+            .candidates();
         let mut item = ClaimItem::new(
             &self.package,
             fsl_foundation::RequestIndex::new(index),
@@ -176,19 +182,18 @@ impl World {
             },
         )
         .expect("a checked schedulability claim");
-        let (disposition, diagnostic) =
-            match fsl_route::settle_candidates(&registry.candidates(kind, None), kind, None) {
-                NegotiationSettlement::Single(backend) => {
-                    let candidate = fsl_route::Candidate::new(backend);
-                    item.candidates = vec![candidate.clone()];
-                    (Disposition::Supported(candidate), None)
-                }
-                NegotiationSettlement::Cause(cause) => (
-                    Disposition::Unsupported,
-                    Some(fsl_analyze::analyze::Diagnostic::new(cause.code())),
-                ),
-                NegotiationSettlement::Inconsistent => (Disposition::InvalidRequest, None),
-            };
+        let (disposition, diagnostic) = match fsl_route::settle_candidates(candidates, kind, None) {
+            NegotiationSettlement::Single(backend) => {
+                let candidate = fsl_route::Candidate::new(backend);
+                item.candidates = vec![candidate.clone()];
+                (Disposition::Supported(candidate), None)
+            }
+            NegotiationSettlement::Cause(cause) => (
+                Disposition::Unsupported,
+                Some(fsl_analyze::analyze::Diagnostic::new(cause.code())),
+            ),
+            NegotiationSettlement::Inconsistent => (Disposition::InvalidRequest, None),
+        };
         NegotiatedItem {
             item,
             disposition,
@@ -292,15 +297,28 @@ fn schedulability_is_registered() {
         en7.advertises().collect::<Vec<_>>(),
         [(Capability::Schedulability, fsl_route::Mode::Unbounded)]
     );
+    let mut schedulability: Vec<_> = engines
+        .registrations()
+        .filter(|descriptor| descriptor
+            .advertises()
+            .any(|(kind, _)| kind == Capability::Schedulability))
+        .map(|descriptor| descriptor.id().as_str())
+        .collect();
+    schedulability.sort_unstable();
+    assert_eq!(schedulability, ["en-6", "en-7"]);
+    let unbounded: Vec<_> = engines
+        .registrations()
+        .filter(|descriptor| {
+            descriptor.advertises().any(|pair| {
+                pair == (Capability::Schedulability, fsl_route::Mode::Unbounded)
+            })
+        })
+        .map(|descriptor| descriptor.id().as_str())
+        .collect();
     assert_eq!(
-        engines
-            .registrations()
-            .filter(|descriptor| descriptor
-                .advertises()
-                .any(|(kind, _)| kind == Capability::Schedulability))
-            .count(),
-        1,
-        "en-7 is the one engine that serves schedulability"
+        unbounded,
+        ["en-7"],
+        "only en-7 serves unbounded schedulability"
     );
 }
 

@@ -1150,26 +1150,38 @@ pub(crate) fn read_package<'p>(
     packages: &PackageInput,
     emit: EmitLimits,
 ) -> Result<fsl_package::AdmittedPackageRead<'p>, NotAdmitted> {
+    read_package_with_temporal_selections(package, packages, emit, &[])
+}
+
+/// Read the source package under its checked acquisition's clock selections.
+pub(crate) fn read_package_with_temporal_selections<'p>(
+    package: &'p CheckedPackage,
+    packages: &PackageInput,
+    emit: EmitLimits,
+    selections: &[fsl_package::TemporalClockSelection],
+) -> Result<fsl_package::AdmittedPackageRead<'p>, NotAdmitted> {
     let identity =
         LibraryName::new(package.graph().package_name()).map_err(|_| NotAdmitted::Other(None))?;
-    fsl_package::read_evaluation_package(
+    let emission = fsl_package::emit_checked_with_temporal_selections(package, selections, emit)
+        .map_err(|refusal| NotAdmitted::Other(Some(Box::new(refusal))))?;
+    fsl_package::read_evaluation_emission(
         package,
+        &emission,
         identity,
         packages,
         fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT),
         emit,
+        fsl_package::SourceWitnessSupplier::new(&emission),
     )
     .map_err(|refusal| {
         let typed = fsl_package::PackageAdmissionRefusal::of_import_view(&refusal, None);
-        // A missing import names its identity from the package bytes it
-        // refused; the read does not return them, so they are emitted again
-        // on this error path only.
+        // A missing import names its identity from the exact bytes refused
+        // by the read, under the same clock selections.
         let typed = match typed {
             Some(typed) if typed.code == Code::MissingImport => {
-                let emitted = fsl_package::emit_checked(package, emit).ok();
                 fsl_package::PackageAdmissionRefusal::of_import_view(
                     &refusal,
-                    emitted.as_ref().map(|emission| emission.package().bytes()),
+                    Some(emission.package().bytes()),
                 )
             }
             other => other,

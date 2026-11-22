@@ -972,7 +972,7 @@ fn a_certificate_with_no_initials_is_malformed_at_initials() {
 }
 
 /// FSpec FR-331-AC-46 (TC-1197): the certificate-member locus names
-/// exactly the 51 members of FSpec's backend-provider schema, in its order,
+/// exactly the members of FSpec's backend-provider schema, as a set,
 /// each by its FR-331 spelling. The schema comes from the pinned FSpec package;
 /// `initial` is no member.
 #[trace("TC-1197", "FSpec-FR-331-AC-46")]
@@ -992,17 +992,62 @@ fn the_certificate_members_are_the_schema_fifty_one_names() {
     else {
         panic!("one `malformed` branch at a certificate member");
     };
-    let names: Vec<&str> = malformed["properties"]["at"]["properties"]["member"]["enum"]
+    let members = malformed["properties"]["at"]["properties"]["member"]["enum"]
         .as_array()
-        .expect("the member enum")
+        .expect("the member enum");
+    let names: std::collections::BTreeSet<&str> = members
         .iter()
         .map(|name| name.as_str().expect("a member name"))
         .collect();
-    let written: Vec<&str> = CertificateMember::ALL
+    let written: std::collections::BTreeSet<&str> = CertificateMember::ALL
         .iter()
         .map(|member| member.as_str())
         .collect();
-    assert_eq!(written.len(), 51);
+    assert_eq!(members.len(), names.len(), "no duplicate schema member");
+    fn property_names<'a>(
+        schema: &'a serde_json::Value,
+        names: &mut std::collections::BTreeSet<&'a str>,
+    ) {
+        match schema {
+            serde_json::Value::Object(members) => {
+                if let Some(properties) = members
+                    .get("properties")
+                    .and_then(serde_json::Value::as_object)
+                {
+                    names.extend(properties.keys().map(String::as_str));
+                }
+                for member in members.values() {
+                    property_names(member, names);
+                }
+            }
+            serde_json::Value::Array(members) => {
+                for member in members {
+                    property_names(member, names);
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut owned = std::collections::BTreeSet::new();
+    for definition in [
+        "ProbabilityCertificate",
+        "ZoneCertificate",
+        "CertificateIdentity",
+        "DbmBound",
+        "ComponentReason",
+        "RefinementPart",
+        "ProbabilityProductKey",
+    ] {
+        let definition = schema["$defs"]
+            .get(definition)
+            .expect("a certificate-owned schema definition");
+        property_names(definition, &mut owned);
+    }
+    assert_eq!(
+        names, owned,
+        "the locus vocabulary equals the certificates' property names"
+    );
+    assert_eq!(CertificateMember::ALL.len(), names.len());
     assert_eq!(written, names);
     assert!(!written.contains(&"initial"));
     for member in CertificateMember::ALL {

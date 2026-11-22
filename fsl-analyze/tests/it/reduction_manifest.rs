@@ -200,6 +200,7 @@ fn en1_entry(reductions: &[&str]) -> Json {
             .map(|(kind, mode)| json!({"kind": kind, "mode": mode}))
             .collect::<Vec<_>>(),
         "domains": en1::DOMAINS,
+        "bounds": {"max_cases": en1::DEFAULT_MAX_CASES.get()},
         "fairness_kinds": ["weak", "strong"],
         "memory_models": en1::MEMORY_MODELS
             .iter()
@@ -217,6 +218,8 @@ fn en1_entry(reductions: &[&str]) -> Json {
 #[trace("TC-583", "FR-159-AC-5")]
 #[test]
 fn en1_manifest_entry_validates_against_the_backend_provider_schema() {
+    let descriptor = en1::descriptor(ProviderOrigin::Linked).expect("EN-1 admits");
+    assert_eq!(descriptor.max_cases(), Some(en1::DEFAULT_MAX_CASES));
     let schema = crate::published_fspec::json("proposals/backend-provider-v1/schema.json");
     // The backend-provider schema refers to the checked-package schema by
     // its `$id`.
@@ -321,17 +324,28 @@ fn the_request_writer_restricts_each_item_by_its_reductions() {
 
 /// FR-239: EN-6 advertises `temporal-satisfaction` over both a bounded and
 /// an unbounded domain, so a declared timed clause and the derived
-/// time-lock-freedom item, which route as unbounded, negotiate to it.
+/// time-lock-freedom item, which route as unbounded, negotiate to it. It also
+/// advertises bounded schedulability for release-backed task products.
 #[trace("TC-698", "FR-239")]
 #[test]
 fn en6_advertises_temporal_satisfaction_bounded_and_unbounded() {
     let en6 = en6::descriptor(ProviderOrigin::Linked).expect("EN-6 admits");
     let advertised: Vec<_> = en6.advertises().collect();
-    assert_eq!(advertised.len(), 2, "{advertised:?}");
-    for mode in [Mode::Bounded, Mode::Unbounded] {
-        assert!(
-            advertised.contains(&(Capability::TemporalSatisfaction, mode)),
-            "{mode:?}"
-        );
-    }
+    assert_eq!(
+        advertised
+            .into_iter()
+            .map(|(kind, mode)| (kind.to_wire(), mode.to_wire()))
+            .collect::<BTreeSet<_>>(),
+        BTreeSet::from([
+            (
+                Capability::TemporalSatisfaction.to_wire(),
+                Mode::Bounded.to_wire(),
+            ),
+            (
+                Capability::TemporalSatisfaction.to_wire(),
+                Mode::Unbounded.to_wire(),
+            ),
+            (Capability::Schedulability.to_wire(), Mode::Bounded.to_wire()),
+        ])
+    );
 }

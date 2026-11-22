@@ -1313,6 +1313,13 @@ fn deadlock_of_vault() -> serde_json::Value {
     serde_json::json!([{"claim": "V", "temporal": {"item_kind": "deadlock-freedom"}}])
 }
 
+fn deadlock_items(items: &[serde_json::Value]) -> Vec<&serde_json::Value> {
+    items
+        .iter()
+        .filter(|item| item["request"]["temporal"]["item_kind"] == "deadlock-freedom")
+        .collect()
+}
+
 /// FR-124-AC-12, TC-519 step 11: a request whose subject reads one identity
 /// of a unit that selects two models derives the deadlock-freedom item for
 /// that identity, so the item settles `refuted` with the one-step deadlock,
@@ -1323,7 +1330,8 @@ fn a_subject_reading_one_identity_derives_the_deadlock_item_of_that_identity() {
     let world = two_models("").reading_vault_only();
     for items in [Some(deadlock_of_vault()), None] {
         let settled = settled_items(&world, items.clone());
-        let [item] = settled.as_slice() else {
+        let derived = deadlock_items(&settled);
+        let [item] = derived.as_slice() else {
             panic!("{items:?}: one derived item: {settled:?}");
         };
         assert_eq!(item["record"]["result"], "refuted", "{item}");
@@ -1345,16 +1353,23 @@ fn another_identitys_terminal_any_does_not_opt_the_read_identity_out() {
     let world = two_models(OTHER_ANY).reading_vault_only();
     for items in [Some(deadlock_of_vault()), None] {
         let settled = settled_items(&world, items.clone());
-        let [item] = settled.as_slice() else {
+        let derived = deadlock_items(&settled);
+        let [item] = derived.as_slice() else {
             panic!("{items:?}: one derived item: {settled:?}");
         };
         assert_eq!(item["record"]["result"], "refuted", "{item}");
+        assert_eq!(item["replay"]["reproduced"], true, "{item}");
+        assert_eq!(
+            item["counterexample"]["prefix"].as_array().map(Vec::len),
+            Some(1),
+            "the vault deadlocks after one step: {item}"
+        );
     }
 }
 
 /// FSpec FR-368-AC-22: a subject that reads both identities has no anchor for
 /// a derived item, so the item the request names settles `unsupported` and
-/// FR-620's default items write none.
+/// FR-620's default items write no derived deadlock item.
 #[trace("TC-431", "FR-368-AC-22")]
 #[test]
 fn a_subject_reading_both_identities_has_no_derived_item() {
@@ -1366,7 +1381,7 @@ fn a_subject_reading_both_identities_has_no_derived_item() {
     assert_eq!(item["record"]["result"], "unsupported", "{item}");
     assert_eq!(item["record"]["settled_by"], "disposition", "{item}");
     assert!(
-        settled_items(&world, None).is_empty(),
-        "the default items write none"
+        deadlock_items(&settled_items(&world, None)).is_empty(),
+        "the default items write no derived deadlock item"
     );
 }

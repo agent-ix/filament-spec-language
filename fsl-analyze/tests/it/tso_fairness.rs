@@ -238,6 +238,15 @@ impl Unit {
         selection: &[MemorySelection],
         payload: TemporalCounterexample<ProtocolTransition>,
     ) -> Result<fsl_replay::ModelTraceReplayResult, ReplayRefusal> {
+        self.replay_with_store_buffer(selection, payload, None)
+    }
+
+    fn replay_with_store_buffer(
+        &self,
+        selection: &[MemorySelection],
+        payload: TemporalCounterexample<ProtocolTransition>,
+        max_store_buffer: Option<u64>,
+    ) -> Result<fsl_replay::ModelTraceReplayResult, ReplayRefusal> {
         let unit = unit_text(&self.body).into_bytes();
         let node = &self.checked.graph().temporal_clauses()[0];
         let clause_node = node.identity().clone();
@@ -264,7 +273,7 @@ impl Unit {
                 roles: subject.roles.clone(),
                 capacities: Vec::new(),
                 memory: subject.memory.clone(),
-                max_store_buffer: None,
+                max_store_buffer,
                 max_messages: None,
                 max_live_instances: None,
             },
@@ -976,8 +985,8 @@ fn double_store_run() -> String {
 
 /// ADR-025 MB-4 over a liveness clause: the claim `eventually holds(k.r1 =
 /// 2)` is false (no load reads 2), and its lasso exists under the default
-/// bound, but under `max_store_buffer` 1 a store is cut, so the run settles
-/// `MemoryBoundReached` in place of the counterexample.
+/// bound and under `max_store_buffer` 1: a flush before the second store
+/// supplies a genuine lasso even though another explored store is cut.
 #[trace("TC-673")]
 #[test]
 fn a_false_liveness_claim_with_a_cut_store_settles_inconclusive() {
@@ -992,15 +1001,23 @@ fn a_false_liveness_claim_with_a_cut_store_settles_inconclusive() {
     let cut = unit
         .check(&unit.tso(), Some(1))
         .expect("the subject checks");
-    let ModelCheckOutcome::Memory {
-        cause: MemoryCause::BoundReached { bound, states },
-        ..
-    } = cut
+    let ModelCheckOutcome::Violated { counterexample, .. } = cut
     else {
         panic!("{cut:?}");
     };
-    assert_eq!(bound.value, 1);
-    assert!(states > 0);
+    assert!(counterexample.lasso.is_some());
+    assert!(counterexample.fairness.contains(&flush("w")));
+    let trace_position = counterexample.trace_position();
+    let replay = unit
+        .replay_with_store_buffer(&unit.tso(), *counterexample, Some(1))
+        .expect("the genuine lasso replays at the same store-buffer bound");
+    assert_eq!(
+        replay.settlement,
+        fsl_replay::ModelTraceSettlement::Reproduced {
+            value: fsl_replay::ModelTraceValue::Truth(false),
+            trace_position,
+        }
+    );
 }
 
 /// The model-only pass over a clause that is dead at its initial state still

@@ -24,6 +24,10 @@ use fsl_semantics::check::Capability;
 /// EN-1's backend identity, the identity its terminal records name.
 pub const BACKEND_ID: &str = fsl_route::tie::EN1;
 
+/// The default case budget for EN-1's operation-contract items.
+pub const DEFAULT_MAX_CASES: std::num::NonZeroU64 =
+    crate::contract_check::manifest::DEFAULT_MAX_CASES;
+
 /// The (kind, mode) pairs EN-1 advertises: both temporal extent modes, for
 /// `temporal-satisfaction` and for an invariant's `operation-contract`.
 pub const ADVERTISED: [(Option<&str>, Option<&str>); 4] = [
@@ -107,6 +111,7 @@ pub fn descriptor(origin: ProviderOrigin) -> Result<BackendDescriptor, Registrat
     )
     .map(|descriptor| {
         descriptor
+            .with_max_cases(DEFAULT_MAX_CASES)
             .with_state_graph_forms(STATE_GRAPH_FORMS)
             .with_option_values(
                 crate::zone_check::manifest::METHOD,

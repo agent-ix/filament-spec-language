@@ -165,8 +165,14 @@ fn advertising(
             .map(|(kind, mode)| (Some(kind.to_wire()), Some(mode.to_wire())))
             .collect::<Vec<_>>(),
         fsl_route::ManifestMembers {
-            domains: None,
-            fairness_kinds: None,
+            domains: pairs
+                .iter()
+                .any(|(_, mode)| *mode == fsl_route::Mode::Bounded)
+                .then_some(&["population"]),
+            fairness_kinds: pairs
+                .iter()
+                .any(|(kind, _)| *kind == fsl_semantics::check::Capability::TemporalSatisfaction)
+                .then_some(fsl_route::FairnessKindsMember::List(&[])),
             evidence_kinds: None,
             memory_models: None,
             reductions: None,
