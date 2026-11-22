@@ -451,6 +451,7 @@ pub fn settle_package_run(
     let mut protocol_claims: Vec<OccurrenceKey> = Vec::new();
     let mut value_claims: Vec<OccurrenceKey> = Vec::new();
     let mut relation_claims: Vec<OccurrenceKey> = Vec::new();
+    let mut schedule_claims: Vec<OccurrenceKey> = Vec::new();
     for item in named {
         match item {
             Named::Relation {
@@ -556,6 +557,7 @@ pub fn settle_package_run(
             } => match reads.schedule(index, name, &declaration, ordinal, selection)? {
                 Resolution::Settled(settled) => resolved.push(settled),
                 Resolution::Claim(claim, route) => {
+                    schedule_claims.push(claim.item.claim.clone());
                     routes.insert(index, Route::Schedule(Box::new(route)));
                     resolved.push(ResolvedItem::Claim(claim));
                 }
@@ -607,6 +609,7 @@ pub fn settle_package_run(
     let family = |kind: ItemKind, claim: &OccurrenceKey| match kind {
         ItemKind::Formula if protocol_claims.contains(claim) => Some(DeclarationFamily::Protocol),
         ItemKind::Formula if value_claims.contains(claim) => Some(DeclarationFamily::Value),
+        ItemKind::Formula if schedule_claims.contains(claim) => Some(DeclarationFamily::RealTime),
         ItemKind::Formula if relation_claims.contains(claim) => {
             Some(DeclarationFamily::RelationClaim)
         }
