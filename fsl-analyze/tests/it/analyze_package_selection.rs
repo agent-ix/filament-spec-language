@@ -1469,14 +1469,15 @@ fn a_held_invariant_stays_proved_beside_a_refuted_one_over_a_package() {
 }
 
 /// QSL-2765: an `invariant` whose body is undefined at a reachable state
-/// (`6 mod 0` at `value = 3`) settles over the package as from source, with
+/// (`q(0)` at `value = 3`) settles over the package as from source, with
 /// the undefined evaluation reproduced; its replay runs on the same model
 /// system on both routes. Single-selection subject only: a multi-selection
 /// subject with a strict universe subset is not built here.
 #[trace("TC-2410", "FR-850-AC-5")]
 #[test]
 fn an_undefined_invariant_settles_over_a_package_as_from_source() {
-    let body = "invariant DefinedBelowThree using v on M::Counter at current { 6 mod (3 - self.value) >= 0 }\n";
+    let body = "function q using v(x: Integer): Integer pure { 6 mod x }\n\
+                invariant DefinedBelowThree using v on M::Counter at current { q(3 - self.value) >= 0 }\n";
     let items = json!([{"claim": "DefinedBelowThree"}]);
     let ws = Workspace::new("package-invariant-undefined");
     let source = analyze(&counter_request(&ws, body, items.clone()));
