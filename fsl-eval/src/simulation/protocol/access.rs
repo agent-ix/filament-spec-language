@@ -448,7 +448,7 @@ impl WeakAccesses {
         self.load_candidates.get(&node)
     }
 
-    /// The shared locations the constraint of the node at the static
+    /// The shared locations the constraint or correlation ends of the node at the static
     /// declaration path `node` reads; empty for a node that is no reader or
     /// reads none (ADR-025 MA-1).
     pub fn node_reads(&self, node: &str) -> &[Location] {
@@ -750,7 +750,7 @@ fn classify_with(
         }
     }
     // MA-1: an `event`, `effect`, `commit`, `send` or `receive` node of a
-    // weak `parallel` whose constraint reads a model location is a reader of
+    // weak `parallel` whose constraint or correlation ends read a model location is a reader of
     // it. A `finish` and a node outside every weak `parallel` are not.
     let mut node_reads: BTreeMap<ProtocolNodeId, BTreeSet<Location>> = BTreeMap::new();
     let mut reader_chains: BTreeMap<ProtocolNodeId, Chain> = BTreeMap::new();
@@ -806,7 +806,7 @@ fn classify_with(
             _ => None,
         };
         let path = program.text(*node)?;
-        let reads =
+        let mut reads =
             match (constraint, package_constraints) {
                 (None, None) => continue,
                 (Some(body), None) => model.node_reads(path, &parameters, body, over).map_err(
@@ -861,6 +861,18 @@ fn classify_with(
             .ok_or_else(|| {
                 ProtocolRefusal::fault("a-weak-node-model-read-has-a-reference-over-input")
             })?;
+        if let Some(clauses) = program.related.get(node) {
+            for clause in clauses {
+                reads.extend(related_reads(
+                    model,
+                    path,
+                    &parameters,
+                    &clause.ends,
+                    package_constraints.map(|(over, _)| over),
+                    over,
+                )?);
+            }
+        }
         node_reads.insert(*node, reads);
         reader_chains.insert(*node, chain);
     }
