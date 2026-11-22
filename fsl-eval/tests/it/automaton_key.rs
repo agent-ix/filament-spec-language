@@ -1452,8 +1452,12 @@ fn reached_protocol_tp3_monitor_states_resolve_to_normal_form_keys() {
             .expect("the clause translates");
         let mut monitor = Monitor::bad_prefix(automaton, 256).expect("a safety automaton");
         let initial = monitor.initial().expect("initial state fits");
+        // The states a certificate holds are the ones after a first letter:
+        // the unexpanded root of the pre-state is no key.
         let mut reached = BTreeSet::new();
-        let mut pending = vec![initial];
+        let mut pending: Vec<_> = (0..4)
+            .map(|bits| monitor.step(initial, Letter::from_bits(bits)).expect("steps"))
+            .collect();
         while let Some(from) = pending.pop() {
             if !reached.insert(from) {
                 continue;

@@ -2466,11 +2466,12 @@ fn an_on_each_previous_and_interval_clause_transfers_certified() {
     assert_eq!(exit, 0, "{value}");
     // The refinement identity is the one the same refinement's plain-safety
     // transfer names in slot 0.
-    let (_, seed_value) = transfer_run(
+    let (_, seed_value) = transfer_run_over(
         &[(
             "refinement_transfer",
             transfer_member("ThirdRefinesSpec", ("Spec", "Third"), &["PrevSafe"]),
         )],
+        true,
         true,
     );
     let seed = &transfer(&seed_value, "PrevSafe")["transfer"]["premises"];
@@ -2574,6 +2575,10 @@ fn a_broken_initial_mapping_refutes_the_refinement_premise_not_the_transfer() {
 #[test]
 #[trace("TC-2921", "FR-1031-AC-5")]
 fn a_protocol_abstract_subject_is_refused_not_settled_as_a_model() {
+    let steps: String = ["beginA", "beginB", "commitA", "commitB", "retryA", "retryB", "peek"]
+        .iter()
+        .map(|step| format!("step Impl::Counter::{step} -> stutter;\n"))
+        .collect();
     let declarations = format!(
         "profile p = \"filament.protocol.finite-global/v1\";\n{}\
          protocol Twice using p over (c: Spec::Counter) on origin {{\n\
@@ -2581,7 +2586,10 @@ fn a_protocol_abstract_subject_is_refused_not_settled_as_a_model() {
          run sequence Main {{ }}\n\
          finish Done as (d: Boolean) {{ true }};\n\
          }}\n\
-         refinement CasTwice using inf abstract Spec::Twice concrete Impl {{}}\n",
+         refinement CasTwice using inf abstract Spec::Twice concrete Impl {{\n\
+         population Spec::counters from Impl::counters;\n\
+         object Spec::Counter from Impl::Counter {{ value = self.value; }}\n\
+         {steps}}}\n",
         transfer_declarations(true)
     );
     let (exit, value) = transfer_run_declaring(
