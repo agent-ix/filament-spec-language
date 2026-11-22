@@ -36,11 +36,12 @@ fn a_package_refutation_preserves_the_negative_witness_replay_and_charges() {
         "probabilistic-package-refutation-parity",
         LINK_UNIT,
         LINK_MODEL,
+        TOO_LIKELY,
     );
 }
 
-/// The authenticated enum index spells both random draws and scheduled
-/// non-random arguments after the source files have been removed.
+/// Every-scheduler evidence retains enum-valued draws and non-random
+/// arguments after the source files have been removed.
 #[trace("FR-940-AC-6", "FR-741-AC-3", "FR-203-AC-8")]
 #[test]
 fn enum_draws_and_arguments_preserve_package_refutation_witness_parity() {
@@ -104,6 +105,7 @@ fn enum_draws_and_arguments_preserve_package_refutation_witness_parity() {
         "probabilistic-package-enum-refutation-parity",
         &unit,
         &serde_json::to_vec(&model).expect("enum model JSON"),
+        &TOO_LIKELY.replace("under Even", "under every scheduler"),
     );
     let witness = &item["counterexample"];
     let paths = witness["evidence"]["paths"].as_array().expect("path set");
@@ -126,11 +128,11 @@ fn enum_draws_and_arguments_preserve_package_refutation_witness_parity() {
     );
 }
 
-fn refutation_parity(name: &str, unit: &str, model: &[u8]) -> serde_json::Value {
+fn refutation_parity(name: &str, unit: &str, model: &[u8], claim: &str) -> serde_json::Value {
     let ws = Workspace::new(name);
     let source_path = request_over(
         &ws,
-        &format!("{unit}\n{TOO_LIKELY}\n"),
+        &format!("{unit}\n{claim}\n"),
         model,
         &[LINK_START.to_vec()],
         json!({"items": [{"claim": "TooLikely", "kind": "probabilistic-satisfaction",
