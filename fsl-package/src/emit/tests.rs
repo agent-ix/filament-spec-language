@@ -366,7 +366,7 @@ fn operand_slot_rows_preserve_the_retained_document_graph() {
             )));
         }
     }
-    assert_eq!(document_nodes(graph).unwrap(), emission.wire_nodes);
+    assert_eq!(document_nodes(graph).unwrap(), *emission.wire_nodes);
     assert!(matches!(read_back(&emission), Read::Verified { .. }));
 }
 
@@ -389,7 +389,7 @@ fn operand_slot_numbering_visits_only_identity_paths_in_canonical_order() {
     );
     let (_, emission) = emit_from_text("function f using v(): Integer pure { 1 }\n");
     let graph = WireGraph::of_package_bytes(emission.package.bytes()).unwrap();
-    let mut nodes = emission.wire_nodes;
+    let mut nodes = Vec::clone(&emission.wire_nodes);
     let foreign = CheckedTerm::DependencyReference {
         package: "dependency".into(),
         node: serde_json::from_value(value["e_external"]["node"].clone()).unwrap(),

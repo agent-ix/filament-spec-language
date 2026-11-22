@@ -1462,7 +1462,7 @@ pub(super) fn finish(
         identity_row_selection: super::identity_rows::IdentityRowSelection::default(),
         equality_producer_identity_rows: rows.equality_producer_identity_rows,
         equality_fact_witness_rows: rows.equality_fact_witness_rows,
-        wire_nodes: nodes,
+        wire_nodes: std::sync::Arc::new(nodes),
         temporal_binding_rows: rows.temporal_binding_rows,
         temporal_rows: rows.temporal_rows,
     }

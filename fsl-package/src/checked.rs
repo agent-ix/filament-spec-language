@@ -831,7 +831,7 @@ fn unify(
 #[cfg(feature = "std")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EmittedPackage {
-    bytes: Vec<u8>,
+    bytes: Arc<[u8]>,
     name: Box<str>,
 }
 
@@ -845,7 +845,7 @@ impl EmittedPackage {
         encode: impl FnOnce(&str) -> Result<Vec<u8>, E>,
     ) -> Result<Self, E> {
         Ok(Self {
-            bytes: encode(name)?,
+            bytes: encode(name)?.into(),
             name: name.into(),
         })
     }

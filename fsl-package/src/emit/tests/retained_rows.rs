@@ -48,28 +48,25 @@ fn composite() -> Emission {
         .extend(compound.equality_producer_identity_rows.iter().cloned());
     base.equality_fact_witness_rows
         .extend(compound.equality_fact_witness_rows.iter().cloned());
-    base.wire_nodes.extend(compound.wire_nodes.iter().cloned());
+    std::sync::Arc::make_mut(&mut base.wire_nodes).extend(compound.wire_nodes.iter().cloned());
     let enums = emitted_enums(UNIT);
     base.selected_model_enum_declaration_rows = enums.selected_model_enum_declaration_rows.clone();
     base.selected_model_enum_member_rows = enums.selected_model_enum_member_rows.clone();
     let (_, source_enums) = emit_from_text(super::source_enum_rows::STATUS);
     base.selected_enum_declaration_rows = source_enums.selected_enum_declaration_rows.clone();
     base.selected_enum_member_rows = source_enums.selected_enum_member_rows.clone();
-    base.wire_nodes
-        .extend(source_enums.wire_nodes.iter().cloned());
+    std::sync::Arc::make_mut(&mut base.wire_nodes).extend(source_enums.wire_nodes.iter().cloned());
     let (_, source_unions) = emit_from_text(super::source_union_rows::SHAPE);
     base.selected_source_union_rows = source_unions.selected_source_union_rows.clone();
     let (_, source_records) = emit_from_text(super::source_record_rows::RECORDS);
     base.selected_source_record_rows = source_records.selected_source_record_rows.clone();
-    base.wire_nodes
-        .extend(source_records.wire_nodes.iter().cloned());
-    base.wire_nodes
-        .extend(source_unions.wire_nodes.iter().cloned());
+    std::sync::Arc::make_mut(&mut base.wire_nodes).extend(source_records.wire_nodes.iter().cloned());
+    std::sync::Arc::make_mut(&mut base.wire_nodes).extend(source_unions.wire_nodes.iter().cloned());
     base.equality_producer_identity_rows
         .extend(enums.equality_producer_identity_rows.iter().cloned());
     base.equality_fact_witness_rows
         .extend(enums.equality_fact_witness_rows.iter().cloned());
-    base.wire_nodes.extend(enums.wire_nodes.iter().cloned());
+    std::sync::Arc::make_mut(&mut base.wire_nodes).extend(enums.wire_nodes.iter().cloned());
     let id = |name: &str| CheckedNodeId {
         package: "p".into(),
         path: vec![filament_contract_model::CheckedNodePathSegment::Name(

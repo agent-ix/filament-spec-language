@@ -1101,7 +1101,7 @@ struct WireIndex<'wire> {
     projections: std::borrow::Cow<'wire, ExactProjections>,
     admitted: &'wire CheckedPackageV2,
     nodes: BTreeMap<&'wire CheckedNodeId, &'wire CheckedSemanticNodeV2>,
-    ids: BTreeMap<NodeKey, &'wire CheckedNodeId>,
+    ids: std::collections::HashMap<NodeKey, &'wire CheckedNodeId>,
     graph: WireGraph,
     identities: std::borrow::Cow<'wire, filament_contract_model::SelectedExactIdentities>,
     /// Whether the walk reads names and term structure for printing an atom,
@@ -1132,7 +1132,7 @@ impl<'wire> WireIndex<'wire> {
         let graph = crate::checked_v2::wire_graph(admitted)
             .map_err(|_| fault("reader-protocol-graph-has-structural-keys"))?;
         let mut nodes = BTreeMap::new();
-        let mut ids = BTreeMap::new();
+        let mut ids = std::collections::HashMap::new();
         for node in &admitted.resolved_graph().nodes {
             nodes.insert(&node.node_id, node);
             let key = graph
