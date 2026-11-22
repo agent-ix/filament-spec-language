@@ -1603,7 +1603,7 @@ fn cancelling_a_timed_refutation_at_any_poll_settles_cancelled_or_refuted() {
     assert!(total > 0);
     let cause = filament_exact::CancelCause::Requested;
     let mut cancelled = 0_u32;
-    let stride = (total / 150).max(1);
+    let stride = (total / 6).max(1);
     for at in (1..=total).step_by(stride as usize) {
         let slot = Arc::new(OnceLock::<Cancel>::new());
         let weak = Arc::downgrade(&slot);

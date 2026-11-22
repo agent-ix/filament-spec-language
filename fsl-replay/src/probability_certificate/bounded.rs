@@ -17,7 +17,9 @@ pub fn probabilistic_formula_monitor_context(
     binding: Option<&ObjectReference>,
 ) -> Result<StateContext, ExactProbabilityGraphError> {
     let profile = fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
-        .ok_or(ExactProbabilityGraphError::UnsupportedClaimForm)?;
+        // The checker refuses a non-temporal profile (`not-temporal-profile`,
+        // probabilistic/claim.rs), so a checked claim always has one.
+        .ok_or(ExactProbabilityGraphError::ClaimNotBound)?;
     let occurrence = claim
         .occurrence()
         .ok_or(ExactProbabilityGraphError::ClaimNotBound)?;
@@ -39,6 +41,19 @@ pub fn probabilistic_formula_monitor_context(
     })
 }
 
+/// A monitor refusal: its state budget is a limit, anything else a refused expansion.
+fn monitor_failure(
+    error: fsl_eval::automaton::QualifiedBoundedError,
+) -> ExactProbabilityGraphError {
+    use fsl_eval::automaton::{AutomatonError, QualifiedBoundedError};
+    match error {
+        QualifiedBoundedError::Automaton(AutomatonError::StateLimit { limit }) => {
+            ExactProbabilityGraphError::AutomatonStateLimit { limit }
+        }
+        _ => ExactProbabilityGraphError::ExpansionRefused,
+    }
+}
+
 #[derive(Clone, Copy)]
 enum Control {
     Running(StateId),
@@ -52,7 +67,7 @@ impl Control {
     ) -> Result<Self, ExactProbabilityGraphError> {
         match monitor
             .state(state)
-            .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?
+            .map_err(monitor_failure)?
         {
             BoundedState::Open { .. } | BoundedState::Idle => Ok(Self::Running(state)),
             BoundedState::Accept => Ok(Self::Decided(true)),
@@ -68,14 +83,14 @@ impl Control {
             Self::Running(state) => monitor.key(state),
             Self::Decided(accepted) => monitor.decision_key(accepted),
         }
-        .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)
+        .map_err(monitor_failure)
     }
 
     fn rank(self, monitor: &QualifiedBoundedMonitor) -> Result<u64, ExactProbabilityGraphError> {
         match self {
             Self::Running(state) => monitor
                 .rank(state)
-                .map_err(|_| ExactProbabilityGraphError::ExpansionRefused),
+                .map_err(monitor_failure),
             Self::Decided(_) => Ok(0),
         }
     }

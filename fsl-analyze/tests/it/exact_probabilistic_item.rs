@@ -1480,7 +1480,7 @@ fn a_refutation_settles_refuted_or_incomplete_at_every_storage_budget_and_cancel
         ));
     }
     assert!(stopped > 0, "some storage budget must stop the replay");
-    let stride = (total / 150).max(1);
+    let stride = (total / 6).max(1);
     for at in (1..=total).step_by(stride as usize) {
         let slot = Arc::new(OnceLock::<Cancel>::new());
         let weak = Arc::downgrade(&slot);

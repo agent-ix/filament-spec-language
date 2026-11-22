@@ -89,25 +89,6 @@ pub(super) fn failure(
         ProbabilityWitnessError::Limit { limit, value } => {
             settled(&ExactProbBuildIssue::Limit { limit, value }, subject)
         }
-        ProbabilityWitnessError::Graph(ExactProbabilityGraphError::Cancelled(cause)) => {
-            settled(&ExactProbBuildIssue::Cancelled(cause), subject)
-        }
-        ProbabilityWitnessError::Graph(ExactProbabilityGraphError::LimitReached) => settled(
-            &ExactProbBuildIssue::Limit {
-                limit: ModelCheckLimit::ExactProbMaxStates,
-                value: u64::try_from(limits.model.limits.max_states).unwrap_or(u64::MAX),
-            },
-            subject,
-        ),
-        ProbabilityWitnessError::Graph(
-            ExactProbabilityGraphError::EdgeLimitReached | ExactProbabilityGraphError::TooManyEdges,
-        ) => settled(
-            &ExactProbBuildIssue::Limit {
-                limit: ModelCheckLimit::ExactProbMaxTransitions,
-                value: u64::try_from(limits.model.limits.max_transitions).unwrap_or(u64::MAX),
-            },
-            subject,
-        ),
         ProbabilityWitnessError::CertificateRejected(rejection) => checked_report(
             Ok(ExactProbabilityCertificateCheck::Rejected(rejection)),
             ExactProbabilityCertificate { values: Vec::new() },
@@ -118,7 +99,7 @@ pub(super) fn failure(
         ProbabilityWitnessError::Refused => {
             EngineReport::Exact(Box::new(ExactReport::ReplayRefused))
         }
-        ProbabilityWitnessError::Graph(_) => not_yet(),
+        ProbabilityWitnessError::Graph(error) => graph_failure(error, limits, subject),
     }
 }
 

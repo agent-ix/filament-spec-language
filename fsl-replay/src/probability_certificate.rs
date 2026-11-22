@@ -825,6 +825,16 @@ pub enum ExactProbabilityGraphError {
     InvalidDigitalKey,
     /// The model has no single initial state; this slice checks exactly one.
     UnsupportedInitial,
+    /// The subject's `over` universe is unbounded: the claim requires a bound.
+    RequiresBound,
+    /// Classifying the subject's extent reached its node-count stage limit.
+    ExtentLimit,
+    /// The bounded-claim monitor reached its state limit
+    /// (`max_automaton_states`).
+    AutomatonStateLimit {
+        /// The limit that was reached.
+        limit: u64,
+    },
     /// The claim's `over` parameter has not exactly one instance in the
     /// subject; this slice checks one binding.
     UnsupportedBinding,
@@ -1499,8 +1509,10 @@ pub struct ClaimBinding {
 ///
 /// [`ExactProbabilityGraphError::UnsupportedBinding`] when the parameter is
 /// not an object reference or has no instance or several (this slice checks
-/// one); [`ExactProbabilityGraphError::ExpansionRefused`] when the subject
-/// cannot enumerate or reference them.
+/// one); [`ExactProbabilityGraphError::RequiresBound`] and
+/// [`ExactProbabilityGraphError::ExtentLimit`] when the universe is unbounded or
+/// its classification reached its limit; [`ExactProbabilityGraphError::ExpansionRefused`]
+/// when the subject cannot otherwise enumerate or reference them.
 pub fn claim_binding(
     system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
@@ -1511,9 +1523,15 @@ pub fn claim_binding(
     let filament_exact::ValueType::Reference(object) = &over.value_type else {
         return Err(ExactProbabilityGraphError::UnsupportedBinding);
     };
-    let mut instances = system
-        .instances(&over.value_type)
-        .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
+    let mut instances = system.instances(&over.value_type).map_err(|error| match error {
+        fsl_eval::simulation::NotSimulated::RequiresBound(_) => {
+            ExactProbabilityGraphError::RequiresBound
+        }
+        fsl_eval::simulation::NotSimulated::Extent(fsl_semantics::family::ClassifyFailure::Limit(
+            _,
+        )) => ExactProbabilityGraphError::ExtentLimit,
+        _ => ExactProbabilityGraphError::ExpansionRefused,
+    })?;
     let (Some(instance), None) = (instances.pop(), instances.pop()) else {
         return Err(ExactProbabilityGraphError::UnsupportedBinding);
     };

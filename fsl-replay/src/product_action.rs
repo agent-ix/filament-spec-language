@@ -88,7 +88,7 @@ impl Schedule {
     ) -> Result<Self, ProductActionError> {
         let transition = system
             .scheduled_identity_key(identity)
-            .map_err(|_| ProductActionError::Schedule)?;
+            .map_err(ProductActionError::Stopped)?;
         Self::from_identity_bytes(&transition)
     }
 
@@ -531,6 +531,9 @@ pub enum ProductActionError {
     /// A product key is not one JSON document, or the body does not encode.
     #[error("the action body does not encode")]
     Canonical,
+    /// Writing the identity stopped on a budget of the system's expansion.
+    #[error("writing the scheduled identity stopped on an expansion budget")]
+    Stopped(fsl_eval::simulation::ExpansionStop),
 }
 
 /// Why a body is not an enabled choice: every cause refuses
