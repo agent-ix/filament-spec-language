@@ -977,7 +977,7 @@ fn a_certificate_with_no_initials_is_malformed_at_initials() {
 /// `initial` is no member.
 #[trace("TC-1197", "FSpec-FR-331-AC-46")]
 #[test]
-fn the_certificate_members_are_the_schema_fifty_one_names() {
+fn the_certificate_members_are_the_reconciled_schema_set() {
     let schema = crate::published_fspec::json("proposals/backend-provider-v1/schema.json");
     let branches = schema["$defs"]["CertificateRejected"]["oneOf"]
         .as_array()

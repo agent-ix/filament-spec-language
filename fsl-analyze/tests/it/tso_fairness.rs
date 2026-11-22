@@ -989,7 +989,7 @@ fn double_store_run() -> String {
 /// supplies a genuine lasso even though another explored store is cut.
 #[trace("TC-673")]
 #[test]
-fn a_false_liveness_claim_with_a_cut_store_settles_inconclusive() {
+fn a_false_liveness_claim_with_a_cut_store_is_refuted_by_a_replayable_lasso() {
     static IS_TWO: R1 = R1(|value| value == 2);
     let claim = SETTLES.replace("= 1", "= 2");
     let unit = Unit::new(&double_store_run(), &claim, &IS_TWO);
