@@ -429,7 +429,9 @@ fn source_model_alias_names_preserve_nominal_units_and_member_bounds() {
 #[trace("TC-685")]
 #[test]
 fn unit_bounds_bound_the_members_of_their_unit_or_alias() {
+    use fsl_semantics::model::intake::UnitIntakeCause;
     use fsl_semantics::model::observation::PathStep;
+    use fsl_semantics::model::refusal::{MemberPath, ModelRefusalCause};
     use fsl_semantics::model::state::StateModel;
 
     let admitted = bounded_document(
@@ -540,16 +542,18 @@ fn unit_bounds_bound_the_members_of_their_unit_or_alias() {
         let document = bounded_document(on_alias, vec![]);
         let (unit_text, packages) = config_unit(&document);
         let built = parse_and_build(&unit_text);
-        let refusal = admit_unit(
+        admit_unit(
             &built.selections().models,
             &packages,
             ModelNormalizationLimits::default(),
         )
-        .expect_err("the constraint refuses");
-        format!("{refusal:?}")
+        .expect_err("the constraint refuses")
     };
     for value in ["1/0", "0.5", "2/4", ""] {
-        let refusal = malformed(vec![bound("D", "min", value, &node("D"))]);
+        let refusal = format!(
+            "{:?}",
+            malformed(vec![bound("D", "min", value, &node("D"))])
+        );
         assert!(
             refusal.contains("InvalidModelBinding")
                 && refusal.contains("constraints")
@@ -558,14 +562,37 @@ fn unit_bounds_bound_the_members_of_their_unit_or_alias() {
         );
     }
     let refusal = malformed(vec![bound("D", "minLength", "3", &node("D"))]);
-    assert!(
-        refusal.contains("InvalidModelBinding") && refusal.contains("keyword"),
-        "{refusal}"
+    let UnitIntakeCause::Refused(refusals) = &refusal.cause else {
+        panic!("the validator refuses the constraint: {refusal:?}");
+    };
+    assert_eq!(refusals.len(), 1, "{refusal:?}");
+    let malformed_record = &refusals[0];
+    assert_eq!(malformed_record.code, Code::InvalidModelBinding);
+    assert_eq!(malformed_record.cause.as_str(), "malformed-declaration");
+    let ModelRefusalCause::IntakeMalformedDeclaration {
+        node: actual_node,
+        member,
+        ..
+    } = &malformed_record.cause
+    else {
+        panic!("the original declaration refusal is retained: {malformed_record:?}");
+    };
+    assert_eq!(actual_node, &node("D"));
+    assert_eq!(
+        member,
+        &MemberPath::type_definition()
+            .name("constraints")
+            .index(0)
+            .name("operands")
+            .name("value")
     );
-    let refusal = malformed(vec![
-        bound("D", "max", "3", &node("D")),
-        bound("D", "min", "5", &node("D")),
-    ]);
+    let refusal = format!(
+        "{:?}",
+        malformed(vec![
+            bound("D", "max", "3", &node("D")),
+            bound("D", "min", "5", &node("D")),
+        ])
+    );
     assert!(
         refusal.contains("InvalidModelBinding")
             && refusal.contains("constraints[1]")

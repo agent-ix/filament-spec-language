@@ -4697,17 +4697,25 @@ fn a_second_alias_names_every_package_type_as_the_first_alias_does() {
     let level = parameters("level");
     assert!(matches!(&level[0], ValueType::Int(_)), "{level:?}");
     assert_eq!(level[0], level[1], "both spellings name one scalar type");
-    let object_types: Vec<_> = checked
+    let mut object_types: Vec<_> = checked
         .scope()
         .types()
         .object_types()
         .map(|declared| declared.name().to_owned())
         .collect();
+    object_types.sort();
     assert_eq!(
         object_types,
-        ["Config::ConfigVersion"],
-        "the package's object type is declared once, under its first alias"
+        ["ClockReference", "Config::ConfigVersion"],
+        "the package's object type is declared once beside native clock support"
     );
+    let clock = checked
+        .scope()
+        .types()
+        .object_types()
+        .find(|declared| declared.name() == "ClockReference")
+        .expect("the canonical native clock support type is declared");
+    assert_eq!(clock.key(), crate::check::clock_reference_target());
 }
 
 /// FR-480-AC-10 (QSL-1578): selecting the package under a second alias adds no
@@ -4937,13 +4945,21 @@ fn two_units_name_one_package_through_their_own_aliases() {
         f, g,
         "each unit's alias names the same object and scalar types"
     );
-    let object_types: Vec<_> = checked
+    let mut object_types: Vec<_> = checked
         .scope()
         .types()
         .object_types()
         .map(|declared| declared.name().to_owned())
         .collect();
-    assert_eq!(object_types, ["Config::ConfigVersion"]);
+    object_types.sort();
+    assert_eq!(object_types, ["ClockReference", "Config::ConfigVersion"]);
+    let clock = checked
+        .scope()
+        .types()
+        .object_types()
+        .find(|declared| declared.name() == "ClockReference")
+        .expect("the canonical native clock support type is declared");
+    assert_eq!(clock.key(), crate::check::clock_reference_target());
     assert_eq!(checked.model_roots().count(), 1);
 }
 

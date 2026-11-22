@@ -107,9 +107,9 @@ pub(crate) fn quantity_document() -> Value {
 }
 
 /// The package document with `Item` also holding, after its other fields, the
-/// members of no checked type of FR-056-AC-43: `memo` (`Text`), `amount` and
-/// `amounts` (`Decimal`, `[0, 3]`), the operation `scale(by: Decimal): Integer`
-/// and `peek(): Text`, every `typeRef` under `ix://filament/native/`.
+/// native members of FR-056-AC-43: unchecked `memo` (`Text`) and `ratio`
+/// (`Rational`), checked `amount` and `amounts` (`Decimal`, `[0, 3]`),
+/// `scale(by: Rational): Integer` and `peek(): Text`.
 pub(crate) fn bare_native_document() -> Value {
     build_with(Flavor::BareNative)
 }
@@ -243,6 +243,7 @@ fn build_with(flavor: Flavor) -> Value {
             .expect("Item has fields")
             .extend([
                 variants::field("Item", "memo", &type_ref("Text")),
+                variants::field("Item", "ratio", &type_ref("Rational")),
                 decimal(variants::field("Item", "amount", &type_ref("Decimal"))),
                 decimal(collection_field(
                     "amounts",
@@ -252,13 +253,12 @@ fn build_with(flavor: Flavor) -> Value {
                     3,
                 )),
             ]);
-        let mut scale = variants::operation_with(
+        let scale = variants::operation_with(
             "Item",
             "scale",
-            &[("by", type_ref("Decimal"))],
+            &[("by", type_ref("Rational"))],
             &type_ref("Integer"),
         );
-        scale["params"][0] = decimal(scale["params"][0].clone());
         let peek = variants::operation_with("Item", "peek", &[], &type_ref("Text"));
         item["operations"]
             .as_array_mut()

@@ -130,10 +130,23 @@ fn rational_replay() -> Replay {
     replay_of(fixture::rational_document(), rational_fields())
 }
 
-/// The FR-056-AC-43 fixture: `Item` also holding `memo`, `amount` and
-/// `amounts` of no checked type, and the operations `scale` and `peek`.
+/// The FR-056-AC-43 fixture: `Item` also holding unchecked `memo` and `ratio`,
+/// policy-bearing `amount` and `amounts`, which have checked Decimal types, and the
+/// operations `scale` and `peek` with untyped Rational and Text slots.
 fn bare_native_replay() -> Replay {
-    replay_of(fixture::bare_native_document(), base_fields())
+    replay_of(fixture::bare_native_document(), bare_native_fields())
+}
+
+fn bare_native_fields() -> Vec<(String, Value)> {
+    let mut fields = base_fields();
+    fields.extend([
+        (
+            "amount".to_owned(),
+            json!({"kind": "decimal", "coefficient": "1", "scale": "0"}),
+        ),
+        ("amounts".to_owned(), json!({"bag": []})),
+    ]);
+    fields
 }
 
 fn replay_of(document: Value, base: Vec<(String, Value)>) -> Replay {
@@ -3248,18 +3261,27 @@ fn expected(
 }
 
 /// FR-056-AC-43 (TC-897 step 9): a snapshot supplying the typed fields and
-/// omitting `memo`, `amount` and `amounts` is admitted, with no
-/// `missing-member`.
+/// including the policy-bearing Decimal members and omitting the unchecked
+/// members `memo` and `ratio` is admitted, retaining the typed values.
 #[trace("TC-897")]
 #[test]
 fn a_snapshot_omitting_the_members_of_no_checked_type_is_admitted() {
-    bare_native_replay()
-        .admit(&base_fields(), ObservationLimits::default())
+    let replay = bare_native_replay();
+    let admitted = replay
+        .admit(&bare_native_fields(), ObservationLimits::default())
         .unwrap_or_else(|failure| panic!("the snapshot admits: {failure:?}"));
+    assert!(matches!(
+        replay.value(&admitted, "amount"),
+        Datum::Decimal(_)
+    ));
+    let Datum::Collection(amounts) = replay.value(&admitted, "amounts") else {
+        panic!("amounts is a checked Decimal collection");
+    };
+    assert!(amounts.elements().is_empty());
 }
 
-/// FR-056-AC-43 (TC-897 step 9): a snapshot supplying a Text for `memo`, or a
-/// Decimal for `amount`, refuses `ill_typed`/`operator-ineligible` at that
+/// FR-056-AC-43 (TC-897 step 9): a snapshot supplying `memo` or `ratio`
+/// refuses `ill_typed`/`operator-ineligible` at that
 /// field naming the type and `Field.typeRef`, the value unread: a payload
 /// that would itself be malformed gives the same refusal.
 #[trace("TC-897")]
@@ -3268,13 +3290,10 @@ fn a_snapshot_supplying_a_member_of_no_checked_type_refuses_unread() {
     let replay = bare_native_replay();
     for (field, value) in [
         ("memo", json!({"kind": "text", "text": "a"})),
-        (
-            "amount",
-            json!({"kind": "decimal", "coefficient": "1", "scale": "0"}),
-        ),
+        ("ratio", ratio("1", "0")),
         ("memo", json!({"kind": "text", "text": 7, "extra": true})),
     ] {
-        let mut fields = base_fields();
+        let mut fields = bare_native_fields();
         fields.push((field.to_owned(), value));
         let record = record_of(replay.admit(&fields, ObservationLimits::default()));
         assert_eq!(
@@ -3294,11 +3313,10 @@ fn a_snapshot_supplying_a_member_of_no_checked_type_refuses_unread() {
 #[test]
 fn an_invocation_of_an_operation_of_no_checked_type_refuses_the_untyped_slot() {
     let replay = bare_native_replay();
-    let decimal = json!({"kind": "decimal", "coefficient": "1", "scale": "0"});
     let record = record_of(replay.invoke(
         "scale",
         Selected::Postcondition,
-        json!({"by": decimal}),
+        json!({"by": ratio("1", "0")}),
         integer("1"),
         ObservationLimits::default(),
     ));
@@ -3327,6 +3345,16 @@ fn an_invocation_of_an_operation_of_no_checked_type_refuses_the_untyped_slot() {
         untyped_refusal(&record),
         expected("peek", "Operation.returns.typeRef", "result")
     );
+    let admitted = replay
+        .invoke(
+            "peek",
+            Selected::Postcondition,
+            json!({}),
+            Value::Null,
+            ObservationLimits::default(),
+        )
+        .expect("a null untyped result is omitted and admitted");
+    assert!(admitted.result.is_none());
 }
 
 /// FR-505-AC-5 (TC-1300 row 23), the unit sentence: over a bounded Rational
