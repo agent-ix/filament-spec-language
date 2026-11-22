@@ -108,6 +108,7 @@ fn a_bounded_state_predicate_is_false_past_the_terminal_closure() {
     let bounded_ws = OwnedWorkspace::new("qsl2090-false-extension");
     let body = "temporal ThroughFive using t0 over(c: M::Counter) clock \"model-steps\" on origin { always[0,5] holds(c.value <= 3) }";
     let bounded = analyze(&request(&bounded_ws.0, true, body, &["ThroughFive"]));
+    eprintln!("bounded request exit {}: {}", bounded.exit, bounded.document());
     let bounded_item = bounded.item(0);
     assert_eq!(label(&bounded_item), "refuted", "{bounded_item}");
     assert_eq!(bounded_item["replay"]["reproduced"], true, "{bounded_item}");
