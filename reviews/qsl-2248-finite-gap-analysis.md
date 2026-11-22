@@ -158,3 +158,25 @@ The original scoped FND-001/FND-002 repairs are real and covered by the new six 
 ## Latest disposition verdict
 
 **FAIL** remains the repository-wide gap verdict. Baseline FND-001–003 are accepted-no-change for scoped delivery only; scoped FND-004 is fixed. The new Code/Rust FND-003 still blocks this PR and requires a real bounded-refutation test.
+
+## Final bounded disposition (round 2)
+
+No new gap finding or additional disposition row is required: original global FND-001–003 retain their explicit scoped-only accepted-no-change outcomes, and original scoped FND-004 remains fixed. The three additional real round-two tests now exercise the new Code/Rust FND-003's adverse boundary and ordering guards; that finding is fixed in its owning artifact.
+
+Frozen final head: `9fa544b166edf5e0011d9cfb5e0ee3bedd043c07`. Root's captured combined run exits 0: **37 passed, 0 failed, 0 ignored, 2800 filtered**, runtime 3.16 seconds. Log: `/private/tmp/qsl2248-round2-stream-combined.log`. All original 34 controls and the three round-two guards appear as `ok`.
+
+The real pre-fix control at `797f6cad889d3e7b963fee3ba720f30c9496abef` executed and failed exactly as reported: 0 passed / 1 failed, `MaxTransitions=2`, zero product states and two moves before any judgment. Log: `/private/tmp/qsl2248-round2-797f6c-red.log`. This turns the prior static finding into a recorded adverse execution; it is not a hypothetical failure. The parent also supplied the focused original-regression pass on the production fix commit `ec27d18bc9`; the final 37-case log independently retains that pass on the frozen final head.
+
+Bounded source assessment: `Choices` shares component alternatives by Arc and splits compact ranges into at most two pending boxes, rather than materializing their Cartesian product. Admission and joint-move charges happen only when a singleton is popped. A real completed tuple invokes `visit_closed_tuple` immediately; only an actually traversed least member is judged, and its canonical key is judged once. Ordinary lower bounds are component-major; selected bounds minimize each compact box over full group actions, including actions that fix the current prefix but distinguish future successors. Key/action/box work still charges GraphExpand and observes cancellation.
+
+FND-001/FND-002 repairs remain intact: initial constraints precede expansion, entering matches precede successor cuts, excluded successors never queue, cut predecessors and completed members remain separate, complete orbit members alone use max_states, and actual admitted moves alone use max_transitions. Actual replay, terminal false extension, the 432-to-46 orbit oracle, boundary three, exact16/short15 move units, WorkUnits8, real in-flight cancellation and the infinite certificate negative are retained in the passing group.
+
+This is the same original reviewer's **final disposition round 2 of maximum 2**, not a fresh full review or matrix. No Cargo, Titan, tracker, relay or source edits were run by this reviewer. Read-only direct rustfmt on the four round-two Rust files and git diff --check exit 0. HEAD is clean and unchanged; Cargo.toml/Cargo.lock and incoming receipt allocation/fail-fast paths remain identical to receipt base `2fa667`. The root owns subsequent central workspace verification, metadata custody, private publication/read-back and merge.
+
+## Final gap verdict
+
+**FAIL** remains the repository-wide assurance verdict. The original whole-repository counts and incomplete reverse audit are not recomputed, silently discharged or promoted to PASS. Scoped delivery has no remaining local gap finding after this bounded final disposition.
+
+## Delivery hold
+
+Root/arch currently holds finite delivery while the separately owned main emit/source-map regression repair runs. This bounded review PASS does not lift that hold: keep 9fa544b166edf5e0011d9cfb5e0ee3bedd043c07 frozen, run no further finite Cargo, and perform no finite merge until root releases the sequence. The unchanged-head object-free G-153 probe also actually passed 1/0/0 (1093 filtered), log /private/tmp/qsl2248-round2-9fa544-object-free.log.
