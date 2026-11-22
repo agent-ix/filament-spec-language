@@ -31,7 +31,12 @@ fn both_routes(name: &str, items: Value, documents: &[(&str, Value)]) -> (Run, R
     ws.write("analyze.json", request.to_string().as_bytes());
     let source = analyze(&path);
     assert_eq!(source.exit, 0, "{}", source.document());
-    let (members, _) = package_selection(&ws, &request["request"]);
+    let (members, bytes) = package_selection(&ws, &request["request"]);
+    for (_, document) in documents {
+        if document["format"] == "filament.protocol-recording/1" {
+            assert_recording_charge_parity(&ws, &bytes, document);
+        }
+    }
     std::fs::remove_file(ws.path("program.fsl")).expect("the authored unit is removed");
     let sources = ws.path(&format!("{HANDOFF}/sources"));
     std::fs::remove_dir_all(&sources).expect("the handoff sources are removed");
@@ -39,6 +44,59 @@ fn both_routes(name: &str, items: Value, documents: &[(&str, Value)]) -> (Run, R
     let document = json!({"format": "native-analyze/1", "request": members});
     let package = analyze(&ws.write("analyze-package.json", document.to_string().as_bytes()));
     (source, package)
+}
+
+/// Compare the real recording assessor's causal binder frame and predicate
+/// path, including the admitted package evaluator, before testing CLI parity.
+fn assert_recording_charge_parity(ws: &Workspace, bytes: &[u8], document: &Value) {
+    use filament_exact::{Meter, Value as ExactValue};
+    use fsl_eval::simulation::model::PackageModelInput;
+    use fsl_package::{BarePackage, BareSupply, ReadEqualityRows, ReadIdentityRows};
+    use fsl_semantics::model::accounting::ModelNormalizationLimits;
+
+    let compiled = fsl_command::checked_handoff::compile(&ws.path(HANDOFF))
+        .expect("the genuine producer handoff compiles");
+    let limits = fsl_package::V2ReadLimits::bounded(1 << 24);
+    let admitted = fsl_package::admit_checked_package(bytes, compiled.packages(), limits)
+        .expect("the producer bytes admit");
+    let mut budget = limits.native_join_limits().budget();
+    let identities = ReadIdentityRows::read(
+        &std::fs::read(ws.path(&format!("{HANDOFF}/identities.json"))).expect("identity rows"),
+        &admitted, &mut budget,
+    ).expect("the producer identity rows join");
+    let equality = std::fs::read(ws.path(&format!("{HANDOFF}/equality.json"))).ok()
+        .map(|bytes| ReadEqualityRows::read(&bytes, &admitted).expect("equality rows join"));
+    let bare = BarePackage::new(&admitted).with_supply(BareSupply { identities: &identities, equality: equality.as_ref() }, &mut budget)
+        .expect("the actual producer supply joins");
+    let owner = PackageModelInput::of(&bare, compiled.packages(), ModelNormalizationLimits::default())
+        .expect("native package input admits");
+    let mut payload = document.clone();
+    payload.as_object_mut().expect("recording document").remove("identity");
+    let payload = serde_json::to_vec(&payload).expect("recording payload");
+    let mut source_meter = Meter::new(crate::counter::UNLIMITED);
+    let mut package_meter = Meter::new(crate::counter::UNLIMITED);
+    let source = fsl_analyze::protocol_analysis::recording::recording_predicate_source(
+        compiled.checked(), &payload, "Flow::Main::Decide::yes", 2, &mut source_meter,
+    );
+    let package = fsl_analyze::protocol_analysis::recording::recording_predicate_package(
+        &owner.input(), &payload, "Flow::Main::Decide::yes", 2, &mut package_meter,
+    );
+    assert!(matches!(source, Some(ExactValue::Boolean(true))));
+    assert_eq!(package, source);
+    assert!(!source_meter.admitted_charges().is_empty(), "got.ok must read its recorded binder");
+    assert!(!source_meter.charge_log_truncated());
+    assert!(!package_meter.charge_log_truncated());
+    assert_eq!(package_meter.admitted_charges(), source_meter.admitted_charges());
+    let mut foreign = document.clone();
+    foreign["protocol"] = json!("Foreign");
+    foreign.as_object_mut().expect("recording").remove("identity");
+    let foreign = serde_json::to_vec(&foreign).expect("foreign recording");
+    assert!(fsl_analyze::protocol_analysis::recording::recording_predicate_source(
+        compiled.checked(), &foreign, "Flow::Main::Decide::yes", 2, &mut Meter::new(crate::counter::UNLIMITED),
+    ).is_none());
+    assert!(fsl_analyze::protocol_analysis::recording::recording_predicate_package(
+        &owner.input(), &foreign, "Flow::Main::Decide::yes", 2, &mut Meter::new(crate::counter::UNLIMITED),
+    ).is_none());
 }
 
 /// The package run's whole result equals the source run's.
@@ -111,4 +169,52 @@ fn a_conformance_recording_settles_as_the_source_route() {
     assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
     assert_eq!(source.item(0)["global"]["complete"], true);
     assert_equal(&source, &package);
+}
+
+fn refused_routes(name: &str, item: Value, file: &str, document: &Value) -> (Run, Run) {
+    let ws = Workspace::new(name);
+    let path = litmus_request(&ws, &order_protocol(true), json!({"items": [item]}));
+    let mut request: Value = serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("JSON");
+    ws.write(file, document.to_string().as_bytes());
+    request["request"]["documents"].as_array_mut().expect("documents").push(json!({"file": file}));
+    ws.write("analyze.json", request.to_string().as_bytes());
+    let source = analyze(&path);
+    assert_eq!(source.exit, 20, "{}", source.document());
+    let (members, _) = package_selection(&ws, &request["request"]);
+    std::fs::remove_file(ws.path("program.fsl")).expect("delete source program");
+    std::fs::remove_dir_all(ws.path(&format!("{HANDOFF}/sources"))).expect("delete retained source files");
+    assert!(!ws.path("program.fsl").exists());
+    assert!(!ws.path(&format!("{HANDOFF}/sources")).exists());
+    let package = analyze(&ws.write("refused-package.json", json!({"format": "native-analyze/1", "request": members}).to_string().as_bytes()));
+    (source, package)
+}
+
+/// An authentic transition identity does not authenticate a forged post-state.
+#[trace("FR-941", "FR-850-AC-2", "FR-940-AC-6")]
+#[test]
+fn a_package_finite_replay_rejects_a_foreign_post_state_as_the_source_route() {
+    let steps = order_steps(&[StepKind::Send, StepKind::Receive, StepKind::Finish]);
+    let mut trace = trace_document("stale", &steps);
+    trace["initial_state"] = json!(0);
+    trace["prefix"][0]["post_state"]["key"] = json!("Zm9yZWlnbi1zdGF0ZQ");
+    let (source, package) = refused_routes("package-stale-protocol-state",
+        json!({"claim": "Flow", "kind": "finite-replay", "trace": {"authority": "test", "identity": "stale"}}),
+        "trace.json", &trace);
+    assert_equal(&source, &package);
+    assert_eq!(package.stdout, source.stdout, "whole stale-step refusal");
+}
+
+/// Recording identity never substitutes for membership in the admitted package.
+#[trace("FR-895", "FR-850-AC-2", "FR-940-AC-6")]
+#[test]
+fn a_package_recording_rejects_a_foreign_protocol_as_the_source_route() {
+    let recording = json!({"format": "filament.protocol-recording/1", "protocol": "Foreign",
+        "identity": {"authority": "test", "identity": "foreign"},
+        "observations": [], "local_order": {}, "correlations": [],
+        "closure": {"state": "open", "premises": []}});
+    let (source, package) = refused_routes("package-foreign-recording",
+        json!({"claim": "Flow", "kind": "global-conformance", "recording": {"authority": "test", "identity": "foreign"}}),
+        "recording.json", &recording);
+    assert_equal(&source, &package);
+    assert_eq!(package.stdout, source.stdout, "whole foreign-protocol refusal");
 }

@@ -43,7 +43,7 @@ fn recording_payload(bytes: &[u8]) -> Result<Vec<u8>, String> {
 )]
 fn recording_result(
     index: fsl_foundation::RequestIndex,
-    package: &fsl_package::CheckedPackage,
+    package: &super::recording_input::Input<'_>,
     subject: Option<&fsl_eval::model_subject::ProtocolSubject<'_>>,
     recording_identity: Option<&fsl_semantics::model::observation::DocumentRef>,
     recording: &[u8],
@@ -97,11 +97,10 @@ fn recording_result(
         },
         None => None,
     };
-    let assessment = match super::recording::assess_recording_with_population(
-        package,
-        &recording,
-        population.as_deref(),
-    ) {
+    let assessment = match match package {
+        super::recording_input::Input::Source(package) => super::recording::assess_recording_with_population(package, &recording, population.as_deref()),
+        super::recording_input::Input::Package(input) => super::recording::assess_package_recording(input, &recording, population.as_deref()),
+    } {
         Ok(assessment) => assessment,
         Err(refusal) => {
             let detail = [("detail".to_owned(), serde_json::json!(refusal.to_string()))]
@@ -250,6 +249,30 @@ pub(crate) fn global_recording_item<'a>(
     population: Option<serde_json::Value>,
     replay_limits: ReplayLimits,
 ) -> crate::analyze::AnalyzeItem<'a> {
+    global_recording_item_in(index, super::recording_input::Input::Source(package), subject, recording_identity, recording, population, replay_limits)
+}
+
+/// Recording settlement over authenticated admitted protocol facts.
+pub(crate) fn package_global_recording_item<'a>(
+    index: fsl_foundation::RequestIndex,
+    input: fsl_eval::simulation::model::ModelCheckInput<'a>,
+    recording_identity: Option<fsl_semantics::model::observation::DocumentRef>,
+    recording: Option<&'a [u8]>,
+    population: Option<serde_json::Value>,
+    replay_limits: ReplayLimits,
+) -> crate::analyze::AnalyzeItem<'a> {
+    global_recording_item_in(index, super::recording_input::Input::Package(input), None, recording_identity, recording, population, replay_limits)
+}
+
+fn global_recording_item_in<'a>(
+    index: fsl_foundation::RequestIndex,
+    package: super::recording_input::Input<'a>,
+    subject: Option<fsl_eval::model_subject::ProtocolSubject<'a>>,
+    recording_identity: Option<fsl_semantics::model::observation::DocumentRef>,
+    recording: Option<&'a [u8]>,
+    population: Option<serde_json::Value>,
+    replay_limits: ReplayLimits,
+) -> crate::analyze::AnalyzeItem<'a> {
     crate::analyze::AnalyzeItem::new(
         index,
         fsl_semantics::check::Capability::GlobalConformance,
@@ -259,7 +282,7 @@ pub(crate) fn global_recording_item<'a>(
         move |cancel| match recording {
             Some(recording) => recording_result(
                 index,
-                package,
+                &package,
                 subject.as_ref(),
                 recording_identity.as_ref(),
                 recording,

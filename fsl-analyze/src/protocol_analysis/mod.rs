@@ -16,6 +16,7 @@ mod profile;
 mod project;
 mod realize;
 pub mod recording;
+mod recording_input;
 mod step_view;
 mod subject;
 

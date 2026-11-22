@@ -317,6 +317,11 @@ enum Named<'s> {
         name: &'s str,
         selection: &'s ItemSelection,
     },
+    SuppliedProtocol {
+        index: RequestIndex,
+        name: &'s str,
+        selection: &'s ItemSelection,
+    },
     StateClause {
         index: RequestIndex,
         name: &'s str,
@@ -357,6 +362,7 @@ enum Route<'a> {
     },
     ProtocolFreedom(ProtocolBinding),
     ProtocolAnalysis,
+    SuppliedProtocol(String),
     Deadlock,
     StateClause,
     StateGraph(Box<PackageStateGraphSubject<'a>>),
@@ -635,6 +641,14 @@ fn settle_package_run_inner(
                 Resolution::Claim(claim, ()) => {
                     protocol_claims.push(claim.item.claim.clone());
                     routes.insert(index, Route::ProtocolAnalysis);
+                    resolved.push(ResolvedItem::Claim(claim));
+                }
+            },
+            Named::SuppliedProtocol { index, name, selection } => match reads.supplied_protocol(index, name, selection)? {
+                Resolution::Settled(settled) => resolved.push(settled),
+                Resolution::Claim(claim, ()) => {
+                    protocol_claims.push(claim.item.claim.clone());
+                    routes.insert(index, Route::SuppliedProtocol(name.to_owned()));
                     resolved.push(ResolvedItem::Claim(claim));
                 }
             },
@@ -1109,7 +1123,7 @@ fn resolve_names<'s>(
             let derived = item_kind.is_some_and(|kind| kind != ItemKind::Formula);
             let protocol = if matches!(
                 selection.kind.as_deref(),
-                Some("local-projection" | "realizability")
+                Some("local-projection" | "realizability" | "finite-replay" | "global-conformance")
             ) || (item_kind == Some(ItemKind::DeadlockFreedom)
                 && selection.kind.as_deref() == Some(Capability::TemporalSatisfaction.to_wire()))
             {
@@ -1136,6 +1150,9 @@ fn resolve_names<'s>(
             } else {
                 false
             };
+            if matches!(selection.kind.as_deref(), Some("finite-replay" | "global-conformance")) && protocol {
+                return Ok(Named::SuppliedProtocol { index, name, selection });
+            }
             if matches!(
                 selection.kind.as_deref(),
                 Some("local-projection" | "realizability")
@@ -1918,6 +1935,51 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 record,
             }),
         ))
+    }
+
+    /// Supplied finite replay or recording over an admitted protocol declaration.
+    fn supplied_protocol(
+        &self,
+        index: RequestIndex,
+        name: &str,
+        selection: &ItemSelection,
+    ) -> Result<Resolution<()>, PackageRunError> {
+        let fault = || PackageRunError::Document(AnalyzeDocumentError::Fault);
+        let input = self.input.ok_or_else(fault)?;
+        let kind = match selection.kind.as_deref().map(Capability::from_wire) {
+            Some(Ok(kind @ (Capability::FiniteReplay | Capability::GlobalConformance))) => kind,
+            _ => return Ok(Resolution::Settled(invalid_kind(index, Some(name), "unknown-kind"))),
+        };
+        let form = input.package().protocol_execution_named(name).map_err(|_| fault())?.ok_or_else(fault)?;
+        let declaration = form.protocol.clause().clone();
+        let key = input.package().node_key(&declaration).ok_or_else(fault)?;
+        let claim = OccurrenceKey::declaration(key);
+        let named = selection.backend.as_deref().map(BackendId::new);
+        let backend_options = selection.options.clone().unwrap_or_default();
+        if let Some(refused) = unknown_option(index, Some(name), self.registry, named.as_ref(), &backend_options) {
+            return Ok(Resolution::Settled(refused));
+        }
+        if (kind == Capability::GlobalConformance && selection.recording.is_none())
+            || !crate::protocol_analysis::recording::package_recording_supported(&input.input(), name)
+        {
+            return Err(PackageRunError::Pending(PendingPackageFamily {
+                request_index: Some(index), family: PendingFamily::Declaration, node: Some(declaration),
+                note: Some(format!("`{name}`: supplied protocol slice requires origin activation, static roles, unordered literal-capacity channels and sequence/choice/message/check controls; temporal requirements, captures, negative replay and behavioral conformance remain pending")),
+            }));
+        }
+        let candidates = self.registry.candidates(kind, named.as_ref());
+        let temporal = selection.temporal.clone().unwrap_or_default();
+        let own_subject = self.own_subject(index, selection)?;
+        let item_form = (kind == Capability::GlobalConformance).then(|| ItemForm::Temporal(temporal_settings(&temporal)));
+        Ok(Resolution::Claim(Box::new(ResolvedClaim {
+            item: ClaimItem {
+                request_index: index, claim, kind, extent: ExtentClassification::Bounded,
+                backend: named, candidates: candidate_list(&candidates), options: options(selection, backend_options), form: item_form,
+            },
+            claim_name: name.to_owned(), candidates,
+            unrouted: selection.unrouted() || selection.reductions.is_some() || reads_no_clocks(selection) || !own_subject.same_model(self.subject),
+            subject: own_subject,
+        }), ()))
     }
 
     /// A native projection or realizability item over an admitted protocol declaration.
@@ -3110,6 +3172,16 @@ impl<'a> WorkInputs<'_, 'a> {
                 item,
                 &self.limits,
             ),
+            (_, Some(Route::SuppliedProtocol(protocol))) if item.kind == Capability::FiniteReplay => {
+                let trace = item.options.trace.as_ref().and_then(|reference| self.binding.snapshots.get(reference)).map_or(
+                    Err(crate::protocol_analysis::TraceDefect::unreadable()), crate::protocol_analysis::SuppliedTrace::read,
+                );
+                crate::protocol_analysis::finite_replay::package_finite_replay_item(item.request_index, self.input.input(), self.binding.clone(), self.limits, protocol, trace)
+            }
+            (_, Some(Route::SuppliedProtocol(_))) if item.kind == Capability::GlobalConformance => {
+                let recording = item.options.recording.as_ref().and_then(|reference| self.binding.snapshots.get(reference));
+                crate::protocol_analysis::conformance::package_global_recording_item(item.request_index, self.input.input(), item.options.recording.clone(), recording, item.options.population.clone(), self.limits.replay)
+            }
             (
                 Some(ItemForm::Temporal(form)),
                 Some(Route::Clause {
