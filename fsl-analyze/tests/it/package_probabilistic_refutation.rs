@@ -159,10 +159,16 @@ fn enum_draws_and_arguments_preserve_package_refutation_witness_parity() {
 #[test]
 fn enum_draws_preserve_workload_package_refutation_parity() {
     let (unit, model) = enum_fixture();
+    let mut model: serde_json::Value = serde_json::from_slice(&model).expect("enum model JSON");
+    for operation in model["types"][1]["operations"].as_array_mut().expect("operations") {
+        operation["params"].as_array_mut().expect("parameters")
+            .retain(|parameter| parameter["name"] != "tag");
+    }
+    let unit = unit.replace(" and tag = M::Loss::Delivered", "");
     let item = refutation_parity(
         "probabilistic-package-enum-workload-refutation-parity",
         &unit,
-        &model,
+        &serde_json::to_vec(&model).expect("Markov enum model JSON"),
         TOO_LIKELY,
     );
     let witness = &item["counterexample"];
@@ -183,14 +189,14 @@ fn enum_draws_preserve_workload_package_refutation_parity() {
 #[test]
 fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
     use filament_exact::Cancel;
-    use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
-    use fsl_analyze::exact_probabilistic::ProductRequest;
-    use fsl_eval::model_subject::ModelSubject;
+    use fsl_analyze::analyze::document::{
+        resolve_items, settle_run, AnalyzeRun, ItemSelection, SubjectSelection,
+    };
+    use fsl_analyze::analyze::{AnalyzeLimits, Counterexample, Engines, SubjectBinding};
     use fsl_eval::simulation::model::{
         ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, PopulationUniverse,
     };
-    use fsl_foundation::RequestIndex;
-    use fsl_replay::{ModelCheckLimits, ProductAction, Schedule, TerminalValue};
+    use fsl_replay::{ProductAction, Schedule, TerminalValue};
 
     let (unit, model) = enum_fixture();
     let ws = Workspace::new("probabilistic-enum-source-scheduler-encoding");
@@ -237,23 +243,46 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
     let system = ModelSystem::new(simulation.clone()).expect("the source system admits");
     let claim = checked.graph().probabilistic_model().claim("TooLikely")
         .expect("the actual every-scheduler claim");
-    let record = analyze_items(
-        &Engines::fsl().expect("linked engines"),
-        vec![exact_probabilistic_item(
-            RequestIndex::new(0),
-            ProductRequest {
-                subject: ModelSubject { simulation, proof_bounds: Vec::new() },
-                claim,
-                limits: fsl_analyze::exact_probabilistic::ExactProbLimits {
-                    model: ModelCheckLimits::default(),
-                    ..Default::default()
-                },
-            },
-        )],
+    let engines = Engines::fsl().expect("linked engines");
+    let mut registry = fsl_route::Registry::new();
+    for descriptor in engines.registrations() {
+        registry.register(descriptor.clone()).expect("registered backend");
+    }
+    let selections: Vec<ItemSelection> =
+        serde_json::from_value(request["request"]["items"].clone()).expect("actual item selections");
+    let binding = SubjectBinding {
+        packages: compiled.packages(),
+        snapshots: &snapshots,
+        initial: simulation.initial.clone(),
+        universes: simulation.universes.clone(),
+    };
+    let limits = AnalyzeLimits { emit: compiled.emit_limits(), ..AnalyzeLimits::unbounded() };
+    let items = resolve_items(
+        checked,
+        &SubjectSelection::default_over(&snapshots),
+        Some(&selections),
+        &registry,
+        &[checked.graph().source().clone()],
+        &binding,
+        &limits,
+    );
+    let settled = settle_run(
+        AnalyzeRun {
+            package: checked,
+            binding,
+            provision: compiled.sources().clone(),
+            items,
+            engines: &engines,
+            limits,
+        },
+        &crate::analyze_cli_support::Fr290,
         &Cancel::new(),
-    ).remove(0);
-    assert_eq!(record.terminal().expect("the source settles").value(), &TerminalValue::Refuted);
-    let reproduced = record.probabilistic_counterexample.expect("independently replayed evidence");
+    ).expect("the actual source request settles");
+    assert_eq!(settled.exit_code, 10, "{}", settled.document);
+    assert_eq!(settled.records[0].value(), &TerminalValue::Refuted);
+    let Counterexample::Probabilistic(reproduced) = &settled.counterexamples[0].counterexample else {
+        panic!("the actual source request retains a reproduced probabilistic witness");
+    };
     let witness = reproduced.evidence();
     assert!(!witness.paths.is_empty());
     let mut scheduler = Vec::new();
@@ -309,7 +338,10 @@ fn source_enum_scheduler_evidence_encodes_with_the_package_member_index() {
         witness, bound, world.types(), &[], world.enum_members(), &state_key, &scheduler,
     ).expect("authenticated package declarations spell the same evidence");
     assert_eq!(actual, expected);
-    assert_eq!(actual, source.item(0)["counterexample"]);
+    assert_eq!(actual, *settled.counterexamples[0].wire.as_ref().expect("actual raw source wire"));
+    // FR-621 adds decoded states beside FR-286's keys in the document.
+    // Compare that production spelling from the same reproduced witness.
+    assert_eq!(settled.document["items"][0]["counterexample"], source.item(0)["counterexample"]);
     assert!(actual["scheduler"]["entries"].as_array().expect("written scheduler")
         .iter().any(|entry| entry["choice"]["arguments"].as_array()
             .is_some_and(|arguments| arguments.iter().any(|value| value["type"] == "enum"))));
