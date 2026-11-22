@@ -1462,7 +1462,7 @@ fn never_holds() -> &'static str {
 /// The source route's and the package route's documents and exits of one
 /// request over `body`, the first with its `items` as written and the second
 /// selecting the compiled package.
-fn both_routes(name: &str, body: &str, items: Option<Value>) -> (Run, Run) {
+fn counter_routes(name: &str, body: &str, items: Option<Value>) -> (Run, Run) {
     let ws = Workspace::new(name);
     let path = counter_request(&ws, body, json!(null));
     let mut document: Value =
@@ -1498,7 +1498,7 @@ fn assert_same_outcome(package: &Run, source: &Run) {
 #[trace("TC-2410", "FR-850-AC-2", "FR-940-AC-6")]
 #[test]
 fn a_package_false_literal_state_graph_claim_equals_the_source() {
-    let (source, package) = both_routes(
+    let (source, package) = counter_routes(
         "package-false-state-graph",
         &format!("{}{}", bounded(), never_holds()),
         Some(json!([{"claim": "NeverHolds"}])),
@@ -1521,7 +1521,7 @@ fn omitted_items_settle_over_a_package_as_over_the_source() {
         never_holds(),
         not_above_three()
     );
-    let (source, package) = both_routes("package-omitted-items", &body, None);
+    let (source, package) = counter_routes("package-omitted-items", &body, None);
     assert!(!item_heads(&source).is_empty(), "{}", source.document());
     assert_eq!(item_heads(&package), item_heads(&source));
     assert_same_outcome(&package, &source);
