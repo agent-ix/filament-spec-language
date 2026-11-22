@@ -1735,6 +1735,9 @@ pub struct Disposed {
 /// What an engine reports for one item. Only the crate's item adapters
 /// construct one, from the engine's own layer-6 settlement.
 pub(crate) enum EngineReport {
+    /// Preserve an external carrier built under the original runtime/owner
+    /// while retaining the native report for its existing settlement rules.
+    Spelled(Box<EngineReport>, Box<serde_json::Value>),
     /// EN-1's replay-gated hyperproperty settlement.
     Hyper(Box<fsl_replay::HyperRecord>),
     /// EN-1's record, settled by `settle_model_check`.
@@ -2099,6 +2102,9 @@ fn unsupported_kind(kind: Capability) -> Diagnostic {
 /// One item's settlement.
 #[derive(Debug)]
 pub struct AnalyzeRecord {
+    /// External carrier already built under the producer's original resource
+    /// owner. Consuming result output moves it without cloning its subtree.
+    pub(crate) spelled_counterexample: Option<Box<serde_json::Value>>,
     /// EN-1's hyperproperty record, retaining a reproduced trace tuple.
     pub hyper_check: Option<Box<fsl_replay::HyperRecord>>,
     /// The item's request index.
@@ -2193,6 +2199,7 @@ impl AnalyzeRecord {
     fn of(request_index: RequestIndex, settlement: Settlement) -> Self {
         Self {
             request_index,
+            spelled_counterexample: None,
             hyper_check: None,
             claim: None,
             settlement,
@@ -2462,6 +2469,39 @@ impl AnalyzeRecord {
                 }),
         )
     }
+
+    /// Consume the producer's already admitted carrier without cloning its
+    /// JSON subtree or creating another resource allowance after runtime drop.
+    ///
+    /// # Errors
+    /// Preserves the existing outcome/wire validation errors.
+    pub fn into_outcome_item(
+        mut self,
+        package: &CheckedPackage,
+    ) -> Option<Result<OutcomeItem, OutcomeItemError>> {
+        let wire = self
+            .spelled_counterexample
+            .take()
+            .map(|wire| Ok(*wire))
+            .or_else(|| self.spell(Some(package)))
+            .transpose();
+        let terminal = self.terminal()?;
+        let kind = self
+            .counterexample()
+            .map(|counterexample| &counterexample.kind)
+            .or_else(|| {
+                self.protocol_counterexample()
+                    .map(|counterexample| &counterexample.kind)
+            });
+        let undefined = undefined_cause(kind, self.value_check.as_deref());
+        let item = wire
+            .map_err(OutcomeItemError::from)
+            .and_then(|wire| OutcomeItem::from_analyze(terminal, wire, undefined));
+        Some(item.map(|item| match self.protocol_conformance.take() {
+            Some(output) => item.with_protocol_conformance(output),
+            None => item,
+        }))
+    }
 }
 
 /// The cause of a claim evaluation undefined at a state: where and why. An
@@ -2670,7 +2710,11 @@ pub(crate) fn split_records_over(
             terminals.push(terminal);
             continue;
         }
-        let wire = record.spell(package);
+        let wire = record
+            .spelled_counterexample
+            .take()
+            .map(|wire| Ok(*wire))
+            .or_else(|| record.spell(package));
         let counterexample = record.take_counterexample();
         let mut terminal = into_terminal(record);
         if matches!(terminal.value(), TerminalValue::Refuted) {
@@ -2940,6 +2984,11 @@ fn settle(
         )
     };
     match report {
+        EngineReport::Spelled(report, wire) => {
+            let mut record = settle(index, kind, engine, *report);
+            record.spelled_counterexample = Some(wire);
+            record
+        }
         EngineReport::Hyper(hyper) => {
             let terminal_record = TerminalRecord::of_hyper(index, backend.clone(), &hyper)
                 .unwrap_or_else(|_| TerminalRecord::failed(index, backend));

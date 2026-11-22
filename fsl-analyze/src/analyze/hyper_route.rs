@@ -19,6 +19,87 @@ use fsl_route::Mode;
 use fsl_semantics::check::{Capability, DeclarationFamily};
 
 use super::items::{admission, model_refusal, BROKEN};
+
+fn scoped_report<'s, 'm: 's>(
+    record: fsl_replay::HyperRecord,
+    system_at: &impl Fn(usize) -> Option<&'s ModelSystem<'m>>,
+    owner: Option<&fsl_semantics::model::intake::SelectedModels>,
+    claim: &OccurrenceKey,
+    cancel: &Cancel,
+) -> EngineReport {
+    let Some(found) = record.counterexample.as_ref() else {
+        return EngineReport::Hyper(Box::new(record));
+    };
+    let Some(metadata_runtime) = system_at(0) else {
+        return EngineReport::Refused(Refusal::Failed(BROKEN));
+    };
+    // All metadata debits the retained source-unit aggregate. The runtime
+    // borrowed for that scope supplies no model-specific allowance. Each
+    // reference-bearing trace uses its own original quantifier/execution slot.
+    let wire = super::reference_output::with_source(metadata_runtime, owner, cancel, |metadata| {
+        metadata.hyper_counterexample_wire::<Refusal>(
+            found,
+            Some(claim),
+            |index, trace| {
+                let system = system_at(index).ok_or(Refusal::Failed(BROKEN))?;
+                super::reference_output::with_source(system, owner, cancel, |references| {
+                    references.at_index("/traces", index, |references| {
+                        references.hyper_trace_wire(trace)
+                    })
+                })
+            },
+            |undefined, transition| {
+                // A contract guard records its single original component;
+                // this correspondence was already checked by native tuple
+                // replay. It does not select or reconstruct a population.
+                let [(variable, alias)] = undefined.variables.as_slice() else {
+                    return Err(Refusal::Unsupported(super::items::NOT_YET));
+                };
+                let owner = owner.ok_or(Refusal::Unsupported(super::items::NOT_YET))?;
+                let mut slot = None;
+                for (index, trace) in found.traces.iter().enumerate() {
+                    let units = trace
+                        .variable
+                        .len()
+                        .checked_add(variable.len())
+                        .and_then(|n| n.checked_add(trace.alias.len()))
+                        .and_then(|n| n.checked_add(alias.len()))
+                        .and_then(|n| u64::try_from(n).ok())
+                        .ok_or(Refusal::Failed(BROKEN))?;
+                    owner
+                        .charge_reference_work(
+                            fsl_semantics::model::accounting::ChargePoint::ReferenceResult,
+                            units,
+                        )
+                        .map_err(|cause| {
+                            Refusal::from(fsl_replay::ReferenceCodecError::Normalization {
+                                cause,
+                                pointer: "/undefined/where/transition".to_owned(),
+                            })
+                        })?;
+                    if &trace.variable == variable && &trace.alias == alias {
+                        if slot.replace(index).is_some() {
+                            return Err(Refusal::Failed(BROKEN));
+                        }
+                    }
+                }
+                let system = slot.and_then(system_at).ok_or(Refusal::Failed(BROKEN))?;
+                super::reference_output::with_source(system, Some(owner), cancel, |references| {
+                    references.at_pointer("/undefined/where/transition", |references| {
+                        references.encode_transition(transition)
+                    })
+                })
+            },
+        )
+    });
+    match wire {
+        Ok(wire) => EngineReport::Spelled(
+            Box::new(EngineReport::Hyper(Box::new(record))),
+            Box::new(wire),
+        ),
+        Err(refusal) => EngineReport::Refused(refusal),
+    }
+}
 use super::{AnalyzeItem, AnalyzeLimits, EngineReport, Refusal, SubjectBinding, TemporalItem};
 use crate::model_check::{
     alias_provisions, alias_system, check_hyper, check_model_relation, manifest, HyperCheckRequest,
@@ -48,6 +129,7 @@ pub(super) fn hyper_item<'a>(
     let input = analysis.model.clone();
     let binding = binding.clone();
     let form = form.clone();
+    let claim = key.clone();
     Some(
         AnalyzeItem::new(
             index,
@@ -224,7 +306,13 @@ pub(super) fn hyper_item<'a>(
                     },
                 );
                 match settled {
-                    Ok(record) => EngineReport::Hyper(Box::new(record)),
+                    Ok(record) => scoped_report(
+                        record,
+                        &|index| systems.get(index).copied(),
+                        normalization_owner,
+                        &claim,
+                        cancel,
+                    ),
                     Err(_) => EngineReport::Refused(Refusal::Failed(BROKEN)),
                 }
             },
@@ -362,6 +450,7 @@ pub(super) fn relation_item<'a>(
     analysis: &super::RunInput<'a>,
     binding: &SubjectBinding<'a>,
     limits: AnalyzeLimits,
+    normalization_owner: Option<&'a fsl_semantics::model::intake::SelectedModels>,
     key: &OccurrenceKey,
     index: RequestIndex,
     form: &TemporalItem,
@@ -376,6 +465,7 @@ pub(super) fn relation_item<'a>(
     let input = analysis.model.clone();
     let binding = binding.clone();
     let form = form.clone();
+    let claim = key.clone();
     Some(
         AnalyzeItem::new(
             index,
@@ -506,7 +596,13 @@ pub(super) fn relation_item<'a>(
                     },
                 );
                 match settled {
-                    Ok(record) => EngineReport::Hyper(Box::new(record)),
+                    Ok(record) => scoped_report(
+                        record,
+                        &|index| systems.get(index),
+                        normalization_owner,
+                        &claim,
+                        cancel,
+                    ),
                     Err(_) => EngineReport::Refused(Refusal::Failed(BROKEN)),
                 }
             },

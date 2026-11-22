@@ -82,14 +82,95 @@ fn clockful_unreachable_release() -> World {
 #[trace("FSpec-TC-371", "FSpec-FR-418-AC-14")]
 #[test]
 fn clockful_no_release_transport_preserves_context_and_rejects_tampering() {
-    use fsl_analyze::zone_check::read_back_unchanged_with_source;
+    use fsl_analyze::zone_check::read_back_unchanged_with_references;
+    use fsl_replay::{NormalizationReferenceBudget, ReferenceCodec};
+    use fsl_semantics::model::accounting::ChargePoint;
     let world = clockful_unreachable_release();
-    let model = world.system();
+    let packages = fsl_semantics::model::intake::package_input([world.document.as_slice()])
+        .expect("the actual source model document");
+    let source = fsl_foundation::SourceIdentity::new("test", "clockful-canonical-certificate");
+    let limits = fsl_replay::spine::SpineLimits::default();
+    let cancel = Cancel::new();
+    let parsed = fsl_replay::spine::parse(
+        &fsl_replay::spine::ParseRequest {
+            source: &source,
+            path: "clockful-certificate.native",
+            bytes: &world.unit,
+        },
+        limits.source,
+        &cancel,
+    )
+    .expect("actual source parsing")
+    .into_value();
+    let models = fsl_replay::spine::select(&parsed, &packages, limits.model, &cancel)
+        .expect("actual source model admission")
+        .into_value();
+    let checked = fsl_replay::spine::check(
+        &parsed,
+        "clockful-certificate".to_owned(),
+        &models,
+        &fsl_replay::spine::DependencyInput::default(),
+        limits,
+        &cancel,
+    )
+    .expect("genuine source checking")
+    .into_value()
+    .retain_model_admission(models);
+    let owner = checked
+        .model_admission_owner()
+        .expect("retained original Arc")
+        .as_ref();
+    let mut simulation = world.request();
+    simulation.input = fsl_eval::simulation::model::ModelCheckInput::source(checked.package());
+    let model = fsl_eval::simulation::model::ModelSystem::new(simulation.clone())
+        .expect("same original source request");
+    let checked_claim = checked
+        .package()
+        .graph()
+        .task_sets()
+        .claims()
+        .iter()
+        .find(|claim| claim.name == "NFp")
+        .expect("the actual checked schedulability claim");
+    let claim = checked_claim.occurrence().expect("actual occurrence");
+    let verdict = |certificate: &Certificate, limits| {
+        fsl_replay::check_zone_certificate(
+            fsl_replay::ZoneCertificateRequest {
+                simulation: simulation.clone(),
+                model: "M",
+                max_clocks: fsl_eval::simulation::model::DEFAULT_MAX_CLOCKS,
+                item: fsl_replay::CertifiedItem::Schedulability {
+                    claim: checked_claim,
+                },
+            },
+            &claim,
+            |claim| fsl_replay::CertificateItem::Schedulability(claim),
+            certificate,
+            limits,
+            &Cancel::new(),
+        )
+    };
+    let cancel = Cancel::new();
+    let mut budget = NormalizationReferenceBudget::source(owner, ChargePoint::ReferenceCatalog);
+    let catalog = fsl_package::ReferenceCatalog::from_checked_model(
+        checked.package(),
+        model.reference_model(),
+        &mut budget,
+    )
+    .expect("join genuine source rows and this exact runtime");
+    let codec = ReferenceCodec::new(&catalog, &model).expect("same source/runtime owner");
+    let mut budget = NormalizationReferenceBudget::source(owner, ChargePoint::ReferenceResult);
+    let mut references = codec.scope(
+        &mut budget,
+        &cancel,
+        usize::MAX,
+        quire_canonical::Limits::new(u64::MAX),
+    );
     let timed = TimedSystem::new(&model, "M").expect("timed source");
     let product = TaskProductSystem::new(timed, "NFp").expect("task product");
     let built = no_release_task_product_certificate(
         &product,
-        claim_of(&world, "NFp").occurrence().expect("occurrence"),
+        claim.clone(),
         ZoneCheckLimits::default(),
         &Cancel::new(),
     )
@@ -101,9 +182,15 @@ fn clockful_no_release_transport_preserves_context_and_rejects_tampering() {
         built.edges.iter().any(|edge| edge.part == Some(1)),
         "both convex source guard parts are retained"
     );
-    let (wire, read) =
-        read_back_unchanged_with_source(&built, json!({}), &built.obligation, product.source())
-            .expect("genuine source metadata reads back unchanged");
+    let (wire, read) = read_back_unchanged_with_references(
+        &built,
+        json!({}),
+        &built.obligation,
+        Some(product.source()),
+        &mut references,
+    )
+    .expect("genuine source metadata is admitted")
+    .expect("genuine source metadata reads back unchanged");
     assert_eq!(
         wire["bounds"][0]["clock"],
         product
@@ -113,13 +200,18 @@ fn clockful_no_release_transport_preserves_context_and_rejects_tampering() {
     );
     assert_eq!(read.lu_bounds, built.lu_bounds);
     assert_eq!(
-        verdict(&world, "NFp", &read, CertificateCheckLimits::default()),
+        verdict(&read, CertificateCheckLimits::default()),
         Ok(ZoneCertificateVerdict::Accepted)
     );
-    let decode = |wire: &Value| {
-        ZoneCertificate::from_wire_with_source(wire, built.obligation.clone(), product.source())
-            .expect("mutant retains wire shape")
-            .0
+    let mut decode = |wire: &Value| {
+        ZoneCertificate::from_wire_with_references(
+            wire,
+            built.obligation.clone(),
+            Some(product.source()),
+            &mut references,
+        )
+        .expect("mutant retains wire shape")
+        .0
     };
     let mut lu = wire.clone();
     for row in lu["bounds"].as_array_mut().expect("bounds") {
@@ -127,43 +219,39 @@ fn clockful_no_release_transport_preserves_context_and_rejects_tampering() {
         row["upper"] = json!({"bound":"-100","strict":false});
     }
     assert_eq!(
-        rejected(verdict(
-            &world,
-            "NFp",
-            &decode(&lu),
-            CertificateCheckLimits::default()
-        ))
-        .0,
+        rejected(verdict(&decode(&lu), CertificateCheckLimits::default())).0,
         CertificateRule::Malformed
     );
     let mut wrong_clock = wire.clone();
     wrong_clock["bounds"][0]["clock"] = json!("not-the-source-clock");
-    assert!(ZoneCertificate::from_wire_with_source(
+    drop(decode);
+    assert!(ZoneCertificate::from_wire_with_references(
         &wrong_clock,
         built.obligation.clone(),
-        product.source()
+        Some(product.source()),
+        &mut references,
     )
     .is_err());
+    let mut decode = |wire: &Value| {
+        ZoneCertificate::from_wire_with_references(
+            wire,
+            built.obligation.clone(),
+            Some(product.source()),
+            &mut references,
+        )
+        .expect("mutant retains wire shape")
+        .0
+    };
     let mut fragment = wire.clone();
     fragment["edges"][0]["part"] = json!(999);
     assert!(matches!(
-        verdict(
-            &world,
-            "NFp",
-            &decode(&fragment),
-            CertificateCheckLimits::default()
-        ),
+        verdict(&decode(&fragment), CertificateCheckLimits::default()),
         Ok(ZoneCertificateVerdict::Rejected(_))
     ));
     let mut data = wire.clone();
     data["edges"][0]["transition"]["operation"] = json!("M::Call::not_tick");
     assert!(matches!(
-        verdict(
-            &world,
-            "NFp",
-            &decode(&data),
-            CertificateCheckLimits::default()
-        ),
+        verdict(&decode(&data), CertificateCheckLimits::default()),
         Ok(ZoneCertificateVerdict::Rejected(_))
     ));
     let mut horizon = wire.clone();
@@ -179,7 +267,7 @@ fn clockful_no_release_transport_preserves_context_and_rejects_tampering() {
         1
     );
     assert!(matches!(
-        verdict(&world, "NFp", &read, CertificateCheckLimits::default()),
+        verdict(&read, CertificateCheckLimits::default()),
         Ok(ZoneCertificateVerdict::Rejected(_))
     ));
     let mut delay = wire.clone();
@@ -190,8 +278,9 @@ fn clockful_no_release_transport_preserves_context_and_rejects_tampering() {
     let read = decode(&delay);
     assert!(read.edges.last().expect("delay").transition.is_none());
     assert_eq!(read.edges.last().expect("delay").horizon, Some(Vec::new()));
+    drop(decode);
     assert_eq!(
-        read.to_wire_with_source(json!({}), product.source())
+        read.to_wire_with_references(json!({}), Some(product.source()), &mut references)
             .expect("delay and horizon write unchanged"),
         delay
     );
@@ -201,14 +290,15 @@ fn clockful_no_release_transport_preserves_context_and_rejects_tampering() {
         .expect("edges")
         .last_mut()
         .expect("delay")["part"] = json!(0);
-    assert!(ZoneCertificate::from_wire_with_source(
+    assert!(ZoneCertificate::from_wire_with_references(
         &delay_part,
         built.obligation.clone(),
-        product.source()
+        Some(product.source()),
+        &mut references,
     )
     .is_err());
     assert!(matches!(
-        verdict(&world, "NFp", &read, CertificateCheckLimits::default()),
+        verdict(&read, CertificateCheckLimits::default()),
         Ok(ZoneCertificateVerdict::Rejected(_))
     ));
 }

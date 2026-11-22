@@ -478,7 +478,7 @@ pub fn read_back_unchanged(
     identity: serde_json::Value,
     claim: &OccurrenceKey,
 ) -> Option<(serde_json::Value, ZoneCertificate<OccurrenceKey>)> {
-    read_back(built, identity, claim, None, None)
+    read_back(built, identity, claim, None, None).ok().flatten()
 }
 
 /// Reads the emitted task certificate with genuine source clock identities.
@@ -491,18 +491,26 @@ pub fn read_back_unchanged_with_source(
     source: &fsl_eval::simulation::model::TimedSystem<'_, '_>,
 ) -> Option<(serde_json::Value, ZoneCertificate<OccurrenceKey>)> {
     read_back(built, identity, claim, Some(source), None)
+        .ok()
+        .flatten()
 }
 
 /// Transport a certificate using the original package's reference scope.
 /// Source clock identities are retained when `source` is supplied. The
 /// independent semantic checker must still accept the restored certificate.
+///
+/// # Errors
+/// Preserves typed metadata, reference, resource and cancellation failures.
 pub fn read_back_unchanged_with_references(
     built: &ZoneCertificate<OccurrenceKey>,
     identity: serde_json::Value,
     claim: &OccurrenceKey,
     source: Option<&fsl_eval::simulation::model::TimedSystem<'_, '_>>,
     references: &mut fsl_replay::ReferenceScope<'_, '_, '_, '_>,
-) -> Option<(serde_json::Value, ZoneCertificate<OccurrenceKey>)> {
+) -> Result<
+    Option<(serde_json::Value, ZoneCertificate<OccurrenceKey>)>,
+    fsl_replay::ZoneCertificateReferenceError,
+> {
     read_back(built, identity, claim, source, Some(references))
 }
 
@@ -512,38 +520,35 @@ fn read_back(
     claim: &OccurrenceKey,
     source: Option<&fsl_eval::simulation::model::TimedSystem<'_, '_>>,
     references: Option<&mut fsl_replay::ReferenceScope<'_, '_, '_, '_>>,
-) -> Option<(serde_json::Value, ZoneCertificate<OccurrenceKey>)> {
-    let (wire, read, read_identity, written) = if let Some(references) = references {
-        let wire = built
-            .to_wire_with_references(identity.clone(), source, references)
-            .ok()?;
+) -> Result<
+    Option<(serde_json::Value, ZoneCertificate<OccurrenceKey>)>,
+    fsl_replay::ZoneCertificateReferenceError,
+> {
+    let (wire, read, same_wire) = if let Some(references) = references {
+        let wire = built.to_wire_with_references(identity, source, references)?;
         let (read, read_identity) =
-            ZoneCertificate::from_wire_with_references(&wire, claim.clone(), source, references)
-                .ok()?;
-        let written = read
-            .to_wire_with_references(read_identity.clone(), source, references)
-            .ok()?;
-        (wire, read, read_identity, written)
+            ZoneCertificate::from_wire_with_references(&wire, claim.clone(), source, references)?;
+        let written = read.to_wire_with_references(read_identity, source, references)?;
+        let same_wire = references.metadata_equal(&written, &wire)?;
+        (wire, read, same_wire)
     } else {
         let wire = match source {
             Some(source) => built.to_wire_with_source(identity.clone(), source),
             None => built.to_wire(identity.clone()),
-        }
-        .ok()?;
+        }?;
         let (read, read_identity) = match source {
             Some(source) => ZoneCertificate::from_wire_with_source(&wire, claim.clone(), source),
             None => ZoneCertificate::from_wire(&wire, claim.clone()),
-        }
-        .ok()?;
+        }?;
         let written = match source {
             Some(source) => read.to_wire_with_source(read_identity.clone(), source),
             None => read.to_wire(read_identity.clone()),
-        }
-        .ok()?;
-        (wire, read, read_identity, written)
+        }?;
+        let same_wire = written == wire;
+        (wire, read, same_wire)
     };
-    (read_identity == identity
-        && read.admitted == built.admitted
+    // Full respelling equality includes the identity moved into the wire.
+    Ok((read.admitted == built.admitted
         && read.lu_bounds == built.lu_bounds
         && read.edges.len() == built.edges.len()
         && read.edges.iter().zip(&built.edges).all(|(read, built)| {
@@ -553,8 +558,8 @@ fn read_back(
                 && read.horizon == built.horizon
                 && read.silent == built.silent
         })
-        && written == wire)
-        .then_some((wire, read))
+        && same_wire)
+        .then_some((wire, read)))
 }
 
 /// The reading of a wire edge list `flat` from `start`, as

@@ -24,8 +24,6 @@ use fsl_replay::{
     TemporalCounterexample,
 };
 use fsl_semantics::check::{AbstractSide, Capability, CheckedRefinement, DeclarationFamily};
-use fsl_semantics::model::state::ModelState;
-use serde_json::{json, Value};
 
 use super::items::model_refusal;
 use super::{AnalyzeItem, AnalyzeLimits, EngineReport, SubjectBinding, TemporalItem};
@@ -53,6 +51,7 @@ pub(super) fn refinement_item<'a>(
     analysis: &super::RunInput<'a>,
     binding: &SubjectBinding<'a>,
     limits: AnalyzeLimits,
+    normalization_owner: Option<&'a fsl_semantics::model::intake::SelectedModels>,
     claim: &OccurrenceKey,
     index: RequestIndex,
     form: &TemporalItem,
@@ -96,6 +95,7 @@ pub(super) fn refinement_item<'a>(
                     &concrete,
                     abstract_initial,
                     &form,
+                    normalization_owner,
                     cancel,
                 )
             },
@@ -111,6 +111,7 @@ fn run(
     concrete: &ModelSimulationRequest<'_>,
     abstract_initial: AbstractInitial,
     form: &TemporalItem,
+    normalization_owner: Option<&fsl_semantics::model::intake::SelectedModels>,
     cancel: &Cancel,
 ) -> EngineReport {
     let checked = check_refinement(
@@ -145,7 +146,7 @@ fn run(
     };
     // FR-630 "Outputs": the replay that reproduces a counterexample gives
     // the abstract image of each of its positions.
-    let mut steps = None;
+    let mut wire = None;
     let replay = |payload: &TemporalCounterexample| {
         let systems = open_systems(refinement, concrete, package, abstract_initial.clone())
             .map_err(|_| {
@@ -156,46 +157,38 @@ fn run(
             })?;
         let settled = replay_refinement_trace(refinement, &systems, payload)?;
         if let RefinementTraceSettlement::Reproduced { mapped, .. } = &settled {
-            steps = Some(counterexample_steps(refinement, &systems, mapped)?);
+            wire = Some(super::reference_output::with_source(
+                &systems.abstract_system,
+                normalization_owner,
+                cancel,
+                |abstract_refs| {
+                    let owner = normalization_owner
+                        .ok_or(super::Refusal::Unsupported(super::items::NOT_YET))?;
+                    super::reference_output::with_source(
+                        &systems.concrete,
+                        Some(owner),
+                        cancel,
+                        |concrete_refs| {
+                            concrete_refs.refinement_temporal_wire(
+                                payload,
+                                refinement,
+                                &systems,
+                                mapped,
+                                owner,
+                                abstract_refs,
+                            )
+                        },
+                    )
+                },
+            ));
         }
         Ok(settled)
     };
     let settled = settle_refinement(&outcome, &form.limits, &certified, cancel, replay);
-    EngineReport::Refinement(Box::new(settled.record), steps)
-}
-
-/// A reproduced refinement counterexample's members: `steps`, for each position, from
-/// 0 to the failing one, the abstract state it maps to in FSpec FR-181's
-/// typed canonical form, and `step_simulations`, the refinement's FR-146 step records by their
-/// occurrence (role `generated`, ordinal 0 for `Initial`, row position + 1
-/// for a `Step`).
-fn counterexample_steps(
-    refinement: &CheckedRefinement,
-    systems: &fsl_replay::RefinementSystems<'_>,
-    mapped: &[ModelState],
-) -> Result<Value, fsl_replay::ReplayRefusal> {
-    let fault =
-        |invariant| fsl_replay::ReplayRefusal::Fault(InternalFault::new("analyze", invariant));
-    let positions = mapped
-        .iter()
-        .enumerate()
-        .map(|(position, state)| {
-            let (_, key) = systems
-                .abstract_system
-                .state_key_of(state)
-                .map_err(|_| fault("a-mapped-state-encodes"))?;
-            let state: Value = serde_json::from_slice(key.as_bytes())
-                .map_err(|_| fault("a-mapped-state-key-is-json"))?;
-            Ok(json!({"position": position, "abstract_state": state}))
-        })
-        .collect::<Result<Vec<_>, fsl_replay::ReplayRefusal>>()?;
-    let records: Vec<Value> = refinement
-        .step_simulations()
-        .iter()
-        .map(|entry| {
-            json!({"role": entry.occurrence().origin().role().to_string(),
-                "ordinal": entry.occurrence().origin().ordinal()})
-        })
-        .collect();
-    Ok(json!({"steps": positions, "step_simulations": records}))
+    let report = EngineReport::Refinement(Box::new(settled.record), None);
+    match wire {
+        Some(Ok(wire)) => EngineReport::Spelled(Box::new(report), Box::new(wire)),
+        Some(Err(refusal)) => EngineReport::Refused(refusal),
+        None => report,
+    }
 }

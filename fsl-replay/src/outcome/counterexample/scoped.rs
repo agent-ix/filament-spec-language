@@ -25,6 +25,7 @@ impl ReferenceScope<'_, '_, '_, '_> {
             claim,
             terminal_key,
             false,
+            None,
             |s, transition| transition.write_borrowed(s),
             |s, transition| {
                 transition
@@ -160,13 +161,17 @@ impl ReferenceScope<'_, '_, '_, '_> {
             claim,
             terminal_key,
             true,
+            None,
             |s, transition| s.task_product_transition_wire(transition),
             |_, _| Ok(None),
             |s, fairness| s.fairness_wire(fairness),
         )
     }
 
-    fn claim_locus(&mut self, claim: Option<&OccurrenceKey>) -> Result<Json, ReferenceCodecError> {
+    pub(super) fn claim_locus(
+        &mut self,
+        claim: Option<&OccurrenceKey>,
+    ) -> Result<Json, ReferenceCodecError> {
         let claim = claim.ok_or_else(|| self.carrier_refusal("undefined locus"))?;
         let node = self.at_pointer("/node", |s| s.node(claim.node()))?;
         let role = self.display(&claim.origin().role())?;
@@ -283,7 +288,7 @@ impl ReferenceScope<'_, '_, '_, '_> {
         ])
     }
 
-    fn refinement_full(
+    pub(super) fn refinement_full(
         &mut self,
         failure: &RefinementFailure,
     ) -> Result<Json, ReferenceCodecError> {
@@ -438,6 +443,7 @@ impl ReferenceScope<'_, '_, '_, '_> {
             claim,
             terminal_key,
             false,
+            None,
             |s, transition| s.encode_task_transition(transition),
             |_, _| Ok(None),
             |s, fairness| s.fairness_wire(fairness),
@@ -448,13 +454,14 @@ impl ReferenceScope<'_, '_, '_, '_> {
         clippy::too_many_arguments,
         reason = "one carrier builder retains original context and alphabet-specific encoders"
     )]
-    fn temporal_full<T: SubjectTransition>(
+    pub(super) fn temporal_full<T: SubjectTransition>(
         &mut self,
         counterexample: &TemporalCounterexample<T>,
         over: Option<&ObjectReference>,
         claim: Option<&OccurrenceKey>,
         terminal_key: Option<&fsl_eval::simulation::StateKey>,
         delay_required: bool,
+        refinement: Option<Json>,
         mut transition: impl FnMut(&mut Self, &T) -> Result<Json, ReferenceCodecError>,
         mut send_record: impl FnMut(&mut Self, &T) -> Result<Option<Json>, ReferenceCodecError>,
         mut fairness: impl FnMut(&mut Self, &T::Fairness) -> Result<Json, ReferenceCodecError>,
@@ -615,7 +622,10 @@ impl ReferenceScope<'_, '_, '_, '_> {
             self.put(&mut out, "loop_proof", loop_proof)?;
         }
         if let Some(failure) = &counterexample.refinement {
-            let failure = self.at_pointer("/refinement_failure", |s| s.refinement_full(failure))?;
+            let failure = match refinement {
+                Some(failure) => failure,
+                None => self.at_pointer("/refinement_failure", |s| s.refinement_full(failure))?,
+            };
             self.put(&mut out, "refinement_failure", failure)?;
         }
         Ok(out)

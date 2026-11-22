@@ -52,6 +52,7 @@ use crate::simulation::reduction::Permutation;
 use crate::temporal::UndefinedCause;
 use crate::value::Provenance;
 
+mod clock_wire;
 mod over_time;
 pub use over_time::{DelayInterval, ScheduledWindow, TimeLock, TimedTerminalClass};
 mod race;

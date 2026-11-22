@@ -293,6 +293,27 @@ fn hyper_step_relation_through_analyze() {
         if exit == 10 {
             assert_eq!(run.item(0)["counterexample"]["kind"], "step-tuple");
             assert_eq!(run.item(0)["replay"]["reproduced"], true);
+            let item = run.item(0);
+            let traces = item["counterexample"]["traces"]
+                .as_array()
+                .expect("tuple traces");
+            assert_eq!(traces.len(), 2);
+            for trace in traces {
+                let receiver = &trace["steps"][0]["transition"]["receiver"];
+                assert_eq!(receiver["type"], "reference", "{trace}");
+                let identity = receiver["identity"].as_str().expect("reference identity");
+                assert!(
+                    !identity.is_empty() && identity.len() % 2 == 0,
+                    "{receiver}"
+                );
+                assert!(
+                    identity
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+                    "{receiver}"
+                );
+                assert!(receiver["object_type"]["ordinal"].is_number(), "{receiver}");
+            }
         }
     }
 }

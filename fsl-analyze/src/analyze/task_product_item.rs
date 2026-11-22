@@ -191,7 +191,17 @@ pub(super) fn item<'a>(
             }
             let reproduced = match &outcome {
                 crate::zone_check::TaskProductSearchOutcome::Refuted(refutation) => {
-                    task_counterexample(&product, &refutation.trace, &claim)
+                    match super::reference_output::with_source(
+                        product.source().system(),
+                        normalization_owner,
+                        cancel,
+                        |references| {
+                            task_counterexample(&product, &refutation.trace, &claim, references)
+                        },
+                    ) {
+                        Ok(reproduced) => reproduced,
+                        Err(refusal) => return EngineReport::Refused(refusal),
+                    }
                 }
                 crate::zone_check::TaskProductSearchOutcome::Stopped { .. } => None,
             };
@@ -242,79 +252,109 @@ fn task_counterexample(
     product: &fsl_eval::simulation::model::TaskProductSystem<'_, '_>,
     trace: &fsl_eval::simulation::model::TaskProductTrace,
     claim: &OccurrenceKey,
-) -> Option<(
-    fsl_replay::TemporalCounterexample<fsl_eval::simulation::model::TaskProductTransition>,
-    serde_json::Value,
-)> {
+    references: &mut fsl_replay::ReferenceScope<'_, '_, '_, '_>,
+) -> Result<
+    Option<(
+        fsl_replay::TemporalCounterexample<fsl_eval::simulation::model::TaskProductTransition>,
+        serde_json::Value,
+    )>,
+    fsl_replay::ReferenceCodecError,
+> {
     use fsl_eval::simulation::model::TaskProductTransition;
     use fsl_replay::{CounterexampleKind, Lasso, ModelStep, TemporalCounterexample};
-
-    // A finite missed-deadline prefix is useful search evidence, but FR-249
-    // settles a violation only with FR-364's replay-checked divergent
-    // continuation (lasso or terminal stutter). Keep a bare prefix incomplete.
-    trace.lasso_entry?;
-    let states = product.replay_trace_states(trace).ok()?;
-    let terminal_stutter_delay = trace.steps.last().and_then(|step| {
-        matches!(
-            &step.transition,
-            fsl_eval::simulation::model::TaskProductTransition::TerminalStutter
-        )
-        .then(|| step.delay.clone())
-    });
-    let prefix_steps = if terminal_stutter_delay.is_some() {
-        trace.steps.get(..trace.steps.len().checked_sub(1)?)?
-    } else {
-        &trace.steps
-    };
-    let prefix = prefix_steps
-        .iter()
-        .enumerate()
-        .map(|(index, step)| {
-            let state = states.get(index + 1)?;
-            let post_state = fsl_eval::simulation::StateKey::from_canonical_bytes(
-                product.state_key(state).ok()?,
-            );
-            Some(ModelStep {
-                transition: step.transition.clone(),
-                post_state,
-                delay: Some(step.delay.clone()),
+    let mut reference_failure = None;
+    let reproduced = (|| {
+        // A finite missed-deadline prefix is useful search evidence, but FR-249
+        // settles a violation only with FR-364's replay-checked divergent
+        // continuation (lasso or terminal stutter). Keep a bare prefix incomplete.
+        trace.lasso_entry?;
+        let states = product.replay_trace_states(trace).ok()?;
+        let terminal_stutter_delay = trace.steps.last().and_then(|step| {
+            matches!(
+                &step.transition,
+                fsl_eval::simulation::model::TaskProductTransition::TerminalStutter
+            )
+            .then(|| step.delay.clone())
+        });
+        let prefix_steps = if terminal_stutter_delay.is_some() {
+            trace.steps.get(..trace.steps.len().checked_sub(1)?)?
+        } else {
+            &trace.steps
+        };
+        let prefix = prefix_steps
+            .iter()
+            .enumerate()
+            .map(|(index, step)| {
+                let state = states.get(index + 1)?;
+                let post_state = fsl_eval::simulation::StateKey::from_canonical_bytes(
+                    product.state_key(state).ok()?,
+                );
+                Some(ModelStep {
+                    transition: step.transition.clone(),
+                    post_state,
+                    delay: Some(step.delay.clone()),
+                })
             })
-        })
-        .collect::<Option<Vec<ModelStep<TaskProductTransition>>>>()?;
-    let counterexample = TemporalCounterexample {
-        initial_state: trace.initial_state,
-        prefix,
-        over_binding: None,
-        fairness: Vec::new(),
-        kind: CounterexampleKind::Formula,
-        lasso: trace.lasso_entry.map(|entry| Lasso {
-            entry,
-            terminal_stutter: terminal_stutter_delay.is_some(),
-            terminal_stutter_delay,
-        }),
-        blocked: Vec::new(),
-        refinement: None,
-        final_delay: None,
-    };
-    // FR-237 re-admission: rebuild the internal task trace from the typed
-    // FR-364 counterexample, replay it against the checked product, and
-    // compare every supplied post-state key with the recomputed state.
-    // This keeps the emitted task transition identities and lasso position
-    // tied to the independently replayed subject.
-    let wire = fsl_replay::task_temporal_wire(&counterexample, None, Some(claim)).ok()?;
-    // The item is a release-backed schedulability item over an FR-249 task
-    // product, so its alphabet is the task alphabet (FR-237 "Document form").
-    let reproduced =
-        fsl_replay::replay_model_trace_document(&wire, fsl_replay::TraceAlphabet::Task, |read| {
-            match read {
-                fsl_replay::ReadCounterexample::Task(payload) => {
-                    readmit_task_counterexample(product, payload)
-                }
-                fsl_replay::ReadCounterexample::Model(_) => Ok(false),
+            .collect::<Option<Vec<ModelStep<TaskProductTransition>>>>()?;
+        let counterexample = TemporalCounterexample {
+            initial_state: trace.initial_state,
+            prefix,
+            over_binding: None,
+            fairness: Vec::new(),
+            kind: CounterexampleKind::Formula,
+            lasso: trace.lasso_entry.map(|entry| Lasso {
+                entry,
+                terminal_stutter: terminal_stutter_delay.is_some(),
+                terminal_stutter_delay,
+            }),
+            blocked: Vec::new(),
+            refinement: None,
+            final_delay: None,
+        };
+        // FR-237 re-admission: rebuild the internal task trace from the typed
+        // FR-364 counterexample, replay it against the checked product, and
+        // compare every supplied post-state key with the recomputed state.
+        // This keeps the emitted task transition identities and lasso position
+        // tied to the independently replayed subject.
+        let terminal_key = fsl_eval::simulation::StateKey::from_canonical_bytes(
+            product.state_key(states.last()?).ok()?,
+        );
+        let wire = match references.task_temporal_wire(
+            &counterexample,
+            None,
+            Some(claim),
+            Some(&terminal_key),
+        ) {
+            Ok(wire) => wire,
+            Err(error) => {
+                reference_failure = Some(error);
+                return None;
             }
-        })
-        .ok()?;
-    reproduced.then_some((counterexample, wire))
+        };
+        // The item is a release-backed schedulability item over an FR-249 task
+        // product, so its alphabet is the task alphabet (FR-237 "Document form").
+        let read = match fsl_replay::read_task_temporal_document_with_source(
+            &wire,
+            &mut |value, pointer| {
+                references.at_pointer(pointer, |references| {
+                    references.restore_task_transition(value)
+                })
+            },
+        ) {
+            Ok(read) => read,
+            Err(fsl_replay::TaskTemporalReadFailure::Source(error)) => {
+                reference_failure = Some(error);
+                return None;
+            }
+            Err(fsl_replay::TaskTemporalReadFailure::Metadata(_)) => return None,
+        };
+        let reproduced = readmit_task_counterexample(product, &read.counterexample).ok()?;
+        reproduced.then_some((counterexample, wire))
+    })();
+    match reference_failure {
+        Some(error) => Err(error),
+        None => Ok(reproduced),
+    }
 }
 
 fn readmit_task_counterexample(
@@ -646,9 +686,6 @@ fn prove<'a>(
             Err(TaskCertificateRefusal::Shape) => return fault(),
         }
     };
-    let Ok(identity) = fsl_replay::certificate_identity_wire(claim, model) else {
-        return fault();
-    };
     let source = built
         .task_product
         .as_ref()
@@ -661,9 +698,10 @@ fn prove<'a>(
         normalization_owner,
         cancel,
         |references| {
-            Ok(crate::zone_check::read_back_unchanged_with_references(
+            let identity = references.certificate_identity_wire(claim, model)?;
+            crate::zone_check::read_back_unchanged_with_references(
                 &built, identity, claim, source, references,
-            ))
+            )
         },
     )?;
     let Some((wire, read)) = transported else {

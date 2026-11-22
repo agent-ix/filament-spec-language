@@ -22,6 +22,9 @@ use crate::certificate::closure::CertificateRejection;
 use crate::certificate::{CertificateLocus, CertificateRule};
 use crate::TaskTransitionAction;
 
+mod read;
+mod scoped;
+
 /// The largest index or count the wire carries (RFC 8785 exact integers).
 const MAX_COUNT: u64 = 9_007_199_254_740_991;
 
@@ -651,7 +654,7 @@ impl TaskProductCertificate {
         &self,
         references: &mut crate::ReferenceScope<'_, '_, '_, '_>,
     ) -> Result<Value, TaskProductReferenceError> {
-        self.write_with(|template| Ok(references.encode_task_template(template)?))
+        Ok(self.write_scoped(references)?)
     }
 
     /// Restore subtraction templates using the original package context.
@@ -662,11 +665,7 @@ impl TaskProductCertificate {
         value: &Value,
         references: &mut crate::ReferenceScope<'_, '_, '_, '_>,
     ) -> Result<Self, TaskProductReferenceError> {
-        Self::read_with(value, |value, pointer| {
-            Ok(references.at_pointer(pointer, |references| {
-                references.restore_task_template(value)
-            })?)
-        })
+        Self::read_with(value, references)
     }
 
     /// Reads a `task_product` member (FR-418-AC-11, AC-14): the
@@ -682,13 +681,11 @@ impl TaskProductCertificate {
     ///
     /// [`TaskProductShapeRefusal`] naming the first offence.
     pub fn from_wire(value: &Value) -> Result<Self, TaskProductShapeRefusal> {
-        Self::read_with(value, TaskTransitionTemplate::read)
+        Self::read_with(value, &mut read::Native)
     }
 
-    fn read_with<E: From<TaskProductShapeRefusal>>(
-        value: &Value,
-        mut transition: impl FnMut(&Value, &str) -> Result<TaskTransitionTemplate, E>,
-    ) -> Result<Self, E> {
+    fn read_with<R: read::Read>(value: &Value, read: &mut R) -> Result<Self, R::Error> {
+        read.work(value.as_object().map_or(1, Map::len))?;
         let map = object(
             value,
             "",
@@ -706,6 +703,7 @@ impl TaskProductCertificate {
             return refuse("/abstraction", TaskProductShapeReason::UnknownVariant)
                 .map_err(Into::into);
         }
+        read.work(member(map, "time_progress").as_object().map_or(1, Map::len))?;
         let progress = object(
             member(map, "time_progress"),
             "/time_progress",
@@ -756,29 +754,30 @@ impl TaskProductCertificate {
             return refuse("/queue_bounds", TaskProductShapeReason::Inconsistent)
                 .map_err(Into::into);
         }
-        let queue_bounds = rows
-            .iter()
-            .enumerate()
-            .map(|(index, row)| read_queue_bound(row, &format!("/queue_bounds/{index}")))
-            .collect::<Result<Vec<_>, _>>()?;
-        let clock_ceilings = array(member(map, "clock_ceilings"), "/clock_ceilings")?
-            .iter()
-            .enumerate()
-            .map(|(index, row)| read_ceiling(row, &format!("/clock_ceilings/{index}")))
-            .collect::<Result<Vec<_>, _>>()?;
-        let diagonal_constraints =
-            array(member(map, "diagonal_constraints"), "/diagonal_constraints")?
-                .iter()
-                .enumerate()
-                .map(|(index, row)| read_diagonal(row, &format!("/diagonal_constraints/{index}")))
-                .collect::<Result<Vec<_>, _>>()?;
-        let subtractions = array(member(map, "subtractions"), "/subtractions")?
-            .iter()
-            .enumerate()
-            .map(|(index, row)| {
-                read_subtraction(row, &format!("/subtractions/{index}"), &mut transition)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+        let queue_bounds = read::rows(
+            read,
+            member(map, "queue_bounds"),
+            "/queue_bounds",
+            read_queue_bound,
+        )?;
+        let clock_ceilings = read::rows(
+            read,
+            member(map, "clock_ceilings"),
+            "/clock_ceilings",
+            read_ceiling,
+        )?;
+        let diagonal_constraints = read::rows(
+            read,
+            member(map, "diagonal_constraints"),
+            "/diagonal_constraints",
+            read_diagonal,
+        )?;
+        let subtractions = read::rows(
+            read,
+            member(map, "subtractions"),
+            "/subtractions",
+            read_subtraction,
+        )?;
         if method == TaskClosureMethod::ClosedNoReleaseProduct {
             for (name, empty) in [
                 ("clock_ceilings", clock_ceilings.is_empty()),
@@ -880,10 +879,12 @@ impl TaskProductCertificate {
     }
 }
 
-fn read_queue_bound(
+fn read_queue_bound<R: read::Read>(
+    read: &mut R,
     value: &Value,
     pointer: &str,
-) -> Result<TaskQueueBound, TaskProductShapeRefusal> {
+) -> Result<TaskQueueBound, R::Error> {
+    read.work(value.as_object().map_or(1, Map::len))?;
     let map = object(
         value,
         pointer,
@@ -902,30 +903,44 @@ fn read_queue_bound(
     )?;
     let at = |name: &str| child(pointer, name);
     Ok(TaskQueueBound {
-        task_set: text(member(map, "taskset"), &at("taskset"))?,
-        task: text(member(map, "task"), &at("task"))?,
+        task_set: read.text(member(map, "taskset"), &at("taskset"))?,
+        task: read.text(member(map, "task"), &at("task"))?,
         arrival: enumerated(member(map, "arrival"), &at("arrival"), &ARRIVALS)?,
-        interarrival: rational(member(map, "interarrival"), &at("interarrival"))?,
-        relative_deadline: rational(member(map, "relative_deadline"), &at("relative_deadline"))?,
-        max_jitter: rational(member(map, "max_jitter"), &at("max_jitter"))?,
-        work_lower: rational(member(map, "work_lower"), &at("work_lower"))?,
-        work_upper: rational(member(map, "work_upper"), &at("work_upper"))?,
+        interarrival: read.rational(member(map, "interarrival"), &at("interarrival"))?,
+        relative_deadline: read
+            .rational(member(map, "relative_deadline"), &at("relative_deadline"))?,
+        max_jitter: read.rational(member(map, "max_jitter"), &at("max_jitter"))?,
+        work_lower: read.rational(member(map, "work_lower"), &at("work_lower"))?,
+        work_upper: read.rational(member(map, "work_upper"), &at("work_upper"))?,
         max_jobs: positive_count(member(map, "max_jobs"), &at("max_jobs"))?,
     })
 }
 
-fn read_ceiling(value: &Value, pointer: &str) -> Result<TaskClockCeiling, TaskProductShapeRefusal> {
-    let map = object(value, pointer, &["clock", "maximum"], &[])?;
-    Ok(TaskClockCeiling {
-        clock: text(member(map, "clock"), &child(pointer, "clock"))?,
-        maximum: positive_integer(member(map, "maximum"), &child(pointer, "maximum"))?,
-    })
-}
-
-fn read_diagonal(
+fn read_ceiling<R: read::Read>(
+    read: &mut R,
     value: &Value,
     pointer: &str,
-) -> Result<TaskDiagonalConstraint, TaskProductShapeRefusal> {
+) -> Result<TaskClockCeiling, R::Error> {
+    read.work(value.as_object().map_or(1, Map::len))?;
+    let map = object(value, pointer, &["clock", "maximum"], &[])?;
+    let clock = read.text(member(map, "clock"), &child(pointer, "clock"))?;
+    let maximum = read.integer(member(map, "maximum"), &child(pointer, "maximum"))?;
+    if maximum.is_zero() || maximum.is_negative() {
+        return refuse(
+            &child(pointer, "maximum"),
+            TaskProductShapeReason::NotCanonical,
+        )
+        .map_err(Into::into);
+    }
+    Ok(TaskClockCeiling { clock, maximum })
+}
+
+fn read_diagonal<R: read::Read>(
+    read: &mut R,
+    value: &Value,
+    pointer: &str,
+) -> Result<TaskDiagonalConstraint, R::Error> {
+    read.work(value.as_object().map_or(1, Map::len))?;
     let map = object(
         value,
         pointer,
@@ -933,27 +948,38 @@ fn read_diagonal(
         &[],
     )?;
     Ok(TaskDiagonalConstraint {
-        left: text(member(map, "left"), &child(pointer, "left"))?,
+        left: read.text(member(map, "left"), &child(pointer, "left"))?,
         operator: enumerated(
             member(map, "operator"),
             &child(pointer, "operator"),
             &OPERATORS,
         )?,
-        right: text(member(map, "right"), &child(pointer, "right"))?,
-        constant: integer(member(map, "constant"), &child(pointer, "constant"))?,
+        right: read.text(member(map, "right"), &child(pointer, "right"))?,
+        constant: read.integer(member(map, "constant"), &child(pointer, "constant"))?,
     })
 }
 
-fn read_subtraction<E: From<TaskProductShapeRefusal>>(
+fn read_subtraction<R: read::Read>(
+    read: &mut R,
     value: &Value,
     pointer: &str,
-    transition: &mut impl FnMut(&Value, &str) -> Result<TaskTransitionTemplate, E>,
-) -> Result<TaskSubtraction, E> {
+) -> Result<TaskSubtraction, R::Error> {
+    read.work(value.as_object().map_or(1, Map::len))?;
     let map = object(value, pointer, &["transition", "clock", "constant"], &[])?;
+    let transition = read.template(member(map, "transition"), &child(pointer, "transition"))?;
+    let clock = read.text(member(map, "clock"), &child(pointer, "clock"))?;
+    let constant = read.integer(member(map, "constant"), &child(pointer, "constant"))?;
+    if constant.is_zero() || constant.is_negative() {
+        return refuse(
+            &child(pointer, "constant"),
+            TaskProductShapeReason::NotCanonical,
+        )
+        .map_err(Into::into);
+    }
     Ok(TaskSubtraction {
-        transition: transition(member(map, "transition"), &child(pointer, "transition"))?,
-        clock: text(member(map, "clock"), &child(pointer, "clock"))?,
-        constant: positive_integer(member(map, "constant"), &child(pointer, "constant"))?,
+        transition,
+        clock,
+        constant,
     })
 }
 

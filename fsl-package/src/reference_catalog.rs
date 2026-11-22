@@ -182,10 +182,10 @@ impl CatalogBudget for CoreCatalogBudget<'_> {
     ) -> Result<(), ReferenceCatalogError> {
         let refused = || ReferenceCatalogError::Denied(NativeJoinDeniedCharge { kind, amount });
         match kind {
-            NativeJoinChargeKind::Work => {
-                self.0.work(u64::try_from(amount).map_err(|_| refused())?)
-                    .map_err(|_| refused())
-            }
+            NativeJoinChargeKind::Work => self
+                .0
+                .work(u64::try_from(amount).map_err(|_| refused())?)
+                .map_err(|_| refused()),
             NativeJoinChargeKind::Storage => self
                 .0
                 .reserve(usize::try_from(amount).map_err(|_| ReferenceCatalogError::Allocation)?)
@@ -576,9 +576,16 @@ impl<'a> ReferenceCatalog<'a> {
             let SelectedExactIdentity::Object(effective) = &row.exact_identity else {
                 return Err(ReferenceCatalogError::ForeignModel);
             };
-            let key = model
-                .declaration_key_with_work(effective, &mut |units| work(budget, units))?
-                .ok_or(ReferenceCatalogError::UnknownDeclaration)?;
+            let Some(key) =
+                model.declaration_key_with_work(effective, &mut |units| work(budget, units))?
+            else {
+                // A checked unit can select several models (for example the
+                // concrete and abstract sides of a refinement). Only genuine
+                // identities owned by this runtime belong in its catalog.
+                // An attempted use of another model's reference still fails
+                // the catalog lookup; its row cannot confer local authority.
+                continue;
+            };
             let (actual, universe) = model
                 .reference_components_with_work(key, &mut |units| work(budget, units))?
                 .ok_or(ReferenceCatalogError::UnknownDeclaration)?;

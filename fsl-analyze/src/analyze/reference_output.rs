@@ -21,11 +21,11 @@ fn normalization(cause: &fsl_semantics::model::accounting::NormalizationIncomple
 
 /// An adapter view never creates or resets an allowance: both phases debit the
 /// same source admission through its original shared normalization meter.
-pub(super) fn with_source<T>(
+pub(super) fn with_source<T, E: Into<Refusal>>(
     system: &ModelSystem<'_>,
     owner: Option<&SelectedModels>,
     cancel: &Cancel,
-    write: impl FnOnce(&mut ReferenceScope<'_, '_, '_, '_>) -> Result<T, ReferenceCodecError>,
+    write: impl FnOnce(&mut ReferenceScope<'_, '_, '_, '_>) -> Result<T, E>,
 ) -> Result<T, Refusal> {
     let (Some(package), Some(owner)) = (system.source_package(), owner) else {
         // Package-only routes must retain their genuine per-model snapshot
@@ -66,23 +66,39 @@ pub(super) fn with_source<T>(
             fsl_replay::IncompleteCause::Cancelled { source },
         ));
     }
-    match result {
-        Ok(value) => Ok(value),
-        Err(error) => {
-            if let Some(cause) = budget.take_normalization_failure() {
-                return Err(normalization(&cause));
-            }
-            match error {
-                ReferenceCodecError::Normalization { cause, .. } => Err(normalization(&cause)),
-                ReferenceCodecError::Key {
-                    source: ModelKeyError::Cancelled(source),
-                    ..
-                } => Err(Refusal::Incomplete(
-                    fsl_replay::IncompleteCause::Cancelled { source },
-                )),
-                ReferenceCodecError::Native { cause, .. } => Err(items::admission(&cause)),
-                _ => Err(Refusal::Failed(items::BROKEN)),
-            }
+    result.map_err(Into::into)
+}
+
+impl From<ReferenceCodecError> for Refusal {
+    fn from(error: ReferenceCodecError) -> Self {
+        match error {
+            ReferenceCodecError::Normalization { cause, .. } => normalization(&cause),
+            ReferenceCodecError::Key {
+                source: ModelKeyError::Cancelled(source),
+                ..
+            } => Refusal::Incomplete(fsl_replay::IncompleteCause::Cancelled { source }),
+            ReferenceCodecError::Native { cause, .. } => items::admission(&cause),
+            _ => Refusal::Failed(items::BROKEN),
+        }
+    }
+}
+
+impl From<fsl_replay::TaskProductReferenceError> for Refusal {
+    fn from(error: fsl_replay::TaskProductReferenceError) -> Self {
+        match error {
+            fsl_replay::TaskProductReferenceError::Reference(error) => error.into(),
+            fsl_replay::TaskProductReferenceError::Shape(_)
+            | fsl_replay::TaskProductReferenceError::Wire(_) => Refusal::Failed(items::BROKEN),
+        }
+    }
+}
+
+impl From<fsl_replay::ZoneCertificateReferenceError> for Refusal {
+    fn from(error: fsl_replay::ZoneCertificateReferenceError) -> Self {
+        match error {
+            fsl_replay::ZoneCertificateReferenceError::Reference(error) => error.into(),
+            fsl_replay::ZoneCertificateReferenceError::TaskProduct(error) => error.into(),
+            fsl_replay::ZoneCertificateReferenceError::Wire(_) => Refusal::Failed(items::BROKEN),
         }
     }
 }

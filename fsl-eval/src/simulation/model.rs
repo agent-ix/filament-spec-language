@@ -1642,6 +1642,22 @@ impl<'a> ModelSystem<'a> {
         )
     }
 
+    /// Borrow a genuine mapped model state into the same bounded native
+    /// projection used for state keys. External adapters may then convert
+    /// reference leaves; the internal key/projection is unchanged.
+    ///
+    /// # Errors
+    /// Preserves original caller storage/work, cancellation and encoding errors.
+    pub fn model_state_bytes_with_budget(
+        &self,
+        state: &ModelState,
+        identity: IdentityLimits,
+        budget: &mut dyn ModelKeyBudget,
+        cancel: &filament_exact::Cancel,
+    ) -> Result<Vec<u8>, ModelKeyError> {
+        encode::bounded::model_bytes(&self.model, state, self.typing(), identity, budget, cancel)
+    }
+
     /// The full canonical state key used by the FR-101 simulator.
     pub(crate) fn canonical_state_key(
         &self,
@@ -1756,6 +1772,18 @@ impl<'a> ModelSystem<'a> {
             .flatten()
             .find(|application| application.declaring == declaring && application.name == name)
             .map(|application| application.text.as_str())
+    }
+
+    /// Borrow the actual canonical operation identities retained by this
+    /// runtime. Entries may repeat for different receivers. Consumers charge
+    /// traversal before advancing this iterator and charge text inspection
+    /// before comparing it; this creates no identity or admission evidence.
+    pub fn operation_identities(&self) -> impl Iterator<Item = &str> {
+        self.applications.values().flat_map(|applications| {
+            applications
+                .iter()
+                .map(|application| application.text.as_str())
+        })
     }
 
     /// Every transition identity of `state`, enabled or not, in canonical

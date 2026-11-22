@@ -26,7 +26,9 @@ use crate::model_check::counterexample::{
 use crate::refinement::{RefinementFailure, StepRejection};
 
 mod scoped;
+mod scoped_hyper;
 mod scoped_probability;
+mod scoped_refinement;
 
 /// Why a counterexample has no wire spelling here.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -294,6 +296,44 @@ fn unsupported_alphabet() -> TemporalCounterexampleReadRefusal {
 pub fn read_task_temporal_document(
     document: &Json,
 ) -> Result<TaskProductCounterexampleDocument, TemporalCounterexampleReadRefusal> {
+    read_task_temporal_inner::<TemporalCounterexampleReadRefusal>(document, None).map_err(
+        |failure| match failure {
+            TaskTemporalReadFailure::Metadata(cause) | TaskTemporalReadFailure::Source(cause) => {
+                cause
+            }
+        },
+    )
+}
+
+/// A task document's unchanged metadata refusal or its source owner's refusal.
+#[derive(Debug, thiserror::Error)]
+pub enum TaskTemporalReadFailure<E> {
+    /// The existing FR-364 task metadata reader refused the document.
+    #[error(transparent)]
+    Metadata(#[from] TemporalCounterexampleReadRefusal),
+    /// The authentic caller's source-transition restoration refused the leaf.
+    #[error("task source transition restoration failed: {0}")]
+    Source(E),
+}
+
+/// Read the task alphabet using its original owner's source restorer.
+/// Metadata parsing, lasso rules and post-state bytes use the same task reader
+/// as the unscoped entry. The callback restores source/release transitions
+/// before their native constructors run; semantic replay remains required.
+///
+/// # Errors
+/// Preserves the exact task metadata error or the callback's typed refusal.
+pub fn read_task_temporal_document_with_source<E>(
+    document: &Json,
+    restore: &mut dyn FnMut(&Json, &str) -> Result<ModelTransition, E>,
+) -> Result<TaskProductCounterexampleDocument, TaskTemporalReadFailure<E>> {
+    read_task_temporal_inner(document, Some(restore))
+}
+
+fn read_task_temporal_inner<E>(
+    document: &Json,
+    mut restore: Option<&mut dyn FnMut(&Json, &str) -> Result<ModelTransition, E>>,
+) -> Result<TaskProductCounterexampleDocument, TaskTemporalReadFailure<E>> {
     use base64::Engine;
     use filament_exact::Integer;
     use fsl_eval::simulation::model::{TaskTransitionAction as Action, TaskTransitionIdentity};
@@ -432,10 +472,11 @@ pub fn read_task_temporal_document(
         )
         .map_err(|_| malformed("invalid-value", pointer))
     }
-    fn task_transition(
+    fn task_transition<E>(
         value: &Json,
         pointer: &str,
-    ) -> Result<TaskTransitionIdentity, TemporalCounterexampleReadRefusal> {
+        restore: &mut dyn FnMut(&Json, &str) -> Result<ModelTransition, TaskTemporalReadFailure<E>>,
+    ) -> Result<TaskTransitionIdentity, TaskTemporalReadFailure<E>> {
         let action_text = required(value, "action", pointer)?
             .as_str()
             .ok_or_else(|| malformed("wrong-value-kind", format!("{pointer}/action")))?;
@@ -448,14 +489,13 @@ pub fn read_task_temporal_document(
             "complete" => Action::Complete,
             "budget-change" => Action::BudgetChange,
             "deadline-miss" => Action::DeadlineMiss,
-            _ => return Err(malformed("unknown-variant", format!("{pointer}/action"))),
+            _ => return Err(malformed("unknown-variant", format!("{pointer}/action")).into()),
         };
         let budget_present = value.get("budget_delta").is_some();
         if budget_present != (action == Action::BudgetChange) {
-            return Err(malformed(
-                "budget-delta-presence",
-                format!("{pointer}/budget_delta"),
-            ));
+            return Err(
+                malformed("budget-delta-presence", format!("{pointer}/budget_delta")).into(),
+            );
         }
         let required_names = [
             "type",
@@ -476,7 +516,8 @@ pub fn read_task_temporal_document(
         if required(value, "type", pointer)?.as_str() != Some("task-transition") {
             return Err(TemporalCounterexampleReadRefusal::TraceAlphabet {
                 pointer: format!("{pointer}/type"),
-            });
+            }
+            .into());
         }
         let string = |member: &str| -> Result<String, TemporalCounterexampleReadRefusal> {
             required(value, member, pointer)?
@@ -499,10 +540,7 @@ pub fn read_task_temporal_document(
         };
         let source_optional = match required(value, "source_transition", pointer)? {
             Json::Null => None,
-            source => Some(source_transition(
-                source,
-                &format!("{pointer}/source_transition"),
-            )?),
+            source => Some(restore(source, &format!("{pointer}/source_transition"))?),
         };
         Ok(TaskTransitionIdentity {
             action,
@@ -511,7 +549,7 @@ pub fn read_task_temporal_document(
             job: integer("job")?,
             slot: integer("slot")?,
             generation: integer("generation")?,
-            release: source_transition(
+            release: restore(
                 required(value, "release", pointer)?,
                 &format!("{pointer}/release"),
             )?,
@@ -599,10 +637,11 @@ pub fn read_task_temporal_document(
         )?;
         Ok(())
     }
-    fn parse_step(
+    fn parse_step<E>(
         value: &Json,
         pointer: &str,
-    ) -> Result<ModelStep<TaskProductTransition>, TemporalCounterexampleReadRefusal> {
+        restore: &mut dyn FnMut(&Json, &str) -> Result<ModelTransition, TaskTemporalReadFailure<E>>,
+    ) -> Result<ModelStep<TaskProductTransition>, TaskTemporalReadFailure<E>> {
         let transition = required(value, "transition", pointer)?;
         let transition_pointer = format!("{pointer}/transition");
         let kind = required(transition, "type", &transition_pointer)?
@@ -610,17 +649,19 @@ pub fn read_task_temporal_document(
             .unwrap_or_default();
         let transition = match kind {
             "transition" => {
-                TaskProductTransition::Source(source_transition(transition, &transition_pointer)?)
+                TaskProductTransition::Source(restore(transition, &transition_pointer)?)
             }
             "task-transition" => TaskProductTransition::Task(Box::new(task_transition(
                 transition,
                 &transition_pointer,
+                restore,
             )?)),
             "terminal-stutter" => TaskProductTransition::TerminalStutter,
             _ => {
                 return Err(TemporalCounterexampleReadRefusal::TraceAlphabet {
                     pointer: format!("{transition_pointer}/type"),
-                })
+                }
+                .into())
             }
         };
         let post_state = required(
@@ -643,6 +684,10 @@ pub fn read_task_temporal_document(
         })
     }
 
+    let mut restore_source = |value: &Json, pointer: &str| match restore.as_mut() {
+        Some(restore) => restore(value, pointer).map_err(TaskTemporalReadFailure::Source),
+        None => source_transition(value, pointer).map_err(TaskTemporalReadFailure::Metadata),
+    };
     exact_members(
         document,
         &[
@@ -668,7 +713,7 @@ pub fn read_task_temporal_document(
         || required(document, "interval", "")? != &Json::Null
         || document.get("final_delay").is_some()
     {
-        return Err(malformed("invalid-value", "/kind"));
+        return Err(malformed("invalid-value", "/kind").into());
     }
     let prefix = required(document, "prefix", "")?
         .as_array()
@@ -686,13 +731,13 @@ pub fn read_task_temporal_document(
         identity["type"] == "task-transition" && identity["action"] == "deadline-miss"
     });
     if holds_miss && looped.is_empty() && queue_growth.is_none() {
-        return Err(malformed("missing-member", "/loop"));
+        return Err(malformed("missing-member", "/loop").into());
     }
     if !looped.is_empty() && queue_growth.is_some() {
-        return Err(malformed("invalid-value", "/queue_growth"));
+        return Err(malformed("invalid-value", "/queue_growth").into());
     }
     if queue_growth.is_some() && !holds_miss {
-        return Err(malformed("invalid-value", "/queue_growth"));
+        return Err(malformed("invalid-value", "/queue_growth").into());
     }
     if let Some(witness) = &queue_growth {
         if !valid_queue_growth_envelope(witness) {
@@ -700,7 +745,8 @@ pub fn read_task_temporal_document(
                 pointer: "/queue_growth".to_owned(),
                 supplied: witness.to_string(),
                 recomputed: "a well-formed queue-growth continuation".to_owned(),
-            });
+            }
+            .into());
         }
     }
     // Shape-check the entire payload before classifying a foreign transition
@@ -718,9 +764,11 @@ pub fn read_task_temporal_document(
     let mut steps = Vec::with_capacity(prefix.len() + looped.len());
     let mut alphabet_refusal = None;
     for (index, step) in prefix.iter().enumerate() {
-        match parse_step(step, &format!("/prefix/{index}")) {
+        match parse_step(step, &format!("/prefix/{index}"), &mut restore_source) {
             Ok(step) => steps.push(step),
-            Err(error @ TemporalCounterexampleReadRefusal::TraceAlphabet { .. }) => {
+            Err(TaskTemporalReadFailure::Metadata(
+                error @ TemporalCounterexampleReadRefusal::TraceAlphabet { .. },
+            )) => {
                 alphabet_refusal.get_or_insert(error);
             }
             Err(error) => return Err(error),
@@ -733,24 +781,26 @@ pub fn read_task_temporal_document(
     // appends it from `Lasso::terminal_stutter_delay` (FR-249-AC-11).
     let mut stutter_delay = None;
     for (index, step) in looped.iter().enumerate() {
-        match parse_step(step, &format!("/loop/{index}")) {
+        match parse_step(step, &format!("/loop/{index}"), &mut restore_source) {
             Ok(step) if terminal_stutter => stutter_delay = step.delay,
             Ok(step) => steps.push(step),
-            Err(error @ TemporalCounterexampleReadRefusal::TraceAlphabet { .. }) => {
+            Err(TaskTemporalReadFailure::Metadata(
+                error @ TemporalCounterexampleReadRefusal::TraceAlphabet { .. },
+            )) => {
                 alphabet_refusal.get_or_insert(error);
             }
             Err(error) => return Err(error),
         }
     }
     if let Some(error) = alphabet_refusal {
-        return Err(error);
+        return Err(error.into());
     }
     if looped
         .iter()
         .any(|step| step["transition"]["type"] == "terminal-stutter")
         && !terminal_stutter
     {
-        return Err(malformed("invalid-value", "/loop/0/transition/type"));
+        return Err(malformed("invalid-value", "/loop/0/transition/type").into());
     }
     let lasso = (!looped.is_empty()).then(|| crate::Lasso {
         entry,
@@ -775,7 +825,7 @@ pub fn read_task_temporal_document(
         counterexample.trace_position().map(Json::from)
     };
     if expected_position.as_ref() != Some(position) {
-        return Err(malformed("invalid-value", "/trace_position"));
+        return Err(malformed("invalid-value", "/trace_position").into());
     }
     if queue_growth.is_some()
         && task_miss_position(&counterexample)
@@ -789,7 +839,8 @@ pub fn read_task_temporal_document(
             pointer: "/trace_position".to_owned(),
             supplied: position.to_string(),
             recomputed: "the final deadline-miss step".to_owned(),
-        });
+        }
+        .into());
     }
     Ok(TaskProductCounterexampleDocument {
         counterexample,
@@ -1024,52 +1075,12 @@ pub(super) fn witness_omission(
 /// [`super::WitnessOmission`] naming why the witness is left out.
 pub fn sampled_witness_wire(
     witness: &crate::statistical::SampledWitness,
-    types: &filament_semantic_value::declaration::TypeEnvironment,
-    variants: &[fsl_semantics::check::VariantTypeDeclaration],
+    _types: &filament_semantic_value::declaration::TypeEnvironment,
+    _variants: &[fsl_semantics::check::VariantTypeDeclaration],
 ) -> Result<Json, super::WitnessOmission> {
-    use crate::statistical::{MeasureValue, WitnessValue};
-    use fsl_eval::simulation::model::TransitionId;
-    let omitted = |_| witness_omission(witness);
-    let _value = match &witness.value {
-        WitnessValue::Event(holds) => json!({"type": "event", "value": holds}),
-        WitnessValue::Fraction(fraction) | WitnessValue::Measure(MeasureValue::Value(fraction)) => {
-            json!({"type": "measure", "value": {"value": rational(fraction)}})
-        }
-        WitnessValue::Measure(MeasureValue::Censored) => return Err(witness_omission(witness)),
-        WitnessValue::Undefined(evaluation) => {
-            sampled_undefined_wire(&crate::statistical::SampledUndefined {
-                test: witness.test,
-                trace: witness.trace,
-                evaluation: evaluation.clone(),
-            })
-            .map_err(omitted)?
-        }
-    };
-    let mut steps = Vec::with_capacity(witness.steps.len());
-    for step in &witness.steps {
-        let TransitionId::Operation(transition) = &step.transition else {
-            return Err(witness_omission(witness));
-        };
-        let mut random = Vec::with_capacity(step.random.len());
-        for drawn in &step.random {
-            random.push(
-                fsl_eval::simulation::model::typed_value_json(drawn, types, variants)
-                    .ok_or_else(|| witness_omission(witness))?,
-            );
-        }
-        let mut written = json!({
-            "transition": model_transition(transition).map_err(omitted)?,
-            "post_state": state(&step.post_state).map_err(omitted)?,
-            "random": random,
-        });
-        if let Some(delay) = &step.delay {
-            written["delay"] = rational(delay);
-        }
-        steps.push(written);
-    }
-    // `scheduled` has no spelling, so no step is complete.
-    let _ = steps;
-    Err(super::WitnessOmission::ScheduledIdentityNotSpellable)
+    // No scheduled identity has a schema-valid spelling. Decide the original
+    // omission before projecting values or materializing any partial trace.
+    Err(witness_omission(witness))
 }
 
 fn race(race: &Race) -> Result<Json, CounterexampleWireError> {

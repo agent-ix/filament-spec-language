@@ -196,9 +196,31 @@ fn a_refuted_refinement_names_its_first_failing_edge_and_abstract_images() {
     );
     let steps = counterexample["steps"].as_array().expect("steps");
     assert_eq!(steps.len(), 2, "positions 0 and 1: {counterexample}");
+    assert_eq!(
+        counterexample["prefix"][0]["transition"]["receiver"]["identity"], "61",
+        "the concrete receiver retains the fixture's UTF-8 identity a"
+    );
     for (position, step) in steps.iter().enumerate() {
         assert_eq!(step["position"], position, "{step}");
         assert_eq!(step["abstract_state"]["type"], "simulation-state", "{step}");
+        let populations = step["abstract_state"]["semantic"]["entries"]
+            .as_array()
+            .expect("semantic populations");
+        let object = populations
+            .iter()
+            .find_map(|population| {
+                population["value"]["entries"]
+                    .as_array()?
+                    .iter()
+                    .find_map(|row| (row["key"]["type"] == "reference").then_some(&row["key"]))
+            })
+            .expect("the actual abstract model's object");
+        assert_eq!(object["identity"], "61", "{object}");
+        assert_ne!(
+            object["object_type"],
+            counterexample["prefix"][0]["transition"]["receiver"]["object_type"],
+            "abstract and concrete declarations keep their separate owners"
+        );
     }
     assert!(
         counterexample["step_simulations"].is_array(),
@@ -359,7 +381,7 @@ fn a_nested_reference_row_checks_and_proves() {
 #[test]
 fn non_interference_proves_and_refutes() {
     use crate::hyper_world::{
-        EQUAL_INPUTS, STARTS, Vault, non_interference, request_files_over_starts,
+        non_interference, request_files_over_starts, Vault, EQUAL_INPUTS, STARTS,
     };
     for (vault, expected) in [(Vault::Secure, "proved"), (Vault::Leaky, "refuted")] {
         let (unit, model, snapshots) =
