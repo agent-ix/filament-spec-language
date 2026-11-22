@@ -400,3 +400,6 @@ pub(super) fn rows(
     }
     Ok(rows)
 }
+
+#[cfg(test)]
+mod tests;
