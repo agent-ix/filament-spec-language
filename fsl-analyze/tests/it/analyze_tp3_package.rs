@@ -31,6 +31,19 @@ fn both_routes(ws: &Workspace, request: &std::path::Path) -> (Run, Run) {
     (source, package)
 }
 
+/// The terminal record `run` gives item `index`; a document with no such
+/// item fails with the whole outcome document, not a null item.
+fn settled(run: &Run, index: usize) -> Value {
+    let item = run.item(index);
+    assert!(
+        item.is_object(),
+        "exit {}: item {index} is absent from {}",
+        run.exit,
+        run.document()
+    );
+    item
+}
+
 fn assert_same_settlement(source: &Run, package: &Run) {
     for member in ["items", "aggregate", "last_stage", "category"] {
         assert_eq!(
@@ -67,22 +80,42 @@ fn an_on_each_tp3_claim_settles_from_the_package_as_from_source() {
         json!([{"claim": "PrevSafeEach"}, {"claim": "PrevJumpEach"}]),
     );
     let (source, package) = both_routes(&ws, &path);
-    assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
     assert_eq!(
-        source.item(0)["record"]["certification"],
+        label(&settled(&source, 0)),
+        "proved",
+        "{}",
+        source.document()
+    );
+    assert_eq!(
+        settled(&source, 0)["record"]["certification"],
         "certified",
         "{}",
         source.document()
     );
-    assert_eq!(label(&source.item(1)), "refuted", "{}", source.document());
-    assert_eq!(label(&package.item(0)), "proved", "{}", package.document());
     assert_eq!(
-        package.item(0)["record"]["certification"],
+        label(&settled(&source, 1)),
+        "refuted",
+        "{}",
+        source.document()
+    );
+    assert_eq!(
+        label(&settled(&package, 0)),
+        "proved",
+        "{}",
+        package.document()
+    );
+    assert_eq!(
+        settled(&package, 0)["record"]["certification"],
         "certified",
         "{}",
         package.document()
     );
-    assert_eq!(label(&package.item(1)), "refuted", "{}", package.document());
+    assert_eq!(
+        label(&settled(&package, 1)),
+        "refuted",
+        "{}",
+        package.document()
+    );
     assert_same_settlement(&source, &package);
 }
 
@@ -139,13 +172,13 @@ fn a_protocol_tp3_claim_settles_from_the_package_as_from_source() {
     let (source, package) = both_routes(&ws, &path);
     for (index, expected) in [(0, "proved"), (1, "proved"), (2, "refuted")] {
         assert_eq!(
-            label(&source.item(index)),
+            label(&settled(&source, index)),
             expected,
             "{}",
             source.document()
         );
         assert_eq!(
-            label(&package.item(index)),
+            label(&settled(&package, index)),
             expected,
             "{}",
             package.document()
@@ -153,13 +186,13 @@ fn a_protocol_tp3_claim_settles_from_the_package_as_from_source() {
     }
     for index in [0, 1] {
         assert_eq!(
-            source.item(index)["record"]["certification"],
+            settled(&source, index)["record"]["certification"],
             "certified",
             "{}",
             source.document()
         );
         assert_eq!(
-            package.item(index)["record"]["certification"],
+            settled(&package, index)["record"]["certification"],
             "certified",
             "{}",
             package.document()
@@ -248,7 +281,7 @@ fn an_echo_on_each_tp3_claim_settles_from_the_package_as_from_source() {
         let (source, package) = both_routes(&ws, &path);
         for run in [&source, &package] {
             assert_eq!(
-                label(&run.item(0)),
+                label(&settled(run, 0)),
                 expected,
                 "{scheduling}: {}",
                 run.document()
@@ -257,7 +290,7 @@ fn an_echo_on_each_tp3_claim_settles_from_the_package_as_from_source() {
         if expected == "proved" {
             for run in [&source, &package] {
                 assert_eq!(
-                    run.item(0)["record"]["certification"],
+                    settled(run, 0)["record"]["certification"],
                     "certified",
                     "{}",
                     run.document()

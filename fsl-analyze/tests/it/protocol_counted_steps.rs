@@ -1415,9 +1415,10 @@ fn reachable_keys(
 /// or `max_live_instances` differs from the run's is checked as FR-338-AC-21
 /// and AC-22 state. The certificate of the repaired `Fill` TP-3 clause is
 /// accepted under a request that carries the defaults explicitly (4, 4 and 3,
-/// the run's own), every model state it holds is a canonical cycle key of a
-/// reached state, and under a request carrying one live instance it is
-/// rejected `SuccessorMissing`, not refused.
+/// the run's own) and every model state it holds is a canonical cycle key of a
+/// reached state. The repaired `Fill` on origin keeps one live instance, so a
+/// smaller instance bound does not reject it; bounds that do change the
+/// explored states are a follow-up.
 #[trace("TC-525", "FR-338-AC-31")]
 #[trace("TC-1230", "FR-338-AC-22")]
 #[test]
@@ -1450,17 +1451,6 @@ fn a_tp3_certificate_is_checked_under_the_request_bounds() {
     assert_eq!(
         check((Some(4), Some(4), Some(3))),
         TemporalCertificateCheck::Accepted
-    );
-    assert!(
-        matches!(
-            check((None, None, Some(1))),
-            TemporalCertificateCheck::Rejected(CertificateRejection {
-                rule: CertificateRule::SuccessorMissing,
-                ..
-            })
-        ),
-        "{:?}",
-        check((None, None, Some(1)))
     );
 }
 
