@@ -61,8 +61,8 @@ use super::{CheckedPackage, EmittedPackage};
 use crate::checked::EmitLimits;
 use crate::checked_v2::{
     CheckedClockConstraint, CheckedClockGuard, CheckedClockPlace, CheckedClockReset,
-    CheckedConstraintTarget, CheckedGuardPart, CheckedGuardQuantifier, CheckedResetTarget,
-    CheckedTimeInvariant, CheckedTimedModel, CheckedUrgency, ClockComparison, TimedNodeMetadata,
+    CheckedConstraintTarget, CheckedGuardPart, CheckedResetTarget, CheckedTimeInvariant,
+    CheckedTimedModel, CheckedUrgency, ClockComparison, TimedNodeMetadata,
 };
 use crate::wire_form::{OperationSuffix, WireForm};
 
@@ -5859,10 +5859,6 @@ fn write_clauses(
             parts.push(CheckedGuardPart {
                 predicate: node_id(ids, &part.predicate),
                 binders: part.binders.iter().map(|key| node_id(ids, key)).collect(),
-                quantifier: part.quantifier.map(|quantifier| match quantifier {
-                    fsl_semantics::check::GuardPartQuantifier::Each => CheckedGuardQuantifier::Each,
-                    fsl_semantics::check::GuardPartQuantifier::Some => CheckedGuardQuantifier::Some,
-                }),
                 constraints,
             });
         }
@@ -6238,96 +6234,26 @@ fn timed_model_node_id(
     }
     let package = node.node_id.package.as_ref();
     let ordinal = node.node_id.ordinal;
-    if let Some(declaration) = &node.declaration {
+    let key = if let Some(declaration) = &node.declaration {
         let path = declaration
             .qualified_name
             .iter()
             .map(|part| PathSegment::Text(part.to_string()))
             .collect();
-        let key =
-            fsl_semantics::check::structural_node_key(package, path, ordinal).map_err(encoding)?;
-        return Ok(node_id(ids, key));
+        fsl_semantics::check::structural_node_key(package, path, ordinal)
+    } else {
+        let mut operands = Vec::new();
+        timed_body_operands(&node.body, &mut operands)?;
+        fsl_semantics::check::derived_node_key(
+            package,
+            NodeTag::TimedModel,
+            &node.semantic_form,
+            operands,
+            ordinal,
+        )
     }
-    let mut operands = Vec::new();
-    timed_body_operands(&node.body, &mut operands)?;
-    let mut key = fsl_semantics::check::derived_node_key(
-        package,
-        NodeTag::TimedModel,
-        &node.semantic_form,
-        operands,
-        ordinal,
-    )
     .map_err(encoding)?;
-    if let Some((position, quantifier)) = guard_family_quantifier(&node.semantic_form, &node.body)? {
-        let mut path = key.path();
-        path.extend([
-            PathSegment::Text("quantifier".into()),
-            PathSegment::Text(position.to_string()),
-            PathSegment::Text(quantifier.into()),
-        ]);
-        key = NodeKey::new(key.package(), path, key.ordinal()).map_err(encoding)?;
-    }
     Ok(node_id(ids, key))
-}
-
-/// The identity suffix FR-322-AC-484 assigns to a family guard part, if one
-/// occurs in this derived `clock_guard`.
-fn guard_family_quantifier(
-    semantic_form: &str,
-    body: &CheckedTerm,
-) -> Result<Option<(usize, &'static str)>, EmitRefusal> {
-    if semantic_form != "clock_guard" {
-        return Ok(None);
-    }
-    let CheckedTerm::Aggregate { members } = body else {
-        return Ok(None);
-    };
-    let Some(CheckedTerm::Aggregate { members: parts }) =
-        members.iter().find_map(|member| match member {
-            CheckedTerm::Binding { name, value, .. } if name.as_ref() == "parts" => {
-                Some(value.as_ref())
-            }
-            _ => None,
-        })
-    else {
-        return Ok(None);
-    };
-    for (position, part) in parts.iter().enumerate() {
-        let CheckedTerm::Aggregate { members } = part else {
-            return Err(EmitRefusal::TimedModelWriterInvariant(
-                "clock guard parts must be aggregates",
-            ));
-        };
-        let Some(quantifier) = members.iter().find_map(|member| match member {
-            CheckedTerm::Binding { name, value, .. } if name.as_ref() == "quantifier" => {
-                Some(value.as_ref())
-            }
-            _ => None,
-        }) else {
-            continue;
-        };
-        let CheckedTerm::Literal { value, .. } = quantifier else {
-            return Err(EmitRefusal::TimedModelWriterInvariant(
-                "guard quantifiers must be text literals",
-            ));
-        };
-        let spelling = value
-            .as_str()
-            .ok_or(EmitRefusal::TimedModelWriterInvariant(
-                "guard quantifiers must be text literals",
-            ))?;
-        let quantifier = match spelling {
-            "each" => "each",
-            "some" => "some",
-            _ => {
-                return Err(EmitRefusal::TimedModelWriterInvariant(
-                    "guard quantifier must be each or some",
-                ));
-            }
-        };
-        return Ok(Some((position, quantifier)));
-    }
-    Ok(None)
 }
 
 /// Append the literal values, binding names and reference identities of a

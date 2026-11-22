@@ -21,7 +21,7 @@ use filament_checked::node::{CheckedLiteral, NodeKind};
 use filament_exact::{EffectiveId, Identifier, NodeKey, Value, ValueType};
 use filament_semantic_value::location::ExpressionLocation as Location;
 
-use super::{Binder, Binders, Lowering, PlaceStep, refuse, require_admitted};
+use super::{refuse, require_admitted, Binder, Binders, Lowering, PlaceStep};
 use crate::check::family::OccurrenceRole;
 
 use crate::check::node_key::{
@@ -32,9 +32,8 @@ use crate::check::refusal::{CheckCause, CheckRefusal, KeyFault};
 use crate::check::state_clause::ClauseOperation;
 use crate::check::timed_model::{
     CheckedTimedPredicate, ClockConstraint, ClockField, ClockId, ConstraintNodes,
-    ConstraintTargetNodes, ConvexPart, ElementBinding, GuardNodes, GuardPartQuantifier,
-    InvariantNodes, PartNodes, ResetNodes, ResetTargetNodes, StateAlternative, TimedClauseNodes,
-    TimedModel,
+    ConstraintTargetNodes, ElementBinding, GuardNodes, InvariantNodes, PartNodes, ResetNodes,
+    ResetTargetNodes, StateAlternative, TimedClauseNodes, TimedModel,
 };
 use crate::value::member::{AcceptedPoint, Member};
 
@@ -134,64 +133,51 @@ impl Lowering<'_> {
                     Some(_) => (input.part_site)(at, index),
                     None => location.clone(),
                 };
-                let outer = self.guard_part_nodes(
-                    part,
-                    model,
-                    context.clone(),
-                    guard.operation(),
-                    &site,
-                    location,
-                )?;
-                match part.families() {
-                    [] => parts.push(outer),
-                    [family] => {
-                        let [family_part] = family.parts() else {
-                            return Err(super::fault(&site, KeyFault::UnkeyableRequirements));
-                        };
-                        let mut inner = self.guard_part_nodes(
-                            family_part,
-                            model,
+                let mut conjuncts =
+                    self.self_presences(model.clocks(), part.presences(), context.clone(), &site)?;
+                if let Some(data) = part.data() {
+                    conjuncts.push(self.timed_predicate(data, &site)?);
+                }
+                let predicate = match self.conjunction(&conjuncts, &site)? {
+                    Some(predicate) => predicate,
+                    None => self.timed_true(location)?,
+                };
+                let slot_binders = if part.binders().is_empty() {
+                    Vec::new()
+                } else {
+                    let integer = self.type_node(&ValueType::Integer, location)?;
+                    part.binders()
+                        .iter()
+                        .enumerate()
+                        .map(|(level, binding)| {
+                            let parameter =
+                                self.parameter(binding.name(), level, integer.clone(), location)?;
+                            Ok((binding.clone(), parameter))
+                        })
+                        .collect::<Result<Vec<_>, CheckRefusal>>()?
+                };
+                let binders = slot_binders
+                    .iter()
+                    .map(|(_, parameter)| parameter.clone())
+                    .collect();
+                let constraints = part
+                    .clocks()
+                    .iter()
+                    .map(|constraint| {
+                        self.constraint_nodes(
+                            constraint,
                             context.clone(),
                             guard.operation(),
-                            &site,
                             location,
-                        )?;
-                        let predicate = if self.is_truth(outer.predicate.clone()) {
-                            inner.predicate.clone()
-                        } else if self.is_truth(inner.predicate.clone())
-                            || outer.predicate == inner.predicate
-                        {
-                            outer.predicate.clone()
-                        } else {
-                            self.connective(
-                                "filament.op.boolean.and",
-                                outer.predicate.clone(),
-                                inner.predicate.clone(),
-                                &site,
-                            )?
-                        };
-                        inner.predicate = predicate;
-                        let mut binders = outer.binders;
-                        for binder in inner.binders {
-                            if !binders.contains(&binder) {
-                                binders.push(binder);
-                            }
-                        }
-                        inner.binders = binders;
-                        let mut constraints = outer.constraints;
-                        constraints.extend(inner.constraints);
-                        inner.constraints = constraints;
-                        inner.quantifier = Some(if family.each() {
-                            GuardPartQuantifier::Each
-                        } else {
-                            GuardPartQuantifier::Some
-                        });
-                        parts.push(inner);
-                    }
-                    _ => {
-                        return Err(super::fault(&site, KeyFault::UnkeyableRequirements));
-                    }
-                }
+                            &slot_binders,
+                        )
+                    })
+                    .collect::<Result<Vec<_>, _>>()?;
+                parts.push(PartNodes {
+                    predicate,
+                    binders,
+                    constraints,
+                });
             }
             // FSpec FR-322 "Clause nodes": one `clock_guard` for each
             // operation anchor. A second guarded precondition of the same
@@ -231,15 +217,6 @@ impl Lowering<'_> {
                             let part = PartNodes {
                                 predicate,
                                 binders,
-                                quantifier: match (left.quantifier, right.quantifier) {
-                                    (None, None) => None,
-                                    _ => {
-                                        return Err(super::fault(
-                                            &location,
-                                            KeyFault::UnkeyableRequirements,
-                                        ));
-                                    }
-                                },
                                 constraints,
                             };
                             if !product.contains(&part) {
@@ -419,64 +396,6 @@ impl Lowering<'_> {
             self.operation_anchor(&anchor, Some(point), location)?
                 .anchor,
         ))
-    }
-
-    /// Lower one convex guard part's predicate, binders and constraints.
-    fn guard_part_nodes(
-        &mut self,
-        part: &ConvexPart,
-        model: &TimedModel,
-        context: EffectiveId,
-        operation: &ClauseOperation,
-        site: &Location,
-        location: &Location,
-    ) -> Result<PartNodes, CheckRefusal> {
-        let mut conjuncts =
-            self.self_presences(model.clocks(), part.presences(), context.clone(), site)?;
-        if let Some(data) = part.data() {
-            conjuncts.push(self.timed_predicate(data, site)?);
-        }
-        let predicate = match self.conjunction(&conjuncts, site)? {
-            Some(predicate) => predicate,
-            None => self.timed_true(location)?,
-        };
-        let slot_binders = if part.binders().is_empty() {
-            Vec::new()
-        } else {
-            let integer = self.type_node(&ValueType::Integer, location)?;
-            part.binders()
-                .iter()
-                .enumerate()
-                .map(|(level, binding)| {
-                    let parameter =
-                        self.parameter(binding.name(), level, integer.clone(), location)?;
-                    Ok((binding.clone(), parameter))
-                })
-                .collect::<Result<Vec<_>, CheckRefusal>>()?
-        };
-        let binders = slot_binders
-            .iter()
-            .map(|(_, parameter)| parameter.clone())
-            .collect();
-        let constraints = part
-            .clocks()
-            .iter()
-            .map(|constraint| {
-                self.constraint_nodes(
-                    constraint,
-                    context.clone(),
-                    operation,
-                    location,
-                    &slot_binders,
-                )
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        Ok(PartNodes {
-            predicate,
-            binders,
-            quantifier: None,
-            constraints,
-        })
     }
 
     /// The nodes of a guard part's constraint.

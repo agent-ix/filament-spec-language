@@ -842,116 +842,6 @@ fn quantified_clock_guards_emit_ordered_slot_binders() {
     }
 }
 
-/// FR-230-AC-70, FSpec FR-322-AC-484: an unbounded clock-collection guard
-/// emits one family part, with its quantifier after the binder list, and the
-/// derived guard identity ends in the family quantifier suffix.
-#[trace("FR-230-AC-70", "FSpec-FR-322-AC-484")]
-#[test]
-fn unbounded_quantified_clock_guards_emit_family_parts() {
-    for (source_quantifier, wire_quantifier) in [("forall", "each"), ("exists", "some")] {
-        let document = unbounded_timer_document();
-        let (_, wire) = emitted(
-            &document,
-            &format!(
-                "pre Timed using v on Config::ConfigVersion::attemptUpdate {{ \
-                 {source_quantifier}(e in self.us: e.x < 5 ms) }}\n"
-            ),
-        );
-        let [guard] = timed(&wire, "clock_guard")[..] else {
-            panic!("one clock guard");
-        };
-        let path = guard["node_id"]["path"]
-            .as_array()
-            .expect("derived identity path");
-        let suffix = [json!("quantifier"), json!("0"), json!(wire_quantifier)];
-        assert!(
-            path.ends_with(&suffix),
-            "family quantifier suffix: {path:?}"
-        );
-        let [part] = member(&guard["body"], "parts")["members"]
-            .as_array()
-            .expect("guard parts")
-            .as_slice()
-        else {
-            panic!("one family part");
-        };
-        let part_names = names(part);
-        assert_eq!(
-            &part_names[..3],
-            ["predicate", "binders", "quantifier"],
-            "the family members lead with predicate, binders, and quantifier"
-        );
-        assert!(
-            part_names.len() > 3 && part_names[3..].iter().all(|name| *name == "-"),
-            "one or more direct constraint references follow the family bindings: {part_names:?}"
-        );
-        assert_eq!(literal(part, "quantifier"), wire_quantifier);
-        let [binder_reference] = member(part, "binders")["members"]
-            .as_array()
-            .expect("family binder")
-            .as_slice()
-        else {
-            panic!("one family binder");
-        };
-        let binder = target(&wire, binder_reference);
-        assert_eq!(binder["semantic_form"], "parameter");
-        let constraint = nodes(&wire)
-            .iter()
-            .find(|node| node["semantic_form"] == "clock_constraint")
-            .expect("one clock constraint");
-        assert_eq!(
-            member(&constraint["body"], "slots")["members"],
-            json!([binder_reference]),
-            "family constraint uses its typed slot binder"
-        );
-        assert_declared_order(&wire);
-        let bytes = crate::emit::tests::wire_bytes(&wire).expect("the package is JSON");
-        read_presence_package(&document, &bytes, &wire)
-            .unwrap_or_else(|failure| panic!("{source_quantifier}: {failure}"));
-    }
-}
-
-/// A family template without a clock constraint remains a data-only guard
-/// disjunct, while a nested family keeps the existing quantified-clause
-/// refusal.
-#[trace("FR-230-AC-70", "FSpec-FR-322-AC-484")]
-#[test]
-fn unsupported_unbounded_family_guard_shapes_keep_their_refusals() {
-    use fsl_semantics::check::{CheckCause, TemporalCause, UnwrittenTimedMember};
-
-    let document = unbounded_timer_document();
-    let (data_only, span) = excluded(
-        &document,
-        "pre NoClock using v on Config::ConfigVersion::attemptUpdate { \
-         forall(e in self.us: e.n > 0) or forall(f in self.us: f.x < 5 ms) }\n",
-    );
-    assert_eq!(
-        data_only,
-        fsl_semantics::check::ExcludedClauseForm::DataOnlyDisjunct
-    );
-    assert!(span.contains("forall(e in self.us: e.n > 0)"));
-
-    let (_, checked) = checked(
-        &document,
-        "pre Nested using v on Config::ConfigVersion::attemptUpdate { \
-         forall(e in self.us: forall(f in self.us: f.n > 0) and e.x < 6 ms) }\n",
-    );
-    let refusals = checked.expect_err("nested family templates remain refused");
-    assert!(
-        refusals.iter().any(|refusal| match &refusal.cause {
-            CheckCause::Temporal(cause) => matches!(
-                &**cause,
-                TemporalCause::TimedModelNotEmitted {
-                    member: UnwrittenTimedMember::QuantifiedClause,
-                    ..
-                }
-            ),
-            _ => false,
-        }),
-        "the unsupported nested family has its existing refusal: {refusals:?}"
-    );
-}
-
 /// FR-230-AC-56, FR-393-AC-9 and FSpec FR-322-AC-295: a universal quantified
 /// invariant emits one family slot binder and an upper-bound constraint
 /// using that same binder. The family term bounds only live slots, so the
@@ -1134,36 +1024,6 @@ fn timer_document() -> Vec<u8> {
         .as_array_mut()
         .expect("modifies")
         .push(json!("ix://example/config-version/ConfigVersion/ts"));
-    crate::emit::tests::wire_bytes(&document).expect("JSON")
-}
-
-/// [`timer_document`] with its clock collection named `us` and unbounded.
-fn unbounded_timer_document() -> Vec<u8> {
-    let mut document: Value = serde_json::from_slice(&timer_document()).expect("JSON");
-    let field = document["types"][1]["fields"]
-        .as_array_mut()
-        .expect("fields")
-        .iter_mut()
-        .find(|field| field["name"] == "ts")
-        .expect("ts");
-    let identity = "ix://example/config-version/ConfigVersion/us";
-    field["identity"] = json!(identity);
-    field["name"] = json!("us");
-    field["origin"]["generated"]["generatorIdentity"] = json!(identity);
-    field["origin"]["generated"]["inputIdentities"] = json!([identity]);
-    field["multiplicity"]
-        .as_object_mut()
-        .expect("multiplicity")
-        .remove("upper");
-    let modifies = document["types"][1]["operations"][0]["frame"]["modifies"]
-        .as_array_mut()
-        .expect("modifies");
-    let ts_identity = "ix://example/config-version/ConfigVersion/ts";
-    let at = modifies
-        .iter()
-        .position(|item| item == ts_identity)
-        .expect("the frame names ts");
-    modifies[at] = json!(identity);
     crate::emit::tests::wire_bytes(&document).expect("JSON")
 }
 
@@ -1789,7 +1649,7 @@ fn predicate_operation(wire: &Value, reference: &Value) -> String {
     "FSpec-FR-760-AC-3"
 )]
 #[test]
-#[ignore = "QSL-2144: FR-772 Option<Clock> presence_read result_type is refused IllTyped/OperatorIneligible at filament.op.option.slots"]
+#[ignore = "QSL-2144: an element-presence quantifier is not yet written in its clause predicate with its own binder"]
 fn an_element_presence_quantifier_is_scoped_in_its_predicate() {
     let document = slot_presence_document();
     let emit = |body: &str| {

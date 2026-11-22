@@ -2637,7 +2637,7 @@ fn assert_admitted_binder_round_trip(
     let projected = super::timed_model::CheckedTimedModel::from_admitted(admitted)
         .unwrap_or_else(|failure| panic!("{id}: typed timed model projects: {failure}"));
     let model = match id {
-        "CL-57" => projected
+        "CL-57" | "CL-65" | "CL-66" => projected
             .iter()
             .find(|model| {
                 model
@@ -2658,7 +2658,7 @@ fn assert_admitted_binder_round_trip(
         other => panic!("{other}: no admitted binder round-trip assertion"),
     };
     let projected_binders = match id {
-        "CL-57" => model
+        "CL-57" | "CL-65" | "CL-66" => model
             .guards
             .iter()
             .find(|guard| guard.metadata.node_id == node_id)
@@ -2679,6 +2679,22 @@ fn assert_admitted_binder_round_trip(
         projected_binders, expected_binders,
         "{id} projected binder order"
     );
+    if matches!(id, "CL-65" | "CL-66") {
+        let guard = model
+            .guards
+            .iter()
+            .find(|guard| guard.metadata.node_id == node_id)
+            .expect("the family guard is projected");
+        assert_eq!(
+            guard.parts[0].quantifier,
+            Some(if id == "CL-65" {
+                super::timed_model::CheckedGuardQuantifier::Each
+            } else {
+                super::timed_model::CheckedGuardQuantifier::Some
+            }),
+            "{id} typed guard quantifier"
+        );
+    }
 
     let written = model
         .write_nodes()
@@ -2698,6 +2714,60 @@ fn assert_admitted_binder_round_trip(
         round_tripped,
         vec![(*model).clone()],
         "{id} typed model round-trips"
+    );
+    if matches!(id, "CL-65" | "CL-66") {
+        assert_family_guard_refuses_missing_binders_or_constraints(&written, id);
+    }
+}
+
+fn assert_family_guard_refuses_missing_binders_or_constraints(
+    nodes: &[filament_contract_model::CheckedSemanticNodeV2],
+    id: &str,
+) {
+    use filament_contract_model::CheckedTerm;
+
+    fn part_members(
+        nodes: &mut [filament_contract_model::CheckedSemanticNodeV2],
+    ) -> &mut Vec<CheckedTerm> {
+        let guard = nodes
+            .iter_mut()
+            .find(|node| node.semantic_form.as_ref() == "clock_guard")
+            .expect("a family guard node");
+        let CheckedTerm::Aggregate { members: body } = &mut guard.body else {
+            panic!("the guard body is aggregate");
+        };
+        let parts = body
+            .iter_mut()
+            .find_map(|member| match member {
+                CheckedTerm::Binding { name, value, .. } if name.as_ref() == "parts" => {
+                    Some(value.as_mut())
+                }
+                _ => None,
+            })
+            .expect("the guard has parts");
+        let CheckedTerm::Aggregate { members: parts } = parts else {
+            panic!("guard parts are aggregate");
+        };
+        let Some(CheckedTerm::Aggregate { members }) = parts.first_mut() else {
+            panic!("the family part is aggregate");
+        };
+        members
+    }
+
+    let mut missing_binders = nodes.to_vec();
+    part_members(&mut missing_binders).retain(
+        |member| !matches!(member, CheckedTerm::Binding { name, .. } if name.as_ref() == "binders"),
+    );
+    assert!(
+        super::timed_model::CheckedTimedModel::from_nodes(&missing_binders).is_err(),
+        "{id}: a quantified family part without binders is refused"
+    );
+
+    let mut missing_constraints = nodes.to_vec();
+    part_members(&mut missing_constraints).truncate(3);
+    assert!(
+        super::timed_model::CheckedTimedModel::from_nodes(&missing_constraints).is_err(),
+        "{id}: a quantified family part without constraints is refused"
     );
 }
 
@@ -2757,7 +2827,7 @@ fn conformance_timed_clause_vectors_keep_their_published_outcomes() {
                 let Read::Verified { admitted, .. } = &outcome else {
                     panic!("{id}: expected admitted, got {outcome:?}");
                 };
-                if matches!(id.as_str(), Some("CL-57" | "CL-59")) {
+                if matches!(id.as_str(), Some("CL-57" | "CL-59" | "CL-65" | "CL-66")) {
                     assert_admitted_binder_round_trip(case, &package, admitted);
                 }
             }
