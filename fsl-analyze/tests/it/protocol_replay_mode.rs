@@ -106,7 +106,6 @@ fn verdicts(item: &Value) -> &Vec<Value> {
 /// `violated`, `misordered`, naming both, and the item is refuted at `Got`.
 #[trace("TC-2530", "FR-895-AC-2", "FSpec-FR-737-AC-1")]
 #[test]
-#[ignore = "QSL-2210 completed; current blocker has no assigned owner: the recording is refused invalid_runtime_input because its empty closure premises omit Flow::Done and Flow::Main::Decide::{no,yes}, before assessment"]
 fn a_pair_on_a_causal_cycle_is_misordered() {
     let run = replay(
         "replay-cycle",
@@ -139,7 +138,6 @@ fn a_pair_on_a_causal_cycle_is_misordered() {
 /// array, with no causal cycle, conforms and settles `proved`.
 #[trace("TC-2815", "FR-895-AC-7", "FSpec-FR-737-AC-2")]
 #[test]
-#[ignore = "QSL-2210 completed; current blocker has no assigned owner: the recording is refused invalid_runtime_input because its empty closure premises omit Flow::Done and Flow::Main::Decide::{no,yes}, before assessment"]
 fn array_order_alone_never_misorders_a_recording() {
     let mut finish = observation("finish", "Done", "Buyer", "m-0");
     finish["node"] = json!("Flow::Done");
@@ -172,7 +170,6 @@ fn array_order_alone_never_misorders_a_recording() {
 /// cause `unexpected`, and the recording is assessed, not refused.
 #[trace("TC-2531", "FR-895-AC-5", "FSpec-FR-059-AC-1")]
 #[test]
-#[ignore = "QSL-2210 completed; current blocker has no assigned owner: the recording is refused invalid_runtime_input because its empty closure premises omit Flow::Done and Flow::Main::Decide::{no,yes}, before assessment"]
 fn an_unexpected_send_violates_its_enabledness_obligation() {
     let run = replay(
         "replay-unexpected",
@@ -201,7 +198,6 @@ fn an_unexpected_send_violates_its_enabledness_obligation() {
 /// agree.
 #[trace("TC-2531", "FR-895-AC-6", "FSpec-FR-059-AC-4")]
 #[test]
-#[ignore = "QSL-2210 completed; current blocker has no assigned owner: the replay-mode item yields no verdict per obligation"]
 fn a_late_compensation_attempt_violates_its_window_and_an_unread_one_is_pending() {
     let body =
         crate::protocol_compensation::pay("true").replace("within [0, 10]", "within [0, 120]");
@@ -288,7 +284,6 @@ fn flow_item(recording: Value) -> Value {
 #[trace("FSpec-TC-2001", "FSpec-FR-821-AC-1")]
 #[trace("FSpec-TC-2001", "FSpec-FR-821-AC-2")]
 #[test]
-#[ignore = "QSL-2210 completed; current blocker has no assigned owner: the recording is refused invalid_runtime_input because its empty closure premises omit Flow::Done and Flow::Main::Decide::{no,yes}, before assessment"]
 fn a_recording_is_bound_by_its_stated_or_declared_identity() {
     let stated = replay(
         "replay-identity-stated",

@@ -153,7 +153,6 @@ fn a_delay_on_each_source_object_of_a_timed_source_model_is_emitted() {
 /// FR-740-AC-5's literal unit, whose `O` has a `Clock` field.
 #[trace("TC-3012", "FR-740-AC-5")]
 #[test]
-#[ignore = "QSL-2347: the strict read refuses a clock place over a source object type until the source clock_place join lands"]
 fn a_delay_on_each_source_object_beside_a_source_clock_is_emitted() {
     assert_delays_emitted(&format!(
         "{TIMED_CLOCK}object Other {{ n: Integer; operation poke() modifies self.n; }}\n"
@@ -229,7 +228,6 @@ fn a_random_parameter_and_a_workload_on_the_source_model_are_emitted() {
 #[trace("TC-3012", "FR-569-AC-18")]
 #[trace("FSpec-TC-2033", "FSpec-FR-610-AC-9")]
 #[test]
-#[ignore = "QSL-2347: the strict read refuses a clock place over a source object type (MalformedClockPlace) until the source clock_place join lands"]
 fn a_source_operation_entry_lists_its_parameters() {
     let package = check(
         "object O { d: Clock; n: Integer; \

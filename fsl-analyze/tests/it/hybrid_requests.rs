@@ -1164,7 +1164,6 @@ fn a_refuted_hybrid_item_replays_through_fr_098() {
 /// trace bound written as `"8"` refuses `invalid_result`/`wrong-value-kind`.
 #[test]
 #[trace("TC-3035", "FR-1021-AC-3")]
-#[ignore = "QSL-1978: the hybrid plan synthesis that builds the validation item is not implemented yet"]
 fn a_plan_validation_item_carries_rational_objects() {
     todo!("QSL-1978: FR-1021-AC-3");
 }

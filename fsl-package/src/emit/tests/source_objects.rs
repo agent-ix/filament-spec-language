@@ -226,7 +226,6 @@ fn read_edited(wire: &Value) -> Read {
     "FSpec-TC-1441"
 )]
 #[test]
-#[ignore = "QSL-2347: source dispatch, operation-body, and timed-place reader joins are pending IR"]
 fn fixture_s_emits_and_the_i2_reader_reads_it() {
     let package = fixture_s_package();
     let emission = emit_checked(&package).expect("S4 emits fixture S");
@@ -480,7 +479,6 @@ fn source_object_identity_rows_roundtrip_through_qc30_intake() {
 /// before its identity rows can be joined.
 #[trace("FR-569-AC-16", "TC-1408")]
 #[test]
-#[ignore = "QSL-2347: the reader admits source operation_bodies rows; not implemented yet"]
 fn source_object_operations_roundtrip_through_qc30_intake() {
     let source = format!(
         "{HEADER}record Point {{ x: Integer; }}\nobject Order {{ point: Point; operation size(): Integer; operation bump(): Boolean modifies self.point; }}\nobject Sub extends Order {{ operation size(): Integer redefines Order::size; }}\n"
@@ -795,7 +793,6 @@ fn source_object_node_identity_differs_from_selected_model_node_identity() {
 
 #[trace("FR-569-AC-14", "FSpec-FR-610-AC-4", "TC-1941", "FSpec-TC-1441")]
 #[test]
-#[ignore = "QSL-2347: source-owner reader validation is pending the IR reader update"]
 fn a_source_object_node_with_a_model_owner_is_malformed_wire() {
     let package = fixture_s_package();
     let emission = emit_checked(&package).expect("S4 emits fixture S");
@@ -827,7 +824,6 @@ fn a_source_object_node_with_a_model_owner_is_malformed_wire() {
 
 #[trace("FR-569-AC-14", "FSpec-FR-610-AC-4", "TC-1941", "FSpec-TC-1441")]
 #[test]
-#[ignore = "QSL-2347: source-owner reader validation is pending the IR reader update"]
 fn an_object_type_node_with_a_source_owner_and_no_declaration_is_malformed_wire() {
     let package = fixture_s_package();
     let emission = emit_checked(&package).expect("S4 emits fixture S");
@@ -888,7 +884,6 @@ fn fixture_s_protocol_package() -> CheckedPackage {
 
 #[trace("FSpec-FR-610-AC-7", "FSpec-TC-1443", "FR-569-AC-14", "TC-1941")]
 #[test]
-#[ignore = "QSL-2347: source-owner protocol reader joins are pending the IR reader update"]
 fn a_protocol_over_a_source_object_names_its_node_and_joins_its_source_owner() {
     let package = fixture_s_protocol_package();
     let emission = emit_checked(&package).expect("S4 emits the protocol over Order");
@@ -1126,7 +1121,6 @@ fn source_selection_keys_are_spelled_from_the_source_owner() {
 
 #[trace("FR-995-AC-3", "TC-2817", "FSpec-FR-788-AC-2", "FSpec-TC-1916")]
 #[test]
-#[ignore = "QSL-2347: the reader admits a source selection key and refuses a foreign spelling; not implemented yet"]
 fn a_source_selection_key_reads_back_and_a_foreign_spelling_refuses() {
     let emission = emit_checked(&fixture_s_package()).expect("S4 emits fixture S");
     let Read::Verified { .. } = read_back(&emission) else {
@@ -1267,7 +1261,6 @@ fn a_timed_source_model_emits_its_clock_places_with_source_rows() {
 
 #[trace("FR-996-AC-2", "TC-2819", "FSpec-FR-789-AC-2", "FSpec-TC-1918")]
 #[test]
-#[ignore = "QSL-2347: the reader joins source clock-place rows through source rows; not implemented yet"]
 fn a_forged_source_clock_place_row_is_a_malformed_clock_place() {
     let emission = emit_checked(&timed_source_package()).expect("S4 emits the timed source model");
     let Read::Verified { .. } = read_back(&emission) else {
@@ -1386,7 +1379,6 @@ fn source_operations_carry_operation_body_rows() {
 
 #[trace("FR-997-AC-2", "TC-2821", "FSpec-FR-790-AC-2", "FSpec-TC-1920")]
 #[test]
-#[ignore = "QSL-2347: the reader admits source operation_bodies rows and refuses forged ones; not implemented yet"]
 fn a_forged_source_operation_body_row_refuses() {
     let emission = emit_checked(&fixture_s_package()).expect("S4 emits fixture S");
     let Read::Verified { .. } = read_back(&emission) else {
@@ -1541,7 +1533,6 @@ time O dense unit ms;
 
 #[trace("FR-569-AC-17", "TC-1408")]
 #[test]
-#[ignore = "QSL-2347: identity rows list clock fields as clock entries and operations with clock_parameters; not implemented yet"]
 fn source_identity_rows_list_clock_members_and_clock_parameters() {
     let (_, package, bytes) = admitted_identity_file(TIMED_ARM);
     let file: Value = serde_json::from_slice(&bytes).expect("identity JSON parses");
@@ -1583,7 +1574,6 @@ time O dense unit ms;
 
 #[trace("FR-531-AC-34", "TC-1331")]
 #[test]
-#[ignore = "QSL-2347: identities/5 member entries, source_tuples and clock_payload; not implemented yet"]
 fn the_identity_file_carries_data_and_clock_member_entries() {
     let (_, package, bytes) = admitted_identity_file(CLOCK_ENTRIES);
     let file: Value = serde_json::from_slice(&bytes).expect("identity JSON parses");
@@ -1660,7 +1650,6 @@ fn the_identity_file_carries_data_and_clock_member_entries() {
 
 #[trace("FR-996-AC-3", "TC-2999", "FSpec-FR-789-AC-3", "FSpec-TC-2023")]
 #[test]
-#[ignore = "QSL-2347: the identity-row join checks source clock members; not implemented yet"]
 fn a_source_clock_member_row_refuses_at_the_identity_row_join() {
     let (wire, package, bytes) = admitted_identity_file(TIMED);
     let mut file: Value = serde_json::from_slice(&bytes).expect("identity JSON parses");

@@ -1485,7 +1485,6 @@ fn join_projects(
 /// to tell them apart is refuted, not answered `unsupported`.
 #[trace("TC-2521", "FR-890-AC-2", "FSpec-FR-735-AC-2")]
 #[test]
-#[ignore = "QSL-2213: a repeat answers unsupported instead of merging its continue and exit alternatives"]
 fn an_unmerged_repeat_is_refuted_for_the_role_it_hides_from() {
     let package = flow(
         "sequence Main { repeat Loop by Buyer visible () max 2 while { true } \
