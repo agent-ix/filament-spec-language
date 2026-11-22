@@ -817,7 +817,7 @@ fn money_non_negative_scalar_components() {
 fn unresolved_object_reference_refuses_at_input_admission() {
     let event = object_type("OrderPlaced");
     let types = TypeEnvironment::new(
-        [],
+        [crate::support::ids::declared_type()],
         [ObjectTypeDeclaration::new(
             event.clone(),
             "OrderPlaced",

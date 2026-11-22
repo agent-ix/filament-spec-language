@@ -448,8 +448,8 @@ fn find_unit<'a>(admitted: &'a AdmittedCompilation, name: &str) -> &'a AdmittedU
     unit_named(admitted, name)
 }
 
-/// A declared unit the package never uses is not a node of the checked graph,
-/// yet it is listed and found, and every other kind's lookup refuses it
+/// A declared unit the package never uses remains a node of the checked graph,
+/// is listed and found, and every other kind's lookup refuses it
 /// `WrongKind` (the enum lookups, which never refuse `WrongKind`, say
 /// `Unknown`). A dimension no unit names is not listed.
 #[trace("TC-1092", "FR-398-AC-3")]
@@ -467,7 +467,11 @@ fn an_unused_unit_is_found_and_a_dimension_no_unit_names_is_not_listed() {
         .iter()
         .map(|(_, name)| name.as_str())
         .collect();
-    assert_eq!(used, ["m"], "the spine's graph holds only the used unit");
+    assert_eq!(
+        used,
+        ["m", "unused"],
+        "the spine's graph holds every declared unit"
+    );
 
     let admitted = admit(&text, &DependencyInput::default());
     let context = admitted.context();
@@ -475,7 +479,7 @@ fn an_unused_unit_is_found_and_a_dimension_no_unit_names_is_not_listed() {
     assert!(expected
         .units
         .iter()
-        .all(|(node, _)| *node != *unused.node()));
+        .any(|(node, _)| *node == *unused.node()));
     let id = wire(unused.node().clone());
     assert_eq!(context.unit_declaration(&id), Ok(unused));
     assert_eq!(context.units().count(), 2);

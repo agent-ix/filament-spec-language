@@ -3551,11 +3551,19 @@ mod tests {
     #[test]
     fn s6a_family_kind_admits_no_relation_and_family_outcome_has_two_arms() {
         let empty = fsl_package::CheckedPackage::link(
-            PackageDeclarations::new(
-                fsl_semantics::check::fixture_source(),
-                "fixture".to_owned(),
-                fsl_foundation::IdentityLimits::default(),
-            )
+            {
+                let mut declarations = PackageDeclarations::new(
+                    fsl_semantics::check::fixture_source(),
+                    "fixture".to_owned(),
+                    fsl_foundation::IdentityLimits::default(),
+                );
+                declarations.types = filament_semantic_value::declaration::TypeEnvironment::new(
+                    [crate::test_ids::declared_type()],
+                    [],
+                )
+                .unwrap();
+                declarations
+            }
             .check(
                 CheckMode::Linked,
                 CheckingLimits::default(),

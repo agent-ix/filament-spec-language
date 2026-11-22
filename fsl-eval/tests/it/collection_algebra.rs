@@ -1062,11 +1062,16 @@ mod checked {
     #[trace("FSpec-TC-189", "FSpec-FR-144-AC-9")]
     #[test]
     fn c11_converting_to_the_other_bound_admits_equality_without_loss() {
-        let package = package(PackageDeclarations::new(
-            fsl_semantics::check::fixture_source(),
-            "fixture".to_owned(),
-            fsl_foundation::IdentityLimits::default(),
-        ));
+        let package = package({
+            let mut declarations = PackageDeclarations::new(
+                fsl_semantics::check::fixture_source(),
+                "fixture".to_owned(),
+                fsl_foundation::IdentityLimits::default(),
+            );
+            declarations.types =
+                TypeEnvironment::new([crate::support::ids::declared_type()], []).unwrap();
+            declarations
+        });
         let x_type = collection_type(CollectionKind::Set, ValueType::Integer, 0, 2);
         let s_type = collection_type(CollectionKind::Set, ValueType::Integer, 0, 3);
         let parameters = [
@@ -1105,11 +1110,16 @@ mod checked {
     #[trace("FSpec-TC-189", "FSpec-FR-144-AC-10")]
     #[test]
     fn c12_collection_literals_take_their_unique_expected_type() {
-        let package = package(PackageDeclarations::new(
-            fsl_semantics::check::fixture_source(),
-            "fixture".to_owned(),
-            fsl_foundation::IdentityLimits::default(),
-        ));
+        let package = package({
+            let mut declarations = PackageDeclarations::new(
+                fsl_semantics::check::fixture_source(),
+                "fixture".to_owned(),
+                fsl_foundation::IdentityLimits::default(),
+            );
+            declarations.types =
+                TypeEnvironment::new([crate::support::ids::declared_type()], []).unwrap();
+            declarations
+        });
         let set = || literal_collection(CollectionKind::Set, &[2, 1]);
         assert_eq!(
             ill_typed(

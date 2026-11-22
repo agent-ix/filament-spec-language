@@ -2232,6 +2232,16 @@ fn e_construction_refusals_are_located() {
 // ---- scalar operators through the expression checker and evaluator ----------
 
 fn expression_package(types: TypeEnvironment, ieee: bool) -> CheckedPackage {
+    let types = if types.composites().next().is_none() {
+        TypeEnvironment::new(
+            [crate::support::ids::declared_type()],
+            types.object_types().cloned(),
+        )
+        .unwrap()
+        .with_units(types.units().clone())
+    } else {
+        types
+    };
     let graph = {
         let mut declarations = PackageDeclarations::new(
             fsl_semantics::check::fixture_source(),
@@ -3564,9 +3574,21 @@ fn x05_ieee_arithmetic_records_flags_and_float_ordering_composes() {
         CheckMode::Kernel,
     )
     .is_ok());
+    let width_mismatch = cause(&package, &operation(BinaryOperator::Less, "f", "h"));
     assert_eq!(
-        cause(&package, &operation(BinaryOperator::Less, "f", "h")),
-        ill(IllTypedCause::TypeMismatch)
+        width_mismatch,
+        CheckCause::OperandTypeMismatch {
+            operator: BinaryOperator::Less,
+            left_type: Box::new(double.clone()),
+            right_type: Box::new(ValueType::Float(FloatType::exact(IeeeWidth::Binary32))),
+        }
+    );
+    assert_eq!(
+        width_mismatch.catalog_code(),
+        Some(filament_semantic_value::catalog::CatalogCode::new(
+            "ill_typed",
+            "type-mismatch",
+        ))
     );
     // FR-397-AC-14: an admitted IEEE profile makes unary negation valid;
     // it flips the sign bit without recording a loss.
@@ -3598,14 +3620,24 @@ fn x05_ieee_arithmetic_records_flags_and_float_ordering_composes() {
     );
     // FR-397-AC-6, FR-397-AC-12: arithmetic or ordering over a float and an
     // exact type is a mismatch.
-    assert_eq!(
-        cause(&package, &operation(BinaryOperator::Add, "f", "i")),
-        ill(IllTypedCause::TypeMismatch)
-    );
-    assert_eq!(
-        cause(&package, &operation(BinaryOperator::Less, "f", "i")),
-        ill(IllTypedCause::TypeMismatch)
-    );
+    for operator in [BinaryOperator::Add, BinaryOperator::Less] {
+        let exact_type_mismatch = cause(&package, &operation(operator, "f", "i"));
+        assert_eq!(
+            exact_type_mismatch,
+            CheckCause::OperandTypeMismatch {
+                operator,
+                left_type: Box::new(double.clone()),
+                right_type: Box::new(ValueType::Integer),
+            }
+        );
+        assert_eq!(
+            exact_type_mismatch.catalog_code(),
+            Some(filament_semantic_value::catalog::CatalogCode::new(
+                "ill_typed",
+                "type-mismatch",
+            ))
+        );
+    }
     assert_eq!(
         cause(&plain_package(), &operation(BinaryOperator::Add, "f", "g")),
         CheckCause::IeeeProfileNotAdmitted

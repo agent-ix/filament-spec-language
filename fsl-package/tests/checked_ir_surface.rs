@@ -21,7 +21,25 @@ fn empty_graph() -> CheckedGraph {
     .expect("an empty source reads")
     .reference()
     .clone();
-    PackageDeclarations::new(source, "pkg", fsl_foundation::IdentityLimits::default())
+    let mut declarations =
+        PackageDeclarations::new(source, "pkg", fsl_foundation::IdentityLimits::default());
+    declarations.types = filament_semantic_value::declaration::TypeEnvironment::new(
+        [filament_semantic_value::declaration::CompositeDeclaration::new(
+            filament_exact::NodeKey::new(
+                "pkg",
+                vec![filament_exact::PathSegment::Text(
+                    "FixturePlaceholder".to_owned(),
+                )],
+                0,
+            )
+            .expect("a fixture node key"),
+            "FixturePlaceholder",
+            filament_semantic_value::declaration::CompositeShape::Record(vec![]),
+        )],
+        [],
+    )
+    .unwrap();
+    declarations
         .check(
             CheckMode::Linked,
             CheckingLimits::default(),

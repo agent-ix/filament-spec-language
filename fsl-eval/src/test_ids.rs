@@ -34,3 +34,12 @@ pub(crate) fn universe_id(seed: impl AsRef<[u8]>) -> UniverseId {
 pub(crate) fn variant_id(seed: impl AsRef<[u8]>) -> VariantId {
     VariantId::new(node_key(seed), "case").expect("a fixture variant case is non-empty")
 }
+
+/// An unused record supplying one node to a hand-built fixture package.
+pub(crate) fn declared_type() -> filament_semantic_value::declaration::CompositeDeclaration {
+    filament_semantic_value::declaration::CompositeDeclaration::new(
+        node_key(b"fixture-placeholder"),
+        "FixturePlaceholder",
+        filament_semantic_value::declaration::CompositeShape::Record(vec![]),
+    )
+}
