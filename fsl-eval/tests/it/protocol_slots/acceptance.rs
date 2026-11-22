@@ -150,7 +150,11 @@ fn attempt(package: &CheckedPackage, tally: i64) -> Value {
     record(package, "Attempt", vec![("tally", int(tally))])
 }
 fn flag(package: &CheckedPackage, ready: bool) -> Value {
-    record(package, "Flag", vec![("ready", Value::Boolean(ready))])
+    record(
+        package,
+        "Flag",
+        vec![("ready", Value::Boolean(ready)), ("count", int(0))],
+    )
 }
 
 fn binder(package: &CheckedPackage, protocol: &str, name: &str) -> NodeKey {
