@@ -76,6 +76,27 @@ fn compile_with_mode(
     spine::CheckedUnit,
     fsl_semantics::model::intake::PackageInput,
 ) {
+    try_compile_with_mode(source, domain, check_mode).unwrap()
+}
+
+pub(super) fn try_compile_source_with(
+    source: &str,
+    domain: &[u8],
+) -> Result<
+    (spine::CheckedUnit, fsl_semantics::model::intake::PackageInput),
+    spine::FrontEndFailure,
+> {
+    try_compile_with_mode(source, domain, None)
+}
+
+fn try_compile_with_mode(
+    source: &str,
+    domain: &[u8],
+    check_mode: Option<filament_semantic_value::checking::CheckMode>,
+) -> Result<
+    (spine::CheckedUnit, fsl_semantics::model::intake::PackageInput),
+    spine::FrontEndFailure,
+> {
     let identity = SourceIdentity::new("test", "bounded-certificate-source");
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
@@ -106,10 +127,9 @@ fn compile_with_mode(
         &DependencyInput::default(),
         limits,
         &cancel,
-    )
-    .unwrap()
+    )?
     .into_value();
-    (checked, packages)
+    Ok((checked, packages))
 }
 
 pub(super) fn request(
@@ -1118,9 +1138,25 @@ fn bounded_wrong_source_and_nonexact_rows_never_produce_an_accepted_document() {
 /// Keep the offered evidence while naming the actual edited checked claim.
 /// The canonical writer preserves the profile and all numerical assertions.
 pub(super) fn replace_kernel_source_and_rebind(request: &mut Value, source: &str) {
+    replace_source_and_rebind_with_mode(
+        request,
+        source,
+        Some(filament_semantic_value::checking::CheckMode::Kernel),
+    );
+}
+
+pub(super) fn replace_source_and_rebind(request: &mut Value, source: &str) {
+    replace_source_and_rebind_with_mode(request, source, None);
+}
+
+fn replace_source_and_rebind_with_mode(
+    request: &mut Value,
+    source: &str,
+    check_mode: Option<filament_semantic_value::checking::CheckMode>,
+) {
     let previous_source = request["source"]["content"].as_str().unwrap().to_owned();
     let domain: Vec<u8> = serde_json::from_value(request["documents"][0].clone()).unwrap();
-    let (checked, packages) = compile_kernel_source_with(source, &domain);
+    let (checked, packages) = compile_with_mode(source, &domain, check_mode);
     let claim = checked
         .package()
         .graph()
@@ -1150,7 +1186,7 @@ pub(super) fn replace_kernel_source_and_rebind(request: &mut Value, source: &str
         ..
     } = &claim.form
     {
-        let (previous, _) = compile_kernel_source_with(&previous_source, &domain);
+        let (previous, _) = compile_with_mode(&previous_source, &domain, check_mode);
         let previous_claim = previous
             .package()
             .graph()

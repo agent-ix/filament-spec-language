@@ -145,7 +145,7 @@ fn two_step_named_reward_checks_minimum_maximum_and_both_workload_bounds() {
             );
         }
         let mut stronger = request.clone();
-        replace_source(
+        super::bounded::replace_source_and_rebind(
             &mut stronger,
             &claim(&two_step(), scheduler, op, beyond, "m.delivered"),
         );
@@ -169,7 +169,7 @@ fn two_step_named_reward_checks_minimum_maximum_and_both_workload_bounds() {
             let changed_model =
                 two_step().replace("weight Msg::send_a = 1", "weight Msg::send_a = 3");
             let mut changed_workload = request.clone();
-            replace_source(
+            super::bounded::replace_source_and_rebind(
                 &mut changed_workload,
                 &claim(&changed_model, scheduler, op, threshold, "m.delivered"),
             );
@@ -193,7 +193,7 @@ fn two_step_named_reward_checks_minimum_maximum_and_both_workload_bounds() {
     }
 }
 
-#[trace("TC-636", "FR-201-AC-20", "FR-282-AC-16")]
+#[trace("TC-636", "FR-201-AC-20", "FR-201-AC-21", "FR-282-AC-16")]
 #[test]
 fn independent_draw_costs_accept_value_preserving_swap_and_reject_changed_equation() {
     let source = claim(
@@ -210,25 +210,31 @@ fn independent_draw_costs_accept_value_preserving_swap_and_reject_changed_equati
         ("if lost then 2 else 8", 1),
         ("1", 1),
     ] {
+        let edited = claim(&draws(cost), "every scheduler", ">=", "4", "m.attempts = 1");
         let mut changed = request.clone();
-        replace_source(
-            &mut changed,
-            &claim(&draws(cost), "every scheduler", ">=", "4", "m.attempts = 1"),
-        );
+        replace_source(&mut changed, &edited);
+        let (stale_code, stale) = run(&changed);
+        assert_eq!(stale_code, 2, "{cost}: {stale}");
+        assert_eq!(stale["status"], "refused");
+        assert_eq!(stale["reason"], "conflicting_identity: probability certificate");
+        super::bounded::replace_source_and_rebind(&mut changed, &edited);
         let (actual, output) = run(&changed);
         assert_eq!(actual, code, "{cost}: {output}");
         if code == 1 {
             assert_eq!(output["rule"], "inequality-fails");
         }
     }
-    let mut changed_weights = request.clone();
-    replace_source(
-        &mut changed_weights,
-        &source.replace(
-            "Msg::send_a(lost) ~ { true: 1, false: 1 }",
-            "Msg::send_a(lost) ~ { true: 3, false: 1 }",
-        ),
+    let edited_weights = source.replace(
+        "Msg::send_a(lost) ~ { true: 1, false: 1 }",
+        "Msg::send_a(lost) ~ { true: 3, false: 1 }",
     );
+    let mut changed_weights = request.clone();
+    replace_source(&mut changed_weights, &edited_weights);
+    let (stale_code, stale) = run(&changed_weights);
+    assert_eq!(stale_code, 2, "{stale}");
+    assert_eq!(stale["status"], "refused");
+    assert_eq!(stale["reason"], "conflicting_identity: probability certificate");
+    super::bounded::replace_source_and_rebind(&mut changed_weights, &edited_weights);
     let (code, output) = run(&changed_weights);
     assert_eq!(code, 1, "{output}");
     assert_eq!(output["rule"], "inequality-fails");
@@ -377,7 +383,8 @@ fn reward_objective_keys_coverage_heights_and_caller_stops_are_checked() {
     });
     let (code, output) = run(&missing_rank);
     assert_eq!(code, 1, "{output}");
-    assert_eq!(output["rule"], "rank-missing");
+    assert_eq!(output["rule"], "malformed");
+    assert_eq!(output["at"], json!({"member":"ranking"}));
     let zero = proof(&claim(
         &draws("0"),
         "every scheduler",
@@ -438,7 +445,7 @@ fn nonreaching_terminals_hidden_raw_cycles_and_negative_rewards_never_accept() {
         "m.attempts = 1",
     ));
     let mut nonreaching = request.clone();
-    replace_source(
+    super::bounded::replace_source_and_rebind(
         &mut nonreaching,
         &claim(&model, "every scheduler", ">=", "4", "m.delivered"),
     );
@@ -450,7 +457,7 @@ fn nonreaching_terminals_hidden_raw_cycles_and_negative_rewards_never_accept() {
         .replace("post B_done using v on M::Msg::send_b { self.attempts = 2 and self.delivered }", "post B_done using v on M::Msg::send_b { self.attempts = 1 and self.delivered = pre(self.delivered) }")
         .replace("terminal Stop using v on M when { self.attempts = 1 }", "terminal Stop using v on M when { self.attempts = 2 }");
     let mut cyclic = request.clone();
-    replace_source(
+    super::bounded::replace_source_and_rebind(
         &mut cyclic,
         &claim(&cycle, "every scheduler", ">=", "4", "m.attempts = 1"),
     );
@@ -467,13 +474,41 @@ fn nonreaching_terminals_hidden_raw_cycles_and_negative_rewards_never_accept() {
         assert_eq!(code, 2, "{output}");
         assert!(output.get("value").is_none());
         if cost == "-1" {
-            assert!(
-                output["reason"]
-                    .as_str()
-                    .unwrap()
-                    .contains("negative-reward"),
-                "{output}"
+            let failure = match super::bounded::try_compile_source_with(
+                invalid["source"]["content"].as_str().unwrap(),
+                DOMAIN,
+            ) {
+                Ok(_) => panic!("a negative reward must refuse before a checked unit exists"),
+                Err(failure) => failure,
+            };
+            let fsl_foundation::diagnostic::StageFailure::Refused(refusal) = &failure else {
+                panic!("the negative reward retains its S3 refusal: {failure:?}");
+            };
+            let fsl_replay::spine::CompileRefusal::Check { refusals, .. } = refusal.as_ref()
+            else {
+                panic!("the negative reward is a checking refusal: {refusal:?}");
+            };
+            let [fsl_semantics::check::CheckRefusal {
+                cause: fsl_semantics::check::CheckCause::Probabilistic(cause),
+                ..
+            }] = refusals.as_slice()
+            else {
+                panic!("one negative-reward refusal: {refusals:?}");
+            };
+            assert_eq!(
+                cause.as_ref(),
+                &fsl_semantics::check::ProbabilisticCause::NegativeReward {
+                    operation: "send_a".to_owned(),
+                    reward: "cost".to_owned(),
+                    arguments: vec![("lost".to_owned(), "Boolean(false)".to_owned())],
+                }
             );
+            assert_eq!(output["status"], "refused", "{output}");
+            assert_eq!(
+                output["reason"],
+                format!("probability certificate compilation stopped: {failure:?}")
+            );
+            assert_eq!(invalid["certificate"], request["certificate"]);
         }
     }
     let mut foreign_item = request;

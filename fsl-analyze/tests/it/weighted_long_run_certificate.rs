@@ -62,6 +62,38 @@ fn accepted(world: &World, name: &str, document: &WeightedLongRunProbabilityDocu
         ExactProbabilityCertificateCheck::Accepted(_)
     )
 }
+
+/// Reject stale identity before rebinding the unchanged offered evidence.
+fn rebound(
+    world: &World,
+    name: &str,
+    document: &WeightedLongRunProbabilityDocument,
+) -> WeightedLongRunProbabilityDocument {
+    let bytes = write_weighted_long_run_probability_certificate(document, limits(), &Cancel::new())
+        .unwrap();
+    assert_eq!(
+        check(world, name, &bytes, &Cancel::new(), limits()),
+        Err(ProbabilityDocumentError::IdentityMismatch)
+    );
+    let mut rebound = document.clone();
+    rebound.certificate.identity =
+        fsl_replay::probabilistic_claim_identity(world.claim(name)).unwrap();
+    let bytes = write_weighted_long_run_probability_certificate(&rebound, limits(), &Cancel::new())
+        .unwrap();
+    let canonical =
+        read_weighted_long_run_probability_certificate(&bytes, limits(), &Cancel::new()).unwrap();
+    assert_eq!(canonical.certificate.values, document.certificate.values);
+    assert_eq!(
+        canonical.certificate.components,
+        document.certificate.components
+    );
+    assert_eq!(
+        canonical.certificate.predicate_states,
+        document.certificate.predicate_states
+    );
+    assert_eq!(canonical.weight, document.weight);
+    canonical
+}
 #[trace("TC-1402", "FR-201-AC-31", "FR-201-AC-33", "FR-199-AC-3")]
 #[test]
 fn weighted_availability_checks_ratio_gain_bias_and_strict_objective() {
@@ -215,7 +247,8 @@ fn weighted_draws_and_transients_use_component_fractions_not_pooled_payoffs() {
             );
         }
         let swapped = periodic(initial, "3: 1, 1: 1", "1", false);
-        assert!(accepted(&swapped, "Fraction", &doc));
+        let swapped_doc = rebound(&swapped, "Fraction", &doc);
+        assert!(accepted(&swapped, "Fraction", &swapped_doc));
         let scaled = periodic(initial, "2: 1, 6: 1", "2", false);
         let scaled_bytes = produce(&scaled, "Fraction");
         let scaled_doc =
@@ -226,9 +259,11 @@ fn weighted_draws_and_transients_use_component_fractions_not_pooled_payoffs() {
             scaled_doc.certificate.components[0].bias[1].value,
             ratio(-4, 3)
         );
-        assert!(!accepted(&scaled, "Fraction", &doc));
+        let stale_scaled = rebound(&scaled, "Fraction", &doc);
+        assert!(!accepted(&scaled, "Fraction", &stale_scaled));
         let changed = periodic(initial, "1: 1, 5: 1", "1", false);
-        assert!(!accepted(&changed, "Fraction", &doc));
+        let changed_doc = rebound(&changed, "Fraction", &doc);
+        assert!(!accepted(&changed, "Fraction", &changed_doc));
     }
 }
 #[trace("TC-1402", "FR-201-AC-32", "FR-201-AC-34")]
@@ -624,7 +659,8 @@ fn checked_weight_units_and_equivalent_expressions_are_not_display_aliases() {
         equivalent_doc.certificate.components,
         document.certificate.components
     );
-    assert!(accepted(&equivalent, "Lower", &document));
+    let rebound = rebound(&equivalent, "Lower", &document);
+    assert!(accepted(&equivalent, "Lower", &rebound));
     let other = quantity_availability("1 s", "3 s");
     let other_doc = read_weighted_long_run_probability_certificate(
         &produce(&other, "Lower"),

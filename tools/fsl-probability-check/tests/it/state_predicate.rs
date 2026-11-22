@@ -16,8 +16,7 @@ fn source(event: &str, scheduler: &str, operator: &str, threshold: &str) -> Stri
 }
 
 fn replace_source(request: &mut Value, source: &str) {
-    request["source"]["content"] = json!(source);
-    request["byte_provision"][0][2] = json!(source.as_bytes());
+    super::bounded::replace_source_and_rebind(request, source);
 }
 
 #[trace("TC-636", "FR-201-AC-15", "FR-201-AC-16", "FR-282-AC-14")]
