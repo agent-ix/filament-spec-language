@@ -846,7 +846,7 @@ pub struct Emission {
     /// package-level index segments. IR's typed bodies (an operation anchor's
     /// bare execution point) are not decodable through serde outside its
     /// admitting reader, so protocol results read these rather than the bytes.
-    pub(crate) wire_nodes: Vec<CheckedSemanticNodeV2>,
+    pub(crate) wire_nodes: std::sync::Arc<Vec<CheckedSemanticNodeV2>>,
     /// The `temporal_bindings` rows of the checked graph's temporal and
     /// hyper clauses, keyed by the graph's own clause identity.
     pub(crate) temporal_binding_rows: TemporalBindingRows,
@@ -5233,7 +5233,7 @@ pub fn emit_checked_with_protocol_results_and_temporal_selections_and_cancel(
     };
     let structural_nodes = emission
         .as_ref()
-        .map(|emission| emission.wire_nodes.clone());
+        .map(|emission| Vec::clone(&emission.wire_nodes));
     let ids = StructuralIds::default();
     let mut structural_nodes = structural_nodes;
     if let Some(nodes) = structural_nodes.as_mut() {
@@ -6673,7 +6673,7 @@ pub fn emit_timed_models(
         identity_row_selection: identity_rows::IdentityRowSelection::default(),
         equality_producer_identity_rows: Vec::new(),
         equality_fact_witness_rows: Vec::new(),
-        wire_nodes: document_nodes(semantic_graph)?,
+        wire_nodes: std::sync::Arc::new(document_nodes(semantic_graph)?),
         temporal_binding_rows: TemporalBindingRows::default(),
         temporal_rows: TemporalRows::default(),
     }
@@ -7839,7 +7839,7 @@ fn emit_package_inner(
         identity_row_selection: identity_rows::IdentityRowSelection::default(),
         equality_producer_identity_rows,
         equality_fact_witness_rows,
-        wire_nodes: document_nodes(semantic_graph)?,
+        wire_nodes: std::sync::Arc::new(document_nodes(semantic_graph)?),
         temporal_binding_rows,
         temporal_rows: TemporalRows {
             clauses: temporal_clause_refs,

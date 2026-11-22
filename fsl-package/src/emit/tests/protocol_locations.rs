@@ -1068,6 +1068,7 @@ fn deep_projection(
                 work: u64::MAX,
                 storage: 1 << 30,
             };
+            crate::checked_v2::mem_phase("before-read-call");
             let read = crate::read_evaluation_emission(
                 &package,
                 &emission,
