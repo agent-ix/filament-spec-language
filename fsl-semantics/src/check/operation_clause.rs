@@ -205,8 +205,8 @@ impl CheckedOperationClause {
 }
 
 impl StatePredicate for CheckedOperationClause {
-    fn body(&self) -> super::CheckedNode<'_> {
-        self.body.root()
+    fn body(&self) -> Option<super::CheckedNode<'_>> {
+        Some(self.body.root())
     }
 
     fn slots(&self) -> usize {

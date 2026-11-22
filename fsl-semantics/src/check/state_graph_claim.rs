@@ -146,16 +146,24 @@ impl CheckedPredicateBody {
 /// (FR-107): a state-graph claim's ([`CheckedPredicateBody`]) or a
 /// probabilistic claim's ([`CheckedPredicate`](super::CheckedPredicate)).
 pub trait StatePredicate {
-    /// The checked Boolean body.
-    fn body(&self) -> CheckedNode<'_>;
+    /// The source-checked Boolean body, absent for a predicate read from a
+    /// checked package.
+    fn body(&self) -> Option<CheckedNode<'_>>;
+
+    /// The owning probabilistic claim for a predicate read from a checked
+    /// package. Such a predicate is evaluated by its admitted package node,
+    /// never by a source-checked body.
+    fn package_claim(&self) -> Option<&OccurrenceKey> {
+        None
+    }
 
     /// The number of evaluation slots of the body.
     fn slots(&self) -> usize;
 }
 
 impl StatePredicate for CheckedPredicateBody {
-    fn body(&self) -> CheckedNode<'_> {
-        Self::body(self)
+    fn body(&self) -> Option<CheckedNode<'_>> {
+        Some(Self::body(self))
     }
 
     fn slots(&self) -> usize {

@@ -27,6 +27,61 @@ const EVENTUALLY: &str =
     "probabilistic Eventually using inf on M over (m: M::Msg) under Even on origin \
      { probability >= rational(9, 10) [ eventually holds(m.delivered) ] }";
 
+/// A finite-window probability form is not admitted by the package
+/// eventuality projection, and cannot yield a certificate or verdict.
+#[trace("FR-940-AC-6", "FR-741-AC-2")]
+#[test]
+fn an_unimplemented_probability_package_form_keeps_its_typed_refusal() {
+    let ws = Workspace::new("probabilistic-package-bounded-refusal");
+    let unit = LINK_UNIT.replace(
+        "profile inf = \"filament.temporal.infinite-trace/v1\";",
+        "profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+         profile ev = \"filament.temporal.event-position.false-extension/v1\";",
+    );
+    let path = request_over(
+        &ws,
+        &format!(
+            "{unit}\nprobabilistic Bounded using ev on M over (m: M::Msg) under Even on origin \
+            {{ probability >= rational(9, 10) [ eventually[0,2] holds(m.delivered) ] }}\n"
+        ),
+        LINK_MODEL,
+        &[LINK_START.to_vec()],
+        json!({"items": [{"claim": "Bounded", "kind": "probabilistic-satisfaction",
+            "probabilistic": {"evidence": "exact"}}]}),
+    );
+    let source = analyze(&path);
+    assert_eq!(source.exit, 0, "{}", source.document());
+    assert_eq!(source.item(0)["record"]["backend"], "en-5");
+    let request: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("source request"))
+            .expect("request JSON");
+    let (members, _) = package_selection(&ws, &request["request"]);
+    std::fs::remove_file(ws.path("program.fsl")).expect("delete source program");
+    std::fs::remove_dir_all(ws.path(&format!("{HANDOFF}/sources")))
+        .expect("delete retained sources");
+    let package = analyze(
+        &ws.write(
+            "bounded-package.json",
+            json!({"format": "native-analyze/1", "request": members})
+                .to_string()
+                .as_bytes(),
+        ),
+    );
+    let document = package.document();
+    assert_eq!(package.exit, 21, "{document}");
+    assert_eq!(document["diagnostics"][0]["code"], "unsupported_construct");
+    assert_eq!(document["diagnostics"][0]["cause"], "not-yet-implemented");
+    assert!(
+        document["diagnostics"][0]["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("probabilistic-exact-eventual-form")),
+        "{document}"
+    );
+    assert_eq!(document["items"], json!([]));
+    assert!(document.get("certificate").is_none());
+    assert!(document.get("counterexample").is_none());
+}
+
 /// EN-5's exact probability is 391/400, with a checked certificate. The
 /// package request has only the compiled handoff, domain model and snapshot.
 #[trace("FR-940-AC-6", "FR-741-AC-2")]
@@ -53,15 +108,14 @@ fn probabilistic_package_preserves_whole_result_exit_and_predicate_charges() {
     let (members, bytes) = package_selection(&ws, &request["request"]);
     let compiled = fsl_command::checked_handoff::compile(&ws.path(HANDOFF))
         .expect("source handoff compiles for evaluator comparison");
-    let packages = fsl_semantics::model::intake::package_input([LINK_MODEL])
-        .expect("the Link model admits");
+    let packages =
+        fsl_semantics::model::intake::package_input([LINK_MODEL]).expect("the Link model admits");
     let limits = fsl_package::V2ReadLimits::bounded(1 << 24);
     let admitted = fsl_package::admit_checked_package(&bytes, &packages, limits)
         .expect("the actual producer package admits");
     let mut budget = limits.native_join_limits().budget();
     let identities = ReadIdentityRows::read(
-        &std::fs::read(ws.path(&format!("{HANDOFF}/identities.json")))
-            .expect("handoff identities"),
+        &std::fs::read(ws.path(&format!("{HANDOFF}/identities.json"))).expect("handoff identities"),
         &admitted,
         &mut budget,
     )
@@ -78,18 +132,33 @@ fn probabilistic_package_preserves_whole_result_exit_and_predicate_charges() {
             &mut budget,
         )
         .expect("the handoff supply joins");
+    let selected = fsl_package::AnalysisView::claim_name(&bare, "Eventually")
+        .expect("the package names its probabilistic claim");
+    let occurrence = fsl_foundation::source::provenance::OccurrenceKey::new(
+        bare.node_key(&selected.declaration)
+            .expect("the claim has a structural key"),
+        filament_exact::Origin::new(
+            filament_exact::Role::new("claim"),
+            selected.occurrence.ordinal,
+        ),
+    );
+    let package_form = bare
+        .probability_claim_form(&occurrence)
+        .expect("the exact eventuality form reads from the package");
 
     std::fs::remove_file(ws.path("program.fsl")).expect("delete the source program");
     std::fs::remove_dir_all(ws.path(&format!("{HANDOFF}/sources")))
         .expect("delete retained source copies");
     assert!(!ws.path("program.fsl").exists());
     assert!(!ws.path(&format!("{HANDOFF}/sources")).exists());
-    let package = analyze(&ws.write(
-        "analyze-package.json",
-        json!({"format": "native-analyze/1", "request": members})
-            .to_string()
-            .as_bytes(),
-    ));
+    let package = analyze(
+        &ws.write(
+            "analyze-package.json",
+            json!({"format": "native-analyze/1", "request": members})
+                .to_string()
+                .as_bytes(),
+        ),
+    );
     assert_eq!(package.exit, source.exit, "{}", package.document());
     assert_eq!(package.stdout, source.stdout, "whole serialized result");
 
@@ -136,11 +205,10 @@ fn probabilistic_package_preserves_whole_result_exit_and_predicate_charges() {
         )
         .expect("the source probability predicate evaluates");
     let actual = bare
-        .evaluate_state_predicate(
-            predicate,
+        .evaluate_probability_predicate(
+            &package_form.occurrence,
             &objects,
             Some(over),
-            Vec::new(),
             &mut package_meter,
         )
         .expect("the package probability predicate evaluates");

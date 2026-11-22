@@ -575,7 +575,10 @@ impl Lowering<'_> {
         cx: &StatementCx<'_>,
     ) -> Result<Statement, CheckRefusal> {
         let mut binders = Binders::new(predicate.slot_names(), cx.scope);
-        let term = self.expression(predicate.body(), &mut binders)?;
+        let body = predicate
+            .body()
+            .ok_or_else(|| stage_fault(cx.at, "a-package-predicate-has-no-source-body-to-lower"))?;
+        let term = self.expression(body, &mut binders)?;
         self.statement_ref(term, cx)
     }
 
@@ -856,15 +859,18 @@ impl Lowering<'_> {
             .conditions()
             .iter()
             .map(|(index, predicate)| {
-                (
+                let root = predicate.body().ok_or_else(|| {
+                    stage_fault(cx.at, "a-package-predicate-has-no-source-body-to-lower")
+                })?;
+                Ok((
                     *index,
                     FormulaCondition {
-                        root: predicate.body(),
+                        root,
                         slot_names: predicate.slot_names(),
                     },
-                )
+                ))
             })
-            .collect();
+            .collect::<Result<_, CheckRefusal>>()?;
         let aggregates = BTreeMap::new();
         let at = cx.at.clone();
         self.temporal_formula_nodes(

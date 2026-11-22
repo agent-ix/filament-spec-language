@@ -328,8 +328,8 @@ struct Condition<'n> {
 }
 
 impl StatePredicate for Condition<'_> {
-    fn body(&self) -> CheckedNode<'_> {
-        self.body
+    fn body(&self) -> Option<CheckedNode<'_>> {
+        Some(self.body)
     }
 
     fn slots(&self) -> usize {

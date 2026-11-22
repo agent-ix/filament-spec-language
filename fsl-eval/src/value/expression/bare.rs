@@ -621,13 +621,39 @@ pub(crate) fn evaluate_state_graph_predicate(
     role: fsl_semantics::check::PredicateRole,
     objects: &ObjectEnvironment,
     over: StateGraphOver,
-    mut further: Vec<Value>,
+    further: Vec<Value>,
     meter: &mut Meter,
 ) -> Result<Evaluation, InternalFault> {
     let fault = |cause: &'static str| InternalFault::new("FR-940", cause);
     let predicate = package
         .project_state_graph_predicate(claim, role)
         .map_err(|_| fault("state-graph-predicate-projects"))?;
+    evaluate_projected_state_predicate(package, &predicate, objects, over, further, meter)
+}
+
+pub(crate) fn evaluate_probability_predicate(
+    package: &BarePackage<'_>,
+    claim: &fsl_foundation::source::provenance::OccurrenceKey,
+    objects: &ObjectEnvironment,
+    over: Option<filament_exact::ObjectReference>,
+    meter: &mut Meter,
+) -> Result<Evaluation, InternalFault> {
+    let predicate = package
+        .project_probability_predicate(claim)
+        .map_err(|_| InternalFault::new("FR-940", "probability-predicate-projects"))?;
+    let over = over.map_or(StateGraphOver::None, StateGraphOver::Bound);
+    evaluate_projected_state_predicate(package, &predicate, objects, over, Vec::new(), meter)
+}
+
+fn evaluate_projected_state_predicate(
+    package: &BarePackage<'_>,
+    predicate: &fsl_package::BareStatePredicate,
+    objects: &ObjectEnvironment,
+    over: StateGraphOver,
+    mut further: Vec<Value>,
+    meter: &mut Meter,
+) -> Result<Evaluation, InternalFault> {
+    let fault = |cause: &'static str| InternalFault::new("FR-940", cause);
     let world = package
         .world()
         .map_err(|_| fault("state-graph-predicate-world"))?;
@@ -643,8 +669,14 @@ pub(crate) fn evaluate_state_graph_predicate(
     // body (`Machine::with_pre`, no observations of its own), so its field
     // reads carry FR-107's model-read charge; the same family here.
     let reads = std::collections::BTreeMap::new();
-    let mut machine =
-        Machine::with_world(World::Bytes(&world), objects, None, Some(&reads), meter, &[]);
+    let mut machine = Machine::with_world(
+        World::Bytes(&world),
+        objects,
+        None,
+        Some(&reads),
+        meter,
+        &[],
+    );
     let mut bindings = Vec::new();
     match over {
         StateGraphOver::None => {}

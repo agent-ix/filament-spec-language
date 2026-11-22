@@ -237,6 +237,15 @@ impl ModelSystem<'_> {
                     &mut meter,
                 )
                 .map_err(|_| stop(BROKEN))?
+            } else if let Some(claim) = predicate.package_claim() {
+                self.evaluator()
+                    .evaluate_probability_predicate(
+                        claim,
+                        &walk.observation.environment,
+                        bound,
+                        &mut meter,
+                    )
+                    .map_err(|_| stop(BROKEN))?
             } else {
                 self.evaluator()
                     .evaluate_state_predicate(

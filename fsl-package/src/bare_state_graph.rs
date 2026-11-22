@@ -29,6 +29,16 @@ pub struct BareStatePredicate {
 }
 
 impl BareStatePredicate {
+    pub(crate) fn new(
+        parameters: Vec<(String, usize)>,
+        projection: ReaderProtocolProjection,
+    ) -> Self {
+        Self {
+            parameters,
+            projection,
+        }
+    }
+
     /// The predicate's parameters in declaration order with their slots.
     pub fn parameters(&self) -> &[(String, usize)] {
         &self.parameters

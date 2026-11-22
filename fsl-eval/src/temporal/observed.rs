@@ -1479,8 +1479,8 @@ struct Capture<'n> {
 }
 
 impl fsl_semantics::check::StatePredicate for Capture<'_> {
-    fn body(&self) -> fsl_semantics::check::CheckedNode<'_> {
-        self.body
+    fn body(&self) -> Option<fsl_semantics::check::CheckedNode<'_>> {
+        Some(self.body)
     }
 
     fn slots(&self) -> usize {
