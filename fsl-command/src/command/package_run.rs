@@ -1143,9 +1143,14 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
             &sources,
             &cancel,
         ),
-        None => {
-            fsl_replay::spine::run_package_with_sources(&bare, &call, &objects, &sources, &cancel)
-        }
+        None => fsl_replay::spine::run_package_with_sources_and_budget(
+            &bare,
+            &call,
+            &objects,
+            &mut budget,
+            &sources,
+            &cancel,
+        ),
     };
     let outcome = called
         .outcome
