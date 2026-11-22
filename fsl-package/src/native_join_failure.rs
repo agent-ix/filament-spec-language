@@ -17,6 +17,9 @@ pub enum NativeJoinFailure {
     /// FSL producer row materialization refused before an allocation.
     #[error(transparent)]
     Rows(#[from] crate::NativeRowError),
+    /// Enum catalog construction or lookup refused without changing its cause.
+    #[error(transparent)]
+    SourceEnum(crate::SourceEnumCatalogError),
     /// The read of the package's unit definitions (FR-533) ran out of the
     /// native allowance; `setting` names the exhausted allowance.
     #[error("the unit definition read exhausted the native join budget")]
@@ -70,6 +73,7 @@ impl NativeJoinFailure {
             Self::Projection(_)
             | Self::Equality(_)
             | Self::Rows(_)
+            | Self::SourceEnum(_)
             | Self::UnitDefinitions { .. } => None,
         }
     }
@@ -82,14 +86,17 @@ impl NativeJoinFailure {
             }
             Self::Limit(error) => error.native.setting(),
             Self::Projection(error) => fsl_semantics::model::intake::native_budget_setting(error),
-            Self::Rows(error) => error.denied().map(|charge| match charge.kind {
-                filament_contract_model::NativeJoinChargeKind::Work => {
-                    fsl_foundation::Setting::I2WorkUnits
-                }
-                filament_contract_model::NativeJoinChargeKind::Storage => {
-                    fsl_foundation::Setting::I2NativeJoinStorage
-                }
-            }),
+            Self::Rows(error) | Self::SourceEnum(crate::SourceEnumCatalogError::Native(error)) => {
+                error.denied().map(|charge| match charge.kind {
+                    filament_contract_model::NativeJoinChargeKind::Work => {
+                        fsl_foundation::Setting::I2WorkUnits
+                    }
+                    filament_contract_model::NativeJoinChargeKind::Storage => {
+                        fsl_foundation::Setting::I2NativeJoinStorage
+                    }
+                })
+            }
+            Self::SourceEnum(_) => None,
             Self::Equality(error) => match error.code {
                 filament_contract_model::AdmittedEqualityReadErrorCode::WorkLimit => {
                     Some(fsl_foundation::Setting::I2WorkUnits)
@@ -106,5 +113,14 @@ impl NativeJoinFailure {
 impl From<filament_contract_model::ExactTypeProjectionError> for NativeJoinFailure {
     fn from(error: filament_contract_model::ExactTypeProjectionError) -> Self {
         Self::Projection(Box::new(error))
+    }
+}
+
+impl From<crate::SourceEnumCatalogError> for NativeJoinFailure {
+    fn from(error: crate::SourceEnumCatalogError) -> Self {
+        match error {
+            crate::SourceEnumCatalogError::Native(error) => Self::Rows(error),
+            other => Self::SourceEnum(other),
+        }
     }
 }
