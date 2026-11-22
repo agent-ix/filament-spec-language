@@ -633,8 +633,10 @@ fn hp1_package_model_scope_keeps_unselected_population_refusals() {
             .expect("documents")
             .push(json!({"file": "scope-universe.json"}));
         request["request"]["subject"] = subject.clone();
+        request["request"]["items"] = json!([{"claim": "Ordered"}]);
         members["documents"] = request["request"]["documents"].clone();
         members["subject"] = subject;
+        members["items"] = request["request"]["items"].clone();
         let source = analyze(&ws.write("foreign-source.json", request.to_string().as_bytes()));
         forget_source(&ws);
         let package = analyze_package(&ws, "foreign-package.json", &members);
