@@ -310,6 +310,10 @@ fn attempt_fixture(captures: &str, run: &str, owns: bool) -> Fixture {
     )
 }
 
+// Attempt application keeps the first satisfying result for each poststate.
+// Distinct poststates therefore force both Boolean results to be candidates.
+const FLAG_RESULT_POSTSTATES: &str = "post FlagPost using v on M::Cell::flag { (self.v = 1 or self.v = 2) and result = (self.v = 1) }\n";
+
 #[trace("FR-731-AC-1", "FR-940-AC-6")]
 #[test]
 fn sc_attempt_correlation_preserves_candidate_results_poststates_and_both_end_readers() {
@@ -320,7 +324,14 @@ fn sc_attempt_correlation_preserves_candidate_results_poststates_and_both_end_re
             "true"
         )
     );
-    let fixture = attempt_fixture("capture saved: Reference<M::Cell> = k;", &run, true);
+    let fixture = Fixture::with_prelude(
+        "capture saved: Reference<M::Cell> = k;",
+        "",
+        &run,
+        true,
+        FLAG_RESULT_POSTSTATES,
+        filament_semantic_value::checking::CheckMode::Linked,
+    );
     let graph = fixture.graph();
     let attempts: Vec<_> = graph
         .iter()
@@ -335,8 +346,13 @@ fn sc_attempt_correlation_preserves_candidate_results_poststates_and_both_end_re
         step.binder_record(),
         Some(filament_exact::Value::Boolean(false))
     )));
-    for (_, next) in attempts {
-        assert_eq!(fill::v(graph[*next].state.model(), "c"), 1);
+    for (attempt, next) in attempts {
+        let expected = match attempt.binder_record() {
+            Some(filament_exact::Value::Boolean(true)) => 1,
+            Some(filament_exact::Value::Boolean(false)) => 2,
+            other => panic!("attempt must bind its Boolean result: {other:?}"),
+        };
+        assert_eq!(fill::v(graph[*next].state.model(), "c"), expected);
     }
     fixture.with_routes(true, |source, native| {
         let source = fill::sc_system(source);
@@ -373,9 +389,19 @@ fn sc_attempt_correlation_preserves_candidate_results_poststates_and_both_end_re
 #[trace("FR-731-AC-1", "FR-940-AC-6")]
 #[test]
 fn sc_attempt_undefined_end_filters_only_its_candidate_and_retains_findings() {
-    let fixture = Fixture::with_prelude("", "", &attempt("related by Owns ((if q(if worked then 1 else 0) >= 0 then k else k), k)", "true"), true,
-        "function q using v(x: Integer): Integer pure { 6 mod x }\npost FlagPost using v on M::Cell::flag { self.v = 1 }\n",
-        filament_semantic_value::checking::CheckMode::Kernel);
+    let fixture = Fixture::with_prelude(
+        "",
+        "",
+        &attempt(
+            "related by Owns ((if q(if worked then 1 else 0) >= 0 then k else k), k)",
+            "true",
+        ),
+        true,
+        &format!(
+            "function q using v(x: Integer): Integer pure {{ 6 mod x }}\n{FLAG_RESULT_POSTSTATES}"
+        ),
+        filament_semantic_value::checking::CheckMode::Kernel,
+    );
     fixture.with_routes(true, |source, native| {
         let source = fill::sc_system(source);
         let native = ProtocolSystem::new_package(
@@ -392,8 +418,12 @@ fn sc_attempt_undefined_end_filters_only_its_candidate_and_retains_findings() {
                 expansion.successors[0].0.binder_record(),
                 Some(filament_exact::Value::Boolean(true))
             ));
+            assert_eq!(fill::v(expansion.successors[0].1.model(), "c"), 1);
             assert!(
-                !expansion.findings.is_empty(),
+                expansion.findings.iter().any(|finding| matches!(finding,
+                    fsl_eval::simulation::model::ModelFinding::ProtocolExpressionUndetermined { node, .. }
+                        if node == "Main/Tx"
+                )),
                 "undefined false-result candidate retains its finding"
             );
         }
