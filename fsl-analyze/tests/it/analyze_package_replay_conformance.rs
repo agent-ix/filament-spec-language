@@ -22,11 +22,14 @@ fn both_routes(name: &str, items: Value, documents: &[(&str, Value)]) -> (Run, R
         .iter()
         .any(|(_, document)| document["format"] == "filament.protocol-recording/1");
     let protocol = if has_recording {
-        // A checked call reads the real recorded binder and incurs the
+        // Keep the receive field individually visible to the choice owner.
+        // The guards call a checked function over that fact, incurring its
         // function-call charge; a plain Boolean field read has no charge.
         format!(
             "function observed using v(x: Boolean): Boolean pure {{ x }}\n{}",
-            order_protocol(true).replace("got.ok", "observed(got.ok)")
+            order_protocol(true)
+                .replace("when { not got.ok }", "when { not observed(got.ok) }")
+                .replace("when { got.ok }", "when { observed(got.ok) }")
         )
     } else {
         order_protocol(true)
