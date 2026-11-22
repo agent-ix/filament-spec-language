@@ -192,12 +192,6 @@ fn dense_timed_clause_atoms_preserve_complete_ordered_charges() {
             .expect("source state key"),
         "the actual initial model states"
     );
-    let bare_world = bare.world().expect("bare expression world");
-    eprintln!(
-        "dense atom data declarations: retained input {:?}; expression world {:?}",
-        input.input().types.attributes(object.clone()),
-        bare_world.types().attributes(object.clone()),
-    );
     let mut evaluated = 0;
     for (index, formula) in node.clause().formula().nodes().iter().enumerate() {
         if !matches!(formula, FormulaNode::Holds { .. }) {
