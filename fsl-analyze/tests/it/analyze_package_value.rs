@@ -72,17 +72,29 @@ fn a_package_value_clause_refutation_equals_the_source() {
     assert_eq!(item["replay"]["reproduced"], true, "{item}");
 }
 
-/// FR-940-AC-13: a scalar operation whose result stays inside its bound is
-/// proved, as over the source.
+/// FR-940: a value item over a function that is no Boolean value clause has
+/// no package form yet: the request is refused whole, typed
+/// `not-yet-implemented`, and no item settles `unsupported`.
 #[trace("TC-2410", "FR-940-AC-13")]
 #[test]
-fn a_package_scalar_operation_equals_the_source() {
-    let item = assert_parity(
-        "package-value-scalar-holds",
-        WIDE,
-        json!([{"claim": "Wide", "kind": "value-validity"}]),
+fn a_package_value_item_over_a_scalar_function_is_refused_typed() {
+    let body = format!("{WIDE}{}", bounded());
+    let ws = Workspace::new("package-value-scalar-refused");
+    let items = json!([{"claim": "Wide", "kind": "value-validity"}]);
+    let _ = counter_request(&ws, &body, items.clone());
+    let (members, _) = package_selection(&ws, &request_members(Some(items)));
+    let document = json!({"format": "native-analyze/1", "request": members});
+    let run = analyze(&ws.write("analyze-package.json", document.to_string().as_bytes()));
+    let document = run.document();
+    assert_eq!(document["items"], json!([]), "{document}");
+    assert_eq!(
+        document["diagnostics"][0]["code"], "unsupported_construct",
+        "{document}"
     );
-    assert_eq!(label(&item), "proved", "{item}");
+    assert_eq!(
+        document["diagnostics"][0]["cause"], "not-yet-implemented",
+        "{document}"
+    );
 }
 
 /// FR-940-AC-13: value items mixed with a temporal clause keep the request's
@@ -112,4 +124,38 @@ fn a_package_value_item_with_no_candidate_equals_the_source() {
         both("package-value-unbounded", declarations, &items);
     assert_eq!(package["items"], source["items"], "{package}");
     assert_eq!(package_exit, source_exit, "{package}");
+}
+
+/// FR-850-AC-3 (negative): package bytes the strict reader refuses refuse
+/// the request `invalid_package` at the request stage, with no value item
+/// settled and no internal failure.
+#[trace("TC-2410", "FR-850-AC-3")]
+#[test]
+fn malformed_package_bytes_refuse_a_value_item_typed() {
+    let body = format!("{SMALL}{}", bounded());
+    let ws = Workspace::new("package-value-malformed");
+    let items = json!([{"claim": "Small", "kind": "value-validity"}]);
+    let _ = counter_request(&ws, &body, items.clone());
+    let (members, package) = package_selection(&ws, &request_members(Some(items)));
+    let good: Value = serde_json::from_slice(&package).expect("package JSON");
+    let mut no_rows = good.clone();
+    no_rows["requirement_items"] = json!([{"kind": "value-validity"}]);
+    let mut no_nodes = good;
+    no_nodes["nodes"] = json!([]);
+    for (name, bytes) in [
+        ("empty", b"{}".to_vec()),
+        ("bad-requirement-row", no_rows.to_string().into_bytes()),
+        ("no-nodes", no_nodes.to_string().into_bytes()),
+    ] {
+        ws.write("handoff/checked-package.json", &bytes);
+        let document = json!({"format": "native-analyze/1", "request": members});
+        let run = analyze(&ws.write("analyze-bad.json", document.to_string().as_bytes()));
+        let document = run.document();
+        assert_eq!(
+            document["diagnostics"][0]["code"], "invalid_package",
+            "{name}: {document}"
+        );
+        assert_eq!(document["items"], json!([]), "{name}");
+        assert_eq!(run.exit, 20, "{name}");
+    }
 }

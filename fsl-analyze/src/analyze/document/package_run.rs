@@ -1308,6 +1308,17 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         let claim = clauses.first().copied().ok_or_else(pending)?;
         let target = ValueTarget::select_package(self.package, name, claim)
             .map_err(|_| pending())?;
+        // The package form spells Boolean and integer parameters only.
+        if !target.parameters().iter().all(|parameter| {
+            matches!(
+                parameter.domain(),
+                fsl_replay::value_check::ParameterDomain::Boolean
+                    | fsl_replay::value_check::ParameterDomain::Integers(_)
+                    | fsl_replay::value_check::ParameterDomain::Unbounded
+            )
+        }) {
+            return Err(pending());
+        }
         let kind = Capability::ValueValidity;
         let named = selection.backend.as_deref().map(BackendId::new);
         let backend_options = selection.options.clone().unwrap_or_default();
