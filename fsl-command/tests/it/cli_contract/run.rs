@@ -1037,3 +1037,127 @@ fn odd_operands_and_malformed_requests_refuse() {
         );
     }
 }
+
+/// A closed `ParentOrder` clause run over the genuine config-version spine,
+/// either from a native program or from an extracted Markdown clause.
+fn spine_clause(case: &Case, extracted: bool) -> (Value, std::path::PathBuf) {
+    use crate::config_version_spine::{spine, Case as Observed};
+    spine::write(&case.path(""), Observed::Healthy).expect("observations write");
+    let source = |file: &str, identity: &str, document: &str| {
+        json!({"file": file, "authority": "agent-ix", "identity": identity,
+            "document": document, "formal_revision": 1})
+    };
+    let program = if extracted {
+        case.write(
+            "spec.md",
+            format!(
+                "# Doc\n\n## Invariants\n\n### ParentOrder\n```ix:native\n{}```\n",
+                spine::unit_text()
+            )
+            .as_bytes(),
+        );
+        json!({"source": source("spec.md", "ix://agent-ix/spec", "Doc"),
+            "extraction": {"body": {"authority": "agent-ix", "identity": "body", "document": "Body"}},
+            "clauses": [{"clause": "ParentOrder", "package": spine::PACKAGE_IDENTITY}]})
+    } else {
+        case.write("program.native", spine::unit_text().as_bytes());
+        json!({"source": source("program.native", "ix://agent-ix/spec", "Doc")})
+    };
+    let job = json!({"format": "native-run/1", "request": {
+        "models": [{"format": "semantic-ir/2.0.0",
+            "source": source("spine-model.semantic-ir.json", "model", "Model")}],
+        "program": program,
+        "clause": {"selection": {"clause": {"name": "ParentOrder", "observation": "current",
+            "self": {"population": format!("ix://{}/config_history", spine::PACKAGE_IDENTITY),
+                "key": "child"}, "anchor": {"kind": "handler", "name": "validate"}}},
+            "observations": {"current": "spine-snapshot.json"}}}});
+    let path = case.json("clause.json", &job);
+    (job, path)
+}
+
+fn clause_overrides_reach_accounting_and_stages(extracted: bool) {
+    let case = Case::new();
+    let (job, path) = spine_clause(&case, extracted);
+    let control = plain(&path);
+    assert_eq!(control.exit, 0, "{}", control.document);
+
+    let mut accounting = fsl_replay::AccountingLimits::default().0;
+    accounting.work_units = 0;
+    let limited = run(
+        &path,
+        RunLimits::default(),
+        &RequestOverrides {
+            accounting: Some(&accounting),
+            ..Default::default()
+        },
+    );
+    assert_ne!(limited.exit, 0, "{}", limited.document);
+    assert!(
+        limited.document.to_string().contains("work_units"),
+        "{}",
+        limited.document
+    );
+
+    let mut stages = fsl_replay::spine::SpineLimits::default();
+    stages.source.source_bytes = 1;
+    let staged = run(
+        &path,
+        RunLimits::default(),
+        &RequestOverrides {
+            limits: Some(&stages),
+            ..Default::default()
+        },
+    );
+    assert_ne!(staged.exit, 0, "{}", staged.document);
+    assert!(
+        staged.document.to_string().contains("s1.input_bytes"),
+        "{}",
+        staged.document
+    );
+
+    // A caller's clocks beside the request's own are refused on this path too.
+    let mut doubled = job.clone();
+    doubled["request"]["clocks"] = json!({});
+    let clocks = RawValue::from_string("{}".to_owned()).unwrap();
+    run(
+        &case.json("clause-clocks.json", &doubled),
+        RunLimits::default(),
+        &RequestOverrides {
+            clocks: Some(&clocks),
+            ..Default::default()
+        },
+    )
+    .refused("execute", 20, "invalid-request");
+
+    // Just-enough caller limits (the published defaults, supplied explicitly)
+    // leave the result exactly as it is without overrides.
+    let enough = fsl_replay::AccountingLimits::default().0;
+    let stages = fsl_replay::spine::SpineLimits::default();
+    let with = run(
+        &path,
+        RunLimits::default(),
+        &RequestOverrides {
+            accounting: Some(&enough),
+            limits: Some(&stages),
+            ..Default::default()
+        },
+    );
+    assert_eq!(with.exit, control.exit, "{}", with.document);
+    assert_eq!(with.document, control.document);
+}
+
+/// FR-640-AC-14, FR-651-AC-1: an ordinary clause run honors the caller's
+/// accounting, S1 stage limits and clocks, and a just-enough limit completes.
+#[test]
+#[trace("FR-640-AC-14", "FR-651-AC-1")]
+fn caller_overrides_reach_ordinary_clause_runs() {
+    clause_overrides_reach_accounting_and_stages(false);
+}
+
+/// The same caller overrides reach an extracted Markdown clause run.
+#[cfg(feature = "quire-extraction")]
+#[test]
+#[trace("FR-640-AC-14", "FR-651-AC-1")]
+fn caller_overrides_reach_extracted_clause_runs() {
+    clause_overrides_reach_accounting_and_stages(true);
+}
