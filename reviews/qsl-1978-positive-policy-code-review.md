@@ -270,3 +270,46 @@ findings:
     Allocation requested-byte payload and misclassifying resource exhaustion as malformed policy state.
 bindings: []
 ```
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | deferred | Local repairs verified; ARCH explicitly defers internal conformance hooks and NEW fixed-literal UniverseId/ObjectId/ObjectReference construction to the next library cohort. Both remain required QSL-1978 work; no full-metering claim. Authority: bbd09538-fe48-4f9b-96ef-8469095951c2 and 33e89c2a-daba-4c8b-8915-1852216f66fb. |
+| FND-002 | fixed | Product index uses model-only keys and explicit fallible monitor comparisons through the original session; certificate initial/closure reconstruction uses the same comparison. No infallible monitor Ord fallback. |
+| FND-003 | fixed | Native canonical reader Allocation retains requested bytes in Encoding(Error::Allocation). |
+
+## Disposition round 1 evidence
+
+Sole short blocking-only disposition, round1, at frozen `c68091dc4bfcea40b86db0314cd1e4a6b1a89279`. The original Findings rows and IDs remain unchanged. Under the latest Peter/ARCH policy, this is the only fix round; no six-method rerun, matrix, build, extra test request or new review round was performed.
+
+Disposition verdict: **PASS for the three blocking findings, with FND-001's two explicitly authorized external deferrals retained.** No remaining local wrong-result, wrong-refusal, unsound-proof or broken-build blocker was found in this short pass. This is not complete policy accounting or complete QSL-1978 acceptance. No extra nonblocking suggestions are introduced; the parent's single PR-body follow-up list retains both external scopes and assigned subsequent producer/general-policy work.
+
+The local repairs use the actual owner copy hooks and borrowed model/reference-binding data. The selected existing population-domain rule and checked child-order helper remain shared owners. Inspection of the changed helper branches found no altered truth/order/refusal semantics within this bounded pass. The native fixture supplies supported unit-level pre/post clauses; its original length3, selected branch, state sequence and corrupted-certificate assertions remain. Imported inline-operation execution remains the separately assigned next producer slice and is not silently claimed fixed.
+
+Actual current-head targeted evidence: **10 passed, 0 failed** across distinct selected cases. Local native pair2 PASS in /tmp/qsl1978-positive-fix1-two-native-runtime.log and comparison/cancellation1 PASS in /tmp/qsl1978-positive-fix1-comparison-runtime.log were read by this reviewer. Semantics libtest compilation exited0 in /tmp/qsl1978-positive-fix1-semantics-libtest-compile.log; compilation is not counted as runtime. Parent forwarded two exact ARCH/TITAN receipts for the frozen full-SHA request: analyzer singular4 plus canonical count1, rc0 five passed zero failed; semantics --lib two exact tests, rc0 two passed zero failed. The one-line remote service supplied no log paths, so none is invented. Historical df2 fifteen-case qualification is not promoted to c680 evidence. No reviewer Cargo/runtime command ran.
+
+All six original SR custody copies were byte-exact before this appendix. Only this latest code-review artifact now requires renewed custody through coder/lead; the other five original SRs remain unchanged. Mandatory final-main/custody all-target gate and MERGE_READY queue are still the parent's later merge procedure, not evidence already supplied here.
+
+## Disposition round 1 data
+
+```yaml
+dispositions:
+- fnd: FND-001
+  outcome: deferred
+  reason: 'Local preparation repairs are verified at c680: encode visits are admitted, model/base bindings
+    are borrowed, actual identity copies use reservation hooks, and literal/instance/classifier preparation
+    uses the original budget. Two residual external scopes are explicitly deferred by ARCH to the next
+    library cohort: TypeEnvironment internal conformance work/cancellation and NEW fixed-literal UniverseId/ObjectId/ObjectReference
+    construction. Both remain required QSL-1978 work; neither is claimed fully metered. Authority: tracker
+    comments bbd09538-fe48-4f9b-96ef-8469095951c2 and 33e89c2a-daba-4c8b-8915-1852216f66fb.'
+- fnd: FND-002
+  outcome: fixed
+  after_excerpt: "                if self\n                    .rules\n                    .compare_policy_states(&self.nodes[candidate].key.monitors,\
+    \ &key.monitors)?\n                    == std::cmp::Ordering::Equal\n                {\n         \
+    \           existing = Some(candidate);\n                    break;\n                }"
+- fnd: FND-003
+  outcome: fixed
+  after_excerpt: "                quire_canonical::ReadError::Allocation { requested } => {\n        \
+    \            PolicyStateError::Encoding(Error::Allocation { requested })\n                }"
+```
