@@ -808,22 +808,12 @@ fn synthesized_value_validity_region_names_its_application_occurrence() {
     const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
                       profile v = \"filament.value.complete/v1\";\n";
     // The spanless tests above prove that caller placement is consulted; this
-    // source-backed case also checks that the record is narrower than its
-    // owning function's declaration region.
+    // source-backed case checks that the record names the comparison inside
+    // a larger function body.
     let declarations = "record R { amount: Int[0, 9]; }\n\
         function same using v(r: R): Boolean pure { r.amount = r.amount and true }";
     let source_text = format!("{HEADER}{declarations}\n");
     let graph = super::converted_equality::checked_graph(declarations);
-    let function = graph
-        .function_identity("same")
-        .expect("the synthesized function has an identity");
-    let declaration_origin = filament_exact::Origin::new(Role::new("declaration"), 0);
-    let declaration_location = graph
-        .occurrence(function, &declaration_origin)
-        .expect("the synthesized function has a declaration occurrence");
-    let declaration_region = graph
-        .region(declaration_location)
-        .expect("the synthesized function has a source region");
     let placements: HashMap<_, _> = graph
         .occurrences()
         .filter_map(|(_, _, location)| {
@@ -860,14 +850,9 @@ fn synthesized_value_validity_region_names_its_application_occurrence() {
     .expect("region start fits usize");
     let end = usize::try_from(region["end"].as_u64().expect("region end is an integer"))
         .expect("region end fits usize");
-    assert_ne!(
-        (start, end),
-        (
-            usize::try_from(declaration_region.start()).expect("declaration start fits usize"),
-            usize::try_from(declaration_region.end()).expect("declaration end fits usize"),
-        ),
-        "the record region names the application rather than its function",
-    );
+    let body_start = source_text.find("pure {").expect("function body") + "pure {".len();
+    let body_end = source_text.rfind('}').expect("function body close");
+    assert!(body_start < start && start < end && end < body_end);
     assert_eq!(
         source_text
             .as_bytes()
@@ -923,7 +908,7 @@ fn shared_value_validity_application_uses_each_occurrence_region() {
                     let text = source_text
                         .as_bytes()
                         .get(usize::try_from(start).ok()?..usize::try_from(end).ok()?)?;
-                    (text == b"x + 1").then_some((start, end))
+                    matches!(text, b"x + 1" | b"x + 1 = 0").then_some((start, end))
                 })
         })
         .collect();
@@ -934,14 +919,25 @@ fn shared_value_validity_application_uses_each_occurrence_region() {
             let region = entry["regions"].as_array()?.first()?;
             let start = region["start"].as_u64()?;
             let end = region["end"].as_u64()?;
-            (source_text
-                .as_bytes()
-                .get(usize::try_from(start).ok()?..usize::try_from(end).ok()?)?
-                == b"x + 1")
+            matches!(
+                source_text
+                    .as_bytes()
+                    .get(usize::try_from(start).ok()?..usize::try_from(end).ok()?)?,
+                b"x + 1" | b"x + 1 = 0"
+            )
                 .then_some((start, end))
         })
         .collect();
-    assert_eq!(expression_regions.len(), COUNT);
+    let five_byte_regions = expression_regions
+        .iter()
+        .filter(|(start, end)| end - start == 5)
+        .count();
+    let nine_byte_regions = expression_regions
+        .iter()
+        .filter(|(start, end)| end - start == 9)
+        .count();
+    assert_eq!(five_byte_regions, COUNT);
+    assert_eq!(nine_byte_regions, COUNT);
     assert_eq!(generated_regions, expression_regions);
 }
 
