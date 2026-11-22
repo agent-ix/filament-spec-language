@@ -1303,10 +1303,8 @@ fn the_support_graph_is_the_state_graph() {
 
 /// FR-185-AC-7 (TC-620 step 7): `Service`, with `d` typed `Millis = Int[1,
 /// 12]`, checks at S3 with its record intact; S4 writes its random
-/// parameters, workload and reward, and refuses at `unsupported_construct`/
-/// `not-yet-implemented`, naming its Boolean random parameter `ok` (IR-1569),
-/// `random-parameter` and the selected profile.
-#[trace("TC-2062", "FR-185-AC-12")]
+/// parameters, workload and reward, and the strict reader admits them.
+#[trace("TC-2062", "FR-185-AC-7")]
 #[test]
 fn service_checks_and_refuses_emission_naming_its_boolean_random_parameter() {
     let world = World::new(&world::service(""));
@@ -1314,21 +1312,32 @@ fn service_checks_and_refuses_emission_naming_its_boolean_random_parameter() {
     assert_eq!(model.random_parameters().len(), 2);
     assert_eq!(model.rewards().len(), 1);
     assert_eq!(model.workloads().len(), 1);
-    let refusal = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
-        .expect_err("S4 refuses");
-    assert!(matches!(
-        &refusal,
-        fsl_package::EmitRefusal::ProbabilisticModelNotEmitted {
-            declaration,
-            feature: fsl_semantics::check::ProbabilisticFeature::RandomParameter,
-            profile: Some("filament.model.complete/v1"),
-            region,
-        } if declaration == "attempt(ok)" && region.start() < region.end()
-    ));
-    assert_eq!(
-        (refusal.code(), refusal.cause()),
-        (Code::UnsupportedConstruct, Some("not-yet-implemented"))
-    );
+    with_bare(&world, |bare| {
+        let read = bare
+            .probabilistic()
+            .expect("the admitted records read back");
+        assert_eq!(read.random_parameters.len(), 2);
+        assert_eq!(read.rewards.len(), 1);
+        assert_eq!(read.rewards[0].name, "duration");
+        assert_eq!(read.workloads.len(), 1);
+        assert_eq!(read.workloads[0].name, "Steady");
+        assert_eq!(read.workloads[0].weights.len(), 3);
+    });
+    through_the_wire(&world, |input| {
+        for expected in model.random_parameters() {
+            let found = input
+                .probabilistic
+                .random_parameter(expected.operation().key(), expected.parameter())
+                .expect("the checked random parameter is rebuilt");
+            assert_eq!(
+                found.operation().declaring(),
+                expected.operation().declaring()
+            );
+            assert_eq!(found.position(), expected.position());
+            assert_eq!(found.value_type(), expected.value_type());
+            assert_eq!(found.support(), expected.support());
+        }
+    });
 }
 
 /// The [`NotMarkov`] of a `weighted_steps` result that is not steppable.
@@ -1642,24 +1651,36 @@ fn service_random_parameter_and_workload_are_emitted() {
     assert_eq!((count("random_parameter"), count("workload")), (1, 1));
 }
 
-/// FR-185-AC-12 (TC-2062): the Boolean random parameter `ok` of `Service` is
-/// refused at emission with its locus, because IR's reader admits no Boolean
-/// support value (its join refuses every non-string literal payload).
-#[trace("TC-2062", "FR-185-AC-12")]
+/// FR-185-AC-7 (TC-2062): the Boolean random parameter `ok` of `Service`
+/// emits and reads back with its Boolean support and exact weights.
+#[trace("TC-2062", "FR-185-AC-7")]
 #[test]
 fn service_refuses_emission_naming_its_boolean_random_parameter() {
     let world = World::new(&service_without_reward(true));
-    let refusal = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
-        .expect_err("emission refuses the Boolean support");
-    assert!(matches!(
-        &refusal,
-        fsl_package::EmitRefusal::ProbabilisticModelNotEmitted {
-            declaration,
-            feature: fsl_semantics::check::ProbabilisticFeature::RandomParameter,
-            region,
-            ..
-        } if declaration == "attempt(ok)" && region.start() < region.end()
-    ));
+    with_bare(&world, |bare| {
+        let read = bare
+            .probabilistic()
+            .expect("the admitted records read back");
+        let random = read
+            .random_parameters
+            .iter()
+            .find(|random| random.parameter == "ok")
+            .expect("the Boolean random parameter is retained");
+        assert_eq!(random.operation, "attempt");
+        assert_eq!(
+            random.support,
+            [
+                fsl_semantics::check::PackageSupport {
+                    value: fsl_semantics::check::PackageLiteral::Boolean(true),
+                    weight: Rational::from_integer(Integer::from(98)),
+                },
+                fsl_semantics::check::PackageSupport {
+                    value: fsl_semantics::check::PackageLiteral::Boolean(false),
+                    weight: Rational::from_integer(Integer::from(2)),
+                },
+            ]
+        );
+    });
 }
 
 /// FSL FR-740 (TC-2062): the package route's input over the emitted

@@ -3,9 +3,7 @@
 //! mode and the evaluator rounds `+` by it.
 
 use filament_eval::FamilyOutcome;
-use filament_exact::{
-    IeeeFlag, IeeeValue, IllTypedCause, Meter, Outcome, Refusal, ScalarLimits, Value,
-};
+use filament_exact::{IeeeFlag, IeeeValue, Meter, Outcome, Refusal, ScalarLimits, Value};
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
@@ -326,12 +324,33 @@ fn assert_mixed_mode_mismatch(result: &str, body: &str) {
             &fsl_eval::value::S6aRewardEvaluator,
         )
         .expect_err("mixed-mode operands refuse");
-    assert!(
-        refusals.iter().any(|refusal| matches!(
-            refusal.cause,
-            CheckCause::IllTyped(IllTypedCause::TypeMismatch)
-        )),
-        "{body}: a type mismatch, not {refusals:?}"
+    let operator = match body.split_whitespace().nth(1).expect("a binary operator") {
+        "+" => fsl_forms::BinaryOperator::Add,
+        "<" => fsl_forms::BinaryOperator::Less,
+        "<=" => fsl_forms::BinaryOperator::LessOrEqual,
+        ">" => fsl_forms::BinaryOperator::Greater,
+        ">=" => fsl_forms::BinaryOperator::GreaterOrEqual,
+        other => panic!("unexpected fixture operator {other}"),
+    };
+    assert_eq!(refusals.len(), 1, "{body}: {refusals:?}");
+    assert_eq!(
+        refusals[0].cause,
+        CheckCause::OperandTypeMismatch {
+            operator,
+            left_type: Box::new(filament_exact::ValueType::Float(
+                filament_exact::FloatType::new(
+                    filament_exact::IeeeWidth::Binary64,
+                    filament_exact::RoundingMode::TowardZero,
+                )
+            )),
+            right_type: Box::new(filament_exact::ValueType::Float(
+                filament_exact::FloatType::new(
+                    filament_exact::IeeeWidth::Binary64,
+                    filament_exact::RoundingMode::NearestEven,
+                )
+            )),
+        },
+        "{body}"
     );
 }
 

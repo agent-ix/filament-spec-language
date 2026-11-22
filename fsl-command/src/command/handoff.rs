@@ -684,22 +684,31 @@ mod tests {
                 u128::from(completed),
                 "the first unpaid charge retains the cumulative attempted total: {refusal:?}"
             );
-            let fsl_package::NativeJoinFailure::Projection(projection) = refusal.native.native()
-            else {
-                panic!("the original projection owner is preserved: {refusal:?}");
-            };
-            let expected_code = match kind {
+            match kind {
                 filament_contract_model::NativeJoinChargeKind::Work => {
-                    filament_contract_model::ExactTypeProjectionErrorCode::ExhaustedWork
+                    let fsl_package::NativeJoinFailure::Rows(rows) = refusal.native.native() else {
+                        panic!("the original row owner is preserved: {refusal:?}");
+                    };
+                    assert_eq!(rows.code(), fsl_package::NativeRowErrorCode::WorkLimit);
+                    assert_eq!(
+                        rows.locus().expect("the row denial has its locus").form,
+                        "source_enum_catalog_index",
+                        "{refusal:?}"
+                    );
                 }
                 filament_contract_model::NativeJoinChargeKind::Storage => {
-                    filament_contract_model::ExactTypeProjectionErrorCode::ExhaustedStorage
+                    let fsl_package::NativeJoinFailure::Projection(projection) =
+                        refusal.native.native()
+                    else {
+                        panic!("the original projection owner is preserved: {refusal:?}");
+                    };
+                    assert_eq!(
+                        projection.code,
+                        filament_contract_model::ExactTypeProjectionErrorCode::ExhaustedStorage,
+                        "the original typed owner code is preserved: {refusal:?}"
+                    );
                 }
-            };
-            assert_eq!(
-                projection.code, expected_code,
-                "the original typed owner code is preserved: {refusal:?}"
-            );
+            }
         }
     }
 }

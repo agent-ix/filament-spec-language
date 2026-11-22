@@ -546,10 +546,12 @@ fn a_decimal_literal_takes_the_type_of_its_typed_peer() {
     }
     let converted =
         format!("{P}function f using v(r: R): P pure {{ convert<P>(decimal(15, 1) + r) }}\n");
-    assert!(
-        compile(&converted).is_ok(),
-        "{:?}",
-        compile(&converted).err()
+    assert_eq!(
+        refusal(&converted),
+        (
+            "undefined_expression".to_owned(),
+            Some("unproved-range".to_owned())
+        )
     );
     assert_eq!(refusal(&case("p: P, r: R", "p + r = p")), mismatch());
     assert_eq!(

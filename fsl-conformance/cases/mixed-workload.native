@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+model M = "test/mixed-workload";
+workload Both on M { weight A::step = 1; weight B::step = 1; }

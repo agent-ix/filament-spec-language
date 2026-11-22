@@ -1237,7 +1237,11 @@ mod checked {
         assert_eq!(unguarded.cause(), Some("unproved-presence"));
         assert_eq!(
             only(body(binary(BinaryOperator::Add, b(), literal(1)))),
-            mismatch()
+            CheckCause::OperandTypeMismatch {
+                operator: BinaryOperator::Add,
+                left_type: Box::new(ValueType::option(ValueType::Integer)),
+                right_type: Box::new(ValueType::Integer),
+            }
         );
         body(binary(
             BinaryOperator::Add,

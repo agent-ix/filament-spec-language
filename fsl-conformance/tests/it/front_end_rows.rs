@@ -72,7 +72,17 @@ fn package_returns_each_applicable_kind() {
 
     let unsupported = outcome_of(Verb::Package, OutcomeKind::Unsupported);
     assert_eq!(unsupported.exit_code(), 21);
-    assert_eq!(diagnostic(&unsupported).0, "unsupported_construct");
+    assert_eq!(
+        diagnostic(&unsupported),
+        (
+            "unsupported_construct".to_owned(),
+            Some("not-yet-implemented".to_owned())
+        )
+    );
+    assert_eq!(written(&unsupported)["last_stage"], "S4");
+    assert!(crate::support::document(&unsupported).diagnostics()[0]
+        .message()
+        .contains("workload `Both`"));
     assert_eq!(
         crate::support::document(&unsupported).category(),
         Category::Unsupported
@@ -109,6 +119,56 @@ fn the_incomplete_cells_are_one_below_the_counter_their_input_reaches() {
         else {
             panic!("a limited case");
         };
+        if verb == Verb::Package {
+            use fsl_replay::spine::{
+                check, package, parse, select, DependencyInput, PackageLimits, ParseRequest,
+                SpineLimits,
+            };
+            let cancel = filament_exact::Cancel::new();
+            let limits = SpineLimits::default();
+            let source = fsl_foundation::SourceIdentity::new(
+                case.parameters.source_authority,
+                case.parameters.source_identity,
+            );
+            let parsed = parse(
+                &ParseRequest {
+                    source: &source,
+                    path: input.unit.file_name,
+                    bytes: input.unit.bytes,
+                },
+                limits.source,
+                &cancel,
+            )
+            .expect("the package source parses")
+            .into_value();
+            let packages = fsl_semantics::model::intake::package_input(
+                input.packages.iter().map(|input| input.bytes),
+            )
+            .expect("the package models admit");
+            let models = select(&parsed, &packages, limits.model, &cancel)
+                .expect("the package models select")
+                .into_value();
+            let checked = check(
+                &parsed,
+                case.parameters.package_name.to_owned(),
+                &models,
+                &DependencyInput::default(),
+                limits,
+                &cancel,
+            )
+            .expect("the package checks")
+            .into_value();
+            let emitted = package(&checked, PackageLimits::default(), &cancel)
+                .expect("the package emits without a byte limit")
+                .into_value();
+            let actual = u64::try_from(emitted.package().bytes().len())
+                .expect("the fixture byte count fits u64");
+            assert_eq!(
+                below + 1,
+                actual,
+                "emit.output_bytes must be one below the full canonical package size"
+            );
+        }
         let limited = run_case(&case).expect("the limited case runs");
         assert_eq!(
             limited.exit_code(),

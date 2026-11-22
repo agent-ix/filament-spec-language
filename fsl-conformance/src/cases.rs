@@ -111,10 +111,14 @@ const REPEAT_NO_PROGRESS: Input = input(
     include_bytes!("../cases/repeat-no-progress.native"),
 );
 
-/// FR-185-AC-7's `Service`: checks at S3 and refuses at S4.
-const SERVICE: Input = input(
-    "service-unit.native",
-    include_bytes!("../cases/service-unit.native"),
+/// FR-185-AC-12's still-unsupported workload over unrelated object types.
+const MIXED_WORKLOAD: Input = input(
+    "mixed-workload.native",
+    include_bytes!("../cases/mixed-workload.native"),
+);
+const MIXED_WORKLOAD_PACKAGE: Input = input(
+    "mixed-workload-package.json",
+    include_bytes!("../cases/mixed-workload-package.json"),
 );
 
 /// `Service` with the probabilistic claim `Two` (FR-188).
@@ -429,8 +433,8 @@ static MATRIX: &[MatrixCell] = &[
         Verb::Package,
         OutcomeKind::Unsupported,
         CaseInput::Package(FrontEndInput {
-            unit: SERVICE,
-            packages: &[SERVICE_PACKAGE],
+            unit: MIXED_WORKLOAD,
+            packages: &[MIXED_WORKLOAD_PACKAGE],
             limit: FrontEndLimit::Default,
         }),
         Cancellation::None,
