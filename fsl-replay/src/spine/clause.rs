@@ -3366,6 +3366,57 @@ fn evaluate_operation_contracts(
     None
 }
 
+/// FR-867's function-claim policy, selected against the actual checked
+/// package and the sources retained by that compilation, before admission.
+fn select_function_claim<'checked>(
+    run: &CompiledRun<'checked>,
+    name: &str,
+) -> Result<super::call::Selected<'checked>, Box<ClauseDisposition>> {
+    let package = run.package;
+    let sources = run.sources;
+    let selected = select(package, name).map_err(|refusal| {
+        Box::new(match *refusal {
+            RunRefusal::MissingDeclaration { function } => {
+                ClauseDisposition::MissingName { name: function }
+            }
+            RunRefusal::UnsupportedResult { function } => {
+                let callable = package.graph().callable(&function);
+                let declared = callable
+                    .as_ref()
+                    .and_then(|_| function_result_type_locus(sources, &function));
+                ClauseDisposition::NotAPredicate {
+                    actual: declared.as_ref().map_or_else(
+                        || {
+                            callable.as_ref().map_or_else(
+                                || "unknown".to_owned(),
+                                |callable| checker_type_spelling(callable.result),
+                            )
+                        },
+                        |(_, _, spelling)| spelling.clone(),
+                    ),
+                    result_type_locus: declared.map(|(file, span, _)| (file, span)),
+                    name: function,
+                }
+            }
+            other => ClauseDisposition::ArgumentRefusal(Box::new(other)),
+        })
+    })?;
+    if let Some(callable) = package.graph().callable(name) {
+        if !matches!(callable.result, ValueType::Boolean) {
+            let declared = function_result_type_locus(sources, name);
+            return Err(Box::new(ClauseDisposition::NotAPredicate {
+                name: name.to_owned(),
+                actual: declared.as_ref().map_or_else(
+                    || checker_type_spelling(callable.result),
+                    |(_, _, spelling)| spelling.clone(),
+                ),
+                result_type_locus: declared.map(|(file, span, _)| (file, span)),
+            }));
+        }
+    }
+    Ok(selected)
+}
+
 #[allow(clippy::too_many_arguments)]
 fn run_canonical_function(
     run: &CompiledRun<'_>,
@@ -3378,32 +3429,10 @@ fn run_canonical_function(
 ) -> ClauseRunReport {
     use fsl_eval::value::CheckedPackageEvaluation;
 
-    let not_a_predicate = |function: &str| {
-        let callable = run.package.graph().callable(function);
-        let declared = function_result_type_locus(run.sources, function);
-        ClauseDisposition::NotAPredicate {
-            name: function.to_owned(),
-            actual: declared.as_ref().map_or_else(
-                || callable.as_ref().map_or_else(
-                    || "unknown".to_owned(),
-                    |callable| checker_type_spelling(callable.result),
-                ),
-                |(_, _, spelling)| spelling.clone(),
-            ),
-            result_type_locus: declared.map(|(file, span, _)| (file, span)),
-        }
-    };
-    let selected = match select(run.package, name) {
+    let selected = match select_function_claim(run, name) {
         Ok(selected) => selected,
-        Err(refusal) => return run.report(match *refusal {
-            RunRefusal::MissingDeclaration { function } => ClauseDisposition::MissingName { name: function },
-            RunRefusal::UnsupportedResult { function } => not_a_predicate(&function),
-            other => ClauseDisposition::ArgumentRefusal(Box::new(other)),
-        }),
+        Err(disposition) => return run.report(*disposition),
     };
-    if run.package.graph().callable(name).is_some_and(|callable| !matches!(callable.result, ValueType::Boolean)) {
-        return run.report(not_a_predicate(name));
-    }
     let (environment, admission_usage) = match admit_current_snapshot(
         run.package.graph().model_inputs(), run.package.graph().scope().types(),
         run.packages, run.model_limits, run.provisions.snapshots,
@@ -3481,49 +3510,10 @@ fn run_function(
         refused_at: None,
     };
 
-    let selected = match select(package, name) {
+    let selected = match select_function_claim(run, name) {
         Ok(selected) => selected,
-        Err(refusal) => {
-            return Ok(match *refusal {
-                RunRefusal::MissingDeclaration { function } => {
-                    report(ClauseDisposition::MissingName { name: function })
-                }
-                RunRefusal::UnsupportedResult { function } => {
-                    let callable = package.graph().callable(&function);
-                    let declared = callable
-                        .as_ref()
-                        .and_then(|_| function_result_type_locus(sources, &function));
-                    report(ClauseDisposition::NotAPredicate {
-                        actual: declared.as_ref().map_or_else(
-                            || {
-                                callable.as_ref().map_or_else(
-                                    || "unknown".to_owned(),
-                                    |callable| checker_type_spelling(callable.result),
-                                )
-                            },
-                            |(_, _, spelling)| spelling.clone(),
-                        ),
-                        result_type_locus: declared.map(|(file, span, _)| (file, span)),
-                        name: function,
-                    })
-                }
-                other => report(ClauseDisposition::ArgumentRefusal(Box::new(other))),
-            });
-        }
+        Err(disposition) => return Ok(report(*disposition)),
     };
-    if let Some(callable) = package.graph().callable(name) {
-        if !matches!(callable.result, ValueType::Boolean) {
-            let declared = function_result_type_locus(sources, name);
-            return Ok(report(ClauseDisposition::NotAPredicate {
-                name: name.to_owned(),
-                actual: declared.as_ref().map_or_else(
-                    || checker_type_spelling(callable.result),
-                    |(_, _, spelling)| spelling.clone(),
-                ),
-                result_type_locus: declared.map(|(file, span, _)| (file, span)),
-            }));
-        }
-    }
 
     let (environment, admission_usage) = match admit_current_snapshot(
         package.graph().model_inputs(),
