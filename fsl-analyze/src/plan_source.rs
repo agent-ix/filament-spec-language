@@ -1179,7 +1179,7 @@ impl PlanRules for SourcePlan<'_> {
         if self.positive_policies && !self.policies.is_empty() {
             self.policy_charge(
                 filament_exact::Charge::new(filament_exact::ChargePoint::ModelCandidate)
-                    .work(Integer::from(1)),
+                    .work(Integer::from(1_i64)),
             )?;
             self.policy_capacity(bucket, 1)?;
         }
