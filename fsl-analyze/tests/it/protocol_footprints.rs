@@ -12,11 +12,12 @@ use std::collections::BTreeSet;
 use filament_exact::{ObjectReference, ValueType};
 use fsl_eval::automaton::translate;
 use fsl_eval::model_subject::{ProtocolSubject, RoleBinding};
+use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::protocol::{
     visible, AnchorName, ClaimReads, MemoryModel, ParallelInstance, ProtocolLocation,
-    ProtocolState, ProtocolSystem, ProtocolTransition, Sc, StepKind, ThreadPath,
+    ProtocolState, ProtocolSystem, ProtocolTransition, ReachRefusal, Sc, StepKind, ThreadPath,
 };
-use fsl_eval::simulation::{independent, Footprint, Location};
+use fsl_eval::simulation::{independent, Footprint, Limit, Location, TransitionSystem};
 use fsl_package::CheckedPackage;
 use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
@@ -1025,6 +1026,76 @@ fn records_guards_and_channel_anchors_are_read() {
         .anchors
         .insert(AnchorName::Channel("P::ch".to_owned()));
     assert!(visible(duplicate, &footprint, &claim));
+}
+
+/// Concrete duplicate/lose loops retain fresh delivery indices. A direct
+/// search refuses at its explicit state cap; the checker's cycle policy
+/// closes the same fixture at its measured five canonical states.
+#[trace("FR-126-AC-23", "FR-126-AC-24")]
+#[test]
+fn concrete_unknown_delivery_reachability_stops_at_its_state_budget() {
+    let members = "channel ch from w to w carries Boolean \
+                   ordering unordered delivery unknown capacity 2 overflow block;";
+    let run = "sequence Main { send Tx via ch as (tx: Boolean) { tx }; }";
+    let unit = Cells::new(
+        &(contracts("self.v = 0") + &protocol("P", members, run, "d")),
+        &["c"],
+    );
+    let subject = unit.subject("P");
+    let model = ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
+    let concrete = ProtocolSystem::new(model, &subject, Sc).expect("the concrete system builds");
+    let initial = concrete
+        .initial()
+        .into_iter()
+        .next()
+        .expect("one initial state");
+    let sent = concrete
+        .successors(&initial)
+        .expect("send expands")
+        .successors
+        .into_iter()
+        .find(|(transition, _)| transition.kind() == StepKind::Send)
+        .expect("the send is enabled")
+        .1;
+    let successors = concrete.successors(&sent).expect("the sent state expands");
+    for kind in [StepKind::Duplicate, StepKind::Lose] {
+        assert!(
+            successors
+                .successors
+                .iter()
+                .any(|(step, _)| step.kind() == kind),
+            "{kind:?} is enabled"
+        );
+    }
+    for worker_limit in [1, 4] {
+        assert_eq!(
+            concrete
+                .reachable(
+                    std::num::NonZeroUsize::new(worker_limit).expect("positive"),
+                    16
+                )
+                .err(),
+            Some(ReachRefusal::Limit(Limit::States(16))),
+            "{worker_limit} workers"
+        );
+    }
+    let canonical = concrete.with_cycle_keys(BTreeSet::new());
+    for worker_limit in [1, 2, 4] {
+        let workers = std::num::NonZeroUsize::new(worker_limit).expect("positive");
+        assert_eq!(
+            canonical
+                .reachable(workers, 5)
+                .expect("the finite graph fits exactly")
+                .states
+                .len(),
+            5
+        );
+        assert_eq!(
+            canonical.reachable(workers, 4).err(),
+            Some(ReachRefusal::Limit(Limit::States(4))),
+            "{worker_limit} workers"
+        );
+    }
 }
 
 /// The footprint of the `kind` step of `reached[at]` that names `object`

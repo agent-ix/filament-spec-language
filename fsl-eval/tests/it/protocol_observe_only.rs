@@ -210,7 +210,10 @@ fn reachable_with_document(
     };
     ProtocolSystem::new(model, &subject, Sc)
         .expect("protocol subject built")
-        .reachable(NonZeroUsize::new(1).expect("one worker"))
+        .reachable(
+            NonZeroUsize::new(1).expect("one worker"),
+            fsl_eval::simulation::Limits::default().max_states,
+        )
         .expect("finite protocol reachability")
 }
 

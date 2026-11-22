@@ -822,7 +822,9 @@ macro_rules! explored {
                 system: &ProtocolSystem<'_, Self>,
                 worker_limit: NonZeroUsize,
             ) -> Reachable<Self> {
-                system.reachable(worker_limit).expect("the reachable states")
+                system
+                    .reachable(worker_limit, fsl_eval::simulation::Limits::default().max_states)
+                    .expect("the reachable states")
             }
         }
     )+};
