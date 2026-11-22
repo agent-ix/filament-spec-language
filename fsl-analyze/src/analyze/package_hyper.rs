@@ -107,7 +107,7 @@ impl<'a> PackageHyperSubject<'a> {
         let clause = certificate.clause();
         let mut owned = Vec::with_capacity(clause.aliases().len());
         for alias in clause.aliases() {
-            match ModelSystem::for_alias(simulation.clone(), alias.as_str()) {
+            match ModelSystem::for_hyper_alias(simulation.clone(), clause, alias.as_str()) {
                 Ok(system) => owned.push(system),
                 Err(failure) => return EngineReport::Refused(admission(&failure)),
             }

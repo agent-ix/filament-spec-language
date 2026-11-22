@@ -2118,9 +2118,6 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 note: None,
             })
         };
-        if package.model_selections().len() != 1 {
-            return Err(pending("hyper-model-scope"));
-        }
         let form = package
             .hyper_clause_form(&claim)
             .map_err(|refusal| match refusal {

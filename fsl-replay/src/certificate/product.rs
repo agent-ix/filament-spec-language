@@ -258,7 +258,7 @@ impl<'a> PackageHyperClosureRequest<'a> {
     /// Re-read the selected admitted universal clause and bind its original subjects.
     ///
     /// # Errors
-    /// Refuses unsupported forms, multiple models, or a malformed occurrence.
+    /// Refuses unsupported forms or a malformed occurrence or subject-model join.
     pub fn new(
         package: &'a fsl_package::BarePackage<'_>,
         occurrence: &fsl_foundation::source::provenance::OccurrenceKey,
@@ -266,9 +266,6 @@ impl<'a> PackageHyperClosureRequest<'a> {
         meter: ScalarLimits,
         position_limit: u64,
     ) -> Result<Self, ProductClosureRefusal> {
-        if package.model_selections().len() != 1 {
-            return Err(ProductClosureRefusal::Input("package-hyper-model-scope"));
-        }
         let form = package
             .hyper_clause_form(occurrence)
             .map_err(|_| ProductClosureRefusal::Input("package-hyper-form"))?;
@@ -387,7 +384,7 @@ fn alias_systems<'a>(
         .iter()
         .zip(clause.aliases())
         .map(|(subject, alias)| {
-            ModelSystem::for_alias(subject.simulation.clone(), alias.as_str())
+            ModelSystem::for_hyper_alias(subject.simulation.clone(), clause, alias.as_str())
                 .map_err(|_| ProductClosureRefusal::Input("model-subject"))
         })
         .collect()
