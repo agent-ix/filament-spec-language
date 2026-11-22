@@ -5270,6 +5270,7 @@ impl PackageDeclarations {
             &mut nodes_used,
         );
         refusals.extend(checked_probabilistic.refusals);
+        let probabilistic_formed_units = checked_probabilistic.formed_units;
         let probabilistic_model = checked_probabilistic.model;
         // FR-354: each declaration form of a selected extension, checked
         // against the typed-node schema entry of its production.
@@ -5628,6 +5629,7 @@ impl PackageDeclarations {
         // FR-094: the package's units and every compound unit typing formed,
         // kept until lowering has keyed each one's type node.
         let mut units = scope.types().units().clone();
+        units.append(probabilistic_formed_units);
         for (_, body, _) in &drafts {
             units.append(body.formed_units.clone());
         }

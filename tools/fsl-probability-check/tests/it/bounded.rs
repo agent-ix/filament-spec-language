@@ -76,6 +76,27 @@ fn compile_with_mode(
     spine::CheckedUnit,
     fsl_semantics::model::intake::PackageInput,
 ) {
+    try_compile_with_mode(source, domain, check_mode).unwrap()
+}
+
+pub(super) fn try_compile_source_with(
+    source: &str,
+    domain: &[u8],
+) -> Result<
+    (spine::CheckedUnit, fsl_semantics::model::intake::PackageInput),
+    spine::FrontEndFailure,
+> {
+    try_compile_with_mode(source, domain, None)
+}
+
+fn try_compile_with_mode(
+    source: &str,
+    domain: &[u8],
+    check_mode: Option<filament_semantic_value::checking::CheckMode>,
+) -> Result<
+    (spine::CheckedUnit, fsl_semantics::model::intake::PackageInput),
+    spine::FrontEndFailure,
+> {
     let identity = SourceIdentity::new("test", "bounded-certificate-source");
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
@@ -106,10 +127,9 @@ fn compile_with_mode(
         &DependencyInput::default(),
         limits,
         &cancel,
-    )
-    .unwrap()
+    )?
     .into_value();
-    (checked, packages)
+    Ok((checked, packages))
 }
 
 pub(super) fn request(

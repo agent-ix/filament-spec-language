@@ -20,6 +20,7 @@ use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
+use filament_semantic_value::quantity::UnitTable;
 use fsl_forms::{
     ClauseKind, DelayDistributionForm, DelayForm, ExpressionForm, NameForm, QuantityForm,
     RandomForm, RewardForm, WorkloadForm,
@@ -1096,6 +1097,7 @@ fn fault(location: Location, invariant: &'static str) -> CheckRefusal {
 /// The checks of one pass, and what they recorded.
 pub(crate) struct Checked {
     pub(crate) model: CheckedProbabilisticModel,
+    pub(crate) formed_units: UnitTable,
     pub(crate) refusals: Vec<CheckRefusal>,
 }
 
@@ -1115,6 +1117,7 @@ pub(crate) fn check(
         rewards: Vec::new(),
         workloads: Vec::new(),
         delays: Vec::new(),
+        formed_units: UnitTable::default(),
         refusals: Vec::new(),
     };
     for (index, declaration) in declarations.iter().enumerate() {
@@ -1136,6 +1139,7 @@ pub(crate) fn check(
     pass.preconditions();
     Checked {
         model: pass.model,
+        formed_units: pass.formed_units,
         refusals: pass.refusals,
     }
 }
@@ -1154,6 +1158,8 @@ pub(super) struct Pass<'i, 'a> {
     /// Each operation a `delay` declaration resolved to on a `time dense`
     /// model.
     delays: Vec<DeclarationKey>,
+    /// Compound units formed by reward typing, retained until lowering.
+    formed_units: UnitTable,
     pub(super) refusals: Vec<CheckRefusal>,
 }
 
@@ -1397,7 +1403,7 @@ impl Pass<'_, '_> {
     /// The reward's expression typed over the operation's parameters, with
     /// its definedness checked.
     fn typed_reward(
-        &self,
+        &mut self,
         form: &RewardForm,
         parameters: &[(String, ValueType)],
         location: &Location,
@@ -1415,6 +1421,7 @@ impl Pass<'_, '_> {
             &self.input.scope.dispatch_operations,
         )
         .check(body.root())?;
+        self.formed_units.append(typer.into_formed_units());
         Ok((body, slots, slot_names))
     }
 

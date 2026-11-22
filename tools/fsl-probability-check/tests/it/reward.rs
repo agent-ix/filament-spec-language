@@ -470,23 +470,45 @@ fn nonreaching_terminals_hidden_raw_cycles_and_negative_rewards_never_accept() {
             &mut invalid,
             &claim(&draws(cost), "every scheduler", ">=", "4", "m.attempts = 1"),
         );
-        if cost == "-1" {
-            super::bounded::replace_source_and_rebind(
-                &mut invalid,
-                &claim(&draws(cost), "every scheduler", ">=", "4", "m.attempts = 1"),
-            );
-        }
         let (code, output) = run(&invalid);
         assert_eq!(code, 2, "{output}");
         assert!(output.get("value").is_none());
         if cost == "-1" {
-            assert!(
-                output["reason"]
-                    .as_str()
-                    .unwrap()
-                    .contains("negative-reward"),
-                "{output}"
+            let failure = match super::bounded::try_compile_source_with(
+                invalid["source"]["content"].as_str().unwrap(),
+                DOMAIN,
+            ) {
+                Ok(_) => panic!("a negative reward must refuse before a checked unit exists"),
+                Err(failure) => failure,
+            };
+            let fsl_foundation::diagnostic::StageFailure::Refused(refusal) = &failure else {
+                panic!("the negative reward retains its S3 refusal: {failure:?}");
+            };
+            let fsl_replay::spine::CompileRefusal::Check { refusals, .. } = refusal.as_ref()
+            else {
+                panic!("the negative reward is a checking refusal: {refusal:?}");
+            };
+            let [fsl_semantics::check::CheckRefusal {
+                cause: fsl_semantics::check::CheckCause::Probabilistic(cause),
+                ..
+            }] = refusals.as_slice()
+            else {
+                panic!("one negative-reward refusal: {refusals:?}");
+            };
+            assert_eq!(
+                cause.as_ref(),
+                &fsl_semantics::check::ProbabilisticCause::NegativeReward {
+                    operation: "send_a".to_owned(),
+                    reward: "cost".to_owned(),
+                    arguments: vec![("lost".to_owned(), "Boolean(false)".to_owned())],
+                }
             );
+            assert_eq!(output["status"], "refused", "{output}");
+            assert_eq!(
+                output["reason"],
+                format!("probability certificate compilation stopped: {failure:?}")
+            );
+            assert_eq!(invalid["certificate"], request["certificate"]);
         }
     }
     let mut foreign_item = request;
