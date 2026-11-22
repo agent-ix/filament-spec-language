@@ -7745,7 +7745,7 @@ fn emit_package_inner(
         &emitted_node_ids,
         &value_validity_records,
     )?);
-    let requirement_keys: HashMap<_, _> =
+    let requirement_keys: BTreeMap<_, _> =
         emitted_node_ids.iter().map(|(key, id)| (id, key)).collect();
     requirement_rows.sort_by(|left, right| {
         (requirement_keys.get(&left.claim), &left.occurrence)

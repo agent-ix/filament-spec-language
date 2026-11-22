@@ -300,7 +300,7 @@ pub(super) fn rows(
             conversion: record
                 .conversion
                 .as_ref()
-                .map(|(node, ordinal)| Ok((remap(node)?, *ordinal)))
+                .map(|(node, ordinal)| -> Result<_, EmitRefusal> { Ok((remap(node)?, *ordinal)) })
                 .transpose()?,
             path_condition: record
                 .path_condition
