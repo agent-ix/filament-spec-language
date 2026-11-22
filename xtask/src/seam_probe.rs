@@ -242,10 +242,10 @@ pub fn checked_in_locations() -> BTreeSet<SeamLocation> {
         // `FamilyOutcome`, mirroring `execute::replay`'s above.
         SeamLocation {
             file: "fsl-replay/src/spine/call.rs".to_owned(),
-            item: "convert_outcome".to_owned(),
+            item: "convert_outcome_resolving".to_owned(),
         },
         // FR-043-AC-17: the decisive-atom reader's `match` over
-        // `FamilyOutcome` (`decisive_over`), mirroring `convert_outcome`'s
+        // `FamilyOutcome` (`decisive_over`), mirroring `convert_outcome_resolving`'s
         // above.
         SeamLocation {
             file: "fsl-replay/src/spine/clause/temporal.rs".to_owned(),

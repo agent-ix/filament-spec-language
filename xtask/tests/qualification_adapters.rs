@@ -102,7 +102,7 @@ fn report(execution: &xtask::qualification::Execution) -> Value {
 #[test]
 #[trace("TC-875", "FR-350-AC-1", "FR-350-AC-8", "FR-350-AC-5")]
 fn runtime_vectors_bind_positional_values_and_retain_real_outcome_bytes() {
-    let expected = json!({"disposition":"value","value":{"kind":"completed","value":{"kind":"integer","decimal":"12"}}});
+    let expected = json!({"disposition":"value","value":{"kind":"completed","value":{"type":"integer","value":"12"}}});
     let mut fixture = Fixture::new("runtime", "run", COUNTER, expected);
     fixture.run_call(
         json!([{"kind":"integer","decimal":"1"},{"kind":"integer","decimal":"2"}]),
@@ -111,7 +111,7 @@ fn runtime_vectors_bind_positional_values_and_retain_real_outcome_bytes() {
     let first = fixture.execute(&[]);
     assert_eq!(first.outcome.code, 0, "{}", first.outcome.stdout);
     let document: Value = serde_json::from_slice(&first.outputs["V1-TOOL-004-operation"]).unwrap();
-    assert_eq!(document["result"]["value"]["decimal"], "12");
+    assert_eq!(document["result"]["value"]["value"], "12");
     assert_eq!(document["category"], "success");
     let second = fixture.execute(&[]);
     assert_eq!(first.outputs, second.outputs);
@@ -121,11 +121,11 @@ fn runtime_vectors_bind_positional_values_and_retain_real_outcome_bytes() {
         "operation bytes are not an invented FR-352 member"
     );
 
-    fixture.value["vectors"][0]["expected"]["value"]["value"]["decimal"] = json!("21");
+    fixture.value["vectors"][0]["expected"]["value"]["value"]["value"] = json!("21");
     let wrong = fixture.execute(&[]);
     assert_eq!(wrong.outcome.code, 1);
     assert_eq!(
-        report(&wrong)["capabilities"][0]["vectors"][0]["actual"]["value"]["decimal"],
+        report(&wrong)["capabilities"][0]["vectors"][0]["actual"]["value"]["value"],
         "12"
     );
     assert!(
@@ -141,7 +141,7 @@ fn runtime_vectors_bind_positional_values_and_retain_real_outcome_bytes() {
 #[test]
 #[trace("TC-880", "FR-353-AC-2")]
 fn a_recorded_passing_result_does_not_qualify_a_failing_or_uncovered_capability() {
-    let wrong = json!({"disposition":"value","value":{"kind":"completed","value":{"kind":"integer","decimal":"99"}}});
+    let wrong = json!({"disposition":"value","value":{"kind":"completed","value":{"type":"integer","value":"99"}}});
     let mut fixture = Fixture::new("runtime", "run", COUNTER, wrong);
     fixture.run_call(
         json!([{"kind":"integer","decimal":"1"},{"kind":"integer","decimal":"2"}]),
@@ -162,7 +162,7 @@ fn a_recorded_passing_result_does_not_qualify_a_failing_or_uncovered_capability(
 
     // The same planted entry on a corpus whose second capability has no
     // vector: that capability is `uncovered`.
-    let right = json!({"disposition":"value","value":{"kind":"completed","value":{"kind":"integer","decimal":"12"}}});
+    let right = json!({"disposition":"value","value":{"kind":"completed","value":{"type":"integer","value":"12"}}});
     let mut fixture = Fixture::new("runtime", "run", COUNTER, right);
     fixture.run_call(
         json!([{"kind":"integer","decimal":"1"},{"kind":"integer","decimal":"2"}]),
@@ -191,7 +191,7 @@ fn a_recorded_passing_result_does_not_qualify_a_failing_or_uncovered_capability(
 #[test]
 #[trace("TC-875", "FR-350-AC-3", "FR-350-AC-5")]
 fn runtime_limits_remain_incomplete_and_are_fresh_for_siblings() {
-    let expected = json!({"disposition":"value","value":{"kind":"completed","value":{"kind":"integer","decimal":"12"}}});
+    let expected = json!({"disposition":"value","value":{"kind":"completed","value":{"type":"integer","value":"12"}}});
     let mut fixture = Fixture::new("runtime", "run", COUNTER, expected);
     fixture.run_call(
         json!([{"kind":"integer","decimal":"1"},{"kind":"integer","decimal":"2"}]),
@@ -503,7 +503,7 @@ fn compiler_limits_preserve_the_stage_setting_and_refusal_partition() {
         "runtime",
         "run",
         COUNTER,
-        json!({"disposition":"value", "value":{"kind":"completed", "value":{"kind":"integer", "decimal":"12"}}}),
+        json!({"disposition":"value", "value":{"kind":"completed", "value":{"type":"integer", "value":"12"}}}),
     );
     runtime.run_call(
         json!([{"kind":"integer", "decimal":"1"},{"kind":"integer", "decimal":"2"}]),
@@ -534,7 +534,7 @@ fn compiler_limits_preserve_the_stage_setting_and_refusal_partition() {
 #[test]
 #[trace("TC-875", "FR-350-AC-4", "FR-350-AC-5", "FR-350-AC-8")]
 fn runtime_vector_failures_do_not_change_sibling_budgets_or_source_bytes() {
-    let expected = json!({"disposition":"value","value":{"kind":"completed","value":{"kind":"integer","decimal":"12"}}});
+    let expected = json!({"disposition":"value","value":{"kind":"completed","value":{"type":"integer","value":"12"}}});
     let mut fixture = Fixture::new("runtime", "run", COUNTER, expected);
     fixture.run_call(
         json!([{"kind":"integer","decimal":"1"},{"kind":"integer","decimal":"2"}]),
@@ -583,7 +583,7 @@ fn runtime_vector_failures_do_not_change_sibling_budgets_or_source_bytes() {
 #[test]
 #[trace("TC-875", "FR-350-AC-1", "FR-350-AC-5")]
 fn another_consumers_open_operation_is_filtered_without_opening_its_input() {
-    let expected = json!({"disposition":"value","value":{"kind":"completed","value":{"kind":"integer","decimal":"12"}}});
+    let expected = json!({"disposition":"value","value":{"kind":"completed","value":{"type":"integer","value":"12"}}});
     let mut fixture = Fixture::new("runtime", "run", COUNTER, expected);
     fixture.run_call(
         json!([{"kind":"integer","decimal":"1"},{"kind":"integer","decimal":"2"}]),
@@ -621,7 +621,7 @@ fn model_population_fixture() -> Fixture {
         "runtime",
         "run",
         source,
-        json!({"disposition":"value", "value":{"kind":"completed", "value":{"kind":"boolean", "value":true}}}),
+        json!({"disposition":"value", "value":{"kind":"completed", "value":{"type":"boolean", "value":true}}}),
     );
     fixture.file(
         "model",

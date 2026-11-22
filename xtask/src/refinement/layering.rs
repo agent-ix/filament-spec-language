@@ -1309,7 +1309,8 @@ mod tests {
                 "en-6",
                 "value-checker",
                 "contract-checker",
-                "protocol-analysis"
+                "protocol-analysis",
+                "en-7"
             ]
         );
     }
