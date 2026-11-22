@@ -237,7 +237,7 @@ fn fixed_work_release_completes_or_emits_a_deadline_miss() {
         initial_state: 0,
         prefix: vec![
             ModelStep {
-                transition: activated.transitions()[0].clone(),
+                transition: activated.transitions()[0].clone().into(),
                 post_state: product
                     .source()
                     .state_key(activated.state.source())
@@ -245,7 +245,7 @@ fn fixed_work_release_completes_or_emits_a_deadline_miss() {
                 delay: Some(crate::zone_search::exact(0, 1)),
             },
             ModelStep {
-                transition: dispatched.transition(),
+                transition: dispatched.transition().into(),
                 post_state: product
                     .source()
                     .state_key(dispatched.state.source())
@@ -253,7 +253,7 @@ fn fixed_work_release_completes_or_emits_a_deadline_miss() {
                 delay: Some(crate::zone_search::exact(0, 1)),
             },
             ModelStep {
-                transition: miss.transition(),
+                transition: miss.transition().into(),
                 post_state: product
                     .source()
                     .state_key(miss.state.source())
@@ -574,7 +574,7 @@ fn missed_deadline_settles_only_with_a_replayed_positive_time_lasso() {
         )
     }));
 
-    let typed_counterexample = TemporalCounterexample {
+    let typed_counterexample = TemporalCounterexample::<fsl_replay::TaskProductTransition> {
         initial_state: refutation.trace.initial_state,
         prefix: refutation
             .trace
@@ -582,7 +582,7 @@ fn missed_deadline_settles_only_with_a_replayed_positive_time_lasso() {
             .iter()
             .zip(states.iter().skip(1))
             .map(|(step, state)| ModelStep {
-                transition: step.transition.clone(),
+                transition: step.transition.clone().into(),
                 post_state: fsl_eval::simulation::StateKey::from_canonical_bytes(
                     product.state_key(state).expect("replayed state key"),
                 ),
@@ -1239,7 +1239,7 @@ fn tick_world(release_order: &[&str]) -> crate::timed_world::World {
 /// terminal-stutter step is carried only by its lasso, never in the prefix.
 fn refutation_of(
     product: &TaskProductSystem<'_, '_>,
-) -> TemporalCounterexample<TaskProductTransition> {
+) -> TemporalCounterexample<fsl_replay::TaskProductTransition> {
     let TaskProductSearchOutcome::Refuted(refutation) =
         check_task_product(product, TaskProductSearchLimits { max_work: 4096 })
             .expect("task-product search is admitted")
@@ -1259,7 +1259,7 @@ fn refutation_of(
             .iter()
             .zip(states.iter().skip(1))
             .map(|(step, state)| ModelStep {
-                transition: step.transition.clone(),
+                transition: step.transition.clone().into(),
                 post_state: fsl_eval::simulation::StateKey::from_canonical_bytes(
                     product.state_key(state).expect("replayed state key"),
                 ),
@@ -1283,7 +1283,7 @@ fn refutation_of(
 
 fn refusal_pointer(
     product: &TaskProductSystem<'_, '_>,
-    counterexample: &TemporalCounterexample<TaskProductTransition>,
+    counterexample: &TemporalCounterexample<fsl_replay::TaskProductTransition>,
 ) -> (String, String, String) {
     match fsl_replay::replay_task_product_trace(product, counterexample) {
         Err(fsl_replay::TaskProductTraceReplayRefusal::InvalidRuntimeInput {
@@ -1296,11 +1296,11 @@ fn refusal_pointer(
 }
 
 fn task_step(
-    counterexample: &mut TemporalCounterexample<TaskProductTransition>,
+    counterexample: &mut TemporalCounterexample<fsl_replay::TaskProductTransition>,
     index: usize,
-) -> &mut fsl_eval::simulation::model::TaskTransitionIdentity {
+) -> &mut fsl_replay::TaskTransitionIdentity {
     match &mut counterexample.prefix[index].transition {
-        TaskProductTransition::Task(identity) => identity,
+        fsl_replay::TaskProductTransition::Task(identity) => identity,
         other => panic!("step {index} is not a task step: {other:?}"),
     }
 }
@@ -1325,22 +1325,27 @@ fn reversed_release_declarations_write_the_same_synchronized_steps() {
         .iter()
         .take(2)
         .map(|step| match &step.transition {
-            TaskProductTransition::Task(identity) => (identity.action, identity.task.clone()),
+            fsl_replay::TaskProductTransition::Task(identity) => {
+                (identity.action, identity.task.clone())
+            }
             other => panic!("the move is written as activations: {other:?}"),
         })
         .collect();
     assert_eq!(
         tasks,
         [
-            (TaskTransitionAction::Activate, "a".to_owned()),
-            (TaskTransitionAction::Activate, "b".to_owned())
+            (fsl_replay::TaskTransitionAction::Activate, "a".to_owned()),
+            (fsl_replay::TaskTransitionAction::Activate, "b".to_owned())
         ]
     );
     assert_eq!(declared.prefix.len(), reversed.prefix.len());
     for (left, right) in declared.prefix.iter().zip(&reversed.prefix) {
         assert_eq!(left.delay, right.delay);
         match (&left.transition, &right.transition) {
-            (TaskProductTransition::Task(left), TaskProductTransition::Task(right)) => {
+            (
+                fsl_replay::TaskProductTransition::Task(left),
+                fsl_replay::TaskProductTransition::Task(right),
+            ) => {
                 assert_eq!(
                     (
                         left.action,
@@ -1378,7 +1383,7 @@ fn tampered_task_steps_refuse_at_their_member() {
     assert!(original
         .prefix
         .iter()
-        .all(|step| step.transition != TaskProductTransition::TerminalStutter));
+        .all(|step| step.transition != fsl_replay::TaskProductTransition::TerminalStutter));
     fsl_replay::replay_task_product_trace(&product, &original)
         .expect("the untampered counterexample replays");
 
@@ -1388,16 +1393,17 @@ fn tampered_task_steps_refuse_at_their_member() {
         .position(|step| {
             matches!(
                 &step.transition,
-                TaskProductTransition::Task(identity)
-                    if identity.action == TaskTransitionAction::DeadlineMiss
+                fsl_replay::TaskProductTransition::Task(identity)
+                    if identity.action == fsl_replay::TaskTransitionAction::DeadlineMiss
             )
         })
         .expect("the miss step");
-    let member = |mutate: &dyn Fn(&mut TemporalCounterexample<TaskProductTransition>)| {
-        let mut tampered = original.clone();
-        mutate(&mut tampered);
-        refusal_pointer(&product, &tampered)
-    };
+    let member =
+        |mutate: &dyn Fn(&mut TemporalCounterexample<fsl_replay::TaskProductTransition>)| {
+            let mut tampered = original.clone();
+            mutate(&mut tampered);
+            refusal_pointer(&product, &tampered)
+        };
 
     let (pointer, supplied, recomputed) = member(&|found| task_step(found, miss).slot += 1);
     assert_eq!(pointer, format!("/prefix/{miss}/transition/slot"));
@@ -1456,7 +1462,7 @@ fn tampered_task_steps_refuse_at_their_member() {
     assert_eq!(
         member(&|found| {
             found.prefix[0].transition =
-                TaskProductTransition::Source(tick.source.transition().clone());
+                fsl_replay::TaskProductTransition::Source(tick.source.transition().clone());
         })
         .0,
         "/prefix/0/transition/type"

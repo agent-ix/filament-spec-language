@@ -1481,8 +1481,8 @@ pub struct PackageSampledRequest<'a> {
     pub ledger: Option<&'a ProgressLedger>,
     /// The existing covered-position limit for the whole ledger admission.
     pub progress_capacity: u64,
-    /// The package's evaluator.
-    pub evaluator: &'a dyn fsl_eval::simulation::model::ModelEvaluator,
+    /// The evaluator selected for this package's checked forms.
+    pub evaluator: crate::PackageEvaluator<'a>,
     /// The temporal clause's declared name.
     pub name: &'a str,
     /// The package form of the clause and its node's key; `None` when the
@@ -1605,17 +1605,18 @@ fn package_samples_from<'a>(
 /// activation.
 pub fn run_package_valuation(
     request: &PackageSampledRequest<'_>,
-) -> Result<fsl_eval::temporal::ObservedValuation, Box<ClauseRunReport>> {
+) -> Result<crate::spine::ObservedValuation, Box<ClauseRunReport>> {
     let (clause, key, samples, shape) = package_samples(request)?;
     let mut meter = Meter::new(request.accounting);
     fsl_eval::temporal::package_observed_valuation(
-        request.evaluator,
+        request.evaluator.as_inner(),
         clause,
         key,
         &samples,
         shape,
         &mut meter,
     )
+    .map(Into::into)
     .map_err(|_| {
         disposition_report(
             ClauseDisposition::EvaluateFault(filament_semantic_value::catalog::InternalFault::new(
@@ -1762,7 +1763,7 @@ fn run_sampled(
     let positions = fsl_eval::temporal::PackagePositions::Samples(&samples);
     let context = package_window::Context::new(
         request.package,
-        request.evaluator,
+        request.evaluator.as_inner(),
         clause,
         key,
         request.name,
@@ -1792,7 +1793,7 @@ fn run_sampled(
     } = trace
     {
         fsl_eval::temporal::evaluate_package_timed(
-            request.evaluator,
+            request.evaluator.as_inner(),
             clause,
             key,
             positions,
@@ -1814,7 +1815,7 @@ fn run_sampled(
         )
     } else {
         fsl_eval::temporal::evaluate_package_positions(
-            request.evaluator,
+            request.evaluator.as_inner(),
             clause,
             key,
             &samples,
@@ -2452,7 +2453,7 @@ pub(super) fn run_temporal(run: &CompiledRun<'_>, request: &TemporalRun<'_>) -> 
             &mut meter,
         ) {
             Ok(positions) => late(ClauseDisposition::TemporalValuation(Box::new(
-                super::TemporalValuation::from_node(node, graph, Some(positions), None),
+                super::TemporalValuation::from_node(node, graph, Some(positions.into()), None),
             ))),
             Err(_) => late(ClauseDisposition::EvaluateFault(
                 filament_semantic_value::catalog::InternalFault::new(

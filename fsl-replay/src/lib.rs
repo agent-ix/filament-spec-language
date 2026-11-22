@@ -72,9 +72,13 @@ mod id_text;
 mod identity;
 mod limits;
 mod model_check;
+mod replay_model_input;
+pub use replay_model_input::{PackageEvaluator, PackageModelCheckInput, PackageWindowEvaluation};
+mod task_transition;
 pub use model_check::digital_state_graph::{
     explore_digital_state_graph, DigitalGraphEdge, DigitalGraphLimit, DigitalStateGraph,
 };
+pub use task_transition::{TaskProductTransition, TaskTransitionAction, TaskTransitionIdentity};
 mod monitor_plan;
 mod object_environment;
 pub mod outcome;
@@ -586,9 +590,6 @@ pub use filament_semantic_value::call::InputRefusal;
 // constructor (ADR-011 §3 FB-05).
 pub use execute::{ObjectEnvironmentFailure, Unresolved};
 pub use filament_exact::{EmptyInterval, Incomplete, Integer, IntegerInterval};
-pub use fsl_eval::simulation::model::{
-    TaskProductTransition, TaskTransitionAction, TaskTransitionIdentity,
-};
 pub use fsl_foundation::bound::{
     DomainKey, DomainKind, EmptyFiniteBound, FiniteBound, FiniteBoundKind, ProofBound,
     ProofBoundRefusal,

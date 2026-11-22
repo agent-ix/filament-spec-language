@@ -145,7 +145,10 @@ pub fn replay_task_product_trace<T: Spelling + Clone + 'static>(
                 pointer: format!("/prefix/{index}/transition/type"),
             });
         };
-        steps.push(fsl_eval::simulation::model::TaskProductTraceStep { delay, transition });
+        steps.push(fsl_eval::simulation::model::TaskProductTraceStep {
+            delay,
+            transition: transition.into(),
+        });
     }
     if counterexample
         .lasso
@@ -163,7 +166,7 @@ pub fn replay_task_product_trace<T: Spelling + Clone + 'static>(
         };
         steps.push(fsl_eval::simulation::model::TaskProductTraceStep {
             delay,
-            transition: TaskProductTransition::TerminalStutter,
+            transition: fsl_eval::simulation::model::TaskProductTransition::TerminalStutter,
         });
     }
     let trace = fsl_eval::simulation::model::TaskProductTrace {
@@ -312,9 +315,9 @@ fn read_document(
     document: &Json,
     closure_alphabet: bool,
 ) -> Result<TaskProductCounterexampleDocument, TemporalCounterexampleReadRefusal> {
+    use crate::{TaskTransitionAction as Action, TaskTransitionIdentity};
     use base64::Engine;
     use filament_exact::Integer;
-    use fsl_eval::simulation::model::{TaskTransitionAction as Action, TaskTransitionIdentity};
 
     fn malformed(
         cause: &'static str,

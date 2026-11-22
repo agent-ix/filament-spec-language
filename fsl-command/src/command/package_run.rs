@@ -498,8 +498,8 @@ fn execute_clause(
                 package: bare,
                 sources,
                 ledger: work.ledger.as_ref(),
+                evaluator: bare.into(),
                 progress_capacity: work.progress_capacity,
-                evaluator: bare,
                 name: &work.name,
                 clause: found.as_ref().map(|(clause, key)| (clause, key)),
                 types: model.input().types,
@@ -510,7 +510,7 @@ fn execute_clause(
         )
         .map_err(selection_not_read)?,
         Some(over) => {
-            let input = model.input();
+            let input = fsl_replay::PackageModelCheckInput::from(model.input());
             fsl_replay::spine::run_package_snapshots(&fsl_replay::spine::PackageSnapshotRequest {
                 sources,
                 progress_capacity: work.progress_capacity,

@@ -233,7 +233,7 @@ fn trace(
         progress_capacity: fsl_replay::spine::SpineLimits::default()
             .progress
             .covered_positions,
-        evaluator: bare,
+        evaluator: bare.into(),
         name,
         clause: Some((clause, key)),
         types: model.input().types,
@@ -267,7 +267,7 @@ fn behaviours(
     let observation_limits = fsl_replay::spine::ObservationLimitsWire::resolve(None)
         .map_err(|error| invalid(&error.member, error.reason))?;
     let valuations = fsl_replay::spine::run_package_behaviours(PackageBehaviours {
-        input: model.input(),
+        input: model.input().into(),
         clause,
         key,
         packages: run.packages,

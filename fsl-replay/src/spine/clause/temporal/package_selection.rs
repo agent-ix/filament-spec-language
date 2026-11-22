@@ -15,9 +15,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_checked::node::NodeKind;
 use filament_exact::{Meter, NodeKey, ScalarLimits, ValueType};
-use fsl_eval::simulation::model::{
-    ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem,
-};
+use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, ModelSystem};
 use fsl_eval::temporal::{evaluate_package_positions_decisive, DecisiveAtom, PackagePositions};
 use fsl_eval::value::{CheckedPackageEvaluation, HoldsAtom, HoldsBinders, ObservationIdentity};
 use fsl_semantics::check::{CheckedTemporalClause, FormulaNode};
@@ -60,7 +58,7 @@ pub struct PackageSnapshotRequest<'a, 'p> {
     pub package: &'a fsl_package::BarePackage<'p>,
     /// The package's model-check input, which holds its evaluator, its types
     /// and its model selections.
-    pub input: &'a ModelCheckInput<'a>,
+    pub input: &'a crate::PackageModelCheckInput<'a>,
     /// The temporal clause's declared name.
     pub name: &'a str,
     /// The package form of the clause and its node's key; `None` when the
@@ -148,6 +146,7 @@ pub fn run_package_snapshots(
         sources,
         progress_capacity,
     } = *request;
+    let input = input.as_inner();
     let early = |disposition| Ok(report(disposition, ClauseRunUsage::default()));
     let Some((clause, key)) = clause else {
         return early(ClauseDisposition::MissingName {
@@ -401,6 +400,7 @@ fn run_model(
         over,
         ..
     } = *request;
+    let input = input.as_inner();
     let TraceInput::Model {
         initial,
         universes: universe_documents,

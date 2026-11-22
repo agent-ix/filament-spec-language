@@ -3985,7 +3985,7 @@ fn package_window_adapter_controls(
                 sources,
                 ledger,
                 progress_capacity: capacity,
-                evaluator: &bare,
+                evaluator: (&bare).into(),
                 name: "StampedPulse",
                 clause: Some((&clause, &key)),
                 types: model.input().types,
