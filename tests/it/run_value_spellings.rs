@@ -793,11 +793,11 @@ fn an_enumeration_argument_and_result_run_from_a_package_as_from_source() {
         let source = spine_request(
             directory.path(),
             "call",
-            json!({"function": function, "arguments": arguments}),
+            json!({"function": function, "snapshot": "spine-snapshot.json", "arguments": arguments}),
         );
         let package = package_call(
             directory.path(),
-            json!({"function": function, "arguments": arguments}),
+            json!({"function": function, "snapshot": "spine-snapshot.json", "arguments": arguments}),
         );
         let (source, package) = (route_free(&source), route_free(&package));
         assert_eq!(source["outcome"]["kind"], "completed", "{function}: {source}");
@@ -807,11 +807,11 @@ fn an_enumeration_argument_and_result_run_from_a_package_as_from_source() {
     let source = spine_request(
         directory.path(),
         "call",
-        json!({"function": "id_tier", "arguments": unknown}),
+        json!({"function": "id_tier", "snapshot": "spine-snapshot.json", "arguments": unknown}),
     );
     let package = package_call(
         directory.path(),
-        json!({"function": "id_tier", "arguments": unknown}),
+        json!({"function": "id_tier", "snapshot": "spine-snapshot.json", "arguments": unknown}),
     );
     assert_eq!(source.status.code(), Some(20), "{source:?}");
     assert_eq!(route_free(&package), route_free(&source));
