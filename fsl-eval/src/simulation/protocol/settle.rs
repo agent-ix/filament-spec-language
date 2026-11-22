@@ -102,8 +102,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 if package
                     .form
                     .controls
-                    .iter()
-                    .find(|control| control.id == node)
+                    .get(node.0)
                     .is_none_or(|control| &control.node.node_id != proof.repeat())
                 {
                     return Err(

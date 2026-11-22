@@ -1361,13 +1361,16 @@ fn protocol_literal_repeat_name(view: &dyn AnalysisView, name: &str) -> Option<S
     let invariant =
         member(&repeat.node.body, "proof").and_then(|proof| member(proof, "invariant"))?;
     let invariant = match invariant {
-        fsl_package::CheckedTerm::Reference { target } => &view
-            .package()
-            .resolved_graph()
-            .nodes
-            .iter()
-            .find(|node| &node.node_id == target)?
-            .body,
+        fsl_package::CheckedTerm::Reference { target } => {
+            if view.package().node_kind(target)
+                != Some(filament_contract_model::CheckedNodeKind::Value(
+                    filament_contract_model::ValueForm::Literal,
+                ))
+            {
+                return None;
+            }
+            view.package().term(target)?
+        }
         term => term,
     };
     matches!(

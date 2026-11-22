@@ -560,12 +560,14 @@ impl<'a> PackageProtocolProgram<'a> {
                 let invariant = member(body, "proof")
                     .and_then(|proof| member(proof, "invariant"))
                     .and_then(|term| match term {
-                        fsl_package::CheckedTerm::Reference { target } => admitted
-                            .resolved_graph()
-                            .nodes
-                            .iter()
-                            .find(|node| &node.node_id == target)
-                            .map(|node| &node.body),
+                        fsl_package::CheckedTerm::Reference { target } => {
+                            (admitted.node_kind(target)
+                                == Some(filament_contract_model::CheckedNodeKind::Value(
+                                    filament_contract_model::ValueForm::Literal,
+                                )))
+                            .then(|| admitted.term(target))
+                            .flatten()
+                        }
                         _ => Some(term),
                     })
                     .and_then(|term| term.literal_read())
