@@ -18,11 +18,10 @@
 //! (`lowering::enclosing_declarations`), so it resolves here like any other
 //! body, clause, attempt or declared-name location.
 
-use std::cell::RefCell;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use fsl_forms::{DeclarationSpans, ExpressionSpans, SpanId};
+use fsl_forms::{DeclarationSpans, ExpressionSpans};
 use fsl_foundation::source::provenance::{RawSourceRef, SourceRegion};
 use fsl_foundation::source_map::SourceMap;
 use fsl_foundation::Span;
@@ -31,72 +30,6 @@ use super::{CheckCause, CheckRefusal, CheckedGraph, PackageDeclarations};
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
-
-/// The span node each location of a checked unit reaches, remembered by the
-/// address of the location's last link and the span tree it was read in. A
-/// node's span is its parent's child, so a located arena resolves each node
-/// in constant time, never by walking its whole path again. The memo keeps a
-/// clone of every location it remembered a link of, so no remembered address
-/// is freed and reused by another chain while the memo lives, and a span tree
-/// of another origin never reads another tree's entry.
-#[derive(Default)]
-struct SpanMemo {
-    reached: RefCell<HashMap<(usize, usize), Option<SpanId>>>,
-    held: RefCell<Vec<Location>>,
-    /// When set, [`Self::at`] answers with the `n`th binder name token the
-    /// reached node declares instead of the node's own span.
-    binder: Option<usize>,
-    /// The ancestry links `reach` has visited, so a test can bound the work.
-    #[cfg(test)]
-    visited: std::cell::Cell<usize>,
-}
-
-impl SpanMemo {
-    /// The node of `spans` that `location`'s path reaches.
-    fn reach(&self, spans: &ExpressionSpans, location: &Location) -> Option<SpanId> {
-        let mut reached = self.reached.borrow_mut();
-        let tree = std::ptr::from_ref(spans) as usize;
-        // The unresolved links from the tip up to a link already reached.
-        let mut pending: Vec<(usize, usize)> = Vec::new();
-        let mut node = spans.root();
-        for (address, index) in location.ancestry() {
-            #[cfg(test)]
-            self.visited.set(self.visited.get() + 1);
-            if let Some(known) = reached.get(&(address, tree)) {
-                node = (*known)?;
-                break;
-            }
-            pending.push((address, index));
-        }
-        if !pending.is_empty() {
-            self.held.borrow_mut().push(location.clone());
-        }
-        for (address, index) in pending.into_iter().rev() {
-            let next = spans.child(node, index);
-            reached.insert((address, tree), next);
-            node = next?;
-        }
-        Some(node)
-    }
-
-    /// The span `location`'s path reaches in `spans`.
-    fn at(&self, spans: &ExpressionSpans, location: &Location) -> Option<Span> {
-        let node = self.reach(spans, location)?;
-        match self.binder {
-            Some(ordinal) => spans.binder_spans(node).get(ordinal).copied(),
-            None => spans.span(node),
-        }
-    }
-}
-
-/// The span `location`'s path reaches in `spans`.
-pub(super) fn span_at(spans: &ExpressionSpans, location: &Location) -> Option<Span> {
-    SpanMemo::default().at(spans, location)
-}
-
-pub(super) fn operator_span_at(spans: &ExpressionSpans, location: &Location) -> Option<Span> {
-    spans.operator_span(SpanMemo::default().reach(spans, location)?)
-}
 
 /// The source a region is read from, the document it is embedded in, and
 /// the sources that own the unit's declarations when it was assembled from
@@ -141,8 +74,17 @@ fn nominal_declaration_name(origin: &str) -> Option<&str> {
 
 /// The region `location` names, given each function's and each state
 /// clause's form spans by declaration index.
+/// The span of the node `location` reaches in `spans`, or the `binder`th binder
+/// name token that node declares.
+fn at(binder: Option<usize>, spans: &ExpressionSpans, location: &Location) -> Option<Span> {
+    match binder {
+        Some(ordinal) => spans.binder_span_at(location, ordinal),
+        None => spans.span_at(location),
+    }
+}
+
 fn resolve<'s>(
-    memo: &SpanMemo,
+    binder: Option<usize>,
     document: Document<'_>,
     spans: impl Fn(usize) -> Option<&'s DeclarationSpans>,
     clause_spans: impl Fn(usize) -> Option<&'s DeclarationSpans>,
@@ -164,15 +106,15 @@ fn resolve<'s>(
         // A function synthesized for dispatch has no form spans: every
         // occurrence in it is located at the declaration it came from.
         Origin::Body { index, .. } => match spans(*index) {
-            Some(form) => memo.at(&form.body, location)?,
+            Some(form) => at(binder, &form.body, location)?,
             None => *synthesized.get(index)?,
         },
-        Origin::StateClause { index, .. } => memo.at(&clause_spans(*index)?.body, location)?,
-        Origin::Measure { index, .. } => memo.at(spans(*index)?.measure.as_ref()?, location)?,
+        Origin::StateClause { index, .. } => at(binder, &clause_spans(*index)?.body, location)?,
+        Origin::Measure { index, .. } => at(binder, spans(*index)?.measure.as_ref()?, location)?,
         // A site with an expression tree walks it; any other declared name
         // names one span, at its root only.
         Origin::TypeDeclaration { name } => match sites.get(name) {
-            Some(spans) => memo.at(spans, location)?,
+            Some(spans) => at(binder, spans, location)?,
             None if location.depth() == 0 => *types.get(name)?,
             None => return None,
         },
@@ -236,7 +178,7 @@ impl PackageDeclarations {
     /// for a position in a tree not read from it.
     pub fn region(&self, location: &Location) -> Option<SourceRegion> {
         resolve(
-            &SpanMemo::default(),
+            None,
             Document {
                 source: &self.source,
                 embedding: self.embedding.as_deref(),
@@ -322,22 +264,18 @@ impl DeclarationRegions {
     /// FR-096: the region `location` names, by the same rule as
     /// [`PackageDeclarations::region`] over the declarations taken.
     pub fn region(&self, location: &Location) -> Option<SourceRegion> {
-        self.region_in(&SpanMemo::default(), location)
+        self.region_in(None, location)
     }
 
     /// The region of the `ordinal`th binder name token of the expression
     /// node `location` names.
     fn binder_region(&self, location: &Location, ordinal: usize) -> Option<SourceRegion> {
-        let memo = SpanMemo {
-            binder: Some(ordinal),
-            ..SpanMemo::default()
-        };
-        self.region_in(&memo, location)
+        self.region_in(Some(ordinal), location)
     }
 
-    fn region_in(&self, memo: &SpanMemo, location: &Location) -> Option<SourceRegion> {
+    fn region_in(&self, binder: Option<usize>, location: &Location) -> Option<SourceRegion> {
         resolve(
-            memo,
+            binder,
             Document {
                 source: &self.source,
                 embedding: self.embedding.as_deref(),
@@ -478,7 +416,7 @@ impl DeclarationRegions {
             }
             CheckCause::Terminal(cause) => {
                 let spans = self.terminal_spans.get(cause.declaration)?.as_ref()?;
-                let span = SpanMemo::default().at(spans, &refusal.location)?;
+                let span = spans.span_at(&refusal.location)?;
                 region(&self.source, self.embedding.as_deref(), span)
             }
             CheckCause::MissingSegment {
@@ -613,7 +551,7 @@ impl CheckedGraph {
     /// only the checked package resolves an `Evaluation.location`.
     pub fn region(&self, location: &Location) -> Option<SourceRegion> {
         resolve(
-            &SpanMemo::default(),
+            None,
             Document {
                 source: &self.source,
                 embedding: self.embedding.as_deref(),
@@ -650,35 +588,6 @@ impl CheckedGraph {
             .into_iter()
             .map(|span| region(source, self.embedding.as_deref(), span))
             .collect()
-    }
-
-    /// [`Self::region`] as a function that remembers the span node each
-    /// location reaches, so resolving every location of a deep body costs
-    /// the body's size, not its size times its depth. The function keeps a
-    /// clone of each location it remembers, so any location may be asked
-    /// about, graph-owned or not.
-    pub fn memoized_regions(&self) -> impl Fn(&Location) -> Option<SourceRegion> + '_ {
-        let memo = SpanMemo::default();
-        move |location| {
-            resolve(
-                &memo,
-                Document {
-                    source: &self.source,
-                    embedding: self.embedding.as_deref(),
-                    source_owners: &self.source_owners,
-                    function_sources: &self.function_sources,
-                },
-                |index| self.form_spans.get(index)?.as_ref(),
-                |index| Some(&self.state_clauses.get(index)?.spans),
-                DeclaredSpans {
-                    types: &self.type_spans,
-                    sites: &self.site_spans,
-                    synthesized: &self.synthesized_spans,
-                },
-                |protocol, attempt| *self.attempt_spans.get(protocol)?.get(attempt)?,
-                location,
-            )
-        }
     }
 
     /// FR-096: the region of function `index`'s whole declaration form, or
@@ -1066,42 +975,6 @@ mod tests {
         assert_eq!(checked.declaration_region(0), Some(form));
         // A location the unit does not read still resolves to none.
         assert_eq!(declarations.region(&body(&[3])), None);
-    }
-
-    /// FR-096-AC-1: one memo resolves every location of a deep body in
-    /// work linear in the body's size. Walking each location's ancestry
-    /// afresh would visit about `DEPTH * DEPTH / 2` links.
-    #[trace("FR-096-AC-1")]
-    #[test]
-    fn a_shared_memo_visits_each_ancestry_link_once_across_a_deep_body() {
-        const DEPTH: usize = 2_000;
-        let mut spans = ExpressionSpans::new(Span { start: 0, end: 1 }).unwrap();
-        let mut node = spans.root();
-        let mut location = body(&[]);
-        let mut locations = Vec::new();
-        for _ in 0..DEPTH {
-            node = spans.push_child(node, Span { start: 0, end: 1 }).unwrap();
-            location = location.child(0);
-            locations.push(location.clone());
-        }
-        let memo = crate::check::region::SpanMemo::default();
-        for location in &locations {
-            assert_eq!(memo.at(&spans, location), Some(Span { start: 0, end: 1 }));
-        }
-        assert!(
-            memo.visited.get() <= 2 * DEPTH,
-            "{} links visited for {DEPTH} nested locations",
-            memo.visited.get()
-        );
-        let separately: usize = locations
-            .iter()
-            .map(|location| {
-                let each = crate::check::region::SpanMemo::default();
-                each.at(&spans, location);
-                each.visited.get()
-            })
-            .sum();
-        assert!(separately > 100 * DEPTH, "{separately}");
     }
 
     /// SR-742 FND-001: a `SourceMap` embedding whose own body is a

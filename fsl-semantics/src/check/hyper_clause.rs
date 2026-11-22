@@ -2502,7 +2502,7 @@ fn body_refusal(
     scope: &Scope,
 ) -> Found {
     let span = spans
-        .at(&refusal.location.path())
+        .span_at(&refusal.location)
         .or_else(|| spans.span(spans.root()))
         .unwrap_or(Span { start: 0, end: 0 });
     body_refusal_at(
