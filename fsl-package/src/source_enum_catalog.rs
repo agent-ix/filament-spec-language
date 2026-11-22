@@ -18,10 +18,7 @@ pub enum SourceEnumRowKind {
     /// An enum declared by an admitted source unit.
     Source,
     /// An enum declared by an admitted model document.
-    Model {
-        /// The original declaration identity authenticated by its model row.
-        name: &'a str,
-    },
+    Model,
 }
 
 /// A catalog failure, retaining the original native denial without allocation.
@@ -113,7 +110,10 @@ pub enum EnumScope<'a> {
         index: usize,
     },
     /// An exact shape or variant authenticated by an actual model row.
-    Model,
+    Model {
+        /// The original declaration identity authenticated by its model row.
+        name: &'a str,
+    },
     /// Neither joined source nor model rows supplied this identity.
     Missing,
 }
