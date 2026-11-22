@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! First-hit cyclic reward documents checked without analyzer linkage.
-use super::bounded::{document, key, mutate, request_with, run};
+use super::bounded::{
+    check_kernel_document, document, key, mutate, replace_kernel_source_and_rebind,
+    request_with, run,
+};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use ix_trace_rs::trace;
@@ -45,17 +48,30 @@ fn cyclic_reward_roundtrip_stops_before_post_target_cycles() {
     assert_eq!(code, 1, "{output}");
     assert_eq!(output["rule"], "threshold-missed");
     let mut irrelevant = request.clone();
-    replace_source(
+    replace_kernel_source_and_rebind(
         &mut irrelevant,
-        &source(
+        &(source(
             "if lost then 1 else 3",
             "<= 4",
             true,
-            "if m.attempts = 2 then (1 mod 0 = 0) else m.delivered",
-        ),
+            "if m.attempts = 2 then (partial_remainder(0) = 0) else m.delivered",
+        ) + "\nfunction partial_remainder using v(x: Integer): Integer pure { 1 mod x }\n"),
     );
-    let (code, output) = run(&irrelevant);
-    assert_eq!(code, 0, "irrelevant post-B predicate: {output}");
+    let output = check_kernel_document(&irrelevant, &filament_exact::Cancel::new());
+    assert!(
+        matches!(
+            output,
+            Ok(fsl_replay::ExactProbabilityCertificateCheck::Accepted(_))
+        ),
+        "irrelevant post-B predicate: {output:?}"
+    );
+    let (code, refused) = run(&irrelevant);
+    assert_ne!(
+        code, 0,
+        "the public facade retains Linked checking: {refused}"
+    );
+    assert_eq!(refused["status"], "refused", "{refused}");
+    assert!(refused.get("value").is_none());
 }
 #[trace("TC-1403", "FR-201-AC-36", "FR-201-AC-37")]
 #[test]

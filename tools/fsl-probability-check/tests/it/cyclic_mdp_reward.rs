@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Finite MDP reward evidence checked in an analyzer-free process.
-use super::bounded::{alter_keys, document, mutate, request_with, run};
+use super::bounded::{
+    alter_keys, check_kernel_document, document, mutate, replace_kernel_source_and_rebind,
+    request_with, run,
+};
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
@@ -74,17 +77,31 @@ fn same_distribution_distinct_costs_check_both_extrema_and_thresholds() {
         );
         assert_eq!(run(&changed).1["rule"], "inequality-fails");
         let mut post_b = request.clone();
-        replace_source(
+        replace_kernel_source_and_rebind(
             &mut post_b,
-            &source(
+            &(source(
                 false,
                 "1",
                 "2",
                 bound,
-                "if m.attempts = 2 then (1 mod 0 = 0) else m.delivered",
-            ),
+                "if m.attempts = 2 then (partial_remainder(0) = 0) else m.delivered",
+            ) + "\nfunction partial_remainder using v(x: Integer): Integer pure { 1 mod x }\n"),
         );
-        assert_eq!(run(&post_b).0, 0);
+        let output = check_kernel_document(&post_b, &filament_exact::Cancel::new());
+        assert!(
+            matches!(
+                output,
+                Ok(fsl_replay::ExactProbabilityCertificateCheck::Accepted(_))
+            ),
+            "irrelevant post-B predicate: {output:?}"
+        );
+        let (code, refused) = run(&post_b);
+        assert_ne!(
+            code, 0,
+            "the public facade retains Linked checking: {refused}"
+        );
+        assert_eq!(refused["status"], "refused", "{refused}");
+        assert!(refused.get("value").is_none());
     }
 }
 #[trace("TC-1405", "FR-201-AC-44", "FR-201-AC-45")]
