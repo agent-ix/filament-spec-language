@@ -559,6 +559,15 @@ impl<'a> PackageProtocolProgram<'a> {
             } else {
                 let invariant = member(body, "proof")
                     .and_then(|proof| member(proof, "invariant"))
+                    .and_then(|term| match term {
+                        fsl_package::CheckedTerm::Reference { target } => admitted
+                            .resolved_graph()
+                            .nodes
+                            .iter()
+                            .find(|node| &node.node_id == target)
+                            .map(|node| &node.body),
+                        _ => Some(term),
+                    })
                     .and_then(|term| term.literal_read())
                     .and_then(|literal| match literal.value {
                         fsl_package::CheckedLiteralValue::Boolean(value) => Some(value),

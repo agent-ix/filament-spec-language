@@ -1360,6 +1360,16 @@ fn protocol_literal_repeat_name(view: &dyn AnalysisView, name: &str) -> Option<S
     })?;
     let invariant =
         member(&repeat.node.body, "proof").and_then(|proof| member(proof, "invariant"))?;
+    let invariant = match invariant {
+        fsl_package::CheckedTerm::Reference { target } => &view
+            .package()
+            .resolved_graph()
+            .nodes
+            .iter()
+            .find(|node| &node.node_id == target)?
+            .body,
+        term => term,
+    };
     matches!(
         invariant.literal_read()?.value,
         fsl_package::CheckedLiteralValue::Boolean(_)
