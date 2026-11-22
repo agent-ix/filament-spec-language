@@ -684,31 +684,28 @@ mod tests {
                 u128::from(completed),
                 "the first unpaid charge retains the cumulative attempted total: {refusal:?}"
             );
-            match kind {
+            let fsl_package::NativeJoinFailure::Rows(rows) = refusal.native.native() else {
+                panic!("the original row owner is preserved: {refusal:?}");
+            };
+            let expected_code = match kind {
                 filament_contract_model::NativeJoinChargeKind::Work => {
-                    let fsl_package::NativeJoinFailure::Rows(rows) = refusal.native.native() else {
-                        panic!("the original row owner is preserved: {refusal:?}");
-                    };
-                    assert_eq!(rows.code(), fsl_package::NativeRowErrorCode::WorkLimit);
-                    assert_eq!(
-                        rows.locus().expect("the row denial has its locus").form,
-                        "source_enum_catalog_index",
-                        "{refusal:?}"
-                    );
+                    fsl_package::NativeRowErrorCode::WorkLimit
                 }
                 filament_contract_model::NativeJoinChargeKind::Storage => {
-                    let fsl_package::NativeJoinFailure::Projection(projection) =
-                        refusal.native.native()
-                    else {
-                        panic!("the original projection owner is preserved: {refusal:?}");
-                    };
-                    assert_eq!(
-                        projection.code,
-                        filament_contract_model::ExactTypeProjectionErrorCode::ExhaustedStorage,
-                        "the original typed owner code is preserved: {refusal:?}"
-                    );
+                    fsl_package::NativeRowErrorCode::StorageLimit
                 }
-            }
+            };
+            assert_eq!(rows.code(), expected_code, "{refusal:?}");
+            assert_eq!(
+                rows.locus(),
+                Some(filament_contract_model::NativeJoinLocus {
+                    source: filament_contract_model::NativeJoinLocusSource::AdapterRow(0),
+                    form: "source_enum_catalog_index",
+                }),
+                "{refusal:?}"
+            );
+            assert_eq!(rows.denied(), Some(refusal.unpaid), "{refusal:?}");
+            assert_eq!(rows.configured_bound(), Some(completed - 1), "{refusal:?}");
         }
     }
 }

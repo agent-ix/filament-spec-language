@@ -1672,11 +1672,11 @@ fn service_refuses_emission_naming_its_boolean_random_parameter() {
             [
                 fsl_semantics::check::PackageSupport {
                     value: fsl_semantics::check::PackageLiteral::Boolean(true),
-                    weight: Rational::from_integer(Integer::from(98)),
+                    weight: Rational::from_integer(Integer::from(98_i64)),
                 },
                 fsl_semantics::check::PackageSupport {
                     value: fsl_semantics::check::PackageLiteral::Boolean(false),
-                    weight: Rational::from_integer(Integer::from(2)),
+                    weight: Rational::from_integer(Integer::from(2_i64)),
                 },
             ]
         );
