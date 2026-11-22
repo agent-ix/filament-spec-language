@@ -44,24 +44,24 @@ relationships:
 
 ## Description
 
-A run request supplies function arguments as JSON, and a run result reports
-the value a function returned as JSON. Both SHALL use one value form, the
-**run value form**: FR-106's closed value grammar, the grammar a snapshot's
-fields and an invocation's parameters and result already use, with the
-tuple, union-payload, identity-reference and population forms below added
-for run documents. Every value of every declared type that has an FSpec
-FR-181 typed canonical form can be passed as an argument and returned as a
-result.
+A public run request supplies function arguments as JSON, and a public run
+result reports the value a function returned as JSON. Both SHALL use FSpec
+FR-181's tagged canonical values under "Canonical command boundary" below;
+a Population argument retains the separate `{"population":P}` selection.
+Every value of every declared type that has an FSpec FR-181 typed canonical
+form can be passed as an argument and returned as a result. A completed
+value can be passed back unchanged as an argument of a later run, so a
+caller can chain runs, and consumers of the standard envelope (FSpec
+FR-550) and an FSL public run document read the same values.
 
-One form serves both directions for three reasons. A value read in one place
-reads the same way in every other, so one reader and one writer exist. A
-completed result can be passed back unchanged as an argument of a later run,
-so a caller can chain runs. And every form maps one to one onto an FSpec
-FR-181 typed canonical form (ADR-034 CS-2), so a consumer of the standard
-envelope (FSpec FR-550) and a consumer of an FSL run document read the same
-values.
+The **native run value form** below is FR-106's closed value grammar with
+tuple, union-payload, identity-reference and population forms added. It is
+the internal admission representation and the contract of the separately
+exposed spine and clause readers. It SHALL NOT be accepted as an alternative
+to canonical values at the public command boundary. Its correspondence to
+FSpec FR-181 remains ADR-034 CS-2's one-to-one mapping.
 
-The run value form applies to:
+The public canonical boundary applies to:
 
 - each `value` of `call.arguments` in a native-run/1 request (FR-100);
 - each `value` of the `arguments` of FR-312's `function` selection and of

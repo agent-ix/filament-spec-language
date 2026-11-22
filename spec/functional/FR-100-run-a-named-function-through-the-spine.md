@@ -367,12 +367,15 @@ call. A completed Reference SHALL retain the actual returned identity triple
 in `CallValue::Reference`, without dereferencing or narrowing it.
 An unexpected completed kind remains an internal invariant failure.
 
-A completed value is serialized in FR-650's run value form. A Reference is
-`{"reference": {"universe": U, "type": T, "object_identity": O}}`: `U` and
-`T` are the actual UniverseId and most-specific EffectiveId, written as
-FR-650 "Identity spellings" states (structural identity objects, never hex),
-and `O` is the exact nonempty UTF-8 object identity. No population binding or object fields are serialized as a
-Reference result.
+A completed value is serialized in FSpec FR-181's tagged canonical form,
+as FR-650's "Canonical command boundary" specifies. A Reference is
+`{"type":"reference","universe":U,"object_type":T,"identity":O}`:
+`U` is the structural declaration node id of the actual universe's least
+root type, `T` is the structural declaration node id of the returned object's
+most-specific type, and `O` is the lowercase hexadecimal encoding of its
+exact nonempty identity bytes. Each node id carries `package`, `path` and
+`ordinal`; neither node id is a digest or hexadecimal identity string. No
+population binding or object fields are serialized as a Reference result.
 
 For a call that reaches S6a, `command`'s outcome carries one
 `spine-run-result/1` JSON document as its result document and no refusal
