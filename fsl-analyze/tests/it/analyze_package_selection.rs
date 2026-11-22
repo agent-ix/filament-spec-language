@@ -1406,3 +1406,52 @@ fn a_replay_over_the_input_bytes_bound_settles_replay_refused_on_both_routes() {
         assert_ne!(run.exit, 30, "{route}: {document}");
     }
 }
+
+fn at_most_two_invariant() -> &'static str {
+    "invariant AtMostTwoInv using v on M::Counter at current { self.value <= 2 }\n"
+}
+
+/// FR-850 "Equality with the source route", FR-940 (QSL-2765): an `invariant`
+/// state clause a reachable state violates settles over the package as it
+/// does from source: refuted, with the source route's counterexample,
+/// replay, record, aggregate and exit code. The replay is read from the
+/// package bytes alone.
+#[trace("TC-2410", "FR-850-AC-5")]
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn a_refuted_invariant_settles_over_a_package_as_from_source() {
+    let items = json!([{"claim": "AtMostTwoInv"}]);
+    let ws = Workspace::new("package-invariant-refuted");
+    let source = analyze(&counter_request(&ws, at_most_two_invariant(), items.clone()));
+    assert_eq!(label(&source.item(0)), "refuted", "{}", source.document());
+    assert_eq!(source.item(0)["replay"]["reproduced"], true);
+    let (members, _) = package_request(&ws, at_most_two_invariant(), items);
+    let run = analyze_members(&ws, "analyze-invariant-refuted.json", &members);
+    assert_eq!(label(&run.item(0)), "refuted", "{}", run.document());
+    assert_eq!(run.item(0)["replay"]["reproduced"], true, "{}", run.document());
+    for member in ["items", "aggregate", "last_stage", "category", "registry"] {
+        assert_eq!(
+            run.document()[member],
+            source.document()[member],
+            "{member}: {}",
+            run.document()
+        );
+    }
+    assert_eq!(run.exit, source.exit);
+}
+
+/// An invariant that holds stays proved on both routes with equal items.
+#[trace("TC-2410", "FR-850-AC-5")]
+#[test]
+fn a_held_invariant_stays_proved_beside_a_refuted_one_over_a_package() {
+    let body = format!("{}{}", not_above_three(), at_most_two_invariant());
+    let items = json!([{"claim": "NotAboveThree"}, {"claim": "AtMostTwoInv"}]);
+    let ws = Workspace::new("package-invariant-mixed");
+    let source = analyze(&counter_request(&ws, &body, items.clone()));
+    assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
+    let (members, _) = package_request(&ws, &body, items);
+    let run = analyze_members(&ws, "analyze-invariant-mixed.json", &members);
+    assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
+    assert_eq!(run.document()["items"], source.document()["items"]);
+    assert_eq!(run.exit, source.exit);
+}
