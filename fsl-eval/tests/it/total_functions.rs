@@ -936,13 +936,22 @@ fn p09_intervals_come_only_from_declared_types_and_literal_guards() {
         literal(0),
     ))])
     .unwrap();
+    // FSpec FR-146 item 7: `a < b` records the difference bound `a - b <= -1`,
+    // so `b - a` is `[1, 3]` and fits `Int[0, 9]`; under `a > b` the bound
+    // `b - a <= -1` caps it at `[-3, -1]`, which does not.
+    check(vec![body(if_then(
+        binary(BinaryOperator::Less, name("a"), name("b")),
+        binary(BinaryOperator::Subtract, name("b"), name("a")),
+        literal(0),
+    ))])
+    .unwrap();
     assert_eq!(
         unproved(check(vec![body(if_then(
-            binary(BinaryOperator::Less, name("a"), name("b")),
+            binary(BinaryOperator::Greater, name("a"), name("b")),
             binary(BinaryOperator::Subtract, name("b"), name("a")),
             literal(0),
         ))])),
-        range(-3, 3)
+        range(-3, -1)
     );
     check(vec![body(binary(
         BinaryOperator::Add,
