@@ -96,19 +96,47 @@ impl BarePackage<'_> {
         let mut terminals = Vec::with_capacity(rows.len());
         for row in rows {
             let model_key = key(&row.model)?;
-            let context = objects
-                .iter()
-                .map(|object| object.key())
-                .find(|effective| {
-                    let original = effective.original();
-                    let declaration = filament_checked::key::DeclarationKey {
-                        package: original.package().to_owned(),
-                        node: original.node().to_owned(),
-                    };
-                    fsl_semantics::model::key::object_type_node_key(&declaration)
-                        .is_ok_and(|node| node == model_key)
-                })
-                .ok_or_else(|| fault("terminal-model-type"))?;
+            // The row names the selected model's `model_root` node (FSpec
+            // FR-476-AC-6); `self` ranges over the model's terminal object,
+            // as the source route's lowering chooses it: the one object type
+            // the model's populations range over, else the least object type
+            // by declaration key.
+            let mut declared: Vec<EffectiveId> = Vec::new();
+            for object in objects {
+                let effective = object.key();
+                let package_name = effective.original().package();
+                let root = NodeKey::new(
+                    package_name,
+                    vec![
+                        filament_exact::PathSegment::Text("model".into()),
+                        filament_exact::PathSegment::Text("model_root".into()),
+                    ],
+                    0,
+                )
+                .map_err(|_| fault("terminal-model-type"))?;
+                if root == model_key {
+                    declared.push(effective);
+                }
+            }
+            // FR-124: each population's canonical member (its least declared
+            // member type), once each; exactly one names `self`'s type, as
+            // the source lowering's `population_objects` does.
+            let canonical = self.population_canonical_members(model_key.package());
+            let context = match canonical.as_slice() {
+                [only] => declared
+                    .iter()
+                    .find(|effective| *effective == only)
+                    .cloned()
+                    .ok_or_else(|| fault("terminal-population-object-is-not-an-object-type"))?,
+                _ => declared
+                    .iter()
+                    .min_by(|left, right| {
+                        (left.original().package(), left.original().node())
+                            .cmp(&(right.original().package(), right.original().node()))
+                    })
+                    .map(|effective| (*effective).clone())
+                    .ok_or_else(|| fault("terminal-model-type"))?,
+            };
             // The selection that owns the type names the model, as the source
             // route's `model.selection().identity` does; a model with no
             // population falls back to the selection that declares the type.

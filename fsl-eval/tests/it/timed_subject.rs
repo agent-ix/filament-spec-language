@@ -1377,13 +1377,8 @@ fn clock_reference_enumeration_refuses_both_model_routes() {
         );
         let read = fsl_package::read_evaluation_package(
             &world.package,
-            fsl_semantics::library::LibraryName::new(
-                world
-                    .package
-                    .emitted_package_name()
-                    .expect("emitted package name"),
-            )
-            .expect("actual package name"),
+            fsl_semantics::library::LibraryName::new(world.package.graph().package_name())
+                .expect("actual package name"),
             &world.packages,
             fsl_package::V2ReadLimits::fixture(),
             fsl_package::EmitLimits::fixture(),
