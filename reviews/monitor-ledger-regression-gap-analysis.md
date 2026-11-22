@@ -140,3 +140,9 @@ dispositions:
     \      (position.identity, stamp)\n                })\n                .collect::<BTreeSet<_>>()\n\
     \                .len()"
 ```
+
+## Final focused runtime verification
+
+The owning lane ran the four exact integration tests locally through the shared build wrapper at `19773efb53035f0d51b18e417d50667cfbf44571`: the three assigned `monitor_incremental` regressions and `qsl_2750_missing_window_matches_batch_and_checkpoint`. Result: 4 passed, 0 failed, 0 ignored. This includes the full report parity oracle, explicit uncovered-tail completeness refusal and rollback, frozen settlement report, later session ledger admission, partial-watermark/out-of-order history, valid checkpoint continuation and five negative checkpoint controls.
+
+The branch then rebased onto current main `2fa6678716a2274d2a1fe91ec0ee7e3da5ce77dc`. Range-diff confirms all eight existing commits unchanged. No temporal clause/session implementation or monitor regression test changed in that upstream delta. All scoped static findings remain fixed; runtime acceptance is now satisfied. The final exact-head all-target compile gate and matched-head merge evidence will be recorded on PR #3411 after execution. No full runtime gate or broader assurance pass is claimed.
