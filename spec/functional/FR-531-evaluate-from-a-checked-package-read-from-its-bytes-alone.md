@@ -378,6 +378,7 @@ equal inputs.
 | `model_enum_declarations` | every final emission's `SelectedModelEnumDeclarationRow`: `{ "structural_node", "selected_document", "original_identity", "node_key" }` |
 | `model_enum_members` | every final emission's `SelectedModelEnumMemberRow`: `{ "structural_node", "declaration_node", "selected_document", "enum_original_identity", "member_original_identity", "case", "member_key" }` |
 | `model_enum_shapes` | every final emission's `SelectedModelEnumShapeRow`: `{ "structural_node", "node_key", "selected_document", "original_identity", "shape", "cases" }`; `shape` uses the original Exact value-type encoding below with `kind: "enum"`; each case is `{ "case", "structural_node", "member_key", "member_original_identity", "variant" }`, with `variant` `{ "owner", "case" }`. All opaque keys, including a variant's owner, use the original structural-key encoding below. |
+| `model_unions` | every final emission's `SelectedModelUnionRow`: `{ "structural_node", "selected_document", "type_handle", "settled_key", "cases" }`; each case is `{ "rank", "position", "name", "original_case", "member", "payload" }`, with `payload` `{ "kind": "none" }`, `{ "kind": "clock", "payload_type" }` or `{ "kind": "data", "node", "original_type" }`. Cases are in ascending case-name byte order and `position` is the authored index. Keys use the original structural-key encoding below. |
 
 These three model-enum channels carry only payload-free selected model variant
 types, including unused declarations and every real case node. A case with a
@@ -391,6 +392,8 @@ conflicting or noncanonical witnesses refuse before a partial enum view is
 exposed. Full runtime projection and bare evaluation consume those same joined
 shapes; an enum is never represented as a record or a union. Every producer-owned
 copy and runtime enum-member materialization is charged before copying.
+
+The `model_unions` channel carries the selected payload-bearing variant types, including Clock payloads. Contract IR's `with_model_union_rows` joins it against the package; a package selecting no union carries an empty channel and skips the join. The reader and bare evaluation read union values and `case` arms through the joined row, so a member's position is its canonical rank. The bytes route does not carry model-tuple rows, so a package with both model tuples and payload unions refuses at the join's coverage check.
 
 Enum return values and `=` and `!=` evaluation use these joined shapes and native
 equality decisions. Held structural-node membership establishes fact locality;
