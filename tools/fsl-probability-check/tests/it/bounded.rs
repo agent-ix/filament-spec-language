@@ -390,6 +390,44 @@ fn bounded_deliver_exact_minimum_maximum_and_workload_cross_the_process_boundary
         let source = source.replace(threshold, beyond);
         stronger["source"]["content"] = json!(source);
         stronger["byte_provision"][0][2] = json!(source.as_bytes());
+        // The stronger bound is a different checked claim. Keep its actual
+        // identity and monitor context while testing the same exact values.
+        let (checked, _) = compile_source(&source);
+        let claim = checked
+            .package()
+            .graph()
+            .probabilistic_model()
+            .claim("Likely")
+            .unwrap();
+        let item = fsl_replay::probabilistic_claim_identity(claim).unwrap();
+        let identity = json!({"node_id":fsl_foundation::node_wire::node_key_to_json(item.node()).unwrap(), "model":item.model().map(|model| model.as_str()), "ordinal":item.ordinal()});
+        stronger["item"] = identity.clone();
+        let context = fsl_eval::automaton::StateContext {
+            root: fsl_eval::automaton::ContextRoot::Clause(claim.occurrence().unwrap().clone()),
+            profile: fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
+                .unwrap(),
+            activation: fsl_eval::automaton::ContextActivation::Origin,
+            binding: vec![fsl_eval::automaton::ContextBinding::instance(
+                claim.over.as_ref().unwrap().node().unwrap().clone(),
+                stronger["universes"][0]["keys"][0].as_str().unwrap(),
+            )],
+        };
+        let fsl_semantics::check::ProbForm::Probability {
+            event: fsl_semantics::check::Event::Formula { formula, .. },
+            ..
+        } = &claim.form
+        else {
+            panic!("a bounded formula claim")
+        };
+        let monitor =
+            fsl_eval::automaton::QualifiedBoundedMonitor::new(formula.formula(), &context, 100)
+                .unwrap();
+        let actual: Value =
+            serde_json::from_slice(monitor.decision_key(true).unwrap().as_bytes()).unwrap();
+        let mut doc = document(&stronger);
+        doc["identity"] = identity;
+        alter_keys(&mut doc, |state| state[5][1][1] = actual[1].clone());
+        stronger["certificate"] = json!(serde_json::to_string(&doc).unwrap());
         let (code, result) = run(&stronger);
         assert_eq!(code, 1, "{result}");
         assert_eq!(result["rule"], "threshold-missed");
@@ -548,7 +586,11 @@ fn bounded_always_extrema_workload_and_strict_policy_absence_are_independent() {
             optimization
         );
         let dual_operator = if operator == ">=" { "<=" } else { ">=" };
-        let dual_threshold = if dual_operator == "<=" { "1" } else { "0" };
+        let dual_threshold = if dual_operator == "<=" {
+            "0.875"
+        } else {
+            "0.375"
+        };
         let dual = source
             .replace("always[", "eventually[")
             .replace("holds(not m.delivered)", "holds(m.delivered)")
@@ -692,7 +734,7 @@ fn bounded_always_endpoints_terminal_keys_ranks_and_controls_are_checked() {
     let (code, result) = run_with(&original, &["--cancel"]);
     assert_ne!(code, 0, "{result}");
     assert!(result.get("value").is_none());
-    let fair = always_source("every scheduler fair strong Msg::send_a", ">=", "0", 2);
+    let fair = always_source("every scheduler fair strong Msg::send_a", ">=", "0.75", 2);
     let (certificate, settlement) = request(&fair, SNAPSHOT, ExactProbLimits::default());
     assert!(certificate.is_none());
     assert!(
