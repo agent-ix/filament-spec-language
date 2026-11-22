@@ -174,7 +174,7 @@ fn a_package_task_set_declared_out_of_name_order_equals_the_source() {
         profile t = \"filament.temporal.complete/v1\";\n\
         dimension Time;\nunit ms : Time = rational(1, 1);\n\
         taskset Rev {\n\
-        task z periodic 12 ms deadline 12 ms wcet 5 ms priority 1 lo jitter 1 ms blocking 1 ms;\n\
+        task z periodic 12 ms deadline 12 ms wcet 5 ms priority 1 jitter 1 ms blocking 1 ms lo;\n\
         task m sporadic 6 ms deadline 6 ms wcet 2 ms priority 2 lo;\n\
         task a periodic 4 ms deadline 4 ms wcet 1 ms priority 3 lo;\n}\n\
         taskset Plain {\n\
