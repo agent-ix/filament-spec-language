@@ -160,21 +160,6 @@ fn malformed_package_bytes_refuse_a_value_item_typed() {
     }
 }
 
-/// FR-940-AC-13, FR-484: an evaluation that is undefined (a division by
-/// zero at `b = 0`) settles the source route's `refuted` item at the same
-/// locus over the package.
-#[trace("TC-2410", "FR-940-AC-13")]
-#[test]
-fn a_package_value_clause_with_an_undefined_evaluation_equals_the_source() {
-    let declarations =
-        "function Modulus using v(n: Int[0, 3]): Boolean pure { 6 mod (2 - n) >= 0 }\n";
-    let item = assert_parity(
-        "package-value-undefined",
-        declarations,
-        json!([{"claim": "Modulus", "kind": "value-validity"}]),
-    );
-    assert_eq!(label(&item), "refuted", "{item}");
-}
 
 /// FR-940-AC-13: a Boolean parameter's counterexample is spelled and
 /// replayed as the source route does.

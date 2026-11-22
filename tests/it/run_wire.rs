@@ -2224,8 +2224,6 @@ fn equivalent_package_analyze(items: Value, providers: Vec<fsl_analyze::analyze:
 /// `Integer` and of kind `value-validity`.
 #[test]
 #[trace("TC-2984", "FR-644-AC-8")]
-// QSL-2132 is the older duplicate of QSL-2767.
-#[ignore = "QSL-2767: the package route has no declaration-family item form yet, so a clocked monitor's items cannot be compared with it"]
 fn command_monitor_items_equal_the_package_route_of_its_clocked_compile() {
     use fsl_analyze::provider::ProviderVerdict;
 
