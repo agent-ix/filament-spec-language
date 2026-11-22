@@ -71,3 +71,34 @@ No function, public behavior, constructor, enum, serialization rule, bound or fe
 - Inventoried changed behaviors: dependency-kind ownership, protocol ordering type route, hyper quantifier type route. New behavior/API count 0; unowned additions 0; introduced source/test stubs 0 within the bounded diff.
 - Runtime: lead-reported pre-fix twelve cases 11 passed/1 failed and workspace check exit 0; fix-head root layering and six direct consumers remain pending. No local builds/tests/compiled repository scanners ran.
 - Semantic comparison: the parent explicitly requested requirement and product-fix consistency; it was performed over the bounded diff. No separate whole-repository semantic campaign was run.
+
+## Confined expectation-delta disposition
+
+The later one-file test delta adds precisely the three existing evaluator dependencies authorized by arch: filament-observation, sha2 and unicode-normalization. The complete sorted normal-dependency equality remains exact, build dependencies remain prohibited, and all later workspace-layer edge assertions are unchanged. There is no new product behavior or production dependency change in this delta.
+
+The static ownership reconciliation is ADR-011 section 6.1 for the two third-party crates and X-8's explicit FR-861 observation-authority dependency sentence for filament-observation. The PR body quotes the governing full sentences. This is an exact expectation correction, not an open-ended exemption. No new requirement, API, type copy, stub, unowned behavior or semantic value conversion is introduced.
+
+The already-reviewed layer-4 product correction remains untouched. No additional whole-repository audit or native matrix sweep is performed; the existing native-matrix evidence limitation is unchanged. The lead reports sixteen of seventeen named cases and workspace compilation passing on the preceding tree, with compilation and the single formerly failing exact case queued for the current delta.
+
+**Latest disposition: source clear; runtime/evidence remains CONDITIONAL.** No new finding is added and the original Findings table is preserved. Plan completion: not assessed. This disposition supplies no current-head runtime PASS and no repository-wide assurance claim.
+
+### Additional examined scope
+
+```yaml
+{
+  "scope": [
+    {
+      "id": "ADR-011",
+      "path": "spec/decisions/ADR-011-stage-dag-and-dependency-architecture.md",
+      "role": "examined",
+      "excerpt": "The column is the exhaustive allow-list of first-party layer edges; an external third-party crate is not a layer edge and this column does not govern it (for example, `filament-driver` uses `serde_json` to read FR-331 manifest bytes as data, ADR-013 T-7), except that a cell that restricts its external crates with \"only\" or \"without `std`\" (SV, WG) is exhaustive for that crate; a per-crate exact dependency table in a layering test is a stricter gate that governs where it exists."
+    },
+    {
+      "id": "ADR-011/X-8",
+      "path": "spec/decisions/ADR-011-stage-dag-and-dependency-architecture.md",
+      "role": "examined",
+      "excerpt": "FR-861 adds `filament-observation`, the observation-authority owner, as a git dependency on the repository `agent-ix/filament-observation` at `branch = \"main\"`, resolved through the workspace patch that keeps one `fsl-foundation` in the graph; its own dependencies (`fsl-foundation`, `filament-exact`, `quire-canonical`, serialization crates) are all below layer 5."
+    }
+  ]
+}
+```

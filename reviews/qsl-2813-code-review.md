@@ -195,3 +195,38 @@ The lead reports the pre-fix twelve-case titan cohort as eleven passed and one f
 ## Dispositions
 
 The original source review contained no real findings, only its required placeholder. There are therefore no FND outcomes to append. This round adds no finding. Runtime acceptance remains pending the lead's confined titan results.
+
+## Confined dependency-expectation disposition
+
+**Source clear, runtime conditional.** This pass examines only the latest delta in tests/it/family_outcome_layering.rs: exactly filament-observation, sha2 and unicode-normalization are added to the evaluator's sorted exact normal-dependency list, with the corresponding architecture comment updated. No production source, manifest, feature, lockfile, package-layer restriction or other test assertion changes in this delta.
+
+The three additions have the arch ruling recorded by the lead. ADR-011 section 6.1 distinguishes external third-party crates from first-party layer edges and expressly retains per-crate exact dependency tables as stricter gates. Its X-8 FR-861 sentence expressly admits filament-observation as observation-authority owner, with its dependencies below layer 5. The PR body quotes both full sentences. The two third-party dependencies are listed individually rather than accepted through a blanket exemption.
+
+The assert_eq on the complete sorted table is retained. An extra normal dependency still fails that equality. The build-dependency emptiness assertion and later workspace-crate edge checks are unchanged; fsl-forms remains absent from the evaluator's normal table and the package's prohibited direct forms edge remains removed by the already-reviewed product fix. The loop checks workspace members separately, so the named external observation owner is not accidentally treated as a new workspace layer exception.
+
+The lead reports the preceding measured tree as sixteen of seventeen named cases passing and workspace check exit 0. Those are prior-tree results; the current delta awaits the queued compilation and single formerly failing exact case. No local build, test, scanner or matrix sweep was run by this reviewer. No new finding or unresolved source defect is identified; the original Findings section and all prior evidence remain unchanged.
+
+### Additional examined scope for this disposition
+
+```yaml
+{
+  "scope": [
+    {
+      "id": "ADR-011",
+      "path": "spec/decisions/ADR-011-stage-dag-and-dependency-architecture.md",
+      "role": "examined",
+      "excerpt": "The column is the exhaustive allow-list of first-party layer edges; an external third-party crate is not a layer edge and this column does not govern it (for example, `filament-driver` uses `serde_json` to read FR-331 manifest bytes as data, ADR-013 T-7), except that a cell that restricts its external crates with \"only\" or \"without `std`\" (SV, WG) is exhaustive for that crate; a per-crate exact dependency table in a layering test is a stricter gate that governs where it exists."
+    },
+    {
+      "id": "ADR-011/X-8",
+      "path": "spec/decisions/ADR-011-stage-dag-and-dependency-architecture.md",
+      "role": "examined",
+      "excerpt": "FR-861 adds `filament-observation`, the observation-authority owner, as a git dependency on the repository `agent-ix/filament-observation` at `branch = \"main\"`, resolved through the workspace patch that keeps one `fsl-foundation` in the graph; its own dependencies (`fsl-foundation`, `filament-exact`, `quire-canonical`, serialization crates) are all below layer 5."
+    }
+  ]
+}
+```
+
+### Disposition-pass outcome
+
+The existing artifacts contain no real FND rows to close, and this bounded pass adds none. The source disposition is clear; runtime acceptance remains conditional until the lead receives the current-head titan result.
