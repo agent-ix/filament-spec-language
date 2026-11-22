@@ -1071,7 +1071,7 @@ fn an_undecided_contract_conjunction_leaves_its_test_undecided() {
          { probability >= 0.5 [ always[0,3] holds(c.v >= 0) ] }";
     let world = World::new_with_mode(
         &prob_world::undetermined(claim),
-        fsl_semantics::check::CheckMode::Kernel,
+        filament_semantic_value::checking::CheckMode::Kernel,
     );
     let verdict = decided(&world, "Safe", StatisticalMethod::Okamoto);
     let undecided = Decision::Undecided(UndecidedCause::UndecidedSuccessor);

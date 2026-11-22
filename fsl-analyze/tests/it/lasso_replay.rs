@@ -31,7 +31,7 @@ use crate::counter::{
     document, document_with_ranged_parameter, package_from_text, subject, unit_text, universe,
     Documents, Letters, CONTRACT, UNLIMITED,
 };
-use crate::liveness::{counter, fixture, fixture_in_mode, is_zero, Fixture};
+use crate::liveness::{counter, fixture_in_mode, is_zero, Fixture};
 use crate::model_settle::{envelope_at, request};
 
 const FORMULA: &str = "always eventually holds(c.value = 3)";

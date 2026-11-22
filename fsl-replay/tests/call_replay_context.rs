@@ -391,7 +391,10 @@ fn an_unproved_divisor_refuses_the_public_call_context_before_evaluation() {
         &Cancel::new(),
     )
     .expect_err("Linked compilation refuses an unproved divisor");
-    let RunRefusal::Compile(spine::CompileRefusal::Check { refusals, .. }) = refused.as_ref() else {
+    let RunRefusal::Compile(compile) = refused.as_ref() else {
+        panic!("the source fails during compilation: {refused:?}");
+    };
+    let spine::CompileRefusal::Check { refusals, .. } = compile.as_ref() else {
         panic!("the source fails at S3: {refused:?}");
     };
     assert!(refusals.iter().any(|refusal| {

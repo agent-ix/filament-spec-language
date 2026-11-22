@@ -61,13 +61,13 @@ pub(super) fn compile_kernel_source_with(
     spine::CheckedUnit,
     fsl_semantics::model::intake::PackageInput,
 ) {
-    compile_with_mode(source, domain, Some(fsl_semantics::check::CheckMode::Kernel))
+    compile_with_mode(source, domain, Some(filament_semantic_value::checking::CheckMode::Kernel))
 }
 
 fn compile_with_mode(
     source: &str,
     domain: &[u8],
-    check_mode: Option<fsl_semantics::check::CheckMode>,
+    check_mode: Option<filament_semantic_value::checking::CheckMode>,
 ) -> (
     spine::CheckedUnit,
     fsl_semantics::model::intake::PackageInput,

@@ -1087,6 +1087,7 @@ dependencies = [
  "base64 0.22.1",
  "filament-checked",
  "filament-exact",
+ "filament-semantic-value",
  "fsl-analyze",
  "fsl-command",
  "fsl-eval",

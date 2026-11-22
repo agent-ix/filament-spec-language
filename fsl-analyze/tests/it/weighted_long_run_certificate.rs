@@ -543,7 +543,7 @@ fn undefined_actual_weights_and_predicates_preserve_typed_nonacceptance() {
     for transient in [false, true] {
         let world = World::new_with_mode(
             &deferred_reward_model(transient, true),
-            fsl_semantics::check::CheckMode::Kernel,
+            filament_semantic_value::checking::CheckMode::Kernel,
         );
         let system = ModelSystem::new(world.subject().simulation)
             .expect("object-domain reward is deferred by FR187 admission");
