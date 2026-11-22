@@ -2279,9 +2279,16 @@ mod tests {
         use fsl_package::{BarePackage, EmitLimits, ReferenceCatalog, V2ReadLimits};
         use fsl_semantics::library::LibraryName;
         use fsl_semantics::model::accounting::ModelNormalizationLimits;
+        use fsl_semantics::model::dispatch::GeneralizationClosure;
         use fsl_semantics::model::intake::{admit_unit, package_input};
+        use fsl_semantics::model::normalize::EffectiveView;
+        use fsl_semantics::model::object_environment::ObjectEnvironment;
         use fsl_semantics::model::observation::{
-            admit_current_snapshot, declared_type_universe_for, DocumentRef, ObservationLimits,
+            admit_current_snapshot_with_views, admitted_population_document,
+            declared_type_universe_for, DocumentRef, ObservationLimits,
+        };
+        use fsl_semantics::model::population::{
+            admit_binding, AdmissionMeter, AdmissionOutcome, PopulationAdmissionLimits,
         };
         use serde_json::{json, Value};
         use std::collections::BTreeMap;
@@ -2524,7 +2531,7 @@ mod tests {
             transition
         );
         assert_eq!(system.state_key_of(&initial).unwrap().0, before);
-        let (environment, _) = admit_current_snapshot(
+        let (environment, _, views) = admit_current_snapshot_with_views(
             checked.graph().model_inputs(),
             checked.graph().scope().types(),
             &packages,
@@ -2541,7 +2548,39 @@ mod tests {
             },
             key: object_key.to_owned(),
         };
-        let binding = environment.population_binding(&population).unwrap();
+        let bind = |environment: &ObjectEnvironment,
+                    views: &[EffectiveView],
+                    population: &str| {
+            let key = DeclarationKey {
+                package: type_key.package.clone(),
+                node: population.to_owned(),
+            };
+            let view = views
+                .iter()
+                .find(|view| view.population(&key).is_some())
+                .expect("the admitted snapshot retains its population view");
+            let document = admitted_population_document(
+                view,
+                checked.graph().scope().types(),
+                environment,
+                population,
+                &["a", object_key],
+            )
+            .expect("population facts come from the admitted snapshot");
+            let mut admission = AdmissionMeter::new(PopulationAdmissionLimits::default());
+            match admit_binding(
+                view,
+                &document,
+                &key,
+                GeneralizationClosure::Closed,
+                None,
+                &mut admission,
+            ) {
+                AdmissionOutcome::Admitted(binding) => binding,
+                other => panic!("the actual snapshot population binds: {other:?}"),
+            }
+        };
+        let binding = bind(&environment, &views, &population);
         let alternate_ref = DocumentRef {
             authority: selected.authority.clone(),
             identity: "reference-alternate".to_owned(),
@@ -2554,7 +2593,7 @@ mod tests {
             alternate_ref.clone(),
             serde_json::to_vec(&alternate).unwrap(),
         )]);
-        let (alternate_environment, _) = admit_current_snapshot(
+        let (alternate_environment, _, alternate_views) = admit_current_snapshot_with_views(
             checked.graph().model_inputs(),
             checked.graph().scope().types(),
             &packages,
@@ -2564,18 +2603,16 @@ mod tests {
             ObservationLimits::default(),
         )
         .expect("other population's genuine snapshot admission");
-        let other_binding = alternate_environment
-            .population_binding(&other_population)
-            .unwrap();
+        let other_binding = bind(&alternate_environment, &alternate_views, &other_population);
         assert_eq!(binding.universe(), other_binding.universe());
         assert_eq!(
             codec
-                .restore_over_binding(&wire, Some(&selection), binding, &mut budget, &cancel, 64)
+                .restore_over_binding(&wire, Some(&selection), &binding, &mut budget, &cancel, 64)
                 .unwrap(),
             selection
         );
         assert!(matches!(
-            codec.restore_over_binding(&wire, None, binding, &mut budget, &cancel, 64),
+            codec.restore_over_binding(&wire, None, &binding, &mut budget, &cancel, 64),
             Err(ReferenceCodecError::Refused {
                 reason: ReferenceFailure::MissingPopulation,
                 ..
@@ -2585,7 +2622,7 @@ mod tests {
             codec.restore_over_binding(
                 &wire,
                 Some(&selection),
-                other_binding,
+                &other_binding,
                 &mut budget,
                 &cancel,
                 64

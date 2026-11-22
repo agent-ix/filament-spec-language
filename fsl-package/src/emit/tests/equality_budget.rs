@@ -223,7 +223,10 @@ fn bare_admission_retains_equality_and_reports_its_denial_after_projection() {
             assert_eq!(unpaid.amount, 1);
             let diagnostic = error.limit().expect("original limit diagnostic");
             assert_eq!(diagnostic.configured_bound(), work);
-            assert_eq!(diagnostic.actual(), u128::from(budget.consumed().work) + unpaid.amount);
+            assert_eq!(
+                diagnostic.actual(),
+                u128::from(budget.consumed().work) + unpaid.amount
+            );
             continue;
         }
         assert!(
