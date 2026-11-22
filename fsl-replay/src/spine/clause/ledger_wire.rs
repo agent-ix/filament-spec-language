@@ -244,16 +244,15 @@ pub fn read_ledger(bytes: &[u8]) -> Result<ProgressLedger, LedgerReadError> {
                 fingerprint: position.fingerprint,
             });
         }
-        fn key(position: &ObservedPosition) -> (&str, u64) {
-            (position.identity.as_str(), position.stamp)
-        }
+        // FR-502: membership uses the identity only, so an identity is held
+        // once, at one stamp.
         if covered
             .windows(2)
-            .any(|pair| key(&pair[0]) >= key(&pair[1]))
+            .any(|pair| pair[0].identity >= pair[1].identity)
         {
             return Err(invalid(
                 member("covered"),
-                "positions are in identity-then-stamp order with none repeated",
+                "positions are in identity order, each identity held once",
             ));
         }
         let assertion = ProgressAssertion {
@@ -268,4 +267,58 @@ pub fn read_ledger(bytes: &[u8]) -> Result<ProgressLedger, LedgerReadError> {
         entries.push((binding, ProgressLedgerEntry::new(assertion, covered)));
     }
     Ok(ProgressLedger::from_entries(entries))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ix_trace_rs::trace;
+
+    fn ledger_covering(covered: &[(&str, u64)]) -> serde_json::Value {
+        let binding = LedgerBinding {
+            package: "pkg".to_owned(),
+            clause: filament_exact::NodeKey::new(
+                "pkg",
+                vec![filament_exact::PathSegment::Text("Clause".to_owned())],
+                0,
+            )
+            .expect("a clause identity"),
+            occurrence: 0,
+            clock: "ms".to_owned(),
+            profile: "finite-window".to_owned(),
+        };
+        let assertion = ProgressAssertion {
+            watermark: 5,
+            completeness: ProgressCompleteness::Complete { through: 5 },
+            scope: ProgressClosure::Open,
+            execution: ProgressClosure::Open,
+        };
+        let entry = ProgressLedgerEntry::new(
+            assertion,
+            covered.iter().map(|(identity, stamp)| ObservedPosition {
+                identity: (*identity).to_owned(),
+                stamp: *stamp,
+                fingerprint: None,
+            }),
+        );
+        write_ledger(&ProgressLedger::from_entries([(binding, entry)])).expect("writes")
+    }
+
+    /// FR-502 "membership use the identity only": a ledger file holding one
+    /// identity at two stamps, as an older writer could write, is refused at
+    /// `covered`; one identity per stamp-distinct position is read.
+    #[trace("TC-1296", "FR-502-AC-7")]
+    #[test]
+    fn a_repeated_identity_at_two_stamps_is_refused_when_read() {
+        let bytes =
+            |covered: &[(&str, u64)]| serde_json::to_vec(&ledger_covering(covered)).expect("bytes");
+        read_ledger(&bytes(&[("a", 0), ("b", 1)])).expect("distinct identities are read");
+        let refused =
+            read_ledger(&bytes(&[("a", 0), ("a", 1)])).expect_err("one identity at two stamps");
+        assert_eq!(refused.member, "ledger.entries[0].covered");
+        assert!(
+            refused.reason.contains("each identity held once"),
+            "{refused}"
+        );
+    }
 }

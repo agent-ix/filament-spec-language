@@ -4,6 +4,7 @@
 #![allow(clippy::result_large_err)]
 //! FR-251 same-emission authority through genuine observation-owner admission.
 
+mod agreement;
 pub(crate) mod observation;
 
 use filament_exact::{Origin, Role};

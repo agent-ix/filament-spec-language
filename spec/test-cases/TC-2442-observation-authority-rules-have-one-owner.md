@@ -28,4 +28,4 @@ Scope: FR-861-AC-1, FR-861-AC-2, FR-861-AC-3, FR-861-AC-4.
 - Step 2: each ledger acceptance and refusal is the `check_revision` answer, its typed cause read from it.
 - Step 4: `fsl-eval` names `filament-observation` and calls its `partial`, `completeness` and `activation` modules; the progress ledger calls `completeness::check_revision`; the scan finds no such function, use or item, and names the file and item of any it finds.
 
-Test: `fsl-analyze/tests/it/monitor_authority/` (steps 1 to 3) and `fsl-eval/tests/it/observation_owner.rs` (step 4).
+Test: `fsl-analyze/tests/it/monitor_authority/` (steps 1 and 2) and `fsl-eval/tests/it/observation_owner.rs` (steps 3 and 4).

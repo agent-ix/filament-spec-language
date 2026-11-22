@@ -1536,25 +1536,6 @@ pub(super) fn disagreement(invariant: &'static str, owner: String, local: String
     )
 }
 
-/// The owner's completeness state against the state the evaluator's own
-/// assertion carries (FR-944 "Owner requirement: completeness revision": the
-/// ledger's `Complete { through }` rule stays local until QSL-2327).
-pub(super) fn completeness_agrees(
-    owner: filament_observation::authority::completeness::State,
-    asserted: ProgressCompleteness,
-) -> Result<(), CallFailure> {
-    use filament_observation::authority::completeness::State;
-    let local_complete = matches!(asserted, ProgressCompleteness::Complete { .. });
-    if (owner == State::Complete) == local_complete {
-        return Ok(());
-    }
-    Err(disagreement(
-        "owner-completeness-agrees",
-        format!("{owner:?}"),
-        format!("{asserted:?}"),
-    ))
-}
-
 /// A scope that created no instance: an owner `Active` contradicts the
 /// evaluator, which knows no instance exists.
 fn empty_scope_outcome(owner: Disposition) -> Result<Outcome, CallFailure> {
@@ -1729,14 +1710,6 @@ fn assess(
         &facts.authenticated,
         facts.subject.occurrence,
         &trace,
-    )?;
-    let asserted = request
-        .completeness
-        .as_ref()
-        .map_or(ProgressCompleteness::Incomplete, |record| record.state);
-    completeness_agrees(
-        owner.completeness_view(asserted, None)?.payload().state(),
-        asserted,
     )?;
     let canonical_anchor = (0..trace.len())
         .find(|index| {
@@ -2407,29 +2380,6 @@ mod tests {
 
     fn invariant_of(failure: &filament_eval::CallFailure) -> String {
         format!("{failure:?}")
-    }
-
-    /// QSL-2145 negative AC: a disagreement between the owner and the
-    /// evaluator is a fault naming both, never a preferred answer.
-    #[ix_trace_rs::trace("FR-861-AC-4", "TC-2442")]
-    #[test]
-    fn an_owner_completeness_state_that_differs_from_the_assertion_is_a_fault() {
-        use super::completeness_agrees;
-        use crate::temporal::ProgressCompleteness;
-        use filament_observation::authority::completeness::State;
-        let complete = ProgressCompleteness::Complete { through: 3 };
-        assert!(completeness_agrees(State::Complete, complete).is_ok());
-        assert!(completeness_agrees(State::Incomplete, ProgressCompleteness::Incomplete).is_ok());
-        for (owner, asserted) in [
-            (State::Incomplete, complete),
-            (State::Complete, ProgressCompleteness::Incomplete),
-        ] {
-            let failure = completeness_agrees(owner, asserted).expect_err("a disagreement");
-            let text = invariant_of(&failure);
-            assert!(text.contains("owner-completeness-agrees"), "{text}");
-            assert!(text.contains(&format!("{owner:?}")), "{text}");
-            assert!(text.contains(&format!("{asserted:?}")), "{text}");
-        }
     }
 
     #[ix_trace_rs::trace("FR-861-AC-4", "TC-2442")]

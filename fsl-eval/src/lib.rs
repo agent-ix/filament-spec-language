@@ -306,7 +306,6 @@ pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
 
 pub mod automaton;
 pub mod bare;
-pub mod completeness;
 pub mod execution;
 pub mod fairness;
 pub mod hyper;

@@ -2,70 +2,9 @@
 //! FR-944: completeness covers the admitted population, independently of its boundary.
 
 use super::*;
-use crate::temporal::ProgressCompleteness;
 use filament_observation::authority::{completeness, TemporalBoundary};
 
 impl OwnerObservation {
-    pub(in crate::temporal::evidence) fn completeness_selection(
-        &self,
-        asserted: ProgressCompleteness,
-        retained: Option<ProgressCompleteness>,
-    ) -> Result<completeness::Selection, CallFailure> {
-        let through = match asserted {
-            ProgressCompleteness::Complete { through } => Some(through),
-            ProgressCompleteness::Incomplete => None,
-        };
-        let coordinate = through.or(match retained {
-            Some(ProgressCompleteness::Complete { through }) => Some(through),
-            Some(ProgressCompleteness::Incomplete) | None => None,
-        });
-        let complete = through.is_some();
-        let boundary = match self.request.scope.range {
-            ClockRange::EventPosition { .. } => {
-                let upper = coordinate.unwrap_or(0);
-                TemporalBoundary::EventPosition {
-                    lower: upper,
-                    upper_inclusive: upper,
-                    carrier_end_exclusive: upper
-                        .checked_add(1)
-                        .ok_or_else(|| fault("completeness-boundary-fits"))?,
-                    watermark: upper,
-                }
-            }
-            ClockRange::FixedSample { .. } => {
-                let upper = coordinate.unwrap_or(0);
-                TemporalBoundary::FixedSample {
-                    lower: upper,
-                    upper_inclusive: upper,
-                    carrier_end_exclusive: upper
-                        .checked_add(1)
-                        .ok_or_else(|| fault("completeness-boundary-fits"))?,
-                    watermark: upper,
-                }
-            }
-            ClockRange::Timestamp { .. } => {
-                let tick = coordinate.map(i128::from).unwrap_or(i128::from(i64::MIN));
-                let upper = self.scale_coordinate(tick)?;
-                TemporalBoundary::TimestampedEvent {
-                    lower_nanos: upper,
-                    upper_inclusive_nanos: upper,
-                    carrier_end_exclusive_nanos: upper
-                        .checked_add(1)
-                        .ok_or_else(|| fault("completeness-boundary-fits"))?,
-                    watermark_nanos: upper,
-                }
-            }
-        };
-        let identity = Identity::new(canonical_text(
-            &json!({"through": through.map(|value| value.to_string())}),
-        )?);
-        Ok(completeness::Selection::new(
-            identity,
-            boundary,
-            self.completeness_facts(complete),
-        ))
-    }
-
     pub(super) fn completeness_facts(&self, complete: bool) -> Vec<completeness::Fact> {
         self.request
             .scope
@@ -83,35 +22,6 @@ impl OwnerObservation {
                 )
             })
             .collect()
-    }
-
-    pub(in crate::temporal::evidence) fn completeness_view(
-        &self,
-        asserted: ProgressCompleteness,
-        retained: Option<ProgressCompleteness>,
-    ) -> Result<completeness::View, CallFailure> {
-        let selection = self.completeness_selection(asserted, retained)?;
-        let context = self.context();
-        let document = completeness::derive(context, &selection, Limits::owner_max())
-            .map_err(|error| owner_fault(error.code().as_str(), error.detail()))?;
-        completeness::read(document.bytes(), context, &selection, Limits::owner_max())
-            .map_err(|error| owner_fault(error.code().as_str(), error.detail()))
-    }
-
-    fn scale_coordinate(&self, tick: i128) -> Result<i128, CallFailure> {
-        let scaled = self
-            .time_factor
-            .mul(&filament_exact::Rational::from_integer(
-                filament_exact::Integer::from(tick),
-            ));
-        if !scaled.is_integer() {
-            return Err(fault("owner-boundary-is-integral-nanoseconds"));
-        }
-        scaled
-            .numerator()
-            .to_string()
-            .parse()
-            .map_err(|_| fault("owner-boundary-fits-nanoseconds"))
     }
 
     pub(super) fn closure_boundary(&self) -> Result<TemporalBoundary, CallFailure> {
