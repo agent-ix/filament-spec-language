@@ -592,7 +592,7 @@ impl Checker<'_, '_> {
                     let named = slot
                         .form
                         .spans
-                        .span_at(location)
+                        .span_at(&location)
                         .filter(|named| named.start.saturating_add(offset) < named.end);
                     let cause = CheckCause::MissingSegment {
                         name,
