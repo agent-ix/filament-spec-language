@@ -1035,7 +1035,11 @@ struct PopulationInfo {
     member_types: Vec<DeclarationKey>,
 }
 
-pub(super) fn find_population<'v>(
+pub(super) fn has_population(views: &[ModelView], identity: &str) -> bool {
+    find_population(views, identity).is_some()
+}
+
+fn find_population<'v>(
     views: &'v [ModelView],
     identity: &str,
 ) -> Option<(&'v ModelView, PopulationInfo)> {

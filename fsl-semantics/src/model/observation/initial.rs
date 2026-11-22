@@ -115,8 +115,8 @@ pub(crate) fn admit_initial_state_scoped(
     if let Some(all_views) = all_views {
         check_model_any(all_views, &snapshot.model)?;
         snapshot.populations.retain(|population| {
-            super::document::find_population(views, &population.population).is_some()
-                || super::document::find_population(all_views, &population.population).is_none()
+            super::document::has_population(views, &population.population)
+                || !super::document::has_population(all_views, &population.population)
         });
         if let [view] = views
             .iter()
