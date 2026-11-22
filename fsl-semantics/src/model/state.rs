@@ -365,7 +365,7 @@ impl StateModel {
         }) {
             return None;
         }
-        crate::check::timed_model::TimedModel::direct_dense(
+        crate::check::TimedModel::direct_dense(
             &model,
             view.view.domain_package().model_selection.identity.clone(),
             node.clone(),

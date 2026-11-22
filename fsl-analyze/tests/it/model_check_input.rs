@@ -63,6 +63,12 @@ fn package_direct_dense_clocks_preserve_initial_and_delay_identity() {
     let source_initial = source.initial();
     let bytes_initial = bytes.initial();
     assert_eq!(source_initial.len(), 1);
+    assert_eq!(source_initial[0].clocks().values().len(), 2);
+    assert!(source_initial[0]
+        .clocks()
+        .values()
+        .iter()
+        .all(Rational::is_zero));
     assert_eq!(source_initial[0].clocks(), bytes_initial[0].clocks());
     let delay = Rational::new(Integer::from(3_i64), Integer::from(2_i64)).expect("delay");
     let source_delayed = source
@@ -79,10 +85,69 @@ fn package_direct_dense_clocks_preserve_initial_and_delay_identity() {
         input.input().time_sources[0].span,
         world.package.graph().time_sources()[0].span
     );
-    assert_eq!(
-        input.input().time_sources[0].nominal_nodes,
-        world.package.graph().time_sources()[0].nominal_nodes
-    );
+    let table = input.input();
+    let original = &world.package.graph().time_sources()[0].nominal_nodes;
+    assert_eq!(table.time_sources[0].nominal_nodes.len(), 2);
+    for (read, original) in table.time_sources[0].nominal_nodes.iter().zip(original) {
+        assert_eq!(read.key, original.key);
+        assert_eq!(read.form, original.form);
+        assert_eq!(read.origin, original.origin);
+        assert_eq!(read.dependencies, original.dependencies);
+        assert!(read.nominal_payload().is_some());
+    }
+}
+
+/// Unsupported timed definitions do not publish partially reconstructed tables.
+#[trace("FR-940-AC-6")]
+#[test]
+fn package_direct_dense_reader_refuses_derived_units_and_timed_guards() {
+    for body in [
+        crate::timed_world::DENSE.to_owned(),
+        format!("{DIRECT_DENSE}pre Guard using v on M::Call::send {{ self.x >= 1 ms }}\n"),
+    ] {
+        let world = crate::timed_world::world(
+            &crate::timed_world::document(&["x"], &[("send", &[])]),
+            "",
+            &body,
+        );
+        let request = world.request();
+        let emission =
+            fsl_package::emit_checked(&world.package, EmitLimits::fixture()).expect("emit");
+        let admitted = fsl_package::admit_checked_package(
+            emission.package().bytes(),
+            request.packages,
+            V2ReadLimits::fixture(),
+        )
+        .expect("admit bytes");
+        let identities = emission
+            .identity_rows(&admitted, &mut V2ReadLimits::fixture().native_join_budget())
+            .expect("identities");
+        let equality = emission
+            .equality_witness(&admitted, &mut V2ReadLimits::fixture().native_join_budget())
+            .expect("equality");
+        let handoff = Handoff {
+            admitted,
+            identities,
+            equality,
+        };
+        let bare = bare(&handoff);
+        assert!(matches!(
+            PackageModelInput::of(&bare, request.packages, ModelNormalizationLimits::default()),
+            Err(fsl_eval::simulation::model::PendingPackageForm::Form {
+                form: fsl_package::UnreadModelForm::TimedModel,
+                ..
+            })
+        ));
+        assert!(
+            PackageModelInput::of_timed_trace(
+                &bare,
+                request.packages,
+                ModelNormalizationLimits::default()
+            )
+            .is_ok(),
+            "supplied timed traces preserve their wider admitted model boundary"
+        );
+    }
 }
 
 /// Real analyze model items select the timed engine on both intake routes.
