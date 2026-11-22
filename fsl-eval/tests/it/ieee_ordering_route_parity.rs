@@ -715,7 +715,8 @@ const SOURCE_OBJECT_UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
     object Order { total: Int[0, 9]; operation measure(n: Integer): Integer; }\n\
     pre sqrtPre using v on Order::measure { \
     filament::value::ieee::sqrt(float64(bits: 0x4000000000000000)) <= \
-    filament::value::ieee::sqrt(float64(bits: 0x4000000000000000)) }\n";
+    filament::value::ieee::sqrt(float64(bits: 0x4000000000000000)) }\n\
+    invariant Sized using v on Order at current { self.measure(0) >= 0 }\n";
 
 /// QSL-2701 item 1 (FSpec FR-322): a source model's clause function is named
 /// under its owning source's identity on the source route (the checked graph's
@@ -762,7 +763,7 @@ fn a_source_models_clause_function_is_named_alike_on_both_routes() {
     let mut source_names = Vec::new();
     let mut index = 0;
     while let Some(state) = graph.function_state(index) {
-        if state.name.contains("Order") || true {
+        if state.name.contains("/Order/measure.precondition") {
             source_names.push(state.name.to_owned());
         }
         index += 1;
