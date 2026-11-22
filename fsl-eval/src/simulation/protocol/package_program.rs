@@ -13,7 +13,7 @@ use fsl_package::protocol_view::{
     self, ChannelOrdering, ControlBody, ControlOperation, Delivery, Overflow, ParallelJoinPolicy,
     ProtocolExecutionView, ProtocolNodeId, QueueCapacity,
 };
-use fsl_semantics::check::{ChannelDelivery, ChannelOverflow, LossSelector};
+use fsl_semantics::check::{ChannelCapacity, ChannelDelivery, ChannelOverflow, LossSelector};
 
 use super::{MemorySelection, MemorySelectionRefusal, ResolvedMemory};
 use crate::simulation::model::{ModelCheckInput, ModelEvaluator, OperationRef, ProtocolDefinition};
@@ -78,11 +78,11 @@ pub(super) struct PackageJoin {
     pub(super) outstanding: Option<fsl_semantics::check::CheckedOutstanding>,
 }
 
-/// An admitted channel and its literal queue premises.
+/// An admitted channel and its queue premises, before subject binding.
 pub(super) struct PackageChannel {
     pub(super) node: fsl_package::CheckedNodeId,
     pub(super) name: String,
-    pub(super) capacity: u64,
+    pub(super) capacity: ChannelCapacity,
     pub(super) overflow: ChannelOverflow,
     pub(super) delivery: ChannelDelivery,
     pub(super) key: Option<PackageChannelKey>,
@@ -258,12 +258,8 @@ fn channels(
             })
             .ok_or_else(absent)?;
         let capacity = match protocol_view::queue_capacity(queue).map_err(|_| absent())? {
-            QueueCapacity::Literal(capacity) => capacity,
-            QueueCapacity::Symbolic(_) => {
-                return Err(PackageProgramRefusal::Unsupported(
-                    ControlOperation::Channel,
-                ));
-            }
+            QueueCapacity::Literal(capacity) => ChannelCapacity::Literal(capacity),
+            QueueCapacity::Symbolic(name) => ChannelCapacity::Symbolic(name.to_owned()),
         };
         let overflow = match protocol_view::queue_overflow(queue).map_err(|_| absent())? {
             Overflow::Reject => ChannelOverflow::Reject,

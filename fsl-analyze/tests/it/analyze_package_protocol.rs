@@ -184,6 +184,22 @@ fn package_protocol_graph_with_snapshot<M: crate::fill::Explored + Clone>(
     } else {
         documents.start("s0", &[("c", 0), ("d", 0)])
     };
+    let request: Value =
+        serde_json::from_slice(&std::fs::read(path).expect("request")).expect("request JSON");
+    let capacities = request["request"]["items"][0]["temporal"]["subject"]["protocol"]
+        ["capacities"]
+        .as_object()
+        .into_iter()
+        .flat_map(|members| members.iter())
+        .map(|(name, value)| fsl_eval::model_subject::CapacityBinding {
+            name: name.clone(),
+            value: value
+                .as_str()
+                .expect("capacity text")
+                .parse()
+                .expect("natural capacity"),
+        })
+        .collect();
     let source = ProtocolSubject {
         model: crate::fill::model_subject(compiled.checked(), &documents, vec![start], cells),
         protocol: "Flow".to_owned(),
@@ -195,7 +211,7 @@ fn package_protocol_graph_with_snapshot<M: crate::fill::Explored + Clone>(
                 model: crate::fill::PACKAGE.to_owned(),
             })
             .collect(),
-        capacities: Vec::new(),
+        capacities,
         memory: crate::fill::source_memory(compiled.checked(), "Flow"),
     };
     let emission =
@@ -235,7 +251,7 @@ fn package_protocol_graph_with_snapshot<M: crate::fill::Explored + Clone>(
         protocol: source.protocol.clone(),
         over: source.over.clone(),
         roles: source.roles.clone(),
-        capacities: Vec::new(),
+        capacities: source.capacities.clone(),
         memory: ResolvedMemory::resolve_package(
             &bare
                 .protocol_execution_named("Flow")
@@ -1862,6 +1878,465 @@ fn channel_send_parity_using(
         assert_eq!(package.item(0)["replay"]["reproduced"], true);
     }
     source.item(0)
+}
+
+fn symbolic_capacity_request(
+    ws: &Workspace,
+    capacity: Option<u64>,
+    second: bool,
+) -> std::path::PathBuf {
+    let sends = |channel: &str, suffix: &str| {
+        format!("send First{suffix} via {channel} as (sent_a{suffix}: M::Attempt) {{ sent_a{suffix}.n = 0 }};
+                 send Second{suffix} via {channel} as (second{suffix}: M::Attempt) {{ second{suffix}.n = 1 }};")
+    };
+    let receives = |channel: &str, suffix: &str| {
+        format!("receive GotFirst{suffix} via {channel} of First{suffix} as (gotfirst{suffix}: M::Attempt) {{ true }};
+                 receive GotSecond{suffix} via {channel} of Second{suffix} as (gotsecond{suffix}: M::Attempt) {{ true }};")
+    };
+    let mut controls = sends("Release", "");
+    if second {
+        controls += &sends("Alpha", "Other");
+    }
+    controls += &receives("Release", "");
+    if second {
+        controls += &receives("Alpha", "Other");
+    }
+    let ordering =
+        "ordering unordered delivery exactly-once-premise capacity symbolic(Bound) overflow block";
+    let path = channel_request(ws, finite_channel_model(), ordering, &controls, "closing");
+    if second {
+        let unit = std::fs::read_to_string(ws.path("program.fsl")).expect("source");
+        ws.write("program.fsl", unit.replace("run sequence Main", &format!(
+            "channel Alpha from Planning to Machining carries M::Attempt {ordering}; run sequence Main"
+        )).as_bytes());
+    }
+    if let Some(capacity) = capacity {
+        let mut request: Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("JSON");
+        request["request"]["items"][0]["temporal"]["subject"]["protocol"]["capacities"] =
+            json!({"Bound": capacity.to_string()});
+        ws.write("analyze.json", request.to_string().as_bytes());
+    }
+    path
+}
+
+/// Bound symbolic queues use the same native states, steps and message identities
+/// as Source, including zero capacity and one value shared by two channels.
+#[trace(
+    "TC-2958",
+    "FR-940-AC-6",
+    "FSpec-TC-1911",
+    "FSpec-FR-785-AC-1",
+    "FSpec-FR-785-AC-3"
+)]
+#[test]
+fn package_symbolic_capacity_steps_at_zero_one_and_two() {
+    for (capacity, second) in [(0, false), (1, false), (2, false), (2, true)] {
+        let ws = Workspace::new(&format!("package-symbolic-capacity-{capacity}-{second}"));
+        let path = symbolic_capacity_request(&ws, Some(capacity), second);
+        let unit = std::fs::read(ws.path("program.fsl")).expect("source before graph comparison");
+        let graph = package_protocol_graph(
+            &ws,
+            &path,
+            fsl_eval::simulation::protocol::Sc,
+            &["Planning", "Machining"],
+            true,
+            false,
+            |_, _| {},
+        );
+        assert!(
+            !ws.path("program.fsl").exists(),
+            "native graph runs without source"
+        );
+        let peak = graph
+            .iter()
+            .map(|state| {
+                let key: Value = serde_json::from_slice(state.key.as_bytes()).expect("state key");
+                key["queues"]["entries"]
+                    .as_array()
+                    .expect("queue map")
+                    .iter()
+                    .map(|entry| {
+                        entry["value"]["elements"]
+                            .as_array()
+                            .expect("queue entries")
+                            .len()
+                    })
+                    .sum::<usize>()
+            })
+            .max()
+            .expect("initial state");
+        assert_eq!(
+            peak,
+            usize::try_from(capacity).expect("tiny bound") * if second { 2 } else { 1 }
+        );
+        ws.write("program.fsl", &unit);
+        let item =
+            workflow_role_parity(&ws, &path, if capacity < 2 { "refuted" } else { "proved" });
+        assert!(
+            !ws.path("program.fsl").exists(),
+            "package analysis ran without source"
+        );
+        if capacity < 2 {
+            assert_eq!(
+                item["counterexample"]["subject"]["capacities"],
+                json!({"Bound": capacity.to_string()})
+            );
+            assert_eq!(
+                item["counterexample"]["blocked"][0]["cause"]["type"], "full-queue",
+                "{item}"
+            );
+            assert_eq!(
+                item["counterexample"]["blocked"][0]["cause"]["channel"], "Flow::Release",
+                "{item}"
+            );
+        }
+    }
+}
+
+fn copy_capacity_subject<'a>(
+    subject: &fsl_eval::model_subject::ProtocolSubject<'a>,
+) -> fsl_eval::model_subject::ProtocolSubject<'a> {
+    fsl_eval::model_subject::ProtocolSubject {
+        model: fsl_eval::model_subject::ModelSubject {
+            simulation: subject.model.simulation.clone(),
+            proof_bounds: subject.model.proof_bounds.clone(),
+        },
+        protocol: subject.protocol.clone(),
+        over: subject.over.clone(),
+        roles: subject.roles.clone(),
+        capacities: subject.capacities.clone(),
+        memory: subject.memory.clone(),
+    }
+}
+
+fn with_capacity_subjects(
+    ws: &Workspace,
+    path: &std::path::Path,
+    run: impl FnOnce(
+        fsl_eval::model_subject::ProtocolSubject<'_>,
+        fsl_eval::model_subject::ProtocolSubject<'_>,
+        &fsl_package::CheckedPackage,
+        &crate::fill::Documents,
+    ),
+) {
+    use fsl_eval::simulation::model::PackageModelInput;
+    use fsl_package::{AnalysisView, BarePackage, BareSupply, EmitLimits, V2ReadLimits};
+    let _ = package_request(ws, path);
+    let compiled =
+        fsl_command::checked_handoff::compile(&ws.path(crate::analyze_cli_support::HANDOFF))
+            .expect("the capacity fixture compiles");
+    let mut documents = crate::fill::Documents::new();
+    documents.packages = compiled.packages().clone();
+    let initial = documents.start("s0", &[("c", 0)]);
+    let mut source =
+        crate::fill::subject(compiled.checked(), &documents, vec![initial], "Flow", "c");
+    source.roles = ["Planning", "Machining"]
+        .into_iter()
+        .map(|role| fsl_eval::model_subject::RoleBinding {
+            role: role.to_owned(),
+            model: crate::fill::PACKAGE.to_owned(),
+        })
+        .collect();
+    let emission =
+        fsl_package::emit_checked(compiled.checked(), EmitLimits::fixture()).expect("emission");
+    let identities = emission
+        .identity_rows(
+            compiled.admitted(),
+            &mut V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("identities");
+    let equality = emission
+        .equality_witness(
+            compiled.admitted(),
+            &mut V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("equality");
+    let bare = BarePackage::new(compiled.admitted())
+        .with_supply(
+            BareSupply {
+                identities: &identities,
+                equality: Some(&equality),
+            },
+            &mut V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("strict native supply");
+    let input = PackageModelInput::of(
+        &bare,
+        &documents.packages,
+        fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+    )
+    .expect("native input");
+    let mut package = copy_capacity_subject(&source);
+    package.model.simulation.input = input.input();
+    assert!(package.model.simulation.source_package().is_none());
+    package.memory = fsl_eval::simulation::protocol::ResolvedMemory::resolve_package(
+        &bare
+            .protocol_execution_named("Flow")
+            .expect("protocol view")
+            .expect("Flow"),
+        &[],
+    )
+    .expect("native memory");
+    run(source, package, compiled.checked(), &documents);
+}
+
+fn capacity_outcome(
+    subject: fsl_eval::model_subject::ProtocolSubject<'_>,
+) -> Result<
+    fsl_replay::ModelCheckOutcome<fsl_eval::simulation::protocol::ProtocolTransition>,
+    fsl_analyze::model_check::ModelCheckRefusal,
+> {
+    fsl_analyze::model_check::check_protocol(
+        fsl_analyze::model_check::ProtocolCheckRequest {
+            subject,
+            temporal_clock_selections: &[],
+            item: fsl_replay::ModelCheckItem::DeadlockFreedom,
+            max_depth: None,
+            max_store_buffer: None,
+            max_messages: None,
+            max_live_instances: None,
+            limits: fsl_replay::ModelCheckLimits::default(),
+            ignore_memory_constraints: false,
+        },
+        &filament_exact::Cancel::new(),
+    )
+}
+
+/// Unbound names aggregate with other roots before exploration; channel users
+/// retain declaration order rather than node-id or alphabetical order.
+#[trace(
+    "TC-2958",
+    "FR-940-AC-6",
+    "FR-215-AC-4",
+    "FSpec-TC-1911",
+    "FSpec-FR-785-AC-2",
+    "FSpec-FR-785-AC-3"
+)]
+#[test]
+fn package_symbolic_capacity_precheck_retains_typed_roots_and_binding_refusals() {
+    use fsl_analyze::model_check::ModelCheckRefusal;
+    use fsl_eval::model_subject::CapacityBinding;
+    use fsl_eval::simulation::protocol::{CapacityRefusal, ProtocolRefusal, UnboundCapacity};
+    for (wide, separate) in [(false, false), (true, false), (false, true)] {
+        let ws = Workspace::new(&format!(
+            "package-symbolic-capacity-unbound-{wide}-{separate}"
+        ));
+        let path = symbolic_capacity_request(&ws, None, true);
+        if separate {
+            let unit = std::fs::read_to_string(ws.path("program.fsl")).expect("source");
+            ws.write(
+                "program.fsl",
+                unit.replacen("symbolic(Bound)", "symbolic(Other)", 1)
+                    .as_bytes(),
+            );
+        }
+        if wide {
+            let unit = std::fs::read_to_string(ws.path("program.fsl")).expect("source");
+            ws.write(
+                "program.fsl",
+                unit.replace(
+                    "(closing: Boolean) { closing }",
+                    "(closing: Integer) { closing = 0 }",
+                )
+                .as_bytes(),
+            );
+        }
+        with_capacity_subjects(&ws, &path, |source, package, _, _| {
+            let names = if separate {
+                vec![
+                    UnboundCapacity {
+                        name: "Bound".to_owned(),
+                        channels: vec!["Flow::Alpha".to_owned()],
+                    },
+                    UnboundCapacity {
+                        name: "Other".to_owned(),
+                        channels: vec!["Flow::Release".to_owned()],
+                    },
+                ]
+            } else {
+                vec![UnboundCapacity {
+                    name: "Bound".to_owned(),
+                    channels: vec!["Flow::Release".to_owned(), "Flow::Alpha".to_owned()],
+                }]
+            };
+            let inspect = |refusal| match refusal {
+                ModelCheckRefusal::UnboundCapacity(actual) if !wide => assert_eq!(actual, names),
+                ModelCheckRefusal::RequiresBound(actual) if wide => {
+                    assert_eq!(actual.capacities, names);
+                    assert!(
+                        actual.domains.is_some(),
+                        "the Integer finish is also unbounded"
+                    );
+                }
+                other => panic!("expected typed requires-bound, got {other:?}"),
+            };
+            inspect(
+                capacity_outcome(copy_capacity_subject(&source)).expect_err("no source expansion"),
+            );
+            std::fs::remove_file(ws.path("program.fsl"))
+                .expect("remove source before native precheck");
+            inspect(
+                capacity_outcome(copy_capacity_subject(&package))
+                    .expect_err("no package expansion"),
+            );
+            for (bindings, expected) in [
+                (
+                    vec![CapacityBinding {
+                        name: "Unknown".to_owned(),
+                        value: 1,
+                    }],
+                    CapacityRefusal::UnknownName {
+                        name: "Unknown".to_owned(),
+                    },
+                ),
+                (
+                    vec![
+                        CapacityBinding {
+                            name: "Bound".to_owned(),
+                            value: 1
+                        };
+                        2
+                    ],
+                    CapacityRefusal::Duplicate {
+                        name: "Bound".to_owned(),
+                    },
+                ),
+            ] {
+                for mut subject in [
+                    copy_capacity_subject(&source),
+                    copy_capacity_subject(&package),
+                ] {
+                    subject.capacities = bindings.clone();
+                    let refusal =
+                        capacity_outcome(subject).expect_err("binding defect precedes roots");
+                    assert!(
+                        matches!(refusal, ModelCheckRefusal::Protocol(ProtocolRefusal::Capacity(ref actual))
+                        if actual == &expected),
+                        "{refusal:?}"
+                    );
+                }
+            }
+        });
+    }
+}
+
+/// A real deadlock's package replay keeps the capacity binding, disagrees at
+/// another capacity and refuses missing, unknown and duplicate bindings by type.
+#[trace("TC-2958", "FR-940-AC-6", "FSpec-TC-1911", "FSpec-FR-785-AC-5")]
+#[test]
+fn package_symbolic_capacity_replay_readmits_the_recorded_binding() {
+    use fsl_eval::model_subject::CapacityBinding;
+    use fsl_eval::simulation::protocol::{CapacityRefusal, ProtocolRefusal};
+    use fsl_replay::{ModelCheckOutcome, ModelTraceRefusal, ModelTraceSettlement, ReplayRefusal};
+    let ws = Workspace::new("package-symbolic-capacity-replay");
+    let path = symbolic_capacity_request(&ws, Some(1), false);
+    with_capacity_subjects(&ws, &path, |mut source, _, checked, documents| {
+        source.capacities = vec![CapacityBinding {
+            name: "Bound".to_owned(),
+            value: 1,
+        }];
+        let ModelCheckOutcome::Violated { counterexample, .. } =
+            capacity_outcome(copy_capacity_subject(&source)).expect("bound source checks")
+        else {
+            panic!("one-slot queue deadlocks");
+        };
+        let mut wire = crate::model_settle::request(
+            checked,
+            &[],
+            &std::fs::read(ws.path("model.json")).expect("model"),
+            documents.snapshots.iter(),
+            &std::fs::read(ws.path("program.fsl")).expect("source"),
+        );
+        let (node, occurrence) = crate::model_settle::protocol_anchor(checked, "Flow");
+        let envelope = crate::model_settle::envelope_at(*counterexample, node, occurrence);
+        let mut subject = fsl_replay::ProtocolTraceSubject {
+            model: fsl_replay::ModelTraceSubject {
+                timed: None,
+                initial: source.model.simulation.initial.clone(),
+                universes: source.model.simulation.universes.clone(),
+                expansion: source.model.simulation.expansion,
+                stutter_closure: false,
+            },
+            protocol: source.protocol.clone(),
+            over: source.over.clone(),
+            roles: source.roles.clone(),
+            capacities: source.capacities.clone(),
+            memory: source.memory.clone(),
+            max_store_buffer: None,
+            max_messages: None,
+            max_live_instances: None,
+        };
+        let directory = ws.path(crate::analyze_cli_support::HANDOFF);
+        let identities = std::fs::read(directory.join("identities.json")).expect("identity rows");
+        let equality = std::fs::read(directory.join("equality.json")).expect("equality rows");
+        std::fs::remove_file(ws.path("program.fsl")).expect("source absent during native replay");
+        wire.byte_provision.clear();
+        assert!(wire.byte_provision.is_empty());
+        assert!(!ws.path("program.fsl").exists());
+        let replay = |subject: &fsl_replay::ProtocolTraceSubject| {
+            fsl_replay::replay_protocol_trace_from_package(
+                wire.clone(),
+                fsl_replay::HandoffSupply {
+                    dependencies: &[],
+                    identities: &identities,
+                    equality: Some(&equality),
+                },
+                subject,
+                &envelope,
+                &crate::counter::Letters { atom: |_| None },
+                fsl_replay::ReplayLimits::default(),
+            )
+        };
+        assert!(matches!(
+            replay(&subject).expect("native replay").settlement,
+            ModelTraceSettlement::Reproduced { .. }
+        ));
+        subject.capacities[0].value = 2;
+        assert!(matches!(
+            replay(&subject).expect("changed bound rechecks").settlement,
+            ModelTraceSettlement::Inconclusive(_)
+        ));
+        for (bindings, expected) in [
+            (
+                vec![],
+                CapacityRefusal::Missing {
+                    name: "Bound".to_owned(),
+                },
+            ),
+            (
+                vec![CapacityBinding {
+                    name: "Other".to_owned(),
+                    value: 1,
+                }],
+                CapacityRefusal::UnknownName {
+                    name: "Other".to_owned(),
+                },
+            ),
+            (
+                vec![
+                    CapacityBinding {
+                        name: "Bound".to_owned(),
+                        value: 1
+                    };
+                    2
+                ],
+                CapacityRefusal::Duplicate {
+                    name: "Bound".to_owned(),
+                },
+            ),
+        ] {
+            subject.capacities = bindings;
+            let Err(ReplayRefusal::ModelTrace(refusal)) = replay(&subject) else {
+                panic!("native replay must refuse the defective binding");
+            };
+            assert!(
+                matches!(&*refusal, ModelTraceRefusal::Protocol(ProtocolRefusal::Capacity(actual))
+                if actual == &expected),
+                "{refusal:?}"
+            );
+        }
+    });
 }
 
 /// The complete loss-head example's single constrained send uses model payloads.
