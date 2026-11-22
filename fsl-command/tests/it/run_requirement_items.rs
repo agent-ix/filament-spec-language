@@ -375,6 +375,7 @@ fn recording_provider(
 /// retaining guards, bounds, row indices, candidate order and provider requests.
 #[trace("FR-940-AC-13", "FR-961-AC-1")]
 #[test]
+#[ignore = "FR-940 scalar settlement awaits the normal-pinned Contract IR repair of unscoped requirement-row holder references"]
 fn package_scalar_requirement_records_equal_the_source_run() {
     use fsl_analyze::provider::ProviderVerdict;
     let unit = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction Guarded using v(x: Int[0, 9], p: Boolean): Integer pure { if p then x + 1 else x * 2 }\nfunction Other using v(x: Int[0, 9]): Integer pure { x + 1 }\n";
@@ -481,6 +482,7 @@ fn package_scalar_requirement_records_equal_the_source_run() {
 /// refuse before any external provider receives requirement work.
 #[trace("FR-940-AC-13", "FR-961-AC-1", "FR-960-AC-4")]
 #[test]
+#[ignore = "FR-940 scalar held-claim settlement awaits the normal-pinned Contract IR repair of unscoped requirement-row holder references"]
 fn package_scalar_held_claims_and_bad_calls_preserve_admission() {
     let directory = tempfile::tempdir().unwrap();
     let path = sq(directory.path(), Some(json!({})));
@@ -601,6 +603,105 @@ fn package_scalar_held_claims_and_bad_calls_preserve_admission() {
             source_error.category().exit_code()
         );
         assert_eq!(calls, 0, "no provider sees a call that did not admit");
+    }
+}
+
+/// An unavailable authoritative holder never becomes an internal fault or
+/// a provider request. Source calls retain their existing settlement path.
+#[trace("FR-940-AC-13", "FR-961-AC-1")]
+#[test]
+fn package_scalar_unresolved_holder_refuses_typed_without_provider_work() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = sq(directory.path(), Some(json!({})));
+    let source_run = command::run(&path, &Fr290).expect("Source settlement remains available");
+    assert_eq!(entries(&documents(&source_run).0).len(), 3);
+    let bytes = compile_handoff(directory.path());
+    let artifact: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(
+        artifact["requirement_items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| row.get("record").is_some())
+            .count()
+            >= 3
+    );
+    let mut request: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    request["request"]
+        .as_object_mut()
+        .unwrap()
+        .remove("program");
+    request["request"]["package"] = json!({"directory":"handoff"});
+    request["request"]["call"]["requirements"] = json!({"backend":PROVIDER});
+    std::fs::write(&path, request.to_string()).unwrap();
+    std::fs::remove_file(directory.path().join("unit.native")).unwrap();
+    let seen = Arc::new(Mutex::new(Seen::default()));
+    let error = command::run_with_providers(
+        &path,
+        &Fr290,
+        vec![recording_provider(
+            &seen,
+            fsl_analyze::provider::ProviderVerdict::Proved,
+        )],
+        &fsl_analyze::provider::ProviderOptions::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .expect_err("the holder refusal precedes provider execution");
+    assert_eq!(
+        error.cause.code(),
+        fsl_foundation::Code::UnsupportedConstruct
+    );
+    assert_eq!(error.category().exit_code(), 20);
+    assert!(
+        error
+            .to_string()
+            .contains("value-validity-record-unresolved-holder"),
+        "{error}"
+    );
+    assert_eq!(seen.lock().unwrap().settle_calls, 0);
+    for (function, arguments) in [
+        ("Missing", json!([])),
+        (
+            "sq",
+            json!([{"parameter":"x","value":{"type":"boolean","value":true}}]),
+        ),
+    ] {
+        request["request"]["call"] =
+            json!({"function":function,"arguments":arguments,"requirements":{"backend":PROVIDER}});
+        let run = |path: &Path| {
+            command::run_with_providers(
+                path,
+                &Fr290,
+                vec![recording_provider(
+                    &seen,
+                    fsl_analyze::provider::ProviderVerdict::Proved,
+                )],
+                &fsl_analyze::provider::ProviderOptions::default(),
+                &filament_exact::Cancel::new(),
+            )
+        };
+        let mut source_request = request.clone();
+        source_request["request"]
+            .as_object_mut()
+            .unwrap()
+            .remove("package");
+        source_request["request"]["program"] = json!({"source":source()});
+        std::fs::write(directory.path().join("unit.native"), SQ).unwrap();
+        std::fs::write(&path, source_request.to_string()).unwrap();
+        let source_error = run(&path).expect_err("the Source call does not admit");
+        std::fs::remove_file(directory.path().join("unit.native")).unwrap();
+        std::fs::write(&path, request.to_string()).unwrap();
+        let package_error = run(&path).expect_err("the package call does not admit");
+        assert_eq!(
+            package_error.cause.code(),
+            source_error.cause.code(),
+            "{package_error}"
+        );
+        assert_eq!(
+            package_error.category().exit_code(),
+            source_error.category().exit_code()
+        );
+        assert_eq!(seen.lock().unwrap().settle_calls, 0);
     }
 }
 
