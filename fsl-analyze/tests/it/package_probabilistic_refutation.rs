@@ -152,63 +152,57 @@ fn enum_draws_and_arguments_preserve_package_refutation_witness_parity() {
     );
 }
 
-/// A fairness-bearing Every claim remains a typed pending package fact until
-/// the next QSL-2828 slice projects fairness into the checked claim.
+/// A fairness-bearing Every claim settles identically from source and package.
 #[trace("FR-940-AC-6", "FR-741-AC-3", "FR-203-AC-8")]
 #[test]
-fn package_every_fairness_remains_typed_pending() {
-    let unit = LINK_UNIT.to_owned();
-    let claim = TOO_LIKELY.replace(
-        "under Even",
-        "under every scheduler fair weak M::Msg::send_a",
-    );
-    let ws = Workspace::new("probabilistic-package-every-fairness-pending");
+fn every_fairness_preserves_source_package_refutation_parity() {
+    for fairness in [
+        "fair weak M::Msg::send_a",
+        "fair strong M::Msg::send_a",
+        "fair weak each M::Msg::send_a",
+        "fair strong each M::Msg::send_a",
+    ] {
+        let claim = TOO_LIKELY.replace("under Even", &format!("under every scheduler {fairness}"));
+        fairness_source_package_equality(&claim);
+    }
+}
+
+fn fairness_source_package_equality(claim: &str) {
+    let ws = Workspace::new("probabilistic-package-every-fairness-parity");
     let source_path = request_over(
-        &ws,
-        &format!("{unit}\n{claim}\n"),
-        LINK_MODEL,
+        &ws, &format!("{LINK_UNIT}\n{claim}\n"), LINK_MODEL,
         &[LINK_START.to_vec()],
         json!({"items": [{"claim": "TooLikely", "kind": "probabilistic-satisfaction",
             "probabilistic": {"evidence": "exact"}}]}),
     );
+    let source = analyze(&source_path);
     let request: serde_json::Value = serde_json::from_slice(
         &std::fs::read(&source_path).expect("source request"),
     ).expect("request JSON");
-    let (_, bytes) = package_selection(&ws, &request["request"]);
-    let compiled = fsl_command::checked_handoff::compile(&ws.path(HANDOFF))
-        .expect("fairness-bearing claim compiles through the source handoff");
-    let packages = fsl_semantics::model::intake::package_input([LINK_MODEL])
-        .expect("the Link model admits");
-    let limits = fsl_package::V2ReadLimits::bounded(1 << 24);
-    let admitted = fsl_package::admit_checked_package(&bytes, &packages, limits)
-        .expect("the producer package admits");
-    let mut budget = limits.native_join_limits().budget();
-    let identities = ReadIdentityRows::read(
-        &std::fs::read(ws.path(&format!("{HANDOFF}/identities.json")))
-            .expect("identity rows"),
-        &admitted,
-        &mut budget,
-    ).expect("identity rows admit");
-    let equality = std::fs::read(ws.path(&format!("{HANDOFF}/equality.json"))).ok()
-        .map(|bytes| ReadEqualityRows::read(&bytes, &admitted).expect("equality admits"));
-    let bare = BarePackage::new(&admitted).with_supply(
-        BareSupply { identities: &identities, equality: equality.as_ref() },
-        &mut budget,
-    ).expect("package supply joins");
-    let selected = fsl_package::AnalysisView::claim_name(&bare, "TooLikely")
-        .expect("claim name is admitted");
-    let occurrence = fsl_foundation::source::provenance::OccurrenceKey::new(
-        bare.node_key(&selected.declaration).expect("claim key"),
-        filament_exact::Origin::new(
-            filament_exact::Role::new("claim"), selected.occurrence.ordinal,
-        ),
-    );
-    assert!(matches!(
-        bare.probability_claim_form(&occurrence),
-        Err(fsl_package::BareClauseRefusal::Pending {
-            fact: "probabilistic-exact-eventual-form", ..
-        })
+    let (members, _) = package_selection(&ws, &request["request"]);
+    let package = analyze(&ws.write(
+        "fairness-package.json",
+        json!({"format": "native-analyze/1", "request": members}).to_string().as_bytes(),
     ));
+    assert_eq!(package.exit, source.exit, "{}", package.document());
+    assert_eq!(package.document(), source.document());
+    assert_ne!(
+        package.item(0)["record"]["diagnostic"]["cause"],
+        "probabilistic-exact-eventual-form",
+        "the package did not fall back to the old pending fact"
+    );
+}
+
+/// Positive fairness refutation parity awaits analyzer support for fair
+/// every-scheduler eventual claims (QSL-2830).
+#[trace("FR-940-AC-6", "FR-741-AC-3", "FR-203-AC-8")]
+#[test]
+#[ignore = "QSL-2830: analyzer does not admit fair every-scheduler eventual claims yet"]
+fn a_fair_every_scheduler_refutation_replays_with_source_package_parity() {
+    let claim = TOO_LIKELY
+        .replace("under Even", "under every scheduler fair weak M::Msg::send_a")
+        .replace("probability >= rational(99, 100)", "probability <= rational(99, 100)");
+    refutation_parity("fair-every-positive-parity", LINK_UNIT, LINK_MODEL, &claim);
 }
 
 /// Workload evidence spells enum draws through the admitted package index

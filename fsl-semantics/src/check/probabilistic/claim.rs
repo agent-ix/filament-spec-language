@@ -552,6 +552,8 @@ pub struct PackageProbabilityClaimForm {
     pub profile: DefinitionRef,
     /// The selected scheduler.
     pub scheduler: ProbScheduler,
+    /// The authenticated fairness constraints for an every-scheduler claim.
+    pub fairness: Vec<FairnessConstraint>,
     /// The over binder and its admitted effective object type.
     pub over: Option<(String, EffectiveId)>,
     /// The admitted parameter node that declares the over binder.
@@ -577,6 +579,7 @@ impl CheckedProbabilisticClaim {
             subject,
             profile,
             scheduler,
+            fairness,
             over,
             over_node,
             predicate,
@@ -592,14 +595,15 @@ impl CheckedProbabilisticClaim {
             slot_names: Vec::new(),
             normal_form: None,
         };
+        let fairness_declaring = vec![None; fairness.len()];
         Self {
             name,
             span,
             subject,
             profile,
             scheduler,
-            fairness: Vec::new(),
-            fairness_declaring: Vec::new(),
+            fairness,
+            fairness_declaring,
             activation: ClaimActivation::Origin,
             form: ProbForm::Reach {
                 bound,

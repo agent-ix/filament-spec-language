@@ -6,9 +6,12 @@ use filament_contract_model::{
     ProbabilisticExact, ProbabilisticReachTarget, ProbabilisticScheduler,
 };
 use filament_exact::{NodeKey, Rational, ValueType};
+use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity, FairnessKind, FairnessOperation};
 use fsl_foundation::selection::DefinitionRef;
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_semantics::check::{Bound, PackageProbabilityClaimForm, TemporalProfile};
+use fsl_semantics::check::{
+    Bound, PackageProbabilityClaimForm, ProbScheduler, TemporalProfile,
+};
 
 use crate::bare_slot::BareSelectionFailure;
 use crate::bare_term::{fault, walk_failure, BareClauseRefusal};
@@ -93,7 +96,7 @@ impl BarePackage<'_> {
                 return Err(pending("missing-claim-profile"));
             }
         };
-        let scheduler = match &read.scheduler {
+        let (scheduler, fairness) = match &read.scheduler {
             ProbabilisticScheduler::Workload(workload) => {
                 let workload = self.node_key(workload).ok_or_else(malformed)?;
                 let workload = self
@@ -102,13 +105,22 @@ impl BarePackage<'_> {
                     .and_then(text)
                     .ok_or_else(malformed)?
                     .to_owned();
-                fsl_semantics::check::ProbScheduler::Workload(workload)
+                (ProbScheduler::Workload(workload), Vec::new())
             }
-            ProbabilisticScheduler::Every(fairness) if fairness.is_empty() => {
-                fsl_semantics::check::ProbScheduler::Every
-            }
-            ProbabilisticScheduler::Every(_) => {
-                return Err(pending("probabilistic-exact-eventual-form"));
+            ProbabilisticScheduler::Every(members) => {
+                let constraints = members.iter().map(|member| {
+                    let declaring = self.protocol_role_model(&member.declaring).map_err(|_| malformed())?;
+                    let kind = match member.kind {
+                        filament_contract_model::CheckedFairnessKind::Weak => FairnessKind::Weak,
+                        filament_contract_model::CheckedFairnessKind::Strong => FairnessKind::Strong,
+                    };
+                    let granularity = match member.granularity {
+                        filament_contract_model::CheckedFairnessGranularity::Whole => FairnessGranularity::Whole,
+                        filament_contract_model::CheckedFairnessGranularity::Each => FairnessGranularity::Each,
+                    };
+                    Ok(FairnessConstraint::new(kind, FairnessOperation::new(declaring, member.operation.to_string()), granularity))
+                }).collect::<Result<Vec<_>, BareSelectionFailure>>()?;
+                (ProbScheduler::Every, constraints)
             }
         };
         if !matches!(read.activation, ProbabilisticActivation::Origin)
@@ -187,6 +199,7 @@ impl BarePackage<'_> {
             },
             profile,
             scheduler,
+            fairness,
             over,
             over_node: read
                 .over
