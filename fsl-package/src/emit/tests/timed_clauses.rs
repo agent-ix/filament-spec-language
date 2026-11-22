@@ -1739,7 +1739,7 @@ fn predicate_operation(wire: &Value, reference: &Value) -> String {
     "FSpec-FR-760-AC-3"
 )]
 #[test]
-#[ignore = "QSL-2144: an element-presence quantifier is not yet written in its clause predicate with its own binder"]
+#[ignore = "QSL-2144: FR-772 Option<Clock> presence_read result_type is refused IllTyped/OperatorIneligible at filament.op.option.slots"]
 fn an_element_presence_quantifier_is_scoped_in_its_predicate() {
     let document = slot_presence_document();
     let emit = |body: &str| {
