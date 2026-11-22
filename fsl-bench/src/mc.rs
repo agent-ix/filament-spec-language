@@ -546,7 +546,7 @@ pub fn run_reach(world: &World, workers: NonZeroUsize) -> Result<Work, AxisError
     let system = ProtocolSystem::new(model, &subject, Sc)
         .map_err(|refusal| fail("ProtocolSystem::new", refusal))?;
     let reached = system
-        .reachable(workers)
+        .reachable(workers, fsl_eval::simulation::Limits::default().max_states)
         .map_err(|refusal| fail("reachable", refusal))?;
     let edges: usize = reached.states.iter().map(|state| state.steps.len()).sum();
     Ok(Work {

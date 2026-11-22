@@ -205,7 +205,7 @@ impl Case {
         written.obligation(index).cloned().expect("an obligation")
     }
 
-    /// The protocol system of `SB` under `memory`.
+    /// The protocol system of `SB` under `memory`, using the checker's cycle keys.
     pub(crate) fn system<M: MemoryModel>(
         &self,
         selection: &[MemorySelection],
@@ -299,6 +299,7 @@ impl Case {
     ) -> Result<ProtocolSystem<'s, M>, ProtocolRefusal> {
         let model = ModelSystem::new(subject.model.simulation.clone()).expect("admits");
         ProtocolSystem::new(model, subject, memory)
+            .map(|system| system.with_cycle_keys(BTreeSet::new()))
     }
 
     /// EN-1 over `SB` with `item`, the selection and the store buffer bound.
@@ -3273,11 +3274,12 @@ fn reachable_refuses_with_the_expansion_stop_on_any_worker_count() {
     let ra_system = case
         .system_within(&ra, Ra::default(), 6, 0)
         .expect("the bound fits construction");
+    let max_states = fsl_eval::simulation::Limits::default().max_states;
     let refusals = [
-        tso_system.reachable(one).err(),
-        tso_system.reachable(four).err(),
-        ra_system.reachable(one).err(),
-        ra_system.reachable(four).err(),
+        tso_system.reachable(one, max_states).err(),
+        tso_system.reachable(four, max_states).err(),
+        ra_system.reachable(one, max_states).err(),
+        ra_system.reachable(four, max_states).err(),
     ];
     for refusal in refusals {
         let Some(ReachRefusal::Expansion(stop)) = refusal else {
@@ -3292,7 +3294,7 @@ fn reachable_refuses_with_the_expansion_stop_on_any_worker_count() {
     assert!(case
         .system(&tso, Tso::default())
         .expect("builds")
-        .reachable(four)
+        .reachable(four, max_states)
         .is_ok());
 }
 

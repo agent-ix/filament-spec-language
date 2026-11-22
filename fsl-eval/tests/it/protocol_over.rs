@@ -220,7 +220,10 @@ fn the_newly_compiled_forms_are_explored() {
     let fixture = fixture();
     let system = system(&fixture);
     let reachable = system
-        .reachable(NonZeroUsize::new(1).expect("one worker"))
+        .reachable(
+            NonZeroUsize::new(1).expect("one worker"),
+            fsl_eval::simulation::Limits::default().max_states,
+        )
         .expect("finite repeat exploration completes");
     let paths = terminal_event_paths(&reachable);
     assert!(

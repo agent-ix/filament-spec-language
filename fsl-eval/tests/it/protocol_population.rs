@@ -285,7 +285,10 @@ fn run_protocol(
     // `ProtocolSystem` borrows package, request data and subject; return only
     // its reachable result so those inputs can remain local to this helper.
     let graph = system
-        .reachable(NonZeroUsize::new(1).expect("one worker"))
+        .reachable(
+            NonZeroUsize::new(1).expect("one worker"),
+            fsl_eval::simulation::Limits::default().max_states,
+        )
         .expect("finite protocol reachability");
     let capture = system
         .capture_bytes(&graph.states[0].state)

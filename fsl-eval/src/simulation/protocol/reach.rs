@@ -2,6 +2,7 @@
 //! Every reachable state of a [`ProtocolSystem`], breadth-first from its
 //! initial states, each state once by its full canonical state key and its
 //! successors in transition-identity order.
+//! FR-126 requires an explicit budget on distinct admitted canonical states.
 //!
 //! Each breadth-first level expands on up to a caller-given number of worker
 //! threads and is admitted in frontier order, so the state indices and steps
@@ -20,6 +21,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use super::{MemoryModel, ProtocolState, ProtocolSystem, ProtocolTransition, Ra, Sc, Tso};
 use crate::simulation::expansion::ExpansionStop;
 use crate::simulation::explore::TransitionSystem;
+use crate::simulation::frontier::Limit;
 use crate::simulation::key::{EncodingRefusal, StateKey};
 use crate::simulation::subject::SubjectSystem;
 
@@ -49,6 +51,9 @@ pub struct Reachable<M: MemoryModel> {
 /// Why the reachable states could not be computed.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ReachRefusal {
+    /// Admitting another distinct state would exceed the configured budget.
+    #[error("the reachable-state search reached {0:?}")]
+    Limit(Limit),
     /// A state's expansion stopped.
     #[error("the expansion stopped: {0:?}")]
     Expansion(ExpansionStop),
@@ -72,10 +77,15 @@ macro_rules! reachable_under {
             /// `worker_limit` threads and is admitted in frontier order, so
             /// the result does not depend on the worker count.
             ///
-            /// The search is unbounded: it ends when the frontier is empty.
+            /// `max_states` bounds distinct canonical states, including
+            /// initial states. Equal keys consume one slot. The search
+            /// completes when the frontier is empty, including when the
+            /// graph has exactly `max_states` states (FR-126).
             ///
             /// # Errors
             ///
+            /// [`ReachRefusal::Limit`] before admitting a distinct state
+            /// beyond `max_states`, without returning a partial graph;
             /// [`ReachRefusal::Expansion`] when a state's expansion stops and
             /// [`ReachRefusal::Encoding`] when a state or transition has no
             /// canonical encoding: the first such refusal in breadth-first
@@ -90,8 +100,9 @@ macro_rules! reachable_under {
             pub fn reachable(
                 &self,
                 worker_limit: NonZeroUsize,
+                max_states: usize,
             ) -> Result<Reachable<$model>, ReachRefusal> {
-                reachable(self, worker_limit)
+                reachable(self, worker_limit, max_states)
             }
         }
     )+};
@@ -125,6 +136,7 @@ fn expand<M: MemoryModel>(
 fn reachable<M>(
     system: &ProtocolSystem<'_, M>,
     worker_limit: NonZeroUsize,
+    max_states: usize,
 ) -> Result<Reachable<M>, ReachRefusal>
 where
     M: MemoryModel + Sync,
@@ -134,7 +146,12 @@ where
         .initial()
         .into_iter()
         .map(|state| Ok((system.canonical_state_key(&state)?, state)));
-    let (nodes, workers) = search(initial, |state| expand(system, state), worker_limit)?;
+    let (nodes, workers) = search(
+        initial,
+        |state| expand(system, state),
+        worker_limit,
+        max_states,
+    )?;
     let states = nodes
         .into_iter()
         .map(|node| ReachedState {
@@ -168,6 +185,7 @@ fn search<S, T, F>(
     initial: impl IntoIterator<Item = Result<(StateKey, S), ReachRefusal>>,
     expand: F,
     worker_limit: NonZeroUsize,
+    max_states: usize,
 ) -> Result<(Vec<Node<S, T>>, usize), ReachRefusal>
 where
     S: Sync + Send,
@@ -184,7 +202,10 @@ where
     let mut admit =
         |state: S, key: StateKey, nodes: &mut Vec<Node<S, T>>, frontier: &mut Vec<usize>| {
             if let Some(&index) = known.get(&key) {
-                return index;
+                return Ok(index);
+            }
+            if nodes.len() >= max_states {
+                return Err(ReachRefusal::Limit(Limit::States(max_states)));
             }
             let index = nodes.len();
             known.insert(key.clone(), index);
@@ -194,19 +215,19 @@ where
                 steps: Vec::new(),
             });
             frontier.push(index);
-            index
+            Ok(index)
         };
     for entry in initial {
         let (key, state) = entry?;
-        admit(state, key, &mut nodes, &mut frontier);
+        admit(state, key, &mut nodes, &mut frontier)?;
     }
     while !frontier.is_empty() {
         let level = std::mem::take(&mut frontier);
-        let (expanded, used) = expand_level(&expand, &nodes, &level, worker_limit)?;
+        let (expanded, used) = expand_level(&expand, &nodes, &level, worker_limit);
         workers = workers.max(used);
         for (at, successors) in level.into_iter().zip(expanded) {
-            for (transition, state, key) in successors {
-                let next = admit(state, key, &mut nodes, &mut frontier);
+            for (transition, state, key) in successors? {
+                let next = admit(state, key, &mut nodes, &mut frontier)?;
                 nodes[at].steps.push((transition, next));
             }
         }
@@ -216,14 +237,14 @@ where
 
 /// Expands every state of `frontier` on up to `worker_limit` threads,
 /// returning each expansion at its frontier position and the number of
-/// workers used: the first refusal in frontier order, whichever worker
-/// met it first.
+/// workers used. Results remain at their frontier positions so admission
+/// chooses the first expansion or budget refusal in breadth-first order.
 fn expand_level<S, T, F>(
     expand: &F,
     nodes: &[Node<S, T>],
     frontier: &[usize],
     worker_limit: NonZeroUsize,
-) -> Result<(Vec<Successors<T, S>>, usize), ReachRefusal>
+) -> (Vec<Expanded<T, S>>, usize)
 where
     S: Sync + Send,
     T: Send + Sync,
@@ -234,8 +255,8 @@ where
         let expanded = frontier
             .iter()
             .map(|&at| expand(&nodes[at].state))
-            .collect::<Result<_, _>>()?;
-        return Ok((expanded, 1));
+            .collect();
+        return (expanded, 1);
     }
     let next = AtomicUsize::new(0);
     let mut expanded: Vec<Option<Expanded<T, S>>> = std::iter::repeat_with(|| None)
@@ -271,8 +292,8 @@ where
     let expanded = expanded
         .into_iter()
         .map(|successors| successors.unwrap_or_else(|| Err(broken())))
-        .collect::<Result<_, _>>()?;
-    Ok((expanded, workers))
+        .collect();
+    (expanded, workers)
 }
 
 /// The refusal of a frontier position no worker expanded: a broken
@@ -329,21 +350,120 @@ mod tests {
             .collect()
     }
 
+    /// Initial states and successors share one budget per distinct key,
+    /// including zero, without returning an incomplete graph as success.
+    #[trace("FR-126-AC-22")]
+    #[test]
+    fn initial_and_successor_keys_share_the_distinct_state_budget() {
+        for worker_limit in [1, 2, 4] {
+            let empty = Vec::<Result<(StateKey, u64), ReachRefusal>>::new();
+            let (nodes, _) = search(empty, |state| successors(*state), workers(worker_limit), 0)
+                .expect("an empty initial set completes at zero");
+            assert!(nodes.is_empty());
+            assert_eq!(
+                search(
+                    initial(),
+                    |state| successors(*state),
+                    workers(worker_limit),
+                    0
+                )
+                .err(),
+                Some(ReachRefusal::Limit(Limit::States(0)))
+            );
+            let distinct = vec![Ok((key(0), 0)), Ok((key(1), 1))];
+            assert_eq!(
+                search(
+                    distinct,
+                    |state| successors(*state),
+                    workers(worker_limit),
+                    1
+                )
+                .err(),
+                Some(ReachRefusal::Limit(Limit::States(1)))
+            );
+            let repeated = vec![Ok((key(0), 0)), Ok((key(0), 0))];
+            let self_loops =
+                |state: &u64| Ok(vec![(0, *state, key(*state)), (1, *state, key(*state))]);
+            let (nodes, _) = search(repeated, self_loops, workers(worker_limit), 1)
+                .expect("duplicate keys consume no additional slot");
+            assert_eq!(nodes.len(), 1);
+            assert_eq!(nodes[0].steps, vec![(0, 0), (1, 0)]);
+        }
+    }
+
+    /// Finishing exactly at the cap succeeds; the next distinct state
+    /// refuses at the same budget for every worker count.
+    #[trace("FR-126-AC-23")]
+    #[test]
+    fn the_state_budget_allows_exact_closure_and_refuses_the_next_state() {
+        for worker_limit in [1, 2, 4] {
+            let (nodes, _) = search(
+                initial(),
+                |state| successors(*state),
+                workers(worker_limit),
+                15,
+            )
+            .expect("the complete finite graph fits exactly");
+            assert_eq!(nodes.len(), 15);
+            assert_eq!(
+                search(
+                    initial(),
+                    |state| successors(*state),
+                    workers(worker_limit),
+                    14
+                )
+                .err(),
+                Some(ReachRefusal::Limit(Limit::States(14)))
+            );
+        }
+    }
+
+    /// A later frontier expansion completes before the earlier expansion
+    /// exhausts the state budget. Admission still stops at the earlier
+    /// expansion, even when the later expansion refuses for another reason.
+    #[trace("FR-126-AC-23")]
+    #[test]
+    fn the_state_budget_refusal_precedes_a_later_expansion_refusal() {
+        for worker_limit in [1, 2, 4] {
+            let (finished, ready) = (std::sync::Mutex::new(false), std::sync::Condvar::new());
+            let expand = |state: &u64| {
+                if *state == 1 && worker_limit > 1 {
+                    let finished = finished.lock().expect("the completion lock is intact");
+                    let (finished, _) = ready
+                        .wait_timeout_while(finished, Duration::from_secs(5), |done| !*done)
+                        .expect("the completion lock is intact");
+                    assert!(*finished, "the later frontier position completes first");
+                }
+                if *state == 2 {
+                    *finished.lock().expect("the completion lock is intact") = true;
+                    ready.notify_one();
+                    return Err(EncodingRefusal::NoEncoding("later expansion".to_owned()).into());
+                }
+                successors(*state)
+            };
+            assert_eq!(
+                search(initial(), expand, workers(worker_limit), 3).err(),
+                Some(ReachRefusal::Limit(Limit::States(3)))
+            );
+        }
+    }
+
     /// The search admits states breadth-first in frontier order, coalesces
     /// equal keys, and gives the same graph on one worker and on several.
     #[trace("TC-668")]
     #[test]
     fn the_search_is_breadth_first_and_independent_of_the_worker_count() {
-        let (sequential, used) =
-            search(initial(), |state| successors(*state), workers(1)).expect("the system expands");
+        let (sequential, used) = search(initial(), |state| successors(*state), workers(1), 15)
+            .expect("the system expands");
         assert_eq!(used, 1);
         let order: Vec<u64> = sequential.iter().map(|node| node.state).collect();
         assert_eq!(order, (0..STATES).collect::<Vec<_>>());
         assert_eq!(sequential[1].steps, vec![(3, 3), (4, 4), (0, 0)]);
         assert_eq!(sequential[14].steps, vec![(0, 0)]);
         for limit in 2..=8 {
-            let (parallel, used) = search(initial(), |state| successors(*state), workers(limit))
-                .expect("the system expands");
+            let (parallel, used) =
+                search(initial(), |state| successors(*state), workers(limit), 15)
+                    .expect("the system expands");
             // The widest level holds 8 states.
             assert_eq!(used, limit);
             assert_eq!(graph(&parallel), graph(&sequential), "{limit} workers");
@@ -371,7 +491,7 @@ mod tests {
             other => successors(other),
         };
         for limit in 1..=4 {
-            let refusal = search(initial(), refusing, workers(limit))
+            let refusal = search(initial(), refusing, workers(limit), 15)
                 .err()
                 .expect("the search refuses");
             assert_eq!(refusal, ReachRefusal::Expansion(stop), "{limit} workers");
@@ -382,7 +502,7 @@ mod tests {
         };
         for limit in 1..=4 {
             assert_eq!(
-                search(initial(), encoding, workers(limit)).err(),
+                search(initial(), encoding, workers(limit), 15).err(),
                 Some(ReachRefusal::Encoding(EncodingRefusal::NoEncoding(
                     "state 5".to_owned()
                 ))),
@@ -391,7 +511,7 @@ mod tests {
         }
         let unkeyed = vec![Err(EncodingRefusal::NoEncoding("initial".to_owned()).into())];
         assert_eq!(
-            search(unkeyed, |state| successors(*state), workers(2)).err(),
+            search(unkeyed, |state| successors(*state), workers(2), 15).err(),
             Some(ReachRefusal::Encoding(EncodingRefusal::NoEncoding(
                 "initial".to_owned()
             )))
@@ -409,7 +529,7 @@ mod tests {
             successors(*state)
         };
         let payload = catch_unwind(AssertUnwindSafe(|| {
-            search(initial(), panicking, workers(4)).map(|_| ())
+            search(initial(), panicking, workers(4), 15).map(|_| ())
         }))
         .expect_err("the worker's panic is re-raised");
         assert_eq!(payload.downcast_ref::<&str>(), Some(&"expanding state 5"));

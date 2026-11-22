@@ -8,7 +8,7 @@
 //! snapshots and protocol subjects the protocol tests build from it.
 
 use filament_semantic_value::checking::CheckMode;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::num::NonZeroUsize;
 
 use filament_checked::key::DeclarationKey;
@@ -747,10 +747,12 @@ pub(crate) fn source_memory(package: &CheckedPackage, protocol: &str) -> Resolve
         .unwrap_or_default()
 }
 
-/// The system of `subject` under `Sc`.
+/// The system of `subject` under `Sc`, using the checker's cycle keys.
 pub(crate) fn sc_system<'a>(subject: &ProtocolSubject<'a>) -> ProtocolSystem<'a, Sc> {
     let model = ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
-    ProtocolSystem::new(model, subject, Sc).expect("the protocol system builds")
+    ProtocolSystem::new(model, subject, Sc)
+        .expect("the protocol system builds")
+        .with_cycle_keys(BTreeSet::new())
 }
 
 /// The `v` of the cell `object` at `state`.
@@ -820,7 +822,9 @@ macro_rules! explored {
                 system: &ProtocolSystem<'_, Self>,
                 worker_limit: NonZeroUsize,
             ) -> Reachable<Self> {
-                system.reachable(worker_limit).expect("the reachable states")
+                system
+                    .reachable(worker_limit, fsl_eval::simulation::Limits::default().max_states)
+                    .expect("the reachable states")
             }
         }
     )+};
