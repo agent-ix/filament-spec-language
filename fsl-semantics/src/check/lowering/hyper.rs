@@ -371,6 +371,34 @@ impl Lowering<'_> {
             .collect();
         let mut binders = Binders::new(&body_slot_names, &binders_scope);
         let body = self.expression(relation.typed_body().root(), &mut binders)?;
+        // FR-351 requires an expression root even when the Boolean body
+        // lowers directly to a literal or parameter. A reference carrier
+        // preserves the value and contributes no evaluator charge.
+        let body = match &body {
+            LeafTerm::Reference { target }
+                if target
+                    .admitted()
+                    .and_then(|key| self.graph.nodes.get(key))
+                    .is_some_and(|node| node.content.node_tag != NodeTag::Expression) =>
+            {
+                let location = relation.typed_body().root().location();
+                let expression = self.insert(
+                    location,
+                    NodeTag::Expression,
+                    "reference",
+                    Some(boolean.clone()),
+                    None,
+                    BodyTerm::Leaf(body.clone()),
+                )?;
+                self.record(
+                    expression.clone(),
+                    OccurrenceRole::Expression,
+                    location.clone(),
+                );
+                LeafTerm::reference(expression)
+            }
+            _ => body,
+        };
         let subject_declaration_order = relation
             .aliases()
             .iter()
