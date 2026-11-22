@@ -2276,7 +2276,10 @@ mod tests {
             ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem,
             PackageModelInput, PopulationUniverse,
         };
-        use fsl_package::{BarePackage, EmitLimits, ReferenceCatalog, V2ReadLimits};
+        use fsl_package::{
+            BarePackage, BareSupply, EmitLimits, ReadEqualityRows, ReadIdentityRows,
+            ReferenceCatalog, V2ReadLimits,
+        };
         use fsl_semantics::library::LibraryName;
         use fsl_semantics::model::accounting::ModelNormalizationLimits;
         use fsl_semantics::model::dispatch::GeneralizationClosure;
@@ -2632,7 +2635,28 @@ mod tests {
                 ..
             })
         ));
-        let bare = BarePackage::new(read.admitted());
+        let identities = emission
+            .identity_rows(read.admitted(), &mut joins)
+            .expect("actual emitted identity witness");
+        let equality = emission
+            .equality_witness(read.admitted(), &mut joins)
+            .expect("actual emitted equality witness");
+        let identity_bytes = identities.to_bytes(read.admitted()).unwrap();
+        let equality_bytes = equality.to_bytes(read.admitted()).unwrap();
+        let identities = ReadIdentityRows::read(&identity_bytes, read.admitted(), &mut joins)
+            .expect("the genuine identity bytes authenticate against their admitted owner");
+        let equality = ReadEqualityRows::read(&equality_bytes, read.admitted())
+            .expect("the genuine equality bytes authenticate against their admitted owner");
+        let bare = BarePackage::new(read.admitted())
+            .with_canonical_bytes(read.canonical_bytes())
+            .with_supply(
+                BareSupply {
+                    identities: &identities,
+                    equality: Some(&equality),
+                },
+                &mut joins,
+            )
+            .expect("the actual emitted supply joins on the same finite native budget");
         let package_input = PackageModelInput::of(&bare, &packages, limits.model)
             .expect("real admitted package model input");
         let package_system = ModelSystem::new(request(

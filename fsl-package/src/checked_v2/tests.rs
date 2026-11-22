@@ -3703,9 +3703,6 @@ fn conformance_node_index_vectors_refuse_malformed_wire() {
     let vectors = read_fixture(&proposals.join("node-index-vectors.json"));
     let fixture = vectors["base"].as_str().expect("a base fixture");
     let base = read_fixture(&proposals.join(fixture));
-    let library_fixture = "fixtures/positive-dependency-library.json";
-    let library = read_fixture(&proposals.join(library_fixture));
-    let admitted_library = admitted_fixture(library_fixture, &library);
     let cases = vectors["cases"].as_array().expect("NI cases");
     assert!(!cases.is_empty(), "node-index-vectors.json holds no case");
     for case in cases {
@@ -3713,43 +3710,7 @@ fn conformance_node_index_vectors_refuse_malformed_wire() {
         let expected = case["expected"].as_str().expect("published outcome");
         let mut package = base.clone();
         apply_json_patch(&mut package, &case["patch"]);
-        let mut evidence = CheckedPackageEvidence::new();
-        supply_fspec_extension_definitions(&mut evidence, &package, &[]);
-        for feature in package["lock"]["required_features"].as_array().unwrap() {
-            evidence.support_feature(feature.as_str().unwrap());
-        }
-        evidence
-            .insert_dependency_package("test/predicates", admitted_library.clone())
-            .expect("the published direct dependency");
-        if let Some(supplied) = case["supplied"].as_array() {
-            for identity in supplied {
-                let identity = identity.as_str().expect("supplied identity");
-                if identity != "test/predicates" {
-                    evidence
-                        .insert_dependency_package(identity, admitted_library.clone())
-                        .expect("the additional published supply");
-                }
-            }
-        }
-        let outcome = read_v2(
-            &fixture_wire_bytes(&package),
-            identity(package["name"].as_str().expect("package name")),
-            V2ReadLimits::fixture(),
-            &evidence,
-        );
-        if expected == "passes_operand_checks_with_dependency_position" {
-            let dependency_node = usize::try_from(
-                case["dependency_node"].as_u64().expect("dependency node"),
-            )
-            .expect("dependency node position");
-            assert!(dependency_node < admitted_library.resolved_graph().nodes.len());
-            assert!(
-                matches!(&outcome, Read::Verified { .. })
-                    || matches!(&outcome, Read::Refused(V2ReadRefusal::Envelope { refusal, .. }) if refusal.code != CheckedPackageRefusalCode::MalformedWire),
-                "{id}: dependency operand checks reach semantic admission: {outcome:?}"
-            );
-            continue;
-        }
+        let (_, outcome) = read_fixture_wire(fixture, &package);
         if expected == "passes_operand_and_duplicate_checks" || expected == "passes_operand_checks"
         {
             let graph =
