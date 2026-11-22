@@ -2147,6 +2147,15 @@ fn probabilistic_wire_using(
             entries.push(json!({"state":state(&at)?,"choice":choice}));
         }
     }
+    for (at, distribution) in &witness.randomized_scheduler {
+        let at = fsl_eval::simulation::StateKey::from_canonical_bytes(at.as_bytes().to_vec());
+        let alternatives = distribution.iter().map(|(action, weight)| {
+            let bytes = action.to_bytes().map_err(|_| Unspelled("probabilistic internal choice"))?;
+            let action: Json = serde_json::from_slice(&bytes).map_err(|_| Unspelled("probabilistic internal choice"))?;
+            Ok(json!({"choice": action, "probability": rational(weight)}))
+        }).collect::<Result<Vec<_>, CounterexampleWireError>>()?;
+        entries.push(json!({"state": state(&at)?, "choice": {"randomized": alternatives}}));
+    }
     if !entries.is_empty() {
         written["scheduler"] = json!({"entries": entries});
     }

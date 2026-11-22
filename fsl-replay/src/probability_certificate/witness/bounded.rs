@@ -58,6 +58,9 @@ pub(super) fn replay(
     if workload.is_some() && !witness.scheduler.is_empty() {
         return Err(ProbabilityWitnessError::Refused);
     }
+    if !witness.randomized_scheduler.is_empty() {
+        return Err(ProbabilityWitnessError::Refused);
+    }
     if u64::try_from(witness.paths.len()).unwrap_or(u64::MAX) > limits.max_witness_paths {
         return Err(ProbabilityWitnessError::Limit {
             limit: ModelCheckLimit::ExactProbMaxWitnessPaths,
