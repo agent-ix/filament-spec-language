@@ -82,8 +82,9 @@ fn analyze_hyper_holds_with_a_checked_product_certificate() {
     assert!(run.item(0)["counterexample"].is_null());
 }
 
-/// A package route with no hyper evaluator form settles no verdict for the
-/// claim by recompiling the source, which the source route decides.
+/// The admitted universal package form proves the same claim after all source
+/// inputs have been removed; recompiling retained source cannot supply a result.
+#[trace("FR-940-AC-17", "FR-940-AC-18", "FR-176-AC-1")]
 #[test]
 fn a_package_hyper_item_does_not_fall_back_to_source() {
     use crate::analyze_cli_support::{
@@ -91,14 +92,13 @@ fn a_package_hyper_item_does_not_fall_back_to_source() {
     };
     let body = "hyper Equal using t0 over behaviours (c: M::Counter) \
         forall trace a of M forall trace b of M { always holds(c.value @ a <= 3 and c.value @ b <= 3) }";
-    let ws = Workspace::new("hyper-wire-package-pending");
+    let ws = Workspace::new("hyper-wire-package-source-free");
     let items = json!([{"claim": "Equal"}]);
     let source = analyze(&counter_request(&ws, body, items.clone()));
     assert_eq!(source.exit, 0, "{}", source.document());
     assert_eq!(label(&source.item(0)), "proved");
     let (members, _) = package_selection(&ws, &request_members(Some(items)));
-    // Neither the original source nor the handoff's retained source can be
-    // recompiled to conceal the package evaluator's missing form.
+    // Neither source location can be recompiled to produce the package result.
     ws.write("program.fsl", b"not a native unit");
     std::fs::remove_dir_all(ws.path(&format!("{HANDOFF}/sources")))
         .expect("remove only the fixture's retained source files");
@@ -110,13 +110,15 @@ fn a_package_hyper_item_does_not_fall_back_to_source() {
     );
     let package = analyze(&path);
     let document = package.document();
-    assert_ne!(package.exit, 0, "{document}");
-    let proved = document["items"].as_array().is_some_and(|items| {
-        items
-            .iter()
-            .any(|item| item["record"]["result"] == "proved")
-    });
-    assert!(!proved, "{document}");
+    assert_eq!(package.exit, 0, "{document}");
+    for member in ["record", "certificate", "counterexample", "replay"] {
+        assert_eq!(
+            package.item(0)[member],
+            source.item(0)[member],
+            "{member}: {document}"
+        );
+    }
+    assert_eq!(package.item(0)["certificate"]["accepted"], true);
 }
 
 #[trace("TC-1591", "FR-631-AC-1", "FR-177-AC-1", "FR-163-AC-1")]

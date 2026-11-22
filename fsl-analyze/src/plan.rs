@@ -623,7 +623,7 @@ fn model_based_test(
 
 /// The longest generated trace the FR-752 entry admits for a plan step, in
 /// positions; `max_trace_length` is the request's own bound under it.
-const MODEL_BASED_POSITIONS: u64 = 10_000;
+pub(crate) const MODEL_BASED_POSITIONS: u64 = 10_000;
 
 struct Execution<'a> {
     package: &'a CheckedPackage,

@@ -31,6 +31,7 @@ use fsl_semantics::check::{Capability, DeclarationFamily};
 use serde_json::{json, Map};
 
 use super::super::hyper_route::PackageRelationSubject;
+use super::super::package_hyper::PackageHyperSubject;
 use super::super::request::ProtocolBinding;
 use super::super::{
     AnalyzeItem, AnalyzeLimits, ClaimItem, ClauseItemRefusal, ClauseLimits, Engines, ItemForm,
@@ -255,6 +256,13 @@ pub struct PackageRun<'a> {
 /// One item as the package's name tables resolve it.
 enum Named<'s> {
     Simulation(super::super::SimulationItem),
+    Hyper {
+        index: RequestIndex,
+        name: &'s str,
+        declaration: CheckedNodeId,
+        ordinal: u64,
+        selection: &'s ItemSelection,
+    },
     Relation {
         index: RequestIndex,
         name: &'s str,
@@ -328,6 +336,7 @@ enum Route<'a> {
     Deadlock,
     StateClause,
     StateGraph(Box<PackageStateGraphSubject<'a>>),
+    Hyper(Box<PackageHyperSubject<'a>>),
     Relation(Box<PackageRelationSubject<'a>>),
     Value(Box<PackageValue<'a>>),
     Schedule(Box<schedule::ScheduleRoute>),
@@ -463,11 +472,26 @@ pub fn settle_package_run(
     let mut graph_claims: Vec<OccurrenceKey> = Vec::new();
     let mut protocol_claims: Vec<OccurrenceKey> = Vec::new();
     let mut value_claims: Vec<OccurrenceKey> = Vec::new();
+    let mut hyper_claims: Vec<OccurrenceKey> = Vec::new();
     let mut relation_claims: Vec<OccurrenceKey> = Vec::new();
     let mut schedule_claims: Vec<OccurrenceKey> = Vec::new();
     for item in named {
         match item {
             Named::Simulation(item) => resolved.push(ResolvedItem::Simulation(Box::new(item))),
+            Named::Hyper {
+                index,
+                name,
+                declaration,
+                ordinal,
+                selection,
+            } => match reads.hyper(index, name, &declaration, ordinal, selection)? {
+                Resolution::Settled(settled) => resolved.push(settled),
+                Resolution::Claim(claim, subject) => {
+                    hyper_claims.push(claim.item.claim.clone());
+                    routes.insert(index, Route::Hyper(subject));
+                    resolved.push(ResolvedItem::Claim(claim));
+                }
+            },
             Named::Relation {
                 index,
                 name,
@@ -631,8 +655,10 @@ pub fn settle_package_run(
         ItemKind::Formula if invariant_claims.contains(claim) => {
             Some(DeclarationFamily::StateModel)
         }
-        ItemKind::Formula => (clause_claims.contains(claim) || graph_claims.contains(claim))
-            .then_some(DeclarationFamily::TemporalTrace),
+        ItemKind::Formula => (clause_claims.contains(claim)
+            || graph_claims.contains(claim)
+            || hyper_claims.contains(claim))
+        .then_some(DeclarationFamily::TemporalTrace),
         other => crate::claim_family::kind_family(other),
     };
     let Negotiation {
@@ -1082,6 +1108,19 @@ fn resolve_names<'s>(
                     node.node_id == found.declaration && node.step_relation_body().is_some()
                 }) {
                     return Ok(Named::Relation {
+                        index,
+                        name,
+                        declaration: found.declaration,
+                        ordinal: found.occurrence.ordinal,
+                        selection,
+                    });
+                }
+                if view.package().resolved_graph().nodes.iter().any(|node| {
+                    node.node_id == found.declaration
+                        && &*node.node_tag == "claim"
+                        && node.semantic_form.as_ref() == "hyperproperty"
+                }) {
+                    return Ok(Named::Hyper {
                         index,
                         name,
                         declaration: found.declaration,
@@ -1813,7 +1852,137 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         ))
     }
 
-    /// Resolve the HP-1 model capability against the admitted form's own record.
+    /// Resolve universal hyper analysis from its authenticated package form.
+    fn hyper(
+        &self,
+        index: RequestIndex,
+        name: &str,
+        declaration: &CheckedNodeId,
+        ordinal: u64,
+        selection: &ItemSelection,
+    ) -> Result<Resolution<Box<PackageHyperSubject<'r>>>, PackageRunError> {
+        let fault = || PackageRunError::Document(AnalyzeDocumentError::Fault);
+        let input = self.input.ok_or_else(fault)?;
+        let package = input.package();
+        let key = package.node_key(declaration).ok_or_else(fault)?;
+        let claim = OccurrenceKey::new(
+            key.clone(),
+            filament_exact::Origin::new(filament_exact::Role::new("claim"), ordinal),
+        );
+        let pending = |fact| {
+            PackageRunError::Pending(PendingPackageFamily {
+                request_index: Some(index),
+                family: PendingFamily::ClauseFact(fact),
+                node: Some(declaration.clone()),
+                note: None,
+            })
+        };
+        if package.model_selections().len() != 1 {
+            return Err(pending("hyper-model-scope"));
+        }
+        let form = package
+            .hyper_clause_form(&claim)
+            .map_err(|refusal| match refusal {
+                fsl_package::BareClauseRefusal::Pending { fact, .. } => pending(fact),
+                _ => fault(),
+            })?;
+        let world = package.world().map_err(|_| fault())?;
+        let clause = fsl_semantics::check::CheckedHyperClause::of_package_form(
+            form,
+            world.types(),
+            crate::plan::MODEL_BASED_POSITIONS,
+        )
+        .map_err(|_| fault())?;
+        use fsl_eval::simulation::model::ModelEvaluator;
+        package
+            .hyper_reference_literals(&clause)
+            .map_err(|_| pending("hyper-reference-bindings"))?;
+        // Hyper requirements are reconstructed from the authenticated form.
+        // requirement_items currently carries HP-1 rows only. Every admitted
+        // object parameter is a Reference (a bounded type position); the
+        // universal infinite-trace clause itself is the unbounded domain.
+        let requirements = clause
+            .claim()
+            .requirements(key, &[], &[], &[])
+            .map_err(|_| fault())?;
+        let own_subject = self.own_subject(index, selection)?;
+        let temporal = selection.temporal.clone().unwrap_or_default();
+        let mut settings = temporal_settings(&temporal);
+        settings
+            .pending_reductions
+            .clone_from(&selection.reductions);
+        let kind = match selection.kind.as_deref() {
+            Some(label) => match Capability::from_wire(label) {
+                Ok(kind) => kind,
+                Err(_) => {
+                    return Ok(Resolution::Settled(invalid_kind(
+                        index,
+                        Some(name),
+                        "unknown-kind",
+                    )))
+                }
+            },
+            None => Capability::TemporalSatisfaction,
+        };
+        let named = selection.backend.as_deref().map(BackendId::new);
+        let backend_options = selection.options.clone().unwrap_or_default();
+        if let Some(refused) = unknown_option(
+            index,
+            Some(name),
+            self.registry,
+            named.as_ref(),
+            &backend_options,
+        ) {
+            return Ok(Resolution::Settled(refused));
+        }
+        let candidates = self.registry.restrict_to_timing(
+            if kind == Capability::TemporalSatisfaction {
+                fsl_route::request::requirement_candidates(
+                    &requirements,
+                    self.registry,
+                    named.as_ref(),
+                )
+            } else {
+                self.registry.candidates(kind, named.as_ref())
+            },
+            false,
+        );
+        let item = ClaimItem {
+            request_index: index,
+            claim,
+            kind,
+            extent: ExtentClassification::Unbounded {
+                finite_bound_available: false,
+            },
+            backend: named,
+            candidates: candidate_list(&candidates),
+            options: options(selection, backend_options),
+            form: (kind == Capability::TemporalSatisfaction)
+                .then_some(ItemForm::Temporal(settings)),
+        };
+        let unrouted = selection.unrouted_beyond_sampling()
+            || reads_no_clocks(selection)
+            || temporal
+                .limits
+                .is_some_and(|limits| limits.sets_memory_limits())
+            || !own_subject.same_model(self.subject);
+        Ok(Resolution::Claim(
+            Box::new(ResolvedClaim {
+                item,
+                claim_name: name.to_owned(),
+                candidates,
+                subject: own_subject,
+                unrouted,
+            }),
+            Box::new(PackageHyperSubject::new(
+                input,
+                clause,
+                self.binding.clone(),
+                self.limits,
+            )),
+        ))
+    }
+
     fn model_relation(
         &self,
         index: RequestIndex,
@@ -2625,6 +2794,11 @@ impl<'a> WorkInputs<'_, 'a> {
                     protocol: None,
                 }),
             ) if item.kind == Capability::TemporalSatisfaction => {
+                subject.configured(form.clone()).item(item.request_index)
+            }
+            (Some(ItemForm::Temporal(form)), Some(Route::Hyper(subject)))
+                if item.kind == Capability::TemporalSatisfaction =>
+            {
                 subject.configured(form.clone()).item(item.request_index)
             }
             (Some(ItemForm::Temporal(form)), Some(Route::Relation(subject)))

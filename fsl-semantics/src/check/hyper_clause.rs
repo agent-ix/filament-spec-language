@@ -827,6 +827,11 @@ impl CheckedHyperClause {
 }
 
 impl CheckedHyperClause {
+    /// The checked temporal-satisfaction claim over this clause's behaviours.
+    pub fn claim(&self) -> &TemporalClaim {
+        &self.claim
+    }
+
     /// The declared clause name.
     pub fn name(&self) -> &str {
         &self.name

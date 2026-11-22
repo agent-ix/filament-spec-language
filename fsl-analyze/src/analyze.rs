@@ -43,6 +43,7 @@ mod hybrid_process;
 mod hyper_route;
 mod invariant_item;
 mod items;
+mod package_hyper;
 mod protocol_item;
 mod reduction_item;
 mod refinement_item;

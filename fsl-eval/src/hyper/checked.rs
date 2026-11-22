@@ -12,8 +12,8 @@ use fsl_semantics::check::CheckedHyperClause;
 use crate::hyper::{
     MatchIncomplete, MatchPart, MatchReading, ParameterBinding, StepLabel, StepMatch,
 };
+use crate::simulation::model::ModelEvaluator;
 use crate::simulation::model::{verdict, ClauseOutcome, Verdict};
-use crate::value::CheckedPackageEvaluation;
 
 /// The `match` conjuncts of one checked hyper clause, evaluated over the
 /// labels of a joint step.
@@ -25,13 +25,18 @@ use crate::value::CheckedPackageEvaluation;
 /// identity, so a conjunct reads no state and the instance is not read
 /// (ADR-023 HS-5).
 pub struct CheckedStepMatch<'s> {
-    package: &'s CheckedPackage,
+    package: &'s dyn ModelEvaluator,
     clause: &'s CheckedHyperClause,
 }
 
 impl<'s> CheckedStepMatch<'s> {
     /// The `match` of `clause`, evaluated through `package`.
     pub fn new(package: &'s CheckedPackage, clause: &'s CheckedHyperClause) -> Self {
+        Self::for_evaluator(package, clause)
+    }
+
+    /// Evaluate matches through the authenticated source or package evaluator.
+    pub fn for_evaluator(package: &'s dyn ModelEvaluator, clause: &'s CheckedHyperClause) -> Self {
         Self { package, clause }
     }
 
@@ -63,22 +68,20 @@ impl<'s> CheckedStepMatch<'s> {
             {
                 continue;
             }
-            let evaluation = match self.package.evaluate_step_predicate(
-                self.clause,
-                part,
-                conjunct,
-                labels,
-                meter,
-            ) {
-                Ok(evaluation) => evaluation,
-                Err(CallFailure::Fault(fault)) => return Ok(MatchReading::Fault(fault)),
-                Err(_) => {
-                    return Ok(MatchReading::Fault(InternalFault::new(
-                        "hyper-match",
-                        "a-conjunct-evaluates",
-                    )))
-                }
-            };
+            let evaluation =
+                match self
+                    .package
+                    .evaluate_hyper_match(self.clause, part, conjunct, labels, meter)
+                {
+                    Ok(evaluation) => evaluation,
+                    Err(CallFailure::Fault(fault)) => return Ok(MatchReading::Fault(fault)),
+                    Err(_) => {
+                        return Ok(MatchReading::Fault(InternalFault::new(
+                            "hyper-match",
+                            "a-conjunct-evaluates",
+                        )))
+                    }
+                };
             match verdict(&evaluation.outcome) {
                 Verdict::True => {}
                 Verdict::False => return Ok(MatchReading::Fails),
