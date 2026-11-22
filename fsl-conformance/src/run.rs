@@ -457,6 +457,7 @@ fn run_execute(
 
     let call = Call {
         clocks: Default::default(),
+        canonical_values: false,
         wire_arguments: Vec::new(),
         snapshot: None,
         function: input.function.to_owned(),
