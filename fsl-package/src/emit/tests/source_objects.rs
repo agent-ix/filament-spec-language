@@ -1590,7 +1590,7 @@ time O dense unit ms;
 fn the_identity_file_carries_data_and_clock_member_entries() {
     let (_, package, bytes) = admitted_identity_file(CLOCK_ENTRIES);
     let file: Value = serde_json::from_slice(&bytes).expect("identity JSON parses");
-    assert_eq!(file["format"], "filament.checked-handoff.identities/5");
+    assert_eq!(file["format"], crate::IDENTITIES_FORMAT);
     let o = identity_row(&file, "source_objects", "O");
     let kinds: Vec<(&str, bool)> = o["members"]
         .as_array()

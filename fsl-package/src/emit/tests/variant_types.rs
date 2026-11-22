@@ -748,7 +748,7 @@ fn model_enums_round_trip_unused_declarations_and_canonical_runtime_members() {
         .expect("producer rows");
     let bytes = original.to_bytes(&admitted).expect("carrier");
     let value: Value = serde_json::from_slice(&bytes).expect("JSON");
-    assert_eq!(value["format"], "filament.checked-handoff.identities/5");
+    assert_eq!(value["format"], crate::IDENTITIES_FORMAT);
     assert_eq!(
         value["model_enum_declarations"].as_array().unwrap().len(),
         2

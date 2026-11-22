@@ -177,6 +177,35 @@ fn source_enum_carrier_refuses_closed_schema_corruption_and_missing_population()
             "corruption {mutate}"
         );
     }
+    for mutate in 0..3 {
+        let mut malformed = original.clone();
+        let entry = &mut malformed["source_enums"][0];
+        match mutate {
+            0 => {
+                entry["declaration"]["extra"] = json!(true);
+            }
+            1 => {
+                entry["declaration"]["node_key"] = json!("not-a-structural-key");
+            }
+            2 => {
+                entry["declaration"]["shape"] = json!({"kind":"boolean"});
+            }
+            _ => unreachable!(),
+        }
+        assert!(
+            matches!(
+                crate::ReadIdentityRows::read(
+                    &serde_json::to_vec(&malformed).expect("malformed nested field"),
+                    &admitted,
+                    &mut budget()
+                ),
+                Err(crate::IdentityFileRefusal::Malformed {
+                    member: crate::IdentityMember::SourceEnums
+                })
+            ),
+            "malformed case {mutate}"
+        );
+    }
     let mut absent = original.clone();
     absent["source_enums"] = json!([]);
     let read = crate::ReadIdentityRows::read(
