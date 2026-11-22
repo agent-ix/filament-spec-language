@@ -22,7 +22,6 @@ serde_json = "1.0.151"
 ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 fsl-foundation = { path = "../fsl-foundation" }
 fsl-package = { path = "../fsl-package" }
-fsl-forms = { path = "../fsl-forms" }
 fsl-semantics = { path = "../fsl-semantics" }
 filament-exact = { workspace = true }
 # ADR-011 X-8: the owner of the partial-value, completeness, activation and
@@ -54,6 +53,9 @@ thiserror = "2.0.20"
 test-support = []
 
 [dev-dependencies]
+# Parsed forms are constructed only by tests; shipped evaluation reads the
+# declaration discriminants through layer 3 (FR-062-AC-6, ADR-011 section 6.1).
+fsl-forms = { path = "../fsl-forms" }
 syn = { version = "2", features = ["full", "visit"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 filament-specification = { workspace = true }
