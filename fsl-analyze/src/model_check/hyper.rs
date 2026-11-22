@@ -302,7 +302,7 @@ pub fn check_hyper(
                 .get(index)
                 .and_then(|owned| owned.get(index))
                 .and_then(Option::as_ref);
-            alias_system(&subject.simulation, provision, alias.as_str())
+            alias::alias_system_for_clause(&subject.simulation, provision, clause, alias.as_str())
                 .map_err(|failure| ModelCheckRefusal::Admission(Box::new(failure)))
         })
         .collect::<Result<Vec<_>, _>>()?;

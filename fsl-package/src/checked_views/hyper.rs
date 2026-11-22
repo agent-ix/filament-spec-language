@@ -175,17 +175,26 @@ impl BarePackage<'_> {
         let formula_root = reference(formula).ok_or_else(|| malformed(claim))?;
         let mut aliases = Vec::new();
         let mut subject_roots = BTreeMap::new();
+        let mut subject_models = BTreeMap::new();
         for entry in group_member(&node.body, "subjects")
             .and_then(members)
             .ok_or_else(|| malformed(claim))?
         {
             let (alias, root) = binding(entry).ok_or_else(|| malformed(claim))?;
-            if subject_roots
-                .insert(
-                    alias.to_owned(),
-                    reference(root).ok_or_else(|| malformed(claim))?,
-                )
-                .is_some()
+            let root = reference(root).ok_or_else(|| malformed(claim))?;
+            let selected = nodes.get(root).copied().ok_or_else(|| malformed(claim))?;
+            let Some(filament_contract_model::CheckedNodeOwner::ModelRoot { identity }) =
+                &selected.owner
+            else {
+                return Err(malformed(claim));
+            };
+            let identity = identity.to_string();
+            if !self
+                .model_selections()
+                .iter()
+                .any(|model| model.identity == identity)
+                || subject_roots.insert(alias.to_owned(), root).is_some()
+                || subject_models.insert(alias.to_owned(), identity).is_some()
             {
                 return Err(malformed(claim));
             }
@@ -444,6 +453,7 @@ impl BarePackage<'_> {
             occurrence: claim.clone(),
             profile,
             aliases,
+            subject_models,
             parameters,
             quantifiers,
             atom_slots,

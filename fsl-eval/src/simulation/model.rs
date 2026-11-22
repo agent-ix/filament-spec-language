@@ -1283,6 +1283,52 @@ impl<'a> ModelSystem<'a> {
         }
     }
 
+    /// Build an alias's model system from a hyper clause's authenticated root.
+    /// Package forms carry that mapping per clause; source forms use their graph.
+    /// Snapshot admission keeps the original bytes and excludes only populations
+    /// belonging to another selected model, as in [`Self::for_model_identity`].
+    ///
+    /// # Errors
+    /// Refuses an unknown alias or unselected model with `wrong-role-mapping`,
+    /// and preserves the native scoped model admission refusals.
+    pub fn for_hyper_alias(
+        request: ModelSimulationRequest<'a>,
+        clause: &fsl_semantics::check::CheckedHyperClause,
+        alias: &str,
+    ) -> Result<Self, AdmissionFailure> {
+        let unknown_alias = || {
+            refused(
+                Code::InvalidRuntimeInput,
+                "wrong-role-mapping",
+                &[("alias", alias.to_owned())],
+            )
+        };
+        if !clause
+            .aliases()
+            .iter()
+            .any(|declared| declared.as_str() == alias)
+        {
+            return Err(unknown_alias());
+        }
+        let Some(models) = clause.package_subject_models() else {
+            return Self::for_alias(request, alias);
+        };
+        let identity = models.get(alias).ok_or_else(unknown_alias)?;
+        if !request
+            .input
+            .model_selections
+            .iter()
+            .any(|model| &model.identity == identity)
+        {
+            return Err(refused(
+                Code::InvalidRuntimeInput,
+                "wrong-role-mapping",
+                &[("model", identity.clone())],
+            ));
+        }
+        Self::for_model_identity(request, identity)
+    }
+
     /// The effective identity of the object type the declaration `key`
     /// names, as the checked type environment knows it.
     pub fn type_identity(&self, key: &DeclarationKey) -> Option<EffectiveId> {

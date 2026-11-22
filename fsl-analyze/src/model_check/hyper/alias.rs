@@ -81,3 +81,17 @@ pub fn alias_system<'p>(
     }
     ModelSystem::for_alias(request, alias)
 }
+
+/// Build a subject using a package clause's exact model-root mapping when present.
+pub(super) fn alias_system_for_clause<'p>(
+    simulation: &ModelSimulationRequest<'p>,
+    provision: Option<&'p DocumentProvision>,
+    clause: &CheckedHyperClause,
+    alias: &str,
+) -> Result<ModelSystem<'p>, AdmissionFailure> {
+    let mut request = simulation.clone();
+    if let Some(provision) = provision {
+        request.snapshots = provision;
+    }
+    ModelSystem::for_hyper_alias(request, clause, alias)
+}
