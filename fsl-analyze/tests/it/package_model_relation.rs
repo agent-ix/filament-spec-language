@@ -46,7 +46,7 @@ fn forget_source(ws: &Workspace) {
 
 /// Compare the two real evaluator ports on labelled reachable edges, retaining
 /// every admitted charge rather than only comparing the terminal verdict.
-fn assert_tuple_evaluator_parity(
+pub(super) fn assert_tuple_evaluator_parity(
     ws: &Workspace,
     bytes: &[u8],
     swap_observations: bool,
