@@ -807,8 +807,11 @@ fn cold_integer_emission_with_bounds(lower: &str, upper: &str) -> Emission {
 fn synthesized_value_validity_region_names_its_application_occurrence() {
     const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
                       profile v = \"filament.value.complete/v1\";\n";
-    let declarations = "record R { value: Int[0, 9]; }\n\
-        function same using v(r: R): Boolean pure { r.value = r.value }";
+    // The spanless tests above prove that caller placement is consulted; this
+    // source-backed case also checks that the record is narrower than its
+    // owning function's declaration region.
+    let declarations = "record R { amount: Int[0, 9]; }\n\
+        function same using v(r: R): Boolean pure { r.amount = r.amount }";
     let source_text = format!("{HEADER}{declarations}\n");
     let graph = super::converted_equality::checked_graph(declarations);
     let function = graph
@@ -870,8 +873,69 @@ fn synthesized_value_validity_region_names_its_application_occurrence() {
             .as_bytes()
             .get(start..end)
             .expect("the generated region is within the synthesized source"),
-        b"r.value = r.value"
+        b"r.amount = r.amount"
     );
+}
+
+#[trace("FR-825-AC-1")]
+#[test]
+fn shared_value_validity_application_uses_each_occurrence_region() {
+    const COUNT: usize = 2_000;
+    const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
+                      profile v = \"filament.value.complete/v1\";\n";
+    let expressions = std::iter::repeat("x + 1 = 0")
+        .take(COUNT)
+        .collect::<Vec<_>>()
+        .join(" and ");
+    let declarations = format!(
+        "function repeated using v(x: Int[0, 9]): Boolean pure {{ {expressions} }}"
+    );
+    let source_text = format!("{HEADER}{declarations}\n");
+    let graph = super::converted_equality::checked_graph(&declarations);
+    let placements: HashMap<_, _> = graph
+        .occurrences()
+        .filter_map(|(_, _, location)| {
+            graph
+                .region(location)
+                .map(|region| (location.clone(), region))
+        })
+        .collect();
+    let emission = emit_package(&CheckedPackage::link(graph), |location| {
+        placements.get(location).cloned()
+    })
+    .expect("the repeated shared application emits");
+    let wire = wire(&emission);
+    let entries = wire["source_map"].as_array().expect("source map array");
+    let nodes = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("semantic nodes array");
+    let generated_regions: HashSet<_> = nodes
+        .iter()
+        .filter(|node| node["semantic_form"] == "value_validity")
+        .filter_map(|node| {
+            entries
+                .iter()
+                .find(|entry| entry["role"] == "generated" && entry["node_id"] == node["node_id"])
+                .and_then(|entry| entry["regions"].as_array()?.first())
+                .map(|region| (region["start"].as_u64()?, region["end"].as_u64()?))
+        })
+        .collect();
+    let expression_regions: HashSet<_> = entries
+        .iter()
+        .filter(|entry| entry["role"] == "expression")
+        .filter_map(|entry| {
+            let region = entry["regions"].as_array()?.first()?;
+            let start = region["start"].as_u64()?;
+            let end = region["end"].as_u64()?;
+            (source_text
+                .as_bytes()
+                .get(usize::try_from(start).ok()?..usize::try_from(end).ok()?)?
+                == b"x + 1")
+                .then_some((start, end))
+        })
+        .collect();
+    assert_eq!(expression_regions.len(), COUNT);
+    assert_eq!(generated_regions, expression_regions);
 }
 
 #[trace("TC-1331", "FR-531-AC-30")]
