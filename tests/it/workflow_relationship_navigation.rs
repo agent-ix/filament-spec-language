@@ -164,14 +164,15 @@ fn canonical_argument_reference(type_identity: &str, key: &str) -> Value {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
+    let object_type = json!({
+        "package": PACKAGE,
+        "path": ["model", "object_type", type_identity],
+        "ordinal": 0
+    });
     json!({
         "type": "reference",
-        "universe": {
-            "package": PACKAGE,
-            "path": ["model", "object_type", type_identity],
-            "ordinal": 0
-        },
-        "object_type": {"package": PACKAGE, "node": type_identity},
+        "universe": object_type.clone(),
+        "object_type": object_type,
         "identity": identity
     })
 }
