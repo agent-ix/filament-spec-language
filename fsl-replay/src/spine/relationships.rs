@@ -2234,6 +2234,10 @@ mod tests {
 
 // Kept in this module for the public package-selection contract and used by
 // the command side when it has the canonical emitted package bytes.
+/// Build the package identity and digest passed to relationship admission.
+///
+/// `name` is the selected package identity; `digest` is the SHA-256 digest of
+/// its canonical checked-package document.
 pub fn package_selection(name: String, digest: [u8; 32]) -> PackageSelection {
     PackageSelection {
         format: NATIVE_LINKED_PACKAGE_FORMAT.to_owned(),

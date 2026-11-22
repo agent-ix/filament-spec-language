@@ -1511,9 +1511,7 @@ fn relationship_refusal(
     refusal: &filament_observation::RefusalCause,
     producer: &filament_observation::AdmittedStaticBundle,
 ) -> (&'static str, BTreeMap<&'static str, String>) {
-    use filament_observation::{
-        OwnerArtifact, ReferenceComponent, ReferenceRefusal, RefusalCause, SelectionField,
-    };
+    use filament_observation::{ReferenceRefusal, RefusalCause};
     let no_fields = BTreeMap::new();
     match refusal {
         RefusalCause::InvalidSelection(field) => (

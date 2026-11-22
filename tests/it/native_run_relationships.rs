@@ -2,7 +2,7 @@
 //! FR-1045: native-run relationship selection request admission.
 
 use crate::workflow_relationship_navigation::{
-    instance, relationship_row, run_selected, ORDER, PAYMENTS, PAYMENT_ATTEMPT, SHIPMENT, SHIPMENTS,
+    instance, relationship_row, run_selected, ORDER, PAYMENTS, SHIPMENT, SHIPMENTS,
 };
 use filament_observation::{
     ProducerConfiguration, ProducerDigest, RelationshipDeclaration,

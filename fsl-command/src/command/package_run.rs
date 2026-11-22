@@ -938,7 +938,7 @@ pub(super) fn execute(prepared: PreparedPackageRun) -> Result<RunResult> {
         dependencies,
         packages,
         model_limits,
-        relationship_navigation,
+        relationship_navigation: _,
         work,
         selection,
         models,
