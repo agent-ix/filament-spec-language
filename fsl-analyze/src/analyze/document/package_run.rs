@@ -30,6 +30,7 @@ use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::{Capability, DeclarationFamily};
 use serde_json::{json, Map};
 
+use super::super::hyper_route::PackageRelationSubject;
 use super::super::request::ProtocolBinding;
 use super::super::{
     AnalyzeItem, AnalyzeLimits, ClaimItem, ClauseItemRefusal, ClauseLimits, Engines, ItemForm,
@@ -239,6 +240,13 @@ pub struct PackageRun<'a> {
 
 /// One item as the package's name tables resolve it.
 enum Named<'s> {
+    Relation {
+        index: RequestIndex,
+        name: &'s str,
+        declaration: CheckedNodeId,
+        ordinal: u64,
+        selection: &'s ItemSelection,
+    },
     Settled(ResolvedItem),
     Clause {
         index: RequestIndex,
@@ -295,6 +303,7 @@ enum Route<'a> {
     Deadlock,
     StateClause,
     StateGraph(Box<PackageStateGraphSubject<'a>>),
+    Relation(Box<PackageRelationSubject<'a>>),
     Value(Box<PackageValue<'a>>),
 }
 
@@ -426,8 +435,23 @@ pub fn settle_package_run(
     let mut graph_claims: Vec<OccurrenceKey> = Vec::new();
     let mut protocol_claims: Vec<OccurrenceKey> = Vec::new();
     let mut value_claims: Vec<OccurrenceKey> = Vec::new();
+    let mut relation_claims: Vec<OccurrenceKey> = Vec::new();
     for item in named {
         match item {
+            Named::Relation {
+                index,
+                name,
+                declaration,
+                ordinal,
+                selection,
+            } => match reads.model_relation(index, name, &declaration, ordinal, selection)? {
+                Resolution::Settled(settled) => resolved.push(settled),
+                Resolution::Claim(claim, subject) => {
+                    relation_claims.push(claim.item.claim.clone());
+                    routes.insert(index, Route::Relation(subject));
+                    resolved.push(ResolvedItem::Claim(claim));
+                }
+            },
             Named::Settled(settled) => resolved.push(settled),
             Named::Clause {
                 index,
@@ -555,6 +579,9 @@ pub fn settle_package_run(
     let family = |kind: ItemKind, claim: &OccurrenceKey| match kind {
         ItemKind::Formula if protocol_claims.contains(claim) => Some(DeclarationFamily::Protocol),
         ItemKind::Formula if value_claims.contains(claim) => Some(DeclarationFamily::Value),
+        ItemKind::Formula if relation_claims.contains(claim) => {
+            Some(DeclarationFamily::RelationClaim)
+        }
         ItemKind::Formula if invariant_claims.contains(claim) => {
             Some(DeclarationFamily::StateModel)
         }
@@ -957,6 +984,17 @@ fn resolve_names<'s>(
             if let Some(found) = view.claim_name(name) {
                 if derived {
                     return Err(pending(PendingFamily::Derived));
+                }
+                if view.package().resolved_graph().nodes.iter().any(|node| {
+                    node.node_id == found.declaration && node.step_relation_body().is_some()
+                }) {
+                    return Ok(Named::Relation {
+                        index,
+                        name,
+                        declaration: found.declaration,
+                        ordinal: found.occurrence.ordinal,
+                        selection,
+                    });
                 }
                 if is_state_graph(view, &found.declaration) {
                     return Ok(Named::StateGraph {
@@ -1663,6 +1701,210 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         ))
     }
 
+    /// Resolve the HP-1 model capability against the admitted form's own record.
+    fn model_relation(
+        &self,
+        index: RequestIndex,
+        name: &str,
+        declaration: &CheckedNodeId,
+        ordinal: u64,
+        selection: &ItemSelection,
+    ) -> Result<Resolution<Box<PackageRelationSubject<'r>>>, PackageRunError> {
+        use filament_contract_model::{
+            CapabilityKind, DomainKey as WireDomain, DomainKind as WireKind, RequirementExtent,
+        };
+        use fsl_foundation::bound::{DomainKey, DomainKind};
+        use fsl_semantics::family::{ClaimExtent, Requirements};
+        let fault = || PackageRunError::Document(AnalyzeDocumentError::Fault);
+        let input = self.input.ok_or_else(fault)?;
+        let package = input.package();
+        let key = package.node_key(declaration).ok_or_else(fault)?;
+        let claim = OccurrenceKey::new(
+            key.clone(),
+            filament_exact::Origin::new(filament_exact::Role::new("claim"), ordinal),
+        );
+        let selected = fsl_package::ClaimOccurrence {
+            declaration: declaration.clone(),
+            occurrence: filament_contract_model::CheckedOccurrence {
+                role: filament_contract_model::CheckedOccurrenceRole::Claim,
+                ordinal,
+            },
+        };
+        let settled = |record| {
+            Resolution::Settled(ResolvedItem::Settled {
+                claim_name: Some(name.to_owned()),
+                record: Box::new(record),
+            })
+        };
+        let malformed = || {
+            settled(
+                TerminalRecord::failed_with(
+                    index,
+                    BackendId::new(crate::model_check::manifest::BACKEND_ID),
+                    super::super::items::BROKEN,
+                )
+                .with_diagnostic_detail(
+                    serde_json::json!({"node": declaration, "selection": "malformed-node"})
+                        .as_object()
+                        .cloned()
+                        .unwrap_or_default(),
+                ),
+            )
+        };
+        let form = match package.model_relation_form(&selected) {
+            Ok(form) => form,
+            Err(fsl_package::ModelRelationFormRefusal::MissingSubjectDeclarationOrder {
+                package,
+                node,
+            }) => {
+                let locus =
+                    fsl_foundation::node_wire::node_key_to_json(&key).map_err(|_| fault())?;
+                let detail = serde_json::json!({"package": package, "node": node, "locus": locus, "reason": "missing-subject-declaration-order"});
+                return Ok(settled(TerminalRecord::disposition_unsupported(
+                    index,
+                    CatalogCode::new("unknown_required_feature", "unsupported-feature"),
+                    detail.as_object().cloned().unwrap_or_default(),
+                )));
+            }
+            Err(_) => return Ok(malformed()),
+        };
+        let relation = match fsl_eval::simulation::model::ModelRelationDescriptor::of_package(
+            package, &form,
+        ) {
+            Ok(relation) => relation,
+            Err(failure) => {
+                let refused = super::super::items::package_projection_refusal(
+                    package.package().name(),
+                    "model-relation-body",
+                    serde_json::json!(declaration),
+                    &failure,
+                );
+                let record = match refused {
+                    super::super::Refusal::UnsupportedWithDetail(code, details) => {
+                        TerminalRecord::disposition_unsupported(index, code, details)
+                    }
+                    super::super::Refusal::FailedWithDetail(code, details) => {
+                        TerminalRecord::failed_with(
+                            index,
+                            BackendId::new(crate::model_check::manifest::BACKEND_ID),
+                            code,
+                        )
+                        .with_diagnostic_detail(details)
+                    }
+                    super::super::Refusal::Failed(code) => TerminalRecord::failed_with(
+                        index,
+                        BackendId::new(crate::model_check::manifest::BACKEND_ID),
+                        code,
+                    ),
+                    _ => return Ok(malformed()),
+                };
+                return Ok(settled(record));
+            }
+        };
+        let model_record = form.requirement();
+        let actual_extent = match &model_record.extent {
+            RequirementExtent::Unbounded(domains)
+                if domains.len() == 1
+                    && matches!(&domains[0],
+                (WireDomain::Node { node, path }, WireKind::InfiniteTrace) if node == declaration && path.is_empty()) =>
+            {
+                ClaimExtent::from_domains(
+                    [(
+                        DomainKey::Node {
+                            node: key.clone(),
+                            path: Vec::new(),
+                        },
+                        DomainKind::InfiniteTrace,
+                    )]
+                    .into_iter()
+                    .collect(),
+                )
+            }
+            _ => return Ok(malformed()),
+        };
+        if model_record.kind != CapabilityKind::TemporalSatisfaction {
+            return Ok(malformed());
+        }
+        let requirements =
+            Requirements::new(Capability::TemporalSatisfaction, actual_extent).over_model_subject();
+        let own_subject = self.own_subject(index, selection)?;
+        let temporal = selection.temporal.clone().unwrap_or_default();
+        let mut settings = temporal_settings(&temporal);
+        settings
+            .pending_reductions
+            .clone_from(&selection.reductions);
+        let kind = match selection.kind.as_deref() {
+            Some(label) => match Capability::from_wire(label) {
+                Ok(kind) => kind,
+                Err(_) => {
+                    return Ok(Resolution::Settled(invalid_kind(
+                        index,
+                        Some(name),
+                        "unknown-kind",
+                    )))
+                }
+            },
+            None => Capability::TemporalSatisfaction,
+        };
+        let named = selection.backend.as_deref().map(BackendId::new);
+        let backend_options = selection.options.clone().unwrap_or_default();
+        if let Some(refused) = unknown_option(
+            index,
+            Some(name),
+            self.registry,
+            named.as_ref(),
+            &backend_options,
+        ) {
+            return Ok(Resolution::Settled(refused));
+        }
+        let candidates = self.registry.restrict_to_timing(
+            if kind == Capability::TemporalSatisfaction {
+                fsl_route::request::requirement_candidates(
+                    &requirements,
+                    self.registry,
+                    named.as_ref(),
+                )
+            } else {
+                self.registry.candidates(kind, named.as_ref())
+            },
+            false,
+        );
+        let item = ClaimItem {
+            request_index: index,
+            claim,
+            kind,
+            extent: ExtentClassification::Unbounded {
+                finite_bound_available: false,
+            },
+            backend: named,
+            candidates: candidate_list(&candidates),
+            options: options(selection, backend_options),
+            form: (kind == Capability::TemporalSatisfaction)
+                .then_some(ItemForm::Temporal(settings)),
+        };
+        let unrouted = selection.unrouted_beyond_sampling()
+            || reads_no_clocks(selection)
+            || temporal
+                .limits
+                .is_some_and(|limits| limits.sets_memory_limits())
+            || !own_subject.same_model(self.subject);
+        Ok(Resolution::Claim(
+            Box::new(ResolvedClaim {
+                item,
+                claim_name: name.to_owned(),
+                candidates,
+                subject: own_subject,
+                unrouted,
+            }),
+            Box::new(PackageRelationSubject::new(
+                input,
+                relation,
+                self.binding.clone(),
+                self.limits,
+            )),
+        ))
+    }
+
     /// FR-620's item over the state-graph claim `name`, whose `claim_names`
     /// row is on `declaration` at `claim` occurrence `ordinal`, as the source
     /// route's `resolve_one` resolves it: the record's extent and candidates
@@ -2179,6 +2421,11 @@ impl<'a> WorkInputs<'_, 'a> {
                     protocol: None,
                 }),
             ) if item.kind == Capability::TemporalSatisfaction => {
+                subject.configured(form.clone()).item(item.request_index)
+            }
+            (Some(ItemForm::Temporal(form)), Some(Route::Relation(subject)))
+                if item.kind == Capability::TemporalSatisfaction =>
+            {
                 subject.configured(form.clone()).item(item.request_index)
             }
             (Some(ItemForm::Temporal(form)), Some(Route::ProtocolFreedom(protocol)))

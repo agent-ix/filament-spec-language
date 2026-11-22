@@ -19,6 +19,7 @@ pub use application_observation::{
 };
 use application_observation::{ApplicationObserver, OperationCapture};
 mod bare;
+pub(crate) use bare::evaluate_model_relation_tuple;
 mod causes;
 mod clause_set;
 mod closure;
@@ -495,17 +496,39 @@ pub fn evaluate_model_relation_transitions(
     post_components: &[&ObjectEnvironment],
     meter: &mut Meter,
 ) -> Result<ModelRelationEvaluation, InternalFault> {
+    let arguments = bind_model_relation_transitions(
+        relation.executions(),
+        relation.body_parameters(),
+        transitions,
+        results,
+    )?;
+    let evaluation = evaluate_model_relation(
+        package,
+        relation,
+        arguments,
+        pre_components,
+        post_components,
+        meter,
+    )?;
+    settle_model_relation_evaluation(evaluation)
+}
+
+pub(crate) fn bind_model_relation_transitions(
+    executions: &[(String, fsl_semantics::check::OperationKey)],
+    parameters: &[(String, ValueType)],
+    transitions: &[&ModelTransition],
+    results: &[Option<&str>],
+) -> Result<Vec<Value>, InternalFault> {
     let fault = |invariant| InternalFault::new("S6a", invariant);
-    if transitions.len() != relation.executions().len() || results.len() != transitions.len() {
+    if transitions.len() != executions.len() || results.len() != transitions.len() {
         return Err(fault(
             "relation-binds-one-transition-and-result-per-execution",
         ));
     }
-    let parameters = relation.body_parameters();
     let mut arguments = Vec::with_capacity(parameters.len());
     let mut slot = 0;
     for (index, ((variable, operation), transition)) in
-        relation.executions().iter().zip(transitions).enumerate()
+        executions.iter().zip(transitions).enumerate()
     {
         if transition.operation() != fsl_semantics::check::operation_text(operation) {
             return Err(fault("relation-transition-matches-its-operation"));
@@ -551,14 +574,12 @@ pub fn evaluate_model_relation_transitions(
     if slot != parameters.len() {
         return Err(fault("relation-binds-every-checked-execution-member"));
     }
-    let evaluation = evaluate_model_relation(
-        package,
-        relation,
-        arguments,
-        pre_components,
-        post_components,
-        meter,
-    )?;
+    Ok(arguments)
+}
+
+pub(crate) fn settle_model_relation_evaluation(
+    evaluation: Evaluation,
+) -> Result<ModelRelationEvaluation, InternalFault> {
     match evaluation.outcome {
         FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true))) => {
             Ok(ModelRelationEvaluation::Holds)

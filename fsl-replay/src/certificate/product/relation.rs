@@ -6,15 +6,17 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use base64::Engine as _;
 use filament_exact::{Cancel, Meter};
 use filament_semantic_value::model_transition::ModelTransition;
-use fsl_eval::simulation::model::{check_model_bounds, ModelSimState, ModelSystem};
+use fsl_eval::simulation::model::{
+    check_model_bounds, ModelRelationDescriptor, ModelRelationTuple, ModelSimState, ModelSystem,
+};
 use fsl_eval::simulation::{ExpansionLimit, StateKey, TransitionSystem, BOUND_POSITIONS};
 use fsl_eval::value::ModelRelationEvaluation;
-use fsl_semantics::check::{CheckedModelRelation, HyperForm};
+use fsl_semantics::check::HyperForm;
 use serde::{ser::SerializeStruct, Serialize, Serializer};
 
 use super::{
-    ProductClosure, ProductClosureCertificate, ProductClosureCheck, ProductClosureRefusal,
-    ProductClosureRequest,
+    ModelRelationClosureRequest, ProductClosure, ProductClosureCertificate, ProductClosureCheck,
+    ProductClosureRefusal,
 };
 use crate::{
     CertificateLocus, CertificateRejection, CertificateRule, IncompleteCause, ModelCheckLimit,
@@ -171,7 +173,7 @@ impl Counts {
 
 fn reconstruct(
     system: &ModelSystem<'_>,
-    request: &ProductClosureRequest<'_>,
+    request: &ModelRelationClosureRequest<'_>,
     alias_index: usize,
     limits: &ModelCheckLimits,
     counts: &mut Counts,
@@ -265,8 +267,8 @@ fn reconstruct(
 }
 
 pub(super) fn check(
-    request: &ProductClosureRequest<'_>,
-    relation: &CheckedModelRelation,
+    request: &ModelRelationClosureRequest<'_>,
+    relation: &ModelRelationDescriptor,
     certificate: &ProductClosureCertificate,
     limits: &ModelCheckLimits,
     cancel: &Cancel,
@@ -313,13 +315,11 @@ pub(super) fn check(
     let mut systems = Vec::new();
     for (subject, alias) in request.subjects.iter().zip(relation.aliases()) {
         poll(cancel)?;
-        let system = ModelSystem::for_alias(subject.simulation.clone(), alias)
-            .map_err(|_| ProductClosureRefusal::Input("model-subject"))?;
-        let expected = request
-            .package
-            .graph()
+        let expected = relation
             .model_package_identity(alias)
             .ok_or(ProductClosureRefusal::Input("model-alias"))?;
+        let system = ModelSystem::for_model_identity(subject.simulation.clone(), expected)
+            .map_err(|_| ProductClosureRefusal::Input("model-subject"))?;
         if system.model() != Some(expected) {
             return Err(ProductClosureRefusal::Input("model-alias"));
         }
@@ -460,16 +460,19 @@ pub(super) fn check(
             .iter()
             .map(|edge| edge.result.as_deref())
             .collect();
-        let evaluation = fsl_eval::value::evaluate_model_relation_transitions(
-            request.package,
-            relation,
-            &labels,
-            &results,
-            &pre_env,
-            &post_env,
-            &mut Meter::new(request.meter).with_cancel(cancel.clone()),
-        )
-        .map_err(|_| ProductClosureRefusal::Recompute("relation-body"))?;
+        let evaluation = request
+            .evaluator
+            .evaluate_model_relation(
+                relation,
+                ModelRelationTuple {
+                    transitions: &labels,
+                    results: &results,
+                    pre: &pre_env,
+                    post: &post_env,
+                },
+                &mut Meter::new(request.meter).with_cancel(cancel.clone()),
+            )
+            .map_err(|_| ProductClosureRefusal::Recompute("relation-body"))?;
         evaluated = ordinal;
         let rule = match evaluation {
             ModelRelationEvaluation::Holds => None,

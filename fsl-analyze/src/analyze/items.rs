@@ -1126,7 +1126,8 @@ pub(super) fn package_parameter_type_refusal(
     package_projection_refusal(package, "parameter-type", serde_json::json!(node), failure)
 }
 
-fn package_projection_refusal(
+/// Preserve a selected package form's existing typed projection refusal.
+pub(super) fn package_projection_refusal(
     package: &str,
     fact: &str,
     node: serde_json::Value,
