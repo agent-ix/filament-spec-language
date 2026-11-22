@@ -3176,15 +3176,16 @@ fn imported_operation_contracts_bind_inherited_arguments_and_result() {
     };
     let world = finite_argument_world(r#"language "ix:native" edition "1-draft";
 domain "test/native-plan";
+type Amount = Int[0,1];
 object Base {
   number: Int[0,1];
-  operation choose(target: Base, amount: Int[0,1]): Boolean modifies self.number {
+  operation choose(target: Base, amount: Amount): Boolean modifies self.number {
     pre Start { target = self and amount = 1 and self.number = 0 };
     post Next { self.number = amount and pre(self.number) = 0 and result };
   }
 }
 object Counter extends Base {
-  operation stay(target: Base, amount: Int[0,1]): Boolean modifies self.number {
+  operation stay(target: Base, amount: Amount): Boolean modifies self.number {
     pre Start { target = self and amount = 0 and self.number = 0 };
     post Next { self.number = amount and not result };
   }
