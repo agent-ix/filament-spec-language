@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! SC Send/Receive correlation over one object and immutable relationship extents.
+//! SC Send/Receive/Attempt correlation over one object and immutable relationship extents.
 
 use std::collections::BTreeMap;
 
@@ -91,7 +91,7 @@ impl Fixture {
         cell["operations"]
             .as_array_mut()
             .expect("operations")
-            .retain(|operation| operation["name"] == "touch");
+            .retain(|operation| matches!(operation["name"].as_str(), Some("touch" | "flag")));
         let mut other = cell["relationships"][0].clone();
         other["identity"] = json!("ix://test/fill/relationship/other");
         cell["relationships"]
@@ -295,6 +295,111 @@ fn has_step(graph: &[Reached], kind: StepKind) -> bool {
         .any(|(step, _)| step.kind() == kind)
 }
 
+fn attempt(related: &str, constraint: &str) -> String {
+    format!("attempt Tx by w on M::Cell::flag contracts [FlagPost] as (worked: Boolean) {related} {{ {constraint} }};")
+}
+
+fn attempt_fixture(captures: &str, run: &str, owns: bool) -> Fixture {
+    Fixture::with_prelude(
+        captures,
+        "",
+        run,
+        owns,
+        "post FlagPost using v on M::Cell::flag { self.v = 1 }\n",
+        filament_semantic_value::checking::CheckMode::Linked,
+    )
+}
+
+#[trace("FR-731-AC-1", "FR-940-AC-6")]
+#[test]
+fn sc_attempt_correlation_preserves_candidate_results_poststates_and_both_end_readers() {
+    let run = format!(
+        "send First via ch as (prior: Boolean) {{ prior }}; check Between using v {{ true }}; {}",
+        attempt(
+            "related by Owns ((if worked then saved else k), (if prior then saved else k))",
+            "true"
+        )
+    );
+    let fixture = attempt_fixture("capture saved: Reference<M::Cell> = k;", &run, true);
+    let graph = fixture.graph();
+    let attempts: Vec<_> = graph
+        .iter()
+        .flat_map(|state| &state.steps)
+        .filter(|(step, _)| step.kind() == StepKind::Attempt)
+        .collect();
+    assert!(attempts.iter().any(|(step, _)| matches!(
+        step.binder_record(),
+        Some(filament_exact::Value::Boolean(true))
+    )));
+    assert!(attempts.iter().any(|(step, _)| matches!(
+        step.binder_record(),
+        Some(filament_exact::Value::Boolean(false))
+    )));
+    for (_, next) in attempts {
+        assert_eq!(fill::v(graph[*next].state.model(), "c"), 1);
+    }
+    fixture.with_routes(true, |source, native| {
+        let source = fill::sc_system(source);
+        let native = ProtocolSystem::new_package(
+            ModelSystem::new(native.model.simulation.clone()).expect("model"),
+            native,
+            Sc,
+        )
+        .expect("native");
+        for system in [&source, &native] {
+            let reached = fill::reachable(system);
+            let (_, at, _) = step(&reached, StepKind::Attempt);
+            assert!(system
+                .binders(&reached[at].state)
+                .expect("binders")
+                .iter()
+                .any(|(node, _)| node == "Main/First"));
+            assert!(!system
+                .capture_bytes(&reached[at].state)
+                .expect("captures")
+                .is_empty());
+        }
+    });
+    assert!(!has_step(
+        &attempt_fixture("", &attempt("related by Owns (k, k)", "true"), false).graph(),
+        StepKind::Attempt
+    ));
+    assert!(has_step(
+        &attempt_fixture("", &attempt("", "true"), false).graph(),
+        StepKind::Attempt
+    ));
+}
+
+#[trace("FR-731-AC-1", "FR-940-AC-6")]
+#[test]
+fn sc_attempt_undefined_end_filters_only_its_candidate_and_retains_findings() {
+    let fixture = Fixture::with_prelude("", "", &attempt("related by Owns ((if q(if worked then 1 else 0) >= 0 then k else k), k)", "true"), true,
+        "function q using v(x: Integer): Integer pure { 6 mod x }\npost FlagPost using v on M::Cell::flag { self.v = 1 }\n",
+        filament_semantic_value::checking::CheckMode::Kernel);
+    fixture.with_routes(true, |source, native| {
+        let source = fill::sc_system(source);
+        let native = ProtocolSystem::new_package(
+            ModelSystem::new(native.model.simulation.clone()).expect("model"),
+            native,
+            Sc,
+        )
+        .expect("native");
+        for system in [&source, &native] {
+            let state = system.initial().into_iter().next().expect("initial");
+            let (expansion, _) = system.successors_bounded(&state).expect("expansion");
+            assert_eq!(expansion.successors.len(), 1);
+            assert!(matches!(
+                expansion.successors[0].0.binder_record(),
+                Some(filament_exact::Value::Boolean(true))
+            ));
+            assert!(
+                !expansion.findings.is_empty(),
+                "undefined false-result candidate retains its finding"
+            );
+        }
+    });
+}
+
 #[trace("FR-731-AC-1", "FR-940-AC-6", "FSpec-FR-831")]
 #[test]
 fn sc_send_receive_uses_real_extents_and_preserves_queue_and_binder_values() {
@@ -438,6 +543,19 @@ fn correlation_only_capture_and_prior_binder_reads_remain_live_after_an_earlier_
 #[trace("FR-940-AC-6", "FSpec-FR-831")]
 #[test]
 fn missing_authored_carrier_is_typed_unavailable_but_empty_legacy_group_executes() {
+    let correlated_attempt = attempt_fixture("", &attempt("related by Owns (k, k)", "true"), true);
+    correlated_attempt.with_routes(false, |_, native| {
+        assert!(matches!(PackageProtocolProgram::new(&native.model.simulation.input, "P", &[]), Err(PackageProgramRefusal::CorrelationProvenance(cause)) if cause.as_str() == "unavailable_correlation_provenance"));
+    });
+    attempt_fixture("", &attempt("", "true"), true).with_routes(false, |_, native| {
+        let system = ProtocolSystem::new_package(
+            ModelSystem::new(native.model.simulation.clone()).expect("model"),
+            native,
+            Sc,
+        )
+        .expect("empty legacy attempt");
+        assert!(has_step(&fill::reachable(&system), StepKind::Attempt));
+    });
     let correlated = Fixture::new("", &controls("related by Owns (k, k)", ""), true);
     correlated.with_routes(false, |_, native| {
         let result = PackageProtocolProgram::with_memory(&native.model.simulation.input,
@@ -480,22 +598,21 @@ fn missing_authored_carrier_is_typed_unavailable_but_empty_legacy_group_executes
 
 #[trace("FR-940-AC-6", "FR-731-AC-1")]
 #[test]
-fn unported_attempt_and_recommend_correlations_remain_named_unsupported() {
-    for step in [
-        "attempt Work by w on M::Cell::touch contracts [] as (worked: Boolean) related by Other (k, k) { true };",
-        "recommend Work by w on M::Cell::touch contracts [] as (advice: Boolean) related by Other (k, k) { true };",
-    ] {
-        let fixture = Fixture::new("", step, true);
-        fixture.with_routes(true, |_, native| {
-            assert!(matches!(PackageProtocolProgram::new(&native.model.simulation.input, "P", &[]), Err(PackageProgramRefusal::Correlation { .. })));
-        });
-    }
+fn correlated_recommend_remains_named_unsupported() {
+    let fixture = Fixture::new("", "recommend Work by w on M::Cell::touch contracts [] as (advice: Boolean) related by Other (k, k) { true };", true);
+    fixture.with_routes(true, |_, native| {
+        assert!(matches!(
+            PackageProtocolProgram::new(&native.model.simulation.input, "P", &[]),
+            Err(PackageProgramRefusal::Correlation { .. })
+        ));
+    });
 }
 
 #[trace("FR-940-AC-6", "FR-731-AC-1")]
 #[test]
 fn weak_package_profile_refuses_correlation_outside_parallel_and_sc_override_executes() {
-    let run = format!("{} parallel Background memory sc {{ branch idle sequence Idle {{ check OK using v {{ true }}; }} branch other sequence Other {{ check AlsoOK using v {{ true }}; }} }} join all [idle, other];", controls("related by Owns (k, k)", ""));
+    for control in [controls("related by Owns (k, k)", ""), "attempt Tx by w on M::Cell::touch contracts [] as (worked: Boolean) related by Owns (k, k) { true };".to_owned()] {
+    let run = format!("{control} parallel Background memory sc {{ branch idle sequence Idle {{ check OK using v {{ true }}; }} branch other sequence Other {{ check AlsoOK using v {{ true }}; }} }} join all [idle, other];");
     let fixture = Fixture::new("", &run, true);
     fixture.with_routes(true, |_, native| {
         let definition = native
@@ -529,6 +646,7 @@ fn weak_package_profile_refuses_correlation_outside_parallel_and_sc_override_exe
             PackageProtocolProgram::with_memory(&native.model.simulation.input, *form, sc).is_ok()
         );
     });
+    }
 }
 
 fn witness(fixture: &Fixture) -> fsl_replay::TemporalCounterexample<ProtocolTransition> {
@@ -654,6 +772,89 @@ fn replay_both(
         &letters,
         ReplayLimits::default(),
     ));
+}
+
+#[trace("FR-731-AC-2", "FR-731-AC-3", "FR-940-AC-6", "FSpec-FR-831")]
+#[test]
+fn sc_attempt_replay_preserves_authored_alias_order_and_failure_precedence() {
+    let run = attempt(
+        "related by owns (k, k) related by Owns (k, k) related by owns (k, k)",
+        "true",
+    );
+    let passing = attempt_fixture("", &run, true);
+    let valid = witness(&passing);
+    assert_eq!(valid.prefix[0].transition.kind(), StepKind::Attempt);
+    replay_both(&passing, valid.clone(), ReplayExpectation::Reproduced);
+    for (run, owns, expected) in [
+        (run.clone(), false, ReplayExpectation::Related("owns")),
+        (
+            attempt(
+                "related by owns (k, k) related by Other (k, k) related by owns (k, k)",
+                "true",
+            ),
+            true,
+            ReplayExpectation::Related("Other"),
+        ),
+        (
+            run.replace("{ true }", "{ false }"),
+            false,
+            ReplayExpectation::NotEnabled,
+        ),
+        (
+            format!("check Stop using v {{ false }}; {run}"),
+            false,
+            ReplayExpectation::NotEnabled,
+        ),
+    ] {
+        let fixture = attempt_fixture("", &run, owns);
+        let mut forged = witness(&fixture);
+        assert!(forged.prefix.is_empty());
+        forged.prefix.push(valid.prefix[0].clone());
+        replay_both(&fixture, forged, expected);
+    }
+}
+
+#[trace("FR-731-AC-1", "FR-940-AC-6")]
+#[test]
+fn sc_attempt_package_analysis_executes_after_source_removal() {
+    use crate::analyze_cli_support::{analyze, label, package_selection, request_over, Workspace};
+    let fixture = attempt_fixture("", &attempt("related by Owns (k, k)", "true"), true);
+    let ws = Workspace::new("attempt-correlation-source-absent");
+    let request = request_over(
+        &ws,
+        &fill::unit_text_with("", &fixture.body),
+        &fixture.model,
+        &fixture
+            .documents
+            .snapshots
+            .values()
+            .cloned()
+            .collect::<Vec<_>>(),
+        json!({"items": [{"claim": "P", "kind": "temporal-satisfaction", "temporal": {
+            "item_kind": "deadlock-freedom", "subject": {"protocol": {
+                "protocol": "P", "over": {"reference": {"population": "ix://test/fill/cells", "key": "c"}},
+                "roles": {"w": {"type": "model-binding", "selection": "test/fill"}}
+            }}
+        }}]}),
+    );
+    let source = analyze(&request);
+    assert_eq!(label(&source.item(0)), "refuted");
+    let document: Json =
+        serde_json::from_slice(&std::fs::read(&request).expect("request")).expect("JSON");
+    let (members, _) = package_selection(&ws, &document["request"]);
+    let request = ws.write(
+        "package-analyze.json",
+        &serde_json::to_vec(&json!({"format": "native-analyze/1", "request": members}))
+            .expect("request bytes"),
+    );
+    std::fs::remove_file(ws.path("program.fsl")).expect("source removed before package read");
+    let sources = ws.path("handoff/sources");
+    if sources.exists() {
+        std::fs::remove_dir_all(sources).expect("source copies removed");
+    }
+    let native = analyze(&request);
+    assert_eq!(native.exit, source.exit);
+    assert_eq!(label(&native.item(0)), "refuted");
 }
 
 #[trace("FR-731-AC-2", "FR-731-AC-3", "FR-940-AC-6", "FSpec-FR-831")]

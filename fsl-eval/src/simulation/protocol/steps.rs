@@ -989,6 +989,28 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                 *entry = Some(record.clone());
             }
         }
+        if let Some(attempt) = self
+            .program
+            .attempts
+            .get(&node)
+            .filter(|_| self.weak_parallel_paths.is_empty())
+        {
+            let running = instance.threads.get(thread)?;
+            if running.disposition != Disposition::Running || running.rest != Rest::Node(node) {
+                return None;
+            }
+            let verdict = if let Some(constraint) = attempt.constraint {
+                self.evaluate(constraint, frame.clone(), &state.model)
+                    .ok()?
+            } else {
+                self.evaluate_package_control(node, frame.clone(), &state.model)
+                    .ok()?
+                    .unwrap_or(Verdict::True)
+            };
+            if !matches!(verdict, Verdict::True) {
+                return None;
+            }
+        }
         for clause in clauses {
             let [first, second] = self
                 .related_values(&clause.ends, frame.clone(), &state.model)
