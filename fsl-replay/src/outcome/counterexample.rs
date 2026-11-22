@@ -2165,6 +2165,12 @@ fn randomized_scheduler_wire_entry(
     at: &fsl_eval::simulation::StateKey,
     distribution: &[(crate::ProductAction, Rational)],
 ) -> Result<Json, CounterexampleWireError> {
+    // One encoding per choice: a single certain choice is a deterministic entry.
+    if distribution.len() < 2 {
+        return Err(CounterexampleWireError::Unspelled(
+            "probabilistic internal choice",
+        ));
+    }
     let alternatives = distribution
         .iter()
         .map(|(action, weight)| {
@@ -2176,9 +2182,10 @@ fn randomized_scheduler_wire_entry(
             Ok(json!({"choice": action, "probability": rational(weight)}))
         })
         .collect::<Result<Vec<_>, CounterexampleWireError>>()?;
+    // The shape follows FR-412's randomized policy choice.
     Ok(json!({
         "state": state(at)?,
-        "choice": {"randomized": alternatives}
+        "choice": {"type": "randomized", "choices": alternatives}
     }))
 }
 
@@ -2419,6 +2426,13 @@ mod tests {
     }
 
     #[test]
+    fn randomized_scheduler_writer_refuses_fewer_than_two_choices() {
+        let one = [(crate::ProductAction::TerminalStutter, rational(1, 1))];
+        assert!(randomized_scheduler_wire_entry(&key(0), &one).is_err());
+        assert!(randomized_scheduler_wire_entry(&key(0), &[]).is_err());
+    }
+
+    #[test]
     fn randomized_scheduler_writer_spells_the_witness_entry_shape() {
         let entry = randomized_scheduler_wire_entry(
             &key(0),
@@ -2432,9 +2446,10 @@ mod tests {
             entry["state"],
             state(&key(0)).expect("state key is spellable")
         );
-        let alternatives = entry["choice"]["randomized"]
+        let alternatives = entry["choice"]["choices"]
             .as_array()
             .expect("randomized choice contains alternatives");
+        assert_eq!(entry["choice"]["type"], "randomized");
         assert_eq!(alternatives.len(), 2);
         assert_eq!(
             alternatives[0]["choice"],

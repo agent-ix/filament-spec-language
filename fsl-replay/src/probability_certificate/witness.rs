@@ -194,18 +194,28 @@ pub enum ProbabilityWitnessReplay {
 fn validate_randomized_entry(
     distribution: &[(ProductAction, Rational)],
     enabled: &[ProductAction],
+    max_rational_bits: u64,
+    meter: &mut filament_exact::Meter,
+    cancel: &Cancel,
 ) -> Result<(), ProbabilityWitnessError> {
-    if distribution.is_empty() {
+    // One encoding per choice: a single certain choice is a deterministic entry.
+    if distribution.len() < 2 {
         return Err(ProbabilityWitnessError::Refused);
     }
     let mut total = rational(0);
     let mut seen = Vec::new();
     for (action, weight) in distribution {
+        check_bits(weight, max_rational_bits)?;
         if weight <= &rational(0) || seen.contains(&action) || !enabled.contains(action) {
             return Err(ProbabilityWitnessError::Refused);
         }
         seen.push(action);
-        total = total.add(weight);
+        total = bounded::arithmetic(
+            filament_exact::RationalArithmetic::Add(&total, weight),
+            meter,
+            cancel,
+        )?;
+        check_bits(&total, max_rational_bits)?;
     }
     if total != rational(1) {
         return Err(ProbabilityWitnessError::Refused);
@@ -221,53 +231,120 @@ mod randomized_entry_tests {
         Rational::new(n.into(), d.into()).expect("positive denominator")
     }
 
-    #[test]
-    fn randomized_entry_rejects_weights_not_summing_to_one() {
-        let enabled = vec![ProductAction::TerminalStutter];
-        let distribution = vec![(ProductAction::TerminalStutter, q(1, 2))];
-        assert!(matches!(
-            validate_randomized_entry(&distribution, &enabled),
-            Err(ProbabilityWitnessError::Refused)
-        ));
+    const BITS: u64 = 64;
+
+    fn check(
+        distribution: &[(ProductAction, Rational)],
+        enabled: &[ProductAction],
+        max_bits: u64,
+    ) -> Result<(), ProbabilityWitnessError> {
+        let mut meter = filament_exact::Meter::new(crate::spine::default_accounting(1_000_000));
+        validate_randomized_entry(distribution, enabled, max_bits, &mut meter, &Cancel::new())
+    }
+
+    fn both() -> Vec<ProductAction> {
+        vec![ProductAction::TerminalStutter, ProductAction::UnitDelay]
+    }
+
+    fn refused(result: Result<(), ProbabilityWitnessError>) -> bool {
+        matches!(result, Err(ProbabilityWitnessError::Refused))
     }
 
     #[test]
     fn randomized_entry_accepts_enabled_positive_unit_distribution() {
-        let enabled = vec![ProductAction::TerminalStutter, ProductAction::UnitDelay];
         let distribution = vec![
             (ProductAction::TerminalStutter, q(1, 3)),
             (ProductAction::UnitDelay, q(2, 3)),
         ];
-        assert!(validate_randomized_entry(&distribution, &enabled).is_ok());
+        assert!(check(&distribution, &both(), BITS).is_ok());
+    }
+
+    #[test]
+    fn randomized_entry_rejects_empty_distribution() {
+        assert!(refused(check(&[], &both(), BITS)));
+    }
+
+    #[test]
+    fn randomized_entry_rejects_a_single_certain_choice() {
+        let distribution = vec![(ProductAction::TerminalStutter, q(1, 1))];
+        assert!(refused(check(&distribution, &both(), BITS)));
+    }
+
+    #[test]
+    fn randomized_entry_rejects_duplicate_action() {
+        let distribution = vec![
+            (ProductAction::TerminalStutter, q(1, 2)),
+            (ProductAction::TerminalStutter, q(1, 2)),
+        ];
+        assert!(refused(check(&distribution, &both(), BITS)));
+    }
+
+    #[test]
+    fn randomized_entry_rejects_sum_above_one() {
+        let distribution = vec![
+            (ProductAction::TerminalStutter, q(2, 3)),
+            (ProductAction::UnitDelay, q(2, 3)),
+        ];
+        assert!(refused(check(&distribution, &both(), BITS)));
+    }
+
+    #[test]
+    fn randomized_entry_rejects_sum_below_one() {
+        let distribution = vec![
+            (ProductAction::TerminalStutter, q(1, 3)),
+            (ProductAction::UnitDelay, q(1, 3)),
+        ];
+        assert!(refused(check(&distribution, &both(), BITS)));
     }
 
     #[test]
     fn randomized_entry_rejects_non_enabled_action() {
-        let enabled = vec![ProductAction::TerminalStutter];
-        let distribution = vec![(ProductAction::UnitDelay, q(1, 1))];
-        assert!(matches!(
-            validate_randomized_entry(&distribution, &enabled),
-            Err(ProbabilityWitnessError::Refused)
-        ));
+        let distribution = vec![
+            (ProductAction::TerminalStutter, q(1, 2)),
+            (ProductAction::UnitDelay, q(1, 2)),
+        ];
+        assert!(refused(check(
+            &distribution,
+            &[ProductAction::TerminalStutter],
+            BITS
+        )));
     }
 
     #[test]
     fn randomized_entry_rejects_zero_weight() {
-        let enabled = vec![ProductAction::TerminalStutter];
-        let distribution = vec![(ProductAction::TerminalStutter, q(0, 1))];
-        assert!(matches!(
-            validate_randomized_entry(&distribution, &enabled),
-            Err(ProbabilityWitnessError::Refused)
-        ));
+        let distribution = vec![
+            (ProductAction::TerminalStutter, q(0, 1)),
+            (ProductAction::UnitDelay, q(1, 1)),
+        ];
+        assert!(refused(check(&distribution, &both(), BITS)));
     }
 
     #[test]
     fn randomized_entry_rejects_negative_weight() {
-        let enabled = vec![ProductAction::TerminalStutter];
-        let distribution = vec![(ProductAction::TerminalStutter, q(-1, 1))];
+        let distribution = vec![
+            (ProductAction::TerminalStutter, q(-1, 2)),
+            (ProductAction::UnitDelay, q(3, 2)),
+        ];
+        assert!(refused(check(&distribution, &both(), BITS)));
+    }
+
+    #[test]
+    fn randomized_entry_refuses_an_over_limit_weight_by_the_bit_limit() {
+        let huge = Rational::new(
+            filament_exact::Integer::from(1_i64),
+            filament_exact::Integer::from(10_i128.pow(30)),
+        )
+        .expect("positive denominator");
+        let distribution = vec![
+            (ProductAction::TerminalStutter, huge),
+            (ProductAction::UnitDelay, q(1, 2)),
+        ];
         assert!(matches!(
-            validate_randomized_entry(&distribution, &enabled),
-            Err(ProbabilityWitnessError::Refused)
+            check(&distribution, &both(), BITS),
+            Err(ProbabilityWitnessError::Limit {
+                limit: ModelCheckLimit::ExactProbMaxRationalBits,
+                ..
+            })
         ));
     }
 }
@@ -601,14 +678,12 @@ fn replay_probabilistic_witness_impl(
             .actions_with_cancel(state, cancel)
             .map_err(|stop| cancelled_expansion(stop, cancel))?
             .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
-        let enabled_actions = enabled
+        // An identity with no schedule is not an enabled choice; it never refuses the entry itself.
+        let enabled_actions: Vec<ProductAction> = enabled
             .iter()
-            .map(|candidate| {
-                crate::Schedule::of(system, &candidate.identity)
-                    .map(ProductAction::Identity)
-                    .map_err(|_| ProbabilityWitnessError::Refused)
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+            .filter_map(|candidate| crate::Schedule::of(system, &candidate.identity).ok())
+            .map(ProductAction::Identity)
+            .collect();
         match entry {
             ProbabilisticSchedulerChoice::Deterministic(action) => {
                 if !enabled_actions.contains(action) {
@@ -628,7 +703,13 @@ fn replay_probabilistic_witness_impl(
                 if claim.fairness.is_empty() {
                     return Err(ProbabilityWitnessError::Refused);
                 }
-                validate_randomized_entry(distribution, &enabled_actions)?;
+                validate_randomized_entry(
+                    distribution,
+                    &enabled_actions,
+                    limits.max_rational_bits,
+                    &mut meter,
+                    cancel,
+                )?;
                 for (action, _) in distribution {
                     let bytes = action
                         .to_bytes()
