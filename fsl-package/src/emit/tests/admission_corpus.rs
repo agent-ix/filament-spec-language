@@ -2690,7 +2690,7 @@ fn every_emitted_body_of_the_corpus_is_in_the_stratified_grammar() {
     for fixture in Fixture::ALL {
         for emitted in fixture.emit() {
             let written = wire(&emitted.emission);
-            for node in nodes(&written) {
+            for (position, node) in nodes(&written).iter().enumerate() {
                 if node["node_tag"] == "relation" && node["semantic_form"] == "refinement" {
                     // A refinement body's top level is the FR-375 closed
                     // shape; its row terms are checked by the V2 reader's
@@ -2710,11 +2710,60 @@ fn every_emitted_body_of_the_corpus_is_in_the_stratified_grammar() {
                         .iter()
                         .map(|member| member["name"].as_str().expect("member name"))
                         .collect();
-                    assert_eq!(names, ["subjects", "executions", "invariants", "body"]);
+                    assert_eq!(
+                        names,
+                        [
+                            "subjects",
+                            "executions",
+                            "invariants",
+                            "body",
+                            "subject_declaration_order"
+                        ]
+                    );
                     assert_eq!(members[0]["value"]["term"], "aggregate");
                     assert_eq!(members[1]["value"]["term"], "aggregate");
                     assert_eq!(members[2]["value"]["term"], "aggregate");
                     assert_eq!(members[3]["value"]["term"], "reference");
+                    assert_eq!(members[4]["value"]["term"], "aggregate");
+                    let subjects = members[0]["value"]["members"].as_array().unwrap();
+                    let order = members[4]["value"]["members"].as_array().unwrap();
+                    let name = node["declaration"]["qualified_name"]
+                        .as_array()
+                        .and_then(|name| name.last())
+                        .and_then(Value::as_str)
+                        .expect("the relation declaration name");
+                    let source = emitted
+                        .package
+                        .graph()
+                        .step_relations()
+                        .iter()
+                        .find(|relation| relation.name() == name)
+                        .expect("the checked source relation");
+                    let declared: Vec<_> = order
+                        .iter()
+                        .map(|subject| subject["name"].as_str().expect("subject alias"))
+                        .collect();
+                    assert_eq!(declared, source.aliases(), "authored declaration order");
+                    assert_eq!(order.len(), subjects.len(), "exact subject coverage");
+                    let mut aliases = std::collections::BTreeSet::new();
+                    for subject in order {
+                        assert_eq!(subject["term"], "binding");
+                        assert_eq!(subject["value"]["term"], "reference");
+                        let alias = subject["name"].as_str().expect("subject alias");
+                        assert!(aliases.insert(alias), "no repeated subject alias");
+                        let original = subjects
+                            .iter()
+                            .find(|candidate| candidate["name"] == alias)
+                            .expect("the alias belongs to subjects");
+                        assert_eq!(subject, original, "the alias retains its model root");
+                    }
+                    let mut legacy = written.clone();
+                    legacy["semantic_graph"]["nodes"][position]["body"]["members"]
+                        .as_array_mut()
+                        .unwrap()
+                        .pop();
+                    read_bytes(&emitted, &jcs(&legacy))
+                        .expect("the legacy four-member relation remains admitted");
                     continue;
                 }
                 if node["node_tag"] == "claim" && node["semantic_form"] == "schedulability" {
