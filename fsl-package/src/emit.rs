@@ -1556,6 +1556,18 @@ impl Emission {
         self.materialize_identity_rows(package, budget)
     }
 
+    /// The `function` nodes of the emitted graph in node order, each with its
+    /// node id and recorded `check_mode` spelling, read from the typed nodes
+    /// these bytes were encoded from so no reader parses the bytes again.
+    pub fn function_check_modes(
+        &self,
+    ) -> impl Iterator<Item = (&CheckedNodeId, Option<&'static str>)> + '_ {
+        self.wire_nodes
+            .iter()
+            .filter(|node| &*node.node_tag == "function")
+            .map(|node| (&node.node_id, node.check_mode.map(|mode| mode.as_str())))
+    }
+
     /// FSL-owned identity rows keyed by equality application and occurrence.
     pub fn equality_producer_identity_rows(&self) -> &[EqualityProducerEmissionRow] {
         &self.equality_producer_identity_rows

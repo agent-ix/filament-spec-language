@@ -1319,6 +1319,8 @@ pub fn replay_with_cancel_and_temporal_selections(
     replay_limits: ReplayLimits,
     cancel: &Cancel,
 ) -> Result<ReplayResult, ReplayRefusal> {
+    #[cfg(test)]
+    tphase("replay-begin");
     let request = ReplayRequest::decode(wire, replay_limits)?;
     if matches!(request.source(), ReplaySource::ProtocolAnalysis(_)) {
         return Err(ReplayRefusal::WrongProtocolAnalysisEntry);
@@ -1347,6 +1349,8 @@ pub fn replay_with_cancel_and_temporal_selections(
         let counterexample = (**counterexample).clone();
         return replay_hybrid(request, &compiled, &counterexample);
     }
+    #[cfg(test)]
+    tphase("recompiled");
     let (function, owner) = function.ok_or_else(|| {
         ReplayRefusal::Fault(InternalFault::new(
             "replay",
@@ -1403,6 +1407,8 @@ pub fn replay_with_cancel_and_temporal_selections(
     } else {
         ObjectEnvironment::default().with_unresolved_references()
     };
+    #[cfg(test)]
+    tphase("converted");
     let mut meter = Meter::new(limits).with_cancel(cancel.clone());
     let evaluation = match package.call_supplied(
         &call.name,
@@ -2213,10 +2219,25 @@ pub(crate) fn recompile_with_temporal_selections(
             ));
         }
     }
-    check_recorded_modes(
-        request.package().document(),
-        compiled.emitted.package().bytes(),
-    )?;
+    #[cfg(test)]
+    tphase("run_spine_units-returned");
+    // The recompile's own typed nodes carry each function's mode; its bytes are
+    // not parsed again.
+    let recompiled_modes: std::collections::BTreeMap<Vec<u8>, Option<String>> = compiled
+        .emitted
+        .emission()
+        .function_check_modes()
+        .map(|(id, mode)| {
+            (
+                quire_canonical::to_vec(id, quire_canonical::Limits::new(u64::MAX))
+                    .unwrap_or_default(),
+                mode.map(str::to_owned),
+            )
+        })
+        .collect();
+    verify_recorded_modes(request.package().document(), &recompiled_modes)?;
+    #[cfg(test)]
+    tphase("modes-checked");
     request
         .package()
         .admit(&evidence, limits.spine.imports.for_ir())
@@ -2230,6 +2251,8 @@ pub(crate) fn recompile_with_temporal_selections(
                 .ok()
             }),
         })?;
+    #[cfg(test)]
+    tphase("package-admitted");
     request.check_external_package_bytes(
         compiled
             .checked
@@ -2539,6 +2562,8 @@ fn run_spine_units(
             Err(fault) => ReplayRefusal::Fault(fault),
         },
     };
+    #[cfg(test)]
+    tphase("spine-begin");
     let requests = units
         .iter()
         .map(|(identity, path, bytes)| ParseRequest {
@@ -2604,6 +2629,8 @@ fn run_spine_units(
     )
     .map_err(&refusal)?
     .into_value();
+    #[cfg(test)]
+    tphase("spine-checked");
     let checked = checked.into_iter().next().ok_or_else(|| {
         ReplayRefusal::Fault(InternalFault::new(
             "replay",
@@ -2630,6 +2657,8 @@ fn run_spine_units(
     )
     .map_err(&refusal)?
     .into_value();
+    #[cfg(test)]
+    tphase("spine-emitted");
     let evidence = spine::admission_evidence(
         &models,
         &checked,
@@ -3195,14 +3224,13 @@ fn charges(consumed: impl IntoIterator<Item = (LimitKind, u64)>) -> ScalarLimits
     charges
 }
 
-/// FR-098-AC-34: every function the proving package records is rechecked
-/// under exactly the mode it records; a function whose recompile records
-/// another mode, or none, is refused at its node.
+/// FR-098-AC-34: [`verify_recorded_modes`] over the function records of the
+/// recompiled package bytes.
+#[cfg(test)]
 fn check_recorded_modes(
     recorded: &quire_canonical::Document,
     recompiled: &[u8],
 ) -> Result<(), ReplayRefusal> {
-    // Read the emitted side once; the recorded side already owns a flat document.
     let recompiled_modes: std::collections::BTreeMap<Vec<u8>, Option<String>> =
         quire_canonical::read(recompiled, u64::MAX)
             .ok()
@@ -3212,6 +3240,17 @@ fn check_recorded_modes(
             .into_iter()
             .map(|record| (record.node_id, record.mode))
             .collect();
+    verify_recorded_modes(recorded, &recompiled_modes)
+}
+
+/// FR-098-AC-34: every function the proving package records is rechecked
+/// under exactly the mode it records; a function whose recompile records
+/// another mode, or none, is refused at its node. `recompiled_modes` is the
+/// recompile's recorded mode by canonical node id.
+fn verify_recorded_modes(
+    recorded: &quire_canonical::Document,
+    recompiled_modes: &std::collections::BTreeMap<Vec<u8>, Option<String>>,
+) -> Result<(), ReplayRefusal> {
     for record in crate::ReplayPackage::function_records(recorded) {
         if recompiled_modes.get(&record.node_id) != Some(&record.mode) {
             return Err(ReplayRefusal::Request(
@@ -3272,4 +3311,23 @@ mod carried_quantity_tests {
             }))
         ));
     }
+}
+
+/// TEMPORARY (QSL-2825): phase memory.
+#[cfg(test)]
+pub(crate) fn tphase(label: &str) {
+    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+    let field = |name: &str| {
+        status
+            .lines()
+            .find(|line| line.starts_with(name))
+            .and_then(|line| line.split_whitespace().nth(1))
+            .unwrap_or("0")
+            .to_owned()
+    };
+    eprintln!(
+        "MEM label={label} rss_kib={} hwm_kib={}",
+        field("VmRSS:"),
+        field("VmHWM:")
+    );
 }
