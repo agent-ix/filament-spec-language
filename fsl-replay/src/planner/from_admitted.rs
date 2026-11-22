@@ -816,7 +816,15 @@ impl<'a, 'p> PackageComposition<'a, 'p> {
                         if known != premise.on {
                             continue;
                         }
-                        if !peers.contains(&peer_position) {
+                        let mut already_assumed = false;
+                        for &peer in &peers {
+                            work.visit()?;
+                            if peer == peer_position {
+                                already_assumed = true;
+                                break;
+                            }
+                        }
+                        if !already_assumed {
                             work.room(&mut peers)?;
                             peers.push(peer_position);
                         }
@@ -929,7 +937,7 @@ impl<'a, 'p> PackageComposition<'a, 'p> {
                 let mut duplicate = false;
                 for (known, value) in &seen {
                     work.visit()?;
-                    if *known == at && *value == key {
+                    if *known == at && work.text_equal(value.canonical(), key.canonical())? {
                         duplicate = true;
                         break;
                     }
