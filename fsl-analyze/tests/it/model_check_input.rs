@@ -809,3 +809,72 @@ fn a_package_route_finds_the_terminal_whose_predicate_is_at_a_locus() {
     assert_eq!(over_bytes.terminal_at(&elsewhere).expect("resolves"), None);
     assert_eq!(source.terminal_at(&elsewhere).expect("resolves"), None);
 }
+
+/// FR-124, FR-411, FR-940: on a model of several object types, `self` of a
+/// `terminal when` ranges over the one canonical member type of the model's
+/// populations, on the package route as on the source route. Here `Aaa`,
+/// `Counter` and `Zeta` are object types and the one population holds
+/// `Counter` and `Zeta`: its canonical member `Counter` (the least) is the
+/// terminal object, not the least object type `Aaa`.
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn a_package_route_terminal_self_is_the_populations_canonical_member() {
+    use fsl_eval::simulation::model::TerminalClass;
+    use fsl_package::BareTerminalDeclaration;
+    let mut model: serde_json::Value =
+        serde_json::from_slice(&still_document()).expect("model JSON");
+    let counter = model["types"]
+        .as_array()
+        .expect("types")
+        .iter()
+        .find(|node| node["identity"] == "ix://test/counter/Counter")
+        .expect("Counter")
+        .to_string();
+    for name in ["Aaa", "Zeta"] {
+        let node: serde_json::Value =
+            serde_json::from_str(&counter.replace("Counter", name)).expect("the renamed type");
+        model["types"].as_array_mut().expect("types").push(node);
+    }
+    model["populations"][0]["members"] =
+        serde_json::json!(["ix://test/counter/Counter", "ix://test/counter/Zeta"]);
+    let model = serde_json::to_vec(&model).expect("model bytes");
+
+    let body = "terminal Done using v on M when { self.value = 3 };\n";
+    let (package, _) = package_with_clauses(&model, body, &[]);
+    let mut documents = Documents::new(model);
+    let start = documents.start("start", &[("a", 3), ("b", 1)]);
+    let source = subject(&package, &documents, vec![start], &["a", "b"], UNLIMITED);
+    let handoff = handoff(&package, &documents);
+    let bare = bare(&handoff);
+
+    let terminals = bare
+        .terminal_declarations()
+        .expect("the terminal rows read");
+    let [terminal] = terminals.as_slice() else {
+        panic!("one terminal declaration");
+    };
+    let BareTerminalDeclaration::When(predicate) = &terminal.declaration else {
+        panic!("a `when` declaration");
+    };
+    let context = format!("{:?}", predicate.context());
+    assert!(context.contains("/Counter"), "{context}");
+
+    let input = PackageModelInput::of(
+        &bare,
+        &documents.packages,
+        ModelNormalizationLimits::default(),
+    )
+    .expect("the package route reads the terminal");
+    let mut request = source.simulation.clone();
+    request.input = input.input();
+    let over_bytes = ModelSystem::new(request).expect("the package route admits");
+    let over_source = ModelSystem::new(source.simulation).expect("the source admits");
+    let classes = |system: &ModelSystem<'_>| {
+        terminal_classes(system)
+            .into_iter()
+            .map(|(_, class)| class)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(classes(&over_bytes), classes(&over_source));
+    assert!(classes(&over_source).contains(&TerminalClass::Intended));
+}

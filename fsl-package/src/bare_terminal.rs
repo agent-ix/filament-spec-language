@@ -118,18 +118,16 @@ impl BarePackage<'_> {
                     declared.push(effective);
                 }
             }
-            let mut populated = Vec::new();
-            for effective in &declared {
-                if self
-                    .selection_of_object(effective)
-                    .map_err(crate::protocol_selection::SlotSelectionFailure::Fault)?
-                    .is_some()
-                {
-                    populated.push(effective);
-                }
-            }
-            let context = match populated.as_slice() {
-                [only] => (*only).clone(),
+            // FR-124: each population's canonical member (its least declared
+            // member type), once each; exactly one names `self`'s type, as
+            // the source lowering's `population_objects` does.
+            let canonical = self.population_canonical_members(model_key.package());
+            let context = match canonical.as_slice() {
+                [only] => declared
+                    .iter()
+                    .find(|effective| *effective == only)
+                    .cloned()
+                    .ok_or_else(|| fault("terminal-population-object-is-not-an-object-type"))?,
                 _ => declared
                     .iter()
                     .min_by(|left, right| {

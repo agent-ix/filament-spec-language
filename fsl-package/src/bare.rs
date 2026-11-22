@@ -283,6 +283,25 @@ impl<'p> BarePackage<'p> {
         Ok(first)
     }
 
+    /// FR-124: the canonical member type of each population `package`
+    /// declares (the least member by declaration key), once each, ascending.
+    /// Empty when the population catalog was refused.
+    pub(crate) fn population_canonical_members(&self, package: &str) -> Vec<EffectiveId> {
+        let Ok(populations) = self.populations.as_ref() else {
+            return Vec::new();
+        };
+        let canonical: std::collections::BTreeSet<&EffectiveId> = populations
+            .values()
+            .filter(|(declaration, _)| declaration.package == package)
+            .filter_map(|(_, members)| {
+                members
+                    .iter()
+                    .min_by_key(|member| (member.original().package(), member.original().node()))
+            })
+            .collect();
+        canonical.into_iter().cloned().collect()
+    }
+
     /// The selected object declarations, or `Err` when their projection or
     /// the catalog was refused (FR-533 "Observation admission", step 3).
     pub(crate) fn object_declarations(
