@@ -134,6 +134,31 @@ fn package_protocol_graph<M: crate::fill::Explored + Clone>(
         &fsl_eval::simulation::protocol::ProtocolSystem<'_, M>,
     ),
 ) -> Vec<crate::fill::Reached<M>> {
+    package_protocol_graph_with_snapshot(
+        ws,
+        path,
+        memory,
+        roles,
+        source_absent,
+        cycle_keys,
+        None,
+        inspect,
+    )
+}
+
+fn package_protocol_graph_with_snapshot<M: crate::fill::Explored + Clone>(
+    ws: &Workspace,
+    path: &std::path::Path,
+    memory: M,
+    roles: &[&str],
+    source_absent: bool,
+    cycle_keys: bool,
+    snapshot: Option<Vec<u8>>,
+    inspect: impl FnOnce(
+        &fsl_eval::simulation::protocol::ProtocolSystem<'_, M>,
+        &fsl_eval::simulation::protocol::ProtocolSystem<'_, M>,
+    ),
+) -> Vec<crate::fill::Reached<M>> {
     use fsl_eval::model_subject::{ProtocolSubject, RoleBinding};
     use fsl_eval::simulation::model::{ModelSystem, PackageModelInput};
     use fsl_eval::simulation::protocol::{ProtocolSystem, ResolvedMemory};
@@ -146,9 +171,21 @@ fn package_protocol_graph<M: crate::fill::Explored + Clone>(
             .expect("the role fixture compiles");
     let mut documents = crate::fill::Documents::new();
     documents.packages = compiled.packages().clone();
-    let start = documents.start("s0", &[("c", 0), ("d", 0)]);
+    let cells: &[&str] = if snapshot.is_some() {
+        &["c"]
+    } else {
+        &["c", "d"]
+    };
+    let start = if let Some(bytes) = snapshot {
+        let start = fsl_semantics::model::observation::document_reference(&bytes)
+            .expect("the fixture snapshot names itself");
+        documents.snapshots.insert(start.clone(), bytes);
+        start
+    } else {
+        documents.start("s0", &[("c", 0), ("d", 0)])
+    };
     let source = ProtocolSubject {
-        model: crate::fill::model_subject(compiled.checked(), &documents, vec![start], &["c", "d"]),
+        model: crate::fill::model_subject(compiled.checked(), &documents, vec![start], cells),
         protocol: "Flow".to_owned(),
         over: crate::fill::instance("c"),
         roles: roles
@@ -189,7 +226,7 @@ fn package_protocol_graph<M: crate::fill::Explored + Clone>(
         compiled.checked(),
         &documents,
         source.model.simulation.initial.clone(),
-        &["c", "d"],
+        cells,
     );
     model.simulation.input = input.input();
     assert!(model.simulation.source_package().is_none());
@@ -1631,10 +1668,10 @@ fn package_receive_fifo_preserves_replay_refusal_code_and_cause() {
     assert_eq!(package.exit, source.exit);
 }
 
-/// Correlated receives retain a named refusal until package correlations execute.
-#[trace("TC-2958", "FR-940", "FR-731-AC-1")]
+/// FIFO correlation filters the delivered payload on both intake routes.
+#[trace("TC-2958", "FR-940-AC-6", "FR-731-AC-1", "FSpec-FR-831")]
 #[test]
-fn package_receive_fifo_related_premises_refuse_before_execution() {
+fn package_receive_fifo_related_premises_enforce_source_package_parity() {
     for (related, expected) in [(false, "refuted"), (true, "proved")] {
         let ws = Workspace::new(&format!("package-receive-fifo-related-{related}"));
         let controls = receive_fifo_send("Released", "order", 0)
@@ -1649,34 +1686,29 @@ fn package_receive_fifo_related_premises_refuse_before_execution() {
             "closing",
         );
         channel_related_premise(&ws, related);
-        let source = analyze(&path);
-        assert!(
-            source.item(0).get("record").is_some(),
-            "{}",
-            source.document()
-        );
-        assert_eq!(label(&source.item(0)), expected, "{}", source.document());
-        let (package_path, _) = package_request(&ws, &path);
-        std::fs::remove_file(ws.path("program.fsl"))
-            .expect("remove source before package correlation refusal");
-        let package = analyze(&package_path);
-        let item = package.item(0);
-        assert_eq!(package.exit, 21, "{}", package.document());
-        assert_eq!(item["category"], "unsupported", "{}", package.document());
-        let diagnostic = &item["record"]["diagnostic"];
-        assert_eq!(diagnostic["code"], "unsupported_construct", "{item}");
-        assert_eq!(diagnostic["cause"], "not-yet-implemented", "{item}");
-        assert_eq!(diagnostic["detail"]["fact"], "correlation", "{item}");
-        assert_eq!(
-            diagnostic["detail"]["node"]["path"]
+        channel_related_graph(&ws, &path, related, true);
+        let item = workflow_role_parity(&ws, &path, expected);
+        if !related {
+            assert_eq!(
+                item["counterexample"]["blocked"][0]["rest"]["node"], "Main/Correlated",
+                "{item}"
+            );
+            let prefix = item["counterexample"]["prefix"]
                 .as_array()
-                .expect("the refused admitted node's path")
-                .last(),
-            Some(&json!("Correlated")),
-            "{item}"
-        );
-        assert!(item.get("exploration").is_none(), "{item}");
-        assert!(item.get("counterexample").is_none(), "{item}");
+                .expect("the send precedes the blocked receive");
+            assert!(
+                prefix
+                    .iter()
+                    .any(|step| step["transition"]["step"] == "send"),
+                "{item}"
+            );
+            assert!(
+                !prefix
+                    .iter()
+                    .any(|step| step["transition"]["step"] == "receive"),
+                "{item}"
+            );
+        }
     }
 }
 
@@ -2442,10 +2474,145 @@ fn channel_related_premise(ws: &Workspace, related: bool) {
         .expect("write the relationship instances");
 }
 
-/// A nonempty admitted correlation group is named and refused before package execution.
-#[trace("TC-2958", "FR-940", "FR-731-AC-1")]
+/// Compare real states and steps using the same relationship observation as the CLI.
+fn channel_related_graph(ws: &Workspace, path: &std::path::Path, related: bool, receive: bool) {
+    use fsl_eval::simulation::protocol::{Sc, StepKind};
+
+    let snapshot = std::fs::read(ws.path("snapshot-0.json")).expect("the related snapshot");
+    let graph = package_protocol_graph_with_snapshot(
+        ws,
+        path,
+        Sc,
+        &["Planning", "Machining"],
+        false,
+        false,
+        Some(snapshot),
+        |_, _| {},
+    );
+    let queue_len = |at: usize| {
+        let state: Value = serde_json::from_slice(graph[at].key.as_bytes()).expect("state key");
+        state["queues"]["entries"]
+            .as_array()
+            .expect("queue map")
+            .iter()
+            .map(|entry| {
+                entry["value"]["elements"]
+                    .as_array()
+                    .expect("queued messages")
+                    .len()
+            })
+            .sum::<usize>()
+    };
+    let sends: Vec<_> = graph
+        .iter()
+        .flat_map(|state| &state.steps)
+        .filter(|(step, _)| step.kind() == StepKind::Send)
+        .collect();
+    assert_eq!(
+        !sends.is_empty(),
+        receive || related,
+        "a false send premise disables every candidate"
+    );
+    for (send, queued) in &sends {
+        assert_eq!(
+            send.node(),
+            Some(if receive {
+                "Main/Released"
+            } else {
+                "Main/Correlated"
+            })
+        );
+        assert_eq!(
+            queue_len(*queued),
+            1,
+            "the accepted send retains one message"
+        );
+        let record = fsl_eval::simulation::protocol::send_record_json(
+            send.send_record().expect("send record"),
+        )
+        .expect("send record JSON");
+        assert_eq!(record["outcome"], "accepted", "{record}");
+        let fields = record["payload"]["fields"]
+            .as_array()
+            .expect("payload fields");
+        assert_eq!(
+            fields
+                .iter()
+                .find(|field| field["name"] == "n")
+                .expect("n field")["value"]["value"],
+            "0",
+            "{record}"
+        );
+        if receive {
+            assert_eq!(
+                fields
+                    .iter()
+                    .find(|field| field["name"] == "ok")
+                    .expect("ok field")["value"]["value"],
+                true,
+                "{record}"
+            );
+            assert_eq!(
+                fields
+                    .iter()
+                    .find(|field| field["name"] == "target")
+                    .expect("target field")["value"]["identity"],
+                "c",
+                "{record}"
+            );
+        }
+    }
+    let receives: Vec<_> = graph
+        .iter()
+        .flat_map(|state| &state.steps)
+        .filter(|(step, _)| step.kind() == StepKind::Receive)
+        .collect();
+    assert_eq!(
+        !receives.is_empty(),
+        receive && related,
+        "only a true receive premise permits delivery"
+    );
+    for (received, drained) in receives {
+        assert_eq!(received.node(), Some("Main/Correlated"));
+        let (sent, _) = sends
+            .iter()
+            .find(|(sent, _)| {
+                sent.message() == received.delivery().map(|delivery| delivery.message())
+            })
+            .expect("delivery names an actual send occurrence");
+        assert_eq!(
+            filament_exact::compare_keys(
+                received.binder_record().expect("received payload"),
+                sent.binder_record().expect("sent payload"),
+            ),
+            Some(std::cmp::Ordering::Equal),
+            "receive preserves the exact sent payload"
+        );
+        assert_eq!(queue_len(*drained), 0, "the receive drains the FIFO queue");
+    }
+    let finishes = graph
+        .iter()
+        .flat_map(|state| &state.steps)
+        .any(|(step, _)| step.kind() == StepKind::Finish);
+    assert_eq!(
+        finishes, related,
+        "the run finishes exactly when its correlation holds"
+    );
+    if !related {
+        assert!(
+            graph
+                .iter()
+                .enumerate()
+                .any(|(at, state)| state.steps.is_empty() && queue_len(at) == usize::from(receive)),
+            "a false premise waits with the original queue intact"
+        );
+    }
+}
+
+/// Send correlation is an enabling premise on both intake routes.
+#[trace("TC-2958", "FR-940-AC-6", "FR-731-AC-1", "FSpec-FR-831")]
 #[test]
-fn package_channel_send_related_premises_refuse_before_execution() {
+fn package_channel_send_related_premises_enforce_source_package_parity() {
     for (related, expected) in [(false, "refuted"), (true, "proved")] {
         let ws = Workspace::new(&format!("package-channel-send-related-{related}"));
         let path = channel_send_request(
@@ -2457,34 +2624,21 @@ fn package_channel_send_related_premises_refuse_before_execution() {
             "closing",
         );
         channel_related_premise(&ws, related);
-        let source = analyze(&path);
-        assert!(
-            source.item(0).get("record").is_some(),
-            "{}",
-            source.document()
-        );
-        assert_eq!(label(&source.item(0)), expected, "{}", source.document());
-        let (package_path, _) = package_request(&ws, &path);
-        std::fs::remove_file(ws.path("program.fsl"))
-            .expect("remove source before package correlation refusal");
-        let package = analyze(&package_path);
-        let item = package.item(0);
-        assert_eq!(package.exit, 21, "{}", package.document());
-        assert_eq!(item["category"], "unsupported", "{}", package.document());
-        let diagnostic = &item["record"]["diagnostic"];
-        assert_eq!(diagnostic["code"], "unsupported_construct", "{item}");
-        assert_eq!(diagnostic["cause"], "not-yet-implemented", "{item}");
-        assert_eq!(diagnostic["detail"]["fact"], "correlation", "{item}");
-        assert_eq!(
-            diagnostic["detail"]["node"]["path"]
-                .as_array()
-                .expect("the refused admitted node's path")
-                .last(),
-            Some(&json!("Correlated")),
-            "{item}"
-        );
-        assert!(item.get("exploration").is_none(), "{item}");
-        assert!(item.get("counterexample").is_none(), "{item}");
+        channel_related_graph(&ws, &path, related, false);
+        let item = workflow_role_parity(&ws, &path, expected);
+        if !related {
+            assert_eq!(
+                item["counterexample"]["blocked"][0]["rest"]["node"], "Main/Correlated",
+                "{item}"
+            );
+            assert!(
+                item["counterexample"]["prefix"]
+                    .as_array()
+                    .expect("blocked send witness")
+                    .is_empty(),
+                "{item}"
+            );
+        }
     }
 }
 
