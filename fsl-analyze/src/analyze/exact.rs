@@ -31,9 +31,8 @@ use fsl_replay::{
 };
 use fsl_replay::{
     replay_probabilistic_witness, replay_probabilistic_witness_from_package,
-    ProbabilisticCounterexample, ProbabilityWitnessError,
-    ProbabilityWitnessPath, ProbabilityWitnessReplay, ProbabilityWitnessStep,
-    ReproducedProbabilityWitness,
+    ProbabilisticCounterexample, ProbabilityWitnessError, ProbabilityWitnessPath,
+    ProbabilityWitnessReplay, ProbabilityWitnessStep, ReproducedProbabilityWitness,
 };
 use fsl_replay::{CertificateLocus, CertificateRule};
 use fsl_replay::{InconclusiveCause, ProbabilityCertificateLocus, ProbabilityCertificateRule};
@@ -2357,7 +2356,15 @@ fn replay_produced_witness(
         binding: binding.cloned(),
         initial: first.clone(),
         initial_key,
-        scheduler,
+        scheduler: scheduler
+            .into_iter()
+            .map(|(key, action)| {
+                (
+                    key,
+                    fsl_replay::ProbabilisticSchedulerChoice::Deterministic(action),
+                )
+            })
+            .collect(),
         paths,
         subsystem: None,
     };
