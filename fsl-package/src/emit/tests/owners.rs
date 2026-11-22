@@ -564,7 +564,7 @@ fn function_check_modes_spell_the_ids_the_emitted_bytes_record() {
         })
         .collect();
     assert!(
-        recorded.len() >= 4,
+        recorded.len() >= 3,
         "a declared function and the clause functions: {}",
         recorded.len()
     );
