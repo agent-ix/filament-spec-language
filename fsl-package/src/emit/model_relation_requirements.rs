@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-940: retain each HP-1 model requirement in its admitted package.
+//! FR-940: retain original model-relation and refinement requirement records.
 
 use std::collections::HashMap;
 
 use super::{checked_occurrence, EmitRefusal};
 use filament_contract_model::CheckedNodeId;
 use filament_contract_model::{
-    CapabilityKind, DomainKey, DomainKind, RequirementExtent, RequirementItemRow,
+    CapabilityKind, CheckedOccurrenceRole, DomainKey, DomainKind, RequirementExtent,
+    RequirementItemRow,
 };
 use filament_exact::NodeKey;
 use fsl_semantics::check::{Capability, CheckedGraph};
@@ -17,10 +18,18 @@ pub(super) fn rows(
     emitted: &HashMap<NodeKey, CheckedNodeId>,
 ) -> Result<Vec<RequirementItemRow>, EmitRefusal> {
     let mut rows = Vec::new();
-    for relation in graph.step_relations() {
-        let occurrence = relation
-            .occurrence()
-            .ok_or(EmitRefusal::SourceMapInvariant)?;
+    let occurrences = graph
+        .step_relations()
+        .iter()
+        .map(|relation| relation.occurrence())
+        .chain(
+            graph
+                .refinements()
+                .iter()
+                .map(|refinement| refinement.requirement_occurrence()),
+        );
+    for occurrence in occurrences {
+        let occurrence = occurrence.ok_or(EmitRefusal::SourceMapInvariant)?;
         let record = graph
             .requirements()
             .get_kind(occurrence, Capability::TemporalSatisfaction)
@@ -29,7 +38,7 @@ pub(super) fn rows(
             .get(occurrence.node())
             .ok_or(EmitRefusal::SourceMapInvariant)?
             .clone();
-        // The model obligation is precisely the relation's infinite-trace
+        // The model obligation is precisely the declaration's infinite-trace
         // domain. Check the source record rather than inventing an extent.
         let ClaimExtent::Unbounded(domains) = record.requirements().extent() else {
             return Err(EmitRefusal::SourceMapInvariant);
@@ -58,12 +67,24 @@ pub(super) fn rows(
             record: None,
         });
     }
-    // Relation declaration IDs contain no operands; their structural order
+    // These declaration IDs contain no operands; their structural order
     // is also their document-held order (FR-825).
     rows.sort_by(|left, right| {
         left.claim
             .cmp(&right.claim)
+            .then(role_wire(&left.occurrence.role).cmp(role_wire(&right.occurrence.role)))
             .then(left.occurrence.ordinal.cmp(&right.occurrence.ordinal))
     });
     Ok(rows)
+}
+
+fn role_wire(role: &CheckedOccurrenceRole) -> &'static str {
+    match role {
+        CheckedOccurrenceRole::Declaration => "declaration",
+        CheckedOccurrenceRole::Type => "type",
+        CheckedOccurrenceRole::Expression => "expression",
+        CheckedOccurrenceRole::Anchor => "anchor",
+        CheckedOccurrenceRole::Claim => "claim",
+        CheckedOccurrenceRole::Generated => "generated",
+    }
 }
