@@ -340,13 +340,6 @@ fn hp1_package_checker_accepts_and_refuses_tampering_without_source() {
         )
         .expect("supply joins");
     let selected = bare.claim_name("Det").expect("the admitted claim name");
-    eprintln!("HP1 diagnostic claim={selected:?} requirements={:?}", admitted.requirement_items());
-    for node in &admitted.resolved_graph().nodes {
-        if node.node_id == selected.declaration {
-            eprintln!("HP1 diagnostic names={:?} body={:?} order={:?}", admitted.claim_names(), node.step_relation_body(), node.step_relation_subject_declaration_order().map(|order| order.collect::<Vec<_>>()));
-        }
-        eprintln!("HP1 diagnostic node={:?} owner={:?} body={:?}", node.node_id, node.owner, node.body);
-    }
     let form = bare
         .model_relation_form(&selected)
         .expect("HP-1 form selects");
