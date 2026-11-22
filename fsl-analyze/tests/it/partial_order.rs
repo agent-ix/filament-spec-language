@@ -1350,10 +1350,9 @@ fn a_state_constraint_makes_the_transitions_it_reads_visible() {
     assert_eq!(constrained(true), constrained(false));
 }
 
-/// ADR-021 §7.6's operation with no footprint rule: `spin()` calls a function
-/// in its precondition. The unreduced run refutes the claim; partial-order
-/// reduction refuses before it expands a state, naming the clause, instead of
-/// stopping an expansion as a broken invariant.
+/// FSpec FR-383's pure-call rule reads the arguments and callee body. `Noop`
+/// has neither arguments nor reads, so `spin` has only its receiver membership
+/// and postcondition read of `g`. Both runs refute and replay the same claim.
 #[trace("TC-587")]
 #[test]
 fn an_operation_with_no_footprint_rule_refuses_partial_order_reduction() {
@@ -1362,16 +1361,60 @@ fn an_operation_with_no_footprint_rule_refuses_partial_order_reduction() {
         .run(Some(0), por_world::no_f(), Reductions::default())
         .expect("checks");
     assert!(matches!(plain, ModelCheckOutcome::Violated { .. }));
-    let refused = fixture
+    let reduced = fixture
         .run(Some(0), por_world::no_f(), reduced())
-        .expect_err("a footprint-less operation refuses");
-    assert!(
-        matches!(
-            refused,
-            ModelCheckRefusal::Footprint(fsl_eval::simulation::model::FootprintError::Refused(_))
-        ),
-        "{refused:?}"
+        .expect("the pure call has a footprint");
+    let ModelCheckOutcome::Violated {
+        counterexample: plain,
+        ..
+    } = plain
+    else {
+        unreachable!("the unreduced run refutes")
+    };
+    let ModelCheckOutcome::Violated {
+        counterexample: reduced,
+        ..
+    } = reduced
+    else {
+        panic!("the reduced run refutes: {reduced:?}")
+    };
+    assert_eq!(reduced, plain, "the same concrete refutation");
+    for counterexample in [plain, reduced] {
+        assert!(matches!(
+            fixture.replay(Some(0), por_world::no_f(), *counterexample),
+            ModelTraceSettlement::Reproduced {
+                value: fsl_replay::ModelTraceValue::Truth(false),
+                ..
+            }
+        ));
+    }
+    let system = fixture.system();
+    let spin = named(&system, &fixture.start(), "spin");
+    let footprint = system.footprint(&spin).expect("the actual spin footprint");
+    let object = match footprint.writes.iter().next().expect("spin writes g") {
+        Location::Field { object, field } => {
+            assert_eq!(field, &por_world::key("Maker/g"));
+            object.clone()
+        }
+        other => panic!("a receiver field write: {other:?}"),
+    };
+    let field = Location::Field {
+        object: object.clone(),
+        field: por_world::key("Maker/g"),
+    };
+    assert_eq!(footprint.writes, [field.clone()].into());
+    assert_eq!(
+        footprint.reads,
+        [
+            field,
+            Location::Membership {
+                population: por_world::key("makers"),
+                object,
+            },
+        ]
+        .into()
     );
+    assert_eq!(footprint.enabling, footprint.reads);
 }
 
 /// FR-162's absent objects, end to end: reduced and unreduced runs agree on

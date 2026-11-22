@@ -635,25 +635,65 @@ fn over_package_route(
     );
 }
 
-/// QSL-2432 (FR-940 "Package forms of the source-checked evaluators"): a
-/// clause whose package form reads a fact the package route does not read
-/// yet is refused by the package route's clause subject with that fact and
-/// the clause's node, never as an unknown clause: a fairness set, and a
-/// capture, which the package route's letters do not evaluate yet, so no
-/// engine reaches a capture fault.
+/// FR-940's package evaluator reads fairness with the source route's exact
+/// record and exit. A capture remains a typed pending fact, never an unknown
+/// clause or a capture fault reached by the engine.
 #[trace("TC-2958", "FR-940-AC-6")]
 #[test]
 fn a_pending_package_clause_fact_is_refused_typed_naming_it() {
-    for (formula, expected) in [
-        (
-            "fair weak M::Counter::inc; eventually holds(c.value = 3)",
-            "fairness",
-        ),
-        (
-            "capture n: Int[0, 3] = c.value; always holds(c.value >= n)",
-            "capture",
-        ),
-    ] {
+    let formula = "fair weak M::Counter::inc; eventually holds(c.value = 3)";
+    let world = World::new(
+        model_world::counter(),
+        "",
+        INFINITE,
+        &[Clause {
+            activation: "on each (q: M::Counter) when (true)",
+            formula,
+        }],
+        &[("c", json!({"value": {"integer": "0"}}))],
+    );
+    let source = run(&world, ClauseLimits::default());
+    let terminal = source.terminal().expect("the source clause settles");
+    assert_eq!(terminal.value(), &TerminalValue::Refuted);
+    assert_eq!(terminal.value().category().exit_code(), 10);
+    let clause = &world.package.graph().temporal_clauses()[0];
+    let key = OccurrenceKey::new(clause.identity(), clause.claim().clone());
+    over_package_route(&world, |input, bytes, supply| {
+        let subject = fsl_analyze::analyze::PackageClauseSubject::new(
+            input,
+            bytes,
+            supply,
+            world.binding(&["c"]),
+            AnalyzeLimits::unbounded(),
+            &key,
+            ClauseLimits::default(),
+        )
+        .expect("fairness is an admitted package fact");
+        let mut engines = Engines::default();
+        engines
+            .with(Engine::model_check().expect("EN-1's manifest admits"))
+            .expect("one engine");
+        let mut records = analyze_items(
+            &engines,
+            vec![subject.item(RequestIndex::new(0))],
+            &Cancel::new(),
+        );
+        assert_eq!(records.len(), 1);
+        let package = records.remove(0);
+        assert_eq!(
+            package
+                .terminal()
+                .expect("the package clause settles")
+                .value()
+                .category()
+                .exit_code(),
+            10
+        );
+        assert_eq!(format!("{package:?}"), format!("{source:?}"));
+    });
+
+    {
+        let formula = "capture n: Int[0, 3] = c.value; always holds(c.value >= n)";
         let world = World::new(
             model_world::counter(),
             "",
@@ -684,7 +724,7 @@ fn a_pending_package_clause_fact_is_refused_typed_naming_it() {
             let fsl_analyze::analyze::ClauseItemRefusal::Pending { fact, .. } = refused else {
                 panic!("{formula}: a typed pending refusal, not {refused:?}");
             };
-            assert_eq!(fact, expected, "{formula}");
+            assert_eq!(fact, "capture", "{formula}");
         });
     }
 }

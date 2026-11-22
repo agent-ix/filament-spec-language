@@ -1288,9 +1288,8 @@ pub(crate) fn no_f() -> Vec<Atom> {
     })]
 }
 
-/// A maker whose `spin()` has a function call in its precondition, which
-/// FR-383 gives no footprint rule: unreduced the claim `always holds(not
-/// x.f)` is refuted by `set()`.
+/// A maker whose `spin()` calls the read-free literal-true `Noop` in its
+/// precondition. The claim `always holds(not x.f)` is refuted by `set()`.
 pub(crate) fn call_in_a_precondition() -> Fixture {
     Fixture::new(
         vec![object_type(

@@ -341,14 +341,14 @@ pub(crate) const PROTOCOL_PROFILE: &str = "profile pp = \"filament.protocol.fini
 /// The protocol profile selected by `protocol_roles` fixtures as `p`.
 pub(crate) const PROTOCOL_PROFILE_P: &str = "profile p = \"filament.protocol.finite-global/v1\";\n";
 
-/// TCB-01's independent temporal selection: the checked clause supplies
+/// TCB-01's independent temporal selection: the checked clause or await supplies
 /// `model-steps`, while this fixture explicitly selects `order-events` as
 /// the event sequence authority (FSpec FR-322).
 pub(crate) fn tcb_01_event_position_selection(
     package: &CheckedPackage,
 ) -> Vec<TemporalClockSelection> {
     let graph = package.graph();
-    graph
+    let mut selections: Vec<_> = graph
         .temporal_clauses()
         .iter()
         .filter_map(|temporal| {
@@ -365,7 +365,23 @@ pub(crate) fn tcb_01_event_position_selection(
                 },
             ))
         })
-        .collect()
+        .collect();
+    for protocol in graph.protocols() {
+        for awaited in &protocol.awaits {
+            if awaited.profile != Some(TemporalProfile::EventPositionFalseExtension) {
+                continue;
+            }
+            assert_eq!(awaited.clock, "model-steps");
+            selections.push(TemporalClockSelection::new(
+                graph.source().clone(),
+                awaited.span,
+                ClockConfiguration::EventPosition {
+                    sequence_authority: "order-events".into(),
+                },
+            ));
+        }
+    }
+    selections
 }
 
 /// [`package`] with the further header `profiles` lines.
