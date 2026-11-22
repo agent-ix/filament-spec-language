@@ -1125,6 +1125,7 @@ impl<'a> PackageProtocolWork<'a> {
         let family = match self.form.item_kind {
             fsl_route::request::ItemKind::Formula => CLAUSE_FAMILY,
             fsl_route::request::ItemKind::DeadlockFreedom
+            | fsl_route::request::ItemKind::LoopInvariant
             | fsl_route::request::ItemKind::RaceFreedom => {
                 Some(fsl_semantics::check::DeclarationFamily::Protocol)
             }
@@ -1149,6 +1150,7 @@ impl<'a> PackageProtocolWork<'a> {
                     self.form.item_kind,
                     fsl_route::request::ItemKind::Formula
                         | fsl_route::request::ItemKind::DeadlockFreedom
+                        | fsl_route::request::ItemKind::LoopInvariant
                         | fsl_route::request::ItemKind::RaceFreedom
                 ) || !self.form.reductions.symmetry.is_empty()
                     || self.form.reductions.partial_order
@@ -1273,6 +1275,16 @@ impl<'a> PackageProtocolWork<'a> {
                     }
                 };
                 let resolved_memory = program.memory.clone();
+                let loop_repeat = if self.form.item_kind == fsl_route::request::ItemKind::LoopInvariant {
+                    let repeat = usize::try_from(self.occurrence.origin().ordinal()).ok()
+                        .map(fsl_semantics::check::ProtocolNodeId);
+                    match repeat.filter(|repeat| self.occurrence.origin().role().as_str() == "repeat"
+                        && program.form.controls.iter().any(|control| control.id == *repeat
+                            && control.operation == fsl_package::protocol_view::ControlOperation::Repeat)) {
+                        Some(repeat) => Some(repeat),
+                        None => return EngineReport::Refused(Refusal::Failed(BROKEN)),
+                    }
+                } else { None };
                 drop(program);
                 let simulation = self.simulation();
                 let system = match ModelSystem::new(simulation.clone()) {
@@ -1292,6 +1304,9 @@ impl<'a> PackageProtocolWork<'a> {
                 };
                 let make_item = || match self.clause.as_ref() {
                     Some(clause) => ModelCheckItem::Clause { clause, letters },
+                    None if loop_repeat.is_some() => ModelCheckItem::LoopInvariant {
+                        repeat: loop_repeat.expect("the admitted repeat was validated"),
+                    },
                     None if self.form.item_kind == fsl_route::request::ItemKind::RaceFreedom => {
                         ModelCheckItem::RaceFreedom
                     }

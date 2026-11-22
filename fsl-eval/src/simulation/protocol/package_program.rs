@@ -19,6 +19,23 @@ use super::{MemorySelection, MemorySelectionRefusal, ResolvedMemory};
 use crate::simulation::model::{ModelCheckInput, ModelEvaluator, OperationRef, ProtocolDefinition};
 use crate::value::{ProtocolSlot, ProtocolSlotEvaluation, ProtocolSuppliedValue, ProtocolSupply};
 
+/// A literal invariant read from its admitted repeat, never a caller-issued proof.
+#[derive(Clone, Copy)]
+pub(super) struct PackageLoopInvariant<'a> {
+    repeat: &'a fsl_package::CheckedNodeId,
+    value: bool,
+}
+
+impl<'a> PackageLoopInvariant<'a> {
+    pub(super) fn value(self) -> bool {
+        self.value
+    }
+
+    pub(super) fn repeat(self) -> &'a fsl_package::CheckedNodeId {
+        self.repeat
+    }
+}
+
 /// One admitted package control in the normalized execution tree.
 #[derive(Clone, Debug)]
 pub struct PackageControl {
@@ -537,11 +554,26 @@ impl<'a> PackageProtocolProgram<'a> {
             else {
                 return Err(absent());
             };
-            if !proof.is_empty() {
-                return Err(PackageProgramRefusal::RepeatProof {
-                    node: control.node.node_id.clone(),
-                });
-            }
+            let proof = if proof.is_empty() {
+                None
+            } else {
+                let invariant = member(body, "proof")
+                    .and_then(|proof| member(proof, "invariant"))
+                    .and_then(|term| term.literal_read())
+                    .and_then(|literal| match literal.value {
+                        fsl_package::CheckedLiteralValue::Boolean(value) => Some(value),
+                        _ => None,
+                    })
+                    .ok_or_else(|| PackageProgramRefusal::RepeatProof {
+                        node: control.node.node_id.clone(),
+                    })?;
+                // Admission owns both typed terms. An invariant item reads
+                // only its invariant, as the source proof product does.
+                Some(super::program::LoopProof::Package(PackageLoopInvariant {
+                    repeat: &control.node.node_id,
+                    value: invariant,
+                }))
+            };
             let reference = |name| match member(body, name) {
                 Some(fsl_package::CheckedTerm::Reference { target }) => {
                     id_by_node.get(target).copied().ok_or_else(absent)
@@ -590,7 +622,7 @@ impl<'a> PackageProtocolProgram<'a> {
                     max,
                     post_test,
                     guard: super::program::LoopGuard::Package,
-                    proof: None,
+                    proof,
                 },
             );
         }

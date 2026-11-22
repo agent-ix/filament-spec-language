@@ -84,7 +84,14 @@ pub(super) struct Loop<'a> {
     pub(super) post_test: bool,
     pub(super) guard: LoopGuard<'a>,
     /// The checked proof attached to this repeat, when present.
-    pub(super) proof: Option<&'a fsl_semantics::check::CheckedLoopProof>,
+    pub(super) proof: Option<LoopProof<'a>>,
+}
+
+/// The native proof authority retained by a repeat on either input route.
+#[derive(Clone, Copy)]
+pub(super) enum LoopProof<'a> {
+    Source(&'a fsl_semantics::check::CheckedLoopProof),
+    Package(super::package_program::PackageLoopInvariant<'a>),
 }
 
 /// The admitted expression used at a repeat decision.
@@ -747,7 +754,7 @@ impl<'a> Program<'a> {
                     max: repeat.max,
                     post_test: repeat.post_test,
                     guard: LoopGuard::Source(&repeat.guard),
-                    proof: repeat.loop_proof.as_ref(),
+                    proof: repeat.loop_proof.as_ref().map(LoopProof::Source),
                 },
             );
         }
@@ -1398,7 +1405,7 @@ impl<'a> Program<'a> {
                             max: repeat.max,
                             post_test: repeat.post_test,
                             guard: LoopGuard::Package,
-                            proof: None,
+                            proof: repeat.proof,
                         },
                     )
                 })

@@ -1668,6 +1668,24 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         subject: &'a ProtocolSubject<'a>,
         memory: M,
     ) -> Result<Self, ProtocolRefusal> {
+        Self::new_package_with_loop_proof(model, subject, memory, None)
+    }
+
+    /// Build the admitted package protocol product for one literal invariant.
+    ///
+    /// # Errors
+    /// Refuses an unsupported proof form or a target without an admitted proof.
+    pub fn new_package_with_loop_proof(
+        model: ModelSystem<'a>,
+        subject: &'a ProtocolSubject<'a>,
+        memory: M,
+        loop_proof_target: Option<ProtocolLoopProofTarget>,
+    ) -> Result<Self, ProtocolRefusal> {
+        if loop_proof_target.is_some_and(|target| target.kind != ProtocolLoopProofKind::Invariant) {
+            return Err(ProtocolRefusal::Unsupported(
+                Unsupported::PackageRepeatProof,
+            ));
+        }
         let input = &subject.model.simulation.input;
         let form = input
             .protocol_definition(&subject.protocol)
@@ -1799,7 +1817,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             program,
             package_program: Some(package),
             package_subject: Some(subject),
-            loop_proof_target: None,
+            loop_proof_target,
             memory,
             channel_message_bound: None,
             delivery_reads: None,
@@ -1818,6 +1836,17 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
             initial: Vec::new(),
             model_footprints: std::sync::Mutex::default(),
         };
+        if let Some(target) = system.loop_proof_target {
+            if !system
+                .program
+                .repeat(target.repeat)
+                .is_ok_and(|repeat| repeat.proof.is_some())
+            {
+                return Err(ProtocolRefusal::fault(
+                    "a-loop-proof-target-names-an-admitted-loop-proof",
+                ));
+            }
+        }
         system.universes = system.role_universes()?;
         system.initial = system.initial_states()?;
         Ok(system)

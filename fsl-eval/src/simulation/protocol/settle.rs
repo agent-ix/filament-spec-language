@@ -87,6 +87,43 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             .proof
             .ok_or_else(|| ProtocolRefusal::fault("a-loop-proof-target-has-proof"))
             .map_err(ExpansionStop::from)?;
+        let proof = match proof {
+            super::program::LoopProof::Source(proof) => proof,
+            super::program::LoopProof::Package(proof) => {
+                if target.kind != super::ProtocolLoopProofKind::Invariant {
+                    return Err(ProtocolRefusal::Unsupported(
+                        super::Unsupported::PackageRepeatProof,
+                    )
+                    .into());
+                }
+                let package = self.package_program.as_ref().ok_or_else(|| {
+                    ProtocolRefusal::fault("package-loop-proof-has-package-program")
+                })?;
+                if package
+                    .form
+                    .controls
+                    .iter()
+                    .find(|control| control.id == node)
+                    .is_none_or(|control| &control.node.node_id != proof.repeat())
+                {
+                    return Err(
+                        ProtocolRefusal::fault("package-loop-proof-names-its-repeat").into(),
+                    );
+                }
+                // Literal reads make no evaluator charge, as on the source
+                // route. Keep the decision here, before the guard is read.
+                if !proof.value() {
+                    instance.loop_proof_violation.get_or_insert(
+                        super::ProtocolLoopProofViolation {
+                            repeat: node,
+                            kind: target.kind,
+                            failure: super::ProtocolLoopProofFailure::InvariantFalse,
+                        },
+                    );
+                }
+                return Ok(None);
+            }
+        };
         let frame = self.frame(instance, path, node);
         match target.kind {
             super::ProtocolLoopProofKind::Invariant => {

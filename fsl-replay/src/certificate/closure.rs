@@ -579,14 +579,9 @@ fn new_protocol_system<'a, M: MemoryModel>(
         Some(ProtocolDefinition::Source(_)) => {
             ProtocolSystem::new_with_loop_proof(model, subject, memory, loop_proof_target)
         }
-        Some(ProtocolDefinition::Package(_)) if loop_proof_target.is_some() => {
-            Err(ProtocolRefusal::Unsupported(
-                fsl_eval::simulation::protocol::Unsupported::PackageControl(
-                    fsl_package::protocol_view::ControlOperation::Repeat,
-                ),
-            ))
+        Some(ProtocolDefinition::Package(_)) => {
+            ProtocolSystem::new_package_with_loop_proof(model, subject, memory, loop_proof_target)
         }
-        Some(ProtocolDefinition::Package(_)) => ProtocolSystem::new_package(model, subject, memory),
         None => Err(ProtocolRefusal::UnknownProtocol {
             protocol: subject.protocol.clone(),
         }),
