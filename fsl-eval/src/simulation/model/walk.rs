@@ -699,15 +699,9 @@ fn expand<'s>(
             continue;
         };
         for application in applications {
-            let select = |identity| selection.omitted_clause != Some(&identity);
-            let clauses = if selection.clock_selectors.is_none()
-                && selection.post_presence.is_none()
-                && system.input().timed_models.is_empty()
-            {
-                walk.model_selected(row, application, select)
-            } else {
-                walk.selected(row, application, select)
-            };
+            let clauses = walk.selected(row, application, |identity| {
+                selection.omitted_clause != Some(&identity)
+            });
             frames::apply(
                 &walk,
                 row,

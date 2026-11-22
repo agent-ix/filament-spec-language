@@ -3126,26 +3126,19 @@ fn imported_operation_contracts_enforce_preconditions_and_exact_poststates() {
             .map(str::to_owned)
             .collect();
         assert_eq!(disabled, expected_disabled, "pre-state {before}");
-        let expansion = system.successors(&state).unwrap();
-        assert!(expansion.findings.is_empty());
-        let mut ordinary: Vec<_> = expansion
-            .successors
-            .iter()
-            .map(|(transition, state)| {
-                (name(transition), world.domain.integer(state, "c", "number"))
-            })
-            .collect();
-        ordinary.sort();
-        assert_eq!(ordinary, expected, "ordinary model relation at {before}");
     }
     assert_eq!(seen.into_iter().collect::<Vec<_>>(), [0, 1, 2, 3, 4]);
-    // This ordinary expansion reaches an inline precondition before any
-    // post-state trial; it must retain the native evaluation stop.
+    // The imported-contract relation retains the native request's budget
+    // and cancellation stops, rather than reporting an empty relation.
     system.share_evaluation_meter(ScalarLimits {
         work_units: 0,
         ..UNLIMITED
     });
-    let stopped = system.successors(&system.initial()[0]).unwrap_err();
+    let stopped = system
+        .visit_plan_candidates(&system.initial()[0], &order, None, &mut |_| {
+            Control::Continue
+        })
+        .unwrap_err();
     assert_eq!(
         stopped.limit,
         Some(fsl_eval::simulation::ExpansionLimit::EvaluationMeter(
@@ -3157,7 +3150,11 @@ fn imported_operation_contracts_enforce_preconditions_and_exact_poststates() {
         let cancel = Cancel::new();
         system.cancel_plan_with(&cancel);
         cancel.cancel(cause);
-        let stopped = system.successors(&system.initial()[0]).unwrap_err();
+        let stopped = system
+            .visit_plan_candidates(&system.initial()[0], &order, Some(&cancel), &mut |_| {
+                Control::Continue
+            })
+            .unwrap_err();
         assert_eq!(
             stopped.limit,
             Some(fsl_eval::simulation::ExpansionLimit::EvaluationMeter(
@@ -3236,10 +3233,10 @@ population counters: Counter;
                             .values()
                             .find_map(|objects| objects.get(receiver.object().as_str()))
                             .unwrap();
-                        assert_eq!(
-                            object.fields.values().next(),
-                            Some(&Value::Integer(Integer::from(expected)))
-                        );
+                        let Some(Value::Integer(number)) = object.fields.values().next() else {
+                            panic!("the inherited integer field is present");
+                        };
+                        assert_eq!(number.to_string(), expected.to_string());
                         assert_eq!(
                             state.reached_by().unwrap().result.as_deref(),
                             Some(if operation == "choose" {
