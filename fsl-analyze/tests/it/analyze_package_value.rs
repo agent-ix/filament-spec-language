@@ -107,6 +107,35 @@ fn a_package_value_clause_over_an_enum_parameter_equals_the_source() {
     );
 }
 
+/// Unsupported union parameter enumeration keeps a typed refusal that names
+/// the actual shape instead of a generic declaration-family message.
+#[trace("TC-2410", "FR-940-AC-13")]
+#[test]
+fn a_package_value_union_parameter_refusal_names_the_shape() {
+    let declarations = "union Shape { Empty, Circle(Boolean) }\nfunction Same using v(s: Shape): Boolean pure { s = s }\n";
+    let (_, _, package, _) = both(
+        "package-value-union-shape",
+        declarations,
+        &json!([{"claim":"Same","kind":"value-validity"}]),
+    );
+    assert_eq!(package["items"], json!([]), "{package}");
+    assert_eq!(
+        package["diagnostics"][0]["code"], "unsupported_construct",
+        "{package}"
+    );
+    assert_eq!(
+        package["diagnostics"][0]["cause"], "not-yet-implemented",
+        "{package}"
+    );
+    assert!(
+        package["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .contains("union"),
+        "{package}"
+    );
+}
+
 /// FR-940-AC-13: value items mixed with a temporal clause keep the request's
 /// item order and every record.
 #[trace("TC-2410", "FR-940-AC-13")]

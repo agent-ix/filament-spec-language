@@ -651,7 +651,7 @@ fn package_scalar_unresolved_holder_refuses_typed_without_provider_work() {
         error.cause.code(),
         fsl_foundation::Code::UnsupportedConstruct
     );
-    assert_eq!(error.category().exit_code(), 20);
+    assert_eq!(error.category().exit_code(), 21);
     assert!(
         error
             .to_string()

@@ -108,6 +108,10 @@ impl PendingPackageFamily {
                 index.get(),
                 self.note.as_deref().unwrap_or_default()
             ),
+            (Some(index), PendingFamily::ValueShape) => format!(
+                ": items[{}] value-validity has unsupported shape {}{at}",
+                index.get(), self.note.as_deref().unwrap_or("unavailable-type")
+            ),
             (Some(index), PendingFamily::CompositionOwningWorkPermission) => format!(
                 ": items[{}] composition owning execution is pending missing native before-work permission{at}",
                 index.get()
@@ -161,6 +165,8 @@ pub enum PendingFamily {
     LoopTermination,
     /// A named declaration.
     Declaration,
+    /// A value-validity parameter or body form has no package evaluator form.
+    ValueShape,
     /// A selected operation contract needs the source requirement record,
     /// whose operation-contract form the package wire contract does not carry.
     OperationContractRequirementRecord,
@@ -198,6 +204,7 @@ impl PendingFamily {
             Self::LoopInvariant => "loop-invariant",
             Self::LoopTermination => "loop-termination",
             Self::Declaration => "declaration",
+            Self::ValueShape => "value-validity-shape",
             Self::OperationContractRequirementRecord => "operation-contract-requirement-record",
             Self::UnnamedClaim => "unnamed-claim",
             Self::Composition => "composition",
@@ -1681,8 +1688,8 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             Err(refusal) => {
                 return Err(PackageRunError::Pending(PendingPackageFamily {
                     request_index: Some(index),
-                    note: Some(format!("value-validity: {refusal:?}")),
-                    family: PendingFamily::Declaration,
+                    note: Some(format!("{refusal:?}")),
+                    family: PendingFamily::ValueShape,
                     node: None,
                 }));
             }
@@ -1701,17 +1708,27 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 .parameters()
                 .iter()
                 .find_map(|parameter| match parameter.domain() {
-                    fsl_replay::value_check::ParameterDomain::Union(_) => Some("union"),
+                    fsl_replay::value_check::ParameterDomain::Union(_) => Some("union".to_owned()),
                     fsl_replay::value_check::ParameterDomain::Unsupported(_) => {
-                        Some("parameter-type")
+                        let nodes = &self.package.package().resolved_graph().nodes;
+                        nodes
+                            .iter()
+                            .find(|node| {
+                                self.package.node_key(&node.node_id).as_ref()
+                                    == Some(&parameter.node())
+                            })
+                            .and_then(|node| {
+                                nodes.iter().find(|ty| ty.node_id == node.semantic_type)
+                            })
+                            .map(|ty| ty.semantic_form.to_string())
                     }
                     _ => None,
                 })
-                .unwrap_or("parameter-type");
+                .unwrap_or_else(|| "unavailable-type".to_owned());
             return Err(PackageRunError::Pending(PendingPackageFamily {
                 request_index: Some(index),
-                note: Some(format!("value-validity unsupported shape: {shape}")),
-                family: PendingFamily::Declaration,
+                note: Some(shape),
+                family: PendingFamily::ValueShape,
                 node: None,
             }));
         }
