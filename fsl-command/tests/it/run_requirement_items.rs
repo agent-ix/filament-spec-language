@@ -380,11 +380,6 @@ fn package_scalar_requirement_records_equal_the_source_run() {
     let unit = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction Guarded using v(x: Int[0, 9], p: Boolean): Integer pure { if p then x + 1 else x * 2 }\nfunction Other using v(x: Int[0, 9]): Integer pure { x + 1 }\n";
     for provider in [false, true] {
         let directory = tempfile::tempdir().unwrap();
-        let requirements = if provider {
-            json!({"backend": PROVIDER})
-        } else {
-            json!({})
-        };
         let path = write(
             directory.path(),
             "Guarded",
@@ -392,7 +387,7 @@ fn package_scalar_requirement_records_equal_the_source_run() {
                 {"parameter": "x", "value": {"type": "integer", "value": "3"}},
                 {"parameter": "p", "value": {"type": "boolean", "value": true}}
             ]),
-            Some(requirements),
+            Some(json!({"backend": "value-checker"})),
         );
         std::fs::write(directory.path().join("unit.native"), unit).unwrap();
         let seen = Arc::new(Mutex::new(Seen::default()));
