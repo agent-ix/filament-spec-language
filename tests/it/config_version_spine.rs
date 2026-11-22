@@ -383,9 +383,15 @@ fn clause_run_command_uses_explicit_current_self_and_anchor() {
         let decoded =
             fsl_command::command::read_clause_run_request(&path.join("request.json")).unwrap();
         let expected_path = parent_order_decision_path(&decoded);
-        let fsl_replay::spine::ClauseRunSelection::Clause(selection) = &decoded.selection else {
-            panic!("the wire selection must remain a state clause");
+        let fsl_replay::spine::ClauseRunSelection::ClauseWithPath {
+            selection,
+            snapshot_path,
+        } = &decoded.selection
+        else {
+            panic!("the command retains its current state clause and snapshot path");
         };
+        assert_eq!(selection.name, "ParentOrder");
+        assert_eq!(snapshot_path.as_deref(), Some("spine-snapshot.json"));
         let fsl_semantics::model::observation::ClauseSelectionInput::Current {
             self_object,
             anchor,
@@ -394,7 +400,16 @@ fn clause_run_command_uses_explicit_current_self_and_anchor() {
         else {
             panic!("the current snapshot must retain its current role");
         };
-        assert_eq!(self_object.as_ref().expect("a named self").key, "child");
+        let self_object = self_object.as_ref().expect("a named self");
+        assert_eq!(self_object.key, "child");
+        assert_eq!(
+            self_object.population,
+            format!("ix://{}/config_history", spine::PACKAGE_IDENTITY)
+        );
+        assert_eq!(
+            anchor.kind,
+            fsl_semantics::model::observation::AnchorKind::Handler
+        );
         assert_eq!(anchor.name, "validate");
         let report = run_clause(decoded).expect("the decoded command request reports");
         let witness = report.witness.as_ref().expect("a comparison witness");
