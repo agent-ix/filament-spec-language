@@ -15,7 +15,7 @@ use crate::protocol_composition::{order_steps, trace_document};
 
 /// The source run of `items` over the order protocol with `documents`
 /// provisioned, then the package run of the same request once the authored
-/// unit and the handoff's source files are deleted.
+/// unit and the handoff's `sources/` directory are deleted.
 fn both_routes(name: &str, items: Value, documents: &[(&str, Value)]) -> (Run, Run) {
     let ws = Workspace::new(name);
     let path = litmus_request(&ws, &order_protocol(true), json!({"items": items}));
@@ -33,12 +33,9 @@ fn both_routes(name: &str, items: Value, documents: &[(&str, Value)]) -> (Run, R
     assert_eq!(source.exit, 0, "{}", source.document());
     let (members, _) = package_selection(&ws, &request["request"]);
     std::fs::remove_file(ws.path("program.fsl")).expect("the authored unit is removed");
-    for entry in std::fs::read_dir(ws.path(HANDOFF)).expect("the handoff") {
-        let entry = entry.expect("a handoff entry").path();
-        if entry.extension().is_some_and(|extension| extension == "fsl") {
-            std::fs::remove_file(entry).expect("the handoff source is removed");
-        }
-    }
+    let sources = ws.path(&format!("{HANDOFF}/sources"));
+    std::fs::remove_dir_all(&sources).expect("the handoff sources are removed");
+    assert!(!sources.exists(), "the handoff sources are gone");
     let document = json!({"format": "native-analyze/1", "request": members});
     let package = analyze(&ws.write("analyze-package.json", document.to_string().as_bytes()));
     (source, package)
