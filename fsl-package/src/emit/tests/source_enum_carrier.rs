@@ -103,6 +103,59 @@ fn source_enum_carrier_preserves_original_rows_shapes_order_and_unused_case() {
     );
 }
 
+#[trace("FR-531-AC-50", "FR-531-AC-44")]
+#[test]
+fn source_enum_carrier_builds_the_original_runtime_world_from_persisted_rows() {
+    let (source, emission, admitted) = fixture();
+    let mut ledger = budget();
+    let bytes = emission
+        .identity_rows(&admitted, &mut ledger)
+        .expect("paid producer rows")
+        .to_bytes(&admitted)
+        .expect("closed carrier");
+    let rows = crate::ReadIdentityRows::read(&bytes, &admitted, &mut ledger)
+        .expect("persisted rows without producer fallback");
+    let bare = crate::BarePackage::new(&admitted)
+        .with_supply(
+            crate::BareSupply {
+                identities: &rows,
+                equality: None,
+            },
+            &mut ledger,
+        )
+        .expect("the same cumulative ledger builds the runtime catalog");
+    assert_eq!(bare.first_unread_node_form(), None);
+    let world = bare.world().expect("source enum world");
+    let retained = world.clone();
+    for binding in source.graph().scope().enums() {
+        let crate::EnumScope::NamedSource { name } = world
+            .source_enums()
+            .classify_shape(&binding.shape(), &mut ledger)
+            .expect("paid original shape lookup")
+        else {
+            panic!("ordinary authored source enum")
+        };
+        assert_eq!(name, binding.name);
+        for (rank, member) in binding.members.iter().enumerate() {
+            let actual = world
+                .enum_members()
+                .resolve(member.variant())
+                .expect("including the unused DONE member");
+            assert_eq!(actual.member(), member.member());
+            assert_eq!(actual.variant(), member.variant());
+            assert_eq!(actual.position(), rank);
+            assert_eq!(actual.is_ordered(), binding.shape().is_ordered());
+            assert!(std::ptr::eq(
+                actual,
+                retained
+                    .enum_members()
+                    .resolve(member.variant())
+                    .expect("shared member index")
+            ));
+        }
+    }
+}
+
 #[trace("FR-531-AC-43")]
 #[test]
 fn source_enum_carrier_refuses_closed_schema_corruption_and_missing_population() {

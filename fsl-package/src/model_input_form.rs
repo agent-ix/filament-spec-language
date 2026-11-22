@@ -29,7 +29,7 @@ pub enum UnreadModelForm {
     /// a value's canonical form names. A payload-free model enumeration is
     /// read from its rows (FR-531) and is not one.
     Variant,
-    /// A source `enum` declaration, which the identity bytes carry no row of.
+    /// A source `enum` declaration without its complete joined identity rows.
     Enumeration,
     /// An `object` declaration of the unit's own source package (FR-569).
     SourceObject,
