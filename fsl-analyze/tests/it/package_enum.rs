@@ -371,3 +371,24 @@ fn an_enumeration_argument_and_result_run_from_a_package_as_from_source() {
     assert_eq!(package.0, source.0, "{}", package.1);
     assert_eq!(route_free(package.1), route_free(source.1));
 }
+
+/// A source `enum` declaration has no row in the package's identity bytes,
+/// so a package that holds one still refuses every runnable item typed,
+/// naming the enumeration, while the source route settles the same items.
+#[trace("TC-2410", "FR-850-AC-2")]
+#[test]
+fn a_package_with_a_source_enumeration_refuses_typed_naming_it() {
+    let items = json!([{"claim": "KnownMode"}]);
+    let claims = format!("enum Local {{ A, B }}\n{CLAIMS}");
+    let (_ws, _, source, package) = both_routes("package-enum-source", "Idle", &claims, &items);
+    assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
+    let diagnostic = package.document()["diagnostics"][0].clone();
+    assert_eq!(diagnostic["cause"], "not-yet-implemented", "{diagnostic}");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .is_some_and(|message| message.contains("enumeration form")),
+        "{diagnostic}"
+    );
+    assert_eq!(package.document()["items"], json!([]));
+}
