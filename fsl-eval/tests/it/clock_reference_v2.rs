@@ -1383,7 +1383,7 @@ fn source_generates_clock_references_from_ordinary_admitted_owners() {
         role Observer on C::Call;
         run sequence Main {{ check Ready using v {{ true }}; }}
         finish End as (outcome: Boolean) {{ true }};
-    }}", clock_refinement("used = 0; busy = false;"));
+    }}", clock_refinement("used = count(c in C::calls where true); busy = false;"));
     let checked = ring_queue::check_models_with_profiles(
         &ring_queue::queue_spec(),
         ("C", CLOCKS, &ring_queue::clock_calls()),
