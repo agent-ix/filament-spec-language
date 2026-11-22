@@ -5,8 +5,8 @@ resolver = "2"
 exclude = ["fuzz"]
 
 [workspace.dependencies]
-filament-specification-qualification = { git = "https://github.com/agent-ix/filament-specification", rev = "8ce285789333d9d9919433a4ab52a274667ab653" }
-filament-specification = { package = "filament-specification-qualification", git = "https://github.com/agent-ix/filament-specification", rev = "8ce285789333d9d9919433a4ab52a274667ab653" }
+filament-specification-qualification = { git = "https://github.com/agent-ix/filament-specification", rev = "20e74c07cccf7c5ac1dd1623671b5feb3bcd7b2f" }
+filament-specification = { package = "filament-specification-qualification", git = "https://github.com/agent-ix/filament-specification", rev = "20e74c07cccf7c5ac1dd1623671b5feb3bcd7b2f" }
 # `default-features = false`: the encoder builds `no_std` + `alloc`, so the
 # layer-SV leaf `filament-semantic-value` can mint the compound-unit id
 # through it; a crate that writes through `io::Write` turns on `std`.
