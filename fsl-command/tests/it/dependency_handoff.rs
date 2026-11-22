@@ -455,6 +455,7 @@ fn transitive_library_claim_analysis_and_replay_equal_source_after_source_deleti
     )
     .unwrap()
     .len();
+    eprintln!("DIAG first={first_external_bytes} total={external_bytes} dirs={first_directory} manifest={manifest}");
     assert!(first_external_bytes < external_bytes, "a later library follows the one that crosses");
     assert!(external_bytes > 0);
     let (source_baseline, source_exact) = replay_boundary(
