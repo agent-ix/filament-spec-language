@@ -2,11 +2,11 @@
 //! FR-1044: composition premises from authenticated borrowed package facts.
 
 use filament_contract_model::{
-    CheckedComponentClause, CheckedCompositionPremise, CheckedEnvironmentSupplies,
-    CheckedFairnessGranularity, CheckedFairnessKind, NativeJoinBudget, NativeJoinChargeKind,
-    NativeJoinDeniedCharge, NativeJoinLocus, TemporalClauseName,
+    CheckedComponentClause, CheckedEnvironmentSupplies, CheckedFairnessGranularity,
+    CheckedFairnessKind, NativeJoinBudget, NativeJoinChargeKind, NativeJoinDeniedCharge,
+    NativeJoinLocus, TemporalClauseName,
 };
-use filament_exact::{EffectiveId, NodeKey, Origin, Role};
+use filament_exact::{EffectiveId, NodeKey, Origin, OriginalDeclarationKey, Role};
 use filament_semantic_value::fairness::{
     FairnessConstraint, FairnessGranularity, FairnessKind, FairnessOperation, PropertyForm,
 };
@@ -27,7 +27,7 @@ use super::declaration::{
     DerivedSlot, EnvSupplies, EnvironmentMember, SchedulingPremise, SlotBacking, SlotRole,
 };
 use super::from_package::ItemKeyInput;
-use super::key::{ClaimKind, ExtentClass, ItemKey, LocalKey, OperationRef, SlotKey};
+use super::key::{ClaimKind, ExtentClass, LocalKey, OperationRef, SlotKey};
 use super::key_build::{self, KeyBuildRefusal};
 
 /// An actual uniquely named clause and its retained authenticated library view.
@@ -47,7 +47,7 @@ pub struct PackageCompositionClause<'a, 'p> {
     /// Source property classification, absent only before cyclic refusal.
     pub property: Option<PropertyForm>,
     /// Actual owning fairness targets, with structural context and operation identity.
-    pub fairness: Vec<fsl_semantics::check::ClauseConstraint>,
+    pub fairness: Option<fsl_package::BareClauseConstraints<'a>>,
 }
 /// An admitted premise and the actual clauses it links, without source slot objects.
 pub struct PackageCompositionSlot {
@@ -69,6 +69,8 @@ pub struct PackageCompositionCycle {
 pub struct PackageComposition<'a, 'p> {
     /// Actual composition declaration identity.
     pub(crate) node: NodeKey,
+    /// Actual root package identity retained from its sealed owning view.
+    pub(crate) package: String,
     /// The admitted rule.
     pub(crate) rule: CompositionRule,
     /// Actual owner-bound clause forms; no source checked graph is reconstructed.
@@ -83,6 +85,13 @@ pub struct PackageComposition<'a, 'p> {
     pub(crate) environment: Vec<EnvironmentMember>,
     /// Scheduling constraints supplied by the composition.
     pub(crate) supplies: Vec<FairnessConstraint>,
+    raw_supplies: Vec<RawSupply>,
+}
+struct RawSupply {
+    context: NodeKey,
+    operation: filament_exact::Identifier,
+    kind: FairnessKind,
+    granularity: FairnessGranularity,
 }
 /// A composition read preserves original semantic and native refusals.
 #[derive(Debug, thiserror::Error)]
@@ -99,6 +108,9 @@ pub enum PackageCompositionRefusal {
     /// An admitted rule spelling is not a known composition rule.
     #[error("composition rule is unavailable")]
     Rule,
+    /// Cyclic compositions have no planner declaration or interface decision.
+    #[error("the composition dependency graph holds a cycle")]
+    Cyclic,
     /// A clause has no model property form the source composition admits.
     #[error("component {component} clause {clause} has no model property form")]
     Property { component: String, clause: String },
@@ -117,6 +129,9 @@ pub enum PackageCompositionRefusal {
     /// The existing structural identity policy refused.
     #[error(transparent)]
     Structural(#[from] WireIdError),
+    /// The bounded reason-major mismatch core refused.
+    #[error(transparent)]
+    Mismatch(#[from] super::mismatch::MismatchRefusal),
     /// The shared topology traversal refused.
     #[error(transparent)]
     Graph(#[from] CompositionGraphRefusal),
@@ -206,7 +221,7 @@ impl Work<'_> {
         self.text_cost(source.source().identity())?;
         Ok(source.clone())
     }
-    fn effective(&mut self, value: &EffectiveId) -> Result<EffectiveId, PackageCompositionRefusal> {
+    fn effective_cost(&mut self, value: &EffectiveId) -> Result<(), PackageCompositionRefusal> {
         if !value.owner_chain().is_empty() {
             self.charge(
                 NativeJoinChargeKind::Storage,
@@ -218,7 +233,18 @@ impl Work<'_> {
             self.text_cost(original.package())?;
             self.text_cost(original.node())?;
         }
-        Ok(value.clone())
+        Ok(())
+    }
+    fn text_equal(&mut self, left: &str, right: &str) -> Result<bool, PackageCompositionRefusal> {
+        let (mut left, mut right) = (left.bytes(), right.bytes());
+        loop {
+            self.visit()?;
+            match (left.next(), right.next()) {
+                (Some(a), Some(b)) if a == b => {}
+                (None, None) => return Ok(true),
+                _ => return Ok(false),
+            }
+        }
     }
     fn key(
         &mut self,
@@ -374,7 +400,7 @@ fn clause<'a, 'p>(
         subject,
         form: None,
         property: None,
-        fairness: Vec::new(),
+        fairness: None,
     });
     Ok(at)
 }
@@ -412,6 +438,98 @@ impl<'a, 'p> PackageComposition<'a, 'p> {
     pub fn supplies(&self) -> &[FairnessConstraint] {
         &self.supplies
     }
+    /// Recompute interface mismatch from complete authenticated clause and
+    /// raw supply facts. No provider claim or pooled result is an authority.
+    pub fn interface_mismatch_with_budget(
+        &self,
+        budget: &mut NativeJoinBudget,
+    ) -> Result<Option<super::mismatch::InterfaceMismatch>, PackageCompositionRefusal> {
+        use super::mismatch::{
+            MismatchClauseFairness, MismatchFacts, MismatchNeed, MismatchSupply,
+        };
+        let locus = NativeJoinLocus {
+            source: filament_contract_model::NativeJoinLocusSource::Package,
+            form: "composition_mismatch_facts",
+        };
+        let mut work = Work { budget, locus };
+        work.visit()?;
+        if !self.cycles.is_empty() {
+            return Err(PackageCompositionRefusal::Cyclic);
+        }
+        let mut references = Vec::new();
+        for clause in &self.clauses {
+            work.visit()?;
+            work.room(&mut references)?;
+            references.push(fsl_semantics::check::ClauseRef {
+                component: work.text(clause.component)?,
+                name: work.text(clause.name.name.as_ref())?,
+                node: clause.node.clone(),
+            });
+        }
+        let mut declared = Vec::new();
+        let mut needs = Vec::new();
+        for (position, slot) in self.slots.iter().enumerate() {
+            work.visit()?;
+            match slot.derived.role {
+                SlotRole::ComponentGuarantee => {
+                    let peer = references
+                        .get(slot.guarantee.ok_or(PackageCompositionRefusal::Member)?)
+                        .ok_or(PackageCompositionRefusal::Member)?;
+                    work.room(&mut declared)?;
+                    declared.push(peer);
+                }
+                SlotRole::Rely | SlotRole::LivenessDependency => {
+                    let peer = references
+                        .get(slot.on.ok_or(PackageCompositionRefusal::Member)?)
+                        .ok_or(PackageCompositionRefusal::Member)?;
+                    work.room(&mut needs)?;
+                    needs.push(MismatchNeed {
+                        premise: position,
+                        peer,
+                    });
+                }
+                SlotRole::Fairness | SlotRole::Environment => {}
+                _ => return Err(PackageCompositionRefusal::Member),
+            }
+        }
+        let mut clauses = Vec::new();
+        for (position, clause) in self.clauses.iter().enumerate() {
+            work.visit()?;
+            let fairness = clause
+                .fairness
+                .as_ref()
+                .ok_or(PackageCompositionRefusal::Member)?;
+            let peer = references
+                .get(position)
+                .ok_or(PackageCompositionRefusal::Member)?;
+            work.room(&mut clauses)?;
+            clauses.push(MismatchClauseFairness {
+                peer,
+                needed: fairness.constraints(),
+            });
+        }
+        let mut supplies = Vec::new();
+        for supply in &self.raw_supplies {
+            work.visit()?;
+            work.room(&mut supplies)?;
+            supplies.push(MismatchSupply {
+                context: &supply.context,
+                operation: &supply.operation,
+                kind: supply.kind,
+                granularity: supply.granularity,
+            });
+        }
+        Ok(super::mismatch::interface_mismatch_over(
+            MismatchFacts {
+                needs: &needs,
+                declared: &declared,
+                clauses: &clauses,
+                supplies: &supplies,
+            },
+            work.budget,
+        )?)
+    }
+
     /// Move one actual clause form into its owning execution preparation.
     pub fn take_form(&mut self, at: usize) -> Option<PackageClauseForm> {
         self.clauses.get_mut(at)?.form.take()
@@ -626,6 +744,7 @@ impl<'a, 'p> PackageComposition<'a, 'p> {
         }
         let node = view.source().occurrence.node().clone();
         let mut result = Self {
+            package: work.text(root.package().name())?,
             node,
             rule,
             clauses,
@@ -634,6 +753,7 @@ impl<'a, 'p> PackageComposition<'a, 'p> {
             cycles,
             environment: Vec::new(),
             supplies: Vec::new(),
+            raw_supplies: Vec::new(),
         };
         if !result.cycles.is_empty() {
             return Ok(result);
@@ -677,7 +797,7 @@ impl<'a, 'p> PackageComposition<'a, 'p> {
                     .owner
                     .temporal_clause_constraints_with_budget(&clause.name.declaration, work.budget)
                     .map_err(fairness_error)?;
-                result.clauses[at].fairness = fairness;
+                result.clauses[at].fairness = Some(fairness);
                 result.clauses[at].property = property;
                 result.clauses[at].form = Some(form);
             }
@@ -844,7 +964,18 @@ impl<'a, 'p> PackageComposition<'a, 'p> {
             work.visit()?;
             match member.value {
                 CompositionMemberValue::Supply(supply) => {
-                    let constraint = supply_constraint(root, view, supply, &mut work)?;
+                    let targets = view.supply_contexts_with_budget(supply, work.budget)?;
+                    let context = root.model_context_with_budget(&targets, work.budget)?;
+                    let constraint = supplied(&context, supply, &result.clauses, &mut work)?;
+                    let operation = filament_exact::Identifier::new(work.text(&supply.operation)?)
+                        .map_err(|_| PackageCompositionRefusal::Member)?;
+                    work.room(&mut result.raw_supplies)?;
+                    result.raw_supplies.push(RawSupply {
+                        context: context.node().clone(),
+                        operation,
+                        kind: constraint.kind(),
+                        granularity: constraint.granularity(),
+                    });
                     work.room(&mut result.supplies)?;
                     result.supplies.push(constraint);
                 }
@@ -853,7 +984,8 @@ impl<'a, 'p> PackageComposition<'a, 'p> {
                         CheckedEnvironmentSupplies::Fairness(supply) => {
                             let targets = view.supply_contexts_with_budget(supply, work.budget)?;
                             let context = root.model_context_with_budget(&targets, work.budget)?;
-                            let constraint = supplied(&context, supply, &mut work)?;
+                            let constraint =
+                                supplied(&context, supply, &result.clauses, &mut work)?;
                             let operation = OperationRef {
                                 context: context.node().clone(),
                                 operation: work.text(&supply.operation)?,
@@ -933,9 +1065,44 @@ fn insert_node(
 fn supplied(
     context: &fsl_package::CompositionModelContext<'_>,
     supply: &filament_contract_model::CheckedFairnessSupply,
+    clauses: &[PackageCompositionClause<'_, '_>],
     work: &mut Work<'_>,
 ) -> Result<FairnessConstraint, PackageCompositionRefusal> {
-    let declaring = work.effective(context.identity())?;
+    let mut matching = None;
+    for clause in clauses {
+        work.visit()?;
+        let facts = clause
+            .fairness
+            .as_ref()
+            .ok_or(PackageCompositionRefusal::Member)?;
+        for (position, entry) in facts.constraints().iter().enumerate() {
+            work.visit()?;
+            if entry.context == *context.node()
+                && work.text_equal(entry.operation.as_str(), &supply.operation)?
+            {
+                let identity = facts
+                    .declaring_at(position)
+                    .ok_or(PackageCompositionRefusal::Member)?;
+                matching = Some((&entry.constraint, identity));
+                break;
+            }
+        }
+        if matching.is_some() {
+            break;
+        }
+    }
+    let declaring = if let Some((constraint, identity)) = matching {
+        // This retained row constructed this exact constraint; inherited or
+        // redeclared operation identities are never inferred from receivers.
+        work.effective_cost(identity)?;
+        constraint.operation().declaring_type()
+    } else {
+        let display =
+            key_build::node_display_text(context.node(), Some(work.budget)).map_err(key_error)?;
+        let package = work.text(context.node().package())?;
+        work.charge(NativeJoinChargeKind::Storage, 2)?;
+        EffectiveId::new(None, OriginalDeclarationKey::new(package, display))
+    };
     let operation = work.text(&supply.operation)?;
     Ok(FairnessConstraint::new(
         match supply.kind {
@@ -948,16 +1115,6 @@ fn supplied(
             CheckedFairnessGranularity::Each => FairnessGranularity::Each,
         },
     ))
-}
-fn supply_constraint(
-    root: &BarePackage<'_>,
-    view: &CompositionView<'_>,
-    supply: &filament_contract_model::CheckedFairnessSupply,
-    work: &mut Work<'_>,
-) -> Result<FairnessConstraint, PackageCompositionRefusal> {
-    let targets = view.supply_contexts_with_budget(supply, work.budget)?;
-    let context = root.model_context_with_budget(&targets, work.budget)?;
-    supplied(&context, supply, work)
 }
 
 #[cfg(test)]
@@ -1001,9 +1158,25 @@ mod tests {
                 })
                 .expect("same authenticated source clause");
             assert_eq!(
-                actual.fairness, expected.fairness,
+                actual
+                    .fairness
+                    .as_ref()
+                    .expect("prepared fairness facts")
+                    .constraints(),
+                expected.fairness,
                 "actual context/operation/declaring identity and source order"
             );
+            let facts = actual
+                .fairness
+                .as_ref()
+                .expect("prepared exact declarations");
+            for (position, constraint) in facts.constraints().iter().enumerate() {
+                assert_eq!(
+                    facts.declaring_at(position),
+                    Some(&constraint.constraint.operation().declaring_type())
+                );
+            }
+            assert!(facts.declaring_at(facts.constraints().len()).is_none());
         }
         let expected = super::super::composition_premises(&fixture.source, source.node())
             .expect("actual source slots");
@@ -1035,6 +1208,134 @@ mod tests {
             shared[0].node, shared[1].node,
             "same names never replace authentic owning identities"
         );
+    }
+
+    /// Trace: FR-1044-AC-10, FSpec-FR-491-AC-6
+    #[test]
+    fn admitted_unused_supply_keeps_source_original_declaration_bytes() {
+        let fixture = AdmittedCompositionFixture::new(CompositionCase::UnusedSupply);
+        let mut budget = NativeJoinBudget::new(10_000_000, 10_000_000);
+        let bare = fixture.bare(&mut budget).expect("genuine owners");
+        let named = bare.claim_name("Sys").expect("actual composition");
+        let view = bare
+            .composition_with_budget(&named.declaration, &mut budget)
+            .expect("actual view");
+        let projected = PackageComposition::from_view(&bare, &view, &mut budget)
+            .expect("actual supply projection");
+        let source = fixture
+            .source
+            .graph()
+            .compositions()
+            .iter()
+            .find(|c| c.name() == "Sys")
+            .expect("source oracle");
+        let declaration =
+            super::super::PlannerDeclaration::from_package(&fixture.source, source.node())
+                .expect("unchanged source declaration");
+        assert_eq!(projected.supplies(), declaration.supplies);
+        let expected_bytes = declaration
+            .supplies
+            .iter()
+            .map(|c| super::super::key::FairnessKey::of(c).expect("source canonical bytes"))
+            .collect::<Vec<_>>();
+        let actual_bytes = key_build::fairness_keys_with_budget(projected.supplies(), &mut budget)
+            .expect("native canonical bytes");
+        assert_eq!(actual_bytes, expected_bytes);
+        let supply = source
+            .supplies()
+            .last()
+            .expect("actual unused receive supply");
+        assert_eq!(supply.operation.as_str(), "receive");
+        assert!(
+            source
+                .clauses()
+                .iter()
+                .flat_map(|c| &c.fairness)
+                .all(|c| c.context != supply.context || c.operation != supply.operation),
+            "fallback is exercised by a genuine operation absent from every F_P"
+        );
+        let expected = EffectiveId::new(
+            None,
+            OriginalDeclarationKey::new(supply.context.package(), supply.context.to_string()),
+        );
+        assert_eq!(projected.supplies().last().expect("unused supplied constraint").operation().declaring_type(), expected, "canonical original-declaration spelling is independent of authenticated execution ownership");
+    }
+
+    /// Trace: FR-1044-AC-10, FSpec-FR-492-AC-1
+    #[test]
+    fn admitted_mismatch_recomputes_full_source_witness_from_actual_facts() {
+        for (case, reason) in [
+            (CompositionCase::Acyclic, None),
+            (
+                CompositionCase::MissingInterface,
+                Some(super::super::MismatchReason::Absent),
+            ),
+            (
+                CompositionCase::MissingSupply,
+                Some(super::super::MismatchReason::Weaker),
+            ),
+        ] {
+            let fixture = AdmittedCompositionFixture::new(case);
+            let mut budget = NativeJoinBudget::new(10_000_000, 10_000_000);
+            let bare = fixture.bare(&mut budget).expect("genuine owners");
+            let named = bare.claim_name("Sys").expect("actual composition");
+            let view = bare
+                .composition_with_budget(&named.declaration, &mut budget)
+                .expect("actual view");
+            let projected = PackageComposition::from_view(&bare, &view, &mut budget)
+                .expect("complete authenticated facts");
+            let source = fixture
+                .source
+                .graph()
+                .compositions()
+                .iter()
+                .find(|c| c.name() == "Sys")
+                .expect("source oracle");
+            let mut measured = NativeJoinBudget::new(1_000_000, 1_000_000);
+            let actual = projected
+                .interface_mismatch_with_budget(&mut measured)
+                .expect("bounded authenticated mismatch");
+            assert_eq!(actual, super::super::interface_mismatch(source));
+            assert_eq!(actual.as_ref().map(|witness| witness.reason), reason);
+            let paid = measured.consumed();
+            let mut exact = NativeJoinBudget::new(paid.work, paid.storage);
+            assert_eq!(
+                projected
+                    .interface_mismatch_with_budget(&mut exact)
+                    .expect("exact cumulative allowance"),
+                actual
+            );
+            for (work, storage) in [(paid.work - 1, paid.storage), (paid.work, paid.storage - 1)] {
+                let mut short = NativeJoinBudget::new(work, storage);
+                let error = projected
+                    .interface_mismatch_with_budget(&mut short)
+                    .expect_err("first unpaid fact or decision operation");
+                let (denied, locus, configured_bound) = match error {
+                    PackageCompositionRefusal::Native {
+                        denied,
+                        locus,
+                        configured_bound,
+                    }
+                    | PackageCompositionRefusal::Mismatch(
+                        super::super::MismatchRefusal::Native {
+                            denied,
+                            locus,
+                            configured_bound,
+                        },
+                    ) => (denied, locus, configured_bound),
+                    other => panic!("native refusal metadata was lost: {other:?}"),
+                };
+                assert_eq!(Some(denied), short.first_unpaid());
+                assert_eq!(locus, short.first_unpaid_locus());
+                assert_eq!(
+                    configured_bound,
+                    match denied.kind {
+                        NativeJoinChargeKind::Work => work,
+                        NativeJoinChargeKind::Storage => storage,
+                    }
+                );
+            }
+        }
     }
 
     /// Trace: FR-1044-AC-10, FR-515-AC-1
