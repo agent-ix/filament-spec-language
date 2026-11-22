@@ -25,16 +25,22 @@
 //! `fsl_replay::replay_hyper_trace_tuple` recomputes either verdict with the
 //! same `fsl-eval` code.
 
+mod enumeration;
+mod reduction;
+
 use std::collections::BTreeSet;
 
-use filament_exact::LimitKind;
+use filament_exact::{LimitKind, Meter};
 use fsl_eval::hyper::{
-    closed_executions, horizon, judge_closed_tuple, search_partner, ClosedExecution, ClosedInputs,
-    ClosedStop, ClosedVerdict, ParameterBinding, PartnerSearch, Tuples,
+    closed_executions, horizon, judge_closed_tuple, match_closed_step, search_partner,
+    ClosedExecution, ClosedInputs, ClosedStop, ClosedVerdict, MatchPart, MatchReading,
+    ParameterBinding, PartnerSearch, Tuples,
 };
+use fsl_eval::simulation::ConstraintValue;
 use fsl_replay::{
-    HyperCounterexample, HyperCounterexampleKind, HyperOutcome, HyperStep, HyperTrace,
-    IncompleteCause, ModelCheckLimit, ModelStep, ReachedLimit, StepMark, UndecidedCause,
+    AppliedReduction, HyperCounterexample, HyperCounterexampleKind, HyperOutcome, HyperStep,
+    HyperTrace, IncompleteCause, ModelCheckLimit, ModelStep, ReachedLimit, StepMark,
+    UndecidedCause,
 };
 
 use super::{exhausted, fault, stopped, widen, Ending, HyperRefusal, Run, Totals};
@@ -50,6 +56,14 @@ enum Reading {
     Ended(HyperOutcome),
 }
 
+enum ConstraintReading {
+    Allowed,
+    Unmatched,
+    Cut,
+    Stopped(ClosedVerdict),
+    Ended(HyperOutcome),
+}
+
 impl Run<'_, '_> {
     /// Decide the event-position HP-2 or HP-3 clause over `instances`.
     pub(super) fn decide_closed(
@@ -60,6 +74,9 @@ impl Run<'_, '_> {
         let clause = self.request.clause;
         let depth = horizon(clause.body()).ok_or_else(|| fault("a-body-has-a-horizon"))?;
         let limits = self.request.limits;
+        if !self.witness && !self.projected {
+            return self.decide_closed_universal(instances, depth, totals);
+        }
         let mut lists: Vec<Vec<ClosedExecution>> = Vec::with_capacity(self.systems.len());
         for (index, system) in self.systems.iter().enumerate() {
             let skips: BTreeSet<String> = clause
@@ -153,6 +170,169 @@ impl Run<'_, '_> {
         }
         Ok(HyperOutcome::HoldsClosed {
             stats: totals.stats(),
+        })
+    }
+
+    /// Traverse admitted joint prefixes. Excluded successors never reach a
+    /// descendant expansion or the completed-tuple quotient.
+    fn decide_closed_universal(
+        &self,
+        instances: &[Vec<ParameterBinding>],
+        depth: u64,
+        mut totals: Totals,
+    ) -> Result<HyperOutcome, ModelCheckRefusal> {
+        let selected = self.symmetric || self.request.reductions.constraint.is_some();
+        totals.depth = depth;
+        let clause = self.request.clause;
+        let mut meter = Meter::new(self.request.meter).with_cancel(self.cancel.clone());
+        let mut matched = false;
+        let mut reductions = Vec::new();
+        for instance in instances {
+            let inputs = ClosedInputs {
+                clause,
+                instance,
+                letters: self.request.letters,
+                matcher: self.request.matcher,
+                meter: self.request.meter,
+                cancel: self.cancel,
+            };
+            let scope = match self.enumerate_closed_joint(
+                &inputs,
+                depth,
+                &mut totals,
+                &mut meter,
+                &mut matched,
+            ) {
+                Ok(scope) => scope,
+                Err(stop) => return self.closed_graph_stop(stop, &totals),
+            };
+            for (canonical, representative) in &scope.boundaries {
+                if representative.actual != *canonical {
+                    return Err(fault("a-canonical-cut-predecessor-was-actually-traversed"));
+                }
+            }
+            for (canonical, representative) in scope.complete {
+                if self.cancel.poll() {
+                    return self.cancelled(&totals);
+                }
+                if representative.actual != canonical {
+                    return Err(fault(
+                        "a-canonical-closed-representative-was-actually-traversed",
+                    ));
+                }
+            }
+            if self.symmetric {
+                reductions.push(AppliedReduction::Symmetry {
+                    groups: self.keys.classes.clone(),
+                    orbit: self.orbit_of(instance),
+                    stabiliser: self.stabiliser_of(instance).classes,
+                });
+            }
+        }
+        if totals.boundary > 0 {
+            return Ok(Self::constraint_reached(&totals));
+        }
+        if !clause.mu_universal().is_empty() && !matched {
+            return Ok(HyperOutcome::Undecided {
+                cause: UndecidedCause::VacuousMatch,
+                stats: totals.stats(),
+            });
+        }
+        if !selected {
+            return Ok(HyperOutcome::HoldsClosed {
+                stats: totals.stats(),
+            });
+        }
+        if !self.copy.classes.is_empty() {
+            reductions.push(AppliedReduction::CopySwap {
+                classes: self.copy.classes.clone(),
+            });
+        }
+        Ok(HyperOutcome::HoldsReduced {
+            certificates: Vec::new(),
+            scope: fsl_replay::HyperReducedScope::ClosedExecutions,
+            reductions,
+            stats: totals.stats(),
+        })
+    }
+
+    fn closed_graph_stop(
+        &self,
+        stop: reduction::Stop,
+        totals: &Totals,
+    ) -> Result<HyperOutcome, ModelCheckRefusal> {
+        match stop {
+            reduction::Stop::Cancelled => self.cancelled(totals),
+            reduction::Stop::Meter(counter) => Ok(self.meter_stop(counter, totals)),
+            reduction::Stop::Limit(limit, value) => Ok(exhausted(limit, value, totals)),
+            reduction::Stop::Refused(refusal) => Err(*refusal),
+            reduction::Stop::Outcome(outcome) => Ok(*outcome),
+            reduction::Stop::Expansion(component, stop) => {
+                match self.expansion_ending(Some(component), stop)? {
+                    Ending::Complete => Err(fault("a-stopped-joint-expansion-stops")),
+                    Ending::Stopped(cause, limit, count) => {
+                        Ok(stopped(cause, limit, count, totals))
+                    }
+                }
+            }
+        }
+    }
+
+    /// Read only the entering match and current constraint. Each caller has
+    /// already admitted its predecessor; no later step is touched here.
+    fn closed_admission(
+        &self,
+        inputs: &ClosedInputs<'_>,
+        tuple: &[&ClosedExecution],
+        position: usize,
+        totals: &Totals,
+    ) -> Result<ConstraintReading, ModelCheckRefusal> {
+        if position > 0 && !inputs.clause.mu_universal().is_empty() {
+            match match_closed_step(inputs, tuple, position, MatchPart::Universal) {
+                Ok(MatchReading::Holds) => {}
+                Ok(MatchReading::Fails) => return Ok(ConstraintReading::Unmatched),
+                Ok(MatchReading::Undefined { .. } | MatchReading::Refused { .. }) => {
+                    return Ok(ConstraintReading::Stopped(ClosedVerdict::MatchUndetermined));
+                }
+                Ok(MatchReading::Fault(internal)) => {
+                    return Err(ModelCheckRefusal::Fault(internal))
+                }
+                Err(verdict) => return Ok(ConstraintReading::Stopped(verdict)),
+            }
+        }
+        let Some(constraint) = &self.request.reductions.constraint else {
+            return Ok(ConstraintReading::Allowed);
+        };
+        let mut cut = false;
+        for (component, path) in tuple.iter().enumerate() {
+            let Some(state) = path.states.get(position) else {
+                continue;
+            };
+            let system = self
+                .slots
+                .get(component)
+                .and_then(|slot| self.systems.get(*slot))
+                .ok_or_else(|| fault("a-closed-constraint-has-a-component-system"))?;
+            match system.constraint_value(state, constraint) {
+                Ok(ConstraintValue::Holds) => {}
+                Ok(ConstraintValue::Boundary) => cut = true,
+                Ok(ConstraintValue::Undefined { cause, .. }) => {
+                    return Err(HyperRefusal::ConstraintUndefined { cause }.into());
+                }
+                Err(stop) => {
+                    return match self.expansion_ending(Some(component), stop)? {
+                        Ending::Complete => Err(fault("a-stopped-constraint-expansion-stops")),
+                        Ending::Stopped(cause, limit, count) => Ok(ConstraintReading::Ended(
+                            stopped(cause, limit, count, totals),
+                        )),
+                    };
+                }
+            }
+        }
+        Ok(if cut {
+            ConstraintReading::Cut
+        } else {
+            ConstraintReading::Allowed
         })
     }
 

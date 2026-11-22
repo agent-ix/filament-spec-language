@@ -41,6 +41,10 @@ pub use model_input_form::UnreadModelForm;
 #[cfg(feature = "std")]
 mod bare;
 #[cfg(feature = "std")]
+mod clock_authority;
+#[cfg(feature = "std")]
+pub use clock_authority::{ClockDeclarationTableError, ClockDeclarations};
+#[cfg(feature = "std")]
 mod bare_slot;
 #[cfg(feature = "std")]
 mod bare_state_graph;
@@ -50,6 +54,8 @@ mod bare_synthesis;
 mod bare_term;
 #[cfg(feature = "std")]
 mod bare_terminal;
+#[cfg(feature = "std")]
+mod bare_timed;
 #[cfg(feature = "std")]
 mod bare_units;
 #[cfg(feature = "std")]
@@ -144,6 +150,8 @@ pub use checked_v2::{
     V2ReadRefusal, WitnessSupplyFailure,
 };
 #[cfg(feature = "std")]
+pub use checked_views::BareHyperTerm;
+#[cfg(feature = "std")]
 pub use emit::write_operand_slots;
 #[cfg(feature = "std")]
 pub use emit::{
@@ -191,8 +199,8 @@ pub use protocol_occurrence_key::{
 pub use protocol_selection::{ProtocolSlotDescriptor, SlotSelectionFailure};
 #[cfg(feature = "std")]
 pub use reader_protocol_projection::{
-    MissingLocation, ReaderProtocolFunction, ReaderProtocolParameter, ReaderProtocolProjection,
-    ReaderSlot, UnsupportedReason, UnsupportedView, ViewLocus,
+    MissingLocation, ReaderFunctionBody, ReaderProtocolFunction, ReaderProtocolParameter,
+    ReaderProtocolProjection, ReaderSlot, UnsupportedReason, UnsupportedView, ViewLocus,
 };
 #[cfg(feature = "std")]
 pub use verification_plan::{
@@ -205,12 +213,13 @@ pub use verification_plan::{
 
 #[cfg(feature = "std")]
 pub use filament_contract_model::{
-    CheckedArtifactRef, CheckedIntervalEnd, CheckedNodeId, CheckedOccurrence,
+    CheckedArtifactRef, CheckedIntervalEnd, CheckedNodeId, CheckedNodeOwner, CheckedOccurrence,
     CheckedOccurrenceRole, CheckedOperationInterval, CheckedOperationRational, CheckedPackageV2,
     CheckedSelection, CheckedSourceMapEntry, ClockConfiguration, ClockExactNumber,
     ExactTypeProjection, ExactTypeProjectionError, ExactTypeProjectionErrorCode, NativeJoinBudget,
-    SelectedExactIdentities, SelectedModelUnionPayload, SelectedModelUnionRow, TemporalBinding,
-    CHECKED_PACKAGE_V2,
+    ProtocolCorrelationReadError, ProtocolCorrelationRow, SelectedExactIdentities,
+    SelectedModelUnionPayload, SelectedModelUnionRow, TemporalBinding,
+    UnavailableCorrelationProvenance, CHECKED_PACKAGE_V2,
 };
 
 // The FR-105-AC-6 fault-injection seam. Public only under

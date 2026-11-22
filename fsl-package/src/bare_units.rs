@@ -30,6 +30,95 @@ pub(crate) struct UnitDefinitions {
 }
 
 impl UnitDefinitions {
+    /// Read the authentic closure for a source-owned base Time dimension
+    /// and a direct non-affine unit. Derived units remain unsupported here.
+    pub(crate) fn direct_time_nodes(
+        &self,
+        package: &CheckedPackageV2,
+        unit: &NodeKey,
+        dimension: &NodeKey,
+    ) -> Option<(String, Vec<fsl_semantics::check::TimeNominalNode>)> {
+        use fsl_semantics::check::{TimeNominalForm, TimeNominalNode, TimeNominalOrigin};
+        use fsl_semantics::value::nominal_payload::{
+            DimensionPayload, NominalPayload, UnitPayload,
+        };
+        let (dimension_definition, _) = self.dimensions.iter().find(|(_, key)| key == dimension)?;
+        if !dimension_definition.is_base()
+            || !dimension_definition.terms().is_empty()
+            || dimension_definition.qualified_declaration() != ["Time"]
+        {
+            return None;
+        }
+        let (unit_definition, _) = self.units.iter().find(|(_, key)| key == unit)?;
+        let payload = UnitPayload::of(unit_definition)?;
+        if payload.dimension() != dimension
+            || payload.target().is_some()
+            || payload.offset().numerator() != &Integer::from(0_i64)
+        {
+            return None;
+        }
+        let [unit_name] = unit_definition.qualified_declaration() else {
+            return None;
+        };
+        let graph = wire_graph(package).ok()?;
+        let origin = |key: &NodeKey, owner: &NodeOwner, qualified: &[String]| {
+            let NodeOwner::Source(owner) = owner else {
+                return None;
+            };
+            let node = package
+                .resolved_graph()
+                .nodes
+                .iter()
+                .find(|node| graph.key(&node.node_id).ok().as_ref() == Some(key))?;
+            let mut regions = package
+                .source_map()
+                .iter()
+                .filter(|entry| {
+                    entry.node_id == node.node_id
+                        && entry.role == filament_contract_model::CheckedOccurrenceRole::Declaration
+                })
+                .flat_map(|entry| &entry.regions);
+            let region = regions.next()?;
+            if regions.next().is_some() {
+                return None;
+            }
+            let region = crate::checked_v2::source_region(region).ok()?;
+            Some(TimeNominalOrigin::Source {
+                owner: owner.clone(),
+                qualified_declaration: qualified.to_vec(),
+                name_span: fsl_foundation::Span {
+                    start: usize::try_from(region.start()).ok()?,
+                    end: usize::try_from(region.end()).ok()?,
+                },
+            })
+        };
+        let dimension_node = TimeNominalNode {
+            key: dimension.clone(),
+            form: TimeNominalForm::Dimension,
+            origin: origin(
+                dimension,
+                dimension_definition.owner(),
+                dimension_definition.qualified_declaration(),
+            )?,
+            dependencies: Vec::new(),
+            nominal: Some(NominalPayload::Dimension(DimensionPayload::of(
+                dimension_definition,
+            ))),
+        };
+        let unit_node = TimeNominalNode {
+            key: unit.clone(),
+            form: TimeNominalForm::Unit,
+            origin: origin(
+                unit,
+                unit_definition.owner(),
+                unit_definition.qualified_declaration(),
+            )?,
+            dependencies: vec![dimension.clone()],
+            nominal: Some(NominalPayload::Unit(payload)),
+        };
+        Some((unit_name.clone(), vec![dimension_node, unit_node]))
+    }
+
     /// Read clock metadata from the table admitted with these definitions.
     pub(crate) fn time_unit_scale(&self, unit: &str) -> Option<Rational> {
         use filament_semantic_value::quantity::QuantityUnit;

@@ -28,7 +28,7 @@ pub(super) mod judge;
 #[cfg(test)]
 mod narrowing_tests;
 
-use super::contracts::{conjunction, Conjunction};
+use super::contracts::{conjunction, operation_conjunction, Conjunction};
 use super::domain::{Domain, Odometer};
 use super::encode::{self, value_enc, values_equal, Typing};
 use super::footprints::ReadCheck;
@@ -304,6 +304,22 @@ fn apply_argument(
     if let Some(check) = &check {
         check.verify()?;
     }
+    let verdict = if clauses.operation_preconditions.is_empty() {
+        verdict
+    } else {
+        operation_conjunction(
+            walk,
+            &clauses.operation_preconditions,
+            &fsl_semantics::model::observation::OperationContractObservations {
+                pre: walk.observation.clone(),
+                post: walk.observation.clone(),
+                self_reference: row.reference.clone(),
+                parameters: args.clone(),
+                result: None,
+            },
+            verdict,
+        )?
+    };
     match verdict {
         Conjunction::True => {}
         Conjunction::False(_) => return Ok(()),
@@ -354,6 +370,7 @@ fn apply_argument(
         transition: &transition,
         transition_bytes: &transition_bytes,
         postconditions,
+        operation_postconditions: &clauses.operation_postconditions,
         footprint: footprint.as_ref(),
         references: reference_arguments(&args),
         frames,
@@ -469,7 +486,7 @@ pub(super) fn visit_operation(
             }
             walk.retained_occurrences
                 .replace(filament_exact::Integer::one());
-            let clauses = walk.selected(row, application, |_| true);
+            let clauses = walk.model_selected(row, application, |_| true);
             let mut contract = Vec::new();
             let mut successors = Vec::new();
             apply_argument(
@@ -753,11 +770,17 @@ fn pre_observations(
         pre: Some(walk.observation.clone()),
         post: None,
         self_object: row.reference.clone(),
+        self_population: walk
+            .observation
+            .environment
+            .population_node(&row.population.node)
+            .cloned(),
         invocation: None,
         self_kind: SelfKind::Object,
         receiver_pre: None,
         receiver_post: None,
         parameters: args.to_vec(),
+        value_origins: Default::default(),
         result: None,
         created: Vec::new(),
         deleted: Vec::new(),
@@ -773,6 +796,7 @@ struct Run<'w, 's, 'a> {
     transition: &'w ModelTransition,
     transition_bytes: &'w [u8],
     postconditions: &'w [&'w ClauseInfo],
+    operation_postconditions: &'w [&'w fsl_semantics::check::CheckedOperationClause],
     /// The footprint the clauses are held to, when the expansion enforces
     /// footprints.
     footprint: Option<&'w Footprint>,
@@ -1128,11 +1152,18 @@ impl Run<'_, '_, '_> {
                 pre: Some(self.walk.observation.clone()),
                 post: Some(self.walk.observation.clone()),
                 self_object: self.row.reference.clone(),
+                self_population: self
+                    .walk
+                    .observation
+                    .environment
+                    .population_node(&self.row.population.node)
+                    .cloned(),
                 invocation: None,
                 self_kind: SelfKind::Object,
                 receiver_pre: None,
                 receiver_post: None,
                 parameters: self.args.to_vec(),
+                value_origins: Default::default(),
                 result: result.clone(),
                 created: Vec::new(),
                 deleted: Vec::new(),
@@ -1140,7 +1171,13 @@ impl Run<'_, '_, '_> {
             let found = self.walk.system.evaluator().evaluate_post_targets(
                 &info.qualified,
                 &observations,
-                &mut || filament_exact::Meter::new(self.walk.system.meter),
+                &mut || {
+                    let meter = self.walk.system.fresh_meter();
+                    match &self.walk.cancel {
+                        Some(cancel) => meter.with_cancel(cancel.clone()),
+                        None => meter,
+                    }
+                },
             );
             let Ok(found) = found else {
                 return Ok(None);
@@ -1855,7 +1892,7 @@ impl Run<'_, '_, '_> {
         effect: &StepEffect,
         result: Option<&Value>,
     ) -> Result<Conjunction, ExpansionStop> {
-        if self.postconditions.is_empty() {
+        if self.postconditions.is_empty() && self.operation_postconditions.is_empty() {
             return Ok(Conjunction::True);
         }
         let system = self.walk.system;
@@ -1878,11 +1915,18 @@ impl Run<'_, '_, '_> {
                 pre: Some(self.walk.observation.clone()),
                 post: Some(post.clone()),
                 self_object: self.row.reference.clone(),
+                self_population: self
+                    .walk
+                    .observation
+                    .environment
+                    .population_node(&self.row.population.node)
+                    .cloned(),
                 invocation: None,
                 self_kind: SelfKind::Object,
                 receiver_pre: None,
                 receiver_post: None,
                 parameters: self.args.to_vec(),
+                value_origins: Default::default(),
                 result: result.cloned(),
                 created: effect.created.clone(),
                 deleted: effect.deleted.clone(),
@@ -1895,7 +1939,21 @@ impl Run<'_, '_, '_> {
         if let Some(check) = &check {
             check.verify()?;
         }
-        Ok(verdict)
+        if self.operation_postconditions.is_empty() {
+            return Ok(verdict);
+        }
+        operation_conjunction(
+            self.walk,
+            self.operation_postconditions,
+            &fsl_semantics::model::observation::OperationContractObservations {
+                pre: self.walk.observation.clone(),
+                post: post.clone(),
+                self_reference: self.row.reference.clone(),
+                parameters: self.args.to_vec(),
+                result: result.cloned(),
+            },
+            verdict,
+        )
     }
 
     /// `candidate` with every clock collection the application's
@@ -2005,11 +2063,18 @@ impl Run<'_, '_, '_> {
             pre: Some(self.walk.observation.clone()),
             post: Some(post),
             self_object: self.row.reference.clone(),
+            self_population: self
+                .walk
+                .observation
+                .environment
+                .population_node(&self.row.population.node)
+                .cloned(),
             invocation: None,
             self_kind: SelfKind::Object,
             receiver_pre: None,
             receiver_post: None,
             parameters: self.args.to_vec(),
+            value_origins: Default::default(),
             result: None,
             created: effect.created,
             deleted: effect.deleted,

@@ -259,6 +259,27 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                 ("requires".to_owned(), Value::String("directory".to_owned())),
             ])),
         ),
+        RunCause::ClauseRequest { member, reason } if member == "/call/relationships/producer" => (
+            types::Stage::Request,
+            types::Details::Object(serde_json::Map::from_iter([
+                ("path".to_owned(), Value::String(member.clone())),
+                ("cause".to_owned(), Value::String(reason.clone())),
+            ])),
+        ),
+        RunCause::ClauseRequest { member, .. }
+            if member.starts_with("/call/arguments/")
+                || member == "/call/relationships"
+                || member.starts_with("/call/relationships/")
+                || member.starts_with("/call/snapshot/relationships/") =>
+        {
+            (
+                types::Stage::Request,
+                types::Details::Object(serde_json::Map::from_iter([(
+                    "path".to_owned(),
+                    Value::String(member.clone()),
+                )])),
+            )
+        }
         RunCause::ClauseRequest { .. }
         | RunCause::ClocksGivenTwice
         | RunCause::OutputGivenTwice
@@ -1012,6 +1033,10 @@ fn spine_run_document(
         CallOutcome::Incomplete(incomplete) => types::SpineOutcome::Incomplete {
             limit: incomplete.limits_field(),
         },
+        CallOutcome::RelationshipIncomplete(reasons) => types::SpineOutcome::IncompleteReasons {
+            reasons: reasons.clone(),
+        },
+        CallOutcome::RelationshipLimit(limit) => types::SpineOutcome::IncompleteLimit { limit },
     };
     let (source, package) = match echo {
         RunEcho::Source(source) => (Some(source), None),
@@ -1157,6 +1182,40 @@ mod tests {
 
     fn render(outcome: CallOutcome) -> RunResult {
         spine_run_result(&formal_source(), "seven", outcome, None).unwrap()
+    }
+
+    #[test]
+    #[trace("FR-100-AC-24", "FR-1045-AC-5")]
+    fn relationship_incomplete_and_limit_results_keep_their_wire_forms() {
+        let reasons = vec![serde_json::json!({
+            "code": "missing-relationship",
+            "fields": {"required": "{\"declarationIdentity\":\"ix://test/R\"}"}
+        })];
+        let incomplete = render(CallOutcome::RelationshipIncomplete(reasons.clone()));
+        assert_eq!(incomplete.exit_code, 22);
+        assert_eq!(
+            incomplete.value.as_value()["outcome"],
+            serde_json::json!({"kind": "incomplete", "reasons": reasons})
+        );
+        assert!(
+            incomplete.value.as_value()["outcome"]
+                .get("stage")
+                .is_none(),
+            "{}",
+            incomplete.value.as_value()
+        );
+
+        let limited = render(CallOutcome::RelationshipLimit("max_records"));
+        assert_eq!(limited.exit_code, 22);
+        assert_eq!(
+            limited.value.as_value()["outcome"],
+            serde_json::json!({"kind": "incomplete", "limit": "max_records"})
+        );
+        assert!(
+            limited.value.as_value()["outcome"].get("stage").is_none(),
+            "{}",
+            limited.value.as_value()
+        );
     }
 
     /// FR-100-AC-9 (TC-452 step 4, FND-013): a record refusal renders every

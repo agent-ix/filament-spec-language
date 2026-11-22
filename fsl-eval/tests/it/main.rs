@@ -32,6 +32,7 @@ mod checked_route_owner;
 mod checked_route_trigger;
 mod child_composite;
 mod clause_read_paths;
+mod clock_reference_v2;
 mod collection_algebra;
 mod collection_queries;
 mod composite_values;

@@ -262,6 +262,15 @@ impl Emission {
             charge::text(budget, locus, &row.case)?;
         }
         let model_enum_shapes = self.selected_ir_model_enum_shape_rows(budget)?;
+        let locus = package_locus("identity_model_union_output");
+        charge::items(budget, locus, self.selected_model_union_rows.len())?;
+        for (index, row) in self.selected_model_union_rows.iter().enumerate() {
+            model_union(
+                budget,
+                adapter_locus(index, "identity_model_union_output"),
+                row,
+            )?;
+        }
         Ok(ReadIdentityRows::of_rows_with_source_rows(
             package,
             declarations,
@@ -278,7 +287,8 @@ impl Emission {
             self.selected_model_enum_declaration_rows.clone(),
             self.selected_model_enum_member_rows.clone(),
             model_enum_shapes,
-        ))
+        )
+        .with_model_unions(self.selected_model_union_rows.clone()))
     }
 }
 
@@ -487,6 +497,44 @@ fn union(
         for entry in &member.clock_payload {
             charge::text(budget, locus, &entry.member_type)?;
             charge::items(budget, locus, entry.collections.len())?;
+        }
+    }
+    Ok(())
+}
+
+/// Charges the producer-owned copy of one model union row: its node, its
+/// document, and each case's name, original identity, sealed member and
+/// payload.
+fn model_union(
+    budget: &mut NativeJoinBudget,
+    locus: NativeJoinLocus,
+    row: &filament_contract_model::SelectedModelUnionRow,
+) -> Result<(), NativeRowError> {
+    use filament_contract_model::SelectedModelUnionPayload as Payload;
+
+    charge::node(budget, locus, &row.structural_node)?;
+    charge::text(budget, locus, &row.selected_document)?;
+    charge::items(budget, locus, row.cases.len())?;
+    for case in &row.cases {
+        let locus = NativeJoinLocus {
+            source: locus.source,
+            form: "identity_model_union_case_output",
+        };
+        charge::work(budget, locus, 1)?;
+        charge::text(budget, locus, &case.name)?;
+        charge::text(budget, locus, case.original_case.package())?;
+        charge::text(budget, locus, case.original_case.node())?;
+        charge::text(budget, locus, case.member.identifier())?;
+        match &case.payload {
+            Payload::None => {}
+            Payload::Clock { payload_type } => charge::text(budget, locus, payload_type)?,
+            Payload::Data {
+                node,
+                original_type,
+            } => {
+                charge::node(budget, locus, node)?;
+                charge::value_type(budget, locus, original_type)?;
+            }
         }
     }
     Ok(())

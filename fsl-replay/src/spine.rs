@@ -54,6 +54,7 @@ mod clocks;
 mod lifecycle;
 #[cfg(feature = "quire-extraction")]
 mod native_fences;
+mod relationships;
 /// FR-527's TL mapping table and the native valuation a TL cross-evaluation
 /// reads (FR-757, FR-931), for the command adapter's correspondence stage.
 pub use crate::spine_eval_api::{
@@ -62,6 +63,7 @@ pub use crate::spine_eval_api::{
     SpineEvalTemporalOutcome as TemporalOutcome, SpineEvalTemporalRefusal as TemporalRefusal,
     SpineEvalValueInvariantEvaluation as ValueInvariantEvaluation,
 };
+pub use call::relationship_call_outcome;
 pub(crate) use clocks::ClockLocator;
 pub use clocks::{InvalidClock, RequestClocks};
 pub use fsl_package::checked_views::{
@@ -73,6 +75,11 @@ pub use fsl_package::TemporalClockSelection;
 pub use native_fences::{
     check_native_fences, CheckLimits, FenceCheckCause, NativeFenceDiagnostic, NativeFenceReport,
     NativeFenceRequest, NativeFenceResult, NativeFenceUnit,
+};
+pub use relationships::package_selection as relationship_package_selection;
+pub use relationships::{
+    invalid_snapshot_relationship_identity, snapshot_relationship_member,
+    unknown_snapshot_relationship, ReadError as RelationshipReadError, RelationshipSelection,
 };
 mod subject;
 pub use lifecycle::{
@@ -252,27 +259,28 @@ pub use clause::{
     sample_position, settle_correction, settle_run_correction, temporal_batch_exit_code,
     temporal_batch_outcome, write_ledger, AdmittedLate, AdmittedPosition, AdmittedValue, Advance,
     AuthenticatedTemporalSelection, AuthenticationFailure, ClauseArgument, ClauseArgumentValue,
-    ClauseDisposition, ClauseLimits, ClauseMark, ClauseOpen, ClauseRefusal, ClauseRunBatchOutcome,
-    ClauseRunBatchRefusal, ClauseRunRefusal, ClauseRunReport, ClauseRunRequest, ClauseRunSelection,
-    ClauseRunSource, ClauseRunStage, ClauseRunUsage, ClauseState, ClauseTraceKind,
-    ConsequentEventRefusal, ConsequentSourceEvent, ConsequentSourceEvents, ConsequentState,
-    ContradictedDimension, CorrectionRecord, CorrectionRefusal, EvidenceLedgerFile,
-    EvidenceLedgerReadError, FiniteWindowAssessment, FiniteWindowPremises, FiniteWindowReport,
-    FiniteWindowSupport, LateEntry, LateInputs, LedgerBinding, LedgerReadError, ObservedPosition,
-    OperationName, OverObject, PackageAtomAttributionFailure, PackageAuthentication,
-    PackageBehaviours, PackageSampledRequest, PackageSelectionNotRead, PackageSnapshotRequest,
-    PackageTemporalRequest, PackageTraceSubjectRequest, PackagesStage, ProgramBatchCallOutcome,
-    ProgramBatchItemResult, ProgramBatchOutcome, ProgramBatchRefusal, ProgramBatchSelection,
-    ProgramCompilationRequest, ProgressAssertion, ProgressClosure, ProgressCompleteness,
-    ProgressContradiction, ProgressLedger, ProgressLedgerEntry, ProgressLimitReached,
-    ProgressLowerBoundary, ProgressRefusal, ProgressValue, RenderedClauseAtom, RunRelation,
-    TemporalAuthentication, TemporalIndeterminateReason, TemporalPositionRefusal,
-    TemporalTraceRefusal, TemporalUndefinedCause, TemporalValuation, TemporalVerdict,
-    TemporalWindowRefusal, TimedObservation, TimestampedCover, TimestampedMissingValuation,
-    TimestampedObservation, TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
-    TraceRefusal, TraceSubjectClauseRequest, ValueInvariantsBatchFailure,
-    ValueInvariantsBatchOutcome, ValueInvariantsBatchRequest, CLAUSE_STATE_FORMAT,
-    DEFAULT_MODEL_MAX_CANDIDATES, EVIDENCE_LEDGER_FORMAT, SAMPLE_AUTHORITY,
+    ClauseDisposition, ClauseLimits, ClauseMark, ClauseOpen, ClauseProgress, ClauseRefusal,
+    ClauseRunBatchOutcome, ClauseRunBatchRefusal, ClauseRunRefusal, ClauseRunReport,
+    ClauseRunRequest, ClauseRunSelection, ClauseRunSource, ClauseRunStage, ClauseRunUsage,
+    ClauseState, ClauseTraceKind, ConsequentEventRefusal, ConsequentSourceEvent,
+    ConsequentSourceEvents, ConsequentState, ContradictedDimension, CorrectionRecord,
+    CorrectionRefusal, EvidenceLedgerFile, EvidenceLedgerReadError, FiniteWindowAssessment,
+    FiniteWindowPremises, FiniteWindowReport, FiniteWindowSupport, LateEntry, LateInputs,
+    LedgerBinding, LedgerReadError, ObservedPosition, OperationName, OverObject,
+    PackageAtomAttributionFailure, PackageAuthentication, PackageBehaviours, PackageSampledRequest,
+    PackageSelectionNotRead, PackageSnapshotRequest, PackageTemporalRequest,
+    PackageTraceSubjectRequest, PackagesStage, ProgramBatchCallOutcome, ProgramBatchItemResult,
+    ProgramBatchOutcome, ProgramBatchRefusal, ProgramBatchSelection, ProgramCompilationRequest,
+    ProgressAssertion, ProgressClosure, ProgressCompleteness, ProgressContradiction,
+    ProgressLedger, ProgressLedgerEntry, ProgressLimitReached, ProgressLowerBoundary,
+    ProgressRefusal, ProgressValue, RenderedClauseAtom, RunRelation, TemporalAuthentication,
+    TemporalIndeterminateReason, TemporalPositionRefusal, TemporalTraceRefusal,
+    TemporalUndefinedCause, TemporalValuation, TemporalVerdict, TemporalWindowRefusal,
+    TimedObservation, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
+    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput, TraceRefusal,
+    TraceSubjectClauseRequest, ValueInvariantsBatchFailure, ValueInvariantsBatchOutcome,
+    ValueInvariantsBatchRequest, CLAUSE_STATE_FORMAT, DEFAULT_MODEL_MAX_CANDIDATES,
+    EVIDENCE_LEDGER_FORMAT, SAMPLE_AUTHORITY,
 };
 mod refinement;
 pub use refinement::{
@@ -1483,6 +1491,12 @@ fn check_message_one(first: &CheckRefusal) -> String {
         } => {
             message =
                 format!("{message}: operation {operation} parameter {parameter}: {component}");
+        }
+        CheckCause::DuplicateClockDeclaration(collision) => {
+            message = format!("{message}: {collision}");
+        }
+        CheckCause::AmbiguousClockDeclaration(ambiguity) => {
+            message = format!("{message}: {ambiguity}");
         }
         CheckCause::PlanUnknownField { owner, field, .. }
         | CheckCause::UnknownField { owner, field, .. } => {

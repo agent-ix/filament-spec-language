@@ -39,7 +39,8 @@ FR-644-AC-8 to FR-644-AC-11, FR-635-AC-5.
 - Step 2: no negotiation and no provider call; events and summary
   byte-equal to the run with no providers.
 - Step 3: `unknown-backend` with no provider call and exit 20;
-  `inconclusive` `solver-inconclusive`; `invalid-request` naming
+  `inconclusive` `solver-inconclusive` and, beside the violation, exit 22
+  (FR-285 ranking); `invalid-request` naming
   `providers` before any record, with no event.
 - Step 4: the item `incomplete` `cancelled{requested}` with no provider
   request; the driver writes step 1's events and a summary with `items`.

@@ -326,22 +326,17 @@ pub fn sample_position(canonical: &str) -> DocumentRef {
 /// text is `text`: `sha256:` and the 64 lowercase hexadecimal digits of the
 /// SHA-256 digest of its canonical value bytes, encoded by ADR-013's one
 /// RFC 8785 encoder (`quire-canonical`). It is integrity data beside the
-/// sample's index identity, never an identity (ADR-013 §2).
+/// sample's index identity, never an identity (ADR-013 §2). Missing atom
+/// indices are included as absence content when supplied.
 ///
 /// # Errors
 ///
 /// The internal fault `content-fingerprint-failed` when the canonical bytes
 /// or their digest cannot be produced; no empty fingerprint is returned.
-pub(crate) fn sample_fingerprint(
-    text: &str,
-) -> Result<String, filament_semantic_value::catalog::InternalFault> {
-    sample_fingerprint_with(text, &[])
-}
-
-/// [`sample_fingerprint`] of a sample whose observation holds no valuation of
-/// the atom nodes `absent` (FR-194, FR-641 `missing`): the absence is content
-/// of the position, so a changed absence at a covered index changes the
-/// fingerprint (FR-993). No absence leaves the sample's own fingerprint.
+///
+/// The absence set is FR-194/FR-641 `missing` content: a changed absence at a
+/// covered index changes the fingerprint (FR-993). An empty set fingerprints
+/// only the sample's canonical bytes.
 pub(crate) fn sample_fingerprint_with(
     text: &str,
     absent: &[u64],
@@ -375,7 +370,7 @@ pub(crate) fn sample_fingerprint_with(
 
 /// FR-330-AC-18, FR-643 Decision, FR-993: the record sample at `index` of a
 /// trace, cited by its index, never by its value. A progress-carrying trace
-/// also carries the sample's content `fingerprint` ([`sample_fingerprint`])
+/// also carries the sample's content `fingerprint` ([`sample_fingerprint_with`])
 /// for its ledger entry: the run holds it after the index (`<index>#<fp>`),
 /// and every identity, citation and order reads the index alone
 /// ([`indexed_sample`]).

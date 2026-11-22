@@ -965,9 +965,9 @@ impl HandoffSupply<'_> {
 /// packages, the supply is attached to the `BarePackage`, the model system is
 /// built from its model-check input and the envelope's clause is its package
 /// form, read by its `clause_node` (FR-128). An untimed authored clause and a
-/// package-level freedom item over a model subject are replayed; an invariant
-/// and a timed reading have no package form here yet and are refused, never
-/// replayed from source.
+/// package-level freedom item over a model subject are replayed, and so is an
+/// `invariant` state clause from its package row (FR-951); a timed reading has
+/// no package form here yet and is refused, never replayed from source.
 ///
 /// # Errors
 ///
@@ -1049,6 +1049,30 @@ pub fn replay_model_trace_from_package(
         meter,
         emit: limits.spine.package.emit(),
     };
+    let invariant_row = input
+        .state_clauses()
+        .iter()
+        .find(|entry| entry.invariant && entry.identity == *envelope.clause_node());
+    if let Some(entry) = invariant_row {
+        let system = ModelSystem::new(admission).map_err(ReplayRefusal::Admission)?;
+        // FR-128, FR-951: an `invariant` state clause is read from the
+        // package's own clause row by its `claim_names` occurrence.
+        let expected = OccurrenceKey::new(entry.identity.clone(), entry.claim.clone());
+        if expected != *envelope.occurrence_key() {
+            return Err(refused(ModelTraceRefusal::ItemIdentity {
+                clause_node: envelope.clause_node().clone(),
+                occurrence_key: Box::new(envelope.occurrence_key().clone()),
+                expected_node: entry.identity.clone(),
+                expected_key: Box::new(expected),
+            }));
+        }
+        let settlement = invariant(&system, payload, &entry.name)?;
+        return Ok(ModelTraceReplayResult {
+            settlement,
+            hints: Vec::new(),
+            terminals: input.input().terminal_keys(),
+        });
+    }
     let (for_deadlock, for_race) = derived_items(payload);
     let system = if for_deadlock {
         ModelSystem::new_over_read_identities(admission)
@@ -1165,7 +1189,7 @@ pub fn replay_model_trace_with_temporal_selections(
             if let Some(clause) = resolve_invariant(envelope, package.0)? {
                 let system =
                     ModelSystem::new(simulation(subject)).map_err(ReplayRefusal::Admission)?;
-                return invariant(&system, envelope.family_payload(), clause)
+                return invariant(&system, envelope.family_payload(), clause.name())
                     .map(|settlement| (settlement, Vec::new()));
             }
             let clause = resolve_item(envelope, package.0, DerivedAnchors::Model, |clause| {
@@ -2079,8 +2103,9 @@ fn resolved_deadlock<T: SubjectTransition>(
 
 /// Which derived items the payload's shape belongs to, as (deadlock-freedom,
 /// race-freedom): a deadlock to the first, a race to the second, and an
-/// undefined model-side expression with no `over` binding to both; no
-/// authored clause's payload has that shape.
+/// undefined model-side expression with no `over` binding to both. An
+/// `invariant` clause's undefined payload has that shape too, so callers
+/// resolve an invariant row before consulting this.
 fn derived_items<T: SubjectTransition>(payload: &TemporalCounterexample<T>) -> (bool, bool) {
     match &payload.kind {
         CounterexampleKind::Deadlock => (true, false),
@@ -2133,7 +2158,7 @@ fn resolve_invariant<'p, T: SubjectTransition>(
 fn invariant(
     system: &ModelSystem<'_>,
     payload: &TemporalCounterexample,
-    clause: &fsl_semantics::check::CheckedStateClause,
+    name: &str,
 ) -> Result<ModelTraceSettlement, ReplayRefusal> {
     refuse_closure_alphabet(payload)?;
     if payload.lasso.is_some()
@@ -2155,7 +2180,7 @@ fn invariant(
     };
     let last = positions.len().saturating_sub(1);
     for (index, position) in positions.iter().enumerate() {
-        let value = match system.constraint_value(&position.state, clause.name()) {
+        let value = match system.constraint_value(&position.state, name) {
             Ok(value) => value,
             Err(stop) if stop.is_internal_failure() => return Err(fault("invariant-letter")),
             Err(_) => return Ok(no_value()),
@@ -2176,14 +2201,14 @@ fn invariant(
             ) if at_last
                 && claimed.cause == cause
                 && claimed.site.position == position_of(index)
-                && claimed.site.locus == UndefinedLocus::Invariant(clause.name().to_owned()) =>
+                && claimed.site.locus == UndefinedLocus::Invariant(name.to_owned()) =>
             {
                 return Ok(ModelTraceSettlement::Reproduced {
                     value: ModelTraceValue::Undefined(UndefinedEvaluation {
                         site: UndefinedSite {
                             position: position_of(index),
                             state_key: position.state_key.clone(),
-                            locus: UndefinedLocus::Invariant(clause.name().to_owned()),
+                            locus: UndefinedLocus::Invariant(name.to_owned()),
                             transition: None,
                             time: None,
                         },

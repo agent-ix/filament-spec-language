@@ -17,7 +17,9 @@
 use std::collections::BTreeMap;
 
 use super::covered::CoveredList;
-use crate::completeness::{revise_complete_through, CompleteThroughRefusal};
+use filament_observation::authority::completeness::{
+    FactStatus, HeldFact, ListedContradiction, ListedFact, RetainedHolding, State,
+};
 
 /// FR-255's setting that raises the covered-position capacity.
 pub const COVERED_POSITIONS_SETTING: &str = "progress.covered_positions";
@@ -82,7 +84,8 @@ pub struct ObservedPosition {
     /// FR-993: a record sample's content fingerprint, `sha256:` and 64
     /// lowercase hex digits over its canonical value bytes; `None` for every
     /// other position. Integrity data, never part of the identity: the
-    /// covered set keys a position by its identity and stamp only.
+    /// covered set holds a position by its identity (`get_by_identity`), and
+    /// the ledger refuses a listed fingerprint that differs from the held one.
     pub fingerprint: Option<String>,
 }
 
@@ -301,7 +304,13 @@ impl ProgressLedger {
             check_progress(binding, retained, assertion, positions)
                 .map_err(LedgerRefusal::Contradiction)?;
         }
-        covered.extend(positions.iter().cloned());
+        // FR-502: membership uses the identity only, so a position whose
+        // identity is held already adds no second entry.
+        for position in positions {
+            if covered.get_by_identity(&position.identity).is_none() {
+                covered.insert(position.clone());
+            }
+        }
         let others: usize = self
             .entries
             .iter()
@@ -333,7 +342,33 @@ impl ProgressLedger {
     }
 }
 
-/// The first contradiction of `retained` by `assertion` over `positions`.
+/// The owner's `(upper bound, state)` reading of one completeness assertion
+/// (FR-944 "Completeness"): `Complete { through }` states `through` as its
+/// bound, and `Incomplete` states none.
+fn owner_reading(completeness: ProgressCompleteness) -> (Option<i128>, State) {
+    match completeness {
+        ProgressCompleteness::Complete { through } => (Some(i128::from(through)), State::Complete),
+        ProgressCompleteness::Incomplete => (None, State::Incomplete),
+    }
+}
+
+/// The retained covered set as the owner's `check_revision` reads it: a
+/// position is looked up by its identity alone (FR-502), is `Available`, and
+/// carries its fingerprint as its observation, when it has one.
+impl RetainedHolding for CoveredList {
+    type Key = str;
+
+    fn held(&self, key: &str) -> Option<HeldFact<'_>> {
+        self.get_by_identity(key).map(|position| HeldFact {
+            status: FactStatus::Available,
+            observation_identity: position.fingerprint.as_deref(),
+        })
+    }
+}
+
+/// The first contradiction of `retained` by `assertion` over `positions`:
+/// the watermark check, the owner's `check_revision`, then the closure
+/// checks (FR-861, FR-944 "Completeness").
 fn check_progress(
     binding: &LedgerBinding,
     retained: &LedgerEntry,
@@ -354,40 +389,46 @@ fn check_progress(
             ProgressValue::Watermark(assertion.watermark),
         ));
     }
-    if let Err(refusal) = revise_complete_through(
-        retained.completeness,
-        assertion.completeness,
+    let (prior_upper, prior_state) = owner_reading(retained.completeness);
+    let (asserted_upper, successor_state) = owner_reading(assertion.completeness);
+    let listed: Vec<ListedFact<'_, str>> = positions
+        .iter()
+        .map(|position| ListedFact {
+            key: position.identity.as_str(),
+            status: FactStatus::Available,
+            observation_identity: position.fingerprint.as_deref(),
+            placed: i128::from(position.stamp),
+        })
+        .collect();
+    if let Err(found) = filament_observation::authority::completeness::check_revision(
+        prior_upper,
+        prior_state,
         &retained.covered,
-        positions,
+        asserted_upper.or(prior_upper),
+        successor_state,
+        &listed,
     ) {
-        let asserted = match refusal {
-            CompleteThroughRefusal::Retreat => ProgressValue::Completeness(assertion.completeness),
-            CompleteThroughRefusal::UncoveredPosition(position) => {
-                ProgressValue::Position(position)
+        let asserted = match found {
+            ListedContradiction::BoundaryRegressed { .. }
+            | ListedContradiction::CompleteRegressed { .. } => {
+                ProgressValue::Completeness(assertion.completeness)
+            }
+            ListedContradiction::UncoveredMember { listed } => {
+                ProgressValue::Position(Box::new(positions[listed].clone()))
+            }
+            // FR-993: the contradiction names the position by its identity
+            // and stamp only.
+            ListedContradiction::MemberObservationChanged { listed, .. } => {
+                ProgressValue::Position(Box::new(ObservedPosition {
+                    fingerprint: None,
+                    ..positions[listed].clone()
+                }))
             }
         };
         return Err(contradiction(
             ContradictedDimension::Completeness,
             ProgressValue::Completeness(retained.completeness),
             asserted,
-        ));
-    }
-    // FR-993 "Compared": a re-covered position whose content fingerprint
-    // differs from the retained one is a changed sample at a covered index.
-    // The contradiction names the position by its identity and stamp only.
-    if let Some(position) = positions.iter().find(|position| {
-        retained
-            .covered
-            .get(position)
-            .is_some_and(|held| held.fingerprint != position.fingerprint)
-    }) {
-        return Err(contradiction(
-            ContradictedDimension::Completeness,
-            ProgressValue::Completeness(retained.completeness),
-            ProgressValue::Position(Box::new(ObservedPosition {
-                fingerprint: None,
-                ..position.clone()
-            })),
         ));
     }
     if retained.scope == ProgressClosure::Closed && assertion.scope == ProgressClosure::Open {
@@ -750,33 +791,53 @@ mod tests {
 
     #[trace("FR-502-AC-7", "TC-1296")]
     #[test]
-    fn a_retained_identity_at_one_stamp_does_not_cover_it_at_another_stamp() {
+    fn a_retained_identity_at_one_stamp_is_held_at_another_stamp() {
+        // FR-502: "Ordering and membership use the identity only", so the
+        // identity covered at stamp 0 is held, and the request is accepted.
         let ledger = retaining(assertion(100, complete(100)), &[at("same-id", 0)]);
-        let before = ledger.clone();
-        let refusal = admit(
+        let admitted = admit(
             &ledger,
             &binding(),
             assertion(100, complete(100)),
             &[at("same-id", 80)],
         )
-        .expect_err("same identity at a new in-range stamp is uncovered");
-        assert_eq!(
-            contradiction(refusal),
-            ProgressContradiction {
-                dimension: ContradictedDimension::Completeness,
-                clock: "ms".to_owned(),
-                retained: ProgressValue::Completeness(complete(100)),
-                asserted: ProgressValue::Position(Box::new(at("same-id", 80))),
-            }
-        );
-        assert_eq!(ledger, before, "refusal leaves the input ledger unchanged");
-        let covered: Vec<(&str, u64)> = ledger
+        .expect("the same identity at a new in-range stamp is held");
+        let covered: Vec<(&str, u64)> = admitted
             .entry(&binding())
             .expect("retained entry")
             .covered()
             .map(|position| (position.identity.as_str(), position.stamp))
             .collect();
-        assert_eq!(covered, [("same-id", 0)]);
+        assert_eq!(covered, [("same-id", 0)], "the one entry it holds");
+    }
+
+    #[trace("FR-944-AC-16", "TC-2624")]
+    #[test]
+    fn a_re_stamped_record_sample_index_is_the_same_member_or_a_changed_sample() {
+        let f = Some("sha256:f");
+        let ledger = retaining(assertion(5, complete(5)), &[sample("1", 1, f)]);
+        let before = ledger.clone();
+        let refusal = admit(
+            &ledger,
+            &binding(),
+            assertion(5, complete(5)),
+            &[sample("1", 2, Some("sha256:g"))],
+        )
+        .expect_err("index 1 re-delivered at stamp 2 with changed content");
+        assert_eq!(named_position(refusal), sample("1", 2, None));
+        assert_eq!(ledger, before, "refusal leaves the input ledger unchanged");
+        let admitted = admit(
+            &ledger,
+            &binding(),
+            assertion(5, complete(5)),
+            &[sample("1", 2, f)],
+        )
+        .expect("the same content is the same member");
+        assert_eq!(
+            covered_of(&admitted),
+            [("1".to_owned(), 1, f.map(str::to_owned))],
+            "index 1 is listed once, at stamp 1 with fingerprint F"
+        );
     }
 
     #[trace("FR-502-AC-8", "TC-1296")]
@@ -864,5 +925,142 @@ mod tests {
             )
             .expect_err("a new position inside the retained extent");
         assert!(matches!(late, LedgerRefusal::Contradiction(_)));
+    }
+
+    fn sample(index: &str, stamp: u64, fingerprint: Option<&str>) -> ObservedPosition {
+        ObservedPosition {
+            identity: index.to_owned(),
+            stamp,
+            fingerprint: fingerprint.map(str::to_owned),
+        }
+    }
+
+    fn covered_of(ledger: &ProgressLedger) -> Vec<(String, u64, Option<String>)> {
+        ledger
+            .entry(&binding())
+            .expect("retained entry")
+            .covered()
+            .map(|position| {
+                (
+                    position.identity.clone(),
+                    position.stamp,
+                    position.fingerprint.clone(),
+                )
+            })
+            .collect()
+    }
+
+    /// The position a contradiction on `Completeness` names, or a failure.
+    fn named_position(refusal: LedgerRefusal) -> ObservedPosition {
+        match contradiction(refusal).asserted {
+            ProgressValue::Position(position) => *position,
+            other => panic!("a position, not {other:?}"),
+        }
+    }
+
+    #[trace("FR-944-AC-4", "TC-2624")]
+    #[test]
+    fn a_covered_position_omitted_then_re_supplied_is_accepted_and_stays_covered() {
+        let held = [at("a", 0), at("b", 50), at("c", 100)];
+        let first = retaining(assertion(100, complete(100)), &held);
+        let second = admit(
+            &first,
+            &binding(),
+            assertion(100, complete(100)),
+            &[at("a", 0), at("c", 100)],
+        )
+        .expect("a request that omits a covered position");
+        assert_eq!(covered_of(&second).len(), 3, "the omitted position stays");
+        let third = admit(
+            &second,
+            &binding(),
+            assertion(100, complete(140)),
+            &[at("b", 50)],
+        )
+        .expect("the omitted position re-supplied at or before the retained through");
+        assert_eq!(
+            covered_of(&third)
+                .iter()
+                .map(|(identity, stamp, _)| (identity.as_str(), *stamp))
+                .collect::<Vec<_>>(),
+            [("a", 0), ("b", 50), ("c", 100)]
+        );
+    }
+
+    #[trace("FR-944-AC-16", "TC-2624")]
+    #[test]
+    fn a_new_position_at_stamp_zero_after_an_incomplete_assertion_is_accepted() {
+        let held = [at("p1", 1), at("p2", 2), at("p3", 3)];
+        let ledger = retaining(assertion(3, ProgressCompleteness::Incomplete), &held);
+        for asserted in [ProgressCompleteness::Incomplete, complete(5)] {
+            let admitted = admit(&ledger, &binding(), assertion(3, asserted), &[at("new", 0)])
+                .unwrap_or_else(|refusal| panic!("{asserted:?}: {refusal:?}"));
+            assert_eq!(covered_of(&admitted).len(), 4);
+        }
+    }
+
+    #[trace("FR-944-AC-16", "TC-2624")]
+    #[test]
+    fn a_changed_fingerprint_is_refused_after_an_incomplete_and_after_a_complete_assertion() {
+        let f = Some("sha256:f");
+        let g = Some("sha256:g");
+        for retained in [ProgressCompleteness::Incomplete, complete(5)] {
+            let ledger = retaining(assertion(5, retained), &[sample("1", 1, f)]);
+            let before = ledger.clone();
+            admit(
+                &ledger,
+                &binding(),
+                assertion(5, retained),
+                &[sample("1", 1, f)],
+            )
+            .unwrap_or_else(|refusal| panic!("{retained:?} same sample: {refusal:?}"));
+            let refusal = admit(
+                &ledger,
+                &binding(),
+                assertion(5, retained),
+                &[sample("1", 1, g)],
+            )
+            .expect_err("a changed sample at a covered index");
+            let report = contradiction(refusal);
+            assert_eq!(report.dimension, ContradictedDimension::Completeness);
+            assert_eq!(report.clock, "ms");
+            assert_eq!(report.retained, ProgressValue::Completeness(retained));
+            assert_eq!(
+                report.asserted,
+                ProgressValue::Position(Box::new(sample("1", 1, None))),
+                "the position without its fingerprint"
+            );
+            assert_eq!(ledger, before, "refusal leaves the input ledger unchanged");
+        }
+    }
+
+    #[trace("FR-944-AC-16", "TC-2624")]
+    #[test]
+    fn a_fingerprint_present_against_absent_is_a_changed_sample_in_both_directions() {
+        let with = retaining(
+            assertion(5, ProgressCompleteness::Incomplete),
+            &[sample("1", 1, Some("sha256:f"))],
+        );
+        let without = retaining(
+            assertion(5, ProgressCompleteness::Incomplete),
+            &[sample("1", 1, None)],
+        );
+        for (ledger, listed) in [(&with, None), (&without, Some("sha256:f"))] {
+            let refusal = admit(
+                ledger,
+                &binding(),
+                assertion(5, ProgressCompleteness::Incomplete),
+                &[sample("1", 1, listed)],
+            )
+            .expect_err("present against absent");
+            assert_eq!(named_position(refusal), sample("1", 1, None));
+        }
+        admit(
+            &without,
+            &binding(),
+            assertion(5, ProgressCompleteness::Incomplete),
+            &[sample("1", 1, None)],
+        )
+        .expect("none against none");
     }
 }

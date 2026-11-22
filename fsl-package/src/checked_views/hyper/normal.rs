@@ -122,6 +122,7 @@ struct Encoded {
     bytes: Vec<u8>,
     associative: Option<(Vec<u8>, Vec<Vec<u8>>)>,
     traces: BTreeSet<usize>,
+    opaque: bool,
 }
 
 fn encode(
@@ -163,6 +164,7 @@ fn combine(
         })
         .ok_or_else(|| pending(budget.node, "hyper-normal-form-work"))?;
     budget.charge(count, count.saturating_mul(std::mem::size_of::<Encoded>()))?;
+    let opaque = children.iter().any(|child| child.opaque);
     let traces = children
         .iter()
         .flat_map(|child| child.traces.iter().copied())
@@ -188,18 +190,28 @@ fn combine(
         bytes: encode(&tag, &parts, budget)?,
         associative: associative.then_some((tag, parts)),
         traces,
+        opaque,
     })
 }
 
 enum Work<'a> {
     Node(&'a CheckedNodeId),
     Term(&'a CheckedTerm),
+    BindLet {
+        binder: &'a CheckedNodeId,
+        body: &'a CheckedTerm,
+    },
+    RestoreLocal {
+        binder: &'a CheckedNodeId,
+        previous: Option<BTreeSet<usize>>,
+    },
     Finish {
         tag: Vec<u8>,
         count: usize,
         associative: bool,
         symmetric: bool,
         model_read: bool,
+        opaque: bool,
     },
 }
 
@@ -214,6 +226,7 @@ fn expression(
     budget.charge(1, std::mem::size_of::<Work<'_>>())?;
     let mut pending_work = vec![Work::Node(root)];
     let mut values: Vec<Encoded> = Vec::new();
+    let mut locals: BTreeMap<&CheckedNodeId, BTreeSet<usize>> = BTreeMap::new();
     while let Some(work) = pending_work.pop() {
         budget.charge(
             1,
@@ -244,6 +257,7 @@ fn expression(
                         )?,
                         associative: None,
                         traces: BTreeSet::from([trace]),
+                        opaque: false,
                     });
                     continue;
                 }
@@ -253,12 +267,31 @@ fn expression(
                 {
                     pending_work.push(Work::Term(&node.body));
                 } else if node.semantic_form.as_ref() == "parameter" {
-                    return Err(pending(id, "hyper-local-binder"));
+                    let level = super::group_member(&node.body, "level")
+                        .and_then(super::integer)
+                        .ok_or_else(|| malformed(claim))?;
+                    let traces = locals
+                        .get(id)
+                        .ok_or_else(|| pending(id, "hyper-local-binder"))?;
+                    budget.charge(
+                        traces.len(),
+                        traces.len().saturating_mul(std::mem::size_of::<Encoded>()),
+                    )?;
+                    let level = u64::try_from(level)
+                        .map_err(|_| malformed(claim))?
+                        .to_be_bytes();
+                    values.push(Encoded {
+                        bytes: encode(b"local", &[budget.copy(&level)?], budget)?,
+                        associative: None,
+                        traces: traces.clone(),
+                        opaque: false,
+                    });
                 } else {
                     values.push(Encoded {
                         bytes: encode(b"declaration", &[inputs.key(id, claim, budget)?], budget)?,
                         associative: None,
                         traces: BTreeSet::new(),
+                        opaque: false,
                     });
                 }
             }
@@ -278,6 +311,7 @@ fn expression(
                         bytes,
                         associative: None,
                         traces: BTreeSet::new(),
+                        opaque: false,
                     });
                 }
                 CheckedTerm::Application {
@@ -288,7 +322,8 @@ fn expression(
                 } => {
                     let read = operation.read().map_err(|_| malformed(claim))?;
                     let identity = read.identity;
-                    if identity.starts_with("filament.op.control.")
+                    if (identity.starts_with("filament.op.control.")
+                        && identity != "filament.op.control.let")
                         || identity.starts_with("filament.op.collection.")
                     {
                         return Err(pending(root, "hyper-normal-form-operation"));
@@ -311,6 +346,31 @@ fn expression(
                             ],
                             budget,
                         )?,
+                        Some(filament_contract_model::CheckedOperationMember::TypeArgument {
+                            declaration,
+                            alias,
+                        }) if matches!(
+                            identity,
+                            "filament.op.numeric.convert" | "filament.op.numeric.narrow"
+                        ) =>
+                        {
+                            let alias = match alias {
+                                Some(alias) => encode(
+                                    b"alias",
+                                    &[
+                                        budget.copy(alias.package.as_bytes())?,
+                                        budget.copy(alias.node.as_bytes())?,
+                                    ],
+                                    budget,
+                                )?,
+                                None => Vec::new(),
+                            };
+                            encode(
+                                b"type-argument",
+                                &[inputs.key(declaration, claim, budget)?, alias],
+                                budget,
+                            )?
+                        }
                         _ => return Err(pending(root, "hyper-normal-form-member")),
                     };
                     budget.charge(
@@ -358,6 +418,40 @@ fn expression(
                             .len()
                             .saturating_mul(std::mem::size_of::<Work<'_>>()),
                     )?;
+                    if identity == "filament.op.control.let" {
+                        let [CheckedTerm::Binding {
+                            binder: Some(binder),
+                            value,
+                            ..
+                        }, body] = arguments.as_slice()
+                        else {
+                            return Err(malformed(claim));
+                        };
+                        let declared = inputs.nodes.get(binder).ok_or_else(|| malformed(claim))?;
+                        if declared.semantic_form.as_ref() != "parameter" {
+                            return Err(malformed(claim));
+                        }
+                        let level = super::group_member(&declared.body, "level")
+                            .and_then(super::integer)
+                            .ok_or_else(|| malformed(claim))?;
+                        let level = u64::try_from(level)
+                            .map_err(|_| malformed(claim))?
+                            .to_be_bytes();
+                        let tag = encode(b"let", &[tag, budget.copy(&level)?], budget)?;
+                        budget
+                            .charge(3, 3_usize.saturating_mul(std::mem::size_of::<Work<'_>>()))?;
+                        pending_work.push(Work::Finish {
+                            tag,
+                            count: 2,
+                            associative: false,
+                            symmetric: false,
+                            model_read: false,
+                            opaque: true,
+                        });
+                        pending_work.push(Work::BindLet { binder, body });
+                        pending_work.push(Work::Term(value));
+                        continue;
+                    }
                     pending_work.push(Work::Finish {
                         tag,
                         count: arguments.len(),
@@ -369,10 +463,33 @@ fn expression(
                             || identity.ends_with(".ne")
                             || identity == "filament.op.ieee.numeric_equal",
                         model_read: identity == "filament.op.model.deref",
+                        opaque: false,
                     });
                     pending_work.extend(arguments.iter().rev().map(Work::Term));
                 }
                 _ => return Err(pending(root, "hyper-normal-form-term")),
+            },
+            Work::BindLet { binder, body } => {
+                let traces = &values.last().ok_or_else(|| malformed(claim))?.traces;
+                budget.charge(
+                    2 + traces.len(),
+                    2_usize
+                        .saturating_mul(std::mem::size_of::<Work<'_>>())
+                        .saturating_add(
+                            traces.len().saturating_mul(std::mem::size_of::<Encoded>()),
+                        ),
+                )?;
+                let previous = locals.insert(binder, traces.clone());
+                pending_work.push(Work::RestoreLocal { binder, previous });
+                pending_work.push(Work::Term(body));
+            }
+            Work::RestoreLocal { binder, previous } => match previous {
+                Some(previous) => {
+                    locals.insert(binder, previous);
+                }
+                None => {
+                    locals.remove(binder);
+                }
             },
             Work::Finish {
                 tag,
@@ -380,13 +497,15 @@ fn expression(
                 associative,
                 symmetric,
                 model_read,
+                opaque,
             } => {
                 let from = values
                     .len()
                     .checked_sub(count)
                     .ok_or_else(|| malformed(claim))?;
                 let children = values.split_off(from);
-                let value = combine(tag, children, associative, symmetric, budget)?;
+                let mut value = combine(tag, children, associative, symmetric, budget)?;
+                value.opaque |= opaque && !value.traces.is_empty();
                 if model_read && value.traces.len() != 1 {
                     return Err(malformed(claim));
                 }
@@ -400,6 +519,12 @@ fn expression(
     values.pop().ok_or_else(|| malformed(claim))
 }
 
+struct EncodedBody {
+    bytes: Vec<u8>,
+    atoms: Vec<Vec<u8>>,
+    opaque: bool,
+}
+
 fn body(
     inputs: &Inputs<'_, '_>,
     formula: &[PackageFormulaNode],
@@ -408,7 +533,7 @@ fn body(
     swap: Option<(usize, usize)>,
     budget: &mut Budget<'_>,
     claim: &OccurrenceKey,
-) -> Result<(Vec<u8>, Vec<Vec<u8>>), BareClauseRefusal> {
+) -> Result<EncodedBody, BareClauseRefusal> {
     budget.charge(
         formula.len(),
         formula
@@ -499,14 +624,15 @@ fn body(
             .collect::<Result<Vec<_>, _>>()?;
         encoded[at] = Some(combine(tag, children, associative, symmetric, budget)?);
     }
-    Ok((
-        encoded
-            .first_mut()
-            .and_then(Option::take)
-            .ok_or_else(|| malformed(claim))?
-            .bytes,
-        atom_bytes,
-    ))
+    let body = encoded
+        .first_mut()
+        .and_then(Option::take)
+        .ok_or_else(|| malformed(claim))?;
+    Ok(EncodedBody {
+        bytes: body.bytes,
+        atoms: atom_bytes,
+        opaque: body.opaque,
+    })
 }
 
 fn exchange(
@@ -694,7 +820,20 @@ fn copy_group_with_budget(
             std::mem::size_of::<CopyGenerator>() + 4 * std::mem::size_of::<usize>(),
         ),
     )?;
-    let (plain, atom_bytes) = body(&inputs, formula, atoms, slots, None, budget, claim)?;
+    let EncodedBody {
+        bytes: plain,
+        atoms: atom_bytes,
+        opaque,
+    } = body(&inputs, formula, atoms, slots, None, budget, claim)?;
+    if opaque {
+        return Ok((
+            plain,
+            CopyGroup {
+                classes: Vec::new(),
+                generators: Vec::new(),
+            },
+        ));
+    }
     let mut classes: Vec<Vec<usize>> = Vec::new();
     let mut generators = Vec::new();
     for later in 0..quantifiers.len() {
@@ -711,7 +850,11 @@ fn copy_group_with_budget(
             if quantifiers[earlier].alias != quantifiers[later].alias {
                 continue;
             }
-            let (swapped, swapped_atoms) = body(
+            let EncodedBody {
+                bytes: swapped,
+                atoms: swapped_atoms,
+                ..
+            } = body(
                 &inputs,
                 formula,
                 atoms,

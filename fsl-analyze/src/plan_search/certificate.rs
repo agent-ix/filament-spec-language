@@ -129,6 +129,24 @@ impl Certificate {
         }
     }
 
+    /// Substitute valid reached bytes without relying on a malformed codec.
+    pub(crate) fn forge_policy_states<R: PlanRules>(
+        &mut self,
+        entry: usize,
+        source: usize,
+        rules: &mut R,
+    ) -> Result<(), super::RuleStop> {
+        if let Some(source) = self.entries.get(source) {
+            let monitors = rules.copy_policy_states(&source.monitors)?;
+            let key_monitors = rules.copy_policy_states(&monitors)?;
+            if let Some(entry) = self.entries.get_mut(entry) {
+                entry.key.monitors = key_monitors;
+                entry.monitors = monitors;
+            }
+        }
+        Ok(())
+    }
+
     /// Replace only the recorded total, leaving the native path unchanged.
     pub(crate) fn forge_accumulated(&mut self, entry: usize, value: Rational) {
         if let Some(entry) = self.entries.get_mut(entry) {
@@ -191,10 +209,18 @@ pub(crate) fn write<R: PlanRules>(
         .iter()
         .map(|&index| {
             let node = &search.nodes[index];
-            Entry {
-                key: node.key.clone(),
+            Ok(Entry {
+                key: node.key.with_monitors(
+                    search
+                        .rules
+                        .copy_policy_states(&node.key.monitors)
+                        .map_err(super::stop_cause)?,
+                ),
                 state: node.state.clone(),
-                monitors: node.monitors.clone(),
+                monitors: search
+                    .rules
+                    .copy_policy_states(&node.monitors)
+                    .map_err(super::stop_cause)?,
                 parent: node
                     .parent
                     .as_ref()
@@ -208,9 +234,9 @@ pub(crate) fn write<R: PlanRules>(
                     .iter()
                     .map(|(step, target, _)| (step.clone(), position[*target]))
                     .collect(),
-            }
+            })
         })
-        .collect();
+        .collect::<Result<_, PlanStopCause>>()?;
     Ok(Certificate {
         kind,
         objective: search.kind,
@@ -309,7 +335,7 @@ pub(crate) fn check<R: PlanRules>(
     let Some(start_admissible) = invariants_hold(system, &start)? else {
         return reject(CertificateRule::Initial, 0);
     };
-    let mut monitors = Vec::new();
+    let mut monitors = rules.policy_states().map_err(super::stop_cause)?;
     let mut start_rejected = !start_admissible;
     if start_admissible {
         for policy in 0..rules.policy_count() {
@@ -339,7 +365,10 @@ pub(crate) fn check<R: PlanRules>(
     };
     let start_key = system.state_key(&start).map(|(key, _)| key).ok();
     if start_key.as_ref() != Some(&first.key.state)
-        || monitors != first.monitors
+        || rules
+            .compare_policy_states(&monitors, &first.monitors)
+            .map_err(super::stop_cause)?
+            != std::cmp::Ordering::Equal
         || first.key.depth != 0
         || first.parent.is_some()
     {
@@ -484,7 +513,7 @@ pub(crate) fn check<R: PlanRules>(
                 Some(false) => continue,
                 None => return reject(CertificateRule::Closure, index),
             }
-            let mut next_monitors = Vec::with_capacity(entry.monitors.len());
+            let mut next_monitors = rules.policy_states().map_err(super::stop_cause)?;
             let mut rejected = false;
             for (policy, monitor) in entry.monitors.iter().enumerate() {
                 match rules
@@ -544,7 +573,10 @@ pub(crate) fn check<R: PlanRules>(
             // which the re-derived step must reproduce.
             let accumulated = entry.key.accumulated.as_ref().and(accumulated);
             let names_node = successor.key.state == state_key
-                && successor.key.monitors == next_monitors
+                && rules
+                    .compare_policy_states(&successor.key.monitors, &next_monitors)
+                    .map_err(super::stop_cause)?
+                    == std::cmp::Ordering::Equal
                 && successor.key.depth == entry.key.depth + 1
                 && successor.key.accumulated == accumulated
                 && (certificate.merges

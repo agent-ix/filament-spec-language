@@ -3,7 +3,6 @@
 
 use filament_semantic_value::checking::CheckMode;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::num::NonZeroUsize;
 
 use filament_exact::ScalarLimits;
 use filament_semantic_value::checking::CheckingLimits;
@@ -61,6 +60,10 @@ fn fixture_with_recovery_view(bound: u64, recovery_view: bool) -> Fixture {
 }
 
 fn fixture_with_recovery_predicate(bound: u64, recovery_predicate: Option<&str>) -> Fixture {
+    fixture_for_template(bound, recovery_predicate, "Refund")
+}
+
+fn fixture_for_template(bound: u64, recovery_predicate: Option<&str>, template: &str) -> Fixture {
     let recovery_view = recovery_predicate.is_some();
     let mut domain = tc1070::document();
     let total = domain["types"]
@@ -76,6 +79,26 @@ fn fixture_with_recovery_predicate(bound: u64, recovery_predicate: Option<&str>)
         .find(|constraint| constraint["keyword"] == "max")
         .expect("Total maximum");
     max["operands"]["value"] = "5".into();
+    total["constraints"]
+        .as_array_mut()
+        .expect("Total constraints")
+        .iter_mut()
+        .find(|constraint| constraint["keyword"] == "min")
+        .expect("Total minimum")["operands"]["value"] = "5".into();
+    // A single attempt record and enabled poststate keep the three outcome
+    // histories exhaustive without multiplying them by unrelated values.
+    let tally = domain["types"]
+        .as_array_mut()
+        .expect("domain types")
+        .iter_mut()
+        .find(|ty| ty["displayName"] == "Tally")
+        .expect("attempt tally");
+    tally["constraints"]
+        .as_array_mut()
+        .expect("Tally constraints")
+        .iter_mut()
+        .find(|constraint| constraint["keyword"] == "max")
+        .expect("Tally maximum")["operands"]["value"] = "0".into();
     let node = domain["types"]
         .as_array_mut()
         .expect("domain types")
@@ -201,14 +224,21 @@ fn fixture_with_recovery_predicate(bound: u64, recovery_predicate: Option<&str>)
                 "effect Applied of Main::Tried as (applied: Boolean) { true };\n\
                  event Signal by Service as (signal: Boolean) { true };",
             );
-        let partial = source
-            .find("  compensate Partial for")
-            .expect("the fixture declares a partial compensation template");
-        let main = source[partial..]
-            .find("  run sequence Main")
-            .map(|offset| partial + offset)
-            .expect("the run tree follows the compensation templates");
-        source.replace_range(partial..main, "");
+    }
+    let refund = source
+        .find("  compensate Refund for")
+        .expect("Refund template");
+    let partial = source
+        .find("  compensate Partial for")
+        .expect("Partial template");
+    let main = source[partial..]
+        .find("  run sequence Main")
+        .map(|offset| partial + offset)
+        .expect("run tree follows compensation templates");
+    match template {
+        "Refund" => source.replace_range(partial..main, ""),
+        "Partial" => source.replace_range(refund..partial, ""),
+        _ => panic!("unknown fixture template {template}"),
     }
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("qsl-1757", "unit.native"),
@@ -386,31 +416,40 @@ type CendSuccessors = (
 /// Find the first recovery step in a bounded breadth-first walk. This visits
 /// only the prefix needed by the assertion and stops after 256 unique states.
 fn recovery_cend_successors(system: &ProtocolSystem<'_, Sc>) -> Option<CendSuccessors> {
+    bounded_step_successors(system, StepKind::CEnd)
+}
+
+fn bounded_step_successors(
+    system: &ProtocolSystem<'_, Sc>,
+    kind: StepKind,
+) -> Option<CendSuccessors> {
     use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 
     const MAX_STATES: usize = 256;
     let initial = system.initial().into_iter().next()?;
+    let (key, _) = SubjectSystem::state_key(system, &initial).ok()?;
     let mut queue = VecDeque::from([(initial, Vec::new())]);
-    let mut visited = BTreeSet::new();
+    let mut visited = BTreeSet::from([key]);
     while let Some((state, prefix)) = queue.pop_front() {
-        let (key, _) = SubjectSystem::state_key(system, &state).ok()?;
-        if !visited.insert(key) {
-            continue;
-        }
-        if visited.len() > MAX_STATES {
-            return None;
-        }
         let expansion = system.successors(&state).ok()?;
         let cends: Vec<_> = expansion
             .successors
             .iter()
-            .filter(|(transition, _)| transition.kind() == StepKind::CEnd)
+            .filter(|(transition, _)| transition.kind() == kind)
             .cloned()
             .collect();
         if !cends.is_empty() {
             return Some((prefix, cends));
         }
         for (transition, next) in expansion.successors {
+            let (key, _) = SubjectSystem::state_key(system, &next).ok()?;
+            if visited.contains(&key) {
+                continue;
+            }
+            if visited.len() == MAX_STATES {
+                return None;
+            }
+            visited.insert(key);
             let identity = fsl_eval::simulation::protocol::transition_json(&transition)?;
             let mut path = prefix.clone();
             path.push(identity);
@@ -418,6 +457,65 @@ fn recovery_cend_successors(system: &ProtocolSystem<'_, Sc>) -> Option<CendSucce
         }
     }
     None
+}
+
+/// Explore the complete small fixture, failing rather than treating a prefix
+/// as a universal result if its shape changes. Permanent outcome histories
+/// yield 1 + 3 + ... + 3^5 prefixes; the cap allows lifecycle steps around
+/// those histories while bounding retained states and canonical keys.
+fn complete_fixture_graph(
+    system: &ProtocolSystem<'_, Sc>,
+) -> fsl_eval::simulation::protocol::Reachable<Sc> {
+    use fsl_eval::simulation::protocol::{Reachable, ReachedState};
+    use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
+
+    const MAX_STATES: usize = 16_384;
+    const MAX_KEY_BYTES: usize = 32 * 1024 * 1024;
+    let mut states: Vec<ReachedState<Sc>> = Vec::new();
+    let mut known = BTreeMap::new();
+    let mut key_bytes = 0;
+    for state in system.initial() {
+        let key = system
+            .canonical_state_key(&state)
+            .expect("initial state key");
+        key_bytes += key.as_bytes().len();
+        assert!(key_bytes <= MAX_KEY_BYTES, "fixture key budget exceeded");
+        known.insert(key.clone(), states.len());
+        states.push(ReachedState {
+            state,
+            key,
+            steps: Vec::new(),
+        });
+    }
+    let mut at = 0;
+    while at < states.len() {
+        let expansion = system
+            .successors(&states[at].state)
+            .expect("fixture expands completely");
+        for (transition, state) in expansion.successors {
+            let key = system
+                .canonical_state_key(&state)
+                .expect("successor state key");
+            let next = if let Some(&index) = known.get(&key) {
+                index
+            } else {
+                assert!(states.len() < MAX_STATES, "fixture state budget exceeded");
+                key_bytes += key.as_bytes().len();
+                assert!(key_bytes <= MAX_KEY_BYTES, "fixture key budget exceeded");
+                let index = states.len();
+                known.insert(key.clone(), index);
+                states.push(ReachedState {
+                    state,
+                    key,
+                    steps: Vec::new(),
+                });
+                index
+            };
+            states[at].steps.push((transition, next));
+        }
+        at += 1;
+    }
+    Reachable { states, workers: 1 }
 }
 
 fn replay_transition_path(
@@ -473,7 +571,7 @@ fn replace_scalar(value: &mut serde_json::Value, from: &str, to: &str) -> bool {
     }
 }
 
-fn maximum_cattempts(
+fn maximum_attempts(
     reachable: &fsl_eval::simulation::protocol::Reachable<Sc>,
     template: &str,
 ) -> usize {
@@ -497,8 +595,10 @@ fn maximum_cattempts(
             .iter()
             .map(|(transition, next)| {
                 let increment = usize::from(
-                    transition.kind() == StepKind::CAttempt
-                        && transition.template() == Some(template),
+                    matches!(
+                        transition.kind(),
+                        StepKind::CAttempt | StepKind::CFail | StepKind::CTimeout
+                    ) && transition.template() == Some(template),
                 );
                 increment + longest(reachable, *next, template, memo, active)
             })
@@ -518,24 +618,24 @@ fn maximum_cattempts(
 #[trace("FR-520-AC-4", "TC-1315")]
 fn compensation_attempt_bound_admits_n_and_refuses_attempt_n_plus_one() {
     for bound in [1_u64, 3, 5] {
-        let fixture = fixture(bound);
-        let keys = fixture
-            .package
-            .graph()
-            .protocol_node_keys("Refunds")
-            .expect("protocol node keys");
-        let read = fsl_package::read_evaluation_package(
-            &fixture.package,
-            fsl_semantics::library::LibraryName::new("qsl-1757").expect("package name"),
-            &fixture.packages,
-            fsl_package::V2ReadLimits::fixture(),
-            fsl_package::EmitLimits::fixture(),
-        )
-        .expect("strict reader admits the protocol");
-        for (index, name) in [(0, "Refund"), (1, "Partial")] {
+        for name in ["Refund", "Partial"] {
+            let fixture = fixture_for_template(bound, None, name);
+            let keys = fixture
+                .package
+                .graph()
+                .protocol_node_keys("Refunds")
+                .expect("protocol node keys");
+            let read = fsl_package::read_evaluation_package(
+                &fixture.package,
+                fsl_semantics::library::LibraryName::new("qsl-1757").expect("package name"),
+                &fixture.packages,
+                fsl_package::V2ReadLimits::fixture(),
+                fsl_package::EmitLimits::fixture(),
+            )
+            .expect("strict reader admits the protocol");
             let compensation_key = keys
                 .compensations
-                .get(&index)
+                .get(&0)
                 .unwrap_or_else(|| panic!("compensation {name} has an emitted node"));
             let compensation = fsl_semantics::check::wire_id::structural_id(compensation_key);
             assert_eq!(
@@ -544,18 +644,25 @@ fn compensation_attempt_bound_admits_n_and_refuses_attempt_n_plus_one() {
                 bound,
                 "{name}: the read bound equals the authored count",
             );
-        }
-
-        let system = system(&fixture);
-        let reachable = system
-            .reachable(NonZeroUsize::new(1).expect("one worker"))
-            .expect("finite compensation exploration completes");
-        for name in ["Refunds::Refund", "Refunds::Partial"] {
+            let system = system(&fixture);
+            let reachable = complete_fixture_graph(&system);
+            let template = format!("Refunds::{name}");
             assert_eq!(
-                maximum_cattempts(&reachable, name),
+                maximum_attempts(&reachable, &template),
                 usize::try_from(bound).expect("test bound fits usize"),
-                "{name}: exactly n cattempts are admitted; n+1 has no successor",
+                "{name}: exactly n dispatches are admitted across all outcomes; n+1 has no successor",
             );
+            for kind in [StepKind::CAttempt, StepKind::CFail, StepKind::CTimeout] {
+                assert!(
+                    reachable.states.iter().flat_map(|state| &state.steps).any(
+                        |(transition, _)| {
+                            transition.kind() == kind
+                                && transition.template() == Some(template.as_str())
+                        }
+                    ),
+                    "{name}: the complete graph includes {kind:?}"
+                );
+            }
         }
     }
 }
@@ -564,19 +671,17 @@ fn compensation_attempt_bound_admits_n_and_refuses_attempt_n_plus_one() {
 #[trace("FSpec-FR-426-AC-1", "FSpec-FR-426-AC-9")]
 fn finish_is_stepped() {
     let fixture = fixture(1);
-    let reachable = system(&fixture)
-        .reachable(NonZeroUsize::new(1).expect("one worker"))
-        .expect("finite protocol exploration completes");
-    let finishes = reachable
-        .states
-        .iter()
-        .flat_map(|state| &state.steps)
-        .filter(|(transition, _)| transition.kind() == StepKind::Finish)
-        .count();
-    assert!(finishes > 0, "the protocol reaches its finish step");
+    let system = system(&fixture);
+    let (_, finishes) = bounded_step_successors(&system, StepKind::Finish)
+        .expect("the bounded prefix reaches finish");
+    use fsl_eval::simulation::TransitionSystem;
     assert!(
-        reachable.states.iter().any(|state| state.steps.is_empty()),
-        "the explored graph includes end states after finish"
+        finishes.iter().any(|(_, state)| system
+            .successors(state)
+            .expect("finished state expands")
+            .successors
+            .is_empty()),
+        "the prefix includes an end state after finish"
     );
 }
 
@@ -585,15 +690,7 @@ fn finish_is_stepped() {
 fn the_compensation_template_is_stepped() {
     let fixture = fixture_with_recovery_view(1, true);
     let system = system(&fixture);
-    let reachable = system
-        .reachable(NonZeroUsize::new(1).expect("one worker"))
-        .expect("finite compensation exploration completes");
-    let cends: Vec<_> = reachable
-        .states
-        .iter()
-        .flat_map(|state| &state.steps)
-        .filter(|(transition, _)| transition.kind() == StepKind::CEnd)
-        .collect();
+    let (_, cends) = recovery_cend_successors(&system).expect("the bounded prefix reaches cend");
     assert!(!cends.is_empty(), "an activation creates a stepped thread");
     let mut threads = BTreeMap::<_, BTreeSet<_>>::new();
     for (transition, _) in cends {

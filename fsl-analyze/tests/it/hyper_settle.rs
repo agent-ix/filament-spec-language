@@ -616,6 +616,7 @@ fn a_reduction_outcome_settles_by_its_cause_and_a_reduced_hold_waits_for_the_che
 
     let reduced = settle(&HyperOutcome::HoldsReduced {
         certificates: Vec::new(),
+        scope: fsl_replay::HyperReducedScope::Product,
         reductions: Vec::new(),
         stats: RunStats::default(),
     });

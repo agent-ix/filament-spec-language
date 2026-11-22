@@ -73,7 +73,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::{
-    EffectiveId, Incomplete, Integer, IntegerInterval, NodeKey, ObjectReference, Refusal,
+    EffectiveId, Incomplete, Integer, IntegerInterval, Meter, NodeKey, ObjectReference, Refusal,
     ScalarLimits, Undefined, ValueType,
 };
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
@@ -130,7 +130,7 @@ pub(crate) use reference_bindings::ReferenceBinding;
 pub use reference_bindings::ReferenceBindings;
 mod hyper_letters;
 pub use hyper_letters::CheckedHyperLetters;
-pub use letters::{ClauseLetters, DecisiveObservation, LettersRefusal};
+pub use letters::{ClauseLetters, DecisiveObservation, LettersPreparationError, LettersRefusal};
 pub use probabilistic::{
     same_rewards, same_values, Action, Draw, NotMarkov, ScheduledIdentity, TransitionId,
     UndecidedSuccessor, Unsteppable, WeightedStep,
@@ -710,6 +710,7 @@ pub enum ModelShrinkError {
 /// One operation of an object type's effective view, with the texts and keys
 /// that name it.
 struct Application {
+    key: DeclarationKey,
     name: String,
     declaring: EffectiveId,
     declaration: OperationDeclaration,
@@ -784,6 +785,24 @@ pub enum NativeCandidateVisit {
     Stopped,
 }
 
+/// A probability system's structural admission failure or original scalar
+/// stop while checking the rewards against its run allowance (FR-120).
+#[derive(Debug, thiserror::Error)]
+pub enum ProbabilityAdmissionFailure {
+    /// The ordinary structural or reward-sign admission failure.
+    #[error("model admission failed: {0:?}")]
+    Admission(AdmissionFailure),
+    /// The owner's unchanged scalar stop while admitting a scoped reward.
+    #[error("probability reward accounting stopped: {0:?}")]
+    Evaluation(filament_exact::Incomplete),
+}
+
+impl From<AdmissionFailure> for ProbabilityAdmissionFailure {
+    fn from(failure: AdmissionFailure) -> Self {
+        Self::Admission(failure)
+    }
+}
+
 /// FR-120: the transition system of a checked package's state family.
 pub struct ModelSystem<'a> {
     /// The identity of the one domain package this system is over, when it
@@ -805,6 +824,8 @@ pub struct ModelSystem<'a> {
     populations: Vec<fsl_semantics::model::state::StatePopulation>,
     limits: ExpansionLimits,
     meter: ScalarLimits,
+    probability_work: Option<filament_exact::WorkScope>,
+    probability_cancel: Option<filament_exact::Cancel>,
     shared_meter: std::sync::Arc<std::sync::Mutex<filament_exact::Meter>>,
     shared_accounting: std::sync::atomic::AtomicBool,
     shared_limits: std::sync::Mutex<ScalarLimits>,
@@ -979,7 +1000,20 @@ impl ModelSystem<'_> {
         if self.shares_evaluation_meter() {
             EvaluationMeter::Shared(self.shared_meter.lock().expect("evaluation meter lock"))
         } else {
-            EvaluationMeter::Local(Box::new(filament_exact::Meter::new(self.meter)))
+            EvaluationMeter::Local(Box::new(self.fresh_meter()))
+        }
+    }
+
+    /// A fresh evaluation meter, sharing only the probability item's work
+    /// allowance when this system belongs to such an item.
+    pub fn fresh_meter(&self) -> filament_exact::Meter {
+        let meter = match &self.probability_work {
+            Some(scope) => scope.meter(),
+            None => filament_exact::Meter::new(self.meter),
+        };
+        match &self.probability_cancel {
+            Some(cancel) => meter.with_cancel(cancel.clone()),
+            None => meter,
         }
     }
 }
@@ -1111,6 +1145,7 @@ impl<'a> ModelSystem<'a> {
     pub(crate) fn typing(&self) -> encode::Typing<'_> {
         encode::Typing::with_variants(self.types, self.input.variant_types)
             .with_enums(self.input.enums)
+            .with_enum_members(self.input.enum_members)
             .with_tuple_positions(&self.tuple_positions)
             .with_clock_members(&self.clock_counts, &self.clock_bits)
             .with_names(&self.key_names)
@@ -1122,6 +1157,7 @@ impl<'a> ModelSystem<'a> {
     pub(crate) fn value_typing(&self) -> encode::Typing<'a> {
         encode::Typing::with_variants(self.types, self.input.variant_types)
             .with_enums(self.input.enums)
+            .with_enum_members(self.input.enum_members)
     }
 
     /// Check the universes, then admit each initial document in the given
@@ -1180,6 +1216,37 @@ impl<'a> ModelSystem<'a> {
     ) -> Result<Self, AdmissionFailure> {
         let selections = request.input.model_inputs();
         Self::over(request, selections, Some(cancel), &[])
+    }
+
+    /// Admit a probability item's system with its work scope already attached,
+    /// including reward admission before any initial-state or claim reads.
+    ///
+    /// # Errors
+    /// Ordinary admission failures, or the original scalar stop from a
+    /// reward read admitted against the probability item's work scope.
+    pub fn new_with_work_scope(
+        request: ModelSimulationRequest<'a>,
+        scope: filament_exact::WorkScope,
+        cancel: &filament_exact::Cancel,
+    ) -> Result<Self, ProbabilityAdmissionFailure> {
+        let selections = request.input.model_inputs();
+        let system = Self::over_scoped(request, selections, Some(cancel), &[], Some(scope))?;
+        system.check_rewards_metered(Some(cancel))?;
+        Ok(system)
+    }
+
+    /// Validate the shared structural binding of an all-probability request.
+    /// Reward evaluation belongs to each item's scoped constructor, so this
+    /// preflight neither evaluates rewards nor returns an executable system.
+    ///
+    /// # Errors
+    /// The structural admission failures of [`Self::new`]. Each item must
+    /// still admit its rewards through [`Self::new_with_work_scope`].
+    pub fn validate_probability_binding(
+        request: ModelSimulationRequest<'a>,
+    ) -> Result<(), AdmissionFailure> {
+        let selections = request.input.model_inputs();
+        Self::over_scoped(request, selections, None, &[], None).map(|_| ())
     }
 
     /// The model system's selected populations in ascending declaration-key
@@ -1289,6 +1356,18 @@ impl<'a> ModelSystem<'a> {
         selections: fsl_semantics::model::observation::ModelSelections<'_>,
         cancel: Option<&filament_exact::Cancel>,
         other_models: &[DeclarationKey],
+    ) -> Result<Self, AdmissionFailure> {
+        let system = Self::over_scoped(request, selections, cancel, other_models, None)?;
+        system.check_rewards_with_cancel(cancel)?;
+        Ok(system)
+    }
+
+    fn over_scoped(
+        request: ModelSimulationRequest<'a>,
+        selections: fsl_semantics::model::observation::ModelSelections<'_>,
+        cancel: Option<&filament_exact::Cancel>,
+        other_models: &[DeclarationKey],
+        probability_work: Option<filament_exact::WorkScope>,
     ) -> Result<Self, AdmissionFailure> {
         let input = request.input;
         let types = input.types;
@@ -1577,6 +1656,8 @@ impl<'a> ModelSystem<'a> {
             populations,
             limits: request.expansion,
             meter: request.meter,
+            probability_cancel: probability_work.as_ref().and(cancel.cloned()),
+            probability_work,
             shared_meter: std::sync::Arc::new(std::sync::Mutex::new(filament_exact::Meter::new(
                 request.meter,
             ))),
@@ -1598,8 +1679,40 @@ impl<'a> ModelSystem<'a> {
             clock_bits: bits,
             bounded: std::sync::OnceLock::new(),
         };
-        system.check_rewards_with_cancel(cancel)?;
+        // The shared enumeration routes do not yet carry an authenticated
+        // population beside each clock-owner candidate. Refuse those actual
+        // data domains before reward or frame probing can enumerate them.
+        system.check_clock_reference_enumeration()?;
         Ok(system)
+    }
+
+    fn check_clock_reference_enumeration(&self) -> Result<(), AdmissionFailure> {
+        for field in self.fields.values().flatten() {
+            if !domain::clock_reference_paths(&field.value_type, self.types).is_empty() {
+                return Err(refused(
+                    Code::UnknownRequiredFeature,
+                    "unsupported-feature",
+                    &[
+                        ("reason", "clock-reference-enumeration".to_owned()),
+                        ("member", field.key.node.clone()),
+                    ],
+                ));
+            }
+        }
+        for (node, path, value_type) in self.generation_domains() {
+            if !domain::clock_reference_paths(&value_type, self.types).is_empty() {
+                return Err(refused(
+                    Code::UnknownRequiredFeature,
+                    "unsupported-feature",
+                    &[
+                        ("reason", "clock-reference-enumeration".to_owned()),
+                        ("member", format!("{node:?}")),
+                        ("domain_path", format!("{path:?}")),
+                    ],
+                ));
+            }
+        }
+        Ok(())
     }
 
     /// The RFC 8785 key bytes and `filament.simulation.state-key/v1` state key of
@@ -1880,6 +1993,7 @@ impl<'a> ModelSystem<'a> {
             let text = declaration_text(&key, CanonicalLimits::new(u64::MAX))
                 .map_err(|_| fault("operation-identity-text"))?;
             applications.push(Application {
+                key,
                 name,
                 declaring,
                 declaration: operation.clone(),
@@ -1949,7 +2063,7 @@ impl<'a> ModelSystem<'a> {
         &self,
         value_type: &ValueType,
         objects: &[ObjectReference],
-        selectors: Option<&domain::ClockSelectorMaxima>,
+        _selectors: Option<&domain::ClockSelectorMaxima>,
     ) -> Option<domain::Domain> {
         let bits = match self
             .max_value_bits
@@ -1958,17 +2072,7 @@ impl<'a> ModelSystem<'a> {
             0 => None,
             bits => Some(bits),
         };
-        domain::Domain::of_bounded_with_clock_places(
-            value_type,
-            objects,
-            self.types,
-            &self.record_orders,
-            bits,
-            domain::ClockDomains {
-                models: self.input.timed_models,
-                maxima: selectors,
-            },
-        )
+        domain::Domain::of_bounded(value_type, objects, self.types, &self.record_orders, bits)
     }
 
     pub(super) fn reset_value_bound_cuts(&self) {
@@ -2373,6 +2477,163 @@ impl<'a> ModelSystem<'a> {
                     })
             })
             .collect())
+    }
+
+    /// List policy instances in the existing deterministic order, charging
+    /// caller-owned traversal, ordering and full new capacities before growth.
+    /// The ordinary unmetered instance API remains unchanged.
+    ///
+    /// # Errors
+    /// The original instance admission, scalar accounting, cancellation or
+    /// allocation/encoding refusal; no partial instance list is returned.
+    pub fn instances_with_meter(
+        &self,
+        over: &ValueType,
+        meter: &mut Meter,
+    ) -> Result<Vec<ModelInstance>, crate::automaton::PolicyStateError> {
+        use crate::automaton::PolicyStateError;
+        use crate::policy_budget::{declaration_bytes, Budget};
+        let budget = Budget {
+            meter: std::cell::RefCell::new(meter),
+            stopped: std::cell::RefCell::new(None),
+        };
+        budget.work(0)?;
+        let ValueType::Reference(parameter) = over else {
+            return Ok(Vec::new());
+        };
+        let mut admitting = Vec::new();
+        for population in &self.populations {
+            budget.work(1)?;
+            if self.overlaps_with_budget(population, parameter, &budget)? {
+                let identity = declaration_bytes(&population.key, &budget)?;
+                budget.growth(&mut admitting, 1)?;
+                admitting.push((identity, &population.key));
+            }
+        }
+        let mut unbounded = Vec::new();
+        for (_, population) in &admitting {
+            budget.work(1)?;
+            if self.universe_with_budget(population, &budget)?.is_none() {
+                budget.growth(&mut unbounded, 1)?;
+                unbounded.push(*population);
+            }
+        }
+        let extent = fsl_semantics::family::classify_unbounded_populations_with(
+            &unbounded,
+            &mut |units| {
+                budget.work(usize::try_from(units).map_err(|_| PolicyStateError::Invalid)?)
+            },
+            &mut |bytes| budget.reserve(bytes),
+        )
+        .map_err(|error| match error {
+            filament_exact::NodeKeyConstructionError::Policy(error) => error,
+            filament_exact::NodeKeyConstructionError::Construction(
+                filament_exact::InvalidNodeKey::Allocation { requested },
+            ) => PolicyStateError::Encoding(quire_canonical::Error::Allocation { requested }),
+            filament_exact::NodeKeyConstructionError::Construction(_) => PolicyStateError::Invalid,
+        })?;
+        if let fsl_semantics::family::ClaimExtent::Unbounded(domains) = extent {
+            return Err(crate::simulation::NotSimulated::RequiresBound(
+                crate::simulation::RequiresBound {
+                    domains: Some(domains),
+                    capacities: Vec::new(),
+                    clock_references: Vec::new(),
+                },
+            )
+            .into());
+        }
+        // Insertion sort keeps the byte-comparison schedule caller-controlled:
+        // every inspected pair is admitted before comparison and movement.
+        for position in 1..admitting.len() {
+            let mut at = position;
+            while at > 0 {
+                let (left, right) = (&admitting[at - 1].0, &admitting[at].0);
+                let mut order = std::cmp::Ordering::Equal;
+                for (left, right) in left.iter().zip(right) {
+                    budget.work(1)?;
+                    order = left.cmp(right);
+                    if order != std::cmp::Ordering::Equal {
+                        break;
+                    }
+                }
+                if order == std::cmp::Ordering::Equal {
+                    budget.work(1)?;
+                    order = left.len().cmp(&right.len());
+                }
+                if order != std::cmp::Ordering::Greater {
+                    break;
+                }
+                budget.work(1)?;
+                admitting.swap(at - 1, at);
+                at -= 1;
+            }
+        }
+        let mut instances = Vec::new();
+        for (_, population) in admitting {
+            budget.work(1)?;
+            for key in self
+                .universe_with_budget(population, &budget)?
+                .into_iter()
+                .flatten()
+            {
+                budget.work(1)?;
+                let population = DeclarationKey {
+                    package: budget.text(&population.package)?,
+                    node: budget.text(&population.node)?,
+                };
+                let key = budget.text(key)?;
+                budget.growth(&mut instances, 1)?;
+                instances.push(ModelInstance { population, key });
+            }
+        }
+        Ok(instances)
+    }
+
+    fn universe_with_budget(
+        &self,
+        population: &DeclarationKey,
+        budget: &crate::policy_budget::Budget<'_>,
+    ) -> Result<Option<&Vec<String>>, crate::automaton::PolicyStateError> {
+        for (candidate, keys) in &self.universes {
+            budget.work(1)?;
+            if budget.compare_declarations(candidate, population)? == std::cmp::Ordering::Equal {
+                return Ok(Some(keys));
+            }
+        }
+        Ok(None)
+    }
+
+    fn overlaps_with_budget(
+        &self,
+        population: &fsl_semantics::model::state::StatePopulation,
+        parameter: &EffectiveId,
+        budget: &crate::policy_budget::Budget<'_>,
+    ) -> Result<bool, crate::automaton::PolicyStateError> {
+        for member in &population.member_types {
+            budget.work(1)?;
+            let Some(member) = self.model.type_identity_with_work(member, &mut |units| {
+                budget.work(
+                    usize::try_from(units)
+                        .map_err(|_| crate::automaton::PolicyStateError::Invalid)?,
+                )
+            })?
+            else {
+                continue;
+            };
+            // The admitted conformance API owns both arguments. Their real
+            // copies use its identity reservation hook; its internal query
+            // work still needs the owner's borrowed metered seam.
+            if self
+                .types
+                .conforms(budget.effective(member)?, budget.effective(parameter)?)
+                || self
+                    .types
+                    .conforms(budget.effective(parameter)?, budget.effective(member)?)
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Whether `population` overlaps the object type `parameter` (FR-125

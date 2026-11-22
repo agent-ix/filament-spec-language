@@ -3953,6 +3953,86 @@ pub fn model_operation_table<'v>(
     Ok(table)
 }
 
+/// Assemble the data declarations of an already normalized selected model.
+/// The caller supplies the authenticated declaration span and retains its
+/// existing unit environment; this does not normalize the model again.
+pub(crate) fn dense_model_data_environment(
+    view: &crate::model::normalize::EffectiveView,
+    span: Span,
+    existing: &TypeEnvironment,
+    units: &BTreeMap<String, filament_exact::UnitId>,
+) -> Result<TypeEnvironment, AssemblyRefusal> {
+    let alias = view.domain_package().model_selection.identity.clone();
+    let selected = SelectedModel {
+        alias: alias.clone(),
+        span,
+        view: view.clone(),
+        operation_clauses: Vec::new(),
+        type_invariants: Vec::new(),
+    };
+    let declared = model_object_types(
+        &alias,
+        &selected,
+        span,
+        &mut OperationTable::default(),
+        units,
+        &[],
+    )
+    .map_err(|errors| AssemblyRefusal { errors })?;
+    let unread = |node: String| AssemblyRefusal {
+        errors: vec![AssemblyError {
+            span,
+            cause: AssemblyCause::UnsupportedModelMember {
+                alias: alias.clone(),
+                node,
+            },
+        }],
+    };
+    if let Some(member) = declared.untyped_members.first() {
+        return Err(unread(member.locus.clone()));
+    }
+    let mut composites: BTreeMap<_, _> = existing
+        .composites()
+        .map(|declaration| (declaration.key(), declaration.clone()))
+        .collect();
+    let mut objects: BTreeMap<_, _> = existing
+        .object_types()
+        .map(|declaration| (declaration.key(), declaration.clone()))
+        .collect();
+    for declaration in declared.composites {
+        if composites
+            .get(&declaration.key())
+            .is_some_and(|held| held.shape() != declaration.shape())
+        {
+            return Err(unread(declaration.name().to_owned()));
+        }
+        composites.insert(declaration.key(), declaration);
+    }
+    for declaration in declared.objects {
+        if objects.get(&declaration.key()).is_some_and(|held| {
+            held.attributes() != declaration.attributes()
+                || held.supertypes() != declaration.supertypes()
+        }) {
+            return Err(unread(declaration.name().to_owned()));
+        }
+        objects.insert(declaration.key(), declaration);
+    }
+    let spans = composites
+        .values()
+        .map(|declaration| declaration.name())
+        .chain(objects.values().map(|declaration| declaration.name()))
+        .map(|name| (name.to_owned(), span))
+        .collect();
+    admit_types(
+        composites.into_values().collect(),
+        &objects.into_values().collect::<Vec<_>>(),
+        &spans,
+        TypeEnvironmentLimits::default(),
+        &Cancel::new(),
+    )
+    .map(|admitted| admitted.types.with_units(existing.units().clone()))
+}
+
 /// The type environment the unit's clauses are typed against, with the staged
 /// model admission whose completion waits for the conformance stage.
 pub(crate) struct AdmittedTypes {

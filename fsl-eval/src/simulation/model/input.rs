@@ -15,9 +15,7 @@
 use std::collections::BTreeSet;
 
 use filament_eval::{CallFailure, Evaluation};
-use filament_exact::{
-    EffectiveId, Meter, NodeKey, ObjectReference, ScalarLimits, Value, ValueType,
-};
+use filament_exact::{EffectiveId, Meter, NodeKey, ObjectReference, Value, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::declaration::TypeEnvironment;
 use fsl_package::{
@@ -160,6 +158,9 @@ pub struct ModelCheckInput<'a> {
     pub variant_types: &'a [VariantTypeDeclaration],
     /// The package's enumerations, which a value's canonical form names.
     pub enums: &'a [EnumBinding],
+    /// The package's model enumerations read from its rows, which a value's
+    /// canonical form names when it holds no `variant_types`.
+    pub enum_members: Option<&'a filament_semantic_value::enumeration::EnumMemberIndex>,
     /// The operations each object type declares.
     pub operations: &'a OperationTable,
     /// The domain packages the package selects, ascending by identity
@@ -212,6 +213,7 @@ impl<'a> ModelCheckInput<'a> {
             types: scope.types(),
             variant_types: scope.variant_types(),
             enums: scope.enums(),
+            enum_members: None,
             operations: scope.operations(),
             model_selections: graph.model_selections(),
             source_packages: graph.source_packages(),
@@ -427,6 +429,7 @@ struct ProbabilisticParts {
     model_selections: Vec<DomainPackageRef>,
     operations: OperationTable,
     probabilistic: CheckedProbabilisticModel,
+    unit_names: std::collections::BTreeMap<String, filament_exact::UnitId>,
 }
 
 impl ProbabilisticParts {
@@ -518,6 +521,7 @@ impl ProbabilisticParts {
             model_selections,
             operations,
             probabilistic,
+            unit_names,
         })
     }
 }
@@ -575,6 +579,8 @@ pub struct PackageModelInput<'p> {
     rewards: PackageRewards,
     terminals: Vec<fsl_package::BareTerminal>,
     state_clauses: Vec<StateClauseEntry>,
+    timed_models: Vec<TimedModel>,
+    time_sources: Vec<ModelTimeSource>,
 }
 
 impl<'p> PackageModelInput<'p> {
@@ -589,7 +595,9 @@ impl<'p> PackageModelInput<'p> {
     /// `probabilistic` nodes carry, rebuilt as S3 records them against the
     /// selected domain packages (FSL FR-740), and its rewards are the ones
     /// its `reward` nodes carry, evaluated through their clause functions. It
-    /// carries no claim of the model, and its delay tables are empty.
+    /// carries no claim of the model. A dense time source with a source-owned
+    /// base Time dimension, direct unit and required direct clock fields is
+    /// read into delay tables; other timed forms refuse the input.
     ///
     /// # Errors
     ///
@@ -632,11 +640,9 @@ impl<'p> PackageModelInput<'p> {
         normalization: fsl_semantics::model::accounting::ModelNormalizationLimits,
         timed_trace: bool,
     ) -> Result<Self, PendingPackageForm> {
-        let unread = if timed_trace {
-            package.first_unread_timed_trace_form()
-        } else {
-            package.first_unread_model_form()
-        };
+        // Timed nodes are validated in full below before a simulation input
+        // is published. Supplied trace stamps keep their existing route.
+        let unread = package.first_unread_timed_trace_form();
         if let Some((form, node)) = unread {
             return Err(PendingPackageForm::Form {
                 form,
@@ -644,12 +650,26 @@ impl<'p> PackageModelInput<'p> {
             });
         }
         let ProbabilisticParts {
-            world,
-            model,
+            mut world,
+            mut model,
             model_selections,
             operations,
             probabilistic,
+            unit_names,
         } = ProbabilisticParts::read(package, packages, normalization, false)?;
+        let (timed_models, time_sources) = if timed_trace {
+            (Vec::new(), Vec::new())
+        } else {
+            package
+                .direct_dense_tables(&model)
+                .map_err(|node| PendingPackageForm::Form {
+                    form: UnreadModelForm::TimedModel,
+                    node,
+                })?
+        };
+        world
+            .read_dense_model_data(&mut model, &time_sources, &unit_names)
+            .map_err(PendingPackageForm::Operations)?;
         let rewards = PackageRewards::of(package, world.clone(), &probabilistic)?;
         // FR-940: the state clauses by their `claim_names` rows (FSpec
         // FR-322), in source order, as the source route lists them.
@@ -683,6 +703,8 @@ impl<'p> PackageModelInput<'p> {
             rewards,
             state_clauses,
             terminals,
+            timed_models,
+            time_sources,
         })
     }
 
@@ -720,7 +742,8 @@ impl<'p> PackageModelInput<'p> {
 
     /// FR-940: the package form of the temporal clause declared at the
     /// `claim` occurrence `claim`, the model checker's clause on the package route: read from
-    /// the package's nodes ([`BarePackage::temporal_clause_form`]) with the
+    /// the package's nodes ([`BarePackage::temporal_clause_run_form`], each operator's
+    /// step interval read) with the
     /// population domains of the supplied domain packages, and rebuilt as S3
     /// builds it ([`CheckedTemporalClause::of_package_form`]) within S3's
     /// domain `position_limit`.
@@ -741,7 +764,7 @@ impl<'p> PackageModelInput<'p> {
         let clause = claim.node();
         let mut form = self
             .package
-            .temporal_clause_form(claim)
+            .temporal_clause_run_form(claim)
             .map_err(PendingClauseForm::Read)?;
         let pending = |fact| -> Result<CheckedTemporalClause, PendingClauseForm> {
             let node = self
@@ -823,10 +846,12 @@ impl<'p> PackageModelInput<'p> {
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
         position_limit: u64,
     ) -> Result<fsl_semantics::check::CheckedStateGraphClaim, PendingClauseForm> {
-        let form = self
-            .package
-            .state_graph_claim_form(claim)
-            .map_err(PendingClauseForm::Read)?;
+        let form = if self.time_sources.is_empty() {
+            self.package.state_graph_claim_form(claim)
+        } else {
+            self.package.direct_dense_state_graph_form(claim)
+        }
+        .map_err(PendingClauseForm::Read)?;
         fsl_semantics::check::CheckedStateGraphClaim::of_package_form(
             form,
             self.world.types(),
@@ -908,11 +933,12 @@ impl<'p> PackageModelInput<'p> {
             types: self.world.types(),
             variant_types: &[],
             enums: &[],
+            enum_members: Some(self.world.enum_members()),
             operations: &self.operations,
             model_selections: &self.model_selections,
             source_packages: &[],
-            timed_models: &[],
-            time_sources: &[],
+            timed_models: &self.timed_models,
+            time_sources: &self.time_sources,
             probabilistic: &self.probabilistic,
             state_clauses: self.state_clauses.clone(),
             terminals: Ok(self
@@ -967,6 +993,16 @@ const PACKAGE_FORM: InternalFault = InternalFault::new("FR-940", "package-form-o
 /// route, the package route through [`CheckedPackageEvaluation`] over the
 /// package's forms.
 pub trait ModelEvaluator: sealed::Sealed + Sync {
+    /// The actual admitted package form of a state-graph occurrence, when
+    /// this evaluator owns package forms. Used to authenticate a certificate's
+    /// claim against its root and declaration metadata before evaluating it.
+    fn package_state_graph_form(
+        &self,
+        _claim: &fsl_foundation::source::provenance::OccurrenceKey,
+    ) -> Option<fsl_semantics::check::PackageStateGraphForm> {
+        None
+    }
+
     /// FR-107: one state clause, by name, over its admitted observations.
     ///
     /// # Errors
@@ -980,7 +1016,7 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     ) -> Result<ClauseEvaluation, CallFailure>;
 
     /// FR-107 "Clause sets": the state clauses of one invocation, object or
-    /// state, each with a fresh meter of `limits`, polling `cancel`.
+    /// state, each with an ordinary fresh meter supplied by the owning run.
     ///
     /// # Errors
     ///
@@ -988,8 +1024,7 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     fn evaluate_clause_set(
         &self,
         clauses: &[(QualifiedName, &AdmittedObservations)],
-        limits: ScalarLimits,
-        cancel: Option<&filament_exact::Cancel>,
+        fresh_meter: &mut dyn FnMut() -> Meter,
     ) -> Result<ClauseSetEvaluation, CallFailure>;
 
     /// FR-940: the `holds` atom `atom` of a temporal clause, keyed by the
@@ -1292,8 +1327,12 @@ pub trait ModelEvaluator: sealed::Sealed + Sync {
     ) -> Result<Evaluation, InternalFault>;
 
     /// FR-940: evaluate a package protocol slot from its admitted node
-    /// descriptor and supplied package binders. This is separate from the
-    /// source `CheckedBody` path so package execution never synthesizes one.
+    /// descriptor and internally generated package binders. This trusted
+    /// model-engine entry retains unavailable population origins as absent;
+    /// it does not mint authority for them. External FR-390 supplies use
+    /// `CheckedPackageEvaluation` and its complete-provenance admission.
+    /// This is separate from the source `CheckedBody` path so package
+    /// execution never synthesizes one.
     fn evaluate_package_protocol_slot(
         &self,
         _slot: &ProtocolSlot,
@@ -1596,10 +1635,9 @@ impl ModelEvaluator for CheckedPackage {
     fn evaluate_clause_set(
         &self,
         clauses: &[(QualifiedName, &AdmittedObservations)],
-        limits: ScalarLimits,
-        cancel: Option<&filament_exact::Cancel>,
+        fresh_meter: &mut dyn FnMut() -> Meter,
     ) -> Result<ClauseSetEvaluation, CallFailure> {
-        crate::value::evaluate_clause_set_with_cancel(self, clauses, limits, cancel)
+        crate::value::evaluate_clause_set_with_meter_factory(self, clauses, fresh_meter)
     }
 
     fn evaluate_holds(
@@ -2086,6 +2124,13 @@ const NO_SOURCE_FOOTPRINT: FootprintRefusal = FootprintRefusal::Unresolved {
 };
 
 impl ModelEvaluator for BarePackage<'_> {
+    fn package_state_graph_form(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+    ) -> Option<fsl_semantics::check::PackageStateGraphForm> {
+        self.state_graph_claim_form(claim).ok()
+    }
+
     fn package_protocol_observation(
         &self,
         model: &DomainPackageRef,
@@ -2114,10 +2159,9 @@ impl ModelEvaluator for BarePackage<'_> {
     fn evaluate_clause_set(
         &self,
         clauses: &[(QualifiedName, &AdmittedObservations)],
-        limits: ScalarLimits,
-        _cancel: Option<&filament_exact::Cancel>,
+        fresh_meter: &mut dyn FnMut() -> Meter,
     ) -> Result<ClauseSetEvaluation, CallFailure> {
-        CheckedPackageEvaluation::evaluate_clause_set(self, clauses, limits)
+        crate::value::evaluate_clause_set_with_meter_factory(self, clauses, fresh_meter)
     }
 
     fn evaluate_holds(
@@ -2433,7 +2477,9 @@ impl ModelEvaluator for BarePackage<'_> {
         supply: &ProtocolSupply<'_>,
         meter: &mut Meter,
     ) -> Result<ProtocolSlotEvaluation, CallFailure> {
-        CheckedPackageEvaluation::evaluate_protocol_slot(self, slot, supply, meter)
+        // This engine path supplies its own generated binder values; public
+        // CheckedPackageEvaluation ports retain mandatory FR-390 origins.
+        crate::value::evaluate_generated_package_protocol_slot(self, slot, supply, meter)
     }
 
     fn evaluate_join_predicate(

@@ -16,12 +16,17 @@ fn program_source(file: &str) -> Value {
 
 /// Run `function(a = value)` of the model-free unit `unit`.
 fn run_unit(unit: &str, function: &str, value: Value) -> Output {
+    run_call(unit, function, json!([{"parameter": "a", "value": value}]))
+}
+
+/// Run `function` of the model-free unit `unit` over `arguments`.
+fn run_call(unit: &str, function: &str, arguments: Value) -> Output {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join("program.native"), unit).unwrap();
     let request = json!({"format": "native-run/1", "request": {
         "models": [],
         "program": {"source": program_source("program.native")},
-        "call": {"function": function, "arguments": [{"parameter": "a", "value": value}]},
+        "call": {"function": function, "arguments": arguments},
     }});
     std::fs::write(
         directory.path().join("request.json"),
@@ -48,6 +53,22 @@ fn assert_call_refusal(output: &Output, code: &str, cause: &str, path: &str) {
     assert_eq!(failure["details"]["path"], path, "{failure}");
 }
 
+/// A canonical reference refusal: the codec's typed condition names its code,
+/// its position in the canonical form and its kind in the message.
+fn assert_reference_refusal(output: &Output, code: &str, path: &str, condition: &str) {
+    assert_eq!(output.status.code(), Some(20), "{output:?}");
+    assert!(output.stdout.is_empty());
+    let failure: Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(failure["stage"], "call", "{failure}");
+    assert_eq!(failure["code"], code, "{failure}");
+    assert_eq!(failure["details"]["path"], path, "{failure}");
+    assert_eq!(
+        failure["message"],
+        format!("reference conversion {condition} at {path}"),
+        "{failure}"
+    );
+}
+
 // --- the ConfigVersion spine -------------------------------------------
 
 fn spine_source(file: &str, document: &str) -> Value {
@@ -59,8 +80,30 @@ fn population() -> String {
     format!("ix://{}/config_history", spine::PACKAGE_IDENTITY)
 }
 
-fn child() -> Value {
-    json!({"population": population(), "key": "child"})
+/// The lowercase hex of an object identity's bytes (FR-181 reference form).
+fn identity_hex(text: &str) -> Value {
+    json!(text
+        .bytes()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>())
+}
+
+/// The canonical reference to the `child` object, read from the result of a
+/// call over the population (a population is the one reference-producing
+/// argument the public run boundary still takes as a native selection).
+fn child_ref(directory: &Path) -> Value {
+    let result = completed(&spine_call(
+        directory,
+        "members",
+        json!([{"parameter": "p", "value": {"population": population()}}]),
+    ));
+    result["elements"]
+        .as_array()
+        .expect("a set of references")
+        .iter()
+        .find(|member| member["identity"] == identity_hex("child"))
+        .cloned()
+        .expect("the child reference")
 }
 
 fn spine_dir(functions: &str) -> tempfile::TempDir {
@@ -104,7 +147,9 @@ fn spine_call(directory: &Path, function: &str, arguments: Value) -> Output {
 }
 
 const SAME: &str = "function same using v(r: Config::ConfigVersion): \
-                    Config::ConfigVersion pure { r }\n";
+                    Config::ConfigVersion pure { r }\n\
+                    function members using v(p: Population<Config::ConfigVersion>[4]): \
+                    Population<Config::ConfigVersion>[4] pure { p }\n";
 
 #[test]
 #[trace("TC-2370", "FR-650-AC-9")]
@@ -113,21 +158,22 @@ fn a_reference_result_spells_structural_identities() {
     let first = completed(&spine_call(
         directory.path(),
         "same",
-        json!([{"parameter": "r", "value": {"reference": child()}}]),
+        json!([{"parameter": "r", "value": child_ref(directory.path())}]),
     ));
-    let triple = &first["reference"];
+    assert_eq!(first["type"], "reference", "{first}");
+    let triple = &first;
     let universe = triple["universe"].as_object().expect("a universe object");
     let mut members: Vec<_> = universe.keys().cloned().collect();
     members.sort();
     assert_eq!(members, ["ordinal", "package", "path"], "{first}");
     assert!(universe["ordinal"].is_u64(), "{first}");
-    let kind = triple["type"].as_object().expect("a type object");
-    assert_eq!(kind.len(), 2, "{first}");
-    assert!(kind["owner_effective_type"].is_null(), "{first}");
-    let original = kind["original"].as_object().expect("an original key");
-    assert_eq!(original.len(), 2, "{first}");
-    assert!(original["package"].is_string() && original["node"].is_string());
-    assert_eq!(triple["object_identity"], "child");
+    let kind = triple["object_type"]
+        .as_object()
+        .expect("an object type node id");
+    let mut kind_members: Vec<_> = kind.keys().cloned().collect();
+    kind_members.sort();
+    assert_eq!(kind_members, ["ordinal", "package", "path"], "{first}");
+    assert_eq!(triple["identity"], identity_hex("child"), "{first}");
     let again = completed(&spine_call(
         directory.path(),
         "same",
@@ -136,28 +182,28 @@ fn a_reference_result_spells_structural_identities() {
     assert_eq!(again, first);
 
     let mut hex = first.clone();
-    hex["reference"]["universe"] = json!("0".repeat(64));
-    assert_call_refusal(
+    hex["universe"] = json!("0".repeat(64));
+    assert_reference_refusal(
         &spine_call(
             directory.path(),
             "same",
             json!([{"parameter": "r", "value": hex}]),
         ),
         "invalid_runtime_input",
-        "wrong-value-kind",
-        "/reference/universe",
+        "/universe",
+        "MalformedWire",
     );
     let mut extra = first;
-    extra["reference"]["type"]["x"] = json!(1);
-    assert_call_refusal(
+    extra["object_type"]["x"] = json!(1);
+    assert_reference_refusal(
         &spine_call(
             directory.path(),
             "same",
             json!([{"parameter": "r", "value": extra}]),
         ),
         "invalid_runtime_input",
-        "unknown-member",
-        "/reference/type/x",
+        "/object_type",
+        "MalformedWire",
     );
 }
 
@@ -167,6 +213,8 @@ dimension Time;
 unit s : Time = rational(1, 1);
 unit ms : Time = rational(1, 1000) * s;
 function id_q using v(a: Quantity<ms>): Quantity<ms> pure { a }
+function give_ms using v(): Quantity<ms> pure { 3 ms / 2 }
+function give_s using v(): Quantity<s> pure { 1 s }
 "#;
 
 /// The same unit with a bounded quantity: S1 does not parse
@@ -187,20 +235,32 @@ fn rational(numerator: &str, denominator: &str) -> Value {
     json!({"kind": "rational", "numerator": numerator, "denominator": denominator})
 }
 
+/// The FR-181 canonical Integer.
+fn tagged_integer(value: &str) -> Value {
+    json!({"type": "integer", "value": value})
+}
+
+/// The FR-181 canonical Quantity: a Rational carrying its unit.
+fn tagged_quantity(unit: &str, numerator: &str, denominator: &str) -> Value {
+    json!({"type": "rational", "numerator": numerator, "denominator": denominator, "unit": unit})
+}
+
 #[test]
 #[trace("TC-2371", "FR-650-AC-10")]
 fn a_quantity_round_trips_normalized() {
-    let decimal = json!({"kind": "decimal", "coefficient": "150", "scale": "2"});
+    // The canonical writer spells each unit; the spellings it writes are the
+    // ones the reader admits back.
+    let unit =
+        |function: &str| completed(&run_call(QUANTITY_UNIT, function, json!([])))["unit"].clone();
+    let (ms, s) = (unit("give_ms"), unit("give_s"));
+    let decimal =
+        |unit: &Value| json!({"type": "decimal", "coefficient": "150", "scale": "2", "unit": unit});
     assert_eq!(
-        completed(&run_unit(
-            QUANTITY_UNIT,
-            "id_q",
-            quantity("ms", decimal.clone())
-        )),
-        quantity("ms", rational("3", "2"))
+        completed(&run_unit(QUANTITY_UNIT, "id_q", decimal(&ms))),
+        tagged_quantity(ms.as_str().unwrap(), "3", "2")
     );
     assert_call_refusal(
-        &run_unit(QUANTITY_UNIT, "id_q", quantity("s", decimal)),
+        &run_unit(QUANTITY_UNIT, "id_q", decimal(&s)),
         "invalid_runtime_input",
         "wrong-value-kind",
         "/unit",
@@ -234,7 +294,7 @@ function id_map using v(a: Map<String, Int[0, 9]>[0, 2]): Map<String, Int[0, 9]>
 "#;
 
 fn entry(key: &str, value: u8) -> Value {
-    json!({"key": {"kind": "string", "text": key}, "value": {"integer": value.to_string()}})
+    json!({"key": {"type": "string", "value": key}, "value": tagged_integer(&value.to_string())})
 }
 
 #[test]
@@ -245,9 +305,9 @@ fn a_map_round_trips_in_key_order() {
         completed(&run_unit(
             MAP_UNIT,
             "id_map",
-            json!({"map": [entry("b", 2), entry("a", 1)]})
+            json!({"type": "map", "entries": [entry("b", 2), entry("a", 1)]})
         )),
-        json!({"map": [entry("a", 1), entry("b", 2)]})
+        json!({"type": "map", "entries": [entry("a", 1), entry("b", 2)]})
     );
     let mut no_value = entry("a", 1);
     no_value.as_object_mut().unwrap().remove("value");
@@ -255,28 +315,28 @@ fn a_map_round_trips_in_key_order() {
     extra["extra"] = json!(true);
     for (value, code, cause, path) in [
         (
-            json!({"map": [entry("a", 1), entry("a", 2)]}),
+            json!({"type": "map", "entries": [entry("a", 1), entry("a", 2)]}),
             "invalid_runtime_input",
             "duplicate-member",
-            "/map/1/key",
+            "/entries/1/key",
         ),
         (
-            json!({"map": [entry("a", 1), entry("b", 2), entry("c", 3)]}),
+            json!({"type": "map", "entries": [entry("a", 1), entry("b", 2), entry("c", 3)]}),
             "cardinality_out_of_bound",
             "above-maximum",
             "",
         ),
         (
-            json!({"map": [no_value]}),
+            json!({"type": "map", "entries": [no_value]}),
             "invalid_runtime_input",
             "missing-member",
-            "/map/0",
+            "/entries/0",
         ),
         (
-            json!({"map": [extra]}),
+            json!({"type": "map", "entries": [extra]}),
             "invalid_runtime_input",
             "unknown-member",
-            "/map/0/extra",
+            "/entries/0/extra",
         ),
     ] {
         assert_call_refusal(&run_unit(MAP_UNIT, "id_map", value), code, cause, path);
@@ -343,14 +403,20 @@ fn extend_model(directory: &Path) {
 #[trace("TC-2373", "FR-650-AC-12")]
 fn model_declared_names_are_ix_identities() {
     let directory = spine_dir(
-        "function id_tier using v(a: Config::Tier): Config::Tier pure { a }\n\
+        "function gold using v(): Config::Tier pure { Config::Tier::Gold }\n\
+         function stamp using v(): Config::Stamp pure { Config::Stamp{n: 3} }\n\
+         function id_tier using v(a: Config::Tier): Config::Tier pure { a }\n\
          function id_stamp using v(a: Config::Stamp): Config::Stamp pure { a }\n",
     );
     extend_model(directory.path());
-    let tier_name = format!("ix://{}/Tier", spine::PACKAGE_IDENTITY);
-    let gold = json!({"variant": {"type": tier_name, "case": "Gold"}});
-    let stamp = json!({"record": {"type": format!("ix://{}/Stamp", spine::PACKAGE_IDENTITY),
-        "fields": {"n": {"integer": "3"}}}});
+    // The canonical writer names each declaration; the names it writes are the
+    // names the reader admits back.
+    let gold = completed(&spine_call(directory.path(), "gold", json!([])));
+    let stamp = completed(&spine_call(directory.path(), "stamp", json!([])));
+    assert_eq!(gold["type"], "enum", "{gold}");
+    assert_eq!(gold["member"], "Gold", "{gold}");
+    assert_eq!(stamp["type"], "record", "{stamp}");
+    let tier_name = gold["name"].clone();
     let call = |function: &str, value: Value| {
         spine_call(
             directory.path(),
@@ -363,20 +429,20 @@ fn model_declared_names_are_ix_identities() {
     assert_call_refusal(
         &call(
             "id_tier",
-            json!({"variant": {"type": "Tier", "case": "Gold"}}),
+            json!({"type": "enum", "name": "Tier", "member": "Gold"}),
         ),
         "invalid_runtime_input",
         "wrong-value-kind",
-        "/variant/type",
+        "/name",
     );
     assert_call_refusal(
         &call(
             "id_tier",
-            json!({"variant": {"type": tier_name, "case": "variant/Tier-Gold"}}),
+            json!({"type": "enum", "name": tier_name, "member": "variant/Tier-Gold"}),
         ),
         "invalid_runtime_input",
         "invalid-value",
-        "/variant/case",
+        "/member",
     );
 }
 
@@ -400,10 +466,10 @@ fn depth(value: &Value) -> usize {
 fn a_deep_value_round_trips_and_null_refuses() {
     const LEVELS: usize = 60;
     let mut type_text = String::from("Int[0, 1]");
-    let mut value = json!({"integer": "1"});
+    let mut value = tagged_integer("1");
     for _ in 0..LEVELS {
         type_text = format!("Sequence<{type_text}>[0, 1]");
-        value = json!({"sequence": [value]});
+        value = json!({"type": "sequence", "elements": [value]});
     }
     let unit = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
@@ -417,16 +483,20 @@ fn a_deep_value_round_trips_and_null_refuses() {
     let record_unit = "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          record P { x: Int[0, 9]; y: Int[0, 9]; }\n\
+         function mk using v(): P pure { P{x: 1, y: 2} }\n\
          function id_rec using v(a: P): P pure { a }\n";
+    let name = completed(&run_call(record_unit, "mk", json!([])))["name"].clone();
     assert_call_refusal(
         &run_unit(
             record_unit,
             "id_rec",
-            json!({"record": {"type": "P", "fields": {"x": {"integer": "1"}, "y": null}}}),
+            json!({"type": "record", "name": name, "fields": [
+                {"name": "x", "value": tagged_integer("1")},
+                {"name": "y", "value": null}]}),
         ),
         "invalid_runtime_input",
         "wrong-value-kind",
-        "/record/fields/y",
+        "/fields/1/value",
     );
 }
 
@@ -442,13 +512,16 @@ fn a_population_result_is_a_set_of_references() {
         "members",
         json!([{"parameter": "p", "value": {"population": population()}}]),
     ));
-    let members = value["set"].as_array().expect("a set");
+    assert_eq!(value["type"], "set", "{value}");
+    let members = value["elements"].as_array().expect("a set");
     assert_eq!(members.len(), 2, "{value}");
     let identities: Vec<_> = members
         .iter()
-        .map(|member| member["reference"]["object_identity"].clone())
+        .map(|member| member["identity"].clone())
         .collect();
-    assert!(identities.contains(&json!("root")) && identities.contains(&json!("child")));
+    assert!(
+        identities.contains(&identity_hex("root")) && identities.contains(&identity_hex("child"))
+    );
     let bytes: Vec<Vec<u8>> = members
         .iter()
         .map(|member| serde_json::to_vec(member).unwrap())
@@ -476,10 +549,10 @@ fn source_queries_aggregate_a_complete_population_view() {
         "totalVersions",
         arguments.clone(),
     ));
-    assert_eq!(sum, json!({"integer": "3"}));
+    assert_eq!(sum, tagged_integer("3"));
 
     let count = completed(&spine_call(directory.path(), "countNewer", arguments));
-    assert_eq!(count, json!({"integer": "1"}));
+    assert_eq!(count, tagged_integer("1"));
 }
 
 #[test]
@@ -521,22 +594,22 @@ fn a_foreign_universe_refuses_and_call_selection_snapshot() {
     let mut foreign = completed(&spine_call(
         directory.path(),
         "same",
-        json!([{"parameter": "r", "value": {"reference": child()}}]),
+        json!([{"parameter": "r", "value": child_ref(directory.path())}]),
     ));
-    foreign["reference"]["universe"] =
+    foreign["universe"] =
         json!({"package": "other/package", "path": ["ConfigVersion"], "ordinal": 0});
     let output = spine_call(
         directory.path(),
         "sameIdentity",
         json!([{"parameter": "a", "value": foreign},
-            {"parameter": "b", "value": {"reference": child()}}]),
+            {"parameter": "b", "value": child_ref(directory.path())}]),
     );
-    assert_eq!(output.status.code(), Some(20), "{output:?}");
-    let failure: Value = serde_json::from_slice(&output.stderr).unwrap();
-    assert_eq!(failure["code"], "foreign_reference", "{failure}");
-    assert_eq!(failure["cause"], "foreign-universe", "{failure}");
-    assert_eq!(failure["stage"], "call", "{failure}");
-    assert_eq!(failure["details"]["position"], 0, "{failure}");
+    assert_reference_refusal(
+        &output,
+        "foreign_reference",
+        "/universe",
+        "IncompatibleUniverse",
+    );
 }
 
 #[test]
@@ -548,14 +621,14 @@ fn a_call_selection_snapshot_keys_the_items_universe() {
         "items",
         json!({"observations": {"current": "spine-snapshot.json"}, "selections": [
             {"call": {"function": "sameIdentity", "snapshot": "current", "arguments": [
-                {"parameter": "a", "value": {"reference": child()}},
-                {"parameter": "b", "value": {"reference": child()}}]}}]}),
+                {"parameter": "a", "value": child_ref(directory.path())},
+                {"parameter": "b", "value": child_ref(directory.path())}]}}]}),
     );
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let document: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(
         document["items"][0]["result"]["outcome"],
-        json!({"kind": "completed", "value": {"boolean": true}}),
+        json!({"kind": "completed", "value": {"type": "boolean", "value": true}}),
         "{document}"
     );
 }
@@ -590,15 +663,25 @@ fn a_collection_over_a_population_refuses_at_check_and_every_other_type_has_a_fo
         assert_eq!(failure["cause"], "operator-ineligible", "{function}: {failure}");
         assert_ne!(failure["stage"], "call", "{function}: {failure}");
     }
-    let output = run_unit(QUANTITY_UNIT, "id_q", quantity("ms", rational("1", "1")));
+    let output = run_unit(
+        QUANTITY_UNIT,
+        "id_q",
+        tagged_quantity(
+            completed(&run_call(QUANTITY_UNIT, "give_ms", json!([])))["unit"]
+                .as_str()
+                .unwrap(),
+            "1",
+            "1",
+        ),
+    );
     assert_ne!(output.status.code(), Some(21), "{output:?}");
-    let output = run_unit(MAP_UNIT, "id_map", json!({"map": []}));
+    let output = run_unit(MAP_UNIT, "id_map", json!({"type": "map", "entries": []}));
     assert_ne!(output.status.code(), Some(21), "{output:?}");
     let directory = spine_dir(SAME);
     let output = spine_call(
         directory.path(),
         "same",
-        json!([{"parameter": "r", "value": {"reference": child()}}]),
+        json!([{"parameter": "r", "value": child_ref(directory.path())}]),
     );
     assert_ne!(output.status.code(), Some(21), "{output:?}");
 }

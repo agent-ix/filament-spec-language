@@ -67,6 +67,34 @@ fn emitted_source_place_member_type_matches_its_target_node_identity() {
             &fsl_semantics::check::test_support::ZeroRewardEvaluator,
         )
         .unwrap_or_else(|refusals| panic!("the source checks: {refusals:?}"));
+    let normalization =
+        fsl_semantics::model::clock_reference::normalization::SourceDeclarations::from_graph(
+            &graph,
+        )
+        .expect("checked declaration provenance");
+    let source_clock = graph
+        .timed_models()
+        .first()
+        .expect("source timed model")
+        .clocks()
+        .first()
+        .expect("nested clock");
+    let source_rows: Vec<_> = source_clock
+        .resolved_path()
+        .iter()
+        .map(|row| {
+            (
+                normalization.text(&row.declaring_type),
+                normalization
+                    .member(&row.declaring_type, &row.member_identity)
+                    .expect("member resolved in its declaring row"),
+                normalization.text(&row.member_type),
+            )
+        })
+        .collect();
+    let source_template = normalization
+        .clock_template(source_clock)
+        .expect("actual source path retains original declaration scopes");
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the source emits");
     let wire = wire(&emission);
     let order = nodes(&wire)
@@ -109,6 +137,15 @@ fn emitted_source_place_member_type_matches_its_target_node_identity() {
     let checked_target_identity = format!("{package_name}:[{path},]:{ordinal}");
     assert_eq!(checked_target_identity, "pkg:[\"W\",]:0");
     let target_identity = format!("ix://{source_owner}/W");
+    assert_eq!(source_rows.last().expect("W.c row").0, target_identity);
+    assert_eq!(
+        source_rows.last().expect("W.c row").1,
+        format!("{target_identity}/c")
+    );
+    assert_eq!(
+        source_rows.last().expect("W.c row").2,
+        "ix://filament/native/Clock"
+    );
 
     let place = nodes(&wire)
         .iter()
@@ -147,6 +184,187 @@ fn emitted_source_place_member_type_matches_its_target_node_identity() {
     );
     assert!(!target_identity.contains("resolved:"));
     assert!(!target_identity.contains("Composite("));
+    let Read::Verified {
+        admitted,
+        timed_models,
+        ..
+    } = super::read_back(&emission)
+    else {
+        panic!("the actual emitted source declarations admit");
+    };
+    let bare = crate::BarePackage::new(&admitted);
+    let declarations = bare
+        .clock_declarations()
+        .expect("sealed declaration context");
+    let [timed] = timed_models.as_slice() else {
+        panic!("one admitted timed model");
+    };
+    let [place] = timed.clock_places.as_slice() else {
+        panic!("one admitted nested clock path");
+    };
+    assert_eq!(
+        declarations
+            .clock_template(place)
+            .expect("admitted path normalizes"),
+        source_template,
+        "source and bare typed paths retain exactly the same declaration scopes",
+    );
+    let original = admitted
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| {
+            node.declaration.as_ref().is_some_and(|declaration| {
+                declaration
+                    .qualified_name
+                    .iter()
+                    .map(|part| part.as_ref())
+                    .eq(["W"])
+            })
+        })
+        .expect("the admitted original W declaration");
+    let key = bare
+        .node_key(&original.node_id)
+        .expect("actual admitted key");
+    let Some(fsl_semantics::model::clock_reference::identity::DeclarationScope::Source {
+        authority,
+        identity,
+        declaration,
+    }) = declarations.scope(&key)
+    else {
+        panic!("the bare route retains SourceOwner rather than model scope");
+    };
+    assert_eq!(identity, source_owner);
+    assert_eq!(declaration, &target_identity);
+    assert_eq!(
+        authority,
+        order["owner"]["authority"]
+            .as_str()
+            .expect("source authority")
+    );
+}
+
+/// The actual checked and read-back declarations preserve optional Clocks,
+/// positional bounds, tuple positions and union tags in the same full path.
+#[trace("FR-230-AC-49", "TC-3084")]
+#[test]
+fn source_and_bare_clock_templates_preserve_optional_indexed_tuple_and_case_paths() {
+    use fsl_semantics::model::clock_reference::identity::{
+        CarrierLayer, CollectionKind, PathEntry,
+    };
+    use fsl_semantics::model::clock_reference::normalization::SourceDeclarations;
+
+    // Optional Clock fields use the admitted Model definition, whose
+    // presence/multiplicity are authoritative. Source-owned aggregate
+    // paths exercise the independently admitted record/tuple/union shapes.
+    let mut document: Value = serde_json::from_slice(&clocked_document_with(false))
+        .expect("the checked Model fixture is JSON");
+    let fields = document["types"][1]["fields"]
+        .as_array_mut()
+        .expect("fields");
+    let optional = fields
+        .iter_mut()
+        .find(|field| field["name"] == "x")
+        .expect("x");
+    optional["presence"] = json!("optional");
+    let mut sequence = optional.clone();
+    sequence["identity"] = json!("ix://example/config-version/ConfigVersion/q");
+    sequence["name"] = json!("q");
+    sequence["origin"]["generated"]["generatorIdentity"] = sequence["identity"].clone();
+    sequence["multiplicity"] = json!({"lower": 0, "upper": 2, "ordered": true, "unique": false});
+    fields.push(sequence);
+    let document = serde_json::to_vec(&document).expect("JSON");
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()])
+        .expect("actual Model input");
+    let source_only = "language \"ix:native\" edition \"1-draft\";\n\
+         profile T = \"filament.temporal.complete/v1\";\n\
+         dimension Time; unit ms : Time = rational(1, 1);\n\
+         record W { c: Clock; }\n\
+         type AW = W; tuple Pair(AW, Clock);\n\
+         union U { armed(Clock), idle }\n\
+         object Order { pair: Pair; u: U; }\n\
+         time Order dense unit ms;\n";
+    let source_packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
+        .expect("actual source-only input");
+    // QSL-2768 separately owns convergence of two time-source declarations.
+    // Each route/path oracle here uses its own complete admitted package.
+    let cases = [
+        (clocked_unit(""), packages),
+        (source_only.to_owned(), source_packages),
+    ];
+    let mut all_templates = Vec::new();
+    for (source, packages) in cases {
+        let graph = assemble_with_models(source.as_bytes(), &packages)
+            .expect("Model and source declarations assemble")
+            .check(
+                CheckMode::Linked,
+                CheckingLimits::default(),
+                &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+            )
+            .unwrap_or_else(|refusals| panic!("declarations check: {refusals:?}"));
+        let declarations =
+            SourceDeclarations::from_graph(&graph).expect("actual source provenance");
+        let mut source_templates = graph
+            .timed_models()
+            .iter()
+            .flat_map(|timed| timed.clocks().iter())
+            .map(|clock| {
+                declarations
+                    .clock_template(clock)
+                    .expect("source clock normalizes")
+            })
+            .collect::<Vec<_>>();
+
+        let source_table = graph.clock_declaration_table().clone();
+        let emission = emit_checked(&CheckedPackage::link(graph)).expect("source emits");
+        let mut evidence = super::read_evidence(&emission);
+        for document in packages.values() {
+            evidence
+                .insert_domain_package_document(package_identity(document), document.clone())
+                .expect("the actual selected Model document is supplied once");
+        }
+        let admitted = read_checked_package_v2(
+            emission.package.bytes(),
+            library(),
+            V2ReadLimits::fixture(),
+            &evidence,
+        )
+        .unwrap_or_else(|refusal| panic!("actual emitted package admits: {refusal:?}"))
+        .into_value()
+        .admitted;
+        let timed_models = CheckedTimedModel::from_admitted(&admitted)
+            .expect("actual admitted timed declarations");
+        let declarations = crate::BarePackage::new(&admitted)
+            .clock_declarations()
+            .expect("admitted declaration provenance");
+        let bare_table = declarations
+            .table(&timed_models)
+            .expect("atomic admitted place table");
+        assert_eq!(
+            source_table.entries().collect::<Vec<_>>(),
+            bare_table.entries().collect::<Vec<_>>(),
+            "both routes retain the same complete original member chains"
+        );
+        let mut bare_templates = timed_models
+            .iter()
+            .flat_map(|timed| timed.clock_places.iter())
+            .map(|place| {
+                declarations
+                    .clock_template(place)
+                    .expect("bare clock normalizes")
+            })
+            .collect::<Vec<_>>();
+        source_templates.sort();
+        bare_templates.sort();
+        assert_eq!(bare_templates, source_templates);
+        all_templates.extend(source_templates);
+    }
+    assert_eq!(all_templates.len(), 5);
+    assert!(all_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { carrier, .. }, PathEntry::Option] if carrier.layers == [CarrierLayer::Option])));
+    assert!(all_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { .. }, PathEntry::Collection { shape, .. }, PathEntry::Option] if shape.kind == CollectionKind::Sequence && shape.minimum.as_str() == "0" && shape.maximum.as_ref().map(|bound| bound.as_str()) == Some("2"))));
+    assert!(all_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { .. }, PathEntry::Tuple { position, .. }, PathEntry::Field { .. }] if position.as_str() == "0")));
+    assert!(all_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { .. }, PathEntry::Tuple { position, .. }] if position.as_str() == "1")));
+    assert!(all_templates.iter().any(|template| matches!(template.path.as_slice(), [PathEntry::Field { .. }, PathEntry::Case { name, .. }] if name == "armed")));
 }
 
 /// The unit selecting [`clocked_document`] under a dense time source, with
@@ -1036,6 +1254,71 @@ fn reached<'w>(wire: &'w Value, from: &'w Value) -> Vec<&'w Value> {
     seen
 }
 
+/// The predicate quantifies the live slots of `q` and reads each bound
+/// element's presence from that same place and owner.
+pub(super) fn assert_element_presence(wire: &Value, predicate: &Value) {
+    let quantifiers: Vec<_> = reached(wire, predicate)
+        .into_iter()
+        .filter(|node| node["body"]["operation"]["identity"] == "filament.op.collection.forall")
+        .collect();
+    let [quantifier] = quantifiers.as_slice() else {
+        panic!("one universal presence predicate: {quantifiers:?}");
+    };
+    let resolve = |reference: &Value| {
+        nodes(wire)
+            .iter()
+            .find(|node| node["node_id"] == reference["target"])
+            .unwrap_or_else(|| panic!("a predicate node: {reference}"))
+    };
+    let [domain, binding] = quantifier["body"]["arguments"]
+        .as_array()
+        .expect("quantifier arguments")
+        .as_slice()
+    else {
+        panic!("a domain and binding: {quantifier}");
+    };
+    assert_eq!(binding["term"], "binding");
+    let domain = resolve(domain);
+    assert_eq!(
+        domain["body"]["operation"]["identity"],
+        "filament.op.option.slots"
+    );
+    let presence = resolve(&binding["value"]);
+    assert_eq!(presence["semantic_form"], "presence_read");
+    assert_eq!(
+        presence["body"]["operation"]["identity"],
+        "filament.op.option.present"
+    );
+    let [domain_place, domain_owner] = domain["body"]["arguments"]
+        .as_array()
+        .expect("slot domain arguments")
+        .as_slice()
+    else {
+        panic!("the domain's place and owner: {domain}");
+    };
+    let [place, owner, slot] = presence["body"]["arguments"]
+        .as_array()
+        .expect("presence arguments")
+        .as_slice()
+    else {
+        panic!("the presence's place, owner and bound slot: {presence}");
+    };
+    assert_eq!(place, domain_place);
+    assert_eq!(owner, domain_owner);
+    let slot = resolve(slot);
+    assert_eq!(slot["semantic_form"], "parameter");
+    assert_eq!(member(&slot["body"], "name")["value"], binding["name"]);
+    assert_eq!(member(&slot["body"], "level")["value"], "1");
+    let place = resolve(place);
+    assert_eq!(place["semantic_form"], "clock_place");
+    let path = member(&place["body"], "path")["members"]
+        .as_array()
+        .expect("a place path");
+    assert_eq!(path.len(), 2);
+    assert_eq!(member(&path[0], "name")["value"], "q");
+    assert_eq!(member(&path[1], "kind")["value"], "slot");
+}
+
 /// The emitted wire of [`clocked_unit`] over `document` with `body`.
 fn emitted(document: &[u8], body: &str) -> (String, Value) {
     let packages = fsl_semantics::model::intake::package_input([document]).unwrap();
@@ -1143,10 +1426,8 @@ fn a_self_free_urgency_predicate_writes_no_parameter() {
     );
 }
 
-/// FR-230-AC-50 and AC-53 (TC-685, STD-554): an `urgent when` reading
-/// the presences of a clock collection's elements (`forall(e in self.q :
-/// present(e))`) has no quantifier form over the collection's slots, so its
-/// model is refused `TimedModelNotEmitted`.
+/// FR-230-AC-53/66: an urgency reads the presence of each live clock slot,
+/// retaining its universal binder in the complete emitted timed model.
 #[trace("TC-685")]
 #[test]
 fn an_urgency_reading_element_presences_is_not_emitted() {
@@ -1164,24 +1445,18 @@ fn an_urgency_reading_element_presences_is_not_emitted() {
     q["origin"]["generated"]["inputIdentities"] = json!([identity]);
     fields.push(q);
     let document = crate::emit::tests::wire_bytes(&document).expect("JSON");
-    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
-    let unit = clocked_unit("urgent All when { forall(e in self.q : present(e)) };\n");
-    let refusals = assemble_with_models(unit.as_bytes(), &packages)
-        .expect("the unit assembles")
-        .check(
-            CheckMode::Linked,
-            CheckingLimits::default(),
-            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
-        )
-        .expect_err("an element presence urgency is not written yet");
-    assert!(
-        refusals.iter().any(|refusal| matches!(
-            &refusal.cause,
-            fsl_semantics::check::CheckCause::Temporal(cause)
-                if matches!(**cause, fsl_semantics::check::TemporalCause::TimedModelNotEmitted { .. })
-        )),
-        "{refusals:?}"
-    );
+    let source = "urgent All when { forall(e in self.q : present(e)) };\n";
+    let (_, wire) = emitted(&document, source);
+    let urgencies = listed_urgencies(&wire);
+    let [urgency] = urgencies.as_slice() else {
+        panic!("one listed urgency: {urgencies:?}");
+    };
+    let predicate = nodes(&wire)
+        .iter()
+        .find(|node| node["node_id"] == member(&urgency["body"], "predicate")["target"])
+        .expect("the urgency predicate");
+    assert_element_presence(&wire, predicate);
+    // Strict reader qualification for this quantified predicate remains separate.
 }
 
 /// `units`, each a source identity and its text, assembled as one package
@@ -1363,4 +1638,197 @@ fn a_timed_predicate_population_is_the_one_shared_reference_node() {
         panic!("one timed model reads back");
     };
     assert_eq!((timed.invariants.len(), timed.urgencies.len()), (1, 2));
+}
+
+/// The package over the model document `Config` and the source object
+/// `Order`, each under `time <name> dense unit ms`, with `body` after them.
+fn two_time_package(body: &str) -> (Vec<u8>, String, CheckedPackage) {
+    let document = clocked_document_with(false);
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
+    let unit = clocked_unit(&format!(
+        "object Order {{ n: Integer; operation step() modifies self.n; }}\n\
+         time Order dense unit ms;\n{body}"
+    ));
+    let graph = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("two time declarations check: {refusals:?}"));
+    assert_eq!(graph.time_sources().len(), 2);
+    (document, unit, CheckedPackage::link(graph))
+}
+
+/// The source text of `entry`'s first region.
+fn entry_text<'u>(unit: &'u str, entry: &Value) -> &'u str {
+    let region = &entry["regions"][0];
+    &unit[region["start"].as_u64().unwrap() as usize..region["end"].as_u64().unwrap() as usize]
+}
+
+/// QSL-2768, FSpec FR-322 "Timed-model nodes": a model-document `time Config
+/// dense unit ms` and a source `time Order dense unit ms` have one content
+/// (`kind`, `unit`), so they are ONE `time_source` node with one `expression`
+/// occurrence at each declaration, both roots reference it, each root keeps
+/// its own declaration region, and the one package emits, strictly reads and
+/// re-emits.
+#[trace("TC-685")]
+#[test]
+fn two_time_declarations_of_equal_content_are_one_source_with_two_occurrences() {
+    let (document, unit, package) = two_time_package("");
+    let emission = emit_checked(&package).expect("the package emits");
+    let wire = wire(&emission);
+    let sources: Vec<&Value> = nodes(&wire)
+        .iter()
+        .filter(|node| node["semantic_form"] == "time_source")
+        .collect();
+    assert_eq!(sources.len(), 1, "equal content is one node");
+    let id = &sources[0]["node_id"];
+    let entries_of = |id: &Value, role: &str| -> Vec<&Value> {
+        wire["source_map"]
+            .as_array()
+            .expect("source_map")
+            .iter()
+            .filter(|entry| &entry["node_id"] == id && entry["role"] == role)
+            .collect()
+    };
+    let mut occurrences = entries_of(id, "expression");
+    occurrences.sort_by_key(|entry| entry["ordinal"].as_u64().unwrap());
+    assert_eq!(
+        occurrences
+            .iter()
+            .map(|entry| entry["ordinal"].as_u64().unwrap())
+            .collect::<Vec<_>>(),
+        [0, 1]
+    );
+    // Ordinal 0 is the declaration that starts first (FR-322 order key).
+    let starts: Vec<u64> = occurrences
+        .iter()
+        .map(|entry| entry["regions"][0]["start"].as_u64().unwrap())
+        .collect();
+    assert!(starts[0] < starts[1], "{starts:?}");
+    assert!(entry_text(&unit, occurrences[0]).starts_with("time Config"));
+    assert!(entry_text(&unit, occurrences[1]).starts_with("time Order"));
+    // Each root's `source` is the one node and its declaration region is its
+    // own `time` declaration.
+    let roots: Vec<&Value> = nodes(&wire)
+        .iter()
+        .filter(|node| node["semantic_form"] == "timed_model")
+        .collect();
+    assert_eq!(roots.len(), 2);
+    let mut declared = Vec::new();
+    for root in &roots {
+        assert_eq!(&member(&root["body"], "source")["target"], id);
+        let entries = entries_of(&root["node_id"], "declaration");
+        assert_eq!(entries.len(), 1, "{entries:?}");
+        declared.push(entry_text(&unit, entries[0]).to_owned());
+    }
+    declared.sort();
+    assert!(declared[0].starts_with("time Config"), "{declared:?}");
+    assert!(declared[1].starts_with("time Order"), "{declared:?}");
+
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in wire["lock"]["required_features"].as_array().unwrap() {
+        evidence.support_feature(feature.as_str().unwrap());
+    }
+    evidence
+        .insert_domain_package_document(package_identity(&document), document.clone())
+        .expect("a fresh evidence key");
+    let read = read_checked_package_v2(
+        emission.package.bytes(),
+        library(),
+        V2ReadLimits::fixture(),
+        &evidence,
+    )
+    .unwrap_or_else(|failure| panic!("the strict read admits the package: {failure:?}"));
+    let admitted = read.into_value().admitted;
+    let typed = CheckedTimedModel::from_admitted(&admitted).expect("read back");
+    assert_eq!(typed.len(), 2);
+    let re_emitted =
+        crate::emit::emit_timed_models(&admitted, &typed, crate::EmitLimits::fixture())
+            .expect("the typed models re-emit with the shared source");
+    let again: Value = serde_json::from_slice(re_emitted.package().bytes()).expect("JSON");
+    assert_eq!(
+        nodes(&again)
+            .iter()
+            .filter(|node| node["semantic_form"] == "time_source")
+            .count(),
+        1
+    );
+}
+
+/// The merge numbers three equal declarations 0..2 in region order, keeps a
+/// node with another id separate, and refuses an unequal or a declared node
+/// that shares an id.
+#[trace("TC-685")]
+#[test]
+fn equal_timed_nodes_merge_by_region_and_unequal_ones_are_refused() {
+    let (_, _, package) = two_time_package("");
+    emit_checked(&package).expect("the package emits");
+    let (nodes, map) = crate::emit::TIMED_GRAPH
+        .with(|held| held.borrow().clone())
+        .expect("a timed graph");
+    let source = nodes
+        .iter()
+        .find(|node| node.semantic_form.as_ref() == "time_source")
+        .expect("the source")
+        .clone();
+    let entry = map
+        .iter()
+        .find(|entry| entry.node_id == source.node_id)
+        .expect("its entry")
+        .clone();
+    let at = |start: u64| {
+        let mut entry = entry.clone();
+        entry.regions[0].start = start;
+        entry.regions[0].end = start + 1;
+        entry
+    };
+    // Written out of region order; the later start is pushed first.
+    let mut three = vec![source.clone(), source.clone(), source.clone()];
+    let mut entries = vec![at(30), at(10), at(20)];
+    crate::emit::merge_equal_timed_nodes(&mut three, &mut entries).expect("equal nodes merge");
+    assert_eq!(three.len(), 1);
+    let ordinals: Vec<(u64, u64)> = entries
+        .iter()
+        .map(|entry| (entry.regions[0].start, entry.ordinal))
+        .collect();
+    assert_eq!(ordinals, [(30, 2), (10, 0), (20, 1)]);
+    assert_eq!(three[0].occurrences.len(), 3);
+
+    // A node with another id (a different unit or kind) stays separate.
+    let mut odd = source.clone();
+    odd.node_id = nodes
+        .iter()
+        .find(|node| node.semantic_form.as_ref() == "timed_model")
+        .expect("a root")
+        .node_id
+        .clone();
+    let mut mixed = vec![source.clone(), odd, source.clone()];
+    let mut entries = vec![at(10), at(20)];
+    crate::emit::merge_equal_timed_nodes(&mut mixed, &mut entries).expect("merge");
+    assert_eq!(mixed.len(), 2);
+
+    // Same id, different body: refused, not merged.
+    let mut unequal = source.clone();
+    unequal.semantic_form = "time_invariant".into();
+    let mut pair = vec![source.clone(), unequal];
+    assert!(matches!(
+        crate::emit::merge_equal_timed_nodes(&mut pair, &mut []),
+        Err(EmitRefusal::TimedModelWriterInvariant(_))
+    ));
+
+    // Two declared roots of one id (one alias over two packages): refused.
+    let root = nodes
+        .iter()
+        .find(|node| node.semantic_form.as_ref() == "timed_model")
+        .expect("a root")
+        .clone();
+    assert!(root.declaration.is_some());
+    let mut roots = vec![root.clone(), root];
+    assert!(matches!(
+        crate::emit::merge_equal_timed_nodes(&mut roots, &mut []),
+        Err(EmitRefusal::TimedModelWriterInvariant(_))
+    ));
 }

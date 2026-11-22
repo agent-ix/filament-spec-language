@@ -460,10 +460,25 @@ pub fn value_item<'a>(
     claim: &OccurrenceKey,
     selection: Result<ValueRequest<'a>, Selection>,
 ) -> AnalyzeItem<'a> {
+    value_item_in(
+        index,
+        claim_family(package, ItemKind::Formula, claim),
+        selection,
+    )
+}
+
+/// [`value_item`] for a claim whose declaration family the caller read: the
+/// package route (FR-940) reads it from its own rows, never from a checked
+/// graph.
+pub(crate) fn value_item_in<'a>(
+    index: RequestIndex,
+    family: Option<fsl_semantics::check::DeclarationFamily>,
+    selection: Result<ValueRequest<'a>, Selection>,
+) -> AnalyzeItem<'a> {
     AnalyzeItem::new_with_engine(
         index,
         Capability::ValueValidity,
-        claim_family(package, ItemKind::Formula, claim),
+        family,
         Mode::Bounded,
         manifest::BACKEND_ID,
         move |cancel, engine| {

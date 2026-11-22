@@ -160,8 +160,20 @@ pub fn check_statistical_with_output<T>(
         .simulation
         .source_package()
         .ok_or_else(|| fault("the-statistical-check-reads-source-forms"))?;
-    let system = ModelSystem::new(subject.simulation)
-        .map_err(|failure| StatisticalRefusal::Admission(Box::new(failure)))?;
+    let scope = filament_exact::WorkScope::new(scalar_limits);
+    let system =
+        ModelSystem::new_with_work_scope(subject.simulation, scope, cancel).map_err(|failure| {
+            match failure {
+                fsl_eval::simulation::model::ProbabilityAdmissionFailure::Admission(failure) => {
+                    StatisticalRefusal::Admission(Box::new(failure))
+                }
+                fsl_eval::simulation::model::ProbabilityAdmissionFailure::Evaluation(
+                    incomplete,
+                ) => StatisticalRefusal::PredicateRefused(
+                    fsl_eval::simulation::model::ClauseOutcome::Incomplete(incomplete),
+                ),
+            }
+        })?;
     let group = if symmetry.is_empty() {
         None
     } else {
@@ -182,7 +194,7 @@ pub fn check_statistical_with_output<T>(
     let mut model = ModelSampler {
         shared: Rc::new(RefCell::new(shared)),
     };
-    let clause_meter = filament_exact::Meter::new(scalar_limits).with_cancel(cancel.clone());
+    let clause_meter = system.fresh_meter().with_cancel(cancel.clone());
     let outcome = check_sampled_with_meter(
         SampledRequest {
             claim: &statistical,

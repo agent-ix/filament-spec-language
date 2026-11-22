@@ -750,6 +750,15 @@ fn mismatch() -> CheckCause {
     CheckCause::IllTyped(IllTypedCause::TypeMismatch)
 }
 
+/// A case the model variant type `Tier` does not declare: the cause names the
+/// owner and the case and keeps the FR-360 `ill_typed`/`type-mismatch` code.
+fn undeclared_case(case: &str) -> CheckCause {
+    CheckCause::UndeclaredVariantCase {
+        owner: "Tier".into(),
+        case: case.into(),
+    }
+}
+
 /// TC-1007 step 1 (FR-360-AC-4): the case literal and every variant-producing
 /// form check as `Config::Tier`.
 #[trace("TC-1007", "FR-360-AC-4")]
@@ -814,7 +823,8 @@ fn a_case_literal_and_every_variant_producing_form_check_as_the_variant_type() {
 }
 
 /// TC-1007 steps 2 to 7 (FR-360-AC-5): each mistyped use refuses
-/// `ill_typed`/`type-mismatch`, and a name that resolves to no variant type
+/// `ill_typed`/`type-mismatch` (an undeclared case as `UndeclaredVariantCase`
+/// naming the owner and the case), and a name that resolves to no variant type
 /// refuses `missing-name`.
 #[trace("TC-1007", "FR-360-AC-5")]
 #[test]
@@ -900,14 +910,14 @@ fn each_mistyped_use_of_a_variant_type_refuses_with_its_cause() {
         &[],
         name("Config::Tier::Silver"),
         None,
-        mismatch(),
+        undeclared_case("Silver"),
         "an undeclared case",
     );
     refuses(
         &[],
         name("Config::Tier::gold"),
         None,
-        mismatch(),
+        undeclared_case("gold"),
         "a letter-case variant of a case",
     );
     refuses(

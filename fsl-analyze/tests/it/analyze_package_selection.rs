@@ -965,6 +965,106 @@ fn a_package_request_settles_temporal_and_deadlock_items_as_the_source_route() {
     assert_eq!(package.exit, source.exit);
 }
 
+/// Bounded past and future operators retain their closed step endpoints on
+/// both routes. The Counter advances 0, 1, 2, 3 and then stutters at 3.
+/// The package run has neither the authored source nor handoff source files.
+#[trace("TC-2410", "FR-850-AC-2")]
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn bounded_step_intervals_settle_from_bytes_as_from_source() {
+    let cases = [
+        (
+            "OnceEndpoint",
+            "always (holds(c.value = 2) implies once[2,2] holds(c.value = 0))",
+            "proved",
+        ),
+        (
+            "OnceOutside",
+            "always (holds(c.value = 2) implies once[1,1] holds(c.value = 0))",
+            "refuted",
+        ),
+        (
+            "HistoricallyInside",
+            "always (holds(c.value = 2) implies historically[1,2] holds(c.value <= 1))",
+            "proved",
+        ),
+        (
+            "HistoricallyEndpoint",
+            "always (holds(c.value = 2) implies historically[1,2] holds(c.value < 1))",
+            "refuted",
+        ),
+        (
+            "EventuallyEndpoint",
+            "eventually[1,3] holds(c.value = 3)",
+            "proved",
+        ),
+        (
+            "EventuallyOutside",
+            "eventually[1,2] holds(c.value = 3)",
+            "refuted",
+        ),
+        (
+            "AlwaysInside",
+            "always[1,2] holds(c.value >= 1 and c.value <= 2)",
+            "proved",
+        ),
+        (
+            "AlwaysEndpoint",
+            "always[1,3] holds(c.value <= 2)",
+            "refuted",
+        ),
+        (
+            "SharedFutureCore",
+            "eventually[0,2] holds(c.value = 2) and eventually[1,3] holds(c.value = 2)",
+            "proved",
+        ),
+    ];
+    let body: String = cases
+        .iter()
+        .map(|(name, formula, _)| clause(name, "", formula))
+        .collect();
+    let items: Vec<_> = cases
+        .iter()
+        .map(|(name, _, _)| json!({"claim": name}))
+        .collect();
+    let ws = Workspace::new("package-bounded-step-intervals");
+    let path = counter_request(&ws, &body, json!(items));
+    let source = analyze(&path);
+    let (members, _) = package_selection(&ws, &request_of(&path));
+    std::fs::remove_file(ws.path("program.fsl")).expect("remove authored source");
+    std::fs::remove_dir_all(ws.path(&handoff_file("sources")))
+        .expect("remove the handoff source directory");
+    let package = analyze_members(&ws, "analyze-package.json", &members);
+    for (index, (name, _, expected)) in cases.iter().enumerate() {
+        for run in [&source, &package] {
+            assert_eq!(
+                label(&run.item(index)),
+                *expected,
+                "{name}: {}",
+                run.document()
+            );
+            if *expected == "proved" {
+                assert_eq!(
+                    run.item(index)["record"]["certification"],
+                    "certified",
+                    "{name}: {}",
+                    run.document()
+                );
+            }
+        }
+    }
+    for member in ["items", "aggregate", "last_stage", "category", "registry"] {
+        assert_eq!(
+            package.document()[member],
+            source.document()[member],
+            "{member}: {}",
+            package.document()
+        );
+    }
+    assert_eq!(source.exit, 10, "{}", source.document());
+    assert_eq!(package.exit, source.exit, "{}", package.document());
+}
+
 /// FR-940 "Package forms of the source-checked evaluators" (QSL-2406,
 /// QSL-2432): a request whose item names a family the package route has
 /// no form of yet is refused whole, typed and naming the family, never
@@ -1406,3 +1506,65 @@ fn a_replay_over_the_input_bytes_bound_settles_replay_refused_on_both_routes() {
         assert_ne!(run.exit, 30, "{route}: {document}");
     }
 }
+
+fn at_most_two_invariant() -> &'static str {
+    "invariant AtMostTwoInv using v on M::Counter at current { self.value <= 2 }\n"
+}
+
+/// FR-850 "Equality with the source route", FR-940 (QSL-2765): an `invariant`
+/// state clause a reachable state violates settles over the package as it
+/// does from source: refuted, with the source route's counterexample,
+/// replay, record, aggregate and exit code. The replay is read from the
+/// package bytes alone.
+#[trace("TC-2410", "FR-850-AC-5")]
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn a_refuted_invariant_settles_over_a_package_as_from_source() {
+    let items = json!([{"claim": "AtMostTwoInv"}]);
+    let ws = Workspace::new("package-invariant-refuted");
+    let source = analyze(&counter_request(
+        &ws,
+        at_most_two_invariant(),
+        items.clone(),
+    ));
+    assert_eq!(label(&source.item(0)), "refuted", "{}", source.document());
+    assert_eq!(source.item(0)["replay"]["reproduced"], true);
+    let (members, _) = package_request(&ws, at_most_two_invariant(), items);
+    let run = analyze_members(&ws, "analyze-invariant-refuted.json", &members);
+    assert_eq!(label(&run.item(0)), "refuted", "{}", run.document());
+    assert_eq!(
+        run.item(0)["replay"]["reproduced"],
+        true,
+        "{}",
+        run.document()
+    );
+    for member in ["items", "aggregate", "last_stage", "category", "registry"] {
+        assert_eq!(
+            run.document()[member],
+            source.document()[member],
+            "{member}: {}",
+            run.document()
+        );
+    }
+    assert_eq!(run.exit, source.exit);
+}
+
+/// An invariant that holds stays proved on both routes with equal items.
+#[trace("TC-2410", "FR-850-AC-5")]
+#[test]
+fn a_held_invariant_stays_proved_beside_a_refuted_one_over_a_package() {
+    let body = format!("{}{}", not_above_three(), at_most_two_invariant());
+    let items = json!([{"claim": "NotAboveThree"}, {"claim": "AtMostTwoInv"}]);
+    let ws = Workspace::new("package-invariant-mixed");
+    let source = analyze(&counter_request(&ws, &body, items.clone()));
+    assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
+    let (members, _) = package_request(&ws, &body, items);
+    let run = analyze_members(&ws, "analyze-invariant-mixed.json", &members);
+    assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
+    assert_eq!(run.document()["items"], source.document()["items"]);
+    for member in ["aggregate", "category"] {
+        assert_eq!(run.document()[member], source.document()[member], "{member}");
+    }
+    assert_eq!(run.exit, source.exit);
+}
+

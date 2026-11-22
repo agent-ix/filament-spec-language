@@ -327,6 +327,87 @@ pub struct StateModel {
 }
 
 impl StateModel {
+    /// Restore the complete data declarations of dense models from this
+    /// model's existing admitted views. Each source has already been joined
+    /// to its actual selected object node and source declaration region.
+    /// Clock places remain outside the data environment. No model is
+    /// re-normalized and the admitted views and their allowances are retained.
+    pub fn read_dense_data_types(
+        &mut self,
+        sources: &[crate::check::ModelTimeSource],
+        units: &BTreeMap<String, filament_exact::UnitId>,
+    ) -> Result<&TypeEnvironment, crate::check::AssemblyRefusal> {
+        let mut types = self.types.clone();
+        for source in sources {
+            let view = self.views.iter().find(|view| {
+                !view.is_source()
+                    && view.view.domain_package().model_selection.identity == source.model
+                    && crate::check::lowering::AdmittedModel::from_view(&view.view)
+                        .object_type_model_node_keys()
+                        .as_slice()
+                        == [source.model_node.clone()]
+            });
+            let Some(view) = view else {
+                return Err(crate::check::AssemblyRefusal {
+                    errors: vec![crate::check::AssemblyError {
+                        span: source.span,
+                        cause: crate::check::AssemblyCause::ModelType {
+                            alias: source.model.clone(),
+                            node: source.model_node.to_string(),
+                        },
+                    }],
+                });
+            };
+            types =
+                crate::check::dense_model_data_environment(&view.view, source.span, &types, units)?;
+        }
+        self.types = types;
+        Ok(&self.types)
+    }
+
+    /// Reconstruct a clause-free dense timed model from the selected domain
+    /// package whose actual object node is `node`. Returns no model for an
+    /// ambiguous selection or a clock place outside required direct fields.
+    pub fn direct_dense_model(
+        &self,
+        node: &filament_exact::NodeKey,
+    ) -> Option<crate::check::TimedModel> {
+        let mut matches = self
+            .views
+            .iter()
+            .filter(|view| !view.is_source())
+            .filter_map(|view| {
+                let model = crate::check::lowering::AdmittedModel::from_view(&view.view);
+                (model.object_type_model_node_keys().as_slice() == [node.clone()])
+                    .then_some((model, view))
+            });
+        let (model, view) = matches.next()?;
+        if matches.next().is_some() {
+            return None;
+        }
+        let package = view.view.domain_package();
+        let lookup =
+            |key: &DeclarationKey| package.records.iter().find(|record| record.key() == key);
+        if package.records.iter().any(|record| match record {
+            DomainPackageRecord::OperationMember(operation) => {
+                operation.parameters.iter().any(|parameter| {
+                    matches!(
+                        crate::model::domain_package::unaliased(&parameter.value_type, lookup),
+                        Some((crate::model::domain_package::ValueTypeRef::Clock, _))
+                    )
+                })
+            }
+            _ => false,
+        }) {
+            return None;
+        }
+        crate::check::TimedModel::direct_dense(
+            &model,
+            view.view.domain_package().model_selection.identity.clone(),
+            node.clone(),
+        )
+    }
+
     /// Compare complete native type identities under the caller's work budget.
     ///
     /// # Errors
@@ -666,6 +747,28 @@ impl StateModel {
         self.views
             .iter()
             .find_map(|view| view.view.type_identities().get(key).cloned())
+    }
+
+    /// Borrow an admitted type identity, charging each model-index visit and
+    /// declaration text comparison before it occurs.
+    ///
+    /// # Errors
+    /// The caller's original work or cancellation refusal.
+    pub fn type_identity_with_work<E>(
+        &self,
+        key: &DeclarationKey,
+        work: &mut impl FnMut(u64) -> Result<(), E>,
+    ) -> Result<Option<&EffectiveId>, E> {
+        for view in &self.views {
+            work(1)?;
+            for (candidate, effective) in view.view.type_identities() {
+                work(1)?;
+                if crate::model::key::declaration_equal_with_work(candidate, key, work)? {
+                    return Ok(Some(effective));
+                }
+            }
+        }
+        Ok(None)
     }
 
     /// The declaration key of the type whose effective identity is

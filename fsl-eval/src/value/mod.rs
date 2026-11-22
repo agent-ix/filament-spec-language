@@ -13,9 +13,9 @@
 pub mod collections;
 pub mod composite;
 mod expression;
-pub(crate) use expression::evaluate_clause_set_with_cancel;
+pub(crate) use expression::evaluate_clause_set_with_meter_factory;
+pub(crate) use expression::evaluate_generated_package_protocol_slot;
 pub(crate) use expression::evaluate_hyper_holds_with_component_bindings;
-pub(crate) use expression::reference_occurrences;
 pub use expression::{
     evaluate_model_relation, evaluate_model_relation_transitions, ModelRelationEvaluation,
     S6aRewardEvaluator,
@@ -84,8 +84,7 @@ pub use expression::{
     evaluate_activation_guard_at_absent_key, evaluate_capture, evaluate_closed_with_frame,
     evaluate_history_update, evaluate_join_predicate, evaluate_operation_contract,
     evaluate_plan_body, evaluate_plan_node, evaluate_protocol_slot, evaluate_refinement_row,
-    evaluate_reward,
-    evaluate_state_predicate, evaluate_state_predicate_at_absent_key,
+    evaluate_reward, evaluate_state_predicate, evaluate_state_predicate_at_absent_key,
     evaluate_state_predicate_with, evaluate_terminal_predicate, input_refusal_code, refusal_record,
     supplied_stop_cause, supplied_stop_code, undefined_contract_code,
     AdmittedEvaluationViewEvaluation, ApplicationObservation, ApplicationObservationOptions,

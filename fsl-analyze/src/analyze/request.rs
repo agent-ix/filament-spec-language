@@ -536,8 +536,19 @@ pub(crate) fn analyze_bound<'a>(
         }
     };
     let simulation = simulation(input, binding, limits);
-    fsl_eval::simulation::model::ModelSystem::new(simulation)
-        .map_err(|failure| StageFailure::Refused(super::AnalyzeRefusal::Binding(failure)))?;
+    let probability_only = !requested.is_empty()
+        && requested.iter().all(|requested| {
+            requested.item.kind == Capability::ProbabilisticSatisfaction
+                && matches!(&requested.item.form, Some(ItemForm::Probabilistic(_)))
+        });
+    // Probability items admit reward work against their own scopes. Other
+    // requests retain the ordinary shared binding preflight, including rewards.
+    let admission = if probability_only {
+        fsl_eval::simulation::model::ModelSystem::validate_probability_binding(simulation)
+    } else {
+        fsl_eval::simulation::model::ModelSystem::new(simulation).map(|_| ())
+    };
+    admission.map_err(|failure| StageFailure::Refused(super::AnalyzeRefusal::Binding(failure)))?;
     check_provision(package, provision)
         .map_err(|failure| StageFailure::Refused(super::AnalyzeRefusal::Provision(failure)))?;
     let shared = read.as_ref().map(crate::provider::Shared::of);

@@ -853,11 +853,15 @@ fn supplied_hyper(
         .emission
         .identity_rows(admitted, &mut budget)
         .expect("the producer identity rows admit");
+    let equality = built
+        .emission
+        .equality_witness(admitted, &mut budget)
+        .expect("the producer equality rows admit");
     let bare = crate::BarePackage::new(admitted)
         .with_supply(
             crate::BareSupply {
                 identities: &identities,
-                equality: None,
+                equality: Some(&equality),
             },
             &mut budget,
         )
@@ -1031,6 +1035,14 @@ fn a_package_hyper_form_refuses_unknown_traces_and_the_reader_refuses_duplicate_
         let admitted = read.admitted;
         let root = hyper_roots(&admitted).expect("hyper roots").remove(0);
         supplied_hyper(&built, &admitted, |bare| {
+            assert!(matches!(
+                bare.project_hyper_holds(root.occurrence(), 1),
+                Err(crate::BareClauseRefusal::Selection(
+                    crate::bare_slot::BareSelectionFailure::Slot(
+                        crate::protocol_selection::SlotSelectionFailure::MalformedNode(node)
+                    )
+                )) if &node == root.occurrence().node()
+            ));
             let error = bare
                 .hyper_clause_form(root.occurrence())
                 .expect_err("malformed package hyper slot");
@@ -1043,6 +1055,93 @@ fn a_package_hyper_form_refuses_unknown_traces_and_the_reader_refuses_duplicate_
             assert_eq!(&node, root.occurrence().node());
         });
     }
+}
+
+/// An otherwise typed function call can carry two trace roots into a model
+/// read. Admission retains it, but projection must refuse ambiguous ownership.
+#[trace("FR-940-AC-19")]
+#[test]
+fn a_package_hyper_atom_refuses_an_admitted_mixed_component_receiver() {
+    let declarations = "function choose_ref using v(x: Reference<V::ConfigVersion>, \
+        y: Reference<V::ConfigVersion>): Reference<V::ConfigVersion> pure { x }\n\
+        hyper Equal using t over behaviours (c: V::ConfigVersion) \
+        forall trace a of V forall trace b of V \
+        { always holds(deref(choose_ref(c, c)).versionNumber @ a <= 3 and c.versionNumber @ b <= 3) }";
+    let built = build(INFINITE, &["V"], declarations);
+    let original = admitted(&built);
+    let root = hyper_roots(&original).expect("hyper roots").remove(0);
+    supplied_hyper(&built, &original, |bare| {
+        let form = bare
+            .hyper_clause_form(root.occurrence())
+            .expect("unmodified form");
+        assert!(bare
+            .project_hyper_holds(root.occurrence(), form.atoms[0].0)
+            .is_ok());
+    });
+    let mut changed = built.wire.clone();
+    let slot_b = slots(&changed)["slot_sc_sb"]["node_id"].clone();
+    let call = changed["semantic_graph"]["nodes"]
+        .as_array_mut()
+        .expect("nodes")
+        .iter_mut()
+        .find(|node| node["body"]["operation"]["identity"] == "filament.op.function.call")
+        .expect("the receiver's pure function call");
+    call["body"]["arguments"][2]["target"] = slot_b.clone();
+    let graph = crate::checked_v2::wire_graph(&original).expect("structural keys");
+    let dependencies = call["dependencies"]
+        .as_array_mut()
+        .expect("call dependencies");
+    dependencies.push(slot_b);
+    dependencies.sort_by_key(|dependency| graph.key_of_value(dependency).expect("dependency key"));
+    assert_eq!(strict_verdict(&built, &changed), None);
+    let mut evidence = read_evidence(&built.emission);
+    for document in &built.documents {
+        evidence
+            .insert_domain_package_document(package_identity(document), document.clone())
+            .expect("model evidence");
+    }
+    let admitted = crate::checked_v2::read_checked_package_v2(
+        &jcs(&changed),
+        library(),
+        V2ReadLimits::fixture(),
+        &evidence,
+    )
+    .expect("strict FSL reader admits")
+    .into_value()
+    .admitted;
+    let root = hyper_roots(&admitted).expect("hyper roots").remove(0);
+    supplied_hyper(&built, &admitted, |bare| {
+        assert!(matches!(bare.project_hyper_holds(root.occurrence(), 1),
+            Err(crate::BareClauseRefusal::Selection(crate::bare_slot::BareSelectionFailure::Slot(
+                crate::protocol_selection::SlotSelectionFailure::MalformedNode(node))))
+                if &node == root.occurrence().node()));
+    });
+}
+
+/// A model read in a separate function context has no admitted atom-slot
+/// owner and cannot silently observe the first trace component.
+#[trace("FR-940")]
+#[test]
+fn a_package_hyper_atom_refuses_unowned_function_body_reads() {
+    let declarations = "function read_ref using v(x: Reference<V::ConfigVersion>): Integer \
+        pure { deref(x).versionNumber }\n\
+        hyper Equal using t over behaviours (c: V::ConfigVersion) \
+        forall trace a of V forall trace b of V \
+        { always holds(read_ref(c) @ a <= 3 and c.versionNumber @ b <= 3) }";
+    let built = build(INFINITE, &["V"], declarations);
+    let admitted = admitted(&built);
+    let root = hyper_roots(&admitted).expect("hyper roots").remove(0);
+    supplied_hyper(&built, &admitted, |bare| {
+        let form = bare
+            .hyper_clause_form(root.occurrence())
+            .expect("the package form");
+        assert!(
+            matches!(bare.project_hyper_holds(root.occurrence(), form.atoms[0].0),
+            Err(crate::BareClauseRefusal::Selection(crate::bare_slot::BareSelectionFailure::Slot(
+                crate::protocol_selection::SlotSelectionFailure::MalformedNode(node))))
+                if &node == root.occurrence().node())
+        );
+    });
 }
 
 /// A constructor rejects inconsistent atoms rather than granting a checked
@@ -1494,7 +1593,27 @@ fn a_read_must_stay_in_the_component_its_slot_root_names() {
     };
     let emits =
         linked("(let r = c.parent in present(r) and deref(value(r)).versionNumber = 1) @ a");
-    admitted(&build(INFINITE, &["V"], &emits));
+    let built = build(INFINITE, &["V"], &emits);
+    let admitted = admitted(&built);
+    let root = hyper_roots(&admitted).expect("Linked hyper root").remove(0);
+    supplied_hyper(&built, &admitted, |bare| {
+        let form = bare
+            .hyper_clause_form(root.occurrence())
+            .unwrap_or_else(|error| {
+                let metadata: Vec<_> = nodes(&built.wire)
+                    .iter()
+                    .filter(|node| {
+                        node["body"]["operation"]["member"]["kind"]
+                            .as_str()
+                            .is_some_and(|kind| kind != "field")
+                    })
+                    .map(|node| &node["body"]["operation"])
+                    .collect();
+                panic!("Linked package form: {error:?}; operation metadata: {metadata:?}");
+            });
+        bare.project_hyper_holds(root.occurrence(), form.atoms[0].0)
+            .unwrap_or_else(|error| panic!("the Linked alias projects: {error:?}"));
+    });
 
     let crossing =
         linked("(let r = (c.parent @ a) in present(r) and deref(value(r)).versionNumber = 1) @ b");
@@ -1503,6 +1622,35 @@ fn a_read_must_stay_in_the_component_its_slot_root_names() {
         not_emitted_text(&text, &refusals),
         "deref(value(r)).versionNumber"
     );
+}
+
+/// A symmetric initializer still lies inside an opaque let. Normalizing its
+/// arithmetic through the let would incorrectly grant a copy swap.
+#[trace("FR-940-AC-16", "FR-174")]
+#[test]
+fn a_package_hyper_let_with_symmetric_slot_reads_stays_opaque() {
+    let declaration = "hyper Opaque using t over behaviours (c: V::ConfigVersion) \
+        forall trace a of V forall trace b of V \
+        { always holds(let n = c.versionNumber @ a + c.versionNumber @ b in n <= 3) }";
+    let built = build(INFINITE, &["V"], declaration);
+    let admitted = admitted(&built);
+    let root = hyper_roots(&admitted).expect("hyper root").remove(0);
+    assert!(built.clauses[0].copy_group().classes.is_empty());
+    assert!(built.clauses[0].copy_group().generators.is_empty());
+    supplied_hyper(&built, &admitted, |bare| {
+        let form = bare
+            .hyper_clause_form(root.occurrence())
+            .expect("opaque let form");
+        assert!(form.copy_group.classes.is_empty());
+        assert!(form.copy_group.generators.is_empty());
+        let rebuilt = fsl_semantics::check::CheckedHyperClause::of_package_form(
+            form,
+            &built.types,
+            1_000_000,
+        )
+        .expect("opaque let clause");
+        assert_eq!(rebuilt.copy_group(), built.clauses[0].copy_group());
+    });
 }
 
 /// FR-488-AC-18: a clause with two refusals reports the first in the order

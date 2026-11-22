@@ -44,7 +44,7 @@ use crate::model::intake::{
     normalize_model_with_provenance, NormalizedModel, NormalizedModelProvenance, UnitIntakeCause,
 };
 use crate::model::normalize::{normalize, EffectiveView, NormalizeOutcome};
-use crate::model::object_environment::ObjectEnvironment;
+use crate::model::object_environment::{ObjectEnvironment, ReferenceOrigins};
 use crate::model::operation::{OperationDeclaration, OperationLookup, OperationTable};
 use filament_checked::key::DeclarationKey;
 use filament_semantic_value::declaration::TypeEnvironment;
@@ -523,10 +523,17 @@ pub struct ValueInvariantObservations {
 /// admitted current snapshot, including FR-106's retained recursive closure.
 /// Each tuple is `(reference, exact population node, value-relative path)`.
 /// The population is never inferred from a reference's present membership.
+/// Clock-reference data requires the actual declaration table and runtime
+/// identity byte limit. Its explicit owner population retains the same
+/// completeness and recursive closure obligations as ordinary reference seeds.
 pub fn admit_protocol_reference_seeds(
     types: &TypeEnvironment,
     observation: &Observation,
     seeds: &[(ObjectReference, filament_exact::NodeKey, Vec<PathStep>)],
+    clock_context: Option<(
+        &super::clock_reference::normalization::ClockDeclarationTable,
+        fsl_foundation::IdentityLimits,
+    )>,
 ) -> Result<(), AdmissionFailure> {
     let environment = &observation.environment;
     let mut required: Vec<(String, Vec<PathStep>)> = Vec::new();
@@ -537,15 +544,17 @@ pub fn admit_protocol_reference_seeds(
             record.path = path.clone();
             return Err(refuse(record));
         };
-        let compatible = provenance.member_types().iter().any(|(member, universe)| {
-            reference.universe() == universe
-                && types.conforms(reference.object_type().clone(), member.clone())
-        });
-        if !compatible {
-            let mut record = admission_record(Code::InvalidRuntimeInput, "wrong-value-kind")
-                .with("population", provenance.declaration().node.clone());
-            record.path = path.clone();
-            return Err(refuse(record));
+        if !super::clock_reference::is_clock_type(reference.object_type()) {
+            let compatible = provenance.member_types().iter().any(|(member, universe)| {
+                reference.universe() == universe
+                    && types.conforms(reference.object_type().clone(), member.clone())
+            });
+            if !compatible {
+                let mut record = admission_record(Code::InvalidRuntimeInput, "wrong-value-kind")
+                    .with("population", provenance.declaration().node.clone());
+                record.path = path.clone();
+                return Err(refuse(record));
+            }
         }
         let identity = provenance.declaration().node.clone();
         if !required.iter().any(|(held, _)| *held == identity) {
@@ -586,6 +595,18 @@ pub fn admit_protocol_reference_seeds(
         let Some(provenance) = environment.population_provenance(node) else {
             return Err(fault("validated-protocol-population-stays-admitted"));
         };
+        if super::clock_reference::is_clock_type(reference.object_type()) {
+            admit_protocol_clock_seed(
+                types,
+                environment,
+                reference,
+                node,
+                provenance,
+                clock_context,
+            )
+            .map_err(|record| refuse(record.at(path.clone())))?;
+            continue;
+        }
         let population = &provenance.declaration().node;
         let present = environment
             .population_members(population)
@@ -600,6 +621,94 @@ pub fn admit_protocol_reference_seeds(
             record.path = path.clone();
             return Err(refuse(record));
         }
+    }
+    Ok(())
+}
+
+fn admit_protocol_clock_seed(
+    types: &TypeEnvironment,
+    environment: &ObjectEnvironment,
+    reference: &ObjectReference,
+    node: &filament_exact::NodeKey,
+    provenance: &super::object_environment::PopulationProvenance,
+    context: Option<(
+        &super::clock_reference::normalization::ClockDeclarationTable,
+        fsl_foundation::IdentityLimits,
+    )>,
+) -> Result<(), AdmissionRecord> {
+    use super::clock_reference::identity::{DeclarationScope, IdentityError, PlaceIdentity};
+
+    let Some((table, limits)) = context else {
+        return Err(
+            admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
+                .with("reason", "clock-reference-binder-authority"),
+        );
+    };
+    let identity = PlaceIdentity::decode(
+        reference.object().as_str(),
+        quire_canonical::Limits::new(limits.input_bytes),
+    )
+    .map_err(|error| match error {
+        IdentityError::Canonical(quire_canonical::Error::Limit(limit))
+        | IdentityError::Read(quire_canonical::ReadError::Limit(limit)) => {
+            limit_record(&LimitExceeded::new(
+                Setting::IdentityInputBytes,
+                limit.bound,
+                u128::from(limit.required),
+            ))
+        }
+        IdentityError::Canonical(quire_canonical::Error::Allocation { requested })
+        | IdentityError::Read(quire_canonical::ReadError::Allocation { requested }) => {
+            allocation_failed_record(requested)
+        }
+        IdentityError::Malformed | IdentityError::Canonical(_) | IdentityError::Read(_) => {
+            admission_record(Code::InvalidRuntimeInput, "invalid-value")
+        }
+    })?;
+    let declarations = table.source_declarations();
+    let scope = declarations
+        .declaration_scope_for_node(node)
+        .or_else(|| declarations.catalog_scope(provenance.declaration()))
+        .ok_or_else(|| {
+            admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
+                .with("reason", "missing-type-representation")
+        })?;
+    if matches!(scope, DeclarationScope::Source { .. }) {
+        return Err(
+            admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
+                .with("reason", "missing-type-representation"),
+        );
+    }
+    let dangling = || {
+        admission_record(
+            Code::DanglingReference,
+            "absent-target-in-complete-population",
+        )
+        .with("population", provenance.declaration().node.clone())
+        .with("object", reference.object().to_string())
+    };
+    let owner = environment
+        .population_members(&provenance.declaration().node)
+        .and_then(|members| {
+            members
+                .iter()
+                .find(|member| member.object().as_str() == identity.owner)
+        })
+        .ok_or_else(dangling)?;
+    // Authenticate context independently of whether a clock path survives.
+    if &identity.population != scope
+        || reference.universe() != owner.universe()
+        || !super::clock_reference::is_declared_owner_scope(
+            &identity.template.scope,
+            owner,
+            table,
+            types,
+        )
+    {
+        return Err(admission_record(Code::InvalidRuntimeInput, "invalid-value"));
+    }
+    if !super::clock_reference::is_declared_identity(&identity, scope, owner, table, types) {
+        return Err(dangling());
     }
     Ok(())
 }
@@ -651,6 +760,15 @@ impl SelfKind {
     }
 }
 
+/// The actual sparse origins of the invocation's admitted values.
+#[derive(Clone, Debug, Default)]
+pub struct AdmittedValueOrigins {
+    /// Parameter origins under their original admitted declaration names.
+    pub parameters: BTreeMap<String, ReferenceOrigins>,
+    /// Result origins, selected against the post snapshot.
+    pub result: ReferenceOrigins,
+}
+
 /// FR-106 Outputs: one typed observation set admitted for S6a.
 #[derive(Clone, Debug)]
 pub struct AdmittedObservations {
@@ -673,6 +791,9 @@ pub struct AdmittedObservations {
     pub post: Option<Observation>,
     /// The selected self object's reference.
     pub self_object: ObjectReference,
+    /// The actual population explicitly selected for this receiver. Context
+    /// receivers and unattributed trusted values have no population origin.
+    pub self_population: Option<filament_exact::NodeKey>,
     /// The selected invocation, whatever kind `self` is: some for a
     /// postcondition and for a precondition selected by `Invocation`, none
     /// for an invariant and for a precondition selected by `PreCall`.
@@ -690,6 +811,8 @@ pub struct AdmittedObservations {
     /// The parameter values of an invocation or a pre-call observation, in
     /// declared order (empty for an invariant).
     pub parameters: Vec<(String, Value)>,
+    /// Explicit parameter/result attribution retained beside their values.
+    pub value_origins: AdmittedValueOrigins,
     /// The invocation's result value, or `None` for an operation with no
     /// result (empty for an invariant).
     pub result: Option<Value>,
@@ -1614,6 +1737,8 @@ pub(crate) struct ModelView {
     pub(crate) view: EffectiveView,
     provenance: Option<NormalizedModelProvenance>,
     pub(crate) clock_places: std::sync::Arc<super::clock_reference::DeclaredClockPlaces>,
+    pub(crate) clock_declarations:
+        Option<super::clock_reference::normalization::ClockDeclarationTable>,
     by_effective_id: BTreeMap<EffectiveId, DeclarationKey>,
     /// Whether the view is the unit's own source package (FR-569), whose
     /// declarations a snapshot names without an `ix://` scheme.
@@ -1632,6 +1757,7 @@ impl ModelView {
             view,
             provenance: None,
             clock_places: std::sync::Arc::default(),
+            clock_declarations: Default::default(),
             by_effective_id,
             source: false,
         }
@@ -1682,6 +1808,7 @@ pub struct ModelSelections<'a> {
     selections: &'a [DomainPackageRef],
     sources: &'a [DomainPackage],
     clock_models: &'a [crate::check::TimedModel],
+    clock_declarations: Option<&'a super::clock_reference::normalization::ClockDeclarationTable>,
 }
 
 impl<'a> ModelSelections<'a> {
@@ -1693,6 +1820,7 @@ impl<'a> ModelSelections<'a> {
             selections,
             sources,
             clock_models: &[],
+            clock_declarations: None,
         }
     }
 
@@ -1707,6 +1835,16 @@ impl<'a> ModelSelections<'a> {
     #[must_use]
     pub fn with_clock_places(mut self, models: &'a [crate::check::TimedModel]) -> Self {
         self.clock_models = models;
+        self
+    }
+
+    /// Retain the checked graph's atomic original-declaration table.
+    #[must_use]
+    pub fn with_clock_declaration_table(
+        mut self,
+        table: &'a super::clock_reference::normalization::ClockDeclarationTable,
+    ) -> Self {
+        self.clock_declarations = Some(table);
         self
     }
 
@@ -1798,11 +1936,18 @@ fn model_views_retaining<'a>(
         view.source = true;
         views.push(view);
     }
-    let clock_places = std::sync::Arc::new(super::clock_reference::DeclaredClockPlaces::new(
-        model_selections.clock_models,
-    ));
+    let clock_places = std::sync::Arc::new(match model_selections.clock_declarations {
+        Some(table) => super::clock_reference::DeclaredClockPlaces::with_declaration_table(
+            model_selections.clock_models,
+            table,
+        ),
+        None => super::clock_reference::DeclaredClockPlaces::new(model_selections.clock_models),
+    });
     for view in &mut views {
         view.clock_places = clock_places.clone();
+        if let Some(table) = model_selections.clock_declarations {
+            view.clock_declarations = Some(table.clone());
+        }
     }
     Ok(views)
 }
@@ -2005,7 +2150,11 @@ fn read_error_refusal(
 /// FR-106 check 1.2's refusal: `stage_limit_exceeded`/`input-bytes-exceeded`
 /// naming `observation.input_bytes`, its bound and the length reached.
 fn input_bytes_exceeded(bound: u64, actual: u128) -> AdmissionFailure {
-    limit_refusal(&LimitExceeded::new(
+    refuse(input_bytes_record(bound, actual))
+}
+
+fn input_bytes_record(bound: u64, actual: u128) -> AdmissionRecord {
+    limit_record(&LimitExceeded::new(
         Setting::ObservationInputBytes,
         bound,
         actual,
@@ -2039,11 +2188,15 @@ pub fn normalization_limit_record(
 /// cause and its `kind`, `bound`, `actual` and `setting` fields (FR-255
 /// Behavior 1).
 fn limit_refusal(limit: &LimitExceeded) -> AdmissionFailure {
+    refuse(limit_record(limit))
+}
+
+fn limit_record(limit: &LimitExceeded) -> AdmissionRecord {
     let mut record = admission_record(Code::StageLimitExceeded, limit.kind().catalog_cause());
     if let Some(fields) = limit.catalog_fields() {
         record.fields.extend(fields);
     }
-    refuse(record)
+    record
 }
 
 /// FR-261 Behavior 4: the object and value counts of one document, charged
@@ -2097,10 +2250,12 @@ const INSUFFICIENT_NEXT_CHARGE: &str = "insufficient-next-charge";
 /// FR-259 B6: reading or encoding the document could not reserve
 /// `requested` bytes of memory.
 fn allocation_failed(requested: usize) -> AdmissionFailure {
-    refuse(
-        admission_record(Code::ResourceExhausted, ALLOCATION_FAILED.cause())
-            .with("requested", requested.to_string()),
-    )
+    refuse(allocation_failed_record(requested))
+}
+
+fn allocation_failed_record(requested: usize) -> AdmissionRecord {
+    admission_record(Code::ResourceExhausted, ALLOCATION_FAILED.cause())
+        .with("requested", requested.to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -3027,6 +3182,10 @@ fn admit_invariant(
         &environment.environment,
         self_object,
     )?;
+    let self_population = environment
+        .environment
+        .population_node(&self_object.population)
+        .cloned();
 
     Ok(AdmittedObservations {
         usage: read.usage,
@@ -3040,11 +3199,13 @@ fn admit_invariant(
         pre: None,
         post: None,
         self_object: self_reference,
+        self_population,
         invocation: None,
         self_kind: SelfKind::Object,
         receiver_pre: None,
         receiver_post: None,
         parameters: Vec::new(),
+        value_origins: AdmittedValueOrigins::default(),
         result: None,
         created: Vec::new(),
         deleted: Vec::new(),
@@ -3146,6 +3307,7 @@ struct InvocationAdmission {
     /// The operation the invocation names, resolved by check 5.
     operation: OperationDeclaration,
     parameters: Vec<(String, Value)>,
+    value_origins: AdmittedValueOrigins,
     result: Option<Value>,
 }
 
@@ -3441,9 +3603,9 @@ fn admit_invocation_documents(
     // absent from its complete population refuses `dangling_reference`
     // (check 8's closure rule, SR-771 FND-001).
     let mut parameter_references =
-        document::References::over(views, types, &pre_snapshot.populations);
+        document::References::over(views, types, &pre_snapshot.populations)?;
     let mut result_references =
-        document::References::over(views, types, &post_snapshot.populations);
+        document::References::over(views, types, &post_snapshot.populations)?;
     document::check_untyped_parameters(
         views,
         context_name,
@@ -3466,6 +3628,10 @@ fn admit_invocation_documents(
         result.as_ref(),
     )?;
 
+    let value_origins = AdmittedValueOrigins {
+        parameters: parameter_references.parameter_origins,
+        result: result_references.result_origins,
+    };
     Ok(InvocationAdmission {
         documents,
         pre: pre_admitted,
@@ -3477,6 +3643,7 @@ fn admit_invocation_documents(
         receiver_post,
         operation,
         parameters,
+        value_origins,
         result,
     })
 }
@@ -3801,21 +3968,32 @@ fn admit_pre_call(
     // Check 10: parameters, resolved against the pre snapshot. A pre-call
     // observation carries no result, and a state machine's invariant binds
     // no parameter.
-    let parameters = if context.as_context {
-        Vec::new()
+    let (parameters, value_origins) = if context.as_context {
+        (Vec::new(), AdmittedValueOrigins::default())
     } else {
         let mut references =
-            document::References::over(context.views, context.types, &snapshot.populations);
+            document::References::over(context.views, context.types, &snapshot.populations)?;
         document::check_untyped_parameters(
             context.views,
             context.context_name,
             operation.name(),
             input.parameters,
         )?;
-        document::admit_parameters(&mut references, &operation, input.parameters)?
+        let parameters = document::admit_parameters(&mut references, &operation, input.parameters)?;
+        (
+            parameters,
+            AdmittedValueOrigins {
+                parameters: references.parameter_origins,
+                result: ReferenceOrigins::default(),
+            },
+        )
     };
 
     let usage = input.invocation_usage.merged_with(input.pre.usage);
+    let self_population = input
+        .self_object
+        .and_then(|object| admitted.environment.population_node(&object.population))
+        .cloned();
     let observation = Observation {
         identity: input.pre.identity,
         environment: admitted.environment,
@@ -3834,11 +4012,13 @@ fn admit_pre_call(
         pre,
         post: None,
         self_object: self_reference,
+        self_population,
         invocation: input.receiver_invocation.cloned(),
         self_kind: SelfKind::of(state_machine),
         receiver_pre,
         receiver_post: None,
         parameters,
+        value_origins,
         result: None,
         created: Vec::new(),
         deleted: Vec::new(),
@@ -3908,6 +4088,12 @@ fn admit_operation(
         )?;
     }
 
+    let self_population = invocation
+        .call
+        .self_object
+        .as_ref()
+        .and_then(|object| admitted.pre.environment.population_node(&object.population))
+        .cloned();
     let usage = admitted.usage();
     let pre = Observation {
         identity: admitted.documents.pre.identity,
@@ -3929,11 +4115,13 @@ fn admit_operation(
             pre: None,
             post: None,
             self_object: admitted.self_reference,
+            self_population: None,
             invocation: Some(admitted.invocation),
             self_kind: admitted.self_kind,
             receiver_pre: None,
             receiver_post: admitted.receiver_post,
             parameters: Vec::new(),
+            value_origins: AdmittedValueOrigins::default(),
             result: None,
             created: Vec::new(),
             deleted: Vec::new(),
@@ -3946,11 +4134,13 @@ fn admit_operation(
         pre: Some(pre),
         post: Some(post),
         self_object: admitted.self_reference,
+        self_population,
         invocation: Some(admitted.invocation),
         self_kind: admitted.self_kind,
         receiver_pre: admitted.receiver_pre,
         receiver_post: admitted.receiver_post,
         parameters: admitted.parameters,
+        value_origins: admitted.value_origins,
         result: admitted.result,
         created,
         deleted,

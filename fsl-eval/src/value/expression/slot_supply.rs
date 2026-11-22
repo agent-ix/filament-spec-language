@@ -16,6 +16,15 @@ impl SlotHost for CheckedHost<'_, '_, '_> {
         self.package.graph().scope().types()
     }
 
+    fn clock_declarations(
+        &self,
+    ) -> Result<
+        fsl_semantics::model::clock_reference::normalization::ClockDeclarationTable,
+        CallFailure,
+    > {
+        Ok(self.package.graph().clock_declaration_table().clone())
+    }
+
     fn binder_level(&self, key: &NodeKey) -> usize {
         let graph = self.package.graph();
         graph
@@ -60,6 +69,13 @@ pub(super) struct SourceView<'s> {
 /// the checked package, or a package read from its bytes alone (FR-533).
 pub(super) trait SlotHost {
     fn types(&self) -> &filament_semantic_value::declaration::TypeEnvironment;
+    /// The checked/admitted table used to authenticate Clock DATA inputs.
+    fn clock_declarations(
+        &self,
+    ) -> Result<
+        fsl_semantics::model::clock_reference::normalization::ClockDeclarationTable,
+        CallFailure,
+    >;
     /// The level of the protocol binder `key`, `usize::MAX` for a node that
     /// is none.
     fn binder_level(&self, key: &NodeKey) -> usize;
@@ -80,6 +96,7 @@ pub(super) trait SlotHost {
 /// The frame a slot's supply admits to.
 pub(super) struct AdmittedSupply {
     pub(super) frame: Vec<Option<Value>>,
+    pub(super) reference_origins: Vec<super::evaluate::ReferenceOrigins>,
     pub(super) unavailable:
         std::collections::BTreeMap<usize, (NodeKey, filament_semantic_value::catalog::CatalogCode)>,
     pub(super) binder_slots: std::collections::BTreeMap<usize, NodeKey>,
@@ -93,6 +110,38 @@ pub(super) fn admit_slot_supply(
     sources: &[SourceView<'_>],
     frame_len: usize,
     supply: &ProtocolSupply<'_>,
+) -> Result<AdmittedSupply, CallFailure> {
+    admit_slot_supply_with(host, sources, frame_len, supply, |path, binder| {
+        Err(CallFailure::Admission(Box::new(
+            CallAdmissionFailure::Refused(filament_eval::CallAdmissionRecord {
+                record: occurrence_record("invalid_runtime_input", "missing-member", path.to_vec()),
+                locus: CallAdmissionLocus::Binder(binder.clone()),
+            }),
+        )))
+    })
+}
+
+/// Model execution already owns these generated values. Absent population
+/// metadata remains absent, so it cannot authorize a Clock-place read. Every
+/// explicit origin still crosses the same membership and observation checks.
+pub(super) fn admit_generated_slot_supply(
+    host: &dyn SlotHost,
+    sources: &[SourceView<'_>],
+    frame_len: usize,
+    supply: &ProtocolSupply<'_>,
+) -> Result<AdmittedSupply, CallFailure> {
+    admit_slot_supply_with(host, sources, frame_len, supply, |_, _| Ok(()))
+}
+
+fn admit_slot_supply_with(
+    host: &dyn SlotHost,
+    sources: &[SourceView<'_>],
+    frame_len: usize,
+    supply: &ProtocolSupply<'_>,
+    missing_origin: impl Fn(
+        &[filament_semantic_value::admission::PathStep],
+        &NodeKey,
+    ) -> Result<(), CallFailure>,
 ) -> Result<AdmittedSupply, CallFailure> {
     let sources = sources
         .iter()
@@ -128,6 +177,7 @@ pub(super) fn admit_slot_supply(
         }
     }
     let mut frame = vec![None; frame_len];
+    let mut reference_origins = vec![super::evaluate::ReferenceOrigins::default(); frame_len];
     let mut unavailable = std::collections::BTreeMap::new();
     let binder_slots = sources
         .iter()
@@ -244,16 +294,7 @@ pub(super) fn admit_slot_supply(
                         .iter()
                         .any(|metadata| metadata.path == *path)
                     {
-                        return Err(CallFailure::Admission(Box::new(
-                            CallAdmissionFailure::Refused(filament_eval::CallAdmissionRecord {
-                                record: occurrence_record(
-                                    "invalid_runtime_input",
-                                    "missing-member",
-                                    path.clone(),
-                                ),
-                                locus: CallAdmissionLocus::Binder(key),
-                            }),
-                        )));
+                        missing_origin(path, &key)?;
                     }
                 }
                 for (path, reference) in &occurrences {
@@ -262,10 +303,7 @@ pub(super) fn admit_slot_supply(
                         .iter()
                         .find(|metadata| metadata.path == *path)
                     else {
-                        return Err(CallFailure::Fault(InternalFault::new(
-                            "FR-390",
-                            "reference-occurrence-metadata-is-matched",
-                        )));
+                        continue;
                     };
                     let Some((declaration, members)) = host.population_types(&metadata.population)
                     else {
@@ -275,6 +313,14 @@ pub(super) fn admit_slot_supply(
                             CallAdmissionLocus::Binder(key.clone()),
                         ));
                     };
+                    if fsl_semantics::model::clock_reference::is_clock_type(reference.object_type())
+                    {
+                        // Clock references are DATA. Their supplied P selects
+                        // an owner context, not a population of Clock objects.
+                        // The shared seed admission below validates the full
+                        // canonical identity and the actual owner membership.
+                        continue;
+                    }
                     if declaration.package != reference.object_type().original().package() {
                         return Err(protocol_slot::resolve::refused(
                             "invalid_model_binding",
@@ -293,7 +339,7 @@ pub(super) fn admit_slot_supply(
                         ));
                     }
                 }
-                if !occurrences.is_empty() {
+                if !supplied.references.is_empty() {
                     let Some(observation_admission) = supply.observation else {
                         return Err(CallFailure::Admission(Box::new(
                             CallAdmissionFailure::Incomplete(filament_eval::CallAdmissionRecord {
@@ -352,20 +398,22 @@ pub(super) fn admit_slot_supply(
                     }
                     let mut seeds = Vec::with_capacity(occurrences.len());
                     for (path, reference) in occurrences {
-                        let metadata = supplied
+                        let Some(metadata) = supplied
                             .references
                             .iter()
                             .find(|metadata| metadata.path == path)
-                            .ok_or_else(|| {
-                                CallFailure::Fault(InternalFault::new(
-                                    "FR-390",
-                                    "reference-occurrence-metadata-is-matched",
-                                ))
-                            })?;
-                        if protocol_slot::foreign_to_observation(&reference, observation)
+                        else {
+                            continue;
+                        };
+                        // Clock DATA authenticates its outer universe against
+                        // the decoded owner's actual P after completeness.
+                        // Ordinary object references retain their preflight.
+                        if !fsl_semantics::model::clock_reference::is_clock_type(
+                            reference.object_type(),
+                        ) && (protocol_slot::foreign_to_observation(&reference, observation)
                             || !observation
                                 .environment()
-                                .has_population_universe(reference.universe())
+                                .has_population_universe(reference.universe()))
                         {
                             let required = match source.value_type {
                                 filament_exact::ValueType::Reference(expected) => observation
@@ -381,15 +429,41 @@ pub(super) fn admit_slot_supply(
                         }
                         seeds.push((reference, metadata.population.clone(), path));
                     }
+                    let clock_declarations = seeds
+                        .iter()
+                        .any(|(reference, _, _)| {
+                            fsl_semantics::model::clock_reference::is_clock_type(
+                                reference.object_type(),
+                            )
+                        })
+                        .then(|| host.clock_declarations())
+                        .transpose()?;
                     if let Err(failure) =
                         fsl_semantics::model::observation::admit_protocol_reference_seeds(
                             host.types(),
                             observation.observation(),
                             &seeds,
+                            clock_declarations
+                                .as_ref()
+                                .map(|table| (table, fsl_foundation::IdentityLimits::default())),
                         )
                     {
                         return Err(protocol_reference_failure(observation, key, failure));
                     }
+                    // These paths were already owned by the existing typed
+                    // admission walk. Move them once after validation; every
+                    // frame and Local read subsequently shares this backing.
+                    reference_origins[index] = super::evaluate::ReferenceOrigins::from_occurrences(
+                        seeds
+                            .into_iter()
+                            .map(|(_, population, path)| {
+                                super::protocol_slot::ProtocolReferenceOccurrence {
+                                    path,
+                                    population,
+                                }
+                            })
+                            .collect::<Vec<_>>(),
+                    );
                 }
                 frame[index] = Some(value.clone());
             }
@@ -412,6 +486,7 @@ pub(super) fn admit_slot_supply(
     }
     Ok(AdmittedSupply {
         frame,
+        reference_origins,
         unavailable,
         binder_slots,
     })

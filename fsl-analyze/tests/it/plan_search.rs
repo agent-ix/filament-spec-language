@@ -1248,6 +1248,15 @@ fn source_policy_acceptance_requires_closed_truth_and_preserves_vacuity() {
 
 /// A genuine authored native model, retaining its declared operation order.
 fn native_plan_world(model: &str, contracts: &str, start: &[(&str, serde_json::Value)]) -> World {
+    native_plan_world_with_clauses(model, contracts, &[], start)
+}
+
+fn native_plan_world_with_clauses(
+    model: &str,
+    contracts: &str,
+    clauses: &[model_world::Clause<'_>],
+    start: &[(&str, serde_json::Value)],
+) -> World {
     let source = fsl_cst::diagnostic::read_source(
         fsl_foundation::SourceIdentity::new("test", "native-plan-model"),
         "native-plan-model.fsl",
@@ -1267,7 +1276,7 @@ fn native_plan_world(model: &str, contracts: &str, start: &[(&str, serde_json::V
         },
         contracts,
         model_world::INFINITE,
-        &[],
+        clauses,
         start,
     )
 }
@@ -3010,5 +3019,670 @@ fn lambda_objective_classification_preserves_whole_plan_terms_and_default_length
         let proof = result.certificate.unwrap();
         assert_eq!(proof.kind, certificate);
         assert_eq!(proof.outcome, CertificateOutcome::Accepted);
+    }
+}
+
+const POLICY_DIAMOND_MODEL: &str = r#"language "ix:native" edition "1-draft";
+domain "test/native-plan";
+object Counter {
+  number: Int[0,4];
+  operation right() modifies self.number { pre Start { self.number = 0 }; post Next { self.number = 1 }; }
+  operation left() modifies self.number { pre Start { self.number = 0 }; post Next { self.number = 2 }; }
+  operation combine() modifies self.number { pre Branch { self.number = 1 or self.number = 2 }; post Next { self.number = 3 }; }
+  operation settle() modifies self.number { pre Joined { self.number = 3 }; post Next { self.number = 4 }; }
+}
+population counters: Counter;
+"#;
+
+// A mixed unit/imported case retains the existing unit-contract regression.
+const POLICY_DIAMOND_CONTRACTS: &str = r#"
+pre RightStart using v on M::Counter::right { self.number = 0 }
+post RightNext using v on M::Counter::right { self.number = 1 }
+pre LeftStart using v on M::Counter::left { self.number = 0 }
+post LeftNext using v on M::Counter::left { self.number = 2 }
+pre CombineBranch using v on M::Counter::combine { self.number = 1 or self.number = 2 }
+post CombineNext using v on M::Counter::combine { self.number = 3 }
+pre SettleJoined using v on M::Counter::settle { self.number = 3 }
+post SettleNext using v on M::Counter::settle { self.number = 4 }
+"#;
+
+fn positive_policy_world(formula: &str) -> World {
+    policy_diamond_world(formula, true)
+}
+
+fn policy_diamond_world(formula: &str, unit_contracts: bool) -> World {
+    let contracts = if unit_contracts {
+        POLICY_DIAMOND_CONTRACTS
+    } else {
+        ""
+    };
+    native_plan_world_with_clauses(POLICY_DIAMOND_MODEL,
+        &format!("{contracts}\ntype Lengths = Int[0,3]; synthesis Reach using t grammar M::Counter domain Lengths satisfies {{ forall(c in Reach.final.counters: c.number = 4) }};\n"),
+        &[model_world::Clause { activation: "on origin", formula }],
+        &[("c", json!({"number":{"integer":"0"}}))])
+}
+
+/// Inline requires disable operations before their states, and inline ensures
+/// admit only their exact post-states, independently of the synthesis goal.
+#[test]
+#[trace("FR-103", "FR-1011")]
+fn imported_operation_contracts_enforce_preconditions_and_exact_poststates() {
+    use fsl_eval::simulation::model::{
+        NativeCandidateControl as Control, NativeCandidateEvent as Event,
+    };
+    let world = policy_diamond_world("always holds(c.number >= 0)", false);
+    let system = world_system(&world);
+    let order = native_order(&system, &["right", "left", "combine", "settle"]);
+    let operations = system.operations();
+    let mut pending = vec![system.initial()[0].clone()];
+    let mut seen = std::collections::BTreeSet::new();
+    while let Some(state) = pending.pop() {
+        let before = world.domain.integer(&state, "c", "number");
+        if !seen.insert(before) {
+            continue;
+        }
+        let mut completed = Vec::new();
+        let mut disabled = Vec::new();
+        let name = |transition: &ModelTransition| {
+            operations
+                .iter()
+                .find(|(_, _, text)| *text == transition.operation())
+                .unwrap()
+                .1
+                .to_owned()
+        };
+        system
+            .visit_plan_candidates(&state, &order, None, &mut |event| {
+                match event {
+                    Event::Completed {
+                        transition, state, ..
+                    } => {
+                        completed
+                            .push((name(transition), world.domain.integer(state, "c", "number")));
+                        pending.push(state.clone());
+                    }
+                    Event::Disabled(transition) => disabled.push(name(transition)),
+                    Event::Undetermined { outcome, .. } => {
+                        panic!("inline scalar contract must decide: {outcome:?}")
+                    }
+                    Event::Begin(_) => {}
+                }
+                Control::Continue
+            })
+            .unwrap();
+        completed.sort();
+        disabled.sort();
+        let expected = match before {
+            0 => vec![("left".to_owned(), 2), ("right".to_owned(), 1)],
+            1 | 2 => vec![("combine".to_owned(), 3)],
+            3 => vec![("settle".to_owned(), 4)],
+            4 => vec![],
+            other => panic!("unexpected inline post-state {other}"),
+        };
+        assert_eq!(completed, expected, "pre-state {before}");
+        let expected_disabled: Vec<_> = ["combine", "left", "right", "settle"]
+            .into_iter()
+            .filter(|operation| !expected.iter().any(|(name, _)| name == operation))
+            .map(str::to_owned)
+            .collect();
+        assert_eq!(disabled, expected_disabled, "pre-state {before}");
+    }
+    assert_eq!(seen.into_iter().collect::<Vec<_>>(), [0, 1, 2, 3, 4]);
+    // The imported-contract relation retains the native request's budget
+    // and cancellation stops, rather than reporting an empty relation.
+    system.share_evaluation_meter(ScalarLimits {
+        work_units: 0,
+        ..UNLIMITED
+    });
+    let stopped = system
+        .visit_plan_candidates(&system.initial()[0], &order, None, &mut |_| {
+            Control::Continue
+        })
+        .unwrap_err();
+    assert_eq!(
+        stopped.limit,
+        Some(fsl_eval::simulation::ExpansionLimit::EvaluationMeter(
+            filament_exact::LimitKind::WorkUnits
+        ))
+    );
+    for cause in [CancelCause::Requested, CancelCause::Deadline] {
+        system.begin_plan_replay(UNLIMITED);
+        let cancel = Cancel::new();
+        system.cancel_plan_with(&cancel);
+        cancel.cancel(cause);
+        let stopped = system
+            .visit_plan_candidates(&system.initial()[0], &order, Some(&cancel), &mut |_| {
+                Control::Continue
+            })
+            .unwrap_err();
+        assert_eq!(
+            stopped.limit,
+            Some(fsl_eval::simulation::ExpansionLimit::EvaluationMeter(
+                filament_exact::LimitKind::WorkUnits
+            ))
+        );
+        assert_eq!(system.plan_cancel_cause(), Some(cause));
+    }
+}
+
+/// An inherited operation uses its actual declaring owner and typed receiver,
+/// reference/integer arguments and result, alongside ordinary unit contracts.
+#[test]
+#[trace("FR-103", "FR-1011", "FSpec-FR-800")]
+fn imported_operation_contracts_bind_inherited_arguments_and_result() {
+    use filament_exact::Value;
+    use fsl_eval::simulation::model::{
+        NativeCandidateControl as Control, NativeCandidateEvent as Event,
+    };
+    let world = finite_argument_world(r#"language "ix:native" edition "1-draft";
+domain "test/native-plan";
+type Amount = Int[0,1];
+object Base {
+  number: Int[0,1];
+  operation choose(target: Base, amount: Amount): Boolean modifies self.number {
+    pre Start { target = self and amount = 1 and self.number = 0 };
+    post Next { self.number = amount and pre(self.number) = 0 and result };
+  }
+}
+object Counter extends Base {
+  operation stay(target: Base, amount: Amount): Boolean modifies self.number {
+    pre Start { target = self and amount = 0 and self.number = 0 };
+    post Next { self.number = amount and not result };
+  }
+}
+population counters: Counter;
+"#, "Counter", "counters",
+        "pre UnitArgument using v on M::Counter::choose { amount >= 0 }\npost UnitResult using v on M::Counter::choose { result }",
+        &[("counters", "Counter", &[("c", json!({"number":{"integer":"0"}})),
+            ("d", json!({"number":{"integer":"0"}}))])]);
+    let system = ModelSystem::new(
+        world
+            .subject_populations(&[("counters", &["c", "d"])], UNLIMITED)
+            .simulation,
+    )
+    .unwrap();
+    let operations = system.operations();
+    let mut completed = Vec::new();
+    system
+        .visit_plan_candidates(
+            &system.initial()[0],
+            &native_order(&system, &["choose", "stay"]),
+            None,
+            &mut |event| {
+                match event {
+                    Event::Completed {
+                        transition,
+                        receiver,
+                        arguments,
+                        state,
+                        ..
+                    } => {
+                        let operation = operations
+                            .iter()
+                            .find(|(_, _, text)| *text == transition.operation())
+                            .unwrap()
+                            .1;
+                        let [Value::Reference(target), Value::Integer(amount)] = arguments else {
+                            panic!("actual admitted reference and integer arguments");
+                        };
+                        assert_eq!(target, receiver);
+                        let expected: i64 = if operation == "choose" { 1 } else { 0 };
+                        assert_eq!(amount.to_string(), expected.to_string());
+                        let object = state
+                            .state()
+                            .populations
+                            .values()
+                            .find_map(|objects| objects.get(receiver.object().as_str()))
+                            .unwrap();
+                        let Some(Value::Integer(number)) = object.fields.values().next() else {
+                            panic!("the inherited integer field is present");
+                        };
+                        assert_eq!(number.to_string(), expected.to_string());
+                        assert_eq!(
+                            state.reached_by().unwrap().result.as_deref(),
+                            Some(if operation == "choose" {
+                                r#"{"type":"boolean","value":true}"#
+                            } else {
+                                r#"{"type":"boolean","value":false}"#
+                            })
+                        );
+                        completed
+                            .push((operation.to_owned(), receiver.object().as_str().to_owned()));
+                    }
+                    Event::Undetermined { outcome, .. } => {
+                        panic!("typed operation contract must decide: {outcome:?}")
+                    }
+                    Event::Begin(_) | Event::Disabled(_) => {}
+                }
+                Control::Continue
+            },
+        )
+        .unwrap();
+    completed.sort();
+    assert_eq!(
+        completed,
+        [
+            ("choose".to_owned(), "c".to_owned()),
+            ("choose".to_owned(), "d".to_owned()),
+            ("stay".to_owned(), "c".to_owned()),
+            ("stay".to_owned(), "d".to_owned())
+        ]
+    );
+}
+
+/// Different past witnesses survive a native diamond; equal obligations merge
+/// and retain the earlier declared branch. Replay/checking reconstruct both.
+#[test]
+#[trace("FR-1012", "FR-1011", "FSpec-FR-803-AC-3")]
+fn positive_source_policies_preserve_witnesses_and_canonical_native_order() {
+    assert_policy_diamond(true);
+}
+
+/// Inline contracts alone preserve exact branches, states and independent proof.
+#[test]
+#[trace("FR-103", "FR-1012", "FR-1011", "FSpec-FR-803-AC-3")]
+fn imported_operation_contracts_preserve_diamond_witnesses_and_proof() {
+    assert_policy_diamond(false);
+}
+
+fn assert_policy_diamond(unit_contracts: bool) {
+    use fsl_analyze::plan_source::SourcePlan;
+    for (formula, expected) in [
+        ("eventually[0,3] holds(c.number = 2)", "left"),
+        ("always holds(c.number >= 0)", "right"),
+        ("always[0,5] holds(c.number <= 4)", "right"),
+    ] {
+        let world = policy_diamond_world(formula, unit_contracts);
+        if !unit_contracts {
+            assert!(world.package.graph().state_clauses().is_empty());
+            assert_eq!(world.package.graph().operation_clauses().len(), 8);
+        }
+        let types = world.package.graph().scope().types();
+        let counter = types
+            .object_types()
+            .find(|object| object.name() == "M::Counter")
+            .unwrap();
+        let field = types
+            .attributes(counter.key())
+            .unwrap()
+            .iter()
+            .find(|field| field.field().name() == "number")
+            .unwrap();
+        let filament_exact::ValueType::Int(bounds) = field.field().value_type() else {
+            panic!("actual admitted native interval");
+        };
+        assert_eq!(
+            (bounds.lower().to_string(), bounds.upper().to_string()),
+            ("0".to_owned(), "4".to_owned())
+        );
+        let system = world_system(&world);
+        let node = &world.package.graph().temporal_clauses()[0];
+        let mut retained = None;
+        for _ in 0..2 {
+            let mut rules = SourcePlan::new(
+                &world.package,
+                &world.package.graph().syntheses()[0],
+                &system,
+                vec![node],
+                UNLIMITED,
+            )
+            .unwrap();
+            let result = search(
+                &system,
+                &mut rules,
+                PlanSearchRequest {
+                    lengths: PlanLengths::new(0, 3).unwrap(),
+                    limits: PlanSearchLimits::default(),
+                    cancel: &Cancel::new(),
+                    fault: None,
+                },
+            )
+            .unwrap();
+            assert!(rules.fault().is_none(), "{:?}", rules.fault());
+            assert_eq!(result.status, PlanStatus::Optimal);
+            assert!(result.certified);
+            assert_eq!(result.objective, Some(integer(3)));
+            assert_eq!(
+                result.certificate.as_ref().unwrap().outcome,
+                CertificateOutcome::Accepted
+            );
+            let plan = result.plan.as_ref().unwrap();
+            let names: Vec<_> = plan
+                .steps
+                .iter()
+                .map(|step| rules.operation_name(step).unwrap())
+                .collect();
+            assert_eq!(names, [expected, "combine", "settle"]);
+            let numbers: Vec<_> = plan
+                .states
+                .iter()
+                .map(|state| world.domain.integer(state, "c", "number"))
+                .collect();
+            assert_eq!(numbers, [0, if expected == "left" { 2 } else { 1 }, 3, 4]);
+            rules.begin_replay();
+            assert_eq!(
+                fsl_analyze::plan_search::replay::replay(
+                    &system,
+                    &mut rules,
+                    plan,
+                    PlanLengths::new(0, 3).unwrap(),
+                    ObjectiveKind::StepSum,
+                )
+                .unwrap(),
+                integer(3)
+            );
+            assert_eq!(
+                fsl_eval::simulation::model::read_clause(
+                    &system,
+                    node,
+                    &plan.states,
+                    true,
+                    &mut filament_exact::Meter::new(UNLIMITED)
+                )
+                .unwrap(),
+                fsl_eval::simulation::model::ClauseReading::Holds
+            );
+            let evidence = (numbers, result.explored, result.certificate);
+            if let Some(previous) = &retained {
+                assert_eq!(&evidence, previous);
+            } else {
+                retained = Some(evidence);
+            }
+        }
+    }
+}
+
+/// Safety rejects before goal evaluation and gives a checked infeasibility
+/// certificate; state substitution and missing successors cannot certify.
+#[test]
+#[trace("FR-1012", "FSpec-FR-803-AC-5")]
+fn positive_source_policies_refuse_broken_safety_and_forged_certificates() {
+    assert_policy_diamond_forgery(true);
+}
+
+/// Inline-only contracts reject missing successors and substituted proof states.
+#[test]
+#[trace("FR-103", "FR-1012", "FSpec-FR-803-AC-5")]
+fn imported_operation_contracts_reject_safety_and_forged_certificates() {
+    assert_policy_diamond_forgery(false);
+}
+
+fn assert_policy_diamond_forgery(unit_contracts: bool) {
+    use fsl_analyze::plan_source::SourcePlan;
+    let world = policy_diamond_world("always holds(c.number != 4)", unit_contracts);
+    let system = world_system(&world);
+    let mut rules = SourcePlan::new(
+        &world.package,
+        &world.package.graph().syntheses()[0],
+        &system,
+        vec![&world.package.graph().temporal_clauses()[0]],
+        UNLIMITED,
+    )
+    .unwrap();
+    let result = search(
+        &system,
+        &mut rules,
+        PlanSearchRequest {
+            lengths: PlanLengths::new(0, 3).unwrap(),
+            limits: PlanSearchLimits::default(),
+            cancel: &Cancel::new(),
+            fault: None,
+        },
+    )
+    .unwrap();
+    assert_eq!(result.status, PlanStatus::Infeasible);
+    assert!(result.plan.is_none());
+    assert_eq!(
+        result.certificate.unwrap().outcome,
+        CertificateOutcome::Accepted
+    );
+    let world = policy_diamond_world("always holds(c.number >= 0)", unit_contracts);
+    let system = world_system(&world);
+    for fault in [
+        PlanFault::DropSuccessor {
+            entry: 0,
+            successor: 0,
+        },
+        PlanFault::ForgeEntryState {
+            entry: 1,
+            source: 0,
+        },
+    ] {
+        let mut rules = SourcePlan::new(
+            &world.package,
+            &world.package.graph().syntheses()[0],
+            &system,
+            vec![&world.package.graph().temporal_clauses()[0]],
+            UNLIMITED,
+        )
+        .unwrap();
+        let result = search(
+            &system,
+            &mut rules,
+            PlanSearchRequest {
+                lengths: PlanLengths::new(0, 3).unwrap(),
+                limits: PlanSearchLimits::default(),
+                cancel: &Cancel::new(),
+                fault: Some(&fault),
+            },
+        )
+        .unwrap();
+        assert!(!result.certified, "{fault:?}");
+        assert!(
+            matches!(
+                result.certificate.unwrap().outcome,
+                CertificateOutcome::Rejected { .. }
+            ),
+            "{fault:?}"
+        );
+    }
+}
+
+/// A valid but incorrect recorded monitor cannot pass independent initial
+/// reconstruction, even when its own canonical context and framing are valid.
+#[test]
+#[trace("FR-1012", "FSpec-FR-803")]
+fn positive_source_policy_certificate_rejects_a_substituted_monitor() {
+    use fsl_analyze::plan_source::SourcePlan;
+    let world = positive_policy_world("eventually[0,3] holds(c.number = 2)");
+    let system = world_system(&world);
+    let mut rules = SourcePlan::new(
+        &world.package,
+        &world.package.graph().syntheses()[0],
+        &system,
+        vec![&world.package.graph().temporal_clauses()[0]],
+        UNLIMITED,
+    )
+    .unwrap();
+    let fault = PlanFault::ForgePolicyStates {
+        entry: 0,
+        source: 1,
+    };
+    let result = search(
+        &system,
+        &mut rules,
+        PlanSearchRequest {
+            lengths: PlanLengths::new(0, 3).unwrap(),
+            limits: PlanSearchLimits::default(),
+            cancel: &Cancel::new(),
+            fault: Some(&fault),
+        },
+    )
+    .unwrap();
+    assert!(!result.certified);
+    assert_eq!(
+        result.certificate.unwrap().outcome,
+        CertificateOutcome::Rejected {
+            rule: CertificateRule::Initial,
+            entry: 0
+        }
+    );
+}
+
+/// Positive source policies retain their original cumulative work/storage
+/// denial and request/deadline cancellation, without another per-policy meter.
+#[test]
+#[trace("FR-1011-AC-2", "FR-1012")]
+fn positive_source_policy_accounting_and_cancellation_keep_the_original_session() {
+    use filament_exact::{CancelCause, ScalarLimits};
+    use fsl_analyze::plan_source::SourcePlan;
+    let world = positive_policy_world("always holds(c.number >= 0)");
+    let system = world_system(&world);
+    let node = &world.package.graph().temporal_clauses()[0];
+    let initial = system.initial().remove(0);
+    for (counter, limits) in [
+        (
+            "work_units",
+            ScalarLimits {
+                work_units: 0,
+                ..UNLIMITED
+            },
+        ),
+        (
+            "result_units",
+            ScalarLimits {
+                result_units: 0,
+                ..UNLIMITED
+            },
+        ),
+    ] {
+        let mut rules = SourcePlan::new(
+            &world.package,
+            &world.package.graph().syntheses()[0],
+            &system,
+            vec![node, node],
+            limits,
+        )
+        .unwrap();
+        assert!(
+            matches!(rules.policy_start(0,&initial),Err(RuleStop::Accounting {counter:actual,value:0}) if actual == counter)
+        );
+    }
+    for cause in [CancelCause::Requested, CancelCause::Deadline] {
+        let system = world_system(&world);
+        let mut rules = SourcePlan::new(
+            &world.package,
+            &world.package.graph().syntheses()[0],
+            &system,
+            vec![node],
+            UNLIMITED,
+        )
+        .unwrap();
+        let MonitorStep::Continue(bytes) = rules.policy_start(0, &initial).unwrap() else {
+            panic!("safe initial state")
+        };
+        let cancel = Cancel::new();
+        system.cancel_plan_with(&cancel);
+        cancel.cancel(cause);
+        assert_eq!(
+            rules.policy_advance(0, &bytes, &initial),
+            Err(RuleStop::Cancelled(cause))
+        );
+        assert_eq!(
+            rules.policy_accepts(0, &bytes, &initial),
+            Err(RuleStop::Cancelled(cause))
+        );
+    }
+}
+
+/// The budgeted model-owned instance collector preserves ordinary ordering,
+/// two-instance source bindings and empty-population policy vacuity.
+#[test]
+#[trace("FR-1011", "FR-1012", "FSpec-FR-803")]
+fn positive_source_policy_instances_preserve_order_vacuity_and_original_denials() {
+    use filament_exact::{CancelCause, LimitKind, Meter, ScalarLimits};
+    use fsl_analyze::plan_source::SourcePlan;
+    use fsl_eval::automaton::PolicyStateError;
+    for start in [
+        vec![
+            ("z", json!({"number":{"integer":"0"}})),
+            ("a", json!({"number":{"integer":"0"}})),
+        ],
+        vec![],
+    ] {
+        let world = native_plan_world_with_clauses(
+            POLICY_DIAMOND_MODEL,
+            "type Lengths = Int[0,1]; synthesis Reach using t grammar M::Counter domain Lengths satisfies { true };",
+            &[model_world::Clause { activation: "on origin", formula: "always holds(c.number >= 0)" }],
+            &start,
+        );
+        let keys: Vec<_> = start.iter().map(|(key, _)| *key).collect();
+        let system = ModelSystem::new(world.subject(&keys, UNLIMITED).simulation).unwrap();
+        let node = &world.package.graph().temporal_clauses()[0];
+        let over = &node.clause().over().1;
+        let expected = system.instances(over).unwrap();
+        let actual = system
+            .instances_with_meter(over, &mut Meter::new(UNLIMITED))
+            .unwrap();
+        assert_eq!(actual, expected);
+        if !start.is_empty() {
+            assert_eq!(
+                actual
+                    .iter()
+                    .map(|instance| instance.key.as_str())
+                    .collect::<Vec<_>>(),
+                ["z", "a"]
+            );
+            let error = system
+                .instances_with_meter(
+                    over,
+                    &mut Meter::new(ScalarLimits {
+                        result_units: 0,
+                        ..UNLIMITED
+                    }),
+                )
+                .unwrap_err();
+            assert!(
+                matches!(error,PolicyStateError::Accounting(denial) if denial.limit_kind == LimitKind::ResultUnits && denial.limit == 0)
+            );
+        }
+        let mut rules = SourcePlan::new(
+            &world.package,
+            &world.package.graph().syntheses()[0],
+            &system,
+            vec![node],
+            UNLIMITED,
+        )
+        .unwrap();
+        let state = system.initial().remove(0);
+        let MonitorStep::Continue(bytes) = rules.policy_start(0, &state).unwrap() else {
+            panic!("all instances safe or vacuous")
+        };
+        assert!(rules.policy_accepts(0, &bytes, &state).unwrap());
+        for cause in [CancelCause::Requested, CancelCause::Deadline] {
+            let cancel = Cancel::new();
+            cancel.cancel(cause);
+            let error = system
+                .instances_with_meter(over, &mut Meter::new(UNLIMITED).with_cancel(cancel))
+                .unwrap_err();
+            assert!(matches!(error,PolicyStateError::Cancelled(actual) if actual == cause));
+        }
+    }
+}
+
+/// Positive unsupported forms remain explicit; staged monitor support does
+/// not silently discard captures or general liveness.
+#[test]
+#[trace("FR-1012")]
+fn positive_source_policy_stage_boundary_keeps_required_future_forms_explicit() {
+    use fsl_analyze::plan_source::{PlanSourceError, SourcePlan};
+    for formula in [
+        "eventually holds(c.number = 2)",
+        "capture n: Int[0,4] = c.number; always holds(c.number >= n)",
+        "eventually[1,3] holds(c.number = 2)",
+    ] {
+        let world = positive_policy_world(formula);
+        let system = world_system(&world);
+        let result = SourcePlan::new(
+            &world.package,
+            &world.package.graph().syntheses()[0],
+            &system,
+            vec![&world.package.graph().temporal_clauses()[0]],
+            UNLIMITED,
+        );
+        assert!(
+            matches!(result, Err(PlanSourceError::UnsupportedForm { .. })),
+            "{formula}"
+        );
     }
 }

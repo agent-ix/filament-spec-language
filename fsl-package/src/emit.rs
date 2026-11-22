@@ -4241,11 +4241,8 @@ fn checked_equality_term_data(
 
 /// Convert the retained FR-150 identity without looking up a display name or
 /// traversing the checked graph.
-#[derive(Default)]
-struct SourceDeclarationKeys {
-    packages: BTreeMap<String, String>,
-    checked_nodes: BTreeMap<String, String>,
-}
+type SourceDeclarationKeys =
+    fsl_semantics::model::clock_reference::normalization::SourceDeclarations;
 
 fn checked_effective_id(
     identity: &filament_exact::EffectiveId,
@@ -4307,75 +4304,15 @@ fn emission_composites(
 fn source_declaration_key_rewrites(
     graph: &CheckedGraph,
 ) -> Result<SourceDeclarationKeys, EmitRefusal> {
-    let mut rewrites = SourceDeclarationKeys::default();
-    for node in graph.semantic_graph().nodes() {
-        let Some(Owner::Source(owner)) = node.owner() else {
-            continue;
-        };
-        let Some(name) = node.declaration() else {
-            continue;
-        };
-        if let Some(declaration) = graph.resolve_declaration(node.key()) {
-            match rewrites.packages.entry(declaration.package.clone()) {
-                std::collections::btree_map::Entry::Vacant(entry) => {
-                    entry.insert(owner.identity().to_owned());
-                }
-                std::collections::btree_map::Entry::Occupied(entry)
-                    if entry.get() == owner.identity() => {}
-                std::collections::btree_map::Entry::Occupied(_) => {
-                    return Err(EmitRefusal::SourceMapInvariant);
-                }
-            }
-        }
-        rewrites.checked_nodes.insert(
-            node.key().to_string(),
-            source_declaration_identity(owner, name),
-        );
-    }
-    for declaration in emission_composites(graph) {
-        let Some(node_key) = graph.semantic_graph().composite_node(&declaration.key()) else {
-            continue;
-        };
-        let Some(node) = graph.semantic_graph().node(node_key.clone()) else {
-            return Err(EmitRefusal::SourceMapInvariant);
-        };
-        let (Some(Owner::Source(owner)), Some(name)) = (node.owner(), node.declaration()) else {
-            continue;
-        };
-        rewrites.checked_nodes.insert(
-            node_key.to_string(),
-            source_declaration_identity(owner, name),
-        );
-    }
-    Ok(rewrites)
-}
-
-fn source_declaration_identity(
-    owner: &fsl_semantics::check::SourceOwner,
-    name: &[filament_exact::Identifier],
-) -> String {
-    format!(
-        "ix://{}/{}",
-        owner.identity(),
-        name.iter()
-            .map(|segment| segment.as_str())
-            .collect::<Vec<_>>()
-            .join("/")
-    )
+    SourceDeclarationKeys::from_graph_with_composites(graph, emission_composites(graph))
+        .map_err(|_| EmitRefusal::SourceMapInvariant)
 }
 
 /// The name a function body's rows carry: the checker's function name with a
 /// source model's private package spelled as the package the emitted nodes
 /// carry (FSpec FR-322), so no check-time alias reaches the bytes.
 fn emitted_function_name(name: &str, source_keys: &SourceDeclarationKeys) -> String {
-    source_keys
-        .packages
-        .iter()
-        .find_map(|(package, identity)| {
-            name.strip_prefix(&format!("ix://{package}/"))
-                .map(|declaration| format!("ix://{identity}/{declaration}"))
-        })
-        .unwrap_or_else(|| name.to_owned())
+    source_keys.text(name)
 }
 
 /// Apply the source owner's declaration-key spelling to a key retained by S3.
@@ -4384,14 +4321,13 @@ fn emitted_source_declaration_key(
     node: &str,
     source_keys: &SourceDeclarationKeys,
 ) -> Result<(String, String), EmitRefusal> {
-    let Some(identity) = source_keys.packages.get(package) else {
-        return Ok((package.to_owned(), node.to_owned()));
-    };
-    let prefix = format!("ix://{package}/");
-    let declaration = node
-        .strip_prefix(&prefix)
-        .ok_or(EmitRefusal::SourceMapInvariant)?;
-    Ok((identity.clone(), format!("ix://{identity}/{declaration}")))
+    let normalized = source_keys
+        .original_key(&filament_checked::key::DeclarationKey {
+            package: package.to_owned(),
+            node: node.to_owned(),
+        })
+        .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+    Ok((normalized.package, normalized.node))
 }
 
 /// Rewrite source declaration keys in the typed literals of an emitted clock
@@ -4404,6 +4340,8 @@ fn rewrite_source_keys_in_clock_place(
     fn rewrite_term(
         term: &mut CheckedTerm,
         source_keys: &SourceDeclarationKeys,
+        declaring: Option<&str>,
+        binding: Option<&str>,
     ) -> Result<(), EmitRefusal> {
         match term {
             CheckedTerm::Literal {
@@ -4412,35 +4350,12 @@ fn rewrite_source_keys_in_clock_place(
                 ..
             } => {
                 if let Some(text) = value.as_str() {
-                    let mut rewritten = text.to_owned();
-                    if let Some(source_node) = source_keys.checked_nodes.get(text) {
-                        rewritten = source_node.clone();
-                    } else {
-                        for (checked_node, source_node) in &source_keys.checked_nodes {
-                            if rewritten.contains(checked_node) {
-                                rewritten = rewritten.replace(checked_node, source_node);
-                            }
-                        }
-                        for (package, identity) in &source_keys.packages {
-                            let prefix = format!("ix://{package}/");
-                            if let Some(declaration) = rewritten.strip_prefix(&prefix) {
-                                rewritten = format!("ix://{identity}/{declaration}");
-                                break;
-                            }
-                        }
-                        if !rewritten.starts_with("ix://") {
-                            for source_type in source_keys.checked_nodes.values() {
-                                let Some((_, type_name)) = source_type.rsplit_once('/') else {
-                                    continue;
-                                };
-                                let prefix = format!("{type_name}/");
-                                if let Some(member) = rewritten.strip_prefix(&prefix) {
-                                    rewritten = format!("{source_type}/{member}");
-                                    break;
-                                }
-                            }
-                        }
-                    }
+                    let rewritten = match (binding, declaring) {
+                        (Some("member_identity"), Some(declaring)) => source_keys
+                            .member(declaring, text)
+                            .map_err(|_| EmitRefusal::SourceMapInvariant)?,
+                        _ => source_keys.text(text),
+                    };
                     if rewritten != text {
                         *value = CheckedJson::from_serializable(&rewritten)
                             .map_err(|_| EmitRefusal::SourceMapInvariant)?;
@@ -4448,18 +4363,36 @@ fn rewrite_source_keys_in_clock_place(
                 }
             }
             CheckedTerm::Aggregate { members } => {
+                let row_declaring = members.iter().find_map(|member| match member {
+                    CheckedTerm::Binding { name, value, .. }
+                        if name.as_ref() == "declaring_type" =>
+                    {
+                        match value.as_ref() {
+                            CheckedTerm::Literal {
+                                value_kind: LiteralKind::Text,
+                                value,
+                                ..
+                            } => value.as_str().map(str::to_owned),
+                            _ => None,
+                        }
+                    }
+                    _ => None,
+                });
+                let declaring = row_declaring.as_deref().or(declaring);
                 for member in members {
-                    rewrite_term(member, source_keys)?;
+                    rewrite_term(member, source_keys, declaring, binding)?;
                 }
             }
-            CheckedTerm::Binding { value, .. } => rewrite_term(value, source_keys)?,
+            CheckedTerm::Binding { name, value, .. } => {
+                rewrite_term(value, source_keys, declaring, Some(name.as_ref()))?;
+            }
             _ => {}
         }
         Ok(())
     }
 
     if node.semantic_form.as_ref() == "clock_place" {
-        rewrite_term(&mut node.body, source_keys)?;
+        rewrite_term(&mut node.body, source_keys, None, None)?;
     }
     Ok(())
 }
@@ -4570,7 +4503,7 @@ fn checked_dispatch_tables(
 fn checked_term_data(
     graph: &CheckedGraph,
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
-    equality_node_ids: &HashMap<NodeKey, CheckedNodeId>,
+    producer_node_ids: &HashMap<NodeKey, CheckedNodeId>,
     selected_model_members: &[(
         NodeKey,
         NodeKey,
@@ -4584,7 +4517,7 @@ fn checked_term_data(
 ) -> Result<Option<filament_contract_model::CheckedTermDataV2>, EmitRefusal> {
     let mut term_data = checked_equality_term_data(
         graph,
-        equality_node_ids,
+        producer_node_ids,
         selected_model_members,
         equality_rows,
     )?
@@ -4592,11 +4525,14 @@ fn checked_term_data(
     term_data.dispatch_tables =
         checked_dispatch_tables(graph, emitted_node_ids, source_map, source_keys)?;
     term_data.protocol_locations =
-        protocol_locations::checked_protocol_locations(graph, emitted_node_ids)?;
+        protocol_locations::checked_protocol_locations(graph, producer_node_ids)?;
     term_data.probabilistic_claims = checked_probabilistic_claims(graph, emitted_node_ids)?;
+    // Location rows retain original S3 application keys, just as equality
+    // does. Resolve them through the actual timed substitutions, without
+    // adding aliases to the graph index used by reverse lookups.
     term_data.body_locations = body_locations::checked_body_locations(
         graph,
-        emitted_node_ids,
+        producer_node_ids,
         nodes,
         source_keys,
         output_bytes,
@@ -6178,17 +6114,41 @@ fn rekey_timed_model_nodes(
         // FR-322 "Operand index segments": a node whose own path holds a
         // rekeyed node as an operand is rekeyed with it, so every operand
         // stays a node of the graph.
-        let mut next = 0;
-        while let Some((old, new)) = changes.get(next).cloned() {
-            next += 1;
+        // Several changed operands may meet at one node (for example, a
+        // slot domain and its presence predicate). Rebuild each target from
+        // its original candidate so no first rewrite hides a later operand.
+        let seeds = changes.clone();
+        let mut settled = false;
+        for _ in 0..=nodes.len() {
+            let previous = changes.clone();
             for node in nodes.iter() {
-                if changes.iter().any(|(changed, _)| *changed == node.node_id) {
-                    continue;
+                let mut rekeyed = seeds
+                    .iter()
+                    .find(|(old, _)| *old == node.node_id)
+                    .map(|(_, new)| new)
+                    .unwrap_or(&node.node_id)
+                    .clone();
+                for (old, new) in &previous {
+                    if let Some(replacement) = with_operand(&rekeyed, old, new) {
+                        rekeyed = replacement;
+                    }
                 }
-                if let Some(rekeyed) = with_operand(&node.node_id, &old, &new) {
-                    changes.push((node.node_id.clone(), rekeyed));
+                if rekeyed != node.node_id {
+                    match changes.iter_mut().find(|(old, _)| *old == node.node_id) {
+                        Some((_, target)) => *target = rekeyed,
+                        None => changes.push((node.node_id.clone(), rekeyed)),
+                    }
                 }
             }
+            if changes == previous {
+                settled = true;
+                break;
+            }
+        }
+        if !settled {
+            return Err(EmitRefusal::TimedModelWriterInvariant(
+                "timed-node operand propagation did not converge",
+            ));
         }
         for (old, new) in changes {
             substitutions.push((
@@ -6564,10 +6524,21 @@ pub fn emit_timed_models(
             .write_nodes()
             .map_err(EmitRefusal::TimedModelWriterInvariant)?;
         for node in written {
-            if CheckedNodeTag::from_wire(&node.node_tag) != Some(CheckedNodeTag::TimedModel)
-                || timed.insert(node.node_id.clone(), node).is_some()
-            {
+            if CheckedNodeTag::from_wire(&node.node_tag) != Some(CheckedNodeTag::TimedModel) {
                 return Err(EmitRefusal::TimedModelNodeSetMismatch);
+            }
+            // Equal declarations share one node (FR-322), so each model
+            // writes its copy; a repeat is accepted only when it equals the
+            // node already held.
+            match timed.entry(node.node_id.clone()) {
+                std::collections::btree_map::Entry::Vacant(slot) => {
+                    slot.insert(node);
+                }
+                std::collections::btree_map::Entry::Occupied(held) => {
+                    if *held.get() != node {
+                        return Err(EmitRefusal::TimedModelNodeSetMismatch);
+                    }
+                }
             }
         }
     }
@@ -7522,6 +7493,7 @@ fn emit_package_inner(
             &mut source_map,
             &mut None,
         )?);
+        merge_equal_timed_nodes(&mut nodes, &mut source_map)?;
         // FSpec FR-322 "Aggregate order": the lists are written in declared
         // order, which reads the nodes' regions and structure alone, and
         // the nodes whose lists moved are rekeyed.
@@ -7534,6 +7506,7 @@ fn emit_package_inner(
                 &mut source_map,
                 &mut None,
             )?);
+            merge_equal_timed_nodes(&mut nodes, &mut source_map)?;
         }
         #[cfg(test)]
         TIMED_GRAPH.with(|held| *held.borrow_mut() = Some((nodes.clone(), source_map.clone())));
@@ -10374,4 +10347,80 @@ fn collection_layers(
             .upper
             .map_or_else(|| "unbounded".into(), |upper| upper.to_string().into()),
     }]
+}
+
+/// FSpec FR-322 "Timed-model nodes" and "Every node has one or more exact
+/// source occurrences": derived timed nodes of equal content are one node, so
+/// two declarations that write one body (two `time` declarations of one kind
+/// and unit, or `urgent when` over one predicate) are one node with one
+/// occurrence per declaration. A repeated id is merged only when the nodes are
+/// derived (no declaration) and equal apart from `occurrences`; any other
+/// repeat is a producer disagreement. The kept node's entries are numbered per
+/// role in ascending (source identity, start, end) order, as the urgency path
+/// orders its declarations.
+pub(crate) fn merge_equal_timed_nodes(
+    nodes: &mut Vec<CheckedSemanticNodeV2>,
+    source_map: &mut [CheckedSourceMapEntry],
+) -> Result<(), EmitRefusal> {
+    let mut first_at: BTreeMap<CheckedNodeId, usize> = BTreeMap::new();
+    let mut repeated: BTreeSet<CheckedNodeId> = BTreeSet::new();
+    for (at, node) in nodes.iter().enumerate() {
+        if CheckedNodeTag::from_wire(&node.node_tag) != Some(CheckedNodeTag::TimedModel) {
+            continue;
+        }
+        match first_at.get(&node.node_id) {
+            None => {
+                first_at.insert(node.node_id.clone(), at);
+            }
+            Some(&held) => {
+                let mut left = nodes[held].clone();
+                let mut right = node.clone();
+                left.occurrences.clear();
+                right.occurrences.clear();
+                if left != right || node.declaration.is_some() {
+                    return Err(EmitRefusal::TimedModelWriterInvariant(
+                        "unequal or declared timed nodes share one id",
+                    ));
+                }
+                repeated.insert(node.node_id.clone());
+            }
+        }
+    }
+    if repeated.is_empty() {
+        return Ok(());
+    }
+    // Keep the first node of each repeated id; drop the equal later ones.
+    let mut kept: BTreeSet<CheckedNodeId> = BTreeSet::new();
+    nodes.retain(|node| !repeated.contains(&node.node_id) || kept.insert(node.node_id.clone()));
+    for id in &repeated {
+        let mut entries: Vec<&mut CheckedSourceMapEntry> = source_map
+            .iter_mut()
+            .filter(|entry| entry.node_id == *id)
+            .collect();
+        let order_key = |entry: &CheckedSourceMapEntry| {
+            entry
+                .regions
+                .iter()
+                .map(|region| (region.source.identity.clone(), region.start, region.end))
+                .min()
+        };
+        entries.sort_by_cached_key(|entry| order_key(entry));
+        let mut next: BTreeMap<&'static str, u64> = BTreeMap::new();
+        let mut occurrences = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let counter = next
+                .entry(crate::checked_v2::role_spelling(&entry.role))
+                .or_default();
+            entry.ordinal = *counter;
+            *counter += 1;
+            occurrences.push(CheckedOccurrence {
+                role: entry.role.clone(),
+                ordinal: entry.ordinal,
+            });
+        }
+        if let Some(node) = nodes.iter_mut().find(|node| node.node_id == *id) {
+            node.occurrences = occurrences;
+        }
+    }
+    Ok(())
 }

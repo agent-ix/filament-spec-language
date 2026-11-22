@@ -299,6 +299,8 @@ fn check_limit(cause: &CheckCause) -> Option<ReachedLimit> {
         }
         CheckCause::TypeAdmission { limit, .. } => limit.as_deref().map(ReachedLimit::of),
         CheckCause::EmptyPackage { .. } => None,
+        CheckCause::DuplicateClockDeclaration(_) => None,
+        CheckCause::AmbiguousClockDeclaration(_) => None,
         // A type invariant's wrapper classifies as the cause it wraps.
         CheckCause::TypeInvariant(refusal) => check_limit(&refusal.cause),
         CheckCause::Terminal(refusal) => check_limit(&refusal.cause),
@@ -663,6 +665,9 @@ fn classify_outcome(outcome: &CallOutcome) -> Classification {
             vec![RefusalCause::new(Code::ResourceExhausted, None)
                 .reaching(Some(accounting_limit(incomplete)))],
         ),
+        CallOutcome::RelationshipIncomplete(_) | CallOutcome::RelationshipLimit(_) => {
+            Classification::new(Incomplete, Vec::new())
+        }
     }
 }
 

@@ -15,16 +15,17 @@ use std::sync::Arc;
 
 use filament_exact::{Cancel, Value, ValueType};
 use filament_semantic_value::catalog::InternalFault;
-use fsl_foundation::diagnostic::{Code, StageFailure};
+use fsl_foundation::diagnostic::{Code, LimitExceeded, StageFailure};
 use fsl_foundation::node_wire::node_key_to_text;
+use fsl_foundation::setting::Setting;
 use fsl_package::number::ExactRational;
 use fsl_package::CheckedPackage;
 use fsl_replay::spine::{
     assertion_json, assertion_of, authenticate_emission, authenticate_package_trace,
     incomplete_json, incomplete_of, pending_report, read_ledger, write_ledger, AdmittedPosition,
-    AdmittedValue, ClauseDisposition, ClauseLimits, ClauseMark, ClauseOpen, ClauseRefusal,
-    ClauseRunReport, ClauseState, ClauseTraceKind, ContradictedDimension, LedgerBinding,
-    LedgerReadError, PackageAuthentication, ProgressAssertion, ProgressClosure,
+    AdmittedValue, ClauseDisposition, ClauseLimits, ClauseMark, ClauseOpen, ClauseProgress,
+    ClauseRefusal, ClauseRunReport, ClauseState, ClauseTraceKind, ContradictedDimension,
+    LedgerBinding, LedgerReadError, PackageAuthentication, ProgressAssertion, ProgressClosure,
     ProgressCompleteness, ProgressContradiction, ProgressLedger, ProgressLimitReached,
     ProgressLowerBoundary, ProgressRefusal, ProgressValue, SpineLimits, TemporalVerdict,
     TimestampedCover, TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey,
@@ -202,6 +203,8 @@ struct Slot<'a> {
     /// The state at the call that decided a settled clause, which the
     /// checkpoint writes so a resumed session reports the same `B(s)`.
     decided_state: Option<Vec<u8>>,
+    /// Progress facts continue after the clause's report has frozen.
+    progress: Option<ClauseProgress>,
     /// The setting whose limit ended the clause, if one did.
     limited: Option<&'static str>,
     announced: bool,
@@ -221,6 +224,7 @@ struct Prior<'a> {
     mark: Option<ClauseMark>,
     /// The state of a clause the call settled, which it would drop.
     dropped: Option<ClauseState<'a>>,
+    progress: Option<ClauseProgress>,
 }
 
 /// FR-643's stepping monitor.
@@ -567,6 +571,7 @@ impl<'a> MonitorSession<'a> {
                     settlement: None,
                     state: Some(state),
                     decided_state: None,
+                    progress: None,
                     limited: None,
                     announced: false,
                     usage: MonitorUsage::default(),
@@ -710,10 +715,14 @@ impl<'a> MonitorSession<'a> {
         let position = self.admit_observation(&observation)?;
         let stamp = position.stamp;
         let seen = self.seen.saturating_add(1);
-        let (priors, ledger) =
-            self.advance(seen, self.assertion, false, cancel, |state, cancel| {
-                state.advance(position.clone(), cancel)
-            })?;
+        let (priors, ledger) = self.advance(
+            seen,
+            self.assertion,
+            false,
+            Some(&position),
+            cancel,
+            |state, cancel| state.advance(position.clone(), cancel),
+        )?;
         self.seen = seen;
         self.newest = Some(self.newest.map_or(stamp, |newest| newest.max(stamp)));
         Ok(self.commit(priors, ledger))
@@ -756,10 +765,14 @@ impl<'a> MonitorSession<'a> {
                 Box::new(ProgressRefusal::from(contradiction)),
             )));
         }
-        let (priors, ledger) =
-            self.advance(self.seen, Some(progress), true, cancel, |state, cancel| {
-                state.assert_progress(&progress, cancel)
-            })?;
+        let (priors, ledger) = self.advance(
+            self.seen,
+            Some(progress),
+            true,
+            None,
+            cancel,
+            |state, cancel| state.assert_progress(&progress, cancel),
+        )?;
         self.assertion = Some(progress);
         Ok(self.commit(priors, ledger))
     }
@@ -774,6 +787,7 @@ impl<'a> MonitorSession<'a> {
         seen: u64,
         assertion: Option<ProgressAssertion>,
         retain_ledger: bool,
+        position: Option<&AdmittedPosition<'_>>,
         cancel: &Cancel,
         call: F,
     ) -> Result<(Vec<Prior<'a>>, Option<ProgressLedger>), Failure>
@@ -786,6 +800,7 @@ impl<'a> MonitorSession<'a> {
             (seen, assertion, retain_ledger),
             cancel,
             &call,
+            position,
             &mut priors,
             &mut ledger,
         ) {
@@ -804,6 +819,7 @@ impl<'a> MonitorSession<'a> {
             slot.settlement = prior.settlement;
             slot.limited = prior.limited;
             slot.usage = prior.usage;
+            slot.progress = prior.progress;
             if let Some(state) = prior.dropped {
                 slot.state = Some(state);
             }
@@ -823,6 +839,7 @@ impl<'a> MonitorSession<'a> {
         (seen, assertion, retain_ledger): (u64, Option<ProgressAssertion>, bool),
         cancel: &Cancel,
         call: &F,
+        position: Option<&AdmittedPosition<'_>>,
         priors: &mut Vec<Prior<'a>>,
         ledger: &mut Option<ProgressLedger>,
     ) -> Result<(), Failure>
@@ -843,10 +860,66 @@ impl<'a> MonitorSession<'a> {
                 usage: slot.usage.clone(),
                 mark: slot.state.as_ref().map(ClauseState::mark),
                 dropped: None,
+                progress: slot.progress.clone(),
             });
             let Some(state) = slot.state.as_mut() else {
                 // FR-643 "Usage": a settled clause charges nothing more.
                 slot.usage = slot.usage.idle();
+                if let Some(progress) = slot.progress.as_mut() {
+                    if let Some(position) = position {
+                        let capacity = fsl_eval::temporal::DEFAULT_COVERED_POSITIONS;
+                        if progress.retained() >= capacity {
+                            return Err(StageFailure::Limit(LimitExceeded::new(
+                                Setting::ProgressCoveredPositions,
+                                capacity,
+                                u128::from(progress.retained()) + 1,
+                            )));
+                        }
+                        progress.observe(position);
+                    }
+                    if let Some(assertion) = assertion.filter(|_| retain_ledger) {
+                        let source = self
+                            .request
+                            .sources
+                            .first()
+                            .ok_or_else(|| state_fault("progress-has-package-source"))?;
+                        let node = Self::node_in(self.package, name)
+                            .ok_or_else(|| state_fault("progress-has-clause"))?;
+                        let binding = LedgerBinding {
+                            package: source.identity().identity.clone(),
+                            clause: node.identity(),
+                            occurrence: node.claim().ordinal(),
+                            clock: node.clause().clock().to_owned(),
+                            profile: node.clause().profile().identity().to_owned(),
+                        };
+                        let fresh = ProgressLedger::new();
+                        let updated = progress
+                            .admit(
+                                ledger.as_ref().unwrap_or(&fresh),
+                                &binding,
+                                assertion,
+                                fsl_eval::temporal::DEFAULT_COVERED_POSITIONS,
+                            )
+                            .map_err(|disposition| match *disposition {
+                                ClauseDisposition::ProgressContradiction(refusal) => {
+                                    StageFailure::Refused(MonitorRefusal::Contradiction(refusal))
+                                }
+                                ClauseDisposition::Temporal(
+                                    TemporalVerdict::ProgressLimitReached(limit),
+                                ) => StageFailure::Limit(LimitExceeded::new(
+                                    Setting::ProgressCoveredPositions,
+                                    limit.value,
+                                    u128::from(limit.value) + 1,
+                                )),
+                                ClauseDisposition::EvaluateFault(fault) => {
+                                    StageFailure::Fault(fault)
+                                }
+                                _ => state_fault("progress-admission-has-typed-result"),
+                            })?;
+                        cancelled(cancel)?;
+                        *ledger = Some(updated);
+                    }
+                }
                 continue;
             };
             state.carry_ledger(ledger.clone());
@@ -920,6 +993,18 @@ impl<'a> MonitorSession<'a> {
                 }
             };
             if let Some((trigger, reading)) = settled {
+                if self.request.kind.carries_progress() {
+                    let progress = state.progress_tracker();
+                    let capacity = fsl_eval::temporal::DEFAULT_COVERED_POSITIONS;
+                    if progress.retained() > capacity {
+                        return Err(StageFailure::Limit(LimitExceeded::new(
+                            Setting::ProgressCoveredPositions,
+                            capacity,
+                            u128::from(progress.retained()),
+                        )));
+                    }
+                    slot.progress = Some(progress);
+                }
                 slot.settlement = Some(Settlement {
                     step,
                     trigger,
@@ -998,14 +1083,19 @@ impl<'a> MonitorSession<'a> {
                 ProgressValue::Watermark(next.watermark),
             );
         }
-        let retreats = match (held.completeness, next.completeness) {
-            (ProgressCompleteness::Complete { .. }, ProgressCompleteness::Incomplete) => true,
-            (
-                ProgressCompleteness::Complete { through: held },
-                ProgressCompleteness::Complete { through: next },
-            ) => next < held,
-            _ => false,
-        };
+        // FR-861: the owner's history-free revision check decides whether the
+        // assertion retreats; the session holds no covered set, so it lists none.
+        let (held_upper, held_state) = owner_reading(held.completeness);
+        let (next_upper, next_state) = owner_reading(next.completeness);
+        let retreats = filament_observation::authority::completeness::check_revision(
+            held_upper,
+            held_state,
+            &NoHolding,
+            next_upper.or(held_upper),
+            next_state,
+            &[],
+        )
+        .is_err();
         if retreats {
             return contradiction(
                 ContradictedDimension::Completeness,
@@ -1247,6 +1337,9 @@ impl<'a> MonitorSession<'a> {
                 Ok(json!({
                     "state": state,
                     "decided_state": decided,
+                    "progress_state": slot.progress.as_ref()
+                        .map(|progress| progress.to_bytes().map_err(clause_failure).and_then(text))
+                        .transpose()?,
                     "settled_step": slot.settlement.as_ref().map(|s| s.step),
                     "trigger": slot.settlement.as_ref().map(|s| s.trigger.as_str()),
                     "reading": slot.settlement.as_ref()
@@ -1356,6 +1449,28 @@ impl<'a> MonitorSession<'a> {
             let step = saved["settled_step"].as_u64();
             let slot = &mut session.slots[index];
             slot.announced = saved["announced"].as_bool().ok_or_else(state_mismatch)?;
+            let progress_state = saved.get("progress_state").ok_or_else(state_mismatch)?;
+            let needs_progress =
+                session.request.kind.carries_progress() && saved["trigger"].as_str().is_some();
+            if needs_progress != progress_state.is_string()
+                || (!needs_progress && !progress_state.is_null())
+            {
+                return Err(state_mismatch());
+            }
+            slot.progress = match progress_state {
+                Json::Null => None,
+                Json::String(bytes) => Some(
+                    ClauseProgress::from_bytes(
+                        bytes.as_bytes(),
+                        session.request.kind.clause_kind(),
+                        session.seen,
+                        fsl_eval::temporal::DEFAULT_COVERED_POSITIONS,
+                    )
+                    .map_err(clause_failure)?,
+                ),
+                _ => return Err(state_mismatch()),
+            };
+            let mut deciding_progress = None;
             match saved["trigger"].as_str() {
                 None => {
                     let bytes = saved["state"].as_str().ok_or_else(state_mismatch)?;
@@ -1414,6 +1529,7 @@ impl<'a> MonitorSession<'a> {
                 Some("decided") => {
                     let bytes = saved["decided_state"].as_str().ok_or_else(state_mismatch)?;
                     let decided = restore(bytes)?;
+                    deciding_progress = Some(decided.progress_tracker());
                     slot.record = record_of(
                         package,
                         session.request.sources,
@@ -1430,7 +1546,55 @@ impl<'a> MonitorSession<'a> {
                 }
                 Some(_) => return Err(state_mismatch()),
             }
+            if let Some(progress) = &slot.progress {
+                let source = session.request.sources.first().ok_or_else(state_mismatch)?;
+                let binding = LedgerBinding {
+                    package: source.identity().identity.clone(),
+                    clause: node.identity(),
+                    occurrence: node.claim().ordinal(),
+                    clock: node.clause().clock().to_owned(),
+                    profile: node.clause().profile().identity().to_owned(),
+                };
+                progress
+                    .validate_checkpoint(
+                        deciding_progress.as_ref(),
+                        session.ledger.as_ref(),
+                        session.request.ledger.as_ref(),
+                        &binding,
+                    )
+                    .map_err(clause_failure)?;
+            }
         }
         Ok(session)
+    }
+}
+
+/// The owner's `(upper bound, state)` reading of one completeness assertion
+/// (FR-944 "Completeness").
+fn owner_reading(
+    completeness: ProgressCompleteness,
+) -> (
+    Option<i128>,
+    filament_observation::authority::completeness::State,
+) {
+    use filament_observation::authority::completeness::State;
+    match completeness {
+        ProgressCompleteness::Complete { through } => (Some(i128::from(through)), State::Complete),
+        ProgressCompleteness::Incomplete => (None, State::Incomplete),
+    }
+}
+
+/// A retained assessment that holds no member: the session keeps only the
+/// assertion, so the owner's check reads the boundary and state alone.
+struct NoHolding;
+
+impl filament_observation::authority::completeness::RetainedHolding for NoHolding {
+    type Key = str;
+
+    fn held(
+        &self,
+        _key: &str,
+    ) -> Option<filament_observation::authority::completeness::HeldFact<'_>> {
+        None
     }
 }

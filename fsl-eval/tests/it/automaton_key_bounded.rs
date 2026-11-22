@@ -447,3 +447,222 @@ fn an_each_key_has_a_clock_without_a_remaining_distance() {
         )
     );
 }
+
+/// The metered policy facade preserves existing canonical identities, rather
+/// than introducing search-local state numbers or another key namespace.
+#[test]
+#[trace("FSpec-FR-803", "FR-1011", "FR-1012")]
+fn source_policy_keys_match_the_shared_canonical_translations() {
+    use filament_exact::Meter;
+    use fsl_eval::automaton::{
+        ContextBinding, PolicyContext, PolicyState, SafetyTranslation, StepPolicy,
+    };
+    use fsl_semantics::check::SCALAR_LIMITS_UNLIMITED;
+    let root = crate::support::ids::node_key([0xab]);
+    let parameter = crate::support::ids::node_key([0xcd]);
+    let claim = Origin::new(Role::new("temporal"), 0);
+    let contexts = [PolicyContext {
+        node: &root,
+        claim: &claim,
+        parameter: &parameter,
+        instance: "c",
+    }];
+    for formula in [
+        "always holds(c.level >= 1)",
+        "eventually[0,4] holds(c.level >= 1)",
+        "always[0,4] holds(c.level >= 1)",
+    ] {
+        let fixture = fixture(INFINITE, "c: Counter", "on origin", formula);
+        let policy = StepPolicy::new(&fixture.clause).unwrap();
+        let context = StateContext::clause(
+            &fixture.clause,
+            occurrence(0),
+            vec![ContextBinding::instance(parameter.clone(), "c")],
+        );
+        for holds in [false, true] {
+            let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
+            let state = policy.advance(None, holds, &mut meter).unwrap();
+            let expected = match state {
+                PolicyState::Safety(state) => {
+                    SafetyTranslation::reachable_invariant(&fixture.clause, &context)
+                        .unwrap()
+                        .key(state)
+                        .unwrap()
+                }
+                PolicyState::Bounded(state) => {
+                    BoundedTranslation::clause(&fixture.clause, &context)
+                        .unwrap()
+                        .key(state)
+                        .unwrap()
+                }
+            };
+            let bytes = policy.encode(&contexts, &[state], &mut meter).unwrap();
+            assert_eq!(&bytes[16..], expected.as_bytes());
+            assert_eq!(
+                policy.admit(&contexts, &bytes, &mut meter).unwrap(),
+                [state]
+            );
+            let foreign = [PolicyContext {
+                instance: "other",
+                ..contexts[0]
+            }];
+            assert!(policy.admit(&foreign, &bytes, &mut meter).is_err());
+            let mut trailing = bytes.clone();
+            trailing.push(0);
+            assert!(policy.admit(&contexts, &trailing, &mut meter).is_err());
+            let mut omitted = bytes.clone();
+            omitted[0] = 0;
+            assert!(policy.admit(&contexts, &omitted, &mut meter).is_err());
+        }
+    }
+}
+
+/// Infinite-trace completion repeats the final letter, whereas the bounded
+/// profile's false extension would reject an unexhausted always window.
+#[test]
+#[trace("FSpec-FR-803", "FR-1012")]
+fn source_policy_terminal_stutter_matches_the_batch_lasso() {
+    use crate::temporal_trace::{counters, outcome};
+    use filament_exact::Meter;
+    use fsl_eval::automaton::StepPolicy;
+    use fsl_eval::temporal::{TemporalOutcome, TemporalTrace};
+    use fsl_semantics::check::SCALAR_LIMITS_UNLIMITED;
+    for formula in [
+        "always holds(c.level >= 1)",
+        "eventually[0,4] holds(c.level >= 1)",
+        "always[0,4] holds(c.level >= 1)",
+        "always[0,0] holds(c.level >= 1)",
+        "eventually[0,0] holds(c.level >= 1)",
+    ] {
+        let fixture = fixture(INFINITE, "c: Counter", "on origin", formula);
+        let policy = StepPolicy::new(&fixture.clause).unwrap();
+        for value in [0, 1] {
+            let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
+            let state = policy.advance(None, value >= 1, &mut meter).unwrap();
+            let expected = outcome(
+                &fixture,
+                TemporalTrace::Lasso {
+                    prefix: 0,
+                    loop_len: 1,
+                },
+                counters(&[value]),
+            );
+            assert_eq!(
+                policy.terminal(state, value >= 1, &mut meter).unwrap(),
+                matches!(expected, TemporalOutcome::Holds),
+                "{formula}, {value}: {expected:?}"
+            );
+        }
+    }
+}
+
+/// Representation work and full capacity reservations use the caller's
+/// original scalar ledger; cancellation is distinct from ordinary shortage.
+#[test]
+#[trace("FR-1011", "FSpec-FR-803")]
+fn source_policy_key_budget_preserves_work_capacity_and_cancel_causes() {
+    use filament_exact::{Cancel, CancelCause, ChargePoint, LimitKind, Meter, ScalarLimits};
+    use fsl_eval::automaton::{PolicyContext, PolicyStateError, StepPolicy};
+    use fsl_semantics::check::SCALAR_LIMITS_UNLIMITED;
+    let fixture = fixture(
+        INFINITE,
+        "c: Counter",
+        "on origin",
+        "always holds(c.level >= 1)",
+    );
+    let policy = StepPolicy::new(&fixture.clause).unwrap();
+    let root = crate::support::ids::node_key([0xab]);
+    let parameter = root.clone();
+    let claim = Origin::new(Role::new("temporal"), 0);
+    let contexts = [PolicyContext {
+        node: &root,
+        claim: &claim,
+        parameter: &parameter,
+        instance: "c",
+    }];
+    let state = policy
+        .advance(None, true, &mut Meter::new(SCALAR_LIMITS_UNLIMITED))
+        .unwrap();
+    let mut ample = Meter::new(SCALAR_LIMITS_UNLIMITED);
+    let expected = policy.encode(&contexts, &[state], &mut ample).unwrap();
+    for counter in [LimitKind::WorkUnits, LimitKind::ResultUnits] {
+        let exact = ample.consumed(counter);
+        for (limit, succeeds) in [(exact, true), (exact - 1, false)] {
+            let mut limits = SCALAR_LIMITS_UNLIMITED;
+            match counter {
+                LimitKind::WorkUnits => limits.work_units = limit,
+                LimitKind::ResultUnits => limits.result_units = limit,
+                _ => unreachable!(),
+            }
+            let result = policy.encode(&contexts, &[state], &mut Meter::new(limits));
+            if succeeds {
+                assert_eq!(result.unwrap(), expected);
+            } else {
+                let PolicyStateError::Accounting(denial) = result.unwrap_err() else {
+                    panic!("original scalar denial");
+                };
+                assert_eq!(denial.limit_kind, counter);
+                assert_eq!(denial.limit, limit);
+                assert_eq!(denial.charge_point, ChargePoint::ModelCandidate);
+            }
+        }
+    }
+    for cause in [CancelCause::Requested, CancelCause::Deadline] {
+        let cancel = Cancel::new();
+        cancel.cancel(cause);
+        let mut meter = Meter::new(ScalarLimits {
+            work_units: 0,
+            result_units: 0,
+            ..SCALAR_LIMITS_UNLIMITED
+        })
+        .with_cancel(cancel);
+        assert!(
+            matches!(policy.encode(&contexts, &[state], &mut meter), Err(PolicyStateError::Cancelled(actual)) if actual == cause)
+        );
+        assert!(
+            matches!(policy.admit(&contexts, &expected, &mut meter), Err(PolicyStateError::Cancelled(actual)) if actual == cause)
+        );
+    }
+}
+
+/// Trace: FR-1011, FR-1012.
+#[test]
+#[trace("FR-1011", "FR-1012")]
+fn source_policy_comparisons_admit_actual_prefix_bytes_and_original_cancellation() {
+    use filament_exact::{Cancel, CancelCause, ChargePoint, LimitKind, Meter};
+    use fsl_eval::automaton::{PolicyStateError, StepPolicy};
+    use fsl_semantics::check::SCALAR_LIMITS_UNLIMITED;
+    use std::cmp::Ordering;
+    let left = [b"same-prefix-a".to_vec(), b"unvisited".to_vec()];
+    let right = [b"same-prefix-b".to_vec(), b"unvisited-other".to_vec()];
+    let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
+    assert_eq!(
+        StepPolicy::compare_states(&left, &right, &mut meter).unwrap(),
+        Ordering::Less
+    );
+    // One vector visit and precisely thirteen compared bytes. The later
+    // vectors and the length tie-breakers are not read after the difference.
+    assert_eq!(meter.consumed(LimitKind::WorkUnits), 14);
+    assert_eq!(meter.consumed(LimitKind::ResultUnits), 0);
+    let mut limits = SCALAR_LIMITS_UNLIMITED;
+    limits.work_units = 13;
+    let mut denied = Meter::new(limits);
+    let Err(PolicyStateError::Accounting(cause)) =
+        StepPolicy::compare_states(&left, &right, &mut denied)
+    else {
+        panic!("the differing byte requires its own admitted unit");
+    };
+    assert_eq!(cause.charge_point, ChargePoint::ModelCandidate);
+    assert_eq!(cause.limit_kind, LimitKind::WorkUnits);
+    assert_eq!(cause.limit, 13);
+    assert_eq!(denied.consumed(LimitKind::WorkUnits), 13);
+    for cause in [CancelCause::Requested, CancelCause::Deadline] {
+        let cancel = Cancel::new();
+        cancel.cancel(cause);
+        let mut meter = Meter::new(limits).with_cancel(cancel);
+        assert!(
+            matches!(StepPolicy::compare_states(&left, &right, &mut meter), Err(PolicyStateError::Cancelled(actual)) if actual == cause)
+        );
+        assert_eq!(meter.consumed(LimitKind::WorkUnits), 0);
+    }
+}

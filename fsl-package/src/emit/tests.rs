@@ -3559,8 +3559,8 @@ fn a_model_declaration_with_no_admitted_package_refuses_at_the_assembler() {
 /// FR-056-AC-9 (TC-442 step 3): a refusal after admission and a
 /// normalization ceiling each stop I1 at the `model` declaration: a
 /// supertype cycle (`Widget` and `Gadget` generalizing each other) is
-/// refused by the Semantic IR record reader as
-/// `invalid_model_binding`/`malformed-declaration`, and a
+/// refused by normalization as
+/// `invalid_model_binding`/`specialization-cycle`, and a
 /// `declaration_records` ceiling of one is a limit, `stage_limit_exceeded`.
 #[trace("TC-442", "FR-056-AC-9")]
 #[test]
@@ -3611,7 +3611,7 @@ fn normalization_refusals_and_limits_stop_intake_at_the_declaration() {
         panic!("expected a refusal, got {refused:?}");
     };
     assert_eq!(refusals[0].code, fsl_foundation::Code::InvalidModelBinding);
-    assert_eq!(refusals[0].cause.as_str(), "malformed-declaration");
+    assert_eq!(refusals[0].cause.as_str(), "specialization-cycle");
     assert!(text[refused.span.start..refused.span.end].starts_with("model M = "));
 }
 

@@ -130,6 +130,8 @@ pub enum Unsupported {
     PackageControl(fsl_package::protocol_view::ControlOperation),
     /// A package control's correlation premises have no executable form yet.
     PackageCorrelation,
+    /// Authored clause order is unavailable for a nonempty correlation group.
+    PackageCorrelationProvenance(fsl_package::UnavailableCorrelationProvenance),
     /// A package repeat's loop proof has no executable package form yet.
     PackageRepeatProof,
     /// A package protocol declares a replicated role this program does not
@@ -147,6 +149,7 @@ impl Unsupported {
             Self::UnenumerableRecord => "step binder of an unenumerable record type",
             Self::PackageControl(_) => "package protocol control",
             Self::PackageCorrelation => "package protocol correlation",
+            Self::PackageCorrelationProvenance(cause) => cause.as_str(),
             Self::PackageRepeatProof => "package repeat proof",
             Self::PackageReplicatedRole => "package replicated role",
             Self::PackageRoleLifetime => "package replicated role lifetime",
@@ -1625,6 +1628,9 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                 PackageProgramRefusal::Correlation { .. } => {
                     ProtocolRefusal::Unsupported(Unsupported::PackageCorrelation)
                 }
+                PackageProgramRefusal::CorrelationProvenance(cause) => {
+                    ProtocolRefusal::Unsupported(Unsupported::PackageCorrelationProvenance(cause))
+                }
                 PackageProgramRefusal::RepeatProof { .. } => {
                     ProtocolRefusal::Unsupported(Unsupported::PackageRepeatProof)
                 }
@@ -2843,28 +2849,53 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                 &mut Meter::new(self.model.meter()),
             )
             .map_err(|_| broken())?;
-        Ok(match evaluation.outcome {
-            filament_eval::FamilyOutcome::Evaluated(outcome) => match outcome {
-                filament_exact::Outcome::Completed(value) => Ok(value),
-                filament_exact::Outcome::Undefined(undefined) => {
-                    Err(ClauseOutcome::KernelUndefined(undefined))
-                }
-                filament_exact::Outcome::Refused(refusal) => {
-                    Err(ClauseOutcome::KernelRefused(refusal))
-                }
-                filament_exact::Outcome::Incomplete(incomplete) => {
-                    Err(ClauseOutcome::Incomplete(incomplete))
-                }
-            },
-            filament_eval::FamilyOutcome::FamilyEvaluated(family) => Err(match family {
-                filament_eval::FamilyResult::Refused(cause) => {
-                    ClauseOutcome::FamilyRefused(cause.catalog_code())
-                }
-                filament_eval::FamilyResult::Undefined(cause) => {
-                    ClauseOutcome::FamilyUndefined(cause.undefined_record().reason)
-                }
-            }),
-        })
+        Ok(value_outcome(evaluation.outcome))
+    }
+
+    /// Evaluate an admitted native value slot with precisely its required binders.
+    fn evaluate_package_value(
+        &self,
+        slot: &crate::value::ProtocolSlot,
+        frame: Vec<Option<Value>>,
+        state: &ModelSimState,
+    ) -> Result<Result<Value, ClauseOutcome>, ExpansionStop> {
+        let package = self.package_program.as_ref().ok_or_else(broken)?;
+        let observation = self.package_observation(state)?;
+        let binders = self.package_binder_values(frame, &observation, slot)?;
+        let supply = package
+            .supply_for_slot(slot, binders, Some(&observation))
+            .map_err(|_| broken())?;
+        let result = package
+            .evaluate_slot(slot, &supply, &mut Meter::new(self.model.meter()))
+            .map_err(|_| broken())?;
+        match result {
+            crate::value::ProtocolSlotEvaluation::Evaluated(evaluation, _) => {
+                Ok(value_outcome(evaluation.outcome))
+            }
+            crate::value::ProtocolSlotEvaluation::Unavailable { .. } => Err(broken()),
+        }
+    }
+
+    /// Evaluate both ends against the candidate frame and observed model state.
+    fn related_values(
+        &self,
+        ends: &program::RelatedEnds<'_>,
+        frame: Vec<Option<Value>>,
+        state: &ModelSimState,
+    ) -> Result<[Result<Value, ClauseOutcome>; 2], ExpansionStop> {
+        match ends {
+            program::RelatedEnds::Source(ends) => {
+                let observation = self.model.observation_of(state)?;
+                Ok([
+                    self.evaluate_value_in(ends[0], frame.clone(), &observation)?,
+                    self.evaluate_value_in(ends[1], frame, &observation)?,
+                ])
+            }
+            program::RelatedEnds::Package(ends) => Ok([
+                self.evaluate_package_value(&ends[0], frame.clone(), state)?,
+                self.evaluate_package_value(&ends[1], frame, state)?,
+            ]),
+        }
     }
 
     /// Evaluate a package control constraint from admitted binder identities.
@@ -2991,8 +3022,8 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         self.package_supplied_binders(binders, observation, slot)
     }
 
-    /// Admit values from either a live protocol frame or a FIFO key's own
-    /// payload binder through the same reference-population provenance.
+    /// Package live-frame and FIFO payload values without inferring their
+    /// reference origins from population membership.
     fn package_supplied_binders<'b>(
         &self,
         binders: impl IntoIterator<Item = (&'b fsl_package::CheckedNodeId, Option<Value>)>,
@@ -3007,8 +3038,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         )>,
         ExpansionStop,
     > {
-        let filament_semantic_value::admission::ObservationAdmission::Admitted(observation) =
-            observation
+        let filament_semantic_value::admission::ObservationAdmission::Admitted(_) = observation
         else {
             return Err(broken());
         };
@@ -3027,46 +3057,9 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                     .is_some_and(|key| required.contains(&key))
             })
             .map(|(binder, value)| {
-                let mut references = Vec::new();
-                let value = match value {
-                    Some(value) => {
-                        for (path, reference) in crate::value::reference_occurrences(
-                            &value,
-                            subject.model.simulation.input.types,
-                        )
-                        .map_err(|_| broken())?
-                        {
-                            let environment = observation.environment();
-                            let population = if binder == &package.over {
-                                fsl_semantics::model::key::population_node_key(
-                                    &subject.over.population,
-                                )
-                                .map_err(|_| broken())?
-                            } else {
-                                environment
-                                    .population_completeness()
-                                    .keys()
-                                    .find(|population| {
-                                        environment
-                                            .population_members(population)
-                                            .is_some_and(|members| members.contains(&reference))
-                                    })
-                                    .and_then(|population| environment.population_node(population))
-                                    .cloned()
-                                    .ok_or_else(broken)?
-                            };
-                            references.push(crate::value::ProtocolReferenceOccurrence {
-                                path,
-                                population,
-                            });
-                        }
-                        crate::value::SuppliedValue::Value(value)
-                    }
-                    None => crate::value::SuppliedValue::Unavailable(BROKEN),
-                };
                 Ok((
                     binder.clone(),
-                    crate::value::ProtocolSuppliedValue { value, references },
+                    package_binder_value(value, binder, &package.over, &subject.over)?,
                 ))
             })
             .collect()
@@ -3175,6 +3168,26 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                 })
             }
         }
+    }
+}
+
+/// Preserve value and typed non-value outcomes for both expression routes.
+fn value_outcome(outcome: filament_eval::FamilyOutcome<Value>) -> Result<Value, ClauseOutcome> {
+    match outcome {
+        filament_eval::FamilyOutcome::Evaluated(outcome) => match outcome {
+            filament_exact::Outcome::Completed(value) => Ok(value),
+            filament_exact::Outcome::Undefined(cause) => Err(ClauseOutcome::KernelUndefined(cause)),
+            filament_exact::Outcome::Refused(cause) => Err(ClauseOutcome::KernelRefused(cause)),
+            filament_exact::Outcome::Incomplete(cause) => Err(ClauseOutcome::Incomplete(cause)),
+        },
+        filament_eval::FamilyOutcome::FamilyEvaluated(family) => Err(match family {
+            filament_eval::FamilyResult::Refused(cause) => {
+                ClauseOutcome::FamilyRefused(cause.catalog_code())
+            }
+            filament_eval::FamilyResult::Undefined(cause) => {
+                ClauseOutcome::FamilyUndefined(cause.undefined_record().reason)
+            }
+        }),
     }
 }
 
@@ -3380,6 +3393,30 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
     }
 }
 
+/// Only the subject's declared over binder has a known population origin.
+/// Generated payloads and references nested inside values have no such
+/// origin, even when the same object belongs to an observed population.
+fn package_binder_value(
+    value: Option<Value>,
+    binder: &fsl_package::CheckedNodeId,
+    over_binder: &fsl_package::CheckedNodeId,
+    over: &ModelInstance,
+) -> Result<crate::value::ProtocolSuppliedValue, ExpansionStop> {
+    let mut references = Vec::new();
+    if binder == over_binder && matches!(&value, Some(Value::Reference(_))) {
+        references.push(crate::value::ProtocolReferenceOccurrence {
+            path: Vec::new(),
+            population: fsl_semantics::model::key::population_node_key(&over.population)
+                .map_err(|_| broken())?,
+        });
+    }
+    let value = match value {
+        Some(value) => crate::value::SuppliedValue::Value(value),
+        None => crate::value::SuppliedValue::Unavailable(BROKEN),
+    };
+    Ok(crate::value::ProtocolSuppliedValue { value, references })
+}
+
 /// The identity limits exploration encodes under.
 fn identity_limits() -> fsl_foundation::IdentityLimits {
     fsl_foundation::IdentityLimits::default()
@@ -3399,6 +3436,58 @@ mod tests {
     use quire_canonical::Limits;
 
     use super::*;
+
+    /// Trace: FR-230, FR-390
+    #[test]
+    fn generated_reference_binders_do_not_acquire_the_over_population() {
+        let over_binder = fsl_package::checked_node_id_of(&crate::test_ids::node_key(b"over"));
+        let payload_binder =
+            fsl_package::checked_node_id_of(&crate::test_ids::node_key(b"payload"));
+        let reference = ObjectReference::new(
+            crate::test_ids::universe_id(b"shared"),
+            crate::test_ids::effective_id(b"Call"),
+            filament_exact::ObjectId::new("call-1").expect("object key"),
+        );
+        let over = ModelInstance {
+            population: filament_checked::key::DeclarationKey {
+                package: "fixture".to_owned(),
+                node: "calls".to_owned(),
+            },
+            key: "call-1".to_owned(),
+        };
+        let root = Value::Reference(reference.clone());
+        let declared = package_binder_value(Some(root.clone()), &over_binder, &over_binder, &over)
+            .expect("declared over packages");
+        assert_eq!(declared.references.len(), 1);
+        assert!(declared.references[0].path.is_empty());
+        assert_eq!(
+            declared.references[0].population,
+            fsl_semantics::model::key::population_node_key(&over.population)
+                .expect("population identity")
+        );
+        // The identical reference under a different binder is still ordinary
+        // data; equal type, universe and key confer no population authority.
+        let generated = package_binder_value(Some(root), &payload_binder, &over_binder, &over)
+            .expect("generated reference remains packageable");
+        assert!(generated.references.is_empty());
+        let crate::value::SuppliedValue::Value(Value::Reference(actual)) = generated.value else {
+            panic!("the generated reference must remain available")
+        };
+        assert_eq!(actual, reference);
+
+        let nested = filament_exact::OptionValue::present(
+            ValueType::Reference(reference.object_type().clone()),
+            Value::Reference(reference.clone()),
+        )
+        .expect("typed option");
+        let packaged = package_binder_value(Some(nested), &over_binder, &over_binder, &over)
+            .expect("nested reference remains packageable");
+        assert!(packaged.references.is_empty());
+        let crate::value::SuppliedValue::Value(Value::Option(actual)) = packaged.value else {
+            panic!("the nested reference must remain available")
+        };
+        assert!(matches!(actual.payload(), Some(Value::Reference(held)) if *held == reference));
+    }
 
     /// The envelope's directly written result, bytes or refusal, against
     /// `quire_canonical::to_vec` of the same envelope.

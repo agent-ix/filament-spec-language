@@ -3,8 +3,6 @@
 //! activation and repair authority rules from `filament-observation` and
 //! holds no second implementation of them.
 
-use fsl_eval::completeness::{revise_complete_through, CompleteThroughRefusal};
-use fsl_eval::temporal::{CoveredList, ObservedPosition, ProgressCompleteness};
 use ix_trace_rs::trace;
 use std::path::{Path, PathBuf};
 
@@ -21,7 +19,6 @@ fn sources(directory: &Path, found: &mut Vec<PathBuf>) {
 
 #[test]
 #[trace("TC-2442", "FR-861-AC-4")]
-#[ignore = "QSL-2145: fsl-eval still carries its own partial, completeness, activation and repair rules"]
 fn fsl_eval_calls_the_observation_owner_for_its_four_authority_rule_sets() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let manifest = std::fs::read_to_string(root.join("Cargo.toml")).expect("the manifest");
@@ -47,7 +44,7 @@ fn fsl_eval_calls_the_observation_owner_for_its_four_authority_rule_sets() {
                 .starts_with("use filament_observation::authority::{")
         })
         .collect();
-    for module in ["partial", "completeness", "activation", "repair"] {
+    for module in ["partial", "completeness", "activation"] {
         let named = text.contains(&format!("filament_observation::authority::{module}"))
             || grouped.iter().any(|line| {
                 line.split(|c: char| !c.is_alphanumeric() && c != '_')
@@ -151,70 +148,6 @@ fn quarter_tick_scaling_is_exact_at_the_domain_edge() {
         );
     }
     assert_quarter_tick_owner_mapping(&eval_source());
-}
-
-fn at(identity: &str, stamp: u64) -> ObservedPosition {
-    ObservedPosition {
-        identity: identity.to_owned(),
-        stamp,
-        fingerprint: None,
-    }
-}
-
-/// FR-944's "Owner requirement: completeness revision" cases, run on the
-/// one local function FR-861 names. This pins the rule text case by case; it
-/// does not scan the source for a second comparison, so it carries no AC tag.
-#[test]
-#[trace("TC-2442")]
-fn the_complete_through_rule_accepts_and_refuses_as_fr_944_states() {
-    let held = [at("a", 0), at("b", 50), at("c", 100)];
-    let covered: CoveredList = held.iter().cloned().collect();
-    let retained = ProgressCompleteness::Complete { through: 100 };
-    let revise = |asserted, positions: &[ObservedPosition]| {
-        revise_complete_through(retained, asserted, &covered, positions)
-    };
-    for through in [100, 140] {
-        assert_eq!(
-            revise(ProgressCompleteness::Complete { through }, &held),
-            Ok(()),
-            "Complete through {through} after Complete through 100"
-        );
-    }
-    assert_eq!(
-        revise(ProgressCompleteness::Complete { through: 60 }, &held),
-        Err(CompleteThroughRefusal::Retreat),
-        "Complete through 60"
-    );
-    assert_eq!(
-        revise(ProgressCompleteness::Incomplete, &held),
-        Err(CompleteThroughRefusal::Retreat),
-        "Incomplete"
-    );
-    let same = ProgressCompleteness::Complete { through: 100 };
-    for (stamp, expected) in [(80, true), (100, true), (101, false)] {
-        let uncovered = at("d", stamp);
-        assert_eq!(
-            revise(same, std::slice::from_ref(&uncovered)),
-            if expected {
-                Err(CompleteThroughRefusal::UncoveredPosition(Box::new(
-                    uncovered,
-                )))
-            } else {
-                Ok(())
-            },
-            "an uncovered position stamped {stamp} against a boundary of 100"
-        );
-    }
-    assert_eq!(
-        revise_complete_through(
-            ProgressCompleteness::Incomplete,
-            ProgressCompleteness::Incomplete,
-            &covered,
-            &held
-        ),
-        Ok(()),
-        "a retained Incomplete refuses nothing"
-    );
 }
 
 fn bundle_global_lines(source: &str) -> Vec<usize> {
@@ -399,4 +332,432 @@ fn evidence_calls_consume_optional_activation_views_for_scopes_and_instances() {
     assert_eq!(result.activation, ActivationState::Active);
     assert_eq!(result.truth, Some(Truth::True));
     assert_eq!(result.instances.len(), 2);
+}
+
+/// The items FR-861-AC-4 forbids `fsl-eval` to define: the local rules the
+/// four owners replace. A definition of any of these names is a second copy.
+const FORBIDDEN_ITEMS: &[&str] = &[
+    // partial: the local interval algebra (`EvidenceLetters` reads through the owner).
+    "PossibilitySet",
+    "OrderPossibilities",
+    "EventTimeInterval",
+    "relation_to",
+    // activation: the local scope disposition rule.
+    "scope_disposition",
+    "ActivationView",
+    "ActivationSelection",
+    // completeness: a second revision rule or view.
+    "CompletenessView",
+    "revise_completeness",
+    "revise",
+    // repair: affected-region planning.
+    "plan_repair",
+    "RepairPlan",
+    "FactRegion",
+    "PriorResult",
+    "DependencyEdge",
+    "affected_region",
+];
+
+/// Names of items defined (fn, struct, enum, trait, type) in `source`,
+/// and of fns whose signature takes two `ProgressCompleteness` values, which
+/// is a comparison of two completeness assertions.
+fn defined_items(source: &str) -> (Vec<String>, Vec<String>) {
+    use syn::visit::Visit;
+    #[derive(Default)]
+    struct Items {
+        defined: Vec<String>,
+        comparing: Vec<String>,
+    }
+    /// Whether `pat` names a `ProgressCompleteness` variant.
+    fn completeness_variant(pat: &syn::Pat) -> bool {
+        let path = match pat {
+            syn::Pat::Path(node) => &node.path,
+            syn::Pat::Struct(node) => &node.path,
+            syn::Pat::TupleStruct(node) => &node.path,
+            syn::Pat::Reference(node) => return completeness_variant(&node.pat),
+            _ => return false,
+        };
+        path.segments.len() >= 2
+            && path.segments[path.segments.len() - 2].ident == "ProgressCompleteness"
+    }
+    /// Whether `expr` is a field or identifier named `completeness`.
+    fn names_completeness(expr: &syn::Expr) -> bool {
+        match expr {
+            syn::Expr::Field(node) => {
+                matches!(&node.member, syn::Member::Named(name) if name == "completeness")
+            }
+            syn::Expr::Path(node) => node.path.is_ident("completeness"),
+            syn::Expr::Paren(node) => names_completeness(&node.expr),
+            syn::Expr::Reference(node) => names_completeness(&node.expr),
+            _ => false,
+        }
+    }
+    fn completeness_params(signature: &syn::Signature) -> usize {
+        signature
+            .inputs
+            .iter()
+            .filter(|input| match input {
+                syn::FnArg::Typed(typed) => matches!(&*typed.ty, syn::Type::Path(path)
+                    if path.path.segments.last().is_some_and(|s| s.ident == "ProgressCompleteness")),
+                syn::FnArg::Receiver(_) => false,
+            })
+            .count()
+    }
+    impl<'ast> Visit<'ast> for Items {
+        fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
+            self.defined.push(node.sig.ident.to_string());
+            if completeness_params(&node.sig) >= 2 {
+                self.comparing.push(node.sig.ident.to_string());
+            }
+            syn::visit::visit_item_fn(self, node);
+        }
+        fn visit_impl_item_fn(&mut self, node: &'ast syn::ImplItemFn) {
+            self.defined.push(node.sig.ident.to_string());
+            if completeness_params(&node.sig) >= 2 {
+                self.comparing.push(node.sig.ident.to_string());
+            }
+            syn::visit::visit_impl_item_fn(self, node);
+        }
+        fn visit_pat_tuple(&mut self, node: &'ast syn::PatTuple) {
+            if node
+                .elems
+                .iter()
+                .filter(|pat| completeness_variant(pat))
+                .count()
+                >= 2
+            {
+                self.comparing
+                    .push("a tuple pattern over two completeness variants".to_owned());
+            }
+            syn::visit::visit_pat_tuple(self, node);
+        }
+        fn visit_pat_slice(&mut self, node: &'ast syn::PatSlice) {
+            if node
+                .elems
+                .iter()
+                .filter(|pat| completeness_variant(pat))
+                .count()
+                >= 2
+            {
+                self.comparing
+                    .push("a slice pattern over two completeness variants".to_owned());
+            }
+            syn::visit::visit_pat_slice(self, node);
+        }
+        fn visit_expr_binary(&mut self, node: &'ast syn::ExprBinary) {
+            use syn::BinOp::{Eq, Ge, Gt, Le, Lt, Ne};
+            if matches!(node.op, Eq(_) | Ne(_) | Lt(_) | Le(_) | Gt(_) | Ge(_))
+                && names_completeness(&node.left)
+                && names_completeness(&node.right)
+            {
+                self.comparing
+                    .push("a comparison of two completeness values".to_owned());
+            }
+            syn::visit::visit_expr_binary(self, node);
+        }
+        fn visit_item_struct(&mut self, node: &'ast syn::ItemStruct) {
+            self.defined.push(node.ident.to_string());
+            syn::visit::visit_item_struct(self, node);
+        }
+        fn visit_item_enum(&mut self, node: &'ast syn::ItemEnum) {
+            self.defined.push(node.ident.to_string());
+            syn::visit::visit_item_enum(self, node);
+        }
+        fn visit_item_trait(&mut self, node: &'ast syn::ItemTrait) {
+            self.defined.push(node.ident.to_string());
+            syn::visit::visit_item_trait(self, node);
+        }
+        fn visit_item_type(&mut self, node: &'ast syn::ItemType) {
+            self.defined.push(node.ident.to_string());
+            syn::visit::visit_item_type(self, node);
+        }
+    }
+    let parsed = syn::parse_file(source).expect("Rust source");
+    let mut items = Items::default();
+    items.visit_file(&parsed);
+    (items.defined, items.comparing)
+}
+
+/// Name fragments no item of shipped source may carry: an affected-region
+/// plan is the owner's `repair::plan`, which FSL does not call or copy.
+const AFFECTED_REGION_FRAGMENTS: &[&str] = &["affected_region", "AffectedRegion"];
+
+/// Findings of the scan over `files`: `(file, finding)` for each forbidden
+/// definition, each function with two `ProgressCompleteness` parameters, each
+/// use of the owner's `repair` module and each item named for an
+/// affected-region plan.
+fn second_copies(files: &[(String, String)]) -> Vec<(String, String)> {
+    let mut found = Vec::new();
+    for (name, source) in files {
+        let (defined, comparing) = defined_items(source);
+        for item in defined {
+            if FORBIDDEN_ITEMS.contains(&item.as_str())
+                || AFFECTED_REGION_FRAGMENTS
+                    .iter()
+                    .any(|fragment| item.contains(fragment))
+            {
+                found.push((name.clone(), item));
+            }
+        }
+        for item in comparing {
+            found.push((
+                name.clone(),
+                format!("{item} compares two completeness assertions"),
+            ));
+        }
+        if source.contains("filament_observation::authority::repair") {
+            found.push((
+                name.clone(),
+                "a use of filament_observation::authority::repair".to_owned(),
+            ));
+        }
+    }
+    found
+}
+
+/// The shipped source of every FSL crate of the workspace: each `src`
+/// directory of the root crate and of the `fsl-*` crates.
+fn workspace_sources() -> Vec<(String, String)> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("the workspace root");
+    let mut directories = vec![root.join("src")];
+    for entry in std::fs::read_dir(root).expect("the workspace root is readable") {
+        let path = entry.expect("a directory entry").path();
+        let named = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with("fsl-"));
+        if named && path.join("src").is_dir() {
+            directories.push(path.join("src"));
+        }
+    }
+    let mut paths = Vec::new();
+    for directory in directories {
+        sources(&directory, &mut paths);
+    }
+    paths
+        .iter()
+        .map(|path| {
+            (
+                path.display().to_string(),
+                std::fs::read_to_string(path).expect("a source file"),
+            )
+        })
+        .collect()
+}
+
+#[test]
+#[trace("TC-2442", "FR-861-AC-4")]
+fn no_fsl_crate_defines_a_second_copy_of_the_four_owners_rule_sets() {
+    // The scan finds what it forbids, and names the file and item.
+    let planted = [(
+        "planted.rs".to_owned(),
+        "fn scope_disposition() {} struct OrderPossibilities; \
+         fn revise_again(a: ProgressCompleteness, b: ProgressCompleteness) {} \
+         fn affected_region_of() {} \
+         use filament_observation::authority::repair;"
+            .to_owned(),
+    )];
+    let found = second_copies(&planted);
+    assert_eq!(found.len(), 5, "{found:?}");
+    assert!(found.iter().all(|(file, _)| file == "planted.rs"));
+    // Both forms of a comparison of two values are found, in any function.
+    for (source, finding) in [
+        (
+            "fn judge(a: Entry, b: Entry) { match (a.completeness, b.completeness) { \
+             (ProgressCompleteness::Complete { through: x }, \
+             ProgressCompleteness::Complete { through: y }) if y < x => {} _ => {} } }",
+            "a tuple pattern over two completeness variants",
+        ),
+        (
+            "fn judge(a: Entry, b: Entry) -> bool { a.completeness != b.completeness }",
+            "a comparison of two completeness values",
+        ),
+    ] {
+        let planted = [("planted_form.rs".to_owned(), source.to_owned())];
+        let found = second_copies(&planted);
+        assert_eq!(found.len(), 1, "{source}: {found:?}");
+        assert!(found[0].1.contains(finding), "{found:?}");
+    }
+    // One parameter of the type is no comparison.
+    let single = [(
+        "single.rs".to_owned(),
+        "fn reading(a: ProgressCompleteness) {}".to_owned(),
+    )];
+    assert!(second_copies(&single).is_empty());
+    let found = second_copies(&workspace_sources());
+    assert!(
+        found.is_empty(),
+        "second copies of an owner rule: {found:?}"
+    );
+}
+
+#[test]
+#[trace("TC-2442", "FR-861-AC-4")]
+fn the_progress_ledger_calls_the_owners_completeness_revision_check() {
+    let ledger = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("src/temporal/ledger.rs"),
+    )
+    .expect("the progress ledger source");
+    assert!(
+        ledger.contains("completeness::check_revision"),
+        "the progress ledger calls `completeness::check_revision`"
+    );
+}
+
+/// One case on which the evaluator's reported disposition is compared with
+/// the one FR-524 states.
+#[derive(Debug, Eq, PartialEq)]
+struct Disagreement {
+    case: String,
+    evaluator: String,
+    stated: String,
+}
+
+/// Equal answers pass; any other pair is reported with the case and both
+/// answers, never passed on as either one.
+fn agree(case: &str, evaluator: &str, stated: &str) -> Result<(), Disagreement> {
+    if evaluator == stated {
+        return Ok(());
+    }
+    Err(Disagreement {
+        case: case.to_owned(),
+        evaluator: evaluator.to_owned(),
+        stated: stated.to_owned(),
+    })
+}
+
+/// FR-861-AC-3 (TC-2442): through `evaluate_temporal_evidence`, whose
+/// dispositions come from the owner's `activation` module, FR-524-AC-27 to
+/// AC-29's scopes report the activation state and non-value code FR-524
+/// states; a disagreement is reported with the case and both answers.
+#[test]
+#[trace(
+    "TC-2442",
+    "FR-861-AC-3",
+    "FR-524-AC-27",
+    "FR-524-AC-28",
+    "FR-524-AC-29"
+)]
+fn the_owner_activation_gives_the_dispositions_fr_524_states() {
+    use crate::temporal_activation as fixture;
+    use fsl_eval::temporal::evidence::TriggerEvidence;
+    use fsl_eval::temporal::{ProgressClosure, ProgressCompleteness, Valuation};
+    let (env, atom) = fixture::each_env();
+    let mut subject = env.subject(&[]);
+    subject.canonical_package_bytes = Some(b"{}");
+    subject.time_unit_scale = fsl_eval::temporal::evidence::ClockScale::PerSecond(
+        filament_exact::Rational::new(1_i64.into(), 1000_i64.into()).expect("ms"),
+    );
+    let reported = |closure, evidence, record: ProgressCompleteness| {
+        let mut asked = fixture::request(&env, fixture::at_t0(&[(atom, Valuation::True)]));
+        asked.trigger_scope = closure;
+        asked.trigger_evidence = evidence;
+        if let Some(held) = asked.completeness.as_mut() {
+            held.state = record;
+        }
+        let result = fixture::call(&env, &subject, &asked).expect("a result");
+        format!(
+            "{:?} {}",
+            result.activation,
+            result.non_value.map_or("none", |non_value| non_value.code)
+        )
+    };
+    let complete = ProgressCompleteness::Complete { through: 100 };
+    let cases = [
+        (
+            "FR-524-AC-27: closed scope, admitted evidence, no instance",
+            reported(ProgressClosure::Closed, TriggerEvidence::Admitted, complete),
+            "Inactive no-trigger-admitted",
+        ),
+        (
+            "FR-524-AC-27: open scope",
+            reported(ProgressClosure::Open, TriggerEvidence::Admitted, complete),
+            "Unknown trigger-scope-open",
+        ),
+        (
+            "FR-524-AC-28: missing evidence, closed",
+            reported(ProgressClosure::Closed, TriggerEvidence::Missing, complete),
+            "Unknown trigger-evidence-missing",
+        ),
+        (
+            "FR-524-AC-28: missing evidence, open",
+            reported(ProgressClosure::Open, TriggerEvidence::Missing, complete),
+            "Unknown trigger-evidence-missing",
+        ),
+        (
+            "FR-524-AC-28: refused evidence, closed",
+            reported(ProgressClosure::Closed, TriggerEvidence::Refused, complete),
+            "Unknown trigger-evidence-refused",
+        ),
+        (
+            "FR-524-AC-28: refused evidence, open",
+            reported(ProgressClosure::Open, TriggerEvidence::Refused, complete),
+            "Unknown trigger-evidence-refused",
+        ),
+        (
+            "FR-524-AC-29: closed scope, incomplete trigger record",
+            reported(
+                ProgressClosure::Closed,
+                TriggerEvidence::Admitted,
+                ProgressCompleteness::Incomplete,
+            ),
+            "Unknown trigger-scope-open",
+        ),
+    ];
+    let failures: Vec<_> = cases
+        .iter()
+        .filter_map(|(case, evaluator, stated)| agree(case, evaluator, stated).err())
+        .collect();
+    assert!(failures.is_empty(), "disagreements: {failures:?}");
+    // A disagreement is reported naming the case and both answers.
+    assert_eq!(
+        agree(cases[0].0, "Unknown trigger-scope-open", cases[0].2),
+        Err(Disagreement {
+            case: cases[0].0.to_owned(),
+            evaluator: "Unknown trigger-scope-open".to_owned(),
+            stated: "Inactive no-trigger-admitted".to_owned(),
+        })
+    );
+}
+
+/// FR-944-AC-4 (TC-2624, TC-3036): a position whose content, stamp and
+/// order key equal a covered position's, listed under a new FR-106 identity,
+/// shares that position's owner record identity in the admitted history, but
+/// coverage is decided by the FR-106 identity, so it is refused
+/// `UncoveredMember`: FR-502's contradiction on `Completeness`.
+#[test]
+#[trace("TC-2624", "TC-3036", "FR-944-AC-4")]
+fn a_position_equal_to_a_covered_one_under_a_new_identity_is_an_uncovered_member() {
+    use crate::temporal_activation as fixture;
+    use filament_eval::{CallAdmissionFailure, CallFailure};
+    use fsl_eval::temporal::Valuation;
+    let (env, atom) = fixture::each_env();
+    let subject = env.subject(&[]);
+    let values = [(atom, Valuation::True)];
+    let mut asked = fixture::request(&env, fixture::at_t0(&values));
+    asked.progress_ledger = Some(fsl_eval::temporal::ProgressLedger::new());
+    let first = fixture::call(&env, &subject, &asked).expect("the first request");
+    asked.progress_ledger = first.progress_ledger.clone();
+    let mut twin = fixture::position(0, &values);
+    twin.observation = fsl_eval::temporal::evidence::EvidenceRef::named("twin-of-obs0");
+    asked.positions.push(twin);
+    let refused = fixture::call(&env, &subject, &asked);
+    let Err(CallFailure::Admission(failure)) = refused else {
+        panic!("a refusal, got {refused:?}");
+    };
+    let CallAdmissionFailure::Refused(record) = *failure else {
+        panic!("a refusal record");
+    };
+    let fields = &record.record.fields;
+    assert_eq!(
+        fields.get("cause").map(String::as_str),
+        Some("progress-contradiction")
+    );
+    assert_eq!(
+        fields.get("contradicted_dimension").map(String::as_str),
+        Some("Completeness")
+    );
 }

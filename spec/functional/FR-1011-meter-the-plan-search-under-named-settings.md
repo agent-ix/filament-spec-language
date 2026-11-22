@@ -30,6 +30,15 @@ The request member that raises a limit is the plan request's `limits` (FSpec FR-
 - A denied charge SHALL stop the search `incomplete` with `limit-reached{limit, value, setting}`.
 - `plan_search.*` SHALL be distinct from `planner.max_work` (FSpec FR-807).
 
+For canonical source-policy state construction and admission, `ModelCandidate`
+(`model.candidate`) SHALL charge actual structural-node and byte visits to
+`accounting.work_units` and full new buffer-capacity bytes, before every
+growth, to `accounting.result_units`; writer/reader scratch, output copies and
+retained monitor vectors share the original evaluation ledger and cancellation
+handle through search and the existing independent replay/checker sessions,
+without changing model-only `plan_search.max_state_key_bytes` or the existing
+automaton identity-byte bound.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |

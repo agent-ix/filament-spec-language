@@ -308,10 +308,15 @@ fn same_value(left: &Value, right: &Value) -> bool {
 }
 
 fn settings(package: &CheckedPackage, tier: Value, size: i64) -> Value {
+    settings_in(package, "Config", tier, size)
+}
+
+fn settings_in(package: &CheckedPackage, alias: &str, tier: Value, size: i64) -> Value {
     let types = package.graph().scope().types();
+    let wanted = format!("{alias}::Settings");
     let declaration = types
         .composites()
-        .find(|declared| declared.name() == "Config::Settings")
+        .find(|declared| declared.name() == wanted)
         .expect("Settings is declared")
         .key();
     types
@@ -722,4 +727,211 @@ fn equality_over_non_identifier_cases_is_by_the_exact_name() {
             );
         }
     }
+}
+
+/// A document whose variant type `Shape` holds payload cases (`Circle` over
+/// `Integer`, `Square` over the record `Settings`) beside the nullary
+/// `Empty`.
+fn payload_union_document() -> serde_json::Value {
+    let mut shape = fixture::variant_type("Shape", &["Circle", "Empty", "Square"]);
+    let payloads = [
+        ("Circle", "ix://filament/native/Integer".to_owned()),
+        ("Square", fixture::id("Settings")),
+    ];
+    for (name, payload) in payloads {
+        let case = shape["variants"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|case| case["name"] == name)
+            .unwrap();
+        case["payloadType"] = serde_json::json!(payload);
+    }
+    let mut phase = fixture::variant_type("Phase", &["Armed", "Idle"]);
+    phase["variants"][0]["payloadType"] = serde_json::json!("ix://filament/native/Clock");
+    fixture::with_types(vec![shape, phase])
+}
+
+/// Payload-bearing selected model unions evaluate the same values from the
+/// source package and from the bytes-only carrier.
+#[trace("FR-531-AC-8", "FR-360-AC-8")]
+#[test]
+fn selected_model_union_values_match_source_and_bare_evaluation() {
+    use fsl_eval::value::QualifiedName;
+    use fsl_package::{BarePackage, BareSupply, ReadIdentityRows};
+    use fsl_semantics::library::LibraryName;
+    let document = payload_union_document();
+    let document_bytes = serde_json::to_vec(&document).unwrap();
+    let models = package_input([document_bytes.as_slice()]).unwrap();
+    let functions = "function circle using v(): M::Shape pure { M::Shape::Circle(3) }\n\
+        function empty using v(): M::Shape pure { M::Shape::Empty }\n\
+        function pass using v(s: M::Shape): M::Shape pure { s }\n\
+        function forwarded using v(): M::Shape pure { pass(M::Shape::Circle(4)) }\n\
+        function same using v(): Boolean pure { circle() = M::Shape::Circle(3) }\n\
+        function other using v(): Boolean pure { circle() = M::Shape::Circle(4) }\n\
+        function differs using v(): Boolean pure { circle() = empty() }\n\
+        function square using v(s: M::Settings): M::Shape pure { M::Shape::Square(s) }\n\
+        function idle using v(): M::Phase pure { M::Phase::Idle }\n\
+        function pass_phase using v(p: M::Phase): M::Phase pure { p }\n";
+    let package = package_functions(&document, "M", functions);
+    let emission = fsl_package::emit_checked(&package, fsl_package::EmitLimits::fixture())
+        .expect("selected unions emit");
+    let budget = || fsl_package::V2ReadLimits::fixture().native_join_budget();
+    let read = fsl_package::read_evaluation_emission(
+        &package,
+        &emission,
+        LibraryName::new("fixture").unwrap(),
+        &models,
+        fsl_package::V2ReadLimits::fixture(),
+        fsl_package::EmitLimits::fixture(),
+        fsl_package::SourceWitnessSupplier::new(&emission),
+    )
+    .expect("source route admits the same package");
+    let identities = emission
+        .identity_rows(read.admitted(), &mut budget())
+        .unwrap();
+    let identity_bytes = identities.to_bytes(read.admitted()).unwrap();
+    let identities =
+        ReadIdentityRows::read(&identity_bytes, read.admitted(), &mut budget()).unwrap();
+    // Native metadata, not the canonical value, tells a Clock payload from a
+    // nullary case: both hold no Exact data, but only `Armed` is a Clock.
+    {
+        use fsl_package::SelectedModelUnionPayload as Payload;
+        let admitted_rows = identities
+            .selected(read.admitted(), &mut budget())
+            .expect("the union join admits");
+        let phase = emission
+            .selected_model_union_rows()
+            .iter()
+            .find(|row| row.cases.iter().any(|case| case.name.as_ref() == "Armed"))
+            .expect("the Phase row is emitted");
+        let joined = admitted_rows
+            .model_union_row(&phase.structural_node)
+            .expect("the Phase row survives the join");
+        assert_eq!(joined, phase);
+        assert_eq!(
+            identities.model_unions().len(),
+            emission.selected_model_union_rows().len()
+        );
+        let [armed, idle] = joined.cases.as_slice() else {
+            panic!("Phase has two cases")
+        };
+        assert_eq!((armed.name.as_ref(), armed.rank), ("Armed", 0));
+        assert!(
+            matches!(&armed.payload, Payload::Clock { payload_type } if payload_type.as_ref() == "ix://filament/native/Clock")
+        );
+        assert_eq!((idle.name.as_ref(), idle.rank), ("Idle", 1));
+        assert!(matches!(idle.payload, Payload::None));
+    }
+    let equality = emission
+        .equality_witness(read.admitted(), &mut budget())
+        .unwrap();
+    let equality_bytes = equality.to_bytes(read.admitted()).unwrap();
+    let equality = fsl_package::ReadEqualityRows::read(&equality_bytes, read.admitted()).unwrap();
+    let bare = BarePackage::new(read.admitted())
+        .with_supply(
+            BareSupply {
+                identities: &identities,
+                equality: Some(&equality),
+            },
+            &mut budget(),
+        )
+        .unwrap();
+    let tier = evaluate(&package, &[], Vec::new(), &name("M::Tier::Gold"));
+    let square_argument = settings_in(&package, "M", tier, 2);
+    let armed = phase_case(&package, "Armed");
+    for (name, arguments, expected) in [
+        ("circle", vec![], None),
+        ("empty", vec![], None),
+        ("forwarded", vec![], None),
+        ("same", vec![], Some(true)),
+        ("other", vec![], Some(false)),
+        ("differs", vec![], Some(false)),
+        ("square", vec![square_argument], None),
+        ("idle", vec![], None),
+        ("pass_phase", vec![armed.clone()], None),
+    ] {
+        let call = |route: &dyn CheckedPackageEvaluation| {
+            let mut meter = Meter::new(UNLIMITED);
+            let evaluation = route
+                .call(
+                    &QualifiedName::unqualified(name).unwrap(),
+                    arguments.clone(),
+                    &ObjectEnvironment::default(),
+                    &mut meter,
+                )
+                .expect("union function evaluates");
+            (evaluation, meter)
+        };
+        let (source, source_meter) = call(&package);
+        let (bytes, bytes_meter) = call(&bare);
+        let FamilyOutcome::Evaluated(Outcome::Completed(source_value)) = source.outcome else {
+            panic!("{name}: source value")
+        };
+        let FamilyOutcome::Evaluated(Outcome::Completed(bare_value)) = bytes.outcome else {
+            panic!("{name}: bare value: {bytes:?}")
+        };
+        if name == "pass_phase" {
+            let Value::Union(armed) = &armed else {
+                unreachable!()
+            };
+            for value in [&source_value, &bare_value] {
+                let Value::Union(result) = value else {
+                    panic!("a union result")
+                };
+                assert_eq!(result.member(), armed.member(), "the active Armed member");
+                assert!(result.payload().is_empty(), "a Clock holds no Exact data");
+            }
+        }
+        match expected {
+            Some(expected) => {
+                assert!(
+                    matches!(source_value, Value::Boolean(held) if held == expected),
+                    "{name}"
+                );
+                assert!(same_value(&bare_value, &source_value), "{name}");
+            }
+            None => {
+                let (Value::Union(source), Value::Union(bare)) = (&source_value, &bare_value)
+                else {
+                    panic!("{name} returns a union on both routes")
+                };
+                assert_eq!(source.member(), bare.member(), "{name}");
+                assert_eq!(source.payload().len(), bare.payload().len(), "{name}");
+                for (left, right) in source.payload().iter().zip(bare.payload()) {
+                    assert!(same_value(left, right), "{name}");
+                }
+            }
+        }
+        assert_eq!(
+            source_meter.admitted_charges(),
+            bytes_meter.admitted_charges(),
+            "{name}: semantic charge sequence"
+        );
+    }
+}
+
+/// The active case `case` of the checked `M::Phase` union. A Clock payload is
+/// timed-state data, not an Exact payload, so the active `Armed` case holds no
+/// data position; the Clock is recorded by the selected union row instead.
+fn phase_case(package: &CheckedPackage, case: &str) -> Value {
+    use filament_semantic_value::declaration::CompositeShape;
+    let types = package.graph().scope().types();
+    let declaration = types
+        .composites()
+        .find(|declared| declared.name() == "M::Phase")
+        .expect("Phase is declared");
+    let CompositeShape::Union(members) = declaration.shape() else {
+        panic!("Phase is a union");
+    };
+    let member = members
+        .iter()
+        .find(|member| member.identifier() == case)
+        .expect("the case is declared");
+    filament_exact::union(
+        member.positions(),
+        member.member().expect("a sealed case").clone(),
+        Vec::new(),
+    )
+    .expect("a Clock case holds no data payload")
 }

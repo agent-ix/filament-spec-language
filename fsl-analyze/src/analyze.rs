@@ -2397,7 +2397,25 @@ impl AnalyzeRecord {
         }
         if let Some(found) = &self.value_check {
             let Some(package) = package else {
-                return Some(Err(CounterexampleWireError::Unspelled("value-check scope")));
+                // The package route (FR-850) holds no checked graph; a
+                // Boolean or integer assignment needs no declared type to
+                // be spelled, and any other value stays unspelled.
+                let plain = found.reproduced.assignment().iter().all(|value| {
+                    matches!(
+                        value,
+                        filament_exact::Value::Boolean(_) | filament_exact::Value::Integer(_)
+                    )
+                });
+                return Some(if plain {
+                    fsl_replay::assignments_wire(
+                        &found.parameters,
+                        found.reproduced.assignment(),
+                        &filament_semantic_value::declaration::TypeEnvironment::default(),
+                        &[],
+                    )
+                } else {
+                    Err(CounterexampleWireError::Unspelled("value-check scope"))
+                });
             };
             let scope = package.graph().scope();
             return Some(fsl_replay::assignments_wire(
@@ -2795,9 +2813,9 @@ pub fn split_records(
 }
 
 /// [`split_records`] over the checked package `package` of the source route,
-/// or over none on the package route (FR-850), whose items carry no
-/// value-validity counterexample: one spelled against no package fails
-/// unspelled.
+/// or over none on the package route (FR-850), whose value-validity
+/// counterexample over Boolean and integer parameters is spelled without a
+/// checked graph and any other fails unspelled.
 pub(crate) fn split_records_over(
     records: Vec<AnalyzeRecord>,
     package: Option<&CheckedPackage>,

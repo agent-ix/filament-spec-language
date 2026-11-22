@@ -8,7 +8,7 @@ use fsl_analyze::monitor::{
     MonitorClause, MonitorLimits, MonitorRefusal, MonitorVerdict, DEFAULT_RETAINED_POSITIONS,
 };
 use fsl_analyze::monitor_session::{
-    MonitorObservation, MonitorOpen, MonitorPosition, MonitorSession, MonitorStamp,
+    MonitorObservation, MonitorOpen, MonitorPosition, MonitorSession, MonitorStamp, MonitorState,
     MonitorTraceKind,
 };
 use fsl_foundation::diagnostic::StageFailure;
@@ -420,17 +420,124 @@ fn a_regressing_stamp_is_refused_and_the_ledger_equals_the_batch_run() {
         .expect("opens");
     let cancel = Cancel::new();
     let mut last = None;
-    for (stamp, level) in [(0, 0), (2, 0), (5, 1)] {
+    let mut pending_checkpoint: Option<MonitorState> = None;
+    let mut prior_partial_ledger = None;
+    let open = || MonitorOpen {
+        clauses: clauses(&["T"]),
+        kind: MonitorTraceKind::Timestamped,
+        lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+        binding: Some(stamped_binding()),
+        cover: None,
+        ledger: None,
+        packages: &world.packages,
+        sources: &world.sources,
+        temporal_selections: &world.selections,
+    };
+    for (stamp, level, watermark) in [(0, 0, 0), (2, 0, 2), (5, 1, 5), (7, 0, 5), (6, 0, 7)] {
         let observed = text(level);
         session
             .step(stamped(&observed, stamp), &cancel)
             .expect("an observation");
+        if stamp == 5 {
+            // The decisive observation has settled T, before G5 is asserted.
+            // Its metadata-only ledger continuation survives a checkpoint.
+            let checkpoint = session.checkpoint().expect("checkpoints after settlement");
+            for mutation in 0..5 {
+                let mut altered: serde_json::Value =
+                    serde_json::from_slice(checkpoint.as_bytes()).unwrap();
+                match mutation {
+                    0 => altered["clauses"][0]["progress_state"] = serde_json::Value::Null,
+                    1 => {
+                        altered["clauses"][0]
+                            .as_object_mut()
+                            .unwrap()
+                            .remove("progress_state");
+                    }
+                    2 | 3 => {
+                        let mut tracker: serde_json::Value = serde_json::from_str(
+                            altered["clauses"][0]["progress_state"].as_str().unwrap(),
+                        )
+                        .unwrap();
+                        if mutation == 2 {
+                            tracker["first"] = altered["seen"].clone();
+                            tracker["positions"] = serde_json::json!([]);
+                            tracker["fixed"] = serde_json::json!(0);
+                        } else {
+                            tracker["fixed"] =
+                                serde_json::json!(tracker["positions"].as_array().unwrap().len());
+                        }
+                        altered["clauses"][0]["progress_state"] =
+                            serde_json::json!(serde_json::to_string(&tracker).unwrap());
+                    }
+                    4 => {
+                        let tracker = altered["clauses"][0]["progress_state"].as_str().unwrap();
+                        let mut tracker: serde_json::Value = serde_json::from_str(tracker).unwrap();
+                        tracker["positions"].as_array_mut().unwrap().pop();
+                        altered = serde_json::from_slice(
+                            pending_checkpoint
+                                .as_ref()
+                                .expect("the pending checkpoint")
+                                .as_bytes(),
+                        )
+                        .unwrap();
+                        altered["clauses"][0]["progress_state"] =
+                            serde_json::json!(serde_json::to_string(&tracker).unwrap());
+                    }
+                    _ => unreachable!(),
+                }
+                let altered = MonitorState::from_bytes(serde_json::to_vec(&altered).unwrap());
+                let refused = MonitorSession::resume(
+                    world.unit.package(),
+                    &altered,
+                    open(),
+                    &limits(DEFAULT_RETAINED_POSITIONS),
+                    &cancel,
+                );
+                assert!(
+                    matches!(
+                        refused,
+                        Err(StageFailure::Refused(MonitorRefusal::State { .. }))
+                    ),
+                    "checkpoint mutation {mutation} must not lose pending progress facts"
+                );
+            }
+            session = MonitorSession::resume(
+                world.unit.package(),
+                &checkpoint,
+                open(),
+                &limits(DEFAULT_RETAINED_POSITIONS),
+                &cancel,
+            )
+            .expect("resumes after settlement");
+        }
         last = Some(
             session
-                .assert_progress(progress(stamp), &cancel)
+                .assert_progress(progress(watermark), &cancel)
                 .expect("progress"),
         );
+        if stamp == 7 || stamp == 6 {
+            let checkpoint = session
+                .checkpoint()
+                .expect("checkpoints the partial-history ledger");
+            let resumed = MonitorSession::resume(
+                world.unit.package(),
+                &checkpoint,
+                open(),
+                &limits(DEFAULT_RETAINED_POSITIONS),
+                &cancel,
+            )
+            .expect("resumes the partial-history ledger");
+            if stamp == 7 {
+                prior_partial_ledger = resumed
+                    .finish(&cancel)
+                    .expect("reads the actual G5 ledger")
+                    .ledger;
+            } else {
+                session = resumed;
+            }
+        }
         if stamp == 2 {
+            pending_checkpoint = Some(session.checkpoint().expect("checkpoints while pending"));
             let late = text(1);
             let refused = session
                 .step(stamped(&late, 2), &cancel)
@@ -448,7 +555,11 @@ fn a_regressing_stamp_is_refused_and_the_ledger_equals_the_batch_run() {
     let outcome = session.finish(&cancel).expect("ends");
     assert_eq!(outcome.records[0].verdict, record.verdict);
 
-    // The batch run over the same three observations.
+    // FR-643 "Batch equality": a settled clause "SHALL report exactly B(s)".
+    // The step at 5 settles under G2; later real assertions advance the
+    // session ledger, independently of that frozen report.
+    // FR-643 "Settling": finite-window settles on "a verdict FR-501 reports
+    // with a decisive basis", so the witness settles before G5 is asserted.
     let authentication = spine::authenticate_emission(
         world.unit.package(),
         &world.selections,
@@ -467,7 +578,7 @@ fn a_regressing_stamp_is_refused_and_the_ledger_equals_the_batch_run() {
         .collect();
     let trace = TraceInput::Timestamped {
         observations,
-        progress: progress(5),
+        progress: progress(2),
         window: Box::new(TimestampedWindow {
             binding: Some(stamped_binding()),
             authoritative_origin: true,
@@ -476,7 +587,7 @@ fn a_regressing_stamp_is_refused_and_the_ledger_equals_the_batch_run() {
             late: Default::default(),
         }),
     };
-    let batch = run_package_temporal(&PackageTemporalRequest {
+    let request = PackageTemporalRequest {
         package: world.unit.package(),
         packages: &world.packages,
         model_limits: ModelNormalizationLimits::default(),
@@ -490,14 +601,53 @@ fn a_regressing_stamp_is_refused_and_the_ledger_equals_the_batch_run() {
         sources: &world.sources,
         authentication: Some(PackageAuthentication::temporal(&authentication)),
         cancel: &cancel,
-    });
+    };
+    let batch = run_package_temporal(&request);
     let from_session = outcome.records[0].report();
     assert_eq!(
-        format!("{:?}", from_session.disposition),
-        format!("{:?}", batch.disposition)
+        qsl_2750_report_fields(&from_session),
+        qsl_2750_report_fields(&batch)
     );
-    assert_eq!(from_session.ledger, batch.ledger);
     assert!(batch.ledger.is_some());
+    let mut latest = trace.clone();
+    let TraceInput::Timestamped {
+        observations,
+        progress: assertion,
+        ..
+    } = &mut latest
+    else {
+        panic!("the timestamped trace");
+    };
+    observations.push(TimestampedObservation {
+        document: spine::sample_position(&text(0)),
+        stamp: 7,
+        order_key: None,
+    });
+    observations.push(TimestampedObservation {
+        document: spine::sample_position(&text(0)),
+        stamp: 6,
+        order_key: None,
+    });
+    *assertion = progress(7);
+    // FR-502 requires equality for the same request sequence, retaining
+    // facts from the earlier G5 request that already listed stamp 7.
+    let prior_partial_ledger = prior_partial_ledger.expect("the actual prior G5 ledger");
+    let latest_batch = run_package_temporal(&PackageTemporalRequest {
+        trace: &latest,
+        ledger: Some(&prior_partial_ledger),
+        ..request
+    });
+    assert_eq!(outcome.ledger, latest_batch.ledger);
+    let ledger = outcome.ledger.expect("the session's latest ledger");
+    let (_, entry) = ledger
+        .entries()
+        .next()
+        .expect("the clause's ledger binding");
+    assert_eq!(
+        entry.covered().count(),
+        5,
+        "all historical facts remain across five observations: the position re-delivered at stamp 6 is the identity covered at stamp 7, held once (FR-502: membership uses the identity only)"
+    );
 }
 
 /// FR-643 Order (TC-1667): a progress assertion that regresses the retained
@@ -3993,7 +4143,7 @@ fn a_carried_window_member_without_a_valuation_equals_the_batch() {
 /// FR-993, FR-194-AC-17: an absence is content of its position, so a state
 /// that delivers a position without the absence the covered ledger holds for
 /// it is refused as a `Completeness` contradiction, before and after a
-/// `from_bytes` restore.
+/// `from_bytes` restore, including when a later position is still uncovered.
 #[test]
 #[trace("TC-629", "FR-194-AC-17", "FR-993-AC-1")]
 fn a_changed_absence_at_a_covered_index_is_a_completeness_contradiction() {
@@ -4008,7 +4158,7 @@ fn a_changed_absence_at_a_covered_index_is_a_completeness_contradiction() {
     )
     .ledger
     .expect("the retained ledger");
-    for restored in [false, true] {
+    for (restored, uncovered) in [(false, false), (true, false), (false, true), (true, true)] {
         let mut open = clause_open(
             &world,
             ClauseTraceKind::Timestamped,
@@ -4018,9 +4168,10 @@ fn a_changed_absence_at_a_covered_index_is_a_completeness_contradiction() {
         open.ledger = Some(held.clone());
         let mut state = ClauseState::open(world.unit.package(), clause_node(&world, "Twos"), &open)
             .expect("opens");
-        state
+        let advance = state
             .advance(admitted(&world, "Twos", &text(1), 0), &cancel)
             .expect("advances");
+        assert_eq!(advance.report.ledger.as_ref(), Some(&held));
         if restored {
             let bytes = state.to_bytes().expect("writes");
             state = ClauseState::from_bytes(
@@ -4031,6 +4182,7 @@ fn a_changed_absence_at_a_covered_index_is_a_completeness_contradiction() {
                 &cancel,
             )
             .expect("reads back");
+            assert_eq!(state.report().ledger.as_ref(), Some(&held));
         }
         for index in 1..4_u64 {
             // The covered index 1 arrives without its absence.
@@ -4038,15 +4190,22 @@ fn a_changed_absence_at_a_covered_index_is_a_completeness_contradiction() {
                 .advance(admitted(&world, "Twos", &text(1), index), &cancel)
                 .expect("advances");
         }
+        if uncovered {
+            state
+                .advance(admitted(&world, "Twos", &text(1), 5), &cancel)
+                .expect("an uncovered observation asserts no progress");
+        }
+        let before = state.to_bytes().expect("writes before the assertion");
         let refused = state.assert_progress(&progress(3), &cancel);
         let Err(spine::ClauseRefusal::Contradiction(contradiction)) = refused else {
-            panic!("restored {restored}: a contradiction, got {refused:?}");
+            panic!("restored {restored}, uncovered {uncovered}: a contradiction, got {refused:?}");
         };
         assert_eq!(
             contradiction.contradiction.dimension,
             ContradictedDimension::Completeness,
-            "restored {restored}"
+            "restored {restored}, uncovered {uncovered}"
         );
+        assert_eq!(state.to_bytes().expect("writes after refusal"), before);
     }
 }
 
@@ -4660,4 +4819,424 @@ fn qsl_2750_batch_over(world: &World, name: &str, trace: &TraceInput) -> ClauseR
         authentication: Some(authentication.temporal()),
         cancel: &cancel,
     })
+}
+
+/// A `Progressed` trace of record samples at `levels` under `assertion`.
+fn progressed_under(levels: &[i64], assertion: ProgressAssertion) -> TraceInput {
+    TraceInput::Progressed {
+        trace: levels
+            .iter()
+            .map(|level| spine::sample_position(&text(*level)))
+            .collect(),
+        progress: assertion,
+        lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+        binding: events_binding(),
+    }
+}
+
+/// An assertion at `watermark`, `Incomplete` or `Complete` through it.
+fn asserted(watermark: u64, complete: bool) -> ProgressAssertion {
+    ProgressAssertion {
+        completeness: if complete {
+            ProgressCompleteness::Complete { through: watermark }
+        } else {
+            ProgressCompleteness::Incomplete
+        },
+        ..progress(watermark)
+    }
+}
+
+/// What one request answers: the ledger it returns, or the contradiction it
+/// is refused with (dimension, retained value, asserted value).
+type Answer = Result<
+    spine::ProgressLedger,
+    (
+        spine::ContradictedDimension,
+        spine::ProgressValue,
+        spine::ProgressValue,
+    ),
+>;
+
+/// The `Timestamped` record-sample trace of `samples`, each `(level, stamp)`,
+/// under `assertion`.
+fn stamped_at(samples: &[(i64, u64)], assertion: ProgressAssertion) -> TraceInput {
+    TraceInput::Timestamped {
+        observations: samples
+            .iter()
+            .map(|(level, stamp)| TimestampedObservation {
+                document: spine::sample_position(&text(*level)),
+                stamp: *stamp,
+                order_key: None,
+            })
+            .collect(),
+        progress: assertion,
+        window: Box::new(TimestampedWindow {
+            binding: Some(stamped_binding()),
+            authoritative_origin: true,
+            cover: None,
+            missing_valuations: Vec::new(),
+            late: spine::LateInputs::default(),
+        }),
+    }
+}
+
+/// The batch run's answer for `trace` over `held`: a refusal returns the
+/// ledger it was given.
+fn batch_answer(
+    world: &World,
+    name: &str,
+    held: Option<&spine::ProgressLedger>,
+    trace: &TraceInput,
+) -> Answer {
+    let report = batch_from(world, name, trace, held);
+    match &report.disposition {
+        spine::ClauseDisposition::ProgressContradiction(refusal) => {
+            assert_eq!(report.ledger.as_ref(), held, "a refusal returns the ledger");
+            let found = &refusal.contradiction;
+            Err((
+                found.dimension.clone(),
+                found.retained.clone(),
+                found.asserted.clone(),
+            ))
+        }
+        other => {
+            assert!(
+                !matches!(other, spine::ClauseDisposition::TraceRefused(_)),
+                "{other:?}"
+            );
+            Ok(report.ledger.expect("the updated ledger"))
+        }
+    }
+}
+
+/// The carried state's answer for `samples`, each `(level, stamp)`, opened on
+/// `held` over a `Progressed` (`timestamped` false, clause `Past`) or a
+/// `Timestamped` (clause `Twos`) trace, optionally read back from its bytes
+/// after its first position.
+fn carried_answer(
+    world: &World,
+    held: &spine::ProgressLedger,
+    timestamped: bool,
+    samples: &[(i64, u64)],
+    assertion: ProgressAssertion,
+    restored: bool,
+) -> Answer {
+    let cancel = Cancel::new();
+    let (name, kind, binding) = if timestamped {
+        ("Twos", ClauseTraceKind::Timestamped, stamped_binding())
+    } else {
+        ("Past", ClauseTraceKind::Progressed, events_binding())
+    };
+    let mut open = clause_open(
+        world,
+        kind,
+        Some(binding),
+        ProgressLowerBoundary::AuthoritativeOrigin,
+    );
+    open.ledger = Some(held.clone());
+    let mut state =
+        ClauseState::open(world.unit.package(), clause_node(world, name), &open).expect("opens");
+    for (index, (level, stamp)) in samples.iter().enumerate() {
+        if restored && index == 1 {
+            let bytes = state.to_bytes().expect("bytes");
+            state = ClauseState::from_bytes(
+                world.unit.package(),
+                clause_node(world, name),
+                &open,
+                &bytes,
+                &cancel,
+            )
+            .expect("reads back");
+        }
+        state
+            .advance(admitted(world, name, &text(*level), *stamp), &cancel)
+            .expect("advances");
+    }
+    match state.assert_progress(&assertion, &cancel) {
+        Ok(advance) => Ok(advance.report.ledger.clone().expect("the updated ledger")),
+        Err(spine::ClauseRefusal::Contradiction(refusal)) => {
+            let found = refusal.contradiction;
+            Err((found.dimension, found.retained, found.asserted))
+        }
+        Err(other) => panic!("a contradiction or an answer, got {other:?}"),
+    }
+}
+
+/// What a case must answer: accepted, or refused with this asserted value
+/// (`Some(None)` a position, `Some(Some(c))` the completeness `c`).
+#[derive(Clone, Copy, Debug)]
+enum Expect {
+    Accepted,
+    ChangedSample,
+    Regressed(ProgressCompleteness),
+}
+
+fn check_expect(case: &str, answer: &Answer, retained: ProgressCompleteness, expect: Expect) {
+    match (expect, answer) {
+        (Expect::Accepted, Ok(_)) => {}
+        (Expect::ChangedSample, Err((dimension, kept, spine::ProgressValue::Position(_)))) => {
+            assert_eq!(*dimension, ContradictedDimension::Completeness, "{case}");
+            assert_eq!(
+                *kept,
+                spine::ProgressValue::Completeness(retained),
+                "{case}"
+            );
+        }
+        (Expect::Regressed(value), Err((dimension, kept, asserted))) => {
+            assert_eq!(*dimension, ContradictedDimension::Completeness, "{case}");
+            assert_eq!(
+                *kept,
+                spine::ProgressValue::Completeness(retained),
+                "{case}"
+            );
+            assert_eq!(
+                *asserted,
+                spine::ProgressValue::Completeness(value),
+                "{case}"
+            );
+        }
+        (expected, found) => panic!("{case}: expected {expected:?}, found {found:?}"),
+    }
+}
+
+/// One case: its name, its samples `(level, stamp)`, its assertion and the
+/// answer FR-944 states.
+type Case = (&'static str, Vec<(i64, u64)>, ProgressAssertion, Expect);
+
+/// Run `cases` over `held` in batch and carried evaluation (restored or not)
+/// and require equal answers, the refusal's dimension, retained and asserted
+/// values included, and the stated answer.
+fn compare_cases(
+    world: &World,
+    timestamped: bool,
+    held: &spine::ProgressLedger,
+    retained: ProgressCompleteness,
+    cases: &[Case],
+) {
+    let name = if timestamped { "Twos" } else { "Past" };
+    for (case, samples, assertion, expect) in cases {
+        let trace = if timestamped {
+            stamped_at(samples, *assertion)
+        } else {
+            let levels: Vec<i64> = samples.iter().map(|(level, _)| *level).collect();
+            progressed_under(&levels, *assertion)
+        };
+        let batch = batch_answer(world, name, Some(held), &trace);
+        check_expect(case, &batch, retained, *expect);
+        for restored in [false, true] {
+            let carried = carried_answer(world, held, timestamped, samples, *assertion, restored);
+            assert_eq!(carried, batch, "{case}, restored {restored}");
+        }
+    }
+}
+
+/// `levels` at stamps 0, 1, 2 and so on.
+fn at_index(levels: &[i64]) -> Vec<(i64, u64)> {
+    levels
+        .iter()
+        .enumerate()
+        .map(|(stamp, level)| (*level, stamp as u64))
+        .collect()
+}
+
+/// FR-944-AC-4 and AC-16 (TC-2624), FR-820: batch evaluation and carried
+/// evaluation, the carried state read back by `from_bytes` or not, give
+/// equal answers, refusals compared by dimension, retained value and asserted
+/// value, on every case a record-sample trace expresses: an identical
+/// redelivery, a changed sample at a covered index after `Complete` and after
+/// `Incomplete`, `Incomplete` after `Complete` (`CompleteRegressed`),
+/// `Complete` through a lower bound (`BoundaryRegressed`), and a covered
+/// position one request omits and a later one supplies again. Not expressible
+/// by a trace (event-position indices always start at stamp 0, and a
+/// record sample always has a fingerprint): a new position at stamp 0 after
+/// `Incomplete` and a fingerprint present against absent; those are ledger
+/// tests. The timestamped re-stamp is its own test.
+#[test]
+#[trace("TC-2624", "FR-944-AC-4", "FR-944-AC-16", "FR-820-AC-1")]
+fn carried_and_batch_evaluation_answer_the_completeness_cases_alike() {
+    let world = world();
+    for retained_complete in [true, false] {
+        let retained = if retained_complete {
+            ProgressCompleteness::Complete { through: 1 }
+        } else {
+            ProgressCompleteness::Incomplete
+        };
+        let held = batch_answer(
+            &world,
+            "Past",
+            None,
+            &progressed_under(&[1, 2], asserted(1, retained_complete)),
+        )
+        .expect("the first request is accepted");
+        let mut cases: Vec<Case> = vec![
+            (
+                "the same samples",
+                at_index(&[1, 2]),
+                asserted(1, retained_complete),
+                Expect::Accepted,
+            ),
+            (
+                "a changed sample",
+                at_index(&[1, 5, 3]),
+                asserted(2, retained_complete),
+                Expect::ChangedSample,
+            ),
+            (
+                "the same samples and one more",
+                at_index(&[1, 2, 3]),
+                asserted(2, true),
+                Expect::Accepted,
+            ),
+            (
+                "a covered position omitted",
+                at_index(&[1]),
+                asserted(1, retained_complete),
+                Expect::Accepted,
+            ),
+        ];
+        if retained_complete {
+            cases.push((
+                "Incomplete after Complete",
+                at_index(&[1, 2]),
+                asserted(1, false),
+                Expect::Regressed(ProgressCompleteness::Incomplete),
+            ));
+        }
+        compare_cases(&world, false, &held, retained, &cases);
+        if retained_complete {
+            // A retained boundary above the watermark, then a lower one.
+            let wide = ProgressCompleteness::Complete { through: 2 };
+            let held_wide = batch_answer(
+                &world,
+                "Past",
+                None,
+                &progressed_under(
+                    &[1, 2],
+                    ProgressAssertion {
+                        completeness: wide,
+                        ..asserted(1, true)
+                    },
+                ),
+            )
+            .expect("the first request is accepted");
+            compare_cases(
+                &world,
+                false,
+                &held_wide,
+                wide,
+                &[(
+                    "Complete through a lower bound",
+                    at_index(&[1, 2]),
+                    asserted(1, true),
+                    Expect::Regressed(ProgressCompleteness::Complete { through: 1 }),
+                )],
+            );
+        }
+        // The omitted position is supplied again by a later request.
+        let omitted = batch_answer(
+            &world,
+            "Past",
+            Some(&held),
+            &progressed_under(&[1], asserted(1, retained_complete)),
+        )
+        .expect("omitting a covered position is accepted");
+        compare_cases(
+            &world,
+            false,
+            &omitted,
+            retained,
+            &[(
+                "re-supplied after the omission",
+                at_index(&[1, 2, 3]),
+                asserted(2, true),
+                Expect::Accepted,
+            )],
+        );
+    }
+}
+
+/// FR-944-AC-16 (TC-2624), FR-993: under a `Timestamped` record-sample trace,
+/// after a retained `Complete { through: 5 }` covering index 1 at stamp 1,
+/// index 1 re-delivered at stamp 2 with changed content is refused
+/// `MemberObservationChanged` (a contradiction on `Completeness` naming the
+/// position), with the same content is accepted as the same member, and the
+/// returned ledger lists the index once, at stamp 1 with its fingerprint.
+#[test]
+#[trace("TC-2624", "FR-944-AC-16", "FR-993-AC-1")]
+fn a_re_stamped_timestamped_sample_is_the_same_member_in_batch_evaluation() {
+    let world = world();
+    let retained = ProgressCompleteness::Complete { through: 5 };
+    let held = batch_answer(
+        &world,
+        "Twos",
+        None,
+        &stamped_at(&[(1, 0), (2, 1)], asserted(5, true)),
+    )
+    .expect("the first request is accepted");
+    let same = batch_answer(
+        &world,
+        "Twos",
+        Some(&held),
+        &stamped_at(&[(1, 0), (2, 2)], asserted(5, true)),
+    );
+    check_expect("the same content", &same, retained, Expect::Accepted);
+    let ledger = same.expect("accepted");
+    let covered: Vec<(String, u64)> = ledger
+        .entries()
+        .flat_map(|(_, entry)| entry.covered())
+        .map(|position| (position.identity.clone(), position.stamp))
+        .collect();
+    let stamps: Vec<u64> = covered
+        .iter()
+        .filter(|(identity, _)| identity.ends_with(":1"))
+        .map(|(_, stamp)| *stamp)
+        .collect();
+    assert_eq!(
+        stamps,
+        [1],
+        "index 1 is listed once, at stamp 1: {covered:?}"
+    );
+    assert_eq!(covered.len(), 2, "no entry is added: {covered:?}");
+    let changed = batch_answer(
+        &world,
+        "Twos",
+        Some(&held),
+        &stamped_at(&[(1, 0), (5, 2)], asserted(5, true)),
+    );
+    check_expect("changed content", &changed, retained, Expect::ChangedSample);
+}
+
+/// The carried side of the re-stamp case above.
+#[test]
+#[trace("TC-2624", "FR-944-AC-16", "FR-820-AC-1")]
+fn a_re_stamped_timestamped_sample_is_the_same_member_in_carried_evaluation() {
+    let world = world();
+    let retained = ProgressCompleteness::Complete { through: 5 };
+    let held = batch_answer(
+        &world,
+        "Twos",
+        None,
+        &stamped_at(&[(1, 0), (2, 1)], asserted(5, true)),
+    )
+    .expect("the first request is accepted");
+    compare_cases(
+        &world,
+        true,
+        &held,
+        retained,
+        &[
+            (
+                "the same content at stamp 2",
+                vec![(1, 0), (2, 2)],
+                asserted(5, true),
+                Expect::Accepted,
+            ),
+            (
+                "changed content at stamp 2",
+                vec![(1, 0), (5, 2)],
+                asserted(5, true),
+                Expect::ChangedSample,
+            ),
+        ],
+    );
 }

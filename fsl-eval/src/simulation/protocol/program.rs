@@ -118,7 +118,14 @@ pub(super) struct Record<'a> {
 /// One checked `related by` premise of an event step (FR-731).
 pub(super) struct Related<'a> {
     pub(super) relationship: DeclarationKey,
-    pub(super) ends: [&'a CheckedBody; 2],
+    pub(super) alias: &'a str,
+    pub(super) ends: RelatedEnds<'a>,
+}
+
+/// Correlation ends retain the admitted route's expression authority.
+pub(super) enum RelatedEnds<'a> {
+    Source([&'a CheckedBody; 2]),
+    Package([crate::value::ProtocolSlot; 2]),
 }
 
 /// One `send` or `receive` (ADR-027 ST-3, ST-4): its record, its channel
@@ -819,7 +826,8 @@ impl<'a> Program<'a> {
                 .ok_or_else(|| ProtocolRefusal::fault("a-related-clause-has-a-relationship"))?;
             related.entry(clause.node).or_default().push(Related {
                 relationship: relationship.key.clone(),
-                ends: [&clause.ends[0], &clause.ends[1]],
+                alias: &relationship.name,
+                ends: RelatedEnds::Source([&clause.ends[0], &clause.ends[1]]),
             });
         }
 
@@ -1012,7 +1020,7 @@ impl<'a> Program<'a> {
     /// evaluator.
     pub(super) fn new_package(
         model: &ModelSystem<'_>,
-        package: &super::PackageProtocolProgram<'_>,
+        package: &super::PackageProtocolProgram<'a>,
     ) -> Result<Self, ProtocolRefusal> {
         // A control's text includes each structural branch or case label,
         // which the package's declaration path omits.
@@ -1328,6 +1336,11 @@ impl<'a> Program<'a> {
                     .flat_map(|(choice, cases)| cases.iter().map(move |(_, slot)| (*choice, slot))),
             )
             .chain(package.finish.as_ref().map(|slot| (finish_node, slot)))
+            .chain(package.related.iter().flat_map(|(node, clauses)| {
+                clauses
+                    .iter()
+                    .flat_map(move |clause| clause.ends.iter().map(move |slot| (*node, slot)))
+            }))
         {
             for binder in package
                 .slot_binders(slot)
@@ -1347,7 +1360,23 @@ impl<'a> Program<'a> {
             controls,
             attempts,
             recommendations,
-            related: BTreeMap::new(),
+            related: package
+                .related
+                .iter()
+                .map(|(node, clauses)| {
+                    (
+                        *node,
+                        clauses
+                            .iter()
+                            .map(|clause| Related {
+                                relationship: clause.relationship.clone(),
+                                alias: &clause.authored.alias,
+                                ends: RelatedEnds::Package(clause.ends.clone()),
+                            })
+                            .collect(),
+                    )
+                })
+                .collect(),
             joins,
             loops: package
                 .loops

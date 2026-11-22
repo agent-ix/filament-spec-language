@@ -352,6 +352,11 @@ pub enum RuleStop {
         /// The bound in force.
         value: u64,
     },
+    /// The existing per-identity encoding byte bound stopped a rule key.
+    IdentityLimit {
+        /// The bound in force.
+        value: u64,
+    },
     /// The run was cancelled.
     Cancelled(CancelCause),
 }
@@ -418,6 +423,43 @@ pub trait PlanRules {
 
     /// The number of policy clauses, in the request's `policy` order.
     fn policy_count(&self) -> usize;
+
+    /// Allocate the ordered policy vector before retaining any monitor.
+    ///
+    /// # Errors
+    /// [`RuleStop`] before denied storage growth.
+    fn policy_states(&mut self) -> Result<Vec<Vec<u8>>, RuleStop> {
+        Ok(Vec::with_capacity(self.policy_count()))
+    }
+
+    /// Retain an independent copy of policy-state vectors on the caller's ledger.
+    ///
+    /// # Errors
+    /// [`RuleStop`] before any denied representation allocation.
+    fn copy_policy_states(&mut self, monitors: &[Vec<u8>]) -> Result<Vec<Vec<u8>>, RuleStop> {
+        Ok(monitors.to_vec())
+    }
+
+    /// Compare monitor vectors through the rule's representation ledger.
+    ///
+    /// # Errors
+    /// The original accounting or cancellation stop before inspected bytes.
+    fn compare_policy_states(
+        &mut self,
+        left: &[Vec<u8>],
+        right: &[Vec<u8>],
+    ) -> Result<std::cmp::Ordering, RuleStop> {
+        Ok(left.cmp(right))
+    }
+
+    /// Retain a node index in a model-key bucket.
+    ///
+    /// # Errors
+    /// The original representation storage or cancellation stop.
+    fn push_policy_index(&mut self, bucket: &mut Vec<usize>, node: usize) -> Result<(), RuleStop> {
+        bucket.push(node);
+        Ok(())
+    }
 
     /// Policy `policy`'s monitor after reading the initial state.
     ///
@@ -581,6 +623,13 @@ pub enum PlanFault {
         /// The entry whose state is replaced.
         entry: usize,
         /// The entry whose state is copied.
+        source: usize,
+    },
+    /// Substitute another reached monitor vector before certificate checking.
+    ForgePolicyStates {
+        /// Certificate entry receiving the substitution.
+        entry: usize,
+        /// Certificate entry supplying valid but potentially different states.
         source: usize,
     },
     /// Replace a recorded prefix total before independent certificate checking.
@@ -766,7 +815,7 @@ pub enum PlanSearchError {
 }
 
 /// A search node's identity (FSpec FR-801 "Search nodes").
-#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct NodeKey {
     pub(crate) state: Vec<u8>,
     pub(crate) monitors: Vec<Vec<u8>>,
@@ -775,6 +824,39 @@ pub(crate) struct NodeKey {
     pub(crate) accumulated: Option<Rational>,
     /// A distinct prefix index, when prefixes are never merged.
     pub(crate) prefix: Option<usize>,
+}
+
+impl NodeKey {
+    pub(crate) fn with_monitors(&self, monitors: Vec<Vec<u8>>) -> Self {
+        Self {
+            state: self.state.clone(),
+            monitors,
+            depth: self.depth,
+            accumulated: self.accumulated.clone(),
+            prefix: self.prefix,
+        }
+    }
+}
+
+/// The model part of a product key. Monitor bytes are compared explicitly
+/// within this key's bucket so comparison can return the caller's refusal.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub(crate) struct ModelNodeKey {
+    state: Vec<u8>,
+    depth: u64,
+    accumulated: Option<Rational>,
+    prefix: Option<usize>,
+}
+
+impl NodeKey {
+    fn model_key(&self) -> ModelNodeKey {
+        ModelNodeKey {
+            state: self.state.clone(),
+            depth: self.depth,
+            accumulated: self.accumulated.clone(),
+            prefix: self.prefix,
+        }
+    }
 }
 
 /// One admitted search node.
@@ -807,7 +889,7 @@ pub(crate) struct Search<'s, 'a, R: PlanRules> {
     pub(crate) kind: ObjectiveKind,
     pub(crate) dominance: bool,
     pub(crate) nodes: Vec<Node<R::StepKey>>,
-    pub(crate) index: BTreeMap<NodeKey, usize>,
+    pub(crate) index: BTreeMap<ModelNodeKey, Vec<usize>>,
     pub(crate) explored: PlanExplored,
     pub(crate) negative_step: Option<usize>,
     /// The first state pruned for an undetermined invariant: its canonical
@@ -887,6 +969,13 @@ pub(crate) fn stop_cause(stop: RuleStop) -> PlanStopCause {
             limit: counter,
             value,
             setting: format!("accounting.{counter}"),
+        },
+        RuleStop::IdentityLimit { value } => PlanStopCause::LimitReached {
+            limit: "input_bytes",
+            value,
+            setting: fsl_foundation::setting::Setting::IdentityInputBytes
+                .name()
+                .to_owned(),
         },
         RuleStop::Cancelled(cause) => PlanStopCause::Cancelled(cause),
     }
@@ -995,7 +1084,7 @@ impl<R: PlanRules> Search<'_, '_, R> {
             // is admissible and the space is empty.
             return Ok(());
         }
-        let mut monitors = Vec::with_capacity(self.rules.policy_count());
+        let mut monitors = self.rules.policy_states()?;
         for policy in 0..self.rules.policy_count() {
             self.charge(PlanLimit::MaxWork)?;
             match self.rules.policy_start(policy, &start)? {
@@ -1007,12 +1096,13 @@ impl<R: PlanRules> Search<'_, '_, R> {
         }
         let key = NodeKey {
             state: self.state_key(&start)?,
-            monitors: monitors.clone(),
+            monitors: self.rules.copy_policy_states(&monitors)?,
             depth: 0,
             accumulated: (!self.dominance && self.kind == ObjectiveKind::StepSum).then(zero),
             prefix: (!self.rules.merges_prefixes()).then_some(0),
         };
-        self.index.insert(key.clone(), 0);
+        self.rules
+            .push_policy_index(self.index.entry(key.model_key()).or_default(), 0)?;
         self.nodes.push(Node {
             key,
             state: start,
@@ -1231,11 +1321,15 @@ impl<R: PlanRules> Search<'_, '_, R> {
         if !self.admissible(&state)? {
             return Ok(());
         }
-        let mut monitors = Vec::with_capacity(self.nodes[parent].monitors.len());
+        let mut monitors = self.rules.policy_states()?;
         let mut rejected = false;
         for policy in 0..self.rules.policy_count() {
             self.charge(PlanLimit::MaxWork)?;
-            let previous = self.nodes[parent].monitors[policy].clone();
+            let previous = self
+                .rules
+                .copy_policy_states(std::slice::from_ref(&self.nodes[parent].monitors[policy]))?
+                .pop()
+                .ok_or(Stop::Error(PlanSearchError::StateKey))?;
             match self.rules.policy_advance(policy, &previous, &state)? {
                 MonitorStep::Continue(monitor) => monitors.push(monitor),
                 MonitorStep::Reject => {
@@ -1275,13 +1369,27 @@ impl<R: PlanRules> Search<'_, '_, R> {
         };
         let key = NodeKey {
             state: self.state_key(&state)?,
-            monitors: monitors.clone(),
+            monitors: self.rules.copy_policy_states(&monitors)?,
             depth,
             accumulated: (!self.dominance && self.kind == ObjectiveKind::StepSum)
                 .then(|| accumulated.value.clone()),
             prefix: (!self.rules.merges_prefixes()).then_some(self.nodes.len()),
         };
-        if let Some(&existing) = self.index.get(&key) {
+        let model_key = key.model_key();
+        let mut existing = None;
+        if let Some(bucket) = self.index.get(&model_key) {
+            for &candidate in bucket {
+                if self
+                    .rules
+                    .compare_policy_states(&self.nodes[candidate].key.monitors, &key.monitors)?
+                    == std::cmp::Ordering::Equal
+                {
+                    existing = Some(candidate);
+                    break;
+                }
+            }
+        }
+        if let Some(existing) = existing {
             // Frontier comparison with the admitted node.
             self.charge(PlanLimit::MaxWork)?;
             self.nodes[parent]
@@ -1306,7 +1414,8 @@ impl<R: PlanRules> Search<'_, '_, R> {
         }
         self.charge(PlanLimit::MaxStates)?;
         let index = self.nodes.len();
-        self.index.insert(key.clone(), index);
+        self.rules
+            .push_policy_index(self.index.entry(model_key).or_default(), index)?;
         self.nodes.push(Node {
             key,
             state,
@@ -1375,7 +1484,7 @@ impl<R: PlanRules> Search<'_, '_, R> {
         if !self.rules.goal(&view)? {
             return Ok(false);
         }
-        let monitors = self.nodes[index].monitors.clone();
+        let monitors = self.rules.copy_policy_states(&self.nodes[index].monitors)?;
         for (policy, monitor) in monitors.iter().enumerate() {
             if !self
                 .rules
@@ -1522,6 +1631,11 @@ impl<R: PlanRules> Search<'_, '_, R> {
             Some(PlanFault::ParentCycle { entry }) => written.parent_cycle(*entry),
             Some(PlanFault::ForgeAccumulated { entry, value }) => {
                 written.forge_accumulated(*entry, value.clone())
+            }
+            Some(PlanFault::ForgePolicyStates { entry, source }) => {
+                if let Err(stop) = written.forge_policy_states(*entry, *source, &mut *self.rules) {
+                    return self.stopped(stop_cause(stop));
+                }
             }
             Some(PlanFault::ForgeInitialValue { value }) => {
                 written.forge_initial_value(value.clone())

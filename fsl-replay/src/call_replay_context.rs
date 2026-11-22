@@ -283,6 +283,7 @@ mod tests {
                 model_limits: limits.spine.model,
             },
             call,
+            emitted,
             &ObjectEnvironment::default(),
             &fsl_eval::execution::SuppliedBackends::default(),
             &fsl_eval::execution::PrepareLimits::default(),

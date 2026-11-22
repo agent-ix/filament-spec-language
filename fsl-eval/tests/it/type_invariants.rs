@@ -703,6 +703,96 @@ fn order_unit(operation: &str) -> String {
     )
 }
 
+/// Raw current, pre and post selections retain the population they
+/// explicitly selected, beside the receiver's kernel reference.
+#[trace("TC-464")]
+#[test]
+fn raw_clause_selections_retain_the_explicit_receiver_population() {
+    let body = format!(
+        "{}\npre Before using v on M::Order::requote {{ true }}",
+        order_unit("requote")
+    );
+    let mut documents = documents_with(&fixture_f(|_| {}), &body);
+    let population = id("orders");
+    let objects = [order_json("o1", money_json(5), &[], None, Vec::new())];
+    let current = documents.add_snapshot(snapshot_doc(
+        "selected-current",
+        "current",
+        &population,
+        &objects,
+    ));
+    let pre = documents.add_snapshot(snapshot_doc("selected-pre", "pre", &population, &objects));
+    let post = documents.add_snapshot(snapshot_doc("selected-post", "post", &population, &objects));
+    let (invocation, bytes) = invocation_doc(
+        "selected-call",
+        "Order",
+        "requote",
+        &population,
+        "o1",
+        (&pre, &post),
+        json!({"amount": money_json(5)}),
+    );
+    documents.invocations.insert(invocation.clone(), bytes);
+    let selections = [
+        (
+            "Any",
+            ClauseSelectionInput::Current {
+                snapshot: current,
+                anchor: SelectedAnchor {
+                    kind: AnchorKind::Handler,
+                    name: "validate".to_owned(),
+                },
+                self_object: Some(SelectedObject {
+                    population: population.clone(),
+                    key: "o1".to_owned(),
+                }),
+            },
+        ),
+        (
+            "Before",
+            ClauseSelectionInput::Invocation {
+                invocation: invocation.clone(),
+            },
+        ),
+        ("Done", ClauseSelectionInput::Invocation { invocation }),
+    ];
+    for (clause, input) in selections {
+        let admitted = documents.admit(clause, input);
+        let observation = admitted
+            .current
+            .as_ref()
+            .or(admitted.pre.as_ref())
+            .expect("admitted receiver observation");
+        let expected = observation
+            .environment
+            .population_node(&population)
+            .expect("the explicitly named declared population");
+        assert_eq!(
+            admitted.self_population.as_ref(),
+            Some(expected),
+            "{clause}"
+        );
+        let provenance = observation
+            .environment
+            .population_provenance(expected)
+            .expect("actual declared population catalog row");
+        assert_eq!(provenance.declaration().node, population);
+        assert_eq!(admitted.self_object.object().as_str(), "o1");
+        let evaluated = documents
+            .package
+            .evaluate_clause(
+                &QualifiedName::unqualified(clause).expect("fixture clause name"),
+                &admitted,
+                &mut unlimited(),
+            )
+            .expect("the actual clause entry binds the admitted receiver");
+        assert!(matches!(
+            evaluated.evaluation.outcome,
+            FamilyOutcome::Evaluated(Outcome::Completed(QuireValue::Boolean(true)))
+        ));
+    }
+}
+
 fn identity_of(label: &str) -> ObservationIdentity {
     ObservationIdentity {
         authority: "test".to_owned(),

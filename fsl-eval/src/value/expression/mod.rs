@@ -27,7 +27,6 @@ mod evaluate;
 mod family;
 pub mod post_targets;
 mod protocol_slot;
-pub(crate) use protocol_slot::reference_occurrences;
 mod s6a;
 mod slot_admission;
 mod slot_supply;
@@ -36,6 +35,7 @@ use slot_supply::SourceView;
 mod value_invariants;
 
 pub use bare::evaluate_bare_expression;
+pub(crate) use bare::evaluate_generated_package_protocol_slot;
 pub use bare::evaluate_selected_protocol_slot as bare_evaluate_selected_protocol_slot;
 pub(crate) use bare::post_targets as bare_post_targets;
 pub use bare::{evaluate_frame as bare_evaluate_frame, PackageOperations, ProjectedReward};
@@ -47,7 +47,7 @@ pub(crate) use evaluate::reader_source::{
     package_constraint_reads, package_guard_reads, package_node_reads, package_operation_footprint,
     package_term_reads, ProjectedClause,
 };
-use evaluate::Machine;
+use evaluate::{Machine, ReferenceOrigins};
 use filament_eval::{Registry, SessionLimits};
 use filament_exact::{FieldValue, Meter, NodeKey, Outcome, Value, ValueType};
 use filament_semantic_value::admission::AdmissionRecord;
@@ -65,7 +65,7 @@ use s6a::{ReferenceEvaluation, S6aFamilyKind};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 
-pub(crate) use clause_set::evaluate_with_cancel as evaluate_clause_set_with_cancel;
+pub(crate) use clause_set::evaluate_with_meter_factory as evaluate_clause_set_with_meter_factory;
 pub use clause_set::{ClauseSetEntry, ClauseSetEvaluation, ClauseSetOutcome};
 pub use closure::{PackageClosure, PackageTask};
 pub use evaluate::refusal_record;
@@ -1919,6 +1919,7 @@ struct ClauseSetup<'a> {
     current: &'a ObjectEnvironment,
     pre: Option<&'a ObjectEnvironment>,
     bindings: Vec<Value>,
+    reference_origins: Vec<ReferenceOrigins>,
     trail: s6a::separation::Trail,
     receiver_path: Option<s6a::separation::RuntimeValuePath>,
 }
@@ -1960,6 +1961,7 @@ impl<'a> ClauseSetup<'a> {
             current,
             pre,
             bindings,
+            reference_origins,
             trail,
             receiver_path,
         } = bind_clause(
@@ -1973,6 +1975,7 @@ impl<'a> ClauseSetup<'a> {
             current,
             pre,
             bindings,
+            reference_origins,
             trail,
             receiver_path,
         })
@@ -1986,6 +1989,7 @@ pub(super) struct ClauseBinding<'a> {
     pub(super) current: &'a ObjectEnvironment,
     pub(super) pre: Option<&'a ObjectEnvironment>,
     pub(super) bindings: Vec<Value>,
+    pub(super) reference_origins: Vec<ReferenceOrigins>,
     pub(super) trail: s6a::separation::Trail,
     pub(super) receiver_path: Option<s6a::separation::RuntimeValuePath>,
 }
@@ -2043,6 +2047,32 @@ pub(super) fn bind_clause<'a>(
                 CallFailure::Fault(InternalFault::new("S6a", "clause-parameter-not-admitted"))
             })?;
         bindings.push(value);
+    }
+    let mut reference_origins: Vec<ReferenceOrigins> =
+        vec![ReferenceOrigins::default(); bindings.len()];
+    if let Some(population) = &observations.self_population {
+        reference_origins[0] =
+            ReferenceOrigins::from_occurrences(vec![ProtocolReferenceOccurrence {
+                path: Vec::new(),
+                population: population.clone(),
+            }])
+            .with_locus(fsl_semantics::model::object_environment::ReferenceOriginLocus::Receiver);
+    }
+    let mut remaining = parameters.get(1..).unwrap_or(&[]).iter();
+    let mut index = 1;
+    if binds_result {
+        remaining.next();
+        reference_origins[index] = observations.value_origins.result.clone();
+        index += 1;
+    }
+    for name in remaining {
+        reference_origins[index] = observations
+            .value_origins
+            .parameters
+            .get(name)
+            .cloned()
+            .unwrap_or_default();
+        index += 1;
     }
     let pre = observations
         .pre
@@ -2112,6 +2142,7 @@ pub(super) fn bind_clause<'a>(
             .as_ref()
             .map(|observation| &observation.environment),
         bindings,
+        reference_origins,
         trail,
         receiver_path,
     })
@@ -2574,6 +2605,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
             .collect::<Vec<_>>();
         let slot_supply::AdmittedSupply {
             mut frame,
+            reference_origins,
             unavailable,
             binder_slots,
         } = slot_supply::admit_slot_supply(
@@ -2605,6 +2637,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
                     meter,
                     self.graph().dispatch_tables(),
                 )
+                .with_reference_origins(reference_origins)
             };
         }
         // FR-390-AC-16: a reader-backed view evaluates every slot root, of
@@ -2937,7 +2970,8 @@ impl CheckedPackageEvaluation for CheckedPackage {
             setup.pre,
             setup.bindings,
             setup.trail,
-        );
+        )
+        .with_reference_origins(setup.reference_origins);
         let evaluation = evaluate_declaration(
             S6aFamilyKind::ProtocolClause,
             &identity,
@@ -3024,6 +3058,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
             graph.dispatch_tables(),
         )
         .with_trail(setup.trail)
+        .with_reference_origins(setup.reference_origins)
         .separate(
             declaration.slots(),
             setup.bindings,
@@ -3107,6 +3142,7 @@ pub(crate) fn source_post_targets(
                 &mut meter,
                 graph.dispatch_tables(),
             )
+            .with_reference_origins(setup.reference_origins.clone())
             .run_frame(node, frame.clone())
             .map(|evaluation| evaluation.outcome)
             .map_err(CallFailure::Fault)

@@ -385,6 +385,14 @@ pub enum SafetyState {
 }
 
 impl SafetyState {
+    pub(super) fn read(before: Option<Self>, holds: bool) -> Self {
+        match before {
+            Some(SafetyState::Rejected) => SafetyState::Rejected,
+            None | Some(SafetyState::Carried) if holds => SafetyState::Carried,
+            None | Some(SafetyState::Carried) => SafetyState::Rejected,
+        }
+    }
+
     /// Whether the state rejects.
     pub const fn is_rejecting(self) -> bool {
         matches!(self, Self::Rejected)
@@ -598,11 +606,7 @@ impl SafetyTranslation {
     /// `before`, or from the initial root obligation when `before` is
     /// `None` (position zero).
     pub fn read(&self, before: Option<SafetyState>, holds: bool) -> SafetyState {
-        match before {
-            Some(SafetyState::Rejected) => SafetyState::Rejected,
-            None | Some(SafetyState::Carried) if holds => SafetyState::Carried,
-            None | Some(SafetyState::Carried) => SafetyState::Rejected,
-        }
+        SafetyState::read(before, holds)
     }
 
     /// The canonical key of `state` under this translation's context.

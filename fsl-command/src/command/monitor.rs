@@ -751,10 +751,16 @@ fn drive(
                         // emission is remembered so the provider request reads
                         // these bytes; an emission the selections refuse leaves
                         // the provider items `package-not-emitted` (FSpec FR-331).
+                        // FR-621 "Node ids in an item": every item, an incomplete one
+                        // included, holds its ids against this package's graph, so
+                        // the graph is always needed. The emission is therefore made
+                        // under a handle the stream's cancellation does not reach: a
+                        // cancelled emission would remember nothing and the analyze
+                        // read would emit without the clock selections.
                         let _ = fsl_package::emit_dependency_with_temporal_selections_and_cancel(
                             checked.package(),
                             selections,
-                            settle.cancel,
+                            &Cancel::new(),
                             routed.limits.emit,
                         );
                         super::analyze::settle_items(

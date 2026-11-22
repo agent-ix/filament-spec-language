@@ -899,7 +899,6 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             return Ok(true);
         };
         let text = self.program.text(node)?;
-        let observation = self.model.observation_of(observed)?;
         for clause in clauses {
             let mut frame = self.frame(instance, path, node);
             if let (Some(slot), Some(record)) = (slot, record) {
@@ -907,8 +906,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                     *entry = Some(record.clone());
                 }
             }
-            let first = self.evaluate_value_in(clause.ends[0], frame.clone(), &observation)?;
-            let second = self.evaluate_value_in(clause.ends[1], frame, &observation)?;
+            let [first, second] = self.related_values(&clause.ends, frame, observed)?;
             let source = match first {
                 Ok(Value::Reference(reference)) => reference,
                 Ok(_) => return Ok(false),
@@ -958,7 +956,30 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             .0;
         let clauses = self.program.related.get(&node)?;
         let instance = state.instances.get(&thread.instance)?;
-        let observation = self.model.observation_of(&state.model).ok()?;
+        if let Some(message) = self.program.messages.get(&node) {
+            let running = instance.threads.get(thread)?;
+            if running.disposition != Disposition::Running || running.rest != Rest::Node(node) {
+                return None;
+            }
+            if !instance.pending_sends.contains_key(&(thread.clone(), node))
+                && !self
+                    .admits(
+                        Reader {
+                            instance,
+                            path: thread,
+                            node,
+                        },
+                        message.record.constraint,
+                        message.record.slot,
+                        transition.binder_record()?,
+                        &state.model,
+                        &mut Vec::new(),
+                    )
+                    .ok()?
+            {
+                return None;
+            }
+        }
         let mut frame = self.frame(instance, thread, node);
         if let (Some(slot), Some(record)) = (
             self.program.binder_of.get(&node).copied(),
@@ -969,21 +990,12 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
             }
         }
         for clause in clauses {
-            let first = self
-                .evaluate_value_in(clause.ends[0], frame.clone(), &observation)
-                .ok()?;
-            let second = self
-                .evaluate_value_in(clause.ends[1], frame.clone(), &observation)
+            let [first, second] = self
+                .related_values(&clause.ends, frame.clone(), &state.model)
                 .ok()?;
             let (Ok(Value::Reference(source)), Ok(Value::Reference(target))) = (first, second)
             else {
-                return self.protocol.and_then(|protocol| {
-                    protocol
-                        .relationships
-                        .iter()
-                        .find(|relationship| relationship.key == clause.relationship)
-                        .map(|relationship| relationship.name.clone())
-                });
+                return Some(clause.alias.to_owned());
             };
             let holds = state.model.state().extents.iter().any(|extent| {
                 extent.relationship == clause.relationship
@@ -993,13 +1005,7 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
                         .any(|pair| pair.0 == source && pair.1 == target)
             });
             if !holds {
-                return self.protocol.and_then(|protocol| {
-                    protocol
-                        .relationships
-                        .iter()
-                        .find(|relationship| relationship.key == clause.relationship)
-                        .map(|relationship| relationship.name.clone())
-                });
+                return Some(clause.alias.to_owned());
             }
         }
         None

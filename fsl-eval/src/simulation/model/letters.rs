@@ -78,6 +78,17 @@ pub enum LettersRefusal {
     ReferenceBindingsAdmission(fsl_semantics::model::observation::AdmissionFailure),
 }
 
+/// A caller-budgeted letter preparation stopped in admission or accounting.
+#[derive(Debug, thiserror::Error)]
+pub enum LettersPreparationError {
+    /// The existing clause/reference-binding admission refusal.
+    #[error(transparent)]
+    Admission(#[from] LettersRefusal),
+    /// Original representation accounting, cancellation or storage refusal.
+    #[error(transparent)]
+    Policy(#[from] crate::automaton::PolicyStateError),
+}
+
 /// The `holds` atoms of one checked temporal clause, read at the states of a
 /// [`ModelSystem`].
 ///
@@ -95,11 +106,11 @@ pub struct ClauseLetters<'s, 'a> {
     node: ClauseSource<'s>,
     /// Base package bindings extended with literals from this separately
     /// checked temporal clause.
-    reference_bindings: super::reference_bindings::ReferenceBindings,
-    parameter: EffectiveId,
+    reference_bindings: std::borrow::Cow<'s, super::reference_bindings::ReferenceBindings>,
+    parameter: &'s EffectiveId,
     /// The declaration key of the parameter's object type.
-    type_key: DeclarationKey,
-    overlapping: BTreeSet<DeclarationKey>,
+    type_key: &'s DeclarationKey,
+    overlapping: Vec<&'s DeclarationKey>,
     /// The last state observed, by its canonical key.
     observed: RefCell<Option<(StateKey, Rc<Observed>)>>,
     /// How many states have been observed (not read from `observed`).
@@ -163,6 +174,75 @@ impl<'a> ModelSystem<'a> {
         self.letters(ClauseSource::Source(node))
     }
 
+    /// Prepare source policy letters on the caller's original representation
+    /// ledger, borrowing immutable model identities and admitted bindings.
+    ///
+    /// # Errors
+    /// Existing clause admission, accounting, cancellation or storage refusal.
+    pub fn clause_letters_with_meter<'s>(
+        &'s self,
+        node: &'s TemporalClauseNode,
+        meter: &mut filament_exact::Meter,
+    ) -> Result<ClauseLetters<'s, 'a>, LettersPreparationError> {
+        let budget = crate::policy_budget::Budget {
+            meter: RefCell::new(meter),
+            stopped: RefCell::new(None),
+        };
+        budget.work(1)?;
+        let ValueType::Reference(parameter) = &node.clause().over().1 else {
+            return Err(LettersRefusal::OverNotReference.into());
+        };
+        let type_key = self
+            .model
+            .declaration_key_with_work(parameter, &mut |units| {
+                budget.work(
+                    usize::try_from(units)
+                        .map_err(|_| crate::automaton::PolicyStateError::Invalid)?,
+                )
+            })?
+            .ok_or(LettersRefusal::OverTypeUndeclared)?;
+        let reference_bindings = match self.source_package() {
+            Some(package)
+                if !self
+                    .reference_bindings
+                    .contains_temporal_literals_with_budget(package.graph(), node, &budget)? =>
+            {
+                // Separately checked clauses still need the shared resolver's
+                // budgeted extension boundary; do not omit their admission.
+                std::borrow::Cow::Owned(self.reference_bindings.with_temporal_clause_with_budget(
+                    package.graph(),
+                    node,
+                    &self.model,
+                    self.types,
+                    &self.populations,
+                    &self.universes,
+                    &self.initial,
+                    &budget,
+                )?)
+            }
+            _ => std::borrow::Cow::Borrowed(&self.reference_bindings),
+        };
+        let mut overlapping = Vec::new();
+        for population in &self.populations {
+            budget.work(1)?;
+            if self.overlaps_with_budget(population, parameter, &budget)? {
+                budget.growth(&mut overlapping, 1)?;
+                overlapping.push(&population.key);
+            }
+        }
+        Ok(ClauseLetters {
+            system: self,
+            node: ClauseSource::Source(node),
+            reference_bindings,
+            parameter,
+            type_key,
+            overlapping,
+            observed: RefCell::new(None),
+            observations: Cell::new(0),
+            call_failure: RefCell::new(None),
+        })
+    }
+
     /// FR-940: the [`ModelLetters`] of the package form `clause` of the
     /// temporal clause whose node key is `key`, over this system: each `holds`
     /// atom and the activation guard read through the input's evaluator keyed
@@ -191,7 +271,6 @@ impl<'a> ModelSystem<'a> {
         let type_key = self
             .model
             .type_key(parameter.clone())
-            .cloned()
             .ok_or(LettersRefusal::OverTypeUndeclared)?;
         let reference_bindings = match (node, self.source_package()) {
             (ClauseSource::Source(source_node), Some(package)) => {
@@ -223,14 +302,14 @@ impl<'a> ModelSystem<'a> {
         Ok(ClauseLetters {
             system: self,
             node,
-            reference_bindings,
-            parameter: parameter.clone(),
+            reference_bindings: std::borrow::Cow::Owned(reference_bindings),
+            parameter,
             type_key,
             overlapping: self
                 .populations
                 .iter()
                 .filter(|population| self.overlaps(population, parameter.clone()))
-                .map(|population| population.key.clone())
+                .map(|population| &population.key)
                 .collect(),
             observed: RefCell::new(None),
             observations: Cell::new(0),
@@ -442,11 +521,14 @@ impl ClauseLetters<'_, '_> {
         rows.iter()
             .find(|row| {
                 row.key == instance.key
-                    && self.overlapping.contains(&row.population)
                     && self
-                        .system
-                        .types
-                        .conforms(row.reference.object_type().clone(), self.parameter.clone())
+                        .overlapping
+                        .iter()
+                        .any(|population| **population == row.population)
+                    && self.system.types.conforms(
+                        row.reference.object_type().clone(),
+                        (*self.parameter).clone(),
+                    )
             })
             .map(|row| row.reference.clone())
     }

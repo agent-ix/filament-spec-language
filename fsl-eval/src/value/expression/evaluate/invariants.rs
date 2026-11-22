@@ -99,6 +99,9 @@ fn iteration<'a>(node: CheckedNode<'a>) -> Box<Iteration<CheckedNode<'a>>> {
             accumulator: None,
             count: Integer::zero(),
         },
+        source_origins: ReferenceOrigins::default(),
+        population_origin: None,
+        stable_sequence: true,
         source_owner: Owner::None,
         owner: Owner::None,
     })
@@ -312,9 +315,14 @@ fn checked_dispatch_package() -> fsl_package::CheckedPackage {
 fn set_values(machine: &mut CheckedMachine<'_, '_>, values: Vec<Value>) {
     machine.values = values;
     machine.value_guard_provenance = vec![false; machine.values.len()];
+    machine.value_reference_origins = vec![ReferenceOrigins::default(); machine.values.len()];
 }
 
 fn set_frames(machine: &mut CheckedMachine<'_, '_>, frames: Vec<Vec<Option<Value>>>) {
+    machine.frame_reference_origins = frames
+        .iter()
+        .map(|frame| vec![ReferenceOrigins::default(); frame.len()])
+        .collect();
     machine.frame_guard_provenance = frames
         .iter()
         .map(|frame| vec![false; frame.len()])
@@ -435,6 +443,7 @@ fn dispatch_table_candidate_and_each_callable_consumer_fault_at_its_own_site() {
                 ),
                 node: node.root(),
                 owners: Vec::new(),
+                reference_origins: Vec::new(),
             })))
         }
     );
@@ -507,6 +516,7 @@ fn resolved_dispatch_and_callable_consumers_keep_the_matching_valid_prefixes() {
             ),
             node: node.root(),
             owners: Vec::new(),
+            reference_origins: Vec::new(),
         })))
         .unwrap_or_else(|_| panic!("linked guard body"));
     finish_tasks(&mut machine).unwrap_or_else(|_| panic!("guard result"));
@@ -1859,6 +1869,7 @@ fn stack_extraction_and_frame_producers_report_their_own_invariants() {
             ),
             node: root.root(),
             owners: Vec::new(),
+            reference_origins: Vec::new(),
         })))
     });
     probe!("evaluation-branch-node-expected", m, [], {

@@ -141,14 +141,6 @@ impl<'a> Run<'_, 'a> {
             Source::Bytes { .. } => None,
         }
     }
-    /// The checked package of a source-route run; the package route has none.
-    fn package(&self) -> Option<&'a CheckedPackage> {
-        match self.source {
-            Source::Checked { package, .. } => Some(package),
-            Source::Bytes { .. } => None,
-        }
-    }
-
     fn simulation(&self) -> ModelSimulationRequest<'a> {
         ModelSimulationRequest {
             input: self.input.clone(),
@@ -283,7 +275,12 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
 }
 
 fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
-    let Some(model) = read.package().and_then(super::timed_item::timed_model) else {
+    let Some(model) = read
+        .input
+        .time_sources
+        .first()
+        .map(|source| source.model.clone())
+    else {
         return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
     };
     let system = match ModelSystem::new(read.simulation()) {
@@ -1046,7 +1043,12 @@ fn no_timed_graph_decision(
 }
 
 fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
-    let Some(model) = read.package().and_then(super::timed_item::timed_model) else {
+    let Some(model) = read
+        .input
+        .time_sources
+        .first()
+        .map(|source| source.model.clone())
+    else {
         return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
     };
     let simulation = read.simulation();
@@ -1551,7 +1553,12 @@ fn replay_instance(
         documents: read.binding.replay_documents()?,
     };
     let timed = (digital || certificate.is_some())
-        .then(|| read.package().and_then(super::timed_item::timed_model))
+        .then(|| {
+            read.input
+                .time_sources
+                .first()
+                .map(|source| source.model.clone())
+        })
         .flatten()
         .map(|model| fsl_replay::TimedReplay {
             model,
@@ -1649,12 +1656,17 @@ impl<'a> PackageStateGraphSubject<'a> {
     /// [`state_graph_item`] does.
     pub fn item(self, index: RequestIndex) -> AnalyzeItem<'a> {
         let key = self.occurrence.clone();
+        let timed = !self.input.time_sources.is_empty();
         AnalyzeItem::new(
             index,
             Capability::TemporalSatisfaction,
             Some(DeclarationFamily::TemporalTrace),
             fsl_route::Mode::Bounded,
-            en1::BACKEND_ID,
+            if timed {
+                crate::zone_check::manifest::BACKEND_ID
+            } else {
+                en1::BACKEND_ID
+            },
             move |cancel| {
                 run(
                     &Run {
@@ -1667,7 +1679,7 @@ impl<'a> PackageStateGraphSubject<'a> {
                         limits: self.limits,
                         claim: &self.claim,
                         form: &self.form,
-                        timed: false,
+                        timed,
                         digital: false,
                     },
                     cancel,

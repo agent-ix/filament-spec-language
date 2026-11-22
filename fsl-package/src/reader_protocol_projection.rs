@@ -91,6 +91,21 @@ impl ReaderProtocolProjection {
             .and_then(|node| node.location.as_ref())
     }
 
+    /// The structural key of the node at an arena index.
+    pub fn node_key(&self, index: usize) -> Option<&NodeKey> {
+        self.nodes.get(index).and_then(|node| node.key.as_ref())
+    }
+
+    /// Each application a function body's admitted `body_locations` rows
+    /// locate: its location and the occurrence its row binds (FSpec FR-322).
+    pub fn located_applications(
+        &self,
+    ) -> impl Iterator<Item = (&Location, &fsl_foundation::source::provenance::OccurrenceKey)> {
+        self.nodes.iter().filter(|node| node.captured_body).filter_map(|node| {
+            Some((node.location.as_ref()?, node.occurrence.as_ref()?))
+        })
+    }
+
     /// The occurrence bound to this walk position by its captured location
     /// row, or its unique admitted expression occurrence when no row applies.
     pub fn occurrence(
@@ -897,6 +912,8 @@ fn is_equality_identity(identity: &str) -> bool {
             | "filament.op.quantity.ne"
             | "filament.op.reference.eq"
             | "filament.op.reference.ne"
+            | "filament.op.clock_reference.eq"
+            | "filament.op.clock_reference.ne"
             | "filament.op.structural.eq"
             | "filament.op.structural.ne"
     )
@@ -1078,6 +1095,20 @@ impl<'wire> WireIndex<'wire> {
 
     fn node(&self, id: &CheckedNodeId) -> Option<&'wire CheckedSemanticNodeV2> {
         self.nodes.get(id).copied()
+    }
+
+    /// The members of the union whose declaration node is `declared`.
+    fn union_members(&self, declared: &CheckedNodeId) -> Option<UnionMembers<'_>> {
+        let node = self.node(declared)?;
+        if has_form(node, WireTag::CompositeType, WireForm::Union) {
+            let CheckedTerm::Aggregate { members } = &node.body else {
+                return None;
+            };
+            return Some(UnionMembers::Source(members));
+        }
+        self.identities
+            .model_union_row(declared)
+            .map(UnionMembers::Model)
     }
 
     /// The admitted equality decision of application `id`: from the
@@ -1560,6 +1591,52 @@ impl<'wire> BareWalker<'wire> {
         }))
     }
 
+    /// The body expression node of the selected pure function and the
+    /// occurrences the package records at it, in the package's order.
+    pub(crate) fn function_body(
+        &self,
+        function: FunctionSelector<'_>,
+    ) -> Result<Option<ReaderFunctionBody>, InternalFault> {
+        let Some(selected) = self.selected_function(function) else {
+            return Ok(None);
+        };
+        let (_, body) = function_parts(&selected.body)
+            .ok_or_else(|| fault("reader-pure-function-has-checked-body"))?;
+        let CheckedTerm::Reference { target } = body else {
+            return Err(fault("reader-function-body-has-checked-identity"));
+        };
+        let node = self.index.key(target)?;
+        let body_node = self
+            .index
+            .node(target)
+            .ok_or_else(|| fault("reader-function-body-is-admitted"))?;
+        let semantic_type = if body_node.semantic_type == body_node.node_id {
+            None
+        } else {
+            Some(self.index.key(&body_node.semantic_type)?)
+        };
+        let occurrences = body_node
+            .occurrences
+            .iter()
+            .map(|occurrence| {
+                fsl_foundation::source::provenance::OccurrenceKey::new(
+                    node.clone(),
+                    filament_exact::Origin::new(
+                        filament_exact::Role::new(crate::checked_v2::role_spelling(
+                            &occurrence.role,
+                        )),
+                        occurrence.ordinal,
+                    ),
+                )
+            })
+            .collect();
+        Ok(Some(ReaderFunctionBody {
+            node,
+            semantic_type,
+            occurrences,
+        }))
+    }
+
     /// Project the named pure function and every function its body reaches.
     /// The function's body has no protocol-origin location rows, so this
     /// route retains the admitted node types and evaluator operations only.
@@ -1765,6 +1842,18 @@ impl<'wire> BareWalker<'wire> {
     pub(crate) fn key(&self, application: &CheckedNodeId) -> Result<NodeKey, InternalFault> {
         self.index.key(application)
     }
+}
+
+/// The body expression node of a pure function and the occurrences its
+/// package records at it.
+pub struct ReaderFunctionBody {
+    /// The body node.
+    pub node: NodeKey,
+    /// The body node's semantic type, `None` for a self-typed node: the
+    /// `result_bound` of the body's clause item.
+    pub semantic_type: Option<NodeKey>,
+    /// Every occurrence of the body node, in the package's order.
+    pub occurrences: Vec<fsl_foundation::source::provenance::OccurrenceKey>,
 }
 
 pub(crate) struct ReaderFunctionResultType {
@@ -2452,17 +2541,10 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             return Err(fault("reader-union-value-has-declaration-key").into());
         };
         let union_key = union_key.clone();
-        let union_node = self
+        let union_members = self
             .index
-            .node(&node.semantic_type)
-            .filter(|candidate| has_form(candidate, WireTag::CompositeType, WireForm::Union))
+            .union_members(&node.semantic_type)
             .ok_or_else(|| fault("reader-union-value-type-is-union"))?;
-        let CheckedTerm::Aggregate {
-            members: union_members,
-        } = &union_node.body
-        else {
-            return Err(fault("reader-union-declaration-has-checked-members").into());
-        };
         let [CheckedTerm::Binding { name, value, .. }] = members else {
             return Err(fault("reader-union-value-has-one-member").into());
         };
@@ -2470,7 +2552,8 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         else {
             return Err(fault("reader-union-value-has-member-name").into());
         };
-        let member = member_position(union_members, member_name)
+        let member = union_members
+            .position(member_name)
             .ok_or_else(|| fault("reader-union-value-member-is-declared"))?;
         let CheckedTerm::Aggregate { members } = value.as_ref() else {
             return Err(fault("reader-union-value-has-payload-list").into());
@@ -2803,6 +2886,35 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     return Err(fault("reader-pre-read-has-one-operand").into());
                 };
                 Ok((NodeKind::Pre(*operand), children))
+            }
+            Some("filament.op.clock_reference.ref") => {
+                let [CheckedTerm::Reference { target: place }, _, ..] = arguments else {
+                    return Err(fault("reader-clock-reference-has-place-and-owner").into());
+                };
+                if self.index.admitted.node_kind(place)
+                    != Some(filament_contract_model::CheckedNodeKind::TimedModel(
+                        filament_contract_model::TimedModelForm::Place,
+                    ))
+                {
+                    return Err(fault("reader-clock-reference-target-is-admitted-place").into());
+                }
+                // The first argument is the admitted declaration, not an
+                // evaluated value. Retain its actual run key for the shared
+                // authority lookup; owner and selectors keep operand order.
+                let place = self.index.key(place)?;
+                let children =
+                    self.project_arguments(id, Some(&arguments[1..]), context, locals)?;
+                let Some((&reference, slots)) = children.split_first() else {
+                    return Err(fault("reader-clock-reference-has-owner").into());
+                };
+                Ok((
+                    NodeKind::PlaceReference {
+                        reference,
+                        place,
+                        slots: slots.to_vec(),
+                    },
+                    children,
+                ))
             }
             Some("filament.op.option.present") => {
                 let children = self.project_arguments(id, Some(arguments), context, locals)?;
@@ -3279,18 +3391,11 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             return Err(fault("reader-union-case-scrutinee-has-union-type").into());
         };
         let declaration = declaration.clone();
-        let union_node = self
+        let union_members = self
             .index
             .node(scrutinee_id)
-            .and_then(|scrutinee| self.index.node(&scrutinee.semantic_type))
-            .filter(|candidate| has_form(candidate, WireTag::CompositeType, WireForm::Union))
+            .and_then(|scrutinee| self.index.union_members(&scrutinee.semantic_type))
             .ok_or_else(|| fault("reader-union-case-declaration-is-admitted"))?;
-        let CheckedTerm::Aggregate {
-            members: union_members,
-        } = &union_node.body
-        else {
-            return Err(fault("reader-union-declaration-has-checked-members").into());
-        };
         let mut arms = Vec::with_capacity(arguments.len().saturating_sub(1));
         let mut children = vec![scrutinee];
         let first_free = match context {
@@ -3314,7 +3419,8 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             else {
                 return Err(fault("reader-union-case-arm-has-member-name").into());
             };
-            let member = member_position(union_members, member_name)
+            let member = union_members
+                .position(member_name)
                 .ok_or_else(|| fault("reader-union-case-arm-is-declared"))?;
             let CheckedTerm::Aggregate { members } = value.as_ref() else {
                 return Err(fault("reader-union-case-arm-has-body").into());
@@ -3877,6 +3983,11 @@ pub(crate) fn node_value_type(
         Ok(projection) => return Ok(projection.value_type().clone()),
         Err(error) => error,
     };
+    if error.code == Code::UnsupportedExactType {
+        if let Some(clock) = clock_reference_carrier_type(index, id)? {
+            return Ok(clock);
+        }
+    }
     if matches!(
         error.code,
         Code::UnsupportedExactType | Code::UnavailableIdentityWitness
@@ -4042,6 +4153,89 @@ pub(crate) fn node_value_type(
             Err(TypeError::Unsupported)
         }
     }
+}
+
+#[ix_trace_rs::string_edge]
+/// FSL supplies the runtime meaning of the admitted Clock-reference leaf;
+/// the already admitted Option/collection nodes retain their exact wrappers.
+/// Other leaves remain the shared exact projection's responsibility.
+fn clock_reference_carrier_type(
+    index: &TypeReader<'_>,
+    id: &CheckedNodeId,
+) -> Result<Option<ValueType>, TypeError> {
+    enum Layer {
+        Option,
+        Collection(
+            filament_exact::CollectionKind,
+            Option<filament_exact::CardinalityBound>,
+        ),
+    }
+    use filament_contract_model::{CheckedNodeKind, CompositeTypeForm, ScalarTypeForm};
+    let Some(mut current) = index.node(id).map(|node| &node.semantic_type) else {
+        return Ok(None);
+    };
+    let mut layers = Vec::new();
+    let mut bound = None;
+    // A primitive carrier cannot revisit a type node. A recursive type stays
+    // unsupported instead of looping or inventing a primitive representation.
+    for _ in 0..=index.nodes.len() {
+        let node = index.node(current).ok_or(TypeError::Unsupported)?;
+        if index.admitted.node_kind(current)
+            == Some(CheckedNodeKind::ScalarType(ScalarTypeForm::ClockReference))
+        {
+            let mut value = fsl_semantics::model::clock_reference::reference_type();
+            for layer in layers.into_iter().rev() {
+                value = match layer {
+                    Layer::Option => ValueType::option(value),
+                    Layer::Collection(kind, bounds) => ValueType::collection(
+                        filament_exact::CollectionType::new(kind, value, bounds),
+                    ),
+                };
+            }
+            return Ok(Some(value));
+        }
+        if node.node_tag.as_ref() == "bounded_domain"
+            && node.semantic_form.as_ref() == "collection_bounds"
+        {
+            let (Some(min), Some(max)) = (
+                bound_member(&node.body, "min"),
+                bound_member(&node.body, "max"),
+            ) else {
+                return Err(fault("reader-clock-collection-bounds-are-admitted").into());
+            };
+            bound = Some(
+                filament_exact::CardinalityBound::new(min, max)
+                    .map_err(|_| fault("reader-clock-collection-bounds-are-ordered"))?,
+            );
+            current = &node.semantic_type;
+            continue;
+        }
+        let layer = match index.admitted.node_kind(current) {
+            Some(CheckedNodeKind::CompositeType(CompositeTypeForm::Option)) => Layer::Option,
+            Some(CheckedNodeKind::CompositeType(CompositeTypeForm::Sequence)) => {
+                Layer::Collection(filament_exact::CollectionKind::Sequence, bound.take())
+            }
+            Some(CheckedNodeKind::CompositeType(CompositeTypeForm::Set)) => {
+                Layer::Collection(filament_exact::CollectionKind::Set, bound.take())
+            }
+            Some(CheckedNodeKind::CompositeType(CompositeTypeForm::Bag)) => {
+                Layer::Collection(filament_exact::CollectionKind::Bag, bound.take())
+            }
+            Some(CheckedNodeKind::CompositeType(CompositeTypeForm::OrderedSet)) => {
+                Layer::Collection(filament_exact::CollectionKind::OrderedSet, bound.take())
+            }
+            _ => return Ok(None),
+        };
+        let CheckedTerm::Aggregate { members } = &node.body else {
+            return Err(fault("reader-clock-carrier-has-admitted-aggregate").into());
+        };
+        let [CheckedTerm::Reference { target }] = members.as_slice() else {
+            return Err(fault("reader-clock-carrier-has-one-element").into());
+        };
+        layers.push(layer);
+        current = target;
+    }
+    Ok(None)
 }
 
 /// A reference retains the selected model object's effective identity.
@@ -4307,6 +4501,27 @@ fn member_position(members: &[CheckedTerm], wanted: &str) -> Option<usize> {
         ),
         _ => false,
     })
+}
+
+/// The members of the union a node is typed by: a source union's checked
+/// bindings, or a selected model union's joined row. A member's position is
+/// its place in the declaration the value type carries: declaration order for
+/// a source union, canonical case-name rank for a model union.
+enum UnionMembers<'a> {
+    Source(&'a [CheckedTerm]),
+    Model(&'a filament_contract_model::SelectedModelUnionRow),
+}
+
+impl UnionMembers<'_> {
+    fn position(&self, wanted: &str) -> Option<usize> {
+        match self {
+            Self::Source(members) => member_position(members, wanted),
+            Self::Model(row) => row
+                .cases
+                .iter()
+                .position(|case| case.name.as_ref() == wanted),
+        }
+    }
 }
 
 /// A wire location as the evaluator's `Location`; `None` for an ordinal no

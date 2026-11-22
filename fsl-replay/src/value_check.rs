@@ -43,7 +43,7 @@ use filament_semantic_value::declaration::{CompositeShape, TypeEnvironment};
 use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_eval::value::{ApplicationObservationOptions, CheckedPackageEvaluation, QualifiedName};
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_package::CheckedPackage;
+use fsl_package::{BarePackage, BareSelectionFailure, CheckedPackage};
 use fsl_semantics::check::{Capability, NodeTag};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 
@@ -81,6 +81,18 @@ pub enum Selection {
     MissingNode,
     /// A broken invariant of the checked package; the item settles `failed`.
     Fault(InternalFault),
+}
+
+/// Why a claim of an admitted package selects no evaluable target.
+#[derive(Debug)]
+pub enum PackageSelection {
+    /// The claim selects no form, or the package breaks an invariant, as on
+    /// the source route.
+    Selection(Selection),
+    /// The package's function does not project to an evaluator form: a
+    /// parameter or result type, or a body operation, the reader has no form
+    /// for.
+    Unread(BareSelectionFailure),
 }
 
 /// What of a parameter's domain the arm cannot enumerate.
@@ -207,12 +219,54 @@ impl ReproducedViolation {
     }
 }
 
-/// A claim's function, form and parameter domains over one checked package.
+/// The package a target evaluates over.
+#[derive(Clone, Copy)]
+enum Evaluator<'p> {
+    /// The source route's checked package.
+    Source(&'p CheckedPackage),
+    /// The package route's admitted package read (FR-940).
+    Package(&'p BarePackage<'p>),
+}
+
+impl Evaluator<'_> {
+    fn call_observing_applications(
+        self,
+        function: &QualifiedName,
+        arguments: Vec<Value>,
+        objects: &ObjectEnvironment,
+        meter: &mut Meter,
+        options: ApplicationObservationOptions,
+    ) -> fsl_eval::value::ApplicationObservation {
+        match self {
+            Self::Source(package) => {
+                package.call_observing_applications(function, arguments, objects, meter, options)
+            }
+            Self::Package(package) => {
+                package.call_observing_applications(function, arguments, objects, meter, options)
+            }
+        }
+    }
+}
+
+/// Where an undefined evaluation's location is mapped to an occurrence.
+enum Loci<'p> {
+    /// The checked graph's occurrences.
+    Source(&'p CheckedPackage),
+    /// The applications the admitted `body_locations` rows locate.
+    Package(Vec<(Location, OccurrenceKey)>),
+}
+
+/// A claim's function, form and parameter domains over one checked package,
+/// on the source route or over an admitted package read (FR-940).
 pub struct ValueTarget<'p> {
-    package: &'p CheckedPackage,
+    evaluator: Evaluator<'p>,
+    loci: Loci<'p>,
     name: QualifiedName,
     form: ClaimForm,
     claim: OccurrenceKey,
+    claim_location: Option<Location>,
+    result_bound: Option<ValueType>,
+    extent: Option<fsl_semantics::family::ClaimExtent>,
     parameters: Vec<TargetParameter>,
     limits: AccountingLimits,
 }
@@ -287,14 +341,115 @@ impl<'p> ValueTarget<'p> {
                 domain: parameter_domain(value_type, types),
             })
             .collect();
+        let claim_location = graph
+            .occurrence(claim.node().clone(), claim.origin())
+            .cloned();
+        let result_bound = graph
+            .requirements()
+            .get(claim)
+            .filter(|_| form == ClaimForm::ScalarOperation)
+            .map(|record| record.result_bound().value_type().clone());
         Ok(Self {
-            package,
+            evaluator: Evaluator::Source(package),
+            loci: Loci::Source(package),
             name,
             form,
             claim: claim.clone(),
+            claim_location,
+            result_bound,
+            extent: None,
             parameters,
             limits: AccountingLimits::default(),
         })
+    }
+
+    /// The target of the Boolean value clause the function `function` of the
+    /// admitted `package` is, read from the package's own rows: the claim is
+    /// the function body's `claim` or `declaration` occurrence, as
+    /// [`Self::select`] reads it from the checked graph (FSpec FR-484
+    /// "Forms"). Only the `clause` form has a package form; any other claim
+    /// selects none ([`Selection::NoForm`]).
+    ///
+    /// # Errors
+    ///
+    /// [`PackageSelection::Selection`] as [`Self::select`];
+    /// [`PackageSelection::Unread`] when the package's function does not
+    /// project (its types or body have no evaluator form).
+    pub fn select_package(
+        package: &'p BarePackage<'p>,
+        function: &str,
+        claim: &OccurrenceKey,
+    ) -> Result<Self, PackageSelection> {
+        let fault = |invariant| {
+            PackageSelection::Selection(Selection::Fault(InternalFault::new(
+                "value-check",
+                invariant,
+            )))
+        };
+        let body = package
+            .function_body(function)
+            .map_err(PackageSelection::Unread)?
+            .ok_or(PackageSelection::Selection(Selection::NoForm))?;
+        let projection = package
+            .project_function(function)
+            .map_err(PackageSelection::Unread)?
+            .ok_or(PackageSelection::Selection(Selection::NoForm))?;
+        let selected = projection
+            .selected_function()
+            .ok_or_else(|| fault("projection-selects-its-function"))?;
+        let name = QualifiedName::unqualified(function)
+            .map_err(|_| fault("function-name-is-an-identifier"))?;
+        let is_clause_key = *claim.node() == body.node
+            && ["declaration", "claim"].contains(&claim.origin().role().as_str())
+            && body.occurrences.contains(claim);
+        if !is_clause_key || *selected.result_type != ValueType::Boolean {
+            return Err(PackageSelection::Selection(Selection::NoForm));
+        }
+        let world = package.world().map_err(|_| fault("package-world-reads"))?;
+        let parameters = selected
+            .parameters
+            .iter()
+            .map(|parameter| TargetParameter {
+                node: parameter.node.clone(),
+                domain: parameter_domain(&parameter.value_type, world.types()),
+            })
+            .collect();
+        let roots: Vec<(NodeKey, &ValueType)> = selected
+            .parameters
+            .iter()
+            .map(|parameter| (parameter.node.clone(), &parameter.value_type))
+            .collect();
+        let extent = fsl_semantics::family::requirements::classify_extent(
+            &roots,
+            world.types(),
+            u64::MAX,
+        )
+        .ok();
+        let expression = Role::new("expression");
+        let loci = projection
+            .located_applications()
+            .filter(|(_, occurrence)| *occurrence.origin().role() == expression)
+            .map(|(location, occurrence)| (location.clone(), occurrence.clone()))
+            .collect();
+        Ok(Self {
+            evaluator: Evaluator::Package(package),
+            loci: Loci::Package(loci),
+            name,
+            form: ClaimForm::Clause,
+            claim: claim.clone(),
+            claim_location: None,
+            result_bound: None,
+            extent,
+            parameters,
+            limits: AccountingLimits::default(),
+        })
+    }
+
+    /// The extent of the Boolean value clause an admitted package's target
+    /// is, from its parameter domains; `None` on the source route, which
+    /// reads it from its checked graph, and for types that do not classify.
+    pub fn clause_extent(&self) -> Option<&fsl_semantics::family::ClaimExtent> {
+        self.extent.as_ref()
     }
 
     /// This target with the integer parameter at `node` restricted to
@@ -375,7 +530,7 @@ impl<'p> ValueTarget<'p> {
         }
         let mut meter = Meter::new(self.limits.0).with_cancel(cancel.clone());
         let objects = ObjectEnvironment::default().with_unresolved_references();
-        let call = self.package.call_observing_applications(
+        let call = self.evaluator.call_observing_applications(
             &self.name,
             assignment.to_vec(),
             &objects,
@@ -426,17 +581,8 @@ impl<'p> ValueTarget<'p> {
                 function_evaluations,
             ));
         }
-        let target_location = self
-            .package
-            .graph()
-            .occurrence(self.claim.node().clone(), self.claim.origin());
-        let result_bound = self
-            .package
-            .graph()
-            .requirements()
-            .get(&self.claim)
-            .filter(|_| self.form == ClaimForm::ScalarOperation)
-            .map(|record| record.result_bound().value_type().clone());
+        let target_location = self.claim_location.as_ref();
+        let result_bound = self.result_bound.as_ref();
         let target_value = target_location.and_then(|target| {
             observed
                 .iter()
@@ -445,7 +591,6 @@ impl<'p> ValueTarget<'p> {
         });
         let reached = target_value.is_some();
         let out_of_bound = result_bound
-            .as_ref()
             .zip(target_value)
             .is_some_and(|(bound, value)| !bound.admits(value));
         let scalar_result = || {
@@ -631,7 +776,23 @@ impl<'p> ValueTarget<'p> {
     /// candidate or more than one remains, so a locus is never a guess
     /// (FSpec FR-484: the innermost undefined subexpression).
     fn locus_of(&self, location: &Location) -> Option<OccurrenceKey> {
-        let graph = self.package.graph();
+        let package = match &self.loci {
+            Loci::Source(package) => *package,
+            Loci::Package(applications) => {
+                let mut found: Vec<&OccurrenceKey> = applications
+                    .iter()
+                    .filter(|(at, _)| at == location)
+                    .map(|(_, occurrence)| occurrence)
+                    .collect();
+                found.sort();
+                found.dedup();
+                return match found.as_slice() {
+                    [only] => Some((*only).clone()),
+                    _ => None,
+                };
+            }
+        };
+        let graph = package.graph();
         let expression = Role::new("expression");
         let mut found = graph
             .occurrences()

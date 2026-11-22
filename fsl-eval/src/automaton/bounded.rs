@@ -56,8 +56,34 @@ pub enum BoundedKind {
 }
 
 impl BoundedKind {
+    pub(super) fn decide(self, remaining: u64, holds: bool) -> BoundedState {
+        match (self, holds) {
+            (BoundedKind::Eventually, true) => BoundedState::Accept,
+            (BoundedKind::Always, false) => BoundedState::Reject,
+            (BoundedKind::Eventually, false) | (BoundedKind::Always, true) => {
+                BoundedState::Open { remaining }
+            }
+        }
+    }
+    pub(super) fn step(self, before: BoundedState, counted: bool, holds: bool) -> BoundedState {
+        let BoundedState::Open { remaining } = before else {
+            return before;
+        };
+        if !counted {
+            return self.decide(remaining, holds);
+        }
+        match remaining.checked_sub(1) {
+            Some(remaining) => self.decide(remaining, holds),
+            // The region closed before the next distance was read.
+            None => match self {
+                BoundedKind::Eventually => BoundedState::Reject,
+                BoundedKind::Always => BoundedState::Accept,
+            },
+        }
+    }
+
     /// The window kind's spelling in a key.
-    const fn window(self) -> &'static str {
+    pub(super) const fn window(self) -> &'static str {
         match self {
             Self::Eventually => "deadline",
             Self::Always => "extent",
@@ -215,20 +241,7 @@ impl BoundedTranslation {
     /// that `counted` or not, whose atom is `holds`. A step that counts out
     /// of an exhausted window reads no letter, so `holds` is ignored there.
     pub fn step(&self, before: BoundedState, counted: bool, holds: bool) -> BoundedState {
-        let BoundedState::Open { remaining } = before else {
-            return before;
-        };
-        if !counted {
-            return self.decide(remaining, holds);
-        }
-        match remaining.checked_sub(1) {
-            Some(remaining) => self.decide(remaining, holds),
-            // The region closed before the next distance was read.
-            None => match self.kind {
-                BoundedKind::Eventually => BoundedState::Reject,
-                BoundedKind::Always => BoundedState::Accept,
-            },
-        }
+        self.kind.step(before, counted, holds)
     }
 
     /// Whether the clause is `on each`: its states are read with
@@ -319,13 +332,7 @@ impl BoundedTranslation {
     /// The state with `remaining` counted steps left after a letter whose
     /// atom is `holds`.
     fn decide(&self, remaining: u64, holds: bool) -> BoundedState {
-        match (self.kind, holds) {
-            (BoundedKind::Eventually, true) => BoundedState::Accept,
-            (BoundedKind::Always, false) => BoundedState::Reject,
-            (BoundedKind::Eventually, false) | (BoundedKind::Always, true) => {
-                BoundedState::Open { remaining }
-            }
-        }
+        self.kind.decide(remaining, holds)
     }
 
     /// The canonical key of `state` under this translation's context.

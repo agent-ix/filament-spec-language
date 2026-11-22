@@ -38,6 +38,7 @@ pub(crate) struct Budget {
     max: Option<u64>,
     cancel: Option<filament_exact::Cancel>,
     request_meter: Option<std::sync::Arc<std::sync::Mutex<filament_exact::Meter>>>,
+    work_meter: Option<filament_exact::Meter>,
 }
 
 impl Budget {
@@ -48,6 +49,7 @@ impl Budget {
             max: Some(max),
             cancel: None,
             request_meter: None,
+            work_meter: None,
         }
     }
 
@@ -63,16 +65,27 @@ impl Budget {
             max: None,
             cancel: cancel.cloned(),
             request_meter: Some(system.shared_meter.clone()),
+            work_meter: None,
         }
     }
 
-    fn account_trials(&self, count: u64) -> Result<(), ExpansionStop> {
+    fn account_trials(&mut self, count: u64) -> Result<(), ExpansionStop> {
         if let Some(meter) = &self.request_meter {
             meter
                 .lock()
                 .expect("evaluation meter lock")
                 .charge(
                     filament_exact::Charge::new(filament_exact::ChargePoint::CollectionVisit)
+                        .work(filament_exact::Integer::from(count)),
+                )
+                .map_err(|incomplete| {
+                    exhausted(ExpansionLimit::EvaluationMeter(incomplete.limit_kind))
+                })?;
+        }
+        if let Some(meter) = &mut self.work_meter {
+            meter
+                .charge(
+                    filament_exact::Charge::new(filament_exact::ChargePoint::ModelCandidate)
                         .work(filament_exact::Integer::from(count)),
                 )
                 .map_err(|incomplete| {
@@ -89,14 +102,7 @@ impl Budget {
     /// `resource_exhausted`/`insufficient-next-charge` when the count would
     /// exceed the bound.
     pub(crate) fn charge(&mut self) -> Result<(), ExpansionStop> {
-        self.poll_cancel()?;
-        self.account_trials(1)?;
-        self.used = self.used.saturating_add(1);
-        if self.max.is_some_and(|max| self.used > max) {
-            Err(exhausted(ExpansionLimit::MaxCandidates))
-        } else {
-            Ok(())
-        }
+        self.charge_count(1)
     }
     /// The candidates counted so far.
     pub(super) const fn used(&self) -> u64 {
@@ -109,16 +115,30 @@ impl Budget {
     ///
     /// As [`Self::charge`].
     pub(super) fn charge_many(&mut self, count: usize) -> Result<(), ExpansionStop> {
+        self.charge_count(u64::try_from(count).unwrap_or(u64::MAX))
+    }
+
+    fn charge_count(&mut self, count: u64) -> Result<(), ExpansionStop> {
         self.poll_cancel()?;
-        self.account_trials(u64::try_from(count).unwrap_or(u64::MAX))?;
-        self.used = self
-            .used
-            .saturating_add(u64::try_from(count).unwrap_or(u64::MAX));
-        if self.max.is_some_and(|max| self.used > max) {
-            Err(exhausted(ExpansionLimit::MaxCandidates))
-        } else {
-            Ok(())
+        if self
+            .max
+            .is_some_and(|max| count > max.saturating_sub(self.used))
+        {
+            return Err(exhausted(ExpansionLimit::MaxCandidates));
         }
+        self.account_trials(count)?;
+        self.used = self.used.saturating_add(count);
+        Ok(())
+    }
+
+    pub(super) fn scoped(max: u64, system: &ModelSystem<'_>) -> Self {
+        let mut budget = Self::new(max);
+        budget.work_meter = system
+            .probability_work
+            .as_ref()
+            .map(|_| system.fresh_meter());
+        budget.cancel = system.probability_cancel.clone();
+        budget
     }
 
     fn poll_cancel(&self) -> Result<(), ExpansionStop> {
@@ -287,7 +307,43 @@ impl Walk<'_, '_> {
         Selected {
             preconditions: pick(&clauses.preconditions),
             postconditions: pick(&clauses.postconditions),
+            operation_preconditions: Vec::new(),
+            operation_postconditions: Vec::new(),
         }
+    }
+
+    /// Source model steps additionally read the checked contracts of their
+    /// actual operation. Protocol contract selection stays unit-scoped.
+    pub(super) fn model_selected<'c>(
+        &'c self,
+        row: &Row,
+        application: &Application,
+        select: impl Fn(filament_exact::NodeKey) -> bool,
+    ) -> Selected<'c> {
+        use filament_semantic_value::location::OperationClauseKind;
+
+        let mut selected = self.selected(row, application, select);
+        let Some(package) = self.system.source_package() else {
+            return selected;
+        };
+        for clause in package.graph().operation_clauses() {
+            if clause.operation() != &application.key
+                || clause.declaring() != &application.declaring
+            {
+                continue;
+            }
+            match clause.kind() {
+                OperationClauseKind::Requires => selected.operation_preconditions.push(clause),
+                OperationClauseKind::Ensures => selected.operation_postconditions.push(clause),
+            }
+        }
+        selected
+            .operation_preconditions
+            .sort_by_key(|clause| clause.position());
+        selected
+            .operation_postconditions
+            .sort_by_key(|clause| clause.position());
+        selected
     }
 
     /// The clauses in `group` that apply to `row` as the receiver of the
@@ -322,6 +378,8 @@ impl Walk<'_, '_> {
 pub(super) struct Selected<'c> {
     pub(super) preconditions: Vec<&'c ClauseInfo>,
     pub(super) postconditions: Vec<&'c ClauseInfo>,
+    pub(super) operation_preconditions: Vec<&'c fsl_semantics::check::CheckedOperationClause>,
+    pub(super) operation_postconditions: Vec<&'c fsl_semantics::check::CheckedOperationClause>,
 }
 
 /// A contract finding with the keys its position among its siblings follows:
@@ -626,7 +684,12 @@ fn expand<'s>(
     walk.post_presence = selection.post_presence;
     walk.clock_selectors = selection.clock_selectors;
     let mut budget = system.budget();
-    budget.cancel = cancel.cloned();
+    budget.cancel = cancel
+        .cloned()
+        .or_else(|| system.probability_cancel.clone());
+    if let (Some(meter), Some(cancel)) = (&mut budget.work_meter, cancel) {
+        *meter = meter.clone().with_cancel(cancel.clone());
+    }
 
     let mut findings = contracts::invariants(&walk)?;
     let mut contract = Vec::new();
@@ -714,16 +777,13 @@ pub(super) fn identities_of(
 ) -> Result<Vec<ModelTransition>, ExpansionStop> {
     let mut walk = walk_of(system, state, None)?;
     walk.rows.extend(absent_rows(system, state));
-    let mut budget = Budget {
-        used: 0,
-        max: Some(system.limits.max_candidates),
-        cancel: system
-            .request_cancel
-            .lock()
-            .expect("request cancellation lock")
-            .clone(),
-        request_meter: None,
-    };
+    let mut budget = system.budget();
+    budget.cancel = system
+        .request_cancel
+        .lock()
+        .expect("request cancellation lock")
+        .clone()
+        .or_else(|| system.probability_cancel.clone());
     let mut found = Vec::new();
     for row in &walk.rows {
         let Some(applications) = system.applications.get(&row.type_id()) else {

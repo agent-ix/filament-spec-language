@@ -87,6 +87,7 @@ pub(crate) fn write_run_value(
     types: &filament_semantic_value::declaration::TypeEnvironment,
     enums: &[fsl_semantics::check::EnumBinding],
     variants: &[fsl_semantics::check::VariantTypeDeclaration],
+    enum_members: Option<&filament_semantic_value::enumeration::EnumMemberIndex>,
     codec: Option<&crate::reference_codec::ReferenceCodec<'_, '_, '_>>,
     budget: &mut NormalizationReferenceBudget<'_>,
     cancel: &filament_exact::Cancel,
@@ -96,6 +97,7 @@ pub(crate) fn write_run_value(
         types,
         enums,
         variants,
+        enum_members,
         fsl_foundation::IdentityLimits {
             input_bytes: u64::MAX,
         },

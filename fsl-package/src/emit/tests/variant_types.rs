@@ -812,6 +812,7 @@ fn model_enum_carrier_refuses_missing_repeated_foreign_and_conflicting_evidence(
         "model_enum_declarations",
         "model_enum_members",
         "model_enum_shapes",
+        "model_unions",
     ] {
         let mut missing = value.clone();
         missing.as_object_mut().unwrap().remove(channel);
@@ -961,6 +962,207 @@ fn model_enum_identity_and_full_projection_budgets_are_cumulative() {
         } else {
             assert_eq!(result.expect("exact allowance").enums().len(), 2);
             assert_eq!(exact.consumed(), need);
+        }
+    }
+}
+
+/// A document whose variant types hold payload cases: `Shape` over an
+/// `Integer` and a record, `Phase` over a Clock.
+fn bare_unions() -> Emitted {
+    let mut shape = fixture::variant_type("Shape", &["Circle", "Empty", "Square"]);
+    shape["variants"][0]["payloadType"] = json!("ix://filament/native/Integer");
+    shape["variants"][2]["payloadType"] = json!(fixture::id("Settings"));
+    let mut phase = fixture::variant_type("Phase", &["Armed", "Idle"]);
+    phase["variants"][0]["payloadType"] = json!("ix://filament/native/Clock");
+    let document = serde_json::to_vec(&fixture::with_types(vec![shape, phase])).unwrap();
+    let (graph, document) = checked_document(
+        "function circle using v(): M::Shape pure { M::Shape::Circle(3) }\n\
+         function idle using v(): M::Phase pure { M::Phase::Idle }",
+        "filament.value.complete/v1",
+        document,
+    );
+    emitted_from(
+        emit_checked(&CheckedPackage::link(graph)).expect("selected payload unions emit"),
+        document,
+    )
+}
+
+/// Payload-bearing variant types emit one canonically ordered union row each,
+/// round trip through the identities carrier, and refuse a missing, repeated,
+/// foreign or reordered witness with a typed refusal.
+#[trace("FR-531-AC-12", "FR-531-AC-43", "FR-531-AC-8")]
+#[test]
+fn model_union_rows_round_trip_and_refuse_missing_foreign_and_reordered_evidence() {
+    use crate::{IdentityFileRefusal, ReadIdentityRows};
+    use filament_contract_model::{NativeJoinBudget, SelectedModelUnionPayload as Payload};
+    let emitted = bare_unions();
+    let rows = emitted.emission.selected_model_union_rows();
+    let names = |row: &filament_contract_model::SelectedModelUnionRow| {
+        row.cases
+            .iter()
+            .map(|case| case.name.to_string())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(rows.len(), 2);
+    let phase = &rows[0];
+    let shape = &rows[1];
+    assert_eq!(names(phase), ["Armed", "Idle"]);
+    assert!(matches!(phase.cases[0].payload, Payload::Clock { .. }));
+    assert!(matches!(phase.cases[1].payload, Payload::None));
+    assert_eq!(names(shape), ["Circle", "Empty", "Square"]);
+    assert!(matches!(shape.cases[0].payload, Payload::Data { .. }));
+    assert!(matches!(shape.cases[1].payload, Payload::None));
+    assert!(matches!(shape.cases[2].payload, Payload::Data { .. }));
+    for row in rows {
+        for (rank, case) in row.cases.iter().enumerate() {
+            assert_eq!(case.rank, rank as u64);
+        }
+    }
+    let Read::Verified { admitted, .. } = emitted.read(emitted.emission.package.bytes()) else {
+        panic!("selected model admits")
+    };
+    let budget = || NativeJoinBudget::new(10_000_000, 10_000_000);
+    let carried = emitted
+        .emission
+        .identity_rows(&admitted, &mut budget())
+        .expect("rows");
+    let bytes = carried.to_bytes(&admitted).expect("carrier");
+    let read = ReadIdentityRows::read(&bytes, &admitted, &mut budget()).expect("round trip");
+    assert_eq!(read.model_unions().len(), 2);
+    assert_eq!(read.to_bytes(&admitted).expect("carrier"), bytes);
+    let value: Value = serde_json::from_slice(&bytes).unwrap();
+    let mut missing = value.clone();
+    missing.as_object_mut().unwrap().remove("model_unions");
+    assert!(matches!(
+        ReadIdentityRows::read(
+            &serde_json::to_vec(&missing).unwrap(),
+            &admitted,
+            &mut budget()
+        ),
+        Err(IdentityFileRefusal::Malformed { .. })
+    ));
+    for edit in ["foreign", "missing", "duplicate", "position", "rank"] {
+        let mut changed = value.clone();
+        match edit {
+            "foreign" => changed["model_unions"][0]["selected_document"] = json!("foreign/doc"),
+            "missing" => {
+                changed["model_unions"].as_array_mut().unwrap().pop();
+            }
+            "duplicate" => {
+                let row = changed["model_unions"][0].clone();
+                changed["model_unions"].as_array_mut().unwrap().push(row);
+            }
+            "position" => changed["model_unions"][1]["cases"][0]["position"] = json!(2),
+            "rank" => changed["model_unions"][1]["cases"]
+                .as_array_mut()
+                .unwrap()
+                .reverse(),
+            _ => unreachable!(),
+        }
+        let result = ReadIdentityRows::read(
+            &serde_json::to_vec(&changed).unwrap(),
+            &admitted,
+            &mut budget(),
+        );
+        assert!(
+            matches!(result, Err(IdentityFileRefusal::Native(_))),
+            "{edit} must keep its typed native refusal: {result:?}"
+        );
+    }
+}
+
+/// Union producer copies and the native union join consume one cumulative
+/// allowance: the exact total succeeds and one unit short refuses with the
+/// first unpaid resource.
+#[trace("FR-531-AC-31", "FR-531-AC-44", "FR-092-AC-26")]
+#[test]
+fn model_union_identity_and_join_budgets_are_cumulative() {
+    use filament_contract_model::{NativeJoinBudget, NativeJoinChargeKind};
+    let emitted = bare_unions();
+    let Read::Verified { admitted, .. } = emitted.read(emitted.emission.package.bytes()) else {
+        panic!("selected model admits")
+    };
+    let run = |budget: &mut NativeJoinBudget| {
+        emitted
+            .emission
+            .identity_rows(&admitted, budget)
+            .ok()
+            .and_then(|rows| rows.selected(&admitted, budget).ok())
+            .map(|identities| identities.model_union_rows().count())
+    };
+    let mut full = NativeJoinBudget::new(10_000_000, 10_000_000);
+    assert_eq!(run(&mut full), Some(2));
+    let need = full.consumed();
+    assert!(need.work > 0 && need.storage > 0);
+    for (work, storage, denied) in [
+        (need.work, need.storage, None),
+        (
+            need.work - 1,
+            need.storage,
+            Some(NativeJoinChargeKind::Work),
+        ),
+        (
+            need.work,
+            need.storage - 1,
+            Some(NativeJoinChargeKind::Storage),
+        ),
+    ] {
+        let mut exact = NativeJoinBudget::new(work, storage);
+        let result = run(&mut exact);
+        match denied {
+            Some(kind) => {
+                assert_eq!(result, None);
+                assert_eq!(exact.first_unpaid().expect("original denial").kind, kind);
+            }
+            None => {
+                assert_eq!(result, Some(2));
+                assert_eq!(exact.consumed(), need);
+            }
+        }
+    }
+}
+
+/// A union witness whose Clock payload names another type, or whose member
+/// key is not an original structural key, is refused rather than joined.
+#[trace("FR-531-AC-12", "FR-531-AC-8")]
+#[test]
+fn a_malformed_model_union_witness_is_refused() {
+    use crate::{IdentityFileRefusal, ReadIdentityRows};
+    use filament_contract_model::NativeJoinBudget;
+    let emitted = bare_unions();
+    let Read::Verified { admitted, .. } = emitted.read(emitted.emission.package.bytes()) else {
+        panic!("selected model admits")
+    };
+    let budget = || NativeJoinBudget::new(10_000_000, 10_000_000);
+    let bytes = emitted
+        .emission
+        .identity_rows(&admitted, &mut budget())
+        .expect("rows")
+        .to_bytes(&admitted)
+        .expect("carrier");
+    let value: Value = serde_json::from_slice(&bytes).unwrap();
+    for edit in ["clock_type", "unknown_member", "payload_kind"] {
+        let mut changed = value.clone();
+        match edit {
+            "clock_type" => {
+                changed["model_unions"][0]["cases"][0]["payload"]["payload_type"] =
+                    json!("ix://filament/native/Integer")
+            }
+            "unknown_member" => changed["model_unions"][0]["cases"][0]["extra"] = json!(1),
+            "payload_kind" => {
+                changed["model_unions"][0]["cases"][0]["payload"] = json!({"kind": "weight"})
+            }
+            _ => unreachable!(),
+        }
+        let result = ReadIdentityRows::read(
+            &serde_json::to_vec(&changed).unwrap(),
+            &admitted,
+            &mut budget(),
+        );
+        match (edit, result) {
+            ("clock_type", Err(IdentityFileRefusal::Native(_))) => {}
+            ("unknown_member" | "payload_kind", Err(IdentityFileRefusal::Malformed { .. })) => {}
+            (_, other) => panic!("{edit} must keep its typed refusal: {other:?}"),
         }
     }
 }

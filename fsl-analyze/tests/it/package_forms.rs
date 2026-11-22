@@ -4,6 +4,8 @@
 //! returns, for a Counter unit compiled into its FR-517 handoff and the
 //! `BarePackage` of the handoff's files.
 
+mod hyper;
+
 use std::collections::BTreeMap;
 
 use filament_exact::{LimitKind, Meter, ScalarLimits, Value};
@@ -259,6 +261,124 @@ fn package_holds_equals_source_holds() {
     for expected in [Some(true), Some(false)] {
         assert!(seen.contains(&expected), "{seen:?}");
     }
+}
+
+/// Every atom under a bounded past or future step operator keeps the source
+/// evaluator's ordered expression charges, including its true and false cases.
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn bounded_step_interval_atoms_preserve_expression_charges() {
+    let claims: String = ["once", "historically", "eventually", "always"]
+        .iter()
+        .enumerate()
+        .map(|(index, operator)| {
+            format!("temporal Window{index} using t0 over (c: M::Counter) clock \"model-steps\" on origin {{ {operator}[1,2] holds(c.value <= 2) }}\n")
+        })
+        .collect();
+    let (_ws, handoff, mut budget) = handoff_of("package-step-interval-charges", &claims);
+    let bare = BarePackage::new(&handoff.admitted)
+        .with_supply(
+            BareSupply {
+                identities: &handoff.identities,
+                equality: handoff.equality.as_ref(),
+            },
+            &mut budget,
+        )
+        .expect("the handoff supply joins");
+    let source = handoff.compiled.checked();
+    assert_eq!(source.graph().temporal_clauses().len(), 4);
+    for index in 0..4 {
+        let atoms = holds_atoms(clause(&handoff, index));
+        assert_eq!(atoms.len(), 1, "clause {index}");
+        for value in 0..=3 {
+            let objects = objects(&handoff, value);
+            let over = Value::Reference(counter(&objects));
+            for atom in &atoms {
+                let mut source_meter = Meter::new(UNLIMITED);
+                let from_source = source
+                    .evaluate_holds(atom, over.clone(), &[], &objects, &mut source_meter)
+                    .expect("the source atom evaluates");
+                let mut package_meter = Meter::new(UNLIMITED);
+                let from_package = bare
+                    .evaluate_holds(atom, over.clone(), &[], &objects, &mut package_meter)
+                    .expect("the byte-read atom evaluates");
+                let at = format!("clause {index} at value {value}");
+                assert_eq!(boolean(&from_source), value <= 2, "{at}");
+                assert_eq!(outcome(&from_package), outcome(&from_source), "{at}");
+                assert_eq!(from_package.location, from_source.location, "{at}");
+                assert!(!source_meter.admitted_charges().is_empty(), "{at}");
+                assert_eq!(
+                    package_meter.admitted_charges(),
+                    source_meter.admitted_charges(),
+                    "{at}"
+                );
+            }
+        }
+    }
+}
+
+/// Reading a genuine timed interval does not authorize it for the untimed
+/// model-check clause constructor: the remaining boundary is a typed profile
+/// refusal, rather than an interval silently converted into a step window.
+#[trace("TC-2958", "FR-940-AC-6")]
+#[test]
+fn timed_intervals_remain_typed_refusals_for_untimed_model_checking() {
+    use fsl_package::{EmitLimits, V2ReadLimits};
+    use fsl_semantics::check::{
+        CheckedInterval, CheckedTemporalClause, PackageClauseRefusal, PackageFormulaNode,
+        TemporalProfile,
+    };
+
+    let world = crate::zone_search::rpc_claim(
+        3,
+        crate::zone_search::TIMED,
+        "temporal TimedWindow using tt over (c: M::Call) clock \"model-time\" on origin { eventually[1 ms,2 ms] holds(c.phase = 2) }\n",
+    );
+    let domain = fsl_semantics::model::intake::package_input([world.document.as_slice()])
+        .expect("the timed domain admits");
+    let emission = fsl_package::emit_checked(&world.package, EmitLimits::fixture())
+        .expect("the real timed program emits");
+    let limits = V2ReadLimits::fixture();
+    let admitted = fsl_package::admit_checked_package(emission.package().bytes(), &domain, limits)
+        .expect("the emitted timed bytes admit");
+    let mut budget = limits.native_join_limits().budget();
+    let identities = emission
+        .identity_rows(&admitted, &mut budget)
+        .expect("the emission's identity rows join");
+    let bare = BarePackage::new(&admitted)
+        .with_supply(
+            BareSupply {
+                identities: &identities,
+                equality: None,
+            },
+            &mut budget,
+        )
+        .expect("the timed identity supply joins");
+    let source_clause = world
+        .package
+        .graph()
+        .temporal_clauses()
+        .first()
+        .expect("the source declares its timed clause");
+    let occurrence = fsl_foundation::source::provenance::OccurrenceKey::new(
+        source_clause.identity(),
+        source_clause.claim().clone(),
+    );
+    let form = bare
+        .temporal_clause_run_form(&occurrence)
+        .expect("the interval is read from the actual package formula");
+    assert!(form.formula.iter().any(|node| matches!(
+        node,
+        PackageFormulaNode::Unary {
+            interval: Some(CheckedInterval::Timed(_)),
+            ..
+        }
+    )));
+    let types = bare.world().expect("the package world reads");
+    assert!(matches!(
+        CheckedTemporalClause::of_package_form(form, types.types(), u64::MAX),
+        Err(PackageClauseRefusal::Profile(TemporalProfile::Timed))
+    ));
 }
 
 /// FR-940-AC-6 (the forms' part): the package form of `evaluate_guard`
