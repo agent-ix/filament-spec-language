@@ -104,7 +104,7 @@ fn a_reachable_deadlock_over_one_of_two_models_refutes_as_the_source_route() {
             &json!([deadlock_item(identity)]),
         );
         assert!(
-            source.document()["items"][0].is_object(),
+            source.document()["items"][0]["record"]["result"].is_string(),
             "{identity}: {}",
             source.document()
         );
