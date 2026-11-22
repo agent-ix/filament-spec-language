@@ -251,7 +251,7 @@ fn a_source_map_type_checks_with_its_guarded_read() {
 
 #[trace("TC-1823", "FR-680-AC-4", "FSpec-FR-143-AC-21", "FSpec-FR-375-AC-17")]
 #[test]
-#[ignore = "QSL-2169 completed; current blocker has no assigned owner: `Some(3) = y` over Option<Int[0, 9]> is still refused IllTyped(TypeMismatch)"]
+#[ignore = "QSL-2902: `Some(3) = y` over Option<Int[0, 9]> is still refused IllTyped(TypeMismatch)"]
 fn some_takes_the_expected_bounded_element_type() {
     assert_checks("function f using v(): Option<Int[0, 9]> pure { Some(3) }");
     assert_checks("function g using v(y: Option<Int[0, 9]>): Boolean pure { Some(3) = y }");

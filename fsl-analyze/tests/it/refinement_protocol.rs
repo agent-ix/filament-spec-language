@@ -2325,7 +2325,7 @@ fn the_certificate_checker_refuses_a_refinement_over_a_protocol() {
 /// each before any state is explored.
 #[trace("FSpec-TC-1911")]
 #[test]
-#[ignore = "Remaining work: un-ignore with the refinement_cas fixture fix; every refinement_protocol fixture refuses AttemptBinderType at S3 (a binder over the void Spec::Counter::inc)"]
+#[ignore = "QSL-2904: Remaining work: un-ignore with the refinement_cas fixture fix; every refinement_protocol fixture refuses AttemptBinderType at S3 (a binder over the void Spec::Counter::inc)"]
 fn an_abstract_protocol_side_takes_its_capacity_binding_from_the_request() {
     use fsl_eval::model_subject::CapacityBinding;
     use fsl_eval::simulation::protocol::{CapacityRefusal, ProtocolRefusal, UnboundCapacity};

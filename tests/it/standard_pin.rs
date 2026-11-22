@@ -385,7 +385,7 @@ fn the_pinned_inventory_lists_the_required_facts() {
 
 #[test]
 #[trace("FSpec-TC-1647", "FSpec-FR-661-AC-4")]
-#[ignore = "FSpec publishes TC-1647 but not the functional requirement files it requires opening; pending FR-660/FR-661 ruling"]
+#[ignore = "QSL-2904: FSpec publishes TC-1647 but not the functional requirement files it requires opening; pending FR-660/FR-661 ruling"]
 fn every_inventory_fact_requirement_names_its_fact_id() {
     let inventory = pinned_inventory();
     for consumer in inventory["consumers"].as_array().expect("consumers") {

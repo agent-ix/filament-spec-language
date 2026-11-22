@@ -866,7 +866,6 @@ fn a_memory_word_outside_its_position_is_an_identifier_and_a_relaxed_fence_refus
 /// parser with `invalid_syntax` at the closing `]` and build no form.
 #[trace("TC-1065", "FR-218-AC-23", "FSpec-FR-501-AC-8")]
 #[test]
-#[ignore = "QSL-2411: an empty join member list refused at parse time at `]` not implemented yet"]
 fn an_empty_join_list_fails_at_the_parser() {
     for policy in ["any [] outstanding cancel", "all []"] {
         let run = format!("parallel P {PARALLEL_BRANCHES} join {policy};");

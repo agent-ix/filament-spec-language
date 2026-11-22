@@ -238,7 +238,7 @@ fn a_package_synthesis_outcome_equals_the_source_outcome() {
 /// stage `request` with the stated code.
 #[test]
 #[trace("TC-3019", "FR-1039-AC-3")]
-#[ignore = "FR-1039 names code unknown_contract_version, which the closed diagnostic catalogue (fsl-foundation CATALOG_CATEGORIES) does not hold; spec decision needed"]
+#[ignore = "QSL-2904: FR-1039 names code unknown_contract_version, which the closed diagnostic catalogue (fsl-foundation CATALOG_CATEGORIES) does not hold; spec decision needed"]
 fn a_package_that_cannot_run_refuses_at_the_request() {
     let directory = tempfile::tempdir().unwrap();
     crate::support::config_version_spine::spine::write(
