@@ -774,7 +774,7 @@ fn a_source_models_clause_function_is_named_alike_on_both_routes() {
         serde_json::from_slice(emission.package().bytes()).expect("the package is JSON");
     let mut package_names: Vec<String> = wire["checked_term_data"]["body_locations"]
         .as_array()
-        .expect("the body location rows")
+        .unwrap_or_else(|| panic!("the body location rows: {}", wire["checked_term_data"].to_string().chars().take(1500).collect::<String>()))
         .iter()
         .filter_map(|row| row["location"]["origin"]["name"].as_str())
         .filter(|name| name.ends_with("/Order/measure.precondition"))
