@@ -147,6 +147,16 @@ pub(super) fn admit(claim: &CheckedProbabilisticClaim) -> Result<(), Probability
     if claim.fairness.is_empty()
         || !matches!(claim.scheduler, ProbScheduler::Every)
         || !fsl_eval::automaton::QualifiedBoundedMonitor::supports(formula.formula(), profile)
+        || !matches!(
+            formula
+                .formula()
+                .nodes()
+                .get(formula.formula().root().index()),
+            Some(fsl_semantics::check::FormulaNode::Unary {
+                operator: fsl_semantics::check::UnaryTemporal::Eventually,
+                ..
+            })
+        )
     {
         return Err(ProbabilityDocumentError::Unsupported);
     }

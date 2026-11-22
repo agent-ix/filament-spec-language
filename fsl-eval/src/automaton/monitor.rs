@@ -119,7 +119,7 @@ impl SafetyAutomaton for Gba {
 
 impl SafetyAutomaton for PropertyAutomaton {
     fn known_viability(&self, state: StateId) -> Result<Option<bool>, AutomatonError> {
-        self.bounded_eventually_viability(state)
+        self.bounded_atom_viability(state)
     }
     fn acceptance_sets(&self) -> usize {
         self.acceptance_set_count()
@@ -213,7 +213,7 @@ impl Monitor<PropertyAutomaton> {
         &self,
         state: StateId,
     ) -> Result<Option<super::BoundedState>, AutomatonError> {
-        if !self.automaton.is_origin_bounded_eventually()? {
+        if self.automaton.origin_bounded_kind()? != Some(super::BoundedKind::Eventually) {
             return Ok(None);
         }
         let members = self

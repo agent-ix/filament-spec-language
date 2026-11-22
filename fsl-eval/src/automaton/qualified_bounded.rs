@@ -37,13 +37,12 @@ pub struct QualifiedBoundedMonitor {
 
 impl QualifiedBoundedMonitor {
     /// Whether the defined-value probability certificate path admits this
-    /// formula. Observation replay additionally admits bounded always through
-    /// [`Self::supports_observations`]. Binding admission remains contextual.
+    /// formula. Binding admission remains contextual.
     pub fn supports(formula: &CheckedFormula, profile: TemporalProfile) -> bool {
         profile == TemporalProfile::EventPositionFalseExtension
             && matches!(
                 super::bounded::bounded_formula_shape(formula),
-                Some((BoundedKind::Eventually, _, _))
+                Some((BoundedKind::Eventually | BoundedKind::Always, _, _))
             )
     }
 
@@ -57,7 +56,7 @@ impl QualifiedBoundedMonitor {
             )
     }
 
-    /// Retain a defined-value eventual producer monitor without copying its
+    /// Retain a defined-value bounded producer monitor without copying its
     /// cache. Its complete translation identity must match the checked
     /// formula before any local handle can be projected into a key.
     pub fn from_monitor(
@@ -109,8 +108,7 @@ impl QualifiedBoundedMonitor {
         Ok(expected)
     }
 
-    /// Build an origin event-position eventual monitor for defined values.
-    /// Bounded always is admitted only by [`Self::for_observations`].
+    /// Build an origin event-position bounded monitor for defined values.
     /// Other profiles, operators and activations are explicitly refused.
     pub fn new(
         formula: &CheckedFormula,
@@ -124,7 +122,6 @@ impl QualifiedBoundedMonitor {
     }
 
     /// Build control for replaying possibly undefined bounded observations.
-    /// Unlike the defined certificate constructor, this admits bounded always.
     pub fn for_observations(
         formula: &CheckedFormula,
         context: &StateContext,

@@ -44,8 +44,8 @@ pub use long_run::{
     LongRunProbabilityDocument, WeightedLongRunProbabilityDocument,
 };
 mod timed;
-pub(super) use timed::{is_timed_deadline_claim, replay_timed_witness};
 pub use timed::digital_key_clocks;
+pub(super) use timed::{is_timed_deadline_claim, replay_timed_witness};
 mod unit;
 mod writer;
 pub(super) use key::{
@@ -923,6 +923,16 @@ fn read_document_profile(
         if canonical != bytes {
             return Err(ProbabilityDocumentError::Noncanonical);
         }
+    }
+    if parsed.root().get("policy").is_some()
+        && matches!(
+            objective
+                .and_then(|node| node.get("profile"))
+                .map(|node| node.node()),
+            Some(quire_canonical::Node::String(PROFILE))
+        )
+    {
+        return Err(ProbabilityDocumentError::MalformedMember("policy"));
     }
     drop(parsed);
     let wire: WireDocument =
@@ -1834,7 +1844,8 @@ fn check_document_with_control(
     for (key, state) in &graph.states {
         if !ranks.contains_key(key) {
             return Ok(
-                if !document.cyclic_dtmc
+                if bounded_ranks.is_none()
+                    && !document.cyclic_dtmc
                     && state.terminal.is_none()
                     && values.get(key).is_some_and(|value| *value > rational(0))
                 {

@@ -412,6 +412,294 @@ fn cyclic_source(horizon: u64, threshold: &str) -> String {
     )
 }
 
+fn always_source(scheduler: &str, operator: &str, threshold: &str, horizon: u64) -> String {
+    cyclic_source(horizon, threshold)
+        .replace("true: 1, false: 1", "true: 9, false: 1")
+        .replace("under every scheduler", &format!("under {scheduler}"))
+        .replace(
+            &format!("probability >= {threshold}"),
+            &format!("probability {operator} {threshold}"),
+        )
+        .replace("eventually[", "always[")
+        .replace("holds(m.delivered)", "holds(not m.delivered)")
+        .lines()
+        .filter(|line| !line.starts_with("reward "))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+#[trace("TC-636", "FR-201-AC-56", "FSpec-FR-412-AC-21")]
+#[test]
+fn bounded_always_health_has_direct_accepting_values_and_real_remaining_ranks() {
+    for terminal_fault in [false, true] {
+        let mut source = always_source("Even", ">=", "0.75", 2);
+        if !terminal_fault {
+            source = source.replace("when { self.delivered }", "when { false }");
+        }
+        let request = proof(&source, SNAPSHOT);
+        let (code, result) = run(&request);
+        assert_eq!(code, 0, "{result}");
+        assert_eq!(
+            result["value"],
+            json!({"numerator":"81","denominator":"100"})
+        );
+        let doc = document(&request);
+        assert_eq!(doc.as_object().unwrap().len(), 5);
+        assert!(doc.get("policy").is_none());
+        assert_eq!(
+            doc["objective"]["profile"],
+            "filament.probability-objective/reachability/v1"
+        );
+        assert_eq!(doc["objective"]["fairness"], json!([]));
+        for (rank, expected) in [(2, ("81", "100")), (1, ("9", "10"))] {
+            let row = doc["ranking"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["rank"] == rank)
+                .unwrap();
+            let value = doc["values"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|value| value["state"] == row["state"])
+                .unwrap();
+            assert_eq!(
+                value["value"],
+                json!({"numerator":expected.0,"denominator":expected.1})
+            );
+            assert_eq!(key(&row["state"])[5][1][2][1][1], json!(rank.to_string()));
+        }
+        for row in doc["ranking"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|row| row["rank"] == 0)
+        {
+            let state = key(&row["state"]);
+            let accepting = state[5][1][2] == json!(["accept"]);
+            assert!(accepting || state[5][1][2] == json!(["reject"]));
+            let value = doc["values"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|value| value["state"] == row["state"])
+                .unwrap();
+            assert_eq!(
+                value["value"],
+                json!({"numerator":if accepting {"1"} else {"0"},"denominator":"1"})
+            );
+            assert_eq!(
+                doc["objective"]["targets"]
+                    .as_array()
+                    .unwrap()
+                    .contains(&row["state"]),
+                accepting
+            );
+        }
+        let changed = mutate(&request, |doc| {
+            let initial = doc["ranking"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|row| row["rank"] == 2)
+                .unwrap()["state"]
+                .clone();
+            doc["values"]
+                .as_array_mut()
+                .unwrap()
+                .iter_mut()
+                .find(|row| row["state"] == initial)
+                .unwrap()["value"] = json!({"numerator":"9","denominator":"10"});
+        });
+        let (code, result) = run(&changed);
+        assert_eq!(code, 1, "{result}");
+        assert_eq!(result["rule"], "inequality-fails");
+    }
+}
+
+#[trace(
+    "TC-636",
+    "FR-201-AC-56",
+    "FSpec-FR-412-AC-21",
+    "FSpec-FR-412-AC-22",
+    "FSpec-FR-412-AC-23"
+)]
+#[test]
+fn bounded_always_extrema_workload_and_strict_policy_absence_are_independent() {
+    for (scheduler, operator, threshold, numerator, denominator, optimization) in [
+        ("every scheduler", ">=", "0.25", "1", "4", "minimum"),
+        ("every scheduler", "<=", "0.5625", "9", "16", "maximum"),
+        ("Even", ">=", "0.390625", "25", "64", "workload"),
+        ("Even", "<=", "0.390625", "25", "64", "workload"),
+    ] {
+        let source = always_source(scheduler, operator, threshold, 2)
+            .replacen("true: 9, false: 1", "true: 1, false: 1", 1)
+            .replacen("true: 9, false: 1", "true: 3, false: 1", 1);
+        let request = proof(&source, SNAPSHOT);
+        let (code, result) = run(&request);
+        assert_eq!(code, 0, "{result}");
+        assert_eq!(
+            result["value"],
+            json!({"numerator":numerator,"denominator":denominator})
+        );
+        assert_eq!(
+            document(&request)["objective"]["optimization"],
+            optimization
+        );
+        let dual_operator = if operator == ">=" { "<=" } else { ">=" };
+        let dual_threshold = if dual_operator == "<=" { "1" } else { "0" };
+        let dual = source
+            .replace("always[", "eventually[")
+            .replace("holds(not m.delivered)", "holds(m.delivered)")
+            .replace(
+                &format!("probability {operator} {threshold}"),
+                &format!("probability {dual_operator} {dual_threshold}"),
+            );
+        let (dual_code, dual_result) = run(&proof(&dual, SNAPSHOT));
+        assert_eq!(dual_code, 0, "{dual_result}");
+        let complement = match optimization {
+            "minimum" => json!({"numerator":"3","denominator":"4"}),
+            "maximum" => json!({"numerator":"7","denominator":"16"}),
+            "workload" => json!({"numerator":"39","denominator":"64"}),
+            _ => unreachable!("closed test cases"),
+        };
+        assert_eq!(
+            dual_result["value"], complement,
+            "Always exchanges extrema under complementation"
+        );
+        for policy in [
+            json!([]),
+            json!([{"choice":"send_a"}]),
+            json!([{"choice":"send_b"}]),
+        ] {
+            let changed = mutate(&request, |doc| doc["policy"] = policy);
+            let (code, result) = run(&changed);
+            assert_eq!(code, 1, "{result}");
+            assert_eq!(result["rule"], "malformed");
+            assert_eq!(result["at"], json!({"member":"policy"}));
+        }
+        let missing = mutate(&request, |doc| {
+            doc["ranking"]
+                .as_array_mut()
+                .unwrap()
+                .retain(|row| row["rank"] != 2);
+        });
+        let (code, result) = run(&missing);
+        assert_eq!(code, 1, "{result}");
+        assert_eq!(result["rule"], "malformed");
+        assert_eq!(result["at"], json!({"member":"ranking"}));
+        if scheduler == "every scheduler" {
+            let mut crossing = request.clone();
+            let opposite = if operator == ">=" { "<=" } else { ">=" };
+            let source = source.replace(
+                &format!("probability {operator}"),
+                &format!("probability {opposite}"),
+            );
+            crossing["source"]["content"] = json!(source);
+            crossing["byte_provision"][0][2] = json!(source.as_bytes());
+            let (code, result) = run(&crossing);
+            assert_ne!(
+                code, 0,
+                "crossing objective cannot establish this claim: {result}"
+            );
+        }
+    }
+}
+
+#[trace("TC-636", "FR-201-AC-56", "FR-201-AC-14")]
+#[test]
+fn bounded_always_endpoints_terminal_keys_ranks_and_controls_are_checked() {
+    for (horizon, delivered, terminal, operator) in [
+        (0, false, false, ">="),
+        (0, true, false, "<="),
+        (2, false, true, "<="),
+    ] {
+        let mut source = always_source("every scheduler", operator, "0.5", horizon);
+        if terminal {
+            source = source
+                .replace("{ not self.delivered }", "{ false }")
+                .replace("when { self.delivered }", "when { true }");
+        }
+        let mut snapshot: Value = serde_json::from_slice(SNAPSHOT).unwrap();
+        snapshot["populations"][0]["objects"][0]["fields"]["delivered"]["boolean"] =
+            json!(delivered);
+        let request = proof(&source, &serde_json::to_vec(&snapshot).unwrap());
+        let (code, result) = run(&request);
+        assert_eq!(code, 0, "{result}");
+        let numerator = if delivered || terminal { "0" } else { "1" };
+        assert_eq!(
+            result["value"],
+            json!({"numerator":numerator,"denominator":"1"})
+        );
+        let mut ranks: Vec<_> = document(&request)["ranking"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|row| row["rank"].as_u64().unwrap())
+            .collect();
+        ranks.sort();
+        assert_eq!(ranks, if terminal { vec![0, 2] } else { vec![0] });
+    }
+    let original = proof(&always_source("Even", ">=", "0.75", 2), SNAPSHOT);
+    for alteration in [
+        "rank", "horizon", "binding", "local-id", "absent", "targets",
+    ] {
+        let changed = mutate(&original, |doc| {
+            if alteration == "rank" {
+                doc["ranking"]
+                    .as_array_mut()
+                    .unwrap()
+                    .iter_mut()
+                    .find(|row| row["rank"] == 2)
+                    .unwrap()["rank"] = json!(3);
+            } else if alteration == "targets" {
+                doc["objective"]["targets"] = json!([]);
+            } else {
+                alter_keys(doc, |state| {
+                    if state[5][1][2][0] == "bounded" {
+                        match alteration {
+                            "horizon" => state[5][1][2][1][1] = json!("9"),
+                            "binding" => state[5][1][1][3] = json!([]),
+                            "local-id" => state[5][1] = json!(1),
+                            "absent" => state[5] = Value::Null,
+                            _ => unreachable!("closed test cases"),
+                        }
+                    }
+                });
+            }
+        });
+        let (code, result) = run(&changed);
+        assert_ne!(code, 0, "{alteration}: {result}");
+        if alteration == "rank" {
+            assert_eq!(result["rule"], "rank-broken");
+        }
+    }
+    for budget in [
+        "bytes",
+        "storage_bytes",
+        "states",
+        "edges",
+        "scalar_bits",
+        "expansion",
+    ] {
+        let mut request = original.clone();
+        request["limits"][budget] = json!(0);
+        let (code, result) = run(&request);
+        assert_ne!(code, 0, "{budget}: {result}");
+        assert!(result.get("value").is_none(), "{budget}: {result}");
+    }
+    let (code, result) = run_with(&original, &["--cancel"]);
+    assert_ne!(code, 0, "{result}");
+    assert!(result.get("value").is_none());
+    let fair = always_source("every scheduler fair strong Msg::send_a", ">=", "0", 2);
+    let (certificate, settlement) = request(&fair, SNAPSHOT, ExactProbLimits::default());
+    assert!(certificate.is_none());
+    assert!(
+        !matches!(settlement, Settlement::Terminal(record) if matches!(record.value(), fsl_replay::TerminalValue::Proved { .. }))
+    );
+}
+
 #[trace("TC-636", "FR-201-AC-13", "FR-282-AC-13")]
 #[test]
 fn bounded_raw_cycle_has_distinct_real_horizons_and_exact_ranks() {
