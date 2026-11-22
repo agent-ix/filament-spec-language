@@ -875,7 +875,16 @@ fn unbounded_quantified_clock_guards_emit_family_parts() {
         else {
             panic!("one family part");
         };
-        assert_eq!(names(part), ["predicate", "binders", "quantifier"]);
+        let part_names = names(part);
+        assert_eq!(
+            &part_names[..3],
+            ["predicate", "binders", "quantifier"],
+            "the family members lead with predicate, binders, and quantifier"
+        );
+        assert!(
+            part_names.len() > 3 && part_names[3..].iter().all(|name| *name == "-"),
+            "one or more direct constraint references follow the family bindings: {part_names:?}"
+        );
         assert_eq!(literal(part, "quantifier"), wire_quantifier);
         let [binder_reference] = member(part, "binders")["members"]
             .as_array()

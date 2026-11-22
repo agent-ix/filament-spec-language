@@ -1590,18 +1590,16 @@ impl TimedModel {
                 {
                     return Some((Unwritten(Member::QuantifiedClause), guard.span));
                 }
-                let family_has_clock = part
-                    .families
-                    .iter()
-                    .any(|family| {
-                        family
-                            .parts
-                            .iter()
-                            .any(|family_part| !family_part.clocks.is_empty())
-                    });
+                let family_has_clock = part.families.iter().any(|family| {
+                    family
+                        .parts
+                        .iter()
+                        .any(|family_part| !family_part.clocks.is_empty())
+                });
+                let family_without_clock = !part.families.is_empty() && !family_has_clock;
                 if part.clocks.is_empty()
                     && !family_has_clock
-                    && !guard.covered()
+                    && (!guard.covered() || family_without_clock)
                     && !part.empty_collection_branch
                 {
                     // Located at the disjunct: its data predicate's site.
