@@ -25,6 +25,7 @@ base64 = "0.22"
 fsl-analyze = { path = "../../fsl-analyze" }
 fsl-command = { path = "../../fsl-command" }
 fsl-route = { path = "../../fsl-route" }
+fsl-replay = { path = "../../fsl-replay", features = ["test-support"] }
 
 [lints.rust]
 unsafe_code = "forbid"

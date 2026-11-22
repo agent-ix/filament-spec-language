@@ -18,9 +18,10 @@ impl ProbabilityProofDocument {
         &self.document
     }
 
-    /// Mutate the unchecked identity, values, ranks and objective data.
+    /// Mutate unchecked identity, values, ranks and objective data for tests.
     /// The retained profile and fairness discriminator are unchanged. Writing
     /// still validates the wire shape; semantic acceptance requires checking.
+    #[cfg(feature = "test-support")]
     pub fn document_mut(&mut self) -> &mut ProbabilityCertificateDocument {
         &mut self.document
     }
