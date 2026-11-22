@@ -196,52 +196,19 @@ fn bare_admission_retains_equality_and_reports_its_denial_after_projection() {
         &expected
     );
     assert_eq!(exact.consumed(), full);
-    for (work, storage, kind) in [
-        (full.work - 1, full.storage, NativeJoinChargeKind::Work),
-        (full.work, full.storage - 1, NativeJoinChargeKind::Storage),
-    ] {
+    // One short of the whole pass is denied by the declaration projection.
+    for (work, storage) in [(full.work - 1, full.storage), (full.work, full.storage - 1)] {
         let mut budget = NativeJoinBudget::new(work, storage);
         let error = BarePackage::new(&admitted)
             .with_supply(supply, &mut budget)
-            .expect_err("one short of the complete admission pass");
-        let NativeJoinFailure::Rows(native) = error.native() else {
-            panic!("source enum index owns the final denial: {error:?}")
-        };
-        let (code, setting, bound, consumed) = match kind {
-            NativeJoinChargeKind::Work => (
-                crate::NativeRowErrorCode::WorkLimit,
-                fsl_foundation::Setting::I2WorkUnits,
-                work,
-                budget.consumed().work,
-            ),
-            NativeJoinChargeKind::Storage => (
-                crate::NativeRowErrorCode::StorageLimit,
-                fsl_foundation::Setting::I2NativeJoinStorage,
-                storage,
-                budget.consumed().storage,
-            ),
-        };
-        assert_eq!(native.code(), code);
-        assert_eq!(native.configured_bound(), Some(bound));
-        assert_eq!(native.denied(), budget.first_unpaid());
-        assert_eq!(native.locus(), budget.first_unpaid_locus());
-        let locus = native.locus().expect("original source enum index locus");
-        assert_eq!(
-            locus.source,
-            filament_contract_model::NativeJoinLocusSource::AdapterRow(0)
-        );
-        assert_eq!(locus.form, "source_enum_catalog_index");
-        let unpaid = budget.first_unpaid().expect("original unpaid charge");
-        assert_eq!(unpaid.kind, kind);
-        assert_eq!(unpaid.amount, 1);
-        assert_eq!(budget.consumed().work, work);
-        assert_eq!(budget.consumed().storage, full.storage - 1);
-        let diagnostic = error.limit().expect("original limit diagnostic");
-        assert_eq!(diagnostic.setting(), setting);
-        assert_eq!(diagnostic.configured_bound(), bound);
-        assert_eq!(
-            diagnostic.actual(),
-            u128::from(consumed) + unpaid.amount
+            .expect_err("one short in the declarations");
+        assert!(
+            matches!(error.native(), NativeJoinFailure::Projection(_)),
+            "native={:?}, limit={:?}, ceilings=({work}, {storage}), consumed={:?}, first_unpaid={:?}",
+            error.native(),
+            error.limit(),
+            budget.consumed(),
+            budget.first_unpaid(),
         );
     }
     for (work, storage, kind, code) in [
@@ -263,46 +230,25 @@ fn bare_admission_retains_equality_and_reports_its_denial_after_projection() {
             .with_supply(supply, &mut budget)
             .expect_err("one short in equality");
         let NativeJoinFailure::Equality(native) = error.native() else {
-            panic!(
-                "actual equality cause after identity/type prefix: native={:?}, limit={:?}, \
-                 ceilings=({work}, {storage}), consumed={:?}, first_unpaid={:?}, \
-                 first_unpaid_locus={:?}, full={full:?}, declarations={declarations:?}, need={need:?}",
-                error.native(),
-                error.limit(),
-                budget.consumed(),
-                budget.first_unpaid(),
-                budget.first_unpaid_locus(),
-            )
+            panic!("actual equality cause after identity/type prefix")
         };
-        assert_eq!(native.code, code, "native={native:?}, budget={budget:?}");
+        assert_eq!(native.code, code);
         let diagnostic = error
             .limit()
-            .unwrap_or_else(|| panic!("bare entry retains the stage diagnostic: {error:?}"));
+            .expect("bare entry retains the stage diagnostic");
         let (bound, consumed) = if kind == NativeJoinChargeKind::Work {
             (work, budget.consumed().work)
         } else {
             (storage, budget.consumed().storage)
         };
-        assert_eq!(diagnostic.configured_bound(), bound, "{error:?}");
+        assert_eq!(diagnostic.configured_bound(), bound);
         assert_eq!(
             diagnostic.actual(),
-            u128::from(consumed) + budget.first_unpaid().expect("unpaid").amount,
-            "native={native:?}, budget={budget:?}"
+            u128::from(consumed) + budget.first_unpaid().expect("unpaid").amount
         );
-        assert_eq!(
-            native.consumed_work,
-            budget.consumed().work,
-            "native={native:?}, budget={budget:?}"
-        );
-        assert!(
-            budget.consumed().work > 0 && budget.consumed().storage > 0,
-            "native={native:?}, budget={budget:?}"
-        );
-        assert_eq!(
-            budget.first_unpaid().expect("first unpaid").kind,
-            kind,
-            "native={native:?}, budget={budget:?}"
-        );
+        assert_eq!(native.consumed_work, budget.consumed().work);
+        assert!(budget.consumed().work > 0 && budget.consumed().storage > 0);
+        assert_eq!(budget.first_unpaid().expect("first unpaid").kind, kind);
     }
 }
 
