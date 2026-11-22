@@ -1475,6 +1475,10 @@ fn counter_routes(name: &str, body: &str, items: Option<Value>) -> (Run, Run) {
     let path = ws.write("analyze-source.json", document.to_string().as_bytes());
     let source = analyze(&path);
     let (members, _) = package_selection(&ws, &document["request"]);
+    // The package route reads the handoff's bytes alone.
+    std::fs::remove_file(ws.path("program.fsl")).expect("remove authored source");
+    std::fs::remove_dir_all(ws.path(&handoff_file("sources")))
+        .expect("remove the handoff source directory");
     let package = analyze_members(&ws, "analyze-package.json", &members);
     (source, package)
 }
@@ -1510,12 +1514,14 @@ fn a_package_false_literal_state_graph_claim_equals_the_source() {
 /// FR-620 "Subject, compilation and default items", FR-850: a request that
 /// omits `items` over a package with a `false`-target claim among the other
 /// claim forms writes the source route's default items, in its order, and
-/// settles each as the source does.
+/// settles each as the source does. A Boolean function is no default item on
+/// either route: its value-validity records are over the applications in its
+/// body, which are not declarations.
 #[trace("TC-1580", "FR-620-AC-1", "FR-850-AC-2")]
 #[test]
 fn omitted_items_settle_over_a_package_as_over_the_source() {
     let body = format!(
-        "{}{}{}{}",
+        "{}{}{}{}function Small using v(n: Int[0, 9]): Boolean pure {{ n <= 9 }}\n",
         bounded(),
         state_graph_claims(),
         never_holds(),
@@ -1523,6 +1529,13 @@ fn omitted_items_settle_over_a_package_as_over_the_source() {
     );
     let (source, package) = counter_routes("package-omitted-items", &body, None);
     assert!(!item_heads(&source).is_empty(), "{}", source.document());
+    assert!(
+        item_heads(&source)
+            .iter()
+            .all(|(name, _)| name != &json!("Small")),
+        "{}",
+        source.document()
+    );
     assert_eq!(item_heads(&package), item_heads(&source));
     assert_same_outcome(&package, &source);
 }
