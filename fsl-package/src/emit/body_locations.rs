@@ -218,9 +218,16 @@ pub(super) fn checked_body_locations(
         let mut walk = nodes
             .get(id)
             .and_then(|node| body(node))
-            .map(|body| references(body, &nodes, graph.package_name()))
-            .unwrap_or_default();
-        walk.reverse();
+            .and_then(|body| match body {
+                CheckedTerm::Reference { target }
+                    if target.package.as_ref() == graph.package_name() =>
+                {
+                    nodes.get(target).copied()
+                }
+                _ => None,
+            })
+            .into_iter()
+            .collect::<Vec<_>>();
         while let Some(node) = walk.pop() {
             if is_term(node) {
                 let rank = visits.entry(&node.node_id).or_default();

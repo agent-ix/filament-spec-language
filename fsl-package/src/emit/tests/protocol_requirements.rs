@@ -892,7 +892,7 @@ fn refusals_of(profiles: &str, clauses: &str) -> Vec<fsl_semantics::check::Check
 }
 
 /// FR-383-AC-17: a protocol that requires a temporal clause whose own
-/// lowering refused adds no refusal of its own: the clause's refusal is the
+/// check refused adds no refusal of its own: the clause's refusal is the
 /// only report of it, and the protocol is neither an internal fault nor a
 /// `missing-name` at the requirement.
 #[trace("FR-383-AC-17", "TC-1063")]
@@ -918,7 +918,10 @@ fn a_protocol_requiring_a_refused_temporal_adds_no_second_refusal() {
         refusals
             .iter()
             .any(|refusal| name(refusal) == "temporal 0 holds 1"
-                && matches!(refusal.cause, CheckCause::UnsupportedFeature { .. })),
+                && matches!(
+                    refusal.cause,
+                    CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
+                )),
         "the temporal clause's own refusal is reported: {refusals:?}"
     );
     assert!(

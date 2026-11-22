@@ -543,8 +543,9 @@ fn braking2_restored_nodes_match_fspec_vectors() {
         .expect("FSpec restored nodes");
     let (emission, wire) = compile(BRAKING2);
     admitted(&emission);
-    // FR-322: FSpec's vectors and the emitted package are two documents, so
-    // their nodes compare by structural key, never by graph index.
+    // FR-322 derived paths are identity labels, not a prescribed derivation
+    // from node content. Compare the complete graphs with a bijection of
+    // their local references, preserving declarations and node sharing.
     use fsl_semantics::check::wire_id::WireGraph;
     let base = fixture["nodes"].as_array().expect("FSpec base nodes");
     let vector_nodes: Vec<Value> = base.iter().chain(expected).cloned().collect();
@@ -580,39 +581,121 @@ fn braking2_restored_nodes_match_fspec_vectors() {
         .map(|node| key_text(&vectors, &node["node_id"]))
         .collect();
     let model = declared(&wire, "hybrid_model", &["Braking2"]);
-    let mut pending: Vec<Value> = std::iter::once(model)
+    let mut pending: Vec<(Value, Value)> = std::iter::once(model)
         .chain(of_form(&wire, "temporal_clause"))
-        .map(|node| node["node_id"].clone())
+        .map(|node| {
+            let id = node["node_id"].clone();
+            let key = key_text(&emitted, &id);
+            let vector = vector_nodes
+                .iter()
+                .find(|node| key_text(&vectors, &node["node_id"]) == key)
+                .expect("the vector has the same declared root");
+            (id, vector["node_id"].clone())
+        })
         .collect();
-    let mut reached = BTreeSet::new();
-    let mut by_key = BTreeMap::new();
-    while let Some(id) = pending.pop() {
-        let key = key_text(&emitted, &id);
-        if !reached.insert(key.clone()) {
+
+    fn compare_values(actual: &Value, expected: &Value, pending: &mut Vec<(Value, Value)>) {
+        match (actual, expected) {
+            (Value::Object(actual), Value::Object(expected)) => {
+                assert_eq!(
+                    actual.keys().collect::<Vec<_>>(),
+                    expected.keys().collect::<Vec<_>>()
+                );
+                if actual.len() == 3
+                    && actual.contains_key("package")
+                    && actual.contains_key("path")
+                    && actual.contains_key("ordinal")
+                {
+                    pending.push((
+                        Value::Object(actual.clone()),
+                        Value::Object(expected.clone()),
+                    ));
+                } else {
+                    for (key, actual) in actual {
+                        compare_values(actual, &expected[key], pending);
+                    }
+                }
+            }
+            (Value::Array(actual), Value::Array(expected)) => {
+                assert_eq!(actual.len(), expected.len());
+                for (actual, expected) in actual.iter().zip(expected) {
+                    compare_values(actual, expected, pending);
+                }
+            }
+            _ => assert_eq!(actual, expected),
+        }
+    }
+
+    let mut paired = BTreeMap::new();
+    let mut reverse = BTreeMap::new();
+    while let Some((actual_id, expected_id)) = pending.pop() {
+        let key = key_text(&emitted, &actual_id);
+        let vector_key = key_text(&vectors, &expected_id);
+        if let Some(previous) = paired.insert(key.clone(), vector_key.clone()) {
+            assert_eq!(
+                previous, vector_key,
+                "shared emitted node has one vector counterpart"
+            );
             continue;
         }
-        let node = node_with(&wire, idtext(&id));
-        by_key.insert(key, node);
-        pending.extend(
-            node["dependencies"]
-                .as_array()
-                .expect("node dependencies")
-                .iter()
-                .cloned(),
+        assert!(
+            reverse.insert(vector_key.clone(), key.clone()).is_none(),
+            "distinct emitted nodes cannot replace one shared vector node"
         );
-        pending.push(node["semantic_type"].clone());
+        let actual = node_with(&wire, idtext(&actual_id));
+        let expected = vector_nodes
+            .iter()
+            .find(|node| key_text(&vectors, &node["node_id"]) == vector_key)
+            .unwrap();
+        // Declared identities remain exact; derived identities may differ.
+        assert_eq!(
+            actual_id["package"], expected_id["package"],
+            "reference package"
+        );
+        if actual["declaration"].is_object()
+            || expected["declaration"].is_object()
+            || actual_id["package"] != model["node_id"]["package"]
+        {
+            assert_eq!(key, vector_key, "declared node identity");
+        }
+        let mut actual = actual.clone();
+        let mut expected = expected.clone();
+        for node in [&mut actual, &mut expected] {
+            let node = node.as_object_mut().unwrap();
+            node.remove("node_id");
+            node.remove("occurrences");
+            node.remove("dependencies");
+        }
+        compare_values(&actual, &expected, &mut pending);
     }
-    let actual_ids: BTreeSet<String> = reached.difference(&base_ids).cloned().collect();
+    let actual_ids: BTreeSet<String> = reverse
+        .keys()
+        .filter(|key| !base_ids.contains(*key))
+        .cloned()
+        .collect();
     assert_eq!(actual_ids, expected_ids, "complete restored node set");
-    for node in expected {
-        let id = key_text(&vectors, &node["node_id"]);
-        let mut actual = emitted.structural_value(by_key[&id]).unwrap();
-        let mut expected = vectors.structural_value(node).unwrap();
-        // A package's source map may attach more occurrences to a shared
-        // semantic node; it does not change the node's semantic content.
-        actual.as_object_mut().unwrap().remove("occurrences");
-        expected.as_object_mut().unwrap().remove("occurrences");
-        assert_eq!(actual, expected, "FSpec restored node {id}");
+    for (actual_key, expected_key) in &paired {
+        let actual = nodes(&wire)
+            .iter()
+            .find(|node| key_text(&emitted, &node["node_id"]) == *actual_key)
+            .unwrap();
+        let expected = vector_nodes
+            .iter()
+            .find(|node| key_text(&vectors, &node["node_id"]) == *expected_key)
+            .unwrap();
+        let actual: BTreeSet<_> = actual["dependencies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|id| paired[&key_text(&emitted, id)].clone())
+            .collect();
+        let expected: BTreeSet<_> = expected["dependencies"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|id| key_text(&vectors, id))
+            .collect();
+        assert_eq!(actual, expected, "complete dependencies of {expected_key}");
     }
 }
 

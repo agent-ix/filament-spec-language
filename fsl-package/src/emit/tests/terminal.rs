@@ -191,12 +191,19 @@ fn a_terminal_declaration_emits_its_node_and_the_i2_read_returns_it() {
         node_with(&when.wire, target(literal))["semantic_form"],
         "conversion"
     );
-    // `self` is typed `Reference<T>` for the model's one object type, which is
-    // the node the terminal's `model` binding names.
+    // `self` names the selected object type, while the terminal's model
+    // binding names the selection's model root.
     let self_type = node_with(&when.wire, &parameter["semantic_type"]);
     assert_eq!(self_type["node_tag"], "composite_type");
     assert_eq!(self_type["semantic_form"], "reference");
-    assert_eq!(target(&self_type["body"]["members"][0]), &model["node_id"]);
+    let object_type = node_with(&when.wire, target(&self_type["body"]["members"][0]));
+    assert_eq!(object_type["semantic_form"], "object_type");
+    assert_eq!(model["semantic_form"], "model_root");
+    assert_eq!(object_type["owner"]["identity"], model["owner"]["identity"]);
+    assert_eq!(
+        object_type["owner"]["node"],
+        "ix://example/config-version/ConfigVersion"
+    );
     let claims: Vec<&Value> = when.wire["source_map"]
         .as_array()
         .unwrap()

@@ -6,7 +6,9 @@
 //! nodes, each located at its source and listed in declared order, and the
 //! members S4 does not write yet refuse `not-yet-implemented` at the member.
 
-use super::clock_places::{clocked_document_with, clocked_unit, member, vector_document};
+use super::clock_places::{
+    assert_element_presence, clocked_document_with, clocked_unit, member, vector_document,
+};
 use super::*;
 use filament_semantic_value::checking::CheckMode;
 
@@ -720,22 +722,6 @@ fn a_presence_reads_the_place_template_at_its_owner() {
     assert_declared_order(&wire);
 }
 
-/// The member a refused model names, and the text of its span in `unit`.
-fn unwritten(document: &[u8], body: &str) -> (fsl_semantics::check::UnwrittenTimedMember, String) {
-    let (unit, checked) = checked(document, body);
-    let refusals = checked.expect_err("the member is not written yet");
-    let found = refusals.iter().find_map(|refusal| match &refusal.cause {
-        fsl_semantics::check::CheckCause::Temporal(cause) => match &**cause {
-            fsl_semantics::check::TemporalCause::TimedModelNotEmitted { member, span, .. } => {
-                Some((*member, unit[span.start..span.end].to_owned()))
-            }
-            _ => None,
-        },
-        _ => None,
-    });
-    found.unwrap_or_else(|| panic!("{body}: {refusals:?}"))
-}
-
 /// FR-230-AC-55, FSpec FR-322-AC-295 and FR-415-AC-24: bounded `forall`
 /// guards encode each live length as a conjunction with one slot binder per
 /// constraint, while `exists` encodes selected slots as disjunctions and has
@@ -923,93 +909,87 @@ fn quantified_time_invariant_emits_binder_and_live_slot_bound() {
     assert_declared_order(&wire);
 }
 
-/// FR-230-AC-56: existential quantified invariant bounds and quantified
-/// element-presence invariants refuse as a whole at the owning invariant.
+/// FR-230-AC-56/66: existential clock bounds still refuse at the invariant;
+/// a quantified presence predicate emits with its slot read.
 #[trace("TC-685", "FR-230-AC-56", "FR-230-AC-50")]
 #[test]
 fn unsupported_quantified_invariant_forms_refuse_without_partial_output() {
     use fsl_foundation::diagnostic::Code;
     use fsl_semantics::check::{CheckCause, TemporalCause};
 
-    for (document, source, expected) in [
-        (
-            timer_document(),
-            "time invariant Some when { true } { exists(e in self.ts: e.x <= 9 ms) }",
-            "time invariant Some",
-        ),
-        (
-            slot_presence_document(),
-            "time invariant HasElement when { forall(e in self.q: present(e)) } { self.x <= 9 ms }",
-            "time invariant HasElement",
-        ),
-    ] {
-        let (unit, result) = checked(&document, &format!("{source}\n"));
-        let refusals = result.expect_err("the unsupported invariant is refused");
-        let Some(refusal) = refusals.iter().find(|refusal| {
-            matches!(
-                &refusal.cause,
-                CheckCause::Temporal(cause)
-                    if matches!(&**cause, TemporalCause::TimeInvariantShape { .. }
-                        | TemporalCause::TimedModelNotEmitted { .. })
-            )
-        }) else {
-            panic!("the invariant refusal is reported: {refusals:?}");
-        };
-        let expected_code = if source.contains("exists(") {
-            Code::InvalidTimedModel
-        } else {
-            Code::UnsupportedConstruct
-        };
-        assert_eq!(refusal.cause.code(), expected_code, "{source}");
-        let span = match &refusal.cause {
-            CheckCause::Temporal(cause) => match &**cause {
-                TemporalCause::TimeInvariantShape { span }
-                | TemporalCause::TimedModelNotEmitted { span, .. } => *span,
-                other => panic!("invariant refusal: {other:?}"),
-            },
-            other => panic!("temporal refusal: {other:?}"),
-        };
-        assert!(
-            unit[span.start..span.end].starts_with(expected),
-            "{source}: refusal span {:?} is {:?}, expected prefix {expected:?}",
-            span,
-            &unit[span.start..span.end]
-        );
-    }
+    let source = "time invariant Some when { true } { exists(e in self.ts: e.x <= 9 ms) }";
+    let (unit, result) = checked(&timer_document(), &format!("{source}\n"));
+    let refusals = result.expect_err("the existential clock bound is refused");
+    let refusal = refusals
+        .iter()
+        .find(|refusal| {
+            matches!(&refusal.cause, CheckCause::Temporal(cause)
+            if matches!(&**cause, TemporalCause::TimeInvariantShape { .. }))
+        })
+        .unwrap_or_else(|| panic!("the invariant refusal is reported: {refusals:?}"));
+    assert_eq!(refusal.cause.code(), Code::InvalidTimedModel);
+    let CheckCause::Temporal(cause) = &refusal.cause else {
+        unreachable!()
+    };
+    let TemporalCause::TimeInvariantShape { span } = &**cause else {
+        unreachable!()
+    };
+    assert!(unit[span.start..span.end].starts_with("time invariant Some"));
+
+    let source =
+        "time invariant HasElement when { forall(e in self.q: present(e)) } { self.x <= 9 ms }\n";
+    let document = slot_presence_document();
+    let (_, wire) = emitted(&document, source);
+    let invariants = timed(&wire, "time_invariant");
+    let [invariant] = invariants.as_slice() else {
+        panic!("one invariant: {invariants:?}");
+    };
+    let predicate = target(&wire, member(&invariant["body"], "predicate"));
+    assert_element_presence(&wire, predicate);
+    // Strict reader qualification for this quantified predicate remains separate.
+    assert_declared_order(&wire);
 }
 
-/// FR-230-AC-55, FR-230-AC-56, FR-230-AC-53: element-presence reads remain
-/// unavailable in timed guards, invariants and urgency predicates until their
-/// quantified wire form is admitted. Each model refuses as a whole instead of
-/// emitting a guard with the presence requirement missing.
+/// FR-230-AC-53/55/56/66: guards, invariants and urgency predicates retain
+/// the quantified element-presence requirement in complete emitted models.
 #[trace("TC-685", "FR-230-AC-53", "FR-230-AC-55", "FR-230-AC-56")]
 #[test]
 fn element_presence_in_timed_predicates_refuses_without_emitting_partial_nodes() {
-    use fsl_semantics::check::UnwrittenTimedMember as Member;
-
     let quantifier = "forall(e in self.q: present(e))";
     let guard = format!(
         "pre HasElement using v on Config::ConfigVersion::attemptUpdate {{ \
          self.x >= 1 ms and {quantifier} }}"
     );
-    let (member, text) = unwritten(&slot_presence_document(), &format!("{guard}\n"));
-    assert_eq!(
-        (member, text.as_str()),
-        (Member::ElementPresence, guard.as_str()),
-        "FR-230-AC-55: a quantified guard that reads element presence is refused at \
-         the owning guard as ElementPresence"
-    );
-
     let invariant =
         format!("time invariant HasElement when {{ {quantifier} }} {{ self.x <= 9 ms }}");
-    let (member, text) = unwritten(&slot_presence_document(), &format!("{invariant}\n"));
-    assert_eq!(member, Member::ElementPresence);
-    assert!(text.starts_with("time invariant HasElement"), "{text}");
-
     let urgency = format!("urgent HasElement when {{ {quantifier} }};");
-    let (member, text) = unwritten(&slot_presence_document(), &format!("{urgency}\n"));
-    assert_eq!(member, Member::ElementPresence);
-    assert!(text.starts_with("urgent HasElement"), "{text}");
+    for (source, form) in [
+        (guard, "clock_guard"),
+        (invariant, "time_invariant"),
+        (urgency, "urgency"),
+    ] {
+        let document = slot_presence_document();
+        let source = format!("{source}\n");
+        let (_, wire) = emitted(&document, &source);
+        let clauses = timed(&wire, form);
+        let [clause] = clauses.as_slice() else {
+            panic!("one {form}: {clauses:?}");
+        };
+        let predicate = if form == "clock_guard" {
+            let parts = member(&clause["body"], "parts")["members"]
+                .as_array()
+                .expect("guard parts");
+            let [part] = parts.as_slice() else {
+                panic!("one conjunctive part: {parts:?}");
+            };
+            member(part, "predicate")
+        } else {
+            member(&clause["body"], "predicate")
+        };
+        assert_element_presence(&wire, target(&wire, predicate));
+        // Strict reader qualification for these quantified predicates remains separate.
+        assert_declared_order(&wire);
+    }
 }
 
 /// FR-230-AC-57 / TC-685 step 38: a mixed quantified and ordinary bound

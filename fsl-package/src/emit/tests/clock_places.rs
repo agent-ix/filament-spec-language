@@ -1036,6 +1036,71 @@ fn reached<'w>(wire: &'w Value, from: &'w Value) -> Vec<&'w Value> {
     seen
 }
 
+/// The predicate quantifies the live slots of `q` and reads each bound
+/// element's presence from that same place and owner.
+pub(super) fn assert_element_presence(wire: &Value, predicate: &Value) {
+    let quantifiers: Vec<_> = reached(wire, predicate)
+        .into_iter()
+        .filter(|node| node["body"]["operation"]["identity"] == "filament.op.collection.forall")
+        .collect();
+    let [quantifier] = quantifiers.as_slice() else {
+        panic!("one universal presence predicate: {quantifiers:?}");
+    };
+    let resolve = |reference: &Value| {
+        nodes(wire)
+            .iter()
+            .find(|node| node["node_id"] == reference["target"])
+            .unwrap_or_else(|| panic!("a predicate node: {reference}"))
+    };
+    let [domain, binding] = quantifier["body"]["arguments"]
+        .as_array()
+        .expect("quantifier arguments")
+        .as_slice()
+    else {
+        panic!("a domain and binding: {quantifier}");
+    };
+    assert_eq!(binding["term"], "binding");
+    let domain = resolve(domain);
+    assert_eq!(
+        domain["body"]["operation"]["identity"],
+        "filament.op.option.slots"
+    );
+    let presence = resolve(&binding["value"]);
+    assert_eq!(presence["semantic_form"], "presence_read");
+    assert_eq!(
+        presence["body"]["operation"]["identity"],
+        "filament.op.option.present"
+    );
+    let [domain_place, domain_owner] = domain["body"]["arguments"]
+        .as_array()
+        .expect("slot domain arguments")
+        .as_slice()
+    else {
+        panic!("the domain's place and owner: {domain}");
+    };
+    let [place, owner, slot] = presence["body"]["arguments"]
+        .as_array()
+        .expect("presence arguments")
+        .as_slice()
+    else {
+        panic!("the presence's place, owner and bound slot: {presence}");
+    };
+    assert_eq!(place, domain_place);
+    assert_eq!(owner, domain_owner);
+    let slot = resolve(slot);
+    assert_eq!(slot["semantic_form"], "parameter");
+    assert_eq!(member(&slot["body"], "name")["value"], binding["name"]);
+    assert_eq!(member(&slot["body"], "level")["value"], "1");
+    let place = resolve(place);
+    assert_eq!(place["semantic_form"], "clock_place");
+    let path = member(&place["body"], "path")["members"]
+        .as_array()
+        .expect("a place path");
+    assert_eq!(path.len(), 2);
+    assert_eq!(member(&path[0], "name")["value"], "q");
+    assert_eq!(member(&path[1], "kind")["value"], "slot");
+}
+
 /// The emitted wire of [`clocked_unit`] over `document` with `body`.
 fn emitted(document: &[u8], body: &str) -> (String, Value) {
     let packages = fsl_semantics::model::intake::package_input([document]).unwrap();
@@ -1143,10 +1208,8 @@ fn a_self_free_urgency_predicate_writes_no_parameter() {
     );
 }
 
-/// FR-230-AC-50 and AC-53 (TC-685, STD-554): an `urgent when` reading
-/// the presences of a clock collection's elements (`forall(e in self.q :
-/// present(e))`) has no quantifier form over the collection's slots, so its
-/// model is refused `TimedModelNotEmitted`.
+/// FR-230-AC-53/66: an urgency reads the presence of each live clock slot,
+/// retaining its universal binder in the complete emitted timed model.
 #[trace("TC-685")]
 #[test]
 fn an_urgency_reading_element_presences_is_not_emitted() {
@@ -1164,24 +1227,18 @@ fn an_urgency_reading_element_presences_is_not_emitted() {
     q["origin"]["generated"]["inputIdentities"] = json!([identity]);
     fields.push(q);
     let document = crate::emit::tests::wire_bytes(&document).expect("JSON");
-    let packages = fsl_semantics::model::intake::package_input([document.as_slice()]).unwrap();
-    let unit = clocked_unit("urgent All when { forall(e in self.q : present(e)) };\n");
-    let refusals = assemble_with_models(unit.as_bytes(), &packages)
-        .expect("the unit assembles")
-        .check(
-            CheckMode::Linked,
-            CheckingLimits::default(),
-            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
-        )
-        .expect_err("an element presence urgency is not written yet");
-    assert!(
-        refusals.iter().any(|refusal| matches!(
-            &refusal.cause,
-            fsl_semantics::check::CheckCause::Temporal(cause)
-                if matches!(**cause, fsl_semantics::check::TemporalCause::TimedModelNotEmitted { .. })
-        )),
-        "{refusals:?}"
-    );
+    let source = "urgent All when { forall(e in self.q : present(e)) };\n";
+    let (_, wire) = emitted(&document, source);
+    let urgencies = listed_urgencies(&wire);
+    let [urgency] = urgencies.as_slice() else {
+        panic!("one listed urgency: {urgencies:?}");
+    };
+    let predicate = nodes(&wire)
+        .iter()
+        .find(|node| node["node_id"] == member(&urgency["body"], "predicate")["target"])
+        .expect("the urgency predicate");
+    assert_element_presence(&wire, predicate);
+    // Strict reader qualification for this quantified predicate remains separate.
 }
 
 /// `units`, each a source identity and its text, assembled as one package
