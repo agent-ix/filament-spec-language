@@ -424,10 +424,46 @@ fn bounded_deliver_exact_minimum_maximum_and_workload_cross_the_process_boundary
                 .unwrap();
         let actual: Value =
             serde_json::from_slice(monitor.decision_key(true).unwrap().as_bytes()).unwrap();
-        let mut doc = document(&stronger);
-        doc["identity"] = identity;
-        alter_keys(&mut doc, |state| state[5][1][1] = actual[1].clone());
-        stronger["certificate"] = json!(serde_json::to_string(&doc).unwrap());
+        let limits = fsl_replay::ProbabilityDocumentLimits {
+            bytes: stronger["limits"]["bytes"].as_u64().unwrap(),
+            storage_bytes: stronger["limits"]["storage_bytes"].as_u64().unwrap(),
+            states: usize::try_from(stronger["limits"]["states"].as_u64().unwrap()).unwrap(),
+            edges: usize::try_from(stronger["limits"]["edges"].as_u64().unwrap()).unwrap(),
+            scalar_bits: stronger["limits"]["scalar_bits"].as_u64().unwrap(),
+            accounting: fsl_replay::AccountingLimits::default().0,
+        };
+        let cancel = Cancel::new();
+        let mut doc = fsl_replay::read_probability_certificate(
+            stronger["certificate"].as_str().unwrap().as_bytes(),
+            limits,
+            &cancel,
+        )
+        .unwrap();
+        doc.identity = item;
+        let rebind = |key: &mut fsl_replay::ProbabilityProductKey| {
+            let mut state: Value = serde_json::from_slice(key.as_bytes()).unwrap();
+            state[5][1][1] = actual[1].clone();
+            *key = fsl_replay::ProbabilityProductKey::from_canonical_bytes(
+                fsl_foundation::canonical_json::encode(&state).unwrap(),
+            );
+        };
+        for row in &mut doc.values {
+            rebind(&mut row.state);
+        }
+        for (key, _) in &mut doc.ranking {
+            rebind(key);
+        }
+        for key in &mut doc.targets {
+            rebind(key);
+        }
+        doc.values
+            .sort_by(|left, right| left.state.cmp(&right.state));
+        doc.ranking.sort_by(|left, right| left.0.cmp(&right.0));
+        doc.targets.sort();
+        let bytes = fsl_replay::write_probability_certificate(&doc, limits, &cancel).unwrap();
+        fsl_replay::read_probability_certificate(&bytes, limits, &cancel)
+            .expect("the rebound certificate is canonical before checking its threshold");
+        stronger["certificate"] = json!(String::from_utf8(bytes).unwrap());
         let (code, result) = run(&stronger);
         assert_eq!(code, 1, "{result}");
         assert_eq!(result["rule"], "threshold-missed");
