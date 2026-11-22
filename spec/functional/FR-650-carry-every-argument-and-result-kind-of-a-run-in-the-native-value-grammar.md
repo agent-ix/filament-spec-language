@@ -85,6 +85,45 @@ The run value form applies to:
 
 ## Behavior
 
+### Canonical command boundary
+
+The public `fsl_command::command::run` family SHALL read function-call
+arguments and write completed call values in FSpec FR-181's tagged canonical
+form. Integers carry `{"type":"integer","value":"5"}`, Booleans
+carry `{"type":"boolean","value":true}`, Text carries
+`{"type":"text","value":"hello"}`, and collections carry their
+`type` and `elements`. The command SHALL refuse the untagged native forms
+and bare integer shorthand; it SHALL NOT retry them through another reader.
+
+This boundary SHALL retain the declared type's existing admission: exact
+integers have no machine-integer ceiling, rational `4/6` admits as `2/3`,
+and an unordered supplied set is admitted before its canonical writer
+orders its elements. Unknown members, domain and cardinality violations,
+snapshot reference admission, and resource limits retain their existing
+refusal or incomplete category. A Population argument retains its native
+`{"population":P}` selection because a population has no FR-181 value
+form; its returned members use the canonical set and reference forms.
+
+Canonical reference argument conversion and execution SHALL borrow the same
+supplied-value run, retaining its counters, original argument index and
+preorder position. Reference catalog work and result-reference encoding SHALL
+charge `work_units` on the normalization owner that admitted the actual
+declaration, at `reference.catalog` or `reference.result`. Snapshot admission
+SHALL retain each model's original owner; selecting a declaration SHALL NOT
+substitute the first model's owner or create a fresh allowance. A denied
+charge SHALL preserve its typed normalization refusal and charge point.
+With no snapshot, canonical output SHALL NOT spend model-normalization work
+or construct a reference catalog; its borrowed writer retains physical
+allocation admission.
+
+The native forms below remain the internal admission representation and
+the contract of the separately exposed spine and clause readers. They are
+not additional accepted forms at the public run command boundary. The
+driver SHALL call `run_with_limits_and_overrides` (or its provider-aware
+variant) so the existing verification-plan and multi-selection coordinators
+receive their selections; a function-only preparation API does not execute
+those coordinators.
+
 ### The run value form
 
 For a declared type, the run value form is:
@@ -431,6 +470,12 @@ function id_opt using v(a: Option<Int[0, 9]>): Option<Int[0, 9]> pure { a }
 | FR-650-AC-13 | A function that returns its argument of a type nesting `Sequence<...>[0, 1]` 60 levels deep around `Int[0, 1]`, called with the one value that nests one element at every level, completes with the same value, more than 100 JSON levels deep, exit 0, and no depth refusal. `id_rec` called with `{"record": {"type": "P", "fields": {"x": {"integer": "1"}, "y": null}}}` refuses `invalid_runtime_input`/`wrong-value-kind` at `/record/fields/y`, stage `call`, exit 20. | Test (TC-2374) |
 | FR-650-AC-14 | Over the healthy current snapshot, `function members using v(p: Population<Config::ConfigVersion>[4]): Population<Config::ConfigVersion>[4] pure { p }` called with `{"population": P}` completes `{"set": [R1, R2]}`, `R1` and `R2` the identity references of `root` and `child` ascending by the RFC 8785 bytes of each, exit 0. | Test (TC-2375) |
 | FR-650-AC-15 | `sameIdentity` called with `a` an identity reference whose `universe` is `{"package": "other/package", "path": ["ConfigVersion"], "ordinal": 0}` refuses `foreign_reference`/`foreign-universe` at stage `call` with `details.position` 0, exit 20. An FR-651 `items` request whose `call` selection of `sameIdentity` names the observation key of the healthy current snapshot as `snapshot`, with `a` and `b` both the reference to `child`, completes `{"boolean": true}`. | Test (TC-2376) |
+| FR-650-AC-18 | Through the public run command, canonical Integer, Boolean, Text, Sequence and Set arguments complete with canonical values; a 23-digit integer remains exact, `4/6` completes as `2/3`, an empty sequence and one at its maximum retain order, and a set supplied as 3 then 1 completes as 1 then 3. A call with no arguments also writes its result canonically. | Test |
+| FR-650-AC-19 | The public run command refuses an untagged integer, a bare integer, a tagged integer with noncanonical decimal spelling, an unknown member, and an out-of-domain integer, each with exit 20. Request and dependent-byte exhaustion remain incomplete with no completed value. | Test |
+| FR-650-AC-20 | Genuine canonical argument membership and execution each fit a supplied admission-work limit independently, but their combined work on the same supplied run exceeds it and returns the typed supplied-value limit refusal. Reference codec conversion retains its separately cumulative conversion-work counter on that same run. | Test |
+| FR-650-AC-21 | A genuine checked-call reference catalog exhausts its original normalization owner's remaining work allowance and returns `NormalizationIncomplete` at `reference.catalog`, retaining the configured limit, prior consumption and denied charge. | Test |
+| FR-650-AC-22 | A checked-package call over a genuine admitted snapshot accepts a canonical reference and returns that same canonical reference; feeding the result into another package call completes unchanged after the original program file is removed. The catalog and writer use the same snapshot admission's retained normalization owners. | Test |
+| FR-650-AC-23 | A call with no models and no snapshot completes with its canonical value when `model.work_units` is zero; canonical output does not introduce model work into that value-only call. | Test |
 
 ## Dependencies
 

@@ -118,7 +118,8 @@ pub(crate) use contracts::{verdict, Verdict};
 use encode::declaration_text;
 pub use encode::{
     canonical_json, declaration_identity_text, encode_reference, reference_canonical_text,
-    typed_value_json, value_json, ModelKey,
+    run_declaration_name, run_value_bytes, typed_value_json, value_json, ModelKey, RunValueBudget,
+    SingleOwnerRunBudget,
 };
 pub use footprints::{FootprintError, FootprintViolation, WithinStop};
 pub use frames::judge::{
@@ -1007,6 +1008,12 @@ fn fault(invariant: &'static str) -> AdmissionFailure {
 }
 
 impl<'a> ModelSystem<'a> {
+    /// The actual admitted model used by this system's reference operations.
+    /// Borrowing this owner preserves the connection to native state identity.
+    pub fn reference_model(&self) -> &StateModel {
+        &self.model
+    }
+
     /// What this system reads of its package (FR-531, FR-940).
     pub fn input(&self) -> &ModelCheckInput<'a> {
         &self.input

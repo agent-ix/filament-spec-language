@@ -53,7 +53,7 @@ fn run_request(directory: &Path, work_units: u64) -> std::path::PathBuf {
             "file":"library.native","authority":"library issuer","identity":"library:source",
             "document":"LibrarySource","formal_revision":1}}],
         "program":{"source":source()}, "call":{
-            "function":"lt", "arguments":[{"parameter":"a","value":2},{"parameter":"b","value":5}],
+            "function":"lt", "arguments":[{"parameter":"a","value":{"type":"integer","value":"2"}},{"parameter":"b","value":{"type":"integer","value":"5"}}],
             "accounting":{"work_units":work_units}}}}),
     )
 }
@@ -162,7 +162,10 @@ fn preparation_retains_owned_inputs_and_the_existing_run_outcomes() {
         // declared types once the program is checked.
         assert_eq!(input.call.wire_arguments.len(), 2);
         assert_eq!(input.call.wire_arguments[0].parameter, "a");
-        assert_eq!(input.call.wire_arguments[0].value, json!(2));
+        assert_eq!(
+            input.call.wire_arguments[0].value,
+            json!({"type":"integer","value":"2"})
+        );
         for file in ["program.native", "library.native", "model.json", "run.json"] {
             std::fs::remove_file(directory.path().join(file)).unwrap();
         }
@@ -188,7 +191,10 @@ fn preparation_retains_owned_inputs_and_the_existing_run_outcomes() {
                 machine["result"]["value"],
                 native.value.as_value()["outcome"]["value"]
             );
-            assert_eq!(machine["result"]["value"], json!({"boolean":true}));
+            assert_eq!(
+                machine["result"]["value"],
+                json!({"type":"boolean","value":true})
+            );
         } else {
             assert_eq!(machine["result"]["kind"], "incomplete");
             assert_eq!(machine["result"]["limit"]["counter"], "1");
@@ -220,7 +226,7 @@ fn prepared_function_input_retains_the_request_integer_division_law() {
             "program":{"source":source()},
             "integer_division":"floor",
             "call":{"function":"q", "arguments":[
-                {"parameter":"a", "value":-7}, {"parameter":"b", "value":3}]}
+                {"parameter":"a", "value":{"type":"integer","value":"-7"}}, {"parameter":"b", "value":{"type":"integer","value":"3"}}]}
         }}),
     );
     let PreparedRun::Function(prepared) =
@@ -798,7 +804,7 @@ fn command_outcome_documents_include_category_and_last_stage() {
     // A successful run reached S6a.
     let success = document(&run_document(
         "lt",
-        json!([{"parameter":"a","value":2},{"parameter":"b","value":5}]),
+        json!([{"parameter":"a","value":{"type":"integer","value":"2"}},{"parameter":"b","value":{"type":"integer","value":"5"}}]),
     ));
     assert_members(&success, "success", json!("S6a"));
 

@@ -22,6 +22,13 @@ impl RequestKind for Request {
         fsl_foundation::wire_format::WireFormat::RunRequest;
 
     fn validate(&self) -> super::Result<()> {
+        if self.requirements.is_some() && self.verification_plan.is_none() {
+            return Err(super::RunCause::ClauseRequest {
+                member: "/requirements".to_owned(),
+                reason: "request-level requirements select a verification plan's backend"
+                    .to_owned(),
+            });
+        }
         super::runtime_sources::validate(self)
     }
 }
@@ -266,6 +273,9 @@ fn present_json_value<'de, D: serde::Deserializer<'de>>(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Request {
+    /// The standard named backend for verification-plan caller negotiation.
+    #[serde(default, deserialize_with = "present_json_value")]
+    pub requirements: Option<serde_json::Value>,
     /// FR-1039: explicit package-only rendering sources, with presence
     /// retained so even an empty array conflicts with `program`.
     #[serde(default, deserialize_with = "super::runtime_sources::deserialize")]

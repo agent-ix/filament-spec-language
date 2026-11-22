@@ -100,8 +100,8 @@ fn run_documents_are_deterministic_and_order_free() {
     let call = |parameter: &str| {
         json!({"format": "native-run/1", "request": {"models": [], "program": program(),
             "call": {"function": "Remaining", "arguments": [
-                {"parameter": "total", "value": {"integer": "17"}},
-                {"parameter": parameter, "value": {"integer": "5"}}]}}})
+                {"parameter": "total", "value": {"type":"integer", "value": "17"}},
+                {"parameter": parameter, "value": {"type":"integer", "value": "5"}}]}}})
     };
     for (value, exit) in [(call("held"), 0), (call("zz"), 20)] {
         let (forward, backward) = both_orders(&case, &value);

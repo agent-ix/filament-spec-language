@@ -1,0 +1,23 @@
+   Compiling fsl-semantics v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-semantics)
+   Compiling fsl-package v0.3.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-package)
+   Compiling fsl-route v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-route)
+   Compiling fsl-eval v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-eval)
+error[E0599]: no method named `reserve` found for struct `RefMut<'_, AdmittedBudget<'_>>` in the current scope
+   --> fsl-eval/src/simulation/model/encode/bounded.rs:102:14
+    |
+100 | /         self.budget
+101 | |             .borrow_mut()
+102 | |             .reserve(bytes)
+    | |             -^^^^^^^ method not found in `RefMut<'_, AdmittedBudget<'_>>`
+    | |_____________|
+    |
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: trait `Reservation` which provides `reserve` is implemented but not in scope; perhaps you want to import it
+    |
+  4 + use filament_exact::Reservation;
+    |
+
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `fsl-eval` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...

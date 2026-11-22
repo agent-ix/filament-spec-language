@@ -199,7 +199,7 @@ fn duration_wire_payloads_keep_exact_magnitudes_and_require_the_declared_unit() 
             limits(100_000),
             SuppliedLimits::default(),
         );
-        call.wire_arguments.push(WireArgument {parameter:"d".into(),value:json!({
+        call.wire_arguments.push(WireArgument {parameter:"d".into(),selected_object:None,value:json!({
             "kind":"quantity","unit":unit,"magnitude":{"kind":"rational","numerator":numerator.to_string(),"denominator":denominator.to_string()}
         })});
         spine::run(

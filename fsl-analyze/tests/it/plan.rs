@@ -85,6 +85,8 @@ fn plan(world: &World, steps: &[(&str, &str)], edges: &[(&str, &str)]) -> Verifi
 
 fn inputs<'a>(world: &'a World, plan: &VerificationPlan) -> PlanInputs<'a> {
     PlanInputs {
+        backend: None,
+        backend_options: BTreeMap::new(),
         bindings: plan
             .nodes
             .iter()
@@ -885,6 +887,8 @@ fn probability_methods_keep_their_evidence_and_only_statistical_consumes_seed() 
         node.method.evidence_kind = vec![evidence.into()];
     }
     let inputs = PlanInputs {
+        backend: None,
+        backend_options: BTreeMap::new(),
         bindings: plan
             .nodes
             .iter()

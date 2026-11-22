@@ -12,11 +12,12 @@ pub use key::{
     TaskProductKeyRefusal, TaskSchedulerControl,
 };
 pub(crate) use wire::{
-    array, child, count, integer, member, object, rational, rational_wire, refuse,
-    source_transition, source_transition_wire,
+    action_name, array, child, count, integer, member, object, rational, rational_wire, refuse,
+    source_transition, source_transition_wire, ACTIONS,
 };
 pub use wire::{
-    same_source_transition, TaskProductShapeReason, TaskProductShapeRefusal, TaskProductWireError,
+    same_source_transition, TaskProductReferenceError, TaskProductShapeReason,
+    TaskProductShapeRefusal, TaskProductWireError,
 };
 
 /// A checked arrival rule copied into the FR-418 task-product certificate.

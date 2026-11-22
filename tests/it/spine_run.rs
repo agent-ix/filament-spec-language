@@ -1121,6 +1121,7 @@ fn tc_786_run_exit_statuses_come_from_the_exit_function() {
             &Call {
                 clocks: Default::default(),
                 wire_arguments: Vec::new(),
+                canonical_values: false,
                 snapshot: None,
                 function: function.to_owned(),
                 arguments,

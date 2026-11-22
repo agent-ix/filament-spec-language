@@ -22,6 +22,17 @@ use fsl_semantics::check::EnumBinding;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use serde_json::{json, Map, Value as Json};
 
+#[cfg(test)]
+mod accounting_tests;
+mod canonical;
+mod references;
+pub(crate) use crate::NormalizationReferenceBudget;
+pub(crate) use references::{
+    catalog_error_cause, catalog_error_code, catalog_refusal, reference_cancel_cause,
+    reference_error_cause, reference_error_code, reference_error_pointer, reference_refusal,
+    take_normalization_refusal, write_run_value, SuppliedReferenceAdmission,
+};
+
 /// One argument defect: the catalog code and cause FR-650's table names, and
 /// the JSON pointer of the defect inside the argument's `value`.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -42,16 +53,20 @@ pub(crate) enum ReadStop {
     Defect(ArgumentDefect),
     /// An established invariant of the checked package is broken.
     Fault(&'static str),
+    /// An owning admission or resource refusal from reference conversion.
+    Refusal(Box<super::RunRefusal>),
 }
 
 /// Why a write stopped.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug)]
 pub(crate) enum WriteStop {
     /// The value has no run value form, or nests deeper than the form's
     /// bound.
     NoForm,
     /// An established invariant of the checked package is broken.
     Fault(&'static str),
+    /// An owning reference conversion refusal.
+    Refusal(Box<super::RunRefusal>),
 }
 
 /// The declarations of one checked package a value form names.
@@ -63,6 +78,7 @@ pub(crate) struct Forms<'a> {
     own_package: &'a str,
     /// The call's object world, when the call names a snapshot.
     world: Option<&'a World<'a>>,
+    canonical_writer: Option<&'a dyn Fn(&Value) -> Result<Json, WriteStop>>,
 }
 
 /// The object world of a call (FR-650 "Arguments"): the admitted snapshot's
@@ -72,16 +88,48 @@ pub(crate) struct World<'a> {
     pub objects: &'a ObjectEnvironment,
     /// The universe of the objects of a declared object type.
     pub universe_of: &'a dyn Fn(&EffectiveId) -> Option<UniverseId>,
+    pub restore_reference:
+        Option<&'a dyn Fn(&Json, usize, u64) -> Result<ObjectReference, ReadStop>>,
 }
 
 impl<'a> Forms<'a> {
+    /// Canonical boundary membership borrows the invocation's original A.
+    /// Population membership remains the owned FSL binding check because the
+    /// kernel intentionally has no generic Population admission.
+    pub(crate) fn admit_supplied(
+        &self,
+        run: &mut filament_semantic_value::supplied_stop::SuppliedRun,
+        position: usize,
+        declared: &ValueType,
+        value: &Value,
+    ) -> Result<(), filament_semantic_value::supplied_stop::SuppliedFailure> {
+        if matches!(declared, ValueType::Population(_)) {
+            return Ok(());
+        }
+        run.admit(
+            filament_semantic_value::supplied_stop::SuppliedPhase::Admission,
+            position,
+            self.types,
+            declared,
+            value,
+        )
+    }
     pub(crate) fn new(types: &'a TypeEnvironment, enums: &'a [EnumBinding]) -> Self {
         Self {
             types,
             enums,
             own_package: "",
             world: None,
+            canonical_writer: None,
         }
+    }
+
+    pub(crate) fn with_canonical_writer(
+        mut self,
+        writer: &'a dyn Fn(&Value) -> Result<Json, WriteStop>,
+    ) -> Self {
+        self.canonical_writer = Some(writer);
+        self
     }
 
     /// These forms for a unit whose own declarations live in `own_package`,

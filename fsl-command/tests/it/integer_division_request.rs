@@ -55,7 +55,7 @@ fn compile_body(law: Option<Value>) -> Value {
 fn run_body(law: Option<Value>, function: &str) -> Value {
     let mut body = compile_body(law);
     body["call"] = json!({"function": function, "arguments":[
-        {"parameter":"a","value":-7},{"parameter":"b","value":3}],
+        {"parameter":"a","value":{"type":"integer","value":"-7"}},{"parameter":"b","value":{"type":"integer","value":"3"}}],
         "accounting":{"work_units":100_000}});
     body
 }
@@ -113,24 +113,13 @@ fn refusal(error: &command::RunError, operation: Operation) -> (String, String, 
 fn returned(path: &Path) -> String {
     let result = command::run(path, &crate::negotiation::Fr290).expect("the run completes");
     assert_eq!(result.exit_code, 0);
-    result.value.as_value()["outcome"]["value"]["integer"]
+    assert_eq!(
+        result.value.as_value()["outcome"]["value"]["type"],
+        "integer"
+    );
+    result.value.as_value()["outcome"]["value"]["value"]
         .as_str()
         .map(str::to_owned)
-        .or_else(|| {
-            result.value.as_value()["outcome"]["value"]["integer"]
-                .as_i64()
-                .map(|value| value.to_string())
-        })
-        .or_else(|| {
-            result.value.as_value()["outcome"]["value"]["decimal"]
-                .as_str()
-                .map(str::to_owned)
-                .or_else(|| {
-                    result.value.as_value()["outcome"]["value"]["decimal"]
-                        .as_i64()
-                        .map(|value| value.to_string())
-                })
-        })
         .unwrap_or_else(|| panic!("an integer value: {}", result.value))
 }
 
@@ -208,7 +197,7 @@ fn program_and_library_laws_are_selected_independently_during_run() {
     });
     let call = |function: &str| {
         json!({"function":function, "arguments":[
-            {"parameter":"a", "value":-7}, {"parameter":"b", "value":3}
+            {"parameter":"a", "value":{"type":"integer","value":"-7"}}, {"parameter":"b", "value":{"type":"integer","value":"3"}}
         ]})
     };
     body["call"] = call("q");

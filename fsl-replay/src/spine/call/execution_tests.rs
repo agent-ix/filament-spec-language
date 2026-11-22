@@ -12,6 +12,7 @@ use filament_eval::{
 use filament_exact::{Cancel, CancelCause, Integer, Meter, ScalarLimits, Value};
 use filament_semantic_value::catalog::{Category, InternalFault};
 use filament_semantic_value::location::{ExpressionLocation, ExpressionOwner};
+use filament_semantic_value::supplied_stop::{SuppliedLimits, SuppliedRun};
 use fsl_eval::execution::{
     CallLimits, EntrySelection, ExecuteLimits, ExecuteRequest, ExecuteSelection, ExecutionBackend,
     Interpreter, PrepareFailure, PrepareLimits, PrepareMeter, PreparedEntries, SuppliedBackends,
@@ -88,7 +89,6 @@ fn request(
 fn limits() -> ExecuteLimits {
     ExecuteLimits {
         accounting: default_accounting(DEFAULT_WORK_UNITS),
-        supplied: Default::default(),
         prepare: PrepareLimits::default(),
         session: Default::default(),
     }
@@ -194,6 +194,7 @@ impl PreparedEntries for StubPrepared<'_> {
         arguments: &[Value],
         environment: &ObjectEnvironment,
         limits: &CallLimits,
+        run: &mut SuppliedRun,
         cancel: &Cancel,
     ) -> Result<Evaluation, CallFailure> {
         if let Some((_, unsupported)) = self
@@ -205,7 +206,7 @@ impl PreparedEntries for StubPrepared<'_> {
         }
         self.interpreted.set(self.interpreted.get() + 1);
         self.inner
-            .call(entry, arguments, environment, limits, cancel)
+            .call(entry, arguments, environment, limits, run, cancel)
     }
 
     fn evaluate(
@@ -244,6 +245,7 @@ fn seven_is_7(result: &Result<Evaluation, CallFailure>) {
 #[trace("TC-778", "FR-294-AC-1")]
 #[test]
 fn the_interpreter_returns_what_the_package_call_returns() {
+    let cancel = Cancel::new();
     let unit = checked();
     let cases = [
         ("lt", vec![integer(5), integer(3)]),
@@ -261,7 +263,9 @@ fn the_interpreter_returns_what_the_package_call_returns() {
             ),
             &SuppliedBackends::default(),
             &limits(),
-            &Cancel::new(),
+            &mut SuppliedRun::new(SuppliedLimits::default(), cancel.clone())
+                .expect("default supplied limits initialize"),
+            &cancel,
         );
         let expected = direct(&unit, function, arguments);
         assert_eq!(
@@ -279,7 +283,9 @@ fn the_interpreter_returns_what_the_package_call_returns() {
         ),
         &SuppliedBackends::default(),
         &limits(),
-        &Cancel::new(),
+        &mut SuppliedRun::new(SuppliedLimits::default(), cancel.clone())
+            .expect("default supplied limits initialize"),
+        &cancel,
     );
     assert!(matches!(
         lt,
@@ -293,7 +299,9 @@ fn the_interpreter_returns_what_the_package_call_returns() {
         &request("id", vec![integer(12)], ExecutionBackendChoice::Interpreter),
         &SuppliedBackends::default(),
         &limits(),
-        &Cancel::new(),
+        &mut SuppliedRun::new(SuppliedLimits::default(), cancel.clone())
+            .expect("default supplied limits initialize"),
+        &cancel,
     );
     assert!(matches!(refused, Err(CallFailure::Input(_))), "{refused:?}");
 }
@@ -324,6 +332,7 @@ fn document_outcome(outcome: &CallOutcome) -> serde_json::Value {
 #[trace("TC-760", "FR-279-AC-3")]
 #[test]
 fn the_run_outcome_is_the_rendering_of_executes_result() {
+    let cancel = Cancel::new();
     let unit = checked();
     let sources = vec![unit.source().clone()];
     let cases = [
@@ -391,7 +400,9 @@ fn the_run_outcome_is_the_rendering_of_executes_result() {
             &request(function, values, ExecutionBackendChoice::Interpreter),
             &SuppliedBackends::default(),
             &execute_limits,
-            &Cancel::new(),
+            &mut SuppliedRun::new(SuppliedLimits::default(), cancel.clone())
+                .expect("existing supplied limits initialize"),
+            &cancel,
         )
         .expect("the interpreter completes or reports incomplete");
         let rendered = convert_outcome(evaluation, unit.package().graph(), &sources)
@@ -411,6 +422,7 @@ fn the_run_outcome_is_the_rendering_of_executes_result() {
 #[trace("TC-769", "FR-285-AC-6")]
 #[test]
 fn a_compile_work_units_stop_exits_22() {
+    let cancel = Cancel::new();
     let unit = checked();
     let mut aot = Stub::new();
     aot.refuse = Some(PrepareFailure::Limit(LimitExceeded::new(
@@ -427,7 +439,9 @@ fn a_compile_work_units_stop_exits_22() {
         &request("seven", vec![], ExecutionBackendChoice::Aot),
         &backends,
         &limits(),
-        &Cancel::new(),
+        &mut SuppliedRun::new(SuppliedLimits::default(), cancel.clone())
+            .expect("default supplied limits initialize"),
+        &cancel,
     )
     .expect_err("prepare reached its limit");
     match &failure {
@@ -446,6 +460,7 @@ fn a_compile_work_units_stop_exits_22() {
 #[trace("TC-760", "FR-279-AC-4")]
 #[test]
 fn a_prepare_limit_and_a_prepare_fault_reach_the_call_failure() {
+    let cancel = Cancel::new();
     let unit = checked();
     let mut aot = Stub::new();
     aot.refuse = Some(PrepareFailure::Limit(LimitExceeded::new(
@@ -462,7 +477,9 @@ fn a_prepare_limit_and_a_prepare_fault_reach_the_call_failure() {
         &request("seven", vec![], ExecutionBackendChoice::Aot),
         &backends,
         &limits(),
-        &Cancel::new(),
+        &mut SuppliedRun::new(SuppliedLimits::default(), cancel.clone())
+            .expect("default supplied limits initialize"),
+        &cancel,
     )
     .expect_err("prepare reached its limit");
     let expected = PrepareLimitReached {
@@ -495,7 +512,9 @@ fn a_prepare_limit_and_a_prepare_fault_reach_the_call_failure() {
         &request("seven", vec![], ExecutionBackendChoice::Aot),
         &backends,
         &limits(),
-        &Cancel::new(),
+        &mut SuppliedRun::new(SuppliedLimits::default(), cancel.clone())
+            .expect("default supplied limits initialize"),
+        &cancel,
     )
     .expect_err("prepare faulted");
     assert!(
@@ -510,6 +529,7 @@ fn a_prepare_limit_and_a_prepare_fault_reach_the_call_failure() {
 #[trace("TC-760", "FR-279-AC-4")]
 #[test]
 fn a_limit_that_is_not_a_prepare_limit_is_a_fault() {
+    let cancel = Cancel::new();
     let unit = checked();
     for limit in [
         LimitExceeded::new(Setting::S1InputBytes, 1, 2),
@@ -526,7 +546,9 @@ fn a_limit_that_is_not_a_prepare_limit_is_a_fault() {
             &request("seven", vec![], ExecutionBackendChoice::Aot),
             &backends,
             &limits(),
-            &Cancel::new(),
+            &mut SuppliedRun::new(SuppliedLimits::default(), cancel.clone())
+                .expect("default supplied limits initialize"),
+            &cancel,
         )
         .expect_err("the limit is not a prepare limit");
         assert!(matches!(failure, CallFailure::Fault(_)), "{failure:?}");
@@ -542,18 +564,22 @@ fn a_limit_that_is_not_a_prepare_limit_is_a_fault() {
 #[trace("TC-760", "FR-279-AC-5")]
 #[test]
 fn supplied_limits_reach_the_function_call() {
-    use filament_semantic_value::supplied_stop::{SuppliedLimits, SuppliedRun};
+    let cancel = Cancel::new();
     let unit = checked();
     let tight = SuppliedLimits::default().with_admission_work_units(0);
-    let mut execute_limits = limits();
-    execute_limits.supplied = tight;
-    let through = fsl_eval::execution::execute(
-        unit.package(),
-        &request("id", vec![integer(4)], ExecutionBackendChoice::Interpreter),
-        &SuppliedBackends::default(),
-        &execute_limits,
-        &Cancel::new(),
-    );
+    let execute_limits = limits();
+    let through = SuppliedRun::new(tight, cancel.clone())
+        .map_err(CallFailure::Supplied)
+        .and_then(|mut run| {
+            fsl_eval::execution::execute(
+                unit.package(),
+                &request("id", vec![integer(4)], ExecutionBackendChoice::Interpreter),
+                &SuppliedBackends::default(),
+                &execute_limits,
+                &mut run,
+                &cancel,
+            )
+        });
     let mut meter = Meter::new(default_accounting(DEFAULT_WORK_UNITS));
     let expected = match SuppliedRun::new(tight, Cancel::new()) {
         Err(stop) => Err(CallFailure::Supplied(stop)),
@@ -576,7 +602,9 @@ fn supplied_limits_reach_the_function_call() {
         &request("id", vec![integer(4)], ExecutionBackendChoice::Interpreter),
         &SuppliedBackends::default(),
         &limits(),
-        &Cancel::new(),
+        &mut SuppliedRun::new(SuppliedLimits::default(), cancel.clone())
+            .expect("default supplied limits initialize"),
+        &cancel,
     );
     assert_eq!(
         format!("{default:?}"),
@@ -622,16 +650,20 @@ fn an_untranslatable_entry_is_listed_and_the_others_run() {
         &[(entries[2].clone(), expected.clone())]
     );
     let call = |entry: &EntrySelection, arguments: &[Value]| {
+        let cancel = Cancel::new();
+        let supplied = SuppliedLimits::default();
+        let mut run = SuppliedRun::new(supplied, cancel.clone())
+            .expect("existing supplied limits initialize");
         prepared.call(
             &entry.name,
             arguments,
             &ObjectEnvironment::default(),
             &CallLimits {
                 accounting: default_accounting(DEFAULT_WORK_UNITS),
-                supplied: Default::default(),
                 session: Default::default(),
             },
-            &Cancel::new(),
+            &mut run,
+            &cancel,
         )
     };
     let lt = call(&entries[0], &[integer(5), integer(3)]);
@@ -657,6 +689,8 @@ fn an_untranslatable_entry_is_listed_and_the_others_run() {
 fn a_cancelled_handle_stops_prepare_and_call() {
     let unit = checked();
     let cancel = Cancel::new();
+    let mut run = SuppliedRun::new(SuppliedLimits::default(), cancel.clone())
+        .expect("existing supplied limits initialize");
     cancel.cancel(CancelCause::Requested);
     let entries = selected(&["seven"]);
     assert_eq!(
@@ -679,9 +713,9 @@ fn a_cancelled_handle_stops_prepare_and_call() {
         &ObjectEnvironment::default(),
         &CallLimits {
             accounting: default_accounting(DEFAULT_WORK_UNITS),
-            supplied: Default::default(),
             session: Default::default(),
         },
+        &mut run,
         &cancel,
     );
     assert_eq!(
@@ -1285,13 +1319,16 @@ fn prepare_admits_a_checked_package() {
 #[trace("TC-781", "FR-296-AC-1")]
 #[test]
 fn the_interpreter_runs_seven_by_default() {
+    let cancel = Cancel::new();
     let unit = checked();
     let result = fsl_eval::execution::execute(
         unit.package(),
         &request("seven", vec![], ExecutionBackendChoice::Interpreter),
         &SuppliedBackends::default(),
         &limits(),
-        &Cancel::new(),
+        &mut SuppliedRun::new(SuppliedLimits::default(), cancel.clone())
+            .expect("default supplied limits initialize"),
+        &cancel,
     );
     seven_is_7(&result);
     let call = Call::new(
@@ -1327,13 +1364,16 @@ fn the_interpreter_runs_seven_by_default() {
 #[trace("TC-781", "FR-296-AC-2")]
 #[test]
 fn an_unsupplied_backend_refuses_as_unsupported() {
+    let cancel = Cancel::new();
     let unit = checked();
     let failure = fsl_eval::execution::execute(
         unit.package(),
         &request("seven", vec![], ExecutionBackendChoice::Jit),
         &SuppliedBackends::default(),
         &limits(),
-        &Cancel::new(),
+        &mut SuppliedRun::new(SuppliedLimits::default(), cancel.clone())
+            .expect("default supplied limits initialize"),
+        &cancel,
     )
     .expect_err("jit is not supplied");
     let expected = UnsupportedEntry {
@@ -1384,6 +1424,7 @@ fn an_unsupplied_backend_refuses_as_unsupported() {
 #[trace("TC-781", "FR-296-AC-3")]
 #[test]
 fn an_entry_the_chosen_backend_lists_unsupported_is_returned() {
+    let cancel = Cancel::new();
     let unit = checked();
     let cause = UnsupportedCause::Untranslatable {
         construct: UntranslatableConstruct::ExpressionForm("let".to_owned()),
@@ -1400,7 +1441,9 @@ fn an_entry_the_chosen_backend_lists_unsupported_is_returned() {
         &request("seven", vec![], ExecutionBackendChoice::Jit),
         &backends,
         &limits(),
-        &Cancel::new(),
+        &mut SuppliedRun::new(SuppliedLimits::default(), cancel.clone())
+            .expect("default supplied limits initialize"),
+        &cancel,
     )
     .expect_err("seven is unsupported on the stand-in");
     let expected = UnsupportedEntry {
@@ -1436,6 +1479,7 @@ fn the_default_backend_choice_is_the_interpreter() {
 #[trace("TC-781", "FR-296-AC-4")]
 #[test]
 fn only_the_chosen_supplied_backend_prepares() {
+    let cancel = Cancel::new();
     let unit = checked();
     let jit = Stub::new();
     let aot = Stub::new();
@@ -1448,7 +1492,9 @@ fn only_the_chosen_supplied_backend_prepares() {
         &request("seven", vec![], ExecutionBackendChoice::Jit),
         &backends,
         &limits(),
-        &Cancel::new(),
+        &mut SuppliedRun::new(SuppliedLimits::default(), cancel.clone())
+            .expect("default supplied limits initialize"),
+        &cancel,
     );
     seven_is_7(&result);
     assert_eq!((jit.prepared.get(), aot.prepared.get()), (1, 0));

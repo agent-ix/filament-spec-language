@@ -610,24 +610,27 @@ pub(super) struct TaskSourceTransitionWire {
     arguments: Vec<serde_json::Value>,
 }
 
+/// Select the existing task-source operation spelling without copying it.
+pub(crate) fn task_source_operation<'a>(
+    operation: &'a serde_json::Value,
+    text: &'a str,
+) -> &'a str {
+    // Keep a checked operation's node as the task-source string spelling;
+    // other canonical identities retain their original text.
+    operation
+        .as_str()
+        .or_else(|| operation.get("name").and_then(serde_json::Value::as_str))
+        .or_else(|| operation.get("node").and_then(serde_json::Value::as_str))
+        .unwrap_or(text)
+}
+
 impl From<&filament_semantic_value::model_transition::ModelTransition>
     for TaskSourceTransitionWire
 {
     fn from(identity: &filament_semantic_value::model_transition::ModelTransition) -> Self {
         let operation: serde_json::Value = serde_json::from_str(identity.operation())
             .expect("canonical source operation identity");
-        let operation = operation
-            .as_str()
-            .or_else(|| operation.get("name").and_then(serde_json::Value::as_str))
-            // Checked model transitions carry the canonical node identity,
-            // not the authored operation spelling. FR-364's source arm
-            // keeps that stable identity as its operation string.
-            .or_else(|| operation.get("node").and_then(serde_json::Value::as_str))
-            .map(str::to_owned)
-            // ModelTransition validates canonical JSON, not a particular
-            // operation-identity object shape. Preserve any other valid
-            // canonical identity instead of panicking on it.
-            .unwrap_or_else(|| identity.operation().to_owned());
+        let operation = task_source_operation(&operation, identity.operation()).to_owned();
         let value = |text: &str| serde_json::from_str(text).expect("canonical typed value");
         Self {
             kind: "transition",
@@ -3389,6 +3392,29 @@ impl OutcomeDocument {
             }
             RunRefusal::Cancelled(cause) => Self::cancelled(operation, *cause),
             RunRefusal::Fault(fault) => Self::faulted(operation, fault),
+            RunRefusal::ReferenceCatalog(error) => {
+                Self::new(operation, Some(OutcomeStage::S6a), refusal.category()).with_diagnostics(
+                    vec![OutcomeDiagnostic::new(
+                        RunRefusal::catalog_cause(error),
+                        refusal.code().as_str(),
+                        None,
+                        error.to_string(),
+                    )],
+                )
+            }
+            RunRefusal::Reference(error) => {
+                if let Some(cause) = refusal.cancel_cause() {
+                    return Self::cancelled(operation, cause);
+                }
+                Self::new(operation, Some(OutcomeStage::S6a), refusal.category()).with_diagnostics(
+                    vec![OutcomeDiagnostic::new(
+                        RunRefusal::reference_cause(error),
+                        refusal.code().as_str(),
+                        None,
+                        error.to_string(),
+                    )],
+                )
+            }
             // FR-277: a supplied-phase stop is phase-marked, not a
             // catalog record. Its category is the document's; the shared
             // result contract has no field for the phase context yet, so
@@ -4887,6 +4913,7 @@ mod tests {
             let call = Call {
                 clocks: Default::default(),
                 wire_arguments: Vec::new(),
+                canonical_values: false,
                 snapshot: None,
                 function: "seven".to_owned(),
                 arguments: Vec::new(),
@@ -4931,6 +4958,7 @@ mod tests {
         let call = Call {
             clocks: Default::default(),
             wire_arguments: Vec::new(),
+            canonical_values: false,
             snapshot: None,
             function: "seven".to_owned(),
             arguments: Vec::new(),
@@ -5298,6 +5326,7 @@ mod tests {
             &Call {
                 clocks: Default::default(),
                 wire_arguments: Vec::new(),
+                canonical_values: false,
                 snapshot: None,
                 function: function.to_owned(),
                 arguments: Vec::new(),

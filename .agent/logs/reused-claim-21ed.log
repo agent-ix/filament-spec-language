@@ -1,0 +1,58 @@
+   Compiling fsl-foundation v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-foundation)
+   Compiling filament-contract-model v0.1.2 (https://github.com/agent-ix/filament-contract-ir?rev=96554ea506a19b16ff9863ad3d30066578bc609c#96554ea5)
+   Compiling fsl-cst v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-cst)
+   Compiling fsl-source v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-source)
+   Compiling fsl-forms v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-forms)
+   Compiling fsl-semantics v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-semantics)
+   Compiling fsl-package v0.3.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-package)
+   Compiling fsl-route v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-route)
+   Compiling fsl-eval v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-eval)
+   Compiling fsl-replay v0.3.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-replay)
+warning: unused import: `identity_form::is_effective_form`
+   --> fsl-replay/src/spine.rs:234:16
+    |
+234 | pub(crate) use identity_form::is_effective_form;
+    |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `is_effective_form` is never used
+   --> fsl-replay/src/spine/identity_form.rs:160:15
+    |
+160 | pub(crate) fn is_effective_form(form: &Json) -> bool {
+    |               ^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `sample_fingerprint` is never used
+   --> fsl-replay/src/spine/clause/temporal.rs:335:15
+    |
+335 | pub(crate) fn sample_fingerprint(
+    |               ^^^^^^^^^^^^^^^^^^
+
+   Compiling fsl-hybrid-reference v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-hybrid-reference)
+   Compiling fsl-analyze v0.3.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-analyze)
+warning: `fsl-replay` (lib) generated 3 warnings (run `cargo fix --lib -p fsl-replay` to apply 1 suggestion)
+   Compiling fsl-inspect v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-inspect)
+   Compiling fsl-command v0.1.0 (/home/peter/dev/.worktrees/luna-qsl-2758-2760/fsl-command)
+    Finished `test` profile [unoptimized] target(s) in 5m 51s
+     Running tests/it/main.rs (target/debug/deps/it-13478c0a8a0f3e03)
+
+running 1 test
+test run_requirement_items::a_run_call_names_the_backend_of_its_requirement_items ... FAILED
+
+failures:
+
+---- run_requirement_items::a_run_call_names_the_backend_of_its_requirement_items stdout ----
+
+thread 'run_requirement_items::a_run_call_names_the_backend_of_its_requirement_items' (2701747) panicked at fsl-command/tests/it/run_requirement_items.rs:164:6:
+called `Result::unwrap()` on an `Err` value: RunError { cause: UnknownRequirementClaim { claim: Object {"node": Object {"ordinal": Number(0), "package": String("test:requirements"), "path": Array [String("expression"), String("binary"), Object {"node": Number(13)}, Object {"node": Number(13)}, String("filament.op.integer.mul"), String("binary"), Object {"node": Number(1)}, Object {"node": Number(1)}]}, "occurrence": Object {"ordinal": Number(0), "role": String("expression")}} }, sources: Sources { sources: [Source(Document { identity: SourceIdentity { authority: "agent-ix", identity: "test:requirements" }, reference: RawSourceRef { authority: "agent-ix", identity: "test:requirements" }, path: "unit.native", text: "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction sq using v(x: Int[0, 9]): Integer pure { (x + 1) * (x + 1) }\nfunction Even using v(n: Integer): Boolean pure { n * 2 - n = n }\nfunction seven using v(): Int[0, 9] pure { 7 }\n", line_starts: [0, 40, 82, 152, 218, 265], indentation_ends: [0, 40, 82, 152, 218, 265], wide_ends: [] })] } }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    run_requirement_items::a_run_call_names_the_backend_of_its_requirement_items
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 198 filtered out; finished in 0.16s
+
+error: test failed, to rerun pass `-p fsl-command --test it`
