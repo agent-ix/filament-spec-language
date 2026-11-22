@@ -233,8 +233,9 @@ fn clock_reference_fixture_variant(
     }
     if map {
         let map_identity = ring_queue::node(CLOCKS, "ClockMap");
-        let mut mo = ring_queue::single(CLOCKS, "Call", "mo", &map_identity);
-        mo["presence"] = json!("optional");
+        // Optional containers retain STD-493's timed refusal. A required
+        // map reaches the existing keyed layout without changing its bound.
+        let mo = ring_queue::single(CLOCKS, "Call", "mo", &map_identity);
         fields.push(mo);
         let mut declaration = ring_queue::declaration(
             CLOCKS,
@@ -430,12 +431,11 @@ fn numeric_selectors_do_not_authorize_a_map_template() {
                 "field",
                 scope,
                 crate::ring_queue::node(CLOCKS, "Call/mo"),
-                ["option", ["collection", "sequence", "0", "2", ["clock"]]]
+                ["collection", "sequence", "0", "2", ["clock"]]
             ],
-            ["option"],
             ["collection", "sequence", "0", "2", ["clock"]]
         ]),
-        json!([["slot", "2", "0"]]),
+        json!([["slot", "1", "0"]]),
     );
     let identity =
         clock_reference::identity::PlaceIdentity::decode(&text, quire_canonical::Limits::new(4096))
