@@ -22,6 +22,7 @@
 //!   composition, whose premise discharge record is
 //!   [`PlannerResult::discharge`].
 
+mod admitted_declaration;
 mod compose;
 mod composition_graph;
 mod declaration;
@@ -51,6 +52,7 @@ mod tests;
 #[cfg(test)]
 mod transfer_tests;
 
+pub use admitted_declaration::AdmittedDeclarationRefusal;
 pub use compose::{DischargeEntry, DischargeRecord, DischargeSource, Relation};
 pub use declaration::{
     strength_implies, ClauseFacts, ClauseForm, DerivedSlot, EnvSupplies, EnvironmentMember,
