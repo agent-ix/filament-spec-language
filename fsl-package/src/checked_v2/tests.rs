@@ -2785,6 +2785,7 @@ fn assert_family_guard_refuses_missing_binders_or_constraints(
 #[trace("TC-685", "FR-230-AC-34")]
 #[trace("FSpec-FR-322-AC-261", "FSpec-FR-322-AC-262", "FSpec-FR-322-AC-263")]
 #[trace("FSpec-FR-322-AC-295", "FSpec-TC-367")]
+#[trace("FSpec-FR-322-AC-484", "FSpec-TC-2063")]
 #[test]
 fn conformance_timed_clause_vectors_keep_their_published_outcomes() {
     let (_fspec, directory, _) = fspec_v2_fixtures();
