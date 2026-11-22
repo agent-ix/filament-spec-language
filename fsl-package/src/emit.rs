@@ -5182,7 +5182,7 @@ fn emit_checked_uncached(
     let graph = package.graph();
     emit_package_inner(
         package,
-        graph.memoized_regions(),
+        |location| graph.region(location),
         |_| None,
         cancel,
         &ir_decodes,
@@ -5218,7 +5218,7 @@ pub fn emit_checked_with_protocol_results_and_temporal_selections_and_cancel(
     let graph = package.graph();
     let emission = match emit_package_inner(
         package,
-        graph.memoized_regions(),
+        |location| graph.region(location),
         |_| None,
         cancel,
         &ir_decodes,
@@ -5362,7 +5362,7 @@ pub fn emit_checked_with_temporal_selections_and_cancel(
     let graph = package.graph();
     emit_package_inner(
         package,
-        graph.memoized_regions(),
+        |location| graph.region(location),
         |_| None,
         cancel,
         &ir_decodes,
@@ -6809,7 +6809,7 @@ pub fn emit_checked_with_fault(
 ) -> Result<Emission, EmitRefusal> {
     require_protocol_results_for_refusals(package)?;
     let graph = package.graph();
-    emit_package_with_fault(package, graph.memoized_regions(), fault, limits)
+    emit_package_with_fault(package, |location| graph.region(location), fault, limits)
 }
 
 /// The [`CheckedNodeId`] [`emit_checked_with_fault`]'s `fault` closure

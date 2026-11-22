@@ -1227,7 +1227,9 @@ fn type_report(graph: &fsl_semantics::check::CheckedGraph, source: &RawSourceRef
     let owns = |node: &fsl_semantics::check::SemanticNode| {
         node.owner() == Some(&Owner::Source(owner.clone()))
     };
-    let regions = graph.memoized_regions();
+    let regions = |location: &filament_semantic_value::location::ExpressionLocation| {
+        graph.region(location)
+    };
     let occurrence_span = |key: &filament_exact::NodeKey,
                            origin: &filament_exact::Origin|
      -> Option<fsl_foundation::Span> {
@@ -3339,7 +3341,9 @@ fn protocol_check_outcome(
         // did not link, FR-302) keeps the region resolved against the
         // declarations before the graph dropped them; the locator is the
         // fallback.
-        let regions = graph.memoized_regions();
+        let regions = |location: &filament_semantic_value::location::ExpressionLocation| {
+            graph.region(location)
+        };
         let refusals = graph.unit_refusals().to_vec();
         let mut refusal_regions: Vec<_> = refusals
             .iter()

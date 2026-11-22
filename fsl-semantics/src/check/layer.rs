@@ -114,7 +114,7 @@ pub(super) fn typed_equalities(
                     selected,
                     required,
                     span: spans
-                        .and_then(|spans| super::region::operator_span_at(spans, node.location())),
+                        .and_then(|spans| spans.operator_span_at(node.location())),
                 },
             });
         }

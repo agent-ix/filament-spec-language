@@ -1487,7 +1487,7 @@ pub(super) fn type_named_body(
 /// expression's.
 pub(super) fn span_of(form: &ExpressionForm, location: &Location) -> Span {
     form.spans
-        .at(&location.path())
+        .span_at(location)
         .or_else(|| form.spans.at(&[]))
         .unwrap_or(Span { start: 0, end: 0 })
 }

@@ -548,7 +548,7 @@ fn an_unavailable_effect_omits_the_whole_member() {
     };
     let emission = emit_package_decoding(
         &checked,
-        checked.graph().memoized_regions(),
+        |location| checked.graph().region(location),
         &cannot_decode_relationship,
         crate::EmitLimits::fixture(),
     )
@@ -619,7 +619,7 @@ fn each_node_an_effect_names_omits_the_whole_member_when_the_package_lacks_it() 
 
         let emission = emit_package_decoding(
             &checked,
-            checked.graph().memoized_regions(),
+            |location| checked.graph().region(location),
             &cannot_decode_process,
             crate::EmitLimits::fixture(),
         )

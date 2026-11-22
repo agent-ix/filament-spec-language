@@ -673,7 +673,7 @@ fn a_fault_on_the_transition_or_a_derived_node_refuses_the_compile() {
         let id: CheckedNodeId = crate::emit::checked_node_id_of(&graph.key_of_value(&id).unwrap());
         let refusal = emit_package_with_fault(
             &package,
-            package.graph().memoized_regions(),
+            |location| package.graph().region(location),
             |at| {
                 (*at == id).then(|| EmitRefusal::Encoding {
                     reason: reason.clone(),
