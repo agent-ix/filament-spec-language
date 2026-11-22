@@ -5859,6 +5859,7 @@ fn write_clauses(
             parts.push(CheckedGuardPart {
                 predicate: node_id(ids, &part.predicate),
                 binders: part.binders.iter().map(|key| node_id(ids, key)).collect(),
+                quantifier: None,
                 constraints,
             });
         }
