@@ -586,10 +586,22 @@ fn braking2_restored_nodes_match_fspec_vectors() {
         .map(|node| {
             let id = node["node_id"].clone();
             let key = key_text(&emitted, &id);
-            let vector = vector_nodes
+            let matches: Vec<_> = expected
                 .iter()
-                .find(|node| key_text(&vectors, &node["node_id"]) == key)
-                .expect("the vector has the same declared root");
+                .filter(|vector| {
+                    if node["declaration"].is_object() {
+                        key_text(&vectors, &vector["node_id"]) == key
+                    } else {
+                        vector["semantic_form"] == "temporal_clause"
+                            && vector["body"]["arguments"][1] == node["body"]["arguments"][1]
+                            && binding(&vector["body"]["arguments"][2], "kind")["value"]
+                                == binding(&node["body"]["arguments"][2], "kind")["value"]
+                    }
+                })
+                .collect();
+            let [vector] = matches.as_slice() else {
+                panic!("one restored root for {key}; found {}", matches.len());
+            };
             (id, vector["node_id"].clone())
         })
         .collect();
