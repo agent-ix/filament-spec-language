@@ -22,6 +22,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+use filament_contract_model::{
+    NativeJoinBudget, NativeJoinChargeKind, NativeJoinDeniedCharge, NativeJoinLocus,
+    NativeJoinLocusSource,
+};
 use filament_exact::{Identifier, NodeKey};
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{
@@ -1170,18 +1174,172 @@ impl Members {
 /// `successors` (Tarjan's algorithm, iterative so a long chain of members
 /// cannot exhaust the stack).
 fn strongly_connected(successors: &[Vec<usize>]) -> Vec<Vec<usize>> {
+    composition_components_core(successors, &mut CompositionProvision { budget: None })
+        .expect("source composition adjacency names declared guarantees")
+}
+
+/// Stable conditions returned by the bounded composition graph walk.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CompositionGraphErrorCode {
+    /// The original native work allowance was exhausted.
+    WorkLimit,
+    /// The original native logical-storage allowance was exhausted.
+    StorageLimit,
+    /// A successor does not name a row of this graph.
+    IndexOutOfRange,
+    /// A paid buffer could not reserve memory.
+    Allocation,
+}
+
+/// A composition graph refusal without an allocated diagnostic payload.
+#[derive(Debug, thiserror::Error)]
+pub enum CompositionGraphRefusal {
+    /// The original caller ledger denied a charge before its operation.
+    #[error("composition graph charge denied: {denied:?} at {locus:?}")]
+    Budget {
+        /// The first unpaid resource and attempted amount.
+        denied: NativeJoinDeniedCharge,
+        /// The original denial locus, including an earlier caller phase.
+        locus: Option<NativeJoinLocus>,
+        /// The caller's configured ceiling for the denied resource.
+        configured_bound: u64,
+    },
+    /// A successor index lies outside the supplied graph.
+    #[error("composition row {row} successor {index} is outside {len} rows")]
+    IndexOutOfRange {
+        /// Row carrying the invalid successor.
+        row: usize,
+        /// Invalid successor.
+        index: usize,
+        /// Number of supplied rows.
+        len: usize,
+    },
+    /// A paid allocation failed.
+    #[error(transparent)]
+    Allocation(#[from] std::collections::TryReserveError),
+}
+
+impl CompositionGraphRefusal {
+    /// Stable typed condition for this refusal.
+    pub fn code(&self) -> CompositionGraphErrorCode {
+        match self {
+            Self::Budget { denied, .. } => match denied.kind {
+                NativeJoinChargeKind::Work => CompositionGraphErrorCode::WorkLimit,
+                NativeJoinChargeKind::Storage => CompositionGraphErrorCode::StorageLimit,
+            },
+            Self::IndexOutOfRange { .. } => CompositionGraphErrorCode::IndexOutOfRange,
+            Self::Allocation(_) => CompositionGraphErrorCode::Allocation,
+        }
+    }
+}
+
+/// Return every strongly connected component, including isolated singletons.
+///
+/// Uses the source checker's iterative Tarjan walk: roots and successors are
+/// visited in supplied order, each component's row indices are sorted, and
+/// components retain completion order. Work charges cover row/edge visits,
+/// stack steps and sorted output members. Logical storage covers every working
+/// container and each reserved entry, including returned component buffers.
+/// Input adjacency is borrowed, never copied. No cache or allowance is reset.
+///
+/// # Errors
+///
+/// Returns the first native denial, an invalid successor index, or a paid
+/// reservation failure. Malformed adjacency never indexes outside a row.
+pub fn composition_components(
+    successors: &[Vec<usize>],
+    budget: &mut NativeJoinBudget,
+) -> Result<Vec<Vec<usize>>, CompositionGraphRefusal> {
+    composition_components_core(
+        successors,
+        &mut CompositionProvision {
+            budget: Some(budget),
+        },
+    )
+}
+
+struct CompositionProvision<'a> {
+    budget: Option<&'a mut NativeJoinBudget>,
+}
+
+impl CompositionProvision<'_> {
+    fn charge(
+        &mut self,
+        kind: NativeJoinChargeKind,
+        amount: u128,
+        row: Option<usize>,
+    ) -> Result<(), CompositionGraphRefusal> {
+        if let Some(budget) = &mut self.budget {
+            let locus = NativeJoinLocus {
+                source: row.map_or(
+                    NativeJoinLocusSource::Package,
+                    NativeJoinLocusSource::AdapterRow,
+                ),
+                form: "composition_components",
+            };
+            budget
+                .accounted_charge(kind, amount, locus)
+                .map_err(|denied| CompositionGraphRefusal::Budget {
+                    denied,
+                    locus: budget.first_unpaid_locus(),
+                    configured_bound: match denied.kind {
+                        NativeJoinChargeKind::Work => budget.work_limit(),
+                        NativeJoinChargeKind::Storage => budget.storage_limit(),
+                    },
+                })?;
+        }
+        Ok(())
+    }
+
+    fn room<T>(
+        &mut self,
+        list: &mut Vec<T>,
+        additional: usize,
+        row: Option<usize>,
+    ) -> Result<(), CompositionGraphRefusal> {
+        let needed = list.len() as u128 + additional as u128;
+        if needed > list.capacity() as u128 {
+            let target = needed.max(list.capacity().saturating_mul(2) as u128);
+            self.charge(NativeJoinChargeKind::Storage, target, row)?;
+            if self.budget.is_some() {
+                // The charge above refuses arithmetic overflow under any u64 ledger.
+                list.try_reserve_exact(usize::try_from(target).unwrap_or(usize::MAX) - list.len())?;
+            } else {
+                list.reserve(additional);
+            }
+        }
+        Ok(())
+    }
+}
+
+fn composition_components_core(
+    successors: &[Vec<usize>],
+    provision: &mut CompositionProvision<'_>,
+) -> Result<Vec<Vec<usize>>, CompositionGraphRefusal> {
     let count = successors.len();
-    let mut index: Vec<Option<usize>> = vec![None; count];
-    let mut low: Vec<usize> = vec![0; count];
-    let mut on_stack: Vec<bool> = vec![false; count];
+    provision.charge(NativeJoinChargeKind::Work, count as u128, None)?;
+    provision.charge(NativeJoinChargeKind::Storage, 5, None)?;
+    let mut index: Vec<Option<usize>> = Vec::new();
+    provision.room(&mut index, count, None)?;
+    index.resize(count, None);
+    let mut low: Vec<usize> = Vec::new();
+    provision.room(&mut low, count, None)?;
+    low.resize(count, 0);
+    let mut on_stack: Vec<bool> = Vec::new();
+    provision.room(&mut on_stack, count, None)?;
+    on_stack.resize(count, false);
     let mut stack: Vec<usize> = Vec::new();
     let mut next_index = 0usize;
     let mut components: Vec<Vec<usize>> = Vec::new();
     for root in 0..count {
+        provision.charge(NativeJoinChargeKind::Work, 1, Some(root))?;
         if index.get(root).copied().flatten().is_some() {
             continue;
         }
-        let mut work: Vec<(usize, usize)> = vec![(root, 0)];
+        provision.charge(NativeJoinChargeKind::Storage, 1, Some(root))?;
+        let mut work: Vec<(usize, usize)> = Vec::new();
+        provision.room(&mut work, 1, Some(root))?;
+        work.push((root, 0));
         let visit = |node: usize,
                      next_index: &mut usize,
                      index: &mut Vec<Option<usize>>,
@@ -1200,6 +1358,7 @@ fn strongly_connected(successors: &[Vec<usize>]) -> Vec<Vec<usize>> {
             *next_index += 1;
             stack.push(node);
         };
+        provision.room(&mut stack, 1, Some(root))?;
         visit(
             root,
             &mut next_index,
@@ -1209,16 +1368,26 @@ fn strongly_connected(successors: &[Vec<usize>]) -> Vec<Vec<usize>> {
             &mut stack,
         );
         while let Some(&(node, edge)) = work.last() {
+            provision.charge(NativeJoinChargeKind::Work, 1, Some(node))?;
             let next = successors
                 .get(node)
                 .and_then(|list| list.get(edge))
                 .copied();
             if let Some(next) = next {
+                if next >= count {
+                    return Err(CompositionGraphRefusal::IndexOutOfRange {
+                        row: node,
+                        index: next,
+                        len: count,
+                    });
+                }
                 if let Some(top) = work.last_mut() {
                     top.1 += 1;
                 }
                 match index.get(next).copied().flatten() {
                     None => {
+                        provision.room(&mut stack, 1, Some(next))?;
+                        provision.room(&mut work, 1, Some(next))?;
                         visit(
                             next,
                             &mut next_index,
@@ -1246,8 +1415,12 @@ fn strongly_connected(successors: &[Vec<usize>]) -> Vec<Vec<usize>> {
                 }
             }
             if index.get(node).copied().flatten() == Some(node_low) {
+                provision.charge(NativeJoinChargeKind::Storage, 1, Some(node))?;
                 let mut component = Vec::new();
-                while let Some(member) = stack.pop() {
+                while let Some(&member) = stack.last() {
+                    provision.charge(NativeJoinChargeKind::Work, 1, Some(member))?;
+                    provision.room(&mut component, 1, Some(member))?;
+                    stack.pop();
                     if let Some(s) = on_stack.get_mut(member) {
                         *s = false;
                     }
@@ -1256,12 +1429,158 @@ fn strongly_connected(successors: &[Vec<usize>]) -> Vec<Vec<usize>> {
                         break;
                     }
                 }
+                provision.charge(
+                    NativeJoinChargeKind::Work,
+                    component.len() as u128,
+                    Some(node),
+                )?;
                 component.sort_unstable();
+                provision.room(&mut components, 1, Some(node))?;
                 components.push(component);
             }
         }
     }
-    components
+    Ok(components)
+}
+
+#[cfg(test)]
+mod bounded_components_tests {
+    use super::*;
+
+    fn budget(work: u64, storage: u64) -> NativeJoinBudget {
+        let mut budget = NativeJoinBudget::new(work, storage);
+        budget.resume();
+        budget
+    }
+
+    /// Trace: FR-1044-AC-6
+    #[test]
+    fn bounded_components_preserve_source_order_for_cycles_chains_and_empty_graphs() {
+        let cases = [
+            (vec![], vec![]),
+            (
+                vec![vec![1], vec![2], vec![]],
+                vec![vec![2], vec![1], vec![0]],
+            ),
+            (
+                vec![vec![1], vec![0, 2], vec![3], vec![2], vec![], vec![5]],
+                vec![vec![2, 3], vec![0, 1], vec![4], vec![5]],
+            ),
+        ];
+        for (graph, expected) in cases {
+            let source = strongly_connected(&graph);
+            assert_eq!(source, expected);
+            let mut ledger = budget(10_000, 10_000);
+            assert_eq!(composition_components(&graph, &mut ledger).unwrap(), source);
+        }
+    }
+
+    /// Trace: FR-1044-AC-6
+    #[test]
+    fn bounded_components_refuse_an_out_of_range_successor() {
+        let mut ledger = budget(10_000, 10_000);
+        let refusal = composition_components(&[vec![usize::MAX]], &mut ledger).unwrap_err();
+        assert_eq!(refusal.code(), CompositionGraphErrorCode::IndexOutOfRange);
+        assert!(matches!(
+            refusal,
+            CompositionGraphRefusal::IndexOutOfRange {
+                row: 0,
+                index: usize::MAX,
+                len: 1,
+            }
+        ));
+        assert_eq!(ledger.first_unpaid(), None);
+    }
+
+    /// Trace: FR-1044-AC-6
+    #[test]
+    fn bounded_components_pay_exactly_and_refuse_short_or_zero_allowances() {
+        // Repeated edges, nested DFS frames, a singleton, and more than one
+        // component exercise every working buffer and its growth.
+        let graph = vec![vec![1, 1], vec![2], vec![0, 3], vec![], vec![4]];
+        let mut measured = budget(10_000, 10_000);
+        let expected = composition_components(&graph, &mut measured).unwrap();
+        let paid = measured.consumed();
+        let mut exact = budget(paid.work, paid.storage);
+        assert_eq!(
+            composition_components(&graph, &mut exact).unwrap(),
+            expected
+        );
+        assert_eq!(exact.consumed(), paid);
+
+        for kind in [NativeJoinChargeKind::Work, NativeJoinChargeKind::Storage] {
+            for bound in [
+                0,
+                match kind {
+                    NativeJoinChargeKind::Work => paid.work - 1,
+                    NativeJoinChargeKind::Storage => paid.storage - 1,
+                },
+            ] {
+                let mut short = budget(
+                    if kind == NativeJoinChargeKind::Work {
+                        bound
+                    } else {
+                        paid.work
+                    },
+                    if kind == NativeJoinChargeKind::Storage {
+                        bound
+                    } else {
+                        paid.storage
+                    },
+                );
+                let refusal = composition_components(&graph, &mut short).unwrap_err();
+                let CompositionGraphRefusal::Budget {
+                    denied,
+                    locus,
+                    configured_bound,
+                } = refusal
+                else {
+                    panic!("the unpaid operation must be a native budget refusal");
+                };
+                assert_eq!(denied.kind, kind);
+                assert_eq!(configured_bound, bound);
+                assert_eq!(Some(denied), short.first_unpaid());
+                assert_eq!(locus, short.first_unpaid_locus());
+                assert_eq!(locus.unwrap().form, "composition_components");
+                assert!(denied.amount > 0);
+                if kind == NativeJoinChargeKind::Work && bound == 0 {
+                    assert_eq!(short.consumed().storage, 0);
+                }
+            }
+        }
+
+        // A second call cannot warm a hidden cache or manufacture a fresh ledger.
+        let mut reused = budget(paid.work * 2, paid.storage * 2 - 1);
+        composition_components(&graph, &mut reused).unwrap();
+        let before = reused.consumed();
+        assert_eq!(
+            composition_components(&graph, &mut reused)
+                .unwrap_err()
+                .code(),
+            CompositionGraphErrorCode::StorageLimit
+        );
+        assert!(reused.consumed().work >= before.work);
+        assert!(reused.consumed().storage >= before.storage);
+    }
+
+    /// Trace: FR-1044-AC-6
+    #[test]
+    fn bounded_components_preserve_an_earlier_unpaid_charge_even_for_empty_input() {
+        let mut ledger = budget(0, 0);
+        let original_locus = NativeJoinLocus {
+            source: NativeJoinLocusSource::ReachedRow(37),
+            form: "composition_selection",
+        };
+        let denied = ledger
+            .accounted_charge(NativeJoinChargeKind::Storage, 9, original_locus)
+            .unwrap_err();
+        let before = ledger.consumed();
+        let refusal = composition_components(&[], &mut ledger).unwrap_err();
+        assert!(matches!(refusal, CompositionGraphRefusal::Budget {
+            denied: original, locus: Some(locus), configured_bound: 0,
+        } if original == denied && locus == original_locus));
+        assert_eq!(ledger.consumed(), before);
+    }
 }
 
 impl CheckedGraph {

@@ -33,6 +33,17 @@ pub const CATALOG_PAIRS: &[fsl_foundation::diagnostic::CatalogCode] = &[
 #[cfg(feature = "std")]
 mod analysis_view;
 #[cfg(feature = "std")]
+mod composition_context;
+#[cfg(feature = "std")]
+pub use composition_context::{CompositionModelContext, CompositionModelContextRefusal};
+#[cfg(feature = "std")]
+mod composition_view;
+#[cfg(feature = "std")]
+pub use composition_view::{
+    CompositionMember, CompositionMemberValue, CompositionView, CompositionViewRefusal,
+    OwnedNodeRef,
+};
+#[cfg(feature = "std")]
 pub mod occurrence_source;
 #[cfg(feature = "std")]
 pub use analysis_view::{AnalysisView, ClaimOccurrence, DependencyClosure};
@@ -121,8 +132,9 @@ pub use bare_slot::{BareSelectionFailure, BareSlot, BareSource};
 pub use bare_state_graph::BareStatePredicate;
 #[cfg(feature = "std")]
 pub use bare_term::{
-    BareClauseRefusal, BareClauseTerm, BareFrameOperation, BareStateClause,
-    BareStateClauseDeclaration, ClauseBinder, DeclaredComposite, DeclaredShape,
+    BareClauseConstraints, BareClauseFormRefusal, BareClauseRefusal, BareClauseTerm,
+    BareFairnessRefusal, BareFrameOperation, BareStateClause, BareStateClauseDeclaration,
+    ClauseBinder, DeclaredComposite, DeclaredShape,
 };
 #[cfg(feature = "std")]
 pub use bare_terminal::{BareTerminal, BareTerminalDeclaration, BareTerminalPredicate};

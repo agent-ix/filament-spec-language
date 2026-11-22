@@ -1734,18 +1734,59 @@ impl<'v> RawItems<'v> {
 /// input, never admission's own name-first lookup).
 #[derive(Debug)]
 pub(crate) struct ModelView {
-    pub(crate) view: EffectiveView,
+    storage: ModelViewStorage,
     provenance: Option<NormalizedModelProvenance>,
     pub(crate) clock_places: std::sync::Arc<super::clock_reference::DeclaredClockPlaces>,
-    pub(crate) clock_declarations:
-        Option<super::clock_reference::normalization::ClockDeclarationTable>,
-    by_effective_id: BTreeMap<EffectiveId, DeclarationKey>,
     /// Whether the view is the unit's own source package (FR-569), whose
     /// declarations a snapshot names without an `ix://` scheme.
     source: bool,
 }
 
+#[derive(Debug)]
+pub(crate) struct ModelViewData {
+    pub(crate) view: EffectiveView,
+    by_effective_id: BTreeMap<EffectiveId, DeclarationKey>,
+    pub(crate) clock_declarations:
+        Option<super::clock_reference::normalization::ClockDeclarationTable>,
+}
+
+#[derive(Debug)]
+enum ModelViewStorage {
+    Owned(ModelViewData),
+    Retained {
+        owners: std::sync::Arc<Vec<NormalizedModel>>,
+        index: usize,
+    },
+}
+
+impl std::ops::Deref for ModelView {
+    type Target = ModelViewData;
+
+    fn deref(&self) -> &Self::Target {
+        match &self.storage {
+            ModelViewStorage::Owned(data) => data,
+            ModelViewStorage::Retained { owners, index } => &owners[*index].data,
+        }
+    }
+}
+
 impl ModelView {
+    /// `index` was checked against the actual owner selection by StateModel.
+    pub(crate) fn retained(
+        owners: std::sync::Arc<Vec<NormalizedModel>>,
+        index: usize,
+    ) -> Option<Self> {
+        let owner = owners.get(index)?;
+        let clock_places = owner.clock_places.clone();
+        let source = owner.source;
+        Some(Self {
+            storage: ModelViewStorage::Retained { owners, index },
+            provenance: None,
+            clock_places,
+            source,
+        })
+    }
+
     /// The view with its reverse type-identity index.
     pub(crate) fn new(view: EffectiveView) -> Self {
         let by_effective_id = view
@@ -1754,11 +1795,13 @@ impl ModelView {
             .map(|(key, effective)| (effective.clone(), key.clone()))
             .collect();
         Self {
-            view,
+            storage: ModelViewStorage::Owned(ModelViewData {
+                view,
+                by_effective_id,
+                clock_declarations: Default::default(),
+            }),
             provenance: None,
             clock_places: std::sync::Arc::default(),
-            clock_declarations: Default::default(),
-            by_effective_id,
             source: false,
         }
     }
@@ -1946,7 +1989,10 @@ fn model_views_retaining<'a>(
     for view in &mut views {
         view.clock_places = clock_places.clone();
         if let Some(table) = model_selections.clock_declarations {
-            view.clock_declarations = Some(table.clone());
+            let ModelViewStorage::Owned(data) = &mut view.storage else {
+                return Err(fault("clock-declarations-bind-new-normalized-view"));
+            };
+            data.clock_declarations = Some(table.clone());
         }
     }
     Ok(views)
@@ -2322,12 +2368,20 @@ pub fn admit_current_snapshot_with_views<'a>(
         &[],
         SnapshotProvenance::Omit,
     )
-    .map(|(environment, usage, views)| {
-        (
+    .and_then(|(environment, usage, views)| {
+        Ok((
             environment,
             usage,
-            views.into_iter().map(|view| view.view).collect(),
-        )
+            views
+                .into_iter()
+                .map(|view| match view.storage {
+                    ModelViewStorage::Owned(data) => Ok(data.view),
+                    ModelViewStorage::Retained { .. } => {
+                        Err(fault("snapshot-owns-normalized-view"))
+                    }
+                })
+                .collect::<Result<Vec<_>, _>>()?,
+        ))
     })
 }
 
@@ -2360,7 +2414,15 @@ pub fn admit_current_snapshot_with_provenance<'a>(
             let provenance = view
                 .provenance
                 .ok_or_else(|| fault("missing-normalization-provenance"))?;
-            Ok(NormalizedModel::from_parts(view.view, provenance))
+            let ModelViewStorage::Owned(data) = view.storage else {
+                return Err(fault("snapshot-owns-normalized-view"));
+            };
+            Ok(NormalizedModel::from_parts(
+                data,
+                provenance,
+                view.clock_places,
+                view.source,
+            ))
         })
         .collect::<Result<Vec<_>, AdmissionFailure>>()?;
     Ok((environment, usage, models))

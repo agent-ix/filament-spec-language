@@ -100,6 +100,13 @@ impl PendingPackageFamily {
                 ": items[{}] names a temporal clause whose {fact} has no package form yet{at}",
                 index.get()
             ),
+            (Some(index), PendingFamily::CompositionOwningWorkPermission) => format!(
+                ": items[{}] composition owning execution is pending missing native before-work permission{at}",
+                index.get()
+            ),
+            (None, PendingFamily::CompositionOwningWorkPermission) => format!(
+                ": composition owning execution is pending missing native before-work permission{at}"
+            ),
             (Some(index), family) => format!(
                 ": items[{}] names the {} family, which has no package form yet{at}",
                 index.get(),
@@ -147,10 +154,11 @@ pub enum PendingFamily {
     /// name it does not carry ([`fsl_package::AnalysisView::unnamed_claims`]):
     /// the name may be that claim's, so it is not settled `unknown-claim`.
     UnnamedClaim,
-    /// The default items of a package that holds a component composition,
-    /// whose derived slots and component packages have no package form yet
-    /// (FSL FR-1044).
+    /// A composition request whose runtime route is not yet available.
     Composition,
+    /// Owning composition execution requires the missing native before-work
+    /// permission hook in the type-environment builder.
+    CompositionOwningWorkPermission,
     /// A temporal clause fact its package form does not read yet.
     ClauseFact(&'static str),
     /// A form of the package its model-check input does not read yet.
@@ -177,6 +185,7 @@ impl PendingFamily {
             Self::Declaration => "declaration",
             Self::UnnamedClaim => "unnamed-claim",
             Self::Composition => "composition",
+            Self::CompositionOwningWorkPermission => "composition-owning-work-permission",
             Self::ClauseFact(fact) => fact,
             Self::ModelForm(_) => "model-form",
             Self::ProbabilisticSourceModel => "probabilistic-source-model",
@@ -327,15 +336,15 @@ pub fn settle_package_run(
         engines,
         limits,
     } = run;
-    // FSL FR-1044: a package's component composition has no package form
-    // yet, so the default items of a package that holds one are refused
-    // whole rather than written without it.
+    // FSL FR-1044: admitted planner facts are available, but owning execution
+    // still requires native permission before type-environment work. Preserve
+    // the whole-request guard until that execution boundary is available.
     if items.is_none() {
         if let Some(node) = admitted_composition(package) {
             return Err(PackageRunError::Pending(PendingPackageFamily {
                 request_index: None,
                 note: None,
-                family: PendingFamily::Composition,
+                family: PendingFamily::CompositionOwningWorkPermission,
                 node: Some(node),
             }));
         }
@@ -959,7 +968,10 @@ fn resolve_names<'s>(
                     });
                 }
                 if !is_state_clause(view, &found.declaration) {
-                    return Err(pending(PendingFamily::Declaration));
+                    return Err(pending(declaration_pending_family(
+                        view,
+                        &found.declaration,
+                    )));
                 }
                 return Ok(Named::StateClause {
                     index,
@@ -969,15 +981,17 @@ fn resolve_names<'s>(
                     selection,
                 });
             }
-            if declared.iter().any(|(declared, _)| declared == name) {
-                if !derived && selection.kind.as_deref() == Some(Capability::ValueValidity.to_wire()) {
+            if let Some((_, declaration)) = declared.iter().find(|(declared, _)| declared == name) {
+                if !derived
+                    && selection.kind.as_deref() == Some(Capability::ValueValidity.to_wire())
+                {
                     return Ok(Named::Value {
                         index,
                         name,
                         selection,
                     });
                 }
-                return Err(pending(PendingFamily::Declaration));
+                return Err(pending(declaration_pending_family(view, declaration)));
             }
             if derived {
                 let selected = models.iter().any(|identity| identity == name);
@@ -997,6 +1011,20 @@ fn resolve_names<'s>(
             Ok(Named::Settled(unknown_claim(index, name)))
         })
         .collect()
+}
+
+/// Refine only the pending diagnostic of an already resolved declaration.
+fn declaration_pending_family(view: &dyn AnalysisView, node: &CheckedNodeId) -> PendingFamily {
+    if matches!(
+        view.package().node_kind(node),
+        Some(filament_contract_model::CheckedNodeKind::Correspondence(
+            filament_contract_model::CorrespondenceForm::ComponentComposition
+        ))
+    ) {
+        PendingFamily::CompositionOwningWorkPermission
+    } else {
+        PendingFamily::Declaration
+    }
 }
 
 /// The protocol name of `name` when it names one of the package protocol's
@@ -1332,12 +1360,14 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         let mut clauses: Vec<&OccurrenceKey> = body
             .occurrences
             .iter()
-            .filter(|occurrence| matches!(occurrence.origin().role().as_str(), "claim" | "declaration"))
+            .filter(|occurrence| {
+                matches!(occurrence.origin().role().as_str(), "claim" | "declaration")
+            })
             .collect();
         clauses.sort();
         let claim = clauses.first().copied().ok_or_else(pending)?;
-        let target = ValueTarget::select_package(self.package, name, claim)
-            .map_err(|_| pending())?;
+        let target =
+            ValueTarget::select_package(self.package, name, claim).map_err(|_| pending())?;
         // The package form spells Boolean and integer parameters only.
         if !target.parameters().iter().all(|parameter| {
             matches!(
@@ -2222,9 +2252,7 @@ impl<'a> WorkInputs<'_, 'a> {
                     |subject| subject.item(item.request_index),
                 )
             }
-            (_, Some(Route::Value(value)))
-                if item.kind == Capability::ValueValidity =>
-            {
+            (_, Some(Route::Value(value))) if item.kind == Capability::ValueValidity => {
                 let PackageValue {
                     target,
                     result_bound,
@@ -2265,15 +2293,15 @@ impl<'a> WorkInputs<'_, 'a> {
                         },
                     )
                 } else {
-                crate::value_check::value_item_in(
-                    item.request_index,
-                    family,
-                    Ok(crate::value_check::ValueRequest {
-                        target,
-                        max_cases: item.options.max_cases,
-                        reported: None,
-                    }),
-                )
+                    crate::value_check::value_item_in(
+                        item.request_index,
+                        family,
+                        Ok(crate::value_check::ValueRequest {
+                            target,
+                            max_cases: item.options.max_cases,
+                            reported: None,
+                        }),
+                    )
                 }
             }
             _ => AnalyzeItem::unadapted(item.request_index, item.kind, family),
@@ -2322,10 +2350,8 @@ impl<'a> WorkInputs<'_, 'a> {
     }
 }
 
-/// The node of the first component composition the package holds. No name
-/// table row carries a composition, and the producer writes it as a
-/// declaration, not a claim occurrence, so [`AnalysisView::unnamed_claims`]
-/// never lists it.
+/// The first component-composition declaration in package graph order.
+/// The default runtime guard cannot omit it while owning execution is pending.
 fn admitted_composition(view: &dyn AnalysisView) -> Option<CheckedNodeId> {
     view.package()
         .resolved_graph()

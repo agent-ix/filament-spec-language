@@ -17,6 +17,7 @@ pub(crate) mod predicate;
 mod subject;
 
 pub use hyper::BareHyperTerm;
+pub(crate) use subject::{ClauseBodies, ClauseBodyRefusal};
 
 pub use crate::protocol_occurrence::SubjectKind;
 pub use mapping::{

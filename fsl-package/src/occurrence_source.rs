@@ -9,10 +9,12 @@ use std::cmp::Ordering;
 
 use filament_contract_model::{
     CheckedBodyLocationOrigin, CheckedBodyLocationReadError, CheckedKeyOrdinal, CheckedNodeId,
-    CheckedOccurrence, CheckedPackageV2,
+    CheckedOccurrence, CheckedPackageV2, NativeJoinBudget, NativeJoinLocus,
 };
-use filament_exact::{Origin, Role};
-use fsl_foundation::source::provenance::{OccurrenceKey, PackageSourceMap, SourceRegion};
+use filament_exact::{NodeKey, Origin, Role};
+use fsl_foundation::source::provenance::{OccurrenceKey, SourceRegion};
+
+use crate::native_row::{self, NativeRowError};
 
 /// One exact admitted occurrence and its selected source region.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -84,35 +86,135 @@ pub(crate) fn occurrence_source(
     selected: Option<&SourceRegion>,
 ) -> Result<OccurrenceSource, OccurrenceSourceRefusal> {
     let key = occurrence_key(package, application, occurrence)?;
-    let entry = package
-        .source_map()
-        .iter()
-        .find(|entry| {
-            entry.node_id == *application
-                && entry.role == occurrence.role
-                && entry.ordinal == occurrence.ordinal
-        })
-        .ok_or(OccurrenceSourceRefusal::MissingRegion)?;
-    let regions = entry
-        .regions
-        .iter()
-        .map(crate::checked_v2::source_region)
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| OccurrenceSourceRefusal::MissingRegion)?;
-    let map = PackageSourceMap::from_entries([(key.clone(), regions)])
-        .map_err(|_| OccurrenceSourceRefusal::MissingRegion)?;
-    let regions = map
-        .regions(&key)
-        .ok_or(OccurrenceSourceRefusal::MissingRegion)?;
-    let region = match (selected, regions) {
-        (Some(selected), _) => regions
-            .iter()
-            .find(|region| *region == selected)
-            .ok_or(OccurrenceSourceRefusal::UnknownRegion)?,
+    source_for_key(
+        package,
+        application,
+        occurrence,
+        key,
+        selected,
+        &mut Unmetered,
+    )
+}
+
+/// A metered attribution preserves the native denial separately from a
+/// semantic attribution refusal, without changing legacy callers' enum.
+#[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
+pub(crate) enum MeteredOccurrenceSourceRefusal {
+    #[error(transparent)]
+    Source(#[from] OccurrenceSourceRefusal),
+    #[error(transparent)]
+    Native(#[from] NativeRowError),
+}
+
+struct Unmetered;
+
+trait SourceWork {
+    type Error: From<OccurrenceSourceRefusal>;
+    fn visit(&mut self) -> Result<(), Self::Error>;
+    fn items(&mut self, count: usize) -> Result<(), Self::Error>;
+    fn text(&mut self, value: &str) -> Result<(), Self::Error>;
+}
+
+impl SourceWork for Unmetered {
+    type Error = OccurrenceSourceRefusal;
+    fn visit(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn items(&mut self, _: usize) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn text(&mut self, _: &str) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+struct Metered<'a> {
+    budget: &'a mut NativeJoinBudget,
+    locus: NativeJoinLocus,
+}
+
+impl SourceWork for Metered<'_> {
+    type Error = MeteredOccurrenceSourceRefusal;
+    fn visit(&mut self) -> Result<(), Self::Error> {
+        Ok(native_row::work(self.budget, self.locus, 1)?)
+    }
+    fn items(&mut self, count: usize) -> Result<(), Self::Error> {
+        Ok(native_row::items(self.budget, self.locus, count)?)
+    }
+    fn text(&mut self, value: &str) -> Result<(), Self::Error> {
+        Ok(native_row::text(self.budget, self.locus, value)?)
+    }
+}
+
+/// Read an occurrence on a composition whose admitted declaration and
+/// structural key the caller already retained. No graph or body walk repeats.
+pub(crate) fn composition_occurrence_source(
+    package: &CheckedPackageV2,
+    application: &CheckedNodeId,
+    occurrence: &CheckedOccurrence,
+    node: &NodeKey,
+    budget: &mut NativeJoinBudget,
+) -> Result<OccurrenceSource, MeteredOccurrenceSourceRefusal> {
+    let locus = native_row::start(budget, "component_composition")?;
+    let mut work = Metered { budget, locus };
+    let role = crate::checked_v2::role_spelling(&occurrence.role);
+    work.text(role)?;
+    let key = OccurrenceKey::new(
+        node.clone(),
+        Origin::new(Role::new(role), occurrence.ordinal),
+    );
+    source_for_key(package, application, occurrence, key, None, &mut work)
+}
+
+fn source_for_key<W: SourceWork>(
+    package: &CheckedPackageV2,
+    application: &CheckedNodeId,
+    occurrence: &CheckedOccurrence,
+    key: OccurrenceKey,
+    selected: Option<&SourceRegion>,
+    work: &mut W,
+) -> Result<OccurrenceSource, W::Error> {
+    let mut found = None;
+    for entry in package.source_map() {
+        work.visit()?;
+        if entry.node_id == *application
+            && entry.role == occurrence.role
+            && entry.ordinal == occurrence.ordinal
+        {
+            found = Some(entry);
+            break;
+        }
+    }
+    let entry = found.ok_or(OccurrenceSourceRefusal::MissingRegion)?;
+    work.items(entry.regions.len())?;
+    let mut regions = Vec::with_capacity(entry.regions.len());
+    for region in &entry.regions {
+        work.visit()?;
+        work.text(&region.source.authority)?;
+        work.text(&region.source.identity)?;
+        regions.push(
+            crate::checked_v2::source_region(region)
+                .map_err(|_| OccurrenceSourceRefusal::MissingRegion)?,
+        );
+    }
+    let region = match (selected, regions.as_slice()) {
+        (Some(selected), _) => {
+            let mut found = None;
+            for region in &regions {
+                work.visit()?;
+                if region == selected {
+                    found = Some(region);
+                    break;
+                }
+            }
+            found.ok_or(OccurrenceSourceRefusal::UnknownRegion)?
+        }
         (None, [only]) => only,
-        (None, []) => return Err(OccurrenceSourceRefusal::MissingRegion),
-        (None, _) => return Err(OccurrenceSourceRefusal::AmbiguousRegion),
+        (None, []) => return Err(OccurrenceSourceRefusal::MissingRegion.into()),
+        (None, _) => return Err(OccurrenceSourceRefusal::AmbiguousRegion.into()),
     };
+    work.text(region.source().authority())?;
+    work.text(region.source().identity())?;
     Ok(OccurrenceSource {
         occurrence: key,
         region: region.clone(),

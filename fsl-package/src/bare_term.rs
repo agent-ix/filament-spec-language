@@ -13,14 +13,22 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use filament_contract_model::{CheckedNodeId, CheckedSemanticNodeV2, CheckedTerm};
-use filament_exact::{EffectiveId, NodeKey};
+use filament_contract_model::{
+    CheckedFairnessGranularity, CheckedFairnessKind, CheckedFairnessTarget, CheckedNodeId,
+    CheckedNodeKind, CheckedOperationMember, CheckedSemanticNodeV2, CheckedTerm, NativeJoinBudget,
+    NativeJoinLocus, SelectedExactIdentity, TemporalForm,
+};
+use filament_exact::{EffectiveId, Identifier, NodeKey};
 use filament_semantic_value::catalog::InternalFault;
+use filament_semantic_value::fairness::{
+    FairnessConstraint, FairnessGranularity, FairnessKind, FairnessOperation,
+};
 
 use crate::bare::BarePackage;
 use crate::bare_slot::BareSelectionFailure;
 use crate::checked_v2::wire_graph;
 use crate::checked_views::{temporal_subject, Activation, FormulaOperation};
+use crate::native_row::{self, NativeRowError};
 use crate::protocol_selection::SlotSelectionFailure;
 use crate::protocol_view::{group_member, text};
 use crate::reader_protocol_projection::{
@@ -88,7 +96,384 @@ enum ClauseTerm {
     Guard,
 }
 
+/// A fairness projection preserves both the original clause refusal and a
+/// denial on the invocation's cumulative native work/storage ledger.
+#[derive(Debug, thiserror::Error)]
+pub enum BareFairnessRefusal {
+    /// The clause or fairness target has no admitted package form.
+    #[error("fairness clause refused: {0:?}")]
+    Clause(BareClauseRefusal),
+    /// The existing native allowance was exhausted before the read or copy.
+    #[error(transparent)]
+    Native(#[from] NativeRowError),
+    /// The admitted structural identity could not be materialized.
+    #[error(transparent)]
+    Structural(#[from] fsl_semantics::check::wire_id::WireIdError),
+    /// A prepaid structural-key reservation failed.
+    #[error(transparent)]
+    Allocation(#[from] std::collections::TryReserveError),
+}
+
+impl From<BareClauseRefusal> for BareFairnessRefusal {
+    fn from(refusal: BareClauseRefusal) -> Self {
+        Self::Clause(refusal)
+    }
+}
+
+/// Complete clause fairness and the exact joined identity used at construction.
+/// Borrowed identities price later copies without substituting receiver types.
+pub struct BareClauseConstraints<'a> {
+    constraints: Vec<fsl_semantics::check::ClauseConstraint>,
+    declaring: Vec<&'a EffectiveId>,
+}
+impl BareClauseConstraints<'_> {
+    /// Actual constraints in admitted fairness-member order.
+    pub fn constraints(&self) -> &[fsl_semantics::check::ClauseConstraint] {
+        &self.constraints
+    }
+    /// Exact identity that constructed the constraint at this position.
+    pub fn declaring_at(&self, position: usize) -> Option<&EffectiveId> {
+        self.declaring.get(position).copied()
+    }
+}
+
+/// A batch clause-form read keeps admitted-view, existing form and native
+/// refusals distinct; no denial is converted into a semantic pending fact.
+#[derive(Debug, thiserror::Error)]
+pub enum BareClauseFormRefusal {
+    /// An existing package clause-form refusal.
+    #[error("package clause form refused: {0:?}")]
+    Form(BareClauseRefusal),
+    /// The requested naming row or clause shape is not owned by this package.
+    #[error(transparent)]
+    View(#[from] crate::checked_views::ViewRefusal),
+    /// The invocation's original native allowance was exhausted.
+    #[error(transparent)]
+    Native(#[from] NativeRowError),
+    /// A paid body reservation failed.
+    #[error("package clause body allocation failed: {0}")]
+    Allocation(#[from] std::collections::TryReserveError),
+}
+
+impl From<BareClauseRefusal> for BareClauseFormRefusal {
+    fn from(refusal: BareClauseRefusal) -> Self {
+        Self::Form(refusal)
+    }
+}
+impl From<crate::checked_views::ClauseBodyRefusal> for BareClauseFormRefusal {
+    fn from(refusal: crate::checked_views::ClauseBodyRefusal) -> Self {
+        match refusal {
+            crate::checked_views::ClauseBodyRefusal::View(refusal) => Self::View(refusal),
+            crate::checked_views::ClauseBodyRefusal::Native(refusal) => Self::Native(refusal),
+            crate::checked_views::ClauseBodyRefusal::Allocation(refusal) => {
+                Self::Allocation(refusal)
+            }
+        }
+    }
+}
+
+struct FormParts<'a, 'p> {
+    over: &'p CheckedNodeId,
+    activation: &'a Activation,
+    captures: &'a [CheckedNodeId],
+    capture_names: &'a [String],
+    formula: &'a [crate::checked_views::FormulaNodeUse<'p>],
+    profile: &'p filament_contract_model::CheckedSelection,
+}
+
+trait FairnessWork {
+    type Error: From<BareClauseRefusal>;
+    fn visit(&mut self) -> Result<(), Self::Error>;
+    fn items(&mut self, count: usize) -> Result<(), Self::Error>;
+    fn text(&mut self, value: &str) -> Result<(), Self::Error>;
+    fn node(&mut self, value: &CheckedNodeId) -> Result<(), Self::Error>;
+    fn effective(&mut self, value: &EffectiveId) -> Result<(), Self::Error> {
+        self.items(value.owner_chain().len())?;
+        for original in value.owner_chain() {
+            self.text(original.package())?;
+            self.text(original.node())?;
+        }
+        Ok(())
+    }
+}
+
+struct UnmeteredFairness;
+
+impl FairnessWork for UnmeteredFairness {
+    type Error = BareClauseRefusal;
+    fn visit(&mut self) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn items(&mut self, _: usize) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn text(&mut self, _: &str) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn node(&mut self, _: &CheckedNodeId) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+struct MeteredFairness<'a> {
+    budget: &'a mut NativeJoinBudget,
+    locus: NativeJoinLocus,
+}
+
+impl FairnessWork for MeteredFairness<'_> {
+    type Error = BareFairnessRefusal;
+    fn visit(&mut self) -> Result<(), Self::Error> {
+        Ok(native_row::work(self.budget, self.locus, 1)?)
+    }
+    fn items(&mut self, count: usize) -> Result<(), Self::Error> {
+        Ok(native_row::items(self.budget, self.locus, count)?)
+    }
+    fn text(&mut self, value: &str) -> Result<(), Self::Error> {
+        Ok(native_row::text(self.budget, self.locus, value)?)
+    }
+    fn node(&mut self, value: &CheckedNodeId) -> Result<(), Self::Error> {
+        Ok(native_row::node(self.budget, self.locus, value)?)
+    }
+}
+
+trait FormWork: FairnessWork {
+    fn value_type(&mut self, value: &filament_exact::ValueType) -> Result<(), Self::Error>;
+    fn interval(&mut self, value: &crate::CheckedOperationInterval) -> Result<(), Self::Error>;
+}
+impl FormWork for UnmeteredFairness {
+    fn value_type(&mut self, _: &filament_exact::ValueType) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn interval(&mut self, _: &crate::CheckedOperationInterval) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+struct MeteredForm<'a> {
+    budget: &'a mut NativeJoinBudget,
+    locus: NativeJoinLocus,
+}
+impl FairnessWork for MeteredForm<'_> {
+    type Error = BareClauseFormRefusal;
+    fn visit(&mut self) -> Result<(), Self::Error> {
+        Ok(native_row::work(self.budget, self.locus, 1)?)
+    }
+    fn items(&mut self, count: usize) -> Result<(), Self::Error> {
+        Ok(native_row::items(self.budget, self.locus, count)?)
+    }
+    fn text(&mut self, text: &str) -> Result<(), Self::Error> {
+        Ok(native_row::text(self.budget, self.locus, text)?)
+    }
+    fn node(&mut self, node: &CheckedNodeId) -> Result<(), Self::Error> {
+        Ok(native_row::node(self.budget, self.locus, node)?)
+    }
+}
+impl FormWork for MeteredForm<'_> {
+    fn value_type(&mut self, value: &filament_exact::ValueType) -> Result<(), Self::Error> {
+        Ok(native_row::value_type(self.budget, self.locus, value)?)
+    }
+    fn interval(&mut self, value: &crate::CheckedOperationInterval) -> Result<(), Self::Error> {
+        self.visit()?;
+        if let crate::CheckedOperationInterval::Timed { lower, upper, .. } = value {
+            for bound in std::iter::once(lower).chain(upper) {
+                native_row::integer(self.budget, self.locus, &bound.numerator)?;
+                native_row::integer(self.budget, self.locus, &bound.denominator)?;
+            }
+        }
+        Ok(())
+    }
+}
+
 impl<'p> BarePackage<'p> {
+    /// Read a document-held temporal clause's model-operation fairness from
+    /// admitted operation members and this owner's joined identity rows.
+    /// Every visited member/identity row and retained copy is charged to the
+    /// invocation's existing native allowance before it is read or copied.
+    pub fn temporal_clause_fairness_with_budget(
+        &self,
+        declaration: &CheckedNodeId,
+        budget: &mut NativeJoinBudget,
+    ) -> Result<Vec<FairnessConstraint>, BareFairnessRefusal> {
+        let locus = native_row::start(budget, "temporal_fairness")?;
+        let mut work = MeteredFairness { budget, locus };
+        work.visit()?;
+        if self.package().node_kind(declaration)
+            != Some(CheckedNodeKind::Temporal(TemporalForm::TemporalClause))
+        {
+            return Err(BareClauseRefusal::from(fault("fairness-clause-is-admitted")).into());
+        }
+        let term = self
+            .package()
+            .term(declaration)
+            .ok_or_else(|| BareClauseRefusal::from(fault("fairness-clause-is-admitted")))?;
+        self.read_clause_fairness(declaration, term, &mut work)
+    }
+
+    /// Read complete operation fairness facts from the actual owning clause.
+    /// Context identities and operation names come from admitted fairness
+    /// targets, alongside the exact joined object identity. Every conversion
+    /// and retained copy consumes the caller's existing native allowance.
+    pub fn temporal_clause_constraints_with_budget<'a>(
+        &'a self,
+        declaration: &CheckedNodeId,
+        budget: &mut NativeJoinBudget,
+    ) -> Result<BareClauseConstraints<'a>, BareFairnessRefusal> {
+        use fsl_semantics::check::wire_id::{StructuralKeyMaterializationError, StructuralKeys};
+        let locus = native_row::start(budget, "temporal_clause_constraints")?;
+        let mut work = MeteredFairness { budget, locus };
+        work.visit()?;
+        if self.package().node_kind(declaration)
+            != Some(CheckedNodeKind::Temporal(TemporalForm::TemporalClause))
+        {
+            return Err(BareClauseRefusal::from(fault("fairness-clause-is-admitted")).into());
+        }
+        let term = self
+            .package()
+            .term(declaration)
+            .ok_or_else(|| BareClauseRefusal::from(fault("fairness-clause-is-admitted")))?;
+        let mut keys = StructuralKeys::default();
+        let CheckedTerm::Application { arguments, .. } = term else {
+            return Err(BareClauseRefusal::from(fault("fairness-clause-is-admitted")).into());
+        };
+        let [_, _, _, _, CheckedTerm::Aggregate { members }, _] = arguments.as_slice() else {
+            return Err(BareClauseRefusal::from(fault("fairness-clause-is-admitted")).into());
+        };
+        work.visit()?;
+        work.items(members.len())?;
+        let mut declaring = Vec::new();
+        declaring.try_reserve_exact(members.len())?;
+        let constraints = self.read_clause_fairness_with(
+            declaration,
+            term,
+            &mut work,
+            |context, name, identity, constraint, work| {
+                let node = match keys.try_key(context, work.budget, work.locus) {
+                    Ok(node) => node,
+                    Err(StructuralKeyMaterializationError::Wire(error)) => return Err(error.into()),
+                    Err(StructuralKeyMaterializationError::Allocation(error)) => {
+                        return Err(error.into())
+                    }
+                    Err(StructuralKeyMaterializationError::Budget { denied, .. }) => {
+                        return Err(NativeRowError::exhausted(denied, work.budget).into())
+                    }
+                };
+                // Identifier owns a separate copy from FairnessOperation.
+                work.text(name)?;
+                let operation = Identifier::new(name.to_owned()).map_err(|_| {
+                    BareClauseRefusal::from(fault("fairness-operation-name-is-admitted"))
+                })?;
+                work.visit()?;
+                declaring.push(identity);
+                Ok(fsl_semantics::check::ClauseConstraint {
+                    constraint,
+                    context: node,
+                    operation,
+                })
+            },
+        )?;
+        Ok(BareClauseConstraints {
+            constraints,
+            declaring,
+        })
+    }
+
+    fn read_clause_fairness<W: FairnessWork>(
+        &self,
+        declaration: &CheckedNodeId,
+        term: &CheckedTerm,
+        work: &mut W,
+    ) -> Result<Vec<FairnessConstraint>, W::Error> {
+        self.read_clause_fairness_with(declaration, term, work, |_, _, _, constraint, _| {
+            Ok(constraint)
+        })
+    }
+
+    fn read_clause_fairness_with<'a, W: FairnessWork, T>(
+        &'a self,
+        declaration: &CheckedNodeId,
+        term: &CheckedTerm,
+        work: &mut W,
+        mut retain: impl FnMut(
+            &CheckedNodeId,
+            &str,
+            &'a EffectiveId,
+            FairnessConstraint,
+            &mut W,
+        ) -> Result<T, W::Error>,
+    ) -> Result<Vec<T>, W::Error> {
+        let malformed = || BareClauseRefusal::from(fault("fairness-member-is-admitted"));
+        let (_, identities) = self.witness().map_err(BareClauseRefusal::from)?;
+        let CheckedTerm::Application { arguments, .. } = term else {
+            return Err(malformed().into());
+        };
+        let [_, _, _, _, CheckedTerm::Aggregate { members }, _] = arguments.as_slice() else {
+            return Err(malformed().into());
+        };
+        work.items(members.len())?;
+        let mut fairness = Vec::with_capacity(members.len());
+        for member in members {
+            work.visit()?;
+            let CheckedTerm::Reference { target } = member else {
+                return Err(malformed().into());
+            };
+            let Some(CheckedTerm::Application { operation, .. }) = self.package().term(target)
+            else {
+                return Err(malformed().into());
+            };
+            let read = operation.read().map_err(|_| malformed())?;
+            let Some(CheckedOperationMember::Fairness {
+                fairness_kind,
+                granularity,
+                target,
+            }) = read.member
+            else {
+                return Err(malformed().into());
+            };
+            let CheckedFairnessTarget::Operation {
+                declaration: context,
+                name,
+            } = target
+            else {
+                work.node(declaration)?;
+                return Err(BareClauseRefusal::Pending {
+                    fact: "fairness-target",
+                    node: declaration.clone(),
+                }
+                .into());
+            };
+            let structural = self
+                .package()
+                .structural_key(context)
+                .ok_or_else(malformed)?;
+            let mut declaring = None;
+            for row in identities.declaration_rows() {
+                work.visit()?;
+                if row.structural_node == *structural {
+                    let SelectedExactIdentity::Object(owner) = &row.exact_identity else {
+                        return Err(malformed().into());
+                    };
+                    declaring = Some(owner);
+                    break;
+                }
+            }
+            let declaring = declaring.ok_or_else(malformed)?;
+            work.effective(declaring)?;
+            work.text(name)?;
+            let constraint = FairnessConstraint::new(
+                match fairness_kind {
+                    CheckedFairnessKind::Weak => FairnessKind::Weak,
+                    CheckedFairnessKind::Strong => FairnessKind::Strong,
+                },
+                FairnessOperation::new(declaring.clone(), name.to_string()),
+                match granularity {
+                    CheckedFairnessGranularity::Whole => FairnessGranularity::Whole,
+                    CheckedFairnessGranularity::Each => FairnessGranularity::Each,
+                },
+            );
+            fairness.push(retain(structural, name, declaring, constraint, work)?);
+        }
+        Ok(fairness)
+    }
+
     /// The `holds` condition at use `position` of the `formula_graph()` of
     /// the temporal clause whose node key is `clause`, projected over the
     /// clause binders it reads. Charges nothing.
@@ -909,12 +1294,99 @@ impl<'p> BarePackage<'p> {
     ///
     /// [`BareClauseRefusal::Selection`] for a clause the package does not
     /// select; [`BareClauseRefusal::Pending`] for a fact the form does not
-    /// read yet: a fairness set, an interval or an aggregate atom.
+    /// read yet: a non-operation fairness target, an interval or an aggregate atom.
     pub fn temporal_clause_form(
         &self,
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
     ) -> Result<fsl_semantics::check::PackageClauseForm, BareClauseRefusal> {
         self.read_temporal_clause_form(claim, false)
+    }
+
+    /// Project several authentic naming rows of this owner through one paid
+    /// graph index and the same converter used by the legacy clause reader.
+    /// Step/timed interval payloads are read as the package run form does;
+    /// populations remain the caller's supplied domain facts.
+    ///
+    /// # Errors
+    /// Rejects foreign/copied naming rows, preserves unsupported clause facts,
+    /// and retains the original first unpaid native charge without a new meter.
+    pub fn temporal_clause_forms_with_budget(
+        &self,
+        rows: &[&filament_contract_model::TemporalClauseName],
+        budget: &mut NativeJoinBudget,
+    ) -> Result<Vec<fsl_semantics::check::PackageClauseForm>, BareClauseFormRefusal> {
+        let locus = native_row::start(budget, "temporal_clause_forms")?;
+        native_row::work(budget, locus, 1)?;
+        self.witness().map_err(BareClauseRefusal::from)?;
+        let bodies = crate::checked_views::ClauseBodies::new(self.package(), budget)?;
+        let mut work = MeteredForm { budget, locus };
+        work.items(rows.len())?;
+        let mut forms = Vec::with_capacity(rows.len());
+        for row in rows {
+            let mut authentic = false;
+            for candidate in self.package().temporal_clause_names().into_iter().flatten() {
+                work.visit()?;
+                if std::ptr::eq(candidate, *row) {
+                    authentic = true;
+                    break;
+                }
+            }
+            if !authentic {
+                return Err(crate::checked_views::ViewRefusal::UnresolvedClause.into());
+            }
+            let body = bodies.body(&row.declaration, work.budget)?;
+            let node = bodies
+                .node(&row.declaration)
+                .ok_or(crate::checked_views::ViewRefusal::UnresolvedClause)?;
+            forms.push(self.finish_temporal_clause_form(
+                row,
+                node,
+                FormParts {
+                    over: body.over,
+                    activation: &body.activation,
+                    captures: &body.captures,
+                    capture_names: &body.capture_names,
+                    formula: &body.formula,
+                    profile: body.profile,
+                },
+                |id| bodies.node(id),
+                true,
+                &|| BareClauseRefusal::from(fault("clause-form-shape-is-admitted")),
+                &mut |_position, atom, work: &mut MeteredForm<'_>| {
+                    let mut found = None;
+                    let mut multiple = false;
+                    for entry in self.package().source_map() {
+                        work.visit()?;
+                        if entry.node_id != *atom.node
+                            || entry.role
+                                != filament_contract_model::CheckedOccurrenceRole::Expression
+                        {
+                            continue;
+                        }
+                        for region in &entry.regions {
+                            work.visit()?;
+                            if region.source == row.declaration_region.source
+                                && region.start >= row.declaration_region.start
+                                && region.end <= row.declaration_region.end
+                            {
+                                if found.is_some() {
+                                    multiple = true;
+                                } else {
+                                    found = Some(region_span(region));
+                                }
+                            }
+                        }
+                    }
+                    match (found, multiple) {
+                        (Some(span), false) => Ok(span),
+                        (Some(_), true) => Ok(region_span(&row.declaration_region)),
+                        (None, _) => Err(crate::checked_views::ViewRefusal::LeafHasNoSource.into()),
+                    }
+                },
+                &mut work,
+            )?);
+        }
+        Ok(forms)
     }
 
     /// [`Self::temporal_clause_form`] with each operator's step interval read
@@ -999,7 +1471,6 @@ impl<'p> BarePackage<'p> {
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
         intervals: bool,
     ) -> Result<fsl_semantics::check::PackageClauseForm, BareClauseRefusal> {
-        use fsl_semantics::check::{BinaryTemporal, PackageFormulaNode, UnaryTemporal};
         let package = self.package();
         self.witness()?;
         let nodes: BTreeMap<&CheckedNodeId, &CheckedSemanticNodeV2> = package
@@ -1022,42 +1493,104 @@ impl<'p> BarePackage<'p> {
                 ordinal: claim.origin().ordinal(),
             })
             .ok_or_else(malformed)?;
+        self.finish_temporal_clause_form(
+            row,
+            node,
+            FormParts {
+                over: view.over(),
+                activation: view.activation(),
+                captures: view.captures(),
+                capture_names: view.capture_names(),
+                formula: view.formula_graph(),
+                profile: view.profile(),
+            },
+            |id| nodes.get(id).copied(),
+            intervals,
+            &|| BareClauseRefusal::from(malformed()),
+            &mut |position, _entry, _work| {
+                let sources = self
+                    .temporal_atom_sources(claim, position)
+                    .map_err(|_| malformed())?;
+                match sources.as_slice() {
+                    [only] => Ok(fsl_foundation::Span {
+                        start: usize::try_from(only.region.start()).map_err(|_| malformed())?,
+                        end: usize::try_from(only.region.end()).map_err(|_| malformed())?,
+                    }),
+                    _ => Ok(region_span(&row.declaration_region)),
+                }
+            },
+            &mut UnmeteredFairness,
+        )
+    }
+
+    #[ix_trace_rs::string_edge]
+    fn finish_temporal_clause_form<'n, W: FormWork>(
+        &self,
+        row: &filament_contract_model::TemporalClauseName,
+        node: &'n CheckedSemanticNodeV2,
+        parts: FormParts<'_, '_>,
+        lookup: impl Fn(&CheckedNodeId) -> Option<&'n CheckedSemanticNodeV2>,
+        intervals: bool,
+        malformed: &impl Fn() -> BareClauseRefusal,
+        atom_span: &mut impl FnMut(
+            usize,
+            &crate::checked_views::FormulaNodeUse<'_>,
+            &mut W,
+        ) -> Result<fsl_foundation::Span, W::Error>,
+        work: &mut W,
+    ) -> Result<fsl_semantics::check::PackageClauseForm, W::Error> {
+        use fsl_semantics::check::{BinaryTemporal, PackageFormulaNode, UnaryTemporal};
+        let package = self.package();
+        work.text(row.name.as_ref())?;
         let name = row.name.as_ref().to_owned();
         let CheckedTerm::Application { arguments, .. } = &node.body else {
             return Err(malformed().into());
         };
         // FR-337 "Clause emission": `over`, clock, activation, captures,
         // fairness, formula.
-        let [_, clock, _, _, CheckedTerm::Aggregate { members: fairness }, _] =
-            arguments.as_slice()
-        else {
+        let [_, clock, _, _, CheckedTerm::Aggregate { .. }, _] = arguments.as_slice() else {
             return Err(malformed().into());
         };
-        if !fairness.is_empty() {
-            return Err(BareClauseRefusal::Pending {
-                fact: "fairness",
-                node: node.node_id.clone(),
-            });
-        }
-        let clock = text(clock).ok_or_else(malformed)?.to_owned();
+        let fairness = self.read_clause_fairness(&node.node_id, &node.body, work)?;
+        let clock = text(clock).ok_or_else(malformed)?;
+        work.text(clock)?;
+        let clock = clock.to_owned();
         // FSpec FR-322 "Clause declaration regions": the whole declaration.
         let span = region_span(&row.declaration_region);
-        let binder =
-            |id: &CheckedNodeId| -> Result<(String, filament_exact::ValueType), BareClauseRefusal> {
-                let parameter = nodes.get(id).ok_or_else(malformed)?;
-                let name = group_member(&parameter.body, "name")
-                    .and_then(text)
-                    .ok_or_else(malformed)?;
+        let mut binder =
+            |id: &CheckedNodeId| -> Result<(String, filament_exact::ValueType), W::Error> {
+                work.visit()?;
+                let parameter = lookup(id).ok_or_else(malformed)?;
+                let CheckedTerm::Aggregate { members } = &parameter.body else {
+                    return Err(malformed().into());
+                };
+                let mut name = None;
+                for field in members {
+                    work.visit()?;
+                    if let CheckedTerm::Binding {
+                        name: bound, value, ..
+                    } = field
+                    {
+                        if &**bound == "name" {
+                            name = text(value);
+                            break;
+                        }
+                    }
+                }
+                let name = name.ok_or_else(malformed)?;
+                work.visit()?;
                 let value_type = self
                     .exact_type_projections()
                     .get(id)
                     .and_then(|projected| projected.as_ref().ok())
-                    .map(|projected| projected.value_type().clone())
+                    .map(|projected| projected.value_type())
                     .ok_or_else(malformed)?;
-                Ok((name.to_owned(), value_type))
+                work.value_type(value_type)?;
+                work.text(name)?;
+                Ok((name.to_owned(), value_type.clone()))
             };
-        let over = binder(view.over())?;
-        let (activation, trigger) = match view.activation() {
+        let over = binder(parts.over)?;
+        let (activation, trigger) = match parts.activation {
             Activation::Origin => (fsl_semantics::check::Activation::Origin, None),
             Activation::Each { trigger, guard } => (
                 fsl_semantics::check::Activation::Each {
@@ -1066,19 +1599,25 @@ impl<'p> BarePackage<'p> {
                 Some(binder(trigger)?),
             ),
         };
-        let mut captures = Vec::with_capacity(view.captures().len());
-        for (initializer, capture) in view.captures().iter().zip(view.capture_names()) {
+        work.items(parts.captures.len())?;
+        let mut captures = Vec::with_capacity(parts.captures.len());
+        for (initializer, capture) in parts.captures.iter().zip(parts.capture_names) {
+            work.visit()?;
             let value_type = self
                 .exact_type_projections()
                 .get(initializer)
                 .and_then(|projected| projected.as_ref().ok())
-                .map(|projected| projected.value_type().clone())
+                .map(|projected| projected.value_type())
                 .ok_or_else(malformed)?;
-            captures.push((capture.clone(), value_type));
+            work.value_type(value_type)?;
+            work.text(capture)?;
+            captures.push((capture.clone(), value_type.clone()));
         }
-        let uses = view.formula_graph();
+        let uses = parts.formula;
+        work.items(uses.len())?;
         let mut formula = Vec::with_capacity(uses.len());
         for (position, entry) in uses.iter().enumerate() {
+            work.visit()?;
             let pending = |fact| BareClauseRefusal::Pending {
                 fact,
                 node: entry.node.clone(),
@@ -1086,9 +1625,19 @@ impl<'p> BarePackage<'p> {
             let interval = match (&entry.interval, intervals) {
                 (None, _) => None,
                 (Some(interval), true) => {
-                    Some(checked_interval(interval).ok_or_else(|| pending("interval"))?)
+                    work.interval(interval)?;
+                    match checked_interval(interval) {
+                        Some(interval) => Some(interval),
+                        None => {
+                            work.node(entry.node)?;
+                            return Err(pending("interval").into());
+                        }
+                    }
                 }
-                (Some(_), false) => return Err(pending("interval")),
+                (Some(_), false) => {
+                    work.node(entry.node)?;
+                    return Err(pending("interval").into());
+                }
             };
             let operand =
                 |position: usize| entry.operands.get(position).copied().ok_or_else(malformed);
@@ -1097,19 +1646,13 @@ impl<'p> BarePackage<'p> {
                 FormulaOperation::True => PackageFormulaNode::Constant(true),
                 FormulaOperation::False => PackageFormulaNode::Constant(false),
                 FormulaOperation::Holds => {
-                    let sources = self
-                        .temporal_atom_sources(claim, position)
-                        .map_err(|_| malformed())?;
-                    let atom_span = match sources.as_slice() {
-                        [only] => fsl_foundation::Span {
-                            start: usize::try_from(only.region.start()).map_err(|_| malformed())?,
-                            end: usize::try_from(only.region.end()).map_err(|_| malformed())?,
-                        },
-                        _ => span,
-                    };
+                    let atom_span = atom_span(position, entry, work)?;
                     PackageFormulaNode::Holds { span: atom_span }
                 }
-                FormulaOperation::Aggregate => return Err(pending("aggregate")),
+                FormulaOperation::Aggregate => {
+                    work.node(entry.node)?;
+                    return Err(pending("aggregate").into());
+                }
                 FormulaOperation::Not => PackageFormulaNode::Not(operand(0)?),
                 FormulaOperation::And => PackageFormulaNode::And(operand(0)?, operand(1)?),
                 FormulaOperation::Or => PackageFormulaNode::Or(operand(0)?, operand(1)?),
@@ -1144,9 +1687,10 @@ impl<'p> BarePackage<'p> {
             });
         }
         let profile = fsl_semantics::check::TemporalProfile::from_identity(
-            &view.profile().definition.identity,
+            &parts.profile.definition.identity,
         )
         .ok_or_else(malformed)?;
+        work.text(package.name())?;
         Ok(fsl_semantics::check::PackageClauseForm {
             name,
             span,
@@ -1158,6 +1702,7 @@ impl<'p> BarePackage<'p> {
             trigger,
             captures,
             formula,
+            fairness,
             populations: Vec::new(),
         })
     }

@@ -51,6 +51,10 @@
 use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug};
 use std::collections::{BTreeMap, BTreeSet};
 
+use filament_contract_model::{
+    NativeJoinBudget, NativeJoinChargeKind, NativeJoinDeniedCharge, NativeJoinLocus,
+    NativeJoinLocusSource,
+};
 use filament_exact::NodeKey;
 use filament_exact::{Integer, Rational, ValueType};
 use filament_semantic_value::catalog::InternalFault;
@@ -2157,39 +2161,58 @@ fn property_form(
     model_subject: bool,
     formula: &CheckedFormula,
 ) -> Option<PropertyForm> {
+    property_form_with_provision(profile, model_subject, formula, &mut UnmeteredProperty)
+        .expect("unmetered property classification cannot refuse")
+}
+
+fn property_form_with_provision<P: PropertyProvision>(
+    profile: TemporalProfile,
+    model_subject: bool,
+    formula: &CheckedFormula,
+    provision: &mut P,
+) -> Result<Option<PropertyForm>, P::Error> {
+    provision.work(None)?;
     if !model_subject {
-        return None;
+        return Ok(None);
     }
     match profile {
         // The timed profile's forms are FR-234's `TimedPropertyForm`.
         TemporalProfile::FixedSampleFalseExtension
         | TemporalProfile::TimestampedEventFiniteWindow
-        | TemporalProfile::Timed => return None,
+        | TemporalProfile::Timed => return Ok(None),
         TemporalProfile::EventPositionFalseExtension | TemporalProfile::InfiniteTrace => {}
     }
-    if is_reachable_invariant(formula) {
-        Some(PropertyForm::ReachableInvariant)
+    if is_reachable_invariant(formula, provision)? {
+        Ok(Some(PropertyForm::ReachableInvariant))
     } else if profile == TemporalProfile::EventPositionFalseExtension {
-        Some(PropertyForm::BoundedMltl)
-    } else if in_safety_fragment(formula) {
-        Some(PropertyForm::Safety)
+        Ok(Some(PropertyForm::BoundedMltl))
+    } else if in_safety_fragment_with_provision(formula, provision)? {
+        Ok(Some(PropertyForm::Safety))
     } else {
-        Some(PropertyForm::Liveness)
+        Ok(Some(PropertyForm::Liveness))
     }
 }
 
 /// Whether the formula is `always holds(I)` with no interval (TP-1).
-fn is_reachable_invariant(formula: &CheckedFormula) -> bool {
+fn is_reachable_invariant<P: PropertyProvision>(
+    formula: &CheckedFormula,
+    provision: &mut P,
+) -> Result<bool, P::Error> {
     let nodes = formula.nodes();
+    provision.work(Some(formula.root().index()))?;
     let Some(FormulaNode::Unary {
         operator: UnaryTemporal::Always,
         interval: None,
         operand,
     }) = nodes.get(formula.root().index())
     else {
-        return false;
+        return Ok(false);
     };
-    matches!(nodes.get(operand.index()), Some(FormulaNode::Holds { .. }))
+    provision.work(Some(operand.index()))?;
+    Ok(matches!(
+        nodes.get(operand.index()),
+        Some(FormulaNode::Holds { .. })
+    ))
 }
 
 /// Whether the interval is closed: the one an interval operator needs to
@@ -2229,9 +2252,20 @@ fn is_temporal_node(node: &FormulaNode) -> bool {
 /// the reverse. The arena puts an operator before its operands, so one pass
 /// reaches every node after its parent.
 pub(crate) fn in_safety_fragment(formula: &CheckedFormula) -> bool {
+    in_safety_fragment_with_provision(formula, &mut UnmeteredProperty)
+        .expect("unmetered safety classification cannot refuse")
+}
+
+fn in_safety_fragment_with_provision<P: PropertyProvision>(
+    formula: &CheckedFormula,
+    provision: &mut P,
+) -> Result<bool, P::Error> {
     let nodes = formula.nodes();
-    let mut negated = vec![false; nodes.len()];
+    let mut negated = Vec::new();
+    provision.room(&mut negated, nodes.len(), None)?;
+    negated.resize(nodes.len(), false);
     for (index, node) in nodes.iter().enumerate() {
+        provision.work(Some(index))?;
         let here = negated.get(index).copied().unwrap_or(false);
         let (admitted, first, second) = match node {
             FormulaNode::Constant(_)
@@ -2262,15 +2296,16 @@ pub(crate) fn in_safety_fragment(formula: &CheckedFormula) -> bool {
             }
         };
         if !admitted {
-            return false;
+            return Ok(false);
         }
         for (operand, polarity) in node.operands().zip([first, second]) {
+            provision.work(Some(index))?;
             if let Some(slot) = negated.get_mut(operand.index()) {
                 *slot = polarity;
             }
         }
     }
-    true
+    Ok(true)
 }
 
 /// The checked formula of `form`: the arena order is kept, so an operator
@@ -2698,6 +2733,9 @@ pub struct PackageClauseForm {
     pub captures: Vec<(String, ValueType)>,
     /// The formula's nodes in arena order; the root is the first.
     pub formula: Vec<PackageFormulaNode>,
+    /// The admitted model-operation fairness constraints, in first-occurrence
+    /// order, with their authenticated effective declaring identities.
+    pub fairness: Vec<FairnessConstraint>,
     /// The populations of the `over` type with no authored maximum.
     pub populations: Vec<PopulationDomain>,
 }
@@ -2706,8 +2744,8 @@ pub struct PackageClauseForm {
 /// package route does not read yet, never a clause built without it.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum PackageClauseRefusal {
-    /// The clause's profile reads timed intervals, which the package form
-    /// does not read yet.
+    /// The selected package execution form does not admit the clause's
+    /// profile, or the profile does not admit the supplied fairness.
     #[error("the package form does not read the {0:?} profile yet")]
     Profile(TemporalProfile),
     /// The formula's arena does not place each operator before its operands.
@@ -2728,14 +2766,213 @@ pub enum PackageClauseRefusal {
     ClockBinding,
 }
 
+/// Why the facts-only package property classification stopped.
+#[derive(Debug, thiserror::Error)]
+pub enum PackagePropertyRefusal {
+    /// The original package formula refusal, without changing its condition.
+    #[error(transparent)]
+    Form(#[from] PackageClauseRefusal),
+    /// The caller's original native ledger denied a charge before its operation.
+    #[error(
+        "native property charge denied: {denied:?} (bound {configured_bound}, locus {locus:?})"
+    )]
+    Native {
+        /// Original first unpaid resource and attempted amount.
+        denied: NativeJoinDeniedCharge,
+        /// Original non-owning denial locus, including an earlier caller phase.
+        locus: Option<NativeJoinLocus>,
+        /// Original configured ceiling for the denied resource.
+        configured_bound: u64,
+    },
+    /// A prepaid working vector could not reserve storage.
+    #[error(transparent)]
+    Allocation(#[from] std::collections::TryReserveError),
+}
+
+impl PackageClauseForm {
+    /// Classify the package formula with the source property's classifier.
+    ///
+    /// Arena conversion, interval copies, classification visits and polarity
+    /// storage use the caller's cumulative native ledger. This reads no type
+    /// environment, domains, horizon, clock binding, or executable clause.
+    /// After the existing profile/fairness check, non-model subjects and
+    /// fixed-sample, timestamped and timed profiles retain the classifier's
+    /// `None`; this grants no full-clause admission.
+    ///
+    /// # Errors
+    ///
+    /// The original profile/fairness or arena refusal, native denial, or paid
+    /// reservation failure.
+    /// The ledger is never resumed or replaced, including after an earlier denial.
+    pub fn property_form_with_budget(
+        &self,
+        budget: &mut NativeJoinBudget,
+    ) -> Result<Option<PropertyForm>, PackagePropertyRefusal> {
+        let mut provision = MeteredProperty { budget };
+        provision.work(None)?;
+        check_package_fairness(self.profile, &self.fairness)?;
+        let (formula, _) =
+            CheckedFormula::of_package_nodes_with_provision(&self.formula, &mut provision)?;
+        property_form_with_provision(
+            self.profile,
+            matches!(self.over.1, ValueType::Reference(_)),
+            &formula,
+            &mut provision,
+        )
+    }
+}
+
+fn check_package_fairness(
+    profile: TemporalProfile,
+    fairness: &[FairnessConstraint],
+) -> Result<(), PackageClauseRefusal> {
+    if profile.is_bounded() && !fairness.is_empty() {
+        return Err(PackageClauseRefusal::Profile(profile));
+    }
+    Ok(())
+}
+
+trait PropertyProvision {
+    type Error: From<PackageClauseRefusal>;
+
+    fn work(&mut self, row: Option<usize>) -> Result<(), Self::Error>;
+    fn room<T>(
+        &mut self,
+        list: &mut Vec<T>,
+        additional: usize,
+        row: Option<usize>,
+    ) -> Result<(), Self::Error>;
+    fn interval(
+        &mut self,
+        interval: &Option<CheckedInterval>,
+        row: usize,
+    ) -> Result<Option<CheckedInterval>, Self::Error>;
+}
+
+struct UnmeteredProperty;
+
+impl PropertyProvision for UnmeteredProperty {
+    type Error = PackageClauseRefusal;
+
+    fn work(&mut self, _: Option<usize>) -> Result<(), Self::Error> {
+        Ok(())
+    }
+    fn room<T>(
+        &mut self,
+        list: &mut Vec<T>,
+        additional: usize,
+        _: Option<usize>,
+    ) -> Result<(), Self::Error> {
+        list.reserve(additional);
+        Ok(())
+    }
+    fn interval(
+        &mut self,
+        interval: &Option<CheckedInterval>,
+        _: usize,
+    ) -> Result<Option<CheckedInterval>, Self::Error> {
+        Ok(interval.clone())
+    }
+}
+
+struct MeteredProperty<'a> {
+    budget: &'a mut NativeJoinBudget,
+}
+
+impl MeteredProperty<'_> {
+    fn charge(
+        &mut self,
+        kind: NativeJoinChargeKind,
+        amount: u128,
+        row: Option<usize>,
+    ) -> Result<(), PackagePropertyRefusal> {
+        let locus = NativeJoinLocus {
+            source: row.map_or(
+                NativeJoinLocusSource::Package,
+                NativeJoinLocusSource::AdapterRow,
+            ),
+            form: "package_clause_property",
+        };
+        self.budget
+            .accounted_charge(kind, amount, locus)
+            .map_err(|denied| PackagePropertyRefusal::Native {
+                denied,
+                locus: self.budget.first_unpaid_locus(),
+                configured_bound: match denied.kind {
+                    NativeJoinChargeKind::Work => self.budget.work_limit(),
+                    NativeJoinChargeKind::Storage => self.budget.storage_limit(),
+                },
+            })
+    }
+
+    fn integer(&mut self, integer: &Integer, row: usize) -> Result<(), PackagePropertyRefusal> {
+        self.work(Some(row))?;
+        let footprint = integer.copy_footprint();
+        if footprint.bytes != 0 {
+            self.charge(
+                NativeJoinChargeKind::Storage,
+                1 + footprint.bytes as u128,
+                Some(row),
+            )?;
+        }
+        Ok(())
+    }
+}
+
+impl PropertyProvision for MeteredProperty<'_> {
+    type Error = PackagePropertyRefusal;
+
+    fn work(&mut self, row: Option<usize>) -> Result<(), Self::Error> {
+        self.charge(NativeJoinChargeKind::Work, 1, row)
+    }
+    fn room<T>(
+        &mut self,
+        list: &mut Vec<T>,
+        additional: usize,
+        row: Option<usize>,
+    ) -> Result<(), Self::Error> {
+        let needed = list.len() as u128 + additional as u128;
+        if needed > list.capacity() as u128 {
+            let target = needed.max(list.capacity().saturating_mul(2) as u128);
+            self.charge(NativeJoinChargeKind::Storage, 1 + target, row)?;
+            list.try_reserve_exact(usize::try_from(target).unwrap_or(usize::MAX) - list.len())?;
+        }
+        Ok(())
+    }
+    fn interval(
+        &mut self,
+        interval: &Option<CheckedInterval>,
+        row: usize,
+    ) -> Result<Option<CheckedInterval>, Self::Error> {
+        if let Some(CheckedInterval::Timed(timed)) = interval {
+            for rational in std::iter::once(timed.lower()).chain(timed.upper()) {
+                self.integer(rational.numerator(), row)?;
+                self.integer(rational.denominator(), row)?;
+            }
+        }
+        Ok(interval.clone())
+    }
+}
+
 impl CheckedFormula {
     /// Rebuild the shared package formula arena without retaining source bodies.
     pub(crate) fn of_package_nodes(
         formula: &[PackageFormulaNode],
     ) -> Result<(Self, Vec<CheckedOperator>), PackageClauseRefusal> {
-        let mut nodes = Vec::with_capacity(formula.len());
+        Self::of_package_nodes_with_provision(formula, &mut UnmeteredProperty)
+    }
+
+    fn of_package_nodes_with_provision<P: PropertyProvision>(
+        formula: &[PackageFormulaNode],
+        provision: &mut P,
+    ) -> Result<(Self, Vec<CheckedOperator>), P::Error> {
+        // Preserve an earlier denial even for an empty formula, before reserving.
+        provision.work(None)?;
+        let mut nodes = Vec::new();
+        provision.room(&mut nodes, formula.len(), None)?;
         let mut operators = Vec::new();
         for (index, node) in formula.iter().enumerate() {
+            provision.work(Some(index))?;
             let id = |operand: &usize| FormulaNodeId(*operand);
             let (checked, operator) = match node {
                 PackageFormulaNode::Constant(value) => (FormulaNode::Constant(*value), None),
@@ -2762,7 +2999,7 @@ impl CheckedFormula {
                 } => (
                     FormulaNode::Unary {
                         operator: *operator,
-                        interval: interval.clone(),
+                        interval: provision.interval(interval, index)?,
                         operand: id(operand),
                     },
                     Some(match operator {
@@ -2780,7 +3017,7 @@ impl CheckedFormula {
                 } => (
                     FormulaNode::Binary {
                         operator: *operator,
-                        interval: interval.clone(),
+                        interval: provision.interval(interval, index)?,
                         left: id(left),
                         right: id(right),
                     },
@@ -2792,16 +3029,17 @@ impl CheckedFormula {
                     }),
                 ),
             };
-            if checked
-                .operands()
-                .any(|operand| operand.0 <= index || operand.0 >= formula.len())
-            {
-                return Err(PackageClauseRefusal::Arena);
+            for operand in checked.operands() {
+                provision.work(Some(index))?;
+                if operand.0 <= index || operand.0 >= formula.len() {
+                    return Err(PackageClauseRefusal::Arena.into());
+                }
             }
             if let Some(operator) = operator {
+                provision.room(&mut operators, 1, Some(index))?;
                 let interval = match &checked {
                     FormulaNode::Unary { interval, .. } | FormulaNode::Binary { interval, .. } => {
-                        interval.clone()
+                        provision.interval(interval, index)?
                     }
                     _ => None,
                 };
@@ -2814,7 +3052,7 @@ impl CheckedFormula {
             nodes.push(checked);
         }
         if nodes.is_empty() {
-            return Err(PackageClauseRefusal::Arena);
+            return Err(PackageClauseRefusal::Arena.into());
         }
         Ok((
             Self {
@@ -2911,6 +3149,7 @@ impl CheckedTemporalClause {
         position_limit: u64,
     ) -> Result<Self, PackageClauseRefusal> {
         let bounded = form.profile.is_bounded();
+        check_package_fairness(form.profile, &form.fairness)?;
         let (formula, operators) = CheckedFormula::of_package_nodes(&form.formula)?;
         let horizon = bounded
             .then(|| package_horizon(&formula.nodes))
@@ -2948,7 +3187,7 @@ impl CheckedTemporalClause {
                     .into_iter()
                     .filter(|domain| domain.maximum.is_none())
                     .collect(),
-                fairness: BTreeSet::new(),
+                fairness: form.fairness.iter().map(FairnessConstraint::kind).collect(),
                 punctual: None,
                 model_subject,
             },
@@ -2956,9 +3195,11 @@ impl CheckedTemporalClause {
             activation: form.activation,
             trigger: form.trigger,
             captures: form.captures,
-            fairness: Vec::new(),
+            fairness_order: (0..form.fairness.len())
+                .map(CheckedFairnessMember::Operation)
+                .collect(),
+            fairness: form.fairness,
             fairness_sources: Vec::new(),
-            fairness_order: Vec::new(),
             protocol_fairness: Vec::new(),
             aggregates: BTreeMap::new(),
             property_form,
@@ -2967,5 +3208,476 @@ impl CheckedTemporalClause {
             timed_form: None,
             timed: false,
         })
+    }
+}
+
+#[cfg(test)]
+mod package_property_budget_tests {
+    use super::*;
+
+    fn ledger(work: u64, storage: u64) -> NativeJoinBudget {
+        let mut ledger = NativeJoinBudget::new(work, storage);
+        ledger.resume();
+        ledger
+    }
+
+    fn form(formula: Vec<PackageFormulaNode>) -> PackageClauseForm {
+        PackageClauseForm {
+            name: "Property".into(),
+            span: Span { start: 0, end: 1 },
+            profile: TemporalProfile::InfiniteTrace,
+            package_name: "property-test".into(),
+            over: (
+                "subject".into(),
+                ValueType::Reference(filament_exact::EffectiveId::new(
+                    None,
+                    filament_exact::OriginalDeclarationKey::new("property-test", "Subject"),
+                )),
+            ),
+            clock: "model-steps".into(),
+            activation: Activation::Origin,
+            trigger: None,
+            captures: vec![],
+            formula,
+            fairness: vec![],
+            populations: vec![],
+        }
+    }
+
+    fn holds() -> PackageFormulaNode {
+        PackageFormulaNode::Holds {
+            span: Span { start: 0, end: 1 },
+        }
+    }
+
+    fn eventually(interval: Option<CheckedInterval>, operand: usize) -> PackageFormulaNode {
+        PackageFormulaNode::Unary {
+            operator: UnaryTemporal::Eventually,
+            interval,
+            operand,
+        }
+    }
+
+    fn closed() -> CheckedInterval {
+        CheckedInterval::Steps(TemporalInterval::new(0, TemporalUpper::Finite(5)).unwrap())
+    }
+
+    fn nested() -> PackageClauseForm {
+        form(vec![
+            PackageFormulaNode::Unary {
+                operator: UnaryTemporal::Always,
+                interval: None,
+                operand: 1,
+            },
+            PackageFormulaNode::Implies(2, 3),
+            holds(),
+            eventually(Some(closed()), 4),
+            holds(),
+        ])
+    }
+
+    /// Trace: FR-123-AC-4, FR-1044-AC-1
+    #[test]
+    fn property_budget_matches_source_classifier_and_independent_property_forms() {
+        let source = CheckedFormula {
+            root: FormulaNodeId(0),
+            nodes: vec![
+                FormulaNode::Unary {
+                    operator: UnaryTemporal::Always,
+                    interval: None,
+                    operand: FormulaNodeId(1),
+                },
+                FormulaNode::Implies(FormulaNodeId(2), FormulaNodeId(3)),
+                FormulaNode::Holds {
+                    span: Span { start: 0, end: 1 },
+                },
+                FormulaNode::Unary {
+                    operator: UnaryTemporal::Eventually,
+                    interval: Some(closed()),
+                    operand: FormulaNodeId(4),
+                },
+                FormulaNode::Holds {
+                    span: Span { start: 0, end: 1 },
+                },
+            ],
+        };
+        assert_eq!(
+            property_form(TemporalProfile::InfiniteTrace, true, &source),
+            Some(PropertyForm::Safety)
+        );
+        assert_eq!(
+            CheckedFormula::of_package_nodes(&nested().formula)
+                .unwrap()
+                .0,
+            source
+        );
+
+        let invariant = form(vec![
+            PackageFormulaNode::Unary {
+                operator: UnaryTemporal::Always,
+                interval: None,
+                operand: 1,
+            },
+            holds(),
+        ]);
+        let mut bounded = form(vec![eventually(Some(closed()), 1), holds()]);
+        bounded.profile = TemporalProfile::EventPositionFalseExtension;
+        let cases = [
+            (nested(), PropertyForm::Safety),
+            (invariant, PropertyForm::ReachableInvariant),
+            (bounded, PropertyForm::BoundedMltl),
+            (
+                form(vec![eventually(None, 1), holds()]),
+                PropertyForm::Liveness,
+            ),
+            (
+                form(vec![
+                    PackageFormulaNode::Not(1),
+                    eventually(None, 2),
+                    holds(),
+                ]),
+                PropertyForm::Safety,
+            ),
+            (
+                form(vec![
+                    PackageFormulaNode::Binary {
+                        operator: BinaryTemporal::Until,
+                        interval: Some(closed()),
+                        left: 1,
+                        right: 2,
+                    },
+                    holds(),
+                    holds(),
+                ]),
+                PropertyForm::Safety,
+            ),
+            (
+                form(vec![
+                    PackageFormulaNode::Binary {
+                        operator: BinaryTemporal::Until,
+                        interval: None,
+                        left: 1,
+                        right: 2,
+                    },
+                    holds(),
+                    holds(),
+                ]),
+                PropertyForm::Liveness,
+            ),
+            (
+                form(vec![
+                    PackageFormulaNode::Binary {
+                        operator: BinaryTemporal::Since,
+                        interval: None,
+                        left: 1,
+                        right: 2,
+                    },
+                    holds(),
+                    holds(),
+                ]),
+                PropertyForm::Safety,
+            ),
+        ];
+        for (form, expected) in cases {
+            let mut budget = ledger(10_000, 10_000);
+            assert_eq!(
+                form.property_form_with_budget(&mut budget).unwrap(),
+                Some(expected)
+            );
+            let (checked, _) = CheckedFormula::of_package_nodes(&form.formula).unwrap();
+            assert_eq!(property_form(form.profile, true, &checked), Some(expected));
+        }
+    }
+
+    /// Trace: FR-123-AC-4, FR-940-AC-1
+    #[test]
+    fn property_none_does_not_grant_full_timed_clause_admission() {
+        for profile in [
+            TemporalProfile::FixedSampleFalseExtension,
+            TemporalProfile::TimestampedEventFiniteWindow,
+            TemporalProfile::Timed,
+        ] {
+            let mut form = nested();
+            form.profile = profile;
+            assert_eq!(
+                form.property_form_with_budget(&mut ledger(10_000, 10_000))
+                    .unwrap(),
+                None
+            );
+            let (checked, _) = CheckedFormula::of_package_nodes(&form.formula).unwrap();
+            assert_eq!(property_form(profile, true, &checked), None);
+            if profile == TemporalProfile::Timed {
+                let types =
+                    filament_semantic_value::declaration::TypeEnvironment::new([], []).unwrap();
+                assert_eq!(
+                    CheckedTemporalClause::of_package_form(form, &types, 10_000),
+                    Err(PackageClauseRefusal::Profile(TemporalProfile::Timed))
+                );
+            }
+        }
+        let mut non_model = nested();
+        non_model.over.1 = ValueType::Boolean;
+        non_model.activation = Activation::Each { guarded: true };
+        non_model.trigger = Some(("event".into(), ValueType::Boolean));
+        non_model
+            .captures
+            .push(("captured".into(), ValueType::Integer));
+        assert_eq!(
+            non_model
+                .property_form_with_budget(&mut ledger(10_000, 10_000))
+                .unwrap(),
+            None
+        );
+    }
+
+    /// Trace: FR-940-AC-1
+    #[test]
+    fn property_budget_preserves_arena_refusals_even_for_inapplicable_profiles() {
+        for formula in [
+            vec![],
+            vec![PackageFormulaNode::Not(0)],
+            vec![PackageFormulaNode::And(1, usize::MAX), holds()],
+        ] {
+            let mut form = form(formula);
+            form.profile = TemporalProfile::Timed;
+            assert_eq!(
+                CheckedFormula::of_package_nodes(&form.formula),
+                Err(PackageClauseRefusal::Arena)
+            );
+            assert!(matches!(
+                form.property_form_with_budget(&mut ledger(10_000, 10_000)),
+                Err(PackagePropertyRefusal::Form(PackageClauseRefusal::Arena))
+            ));
+        }
+    }
+
+    /// Trace: FR-123-AC-4, FR-940-AC-1
+    #[test]
+    fn property_fairness_guard_keeps_its_original_precedence_over_bad_arenas() {
+        let mut form = form(vec![PackageFormulaNode::Not(0)]);
+        form.fairness.push(FairnessConstraint::new(
+            FairnessKind::Weak,
+            FairnessOperation::new(
+                filament_exact::EffectiveId::new(
+                    None,
+                    filament_exact::OriginalDeclarationKey::new("property-test", "Subject"),
+                ),
+                "advance".into(),
+            ),
+            FairnessGranularity::Whole,
+        ));
+        let types = filament_semantic_value::declaration::TypeEnvironment::new([], []).unwrap();
+        for profile in [
+            TemporalProfile::EventPositionFalseExtension,
+            TemporalProfile::FixedSampleFalseExtension,
+            TemporalProfile::TimestampedEventFiniteWindow,
+        ] {
+            form.profile = profile;
+            assert!(
+                matches!(form.property_form_with_budget(&mut ledger(10_000, 10_000)),
+                Err(PackagePropertyRefusal::Form(PackageClauseRefusal::Profile(actual))) if actual == profile)
+            );
+            assert_eq!(
+                CheckedTemporalClause::of_package_run_form(form.clone(), &types, 10_000),
+                Err(PackageClauseRefusal::Profile(profile))
+            );
+        }
+        form.profile = TemporalProfile::InfiniteTrace;
+        assert!(matches!(
+            form.property_form_with_budget(&mut ledger(10_000, 10_000)),
+            Err(PackagePropertyRefusal::Form(PackageClauseRefusal::Arena))
+        ));
+        assert_eq!(
+            CheckedTemporalClause::of_package_run_form(form.clone(), &types, 10_000),
+            Err(PackageClauseRefusal::Arena)
+        );
+        form.formula = nested().formula;
+        assert_eq!(
+            form.property_form_with_budget(&mut ledger(10_000, 10_000))
+                .unwrap(),
+            Some(PropertyForm::Safety)
+        );
+    }
+
+    /// Trace: FR-1044-AC-1, FR-940-AC-1
+    #[test]
+    fn property_budget_exact_short_and_zero_limits_retain_native_denial_data() {
+        let form = nested();
+        let mut measured = ledger(10_000, 10_000);
+        assert_eq!(
+            form.property_form_with_budget(&mut measured).unwrap(),
+            Some(PropertyForm::Safety)
+        );
+        let paid = measured.consumed();
+        let mut exact = ledger(paid.work, paid.storage);
+        assert_eq!(
+            form.property_form_with_budget(&mut exact).unwrap(),
+            Some(PropertyForm::Safety)
+        );
+        assert_eq!(exact.consumed(), paid);
+        for kind in [NativeJoinChargeKind::Work, NativeJoinChargeKind::Storage] {
+            for bound in [
+                0,
+                match kind {
+                    NativeJoinChargeKind::Work => paid.work - 1,
+                    NativeJoinChargeKind::Storage => paid.storage - 1,
+                },
+            ] {
+                let mut short = ledger(
+                    if kind == NativeJoinChargeKind::Work {
+                        bound
+                    } else {
+                        paid.work
+                    },
+                    if kind == NativeJoinChargeKind::Storage {
+                        bound
+                    } else {
+                        paid.storage
+                    },
+                );
+                let refusal = form.property_form_with_budget(&mut short).unwrap_err();
+                let PackagePropertyRefusal::Native {
+                    denied,
+                    locus,
+                    configured_bound,
+                } = refusal
+                else {
+                    panic!("the native owner must retain its typed refusal");
+                };
+                assert_eq!(denied.kind, kind);
+                assert_eq!(Some(denied), short.first_unpaid());
+                assert_eq!(configured_bound, bound);
+                assert_eq!(locus, short.first_unpaid_locus());
+                assert_eq!(locus.unwrap().form, "package_clause_property");
+                assert!(denied.amount > 0);
+                if kind == NativeJoinChargeKind::Work && bound == 0 {
+                    assert_eq!(short.consumed().storage, 0);
+                    assert_eq!(denied.amount, 1);
+                }
+            }
+        }
+        let mut reused = ledger(paid.work * 2, paid.storage * 2 - 1);
+        form.property_form_with_budget(&mut reused).unwrap();
+        assert!(matches!(
+            form.property_form_with_budget(&mut reused),
+            Err(PackagePropertyRefusal::Native {
+                denied: NativeJoinDeniedCharge {
+                    kind: NativeJoinChargeKind::Storage,
+                    ..
+                },
+                ..
+            })
+        ));
+    }
+
+    /// Trace: FR-940-AC-1
+    #[test]
+    fn property_budget_pays_each_actual_rational_interval_copy() {
+        let large: Integer = "680564733841876926926749214863536422912".parse().unwrap();
+        let bytes = large.copy_footprint().bytes as u64;
+        assert!(bytes > 0);
+        let timed = |integer: Integer| {
+            CheckedInterval::Timed(
+                TimedInterval::new(
+                    Rational::from_integer(integer.clone()),
+                    true,
+                    Rational::from_integer(integer),
+                    true,
+                )
+                .unwrap(),
+            )
+        };
+        let small_form = form(vec![eventually(Some(timed(Integer::one())), 1), holds()]);
+        let large_form = form(vec![eventually(Some(timed(large)), 1), holds()]);
+        let mut small = ledger(10_000, 10_000);
+        let mut big = ledger(10_000, 10_000);
+        assert_eq!(
+            small_form.property_form_with_budget(&mut small).unwrap(),
+            Some(PropertyForm::Safety)
+        );
+        assert_eq!(
+            large_form.property_form_with_budget(&mut big).unwrap(),
+            Some(PropertyForm::Safety)
+        );
+        // Two owned integer numerators per interval; the arena and operator
+        // list each retain their own interval copy. Inline denominators allocate nothing.
+        assert_eq!(
+            big.consumed().storage - small.consumed().storage,
+            4 * (1 + bytes)
+        );
+        assert_eq!(big.consumed().work, small.consumed().work);
+        let (checked, operators) = CheckedFormula::of_package_nodes(&large_form.formula).unwrap();
+        assert_eq!(
+            operators[0].interval,
+            match &checked.nodes()[0] {
+                FormulaNode::Unary { interval, .. } => interval.clone(),
+                _ => panic!("unary interval"),
+            }
+        );
+        let total = big.consumed();
+        assert_eq!(
+            large_form
+                .property_form_with_budget(&mut ledger(total.work, total.storage))
+                .unwrap(),
+            Some(PropertyForm::Safety)
+        );
+        assert!(matches!(
+            large_form.property_form_with_budget(&mut ledger(total.work, total.storage - 1)),
+            Err(PackagePropertyRefusal::Native {
+                denied: NativeJoinDeniedCharge {
+                    kind: NativeJoinChargeKind::Storage,
+                    ..
+                },
+                ..
+            })
+        ));
+    }
+
+    /// Trace: FR-940-AC-1
+    #[test]
+    fn property_denial_precedes_allocation_and_keeps_an_earlier_locus() {
+        let form = nested();
+        let mut zero = ledger(10_000, 0);
+        fsv_failing_allocator::arm(0);
+        let refusal = form.property_form_with_budget(&mut zero);
+        let denied_allocation = fsv_failing_allocator::disarm();
+        assert_eq!(denied_allocation, None);
+        assert!(matches!(
+            refusal,
+            Err(PackagePropertyRefusal::Native {
+                denied: NativeJoinDeniedCharge {
+                    kind: NativeJoinChargeKind::Storage,
+                    ..
+                },
+                ..
+            })
+        ));
+
+        let mut paid = ledger(10_000, 10_000);
+        fsv_failing_allocator::arm(0);
+        let refusal = form.property_form_with_budget(&mut paid);
+        let denied_allocation = fsv_failing_allocator::disarm();
+        assert!(denied_allocation.is_some());
+        assert!(matches!(
+            refusal,
+            Err(PackagePropertyRefusal::Allocation(_))
+        ));
+        assert!(paid.consumed().storage > 0);
+        assert_eq!(paid.first_unpaid(), None);
+
+        let mut prior = ledger(0, 0);
+        let locus = NativeJoinLocus {
+            source: NativeJoinLocusSource::ReachedRow(37),
+            form: "composition_owner",
+        };
+        let original = prior
+            .accounted_charge(NativeJoinChargeKind::Storage, 19, locus)
+            .unwrap_err();
+        let before = prior.consumed();
+        let refusal = form.property_form_with_budget(&mut prior).unwrap_err();
+        assert!(matches!(refusal, PackagePropertyRefusal::Native {
+            denied, locus: Some(actual), configured_bound: 0,
+        } if denied == original && actual == locus));
+        assert_eq!(prior.consumed(), before);
     }
 }

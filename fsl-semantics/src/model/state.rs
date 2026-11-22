@@ -2,8 +2,8 @@
 //! FR-120: the layer-3 state-model seam a simulator of a checked package's
 //! state family calls.
 //!
-//! [`StateModel`] re-derives the domain package views FR-106 admission reads
-//! and keeps the checked [`TypeEnvironment`]. It admits an initial snapshot
+//! [`StateModel`] re-derives or retains the domain package views FR-106
+//! admission reads and keeps the checked [`TypeEnvironment`]. It admits an initial snapshot
 //! into a [`ModelState`] ([`StateModel::admit_initial`]) and builds the
 //! [`Observation`] FR-107 evaluates a clause over for any state
 //! ([`StateModel::observation`]). The frame decision a simulator makes
@@ -11,6 +11,12 @@
 //! directly over the model's [`StateModel::population_index`].
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use filament_contract_model::{
+    NativeJoinBudget, NativeJoinChargeKind, NativeJoinDeniedCharge, NativeJoinLocus,
+    NativeJoinLocusSource,
+};
 
 use filament_exact::{EffectiveId, ObjectReference, Value, ValueType};
 use filament_semantic_value::declaration::TypeEnvironment;
@@ -19,7 +25,7 @@ use filament_semantic_value::relationship_extent::RelationshipExtent;
 use crate::model::accounting::ModelNormalizationLimits;
 use crate::model::domain_package::DomainPackageRecord;
 use crate::model::index::ModelIndex;
-use crate::model::intake::PackageInput;
+use crate::model::intake::{NormalizedModel, PackageInput};
 use crate::model::normalize::EffectiveView;
 use crate::model::observation::{
     admit_initial_state, model_views, observe_state, state_fields, state_reference,
@@ -322,8 +328,93 @@ pub struct StatePopulation {
 #[derive(Debug)]
 pub struct StateModel {
     pub(crate) views: Vec<ModelView>,
-    pub(crate) types: TypeEnvironment,
+    pub(crate) types: StateTypes,
     pub(crate) limits: ModelNormalizationLimits,
+}
+
+#[derive(Debug)]
+pub(crate) enum StateTypes {
+    Owned(TypeEnvironment),
+    Shared(Arc<TypeEnvironment>),
+}
+
+impl std::ops::Deref for StateTypes {
+    type Target = TypeEnvironment;
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Owned(types) => types,
+            Self::Shared(types) => types,
+        }
+    }
+}
+
+/// A failure to retain or select genuine normalized model owners.
+#[derive(Debug, thiserror::Error)]
+pub enum RetainedModelFailure {
+    /// Selected owners came from incompatible structural admission policies.
+    #[error(
+        "normalized model structural policies differ between owners {first_owner} and {owner}"
+    )]
+    IncompatiblePolicy {
+        /// Index of the first selected owner in the shared owner vector.
+        first_owner: usize,
+        /// That owner's original structural ancestor bound.
+        first_ancestor_steps: u64,
+        /// Index of the incompatible owner in the shared owner vector.
+        owner: usize,
+        /// The incompatible owner's original structural ancestor bound.
+        ancestor_steps: u64,
+    },
+    /// A requested model is absent, duplicated, or supplied more than once.
+    #[error("normalized model selection is missing or duplicated at {selection}")]
+    Selection {
+        /// Position in the caller's requested selection list.
+        selection: usize,
+    },
+    /// The original model's normalization allowance refused inspection.
+    #[error("normalized model reference inspection was denied")]
+    Normalization {
+        /// Index of the original owner whose meter denied the inspection.
+        owner: usize,
+        /// The original normalization refusal, unchanged.
+        incomplete: crate::model::accounting::NormalizationIncomplete,
+    },
+    /// The invocation's native allowance refused wrapper work or storage.
+    #[error("retained model wrapper charge was denied")]
+    Native {
+        /// The original first unpaid charge.
+        denied: NativeJoinDeniedCharge,
+        /// The original first unpaid location.
+        locus: Option<NativeJoinLocus>,
+        /// The original configured bound for the denied resource.
+        configured_bound: u64,
+    },
+    /// Wrapper allocation failed after its reservation was admitted.
+    #[error("retained model wrapper allocation failed")]
+    Allocation,
+}
+
+fn retain_charge(
+    budget: &mut NativeJoinBudget,
+    kind: NativeJoinChargeKind,
+    amount: u128,
+    source: NativeJoinLocusSource,
+) -> Result<(), RetainedModelFailure> {
+    let locus = NativeJoinLocus {
+        source,
+        form: "retained-normalized-model",
+    };
+    budget
+        .accounted_charge(kind, amount, locus)
+        .map_err(|denied| RetainedModelFailure::Native {
+            denied,
+            locus: budget.first_unpaid_locus(),
+            configured_bound: match denied.kind {
+                NativeJoinChargeKind::Work => budget.work_limit(),
+                NativeJoinChargeKind::Storage => budget.storage_limit(),
+            },
+        })
 }
 
 impl StateModel {
@@ -337,7 +428,7 @@ impl StateModel {
         sources: &[crate::check::ModelTimeSource],
         units: &BTreeMap<String, filament_exact::UnitId>,
     ) -> Result<&TypeEnvironment, crate::check::AssemblyRefusal> {
-        let mut types = self.types.clone();
+        let mut types = (*self.types).clone();
         for source in sources {
             let view = self.views.iter().find(|view| {
                 !view.is_source()
@@ -361,7 +452,7 @@ impl StateModel {
             types =
                 crate::check::dense_model_data_environment(&view.view, source.span, &types, units)?;
         }
-        self.types = types;
+        self.types = StateTypes::Owned(types);
         Ok(&self.types)
     }
 
@@ -406,6 +497,187 @@ impl StateModel {
             view.view.domain_package().model_selection.identity.clone(),
             node.clone(),
         )
+    }
+
+    /// Move the genuine owners into one shared invocation container, reserving
+    /// its fixed control block before allocation on the caller's native ledger.
+    /// The existing vector, payloads, maps and original meters are moved intact.
+    ///
+    /// # Errors
+    /// Returns the original native denial before allocating the shared owner.
+    pub fn retain_normalized_models(
+        models: Vec<NormalizedModel>,
+        budget: &mut NativeJoinBudget,
+    ) -> Result<Arc<Vec<NormalizedModel>>, RetainedModelFailure> {
+        retain_charge(
+            budget,
+            NativeJoinChargeKind::Work,
+            1,
+            NativeJoinLocusSource::Package,
+        )?;
+        retain_charge(
+            budget,
+            NativeJoinChargeKind::Storage,
+            (std::mem::size_of::<Vec<NormalizedModel>>() + 2 * std::mem::size_of::<usize>())
+                as u128,
+            NativeJoinLocusSource::Package,
+        )?;
+        Ok(Arc::new(models))
+    }
+
+    /// Construct a state model by borrowing the actual selected owners. The
+    /// supplied type environment is moved; no model or identity map is copied
+    /// and every inspection consumes that owner's original normalization meter.
+    /// Selected owners must have the same original structural ancestor bound;
+    /// that exact bound is retained.
+    ///
+    /// # Errors
+    /// Refuses absent or repeated selections, incompatible original structural
+    /// policies, original normalization denials, native wrapper denials, and
+    /// failed vector reservation distinctly.
+    pub fn from_normalized_models(
+        selections: &[crate::model::domain_package::DomainPackageRef],
+        types: TypeEnvironment,
+        owners: &Arc<Vec<NormalizedModel>>,
+        budget: &mut NativeJoinBudget,
+    ) -> Result<Self, RetainedModelFailure> {
+        Self::reserve_retained_wrapper(budget)?;
+        Self::from_retained_parts(selections, StateTypes::Owned(types), owners, budget)
+    }
+
+    /// Construct a retained model sharing the immutable genuine type environment
+    /// of its prepared package world. Only Arc handles are copied, after native
+    /// reservation; original model policy and work counters remain unchanged.
+    ///
+    /// # Errors
+    /// The same typed refusals as [`Self::from_normalized_models`].
+    pub fn from_normalized_models_shared_types(
+        selections: &[crate::model::domain_package::DomainPackageRef],
+        types: &Arc<TypeEnvironment>,
+        owners: &Arc<Vec<NormalizedModel>>,
+        budget: &mut NativeJoinBudget,
+    ) -> Result<Self, RetainedModelFailure> {
+        Self::reserve_retained_wrapper(budget)?;
+        retain_charge(
+            budget,
+            NativeJoinChargeKind::Work,
+            1,
+            NativeJoinLocusSource::Package,
+        )?;
+        Self::from_retained_parts(
+            selections,
+            StateTypes::Shared(types.clone()),
+            owners,
+            budget,
+        )
+    }
+
+    fn reserve_retained_wrapper(budget: &mut NativeJoinBudget) -> Result<(), RetainedModelFailure> {
+        retain_charge(
+            budget,
+            NativeJoinChargeKind::Work,
+            1,
+            NativeJoinLocusSource::Package,
+        )?;
+        retain_charge(
+            budget,
+            NativeJoinChargeKind::Storage,
+            std::mem::size_of::<Self>() as u128,
+            NativeJoinLocusSource::Package,
+        )
+    }
+
+    fn from_retained_parts(
+        selections: &[crate::model::domain_package::DomainPackageRef],
+        types: StateTypes,
+        owners: &Arc<Vec<NormalizedModel>>,
+        budget: &mut NativeJoinBudget,
+    ) -> Result<Self, RetainedModelFailure> {
+        retain_charge(
+            budget,
+            NativeJoinChargeKind::Storage,
+            (selections.len() as u128) * (std::mem::size_of::<ModelView>() as u128),
+            NativeJoinLocusSource::Package,
+        )?;
+        let mut views: Vec<ModelView> = Vec::new();
+        views
+            .try_reserve_exact(selections.len())
+            .map_err(|_| RetainedModelFailure::Allocation)?;
+        let mut limits = None::<(usize, ModelNormalizationLimits)>;
+        for (selection, requested) in selections.iter().enumerate() {
+            retain_charge(
+                budget,
+                NativeJoinChargeKind::Work,
+                1,
+                NativeJoinLocusSource::PreparationSelection(selection),
+            )?;
+            let mut selected = None;
+            for (index, owner) in owners.iter().enumerate() {
+                let actual = owner.view().model_selection();
+                let mut work = |units| {
+                    owner.charge_reference_work(
+                        crate::model::accounting::ChargePoint::ReferenceCatalog,
+                        units,
+                    )
+                };
+                owner
+                    .charge_reference_work(
+                        crate::model::accounting::ChargePoint::ReferenceCatalog,
+                        1,
+                    )
+                    .map_err(|incomplete| RetainedModelFailure::Normalization {
+                        owner: index,
+                        incomplete,
+                    })?;
+                if crate::model::key::text_equal_with_work(
+                    &actual.identity,
+                    &requested.identity,
+                    &mut work,
+                )
+                .map_err(|incomplete| RetainedModelFailure::Normalization {
+                    owner: index,
+                    incomplete,
+                })? {
+                    if selected.is_some() {
+                        return Err(RetainedModelFailure::Selection { selection });
+                    }
+                    selected = Some(index);
+                }
+            }
+            let index = selected.ok_or(RetainedModelFailure::Selection { selection })?;
+            for previous in &views {
+                retain_charge(
+                    budget,
+                    NativeJoinChargeKind::Work,
+                    1,
+                    NativeJoinLocusSource::PreparationSelection(selection),
+                )?;
+                if std::ptr::eq::<EffectiveView>(&previous.view, owners[index].view()) {
+                    return Err(RetainedModelFailure::Selection { selection });
+                }
+            }
+            let original = owners[index].normalization_limits();
+            match limits {
+                Some((first_owner, first)) if first.ancestor_steps != original.ancestor_steps => {
+                    return Err(RetainedModelFailure::IncompatiblePolicy {
+                        first_owner,
+                        first_ancestor_steps: first.ancestor_steps,
+                        owner: index,
+                        ancestor_steps: original.ancestor_steps,
+                    });
+                }
+                Some(_) => {}
+                None => limits = Some((index, original)),
+            }
+            let view = ModelView::retained(owners.clone(), index)
+                .ok_or(RetainedModelFailure::Selection { selection })?;
+            views.push(view);
+        }
+        Ok(Self {
+            views,
+            types,
+            limits: limits.map_or_else(ModelNormalizationLimits::default, |(_, limits)| limits),
+        })
     }
 
     /// Compare complete native type identities under the caller's work budget.
@@ -502,7 +774,7 @@ impl StateModel {
     ) -> Result<Self, AdmissionFailure> {
         Ok(Self {
             views: model_views(model_selections, packages, limits)?,
-            types: types.clone(),
+            types: StateTypes::Owned(types.clone()),
             limits,
         })
     }
@@ -517,7 +789,7 @@ impl StateModel {
     ) -> Self {
         Self {
             views: views.into_iter().map(ModelView::new).collect(),
-            types: types.clone(),
+            types: StateTypes::Owned(types.clone()),
             limits,
         }
     }
@@ -887,5 +1159,335 @@ impl StateModel {
             }
         }
         Ok(None)
+    }
+}
+
+#[cfg(test)]
+mod retained_owner_tests {
+    use super::*;
+    use crate::model::accounting::{ChargePoint, LimitKind};
+    use crate::model::domain_package::DomainPackageRef;
+    use crate::model::intake::package_input;
+    use crate::model::observation::admit_current_snapshot_with_provenance;
+    use ix_trace_rs::trace;
+    use serde_json::json;
+
+    fn selection(identity: &str) -> DomainPackageRef {
+        DomainPackageRef {
+            identity: identity.to_owned(),
+        }
+    }
+
+    fn owner(identity: &str, limits: ModelNormalizationLimits) -> NormalizedModel {
+        let document = include_str!("../../../examples/config-version/model.semantic-ir.json")
+            .replace("example/config-version", identity);
+        let packages = package_input([document.as_bytes()]).expect("real model document admits");
+        let (model_selection, document) = crate::model::intake::admit(
+            identity,
+            &packages,
+            fsl_foundation::IntakeLimits::default(),
+        )
+        .unwrap();
+        let package =
+            crate::model::intake::read_domain_package(model_selection, &document).unwrap();
+        let crate::model::normalize::NormalizeOutcome::Completed(view) =
+            crate::model::normalize::normalize(&package, ModelNormalizationLimits::default())
+        else {
+            panic!("fixture view normalizes for its checked type environment")
+        };
+        let types =
+            crate::check::model_type_environment("M", &view).expect("fixture types assemble");
+        let selected = DocumentRef {
+            authority: "test".into(),
+            identity: "current".into(),
+        };
+        let snapshot = json!({
+            "format": "filament.state.snapshot/v1",
+            "identity": {"authority": "test", "identity": "current"},
+            "observation": "current", "model": {"identity": identity},
+            "populations": [{"population": format!("ix://{identity}/config_history"),
+                "complete": true, "objects": []}]
+        });
+        let (_, _, mut owners) = admit_current_snapshot_with_provenance(
+            &[selection(identity)],
+            &types,
+            &packages,
+            limits,
+            &BTreeMap::from([(selected.clone(), snapshot.to_string().into_bytes())]),
+            &selected,
+            ObservationLimits::default(),
+        )
+        .expect("real snapshot producer retains its model");
+        assert_eq!(owners.len(), 1);
+        owners.remove(0)
+    }
+
+    #[trace("FR-940-AC-10")]
+    #[test]
+    fn retained_owner_contexts_borrow_the_same_payload_reverse_index_and_counter() {
+        let models = vec![
+            owner(
+                "test/first",
+                ModelNormalizationLimits::default().with_ancestor_steps(4),
+            ),
+            owner(
+                "test/second",
+                ModelNormalizationLimits::default().with_ancestor_steps(4),
+            ),
+        ];
+        let records = models[1].view().domain_package().records.as_ptr();
+        let exact_rows = models[1].exact_declaration_rows().as_ptr();
+        let before = models[1].consumed(LimitKind::WorkUnits);
+        let mut budget = NativeJoinBudget::new(u64::MAX, u64::MAX);
+        let owners = StateModel::retain_normalized_models(models, &mut budget).unwrap();
+        let types = Arc::new(crate::check::model_type_environment("M", owners[0].view()).unwrap());
+        let selected = [selection("test/second"), selection("test/first")];
+        let first = StateModel::from_normalized_models_shared_types(
+            &selected,
+            &types,
+            &owners,
+            &mut budget,
+        )
+        .unwrap();
+        let second = StateModel::from_normalized_models_shared_types(
+            &selected,
+            &types,
+            &owners,
+            &mut budget,
+        )
+        .unwrap();
+        assert_eq!(first.views.len(), 2);
+        assert_eq!(second.views.len(), 2);
+        assert!(std::ptr::eq(&*first.views[0], &owners[1].data));
+        assert!(std::ptr::eq(&*first.views[1], &owners[0].data));
+        assert!(std::ptr::eq(&*second.views[0], &owners[1].data));
+        assert!(std::ptr::eq(&*second.views[1], &owners[0].data));
+        assert_eq!(first.ancestor_steps(), 4);
+        assert_eq!(
+            first.ancestor_steps(),
+            owners[0].view().effective_limits().ancestor_steps
+        );
+        assert!(std::ptr::eq::<TypeEnvironment>(&*first.types, &*types));
+        assert!(std::ptr::eq::<TypeEnvironment>(&*second.types, &*types));
+        let legacy = StateModel::from_views(
+            [owners[0].view().clone()],
+            &types,
+            *owners[0].view().effective_limits(),
+        );
+        assert!(!std::ptr::eq::<TypeEnvironment>(&*legacy.types, &*types));
+        assert_eq!(first.views[0].view.model_selection(), &selected[0]);
+        assert_eq!(
+            first.views[0].view.domain_package().records.as_ptr(),
+            records
+        );
+        assert_eq!(owners[1].exact_declaration_rows().as_ptr(), exact_rows);
+        let (key, effective) = first.views[0].view.type_identities().iter().next().unwrap();
+        let first_key = first.views[0].declaration_key_borrowed(effective).unwrap();
+        let second_key = second.views[0].declaration_key_borrowed(effective).unwrap();
+        assert_eq!(first_key, key);
+        assert!(std::ptr::eq(first_key, second_key));
+        assert!(owners[1].consumed(LimitKind::WorkUnits) > before);
+        let consumed = owners[1].consumed(LimitKind::WorkUnits);
+        let other_consumed = owners[0].consumed(LimitKind::WorkUnits);
+        owners[1]
+            .charge_reference_work(ChargePoint::ReferenceResult, 7)
+            .unwrap();
+        assert_eq!(owners[1].consumed(LimitKind::WorkUnits), consumed + 7);
+        assert_eq!(owners[0].consumed(LimitKind::WorkUnits), other_consumed);
+        assert!(std::ptr::eq(&*first.views[0], &*second.views[0]));
+    }
+
+    #[trace("FR-940-AC-10")]
+    #[test]
+    fn retained_owner_structural_policy_refuses_mixed_original_bounds_exactly() {
+        let mut budget = NativeJoinBudget::new(u64::MAX, u64::MAX);
+        let owners = StateModel::retain_normalized_models(
+            vec![
+                owner(
+                    "test/first",
+                    ModelNormalizationLimits::default().with_ancestor_steps(4),
+                ),
+                owner(
+                    "test/second",
+                    ModelNormalizationLimits::default().with_ancestor_steps(2),
+                ),
+            ],
+            &mut budget,
+        )
+        .unwrap();
+        let result = StateModel::from_normalized_models(
+            &[selection("test/second"), selection("test/first")],
+            TypeEnvironment::default(),
+            &owners,
+            &mut budget,
+        );
+        let Err(RetainedModelFailure::IncompatiblePolicy {
+            first_owner,
+            first_ancestor_steps,
+            owner,
+            ancestor_steps,
+        }) = result
+        else {
+            panic!("mixed original structural policies must refuse explicitly")
+        };
+        assert_eq!(
+            (first_owner, first_ancestor_steps, owner, ancestor_steps),
+            (1, 2, 0, 4)
+        );
+        assert_eq!(budget.first_unpaid(), None);
+        assert_eq!(owners[0].view().effective_limits().ancestor_steps, 4);
+        assert_eq!(owners[1].view().effective_limits().ancestor_steps, 2);
+    }
+
+    #[trace("FR-940-AC-10")]
+    #[test]
+    fn retained_owner_selection_refuses_missing_repeated_and_ambiguous_owners() {
+        let mut budget = NativeJoinBudget::new(u64::MAX, u64::MAX);
+        let owners = StateModel::retain_normalized_models(
+            vec![owner("test/model", ModelNormalizationLimits::default())],
+            &mut budget,
+        )
+        .unwrap();
+        for selected in [
+            vec![selection("test/missing")],
+            vec![selection("test/model"), selection("test/model")],
+        ] {
+            assert!(matches!(
+                StateModel::from_normalized_models(
+                    &selected,
+                    TypeEnvironment::default(),
+                    &owners,
+                    &mut budget
+                ),
+                Err(RetainedModelFailure::Selection { .. })
+            ));
+        }
+        let ambiguous = StateModel::retain_normalized_models(
+            vec![
+                owner("test/model", ModelNormalizationLimits::default()),
+                owner("test/model", ModelNormalizationLimits::default()),
+            ],
+            &mut budget,
+        )
+        .unwrap();
+        assert!(matches!(
+            StateModel::from_normalized_models(
+                &[selection("test/model")],
+                TypeEnvironment::default(),
+                &ambiguous,
+                &mut budget
+            ),
+            Err(RetainedModelFailure::Selection { selection: 0 })
+        ));
+    }
+
+    #[trace("FR-940-AC-10")]
+    #[test]
+    fn retained_owner_native_reservation_denial_precedes_model_inspection() {
+        let mut budget = NativeJoinBudget::new(100, 0);
+        let error = StateModel::retain_normalized_models(Vec::new(), &mut budget).unwrap_err();
+        let RetainedModelFailure::Native {
+            denied,
+            locus,
+            configured_bound,
+        } = error
+        else {
+            panic!("native storage denial expected")
+        };
+        assert_eq!(denied.kind, NativeJoinChargeKind::Storage);
+        assert_eq!(
+            denied.amount,
+            (std::mem::size_of::<Vec<NormalizedModel>>() + 2 * std::mem::size_of::<usize>())
+                as u128
+        );
+        assert_eq!(configured_bound, 0);
+        assert_eq!(Some(denied), budget.first_unpaid());
+        assert_eq!(locus, budget.first_unpaid_locus());
+        let owners = Arc::new(vec![owner(
+            "test/model",
+            ModelNormalizationLimits::default(),
+        )]);
+        let consumed = owners[0].consumed(LimitKind::WorkUnits);
+        let result = StateModel::from_normalized_models(
+            &[selection("test/model")],
+            TypeEnvironment::default(),
+            &owners,
+            &mut budget,
+        );
+        let Err(RetainedModelFailure::Native {
+            denied: retained_denied,
+            locus: retained_locus,
+            configured_bound: retained_bound,
+        }) = result
+        else {
+            panic!("original native denial must remain first")
+        };
+        assert_eq!(retained_denied, denied);
+        assert_eq!(retained_locus, locus);
+        assert_eq!(retained_bound, configured_bound);
+        assert_eq!(owners[0].consumed(LimitKind::WorkUnits), consumed);
+        let mut work_short = NativeJoinBudget::new(0, u64::MAX);
+        let result = StateModel::from_normalized_models(
+            &[selection("test/model")],
+            TypeEnvironment::default(),
+            &owners,
+            &mut work_short,
+        );
+        let Err(RetainedModelFailure::Native {
+            denied,
+            configured_bound,
+            ..
+        }) = result
+        else {
+            panic!("wrapper work must be admitted before allocating its vector")
+        };
+        assert_eq!(denied.kind, NativeJoinChargeKind::Work);
+        assert_eq!(denied.amount, 1);
+        assert_eq!(configured_bound, 0);
+        assert_eq!(work_short.consumed().storage, 0);
+        assert_eq!(owners[0].consumed(LimitKind::WorkUnits), consumed);
+    }
+
+    #[trace("FR-940-AC-10")]
+    #[test]
+    fn retained_owner_reference_denial_keeps_the_original_limit_and_consumption() {
+        let baseline =
+            owner("test/model", ModelNormalizationLimits::default()).consumed(LimitKind::WorkUnits);
+        let original = ModelNormalizationLimits::default().with_work_units(baseline + 26);
+        let mut budget = NativeJoinBudget::new(u64::MAX, u64::MAX);
+        let owners =
+            StateModel::retain_normalized_models(vec![owner("test/model", original)], &mut budget)
+                .unwrap();
+        for _ in 0..2 {
+            StateModel::from_normalized_models(
+                &[selection("test/model")],
+                TypeEnvironment::default(),
+                &owners,
+                &mut budget,
+            )
+            .expect("the original allowance admits two retained contexts");
+        }
+        let result = StateModel::from_normalized_models(
+            &[selection("test/model")],
+            TypeEnvironment::default(),
+            &owners,
+            &mut budget,
+        );
+        let Err(RetainedModelFailure::Normalization {
+            owner: index,
+            incomplete,
+        }) = result
+        else {
+            panic!("original normalization owner must deny reference inspection")
+        };
+        assert_eq!(index, 0);
+        assert_eq!(incomplete.limit, original.work_units);
+        assert_eq!(incomplete.consumed, original.work_units);
+        assert_eq!(incomplete.next_charge, 1);
+        assert_eq!(incomplete.charge_point, ChargePoint::ReferenceCatalog);
+        assert_eq!(
+            owners[0].consumed(LimitKind::WorkUnits),
+            original.work_units
+        );
     }
 }

@@ -22,13 +22,17 @@
 //!   composition, whose premise discharge record is
 //!   [`PlannerResult::discharge`].
 
+mod admitted_declaration;
 mod compose;
+mod composition_graph;
 mod declaration;
 mod entry;
+mod from_admitted;
 mod from_package;
 mod item;
 mod json;
 mod key;
+mod key_build;
 mod mismatch;
 mod request;
 mod settle;
@@ -40,12 +44,15 @@ use request::read_declared;
 use settle::settle_declared;
 
 #[cfg(test)]
+mod admitted_fixture;
+#[cfg(test)]
 mod composition_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod transfer_tests;
 
+pub use admitted_declaration::AdmittedDeclarationRefusal;
 pub use compose::{DischargeEntry, DischargeRecord, DischargeSource, Relation};
 pub use declaration::{
     strength_implies, ClauseFacts, ClauseForm, DerivedSlot, EnvSupplies, EnvironmentMember,
@@ -54,6 +61,10 @@ pub use declaration::{
 pub use entry::{
     read_result_entry, EntryCause, EntryOrigin, LimitFacts, ResultEntry, ResultEntryRefusal,
     TaskSearchEdge, TaskSearchEvidence, TaskSearchFrontier, TaskSearchNode,
+};
+pub use from_admitted::{
+    PackageComposition, PackageCompositionClause, PackageCompositionCycle,
+    PackageCompositionRefusal, PackageCompositionSlot,
 };
 pub use from_package::{
     composition_premises, subject_text, CompositionPremise, DeclarationRefusal,
@@ -64,7 +75,10 @@ pub use key::{
     ClaimKind, Correspondence, CorrespondenceRole, ExtentClass, FairnessKey, ItemKey, KeyWireError,
     LocalKey, OperationRef, PremiseKey, SlotKey, TemporalItemKind, TemporalKey,
 };
-pub use mismatch::{interface_mismatch, InterfaceMismatch, MismatchReason};
+pub use mismatch::{
+    interface_mismatch, interface_mismatch_over, InterfaceMismatch, MismatchClauseFairness,
+    MismatchFacts, MismatchNeed, MismatchReason, MismatchRefusal, MismatchSupply,
+};
 pub use request::{
     dependency_graphs, read_settlement_request, DependencyGraphs, DependencyGraphsRefusal,
     Discharge, Discharger, EnvironmentRecord, ItemRef, PremiseResult, ReadLimits, RecordSupplies,

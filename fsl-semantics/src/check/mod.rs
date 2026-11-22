@@ -90,9 +90,9 @@ pub use abstraction::{
 };
 pub use abstraction::{AbstractionNodeRefusal, AbstractionNodes};
 pub use composition::{
-    CheckedComponent, CheckedComposition, ClauseRef, ComponentGuaranteeKey, ComponentPackages,
-    ComponentSubject,
-    CompositionClauseFacts, CompositionCycle, CompositionGuarantee, CompositionItem,
+    composition_components, CheckedComponent, CheckedComposition, ClauseRef, ComponentGuaranteeKey,
+    ComponentPackages, ComponentSubject, CompositionClauseFacts, CompositionCycle,
+    CompositionGraphErrorCode, CompositionGraphRefusal, CompositionGuarantee, CompositionItem,
     CompositionName, CompositionPremise, CompositionRefusal, CompositionSlot, CompositionSlotKey,
     CompositionSpans, CompositionSupply, ItemPlacement, MalformedMember, ReadClause, ReadComponent,
     ReadComposition, ReadGuaranteeMember, ReadPremise, ReadSupply,
@@ -625,7 +625,9 @@ pub use temporal_clause::{
     TemporalDeclarations, TemporalSelection, TemporalTraceFamily, TimeNominalForm, TimeNominalNode,
     TimeNominalOrigin, TimeSourceKind, TimedPropertyForm, UnaryTemporal, DEFAULT_CLOCK_ROLE,
 };
-pub use temporal_clause::{PackageClauseForm, PackageClauseRefusal, PackageFormulaNode};
+pub use temporal_clause::{
+    PackageClauseForm, PackageClauseRefusal, PackageFormulaNode, PackagePropertyRefusal,
+};
 pub use timed_model::{
     CheckedTimedPredicate, ClockConstraint, ClockField, ClockGuard, ClockId, ClockOp,
     ClockParameterRange, ClockReset, ClockResets, CollectionWrite, ConstraintNodes,
