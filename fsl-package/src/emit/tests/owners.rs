@@ -568,22 +568,32 @@ fn function_check_modes_spell_the_ids_the_emitted_bytes_record() {
         "a declared function and the clause functions: {}",
         recorded.len()
     );
-    let document_form: Vec<Vec<u8>> = emission
-        .wire_nodes
-        .iter()
-        .filter(|node| &*node.node_tag == "function")
-        .map(|node| {
-            quire_canonical::to_vec(&node.node_id, quire_canonical::Limits::new(u64::MAX)).unwrap()
-        })
-        .collect();
-    assert!(
-        document_form
-            .iter()
-            .zip(&recorded)
-            .any(|(document, (recorded, _))| document != recorded),
-        "some function id holds an operand slot, so the typed form differs from the bytes"
-    );
     assert_eq!(typed, recorded);
+}
+
+/// FR-098-AC-34: a function node whose id holds a document index (the form of
+/// every typed node) is keyed by its operand-slot id, the form the emitted
+/// bytes record, never by the index.
+#[trace("FR-098-AC-34", "TC-1784")]
+#[test]
+fn function_check_modes_key_an_indexed_function_id_by_its_operand_slot() {
+    use filament_contract_model::CheckedNodePathSegment as Segment;
+    let mut emission = emit(&acme_dispatch_package("Order/count"));
+    let node = std::sync::Arc::make_mut(&mut emission.wire_nodes)
+        .iter_mut()
+        .find(|node| &*node.node_tag == "function")
+        .expect("a function node");
+    node.node_id.path.push(Segment::Index(0));
+    let modes = emission
+        .function_check_modes(crate::EmitLimits::fixture())
+        .unwrap();
+    let held = |id: &CheckedNodeId, held: fn(&Segment) -> bool| id.path.iter().any(held);
+    assert!(modes
+        .iter()
+        .any(|(id, _)| held(id, |segment| matches!(segment, Segment::Operand(_)))));
+    assert!(modes
+        .iter()
+        .all(|(id, _)| !held(id, |segment| matches!(segment, Segment::Index(_)))));
 }
 
 fn member<'d>(
