@@ -307,7 +307,43 @@ impl Walk<'_, '_> {
         Selected {
             preconditions: pick(&clauses.preconditions),
             postconditions: pick(&clauses.postconditions),
+            operation_preconditions: Vec::new(),
+            operation_postconditions: Vec::new(),
         }
+    }
+
+    /// Source model steps additionally read the checked contracts of their
+    /// actual operation. Protocol contract selection stays unit-scoped.
+    pub(super) fn model_selected<'c>(
+        &'c self,
+        row: &Row,
+        application: &Application,
+        select: impl Fn(filament_exact::NodeKey) -> bool,
+    ) -> Selected<'c> {
+        use filament_semantic_value::location::OperationClauseKind;
+
+        let mut selected = self.selected(row, application, select);
+        let Some(package) = self.system.source_package() else {
+            return selected;
+        };
+        for clause in package.graph().operation_clauses() {
+            if clause.operation() != &application.key
+                || clause.declaring() != &application.declaring
+            {
+                continue;
+            }
+            match clause.kind() {
+                OperationClauseKind::Requires => selected.operation_preconditions.push(clause),
+                OperationClauseKind::Ensures => selected.operation_postconditions.push(clause),
+            }
+        }
+        selected
+            .operation_preconditions
+            .sort_by_key(|clause| clause.position());
+        selected
+            .operation_postconditions
+            .sort_by_key(|clause| clause.position());
+        selected
     }
 
     /// The clauses in `group` that apply to `row` as the receiver of the
@@ -342,6 +378,8 @@ impl Walk<'_, '_> {
 pub(super) struct Selected<'c> {
     pub(super) preconditions: Vec<&'c ClauseInfo>,
     pub(super) postconditions: Vec<&'c ClauseInfo>,
+    pub(super) operation_preconditions: Vec<&'c fsl_semantics::check::CheckedOperationClause>,
+    pub(super) operation_postconditions: Vec<&'c fsl_semantics::check::CheckedOperationClause>,
 }
 
 /// A contract finding with the keys its position among its siblings follows:
@@ -661,9 +699,15 @@ fn expand<'s>(
             continue;
         };
         for application in applications {
-            let clauses = walk.selected(row, application, |identity| {
-                selection.omitted_clause != Some(&identity)
-            });
+            let select = |identity| selection.omitted_clause != Some(&identity);
+            let clauses = if selection.clock_selectors.is_none()
+                && selection.post_presence.is_none()
+                && system.input().timed_models.is_empty()
+            {
+                walk.model_selected(row, application, select)
+            } else {
+                walk.selected(row, application, select)
+            };
             frames::apply(
                 &walk,
                 row,
