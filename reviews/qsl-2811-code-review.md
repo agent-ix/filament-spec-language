@@ -39,6 +39,22 @@ scope:
     path: spec/functional/FR-249-lower-a-task-automaton-to-a-timed-subject.md
     role: context_only
     excerpt: "The lowered EN-6 subject preserves FSpec FR-419's task-product state and FR-364's derived-step identity across a preemption/resumption sequence; FR-237 replays the resulting existing `ModelTrace` arm against the rebuilt product."
+  - id: FR-237/Reading the wire
+    path: spec/functional/FR-237-replay-a-timed-counterexample.md
+    role: examined
+    excerpt: "A step whose `type` lies outside `T`'s alphabet is not a shape fault. The reader returns it as an alphabet refusal, `invalid_runtime_input`/`invalid-value` at that step's `/transition/type` (FSpec FR-364 \"Step alphabet\")."
+  - id: FR-237-AC-10
+    path: spec/functional/FR-237-replay-a-timed-counterexample.md
+    role: examined
+    excerpt: "The FR-249-AC-9 refutation's counterexample (FSpec FR-364-AC-23's fixture `B`, with `<a>` the index of its `activate t1#0` step), written to JSON by FR-286's writer, reads back with `read_temporal_counterexample::<TaskProductTransition>`, and re-writing gives an equal JSON value."
+  - id: FR-237-AC-11
+    path: spec/functional/FR-237-replay-a-timed-counterexample.md
+    role: examined
+    excerpt: "FR-237-AC-1's `Rpc` counterexample with a `task-transition` step inserted refuses at that step's `/transition/type`. Passed to `replay_task_product_trace`, it refuses `TraceAlphabet`."
+  - id: FR-128-AC-14
+    path: spec/functional/FR-128-replay-a-model-counterexample.md
+    role: context_only
+    excerpt: "At the writer and reader (`fsl-replay/src/outcome/counterexample.rs`): a closure-only engine lasso with an empty prefix and one with a prefix of one `inc` each write the sole closure loop step with the entry key, and the reader reads each back to the same lasso for the model alphabet only."
 ```
 
 Source paths examined in the diff:
@@ -74,3 +90,15 @@ The review used source inspection and static Quire output, not runtime evidence.
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | low | No findings (placeholder) | - |
+
+## Fix-commit disposition — round 1
+
+**CONDITIONAL — no remaining source defect found; final titan reruns are pending.** This is a confined disposition of `c9403b97..3c7626fa`, not a second full review. The source candidate is `3c7626faacd3fa6f8702e4cc81be0767ce91f4a0`. The original Findings table above is unchanged; its placeholder is not a defect requiring a disposition row.
+
+- `bdf77515` fixes the missed frontier-evidence consumer at `fsl-analyze/src/analyze/task_product_item.rs:419`: the evaluator transition is cloned into the already-reviewed replay-owned type before calling `task_product_transition_wire`. The state replay, frontier indexing, edge deduplication and wire writer are unchanged. This is the same exhaustive field-preserving bridge used by the other task consumers.
+- `3c7626fa` corrects the R14b baseline product regression recorded on QSL-2824. The FR-237 wire reader must validate the whole shape and then classify a valid foreign step at its `/transition/type`. The old selected-model-alphabet branch imposed origin position 0 even on a valid task payload whose actual first deadline miss was at position 1, misclassifying the payload as malformed.
+- The origin-position branch now applies only to a parsed model lasso with no scheduler Task steps. Payloads containing scheduler steps retain the task alphabet's actual first-miss position, even when the caller requested ModelTransition. Therefore a correctly shaped task payload reaches the unchanged foreign-step check, while a wrong trace position remains a shape fault for both requested alphabets. Queue-growth position handling is untouched.
+- Both complete shape-check loops and task-field parsing still precede alphabet classification. The new foreign-task test writes through the production task writer, reads and rewrites with its real alphabet, expects a foreign-alphabet refusal under the model reader, rejects a mutated position in both readers, and requires a later unknown member to take precedence. The native-model test writes and reads ordinary and closure-only lassos at origin 0, rejects position 1, and rejects a misplaced terminal stutter. Existing assertions, scanners and allow entries are unchanged.
+- `git diff --check c9403b97..3c7626fa` exited 0. No builds, tests or repository executables were run by this reviewer. The lead reported earlier titan passes for eight TC-452 tests, evaluator renaming and the wrapper conversion test; other selected consumers were compile-blocked by the now-patched frontier call. Those earlier results do not establish acceptance of this final candidate. Final named reruns and compilation remain pending through the lead.
+
+No new findings were added in this disposition. The initial-review execution limits above describe that earlier snapshot; this section records the later reported evidence without claiming independent execution or merge readiness.

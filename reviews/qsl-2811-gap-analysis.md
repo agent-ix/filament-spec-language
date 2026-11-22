@@ -37,6 +37,22 @@ scope:
     path: spec/functional/FR-400-separate-checked-terms-from-the-checker.md
     role: examined
     excerpt: "`filament-checked` builds for `thumbv7em-none-eabi` with default features off, and its manifest forbids unsafe code; no normal or build dependency in FSL enables its `test-support` feature."
+  - id: FR-237/Reading the wire
+    path: spec/functional/FR-237-replay-a-timed-counterexample.md
+    role: examined
+    excerpt: "A step whose `type` lies outside `T`'s alphabet is not a shape fault. The reader returns it as an alphabet refusal, `invalid_runtime_input`/`invalid-value` at that step's `/transition/type` (FSpec FR-364 \"Step alphabet\")."
+  - id: FR-237-AC-10
+    path: spec/functional/FR-237-replay-a-timed-counterexample.md
+    role: examined
+    excerpt: "The FR-249-AC-9 refutation's counterexample (FSpec FR-364-AC-23's fixture `B`, with `<a>` the index of its `activate t1#0` step), written to JSON by FR-286's writer, reads back with `read_temporal_counterexample::<TaskProductTransition>`, and re-writing gives an equal JSON value."
+  - id: FR-237-AC-11
+    path: spec/functional/FR-237-replay-a-timed-counterexample.md
+    role: examined
+    excerpt: "FR-237-AC-1's `Rpc` counterexample with a `task-transition` step inserted refuses at that step's `/transition/type`. Passed to `replay_task_product_trace`, it refuses `TraceAlphabet`."
+  - id: FR-128-AC-14
+    path: spec/functional/FR-128-replay-a-model-counterexample.md
+    role: context_only
+    excerpt: "At the writer and reader (`fsl-replay/src/outcome/counterexample.rs`): a closure-only engine lasso with an empty prefix and one with a prefix of one `inc` each write the sole closure loop step with the entry key, and the reader reads each back to the same lasso for the model alphabet only."
 ```
 
 ## Matrix and evidence
@@ -68,3 +84,13 @@ Inspected all new module bodies and their production consumers. Private inner ca
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | low | No findings in the assigned delta (placeholder) | - |
+
+## Fix-commit disposition — round 1
+
+**CONDITIONAL — no new scoped gap observed; final execution evidence remains pending.** Examined only the two fix commits in `c9403b97..3c7626fa` at candidate `3c7626faacd3fa6f8702e4cc81be0767ce91f4a0`. The original Findings table remains unchanged, and its placeholder is not a finding to dispose.
+
+The frontier writer's explicit evaluator-to-replay conversion is owned by FR-100-AC-8 and uses the already-reviewed bridge; it introduces no new semantic surface. The R14b product correction is owned by FR-237's Reading the wire rule and AC-11, with AC-10 covering real writer/reader roundtrip and shape-fault classification. It prevents selection of the model alphabet from imposing the wrong position convention on a valid foreign task lasso. Shape validation, task first-miss validation, queue-growth handling and foreign-step classification remain real production paths.
+
+The two added tests carry actual test-function trace attributes: `foreign_task_lasso_validates_its_miss_position_before_alphabet_refusal` names FR-237-AC-10/11; `model_lassos_validate_origin_position_with_and_without_closure_steps` names FR-237-AC-10 and FR-128-AC-14. Their assertions call the actual writer/readers and exercise valid payloads, wrong positions, later shape faults, closure-only origin handling and misplaced terminal stutters. No stub, skip or substituted semantic engine was introduced. These new tags were checked in source; the full matrix was not recomputed during this confined disposition, so the earlier matrix counts above remain explicitly the initial-review snapshot.
+
+The lead reports earlier titan passes for the eight TC-452 tests, evaluator renaming and wrapper conversion, and a compiler failure at the frontier consumer now converted by the fix. This is reported evidence, not an independent reviewer run and not acceptance of the final source candidate. No builds/tests/repository executables ran here; no job was queued. Both the original evidence-matrix limitation and the pending final named reruns remain disclosed. No new findings were added.
