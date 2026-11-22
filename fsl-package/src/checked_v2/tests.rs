@@ -1124,6 +1124,30 @@ fn read_fixture_wire(fixture: &str, envelope: &Value) -> (String, Read) {
     read_fixture_wire_withholding(fixture, envelope, &[])
 }
 
+/// FSL's whole I2 read with the selected domain document supplied by a
+/// published timed-clause vector's `document_patch`.
+fn read_fixture_wire_with_document_patch(
+    fixture: &str,
+    envelope: &Value,
+    document: &[u8],
+) -> (String, Read) {
+    let evidence = fixture_evidence_with_document(
+        Some(fixture),
+        envelope,
+        envelope,
+        &[],
+        Some(document),
+    );
+    let name = envelope["name"].as_str().expect("fixture name").to_owned();
+    let outcome = read_v2(
+        &fixture_wire_bytes(envelope),
+        identity(&name),
+        V2ReadLimits::fixture(),
+        &evidence,
+    );
+    (name, outcome)
+}
+
 /// [`read_fixture_wire`] with the extension definitions named by
 /// `withheld` left out of the held evidence (FSpec FR-469 "Published
 /// definitions": the withheld-definition control).
@@ -1167,13 +1191,23 @@ fn fixture_evidence(
     selecting: &Value,
     withheld: &[CheckedArtifactRef],
 ) -> CheckedPackageEvidence {
+    fixture_evidence_with_document(fixture, envelope, selecting, withheld, None)
+}
+
+fn fixture_evidence_with_document(
+    fixture: Option<&str>,
+    envelope: &Value,
+    selecting: &Value,
+    withheld: &[CheckedArtifactRef],
+    document_override: Option<&[u8]>,
+) -> CheckedPackageEvidence {
     let mut evidence = CheckedPackageEvidence::new();
     supply_fspec_extension_definitions(&mut evidence, selecting, withheld);
     for feature in envelope["lock"]["required_features"].as_array().unwrap() {
         evidence.support_feature(feature.as_str().unwrap());
     }
     supply_fspec_dependency_packages(&mut evidence, envelope);
-    let Some((identity, document)) = fixture.and_then(selected_domain_document) else {
+    let Some((identity, selected_document)) = fixture.and_then(selected_domain_document) else {
         return evidence;
     };
     let selects_document = envelope["semantic_graph"]["nodes"]
@@ -1185,8 +1219,17 @@ fn fixture_evidence(
                 && node["owner"]["identity"].as_str() == Some(&*identity)
         });
     if selects_document {
+        let document = document_override.unwrap_or(&selected_document);
+        if let Some(override_bytes) = document_override {
+            let overridden: Value = serde_json::from_slice(override_bytes)
+                .expect("a selected-document patch remains JSON");
+            assert_eq!(
+                overridden["package"]["identity"], identity,
+                "a document patch retains the selected package identity"
+            );
+        }
         evidence
-            .insert_domain_package_document(identity, document)
+            .insert_domain_package_document(identity, document.to_vec())
             .expect("unique domain document");
     }
     evidence
@@ -2637,7 +2680,7 @@ fn assert_admitted_binder_round_trip(
     let projected = super::timed_model::CheckedTimedModel::from_admitted(admitted)
         .unwrap_or_else(|failure| panic!("{id}: typed timed model projects: {failure}"));
     let model = match id {
-        "CL-57" => projected
+        "CL-57" | "CL-65" | "CL-66" => projected
             .iter()
             .find(|model| {
                 model
@@ -2658,7 +2701,7 @@ fn assert_admitted_binder_round_trip(
         other => panic!("{other}: no admitted binder round-trip assertion"),
     };
     let projected_binders = match id {
-        "CL-57" => model
+        "CL-57" | "CL-65" | "CL-66" => model
             .guards
             .iter()
             .find(|guard| guard.metadata.node_id == node_id)
@@ -2679,6 +2722,22 @@ fn assert_admitted_binder_round_trip(
         projected_binders, expected_binders,
         "{id} projected binder order"
     );
+    if matches!(id, "CL-65" | "CL-66") {
+        let guard = model
+            .guards
+            .iter()
+            .find(|guard| guard.metadata.node_id == node_id)
+            .expect("the family guard is projected");
+        assert_eq!(
+            guard.parts[0].quantifier,
+            Some(if id == "CL-65" {
+                super::timed_model::CheckedGuardQuantifier::Each
+            } else {
+                super::timed_model::CheckedGuardQuantifier::Some
+            }),
+            "{id} typed guard quantifier"
+        );
+    }
 
     let written = model
         .write_nodes()
@@ -2699,6 +2758,60 @@ fn assert_admitted_binder_round_trip(
         vec![(*model).clone()],
         "{id} typed model round-trips"
     );
+    if matches!(id, "CL-65" | "CL-66") {
+        assert_family_guard_refuses_missing_binders_or_constraints(&written, id);
+    }
+}
+
+fn assert_family_guard_refuses_missing_binders_or_constraints(
+    nodes: &[filament_contract_model::CheckedSemanticNodeV2],
+    id: &str,
+) {
+    use filament_contract_model::CheckedTerm;
+
+    fn part_members(
+        nodes: &mut [filament_contract_model::CheckedSemanticNodeV2],
+    ) -> &mut Vec<CheckedTerm> {
+        let guard = nodes
+            .iter_mut()
+            .find(|node| node.semantic_form.as_ref() == "clock_guard")
+            .expect("a family guard node");
+        let CheckedTerm::Aggregate { members: body } = &mut guard.body else {
+            panic!("the guard body is aggregate");
+        };
+        let parts = body
+            .iter_mut()
+            .find_map(|member| match member {
+                CheckedTerm::Binding { name, value, .. } if name.as_ref() == "parts" => {
+                    Some(value.as_mut())
+                }
+                _ => None,
+            })
+            .expect("the guard has parts");
+        let CheckedTerm::Aggregate { members: parts } = parts else {
+            panic!("guard parts are aggregate");
+        };
+        let Some(CheckedTerm::Aggregate { members }) = parts.first_mut() else {
+            panic!("the family part is aggregate");
+        };
+        members
+    }
+
+    let mut missing_binders = nodes.to_vec();
+    part_members(&mut missing_binders).retain(
+        |member| !matches!(member, CheckedTerm::Binding { name, .. } if name.as_ref() == "binders"),
+    );
+    assert!(
+        super::timed_model::CheckedTimedModel::from_nodes(&missing_binders).is_err(),
+        "{id}: a quantified family part without binders is refused"
+    );
+
+    let mut missing_constraints = nodes.to_vec();
+    part_members(&mut missing_constraints).truncate(3);
+    assert!(
+        super::timed_model::CheckedTimedModel::from_nodes(&missing_constraints).is_err(),
+        "{id}: a quantified family part without constraints is refused"
+    );
 }
 
 /// FSpec FR-322 "Clause nodes" (TC-367 CK-36): each clause vector of
@@ -2711,10 +2824,13 @@ fn assert_admitted_binder_round_trip(
 /// timed-model join; `CL-54` is the same reset whose frame stays on the
 /// first model, refused `invalid_model_binding` in the state step first.
 /// `CL-57` and `CL-59` admit typed guard/invariant binders; `CL-58`, `CL-60`
-/// and `CL-62` refuse typed binder violations.
+/// and `CL-62` refuse typed binder violations. `CL-63` refuses an unknown
+/// family quantifier; `CL-65` and `CL-66` project and write the family guard
+/// quantifiers after applying their selected-document patches.
 #[trace("TC-685", "FR-230-AC-34")]
 #[trace("FSpec-FR-322-AC-261", "FSpec-FR-322-AC-262", "FSpec-FR-322-AC-263")]
 #[trace("FSpec-FR-322-AC-295", "FSpec-TC-367")]
+#[trace("FSpec-FR-322-AC-484", "FSpec-TC-2063")]
 #[test]
 fn conformance_timed_clause_vectors_keep_their_published_outcomes() {
     let (_fspec, directory, _) = fspec_v2_fixtures();
@@ -2730,7 +2846,24 @@ fn conformance_timed_clause_vectors_keep_their_published_outcomes() {
         if let Some(patch) = case.get("patch") {
             apply_json_patch(&mut package, patch);
         }
-        let (_, outcome) = read_fixture_wire(fixture, &package);
+        let document_patch = case.get("document_patch").and_then(Value::as_array);
+        let (_, outcome) = match document_patch {
+            Some(patch) => {
+                let (document_identity, selected_bytes) = selected_domain_document(fixture)
+                    .unwrap_or_else(|| panic!("{id}: selected document exists"));
+                let mut selected_document: Value = serde_json::from_slice(&selected_bytes)
+                    .expect("selected domain document is JSON");
+                apply_json_patch(&mut selected_document, &Value::Array(patch.clone()));
+                assert_eq!(
+                    selected_document["package"]["identity"], document_identity,
+                    "{id}: document patch retains selected identity"
+                );
+                let patched_bytes = serde_json::to_vec(&selected_document)
+                    .expect("patched selected document serializes");
+                read_fixture_wire_with_document_patch(fixture, &package, &patched_bytes)
+            }
+            None => read_fixture_wire(fixture, &package),
+        };
         let locus = case["locus"].as_str().unwrap_or_default();
         if case["schema"] == "invalid" && case.get("expected").is_none() {
             let Read::Refused(V2ReadRefusal::Envelope { refusal, locus }) = &outcome else {
@@ -2757,7 +2890,7 @@ fn conformance_timed_clause_vectors_keep_their_published_outcomes() {
                 let Read::Verified { admitted, .. } = &outcome else {
                     panic!("{id}: expected admitted, got {outcome:?}");
                 };
-                if matches!(id.as_str(), Some("CL-57" | "CL-59")) {
+                if matches!(id.as_str(), Some("CL-57" | "CL-59" | "CL-65" | "CL-66")) {
                     assert_admitted_binder_round_trip(case, &package, admitted);
                 }
             }

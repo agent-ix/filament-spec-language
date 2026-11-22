@@ -167,8 +167,20 @@ pub struct CheckedGuardPart {
     pub predicate: CheckedNodeId,
     /// The `parameter` nodes the guard quantifies, in slot order.
     pub binders: Vec<CheckedNodeId>,
+    /// The collection quantifier for an unbounded clock family, absent for
+    /// an ordinary or bounded guard part.
+    pub quantifier: Option<CheckedGuardQuantifier>,
     /// The part's `clock_constraint` nodes, in aggregate order.
     pub constraints: Vec<CheckedNodeId>,
+}
+
+/// The collection quantifier on a family guard part.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CheckedGuardQuantifier {
+    /// Every collection member must enable the part.
+    Each,
+    /// At least one collection member must enable the part.
+    Some,
 }
 
 /// One operation's `clock_guard`.
@@ -501,7 +513,7 @@ impl CheckedTimedModel {
             nodes.push(write_place(place, types)?);
         }
         nodes.extend(self.resets.iter().map(|reset| write_reset(reset, types)));
-        nodes.extend(self.guards.iter().map(write_guard));
+        nodes.extend(self.guards.iter().map(|guard| write_guard(guard, types)));
         nodes.extend(self.invariants.iter().map(write_invariant));
         nodes.extend(
             self.urgencies
@@ -694,16 +706,24 @@ fn write_reset(reset: &CheckedClockReset, types: &TimedLiteralTypes) -> CheckedS
     reset.metadata.node("clock_reset", aggregate_term(members))
 }
 
-fn write_guard(guard: &CheckedClockGuard) -> CheckedSemanticNodeV2 {
+fn write_guard(guard: &CheckedClockGuard, types: &TimedLiteralTypes) -> CheckedSemanticNodeV2 {
     let parts = guard
         .parts
         .iter()
         .map(|part| {
             let binders = (!part.binders.is_empty())
                 .then(|| binding_term("binders", reference_terms(&part.binders)));
+            let quantifier = part.quantifier.map(|quantifier| {
+                let spelling = match quantifier {
+                    CheckedGuardQuantifier::Each => "each",
+                    CheckedGuardQuantifier::Some => "some",
+                };
+                binding_term("quantifier", text_literal(&types.text, spelling))
+            });
             aggregate_term(
                 std::iter::once(binding_term("predicate", reference_term(&part.predicate)))
                     .chain(binders)
+                    .chain(quantifier)
                     .chain(part.constraints.iter().map(reference_term))
                     .collect(),
             )
@@ -1134,7 +1154,7 @@ fn project_guard(node: &CheckedSemanticNodeV2) -> Result<CheckedClockGuard, &'st
             if name.as_ref() != "predicate" {
                 return Err("a guard part does not begin with its predicate");
             }
-            let (binders, constraints) = match remaining.split_first() {
+            let (binders, remaining) = match remaining.split_first() {
                 Some((CheckedTerm::Binding { name, value, .. }, rest))
                     if name.as_ref() == "binders" =>
                 {
@@ -1142,9 +1162,26 @@ fn project_guard(node: &CheckedSemanticNodeV2) -> Result<CheckedClockGuard, &'st
                 }
                 _ => (Vec::new(), remaining),
             };
+            let (quantifier, constraints) = match remaining.split_first() {
+                Some((CheckedTerm::Binding { name, value, .. }, rest))
+                    if name.as_ref() == "quantifier" =>
+                {
+                    let quantifier = match literal_text(value)? {
+                        "each" => CheckedGuardQuantifier::Each,
+                        "some" => CheckedGuardQuantifier::Some,
+                        _ => return Err("a guard part has an unknown quantifier"),
+                    };
+                    (Some(quantifier), rest)
+                }
+                _ => (None, remaining),
+            };
+            if quantifier.is_some() && (binders.is_empty() || constraints.is_empty()) {
+                return Err("a family guard part needs binders and constraints");
+            }
             Ok(CheckedGuardPart {
                 predicate: reference(value)?,
                 binders,
+                quantifier,
                 constraints: constraints
                     .iter()
                     .map(reference)
