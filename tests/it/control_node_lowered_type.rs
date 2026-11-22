@@ -72,7 +72,7 @@ fn count(package: &Value, identity: &str) -> usize {
 /// narrowed; a `let` binder bound to the `if` is narrowed at its read.
 #[test]
 #[trace("TC-2298", "FR-495-AC-23")]
-#[ignore = "QSL-2300: a control node's lowered type is not the hull of its leaves' lowered types yet"]
+#[ignore = "QSL-2878: a control node's lowered type is not the hull of its leaves' lowered types yet"]
 fn a_control_node_takes_the_hull_of_its_leaves_lowered_types() {
     let directory = tempfile::tempdir().unwrap();
     let ifi = package(

@@ -43,7 +43,6 @@ fn a_unit_with_a_source_object_emits() {
 /// `operation_bodies` rows.
 #[trace("FR-569-AC-11", "TC-1408")]
 #[test]
-#[ignore = "QSL-2347: the reader admits source operation_bodies rows; not implemented yet"]
 fn a_unit_with_a_source_object_writes_the_handoff() {
     let holder = tempfile::tempdir().unwrap();
     let source = source_request(holder.path());

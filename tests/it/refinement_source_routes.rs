@@ -106,42 +106,36 @@ fn a_type_correct_constant_mapping_is_refuted_by_analysis() {
 
 #[test]
 #[trace("FR-163", "FR-182")]
-#[ignore = "QSL-2128: the public source route must resolve and analyze hyper claims"]
 fn two_copy_determinism_is_certified_from_source() {
     analyze("hyper-universal-equal");
 }
 
 #[test]
 #[trace("FR-182", "FR-183")]
-#[ignore = "QSL-2128: the public source route must resolve and analyze hyper claims"]
 fn a_false_two_copy_rule_publishes_a_replayed_counterexample() {
     analyze("hyper-universal-false");
 }
 
 #[test]
 #[trace("FR-177", "FR-163")]
-#[ignore = "QSL-2128: the public source route must resolve and analyze hyper claims"]
 fn every_counter_trace_has_an_equal_existential_partner() {
     analyze("hyper-witness-equal");
 }
 
 #[test]
 #[trace("FR-177", "FR-183")]
-#[ignore = "QSL-2128: the public source route must resolve and analyze hyper claims"]
 fn equal_initial_values_exhaust_a_different_partner_witness_set() {
     analyze("hyper-witness-impossible");
 }
 
 #[test]
 #[trace("FR-181")]
-#[ignore = "QSL-2128: the public source route must resolve and analyze hyper claims"]
 fn a_single_counter_trace_can_reach_three() {
     analyze("hyper-single-reaches-three");
 }
 
 #[test]
 #[trace("FR-181")]
-#[ignore = "QSL-2128: the public source route must resolve and analyze hyper claims"]
 fn no_counter_trace_can_stay_zero() {
     analyze("hyper-single-impossible");
 }

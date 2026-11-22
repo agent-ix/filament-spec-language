@@ -268,7 +268,7 @@ fn a_quantity_round_trips_normalized() {
 }
 
 #[test]
-#[ignore = "QSL-2171 completed; current blocker has no assigned owner: S1 does not parse Quantity<u>[min, max] (the run refuses with unexpected-token)"]
+#[ignore = "QSL-2877: S1 does not parse Quantity<u>[min, max] (the run refuses with unexpected-token)"]
 #[trace("TC-2371", "FR-650-AC-10")]
 fn a_bounded_quantity_refuses_out_of_range_bounds() {
     let ten = quantity("ms", rational("10", "1"));
@@ -760,7 +760,7 @@ const POPULATION_COLLECTION: &str = "tests/fixtures/population-collection.checke
 
 #[test]
 #[trace("TC-1705", "FR-650-AC-6")]
-#[ignore = "QSL-2182 completed; current blocker has no assigned owner: the fixture tests/fixtures/population-collection.checked-package.json is missing; canonicalization fails before any package request runs"]
+#[ignore = "QSL-2877: the fixture tests/fixtures/population-collection.checked-package.json is missing; canonicalization fails before any package request runs"]
 fn a_selected_package_with_a_population_collection_type_refuses_unsupported() {
     let fixture = std::fs::canonicalize(POPULATION_COLLECTION)
         .unwrap_or_else(|error| panic!("the fixture {POPULATION_COLLECTION} exists: {error}"));
@@ -798,7 +798,7 @@ fn a_selected_package_with_a_population_collection_type_refuses_unsupported() {
 #[test]
 #[trace("TC-2625", "FR-945-AC-1")]
 #[trace("TC-2625", "FR-945-AC-2")]
-#[ignore = "QSL-2182 completed; current blocker has no assigned owner: the fixture tests/fixtures/population-collection.checked-package.json is missing; canonicalization fails before any package request runs"]
+#[ignore = "QSL-2877: the fixture tests/fixtures/population-collection.checked-package.json is missing; canonicalization fails before any package request runs"]
 fn a_run_resolves_its_function_in_a_selected_package() {
     let fixture = std::fs::canonicalize(POPULATION_COLLECTION)
         .unwrap_or_else(|error| panic!("the fixture {POPULATION_COLLECTION} exists: {error}"));
