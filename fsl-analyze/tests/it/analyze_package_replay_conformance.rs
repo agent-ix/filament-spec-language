@@ -82,7 +82,12 @@ fn assert_recording_charge_parity(ws: &Workspace, bytes: &[u8], document: &Value
         &owner.input(), &payload, "Flow::Main::Decide::yes", 2, &mut package_meter,
     );
     assert!(matches!(source, Some(ExactValue::Boolean(true))));
-    assert_eq!(package, source);
+    match (&package, &source) {
+        (Some(ExactValue::Boolean(actual)), Some(ExactValue::Boolean(expected))) => {
+            assert_eq!(actual, expected);
+        }
+        _ => panic!("recording predicate must evaluate to Boolean on both routes: package={package:?}, source={source:?}"),
+    }
     assert!(!source_meter.admitted_charges().is_empty(), "got.ok must read its recorded binder");
     assert!(!source_meter.charge_log_truncated());
     assert!(!package_meter.charge_log_truncated());
