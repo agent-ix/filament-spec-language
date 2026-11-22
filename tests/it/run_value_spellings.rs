@@ -710,3 +710,109 @@ fn a_function_selection_reads_a_quantity_in_a_source_declared_unit() {
     assert_eq!(output.status.code(), Some(0), "{text}");
     assert!(!text.contains("unknown-unit"), "{text}");
 }
+
+// --- an enumeration argument and result over a checked package -----------
+
+/// Compile the spine unit and its extended model into `handoff`, the checked
+/// package a `package` run selects.
+fn compile_spine_package(directory: &Path) {
+    let compile = json!({"format": "native-compile/1", "request": {
+        "models": [{"format": "semantic-ir/2.0.0", "source":
+            spine_source("spine-model.semantic-ir.json", "SpineModel")}],
+        "program": {"source": spine_source("spine-unit.native", "SpineUnit")},
+        "handoff": {"directory": "handoff", "package_name": "enum-call",
+            "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}}});
+    std::fs::write(
+        directory.join("compile.json"),
+        serde_json::to_vec(&compile).unwrap(),
+    )
+    .unwrap();
+    let output = crate::command_harness::compile(directory);
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
+/// `call` run from the checked package in `directory`'s `handoff`.
+fn package_call(directory: &Path, call: Value) -> Output {
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [{"format": "semantic-ir/2.0.0", "source":
+            spine_source("spine-model.semantic-ir.json", "SpineModel")}],
+        "package": {"directory": "handoff"},
+        "call": call,
+    }});
+    std::fs::write(
+        directory.join("package-request.json"),
+        serde_json::to_vec(&request).unwrap(),
+    )
+    .unwrap();
+    run_file(&directory.join("package-request.json"))
+}
+
+/// The document of `output` less the members that name the route.
+fn route_free(output: &Output) -> Value {
+    let (stream, expected) = if output.status.code() == Some(0) {
+        (&output.stdout, 0)
+    } else {
+        (&output.stderr, 20)
+    };
+    assert_eq!(output.status.code(), Some(expected), "{output:?}");
+    let mut document: Value = serde_json::from_slice(stream).unwrap();
+    for member in ["package", "program", "source"] {
+        document.as_object_mut().unwrap().remove(member);
+    }
+    document
+}
+
+/// FR-650-AC-12, FR-1039, FR-850 (QSL-2765): a function whose argument and
+/// result are an enumeration of the model runs from the checked package with
+/// the source route's whole document, outcome and charges included, and an
+/// unknown case refuses with the source route's refusal.
+#[test]
+#[trace("TC-2373", "FR-650-AC-12")]
+fn an_enumeration_argument_and_result_run_from_a_package_as_from_source() {
+    let directory = spine_dir(
+        "function pick_tier using v(): Config::Tier pure { Config::Tier::Silver }\n\
+         function id_tier using v(a: Config::Tier): Config::Tier pure { a }\n\
+         function next_tier using v(a: Config::Tier): Config::Tier pure \
+         { if a = Config::Tier::Gold then Config::Tier::Silver else Config::Tier::Gold }\n\
+         function is_gold using v(a: Config::Tier): Boolean pure { a = Config::Tier::Gold }\n",
+    );
+    extend_model(directory.path());
+    compile_spine_package(directory.path());
+    let tier_name = format!("ix://{}/Tier", spine::PACKAGE_IDENTITY);
+    let tier = |case: &str| json!({"variant": {"type": tier_name, "case": case}});
+    let argument = |case: &str| json!([{"parameter": "a", "value": tier(case)}]);
+    for (function, arguments) in [
+        ("pick_tier", json!([])),
+        ("id_tier", argument("Gold")),
+        ("id_tier", argument("Silver")),
+        ("next_tier", argument("Gold")),
+        ("next_tier", argument("Silver")),
+        ("is_gold", argument("Gold")),
+        ("is_gold", argument("Silver")),
+    ] {
+        let source = spine_request(
+            directory.path(),
+            "call",
+            json!({"function": function, "arguments": arguments}),
+        );
+        let package = package_call(
+            directory.path(),
+            json!({"function": function, "arguments": arguments}),
+        );
+        let (source, package) = (route_free(&source), route_free(&package));
+        assert_eq!(source["outcome"]["kind"], "completed", "{function}: {source}");
+        assert_eq!(package, source, "{function}");
+    }
+    let unknown = json!([{"parameter": "a", "value": tier("Bronze")}]);
+    let source = spine_request(
+        directory.path(),
+        "call",
+        json!({"function": "id_tier", "arguments": unknown}),
+    );
+    let package = package_call(
+        directory.path(),
+        json!({"function": "id_tier", "arguments": unknown}),
+    );
+    assert_eq!(source.status.code(), Some(20), "{source:?}");
+    assert_eq!(route_free(&package), route_free(&source));
+}
