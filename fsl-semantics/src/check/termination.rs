@@ -38,16 +38,39 @@ pub(crate) struct TerminationSubject<'a> {
     pub(crate) calls: &'a [CallSite],
 }
 
-fn unwrap_coerce(node: CheckedNode<'_>) -> CheckedNode<'_> {
-    match node.kind() {
-        NodeKind::Coerce(operand, _) => node.at(*operand),
-        _ => node,
+/// Typing preserves a measure element through a coercion or an implicit exact
+/// integer widening at the same source position. An authored conversion has
+/// its own operand position and is not a measure element.
+fn through_measure_coercions(mut node: CheckedNode<'_>) -> CheckedNode<'_> {
+    loop {
+        match node.kind() {
+            NodeKind::Coerce(operand, _) => node = node.at(*operand),
+            NodeKind::ConvertScalar(_, operand) => {
+                let operand = node.at(*operand);
+                let source = operand.value_type();
+                let target = node.value_type();
+                if source != target
+                    && matches!(source, ValueType::Integer | ValueType::Int(_))
+                    && matches!(target, ValueType::Integer | ValueType::Int(_))
+                    && node.location() == operand.location()
+                    && matches!(
+                        super::numeric_conversion::classify(source, target),
+                        Some(super::numeric_conversion::Class::Exact)
+                    )
+                {
+                    node = operand;
+                } else {
+                    return node;
+                }
+            }
+            _ => return node,
+        }
     }
 }
 
 /// The measure elements, `None` at a position that is not an element.
 fn elements(member: &TerminationSubject<'_>, measure: CheckedNode<'_>) -> Vec<Option<Element>> {
-    let measure = unwrap_coerce(measure);
+    let measure = through_measure_coercions(measure);
     let parts: Vec<CheckedNode<'_>> = match measure.kind() {
         NodeKind::Tuple { arguments, .. } => arguments.iter().map(|id| measure.at(*id)).collect(),
         _ => vec![measure],
@@ -55,7 +78,7 @@ fn elements(member: &TerminationSubject<'_>, measure: CheckedNode<'_>) -> Vec<Op
     parts
         .into_iter()
         .map(|part| {
-            let part = unwrap_coerce(part);
+            let part = through_measure_coercions(part);
             let parameter = |slot: Slot| {
                 member
                     .parameters
@@ -68,7 +91,7 @@ fn elements(member: &TerminationSubject<'_>, measure: CheckedNode<'_>) -> Vec<Op
                     ValueType::Composite(_) => Some(Element::Structural(*slot)),
                     _ => None,
                 },
-                NodeKind::Size(operand) => match unwrap_coerce(part.at(*operand)).kind() {
+                NodeKind::Size(operand) => match through_measure_coercions(part.at(*operand)).kind() {
                     NodeKind::Local(slot) => match parameter(*slot)? {
                         ValueType::Collection(_) => Some(Element::Cardinality(*slot)),
                         _ => None,
