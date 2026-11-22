@@ -283,6 +283,7 @@ impl Emission {
             source_object_operations,
         )
         .with_source_tuples(tuples)
+        .with_source_enums(self.selected_source_enum_rows(budget)?)
         .with_model_enums(
             self.selected_model_enum_declaration_rows.clone(),
             self.selected_model_enum_member_rows.clone(),

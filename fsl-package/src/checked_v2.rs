@@ -1174,9 +1174,11 @@ impl EvaluationWitnessSupplier for SourceWitnessSupplier {
             .map_err(|refusal| match refusal {
                 crate::IdentityJoinFailure::Exhausted(denial) => exhausted(*denial),
                 crate::IdentityJoinFailure::Witness(_) => WitnessSupplyFailure::Fault,
+                crate::IdentityJoinFailure::Rows(denial) => WitnessSupplyFailure::Rows(denial),
             })?;
         // Identity rows already carry source tuples. Complete the selection
-        // with model tuples, source units and source enums.
+        // with model tuples and source units. Source enum rows use the same
+        // identity-file join as the bytes route.
         let identities = identities
             .with_admitted_type_rows(
                 admitted,
@@ -1184,13 +1186,6 @@ impl EvaluationWitnessSupplier for SourceWitnessSupplier {
                 self.emission.selected_source_unit_rows(),
                 budget,
             )
-            .map_err(exhausted)?;
-        let enum_rows = self
-            .emission
-            .selected_source_enum_rows(budget)
-            .map_err(WitnessSupplyFailure::Rows)?;
-        let identities = identities
-            .with_source_enum_rows(admitted, enum_rows, budget)
             .map_err(exhausted)?;
         Ok(EvaluationWitnesses {
             identities: Some(identities),
