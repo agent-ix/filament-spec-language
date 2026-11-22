@@ -917,7 +917,7 @@ fn shared_value_validity_application_uses_each_occurrence_region() {
                 .iter()
                 .find(|entry| entry["role"] == "generated" && entry["node_id"] == node["node_id"])
                 .and_then(|entry| entry["regions"].as_array()?.first())
-                .map(|region| (region["start"].as_u64()?, region["end"].as_u64()?))
+                .and_then(|region| Some((region["start"].as_u64()?, region["end"].as_u64()?)))
         })
         .collect();
     let expression_regions: HashSet<_> = entries
