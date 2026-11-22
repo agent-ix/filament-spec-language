@@ -123,7 +123,6 @@ fn enum_fixture() -> (String, Vec<u8>) {
 /// arguments after the source files have been removed.
 #[trace("FR-940-AC-6", "FR-741-AC-3", "FR-203-AC-8")]
 #[test]
-#[ignore = "QSL-2828: package route does not yet read the exact eventual form under an every scheduler"]
 fn enum_draws_and_arguments_preserve_package_refutation_witness_parity() {
     let (unit, model) = enum_fixture();
     let item = refutation_parity(
@@ -151,6 +150,65 @@ fn enum_draws_and_arguments_preserve_package_refutation_witness_parity() {
             .is_some_and(|arguments| arguments.iter().any(|value| value["type"] == "enum"))),
         "{witness}"
     );
+}
+
+/// A fairness-bearing Every claim remains a typed pending package fact until
+/// the next QSL-2828 slice projects fairness into the checked claim.
+#[trace("FR-940-AC-6", "FR-741-AC-3", "FR-203-AC-8")]
+#[test]
+fn package_every_fairness_remains_typed_pending() {
+    let unit = LINK_UNIT.to_owned();
+    let claim = TOO_LIKELY.replace(
+        "under Even",
+        "under every scheduler fair weak M::Msg::send_a",
+    );
+    let ws = Workspace::new("probabilistic-package-every-fairness-pending");
+    let source_path = request_over(
+        &ws,
+        &format!("{unit}\n{claim}\n"),
+        LINK_MODEL,
+        &[LINK_START.to_vec()],
+        json!({"items": [{"claim": "TooLikely", "kind": "probabilistic-satisfaction",
+            "probabilistic": {"evidence": "exact"}}]}),
+    );
+    let request: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(&source_path).expect("source request"),
+    ).expect("request JSON");
+    let (_, bytes) = package_selection(&ws, &request["request"]);
+    let compiled = fsl_command::checked_handoff::compile(&ws.path(HANDOFF))
+        .expect("fairness-bearing claim compiles through the source handoff");
+    let packages = fsl_semantics::model::intake::package_input([LINK_MODEL])
+        .expect("the Link model admits");
+    let limits = fsl_package::V2ReadLimits::bounded(1 << 24);
+    let admitted = fsl_package::admit_checked_package(&bytes, &packages, limits)
+        .expect("the producer package admits");
+    let mut budget = limits.native_join_limits().budget();
+    let identities = ReadIdentityRows::read(
+        &std::fs::read(ws.path(&format!("{HANDOFF}/identities.json")))
+            .expect("identity rows"),
+        &admitted,
+        &mut budget,
+    ).expect("identity rows admit");
+    let equality = std::fs::read(ws.path(&format!("{HANDOFF}/equality.json"))).ok()
+        .map(|bytes| ReadEqualityRows::read(&bytes, &admitted).expect("equality admits"));
+    let bare = BarePackage::new(&admitted).with_supply(
+        BareSupply { identities: &identities, equality: equality.as_ref() },
+        &mut budget,
+    ).expect("package supply joins");
+    let selected = fsl_package::AnalysisView::claim_name(&bare, "TooLikely")
+        .expect("claim name is admitted");
+    let occurrence = fsl_foundation::source::provenance::OccurrenceKey::new(
+        bare.node_key(&selected.declaration).expect("claim key"),
+        filament_exact::Origin::new(
+            filament_exact::Role::new("claim"), selected.occurrence.ordinal,
+        ),
+    );
+    assert!(matches!(
+        bare.probability_claim_form(&occurrence),
+        Err(fsl_package::BareClauseRefusal::Pending {
+            fact: "probabilistic-exact-eventual-form", ..
+        })
+    ));
 }
 
 /// Workload evidence spells enum draws through the admitted package index
@@ -424,6 +482,12 @@ fn refutation_parity(name: &str, unit: &str, model: &[u8], claim: &str) -> serde
     let package_form = bare
         .probability_claim_form(&occurrence)
         .expect("the exact eventuality form reads from the package");
+    if claim.contains("under every scheduler") {
+        assert_eq!(
+            package_form.scheduler,
+            fsl_semantics::check::ProbScheduler::Every
+        );
+    }
 
     std::fs::remove_file(ws.path("program.fsl")).expect("delete the source program");
     std::fs::remove_dir_all(ws.path(&format!("{HANDOFF}/sources")))
@@ -524,6 +588,17 @@ fn refutation_parity(name: &str, unit: &str, model: &[u8], claim: &str) -> serde
 #[trace("FR-940-AC-6", "FR-202-AC-10", "FR-203-AC-8")]
 #[test]
 fn package_negative_replay_authenticates_the_owner_and_complete_claim_occurrence() {
+    package_replay_authenticates_owner_ordinal_model_and_slice(&TOO_LIKELY);
+}
+
+#[trace("FR-940-AC-6", "FR-202-AC-10", "FR-203-AC-8")]
+#[test]
+fn every_scheduler_package_replay_authenticates_owner_ordinal_model_and_slice() {
+    let claim = TOO_LIKELY.replace("under Even", "under every scheduler");
+    package_replay_authenticates_owner_ordinal_model_and_slice(&claim);
+}
+
+fn package_replay_authenticates_owner_ordinal_model_and_slice(claim: &str) {
     use filament_exact::Cancel;
     use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
     use fsl_eval::simulation::model::{ModelCheckInput, ModelSystem, PackageModelInput};
@@ -533,7 +608,7 @@ fn package_negative_replay_authenticates_the_owner_and_complete_claim_occurrence
         ModelCheckLimits, ProbabilityWitnessError, ProbabilityWitnessReplay, TerminalValue,
     };
 
-    let world = crate::prob_world::World::new(&crate::prob_world::link(TOO_LIKELY));
+    let world = crate::prob_world::World::new(&crate::prob_world::link(claim));
     let record = analyze_items(
         &Engines::fsl().expect("linked engines"),
         vec![exact_probabilistic_item(
