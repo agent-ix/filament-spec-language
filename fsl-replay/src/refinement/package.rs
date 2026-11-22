@@ -180,7 +180,6 @@ fn object_key(
         .and_then(|identities| {
             identities
                 .declaration_rows()
-                .iter()
                 .find(|row| row.structural_node == *node)
         })
         .ok_or(PackageRefinementRefusal::Unsupported(
