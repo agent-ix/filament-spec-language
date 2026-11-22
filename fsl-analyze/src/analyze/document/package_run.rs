@@ -100,6 +100,13 @@ impl PendingPackageFamily {
                 ": items[{}] names a temporal clause whose {fact} has no package form yet{at}",
                 index.get()
             ),
+            (Some(index), PendingFamily::CompositionOwningWorkPermission) => format!(
+                ": items[{}] composition owning execution is pending missing native before-work permission{at}",
+                index.get()
+            ),
+            (None, PendingFamily::CompositionOwningWorkPermission) => format!(
+                ": composition owning execution is pending missing native before-work permission{at}"
+            ),
             (Some(index), family) => format!(
                 ": items[{}] names the {} family, which has no package form yet{at}",
                 index.get(),
@@ -147,10 +154,11 @@ pub enum PendingFamily {
     /// name it does not carry ([`fsl_package::AnalysisView::unnamed_claims`]):
     /// the name may be that claim's, so it is not settled `unknown-claim`.
     UnnamedClaim,
-    /// The default items of a package that holds a component composition,
-    /// whose derived slots and component packages have no package form yet
-    /// (FSL FR-1044).
+    /// A composition request whose runtime route is not yet available.
     Composition,
+    /// Owning composition execution requires the missing native before-work
+    /// permission hook in the type-environment builder.
+    CompositionOwningWorkPermission,
     /// A temporal clause fact its package form does not read yet.
     ClauseFact(&'static str),
     /// A form of the package its model-check input does not read yet.
@@ -177,6 +185,7 @@ impl PendingFamily {
             Self::Declaration => "declaration",
             Self::UnnamedClaim => "unnamed-claim",
             Self::Composition => "composition",
+            Self::CompositionOwningWorkPermission => "composition-owning-work-permission",
             Self::ClauseFact(fact) => fact,
             Self::ModelForm(_) => "model-form",
             Self::ProbabilisticSourceModel => "probabilistic-source-model",
@@ -327,15 +336,15 @@ pub fn settle_package_run(
         engines,
         limits,
     } = run;
-    // FSL FR-1044: a package's component composition has no package form
-    // yet, so the default items of a package that holds one are refused
-    // whole rather than written without it.
+    // FSL FR-1044: admitted planner facts are available, but owning execution
+    // still requires native permission before type-environment work. Preserve
+    // the whole-request guard until that execution boundary is available.
     if items.is_none() {
         if let Some(node) = admitted_composition(package) {
             return Err(PackageRunError::Pending(PendingPackageFamily {
                 request_index: None,
                 note: None,
-                family: PendingFamily::Composition,
+                family: PendingFamily::CompositionOwningWorkPermission,
                 node: Some(node),
             }));
         }
