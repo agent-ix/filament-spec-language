@@ -822,6 +822,9 @@ pub(crate) struct Typing<'t> {
     variants: &'t [VariantTypeDeclaration],
     /// The unit's own `enum` declarations.
     enums: &'t [EnumBinding],
+    /// The model enumerations a package route reads from its rows (FR-531),
+    /// which a source route holds as `variants`.
+    enum_members: Option<&'t filament_semantic_value::enumeration::EnumMemberIndex>,
     /// The element-count members of the pure-clock collections, which a
     /// record writes after its declared fields.
     clock_counts: &'t [super::ClockCount],
@@ -910,6 +913,7 @@ impl<'t> Typing<'t> {
             types: None,
             variants: &[],
             enums: &[],
+            enum_members: None,
             clock_counts: &[],
             clock_bits: &[],
             names: None,
@@ -938,12 +942,22 @@ impl<'t> Typing<'t> {
             types: Some(types),
             variants,
             enums: &[],
+            enum_members: None,
             clock_counts: &[],
             clock_bits: &[],
             names: None,
             state_fields: None,
             tuple_positions: None,
         }
+    }
+
+    /// These declarations with the model enumerations `members`, when the
+    /// caller reads them from a package's rows rather than declarations.
+    pub(crate) fn with_enum_members(
+        self,
+        enum_members: Option<&'t filament_semantic_value::enumeration::EnumMemberIndex>,
+    ) -> Self {
+        Self { enum_members, ..self }
     }
 
     /// These declarations with the source `enum` declarations `enums`.

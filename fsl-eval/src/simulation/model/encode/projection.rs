@@ -852,6 +852,13 @@ fn enum_member<'t, S: ValueSink>(
             }
         }
     }
+    if let Some(member) = typing
+        .enum_members
+        .and_then(|members| members.resolve(value.clone()))
+    {
+        sink.visit()?;
+        return Ok(Some((member.declaration(), member.case())));
+    }
     Ok(None)
 }
 

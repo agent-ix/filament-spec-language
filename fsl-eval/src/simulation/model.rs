@@ -1143,6 +1143,7 @@ impl<'a> ModelSystem<'a> {
     pub(crate) fn typing(&self) -> encode::Typing<'_> {
         encode::Typing::with_variants(self.types, self.input.variant_types)
             .with_enums(self.input.enums)
+            .with_enum_members(self.input.enum_members)
             .with_tuple_positions(&self.tuple_positions)
             .with_clock_members(&self.clock_counts, &self.clock_bits)
             .with_names(&self.key_names)
@@ -1154,6 +1155,7 @@ impl<'a> ModelSystem<'a> {
     pub(crate) fn value_typing(&self) -> encode::Typing<'a> {
         encode::Typing::with_variants(self.types, self.input.variant_types)
             .with_enums(self.input.enums)
+            .with_enum_members(self.input.enum_members)
     }
 
     /// Check the universes, then admit each initial document in the given
