@@ -258,7 +258,7 @@ fn every_region_comment_has_the_one_spelling() {
 #[test]
 #[trace("TC-3003", "FR-1035-AC-1")]
 #[trace("FSpec-TC-2031", "FSpec-FR-812-AC-6")]
-#[ignore = "open defect: population bounds from bound declarations are not exposed to the export yet"]
+#[ignore = "QSL-2873: population bounds from bound declarations are not exposed to the export yet"]
 fn a_bound_declaration_bounds_the_exported_population() {
     let low =
         "invariant Low using v on Config::ConfigVersion at current { self.versionNumber >= 0 }\n";
@@ -280,7 +280,7 @@ fn a_bound_declaration_bounds_the_exported_population() {
 #[test]
 #[trace("TC-3003", "FR-1035-AC-2")]
 #[trace("FSpec-TC-2031", "FSpec-FR-812-AC-7")]
-#[ignore = "open defect: Init from declared initial constraints is not implemented yet"]
+#[ignore = "QSL-2873: Init from declared initial constraints is not implemented yet"]
 fn init_states_the_declared_initial_constraints() {
     let unit = format!(
         "{SPINE_HEADER}invariant Low using v on Config::ConfigVersion at current {{ self.versionNumber >= 0 }}\n\
@@ -306,7 +306,7 @@ fn init_states_the_declared_initial_constraints() {
 #[test]
 #[trace("TC-3003", "FR-1035-AC-3")]
 #[trace("TC-3003", "FR-1035-AC-4")]
-#[ignore = "open defect: CheckedGraph::population_bound and the bound's [N] region are not implemented yet"]
+#[ignore = "QSL-2873: CheckedGraph::population_bound and the bound's [N] region are not implemented yet"]
 fn the_type_ok_comment_names_the_bound_region() {
     let low =
         "invariant Low using v on Config::ConfigVersion at current { self.versionNumber >= 0 }\n";
@@ -412,7 +412,7 @@ fn float_model() -> Value {
 #[test]
 #[trace("TC-3006", "FR-056-AC-62")]
 #[trace("FSpec-TC-1971", "FSpec-FR-812-AC-8")]
-#[ignore = "open defect: a float model field compiles to a package that is refused invalid_package/operator-ineligible at result_type, so it cannot export yet"]
+#[ignore = "QSL-2878: a float model field compiles to a package that is refused invalid_package/operator-ineligible at result_type, so it cannot export yet"]
 fn a_float_model_field_exports_its_exact_bits() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(
@@ -635,7 +635,7 @@ fn a_cause_names_its_node_by_canonical_text() {
 
 #[test]
 #[trace("FSpec-TC-2040", "FSpec-FR-811-AC-7")]
-#[ignore = "open defect: the mode and jump skeleton of an unrepresented hybrid claim is not lowered yet"]
+#[ignore = "QSL-2873: the mode and jump skeleton of an unrepresented hybrid claim is not lowered yet"]
 fn an_unrepresented_claim_still_exports_its_model() {
     let mut member = tla(json!(["SlowEnough"]));
     member["minimum_fidelity"] = json!("any");

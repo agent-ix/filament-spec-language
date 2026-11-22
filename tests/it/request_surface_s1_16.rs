@@ -836,7 +836,7 @@ fn reach(objective: &str, policy: Value) -> Value {
 #[test]
 #[trace("TC-2105", "FR-755-AC-3")]
 #[trace("FSpec-TC-1603", "FSpec-FR-650-AC-4")]
-#[ignore = "open defect: positive-length canonical policy monitors remain required after wiring and lambda"]
+#[ignore = "QSL-2874: positive-length canonical policy monitors remain required after wiring and lambda"]
 fn the_planner_keeps_plans_within_policy() {
     let value = reach("", json!(["NotOne"]));
     let result = &value["synthesis"];
@@ -938,7 +938,7 @@ fn a_test_seam_named_on_the_wire_is_an_unknown_member() {
 #[trace("FSpec-TC-1604", "FSpec-FR-651-AC-2")]
 #[trace("FSpec-TC-1604", "FSpec-FR-651-AC-4")]
 #[trace("FSpec-TC-1604", "FSpec-FR-297-AC-5")]
-#[ignore = "open defect: Lean profile, obligation refusal and family check not implemented yet"]
+#[ignore = "QSL-2873: Lean profile, obligation refusal and family check not implemented yet"]
 fn lean_export_refusals_and_family_check() {
     let unit = format!(
         "{MODEL_HEADER}invariant Low using v on Config::ConfigVersion at current {{ self.versionNumber >= 0 }}\n"
@@ -987,7 +987,7 @@ fn lean_export_refusals_and_family_check() {
 /// states with `Bounded` holding; the export reports no native count.
 #[test]
 #[trace("FSpec-TC-1604", "FSpec-FR-651-AC-5")]
-#[ignore = "open defect: TLA+ export conformance with an observer not implemented yet"]
+#[ignore = "QSL-2873: TLA+ export conformance with an observer not implemented yet"]
 fn tla_export_agrees_with_fsl_exploration() {
     let (_, value) = crate::plan_export_surface::counter_export(json!({
         "profile": "filament.output.tla2/v1", "obligations": ["Bounded"], "observer": "tlc"}));

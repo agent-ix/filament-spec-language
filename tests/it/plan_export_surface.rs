@@ -529,7 +529,7 @@ fn an_exhausted_evaluation_meter_names_its_accounting_setting() {
 /// each completed plan, never refused.
 #[test]
 #[trace("TC-2862", "FR-1012-AC-1")]
-#[ignore = "open defect: positive-length canonical policy monitors remain required after wiring and lambda"]
+#[ignore = "QSL-2874: positive-length canonical policy monitors remain required after wiring and lambda"]
 fn a_non_safety_policy_is_evaluated_on_each_completed_plan() {
     let (exit, value) = plan(
         &plan_unit("Int[0, 3]", "", "Reach.length >= 1"),
@@ -864,7 +864,7 @@ fn an_elapsed_read_over_an_untimed_plan_refuses_missing_name() {
 #[trace("FSpec-TC-1963", "FSpec-FR-810-AC-4")]
 #[trace("FSpec-TC-1964", "FSpec-FR-810-AC-5")]
 #[trace("FSpec-TC-1965", "FSpec-FR-810-AC-6")]
-#[ignore = "open defect: the six reference planning examples are not published yet; its FSpec planning fixtures are not in the pinned filament-specification v0.1.1, so published_file returns none until the pin moves"]
+#[ignore = "QSL-2874: the six reference planning examples are not published yet; its FSpec planning fixtures are not in the pinned filament-specification v0.1.1, so published_file returns none until the pin moves"]
 fn the_six_reference_planning_examples_plan_as_specified() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/planning");
     let decimal =
@@ -1347,7 +1347,7 @@ fn an_export_outcome_renders_as_four_lines() {
 #[trace("FSpec-TC-1971", "FSpec-FR-812-AC-1")]
 #[trace("FSpec-TC-1973", "FSpec-FR-814-AC-3")]
 #[trace("FSpec-TC-1976", "FSpec-FR-817-AC-1")]
-#[ignore = "open defect: the TLA+ mapper is not implemented yet"]
+#[ignore = "QSL-2873: the TLA+ mapper is not implemented yet"]
 fn the_tla_module_is_canonical_text() {
     let (exit, value) = export(
         &low_unit(),
@@ -1383,7 +1383,7 @@ fn the_tla_module_is_canonical_text() {
 #[test]
 #[trace("TC-2867", "FR-1017-AC-1")]
 #[trace("FSpec-TC-1972", "FSpec-FR-813-AC-5")]
-#[ignore = "open defect: the Lean mapper is not implemented yet"]
+#[ignore = "QSL-2873: the Lean mapper is not implemented yet"]
 fn the_lean_file_states_obligations_without_proofs() {
     let (_, value) = export(
         &low_unit(),
@@ -1414,7 +1414,7 @@ fn the_lean_file_states_obligations_without_proofs() {
 #[test]
 #[trace("TC-2868", "FR-1018-AC-1")]
 #[trace("FSpec-TC-1977", "FSpec-FR-818-AC-1")]
-#[ignore = "open defect: the export golden corpus is not published yet"]
+#[ignore = "QSL-2873: the export golden corpus is not published yet"]
 fn the_counter_export_equals_its_golden_files() {
     let golden = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/export");
     for (profile, file) in [
@@ -1435,7 +1435,7 @@ fn the_counter_export_equals_its_golden_files() {
 #[test]
 #[trace("TC-2868", "FR-1018-AC-2")]
 #[trace("FSpec-TC-1977", "FSpec-FR-818-AC-2")]
-#[ignore = "open defect: the TLC export oracle is not implemented yet"]
+#[ignore = "QSL-2873: the TLC export oracle is not implemented yet"]
 fn the_tlc_oracle_agrees_or_names_the_missing_tool() {
     let (_, value) = counter_export(json!({"profile": "filament.output.tla2/v1",
         "obligations": ["Bounded"], "observer": "tlc"}));
@@ -1525,7 +1525,7 @@ fn tank_member(grid: Option<Value>) -> Value {
 #[trace("FSpec-TC-1966", "FSpec-FR-819-AC-2")]
 #[trace("FSpec-TC-1966", "FSpec-FR-819-AC-3")]
 #[trace("FSpec-TC-1966", "FSpec-FR-819-AC-4")]
-#[ignore = "open defect: hybrid plan synthesis is not implemented yet"]
+#[ignore = "QSL-2874: hybrid plan synthesis is not implemented yet"]
 fn a_hybrid_model_plans_through_its_provider() {
     let grid = || Some(rational("1", "1"));
     let (_, value) = run_with_providers(
@@ -1567,7 +1567,7 @@ fn a_hybrid_model_plans_through_its_provider() {
 #[trace("TC-2871", "FR-1021-AC-2")]
 #[trace("FSpec-TC-1955", "FSpec-FR-805-AC-8")]
 #[trace("FSpec-TC-1955", "FSpec-FR-805-AC-6")]
-#[ignore = "open defect: the hybrid plan request reader is not implemented yet"]
+#[ignore = "QSL-2874: the hybrid plan request reader is not implemented yet"]
 fn a_hybrid_plan_request_reads_an_exact_grid_and_no_engine_member() {
     let unit = tank_unit("Reach.final.mode = Tank::Mode::Drain");
     for (grid, cause) in [
@@ -1707,7 +1707,7 @@ fn operations(outcome: &Value) -> Vec<String> {
 #[trace("FSpec-TC-1603", "FSpec-FR-650-AC-1")]
 #[trace("FSpec-TC-1603", "FSpec-FR-650-AC-2")]
 #[trace("FSpec-TC-1955", "FSpec-FR-805-AC-7")]
-#[ignore = "open defect: plan search over the counter fixture is not implemented yet; its FSpec planning fixtures are not in the pinned filament-specification v0.1.1, so published_file returns none until the pin moves"]
+#[ignore = "QSL-2874: plan search over the counter fixture is not implemented yet; its FSpec planning fixtures are not in the pinned filament-specification v0.1.1, so published_file returns none until the pin moves"]
 fn the_counter_plans_by_length_and_by_step_cost() {
     let (exit, value) = fixture("counter", &|unit| unit, json!({}));
     let outcome = &value["synthesis"];
@@ -1753,7 +1753,7 @@ fn the_counter_plans_by_length_and_by_step_cost() {
 #[trace("TC-2105", "FR-755-AC-2")]
 #[trace("FSpec-TC-1603", "FSpec-FR-650-AC-5")]
 #[trace("FSpec-TC-1603", "FSpec-FR-650-AC-7")]
-#[ignore = "open defect: the certificate tamper seam is not implemented yet; its FSpec planning fixtures are not in the pinned filament-specification v0.1.1, so published_file returns none until the pin moves"]
+#[ignore = "QSL-2874: the certificate tamper seam is not implemented yet; its FSpec planning fixtures are not in the pinned filament-specification v0.1.1, so published_file returns none until the pin moves"]
 fn a_tampered_certificate_is_rejected_by_the_core() {
     let (_, value) = fixture(
         "counter",
@@ -1806,7 +1806,7 @@ fn a_tampered_certificate_is_rejected_by_the_core() {
 #[test]
 #[trace("TC-2105", "FR-755-AC-4")]
 #[trace("FSpec-TC-1603", "FSpec-FR-650-AC-6")]
-#[ignore = "open defect: the plan substitution seam is not implemented yet; its FSpec planning fixtures are not in the pinned filament-specification v0.1.1, so published_file returns none until the pin moves"]
+#[ignore = "QSL-2874: the plan substitution seam is not implemented yet; its FSpec planning fixtures are not in the pinned filament-specification v0.1.1, so published_file returns none until the pin moves"]
 fn a_substituted_plan_that_fails_replay_is_a_method_failure() {
     let (_directory, path) = fixture_request("counter", &|unit| unit, json!({}));
     let (exit, value) = run_with_plan_fault(&path, &PlanFault::ReportPlan(vec!["double"; 5]));
@@ -1821,7 +1821,7 @@ fn a_substituted_plan_that_fails_replay_is_a_method_failure() {
 #[test]
 #[trace("TC-2862", "FR-1012-AC-6")]
 #[trace("FSpec-TC-1951", "FSpec-FR-801-AC-8")]
-#[ignore = "open defect: the canonical plan exploration order is not implemented yet; its FSpec planning fixtures are not in the pinned filament-specification v0.1.1, so published_file returns none until the pin moves"]
+#[ignore = "QSL-2874: the canonical plan exploration order is not implemented yet; its FSpec planning fixtures are not in the pinned filament-specification v0.1.1, so published_file returns none until the pin moves"]
 fn the_canonical_exploration_pins_stopped_counts() {
     for (limits, states, work) in [
         (json!({"max_states": 2}), 2, 6),
@@ -1846,7 +1846,7 @@ fn the_canonical_exploration_pins_stopped_counts() {
 #[trace("FSpec-TC-1958", "FSpec-FR-808-AC-2")]
 #[trace("FSpec-TC-1958", "FSpec-FR-808-AC-3")]
 #[trace("FSpec-TC-1958", "FSpec-FR-808-AC-5")]
-#[ignore = "open defect: timed plan search is not implemented yet; its FSpec planning fixtures are not in the pinned filament-specification v0.1.1, so published_file returns none until the pin moves"]
+#[ignore = "QSL-2874: timed plan search is not implemented yet; its FSpec planning fixtures are not in the pinned filament-specification v0.1.1, so published_file returns none until the pin moves"]
 fn timed_plans_carry_exact_delays() {
     let (_, value) = fixture("timed-tick", &|unit| unit, json!({}));
     let outcome = &value["synthesis"];
@@ -1881,7 +1881,7 @@ fn timed_plans_carry_exact_delays() {
 #[trace("TC-2862", "FR-1012-AC-5")]
 #[trace("FSpec-TC-1959", "FSpec-FR-809-AC-1")]
 #[trace("FSpec-TC-1959", "FSpec-FR-809-AC-2")]
-#[ignore = "open defect: probabilistic plan search is not implemented yet; its FSpec planning fixtures are not in the pinned filament-specification v0.1.1, so published_file returns none until the pin moves"]
+#[ignore = "QSL-2874: probabilistic plan search is not implemented yet; its FSpec planning fixtures are not in the pinned filament-specification v0.1.1, so published_file returns none until the pin moves"]
 fn probabilistic_plans_compute_exact_probabilities() {
     let (_, value) = fixture("probabilistic-try", &|unit| unit, json!({}));
     let outcome = &value["synthesis"];
@@ -2007,7 +2007,7 @@ fn plan_requests_refuse_at_admission() {
 /// `synthesis` member equals FSpec's published `plan.json`.
 #[test]
 #[trace("TC-2864", "FR-1014-AC-2")]
-#[ignore = "open defect: the planning example envelopes are not published yet; its FSpec planning fixtures are not in the pinned filament-specification v0.1.1, so published_file returns none until the pin moves"]
+#[ignore = "QSL-2874: the planning example envelopes are not published yet; its FSpec planning fixtures are not in the pinned filament-specification v0.1.1, so published_file returns none until the pin moves"]
 fn planning_examples_hold_only_their_envelope() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("examples/planning");
     for case in [
@@ -2509,7 +2509,7 @@ fn an_on_each_previous_and_interval_clause_transfers_certified() {
 /// met at position 2. Each transfer through `ThirdRefinesSpec` settles
 /// `inconclusive`, `premise-unproved` naming slot 1 with `result` `refuted`.
 #[test]
-#[ignore = "open defect: PrevStutterEach settles conservatively inconclusive/premise-unproved; the other two clauses refute, with no false proof"]
+#[ignore = "QSL-2875: PrevStutterEach settles conservatively inconclusive/premise-unproved; the other two clauses refute, with no false proof"]
 #[trace("TC-2920", "FR-1030-AC-9")]
 fn a_violated_on_each_clause_refutes_its_premise() {
     let (exit, value) = transfer_run_over(
@@ -2542,7 +2542,7 @@ fn a_violated_on_each_clause_refutes_its_premise() {
 /// step-for-step: the transfer settles `inconclusive`, `premise-unproved`
 /// naming slot 0 with `result` `refuted`, `step_for_step.holds` `true`.
 #[test]
-#[ignore = "open defect: the duplicate spec-1 observation fixture is refused before the refinement premise settles"]
+#[ignore = "QSL-2875: the duplicate spec-1 observation fixture is refused before the refinement premise settles"]
 #[trace("TC-2920", "FR-1030-AC-10")]
 fn a_broken_initial_mapping_refutes_the_refinement_premise_not_the_transfer() {
     let mut member = transfer_member("ThirdRefinesSpec", ("Spec", "Third"), &["PrevSafeEach"]);
@@ -3002,7 +3002,7 @@ fn an_inadmissible_snapshot_or_supplied_premise_is_refused_at_admit() {
 #[test]
 #[trace("TC-2872", "FR-1022-AC-1")]
 #[trace("FSpec-TC-1974", "FSpec-FR-815-AC-1")]
-#[ignore = "open defect: genuine FR-1022 settlement awaits original-package binding and target-result verification contracts"]
+#[ignore = "QSL-2875: genuine FR-1022 settlement awaits original-package binding and target-result verification contracts"]
 fn a_lean_proof_enters_as_trusted_evidence() {
     let (_, exported) = export(
         &low_unit(),
@@ -3035,7 +3035,7 @@ fn a_lean_proof_enters_as_trusted_evidence() {
 #[test]
 #[trace("TC-2872", "FR-1022-AC-3")]
 #[trace("FSpec-TC-1974", "FSpec-FR-815-AC-3")]
-#[ignore = "open defect: FR-1022 AC3 package-key and record applicability verification is not implemented"]
+#[ignore = "QSL-2875: FR-1022 AC3 package-key and record applicability verification is not implemented"]
 fn evidence_for_an_unrepresented_record_is_refused() {
     let (exit, value) = run(
         BRAKING,
