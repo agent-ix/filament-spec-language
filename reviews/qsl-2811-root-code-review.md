@@ -1,25 +1,21 @@
 ---
-id: SR-967175026302197768900474181941935084760
-title: "QSL-2811 root evaluator dependency code-review review"
+id: SR-765
+title: "Code review — QSL-2811 root evaluator dependency edge"
 type: SpecReview
 analysis: code-review
-scope: "agent-ix/filament-spec-language; PR #3490; QSL-2811; FR-100-AC-7 and ADR-011 X-8 root evaluator dependency tables"
+scope: "agent-ix/filament-spec-language; Cargo.toml, src/population_fixtures.rs, examples/population_v2_fixtures.rs"
 review_set: subset
-date: 2026-11-22
 relationships:
-  - {target: "ix://agent-ix/filament-spec-language/FR-100", type: references}
-  - {target: "ix://agent-ix/filament-spec-language/ADR-011", type: references}
+  - { target: "ix://agent-ix/filament-spec-language/FR-100", type: references }
 ---
 
 ## Summary
 
-Reviewed frozen head `fedda1012fee7d417d1bf07766640f9d41316712`. Scope is the two authorized dependency-table clarifications; the selected set is base plus EARS, integrity and failure-domain. No active AssuranceProfile document was found by its declared type, so no discovered profile requires an enforced review run.
+Reviewed PR #3493 at frozen head `6fcf58aedf05eb51dbaf64b49af316de48feb5e5` for QSL-2811. Removing the optional normal dependency is correctly paired with passing the existing layer-3 `RewardEvaluator` port through the fixture API; unit and example callers supply the real evaluator through the retained dev dependency.
 
 ## Verdict
 
-PASS — no scoped findings. The two-line specification diff preserves every executable assertion and changes no manifest, feature, production code, test or workflow. Both edited clauses name normal and build tables explicitly and limit the dev allowance to tests; this does not permit the optional normal population-fixtures edge. No new digest, pin, file ledger, copied implementation or compatibility mechanism is introduced.
-
-This review certifies specification readiness only. The root normal dependency is not fixed by this PR, and no implementation or repository-wide coverage PASS is claimed.
+**PASS** — no scoped code, Rust API, or test-intent findings. The change preserves actual fixture checking and the dependency boundary in FR-100-AC-7; no scanner or assertion changed.
 
 ## Findings
 
@@ -27,13 +23,13 @@ This review certifies specification readiness only. The root normal dependency i
 | --- | --- | --- | --- |
 | FND-001 | low | No findings (placeholder) | - |
 
-## Verification
+## Scope and evidence
 
-Installed Quoin 0.36.8 supplied the SpecReview skeleton and schema from spec-artifacts-process v0.36.0. Quire 0.52.0 (engine 0.62.2) validated the two edited documents: 2/2 grammar-clean, zero warnings. Whole-spec validation exited 0 with 2896/2962 documents grammar-clean and 148 inherited grammar findings; these do not establish a repository-wide clean assurance result. Static trace extraction for FR-100-AC-7 exited 0 and resolved six structural verification claims; they are not runtime evidence. Static Quire matrix extraction also exited 0 and reports the criterion tagged. Global matrix counts are method-without-symbol 108, retired 15, tagged 5020, tagged-by-ignored-test 68, untagged 1084; inherited gaps remain outside this two-clause review. The changed file list and `git diff --check` were inspected. No builds, tests, repository executables or titan jobs ran or were queued. Rust and production gap-analysis are inapplicable to this Markdown-only diff; no domain objects or relationship edges changed, so separate object/dependency analyses are not selected. Criterion-strength/Jev analysis was not selected. Existing unrelated pins and dependency architecture are outside the two changed clauses.
-
-## Examined scope
-
-- FR-100-AC-7 — spec/functional/FR-100-run-a-named-function-through-the-spine.md; role: examined; excerpt: `fsl_replay::spine::run` called directly over each AC-1, AC-4, AC-5 and AC-6 input returns the same outcome category, value, code, reason, counter, and parameter name or position `command`'s result document or refusal envelope carries for it. The root crate names `fsl-eval` in no normal or build dependency table (TC-390); a dev-dependency for tests is allowed ([ADR-011 §7.1](../decisions/ADR-011-stage-dag-and-dependency-architecture.md#71-target-crate-graph)).
-- ADR-011/X-8 — spec/decisions/ADR-011-stage-dag-and-dependency-architecture.md; role: examined; excerpt: The root crate names `fsl-eval` in no normal or build dependency table, which TC-390 asserts; a dev-dependency for tests is allowed (§7.1).
-- ADR-011/7.1 — spec/decisions/ADR-011-stage-dag-and-dependency-architecture.md; role: context_only; excerpt: A dependency needed only by tests is a dev dependency.
-- TC-390 — tests/it/family_outcome_layering.rs; role: context_only; excerpt: the root crate's tests drive the temporal evidence call through a dev dependency
+- `Cargo.toml`: examined normal, build, and dev dependency tables and the `population-fixtures` feature.
+- `src/population_fixtures.rs`: examined the public helpers, package-check call, error flow, unit-test caller updates, and deterministic output assertions.
+- `examples/population_v2_fixtures.rs`: examined the external caller's concrete evaluator.
+- FR-100-AC-7: examined; the root has no normal or build `fsl-eval` dependency, while dev-only use is allowed.
+- ADR-011 X-8 and §7.1: examined; they state the same dependency boundary and test-only exception.
+- TC-390 `no_crate_below_layer_three_depends_on_the_check_core`: examined; its root dependency-table checks remain unchanged.
+- Titan evidence supplied by arch: both compile-only commands, strict layering test (2/2 with sibling), ten population-fixture tests, workspace check, and population-fixtures feature check passed. I ran no build or tests.
+- `git diff --check` and scoped `rustfmt --check` were reported green by the PR author; no workflow files changed.
