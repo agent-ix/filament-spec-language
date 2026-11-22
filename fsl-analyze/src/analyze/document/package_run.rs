@@ -3173,13 +3173,13 @@ impl<'a> WorkInputs<'_, 'a> {
                 &self.limits,
             ),
             (_, Some(Route::SuppliedProtocol(protocol))) if item.kind == Capability::FiniteReplay => {
-                let trace = item.options.trace.as_ref().and_then(|reference| self.binding.snapshots.get(reference)).map_or(
+                let trace = item.options.trace.as_ref().and_then(|reference| self.binding.snapshots.get(reference)).map(Vec::as_slice).map_or(
                     Err(crate::protocol_analysis::TraceDefect::unreadable()), crate::protocol_analysis::SuppliedTrace::read,
                 );
                 crate::protocol_analysis::finite_replay::package_finite_replay_item(item.request_index, self.input.input(), self.binding.clone(), self.limits, protocol, trace)
             }
             (_, Some(Route::SuppliedProtocol(_))) if item.kind == Capability::GlobalConformance => {
-                let recording = item.options.recording.as_ref().and_then(|reference| self.binding.snapshots.get(reference));
+                let recording = item.options.recording.as_ref().and_then(|reference| self.binding.snapshots.get(reference)).map(Vec::as_slice);
                 crate::protocol_analysis::conformance::package_global_recording_item(item.request_index, self.input.input(), item.options.recording.clone(), recording, item.options.population.clone(), self.limits.replay)
             }
             (
