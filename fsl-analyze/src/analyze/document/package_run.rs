@@ -23,6 +23,7 @@ use fsl_eval::simulation::model::{PackageModelInput, PendingPackageForm};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_package::{AnalysisView, BarePackage, CheckedNodeId, UnreadModelForm};
+use fsl_replay::value_check::ValueTarget;
 use fsl_replay::TerminalRecord;
 use fsl_route::request::{ExtentClassification, ItemKind};
 use fsl_route::{CandidateOutcome, Registry};
@@ -133,6 +134,9 @@ fn node_words(node: &CheckedNodeId) -> String {
 pub enum PendingFamily {
     /// A claimless `simulation` item (FR-634).
     Simulation,
+    /// An item an external provider decides: the package route has no
+    /// provider request over an admitted package yet.
+    Provider,
     /// A derived item other than a model subject's deadlock-freedom item
     /// (FSpec FR-368).
     Derived,
@@ -170,6 +174,7 @@ impl PendingFamily {
     pub const fn name(self) -> &'static str {
         match self {
             Self::Simulation => "simulation",
+            Self::Provider => "provider",
             Self::Derived => "derived",
             Self::LoopInvariant => "loop-invariant",
             Self::LoopTermination => "loop-termination",
@@ -266,6 +271,12 @@ enum Named<'s> {
         ordinal: u64,
         selection: &'s ItemSelection,
     },
+    /// A `value-validity` item over the Boolean value clause a function is.
+    Value {
+        index: RequestIndex,
+        name: &'s str,
+        selection: &'s ItemSelection,
+    },
 }
 
 /// How a resolved package-route claim item runs.
@@ -279,6 +290,7 @@ enum Route<'a> {
     Deadlock,
     StateClause,
     StateGraph(Box<PackageStateGraphSubject<'a>>),
+    Value(Box<ValueTarget<'a>>),
 }
 
 /// An authored clause and the optional protocol subject it runs over.
@@ -385,6 +397,7 @@ pub fn settle_package_run(
             .map_err(|_| AnalyzeDocumentError::Fault)?;
     }
     let reads = ClaimReads {
+        package,
         input: input.as_ref(),
         package_bytes,
         supply,
@@ -400,6 +413,7 @@ pub fn settle_package_run(
     let mut invariant_claims: Vec<OccurrenceKey> = Vec::new();
     let mut graph_claims: Vec<OccurrenceKey> = Vec::new();
     let mut protocol_claims: Vec<OccurrenceKey> = Vec::new();
+    let mut value_claims: Vec<OccurrenceKey> = Vec::new();
     for item in named {
         match item {
             Named::Settled(settled) => resolved.push(settled),
@@ -470,6 +484,18 @@ pub fn settle_package_run(
                     resolved.push(ResolvedItem::Claim(claim));
                 }
             },
+            Named::Value {
+                index,
+                name,
+                selection,
+            } => match reads.value(index, name, selection)? {
+                Resolution::Settled(settled) => resolved.push(settled),
+                Resolution::Claim(claim, target) => {
+                    value_claims.push(claim.item.claim.clone());
+                    routes.insert(index, Route::Value(Box::new(target)));
+                    resolved.push(ResolvedItem::Claim(claim));
+                }
+            },
             Named::StateGraph {
                 index,
                 name,
@@ -516,6 +542,7 @@ pub fn settle_package_run(
     };
     let family = |kind: ItemKind, claim: &OccurrenceKey| match kind {
         ItemKind::Formula if protocol_claims.contains(claim) => Some(DeclarationFamily::Protocol),
+        ItemKind::Formula if value_claims.contains(claim) => Some(DeclarationFamily::Value),
         ItemKind::Formula if invariant_claims.contains(claim) => {
             Some(DeclarationFamily::StateModel)
         }
@@ -550,6 +577,23 @@ pub fn settle_package_run(
         .map_err(|failure| {
             AnalyzeDocumentError::Refused(super::super::AnalyzeRefusal::Binding(failure))
         })?;
+        // A provider decides no value item over an admitted package yet.
+        for item in &negotiated {
+            let provider = matches!(routes.get(&item.item.request_index), Some(Route::Value(_)))
+                && item.disposition.target().is_some_and(|backend| {
+                    engines
+                        .get(backend.id())
+                        .is_some_and(|engine| engine.provider().is_some())
+                });
+            if provider {
+                return Err(PackageRunError::Pending(PendingPackageFamily {
+                    request_index: Some(item.item.request_index),
+                    note: None,
+                    family: PendingFamily::Provider,
+                    node: None,
+                }));
+            }
+        }
         let work = WorkInputs {
             input,
             package_bytes,
@@ -914,6 +958,13 @@ fn resolve_names<'s>(
                 });
             }
             if declared.iter().any(|(declared, _)| declared == name) {
+                if !derived && selection.kind.as_deref() == Some(Capability::ValueValidity.to_wire()) {
+                    return Ok(Named::Value {
+                        index,
+                        name,
+                        selection,
+                    });
+                }
                 return Err(pending(PendingFamily::Declaration));
             }
             if derived {
@@ -1053,6 +1104,7 @@ enum Resolution<R> {
 
 /// What the package route's claim resolution reads.
 struct ClaimReads<'r, 'a> {
+    package: &'a BarePackage<'a>,
     input: Option<&'r PackageModelInput<'a>>,
     package_bytes: &'a [u8],
     supply: fsl_replay::HandoffSupply<'a>,
@@ -1236,6 +1288,105 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 subject: Box::new(clause_subject),
                 protocol,
             },
+        ))
+    }
+
+    /// A `value-validity` item over the Boolean value clause the function
+    /// `name` is, as the source route's `resolve_one` resolves it: the
+    /// function body's `claim` occurrence, its extent from the parameter
+    /// domains, the arm's candidates. A function the package form does not
+    /// read (a non-Boolean one, or one whose types or body have no evaluator
+    /// form) refuses the request whole, typed.
+    fn value(
+        &self,
+        index: RequestIndex,
+        name: &str,
+        selection: &ItemSelection,
+    ) -> Result<Resolution<ValueTarget<'a>>, PackageRunError> {
+        let pending = || {
+            PackageRunError::Pending(PendingPackageFamily {
+                request_index: Some(index),
+                note: None,
+                family: PendingFamily::Declaration,
+                node: None,
+            })
+        };
+        let body = self
+            .package
+            .function_body(name)
+            .ok()
+            .flatten()
+            .ok_or_else(pending)?;
+        let mut clauses: Vec<&OccurrenceKey> = body
+            .occurrences
+            .iter()
+            .filter(|occurrence| matches!(occurrence.origin().role().as_str(), "claim" | "declaration"))
+            .collect();
+        clauses.sort();
+        let claim = clauses.first().copied().ok_or_else(pending)?;
+        let target = ValueTarget::select_package(self.package, name, claim)
+            .map_err(|_| pending())?;
+        // The package form spells Boolean and integer parameters only.
+        if !target.parameters().iter().all(|parameter| {
+            matches!(
+                parameter.domain(),
+                fsl_replay::value_check::ParameterDomain::Boolean
+                    | fsl_replay::value_check::ParameterDomain::Integers(_)
+                    | fsl_replay::value_check::ParameterDomain::Unbounded
+            )
+        }) {
+            return Err(pending());
+        }
+        let kind = Capability::ValueValidity;
+        let named = selection.backend.as_deref().map(BackendId::new);
+        let backend_options = selection.options.clone().unwrap_or_default();
+        if kind.applies_to_declaration(DeclarationFamily::Value) {
+            if let Some(refused) = unknown_option(
+                index,
+                Some(name),
+                self.registry,
+                named.as_ref(),
+                &backend_options,
+            ) {
+                return Ok(Resolution::Settled(refused));
+            }
+        }
+        let extent = target
+            .clause_extent()
+            .map_or(ExtentClassification::Bounded, ExtentClassification::of);
+        let candidates = tie(
+            self.registry.candidates(kind, named.as_ref()),
+            kind,
+            named.as_ref(),
+        );
+        let own_subject = self.own_subject(index, selection)?;
+        let temporal = selection.temporal.clone().unwrap_or_default();
+        let item = ClaimItem {
+            request_index: index,
+            claim: claim.clone(),
+            kind,
+            extent,
+            backend: named,
+            candidates: candidate_list(&candidates),
+            options: options(selection, backend_options),
+            form: None,
+        };
+        let unrouted = selection.unrouted()
+            || selection.reductions.is_some()
+            || reads_no_clocks(selection)
+            || temporal
+                .limits
+                .is_some_and(|limits| limits.sets_memory_limits())
+            || !own_subject.same_model(self.subject);
+        Ok(Resolution::Claim(
+            Box::new(ResolvedClaim {
+                item,
+                claim_name: name.to_owned(),
+                candidates,
+                subject: own_subject,
+                unrouted,
+            }),
+            target,
         ))
     }
 
@@ -2050,6 +2201,21 @@ impl<'a> WorkInputs<'_, 'a> {
                 .map_or_else(
                     || AnalyzeItem::unadapted(item.request_index, item.kind, family),
                     |subject| subject.item(item.request_index),
+                )
+            }
+            (_, Some(Route::Value(target)))
+                if item.kind == Capability::ValueValidity =>
+            {
+                let target = (*target)
+                    .with_limits(fsl_replay::AccountingLimits(self.limits.accounting));
+                crate::value_check::value_item_in(
+                    item.request_index,
+                    family,
+                    Ok(crate::value_check::ValueRequest {
+                        target,
+                        max_cases: item.options.max_cases,
+                        reported: None,
+                    }),
                 )
             }
             _ => AnalyzeItem::unadapted(item.request_index, item.kind, family),

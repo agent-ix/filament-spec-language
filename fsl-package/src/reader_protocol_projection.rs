@@ -91,6 +91,21 @@ impl ReaderProtocolProjection {
             .and_then(|node| node.location.as_ref())
     }
 
+    /// The structural key of the node at an arena index.
+    pub fn node_key(&self, index: usize) -> Option<&NodeKey> {
+        self.nodes.get(index).and_then(|node| node.key.as_ref())
+    }
+
+    /// Each application a function body's admitted `body_locations` rows
+    /// locate: its location and the occurrence its row binds (FSpec FR-322).
+    pub fn located_applications(
+        &self,
+    ) -> impl Iterator<Item = (&Location, &fsl_foundation::source::provenance::OccurrenceKey)> {
+        self.nodes.iter().filter(|node| node.captured_body).filter_map(|node| {
+            Some((node.location.as_ref()?, node.occurrence.as_ref()?))
+        })
+    }
+
     /// The occurrence bound to this walk position by its captured location
     /// row, or its unique admitted expression occurrence when no row applies.
     pub fn occurrence(
@@ -1576,6 +1591,42 @@ impl<'wire> BareWalker<'wire> {
         }))
     }
 
+    /// The body expression node of the selected pure function and the
+    /// occurrences the package records at it, in the package's order.
+    pub(crate) fn function_body(
+        &self,
+        function: FunctionSelector<'_>,
+    ) -> Result<Option<ReaderFunctionBody>, InternalFault> {
+        let Some(selected) = self.selected_function(function) else {
+            return Ok(None);
+        };
+        let (_, body) = function_parts(&selected.body)
+            .ok_or_else(|| fault("reader-pure-function-has-checked-body"))?;
+        let CheckedTerm::Reference { target } = body else {
+            return Err(fault("reader-function-body-has-checked-identity"));
+        };
+        let node = self.index.key(target)?;
+        let occurrences = self
+            .index
+            .node(target)
+            .ok_or_else(|| fault("reader-function-body-is-admitted"))?
+            .occurrences
+            .iter()
+            .map(|occurrence| {
+                fsl_foundation::source::provenance::OccurrenceKey::new(
+                    node.clone(),
+                    filament_exact::Origin::new(
+                        filament_exact::Role::new(crate::checked_v2::role_spelling(
+                            &occurrence.role,
+                        )),
+                        occurrence.ordinal,
+                    ),
+                )
+            })
+            .collect();
+        Ok(Some(ReaderFunctionBody { node, occurrences }))
+    }
+
     /// Project the named pure function and every function its body reaches.
     /// The function's body has no protocol-origin location rows, so this
     /// route retains the admitted node types and evaluator operations only.
@@ -1781,6 +1832,15 @@ impl<'wire> BareWalker<'wire> {
     pub(crate) fn key(&self, application: &CheckedNodeId) -> Result<NodeKey, InternalFault> {
         self.index.key(application)
     }
+}
+
+/// The body expression node of a pure function and the occurrences its
+/// package records at it.
+pub struct ReaderFunctionBody {
+    /// The body node.
+    pub node: NodeKey,
+    /// Every occurrence of the body node, in the package's order.
+    pub occurrences: Vec<fsl_foundation::source::provenance::OccurrenceKey>,
 }
 
 pub(crate) struct ReaderFunctionResultType {

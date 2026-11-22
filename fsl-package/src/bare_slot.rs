@@ -776,6 +776,34 @@ impl<'p> BarePackage<'p> {
         self.project_selected_function(FunctionSelector::Name(name))
     }
 
+    /// The body expression node of the named pure function and the
+    /// occurrences the package records at it (FR-940 "Package forms of the
+    /// source-checked evaluators"): what the source route reads as the
+    /// function body's checked node. `None` when the package holds no such
+    /// function.
+    ///
+    /// # Errors
+    ///
+    /// [`BareSelectionFailure`] when the identity/equality supply is
+    /// missing or the function's checked body is malformed.
+    pub fn function_body(
+        &self,
+        name: &str,
+    ) -> Result<Option<crate::ReaderFunctionBody>, BareSelectionFailure> {
+        let (_, identities) = self.witness()?;
+        let walker = BareWalker::new(
+            self.package(),
+            identities,
+            self.equality_decisions(),
+            self.exact_type_projections(),
+            self.dependency_views(),
+        )
+        .map_err(SlotSelectionFailure::Fault)?;
+        walker
+            .function_body(FunctionSelector::Name(name))
+            .map_err(|failure| SlotSelectionFailure::Fault(failure).into())
+    }
+
     /// The projection of the clause function at `node`, such as the function a
     /// `reward` node's expression names, as [`Self::project_function`]
     /// projects a named one.
