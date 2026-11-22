@@ -3193,14 +3193,13 @@ object Counter extends Base {
   }
 }
 population counters: Counter;
-population bases: Base;
 "#, "Counter", "counters",
-        "pre UnitArgument using v on M::Base::choose { amount >= 0 }\npost UnitResult using v on M::Base::choose { result }",
-        &[("counters", "Counter", &[("c", json!({"number":{"integer":"0"}}))]),
-          ("bases", "Base", &[("b", json!({"number":{"integer":"0"}}))])]);
+        "pre UnitArgument using v on M::Counter::choose { amount >= 0 }\npost UnitResult using v on M::Counter::choose { result }",
+        &[("counters", "Counter", &[("c", json!({"number":{"integer":"0"}})),
+            ("d", json!({"number":{"integer":"0"}}))])]);
     let system = ModelSystem::new(
         world
-            .subject_populations(&[("counters", &["c"]), ("bases", &["b"])], UNLIMITED)
+            .subject_populations(&[("counters", &["c", "d"])], UNLIMITED)
             .simulation,
     )
     .unwrap();
@@ -3265,9 +3264,10 @@ population bases: Base;
     assert_eq!(
         completed,
         [
-            ("choose".to_owned(), "b".to_owned()),
             ("choose".to_owned(), "c".to_owned()),
-            ("stay".to_owned(), "c".to_owned())
+            ("choose".to_owned(), "d".to_owned()),
+            ("stay".to_owned(), "c".to_owned()),
+            ("stay".to_owned(), "d".to_owned())
         ]
     );
 }
