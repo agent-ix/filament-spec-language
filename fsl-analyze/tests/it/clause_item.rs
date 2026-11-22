@@ -205,7 +205,7 @@ fn a_claim_that_takes_a_modulus_by_zero_settles_refuted_with_a_replayed_undefine
     let written = serde_json::to_value(&item).expect("an item is JSON");
     assert_eq!(written["result"], "refuted");
     assert_eq!(written["cause"]["kind"], "undefined-evaluation");
-    assert_eq!(written["cause"]["code"], "division-by-zero");
+    assert_eq!(written["cause"]["cause"], "division-by-zero");
     assert!(
         written["cause"]["where"]
             .as_str()
