@@ -748,13 +748,13 @@ fn package_call(directory: &Path, call: Value) -> Output {
 }
 
 /// The document of `output` less the members that name the route.
-fn route_free(output: &Output) -> Value {
+fn route_free(output: &Output, what: &str) -> Value {
     let (stream, expected) = if output.status.code() == Some(0) {
         (&output.stdout, 0)
     } else {
         (&output.stderr, 20)
     };
-    assert_eq!(output.status.code(), Some(expected), "{output:?}");
+    assert_eq!(output.status.code(), Some(expected), "{what}: {output:?}");
     let mut document: Value = serde_json::from_slice(stream).unwrap();
     for member in ["package", "program", "source"] {
         document.as_object_mut().unwrap().remove(member);
@@ -770,7 +770,8 @@ fn route_free(output: &Output) -> Value {
 #[trace("TC-2373", "FR-650-AC-12")]
 fn an_enumeration_argument_and_result_run_from_a_package_as_from_source() {
     let directory = spine_dir(
-        "function pick_tier using v(): Config::Tier pure { Config::Tier::Silver }\n\
+        "function same using v(r: Config::ConfigVersion): Config::ConfigVersion pure { r }\n\
+         function pick_tier using v(): Config::Tier pure { Config::Tier::Silver }\n\
          function id_tier using v(a: Config::Tier): Config::Tier pure { a }\n\
          function next_tier using v(a: Config::Tier): Config::Tier pure \
          { if a = Config::Tier::Gold then Config::Tier::Silver else Config::Tier::Gold }\n\
@@ -782,6 +783,7 @@ fn an_enumeration_argument_and_result_run_from_a_package_as_from_source() {
     let tier = |case: &str| json!({"variant": {"type": tier_name, "case": case}});
     let argument = |case: &str| json!([{"parameter": "a", "value": tier(case)}]);
     for (function, arguments) in [
+        ("same", json!([{"parameter": "r", "value": {"reference": child()}}])),
         ("pick_tier", json!([])),
         ("id_tier", argument("Gold")),
         ("id_tier", argument("Silver")),
@@ -799,7 +801,10 @@ fn an_enumeration_argument_and_result_run_from_a_package_as_from_source() {
             directory.path(),
             json!({"function": function, "snapshot": "spine-snapshot.json", "arguments": arguments}),
         );
-        let (source, package) = (route_free(&source), route_free(&package));
+        let (source, package) = (
+            route_free(&source, function),
+            route_free(&package, function),
+        );
         assert_eq!(source["outcome"]["kind"], "completed", "{function}: {source}");
         assert_eq!(package, source, "{function}");
     }
@@ -814,5 +819,5 @@ fn an_enumeration_argument_and_result_run_from_a_package_as_from_source() {
         json!({"function": "id_tier", "snapshot": "spine-snapshot.json", "arguments": unknown}),
     );
     assert_eq!(source.status.code(), Some(20), "{source:?}");
-    assert_eq!(route_free(&package), route_free(&source));
+    assert_eq!(route_free(&package, "unknown case package"), route_free(&source, "unknown case source"));
 }
