@@ -498,7 +498,15 @@ fn materialize_inner(
                 binding: reference.cloned(),
                 initial: initial.clone(),
                 initial_key,
-                scheduler: scheduler.into_iter().collect(),
+                scheduler: scheduler
+                    .into_iter()
+                    .map(|(key, action)| {
+                        (
+                            key,
+                            fsl_replay::ProbabilisticSchedulerChoice::Deterministic(action),
+                        )
+                    })
+                    .collect(),
                 paths: vec![ProbabilityWitnessPath { steps }],
                 subsystem: None,
             },

@@ -219,9 +219,6 @@ pub(super) fn replay(
     if workload.is_some() && !witness.scheduler.is_empty() {
         return Err(ProbabilityWitnessError::Refused);
     }
-    if !witness.randomized_scheduler.is_empty() {
-        return Err(ProbabilityWitnessError::Refused);
-    }
     if u64::try_from(witness.paths.len()).unwrap_or(u64::MAX) > limits.max_witness_paths {
         return Err(ProbabilityWitnessError::Limit {
             limit: ModelCheckLimit::ExactProbMaxWitnessPaths,
@@ -269,7 +266,8 @@ pub(super) fn replay(
     {
         return Err(ProbabilityWitnessError::Refused);
     }
-    let scheduler = step::scheduler(&witness.scheduler, limits, &mut meter, &mut storage, cancel)?;
+    let deterministic = super::deterministic_scheduler_rows(&witness.scheduler)?;
+    let scheduler = step::scheduler(&deterministic, limits, &mut meter, &mut storage, cancel)?;
     let mut used = BTreeSet::new();
     let mut seen = BTreeSet::new();
     let mut edges = 0;
@@ -984,13 +982,14 @@ pub(super) fn replay_subsystem(
     {
         return Err(ProbabilityWitnessError::Refused);
     }
-    step::scheduler(&witness.scheduler, limits, &mut meter, &mut storage, cancel)?;
+    let deterministic = super::deterministic_scheduler_rows(&witness.scheduler)?;
+    step::scheduler(&deterministic, limits, &mut meter, &mut storage, cancel)?;
     let checked = super::super::document::measure::check_mean_refutation(
         system,
         claim,
         &witness.item,
         subsystem.as_bytes(),
-        &witness.scheduler,
+        &deterministic,
         document_limits,
         cancel,
     )

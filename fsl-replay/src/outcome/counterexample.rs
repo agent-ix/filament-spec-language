@@ -2133,33 +2133,53 @@ fn probabilistic_wire_using(
         .iter()
         .map(|(at, choice)| Ok(json!({"state": state(at)?, "choice": identity(choice)?})))
         .collect::<Result<Vec<_>, CounterexampleWireError>>()?;
-    for (at, choice) in &witness.scheduler {
-        if matches!(
-            choice,
-            crate::ProductAction::PostState(_) | crate::ProductAction::TerminalStutter
-        ) {
-            let choice = choice
-                .to_bytes()
-                .map_err(|_| Unspelled("probabilistic internal choice"))?;
-            let choice: Json = serde_json::from_slice(&choice)
-                .map_err(|_| Unspelled("probabilistic internal choice"))?;
-            let at = fsl_eval::simulation::StateKey::from_canonical_bytes(at.as_bytes().to_vec());
-            entries.push(json!({"state":state(&at)?,"choice":choice}));
-        }
-    }
-    for (at, distribution) in &witness.randomized_scheduler {
+    for (at, entry) in &witness.scheduler {
         let at = fsl_eval::simulation::StateKey::from_canonical_bytes(at.as_bytes().to_vec());
-        let alternatives = distribution.iter().map(|(action, weight)| {
-            let bytes = action.to_bytes().map_err(|_| Unspelled("probabilistic internal choice"))?;
-            let action: Json = serde_json::from_slice(&bytes).map_err(|_| Unspelled("probabilistic internal choice"))?;
-            Ok(json!({"choice": action, "probability": rational(weight)}))
-        }).collect::<Result<Vec<_>, CounterexampleWireError>>()?;
-        entries.push(json!({"state": state(&at)?, "choice": {"randomized": alternatives}}));
+        match entry {
+            crate::ProbabilisticSchedulerChoice::Deterministic(choice) => {
+                if !matches!(
+                    choice,
+                    crate::ProductAction::PostState(_) | crate::ProductAction::TerminalStutter
+                ) {
+                    continue;
+                }
+                let bytes = choice
+                    .to_bytes()
+                    .map_err(|_| Unspelled("probabilistic internal choice"))?;
+                let choice: Json = serde_json::from_slice(&bytes)
+                    .map_err(|_| Unspelled("probabilistic internal choice"))?;
+                entries.push(json!({"state": state(&at)?, "choice": choice}));
+            }
+            crate::ProbabilisticSchedulerChoice::Randomized(distribution) => {
+                entries.push(randomized_scheduler_wire_entry(&at, distribution)?);
+            }
+        }
     }
     if !entries.is_empty() {
         written["scheduler"] = json!({"entries": entries});
     }
     Ok(written)
+}
+
+fn randomized_scheduler_wire_entry(
+    at: &fsl_eval::simulation::StateKey,
+    distribution: &[(crate::ProductAction, Rational)],
+) -> Result<Json, CounterexampleWireError> {
+    let alternatives = distribution
+        .iter()
+        .map(|(action, weight)| {
+            let bytes = action
+                .to_bytes()
+                .map_err(|_| CounterexampleWireError::Unspelled("probabilistic internal choice"))?;
+            let action: Json = serde_json::from_slice(&bytes)
+                .map_err(|_| CounterexampleWireError::Unspelled("probabilistic internal choice"))?;
+            Ok(json!({"choice": action, "probability": rational(weight)}))
+        })
+        .collect::<Result<Vec<_>, CounterexampleWireError>>()?;
+    Ok(json!({
+        "state": state(at)?,
+        "choice": {"randomized": alternatives}
+    }))
 }
 
 /// Spell a checked-subject undefined path with its complete pre-read product key.
@@ -2396,6 +2416,52 @@ mod tests {
 
     fn key(index: usize) -> StateKey {
         StateKey::from_canonical_bytes(format!("[{index},[]]").into_bytes())
+    }
+
+    #[test]
+    fn randomized_scheduler_writer_spells_the_witness_entry_shape() {
+        let entry = randomized_scheduler_wire_entry(
+            &key(0),
+            &[
+                (crate::ProductAction::TerminalStutter, rational(1, 3)),
+                (crate::ProductAction::UnitDelay, rational(2, 3)),
+            ],
+        )
+        .expect("randomized entry is spellable");
+        assert_eq!(
+            entry["state"],
+            state(&key(0)).expect("state key is spellable")
+        );
+        let alternatives = entry["choice"]["randomized"]
+            .as_array()
+            .expect("randomized choice contains alternatives");
+        assert_eq!(alternatives.len(), 2);
+        assert_eq!(
+            alternatives[0]["choice"],
+            serde_json::from_slice::<Json>(
+                &crate::ProductAction::TerminalStutter
+                    .to_bytes()
+                    .expect("terminal choice is canonical"),
+            )
+            .expect("terminal choice is JSON"),
+        );
+        assert_eq!(
+            alternatives[0]["probability"],
+            json!({"numerator": "1", "denominator": "3"}),
+        );
+        assert_eq!(
+            alternatives[1]["choice"],
+            serde_json::from_slice::<Json>(
+                &crate::ProductAction::UnitDelay
+                    .to_bytes()
+                    .expect("delay choice is canonical"),
+            )
+            .expect("delay choice is JSON"),
+        );
+        assert_eq!(
+            alternatives[1]["probability"],
+            json!({"numerator": "2", "denominator": "3"}),
+        );
     }
 
     fn step(index: usize) -> ModelStep {

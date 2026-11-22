@@ -630,7 +630,15 @@ fn refute_mean(
         binding: binding.cloned(),
         initial: first.clone(),
         initial_key,
-        scheduler,
+        scheduler: scheduler
+            .into_iter()
+            .map(|(key, action)| {
+                (
+                    key,
+                    fsl_replay::ProbabilisticSchedulerChoice::Deterministic(action),
+                )
+            })
+            .collect(),
         paths: Vec::new(),
         subsystem: Some(Box::new(subsystem)),
     };

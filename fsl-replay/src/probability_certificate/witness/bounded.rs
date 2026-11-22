@@ -58,9 +58,6 @@ pub(super) fn replay(
     if workload.is_some() && !witness.scheduler.is_empty() {
         return Err(ProbabilityWitnessError::Refused);
     }
-    if !witness.randomized_scheduler.is_empty() {
-        return Err(ProbabilityWitnessError::Refused);
-    }
     if u64::try_from(witness.paths.len()).unwrap_or(u64::MAX) > limits.max_witness_paths {
         return Err(ProbabilityWitnessError::Limit {
             limit: ModelCheckLimit::ExactProbMaxWitnessPaths,
@@ -105,7 +102,8 @@ pub(super) fn replay(
     // A cylinder includes its semantic choice and draw, even when several
     // disjoint draws produce exactly the same model and monitor state.
     let mut cylinders: Vec<&ProbabilityWitnessPath> = Vec::new();
-    let scheduler = step::scheduler(&witness.scheduler, limits, &mut meter, &mut storage, cancel)?;
+    let deterministic = super::deterministic_scheduler_rows(&witness.scheduler)?;
+    let scheduler = step::scheduler(&deterministic, limits, &mut meter, &mut storage, cancel)?;
     for path in &witness.paths {
         poll_cancel(cancel)?;
         let mut state = initial.clone();

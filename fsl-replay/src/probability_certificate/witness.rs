@@ -97,6 +97,28 @@ impl ProbabilitySubsystemCertificate {
     }
 }
 
+/// One scheduler choice at a product state.
+#[derive(Clone, Debug)]
+pub enum ProbabilisticSchedulerChoice {
+    /// A deterministic product action.
+    Deterministic(ProductAction),
+    /// An exact-rational distribution over product actions.
+    Randomized(Vec<(ProductAction, Rational)>),
+}
+
+pub(crate) fn deterministic_scheduler_rows(
+    rows: &[(ProbabilityProductKey, ProbabilisticSchedulerChoice)],
+) -> Result<Vec<(ProbabilityProductKey, ProductAction)>, ProbabilityWitnessError> {
+    rows.iter()
+        .map(|(key, choice)| match choice {
+            ProbabilisticSchedulerChoice::Deterministic(action) => {
+                Ok((key.clone(), action.clone()))
+            }
+            ProbabilisticSchedulerChoice::Randomized(_) => Err(ProbabilityWitnessError::Refused),
+        })
+        .collect()
+}
+
 /// Typed path-set evidence for one exact checked claim and binding.
 #[derive(Clone, Debug)]
 pub struct ProbabilisticCounterexample {
@@ -108,13 +130,8 @@ pub struct ProbabilisticCounterexample {
     pub initial: ModelSimState,
     /// Complete initial product key.
     pub initial_key: ProbabilityProductKey,
-    /// Deterministic scheduler entries in full-key order; empty for a workload.
-    pub scheduler: Vec<(ProbabilityProductKey, ProductAction)>,
-    /// Randomized scheduler entries for claims with fairness. Each row is a
-    /// state key and an exact distribution over enabled product actions.
-    /// Kept separate so existing deterministic witness construction remains
-    /// source-compatible.
-    pub randomized_scheduler: Vec<(ProbabilityProductKey, Vec<(ProductAction, Rational)>)>,
+    /// Ordered deterministic or randomized scheduler entries in full-key order.
+    pub scheduler: Vec<(ProbabilityProductKey, ProbabilisticSchedulerChoice)>,
     /// Prefix-free finite paths.
     pub paths: Vec<ProbabilityWitnessPath>,
     /// A mean-refutation subsystem certificate; mutually exclusive with paths.
@@ -188,8 +205,7 @@ fn validate_randomized_entry(
             return Err(ProbabilityWitnessError::Refused);
         }
         seen.push(action);
-        total = filament_exact::RationalArithmetic::Add(&total, weight)
-            .map_err(|_| ProbabilityWitnessError::Refused)?;
+        total = total.add(weight);
     }
     if total != rational(1) {
         return Err(ProbabilityWitnessError::Refused);
@@ -209,7 +225,10 @@ mod randomized_entry_tests {
     fn randomized_entry_rejects_weights_not_summing_to_one() {
         let enabled = vec![ProductAction::TerminalStutter];
         let distribution = vec![(ProductAction::TerminalStutter, q(1, 2))];
-        assert!(matches!(validate_randomized_entry(&distribution, &enabled), Err(ProbabilityWitnessError::Refused)));
+        assert!(matches!(
+            validate_randomized_entry(&distribution, &enabled),
+            Err(ProbabilityWitnessError::Refused)
+        ));
     }
 
     #[test]
@@ -226,21 +245,30 @@ mod randomized_entry_tests {
     fn randomized_entry_rejects_non_enabled_action() {
         let enabled = vec![ProductAction::TerminalStutter];
         let distribution = vec![(ProductAction::UnitDelay, q(1, 1))];
-        assert!(matches!(validate_randomized_entry(&distribution, &enabled), Err(ProbabilityWitnessError::Refused)));
+        assert!(matches!(
+            validate_randomized_entry(&distribution, &enabled),
+            Err(ProbabilityWitnessError::Refused)
+        ));
     }
 
     #[test]
     fn randomized_entry_rejects_zero_weight() {
         let enabled = vec![ProductAction::TerminalStutter];
         let distribution = vec![(ProductAction::TerminalStutter, q(0, 1))];
-        assert!(matches!(validate_randomized_entry(&distribution, &enabled), Err(ProbabilityWitnessError::Refused)));
+        assert!(matches!(
+            validate_randomized_entry(&distribution, &enabled),
+            Err(ProbabilityWitnessError::Refused)
+        ));
     }
 
     #[test]
     fn randomized_entry_rejects_negative_weight() {
         let enabled = vec![ProductAction::TerminalStutter];
         let distribution = vec![(ProductAction::TerminalStutter, q(-1, 1))];
-        assert!(matches!(validate_randomized_entry(&distribution, &enabled), Err(ProbabilityWitnessError::Refused)));
+        assert!(matches!(
+            validate_randomized_entry(&distribution, &enabled),
+            Err(ProbabilityWitnessError::Refused)
+        ));
     }
 }
 
@@ -555,17 +583,9 @@ fn replay_probabilistic_witness_impl(
                 .ok_or(ProbabilityWitnessError::Refused)?,
         ),
     };
-    if workload.is_some() && !witness.scheduler.is_empty() {
-        return Err(ProbabilityWitnessError::Refused);
-    }
-    if !witness.randomized_scheduler.is_empty()
-        && (workload.is_some() || !witness.scheduler.is_empty())
-    {
-        return Err(ProbabilityWitnessError::Refused);
-    }
     let mut scheduler = BTreeMap::new();
     let mut previous = None;
-    for (key, action) in &witness.scheduler {
+    for (key, entry) in &witness.scheduler {
         poll_cancel(cancel)?;
         if previous.is_some_and(|previous| previous >= key) || !graph.states.contains_key(key) {
             return Err(ProbabilityWitnessError::Refused);
@@ -578,50 +598,43 @@ fn replay_probabilistic_witness_impl(
             .actions_with_cancel(state, cancel)
             .map_err(|stop| cancelled_expansion(stop, cancel))?
             .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
-        let ProductAction::Identity(schedule) = action else {
-            return Err(ProbabilityWitnessError::Refused);
-        };
-        if !enabled
+        let enabled_actions = enabled
             .iter()
-            .any(|enabled| crate::Schedule::of(system, &enabled.identity).as_ref() == Ok(schedule))
-        {
-            return Err(ProbabilityWitnessError::Refused);
+            .map(|candidate| {
+                crate::Schedule::of(system, &candidate.identity)
+                    .map(ProductAction::Identity)
+                    .map_err(|_| ProbabilityWitnessError::Refused)
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        match entry {
+            ProbabilisticSchedulerChoice::Deterministic(action) => {
+                if !enabled_actions.contains(action) {
+                    return Err(ProbabilityWitnessError::Refused);
+                }
+                let bytes = action
+                    .to_bytes()
+                    .map_err(|_| ProbabilityWitnessError::Refused)?;
+                bounded::retain(
+                    key.as_bytes().len().saturating_add(bytes.len()),
+                    &mut storage,
+                    limits,
+                )?;
+            }
+            ProbabilisticSchedulerChoice::Randomized(distribution) => {
+                validate_randomized_entry(distribution, &enabled_actions)?;
+                for (action, _) in distribution {
+                    let bytes = action
+                        .to_bytes()
+                        .map_err(|_| ProbabilityWitnessError::Refused)?;
+                    bounded::retain(
+                        key.as_bytes().len().saturating_add(bytes.len()),
+                        &mut storage,
+                        limits,
+                    )?;
+                }
+            }
         }
-        let action_bytes = action
-            .to_bytes()
-            .map_err(|_| ProbabilityWitnessError::Refused)?;
-        bounded::retain(
-            key.as_bytes().len().saturating_add(action_bytes.len()),
-            &mut storage,
-            limits,
-        )?;
-        scheduler.insert(key, action);
-    }
-    let mut randomized_scheduler = BTreeMap::new();
-    previous = None;
-    for (key, distribution) in &witness.randomized_scheduler {
-        poll_cancel(cancel)?;
-        if previous.is_some_and(|previous| previous >= key)
-            || !graph.states.contains_key(key)
-            || distribution.is_empty()
-        {
-            return Err(ProbabilityWitnessError::Refused);
-        }
-        previous = Some(key);
-        let state = model_states.get(key).ok_or(ProbabilityWitnessError::Refused)?;
-        let enabled = system.actions_with_cancel(state, cancel)
-            .map_err(|stop| cancelled_expansion(stop, cancel))?
-            .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
-        let enabled_actions = enabled.iter().map(|candidate| {
-            crate::Schedule::of(system, &candidate.identity)
-                .map(ProductAction::Identity)
-                .map_err(|_| ProbabilityWitnessError::Refused)
-        }).collect::<Result<Vec<_>, _>>()?;
-        validate_randomized_entry(distribution, &enabled_actions)?;
-        for (action, _) in distribution {
-            bounded::retain(key.as_bytes().len().saturating_add(action.to_bytes().map_err(|_| ProbabilityWitnessError::Refused)?.len()), &mut storage, limits)?;
-        }
-        randomized_scheduler.insert(key, distribution);
+        scheduler.insert(key, entry);
     }
     let mut transitions = 0usize;
     let mut mass = rational(0);
@@ -668,17 +681,23 @@ fn replay_probabilistic_witness_impl(
             else {
                 return Err(ProbabilityWitnessError::Refused);
             };
-            let deterministic_choice = scheduler.get(&key).copied() == Some(&step.choice);
-            let randomized_weight = randomized_scheduler.get(&key).and_then(|distribution| {
-                distribution
+            let scheduler_weight = match scheduler.get(&key) {
+                Some(ProbabilisticSchedulerChoice::Deterministic(action))
+                    if action == &step.choice =>
+                {
+                    Some(rational(1))
+                }
+                Some(ProbabilisticSchedulerChoice::Randomized(distribution)) => distribution
                     .iter()
                     .find(|(action, _)| action == &step.choice)
-                    .map(|(_, weight)| weight)
-            });
-            let randomized_choice = randomized_weight.is_some();
+                    .map(|(_, weight)| weight.clone()),
+                Some(_) => None,
+                None if workload.is_some() => Some(rational(1)),
+                None => None,
+            };
             if step.elapsed != rational(0)
                 || crate::Schedule::of(system, step_action).as_ref() != Ok(schedule)
-                || workload.is_none() && !(deterministic_choice || randomized_choice)
+                || scheduler_weight.is_none()
             {
                 return Err(ProbabilityWitnessError::Refused);
             }
@@ -752,7 +771,10 @@ fn replay_probabilistic_witness_impl(
                 return Err(ProbabilityWitnessError::Refused);
             }
             check_bits(&step_mass, limits.max_rational_bits)?;
-            if let Some(weight) = randomized_weight {
+            {
+                let weight = scheduler_weight
+                    .as_ref()
+                    .ok_or(ProbabilityWitnessError::Refused)?;
                 probability = bounded::arithmetic(
                     filament_exact::RationalArithmetic::Multiply(&probability, weight),
                     &mut meter,
