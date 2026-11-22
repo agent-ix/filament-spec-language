@@ -1124,6 +1124,30 @@ fn read_fixture_wire(fixture: &str, envelope: &Value) -> (String, Read) {
     read_fixture_wire_withholding(fixture, envelope, &[])
 }
 
+/// FSL's whole I2 read with the selected domain document supplied by a
+/// published timed-clause vector's `document_patch`.
+fn read_fixture_wire_with_document_patch(
+    fixture: &str,
+    envelope: &Value,
+    document: &[u8],
+) -> (String, Read) {
+    let evidence = fixture_evidence_with_document(
+        Some(fixture),
+        envelope,
+        envelope,
+        &[],
+        Some(document),
+    );
+    let name = envelope["name"].as_str().expect("fixture name").to_owned();
+    let outcome = read_v2(
+        &fixture_wire_bytes(envelope),
+        identity(&name),
+        V2ReadLimits::fixture(),
+        &evidence,
+    );
+    (name, outcome)
+}
+
 /// [`read_fixture_wire`] with the extension definitions named by
 /// `withheld` left out of the held evidence (FSpec FR-469 "Published
 /// definitions": the withheld-definition control).
@@ -1167,13 +1191,23 @@ fn fixture_evidence(
     selecting: &Value,
     withheld: &[CheckedArtifactRef],
 ) -> CheckedPackageEvidence {
+    fixture_evidence_with_document(fixture, envelope, selecting, withheld, None)
+}
+
+fn fixture_evidence_with_document(
+    fixture: Option<&str>,
+    envelope: &Value,
+    selecting: &Value,
+    withheld: &[CheckedArtifactRef],
+    document_override: Option<&[u8]>,
+) -> CheckedPackageEvidence {
     let mut evidence = CheckedPackageEvidence::new();
     supply_fspec_extension_definitions(&mut evidence, selecting, withheld);
     for feature in envelope["lock"]["required_features"].as_array().unwrap() {
         evidence.support_feature(feature.as_str().unwrap());
     }
     supply_fspec_dependency_packages(&mut evidence, envelope);
-    let Some((identity, document)) = fixture.and_then(selected_domain_document) else {
+    let Some((identity, selected_document)) = fixture.and_then(selected_domain_document) else {
         return evidence;
     };
     let selects_document = envelope["semantic_graph"]["nodes"]
@@ -1185,8 +1219,17 @@ fn fixture_evidence(
                 && node["owner"]["identity"].as_str() == Some(&*identity)
         });
     if selects_document {
+        let document = document_override.unwrap_or(&selected_document);
+        if let Some(override_bytes) = document_override {
+            let overridden: Value = serde_json::from_slice(override_bytes)
+                .expect("a selected-document patch remains JSON");
+            assert_eq!(
+                overridden["package"]["identity"], identity,
+                "a document patch retains the selected package identity"
+            );
+        }
         evidence
-            .insert_domain_package_document(identity, document)
+            .insert_domain_package_document(identity, document.to_vec())
             .expect("unique domain document");
     }
     evidence
@@ -2781,7 +2824,9 @@ fn assert_family_guard_refuses_missing_binders_or_constraints(
 /// timed-model join; `CL-54` is the same reset whose frame stays on the
 /// first model, refused `invalid_model_binding` in the state step first.
 /// `CL-57` and `CL-59` admit typed guard/invariant binders; `CL-58`, `CL-60`
-/// and `CL-62` refuse typed binder violations.
+/// and `CL-62` refuse typed binder violations. `CL-63` refuses an unknown
+/// family quantifier; `CL-65` and `CL-66` project and write the family guard
+/// quantifiers after applying their selected-document patches.
 #[trace("TC-685", "FR-230-AC-34")]
 #[trace("FSpec-FR-322-AC-261", "FSpec-FR-322-AC-262", "FSpec-FR-322-AC-263")]
 #[trace("FSpec-FR-322-AC-295", "FSpec-TC-367")]
@@ -2801,7 +2846,24 @@ fn conformance_timed_clause_vectors_keep_their_published_outcomes() {
         if let Some(patch) = case.get("patch") {
             apply_json_patch(&mut package, patch);
         }
-        let (_, outcome) = read_fixture_wire(fixture, &package);
+        let document_patch = case.get("document_patch").and_then(Value::as_array);
+        let (_, outcome) = match document_patch {
+            Some(patch) => {
+                let (document_identity, selected_bytes) = selected_domain_document(fixture)
+                    .unwrap_or_else(|| panic!("{id}: selected document exists"));
+                let mut selected_document: Value = serde_json::from_slice(&selected_bytes)
+                    .expect("selected domain document is JSON");
+                apply_json_patch(&mut selected_document, &Value::Array(patch.clone()));
+                assert_eq!(
+                    selected_document["package"]["identity"], document_identity,
+                    "{id}: document patch retains selected identity"
+                );
+                let patched_bytes = serde_json::to_vec(&selected_document)
+                    .expect("patched selected document serializes");
+                read_fixture_wire_with_document_patch(fixture, &package, &patched_bytes)
+            }
+            None => read_fixture_wire(fixture, &package),
+        };
         let locus = case["locus"].as_str().unwrap_or_default();
         if case["schema"] == "invalid" && case.get("expected").is_none() {
             let Read::Refused(V2ReadRefusal::Envelope { refusal, locus }) = &outcome else {
