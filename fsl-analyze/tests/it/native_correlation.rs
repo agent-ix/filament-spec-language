@@ -735,6 +735,62 @@ fn ra_correlation_inside_parallel_matches_source() {
     weak_correlation_parity::<Ra>("ra", true);
 }
 
+#[trace("FR-731-AC-1", "FR-902-AC-3", "FSpec-FR-741-AC-3")]
+#[test]
+fn tso_event_correlation_only_field_read_records_relaxed_access() {
+    let fixture = Fixture::with_prelude(
+        "capture saved: Reference<M::Cell> = k;",
+        "",
+        "parallel Background memory tso {
+            branch idle sequence Idle {
+                event Seen by w as (seen: Boolean)
+                    related by Owns ((if k.v = 0 then k else saved), k) { seen };
+            }
+            branch other sequence Other {
+                attempt Store by w on M::Cell::flag contracts [FlagPost]
+                    as (worked: Boolean) { worked };
+            }
+        } join all [idle, other];",
+        true,
+        "post FlagPost using v on M::Cell::flag { self.v = 1 }\n",
+        filament_semantic_value::checking::CheckMode::Linked,
+    );
+    let subject = fixture.subject();
+    let source = ProtocolSystem::new(
+        ModelSystem::new(subject.model.simulation.clone()).expect("source model"),
+        &subject,
+        Tso::default(),
+    )
+    .expect("source weak event correlation");
+    let workers = std::num::NonZeroUsize::new(1).expect("one worker");
+    let graph = fill::reachable_with_workers(&source, workers).0;
+    let events: Vec<_> = graph
+        .iter()
+        .flat_map(|state| &state.steps)
+        .filter(|(step, _)| step.kind() == StepKind::Event)
+        .collect();
+    assert!(!events.is_empty(), "Source executes the correlated event");
+    assert!(has_weak_store(&graph), "the sibling executes its store");
+    for (event, _) in events {
+        assert!(
+            event.accesses().iter().any(|access| access.reads
+                && !access.writes
+                && access.ordering == Some(fsl_semantics::check::AccessOrdering::Relaxed)),
+            "a correlation-only field read must execute as a relaxed load: {event:?}"
+        );
+    }
+}
+
+fn has_weak_store(graph: &[Reached<Tso>]) -> bool {
+    graph
+        .iter()
+        .flat_map(|state| &state.steps)
+        .any(|(step, _)| {
+            step.kind() == StepKind::Attempt
+                && step.node().is_some_and(|node| node.ends_with("/Store"))
+        })
+}
+
 #[trace("FR-940-AC-6", "FR-731-AC-1")]
 #[test]
 fn weak_package_profile_refuses_correlation_outside_parallel_and_sc_override_executes() {
