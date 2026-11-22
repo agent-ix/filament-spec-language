@@ -648,6 +648,8 @@ fn a_finite_first_closed_refutation_precedes_later_sibling_budget_work() {
     assert_eq!(ample.kind, fsl_replay::HyperCounterexampleKind::Closed);
     assert_eq!(ample.traces.len(), 2);
     assert!(ample.traces.iter().all(|trace| trace.steps.len() == 1));
+    assert_eq!(crate::hyper::inputs(&ample, 0), vec![0]);
+    assert_eq!(crate::hyper::inputs(&ample, 1), vec![1]);
     assert!(matches!(
         world.replay(&ample),
         Ok(ModelTraceSettlement::Reproduced { .. })
@@ -678,6 +680,83 @@ fn a_finite_first_closed_refutation_precedes_later_sibling_budget_work() {
         "the first tuple holds and a second move is still required: {short:?}"
     );
     assert_eq!(short.stats().product_edges, 1);
+}
+
+/// The selected route streams the least actual copy-orbit member, rather
+/// than waiting for every concrete image to finish or relabeling a prefix.
+#[trace("TC-3011", "FR-174-AC-7", "FR-173-AC-6", "FR-184")]
+#[test]
+fn a_finite_selected_closed_refutation_precedes_later_orbit_budget_work() {
+    let world = World::new(
+        SECURE_CONSTRAINED,
+        false,
+        &[(0, 0)],
+        "hyper Bounded using ep over behaviours (v: V::Vault) \
+         forall trace a of V forall trace b of V \
+         { always [0, 1] holds(v.l @ a = 0 and v.l @ b = 0) }",
+    );
+    let run = |bound| {
+        let mut limits = ModelCheckLimits::default();
+        limits.limits.max_transitions = bound;
+        finite_with_limits(
+            &world,
+            with_constraint(Reductions::default(), "Low"),
+            limits,
+            crate::counter::UNLIMITED,
+            &Cancel::new(),
+        )
+    };
+    let ample = refuted(run(100));
+    let bounded = refuted(run(2));
+    assert_eq!(bounded, ample);
+    assert_eq!(crate::hyper::inputs(&bounded, 0), vec![0]);
+    assert_eq!(crate::hyper::inputs(&bounded, 1), vec![1]);
+    assert!(matches!(
+        world.replay(&bounded),
+        Ok(ModelTraceSettlement::Reproduced { .. })
+    ));
+    let short = run(1);
+    assert!(
+        matches!(
+            short,
+            HyperOutcome::Stopped {
+                limit: Some(fsl_replay::ReachedLimit {
+                    limit: fsl_replay::ModelCheckLimit::MaxTransitions,
+                    value: 1
+                }),
+                ..
+            }
+        ),
+        "{short:?}"
+    );
+}
+
+/// Joint-depth DFS would visit a's second step(1) before b's first step(1).
+/// The ordinary order instead finishes a's whole first path before varying b.
+#[trace("TC-3011", "FR-173-AC-6")]
+#[test]
+fn a_finite_stream_keeps_component_cartesian_order_across_joint_depths() {
+    let world = World::new(
+        SECURE_CONSTRAINED,
+        false,
+        &[(0, 0)],
+        "hyper Bounded using ep over behaviours (v: V::Vault) \
+         forall trace a of V forall trace b of V \
+         { always [0, 2] holds(v.l @ a = 0) and always [0, 1] holds(v.l @ b = 0) }",
+    );
+    let counterexample = refuted(finite_with_limits(
+        &world,
+        Reductions::default(),
+        ModelCheckLimits::default(),
+        crate::counter::UNLIMITED,
+        &Cancel::new(),
+    ));
+    assert_eq!(crate::hyper::inputs(&counterexample, 0), vec![0, 0]);
+    assert_eq!(crate::hyper::inputs(&counterexample, 1), vec![1, 0]);
+    assert!(matches!(
+        world.replay(&counterexample),
+        Ok(ModelTraceSettlement::Reproduced { .. })
+    ));
 }
 
 /// An excluded initial state contributes a boundary, without expanding its
