@@ -1439,7 +1439,6 @@ fn reached_on_each_tp3_monitor_states_resolve_to_fr338_keys() {
 /// encodes a key the protocol-context reader admits as in normal form.
 #[trace("TC-525", "FR-338-AC-31")]
 #[test]
-#[ignore = "QSL-2751 remainder, owner parser PR3428: finite positive-lower Shift projection; the protocol key for eventually[1,2] does not resolve to a normal-form key yet"]
 fn reached_protocol_tp3_monitor_states_resolve_to_normal_form_keys() {
     for (activation, body) in [
         ("on origin", "holds(p) implies eventually[0,2] holds(q)"),

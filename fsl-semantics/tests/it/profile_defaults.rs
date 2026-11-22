@@ -54,7 +54,6 @@ fn a_unit_with_no_profile_checks() {
 /// in a profile-less unit exactly as in a unit selecting only the value layer.
 #[trace("FSpec-TC-1001", "FSpec-FR-500-AC-3")]
 #[test]
-#[ignore = "QSL-2161 completed; current blocker has no assigned owner: the profile-less unit is refused with a Temporal TimedFacetRequired (Clock) cause, not the layer refusal the value layer gives"]
 fn a_profile_less_unit_refuses_another_layer_s_form_as_the_value_layer_does() {
     let body = "function f(c: Clock): Boolean pure { true }";
     let bare = outcome("", body).expect_err("refused");

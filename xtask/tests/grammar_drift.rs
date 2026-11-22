@@ -61,7 +61,6 @@ fn parser_productions() -> BTreeSet<String> {
 /// `ObjectDeclaration`, is the one allow-listed name.
 #[trace("FSpec-FR-610-AC-1", "FSpec-TC-1440", "FR-569-AC-1", "TC-1408")]
 #[test]
-#[ignore = "QSL-2107: the grammar drift gate maps the standard's object productions; not implemented yet"]
 fn the_object_declaration_productions_are_mapped() {
     const MAPPED: [(&str, &str); 9] = [
         ("object-decl", "ObjectDeclaration"),
@@ -200,7 +199,6 @@ fn disagreements(
 /// matched or allow-listed with a reason.
 #[trace("TC-1500", "FR-600-AC-1", "FSpec-TC-1010", "FSpec-FR-503-AC-1")]
 #[test]
-#[ignore = "QSL-2107: the two production inventories do not yet correspond; not implemented yet"]
 fn every_standard_and_parser_production_is_matched_or_allow_listed() {
     let found = disagreements(
         &shared_grammar_productions(),
@@ -216,7 +214,6 @@ fn every_standard_and_parser_production_is_matched_or_allow_listed() {
 /// stale entry each fail naming the production and its side.
 #[trace("TC-1500", "FR-600-AC-2")]
 #[test]
-#[ignore = "QSL-2107: the drift gate does not yet detect each disagreement; not implemented yet"]
 fn drift_and_stale_entries_are_reported_by_name() {
     let mut standard = shared_grammar_productions();
     let parser = parser_productions();
@@ -251,7 +248,6 @@ fn drift_and_stale_entries_are_reported_by_name() {
 /// which publishes it, and a path it does not publish yields nothing.
 #[trace("TC-1500", "FR-600-AC-3")]
 #[test]
-#[ignore = "QSL-2107: the drift gate does not yet read the shared grammar through the pinned standard crate; not implemented yet"]
 fn the_shared_grammar_is_read_through_the_pinned_standard_crate() {
     assert!(published_file(SHARED_GRAMMAR).is_some_and(|text| text.contains("```ebnf")));
     assert!(published_file("proposals/filament-v1/no-such-grammar.md").is_none());
@@ -267,7 +263,6 @@ fn the_shared_grammar_is_read_through_the_pinned_standard_crate() {
     "FSpec-FR-502-AC-4"
 )]
 #[test]
-#[ignore = "QSL-2107: the drift gate does not yet map the population bound, quantified clock bound, delivery interval and protocol requirement; not implemented yet"]
 fn the_language_forms_recorded_in_the_standard_are_mapped() {
     let standard = shared_grammar_productions();
     let parser = parser_productions();
@@ -293,7 +288,6 @@ fn the_language_forms_recorded_in_the_standard_are_mapped() {
 /// name is defined or is a lexical terminal.
 #[trace("FSpec-TC-1010", "FSpec-FR-503-AC-1", "FSpec-FR-503-AC-2")]
 #[test]
-#[ignore = "QSL-2107: the shared grammar is not yet read through the pinned standard crate and checked for closure; not implemented yet"]
 fn every_name_the_shared_grammar_uses_is_defined() {
     const TERMINALS: [&str; 5] = ["ident", "member-name", "string", "uint", "EOF"];
     let text = published_file(SHARED_GRAMMAR).expect("published");
