@@ -7548,6 +7548,8 @@ fn emit_package_inner(
         &mut nodes,
         &mut source_map,
     )?;
+    let value_validity_records =
+        value_validity_requirements::append(ids, graph, &mut nodes, &mut source_map)?;
     let (mut profile_selections, mut laws) = split_laws(&order);
     for refinement in emitted_refinements {
         let selection = CheckedSelection {
@@ -7737,7 +7739,18 @@ fn emit_package_inner(
         source_object_rows(graph, &emitted_node_ids)?;
     let selected_source_operation_rows = source_operation_rows(graph, &emitted_node_ids)?;
     let selected_source_tuple_rows = source_tuple_rows(graph, &emitted_node_ids)?;
-    let requirement_rows = model_relation_requirements::rows(graph, &emitted_node_ids)?;
+    let mut requirement_rows = model_relation_requirements::rows(graph, &emitted_node_ids)?;
+    requirement_rows.extend(value_validity_requirements::rows(
+        graph,
+        &emitted_node_ids,
+        &value_validity_records,
+    )?);
+    let requirement_keys: HashMap<_, _> =
+        emitted_node_ids.iter().map(|(key, id)| (id, key)).collect();
+    requirement_rows.sort_by(|left, right| {
+        (requirement_keys.get(&left.claim), &left.occurrence)
+            .cmp(&(requirement_keys.get(&right.claim), &right.occurrence))
+    });
     let selected_source_collection_rows = source_collection_rows(graph, &emitted_node_ids)?;
     let operation_effects = graph
         .operation_effects()
@@ -10303,6 +10316,7 @@ fn own_evidence(lock: &CheckedPackageLockV2) -> CheckedPackageEvidence {
 mod model_relation_requirements;
 mod probabilistic;
 mod selected_rows;
+mod value_validity_requirements;
 
 #[cfg(test)]
 pub(crate) mod tests;

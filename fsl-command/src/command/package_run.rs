@@ -1038,26 +1038,6 @@ fn execute_inner(
             return Ok(result);
         }
     };
-    let settled = if let Some(requirements) = &requirements {
-        let settle = settle.ok_or_else(|| {
-            invalid(
-                "call.requirements",
-                "prepared requirement settlement needs the run registry",
-            )
-        })?;
-        Some(settle_value_call(
-            &bare,
-            &package_bytes,
-            &dependencies,
-            &identities,
-            &packages,
-            &call.function,
-            requirements,
-            settle,
-        )?)
-    } else {
-        None
-    };
     let (objects, snapshot_views) = if let Some(snapshot) = &call.snapshot {
         let provision = std::collections::BTreeMap::from([(
             snapshot.observation.reference.clone(),
@@ -1201,6 +1181,26 @@ fn execute_inner(
     let outcome = called
         .outcome
         .map_err(|refusal| RunCause::SpineRun(Box::new(*refusal)))?;
+    let settled = if let Some(requirements) = &requirements {
+        let settle = settle.ok_or_else(|| {
+            invalid(
+                "call.requirements",
+                "prepared requirement settlement needs the run registry",
+            )
+        })?;
+        Some(settle_value_call(
+            &bare,
+            &package_bytes,
+            &dependencies,
+            &identities,
+            &packages,
+            &call.function,
+            requirements,
+            settle,
+        )?)
+    } else {
+        None
+    };
     let mut result = output::spine_run_result_for_package_with_items(
         &selection,
         &call.function,
@@ -1223,6 +1223,11 @@ fn settle_value_call(
 ) -> Result<fsl_analyze::analyze::document::SettledRun> {
     use fsl_analyze::analyze::document::{CallItem, ItemSelection, PackageRun, SubjectSelection};
     use fsl_package::AnalysisView;
+    let graph = fsl_analyze::analyze::DocumentGraphs::of_bytes(bytes)
+        .map_err(|_| RunCause::AnalyzeFault)?;
+    let resolved = super::settle::resolve_held_claims_in(&graph, requirements)?;
+    let original = requirements;
+    let requirements = resolved.as_ref();
     let declarations = bare.declared_names();
     let owners = declarations
         .iter()
@@ -1272,13 +1277,13 @@ fn settle_value_call(
         });
         claims.push(wire);
     }
-    if let Some(entry) = requirements
+    if let Some(position) = requirements
         .items
         .iter()
-        .find(|entry| !claims.contains(&entry.claim))
+        .position(|entry| !claims.contains(&entry.claim))
     {
         return Err(RunCause::UnknownRequirementClaim {
-            claim: entry.claim.clone(),
+            claim: original.items[position].claim.clone(),
         });
     }
     let documents = fsl_semantics::model::observation::DocumentProvision::new();

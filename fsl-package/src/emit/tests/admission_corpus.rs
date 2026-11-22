@@ -815,6 +815,7 @@ fn rows() -> Vec<Row> {
         row(K::Claim(ClaimForm::StateGraph), F::StateGraphClaim),
         row(K::Claim(ClaimForm::StepRelation), F::StepRelation),
         row(K::Claim(ClaimForm::Schedulability), F::Schedulability),
+        row(K::Claim(ClaimForm::ValueValidity), F::Tc416Functions),
         row(K::Temporal(TemporalForm::Terminal), F::Terminal),
         row(K::Hybrid(HybridForm::Model), F::Hybrid),
         row(K::Hybrid(HybridForm::Mode), F::Hybrid),
@@ -846,10 +847,6 @@ const NOT_EMITTED_BY_QSL: &[(CheckedNodeKind, &str)] = {
         (
             K::Expression(ExpressionForm::PlaceReference),
             "FSL lowers no place-reference expression node",
-        ),
-        (
-            K::Claim(ClaimForm::ValueValidity),
-            "FSL lowers no value-validity claim node",
         ),
         (
             K::ScalarType(ScalarTypeForm::BoundedQuantity),

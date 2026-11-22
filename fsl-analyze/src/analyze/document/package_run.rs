@@ -1581,6 +1581,79 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 node: None,
             })
         };
+        let functions = self
+            .package
+            .package()
+            .resolved_graph()
+            .nodes
+            .iter()
+            .filter(|node| {
+                node.node_tag.as_ref() == "function"
+                    && node.semantic_form.as_ref() == "pure_function"
+                    && node.declaration.as_ref().is_some_and(|declared| {
+                        declared.qualified_name.len() == 1
+                            && declared.qualified_name[0].as_ref() == name
+                    })
+            })
+            .collect::<Vec<_>>();
+        let [function] = functions.as_slice() else {
+            return Err(pending());
+        };
+        let inapplicable = || {
+            let declarations = function
+                .occurrences
+                .iter()
+                .filter(|occurrence| {
+                    occurrence.role == filament_contract_model::CheckedOccurrenceRole::Declaration
+                })
+                .collect::<Vec<_>>();
+            let [occurrence] = declarations.as_slice() else {
+                return Err(pending());
+            };
+            let claim = OccurrenceKey::new(
+                self.package
+                    .node_key(&function.node_id)
+                    .ok_or_else(pending)?,
+                filament_exact::Origin::new(
+                    filament_exact::Role::new("declaration"),
+                    occurrence.ordinal,
+                ),
+            );
+            let kind = Capability::ValueValidity;
+            let named = selection.backend.as_deref().map(BackendId::new);
+            let candidates = tie(
+                self.registry.candidates(kind, named.as_ref()),
+                kind,
+                named.as_ref(),
+            );
+            Ok(Resolution::Claim(
+                Box::new(ResolvedClaim {
+                    item: ClaimItem {
+                        request_index: index,
+                        claim,
+                        kind,
+                        extent: ExtentClassification::Bounded,
+                        backend: named,
+                        candidates: candidate_list(&candidates),
+                        options: options(selection, selection.options.clone().unwrap_or_default()),
+                        form: None,
+                    },
+                    claim_name: name.to_owned(),
+                    candidates,
+                    subject: self.own_subject(index, selection)?,
+                    unrouted: selection.unrouted(),
+                }),
+                None,
+            ))
+        };
+        if selected_claim.is_none()
+            && self.package.package().node_kind(&function.semantic_type)
+                != Some(filament_contract_model::CheckedNodeKind::ScalarType(
+                    filament_contract_model::ScalarTypeForm::Boolean,
+                ))
+        {
+            return inapplicable();
+        }
         let body = self
             .package
             .function_body(name)
@@ -1603,59 +1676,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             Err(fsl_replay::value_check::PackageSelection::Selection(
                 fsl_replay::value_check::Selection::NoForm,
             )) if selected_claim.is_none() => {
-                let declared = self.package.declared_names();
-                let owners = declared
-                    .iter()
-                    .filter(|(declared, _)| declared == name)
-                    .collect::<Vec<_>>();
-                let [(_, owner)] = owners.as_slice() else {
-                    return Err(pending());
-                };
-                let node = self
-                    .package
-                    .package()
-                    .resolved_graph()
-                    .nodes
-                    .iter()
-                    .find(|node| &node.node_id == *owner)
-                    .ok_or_else(pending)?;
-                let occurrence = node.occurrences.first().ok_or_else(pending)?;
-                let claim = OccurrenceKey::new(
-                    self.package.node_key(owner).ok_or_else(pending)?,
-                    filament_exact::Origin::new(
-                        filament_exact::Role::new("declaration"),
-                        occurrence.ordinal,
-                    ),
-                );
-                let kind = Capability::ValueValidity;
-                let named = selection.backend.as_deref().map(BackendId::new);
-                let candidates = tie(
-                    self.registry.candidates(kind, named.as_ref()),
-                    kind,
-                    named.as_ref(),
-                );
-                return Ok(Resolution::Claim(
-                    Box::new(ResolvedClaim {
-                        item: ClaimItem {
-                            request_index: index,
-                            claim,
-                            kind,
-                            extent: ExtentClassification::Bounded,
-                            backend: named,
-                            candidates: candidate_list(&candidates),
-                            options: options(
-                                selection,
-                                selection.options.clone().unwrap_or_default(),
-                            ),
-                            form: None,
-                        },
-                        claim_name: name.to_owned(),
-                        candidates,
-                        subject: self.own_subject(index, selection)?,
-                        unrouted: selection.unrouted(),
-                    }),
-                    None,
-                ));
+                return inapplicable();
             }
             Err(refusal) => {
                 return Err(PackageRunError::Pending(PendingPackageFamily {

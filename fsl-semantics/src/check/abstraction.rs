@@ -972,6 +972,34 @@ impl CheckedGraph {
         })();
         Some(resolved.map(|()| elements))
     }
+
+    /// The checked model nodes of the static object types recorded by an item.
+    /// These are the recorded references, without re-walking its expression.
+    pub fn item_object_nodes(
+        &self,
+        item: &OccurrenceKey,
+    ) -> Option<Result<Vec<filament_exact::NodeKey>, InternalFault>> {
+        let references = self.requirements.get(item)?.references();
+        Some(
+            references
+                .objects
+                .iter()
+                .map(|identity| {
+                    self.object_types
+                        .iter()
+                        .find_map(|(declaration, known)| (known == identity).then_some(declaration))
+                        .and_then(|declaration| self.object_nodes.get(declaration))
+                        .cloned()
+                        .ok_or_else(|| {
+                            InternalFault::new(
+                                "check.item-elements",
+                                "referenced-object-has-a-model-node",
+                            )
+                        })
+                })
+                .collect(),
+        )
+    }
 }
 
 /// The nodes the emitter writes for a checked relation (FSpec FR-451,
