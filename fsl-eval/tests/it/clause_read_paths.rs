@@ -234,6 +234,8 @@ fn a_selection_on_a_navigation_is_located_at_the_referenced_object() {
         pre: None,
         post: None,
         self_object: p1,
+        self_population: None,
+        value_origins: Default::default(),
         invocation: None,
         self_kind: SelfKind::Object,
         receiver_pre: None,

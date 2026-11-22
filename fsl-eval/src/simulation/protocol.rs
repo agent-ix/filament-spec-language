@@ -3020,8 +3020,8 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         self.package_supplied_binders(binders, observation, slot)
     }
 
-    /// Admit values from either a live protocol frame or a FIFO key's own
-    /// payload binder through the same reference-population provenance.
+    /// Package live-frame and FIFO payload values without inferring their
+    /// reference origins from population membership.
     fn package_supplied_binders<'b>(
         &self,
         binders: impl IntoIterator<Item = (&'b fsl_package::CheckedNodeId, Option<Value>)>,
@@ -3036,8 +3036,7 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
         )>,
         ExpansionStop,
     > {
-        let filament_semantic_value::admission::ObservationAdmission::Admitted(observation) =
-            observation
+        let filament_semantic_value::admission::ObservationAdmission::Admitted(_) = observation
         else {
             return Err(broken());
         };
@@ -3056,46 +3055,9 @@ impl<'a, M: MemoryModel> ProtocolSystem<'a, M> {
                     .is_some_and(|key| required.contains(&key))
             })
             .map(|(binder, value)| {
-                let mut references = Vec::new();
-                let value = match value {
-                    Some(value) => {
-                        for (path, reference) in crate::value::reference_occurrences(
-                            &value,
-                            subject.model.simulation.input.types,
-                        )
-                        .map_err(|_| broken())?
-                        {
-                            let environment = observation.environment();
-                            let population = if binder == &package.over {
-                                fsl_semantics::model::key::population_node_key(
-                                    &subject.over.population,
-                                )
-                                .map_err(|_| broken())?
-                            } else {
-                                environment
-                                    .population_completeness()
-                                    .keys()
-                                    .find(|population| {
-                                        environment
-                                            .population_members(population)
-                                            .is_some_and(|members| members.contains(&reference))
-                                    })
-                                    .and_then(|population| environment.population_node(population))
-                                    .cloned()
-                                    .ok_or_else(broken)?
-                            };
-                            references.push(crate::value::ProtocolReferenceOccurrence {
-                                path,
-                                population,
-                            });
-                        }
-                        crate::value::SuppliedValue::Value(value)
-                    }
-                    None => crate::value::SuppliedValue::Unavailable(BROKEN),
-                };
                 Ok((
                     binder.clone(),
-                    crate::value::ProtocolSuppliedValue { value, references },
+                    package_binder_value(value, binder, &package.over, &subject.over)?,
                 ))
             })
             .collect()
@@ -3429,6 +3391,30 @@ impl<M: MemoryModel> ProtocolSystem<'_, M> {
     }
 }
 
+/// Only the subject's declared over binder has a known population origin.
+/// Generated payloads and references nested inside values have no such
+/// origin, even when the same object belongs to an observed population.
+fn package_binder_value(
+    value: Option<Value>,
+    binder: &fsl_package::CheckedNodeId,
+    over_binder: &fsl_package::CheckedNodeId,
+    over: &ModelInstance,
+) -> Result<crate::value::ProtocolSuppliedValue, ExpansionStop> {
+    let mut references = Vec::new();
+    if binder == over_binder && matches!(&value, Some(Value::Reference(_))) {
+        references.push(crate::value::ProtocolReferenceOccurrence {
+            path: Vec::new(),
+            population: fsl_semantics::model::key::population_node_key(&over.population)
+                .map_err(|_| broken())?,
+        });
+    }
+    let value = match value {
+        Some(value) => crate::value::SuppliedValue::Value(value),
+        None => crate::value::SuppliedValue::Unavailable(BROKEN),
+    };
+    Ok(crate::value::ProtocolSuppliedValue { value, references })
+}
+
 /// The identity limits exploration encodes under.
 fn identity_limits() -> fsl_foundation::IdentityLimits {
     fsl_foundation::IdentityLimits::default()
@@ -3448,6 +3434,58 @@ mod tests {
     use quire_canonical::Limits;
 
     use super::*;
+
+    /// Trace: FR-230, FR-390
+    #[test]
+    fn generated_reference_binders_do_not_acquire_the_over_population() {
+        let over_binder = fsl_package::checked_node_id_of(&crate::test_ids::node_key(b"over"));
+        let payload_binder =
+            fsl_package::checked_node_id_of(&crate::test_ids::node_key(b"payload"));
+        let reference = ObjectReference::new(
+            crate::test_ids::universe_id(b"shared"),
+            crate::test_ids::effective_id(b"Call"),
+            filament_exact::ObjectId::new("call-1").expect("object key"),
+        );
+        let over = ModelInstance {
+            population: filament_checked::key::DeclarationKey {
+                package: "fixture".to_owned(),
+                node: "calls".to_owned(),
+            },
+            key: "call-1".to_owned(),
+        };
+        let root = Value::Reference(reference.clone());
+        let declared = package_binder_value(Some(root.clone()), &over_binder, &over_binder, &over)
+            .expect("declared over packages");
+        assert_eq!(declared.references.len(), 1);
+        assert!(declared.references[0].path.is_empty());
+        assert_eq!(
+            declared.references[0].population,
+            fsl_semantics::model::key::population_node_key(&over.population)
+                .expect("population identity")
+        );
+        // The identical reference under a different binder is still ordinary
+        // data; equal type, universe and key confer no population authority.
+        let generated = package_binder_value(Some(root), &payload_binder, &over_binder, &over)
+            .expect("generated reference remains packageable");
+        assert!(generated.references.is_empty());
+        let crate::value::SuppliedValue::Value(Value::Reference(actual)) = generated.value else {
+            panic!("the generated reference must remain available")
+        };
+        assert_eq!(actual, reference);
+
+        let nested = filament_exact::OptionValue::present(
+            ValueType::Reference(reference.object_type().clone()),
+            Value::Reference(reference.clone()),
+        )
+        .expect("typed option");
+        let packaged = package_binder_value(Some(nested), &over_binder, &over_binder, &over)
+            .expect("nested reference remains packageable");
+        assert!(packaged.references.is_empty());
+        let crate::value::SuppliedValue::Value(Value::Option(actual)) = packaged.value else {
+            panic!("the nested reference must remain available")
+        };
+        assert!(matches!(actual.payload(), Some(Value::Reference(held)) if *held == reference));
+    }
 
     /// The envelope's directly written result, bytes or refusal, against
     /// `quire_canonical::to_vec` of the same envelope.

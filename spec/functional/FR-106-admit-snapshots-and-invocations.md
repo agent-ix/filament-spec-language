@@ -3,6 +3,16 @@ id: FR-106
 title: "Read and admit state snapshots and invocations as the spine clause-execution input"
 type: FR
 relationships:
+  - target: ix://agent-ix/filament-spec-language/FR-230
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-1040
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-995
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-850
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-940
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/US-003
     type: implements
   - target: ix://agent-ix/filament-spec-language/ADR-012
@@ -401,6 +411,22 @@ reference as data, without resolving it as an object or population member.
 The same rule applies inside `Option` and `Sequence` values, retaining their
 presence and element order. No additional snapshot value form is introduced.
 
+The full reference SHALL retain the authenticated outer K2 owner universe
+as validation context and bind the original population declaration scope
+and URI, the owner's local key, and FR-230's declared type/model scope,
+canonical typed declared path and tagged selector indices. A root-type
+`UniverseId` is not a population identity; populations of the same type
+remain distinct through their original population descriptors, without
+serializing a raw universe node key in the place id. FSL SHALL use the same
+`place/v2` identity of FR-230 "Place identity" and declared-place table for
+source and bare checked routes.
+Admission SHALL NOT substitute an S3 allocation key or S4 node id for that
+identity: removing `x` while retaining `y` makes an old `x` reference
+undeclared even if `y` reuses its allocation position. Each route SHALL
+refuse distinct declared places that collide within one model scope as
+`conflicting_declaration`/`duplicate-declaration`, naming both declaration
+origins and producing no partial place table or admitted observation.
+
 > Implementation boundary (QSL-2178 STEP1): the admission requirement above
 > and AC-72/AC-73 remain unmet. Source and Bare raw snapshot, context,
 > parameter and record-sample admission refuse external Clock references as
@@ -413,6 +439,62 @@ presence and element order. No additional snapshot value form is introduced.
 > transported from another model or run. Route-neutral identity is deferred
 > to STEP2, including map-keyed Clock-reference identities, which remain
 > unsupported. This note does not relax the required admission behavior.
+
+> STEP2 targets also include AC-76/AC-77, FR-1040-AC-9 and FR-230's
+> route-neutral identity criteria. They remain unmet until implementation
+> and acceptance proof; the STEP1 boundary above remains in force.
+
+> Current STEP2 implementation boundary: the shared object closure cannot
+> retain two explicitly listed populations of the same declared type with
+> the same local object key as distinct occurrences. Admission refuses this
+> overlap at the second population binding as
+> `unknown_required_feature`/`unsupported-feature`, naming
+> `population-qualified-object-identity`, both populations and the key.
+> One population and populations with distinct keys remain supported. This
+> partial boundary leaves the same-key population identity criteria unmet;
+> map-keyed clock identities also remain unsupported.
+> Clock-reference domain enumeration is also deferred: model construction
+> refuses `unknown_required_feature`/`unsupported-feature`, naming
+> `clock-reference-enumeration`, before reward or frame probing. Ordinary
+> native-Clock timed simulation retains its existing bounds and selectors.
+> An unseeded refinement-row receiver supplies no population authority and
+> is not a v2 Clock-reference producer; seeded clause and protocol inputs
+> remain the supported authority seams.
+> Source-owned Bare raw object materialization also remains outside this
+> implementation: it refuses the existing typed
+> `unknown_required_feature`/`unsupported-feature`, naming
+> `missing-type-representation`. Model-owned raw admission and the static
+> SourceOwner declaration-path comparison do not establish that missing
+> materialization capability. QSL-2178 retains this named remainder.
+
+> The current foundation does not admit transported Clock DATA on either
+> route. Source raw-value admission refuses
+> `unknown_required_feature`/`unsupported-feature`, naming
+> `missing-route-neutral-place-identity`, before decoding a place ID and
+> retaining the actual document and nested value locus. Bare may refuse
+> earlier with `missing-type-representation`; it does not claim the same
+> admission stage or field locus. This boundary covers raw scalar, present
+> optional and sequence Clock-reference values, not ordinary references or
+> native-Clock timed simulation. The five end-to-end acceptance tests retain
+> their original oracles as explicitly ignored QSL-2178 debt. Stored `self.r`
+> refinement evaluation, raw round-trip, removed-`x` rejection, scope checks
+> and alias-table snapshot admission remain unproved and unmet. Codec,
+> declaration-table, provenance, generated-reference and static readback
+> controls do not establish these end-to-end criteria. QSL-2178 stays open.
+>
+> The Clock route and declaration-table criteria reviewed as AC-74/AC-75
+> are now AC-76/AC-77. The relationship criteria on the repaired main branch
+> retain AC-74/AC-75 and their existing text; the Clock wording is unchanged.
+>
+> Reference-origin metadata is a flat parent-linked typed-prefix arena
+> populated by the existing admission walk, with at most one entry per
+> visited path step and one population fact per reference occurrence.
+> Ancestors are shared across sibling references, so retained metadata is
+> linear in admitted input bytes rather than reference-count times depth.
+> Stable-child selection uses the flat typed edge index with logarithmic
+> lookup and no separate evaluation charge; reconstructing a diagnostic
+> path walks only that selected path's actual depth. Typed supplied paths
+> are consumed once into the same backing, and frames share it immutably.
 
 A set, bag or ordered-set value is the native spelling of FSpec FR-181's
 `set`, `bag` and `ordered-set` forms, with FSpec FR-144's "Supplied
@@ -1373,8 +1455,15 @@ completeness.
 | FR-106-AC-73 | Over [TC-464](../test-cases/TC-464-snapshots-and-invocations-admit.md) step 8's model variant without `x`, storing the formerly declared `c1.x` identity in `r`, in the present value of `maybe`, or at element 0 of `refs` refuses `dangling_reference`/`absent-target-in-complete-population`, naming the snapshot, owner population `calls`, object `c1`, the affected field and nested value path, and that undeclared target identity, with no admitted observation or truth value. A target's clock-reference static type or native Clock target alone does not make it declared. | Test (TC-464) |
 | FR-106-AC-74 | A relationship instance with producer-supplied identity bytes written in lowercase hex preserves the exact decoded bytes as `RelationshipIdentity`; ordinary snapshot admission accepts an instance without `identity`, but a `call.relationships` selection that reads the instance as a candidate (its entry is mapped by `relationship_identities`) with an absent, empty, non-string, uppercase, odd-length or invalid lowercase-hex identity refuses `invalid-request` at that instance's `identity` path after snapshot read and before resolver evaluation. | Test (`tests/it/native_run_relationships.rs::relationship_identity_is_optional_without_correlation`, `tests/it/native_run_relationships.rs::snapshot_relationship_identity_round_trips_exact_bytes`, `tests/it/native_run_relationships.rs::invalid_relationship_identity_refuses_after_snapshot_read`) |
 | FR-106-AC-75 | A relationship declaration absent from the selected package refuses `invalid-request` at its exact snapshot reference path after read and before resolver evaluation when `call.relationships` is selected; with no correlation selection the same reference keeps `invalid_runtime_input`/`wrong-role-mapping`. | Test (`tests/it/native_run_relationships.rs::unknown_relationship_type_in_correlation_is_invalid_request_after_snapshot_read`, `tests/it/native_run_relationships.rs::unknown_relationship_type_without_correlation_keeps_wrong_role_mapping`) |
+| FR-106-AC-76 | On source and bare checked routes, TC-464 steps 7 and 8 use the same authenticated declarations and actual evaluated references. Raw scalar, present optional and sequence values retain equal full canonical references across routes, including their outer universe; equal local owner keys in two populations remain distinct. With `x` declared before `y`, removing `x`, retaining `y` and preserving scope, population, owner and data-field declarations refuses every stored old `x` reference under AC-73, regardless of internal allocation order; none is admitted as `y`. | Test (TC-464) |
+| FR-106-AC-77 | For each route, TC-464 step 9's declared-table/admission entry over two distinct declaration origins whose normalized scope and full declared path coincide refuses `conflicting_declaration`/`duplicate-declaration`, naming both origins, and produces no partial place table, admitted observation or truth value. Two aliases of the same authenticated declaration and canonical normalized declared path instead supply one table view and admit the otherwise valid snapshot. | Test (TC-464) |
 
 ## Dependencies
+
+- FR-230: the canonical place-identity grammar and declaration scope.
+- FR-1040: route-neutral declared-table uniqueness and ambiguity refusals.
+- FR-995, FR-850 and FR-940: source declaration provenance and the admitted
+  bare package read boundary.
 
 - FR-084 and FR-089 (population binding and identity), FR-103 (operation
   effect), FR-001 (the two labels; FSpec STD-150), FR-056 (the K2 String, UUID and Timestamp payloads and their runtime-input

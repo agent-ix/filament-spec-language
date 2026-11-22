@@ -897,6 +897,8 @@ fn is_equality_identity(identity: &str) -> bool {
             | "filament.op.quantity.ne"
             | "filament.op.reference.eq"
             | "filament.op.reference.ne"
+            | "filament.op.clock_reference.eq"
+            | "filament.op.clock_reference.ne"
             | "filament.op.structural.eq"
             | "filament.op.structural.ne"
     )
@@ -2804,6 +2806,35 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 };
                 Ok((NodeKind::Pre(*operand), children))
             }
+            Some("filament.op.clock_reference.ref") => {
+                let [CheckedTerm::Reference { target: place }, _, ..] = arguments else {
+                    return Err(fault("reader-clock-reference-has-place-and-owner").into());
+                };
+                if self.index.admitted.node_kind(place)
+                    != Some(filament_contract_model::CheckedNodeKind::TimedModel(
+                        filament_contract_model::TimedModelForm::Place,
+                    ))
+                {
+                    return Err(fault("reader-clock-reference-target-is-admitted-place").into());
+                }
+                // The first argument is the admitted declaration, not an
+                // evaluated value. Retain its actual run key for the shared
+                // authority lookup; owner and selectors keep operand order.
+                let place = self.index.key(place)?;
+                let children =
+                    self.project_arguments(id, Some(&arguments[1..]), context, locals)?;
+                let Some((&reference, slots)) = children.split_first() else {
+                    return Err(fault("reader-clock-reference-has-owner").into());
+                };
+                Ok((
+                    NodeKind::PlaceReference {
+                        reference,
+                        place,
+                        slots: slots.to_vec(),
+                    },
+                    children,
+                ))
+            }
             Some("filament.op.option.present") => {
                 let children = self.project_arguments(id, Some(arguments), context, locals)?;
                 let [operand] = children.as_slice() else {
@@ -3877,6 +3908,11 @@ pub(crate) fn node_value_type(
         Ok(projection) => return Ok(projection.value_type().clone()),
         Err(error) => error,
     };
+    if error.code == Code::UnsupportedExactType {
+        if let Some(clock) = clock_reference_carrier_type(index, id)? {
+            return Ok(clock);
+        }
+    }
     if matches!(
         error.code,
         Code::UnsupportedExactType | Code::UnavailableIdentityWitness
@@ -4042,6 +4078,89 @@ pub(crate) fn node_value_type(
             Err(TypeError::Unsupported)
         }
     }
+}
+
+#[ix_trace_rs::string_edge]
+/// FSL supplies the runtime meaning of the admitted Clock-reference leaf;
+/// the already admitted Option/collection nodes retain their exact wrappers.
+/// Other leaves remain the shared exact projection's responsibility.
+fn clock_reference_carrier_type(
+    index: &TypeReader<'_>,
+    id: &CheckedNodeId,
+) -> Result<Option<ValueType>, TypeError> {
+    enum Layer {
+        Option,
+        Collection(
+            filament_exact::CollectionKind,
+            Option<filament_exact::CardinalityBound>,
+        ),
+    }
+    use filament_contract_model::{CheckedNodeKind, CompositeTypeForm, ScalarTypeForm};
+    let Some(mut current) = index.node(id).map(|node| &node.semantic_type) else {
+        return Ok(None);
+    };
+    let mut layers = Vec::new();
+    let mut bound = None;
+    // A primitive carrier cannot revisit a type node. A recursive type stays
+    // unsupported instead of looping or inventing a primitive representation.
+    for _ in 0..=index.nodes.len() {
+        let node = index.node(current).ok_or(TypeError::Unsupported)?;
+        if index.admitted.node_kind(current)
+            == Some(CheckedNodeKind::ScalarType(ScalarTypeForm::ClockReference))
+        {
+            let mut value = fsl_semantics::model::clock_reference::reference_type();
+            for layer in layers.into_iter().rev() {
+                value = match layer {
+                    Layer::Option => ValueType::option(value),
+                    Layer::Collection(kind, bounds) => ValueType::collection(
+                        filament_exact::CollectionType::new(kind, value, bounds),
+                    ),
+                };
+            }
+            return Ok(Some(value));
+        }
+        if node.node_tag.as_ref() == "bounded_domain"
+            && node.semantic_form.as_ref() == "collection_bounds"
+        {
+            let (Some(min), Some(max)) = (
+                bound_member(&node.body, "min"),
+                bound_member(&node.body, "max"),
+            ) else {
+                return Err(fault("reader-clock-collection-bounds-are-admitted").into());
+            };
+            bound = Some(
+                filament_exact::CardinalityBound::new(min, max)
+                    .map_err(|_| fault("reader-clock-collection-bounds-are-ordered"))?,
+            );
+            current = &node.semantic_type;
+            continue;
+        }
+        let layer = match index.admitted.node_kind(current) {
+            Some(CheckedNodeKind::CompositeType(CompositeTypeForm::Option)) => Layer::Option,
+            Some(CheckedNodeKind::CompositeType(CompositeTypeForm::Sequence)) => {
+                Layer::Collection(filament_exact::CollectionKind::Sequence, bound.take())
+            }
+            Some(CheckedNodeKind::CompositeType(CompositeTypeForm::Set)) => {
+                Layer::Collection(filament_exact::CollectionKind::Set, bound.take())
+            }
+            Some(CheckedNodeKind::CompositeType(CompositeTypeForm::Bag)) => {
+                Layer::Collection(filament_exact::CollectionKind::Bag, bound.take())
+            }
+            Some(CheckedNodeKind::CompositeType(CompositeTypeForm::OrderedSet)) => {
+                Layer::Collection(filament_exact::CollectionKind::OrderedSet, bound.take())
+            }
+            _ => return Ok(None),
+        };
+        let CheckedTerm::Aggregate { members } = &node.body else {
+            return Err(fault("reader-clock-carrier-has-admitted-aggregate").into());
+        };
+        let [CheckedTerm::Reference { target }] = members.as_slice() else {
+            return Err(fault("reader-clock-carrier-has-one-element").into());
+        };
+        layers.push(layer);
+        current = target;
+    }
+    Ok(None)
 }
 
 /// A reference retains the selected model object's effective identity.

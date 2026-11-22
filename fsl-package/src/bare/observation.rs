@@ -26,12 +26,50 @@ fn refused(catalog: CatalogCode, fields: BTreeMap<&'static str, String>) -> Admi
 }
 
 impl BarePackage<'_> {
-    fn needs_clock_reference_authority(&self) -> bool {
-        use filament_contract_model::{CheckedNodeKind, CheckedNodeTag, ScalarTypeForm};
-        self.package().resolved_graph().nodes.iter().any(|node| {
-            CheckedNodeTag::from_wire(&node.node_tag)
-                .and_then(|tag| CheckedNodeKind::decode(tag, &node.semantic_form))
-                == Some(CheckedNodeKind::ScalarType(ScalarTypeForm::ClockReference))
+    /// The atomic original Clock declaration context read from this package.
+    ///
+    /// Selection failures retain the existing unsupported representation
+    /// boundary; competing authenticated origins retain both declarations.
+    pub fn clock_declaration_table(
+        &self,
+    ) -> Result<
+        fsl_semantics::model::clock_reference::normalization::ClockDeclarationTable,
+        AdmissionFailure,
+    > {
+        use fsl_semantics::model::clock_reference::normalization::ClockDeclarationResolutionError;
+        let unsupported = || {
+            AdmissionFailure::Refused(Box::new(refused(
+                CatalogCode::new("unknown_required_feature", "unsupported-feature"),
+                BTreeMap::from([("reason", "missing-type-representation".to_owned())]),
+            )))
+        };
+        let declarations = self.clock_declarations().map_err(|_| unsupported())?;
+        let models =
+            crate::CheckedTimedModel::from_admitted(self.package()).map_err(|_| unsupported())?;
+        declarations.table(&models).map_err(|failure| {
+            let (catalog, first, second) = match failure {
+                crate::ClockDeclarationTableError::Resolution(
+                    ClockDeclarationResolutionError::Fault(fault),
+                ) => {
+                    return AdmissionFailure::Fault(fault);
+                }
+                crate::ClockDeclarationTableError::Resolution(
+                    ClockDeclarationResolutionError::Ambiguous(origins),
+                ) => (
+                    CatalogCode::new("ambiguous_declaration", "ambiguous-name"),
+                    format!("{:?}", origins.first),
+                    format!("{:?}", origins.second),
+                ),
+                crate::ClockDeclarationTableError::Collision(origins) => (
+                    CatalogCode::new("conflicting_declaration", "duplicate-declaration"),
+                    format!("{:?}", origins.first),
+                    format!("{:?}", origins.second),
+                ),
+            };
+            AdmissionFailure::Refused(Box::new(refused(
+                catalog,
+                BTreeMap::from([("first", first), ("second", second)]),
+            )))
         })
     }
     /// Admit a simulated current state against this package's selected models
@@ -60,9 +98,6 @@ impl BarePackage<'_> {
                 ]),
             ))
         };
-        if self.needs_clock_reference_authority() {
-            return unsupported("missing-route-neutral-place-identity");
-        }
         if let Err(failure) = self.witness() {
             return match failure {
                 crate::BareSelectionFailure::Identity(refusal) => unsupported(
@@ -77,8 +112,20 @@ impl BarePackage<'_> {
         let Ok(world) = self.world() else {
             return unsupported("missing-type-representation");
         };
+        let table = match self.clock_declaration_table() {
+            Ok(table) => table,
+            Err(AdmissionFailure::Refused(record)) => {
+                return ObservationAdmission::Refused(*record)
+            }
+            Err(AdmissionFailure::Incomplete(record)) => {
+                return ObservationAdmission::Incomplete(*record)
+            }
+            Err(AdmissionFailure::Fault(fault)) => return ObservationAdmission::Fault(fault),
+        };
+        let selections = self.model_selections();
         let observed = fsl_semantics::model::state::StateModel::new(
-            self.model_selections().as_slice(),
+            fsl_semantics::model::observation::ModelSelections::new(selections.as_slice(), &[])
+                .with_clock_declaration_table(&table),
             world.types(),
             packages,
             model_limits,
@@ -120,8 +167,13 @@ impl BarePackage<'_> {
     > {
         let world = self.call_snapshot_world()?;
         let model_selections = self.model_selections();
+        let table = self.clock_declaration_table()?;
         fsl_semantics::model::observation::admit_current_snapshot(
-            model_selections.as_slice(),
+            fsl_semantics::model::observation::ModelSelections::new(
+                model_selections.as_slice(),
+                &[],
+            )
+            .with_clock_declaration_table(&table),
             world.types(),
             packages,
             model_limits,
@@ -151,8 +203,13 @@ impl BarePackage<'_> {
     > {
         let world = self.call_snapshot_world()?;
         let model_selections = self.model_selections();
+        let table = self.clock_declaration_table()?;
         fsl_semantics::model::observation::admit_current_snapshot_with_views(
-            model_selections.as_slice(),
+            fsl_semantics::model::observation::ModelSelections::new(
+                model_selections.as_slice(),
+                &[],
+            )
+            .with_clock_declaration_table(&table),
             world.types(),
             packages,
             model_limits,
@@ -203,9 +260,6 @@ impl BarePackage<'_> {
                 ]),
             )))
         };
-        if self.needs_clock_reference_authority() {
-            return Err(unsupported("missing-route-neutral-place-identity"));
-        }
         if let Err(failure) = self.witness() {
             let reason = match failure {
                 crate::BareSelectionFailure::Identity(refusal) => {
@@ -251,9 +305,6 @@ impl BarePackage<'_> {
                 ]),
             ))
         };
-        if self.needs_clock_reference_authority() {
-            return unsupported("missing-route-neutral-place-identity");
-        }
         if let Err(failure) = self.witness() {
             return match failure {
                 crate::BareSelectionFailure::Identity(refusal) => unsupported(
@@ -268,8 +319,22 @@ impl BarePackage<'_> {
         if self.object_declarations().is_err() {
             return unsupported("missing-type-representation");
         }
+        let table = match self.clock_declaration_table() {
+            Ok(table) => table,
+            Err(AdmissionFailure::Refused(record)) => {
+                return ObservationAdmission::Refused(*record)
+            }
+            Err(AdmissionFailure::Incomplete(record)) => {
+                return ObservationAdmission::Incomplete(*record)
+            }
+            Err(AdmissionFailure::Fault(fault)) => return ObservationAdmission::Fault(fault),
+        };
         match admit_current_snapshot(
-            core::slice::from_ref(model),
+            fsl_semantics::model::observation::ModelSelections::new(
+                core::slice::from_ref(model),
+                &[],
+            )
+            .with_clock_declaration_table(&table),
             world.types(),
             packages,
             model_limits,

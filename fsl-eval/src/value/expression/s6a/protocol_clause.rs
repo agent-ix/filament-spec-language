@@ -61,6 +61,7 @@ pub(crate) struct ProtocolClauseEnv<'a> {
     /// FR-265: a state clause's trail, given before the call and holding
     /// what the call recorded after it; `None` for a frame.
     pub(crate) trail: Option<Trail>,
+    reference_origins: Vec<super::super::evaluate::ReferenceOrigins>,
 }
 
 impl<'a> ProtocolClauseEnv<'a> {
@@ -97,7 +98,17 @@ impl<'a> ProtocolClauseEnv<'a> {
             losses: Vec::new(),
             witness: None,
             trail: None,
+            reference_origins: Vec::new(),
         }
+    }
+
+    /// Explicit receiver and parameter origins already admitted with values.
+    pub(crate) fn with_reference_origins(
+        mut self,
+        origins: Vec<super::super::evaluate::ReferenceOrigins>,
+    ) -> Self {
+        self.reference_origins = origins;
+        self
     }
 }
 
@@ -188,6 +199,7 @@ impl super::ReferenceEvaluation for ProtocolClauseFamily {
             meter,
             env.graph.dispatch_tables(),
         )
+        .with_reference_origins(std::mem::take(&mut env.reference_origins))
         .with_trail(trail)
         .run_traced(clause.body(), clause.slots(), bindings)?;
         env.trail = Some(trail);

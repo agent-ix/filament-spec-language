@@ -142,12 +142,17 @@ fn admitted_source(source: &str, slot: ValueType) -> Result<Value, AdmissionReco
     let raw = snapshot(source);
     let types = TypeEnvironment::default();
     let mut references = References {
+        document: None,
         views: &[],
         types: &types,
         admitted: BTreeMap::new(),
         completeness: BTreeMap::new(),
         unresolved: Vec::new(),
         clock_references: Vec::new(),
+        population_nodes: BTreeMap::new(),
+        origins: crate::model::object_environment::ReferenceOriginBuilder::default(),
+        parameter_origins: BTreeMap::new(),
+        result_origins: ReferenceOrigins::default(),
         record_keys: None,
         variant_keys: None,
     };

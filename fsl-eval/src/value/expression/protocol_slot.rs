@@ -38,14 +38,8 @@ pub enum SuppliedValue {
     Unavailable(CatalogCode),
 }
 
-/// The selected population for one reference occurrence in a supplied value.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProtocolReferenceOccurrence {
-    /// The typed path from the supplied value's root to this reference.
-    pub path: Vec<PathStep>,
-    /// The exact checked population declaration that supplied the reference.
-    pub population: NodeKey,
-}
+/// The model-owned occurrence carrier, also used by raw value admission.
+pub use fsl_semantics::model::object_environment::ReferenceOccurrence as ProtocolReferenceOccurrence;
 
 /// One binder value with explicit population provenance for every reference.
 #[derive(Clone, Debug)]
@@ -170,20 +164,33 @@ pub(crate) fn reference_occurrences(
                 }
             }
             Value::Composite(composite) => {
-                if let Some(CompositeShape::Record(fields)) = types
+                match types
                     .composite(composite.declaration().clone())
                     .map(filament_semantic_value::declaration::CompositeDeclaration::shape)
                 {
-                    for (field, slot) in fields.iter().zip(composite.slots()).rev() {
-                        if let filament_exact::FieldValue::Present(value) = slot {
-                            let mut nested = path.clone();
-                            nested.push(PathStep::Field(field.name().to_owned()));
-                            if field.presence() == filament_exact::Presence::Optional {
-                                nested.push(PathStep::OptionValue);
+                    Some(CompositeShape::Record(fields)) => {
+                        for (field, slot) in fields.iter().zip(composite.slots()).rev() {
+                            if let filament_exact::FieldValue::Present(value) = slot {
+                                let mut nested = path.clone();
+                                nested.push(PathStep::Field(field.name().to_owned()));
+                                if field.presence() == filament_exact::Presence::Optional {
+                                    nested.push(PathStep::OptionValue);
+                                }
+                                pending.push((value, nested));
                             }
+                        }
+                    }
+                    Some(CompositeShape::Tuple(_)) => {
+                        for (position, slot) in composite.slots().iter().enumerate().rev() {
+                            let filament_exact::FieldValue::Present(value) = slot else {
+                                return Err(());
+                            };
+                            let mut nested = path.clone();
+                            nested.push(PathStep::Index(position));
                             pending.push((value, nested));
                         }
                     }
+                    Some(CompositeShape::Union(_)) | None => {}
                 }
             }
             Value::Collection(collection) => {

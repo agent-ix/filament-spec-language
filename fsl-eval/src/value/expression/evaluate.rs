@@ -36,6 +36,7 @@ use filament_eval::{
     LiveContext, PreconditionFailure, ProtocolReferenceUnsupported, ReferenceUnresolved,
     SessionLimits, StateModelUndefined,
 };
+use filament_exact::NodeKey;
 use filament_exact::{
     admit_quantity_result, compare_text, BoundedQuantityType, ComparisonOperator,
     QuantityResultInterval,
@@ -59,7 +60,6 @@ use filament_exact::{
     LimitKind, Meter, PopulationId,
 };
 use filament_exact::{DivisionMember, IntegerDomain};
-use filament_exact::{EffectiveId, NodeKey};
 use filament_exact::{FloatType, Rational};
 use filament_exact::{Outcome, Refusal, Undefined};
 use filament_semantic_value::catalog::{render_identity, InternalFault};
@@ -342,18 +342,77 @@ fn invariant(identifier: &'static str) -> Halt {
     Halt::Fault(InternalFault::new("S6a", identifier))
 }
 
-/// Build the FR-230 identity for a clock place selected from an owner.
-fn clock_place_reference(
-    owner: ObjectReference,
-    clock_type: EffectiveId,
-    place: &NodeKey,
-    selectors: Vec<Value>,
-) -> Result<ObjectReference, Halt> {
-    if !fsl_semantics::model::clock_reference::is_clock_type(&clock_type) {
-        return Err(invariant("place-reference-result-type-expected"));
+/// A missing authenticated origin is a supported, typed boundary, rather
+/// than permission to choose a population from object membership.
+#[derive(Debug)]
+struct ClockOriginUnavailable {
+    locus: Option<fsl_semantics::model::object_environment::ReferenceOriginLocus>,
+}
+
+impl filament_semantic_value::catalog::CatalogCoded for ClockOriginUnavailable {
+    fn catalog_code(&self) -> filament_semantic_value::catalog::CatalogCode {
+        filament_semantic_value::catalog::CatalogCode::new(
+            "unknown_required_feature",
+            "unsupported-feature",
+        )
     }
-    fsl_semantics::model::clock_reference::encode(&owner, place, &selectors)
-        .map_err(|_| invariant("clock-place-reference-identity-invalid"))
+
+    fn catalog_fields(&self) -> Option<std::collections::BTreeMap<&'static str, String>> {
+        let mut fields = std::collections::BTreeMap::from([(
+            "reason",
+            "clock-owner-population-authority".to_owned(),
+        )]);
+        if let Some(locus) = &self.locus {
+            fields.insert("origin", format!("{locus:?}"));
+        }
+        Some(fields)
+    }
+}
+
+fn unavailable_clock_origin(origins: &ReferenceOrigins) -> Halt {
+    Halt::Family(FamilyResult::Refused(Box::new(ClockOriginUnavailable {
+        locus: origins.locus().cloned(),
+    })))
+}
+
+#[derive(Debug)]
+struct ClockIdentityAllocation(usize);
+
+impl filament_semantic_value::catalog::CatalogCoded for ClockIdentityAllocation {
+    fn catalog_code(&self) -> filament_semantic_value::catalog::CatalogCode {
+        filament_semantic_value::catalog::CatalogCode::new(
+            "resource_exhausted",
+            "allocation-failed",
+        )
+    }
+
+    fn catalog_fields(&self) -> Option<std::collections::BTreeMap<&'static str, String>> {
+        Some(std::collections::BTreeMap::from([(
+            "requested",
+            self.0.to_string(),
+        )]))
+    }
+}
+
+fn clock_identity_halt(
+    error: fsl_semantics::model::clock_reference::identity::IdentityError,
+) -> Halt {
+    use fsl_semantics::model::clock_reference::identity::IdentityError;
+    match error {
+        IdentityError::Canonical(quire_canonical::Error::Limit(limit)) => Halt::Family(
+            FamilyResult::Refused(Box::new(fsl_foundation::diagnostic::LimitExceeded::new(
+                fsl_foundation::setting::Setting::IdentityInputBytes,
+                limit.bound,
+                u128::from(limit.required),
+            ))),
+        ),
+        IdentityError::Canonical(quire_canonical::Error::Allocation { requested }) => Halt::Family(
+            FamilyResult::Refused(Box::new(ClockIdentityAllocation(requested))),
+        ),
+        IdentityError::Malformed | IdentityError::Canonical(_) | IdentityError::Read(_) => {
+            invariant("checked-clock-place-identity-is-canonical")
+        }
+    }
 }
 
 /// The one target of a single-valued navigation end `[lower, upper]` (FR-364
@@ -559,12 +618,16 @@ fn sum_admits(value_type: &ValueType, value: &Value) -> bool {
     }
 }
 
+/// The same immutable sparse authority retained by model admission.
+pub(super) use fsl_semantics::model::object_environment::ReferenceOrigins;
+
 /// The arguments a call popped, with whether each forwards the absent-key
 /// parameter and the binder each derives from.
 struct PoppedArguments {
     values: Vec<Value>,
     provenance: Vec<bool>,
     owners: Vec<Owner>,
+    reference_origins: Vec<ReferenceOrigins>,
 }
 
 /// One live occurrence for the call frame plus all occurrences retained by
@@ -770,6 +833,7 @@ struct DispatchGuard<N> {
     node: N,
     /// The owner of each dispatched argument, receiver first.
     owners: Vec<Owner>,
+    reference_origins: Vec<ReferenceOrigins>,
 }
 
 /// Which population an `allInstances`/`lookup` reads: the ambient post
@@ -792,6 +856,9 @@ enum Anchor {
 struct Iteration<N> {
     node: N,
     state: IterationState,
+    source_origins: ReferenceOrigins,
+    population_origin: Option<ReferenceOrigins>,
+    stable_sequence: bool,
     /// The binder the source derives from; element slots take it.
     source_owner: Owner,
     /// The binder the source and every result so far derive from.
@@ -833,6 +900,9 @@ pub(crate) struct Machine<'a, 'm, N> {
     /// and function table, or a bytes-only package's own world (FR-533).
     world: World<'a>,
     objects: &'a ObjectEnvironment,
+    /// Actual checked/admitted original declarations, never derived from values.
+    clock_declarations:
+        Option<fsl_semantics::model::clock_reference::normalization::ClockDeclarationTable>,
     /// FR-107: a precondition's or postcondition's pre observation, distinct
     /// from `objects` (the clause's own observation: `current` for an
     /// invariant, `post` for a postcondition). `None` for the `Value`
@@ -873,10 +943,16 @@ pub(crate) struct Machine<'a, 'm, N> {
     function_case_limit_reached: Option<&'m mut bool>,
     dispatch_tables: &'a [DispatchTable],
     values: Vec<Value>,
+    /// Explicit admitted population origins, parallel to the value stack.
+    value_reference_origins: Vec<ReferenceOrigins>,
+    /// Root binder origins supplied by admission, consumed by its first frame.
+    root_reference_origins: Vec<ReferenceOrigins>,
     /// FR-125: whether each stack value is still the absent-key parameter
     /// being forwarded as a reference, rather than read by an operation.
     value_guard_provenance: Vec<bool>,
     frames: Vec<Vec<Option<Value>>>,
+    /// Explicit occurrence origins parallel to every frame and slot.
+    frame_reference_origins: Vec<Vec<ReferenceOrigins>>,
     /// Live occurrence charge retained for each call frame while it is on
     /// the stack; ordinary clause and expression roots retain zero or their
     /// separately admitted expression-root charge.
@@ -1161,6 +1237,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         Self {
             world,
             objects,
+            clock_declarations: world
+                .graph()
+                .map(|graph| graph.clock_declaration_table().clone()),
             pre_objects,
             reads,
             family,
@@ -1173,8 +1252,11 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             function_case_limit_reached: None,
             dispatch_tables,
             values: Vec::new(),
+            value_reference_origins: Vec::new(),
+            root_reference_origins: Vec::new(),
             value_guard_provenance: Vec::new(),
             frames: Vec::new(),
+            frame_reference_origins: Vec::new(),
             frame_live_occurrences: Vec::new(),
             live_occurrences_limit: SessionLimits::default().live_occurrences,
             live_occurrences: 0,
@@ -1202,10 +1284,113 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         }
     }
 
+    /// Attach the admitted package's atomic Clock declaration context.
+    pub(crate) fn with_clock_declarations(
+        mut self,
+        declarations: fsl_semantics::model::clock_reference::normalization::ClockDeclarationTable,
+    ) -> Self {
+        self.clock_declarations = Some(declarations);
+        self
+    }
+
+    fn clock_place_reference(
+        &self,
+        node: N,
+        owner: &ObjectReference,
+        origins: &ReferenceOrigins,
+        place: &NodeKey,
+        selectors: Vec<Value>,
+    ) -> Result<ObjectReference, Halt> {
+        use fsl_semantics::model::clock_reference::identity::{
+            Decimal, PathEntry, PlaceIdentity, SlotIndex,
+        };
+        use fsl_semantics::model::clock_reference::{encode_identity, is_declared_identity};
+        let ValueType::Reference(clock_type) = node.value_type() else {
+            return Err(invariant("place-reference-result-type-expected"));
+        };
+        if !fsl_semantics::model::clock_reference::is_clock_type(clock_type) {
+            return Err(invariant("place-reference-result-type-expected"));
+        }
+        let unavailable = || unavailable_clock_origin(origins);
+        let declarations = self.clock_declarations.as_ref().ok_or_else(unavailable)?;
+        let run = declarations.run_place(place).ok_or_else(unavailable)?;
+        let objects = self.objects_for(node)?;
+        let population_node = origins.population().ok_or_else(unavailable)?;
+        let provenance = objects
+            .population_provenance(population_node)
+            .ok_or_else(unavailable)?;
+        if !objects
+            .population_members(&provenance.declaration().node)
+            .is_some_and(|members| members.contains(owner))
+        {
+            return Err(unavailable());
+        }
+        let source = declarations.source_declarations();
+        let population = match source.declaration_scope_for_node(population_node) {
+            Some(scope) => scope.clone(),
+            None => source
+                .catalog_scope(provenance.declaration())
+                .cloned()
+                .ok_or_else(unavailable)?,
+        };
+        let positions = run
+            .template
+            .path
+            .iter()
+            .enumerate()
+            .filter_map(|(position, entry)| {
+                matches!(entry, PathEntry::Collection { .. }).then_some(position)
+            })
+            .collect::<Vec<_>>();
+        if positions.len() != selectors.len() {
+            return Err(invariant("place-reference-selectors-match-checked-path"));
+        }
+        let mut indices = Vec::with_capacity(selectors.len());
+        for (position, selector) in positions.into_iter().zip(selectors) {
+            let Value::Integer(index) = selector else {
+                return Err(invariant("place-reference-selector-is-integer"));
+            };
+            let index = Decimal::new(&index.to_string())
+                .map_err(|_| Halt::Stop(Stop::Undefined(Undefined::NoElement)))?;
+            indices.push(SlotIndex {
+                path_position: Decimal::new(&position.to_string()).map_err(clock_identity_halt)?,
+                index,
+            });
+        }
+        let identity = PlaceIdentity {
+            population: population.clone(),
+            owner: owner.object().as_str().to_owned(),
+            template: run.template.as_ref().clone(),
+            indices,
+        };
+        if !is_declared_identity(
+            &identity,
+            &population,
+            owner,
+            declarations,
+            self.world.types(),
+        ) {
+            return Err(Stop::Undefined(Undefined::NoElement).into());
+        }
+        encode_identity(
+            owner,
+            &identity,
+            quire_canonical::Limits::new(fsl_foundation::IdentityLimits::default().input_bytes),
+        )
+        .map_err(clock_identity_halt)
+    }
+
     /// FR-1000: evaluate against the reference literals admitted with the
     /// model subject that owns the current state.
     pub(crate) fn with_reference_bindings(mut self, bindings: &'a ReferenceBindings) -> Self {
         self.reference_bindings = Some(bindings);
+        self
+    }
+
+    /// Retain the population metadata already validated beside root values.
+    /// An empty list means no explicit origin, never an inferred population.
+    pub(crate) fn with_reference_origins(mut self, origins: Vec<ReferenceOrigins>) -> Self {
+        self.root_reference_origins = origins;
         self
     }
 
@@ -1522,7 +1707,15 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 *slot = true;
             }
         }
-        self.push_frame_owned(frame, provenance, Vec::new(), occurrences, enforce_limit)
+        let origins = std::mem::take(&mut self.root_reference_origins);
+        self.push_frame_owned(
+            frame,
+            provenance,
+            Vec::new(),
+            origins,
+            occurrences,
+            enforce_limit,
+        )
     }
 
     fn push_frame(&mut self, frame: Vec<Option<Value>>, provenance: Vec<bool>) {
@@ -1530,6 +1723,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         if let Some(tracked) = self.owners.as_mut() {
             tracked.push_frame(Vec::new(), frame.len());
         }
+        let mut origins = std::mem::take(&mut self.root_reference_origins);
+        origins.resize_with(frame.len(), ReferenceOrigins::default);
+        self.frame_reference_origins.push(origins);
         self.frames.push(frame);
         self.frame_guard_provenance.push(provenance);
         self.frame_live_occurrences.push(0);
@@ -1541,6 +1737,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         frame: Vec<Option<Value>>,
         mut provenance: Vec<bool>,
         owners: Vec<Owner>,
+        mut reference_origins: Vec<ReferenceOrigins>,
         next_charge: Integer,
         enforce_limit: bool,
     ) -> Result<(), Halt> {
@@ -1569,10 +1766,12 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             (occurrences, total.unwrap_or(u64::MAX))
         };
         provenance.resize(frame.len(), false);
+        reference_origins.resize_with(frame.len(), ReferenceOrigins::default);
         if let Some(tracked) = self.owners.as_mut() {
             tracked.push_frame(owners, frame.len());
         }
         self.frames.push(frame);
+        self.frame_reference_origins.push(reference_origins);
         self.frame_guard_provenance.push(provenance);
         self.frame_live_occurrences.push(occurrences);
         self.live_occurrences = total;
@@ -1726,7 +1925,10 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 return self.stopped(at.stop, at.location.as_ref());
             }
         };
-        if !self.values.is_empty() || !self.value_guard_provenance.is_empty() {
+        if !self.values.is_empty()
+            || !self.value_guard_provenance.is_empty()
+            || !self.value_reference_origins.is_empty()
+        {
             return Err(InternalFault::new("S6a", "evaluation-result-stack-invalid"));
         }
         Ok(Evaluation {
@@ -1883,6 +2085,11 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
 
     /// [`Self::pop`] with the owner of the popped value.
     fn pop_owned(&mut self) -> Result<(Value, Owner), Halt> {
+        let (value, owner, _) = self.pop_owned_with_origins()?;
+        Ok((value, owner))
+    }
+
+    fn pop_owned_with_origins(&mut self) -> Result<(Value, Owner, ReferenceOrigins), Halt> {
         let value = self
             .values
             .pop()
@@ -1892,15 +2099,19 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             .pop()
             .ok_or_else(|| invariant("evaluation-provenance-stack-underflow"))?;
         let owner = self.pop_owners(1)?.first().copied().unwrap_or(Owner::None);
+        let origins = self
+            .value_reference_origins
+            .pop()
+            .ok_or_else(|| invariant("evaluation-reference-origin-stack-underflow"))?;
         if provenance {
             return Err(self.absent_key_halt(&value)?);
         }
-        Ok((value, owner))
+        Ok((value, owner, origins))
     }
 
     /// Pop a value while preserving whether it forwards the absent-key
     /// parameter through a let binding, lookup reference, or helper argument.
-    fn pop_forwarded(&mut self) -> Result<(Value, bool), Halt> {
+    fn pop_forwarded(&mut self) -> Result<(Value, bool, ReferenceOrigins), Halt> {
         let value = self
             .values
             .pop()
@@ -1910,7 +2121,11 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             .pop()
             .ok_or_else(|| invariant("evaluation-provenance-stack-underflow"))?;
         self.pop_owners(1)?;
-        Ok((value, provenance))
+        let origins = self
+            .value_reference_origins
+            .pop()
+            .ok_or_else(|| invariant("evaluation-reference-origin-stack-underflow"))?;
+        Ok((value, provenance, origins))
     }
 
     fn absent_key_halt(&self, value: &Value) -> Result<Halt, Halt> {
@@ -1933,8 +2148,18 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     }
 
     fn push_value(&mut self, value: Value, provenance: bool) {
+        self.push_value_with_origins(value, provenance, ReferenceOrigins::default());
+    }
+
+    fn push_value_with_origins(
+        &mut self,
+        value: Value,
+        provenance: bool,
+        origins: ReferenceOrigins,
+    ) {
         self.values.push(value);
         self.value_guard_provenance.push(provenance);
+        self.value_reference_origins.push(origins);
         if let Some(owners) = self.owners.as_mut() {
             owners.push_value();
         }
@@ -1981,21 +2206,27 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
 
     /// [`Self::pop_many`] with the owner of each popped value.
     fn pop_many_owned(&mut self, count: usize) -> Result<(Vec<Value>, Vec<Owner>), Halt> {
-        let start = self
-            .values
-            .len()
-            .checked_sub(count)
-            .ok_or_else(|| invariant("evaluation-value-stack-underflow"))?;
-        let values = self.values.split_off(start);
-        let provenance = self.value_guard_provenance.split_off(start);
-        let owners = self.pop_owners(count)?;
+        let (values, owners, _) = self.pop_many_owned_with_origins(count)?;
+        Ok((values, owners))
+    }
+
+    fn pop_many_owned_with_origins(
+        &mut self,
+        count: usize,
+    ) -> Result<(Vec<Value>, Vec<Owner>, Vec<ReferenceOrigins>), Halt> {
+        let PoppedArguments {
+            values,
+            provenance,
+            owners,
+            reference_origins,
+        } = self.pop_many_forwarded(count)?;
         if let Some(index) = provenance.iter().position(|provenance| *provenance) {
             let reference = values
                 .get(index)
                 .ok_or_else(|| invariant("forwarded-value-missing"))?;
             return Err(self.absent_key_halt(reference)?);
         }
-        Ok((values, owners))
+        Ok((values, owners, reference_origins))
     }
 
     fn pop_many(&mut self, count: usize) -> Result<Vec<Value>, Halt> {
@@ -2013,6 +2244,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             values: self.values.split_off(start),
             provenance: self.value_guard_provenance.split_off(start),
             owners,
+            reference_origins: self.value_reference_origins.split_off(start),
         })
     }
 
@@ -2200,11 +2432,26 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         value: Value,
         provenance: bool,
     ) -> Result<(), Halt> {
+        self.bind_with_origins(slot, value, provenance, ReferenceOrigins::default())
+    }
+
+    fn bind_with_origins(
+        &mut self,
+        slot: Slot,
+        value: Value,
+        provenance: bool,
+        origins: ReferenceOrigins,
+    ) -> Result<(), Halt> {
         if let Some(trail) = self.trail.as_mut() {
             trail.element_paths.remove(&slot);
         }
         *self.slot(slot)? = Some(value);
         *self.frame_provenance_slot(slot)? = provenance;
+        *self
+            .frame_reference_origins
+            .last_mut()
+            .and_then(|frame| frame.get_mut(slot))
+            .ok_or_else(|| invariant("evaluation-local-reference-origin-unbound"))? = origins;
         let owner = self.step_owner();
         self.set_slot_owner(slot, owner)
     }
@@ -2467,8 +2714,8 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 Ok(())
             }
             Task::Bind(slot) => {
-                let (value, provenance) = self.pop_forwarded()?;
-                self.bind_with_provenance(slot, value, provenance)
+                let (value, provenance, origins) = self.pop_forwarded()?;
+                self.bind_with_origins(slot, value, provenance, origins)
             }
             Task::Select(node) => self.select_arm(node),
             Task::ChargeElement(_) => charge_element(self.meter).map_err(Into::into),
@@ -2479,6 +2726,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 self.frame_guard_provenance
                     .pop()
                     .ok_or_else(|| invariant("evaluation-return-provenance-frame-missing"))?;
+                self.frame_reference_origins
+                    .pop()
+                    .ok_or_else(|| invariant("evaluation-return-reference-origin-frame-missing"))?;
                 self.pop_live_frame()?;
                 self.pop_frame_owners()?;
                 Ok(())
@@ -2490,6 +2740,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     failure,
                     node,
                     owners,
+                    reference_origins,
                 } = *guard;
                 let holds = self.pop_boolean()?;
                 self.frames
@@ -2498,6 +2749,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 self.frame_guard_provenance
                     .pop()
                     .ok_or_else(|| invariant("evaluation-return-provenance-frame-missing"))?;
+                self.frame_reference_origins
+                    .pop()
+                    .ok_or_else(|| invariant("evaluation-return-reference-origin-frame-missing"))?;
                 self.pop_live_frame()?;
                 self.pop_frame_owners()?;
                 if !holds {
@@ -2520,7 +2774,14 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 let mut frame: Vec<Option<Value>> = arguments.into_iter().map(Some).collect();
                 frame.resize(callable.slots.max(frame.len()), None);
                 let provenance = vec![false; frame.len()];
-                self.push_frame_owned(frame, provenance, owners, next_charge, true)?;
+                self.push_frame_owned(
+                    frame,
+                    provenance,
+                    owners,
+                    reference_origins,
+                    next_charge,
+                    true,
+                )?;
                 self.tasks.push(Task::ObserveApplication(node));
                 self.tasks.push(Task::Return);
                 self.tasks.push(Task::Eval(callable.body));
@@ -2589,7 +2850,13 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             .clone()
             .ok_or_else(|| invariant("evaluation-local-value-unbound"))?;
         let provenance = self.slot_has_guard_provenance(slot)?;
-        self.push_value(value, provenance);
+        let origins = self
+            .frame_reference_origins
+            .last()
+            .and_then(|frame| frame.get(slot))
+            .ok_or_else(|| invariant("evaluation-local-reference-origin-unbound"))?
+            .clone();
+        self.push_value_with_origins(value, provenance, origins);
         Ok(())
     }
 
@@ -2812,6 +3079,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     /// reach) rather than left to this `deny` -- see each site's own note.
     #[deny(clippy::wildcard_enum_match_arm)]
     fn apply_as(&mut self, node: N, application: Application) -> Result<(), Halt> {
+        let mut result_origins = ReferenceOrigins::default();
         let value = match node.kind() {
             NodeKind::Literal(_)
             | NodeKind::ReferenceLiteral { .. }
@@ -2831,7 +3099,8 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 if node.at(*operand).value_type() != &ValueType::Composite(declaration.clone()) {
                     return Err(invariant("tuple-project-operand-type-mismatch"));
                 }
-                let Value::Composite(tuple) = self.pop()? else {
+                let (value, _, origins) = self.pop_owned_with_origins()?;
+                let Value::Composite(tuple) = value else {
                     return Err(invariant("tuple-project-composite-value-expected"));
                 };
                 if tuple.declaration() != declaration {
@@ -2854,6 +3123,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 };
                 // FR-143: a tuple position read retains exactly like a record
                 // field projection. It adds no charge of its own.
+                result_origins = origins.select(
+                    &filament_semantic_value::admission::PathStep::Index(*position),
+                );
                 value.clone()
             }
             // FSpec FR-144 "Indexing": a map entry is located by its key's
@@ -2879,7 +3151,10 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 ..
             } => {
                 let position = self.pop_integer()?;
-                let collection = self.pop_collection()?;
+                let (value, _, origins) = self.pop_owned_with_origins()?;
+                let Value::Collection(collection) = value else {
+                    return Err(invariant("collection-value-expected"));
+                };
                 let expected_kind = match collection.collection_type().kind() {
                     CollectionKind::Sequence => IndexedKind::Sequence,
                     CollectionKind::OrderedSet => IndexedKind::OrderedSet,
@@ -2902,6 +3177,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 let Some(value) = collection.elements().get(position) else {
                     return Err(Stop::Undefined(Undefined::NoElement).into());
                 };
+                result_origins = origins.select(
+                    &filament_semantic_value::admission::PathStep::Index(position),
+                );
                 charge_element(self.meter)?;
                 retain_scalar(value.clone(), self.meter)?
             }
@@ -3485,7 +3763,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 field,
                 optional,
             } => {
-                let record = self.pop()?;
+                let (record, _, origins) = self.pop_owned_with_origins()?;
                 let world = self.world;
                 let read = read_field(
                     world.types(),
@@ -3498,6 +3776,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 .map_err(invariant)?;
                 self.note_field(&read.composite, read.index, &read.value);
                 self.note_read(node, *operand, ReadStep::Field(field.name()), None);
+                result_origins = origins.select(
+                    &filament_semantic_value::admission::PathStep::Field(field.name().to_owned()),
+                );
                 read.value
             }
             NodeKind::Attribute {
@@ -3506,7 +3787,8 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 optional,
                 derefed,
             } => {
-                let Value::Reference(reference) = self.pop()? else {
+                let (value, _, owner_origins) = self.pop_owned_with_origins()?;
+                let Value::Reference(reference) = value else {
                     return Err(invariant("attribute-reference-value-expected"));
                 };
                 // FR-107's own model.deref/model.navigate charges are an
@@ -3549,6 +3831,22 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                         ReferenceUnresolved,
                     ))));
                 }
+                result_origins = if owner_origins.unavailable_selection().is_some() {
+                    owner_origins.clone()
+                } else {
+                    owner_origins
+                        .population()
+                        .and_then(|population| {
+                            objects.field_reference_origins(
+                                population,
+                                reference.object().as_str(),
+                                field,
+                            )
+                        })
+                        .or_else(|| objects.context_field_reference_origins(&reference, field))
+                        .cloned()
+                        .unwrap_or_default()
+                };
                 let (slot, witnessed) = self.admitted_slot(objects, &reference, field)?;
                 self.log_field_read(node, objects, &reference, field)?;
                 // A model read is an application, located by its own row
@@ -3634,22 +3932,25 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     .len()
                     .checked_add(1)
                     .ok_or_else(|| invariant("place-reference-child-count-overflow"))?;
-                let mut children = self.pop_many(count)?.into_iter();
+                let (children, _, origins) = self.pop_many_owned_with_origins(count)?;
+                let mut children = children.into_iter();
                 let Some(Value::Reference(owner)) = children.next() else {
                     return Err(invariant("place-reference-owner-expected"));
                 };
-                let ValueType::Reference(clock_type) = node.value_type() else {
-                    return Err(invariant("place-reference-result-type-expected"));
-                };
-                Value::Reference(clock_place_reference(
-                    owner,
-                    clock_type.clone(),
+                let origins = origins
+                    .first()
+                    .ok_or_else(|| invariant("place-reference-owner-origin-slot"))?;
+                Value::Reference(self.clock_place_reference(
+                    node,
+                    &owner,
+                    origins,
                     place,
                     children.collect(),
                 )?)
             }
             NodeKind::Value(_) => {
-                let Value::Option(option) = self.pop()? else {
+                let (value, _, origins) = self.pop_owned_with_origins()?;
+                let Value::Option(option) = value else {
                     return Err(invariant("option-value-expected"));
                 };
                 let payload = option
@@ -3657,6 +3958,8 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     .cloned()
                     .ok_or(Stop::Undefined(Undefined::NoneValue))?;
                 self.note_unwrapped(&option, &payload);
+                result_origins =
+                    origins.select(&filament_semantic_value::admission::PathStep::OptionValue);
                 payload
             }
             NodeKind::Call {
@@ -3671,6 +3974,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     values: arguments,
                     provenance,
                     owners: argument_owners,
+                    reference_origins,
                 } = self.pop_many_forwarded(arguments_len)?;
                 let next_charge = frame_occurrences(&arguments);
                 charge_call(self.meter)?;
@@ -3679,7 +3983,14 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 frame.resize(callable.slots.max(frame.len()), None);
                 let mut frame_provenance = provenance;
                 frame_provenance.resize(frame.len(), false);
-                self.push_frame_owned(frame, frame_provenance, argument_owners, next_charge, true)?;
+                self.push_frame_owned(
+                    frame,
+                    frame_provenance,
+                    argument_owners,
+                    reference_origins,
+                    next_charge,
+                    true,
+                )?;
                 // shared-grammar.md: "self, result and pre(...) are ...
                 // unavailable ... inside a reusable predicate" -- a callee's
                 // own body is never anchored by its caller's `pre(..)`, so
@@ -3719,6 +4030,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     values: arguments,
                     provenance,
                     owners: argument_owners,
+                    reference_origins,
                 } = self.pop_many_forwarded(arguments_len)?;
                 let next_charge = frame_occurrences(&arguments);
                 charge_call(self.meter)?;
@@ -3727,7 +4039,14 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 frame.resize(callable.slots.max(frame.len()), None);
                 let mut frame_provenance = provenance;
                 frame_provenance.resize(frame.len(), false);
-                self.push_frame_owned(frame, frame_provenance, argument_owners, next_charge, true)?;
+                self.push_frame_owned(
+                    frame,
+                    frame_provenance,
+                    argument_owners,
+                    reference_origins,
+                    next_charge,
+                    true,
+                )?;
                 let previous = self.enter(PackageContext {
                     world: World::Checked {
                         scope: library.scope(),
@@ -4013,7 +4332,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 members,
             } = node.at(*population).kind() =>
             {
-                let (reference, _) = self.pop_forwarded()?;
+                let (reference, _, _) = self.pop_forwarded()?;
                 self.named_lookup(node, population, members, *absence, reference)?
             }
             NodeKind::AllInstances { population } => {
@@ -4038,7 +4357,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 absence,
                 population,
             } => {
-                let (reference_value, _) = self.pop_forwarded()?;
+                let (reference_value, _, _) = self.pop_forwarded()?;
                 let Value::Population(population_id) = self.pop()? else {
                     return Err(invariant("query-population-value-expected"));
                 };
@@ -4086,13 +4405,19 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 arguments,
                 ..
             } => {
-                let (arguments, argument_owners) = self.pop_many_owned(arguments.len())?;
-                let (Value::Reference(reference), receiver_owner) = self.pop_owned()? else {
+                let (arguments, argument_owners, argument_origins) =
+                    self.pop_many_owned_with_origins(arguments.len())?;
+                let (Value::Reference(reference), receiver_owner, receiver_origins) =
+                    self.pop_owned_with_origins()?
+                else {
                     return Err(invariant("dispatch-reference-value-expected"));
                 };
                 let mut full_owners = Vec::with_capacity(argument_owners.len() + 1);
                 full_owners.push(receiver_owner);
                 full_owners.extend(argument_owners);
+                let mut full_origins = Vec::with_capacity(argument_origins.len() + 1);
+                full_origins.push(receiver_origins);
+                full_origins.extend(argument_origins);
                 let subtype = reference.object_type();
                 // The exact call site that produced this node (`check.rs`'s
                 // `dispatch_call`), never re-derived by searching
@@ -4136,6 +4461,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                             frame,
                             provenance,
                             full_owners.clone(),
+                            full_origins.clone(),
                             next_charge,
                             true,
                         )?;
@@ -4149,6 +4475,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                             ),
                             node,
                             owners: full_owners,
+                            reference_origins: full_origins,
                         })));
                         self.tasks.push(Task::Eval(callable.body));
                         return Ok(());
@@ -4163,7 +4490,14 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                             full_arguments.into_iter().map(Some).collect();
                         frame.resize(callable.slots.max(frame.len()), None);
                         let provenance = vec![false; frame.len()];
-                        self.push_frame_owned(frame, provenance, full_owners, next_charge, true)?;
+                        self.push_frame_owned(
+                            frame,
+                            provenance,
+                            full_owners,
+                            full_origins,
+                            next_charge,
+                            true,
+                        )?;
                         self.tasks.push(Task::ObserveApplication(node));
                         self.tasks.push(Task::Return);
                         self.tasks.push(Task::Eval(callable.body));
@@ -4172,7 +4506,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 }
             }
         };
-        self.push_value(value, false);
+        self.push_value_with_origins(value, false, result_origins);
         Ok(())
     }
 
@@ -5028,7 +5362,42 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             NodeKind::Query { .. } => (None, false),
             _ => return Err(invariant("iteration-node-invalid")),
         };
+        let source_origins = self
+            .value_reference_origins
+            .last()
+            .cloned()
+            .unwrap_or_default();
+        let mut operand = match node.kind() {
+            NodeKind::Query { source, .. } | NodeKind::Fold { source, .. } => node.at(*source),
+            _ => return Err(invariant("iteration-node-invalid")),
+        };
+        let population_origin = loop {
+            match operand.kind() {
+                NodeKind::PopulationObjects { population } => {
+                    let objects = self.objects_for(node)?;
+                    let origin = objects
+                        .population_node(&population.node)
+                        .filter(|key| objects.population_provenance(key).is_some())
+                        .map(|population| {
+                            ReferenceOrigins::from_occurrences(vec![
+                                fsl_semantics::model::object_environment::ReferenceOccurrence {
+                                    path: Vec::new(),
+                                    population: population.clone(),
+                                },
+                            ])
+                        });
+                    break origin;
+                }
+                NodeKind::Query {
+                    visit: Visit::Filter,
+                    source,
+                    ..
+                } => operand = operand.at(*source),
+                _ => break None,
+            }
+        };
         let source = self.pop_collection()?;
+        let stable_sequence = source.collection_type().kind() == CollectionKind::Sequence;
         let spec = Self::iteration_spec(node)?;
         let state = match IterationState::start(&spec, source, identity, reduce, self.meter) {
             Ok(state) => state,
@@ -5052,6 +5421,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         self.iterate(Box::new(Iteration {
             node,
             state,
+            source_origins,
+            population_origin,
+            stable_sequence,
             source_owner: self.step_owner(),
             owner: self.step_owner(),
         }))
@@ -5100,12 +5472,24 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             Flow::Exhausted => return self.finish(*iteration),
             Flow::Visit { element, position } => (element, position),
         };
+        let element_origins = match &iteration.population_origin {
+            Some(origin) => origin.clone(),
+            None if iteration.stable_sequence => iteration.source_origins.select(
+                &filament_semantic_value::admission::PathStep::Index(position),
+            ),
+            None => ReferenceOrigins::default(),
+        };
         let body = match node.kind() {
             NodeKind::Query {
                 slot, body, source, ..
             } => {
                 self.note_element(node.at(*source), &iteration.state.source, *slot, position);
                 *self.slot(*slot)? = Some(element);
+                *self
+                    .frame_reference_origins
+                    .last_mut()
+                    .and_then(|frame| frame.get_mut(*slot))
+                    .ok_or_else(|| invariant("query-binder-origin-slot"))? = element_origins;
                 iteration.owner = self.step_owner();
                 self.set_slot_owner(*slot, iteration.source_owner)?;
                 body
@@ -5127,6 +5511,17 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 }
                 *self.slot(*accumulator)? = Some(current);
                 *self.slot(*binder)? = Some(element);
+                *self
+                    .frame_reference_origins
+                    .last_mut()
+                    .and_then(|frame| frame.get_mut(*binder))
+                    .ok_or_else(|| invariant("fold-binder-origin-slot"))? = element_origins;
+                *self
+                    .frame_reference_origins
+                    .last_mut()
+                    .and_then(|frame| frame.get_mut(*accumulator))
+                    .ok_or_else(|| invariant("fold-accumulator-origin-slot"))? =
+                    ReferenceOrigins::default();
                 iteration.owner = self.step_owner();
                 self.set_slot_owner(*accumulator, iteration.owner)?;
                 self.set_slot_owner(*binder, iteration.source_owner)?;
@@ -5680,7 +6075,6 @@ mod tests {
     use super::*;
     use filament_checked::key::DeclarationKey;
     use filament_checked::node::CheckedLiteral;
-    use filament_exact::ObjectId;
     use filament_semantic_value::catalog::Category;
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
     use filament_semantic_value::object_closure::ObjectClosure;
@@ -5701,55 +6095,6 @@ mod tests {
 
     // `TypeForm`'s span carries no identity (ADR-011 §2.2 row E2).
     const SPAN: fsl_foundation::Span = fsl_foundation::Span { start: 0, end: 0 };
-
-    /// FR-230-AC-43: a reference identifies its owner, canonical place key,
-    /// and concrete slot path without carrying a clock value.
-    #[trace("FR-230-AC-43")]
-    #[test]
-    fn clock_place_references_encode_the_place_and_ordered_slots() {
-        let owner = ObjectReference::new(
-            crate::test_ids::universe_id([1]),
-            crate::test_ids::effective_id([2]),
-            ObjectId::new("call").expect("fixture object id is non-empty"),
-        );
-        let place = crate::test_ids::node_key([4]);
-        let clock_type = fsl_semantics::model::clock_reference::encode(&owner, &place, &[])
-            .expect("the public codec issues the canonical Clock target")
-            .object_type()
-            .clone();
-        let expected_prefix = "place/v1/63616c6c/7b226f7264696e616c223a302c227061636b616765223a2266697874757265222c2270617468223a5b225b345d225d7d";
-
-        assert!(
-            clock_place_reference(
-                owner.clone(),
-                crate::test_ids::effective_id([3]),
-                &place,
-                Vec::new(),
-            )
-            .is_err(),
-            "a non-clock target is refused"
-        );
-
-        let unindexed =
-            clock_place_reference(owner.clone(), clock_type.clone(), &place, Vec::new())
-                .unwrap_or_else(|_| panic!("an unindexed place reference is well formed"));
-        assert_eq!(unindexed.object().as_str(), format!("{expected_prefix}/-"));
-        assert_eq!(unindexed.universe(), owner.universe());
-        assert_eq!(unindexed.object_type(), &clock_type);
-
-        let indexed = clock_place_reference(
-            owner,
-            clock_type,
-            &place,
-            vec![
-                Value::Integer(Integer::from(0_i64)),
-                Value::Integer(Integer::from(1_i64)),
-            ],
-        )
-        .unwrap_or_else(|_| panic!("an indexed place reference is well formed"));
-        assert_eq!(indexed.object().as_str(), format!("{expected_prefix}/0.1"));
-        assert_ne!(indexed, unindexed);
-    }
 
     #[trace("FSpec-TC-235", "FSpec-FR-208-AC-11", "FSpec-FR-207-AC-8")]
     #[test]

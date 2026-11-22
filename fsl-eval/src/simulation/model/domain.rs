@@ -18,12 +18,6 @@ use std::sync::{Arc, Mutex, OnceLock};
 /// Selector maxima authenticated by a timed subject's live-clock bound.
 pub(super) type ClockSelectorMaxima = BTreeMap<NodeKey, Vec<u64>>;
 
-#[derive(Clone, Copy, Default)]
-pub(super) struct ClockDomains<'a> {
-    pub(super) models: &'a [fsl_semantics::check::TimedModel],
-    pub(super) maxima: Option<&'a ClockSelectorMaxima>,
-}
-
 /// Each record type's slot indices in declaration order, the first the most
 /// significant component of its enumerated domain (FR-120, FR-215). A record
 /// it does not list enumerates in slot order.
@@ -166,24 +160,6 @@ impl Space {
         orders: &RecordOrders,
         visiting: &mut Vec<NodeKey>,
     ) -> Option<Self> {
-        Self::with_clock_places(
-            value_type,
-            objects,
-            types,
-            orders,
-            visiting,
-            ClockDomains::default(),
-        )
-    }
-
-    fn with_clock_places(
-        value_type: &ValueType,
-        objects: &[ObjectReference],
-        types: &TypeEnvironment,
-        orders: &RecordOrders,
-        visiting: &mut Vec<NodeKey>,
-        clock_models: ClockDomains<'_>,
-    ) -> Option<Self> {
         match value_type {
             ValueType::Enum(shape) => Some(Self::Enum(
                 shape
@@ -229,14 +205,7 @@ impl Space {
                                     .positions()
                                     .iter()
                                     .map(|position| {
-                                        Self::with_clock_places(
-                                            position,
-                                            objects,
-                                            types,
-                                            orders,
-                                            visiting,
-                                            clock_models,
-                                        )
+                                        Self::of(position, objects, types, orders, visiting)
                                     })
                                     .collect::<Option<Vec<_>>>()?;
                                 Some((verified, positions))
@@ -250,15 +219,8 @@ impl Space {
                 let fields = members
                     .into_iter()
                     .map(|(optional, member)| {
-                        Self::with_clock_places(
-                            member,
-                            objects,
-                            types,
-                            orders,
-                            visiting,
-                            clock_models,
-                        )
-                        .map(|space| (optional, space))
+                        Self::of(member, objects, types, orders, visiting)
+                            .map(|space| (optional, space))
                     })
                     .collect::<Option<Vec<_>>>()?;
                 visiting.pop();
@@ -273,8 +235,7 @@ impl Space {
                     order,
                 })
             }
-            other => Domain::with_clock_places(other, objects, types, orders, clock_models)
-                .map(Self::Plain),
+            other => Domain::of(other, objects, types, orders).map(Self::Plain),
         }
     }
 
@@ -462,39 +423,6 @@ pub(super) fn composite_values<E>(
     Ok(Some(values))
 }
 
-/// One declared clock template at a real owner, with its potential slots.
-/// Indexing stays lazy even when a finite collection has a large maximum.
-pub(super) struct ClockReferenceSpace {
-    owner: ObjectReference,
-    template: NodeKey,
-    maxima: Vec<u64>,
-}
-
-impl ClockReferenceSpace {
-    fn len(&self) -> u128 {
-        self.maxima.iter().fold(1_u128, |product, maximum| {
-            product.saturating_mul(u128::from(*maximum))
-        })
-    }
-
-    fn nth(&self, index: u128) -> Option<Value> {
-        if index >= self.len() {
-            return None;
-        }
-        let selectors = product_digits(index, self.maxima.iter().copied().map(u128::from))?
-            .into_iter()
-            .map(|digit| {
-                u64::try_from(digit)
-                    .ok()
-                    .map(|digit| Value::Integer(Integer::from(digit)))
-            })
-            .collect::<Option<Vec<_>>>()?;
-        fsl_semantics::model::clock_reference::encode(&self.owner, &self.template, &selectors)
-            .ok()
-            .map(Value::Reference)
-    }
-}
-
 /// A product's component indices, the last component moving fastest.
 fn product_digits(
     mut index: u128,
@@ -531,9 +459,6 @@ pub(super) enum Domain {
         inner: Box<Domain>,
     },
     Reference(Vec<ObjectReference>),
-    /// Place ids are data values over declared templates and real owners,
-    /// distinct from the object references of `Reference`.
-    ClockReferences(Vec<ClockReferenceSpace>),
     Sequence {
         collection: CollectionType,
         element: Box<Domain>,
@@ -579,18 +504,6 @@ impl Domain {
         types: &TypeEnvironment,
         orders: &RecordOrders,
     ) -> Option<Self> {
-        Self::with_clock_places(value_type, objects, types, orders, ClockDomains::default())
-    }
-
-    /// The ordinary finite domain, with clock-reference leaves drawn from
-    /// the checked model's declared places rather than model objects.
-    fn with_clock_places(
-        value_type: &ValueType,
-        objects: &[ObjectReference],
-        types: &TypeEnvironment,
-        orders: &RecordOrders,
-        clock_models: ClockDomains<'_>,
-    ) -> Option<Self> {
         match value_type {
             ValueType::Boolean => Some(Self::Boolean),
             ValueType::Text(text_type) => Some(Self::Text(*text_type)),
@@ -603,58 +516,24 @@ impl Domain {
             }
             ValueType::Option(payload) => Some(Self::Option {
                 payload_type: (**payload).clone(),
-                inner: Box::new(Self::with_clock_places(
-                    payload,
-                    objects,
-                    types,
-                    orders,
-                    clock_models,
-                )?),
+                inner: Box::new(Self::of(payload, objects, types, orders)?),
             }),
             // FR-120 "Applications" (STD-508): an enum, a record or tuple
             // whose components all have a finite domain, the first declared
             // most significant, and a model-variant union whose payload
             // positions all have one; a clock component is a place, not a
             // component of the checked value.
-            ValueType::Enum(_) | ValueType::Composite(_) => Space::with_clock_places(
-                value_type,
-                objects,
-                types,
-                orders,
-                &mut Vec::new(),
-                clock_models,
-            )
-            .map(|space| Self::Space(Box::new(space))),
+            ValueType::Enum(_) | ValueType::Composite(_) => {
+                Space::of(value_type, objects, types, orders, &mut Vec::new())
+                    .map(|space| Self::Space(Box::new(space)))
+            }
             ValueType::Reference(target)
                 if fsl_semantics::model::clock_reference::is_clock_type(target) =>
             {
-                let mut spaces = Vec::new();
-                for model in clock_models.models {
-                    for (clock, template) in model.clocks().iter().zip(model.place_nodes()) {
-                        // A Map value has no place id.
-                        if clock.slots().any(|shape| shape.map) {
-                            continue;
-                        }
-                        for owner in objects.iter().filter(|owner| {
-                            types.conforms(owner.object_type().clone(), clock.owner())
-                        }) {
-                            let maxima =
-                                match clock_models.maxima.and_then(|maxima| maxima.get(template)) {
-                                    Some(maxima) => maxima.clone(),
-                                    None => clock
-                                        .slots()
-                                        .map(|shape| shape.max)
-                                        .collect::<Option<Vec<_>>>()?,
-                                };
-                            spaces.push(ClockReferenceSpace {
-                                owner: owner.clone(),
-                                template: template.clone(),
-                                maxima,
-                            });
-                        }
-                    }
-                }
-                Some(Self::ClockReferences(spaces))
+                // Timed declarations and selector bounds do not authenticate
+                // the original population of a generated clock reference.
+                // The model admission boundary reports this unsupported domain.
+                None
             }
             ValueType::Reference(target) => Some(Self::Reference(
                 objects
@@ -667,13 +546,7 @@ impl Domain {
             // over a finite element, an ordered set by its arrangements.
             ValueType::Collection(collection) => {
                 let bound = collection.bound()?;
-                let element = Box::new(Self::with_clock_places(
-                    collection.element(),
-                    objects,
-                    types,
-                    orders,
-                    clock_models,
-                )?);
+                let element = Box::new(Self::of(collection.element(), objects, types, orders)?);
                 let (collection, min, max) =
                     ((**collection).clone(), bound.minimum(), bound.maximum());
                 match collection.kind() {
@@ -712,29 +585,11 @@ impl Domain {
         orders: &RecordOrders,
         max_value_bits: Option<u8>,
     ) -> Option<Self> {
-        Self::of_bounded_with_clock_places(
-            value_type,
-            objects,
-            types,
-            orders,
-            max_value_bits,
-            ClockDomains::default(),
-        )
-    }
-
-    pub(super) fn of_bounded_with_clock_places(
-        value_type: &ValueType,
-        objects: &[ObjectReference],
-        types: &TypeEnvironment,
-        orders: &RecordOrders,
-        max_value_bits: Option<u8>,
-        clock_models: ClockDomains<'_>,
-    ) -> Option<Self> {
         match value_type {
             ValueType::Integer => Some(Self::SizeInteger {
                 bits: max_value_bits?,
             }),
-            _ => Self::with_clock_places(value_type, objects, types, orders, clock_models),
+            _ => Self::of(value_type, objects, types, orders),
         }
     }
 
@@ -772,9 +627,6 @@ impl Domain {
             Self::Int { len, .. } => *len,
             Self::Option { inner, .. } => inner.len().saturating_add(1),
             Self::Reference(objects) => objects.len() as u128,
-            Self::ClockReferences(spaces) => spaces
-                .iter()
-                .fold(0_u128, |total, space| total.saturating_add(space.len())),
             Self::Listed(values) => values.len() as u128,
             Self::Space(space) => space.len(),
             Self::Sequence {
@@ -841,16 +693,6 @@ impl Domain {
                 .get(usize::try_from(index).ok()?)
                 .cloned()
                 .map(Value::Reference),
-            Self::ClockReferences(spaces) => {
-                let mut remaining = index;
-                for space in spaces {
-                    if remaining < space.len() {
-                        return space.nth(remaining);
-                    }
-                    remaining = remaining.checked_sub(space.len())?;
-                }
-                None
-            }
             Self::Listed(values) => values.get(usize::try_from(index).ok()?).cloned(),
             Self::Space(space) => space.nth(index),
             Self::Sequence {
@@ -1808,11 +1650,11 @@ mod tests {
         }
     }
 
-    /// A stored clock reference ranges over real owners' declared places,
-    /// including both potential positions of a bounded clock collection.
+    /// Timed declarations alone cannot authenticate generated clock references;
+    /// ordinary object references still enumerate their actual owners.
     #[trace("TC-3084", "FR-1040-AC-8")]
     #[test]
-    fn checked_clock_reference_domains_visit_each_owner_and_bounded_slot() {
+    fn legacy_timed_context_does_not_enumerate_clock_reference_domains() {
         use filament_semantic_value::checking::{CheckMode, CheckingLimits};
         use fsl_semantics::model::accounting::ModelNormalizationLimits;
         use fsl_semantics::model::intake::{admit_unit, package_input};
@@ -1858,7 +1700,7 @@ mod tests {
             panic!("one checked timed model")
         };
         let templates: Vec<_> = timed.clocks().iter().zip(timed.place_nodes()).collect();
-        let [(collection, q), (scalar, x)] = templates.as_slice() else {
+        let [(collection, _), (scalar, _)] = templates.as_slice() else {
             panic!("q and x templates")
         };
         assert_eq!(
@@ -1885,48 +1727,116 @@ mod tests {
         let c2 = model
             .object_reference(owner_type, "c2")
             .expect("second owner");
-        let place = |owner: &ObjectReference, template: &NodeKey, slots: &[u64]| {
-            let selectors: Vec<_> = slots
-                .iter()
-                .map(|index| Value::Integer(Integer::from(*index)))
-                .collect();
-            fsl_semantics::model::clock_reference::encode(owner, template, &selectors)
-                .expect("declared place id")
-        };
-        let expected = [
-            place(&c1, q, &[0]),
-            place(&c1, q, &[1]),
-            place(&c2, q, &[0]),
-            place(&c2, q, &[1]),
-            place(&c1, x, &[]),
-            place(&c2, x, &[]),
-        ];
-        let value_type = ValueType::Reference(expected[0].object_type().clone());
-        let domain = Domain::of_bounded_with_clock_places(
-            &value_type,
-            &[c1, c2],
+        let references = [c1.clone(), c2.clone()];
+        let target = graph
+            .scope()
+            .types()
+            .object_types()
+            .find(|declaration| {
+                fsl_semantics::model::clock_reference::is_clock_type(&declaration.key())
+            })
+            .expect("checked native clock reference target")
+            .key();
+        let value_type = ValueType::Reference(target);
+        assert!(
+            Domain::of_bounded(
+                &value_type,
+                &references,
+                graph.scope().types(),
+                &RecordOrders::new(),
+                None,
+            )
+            .is_none(),
+            "checked templates and real owners do not supply original population provenance"
+        );
+        let ordinary = Domain::of(
+            &ValueType::Reference(collection.owner()),
+            &references,
             graph.scope().types(),
             &RecordOrders::new(),
-            None,
-            ClockDomains {
-                models: graph.timed_models(),
-                maxima: None,
-            },
         )
-        .expect("finite clock-reference domain");
-        assert_eq!(domain.len(), 6);
-        for (index, expected) in expected.iter().enumerate() {
-            let Some(Value::Reference(actual)) = domain.nth(index as u128) else {
-                panic!("clock-reference value at {index}")
+        .expect("ordinary references remain enumerable");
+        assert_eq!(ordinary.len(), 2);
+        for (index, expected) in [(0, c1), (1, c2)] {
+            let Some(Value::Reference(actual)) = ordinary.nth(index) else {
+                panic!("the ordinary reference domain retains both real owners");
             };
-            assert_eq!(actual.universe(), expected.universe());
-            assert_eq!(actual.object_type(), expected.object_type());
-            assert_eq!(actual.object(), expected.object());
+            assert_eq!(actual, expected);
         }
-        assert!(
-            domain.nth(6).is_none(),
-            "iteration ends after both owners' exact six place ids"
+        assert!(ordinary.nth(2).is_none());
+    }
+
+    /// An unauthenticated clock leaf cannot leave an empty or partial domain
+    /// through optional values, collections, records, tuples or union cases.
+    #[trace("TC-3084", "FR-1040-AC-8")]
+    #[test]
+    fn unauthenticated_clock_reference_domains_refuse_nested_carriers() {
+        use filament_semantic_value::declaration::{FieldDeclaration, ObjectTypeDeclaration};
+
+        let target = filament_exact::EffectiveId::new(
+            None,
+            filament_exact::OriginalDeclarationKey::new("filament/native", "Clock"),
         );
+        let clock = ValueType::Reference(target.clone());
+        let record = crate::test_ids::node_key([21]);
+        let tuple = crate::test_ids::node_key([22]);
+        let union = crate::test_ids::node_key([23]);
+        let types = TypeEnvironment::new(
+            [
+                CompositeDeclaration::new(
+                    record.clone(),
+                    "Record",
+                    CompositeShape::Record(vec![
+                        FieldDeclaration::new("clock", clock.clone(), Presence::Optional),
+                        FieldDeclaration::new("flag", ValueType::Boolean, Presence::Required),
+                    ]),
+                ),
+                CompositeDeclaration::new(
+                    tuple.clone(),
+                    "Tuple",
+                    CompositeShape::Tuple(vec![ValueType::Boolean, clock.clone()]),
+                ),
+                CompositeDeclaration::new(
+                    union.clone(),
+                    "Choice",
+                    CompositeShape::Union(vec![
+                        UnionMemberDeclaration::from_verified(
+                            UnionMember::from_admitted(union.clone(), "Flag").expect("case name"),
+                            vec![ValueType::Boolean],
+                        ),
+                        UnionMemberDeclaration::from_verified(
+                            UnionMember::from_admitted(union.clone(), "Clock").expect("case name"),
+                            vec![clock.clone()],
+                        ),
+                    ]),
+                ),
+            ],
+            [ObjectTypeDeclaration::new(
+                target,
+                "ClockReference",
+                Vec::new(),
+            )],
+        )
+        .expect("carrier declarations admit");
+        let sequence = ValueType::collection(CollectionType::new(
+            CollectionKind::Sequence,
+            clock.clone(),
+            Some(CardinalityBound::new(0, 2).expect("bounded collection")),
+        ));
+        for value_type in [
+            clock.clone(),
+            ValueType::option(clock),
+            ValueType::option(sequence.clone()),
+            sequence,
+            ValueType::Composite(record),
+            ValueType::Composite(tuple),
+            ValueType::Composite(union),
+        ] {
+            assert!(
+                Domain::of(&value_type, &[], &types, &RecordOrders::new()).is_none(),
+                "no authenticated clock domain for {value_type:?}"
+            );
+        }
     }
 
     /// FR-120 "Applications": an `Int[lower, upper]` domain is every integer

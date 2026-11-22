@@ -130,9 +130,11 @@ pub(super) fn term_rows<L>(
     for &(node, parent) in &positions {
         let at = node.location();
         let under = parent.and_then(|index| {
-            let (ancestor, _) = positions.get(index)?;
             let claim = claimed.get(index).copied().flatten()?;
-            (ancestor.location() == at).then_some((claim, siblings[index].as_slice()))
+            // Distinct operands of a query can share a child location even
+            // when their retained parent has another location. Its actual
+            // ordered operands still identify each visit.
+            Some((claim, siblings[index].as_slice()))
         });
         let mut taken = Vec::new();
         let mut above = parent;
@@ -545,4 +547,146 @@ fn is_deref_application(key: &NodeKey) -> bool {
         key.path().as_slice(),
         [PathSegment::Text(form), PathSegment::Text(kind), ..] if form == "expression" && kind == "deref"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use filament_semantic_value::checking::{CheckMode, CheckingLimits};
+    use fsl_semantics::check::{test_support::ZeroRewardEvaluator, PackageDeclarations};
+    use ix_trace_rs::trace;
+
+    /// A query's source and predicate share a child location but belong to
+    /// distinct ordered operands of its actual retained root. Both terms
+    /// must keep their own application and occurrence in the admitted rows.
+    #[trace("FR-383", "TC-1063")]
+    #[test]
+    fn query_siblings_share_a_location_but_keep_their_actual_parent_operands() {
+        let document = include_bytes!("../../../examples/config-version/model.semantic-ir.json");
+        let packages = fsl_semantics::model::intake::package_input([document.as_slice()])
+            .expect("the actual ConfigVersion model admits");
+        let source = r#"language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile p = "filament.protocol.finite-global/v1";
+model C = "example/config-version";
+protocol Places using p over (call: Reference<C::ConfigVersion>) on each (opened: Boolean) when (opened) {
+  capture chosen: Boolean = true;
+  capture used: Integer = count(c in C::config_history where c = call);
+  role Observer on C::ConfigVersion;
+  run sequence Main { check Ready using v { true }; }
+  finish End as (outcome: Boolean) { true };
+}
+"#;
+        let parsed = fsl_cst::parse(
+            fsl_foundation::SourceIdentity::new("agent-ix", "test:query-locations"),
+            "query.native",
+            source.as_bytes(),
+            fsl_cst::Limits::default(),
+        )
+        .expect("the source parses");
+        assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+        let unit = fsl_forms::build_unit(&parsed).expect("the source forms build");
+        let models = fsl_semantics::model::intake::admit_unit(
+            &unit.selections().models,
+            &packages,
+            fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+        )
+        .expect("the selected Model admits");
+        let graph = PackageDeclarations::assemble(
+            parsed.source().reference().clone(),
+            "fixture".to_owned(),
+            unit,
+            models,
+            Vec::new(),
+        )
+        .expect("the source assembles")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &ZeroRewardEvaluator,
+        )
+        .expect("the protocol checks");
+        let capture = graph.protocols()[0]
+            .obligations
+            .captures
+            .iter()
+            .find(|capture| capture.name == "used")
+            .expect("the actual count capture");
+        let root = capture.initializer.root().location();
+        let origins = HashSet::from([&root.origin]);
+        let applications = applications_at(&graph, &origins);
+        let root_keys = applications.get(root).expect("the lowered count root");
+        let [(root_key, _)] = root_keys.as_slice() else {
+            panic!("one actual retained count root");
+        };
+        let operands = graph
+            .semantic_graph()
+            .node(root_key.clone())
+            .expect("the actual root")
+            .body()
+            .leaves()
+            .into_iter()
+            .filter_map(|leaf| match leaf {
+                LeafTerm::Reference { target } => target.admitted().cloned(),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            operands.len(),
+            2,
+            "the population source and equality predicate"
+        );
+        let (shared, _) = applications
+            .iter()
+            .find(|(_, candidates)| {
+                operands
+                    .iter()
+                    .all(|operand| candidates.iter().any(|(key, _)| key == operand))
+            })
+            .expect("both direct operands really share one recorded location");
+        assert_ne!(
+            *shared, root,
+            "the retained parent has a different location"
+        );
+        let name = match &shared.origin {
+            Origin::TypeDeclaration { name } => name.clone(),
+            _ => panic!("an actual protocol slot origin"),
+        };
+        let path = shared.path();
+        let package = crate::CheckedPackage::link(graph);
+        let read = crate::read_evaluation_package(
+            &package,
+            fsl_semantics::library::LibraryName::new("fixture").expect("library"),
+            &packages,
+            crate::V2ReadLimits::fixture(),
+            super::super::EmitLimits::fixture(),
+        )
+        .expect("the actual emitted protocol and all its locations admit");
+        let wire: serde_json::Value = serde_json::from_slice(read.emission().package.bytes())
+            .expect("the actual emitted wire");
+        let structural = crate::checked_v2::wire_graph(read.admitted())
+            .expect("the admitted structural correspondence");
+        let rows = wire["checked_term_data"]["protocol_locations"]
+            .as_array()
+            .expect("the actual protocol rows");
+        for operand in operands {
+            let matching = rows
+                .iter()
+                .filter(|row| {
+                    if row["location"]["origin"]["name"] != name
+                        || row["location"]["path"] != serde_json::json!(path)
+                    {
+                        return false;
+                    }
+                    let id: CheckedNodeId = serde_json::from_value(row["application"].clone())
+                        .expect("the actual application id");
+                    structural.key(&id).expect("the actual producer key") == operand
+                })
+                .count();
+            assert_eq!(
+                matching, 1,
+                "each distinct source/predicate operand keeps its own row"
+            );
+        }
+    }
 }

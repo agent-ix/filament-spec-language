@@ -753,11 +753,17 @@ fn pre_observations(
         pre: Some(walk.observation.clone()),
         post: None,
         self_object: row.reference.clone(),
+        self_population: walk
+            .observation
+            .environment
+            .population_node(&row.population.node)
+            .cloned(),
         invocation: None,
         self_kind: SelfKind::Object,
         receiver_pre: None,
         receiver_post: None,
         parameters: args.to_vec(),
+        value_origins: Default::default(),
         result: None,
         created: Vec::new(),
         deleted: Vec::new(),
@@ -1128,11 +1134,18 @@ impl Run<'_, '_, '_> {
                 pre: Some(self.walk.observation.clone()),
                 post: Some(self.walk.observation.clone()),
                 self_object: self.row.reference.clone(),
+                self_population: self
+                    .walk
+                    .observation
+                    .environment
+                    .population_node(&self.row.population.node)
+                    .cloned(),
                 invocation: None,
                 self_kind: SelfKind::Object,
                 receiver_pre: None,
                 receiver_post: None,
                 parameters: self.args.to_vec(),
+                value_origins: Default::default(),
                 result: result.clone(),
                 created: Vec::new(),
                 deleted: Vec::new(),
@@ -1878,11 +1891,18 @@ impl Run<'_, '_, '_> {
                 pre: Some(self.walk.observation.clone()),
                 post: Some(post.clone()),
                 self_object: self.row.reference.clone(),
+                self_population: self
+                    .walk
+                    .observation
+                    .environment
+                    .population_node(&self.row.population.node)
+                    .cloned(),
                 invocation: None,
                 self_kind: SelfKind::Object,
                 receiver_pre: None,
                 receiver_post: None,
                 parameters: self.args.to_vec(),
+                value_origins: Default::default(),
                 result: result.cloned(),
                 created: effect.created.clone(),
                 deleted: effect.deleted.clone(),
@@ -2005,11 +2025,18 @@ impl Run<'_, '_, '_> {
             pre: Some(self.walk.observation.clone()),
             post: Some(post),
             self_object: self.row.reference.clone(),
+            self_population: self
+                .walk
+                .observation
+                .environment
+                .population_node(&self.row.population.node)
+                .cloned(),
             invocation: None,
             self_kind: SelfKind::Object,
             receiver_pre: None,
             receiver_post: None,
             parameters: self.args.to_vec(),
+            value_origins: Default::default(),
             result: None,
             created: effect.created,
             deleted: effect.deleted,

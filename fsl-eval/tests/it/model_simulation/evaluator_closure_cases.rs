@@ -86,6 +86,8 @@ fn clause_terminal_and_claim_entries_read_the_actual_current_state() {
             pre: None,
             post: None,
             self_object: reference,
+            self_population: None,
+            value_origins: Default::default(),
             invocation: None,
             self_kind: SelfKind::Object,
             receiver_pre: None,

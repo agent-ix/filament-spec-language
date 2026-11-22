@@ -1485,6 +1485,12 @@ fn check_message_one(first: &CheckRefusal) -> String {
             message =
                 format!("{message}: operation {operation} parameter {parameter}: {component}");
         }
+        CheckCause::DuplicateClockDeclaration(collision) => {
+            message = format!("{message}: {collision}");
+        }
+        CheckCause::AmbiguousClockDeclaration(ambiguity) => {
+            message = format!("{message}: {ambiguity}");
+        }
         CheckCause::PlanUnknownField { owner, field, .. }
         | CheckCause::UnknownField { owner, field, .. } => {
             message = format!("{message}: `{owner}` has no field `{field}`");

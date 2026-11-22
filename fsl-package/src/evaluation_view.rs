@@ -14,8 +14,8 @@ use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::domain_package::DomainPackageRef;
 use fsl_semantics::model::intake::PackageInput;
 use fsl_semantics::model::observation::{
-    admit_current_snapshot, AdmissionFailure, AdmissionUsage, DocumentRef, Observation,
-    ObservationLimits,
+    admit_current_snapshot, AdmissionFailure, AdmissionUsage, DocumentRef, ModelSelections,
+    Observation, ObservationLimits,
 };
 
 use crate::protocol_selection::{self, ProtocolSlotDescriptor, Selected, SlotSelectionFailure};
@@ -89,7 +89,8 @@ impl<'package> AdmittedEvaluationView<'package> {
         }
 
         match admit_current_snapshot(
-            core::slice::from_ref(model),
+            ModelSelections::new(core::slice::from_ref(model), &[])
+                .with_clock_declaration_table(self.package.graph().clock_declaration_table()),
             self.package.graph().scope().types(),
             packages,
             model_limits,
