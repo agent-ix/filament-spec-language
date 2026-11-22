@@ -1462,5 +1462,36 @@ fn a_held_invariant_stays_proved_beside_a_refuted_one_over_a_package() {
     let run = analyze_members(&ws, "analyze-invariant-mixed.json", &members);
     assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
     assert_eq!(run.document()["items"], source.document()["items"]);
+    for member in ["aggregate", "category"] {
+        assert_eq!(run.document()[member], source.document()[member], "{member}");
+    }
+    assert_eq!(run.exit, source.exit);
+}
+
+/// QSL-2765: an `invariant` whose body is undefined at a reachable state
+/// (`6 mod 0` at `value = 3`) settles over the package as from source, with
+/// the undefined evaluation reproduced; its replay runs on the same model
+/// system on both routes. Single-selection subject only: a multi-selection
+/// subject with a strict universe subset is not built here.
+#[trace("TC-2410", "FR-850-AC-5")]
+#[test]
+fn an_undefined_invariant_settles_over_a_package_as_from_source() {
+    let body = "invariant DefinedBelowThree using v on M::Counter at current { 6 mod (3 - self.value) >= 0 }\n";
+    let items = json!([{"claim": "DefinedBelowThree"}]);
+    let ws = Workspace::new("package-invariant-undefined");
+    let source = analyze(&counter_request(&ws, body, items.clone()));
+    let (members, _) = package_request(&ws, body, items);
+    let run = analyze_members(&ws, "analyze-invariant-undefined.json", &members);
+    assert_eq!(label(&run.item(0)), label(&source.item(0)), "{}", run.document());
+    assert_eq!(label(&source.item(0)), "refuted", "{}", source.document());
+    assert_eq!(run.item(0)["replay"]["reproduced"], true, "{}", run.document());
+    for member in ["items", "aggregate", "last_stage", "category", "registry"] {
+        assert_eq!(
+            run.document()[member],
+            source.document()[member],
+            "{member}: {}",
+            run.document()
+        );
+    }
     assert_eq!(run.exit, source.exit);
 }

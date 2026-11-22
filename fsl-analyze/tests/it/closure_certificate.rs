@@ -306,8 +306,9 @@ impl Invariant {
         truths: &[bool],
     ) -> ClosureCertificate {
         let keys = self.monitor_keys(object);
-        let mut monitor = Monitor::bad_prefix(translate(&self.clause, 64).expect("translates"), 64)
-            .expect("a safety automaton");
+        let mut monitor =
+            Monitor::bad_prefix(translate(&self.clause, 64).expect("translates"), 64)
+                .expect("a safety automaton");
         let all = (1u64 << monitor.automaton().atoms().len()) - 1;
         let mut state = monitor.initial().expect("initial state");
         let mut states = Vec::new();
@@ -785,10 +786,7 @@ fn a_past_clause_proof_carries_monitor_keys_the_core_accepts() {
 
     let entry = |value: i64| {
         let model = world.state_key(&[value]);
-        let mut states = full
-            .states
-            .iter()
-            .filter(|state| state.model_state == model);
+        let mut states = full.states.iter().filter(|state| state.model_state == model);
         let state = states.next().expect("the value is certified").clone();
         assert!(states.next().is_none(), "one monitor state per value");
         state
@@ -851,11 +849,7 @@ fn an_interval_clause_proof_carries_monitor_keys_the_core_accepts() {
             .map(|state| state.automaton_state.clone())
             .collect()
     };
-    assert_ne!(
-        keys(&[1]),
-        keys(&[2]),
-        "a pending deadline is part of the key"
-    );
+    assert_ne!(keys(&[1]), keys(&[2]), "a pending deadline is part of the key");
     assert_eq!(keys(&[2]), keys(&[3]));
     let request = claim.request(&world, UNLIMITED);
     assert_eq!(check(&request, &full), TemporalCertificateCheck::Accepted);
@@ -996,33 +990,20 @@ fn a_tp3_clause_is_monitored_only_under_an_explicit_ordinary_subject() {
     let item = claim.item();
     let cancel = Cancel::new();
     let ordinary = item
-        .instances_for(
-            &request.subject,
-            &system,
-            &[],
-            &cancel,
-            SubjectKind::Ordinary,
-            64,
-        )
+        .instances_for(&request.subject, &system, &[], &cancel, SubjectKind::Ordinary, 64)
         .expect("an ordinary subject translates");
-    assert!(matches!(ordinary[0].translation, Translation::Monitored(_)));
+    assert!(matches!(
+        ordinary[0].translation,
+        Translation::Monitored(_)
+    ));
     for refused in [
-        item.instances_for(
-            &request.subject,
-            &system,
-            &[],
-            &cancel,
-            SubjectKind::Protocol,
-            64,
-        ),
+        item.instances_for(&request.subject, &system, &[], &cancel, SubjectKind::Protocol, 64),
         item.instances(&request.subject, &system, &[], &cancel),
     ] {
         assert!(
             matches!(
                 refused,
-                Err(ItemRefusal::Translation(TranslationRefusal::NotTranslated(
-                    _
-                )))
+                Err(ItemRefusal::Translation(TranslationRefusal::NotTranslated(_)))
             ),
             "{refused:?}"
         );

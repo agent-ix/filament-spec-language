@@ -1049,6 +1049,30 @@ pub fn replay_model_trace_from_package(
         meter,
         emit: limits.spine.package.emit(),
     };
+    let invariant_row = input
+        .state_clauses()
+        .iter()
+        .find(|entry| entry.invariant && entry.identity == *envelope.clause_node());
+    if let Some(entry) = invariant_row {
+        let system = ModelSystem::new(admission).map_err(ReplayRefusal::Admission)?;
+        // FR-128, FR-951: an `invariant` state clause is read from the
+        // package's own clause row by its `claim_names` occurrence.
+        let expected = OccurrenceKey::new(entry.identity.clone(), entry.claim.clone());
+        if expected != *envelope.occurrence_key() {
+            return Err(refused(ModelTraceRefusal::ItemIdentity {
+                clause_node: envelope.clause_node().clone(),
+                occurrence_key: Box::new(envelope.occurrence_key().clone()),
+                expected_node: entry.identity.clone(),
+                expected_key: Box::new(expected),
+            }));
+        }
+        let settlement = invariant(&system, payload, &entry.name)?;
+        return Ok(ModelTraceReplayResult {
+            settlement,
+            hints: Vec::new(),
+            terminals: input.input().terminal_keys(),
+        });
+    }
     let (for_deadlock, for_race) = derived_items(payload);
     let system = if for_deadlock {
         ModelSystem::new_over_read_identities(admission)
@@ -1056,27 +1080,6 @@ pub fn replay_model_trace_from_package(
         ModelSystem::new(admission)
     }
     .map_err(ReplayRefusal::Admission)?;
-    if let Some(entry) = input.state_clause_at(envelope.clause_node()) {
-        if entry.invariant {
-            // FR-128, FR-951: an `invariant` state clause is read from the
-            // package's own clause row by its `claim_names` occurrence.
-            let expected = OccurrenceKey::new(entry.identity.clone(), entry.claim.clone());
-            if expected != *envelope.occurrence_key() {
-                return Err(refused(ModelTraceRefusal::ItemIdentity {
-                    clause_node: envelope.clause_node().clone(),
-                    occurrence_key: Box::new(envelope.occurrence_key().clone()),
-                    expected_node: entry.identity.clone(),
-                    expected_key: Box::new(expected),
-                }));
-            }
-            let settlement = invariant(&system, payload, &entry.name)?;
-            return Ok(ModelTraceReplayResult {
-                settlement,
-                hints: Vec::new(),
-                terminals: input.input().terminal_keys(),
-            });
-        }
-    }
     if for_deadlock || for_race || matches!(payload.kind, CounterexampleKind::TimeLock) {
         // A package-level freedom item over a model subject is anchored at
         // the `model_root` node of a model selection the package records, with
@@ -2100,8 +2103,9 @@ fn resolved_deadlock<T: SubjectTransition>(
 
 /// Which derived items the payload's shape belongs to, as (deadlock-freedom,
 /// race-freedom): a deadlock to the first, a race to the second, and an
-/// undefined model-side expression with no `over` binding to both; no
-/// authored clause's payload has that shape.
+/// undefined model-side expression with no `over` binding to both. An
+/// `invariant` clause's undefined payload has that shape too, so callers
+/// resolve an invariant row before consulting this.
 fn derived_items<T: SubjectTransition>(payload: &TemporalCounterexample<T>) -> (bool, bool) {
     match &payload.kind {
         CounterexampleKind::Deadlock => (true, false),
@@ -2925,7 +2929,11 @@ pub fn evaluate_model_trace(
             {
                 return Err(ReplayRefusal::UnfairLasso { constraint });
             }
-            trace_of(lasso.clone(), false, positions.len())
+            trace_of(
+                lasso.clone(),
+                false,
+                positions.len(),
+            )
         }
         None => TemporalTrace::Finite {
             len: position_of(positions.len()),

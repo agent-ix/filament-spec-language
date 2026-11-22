@@ -1093,5 +1093,8 @@ fn a_tp3_proof_over_a_protocol_subject_never_settles_proved() {
         panic!("a safety clause holds with a closure: {certificate:?}");
     };
     assert!(certificate.states.is_empty(), "{certificate:?}");
-    assert_eq!(case.label("Fill", &letters, &outcome), ResultLabel::Failed);
+    assert_eq!(
+        case.label("Fill", &letters, &outcome),
+        ResultLabel::Failed
+    );
 }
