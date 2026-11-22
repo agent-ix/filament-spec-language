@@ -827,7 +827,7 @@ fn hp1_package_bad_order_evidence_refuses_but_legacy_absence_is_item_local() {
         "unsupported-feature"
     );
     assert_eq!(
-        run.item(0)["record"]["diagnostic"]["details"]["reason"],
+        run.item(0)["record"]["diagnostic"]["detail"]["reason"],
         "missing-subject-declaration-order"
     );
     assert_eq!(label(&run.item(1)), "proved", "{}", run.document());
@@ -872,7 +872,7 @@ fn hp1_package_ambiguous_model_read_fails_only_its_item() {
     let run = analyze_package(&ws, "ambiguous.json", &members);
     assert_eq!(label(&run.item(0)), "failed", "{}", run.document());
     assert_eq!(
-        run.item(0)["record"]["diagnostic"]["details"]["selection"],
+        run.item(0)["record"]["diagnostic"]["detail"]["selection"],
         "malformed-node"
     );
     assert!(run.item(0)["counterexample"].is_null());
