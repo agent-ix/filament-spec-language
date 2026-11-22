@@ -842,7 +842,7 @@ fn function_selection_admits_an_identity_reference() {
 /// Function selections still require a current snapshot; FR-652's item
 /// admission of pre/post snapshots does not change FR-312's function reader.
 #[test]
-#[trace("FR-312", "FR-109")]
+#[trace("FR-312-AC-4")]
 fn function_selection_requires_a_current_snapshot() {
     let directory = tempfile::tempdir().unwrap();
     spine::write(directory.path(), Case::Healthy).unwrap();
