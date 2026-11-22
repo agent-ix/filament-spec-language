@@ -126,3 +126,58 @@ Plan completion: not assessed
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | low | No new scoped gaps (placeholder) | - |
+
+## Dispositions
+
+### Round 1 — fix-commit check
+
+**CONDITIONAL** — the four-file delta `033fb284..faf85a8` is source-consistent with the reported titan results and current requirements. No remaining scoped source defect was found. The original Findings table is unchanged; its placeholder is not a defect finding, so there are no original FND outcomes to assign. The nine confined titan reruns remain pending.
+
+The disposition examined only the conformance byte constant, two integer literal types, float mismatch helper/callers and handoff native-owner assertions, plus the immediate producers and governing requirements needed to assess them. No new full review or matrix run was performed.
+
+```yaml
+{
+  "scope": [
+    {
+      "id": "FR-056-AC-59",
+      "path": "spec/functional/FR-056-admit-domain-package-model-declarations.md",
+      "role": "examined",
+      "excerpt": "Over a Float64 field `a`, each of `self.a = 0`, `self.a = self.versionNumber` (`Int[0, 1000]`), `self.a < self.count` (`Integer`), `self.a = self.f32` (a Float32 field), `self.a + 1 = self.a` and `self.a = convert<Float64[nearest-even]>(self.a)` refuses `ill_typed`/`type-mismatch` at the operator, naming both operand types, and the unit yields no checked graph."
+    },
+    {
+      "id": "FR-185-AC-7",
+      "path": "spec/functional/FR-185-declare-random-parameters-workloads-and-rewards.md",
+      "role": "examined",
+      "excerpt": "`Service` (with `d` typed `Millis = Int[1, 12]`) checks at S3 and S4 emits it with its random parameters, reward and workload as FR-740 nodes; the package reader admits it and gives back the checked record."
+    },
+    {
+      "id": "FR-564-AC-2",
+      "path": "spec/functional/FR-564-produce-each-outcome-kind-of-the-lifecycle-conformance-matrix-through-the-library.md",
+      "role": "examined",
+      "excerpt": "Each of `package`'s five applicable cells returns its kind: success exit 0; unsupported `unsupported_construct` exit 21; timeout `Cancelled(Deadline)`, cancellation `Cancelled(Requested)` and incomplete `LimitExceeded` naming the `package` limit field, each exit 22."
+    },
+    {
+      "id": "FR-850-AC-15",
+      "path": "spec/functional/FR-850-analyze-a-selected-checked-package-from-its-bytes.md",
+      "role": "examined",
+      "excerpt": "For AC-12's handoff, compute `B` as the bytes of exactly the root, manifest, unique dependency package/witness files and selected model/runtime files read. At `dependent_bytes = B` intake completes; at `B - 1` it settles `incomplete`, `resource_exhausted`, exit `22`, naming `dependent_bytes` and its configured bound. A handoff whose manifest expands the selected-file total from 64 to 65 stops at the same phase naming the shared file limit before opening file 65. A diamond charges its shared triple once. For strict-read/native-join work and storage, an allowance equal to the completed closure p"
+    },
+    {
+      "id": "FR-397-AC-6",
+      "path": "spec/functional/FR-397-select-the-ieee-profile-of-a-package-that-declares-or-evaluates-a-float.md",
+      "role": "examined",
+      "excerpt": "`+`, `-`, `*` and `/` over unlike float widths, over unlike rounding modes (`Float64[nearest-even]` and `Float64[toward-zero]`), or over a float and an `Int[..]`, `Rational[..]` or `Decimal[..]` parameter refuse `ill_typed`/`type-mismatch`; `a = b`, `a != b`, `a < b`, `a <= b`, `a > b` and `a >= b` over the same pairs, in either order, refuse `ill_typed`/`type-mismatch` at the operator."
+    }
+  ]
+}
+```
+
+- Root reported a full successful canonical emission of 23,250 bytes. The constant is exactly `COMPILE_OUTPUT_BYTES_BELOW: u64 = 23_249`; the existing direct full-size comparison and at-bound/one-short checks remain intact. This uses the reported complete emission, not a clamped limit-denial counter.
+- `Integer::from(98_i64)` and `Integer::from(2_i64)` select the supported conversion without changing either exact support weight.
+- The shared float helper still requires exactly one refusal, code `ill_typed` and cause `type-mismatch`, then returns its typed cause. The arithmetic consumer requires exactly `CheckCause::IllTyped(IllTypedCause::TypeMismatch)`, matching the unlike-float arithmetic branch in `check.rs`. Every ordering consumer independently retains `OperandTypeMismatch`, the exact operator and both actual float types. There is no OR-pattern or fallback accepting either variant.
+- FR-397's Arithmetic rule says the checker SHALL refuse unlike rounding modes as `ill_typed`/`type-mismatch`; it does not require the ordering-only typed carrier. FR-397-AC-6 and FR-056-AC-59 support the distinct precise assertions now used.
+- FR-850-AC-15 requires the original `i2.work_units` or `i2.native_join_storage` setting and cumulative one-short accounting, not a permanent Projection owner. `source_enum_catalog.rs` charges work and then one storage unit at its `AdapterRow(0)` / `source_enum_catalog_index` locus; `native_row.rs` maps the denied resource to WorkLimit or StorageLimit and retains the denied charge, locus and original bound.
+- The handoff test now requires exactly Rows/WorkLimit for Work and Rows/StorageLimit for Storage, exactly that locus, the same denied charge and `completed - 1` bound. Existing setting, attempted-total, unpaid-resource and accumulated-consumption checks remain. Root's reported storage observation (bound 1,070; one unpaid storage unit) is consistent with this producer.
+- Requirement quotations in the updated PR body agree with these source rules. The original source-review statements about Storage/Projection and unfinished calibration describe the earlier reviewed head; this disposition records their corrected current state.
+- No new scoped gap, skip, stub, widened assertion or changed production behavior was introduced. The existing Quoin evidence-matrix size limitation remains recorded; no new evidence claim is made.
+- `git diff --check 033fb284..faf85a8` passed. Frozen current head is `faf85a8f2f78626d40ab7fdae1dd7a8a8590d0bc`. No repository build, test, executable, job request or branch edit was performed by this reviewer.
