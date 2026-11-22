@@ -170,7 +170,7 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     }
     let Run { claim, form, .. } = *read;
     let Ok(system) = ModelSystem::new(read.simulation()) else {
-        return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) };
+        return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
     };
     let mut model_limits = form.limits;
     if let Some(samples) = form.witness_samples {
@@ -209,11 +209,11 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     };
     let (Some(records), Some(instances)) = (settled.records.first(), settled.run.items.first())
     else {
-        return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) };
+        return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
     };
     let chosen = decisive(records);
     let (Some(record), Some(instance)) = (records.get(chosen), instances.get(chosen)) else {
-        return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) };
+        return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
     };
     let property = property_form(claim.form());
     let parameter = claim.over().map(|over| over.name.as_str());
@@ -242,7 +242,7 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         );
     let wire = spelled.and_then(Result::ok);
     if (refuted || witnessed) && wire.is_none() {
-        return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) };
+        return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
     }
     let (counterexample, evidence) = if refuted {
         (wire, None)
@@ -268,7 +268,7 @@ fn run(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
 
 fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     let Some(model) = read.package().and_then(super::timed_item::timed_model) else {
-        return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) };
+        return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
     };
     let system = match ModelSystem::new(read.simulation()) {
         Ok(system) => system,
@@ -289,7 +289,7 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         Some(parameter) => {
             match system.instances(&ValueType::Reference(parameter.object.clone())) {
                 Ok(instances) => instances.into_iter().map(Some).collect::<Vec<_>>(),
-                Err(_) => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+                Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
             }
         }
         None => vec![None],
@@ -337,12 +337,12 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
                     fsl_replay::IncompleteCause::Cancelled { source },
                 ));
             }
-            None => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+            None => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
         },
     };
     let occurrence = match read.claim.occurrence() {
         Some(occurrence) => occurrence.clone(),
-        None => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+        None => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
     };
     let mut selected = None;
     for instance in instances {
@@ -351,10 +351,10 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             (Some(parameter), Some(instance)) => {
                 match system.bound_reference(parameter.object.clone(), instance) {
                     Ok(reference) => Some(reference),
-                    Err(_) => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+                    Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
                 }
             }
-            _ => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+            _ => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
         };
         let (source, target) = match read.claim.form() {
             StateGraphForm::Possible { target } => (None, target),
@@ -364,14 +364,14 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         let target_values =
             match digital_predicate_values(&system, &graph.nodes, target, over.as_ref(), cancel) {
                 Ok(values) => values,
-                Err(_) => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+                Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
             };
         let source_values = match source {
             Some(source) => {
                 match digital_predicate_values(&system, &graph.nodes, source, over.as_ref(), cancel)
                 {
                     Ok(values) => Some(values),
-                    Err(_) => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+                    Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
                 }
             }
             None => None,
@@ -407,14 +407,14 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
                         paths,
                         over: instance.clone(),
                     }),
-                    Err(_) => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+                    Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
                 }
             }
             DigitalDecision::Holds(_) => None,
             DigitalDecision::Trap { initial, stem } => {
                 let stem = match digital_model_path(&timed, &graph, initial, &stem) {
                     Ok(stem) => stem,
-                    Err(_) => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+                    Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
                 };
                 Some(GraphEvidence::Trap {
                     stem,
@@ -430,15 +430,15 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             } => {
                 let stem = match digital_model_path(&timed, &graph, initial, &stem) {
                     Ok(stem) => stem,
-                    Err(_) => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+                    Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
                 };
                 let first = match digital_model_steps(&timed, &graph, &first) {
                     Ok(steps) => steps,
-                    Err(_) => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+                    Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
                 };
                 let second = match digital_model_steps(&timed, &graph, &second) {
                     Ok(steps) => steps,
-                    Err(_) => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+                    Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
                 };
                 Some(GraphEvidence::PathPair {
                     stem,
@@ -455,10 +455,10 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
                     let allocation = super::document::effect_decision::ReplayAllocation::default();
                     let _: Result<(), _> = allocation.capture(Err(*refusal));
                     return allocation.report().unwrap_or_else(|| {
-                        { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) }
+                        EngineReport::Refused(Refusal::Failed(super::items::BROKEN))
                     });
                 }
-                _ => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+                _ => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
             }
         }
         let wire = evidence
@@ -476,7 +476,7 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             .transpose();
         let wire = match wire {
             Ok(wire) => wire,
-            Err(_) => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+            Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
         };
         let record = StateGraphRecord {
             value: if held {
@@ -536,7 +536,7 @@ fn run_digital(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         }
     }
     selected.map_or_else(
-        || { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+        || EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
         |report| EngineReport::StateGraph(Box::new(report)),
     )
 }
@@ -1024,12 +1024,12 @@ fn no_timed_graph_decision(
 
 fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
     let Some(model) = read.package().and_then(super::timed_item::timed_model) else {
-        return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) };
+        return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
     };
     let simulation = read.simulation();
     let system = match ModelSystem::new(simulation.clone()) {
         Ok(system) => system,
-        Err(_) => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+        Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
     };
     let max_clocks = read
         .form
@@ -1037,13 +1037,13 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         .unwrap_or(fsl_eval::simulation::model::DEFAULT_MAX_CLOCKS);
     let timed = match TimedSystem::with_max_clocks(&system, &model, max_clocks) {
         Ok(timed) => timed,
-        Err(_) => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+        Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
     };
     let instances = match read.claim.over() {
         Some(parameter) => {
             match system.instances(&ValueType::Reference(parameter.object.clone())) {
                 Ok(instances) => instances.into_iter().map(Some).collect::<Vec<_>>(),
-                Err(_) => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+                Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
             }
         }
         None => vec![None],
@@ -1087,13 +1087,13 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
                     fsl_replay::IncompleteCause::Cancelled { source },
                 ));
             }
-            None => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+            None => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
         },
-        Err(_) => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+        Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
     };
     let occurrence = match read.claim.occurrence() {
         Some(occurrence) => occurrence.clone(),
-        None => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+        None => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
     };
     let mut selected = None;
     for instance in instances {
@@ -1102,15 +1102,15 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             (Some(parameter), Some(instance)) => {
                 match system.bound_reference(parameter.object.clone(), instance) {
                     Ok(reference) => Some(reference),
-                    Err(_) => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+                    Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
                 }
             }
-            _ => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+            _ => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
         };
         let decision =
             match decide_timed_state_graph(&system, &graph, read.claim, over.as_ref(), cancel) {
                 Ok(decision) => decision,
-                Err(_) => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+                Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
             };
         let held = matches!(decision, TimedStateGraphDecision::Holds { .. });
         let form = certificate_form(read.claim.form());
@@ -1131,7 +1131,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             ef_nodes,
         ) {
             Ok(certificate) => certificate,
-            Err(_) => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+            Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
         };
         let check = fsl_replay::check_zone_certificate(
             ZoneCertificateRequest {
@@ -1161,12 +1161,12 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
                 )
         );
         if (held && !accepted) || (!held && !refuted) {
-            return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) };
+            return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
         }
         let evidence = match timed_evidence(&timed, &graph, read.claim, &decision, instance.clone())
         {
             Ok(evidence) => evidence,
-            Err(_) => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+            Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
         };
         if let Some(evidence) = evidence.as_ref() {
             match replay_instance(read, evidence.clone(), Some(&certificate), false) {
@@ -1175,11 +1175,11 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
                     let allocation = super::document::effect_decision::ReplayAllocation::default();
                     let _: Result<(), _> = allocation.capture(Err(*refusal));
                     return allocation.report().unwrap_or_else(|| {
-                        { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) }
+                        EngineReport::Refused(Refusal::Failed(super::items::BROKEN))
                     });
                 }
                 _ => {
-                    return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) };
+                    return EngineReport::Refused(Refusal::Failed(super::items::BROKEN));
                 }
             }
         }
@@ -1198,7 +1198,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
             .transpose();
         let wire = match wire {
             Ok(wire) => wire,
-            Err(_) => return { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+            Err(_) => return EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
         };
         let limit_values = read.form.limits.used();
         let record = StateGraphRecord {
@@ -1267,7 +1267,7 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
         }
     }
     selected.map_or_else(
-        || { eprintln!("BROKEN@{}", line!()); EngineReport::Refused(Refusal::Failed(super::items::BROKEN)) },
+        || EngineReport::Refused(Refusal::Failed(super::items::BROKEN)),
         |report| EngineReport::StateGraph(Box::new(report)),
     )
 }

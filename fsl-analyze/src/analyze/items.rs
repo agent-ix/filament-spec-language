@@ -1172,7 +1172,6 @@ fn symmetry() -> Refusal {
 /// for a refusal whose own FR-272 code is `unsupported_construct` or
 /// `unsupported_projection`, `failed` for every other one.
 pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
-    eprintln!("MR {refusal:?}");
     match refusal {
         ModelCheckRefusal::Admission(failure) => {
             if let AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record) =

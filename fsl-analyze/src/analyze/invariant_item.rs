@@ -271,7 +271,7 @@ impl<'a> PackageInvariantSubject<'a> {
             },
             payload,
         )?;
-        let result = fsl_replay::replay_model_trace_from_package(
+        fsl_replay::replay_model_trace_from_package(
             wire,
             self.supply,
             &fsl_replay::ModelTraceSubject {
@@ -286,10 +286,6 @@ impl<'a> PackageInvariantSubject<'a> {
             &envelope,
             &NoLetters,
             self.limits.replay,
-        );
-        if let Err(error) = &result {
-            eprintln!("RR {error:?}");
-        }
-        result
+        )
     }
 }
