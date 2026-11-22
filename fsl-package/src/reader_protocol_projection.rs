@@ -1158,17 +1158,31 @@ impl<'wire> WireIndex<'wire> {
         admitted: &'wire CheckedPackageV2,
         projections: std::borrow::Cow<'wire, ExactProjections>,
     ) -> Result<Self, InternalFault> {
+        #[cfg(test)]
+        crate::checked_v2::tphase("wireindex-begin");
         let graph = crate::checked_v2::wire_graph(admitted)
             .map_err(|_| fault("reader-protocol-graph-has-structural-keys"))?;
+        #[cfg(test)]
+        crate::checked_v2::tphase("wireindex-wire_graph");
         let mut nodes = BTreeMap::new();
         let mut ids = BTreeMap::new();
+        let (mut t_nodes, mut t_key, mut t_ids) = (0_u128, 0_u128, 0_u128);
         for node in &admitted.resolved_graph().nodes {
+            let a = std::time::Instant::now();
             nodes.insert(&node.node_id, node);
+            let b = std::time::Instant::now();
             let key = graph
                 .key(&node.node_id)
                 .map_err(|_| fault("reader-protocol-graph-has-structural-keys"))?;
+            let c = std::time::Instant::now();
             ids.insert(key, &node.node_id);
+            let d = std::time::Instant::now();
+            t_nodes += (b - a).as_micros();
+            t_key += (c - b).as_micros();
+            t_ids += (d - c).as_micros();
         }
+        #[cfg(test)]
+        eprintln!("TIME wireindex loop nodes_us={t_nodes} key_us={t_key} ids_us={t_ids}");
         Ok(Self {
             dependencies: Vec::new(),
             populations: None,
