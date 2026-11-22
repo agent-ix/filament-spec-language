@@ -147,3 +147,51 @@ The runtime model identifier is unavailable in the harness; it is not guessed. R
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | low | No findings (placeholder) | - |
+
+## Fix-round source disposition
+
+The one fix round adds a three-file product correction after the existing root layering test progressed beyond its stale FCD scan and exposed a direct layer-4 dependency on layer 2. This disposition examines only fsl-package/Cargo.toml, fsl-package/src/protocol_view.rs and fsl-package/src/checked_views/hyper.rs. Original test assertions, their expected dependency tables and the original Findings section are unchanged.
+
+**Source clear** — no new finding in the bounded fix. AccessOrdering and QuantifierKind are existing fsl_semantics::check re-exports of the same fsl_forms enums; this change does not copy types, alter nominal identity, add an adapter, or change serialization, parsing, match arms or runtime values. The direct forms dependency moves to the dev table; remaining source references are confined to cfg(test) modules or test-only module trees.
+
+The lead reports the pre-fix twelve-case titan cohort as eleven passed and one failed, plus a workspace check exit 0. Those are historical pre-fix results: the root layering case and six direct protocol/memory/hyper consumers have been queued by the lead for the product correction. This reviewer has not run local builds or tests and does not claim those checks have passed at the fix head.
+
+### Additional examined scope
+
+```yaml
+{
+  "scope": [
+    {
+      "id": "ADR-011",
+      "path": "spec/decisions/ADR-011-stage-dag-and-dependency-architecture.md",
+      "role": "examined",
+      "excerpt": "| 4 | `package` | S4, I2 byte reader (verification calls `library`) | 3, F, C, SV, K; `filament-contract-model` for the v2 wire contract: the typed structs the emitter builds and the IR reader the I2 reader delegates to (X-7) |"
+    },
+    {
+      "id": "FR-519-AC-5",
+      "path": "spec/functional/FR-519-publish-the-protocol-read-surface-the-filament-protocol-link-layer-imports.md",
+      "role": "examined",
+      "excerpt": "For each record the map marks read by an FSL view function, the view function over **R** returns the node, argument or lock member the map names, equal to the value the checked clause holds in memory."
+    },
+    {
+      "id": "FR-940-AC-16",
+      "path": "spec/functional/FR-940-analyze-through-one-sealed-package-read-view.md",
+      "role": "examined",
+      "excerpt": "Over AC-4's Counter unit with the hyper clauses `Equal` (`forall trace a of M forall trace b of M { always holds(c.value @ a <= 3 and c.value @ b <= 3) }`, universal, copy-swap symmetric), `Partner` (forall-exists equality), `CanReachThree` (single existential) and a projection-aligned clause with an `align skip` list and a `match` block holding one universal and one existential conjunct, `hyper_clause_form` of each clause's `claim_name` occurrence returns equal records over the `AdmittedPackageRead` and over the `BarePackage` of its handoff directory"
+    }
+  ]
+}
+```
+
+### Checks
+
+- The layer-4 dependency row permits layers 3, F, C, SV and K plus the v2 wire owner, and the manifest now contains no normal or build fsl-forms edge.
+- Attempt/Fence public carriers and the five accepted ordering words use the existing layer-3 AccessOrdering alias. Unknown words retain the same typed malformed refusal.
+- Package hyper reconstruction uses the existing layer-3 QuantifierKind alias and still accepts exactly the same forall wire spelling; pending/refusal paths and atom/formula logic are unchanged.
+- Existing cfg(test) source fixtures keep their direct forms dependency through the dev table. No new test-support feature forwarding or production wrapper is introduced.
+- git diff --check for the bounded fix exits 0; no test/scanner/allow-list changes occur in the fix commit.
+- The new product gap artifact records bounded static trace reconciliation separately. Native matrix/resource limitations are disclosed there; no engine-backed assurance or fresh runtime result is claimed.
+
+## Dispositions
+
+The original source review contained no real findings, only its required placeholder. There are therefore no FND outcomes to append. This round adds no finding. Runtime acceptance remains pending the lead's confined titan results.
