@@ -199,7 +199,7 @@ fn disagreements(
 /// matched or allow-listed with a reason.
 #[trace("TC-1500", "FR-600-AC-1", "FSpec-TC-1010", "FSpec-FR-503-AC-1")]
 #[test]
-#[ignore = "QSL-2852: the two production inventories do not yet correspond; not implemented yet"]
+#[ignore = "QSL-2898: the two production inventories do not yet correspond; not implemented yet"]
 fn every_standard_and_parser_production_is_matched_or_allow_listed() {
     let found = disagreements(
         &shared_grammar_productions(),
@@ -289,7 +289,7 @@ fn the_language_forms_recorded_in_the_standard_are_mapped() {
 /// name is defined or is a lexical terminal.
 #[trace("FSpec-TC-1010", "FSpec-FR-503-AC-1", "FSpec-FR-503-AC-2")]
 #[test]
-#[ignore = "QSL-2852: the shared grammar is not yet read through the pinned standard crate and checked for closure; not implemented yet"]
+#[ignore = "QSL-2898: the shared grammar is not yet read through the pinned standard crate and checked for closure; not implemented yet"]
 fn every_name_the_shared_grammar_uses_is_defined() {
     const TERMINALS: [&str; 5] = ["ident", "member-name", "string", "uint", "EOF"];
     let text = published_file(SHARED_GRAMMAR).expect("published");

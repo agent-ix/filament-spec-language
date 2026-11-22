@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Keep every ignored test in the workspace owned by an open ticket or a real CI lane.
+//! Keep every ignored test in the workspace owned by a ticket or a real CI lane. Ticket state is checked in the tracker, not here.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -33,39 +33,34 @@ fn ci_targets(makefile: &str) -> BTreeSet<&str> {
         .collect()
 }
 
-/// A reason is owned when its first ticket id is open in the snapshot, or it
-/// names a `make` target that is a real CI lane. A ticket missing from the
-/// snapshot is closed, cancelled or unknown, so it owns nothing.
-fn owned_reason(reason: &str, ci: &BTreeSet<&str>, open: &BTreeSet<&str>) -> bool {
+/// A reason is owned when it starts with a ticket id of a known team followed
+/// by a one-line reason, or names a `make` target that is a real CI lane.
+/// Whether the ticket is still open is checked in the tracker, not here.
+fn owned_reason(reason: &str, ci: &BTreeSet<&str>) -> bool {
     let words: Vec<_> = reason
         .split(|character: char| {
             !character.is_ascii_alphanumeric() && !matches!(character, '-' | '_')
         })
         .filter(|word| !word.is_empty())
         .collect();
-    let ticket = words.iter().find(|word| {
-        let Some((team, number)) = word.split_once('-') else {
-            return false;
-        };
-        matches!(team, "IR" | "QSL" | "STD")
-            && !number.is_empty()
-            && !number.starts_with('0')
-            && number.bytes().all(|byte| byte.is_ascii_digit())
-    });
-    ticket.is_some_and(|ticket| open.contains(*ticket))
+    let ticket = reason
+        .split_once(|character: char| {
+            !character.is_ascii_alphanumeric() && !matches!(character, '-' | '_')
+        })
+        .is_some_and(|(id, rest)| {
+            let Some((team, number)) = id.split_once('-') else {
+                return false;
+            };
+            matches!(team, "IR" | "QSL" | "STD")
+                && !number.is_empty()
+                && !number.starts_with('0')
+                && number.bytes().all(|byte| byte.is_ascii_digit())
+                && !rest.trim().is_empty()
+        });
+    ticket
         || words
             .windows(2)
             .any(|words| words[0] == "make" && ci.contains(words[1]))
-}
-
-/// Parses the open-ticket snapshot: one ticket id per line, `#` comments and
-/// blank lines ignored.
-fn open_tickets(snapshot: &str) -> BTreeSet<&str> {
-    snapshot
-        .lines()
-        .map(str::trim)
-        .filter(|line| !line.is_empty() && !line.starts_with('#'))
-        .collect()
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -76,7 +71,6 @@ struct UnownedIgnore {
 
 struct Scanner<'a> {
     ci: &'a BTreeSet<&'a str>,
-    open: &'a BTreeSet<&'a str>,
     rejected: Vec<UnownedIgnore>,
 }
 
@@ -95,7 +89,7 @@ impl Scanner<'_> {
             let owned = match meta {
                 Meta::NameValue(value) => match &value.value {
                     Expr::Lit(value) => match &value.lit {
-                        Lit::Str(reason) => owned_reason(&reason.value(), self.ci, self.open),
+                        Lit::Str(reason) => owned_reason(&reason.value(), self.ci),
                         _ => false,
                     },
                     _ => false,
@@ -128,14 +122,9 @@ impl<'ast> Visit<'ast> for Scanner<'_> {
     }
 }
 
-fn rejected(
-    file: &syn::File,
-    ci: &BTreeSet<&str>,
-    open: &BTreeSet<&str>,
-) -> Vec<UnownedIgnore> {
+fn rejected(file: &syn::File, ci: &BTreeSet<&str>) -> Vec<UnownedIgnore> {
     let mut scanner = Scanner {
         ci,
-        open,
         rejected: Vec::new(),
     };
     scanner.visit_file(file);
@@ -147,11 +136,9 @@ seam-probe:\n\tcargo run --package xtask -- seam-probe\n\
 local-only:\n\tcargo test\n\
 empty:\n";
 
-const OPEN: &str = "# open tickets\nIR-1321\nQSL-2109\n\nSTD-663\n";
-
 fn rejected_names(source: &str) -> Vec<String> {
     let file = syn::parse_file(source).expect("valid Rust attribute fixtures");
-    rejected(&file, &ci_targets(MAKEFILE), &open_tickets(OPEN))
+    rejected(&file, &ci_targets(MAKEFILE))
         .into_iter()
         .map(|finding| finding.function)
         .collect()
@@ -159,12 +146,13 @@ fn rejected_names(source: &str) -> Vec<String> {
 
 /// Provenance: QSL-2852.
 #[test]
-fn fixtures_admit_open_ticket_and_ci_owned_ignore_attributes() {
+fn fixtures_admit_ticket_and_ci_owned_ignore_attributes() {
     let names = rejected_names(
         r##"
         #[test] #[ignore = "IR-1321: protocol read-back work remains gated"] fn ir() {}
         #[test] #[ignore = "QSL-2109: restored behavior"] fn qsl() {}
         #[test] #[ignore = "STD-663: metadata contract"] fn std() {}
+        #[test] #[ignore = "IR-1320 (STD-654): composite leaves"] fn parenthesised() {}
         #[test] #[ignore = "slow: runs under `make seam-probe` (CI_CHECKS)"] fn lane() {}
         #[test] #[cfg_attr(feature = "slow", ignore = "IR-1321: owned")] fn conditional() {}
         struct Holder;
@@ -173,26 +161,6 @@ fn fixtures_admit_open_ticket_and_ci_owned_ignore_attributes() {
         "##,
     );
     assert!(names.is_empty(), "{names:?}");
-}
-
-/// Provenance: QSL-2852.
-#[test]
-fn fixtures_reject_closed_and_unknown_tickets() {
-    let names = rejected_names(
-        r##"
-        #[test] #[ignore = "QSL-1111: closed ticket, absent from the open snapshot"] fn closed() {}
-        #[test] #[ignore = "QSL-2109: open, but QSL-1111 is named first"] fn mentioned_first() {}
-        #[test] #[ignore = "QSL-1111 completed; QSL-2109 is the blocker"] fn closed_first() {}
-        #[test] #[ignore = "IR-9999: unknown"] fn unknown() {}
-        #[test] #[cfg_attr(feature = "slow", ignore = "QSL-1111: closed")] fn conditional() {}
-        struct Holder;
-        impl Holder { #[test] #[ignore = "QSL-1111: closed"] fn method() {} }
-        "##,
-    );
-    assert_eq!(
-        names,
-        ["closed", "closed_first", "unknown", "conditional", "method"],
-    );
 }
 
 /// Provenance: QSL-2109.
@@ -206,6 +174,9 @@ fn fixtures_reject_missing_and_unowned_ignore_attributes() {
             #[test] #[ignore = "slow: blocked on reader"] fn prose() {}
             #[test] #[ignore = "FR-726: requirement only"] fn requirement() {}
             #[test] #[ignore = "QSL-2109later"] fn malformed_ticket() {}
+            #[test] #[ignore = "see QSL-2109: not leading"] fn ticket_not_first() {}
+            #[test] #[ignore = "QSL-2109"] fn bare_ticket() {}
+            #[test] #[ignore = "ZZZ-2109: unknown team"] fn unknown_team() {}
             #[test] #[ignore = "make nonexistent"] fn absent_target() {}
             #[test] #[ignore = "make local-only"] fn non_ci_target() {}
             #[test] #[ignore = "make empty"] fn no_recipe() {}
@@ -221,6 +192,9 @@ fn fixtures_reject_missing_and_unowned_ignore_attributes() {
             "prose",
             "requirement",
             "malformed_ticket",
+            "ticket_not_first",
+            "bare_ticket",
+            "unknown_team",
             "absent_target",
             "non_ci_target",
             "no_recipe",
@@ -258,18 +232,13 @@ fn workspace_rust_files(root: &Path) -> Vec<String> {
 }
 
 /// Provenance: QSL-2852. Runs in the default xtask library suite in CI.
-/// `xtask/open-tickets.txt` is the snapshot of open tickets; refresh it from
-/// Linear when a cited ticket closes or a new one is cited.
 #[test]
-fn every_ignored_test_in_the_workspace_cites_an_open_ticket_or_ci_target() {
+fn every_ignored_test_in_the_workspace_cites_a_ticket_or_ci_target() {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("xtask sits in the workspace root");
     let makefile = fs::read_to_string(root.join("Makefile")).expect("read actual CI targets");
     let ci = ci_targets(&makefile);
-    let snapshot = fs::read_to_string(root.join("xtask/open-tickets.txt"))
-        .expect("read the open-ticket snapshot");
-    let open = open_tickets(&snapshot);
     let mut findings = Vec::new();
     for path in workspace_rust_files(root) {
         let text = fs::read_to_string(root.join(&path)).expect("read a workspace source file");
@@ -278,7 +247,7 @@ fn every_ignored_test_in_the_workspace_cites_an_open_ticket_or_ci_target() {
         }
         match syn::parse_file(&text) {
             Ok(file) => findings.extend(
-                rejected(&file, &ci, &open)
+                rejected(&file, &ci)
                     .into_iter()
                     .map(|finding| format!("{path}:{}: {}", finding.line, finding.function)),
             ),
@@ -292,7 +261,7 @@ fn every_ignored_test_in_the_workspace_cites_an_open_ticket_or_ci_target() {
     }
     assert!(
         findings.is_empty(),
-        "ignored tests need an open IR/QSL/STD ticket listed in xtask/open-tickets.txt or `make <CI_CHECKS target>` with a recipe:\n{}",
+        "ignored tests need a leading IR/QSL/STD ticket id and reason, or `make <CI_CHECKS target>` with a recipe:\n{}",
         findings.join("\n"),
     );
 }

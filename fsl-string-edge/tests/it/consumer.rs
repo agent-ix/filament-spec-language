@@ -96,7 +96,7 @@ fn cargo(current_dir: &Path, arguments: &[&str]) -> std::process::Output {
 /// with the Git library dependency calls the public API on the same source.
 /// Needs network and access to the private repository, so it is run on
 /// request: `cargo test -p fsl-string-edge --test it -- --ignored`.
-#[ignore = "QSL-2852: installs from the private Git source over the network; run with --ignored"]
+#[ignore = "QSL-2904: installs from the private Git source over the network; run with --ignored"]
 #[trace("TC-162", "FR-064-AC-10")]
 #[test]
 fn the_documented_git_install_and_library_dependency_work_outside_fsl() {

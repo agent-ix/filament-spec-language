@@ -468,7 +468,7 @@ fn population_protocol(extra: &str) -> String {
 /// state, refuses the read `operator-ineligible`.
 #[trace("TC-2832", "FR-391-AC-11", "FR-883-AC-1", "FR-883-AC-2")]
 #[test]
-#[ignore = "QSL-2852: the test's protocol source does not parse at S1 (invalid_syntax: expected end of source at the protocol slot)"]
+#[ignore = "QSL-2902: the test's protocol source does not parse at S1 (invalid_syntax: expected end of source at the protocol slot)"]
 fn a_protocol_slot_that_reads_model_state_names_a_population() {
     checked(false, &population_protocol(""));
     let (code, cause, at) = refused(

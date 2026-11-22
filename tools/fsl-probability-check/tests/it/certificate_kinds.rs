@@ -87,7 +87,7 @@ fn accepted_then_rejected(request: &Value, kinds: &[&str]) {
 /// fairness set: an `exact` certificate the checker accepts.
 #[trace("TC-2065", "FR-201-AC-51")]
 #[test]
-#[ignore = "QSL-2852: FR-1041 (unbounded fair eventual) not implemented yet"]
+#[ignore = "QSL-2903: FR-1041 (unbounded fair eventual) not implemented yet"]
 fn an_unbounded_fair_eventual_certificate_is_accepted() {
     let source = likely(
         "inf",
@@ -101,7 +101,7 @@ fn an_unbounded_fair_eventual_certificate_is_accepted() {
 /// certificates the checker accepts.
 #[trace("TC-2065", "FR-201-AC-51")]
 #[test]
-#[ignore = "QSL-2852: FR-1042 (lower/upper value bounds) not implemented yet"]
+#[ignore = "QSL-2903: FR-1042 (lower/upper value bounds) not implemented yet"]
 fn value_bounds_certificates_are_accepted() {
     let source = likely(
         "inf",

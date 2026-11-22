@@ -1009,7 +1009,7 @@ mod scaling {
     use filament_semantic_value::location::ExpressionOwner as Origin;
 
     #[test]
-    #[ignore = "QSL-2852: timing lane, prints wall time, asserts only the refusal count"]
+    #[ignore = "QSL-2904: timing lane, prints wall time, asserts only the refusal count"]
     fn termination_scaling_over_self_recursive_members() {
         for count in [5_000, 10_000, 20_000, 40_000] {
             let names: Vec<String> = (0..count).map(|index| format!("f{index}")).collect();

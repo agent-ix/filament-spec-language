@@ -596,7 +596,7 @@ fn false_guard_deliveries_create_no_capture_obligation_on_both_routes() {
 /// through the library package entry over the same admitted snapshot.
 #[test]
 #[trace("FSpec-FR-093-AC-5", "FSpec-FR-093-AC-6")]
-#[ignore = "QSL-2852: requires the authoritative filament-examples corpus via FSL_EXAMPLES_DIR"]
+#[ignore = "QSL-2904: requires the authoritative filament-examples corpus via FSL_EXAMPLES_DIR"]
 fn the_canonical_false_guard_capture_example_is_inactive() {
     let root = PathBuf::from(
         std::env::var_os("FSL_EXAMPLES_DIR")
