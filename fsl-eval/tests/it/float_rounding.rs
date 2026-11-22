@@ -275,10 +275,13 @@ fn ieee_equality_uses_numeric_equal_and_not_bit_identity() {
 
 /// FSpec FR-322:564 pins the rounding mode by operand type: operands of the
 /// same width under different modes are a type mismatch.
-#[trace("FR-091-AC-19", "TC-405")]
+#[trace("FR-091-AC-19", "FR-397", "TC-405")]
 #[test]
 fn operands_of_different_rounding_modes_are_a_type_mismatch() {
-    assert_mixed_mode_mismatch("Float64[toward-zero]", "f + g");
+    assert_eq!(
+        mixed_mode_refusal("Float64[toward-zero]", "f + g"),
+        CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+    );
 }
 
 /// FSpec FR-149-AC-13: `<`, `<=`, `>` and `>=` over two floats of one width
@@ -287,15 +290,38 @@ fn operands_of_different_rounding_modes_are_a_type_mismatch() {
 #[trace("FSpec-TC-194", "FSpec-FR-149-AC-13")]
 #[test]
 fn an_ordering_over_unlike_rounding_modes_is_a_type_mismatch() {
-    for operator in ["<", "<=", ">", ">="] {
-        assert_mixed_mode_mismatch("Boolean", &format!("f {operator} g"));
+    for (spelling, operator) in [
+        ("<", fsl_forms::BinaryOperator::Less),
+        ("<=", fsl_forms::BinaryOperator::LessOrEqual),
+        (">", fsl_forms::BinaryOperator::Greater),
+        (">=", fsl_forms::BinaryOperator::GreaterOrEqual),
+    ] {
+        assert_eq!(
+            mixed_mode_refusal("Boolean", &format!("f {spelling} g")),
+            CheckCause::OperandTypeMismatch {
+                operator,
+                left_type: Box::new(filament_exact::ValueType::Float(
+                    filament_exact::FloatType::new(
+                        filament_exact::IeeeWidth::Binary64,
+                        filament_exact::RoundingMode::TowardZero,
+                    )
+                )),
+                right_type: Box::new(filament_exact::ValueType::Float(
+                    filament_exact::FloatType::new(
+                        filament_exact::IeeeWidth::Binary64,
+                        filament_exact::RoundingMode::NearestEven,
+                    )
+                )),
+            },
+            "{spelling}"
+        );
     }
 }
 
 /// Checks `function h using v(f: Float64[toward-zero], g:
 /// Float64[nearest-even]): <result> pure { <body> }` and asserts it refuses
-/// `ill_typed`/`type-mismatch`.
-fn assert_mixed_mode_mismatch(result: &str, body: &str) {
+/// `ill_typed`/`type-mismatch`, returning its precise typed cause.
+fn mixed_mode_refusal(result: &str, body: &str) -> CheckCause {
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
@@ -326,13 +352,11 @@ fn assert_mixed_mode_mismatch(result: &str, body: &str) {
             &fsl_eval::value::S6aRewardEvaluator,
         )
         .expect_err("mixed-mode operands refuse");
-    assert!(
-        refusals.iter().any(|refusal| matches!(
-            refusal.cause,
-            CheckCause::IllTyped(IllTypedCause::TypeMismatch)
-        )),
-        "{body}: a type mismatch, not {refusals:?}"
-    );
+    assert_eq!(refusals.len(), 1, "{body}: {refusals:?}");
+    let cause = refusals.into_iter().next().expect("one refusal").cause;
+    assert_eq!(cause.code().as_str(), "ill_typed", "{body}");
+    assert_eq!(cause.cause(), Some("type-mismatch"), "{body}");
+    cause
 }
 
 fn ieee_profile() -> fsl_semantics::value::AdmittedIeeeProfile {

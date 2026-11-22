@@ -1,0 +1,178 @@
+---
+id: SR-967175026302197768900474181941935084705
+title: "Code review of QSL-2817 package expectations"
+type: SpecReview
+analysis: code-review
+scope: "agent-ix/filament-spec-language; QSL-2817; fsl-eval tests/invariants, fsl-command handoff test, fsl-conformance cases/front_end_rows, fsl-inspect render golden"
+review_set: subset
+---
+
+## Summary
+
+Reviewed the eleven-file PR 3471 change, including all 11 assigned stale expectations and the directly affected float arithmetic regression. The source review found no scoped defect. The byte calibration is explicitly unfinished and no compilation or runtime result is claimed.
+
+## Verdict
+
+**CONDITIONAL** — no source-review findings. The actual full-package measurement, corrected one-below constant and named titan tests remain mandatory. This is not a merge-ready verdict.
+
+## Scope
+
+The full rows were read. Long excerpts below retain their first 600 characters verbatim. Every changed file was inspected: the handoff test, both new conformance fixtures, conformance cases and boundary tests, probabilistic unit tests, evaluator invariant scan, optional-field, decimal and float integration tests, and inspector golden bytes.
+
+```yaml
+{
+  "scope": [
+    {
+      "id": "FR-056-AC-59",
+      "path": "spec/functional/FR-056-admit-domain-package-model-declarations.md",
+      "role": "examined",
+      "excerpt": "Over a Float64 field `a`, each of `self.a = 0`, `self.a = self.versionNumber` (`Int[0, 1000]`), `self.a < self.count` (`Integer`), `self.a = self.f32` (a Float32 field), `self.a + 1 = self.a` and `self.a = convert<Float64[nearest-even]>(self.a)` refuses `ill_typed`/`type-mismatch` at the operator, naming both operand types, and the unit yields no checked graph."
+    },
+    {
+      "id": "FR-090-AC-15",
+      "path": "spec/functional/FR-090-return-a-family-outcome-or-a-typed-family-refusal.md",
+      "role": "examined",
+      "excerpt": "Each production evaluator producer in the table other than `record-present-value-missing`, exercised at the detecting site with its stated malformed state, returns the table's `S6a` fault rather than a manufactured kernel CheckedInvariant."
+    },
+    {
+      "id": "FR-091-AC-19",
+      "path": "spec/functional/FR-091-produce-value-forms-and-assemble-package-declarations.md",
+      "role": "examined",
+      "excerpt": "The assembler admits a parameter typed `Float64[nearest-even]`, `Float32[toward-zero]` or `Float64`. Resolving each gives a `ValueType::Float` of the written width and rounding mode `nearest-even`, `toward-zero` and `exact` (the bare spelling). The evaluator rounds a `Float64[mode]` `+` by that mode. It refuses a parameter typed `Reference<M::T>`, in a unit with no admitted domain package, with an unresolved-type-name error naming `M::T`, and returns no `PackageDeclarations`."
+    },
+    {
+      "id": "FR-104-AC-13",
+      "path": "spec/functional/FR-104-check-state-clauses.md",
+      "role": "examined",
+      "excerpt": "With `type P = Decimal[-99, 99; 2, 2; nearest-even];` and `type R = Decimal[0, 1000; 1, 1; exact];`, `function c using v(a: P, b: P): Boolean pure { a + b = b + a }` checks with each sum typed `P`, as do the bodies `a * b = b * a`, `a - b = a - b` and `a + decimal(1, 2) = b`, the last with the literal typed `P`. With `b: R`, `a + b = b + a` refuses `ill_typed`/`type-mismatch` at the first `a + b`. `let s = decimal(1, 2) + decimal(2, 2) in s = a` refuses `ill_typed`/`ambiguous-literal` at the sum. Evaluating `c` with `a = decimal(1, 2)`, `b = decimal(2, 2)` returns `true`, and with `a = decimal"
+    },
+    {
+      "id": "FR-104-AC-16",
+      "path": "spec/functional/FR-104-check-state-clauses.md",
+      "role": "examined",
+      "excerpt": "The six FSpec TC-185 D25 expressions are FSL source (QSL-1394), each built by S2 as `DecimalValue` operands wherever an operand may stand (FR-091-AC-57). With `type P = Decimal[0, 1000; 2, 2; exact];`, `type R = Decimal[0, 1000; 1, 1; exact];` and parameters `p: P`, `r: R`: `function e1 using v(): P pure { let v = decimal(15, 1) + decimal(225, 2) in v }` refuses `ill_typed`/`ambiguous-literal` at the sum, because a `let` binding supplies no expected type; `function e2 using v(): Boolean pure { decimal(15, 1) = decimal(150, 2) }` refuses `ill_typed`/`ambiguous-literal` at its first literal `dec"
+    },
+    {
+      "id": "FR-185-AC-7",
+      "path": "spec/functional/FR-185-declare-random-parameters-workloads-and-rewards.md",
+      "role": "examined",
+      "excerpt": "`Service` (with `d` typed `Millis = Int[1, 12]`) checks at S3 and S4 emits it with its random parameters, reward and workload as FR-740 nodes; the package reader admits it and gives back the checked record."
+    },
+    {
+      "id": "FR-185-AC-12",
+      "path": "spec/functional/FR-185-declare-random-parameters-workloads-and-rewards.md",
+      "role": "examined",
+      "excerpt": "An S4 refusal concerning a random parameter, a workload, a reward or a delay carries that declaration's source reference and label span in its locus member (never `null`), and its message names the declaration in words and holds no debug rendering of a span or source reference."
+    },
+    {
+      "id": "FR-286-AC-26",
+      "path": "spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md",
+      "role": "examined",
+      "excerpt": "The bytes of every golden document, the `analyze` documents `fsl-analyze` assembles and the `monitor` and `execute` documents `fsl-command` writes included, equal their own RFC 8785 re-encoding through `quire-canonical`. FR-286-AC-2's diagnostic is written with its members in the order `cause`, `code`, `details`, `hint`, `locus`, `message`, and an `unsupported_construct`/`declaration-form` diagnostic carrying `construct`, `declaration`, `profile` and `text` in the order `cause`, `code`, `construct`, `declaration`, `details`, `hint`, `locus`, `message`, `profile`, `text`. The canonical check re"
+    },
+    {
+      "id": "FR-564-AC-2",
+      "path": "spec/functional/FR-564-produce-each-outcome-kind-of-the-lifecycle-conformance-matrix-through-the-library.md",
+      "role": "examined",
+      "excerpt": "Each of `package`'s five applicable cells returns its kind: success exit 0; unsupported `unsupported_construct` exit 21; timeout `Cancelled(Deadline)`, cancellation `Cancelled(Requested)` and incomplete `LimitExceeded` naming the `package` limit field, each exit 22."
+    },
+    {
+      "id": "FR-564-AC-7",
+      "path": "spec/functional/FR-564-produce-each-outcome-kind-of-the-lifecycle-conformance-matrix-through-the-library.md",
+      "role": "examined",
+      "excerpt": "Every outcome of AC-1 to AC-5 serializes to an FR-286 document whose `operation` names its verb and whose `category` is its kind's, and every AC-6 item serializes to an FR-286 `items` entry whose `category` is its kind's; serializing each twice gives equal bytes, and each exit code is the one FR-285's function returns for that category."
+    },
+    {
+      "id": "FR-565-AC-2",
+      "path": "spec/functional/FR-565-publish-the-lifecycle-matrix-cases-the-driver-cli-half-runs.md",
+      "role": "examined",
+      "excerpt": "For every `Case`, `run_case` returns `Ok` with a typed document (or, for `prove`, an item) whose category and exit code equal the case's expected category and exit code, two `run_case` calls give equal `OutcomeDocument` values, and every authored source identity in the document equals `SourceIdentity::new(case.parameters.source_authority, case.parameters.source_identity)`, independently of the input's physical file name. A case with an input the test removes returns `Err(CaseError)` whose `stage` is `CaseStage::Read`, the `Copy` stage value, and no `CaseOutcome`."
+    },
+    {
+      "id": "FR-850-AC-15",
+      "path": "spec/functional/FR-850-analyze-a-selected-checked-package-from-its-bytes.md",
+      "role": "examined",
+      "excerpt": "For AC-12's handoff, compute `B` as the bytes of exactly the root, manifest, unique dependency package/witness files and selected model/runtime files read. At `dependent_bytes = B` intake completes; at `B - 1` it settles `incomplete`, `resource_exhausted`, exit `22`, naming `dependent_bytes` and its configured bound. A handoff whose manifest expands the selected-file total from 64 to 65 stops at the same phase naming the shared file limit before opening file 65. A diamond charges its shared triple once. For strict-read/native-join work and storage, an allowance equal to the completed closure p"
+    },
+    {
+      "id": "FR-093/Explicit numeric narrowing",
+      "path": "spec/functional/FR-093-lower-checked-value-expressions-to-fr-322-terms.md",
+      "role": "examined",
+      "excerpt": "An unproved narrowing SHALL refuse `undefined_expression`/`unproved-range` at\nthe conversion."
+    }
+  ]
+}
+```
+
+## Review evidence
+
+- `with_bare` calls the real emit-and-read helper and joins admitted identity rows before exposing `BarePackage`; `through_the_wire` reconstructs the actual package model input. The updated Service tests require checked record counts, rewards/workload identity, all source random-parameter support/type/position records, and the Boolean support values with exact 98/2 weights.
+- The replacement static model declares two unrelated, uniquely identified object types and their operations, each with its own source origin and an empty frame. Its workload references both explicit operations. `emit/probabilistic.rs::workload_node` refuses the absence of a single owning model lineage; the test requires S4, unsupported/not-yet-implemented, and workload Both. An intake or check refusal cannot satisfy it. Fixture admission remains runtime-unverified.
+- The byte measurement reproduces `Prepared::new` and `Prepared::checked`: identical source authority/identity, physical path, unit bytes, model inputs, package name, dependency input, default source/model/check limits and uncancelled stages. It calls default-limit package emission before comparing complete canonical bytes with the old constant plus one. It does not infer full size from the bounded writer's clamped denial. All existing at-limit/one-short assertions remain.
+- Operand assertions now check the exact operator and both actual declared types, with one refusal in the float helper. The optional-field presence controls remain. The decimal peer cases remain, with the explicit unproved narrowing checking its exact code and cause.
+- The evaluator source proof now selects `pop_many_forwarded`, the producer that performs checked subtraction and split; no production implementation was edited.
+- The closure-allowance test retains exact configured bounds, cumulative attempted totals, unpaid kind and accounting. Work now requires Rows/WorkLimit at source_enum_catalog_index, while Storage retains Projection/ExhaustedStorage.
+- Only the diagnostic details member moves in the exact inspector JSON bytes; text/DOT independence and the other golden values remain.
+- No CI files, dependency manifests, production evaluator behavior, or allow entries change. Rust safety/API/test guidance was applied; no applicable AssuranceProfile is declared for this delta.
+- `git diff --check origin/main...HEAD` passed. No build, test, repository executable or job request was run by this reviewer. Exact model runtime identity is unavailable in this harness; it is not guessed.
+
+## Findings
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-001 | low | No findings (placeholder) | - |
+
+## Dispositions
+
+### Round 1 — fix-commit check
+
+**CONDITIONAL** — the four-file delta `033fb284..faf85a8` is source-consistent with the reported titan results and current requirements. No remaining scoped source defect was found. The original Findings table is unchanged; its placeholder is not a defect finding, so there are no original FND outcomes to assign. The nine confined titan reruns remain pending.
+
+The disposition examined only the conformance byte constant, two integer literal types, float mismatch helper/callers and handoff native-owner assertions, plus the immediate producers and governing requirements needed to assess them. No new full review or matrix run was performed.
+
+```yaml
+{
+  "scope": [
+    {
+      "id": "FR-056-AC-59",
+      "path": "spec/functional/FR-056-admit-domain-package-model-declarations.md",
+      "role": "examined",
+      "excerpt": "Over a Float64 field `a`, each of `self.a = 0`, `self.a = self.versionNumber` (`Int[0, 1000]`), `self.a < self.count` (`Integer`), `self.a = self.f32` (a Float32 field), `self.a + 1 = self.a` and `self.a = convert<Float64[nearest-even]>(self.a)` refuses `ill_typed`/`type-mismatch` at the operator, naming both operand types, and the unit yields no checked graph."
+    },
+    {
+      "id": "FR-185-AC-7",
+      "path": "spec/functional/FR-185-declare-random-parameters-workloads-and-rewards.md",
+      "role": "examined",
+      "excerpt": "`Service` (with `d` typed `Millis = Int[1, 12]`) checks at S3 and S4 emits it with its random parameters, reward and workload as FR-740 nodes; the package reader admits it and gives back the checked record."
+    },
+    {
+      "id": "FR-564-AC-2",
+      "path": "spec/functional/FR-564-produce-each-outcome-kind-of-the-lifecycle-conformance-matrix-through-the-library.md",
+      "role": "examined",
+      "excerpt": "Each of `package`'s five applicable cells returns its kind: success exit 0; unsupported `unsupported_construct` exit 21; timeout `Cancelled(Deadline)`, cancellation `Cancelled(Requested)` and incomplete `LimitExceeded` naming the `package` limit field, each exit 22."
+    },
+    {
+      "id": "FR-850-AC-15",
+      "path": "spec/functional/FR-850-analyze-a-selected-checked-package-from-its-bytes.md",
+      "role": "examined",
+      "excerpt": "For AC-12's handoff, compute `B` as the bytes of exactly the root, manifest, unique dependency package/witness files and selected model/runtime files read. At `dependent_bytes = B` intake completes; at `B - 1` it settles `incomplete`, `resource_exhausted`, exit `22`, naming `dependent_bytes` and its configured bound. A handoff whose manifest expands the selected-file total from 64 to 65 stops at the same phase naming the shared file limit before opening file 65. A diamond charges its shared triple once. For strict-read/native-join work and storage, an allowance equal to the completed closure p"
+    },
+    {
+      "id": "FR-397-AC-6",
+      "path": "spec/functional/FR-397-select-the-ieee-profile-of-a-package-that-declares-or-evaluates-a-float.md",
+      "role": "examined",
+      "excerpt": "`+`, `-`, `*` and `/` over unlike float widths, over unlike rounding modes (`Float64[nearest-even]` and `Float64[toward-zero]`), or over a float and an `Int[..]`, `Rational[..]` or `Decimal[..]` parameter refuse `ill_typed`/`type-mismatch`; `a = b`, `a != b`, `a < b`, `a <= b`, `a > b` and `a >= b` over the same pairs, in either order, refuse `ill_typed`/`type-mismatch` at the operator."
+    }
+  ]
+}
+```
+
+- Root reported a full successful canonical emission of 23,250 bytes. The constant is exactly `COMPILE_OUTPUT_BYTES_BELOW: u64 = 23_249`; the existing direct full-size comparison and at-bound/one-short checks remain intact. This uses the reported complete emission, not a clamped limit-denial counter.
+- `Integer::from(98_i64)` and `Integer::from(2_i64)` select the supported conversion without changing either exact support weight.
+- The shared float helper still requires exactly one refusal, code `ill_typed` and cause `type-mismatch`, then returns its typed cause. The arithmetic consumer requires exactly `CheckCause::IllTyped(IllTypedCause::TypeMismatch)`, matching the unlike-float arithmetic branch in `check.rs`. Every ordering consumer independently retains `OperandTypeMismatch`, the exact operator and both actual float types. There is no OR-pattern or fallback accepting either variant.
+- FR-397's Arithmetic rule says the checker SHALL refuse unlike rounding modes as `ill_typed`/`type-mismatch`; it does not require the ordering-only typed carrier. FR-397-AC-6 and FR-056-AC-59 support the distinct precise assertions now used.
+- FR-850-AC-15 requires the original `i2.work_units` or `i2.native_join_storage` setting and cumulative one-short accounting, not a permanent Projection owner. `source_enum_catalog.rs` charges work and then one storage unit at its `AdapterRow(0)` / `source_enum_catalog_index` locus; `native_row.rs` maps the denied resource to WorkLimit or StorageLimit and retains the denied charge, locus and original bound.
+- The handoff test now requires exactly Rows/WorkLimit for Work and Rows/StorageLimit for Storage, exactly that locus, the same denied charge and `completed - 1` bound. Existing setting, attempted-total, unpaid-resource and accumulated-consumption checks remain. Root's reported storage observation (bound 1,070; one unpaid storage unit) is consistent with this producer.
+- Requirement quotations in the updated PR body agree with these source rules. The original source-review statements about Storage/Projection and unfinished calibration describe the earlier reviewed head; this disposition records their corrected current state.
+- No new scoped gap, skip, stub, widened assertion or changed production behavior was introduced. The existing Quoin evidence-matrix size limitation remains recorded; no new evidence claim is made.
+- `git diff --check 033fb284..faf85a8` passed. Frozen current head is `faf85a8f2f78626d40ab7fdae1dd7a8a8590d0bc`. No repository build, test, executable, job request or branch edit was performed by this reviewer.

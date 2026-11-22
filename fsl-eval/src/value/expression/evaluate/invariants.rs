@@ -2632,7 +2632,7 @@ fn record_present_value_branch_has_a_local_count_and_zip_proof() {
     assert!(shared.contains("slots.iter().zip(declared)"));
     assert!(shared.contains("values.next().ok_or(\"record-present-value-missing\")"));
     let pop_many = source
-        .split("fnpop_many")
+        .split("fnpop_many_forwarded(")
         .nth(1)
         .unwrap()
         .split("fnpop_integer")

@@ -111,10 +111,14 @@ const REPEAT_NO_PROGRESS: Input = input(
     include_bytes!("../cases/repeat-no-progress.native"),
 );
 
-/// FR-185-AC-7's `Service`: checks at S3 and refuses at S4.
-const SERVICE: Input = input(
-    "service-unit.native",
-    include_bytes!("../cases/service-unit.native"),
+/// FR-185-AC-12's still-unsupported workload over unrelated object types.
+const MIXED_WORKLOAD: Input = input(
+    "mixed-workload.native",
+    include_bytes!("../cases/mixed-workload.native"),
+);
+const MIXED_WORKLOAD_PACKAGE: Input = input(
+    "mixed-workload-package.json",
+    include_bytes!("../cases/mixed-workload-package.json"),
 );
 
 /// `Service` with the probabilistic claim `Two` (FR-188).
@@ -305,7 +309,7 @@ const fn monitor_input(trace: Input, clauses: &'static [&'static str]) -> Monito
 /// The `s3.nodes` counter of [`COMPILE`] less one.
 const COMPILE_S3_NODES_BELOW: u64 = 10;
 /// The `emit.output_bytes` counter of [`COMPILE`]'s package less one.
-const COMPILE_OUTPUT_BYTES_BELOW: u64 = 20_514;
+const COMPILE_OUTPUT_BYTES_BELOW: u64 = 23_249;
 
 const fn front_end(unit: Input, limit: FrontEndLimit) -> FrontEndInput {
     FrontEndInput {
@@ -429,8 +433,8 @@ static MATRIX: &[MatrixCell] = &[
         Verb::Package,
         OutcomeKind::Unsupported,
         CaseInput::Package(FrontEndInput {
-            unit: SERVICE,
-            packages: &[SERVICE_PACKAGE],
+            unit: MIXED_WORKLOAD,
+            packages: &[MIXED_WORKLOAD_PACKAGE],
             limit: FrontEndLimit::Default,
         }),
         Cancellation::None,

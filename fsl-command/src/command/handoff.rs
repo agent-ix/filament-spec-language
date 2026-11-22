@@ -684,22 +684,28 @@ mod tests {
                 u128::from(completed),
                 "the first unpaid charge retains the cumulative attempted total: {refusal:?}"
             );
-            let fsl_package::NativeJoinFailure::Projection(projection) = refusal.native.native()
-            else {
-                panic!("the original projection owner is preserved: {refusal:?}");
+            let fsl_package::NativeJoinFailure::Rows(rows) = refusal.native.native() else {
+                panic!("the original row owner is preserved: {refusal:?}");
             };
             let expected_code = match kind {
                 filament_contract_model::NativeJoinChargeKind::Work => {
-                    filament_contract_model::ExactTypeProjectionErrorCode::ExhaustedWork
+                    fsl_package::NativeRowErrorCode::WorkLimit
                 }
                 filament_contract_model::NativeJoinChargeKind::Storage => {
-                    filament_contract_model::ExactTypeProjectionErrorCode::ExhaustedStorage
+                    fsl_package::NativeRowErrorCode::StorageLimit
                 }
             };
+            assert_eq!(rows.code(), expected_code, "{refusal:?}");
             assert_eq!(
-                projection.code, expected_code,
-                "the original typed owner code is preserved: {refusal:?}"
+                rows.locus(),
+                Some(filament_contract_model::NativeJoinLocus {
+                    source: filament_contract_model::NativeJoinLocusSource::AdapterRow(0),
+                    form: "source_enum_catalog_index",
+                }),
+                "{refusal:?}"
             );
+            assert_eq!(rows.denied(), Some(refusal.unpaid), "{refusal:?}");
+            assert_eq!(rows.configured_bound(), Some(completed - 1), "{refusal:?}");
         }
     }
 }
