@@ -306,6 +306,11 @@ struct Seen {
     /// The FR-331 `options` of every request item the provider received.
     options: Vec<Value>,
     requests: Vec<Value>,
+    facts: Vec<(
+        filament_exact::NodeKey,
+        Option<fsl_replay::OccurrenceKey>,
+        Vec<fsl_semantics::check::PathGuard>,
+    )>,
 }
 
 /// A process provider that records each request and answers every item
@@ -328,6 +333,13 @@ impl fsl_analyze::provider::ExternalProvider for Recording {
         seen.max_frame_bytes = request.limits().max_frame_bytes;
         let wire = serde_json::to_value(request).expect("the request serializes");
         seen.requests.push(wire.clone());
+        seen.facts.extend(request.items().iter().map(|item| {
+            (
+                item.result_bound().clone(),
+                item.conversion_context().cloned(),
+                item.path_condition().to_vec(),
+            )
+        }));
         seen.options.extend(
             wire["items"]
                 .as_array()
@@ -389,6 +401,7 @@ fn package_scalar_requirement_records_equal_the_source_run() {
         };
         let source_run = execute(&path);
         let source_requests = std::mem::take(&mut seen.lock().unwrap().requests);
+        let source_facts = std::mem::take(&mut seen.lock().unwrap().facts);
         let compile = json!({"format": "native-compile/1", "request": {
             "models": [], "program": {"source": source()},
             "handoff": {"directory": "handoff", "package_name": "test:requirements",
@@ -438,18 +451,17 @@ fn package_scalar_requirement_records_equal_the_source_run() {
             "{items:?}"
         );
         if provider {
-            let package_requests = &seen.lock().unwrap().requests;
-            assert_eq!(package_requests, &source_requests);
-            assert_eq!(package_requests.len(), 2);
-            for request in package_requests {
-                let item = &request["items"][0];
-                assert_eq!(
-                    item["path_condition"].as_array().map(Vec::len),
-                    Some(1),
-                    "{item}"
-                );
-                assert!(item.get("result_bound").is_some(), "{item}");
-            }
+            let seen = seen.lock().unwrap();
+            assert_eq!(seen.requests, source_requests);
+            assert_eq!(seen.requests.len(), 1);
+            assert_eq!(seen.requests[0]["items"].as_array().map(Vec::len), Some(2));
+            assert_eq!(seen.facts, source_facts);
+            assert_eq!(seen.facts.len(), 2);
+            assert!(
+                seen.facts.iter().all(|(_, _, guards)| guards.len() == 1),
+                "{:?}",
+                seen.facts
+            );
         }
     }
 }
