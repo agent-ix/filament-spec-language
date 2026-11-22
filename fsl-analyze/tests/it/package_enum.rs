@@ -55,7 +55,6 @@ fn document() -> Vec<u8> {
     let constructs: Vec<Value> = [
         ("object_type", meaning::OBJECT_TYPE),
         ("population", meaning::POPULATION),
-        ("value_type", meaning::VALUE_TYPE),
     ]
     .into_iter()
     .map(|(name, meaning)| {
