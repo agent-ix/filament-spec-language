@@ -19,6 +19,14 @@
 extern crate alloc;
 
 #[cfg(feature = "std")]
+mod source_enum_catalog;
+#[cfg(feature = "std")]
+pub use source_enum_catalog::{
+    EnumScope, SourceEnumCatalog, SourceEnumCatalogError, SourceEnumRowKind,
+    SourceEnumUnsupportedScope,
+};
+
+#[cfg(feature = "std")]
 mod reference_catalog;
 #[cfg(feature = "std")]
 pub use reference_catalog::{ReferenceCatalog, ReferenceCatalogError, ReferenceDeclaration};
