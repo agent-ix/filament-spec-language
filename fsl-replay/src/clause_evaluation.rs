@@ -467,7 +467,8 @@ mod tests {
         let evaluate = |version: i64| {
             let population = "ix://example/config-version/config_history";
             let reference = fsl_semantics::model::observation::DocumentRef {
-                authority: "t".to_owned(), identity: "ix://t/current".to_owned(),
+                authority: "t".to_owned(),
+                identity: "ix://t/current".to_owned(),
             };
             let snapshot = json!({
                 "format":"filament.state.snapshot/v1",
@@ -487,11 +488,16 @@ mod tests {
             let request = ClauseRunRequest {
                 clocks: Default::default(),
                 source: ClauseRunSource::Program {
-                    identity: SourceIdentity::new("a", "u"), path: "unit.native".to_owned(),
+                    identity: SourceIdentity::new("a", "u"),
+                    path: "unit.native".to_owned(),
                     bytes: source.to_vec(),
                 },
                 package_name: "fixture".to_owned(),
-                packages: package_input([include_bytes!("../../examples/config-version/model.semantic-ir.json").as_slice()]).unwrap(),
+                packages: package_input([include_bytes!(
+                    "../../examples/config-version/model.semantic-ir.json"
+                )
+                .as_slice()])
+                .unwrap(),
                 dependencies: DependencyInput::default(),
                 snapshots: BTreeMap::from([(reference.clone(), snapshot)]),
                 invocations: BTreeMap::new(),
@@ -504,7 +510,8 @@ mod tests {
                             name: "validate".to_owned(),
                         },
                         self_object: Some(SelectedObject {
-                            population: population.to_owned(), key: "root".to_owned(),
+                            population: population.to_owned(),
+                            key: "root".to_owned(),
                         }),
                     },
                 }),
@@ -518,9 +525,20 @@ mod tests {
             settle(report.disposition)
         };
         let result = evaluate(0);
-        assert!(matches!(result, ClauseEvaluation::Undefined { reason: "division-by-zero" }), "{result:?}");
+        assert!(
+            matches!(
+                result,
+                ClauseEvaluation::Undefined {
+                    reason: "division-by-zero"
+                }
+            ),
+            "{result:?}"
+        );
         let defined = evaluate(1);
-        assert!(matches!(defined, ClauseEvaluation::Completed(true)), "{defined:?}");
+        assert!(
+            matches!(defined, ClauseEvaluation::Completed(true)),
+            "{defined:?}"
+        );
     }
 
     /// FR-491-AC-4: an S6a `Undefined` outcome of the clause is the typed

@@ -362,7 +362,10 @@ fn an_incomplete_public_calls_request_equals_the_completed_calls_request() {
     )
     .expect("the public call returns its incomplete outcome and context");
     let CallOutcome::Incomplete(stopped) = incomplete.outcome() else {
-        panic!("the zero-work call is incomplete: {:?}", incomplete.outcome());
+        panic!(
+            "the zero-work call is incomplete: {:?}",
+            incomplete.outcome()
+        );
     };
     assert_eq!(stopped.limits_field(), "work_units");
     let completed = run_q(&source);

@@ -363,7 +363,8 @@ fn an_undefined_step_row_argument_is_undefined() {
     );
     let world = RingWorld::with_mode(
         filament_semantic_value::checking::CheckMode::Kernel,
-        Variant::default(), &refinement,
+        Variant::default(),
+        &refinement,
     );
     let concrete = world.concrete_system(UNLIMITED);
     let StepVerdict::Undefined(undefined) = verdict(
@@ -403,7 +404,8 @@ fn a_defined_step_row_argument_is_judged_against_the_post_state() {
     );
     let world = RingWorld::with_mode(
         filament_semantic_value::checking::CheckMode::Kernel,
-        Variant::default(), &refinement,
+        Variant::default(),
+        &refinement,
     );
     let concrete = world.concrete_system(UNLIMITED);
     let StepVerdict::Fails(failure) = verdict(

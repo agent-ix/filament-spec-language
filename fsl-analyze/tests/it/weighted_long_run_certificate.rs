@@ -482,7 +482,9 @@ fn deferred_reward_model(transient: bool, undefined: bool) -> Model {
         .parameters
         .push(("who", format!("ix://{}/Server", model.package)));
     let expression = if undefined {
-        model.body.push_str("\nfunction undefined_weight using v(): Integer pure { 1 mod 0 }\n");
+        model
+            .body
+            .push_str("\nfunction undefined_weight using v(): Integer pure { 1 mod 0 }\n");
         "if who = who then undefined_weight() else 1"
     } else {
         "if who = who then -1 else 1"

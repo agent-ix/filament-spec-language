@@ -432,7 +432,11 @@ impl World {
         function: &str,
     ) -> Self {
         let extra = format!("{}{function}\n", build.extra);
-        let build = Build { reset: build.reset, post: build.post, extra: &extra };
+        let build = Build {
+            reset: build.reset,
+            post: build.post,
+            extra: &extra,
+        };
         Self::assemble(universe, None, None, declaration, &build, CheckMode::Kernel)
     }
 

@@ -538,26 +538,39 @@ mod tests {
         let parameter = parameters[0].clone();
         let bounds = [bound_at(parameter.clone())];
         let member = &result.requirements().members()[0];
-        let ours = result.context().request(
-            member.request_index(), &bounds, &plugin(), input(parameter.clone(), x),
-        ).expect("a member is an application item");
+        let ours = result
+            .context()
+            .request(
+                member.request_index(),
+                &bounds,
+                &plugin(),
+                input(parameter.clone(), x),
+            )
+            .expect("a member is an application item");
         let packages = fsl_semantics::model::intake::package_input([]).unwrap();
         let function_modes = BTreeMap::new();
         let composed = spine::compose_in_mode(
-            identity, "unit.native", source.as_bytes(), &packages,
-            &DependencyInput::default(), CallerLimits::default().spine,
+            identity,
+            "unit.native",
+            source.as_bytes(),
+            &packages,
+            &DependencyInput::default(),
+            CallerLimits::default().spine,
             spine::ComposeModes {
                 check_mode: Some(filament_semantic_value::checking::CheckMode::Kernel),
                 function_modes: &function_modes,
             },
-        ).expect("the oracle compiles independently under Kernel");
+        )
+        .expect("the oracle compiles independently under Kernel");
         let oracle = PluginReplayContext::new(
-            &composed.checked, &composed.emitted_unit, &composed.models,
+            &composed.checked,
+            &composed.emitted_unit,
+            &composed.models,
             CallerLimits::default(),
         );
-        let theirs = oracle.request(
-            member.occurrence(), &bounds, &plugin(), input(parameter, x),
-        ).expect("the oracle builds the member request");
+        let theirs = oracle
+            .request(member.occurrence(), &bounds, &plugin(), input(parameter, x))
+            .expect("the oracle builds the member request");
         assert_eq!(ours.package, theirs.package);
         assert_eq!(ours.obligation_identity, theirs.obligation_identity);
         assert_eq!(ours.replay_target, theirs.replay_target);
@@ -580,10 +593,17 @@ mod tests {
             result.package_name().as_str()
         );
         assert_eq!(
-            ours.replay_target.members.function.as_ref().map(ToString::to_string),
+            ours.replay_target
+                .members
+                .function
+                .as_ref()
+                .map(ToString::to_string),
             Some(function.to_owned())
         );
-        assert_eq!(ours.replay_target.occurrence_key.as_ref(), Some(member.occurrence()));
+        assert_eq!(
+            ours.replay_target.occurrence_key.as_ref(),
+            Some(member.occurrence())
+        );
         ours
     }
 
@@ -591,12 +611,17 @@ mod tests {
     #[trace("TC-1173", "FR-404-AC-3")]
     #[test]
     fn an_undefined_calls_member_refutes_and_an_incomplete_calls_request_is_unchanged() {
-        let source = format!("{SOURCE}function r using v(x: Int[0, 9]): Integer pure {{ 10 mod x }}\n");
+        let source =
+            format!("{SOURCE}function r using v(x: Int[0, 9]): Integer pure {{ 10 mod x }}\n");
         let call = |function: &str, x: i64, work_units: u64| Call {
-            clocks: Default::default(), wire_arguments: Vec::new(), canonical_values: false,
-            snapshot: None, function: function.to_owned(),
+            clocks: Default::default(),
+            wire_arguments: Vec::new(),
+            canonical_values: false,
+            snapshot: None,
+            function: function.to_owned(),
             arguments: vec![crate::CallArgument {
-                parameter: "x".to_owned(), value: Value::Integer(Integer::from(x)),
+                parameter: "x".to_owned(),
+                value: Value::Integer(Integer::from(x)),
             }],
             accounting: default_accounting(work_units),
             supplied: filament_semantic_value::supplied_stop::SuppliedLimits::default(),
@@ -604,12 +629,18 @@ mod tests {
             live_occurrences: crate::spine::DEFAULT_LIVE_OCCURRENCES,
         };
         let undefined = run_with_replay_context_kernel(
-            &source, CallerLimits::default(), &call("r", 0, 1_000_000),
+            &source,
+            CallerLimits::default(),
+            &call("r", 0, 1_000_000),
         );
         assert!(matches!(undefined.outcome(), CallOutcome::Undefined { .. }));
-        let settle = |wire| TerminalRecord::from_plugin_counterexample(
-            RequestIndex::new(0), plugin(), &crate::replay(wire, ReplayLimits::default()),
-        );
+        let settle = |wire| {
+            TerminalRecord::from_plugin_counterexample(
+                RequestIndex::new(0),
+                plugin(),
+                &crate::replay(wire, ReplayLimits::default()),
+            )
+        };
         let record = settle(kernel_member_request(&source, &undefined, "r", 0));
         assert_eq!(record.value(), &TerminalValue::Refuted);
         assert_eq!(record.backend(), Some(&plugin()));
@@ -618,12 +649,13 @@ mod tests {
             settle(r_x).value(),
             TerminalValue::Inconclusive(crate::InconclusiveCause::ReplayParity(_))
         ));
-        let incomplete = run_with_replay_context_kernel(
-            &source, CallerLimits::default(), &call("q", 3, 0),
-        );
+        let incomplete =
+            run_with_replay_context_kernel(&source, CallerLimits::default(), &call("q", 3, 0));
         assert!(matches!(incomplete.outcome(), CallOutcome::Incomplete(_)));
         let completed = run_with_replay_context_kernel(
-            &source, CallerLimits::default(), &call("q", 3, 1_000_000),
+            &source,
+            CallerLimits::default(),
+            &call("q", 3, 1_000_000),
         );
         let expected = kernel_member_request(&source, &completed, "q", 9);
         let built = kernel_member_request(&source, &incomplete, "q", 9);

@@ -30,7 +30,9 @@ fn growth() -> World {
 fn undecided_model() -> Model {
     let mut model = growth_model();
     model.body=model.body.replace("post Grown using v on M::Server::grow { self.level = 99 }","post Grown using vc on M::Server::grow { self.level = 99 or (self.level = 10 and undefined_remainder(self.level - 10) = 0) }");
-    model.body.push_str("\nfunction undefined_remainder using vc(x: Integer): Integer pure { 1 mod x }\n");
+    model.body.push_str(
+        "\nfunction undefined_remainder using vc(x: Integer): Integer pure { 1 mod x }\n",
+    );
     model
 }
 fn undecided_candidate() -> World {

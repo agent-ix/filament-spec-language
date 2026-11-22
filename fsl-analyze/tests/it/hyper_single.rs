@@ -57,10 +57,8 @@ fn clause(fair: &str, body: &str) -> String {
 
 const SETTLES: &str = "eventually always holds(v.l @ b = 1)";
 
-const KERNEL_REMAINDER: &str =
-    "function remainder using v(x: Integer): Integer pure { 1 mod x }\n";
-const KERNEL_QUOTIENT: &str =
-    "function quotient using v(x: Integer): Integer pure { 1 div x }\n";
+const KERNEL_REMAINDER: &str = "function remainder using v(x: Integer): Integer pure { 1 mod x }\n";
+const KERNEL_QUOTIENT: &str = "function quotient using v(x: Integer): Integer pure { 1 div x }\n";
 
 fn weak() -> &'static str {
     "fair weak V::Vault::reset;"
@@ -683,7 +681,11 @@ fn witnessed_or_unchecked(outcome: &ExistentialOutcome) -> &[LassoWitness] {
 fn an_undefined_letter_refutes_although_every_initial_state_has_a_witness() {
     let body = "eventually always holds(remainder(1 - v.l @ b) = 0 and v.l @ b = 0)";
     let world = World::new_with_kernel_function(
-        Vault::Secure, false, &STARTS, &clause("", body), KERNEL_REMAINDER,
+        Vault::Secure,
+        false,
+        &STARTS,
+        &clause("", body),
+        KERNEL_REMAINDER,
     );
     for limits in [unsampled(), ModelCheckLimits::default()] {
         let result = single(&world, limits);
@@ -732,7 +734,11 @@ fn an_undefined_letter_refutes_although_every_initial_state_has_a_witness() {
 fn an_undefined_letter_at_a_trapped_start_is_undefined_not_trapped() {
     let body = "always holds(remainder(1 - v.l @ b) = 0 and v.l @ b = 0)";
     let world = World::new_with_kernel_function(
-        Vault::Secure, false, &[(0, 0), (0, 1)], &clause("", body), KERNEL_REMAINDER,
+        Vault::Secure,
+        false,
+        &[(0, 0), (0, 1)],
+        &clause("", body),
+        KERNEL_REMAINDER,
     );
     let result = single(&world, unsampled());
     let ExistentialOutcome::Undefined { stem, undefined } = &result.outcome else {
@@ -753,7 +759,11 @@ fn an_undefined_letter_at_a_trapped_start_is_undefined_not_trapped() {
 fn a_trap_comes_before_a_later_undefined_letter() {
     let body = "holds(v.l @ b = 1) and always holds(remainder(1 - v.l @ b) = 0 and v.l @ b = 0)";
     let world = World::new_with_kernel_function(
-        Vault::Secure, false, &STARTS, &clause("", body), KERNEL_REMAINDER,
+        Vault::Secure,
+        false,
+        &STARTS,
+        &clause("", body),
+        KERNEL_REMAINDER,
     );
     let result = single(&world, unsampled());
     assert_eq!(

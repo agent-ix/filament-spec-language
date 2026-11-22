@@ -26,8 +26,7 @@ const DIVIDED: &str = "match { a.step.op = b.step.op and \
      a.step.Vault::step.i = b.step.Vault::step.i and \
      (if present(a.step.Vault::step.i) then remainder(value(a.step.Vault::step.i)) else 0) = 0 }";
 
-const KERNEL_REMAINDER: &str =
-    "function remainder using v(x: Integer): Integer pure { 1 mod x }\n";
+const KERNEL_REMAINDER: &str = "function remainder using v(x: Integer): Integer pure { 1 mod x }\n";
 
 /// A third conjunct that calls a declared function, which a budget that
 /// covers the first two conjuncts of `(step(0), step(0))` does not cover.
@@ -41,7 +40,10 @@ fn secure(matched: &str) -> World {
 
 fn divided() -> World {
     World::build_with_kernel_function(
-        &["v"], &non_interference(DIVIDED, ""), &SECURE, KERNEL_REMAINDER,
+        &["v"],
+        &non_interference(DIVIDED, ""),
+        &SECURE,
+        KERNEL_REMAINDER,
     )
 }
 
@@ -547,7 +549,10 @@ fn a_conjunct_before_the_calling_one_moves_the_refused_tuple() {
 fn a_divisor_outside_the_fragment_is_refused_after_the_match_conjuncts() {
     let body = "always holds(remainder(1 - v.h @ a) = remainder(1 - v.h @ b))";
     let world = World::build_with_kernel_function(
-        &["v"], &with_body(EQUAL_INPUTS, "", body), &SECURE, KERNEL_REMAINDER,
+        &["v"],
+        &with_body(EQUAL_INPUTS, "", body),
+        &SECURE,
+        KERNEL_REMAINDER,
     );
     for kind in [
         SmtQueryKind::InductionBase { depth: 1 },
@@ -567,7 +572,10 @@ fn a_divisor_outside_the_fragment_is_refused_after_the_match_conjuncts() {
         );
     }
     let exhausting = World::build_with_kernel_function(
-        &["v"], &with_body(CALLING, "", body), &SECURE, KERNEL_REMAINDER,
+        &["v"],
+        &with_body(CALLING, "", body),
+        &SECURE,
+        KERNEL_REMAINDER,
     );
     let refusal = refusal_of(
         &exhausting,

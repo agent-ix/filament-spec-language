@@ -16,8 +16,7 @@ use crate::refinement_aux::{
     coin_refines, coin_refines_extended, flag, int, Unit, World, UNLIMITED,
 };
 
-const KERNEL_REMAINDER: &str =
-    "function remainder using v(x: Integer): Integer pure { 1 mod x }\n";
+const KERNEL_REMAINDER: &str = "function remainder using v(x: Integer): Integer pure { 1 mod x }\n";
 
 /// The concrete state of the one coin `r`.
 fn coin(
@@ -291,7 +290,8 @@ fn an_undecided_completion_leaves_the_candidate_set_unknown() {
     let unit = Unit::coin_with_contracts(
         "post SpecTossed using v on Spec::Coin::toss { self.tossed }",
         "post SpecTossed using v on Spec::Coin::toss { self.tossed and remainder(self.side) = 0 }",
-    ).kernel();
+    )
+    .kernel();
     let world = unit.world(&format!("{KERNEL_REMAINDER}{}", coin_refines("")));
     let start = initial(&world);
     let verdict = decide(

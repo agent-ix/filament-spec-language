@@ -61,7 +61,11 @@ pub(super) fn compile_kernel_source_with(
     spine::CheckedUnit,
     fsl_semantics::model::intake::PackageInput,
 ) {
-    compile_with_mode(source, domain, Some(filament_semantic_value::checking::CheckMode::Kernel))
+    compile_with_mode(
+        source,
+        domain,
+        Some(filament_semantic_value::checking::CheckMode::Kernel),
+    )
 }
 
 fn compile_with_mode(
@@ -94,7 +98,10 @@ fn compile_with_mode(
         &parsed,
         "bounded-fixture".to_owned(),
         &spine::StateClauseExecutionPoints::default(),
-        spine::SourceInputs { check_mode, ..spine::SourceInputs::default() },
+        spine::SourceInputs {
+            check_mode,
+            ..spine::SourceInputs::default()
+        },
         &models,
         &DependencyInput::default(),
         limits,
@@ -283,12 +290,17 @@ pub(super) fn check_kernel_document(
 ) -> Result<fsl_replay::ExactProbabilityCertificateCheck, fsl_replay::ProbabilityDocumentError> {
     let domain: Vec<u8> = serde_json::from_value(request["documents"][0].clone()).unwrap();
     let snapshot: Vec<u8> = serde_json::from_value(request["documents"][1].clone()).unwrap();
-    let (checked, packages) = compile_kernel_source_with(
-        request["source"]["content"].as_str().unwrap(), &domain,
-    );
+    let (checked, packages) =
+        compile_kernel_source_with(request["source"]["content"].as_str().unwrap(), &domain);
     let initial = DocumentRef {
-        authority: request["initial"][0]["authority"].as_str().unwrap().to_owned(),
-        identity: request["initial"][0]["identity"].as_str().unwrap().to_owned(),
+        authority: request["initial"][0]["authority"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+        identity: request["initial"][0]["identity"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
     };
     let snapshots = [(initial.clone(), snapshot)].into_iter().collect();
     let universe = &request["universes"][0];
@@ -301,11 +313,18 @@ pub(super) fn check_kernel_document(
         initial: vec![initial],
         universes: vec![PopulationUniverse {
             population: DeclarationKey {
-                package: universe["population"]["package"].as_str().unwrap().to_owned(),
+                package: universe["population"]["package"]
+                    .as_str()
+                    .unwrap()
+                    .to_owned(),
                 node: universe["population"]["node"].as_str().unwrap().to_owned(),
             },
-            keys: universe["keys"].as_array().unwrap().iter()
-                .map(|key| key.as_str().unwrap().to_owned()).collect(),
+            keys: universe["keys"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|key| key.as_str().unwrap().to_owned())
+                .collect(),
         }],
         observation: ObservationLimits::default(),
         expansion: ExpansionLimits {
@@ -313,14 +332,25 @@ pub(super) fn check_kernel_document(
         },
         meter: fsl_replay::AccountingLimits::default().0,
         emit: stages.package.emit(),
-    }).unwrap();
+    })
+    .unwrap();
     let claims = checked.package().graph().probabilistic_model().claims();
     let item = fsl_replay::probabilistic_claim_identity(
-        checked.package().graph().probabilistic_model().claim("Likely").unwrap(),
-    ).unwrap();
+        checked
+            .package()
+            .graph()
+            .probabilistic_model()
+            .claim("Likely")
+            .unwrap(),
+    )
+    .unwrap();
     fsl_replay::check_probability_certificate_document(
-        &system, claims, &item, request["certificate"].as_str().unwrap().as_bytes(),
-        document_limits(request), cancel,
+        &system,
+        claims,
+        &item,
+        request["certificate"].as_str().unwrap().as_bytes(),
+        document_limits(request),
+        cancel,
     )
 }
 
@@ -1088,10 +1118,7 @@ fn bounded_wrong_source_and_nonexact_rows_never_produce_an_accepted_document() {
 /// Keep the offered evidence while naming the actual edited checked claim.
 /// The canonical writer preserves the profile and all numerical assertions.
 pub(super) fn replace_kernel_source_and_rebind(request: &mut Value, source: &str) {
-    let previous_source = request["source"]["content"]
-        .as_str()
-        .unwrap()
-        .to_owned();
+    let previous_source = request["source"]["content"].as_str().unwrap().to_owned();
     let domain: Vec<u8> = serde_json::from_value(request["documents"][0].clone()).unwrap();
     let (checked, packages) = compile_kernel_source_with(source, &domain);
     let claim = checked
@@ -1142,11 +1169,16 @@ pub(super) fn replace_kernel_source_and_rebind(request: &mut Value, source: &str
             panic!("the offered evidence names a bounded formula");
         };
         let initial = DocumentRef {
-            authority: request["initial"][0]["authority"].as_str().unwrap().to_owned(),
-            identity: request["initial"][0]["identity"].as_str().unwrap().to_owned(),
+            authority: request["initial"][0]["authority"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
+            identity: request["initial"][0]["identity"]
+                .as_str()
+                .unwrap()
+                .to_owned(),
         };
-        let snapshot: Vec<u8> =
-            serde_json::from_value(request["documents"][1].clone()).unwrap();
+        let snapshot: Vec<u8> = serde_json::from_value(request["documents"][1].clone()).unwrap();
         let snapshots = [(initial.clone(), snapshot)].into_iter().collect();
         let universe = &request["universes"][0];
         let simulation = ModelSimulationRequest {
@@ -1184,11 +1216,9 @@ pub(super) fn replace_kernel_source_and_rebind(request: &mut Value, source: &str
             Some(&binding.reference),
         )
         .unwrap();
-        let context = fsl_replay::probabilistic_formula_monitor_context(
-            claim,
-            Some(&binding.reference),
-        )
-        .unwrap();
+        let context =
+            fsl_replay::probabilistic_formula_monitor_context(claim, Some(&binding.reference))
+                .unwrap();
         let mut previous_monitor = fsl_eval::automaton::QualifiedBoundedMonitor::new(
             previous_formula.formula(),
             &previous_context,

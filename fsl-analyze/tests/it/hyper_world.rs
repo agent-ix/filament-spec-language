@@ -31,18 +31,18 @@ use fsl_eval::hyper::{
     Property, StepLabel, StepMatch, WitnessInputs, WitnessProduct,
 };
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelSubject};
-use fsl_eval::simulation::Limits;
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelSimState, ModelSimulationRequest, ModelSystem, PopulationUniverse,
 };
+use fsl_eval::simulation::Limits;
 use fsl_eval::temporal::AtomReading;
+use fsl_foundation::diagnostic::StageFailure;
 use fsl_foundation::IdentityLimits;
 use fsl_foundation::SourceIdentity;
-use fsl_foundation::diagnostic::StageFailure;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    DEFAULT_MAX_WITNESS_SET, HyperCounterexample, HyperOutcome, HyperReplay, ModelCheckLimits,
-    ModelTraceSettlement, ReplayRefusal, replay_hyper_trace_tuple,
+    replay_hyper_trace_tuple, HyperCounterexample, HyperOutcome, HyperReplay, ModelCheckLimits,
+    ModelTraceSettlement, ReplayRefusal, DEFAULT_MAX_WITNESS_SET,
 };
 use fsl_route::reductions::Reductions;
 use fsl_semantics::check::{

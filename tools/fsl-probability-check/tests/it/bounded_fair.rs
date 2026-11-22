@@ -259,13 +259,19 @@ fn zero_horizon_and_legacy_bytes_keep_their_actual_context_and_closed_rows() {
         "model admission must not evaluate P after its zero horizon"
     );
     let (code, refused) = run(&query_stops);
-    assert_ne!(code, 0, "the public facade retains Linked checking: {refused}");
+    assert_ne!(
+        code, 0,
+        "the public facade retains Linked checking: {refused}"
+    );
     assert_eq!(refused["status"], "refused", "{refused}");
     assert!(refused.get("value").is_none());
     let mut in_horizon_undefined = proof(&zero_source, SNAPSHOT);
     replace_kernel_source_and_rebind(
         &mut in_horizon_undefined,
-        &(zero_source.replace("holds(m.delivered)", "holds(partial_remainder(m.attempts) = 0)") + partial),
+        &(zero_source.replace(
+            "holds(m.delivered)",
+            "holds(partial_remainder(m.attempts) = 0)",
+        ) + partial),
     );
     let out = check_kernel_document(&in_horizon_undefined, &cancel);
     assert!(matches!(

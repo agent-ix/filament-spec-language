@@ -40,8 +40,8 @@ use fsl_semantics::model::observation::{AnchorKind, DocumentRef};
 use ix_trace_rs::trace;
 
 use crate::counter::{
-    clause_text, document, document_with_ranged_parameter, key, subject,
-    unit_text, value, Documents, Letters, CONTRACT, UNLIMITED, ZERO,
+    clause_text, document, document_with_ranged_parameter, key, subject, unit_text, value,
+    Documents, Letters, CONTRACT, UNLIMITED, ZERO,
 };
 
 /// A Counter world with one declared clause.
@@ -66,7 +66,11 @@ pub(crate) fn fixture(
     starts: &[(&'static str, i64)],
 ) -> Fixture {
     fixture_in_mode(
-        document, body, fairness, formula, starts,
+        document,
+        body,
+        fairness,
+        formula,
+        starts,
         filament_semantic_value::checking::CheckMode::Linked,
     )
 }
@@ -81,7 +85,10 @@ pub(crate) fn fixture_in_mode(
     mode: filament_semantic_value::checking::CheckMode,
 ) -> Fixture {
     let (package, clauses) = crate::counter::package_with_clauses_mode(
-        &document, body, &[("C", fairness, formula)], mode,
+        &document,
+        body,
+        &[("C", fairness, formula)],
+        mode,
     );
     let temporal_clock_selections = crate::fill::tcb_01_event_position_selection(&package);
     let unit = unit_text(&(body.to_owned() + &clause_text("C", fairness, formula))).into_bytes();
@@ -664,7 +671,11 @@ fn an_undefined_letter_refutes_a_liveness_claim_before_any_lasso() {
     let helper = "function undefined_remainder using v(x: Integer): Integer pure { 6 mod x }\n";
     let formula = "always eventually holds(undefined_remainder(2 - c.value) = 0)";
     let fixture = fixture_in_mode(
-        document(false), &format!("{CONTRACT}{helper}"), "", formula, &[("c", 0)],
+        document(false),
+        &format!("{CONTRACT}{helper}"),
+        "",
+        formula,
+        &[("c", 0)],
         filament_semantic_value::checking::CheckMode::Kernel,
     );
     let outcome = fixture
@@ -684,11 +695,15 @@ fn an_undefined_letter_refutes_a_liveness_claim_before_any_lasso() {
     );
     assert_eq!(counterexample.trace_position(), Some(2));
 
-    let guarded = "pre CanInc using v on M::Counter::inc { undefined_remainder(2 - self.value) >= 0 }\n\
+    let guarded =
+        "pre CanInc using v on M::Counter::inc { undefined_remainder(2 - self.value) >= 0 }\n\
                    post Inc using v on M::Counter::inc { self.value - pre(self.value) = 1 }\n";
     let fixture = fixture_in_mode(
-        document(false), &format!("{helper}{guarded}"), "",
-        "always eventually holds(c.value = 0)", &[("c", 0)],
+        document(false),
+        &format!("{helper}{guarded}"),
+        "",
+        "always eventually holds(c.value = 0)",
+        &[("c", 0)],
         filament_semantic_value::checking::CheckMode::Kernel,
     );
     let outcome = fixture.decide(is_zero).expect("checked");

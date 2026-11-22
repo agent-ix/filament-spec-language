@@ -245,7 +245,9 @@ fn an_unproved_divisor_refuses_the_public_clause_before_evaluation() {
         matches!(
             result,
             ClauseEvaluation::Refused(ClauseRefusal::Coded {
-                code: "undefined_expression", cause: "unproved-nonzero", ..
+                code: "undefined_expression",
+                cause: "unproved-nonzero",
+                ..
             })
         ),
         "{result:?}"
