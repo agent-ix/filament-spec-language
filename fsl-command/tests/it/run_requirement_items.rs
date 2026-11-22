@@ -379,7 +379,7 @@ fn package_scalar_requirement_records_equal_the_source_run() {
                     path,
                     &Fr290,
                     vec![recording_provider(&seen, ProviderVerdict::Proved)],
-                    &command::ProviderOptions::default(),
+                    &fsl_analyze::provider::ProviderOptions::default(),
                     &filament_exact::Cancel::new(),
                 )
                 .unwrap()

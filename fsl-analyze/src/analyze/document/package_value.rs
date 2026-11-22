@@ -15,7 +15,7 @@ use fsl_route::Registry;
 use fsl_semantics::check::{Capability, PathGuard};
 use fsl_semantics::family::ClaimExtent;
 
-pub(super) fn occurrence(
+pub(crate) fn occurrence(
     package: &BarePackage<'_>,
     row: &RequirementItemRow,
 ) -> Option<OccurrenceKey> {
