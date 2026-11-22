@@ -3,6 +3,8 @@ id: FR-398
 title: "Expose the admitted unit table through the replay facade"
 type: FR
 relationships:
+  - target: ix://agent-ix/filament-spec-language/FR-910
+    type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-394
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-396
@@ -75,11 +77,11 @@ or builds a key.
   `ValueType::Quantity` or a `Quantity`. A lookup takes the node id; the entry
   returns both. A consumer builds `ValueType::Quantity` and `Quantity` from
   the returned id and never wraps the node id itself.
-- A unit enters the package's checked graph, and so the emitted package, only
-  when the package uses it. The context lists every declared unit, used or
-  not, so a consumer holding the node id of a used unit finds it, and a
-  declared unit the package never uses is listed with the node id its
-  declaration determines.
+- The check retains every declared unit in the package's checked graph, and
+  so the emitted package, whether or not the package uses it
+  ([FR-910](FR-910-check-and-compile-a-unit-that-declares-only-aliases-or-dimensions.md)).
+  The context lists every declared unit, used or not, with the node id its
+  declaration determines; `unit_declaration` finds both used and unused units.
 - The tables hold only the ids the check admitted. A lookup finds an entry or
   refuses; it creates none and returns no partial value.
 - Two units, including two of one dimension, have different ids; the same
