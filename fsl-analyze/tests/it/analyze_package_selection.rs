@@ -1453,6 +1453,80 @@ fn package_default_items_equal_the_source_defaults_over_every_claim_form() {
     );
 }
 
+/// A state-graph claim whose target is the Boolean `false` literal: no state
+/// satisfies it.
+fn never_holds() -> &'static str {
+    "possible NeverHolds using v over (c: M::Counter) { false }\n"
+}
+
+/// The source route's and the package route's documents and exits of one
+/// request over `body`, the first with its `items` as written and the second
+/// selecting the compiled package.
+fn both_routes(name: &str, body: &str, items: Option<Value>) -> (Run, Run) {
+    let ws = Workspace::new(name);
+    let path = counter_request(&ws, body, json!(null));
+    let mut document: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("the request")).expect("JSON");
+    let request = document["request"].as_object_mut().expect("request");
+    match items {
+        Some(items) => request.insert("items".to_owned(), items),
+        None => request.remove("items"),
+    };
+    let path = ws.write("analyze-source.json", document.to_string().as_bytes());
+    let source = analyze(&path);
+    let (members, _) = package_selection(&ws, &document["request"]);
+    let package = analyze_members(&ws, "analyze-package.json", &members);
+    (source, package)
+}
+
+/// The parts of two outcomes FR-850 holds equal across the routes.
+fn assert_same_outcome(package: &Run, source: &Run) {
+    let (package_document, source_document) = (package.document(), source.document());
+    for member in ["items", "registry", "aggregate"] {
+        assert_eq!(
+            package_document[member], source_document[member],
+            "{member}: package {package_document}\nsource {source_document}"
+        );
+    }
+    assert_eq!(package.exit, source.exit, "{package_document}");
+}
+
+/// FR-850 "Equality with the source route", FR-940: a state-graph claim whose
+/// target is the Boolean `false` literal is read from the package as a written
+/// predicate, and settles as it does over the source, never as a declaration
+/// the package route does not read.
+#[trace("TC-2410", "FR-850-AC-2", "FR-940-AC-6")]
+#[test]
+fn a_package_false_literal_state_graph_claim_equals_the_source() {
+    let (source, package) = both_routes(
+        "package-false-state-graph",
+        &format!("{}{}", bounded(), never_holds()),
+        Some(json!([{"claim": "NeverHolds"}])),
+    );
+    assert_eq!(label(&source.item(0)), "refuted", "{}", source.document());
+    assert_same_outcome(&package, &source);
+}
+
+/// FR-620 "Subject, compilation and default items", FR-850: a request that
+/// omits `items` over a package with a `false`-target claim among the other
+/// claim forms writes the source route's default items, in its order, and
+/// settles each as the source does.
+#[trace("TC-1580", "FR-620-AC-1", "FR-850-AC-2")]
+#[test]
+fn omitted_items_settle_over_a_package_as_over_the_source() {
+    let body = format!(
+        "{}{}{}{}",
+        bounded(),
+        state_graph_claims(),
+        never_holds(),
+        not_above_three()
+    );
+    let (source, package) = both_routes("package-omitted-items", &body, None);
+    assert!(!item_heads(&source).is_empty(), "{}", source.document());
+    assert_eq!(item_heads(&package), item_heads(&source));
+    assert_same_outcome(&package, &source);
+}
+
 /// FR-940-AC-22 (QSL-2698): with the run's `replay.input_bytes` below the
 /// length of the package's emission, a replay refused by the bound settles
 /// only the replaying item `inconclusive` `replay_refused` carrying
