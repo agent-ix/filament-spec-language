@@ -1208,10 +1208,10 @@ fn defined_always_items_keep_their_prior_unsupported_disposition() {
         terminal
             .exact_certificate_document()
             .expect("the exact document"),
-        fsl_replay::ProbabilityDocumentLimits {
-            accounting: prob_world::UNLIMITED,
-            ..fsl_replay::ProbabilityDocumentLimits::default()
-        },
+        fsl_replay::ProbabilityDocumentLimits::for_exact(
+            &world.request("True", ModelCheckLimits::default()).limits,
+            prob_world::UNLIMITED,
+        ),
         &Cancel::new(),
     )
     .expect("the independent checker reads bounded always evidence");
@@ -1246,7 +1246,29 @@ fn defined_always_items_keep_their_prior_unsupported_disposition() {
         panic!("the counterexample reproduces the refutation");
     };
     assert_eq!(token.mass(), &ratio(1, 1));
-    assert_eq!(token.evidence(), witness);
+    assert_same_horizon_zero_witness(&system, token.evidence(), witness);
+}
+
+/// Horizon zero's cylinder has no steps or subsystem. Compare every witness
+/// member, using the model's canonical state key for its semantic initial state.
+fn assert_same_horizon_zero_witness(
+    system: &ModelSystem<'_>,
+    reproduced: &fsl_replay::ProbabilisticCounterexample,
+    expected: &fsl_replay::ProbabilisticCounterexample,
+) {
+    assert_eq!(reproduced.item, expected.item);
+    assert_eq!(reproduced.binding, expected.binding);
+    assert_eq!(
+        system.state_key(&reproduced.initial).unwrap(),
+        system.state_key(&expected.initial).unwrap()
+    );
+    assert_eq!(reproduced.initial_key, expected.initial_key);
+    assert_eq!(reproduced.scheduler, expected.scheduler);
+    for witness in [reproduced, expected] {
+        assert_eq!(witness.paths.len(), 1, "one initial-state cylinder");
+        assert!(witness.paths[0].steps.is_empty(), "no horizon-zero step");
+        assert!(witness.subsystem.is_none(), "path-set evidence only");
+    }
 }
 
 fn external_always_world(bound: &str) -> World {
@@ -1385,5 +1407,5 @@ fn external_always_path_set_remains_unsupported() {
         panic!("the initial accepting cylinder refutes the upper bound");
     };
     assert_eq!(token.mass(), &ratio(1, 1));
-    assert_eq!(token.evidence(), &witness);
+    assert_same_horizon_zero_witness(&system, token.evidence(), &witness);
 }
