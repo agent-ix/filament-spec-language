@@ -163,3 +163,38 @@ fn malformed_package_rows_refuse_a_schedulability_item_typed() {
         assert_eq!(run.exit, 20, "{name}");
     }
 }
+
+/// The package orders a task set's rows by task name, not by declaration:
+/// a set declared out of name order, with jitter and blocking, settles with
+/// the source route's whole document for every closed-form analysis.
+#[trace("TC-1593", "FR-940")]
+#[test]
+fn a_package_task_set_declared_out_of_name_order_equals_the_source() {
+    let source = "language \"ix:native\" edition \"1-draft\";\n\
+        profile t = \"filament.temporal.complete/v1\";\n\
+        dimension Time;\nunit ms : Time = rational(1, 1);\n\
+        taskset Rev {\n\
+        task z periodic 12 ms deadline 12 ms wcet 5 ms priority 1 lo jitter 1 ms blocking 1 ms;\n\
+        task m sporadic 6 ms deadline 6 ms wcet 2 ms priority 2 lo;\n\
+        task a periodic 4 ms deadline 4 ms wcet 1 ms priority 3 lo;\n}\n\
+        taskset Plain {\n\
+        task z periodic 12 ms deadline 12 ms wcet 5 ms priority 1 lo;\n\
+        task m periodic 6 ms deadline 6 ms wcet 2 ms priority 2 lo;\n\
+        task a periodic 4 ms deadline 4 ms wcet 1 ms priority 3 lo;\n}\n\
+        schedulable RevFp on Rev under fixed_priority;\n\
+        response RevZ on Rev.z <= 3 ms under fixed_priority;\n\
+        schedulable PlainEdf on Plain under edf;\n";
+    let ws = Workspace::new("package-sched-order");
+    let members = json!({"models": [], "items": [{"claim": "RevFp"}, {"claim": "RevZ"},
+        {"claim": "PlainEdf"}]});
+    let path = request_over(&ws, source, &crate::counter::document(false), &[], members);
+    let sourced = analyze(&path);
+    let request: Value = serde_json::from_slice(&std::fs::read(&path).expect("the request"))
+        .expect("request JSON");
+    let (selected, _) = package_selection(&ws, &request["request"]);
+    std::fs::remove_file(ws.path("program.fsl")).expect("remove the source");
+    let document = json!({"format": "native-analyze/1", "request": selected});
+    let package = analyze(&ws.write("analyze-package.json", document.to_string().as_bytes()));
+    assert_eq!(package.document(), sourced.document(), "{}", package.document());
+    assert_eq!(package.exit, sourced.exit);
+}
