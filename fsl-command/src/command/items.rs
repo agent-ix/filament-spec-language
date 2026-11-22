@@ -27,6 +27,18 @@ struct CallOutput {
     packages: fsl_semantics::model::intake::PackageInput,
 }
 
+struct ValueInvariantInput<'a> {
+    selection: &'a Value,
+    observations: &'a Value,
+    accounting: Option<&'a Value>,
+    observation_limits: Option<&'a Value>,
+}
+
+struct PreparedValueInvariants {
+    compilation: fsl_replay::spine::ProgramCompilationRequest,
+    request: fsl_replay::spine::ValueInvariantsBatchRequest,
+}
+
 pub(super) fn run_bytes(
     directory: &Path,
     bytes: &[u8],
@@ -347,15 +359,9 @@ pub(super) fn run_bytes(
                 call.insert("snapshot".to_owned(), Value::String(file));
             }
             single_body.insert("call".to_owned(), Value::Object(call));
-        } else {
+        } else if kind != "value_invariants" {
             let mut clause = Map::new();
-            let selection = if kind == "value_invariants" {
-                let snapshot = value.get("snapshot").cloned().unwrap_or(Value::Null);
-                json!({"function": {"name": "items_value_invariants_placeholder",
-                    "arguments": [], "snapshot": snapshot}})
-            } else {
-                json!({kind.clone(): value})
-            };
+            let selection = json!({kind.clone(): value});
             clause.insert("selection".to_owned(), selection);
             clause.insert("observations".to_owned(), observations.clone());
             if let Some(accounting) = accounting.clone() {
@@ -368,66 +374,26 @@ pub(super) fn run_bytes(
         }
         let single_bytes = serde_json::to_vec(&single).map_err(RunCause::Json)?;
         let execution = if kind == "value_invariants" {
-            let snapshot_key = value
-                .get("snapshot")
-                .and_then(Value::as_str)
-                .ok_or_else(|| refused("snapshot", "expected a snapshot key"))?;
-            let file = observations
-                .get(snapshot_key)
-                .and_then(Value::as_str)
-                .ok_or_else(|| refused(snapshot_key, "observation key is not present"))?;
-            let snapshot_bytes = super::read_file(&directory.join(file), limits.dependent_bytes)?;
-            match prepare_run_bytes(directory, &single_bytes, limits.dependent_bytes, overrides)? {
-                super::PreparedRun::Clause(request) => {
-                    let request = *request.into_request();
-                    let candidate = compilation_from_clause(&request)?;
-                    set_compilation(&mut compilation, candidate)?;
-                    let reference =
-                        fsl_semantics::model::observation::document_reference(&snapshot_bytes)
-                            .ok_or_else(|| refused(snapshot_key, "invalid snapshot identity"))?;
-                    let invocation = value
-                        .get("invocation")
-                        .and_then(Value::as_str)
-                        .map(|invocation_key| {
-                            let file = observations
-                                .get(invocation_key)
-                                .and_then(Value::as_str)
-                                .ok_or_else(|| {
-                                    refused(invocation_key, "observation key is not present")
-                                })?;
-                            let bytes =
-                                super::read_file(&directory.join(file), limits.dependent_bytes)?;
-                            fsl_semantics::model::observation::document_reference(&bytes)
-                                .ok_or_else(|| {
-                                    refused(invocation_key, "invalid invocation identity")
-                                })
-                        })
-                        .transpose()?;
-                    let selection = fsl_replay::spine::ProgramBatchSelection::ValueInvariants(
-                        Box::new(fsl_replay::spine::ValueInvariantsBatchRequest {
-                            snapshots: request.snapshots,
-                            invocations: request.invocations,
-                            snapshot: reference,
-                            invocation,
-                            observation_limits: request.observation_limits,
-                            accounting: request.accounting,
-                        }),
-                    );
-                    ItemExecution::Batch {
-                        selection: Some(Box::new(selection)),
-                        call_output: None,
-                    }
-                }
-                super::PreparedRun::Function(_)
-                | super::PreparedRun::TlLowering(_)
-                | super::PreparedRun::Package(_)
-                | super::PreparedRun::ModelBasedTest(_)
-                | super::PreparedRun::RefinementTransfer(_) => {
-                    return Err(refused(
-                        "value_invariants",
-                        "expected a clause-run preparation",
-                    ));
-                }
+            let prepared = prepare_value_invariants(
+                directory,
+                &single_bytes,
+                limits.dependent_bytes,
+                overrides,
+                ValueInvariantInput {
+                    selection: &value,
+                    observations: &observations,
+                    accounting: accounting.as_ref(),
+                    observation_limits: observation_limits.as_ref(),
+                },
+            )?;
+            set_compilation(&mut compilation, prepared.compilation)?;
+            ItemExecution::Batch {
+                selection: Some(Box::new(
+                    fsl_replay::spine::ProgramBatchSelection::ValueInvariants(Box::new(
+                        prepared.request,
+                    )),
+                )),
+                call_output: None,
             }
         } else {
             match prepare_run_bytes(directory, &single_bytes, limits.dependent_bytes, overrides) {
@@ -738,6 +704,130 @@ pub(super) fn run_bytes(
         requirements: None,
         sources: crate::Sources::default(),
     }))
+}
+
+/// Prepare FR-652's actual no-clause item without applying function-selection
+/// roles to its snapshot. FR-106 owns current/pre/post admission for this item.
+fn prepare_value_invariants(
+    directory: &Path,
+    bytes: &[u8],
+    dependent_bytes: usize,
+    overrides: &RequestOverrides<'_>,
+    input: ValueInvariantInput<'_>,
+) -> Result<PreparedValueInvariants> {
+    let request: super::wire::Request = super::request_with_overrides(bytes, overrides)?;
+    if request.package.is_some()
+        || request.refinement_transfer.is_some()
+        || request.tl_lowering.is_some()
+        || request.model_based_test.is_some()
+        || request.verification_plan.is_some()
+        || request.synthesis.is_some()
+        || request.export_evidence.is_some()
+    {
+        return Err(refused(
+            "value_invariants",
+            "expected a source-program items request",
+        ));
+    }
+    let program = super::required_program(&request)?;
+    let _law = super::request_integer_division(request.integer_division.clone())?;
+    for (index, library) in request.libraries.iter().enumerate() {
+        let _law = super::read_integer_division(
+            library.integer_division.as_ref(),
+            &format!("libraries[{index}].integer_division"),
+        )?;
+    }
+    super::validate_extension_entries(&request.extensions)?;
+    let observation_files: std::collections::BTreeMap<String, String> =
+        serde_json::from_value(input.observations.clone()).map_err(RunCause::Json)?;
+    let accounting: super::wire::Accounting =
+        serde_json::from_value(input.accounting.cloned().unwrap_or_else(|| json!({})))
+            .map_err(RunCause::Json)?;
+    let observation_limits: Option<fsl_replay::spine::ObservationLimitsWire> = input
+        .observation_limits
+        .cloned()
+        .map(serde_json::from_value)
+        .transpose()
+        .map_err(RunCause::Json)?;
+    let mut intake = super::intake_with_bytes(
+        directory,
+        super::FileCounts {
+            programs: request.libraries.len().saturating_add(1),
+            models: request.models.len(),
+            observations: observation_files
+                .values()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            extensions: request.extensions.len(),
+        },
+        dependent_bytes,
+    )?;
+    let source = intake.source(&program.source, "program.source")?;
+    super::require_native_header(source.source())?;
+    let inputs = super::clause::read_observation_inputs(
+        &mut intake,
+        &request,
+        &observation_files,
+        observation_limits.as_ref(),
+        overrides.observation.copied(),
+    )?;
+    let (snapshot, invocation) = {
+        let reference = |member: &str| {
+            let key = input
+                .selection
+                .get(member)
+                .and_then(Value::as_str)
+                .ok_or_else(|| refused(member, "expected an observation key"))?;
+            inputs
+                .observations
+                .get(key)
+                .map(|observation| observation.reference.clone())
+                .ok_or_else(|| refused(key, "observation key is not present"))
+        };
+        let snapshot = reference("snapshot")?;
+        let invocation = input
+            .selection
+            .get("invocation")
+            .map(|_| reference("invocation"))
+            .transpose()?;
+        (snapshot, invocation)
+    };
+    let mut snapshots = std::collections::BTreeMap::new();
+    let mut invocations = std::collections::BTreeMap::new();
+    for observation in inputs.observations.into_values() {
+        match observation.format.as_str() {
+            "filament.state.snapshot/v1" => {
+                snapshots.insert(observation.reference, observation.bytes);
+            }
+            "filament.state.invocation/v1" => {
+                invocations.insert(observation.reference, observation.bytes);
+            }
+            _ => return Err(refused("observation", "unsupported document format")),
+        }
+    }
+    Ok(PreparedValueInvariants {
+        compilation: fsl_replay::spine::ProgramCompilationRequest {
+            source: source.source().identity().clone(),
+            path: source.source().path().to_owned(),
+            bytes: source.source().text().as_bytes().to_vec(),
+            package_name: super::package_name(source.source().identity()),
+            packages: inputs.packages,
+            dependencies: inputs.dependencies,
+            limits: overrides.limits.copied().unwrap_or_default(),
+            clocks: request.clocks,
+        },
+        request: fsl_replay::spine::ValueInvariantsBatchRequest {
+            snapshots,
+            invocations,
+            snapshot,
+            invocation,
+            observation_limits: inputs.observation_limits,
+            accounting: overrides
+                .accounting
+                .copied()
+                .unwrap_or_else(|| super::call_accounting(&accounting)),
+        },
+    })
 }
 
 fn compilation_from_clause(

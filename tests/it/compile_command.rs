@@ -592,6 +592,14 @@ fn each_spine_stage_refusal_reports_its_stage_and_code() {
     // FR-763 builds every current source construct at S2. FR-027-AC-8
     // retains propagation of any real forms refusal without requiring a
     // source fixture for the unreachable UnrepresentedConstruct cause.
+    let workload =
+        "workload Both on M { weight Base::op = 1; weight ConfigVersion::attemptUpdate = 1; }";
+    let emit_body = format!(
+        "model M = {:?};\n{workload}\n",
+        crate::support::probabilistic_model::PACKAGE
+    );
+    let emit_model = serde_json::to_vec(&crate::support::probabilistic_model::document())
+        .expect("the unrelated-type workload model serializes");
     for (body, stage, code, exit, located) in [
         (
             "function f using v(): Int[0, 9] pure { 7\n",
@@ -615,16 +623,20 @@ fn each_spine_stage_refusal_reports_its_stage_and_code() {
             Some("true"),
         ),
         (
-            "type Digit = Int[0, 9];\n",
+            emit_body.as_str(),
             "emit",
-            "unsupported_projection",
+            "unsupported_construct",
             21,
-            None,
+            Some(workload),
         ),
     ] {
         let text = format!("{SPINE_HEADER}{body}");
         let directory = tempfile::tempdir().unwrap();
-        spine_request(directory.path(), text.as_bytes());
+        if stage == "emit" {
+            spine_model_request(directory.path(), text.as_bytes(), &emit_model);
+        } else {
+            spine_request(directory.path(), text.as_bytes());
+        }
         let output = compile(directory.path());
         assert_eq!(output.status.code(), Some(exit), "{stage}");
         assert!(output.stdout.is_empty(), "{stage}");

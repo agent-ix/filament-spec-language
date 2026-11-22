@@ -239,7 +239,15 @@ fn value_invariants_selection_checks_invocation_parameters() {
     assert_eq!(document["items"].as_array().unwrap().len(), 1, "{document}");
     assert_eq!(document["category"], "refusal", "{document}");
     assert_eq!(
+        document["items"][0]["result"]["disposition"]["stage"], "admit",
+        "{document}"
+    );
+    assert_eq!(
         document["items"][0]["result"]["disposition"]["refusal"]["code"], "wrong_snapshot",
+        "{document}"
+    );
+    assert_eq!(
+        document["items"][0]["result"]["disposition"]["refusal"]["cause"], "wrong-observation",
         "{document}"
     );
     assert!(

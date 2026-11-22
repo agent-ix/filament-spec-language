@@ -74,16 +74,23 @@ pub(super) fn read_extracted(
     )
 }
 
-fn read_with_source(
+pub(super) struct ObservationInputs {
+    pub packages: fsl_semantics::model::intake::PackageInput,
+    pub dependencies: DependencyInput,
+    pub observations: BTreeMap<String, SuppliedObservation>,
+    pub observation_limits: fsl_semantics::model::observation::ObservationLimits,
+}
+
+/// Admit the program's model, library and observation inputs without choosing
+/// a clause or applying any selection-specific snapshot-role requirement.
+pub(super) fn read_observation_inputs(
     intake: &mut Intake<'_>,
     request: &wire::Request,
-    clause: &wire::ClauseRun,
-    source_identity: SourceIdentity,
-    source: ClauseRunSource,
-    limits: SpineLimits,
+    observation_files: &BTreeMap<String, String>,
+    requested_limits: Option<&fsl_replay::spine::ObservationLimitsWire>,
     observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
-) -> Result<ClauseRunRequest> {
-    if observation_override.is_some() && clause.observation_limits.is_some() {
+) -> Result<ObservationInputs> {
+    if observation_override.is_some() && requested_limits.is_some() {
         return Err(invalid(
             "observation_limits",
             "request member and RequestOverrides::observation were both supplied",
@@ -129,14 +136,12 @@ fn read_with_source(
         .map_err(|error| invalid("libraries", error.to_string()))?;
     let observation_limits = match observation_override {
         Some(limits) => limits,
-        None => {
-            fsl_replay::spine::ObservationLimitsWire::resolve(clause.observation_limits.as_ref())
-                .map_err(|error| invalid(error.member, error.reason))?
-        }
+        None => fsl_replay::spine::ObservationLimitsWire::resolve(requested_limits)
+            .map_err(|error| invalid(error.member, error.reason))?,
     };
     let mut by_file = BTreeMap::<String, SuppliedObservation>::new();
     let mut observations = BTreeMap::new();
-    for (key, file) in &clause.observations {
+    for (key, file) in observation_files {
         let observed = if let Some(existing) = by_file.get(file) {
             existing.clone()
         } else {
@@ -146,6 +151,35 @@ fn read_with_source(
         };
         observations.insert(key.clone(), observed);
     }
+    Ok(ObservationInputs {
+        packages,
+        dependencies,
+        observations,
+        observation_limits,
+    })
+}
+
+fn read_with_source(
+    intake: &mut Intake<'_>,
+    request: &wire::Request,
+    clause: &wire::ClauseRun,
+    source_identity: SourceIdentity,
+    source: ClauseRunSource,
+    limits: SpineLimits,
+    observation_override: Option<fsl_semantics::model::observation::ObservationLimits>,
+) -> Result<ClauseRunRequest> {
+    let ObservationInputs {
+        packages,
+        dependencies,
+        observations,
+        observation_limits,
+    } = read_observation_inputs(
+        intake,
+        request,
+        &clause.observations,
+        clause.observation_limits.as_ref(),
+        observation_override,
+    )?;
     let ledger = clause
         .selection
         .ledger_path()

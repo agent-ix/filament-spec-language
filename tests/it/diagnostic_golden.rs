@@ -15,8 +15,7 @@ use fsl_replay::{
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
-#[path = "../../fsl-semantics/tests/support/abstraction.rs"]
-mod probabilistic_model;
+use crate::support::probabilistic_model;
 
 const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
 profile v = \"filament.value.complete/v1\";\n";

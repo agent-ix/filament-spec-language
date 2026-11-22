@@ -5,6 +5,8 @@
 pub mod config_version_spine;
 pub mod front_end;
 pub(crate) mod plan_model;
+#[path = "../../fsl-semantics/tests/support/abstraction.rs"]
+pub(crate) mod probabilistic_model;
 #[path = "refinement_cas.rs"]
 pub mod refinement_cas;
 pub mod spine_model;
