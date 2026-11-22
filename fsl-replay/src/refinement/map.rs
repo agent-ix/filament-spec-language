@@ -586,6 +586,7 @@ pub(super) fn lift_value(
 
 #[cfg(test)]
 mod tests {
+    use fsl_semantics::check::PopulationRow;
     use ix_trace_rs::trace;
 
     use super::*;
@@ -726,7 +727,7 @@ mod tests {
             },
         };
         let ordered = ordered_populations(vec![&later_digest, &earlier_digest]);
-        assert_eq!(ordered[0].abstract_population.node, "z");
-        assert_eq!(ordered[1].abstract_population.node, "a");
+        assert_eq!(ordered[0].abstract_population().node, "z");
+        assert_eq!(ordered[1].abstract_population().node, "a");
     }
 }
