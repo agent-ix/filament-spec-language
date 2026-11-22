@@ -589,6 +589,9 @@ fn retired_and_unknown_editions_refuse_before_emitting_package_bytes() {
     "FR-027-AC-11"
 )]
 fn each_spine_stage_refusal_reports_its_stage_and_code() {
+    // FR-763 builds every current source construct at S2. FR-027-AC-8
+    // retains propagation of any real forms refusal without requiring a
+    // source fixture for the unreachable UnrepresentedConstruct cause.
     for (body, stage, code, exit, located) in [
         (
             "function f using v(): Int[0, 9] pure { 7\n",
@@ -596,13 +599,6 @@ fn each_spine_stage_refusal_reports_its_stage_and_code() {
             "invalid_syntax",
             20,
             None,
-        ),
-        (
-            "synthesis Syn using v grammar M::G domain M::D satisfies { true };\n",
-            "forms",
-            "unsupported_construct",
-            21,
-            Some("synthesis Syn using v grammar M::G domain M::D satisfies { true };"),
         ),
         (
             "function f using v(p: Nope): Int[0, 9] pure { 1 }\n",

@@ -227,7 +227,10 @@ fn value_invariants_selection_checks_invocation_parameters() {
         .iter()
         .find(|item| item["path"].to_string().contains("amount"))
         .unwrap_or_else(|| panic!("parameter result missing: {document}"));
-    assert_eq!(parameter["result"]["category"], "violation", "{parameter}");
+    assert_eq!(
+        parameter["result"]["disposition"]["category"], "violation",
+        "{parameter}"
+    );
 
     let directory = tempfile::tempdir().unwrap();
     let output = invocation_selection(directory.path(), 7, true);

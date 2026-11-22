@@ -15,6 +15,9 @@ use fsl_replay::{
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
+#[path = "../../fsl-semantics/tests/support/abstraction.rs"]
+mod probabilistic_model;
+
 const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
 profile v = \"filament.value.complete/v1\";\n";
 
@@ -108,6 +111,13 @@ fn compile_diagnostic(text: &str, packages: &[&[u8]]) -> OutcomeDiagnostic {
     let ReplayRefusal::Recompile { refusal, .. } = failure else {
         panic!("the source reaches the compiler: {failure:?}");
     };
+    assert!(
+        matches!(
+            refusal.as_ref(),
+            fsl_replay::spine::CompileRefusal::Emit(..)
+        ),
+        "the declaration reaches S4 before refusing: {refusal:?}"
+    );
     OutcomeDiagnostic::from_compile_refusal(&refusal)
 }
 
@@ -156,32 +166,33 @@ fn missing_bounded_temporal_clock_has_plain_message_and_exact_locus() {
     assert!(!message.contains("Span {"), "{message}");
 }
 
+/// FR-185-AC-12 applies to workloads as well as random parameters. A
+/// workload spanning unrelated types still refuses at S4 because no single
+/// model node can own its operations.
 #[test]
 #[trace("FR-185-AC-12")]
 fn random_parameter_refusal_has_its_recorded_declaration_locus() {
-    let declaration = "random M::Workflow::apply(amount) ~ { 1 U: 1, 2 U: 1 };";
+    let declaration =
+        "workload Both on M { weight Base::op = 1; weight ConfigVersion::attemptUpdate = 1; }";
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.model.complete/v1\";\n\
-         model M = \"agent-ix/checked-handoff\";\n\
-         dimension Money;\n\
-         unit U : Money = rational(1, 1);\n\
-         {declaration}\n"
+         model M = {package:?};\n\
+         {declaration}\n",
+        package = probabilistic_model::PACKAGE
     );
     let start = text.find(declaration).unwrap();
-    let diagnostic = compile_diagnostic(
-        &text,
-        &[include_bytes!(
-            "../../examples/checked-handoff/model.semantic-ir.json"
-        )],
-    );
+    let document = serde_json::to_vec(&probabilistic_model::document())
+        .expect("the existing unrelated-type model fixture serializes");
+    let diagnostic = compile_diagnostic(&text, &[&document]);
+    assert_eq!(diagnostic.code(), "unsupported_construct");
     let Some(OutcomeLocus::Region {
         start: locus_start,
         end: locus_end,
         ..
     }) = diagnostic.locus()
     else {
-        panic!("the random-parameter diagnostic has a source-region locus: {diagnostic:?}");
+        panic!("the workload diagnostic has a source-region locus: {diagnostic:?}");
     };
     assert!(*locus_start >= start as u64, "{diagnostic:?}");
     assert!(
@@ -190,7 +201,7 @@ fn random_parameter_refusal_has_its_recorded_declaration_locus() {
     );
     assert!(locus_start < locus_end, "{diagnostic:?}");
     let message = diagnostic.message();
-    assert!(message.contains("random parameter"), "{message}");
+    assert!(message.contains("workload `Both`"), "{message}");
     assert!(!message.contains("RawSourceRef"), "{message}");
     assert!(!message.contains("Span {"), "{message}");
 }
@@ -273,14 +284,11 @@ fn the_diagnostic_bound_is_reported_in_the_retained_list() {
     assert_eq!(diagnostics.len(), 101, "bounded list includes cut marker");
     let cut = diagnostics.last().expect("cut marker");
     assert_eq!(cut["cause"], "diagnostic-list-cut");
-    assert!(
-        cut["message"].as_str().unwrap().contains("50 additional"),
-        "{cut}"
-    );
-    assert!(
-        rendered.contains("50 additional") && rendered.contains("100"),
-        "{rendered}"
-    );
+    let message = cut["message"].as_str().unwrap();
+    assert!(message.contains("s1.diagnostics"), "{cut}");
+    assert!(message.contains("100"), "{cut}");
+    assert!(rendered.contains("s1.diagnostics"), "{rendered}");
+    assert!(rendered.contains("100"), "{rendered}");
     assert!(!rendered.contains("and 99 more"), "{rendered}");
 }
 
@@ -393,11 +401,10 @@ fn refused_compile_fixture(name: &str) -> Value {
 /// Provenance: QSL-2199.
 #[test]
 fn compile_diagnostic_messages_match_goldens_and_keep_structured_stages() {
-    for (name, stage) in [
-        ("forms", "forms"),
-        ("assembler", "assembly"),
-        ("checker", "check"),
-    ] {
+    // FR-763 admits the former `null` forms fixture through S2; no source
+    // reaches its UnrepresentedConstruct row. The null check-stage outcome
+    // and exact locus are covered by forms_refusal_cause's FR-763-AC-6 case.
+    for (name, stage) in [("assembler", "assembly"), ("checker", "check")] {
         let refusal = refused_compile_fixture(name);
         let expected = std::fs::read_to_string(
             std::path::Path::new(DIAGNOSTIC_DIRECTORY).join(format!("{name}.expected")),
