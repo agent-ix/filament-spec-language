@@ -375,7 +375,6 @@ fn recording_provider(
 /// retaining guards, bounds, row indices, candidate order and provider requests.
 #[trace("FR-940-AC-13", "FR-961-AC-1")]
 #[test]
-#[ignore = "FR-940 scalar settlement awaits the normal-pinned Contract IR repair of unscoped requirement-row holder references"]
 fn package_scalar_requirement_records_equal_the_source_run() {
     use fsl_analyze::provider::ProviderVerdict;
     let unit = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction Guarded using v(x: Int[0, 9], p: Boolean): Integer pure { if p then x + 1 else x * 2 }\nfunction Other using v(x: Int[0, 9]): Integer pure { x + 1 }\n";
@@ -482,7 +481,6 @@ fn package_scalar_requirement_records_equal_the_source_run() {
 /// refuse before any external provider receives requirement work.
 #[trace("FR-940-AC-13", "FR-961-AC-1", "FR-960-AC-4")]
 #[test]
-#[ignore = "FR-940 scalar held-claim settlement awaits the normal-pinned Contract IR repair of unscoped requirement-row holder references"]
 fn package_scalar_held_claims_and_bad_calls_preserve_admission() {
     let directory = tempfile::tempdir().unwrap();
     let path = sq(directory.path(), Some(json!({})));
