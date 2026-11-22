@@ -24,7 +24,7 @@ use serde_json::Value;
 use super::settle::Settle;
 use super::{
     check_sources, intake_with_bytes, request_integer_division, require_native_header, wire,
-    FileCounts, NativeResult, Result, RunCause, RunLimits, RunResult,
+    FileCounts, NativeResult, RequestOverrides, Result, RunCause, RunLimits, RunResult,
 };
 
 /// Read the `verification_plan` member of the `native-run/1` request in
@@ -88,12 +88,13 @@ pub(super) fn run_bytes(
     directory: &Path,
     bytes: &[u8],
     limits: RunLimits,
+    overrides: &RequestOverrides<'_>,
     settle: &Settle<'_>,
 ) -> Result<Option<RunResult>> {
     let Some((request::Route::Source, plan_request)) = member(bytes)? else {
         return Ok(None);
     };
-    let mut request: wire::Request = super::request(bytes)?;
+    let mut request: wire::Request = super::request_with_overrides(bytes, overrides)?;
     // A `synthesis` beside this member is refused by the synthesis run's own
     // mutual-exclusion check (FR-1037), which names every excluded member.
     if request.synthesis.is_some() {
@@ -174,7 +175,7 @@ pub(super) fn run_bytes(
         &mut intake,
         sources,
         false,
-        fsl_replay::spine::SpineLimits::default(),
+        overrides.limits.copied().unwrap_or_default(),
         integer_division,
         None,
         |intake, checked, _, _, packages, units, _, _, _, _| {
@@ -228,8 +229,14 @@ pub(super) fn run_bytes(
             // The native-run request carries no analysis limits or deadline member
             // (FSpec FR-824 "no member sets a step's limits"), so the limits are
             // the analyze route's own over its empty `limits` member.
-            let analyze_limits =
+            let mut analyze_limits =
                 super::analyze::analyze_limits(&wire::AnalyzeLimits::default(), None);
+            if let Some(accounting) = overrides.accounting {
+                analyze_limits.accounting = *accounting;
+            }
+            if let Some(observation) = overrides.observation {
+                analyze_limits.observation = *observation;
+            }
             let consumers =
                 plan_consumers(package, plan, &inputs, &analyze_limits).map_err(plan_refusal)?;
             plan_request.close_by_plan(&request::Consumers {

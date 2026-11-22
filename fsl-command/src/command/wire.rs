@@ -474,6 +474,23 @@ pub(super) struct Accounting {
 }
 
 impl Accounting {
+    /// Preserve the caller's complete effective budget without re-defaulting
+    /// any counter while preparing a request selection.
+    pub fn from_limits(limits: filament_exact::ScalarLimits) -> Self {
+        Self {
+            integer_bits: Some(limits.integer_bits),
+            decimal_digits: Some(limits.decimal_digits),
+            scale_expansion: Some(limits.scale_expansion),
+            text_input_bytes: Some(limits.text_input_bytes),
+            text_scalars: Some(limits.text_scalars),
+            normalized_scalars: Some(limits.normalized_scalars),
+            unit_edges: Some(limits.unit_edges),
+            value_occurrences: Some(limits.value_occurrences),
+            work_units: Some(limits.work_units),
+            result_units: Some(limits.result_units),
+        }
+    }
+
     /// The counters the object names, as their settings with their bounds.
     pub fn entries(&self) -> impl Iterator<Item = (AccountingSetting, u64)> {
         [

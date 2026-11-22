@@ -2059,7 +2059,7 @@ fn run_configured(
                 return Ok(Some(result));
             }
             plan::check_member(bytes)?;
-            if let Some(result) = plan::run_bytes(directory, bytes, limits, &settle)? {
+            if let Some(result) = plan::run_bytes(directory, bytes, limits, overrides, &settle)? {
                 return Ok(Some(result));
             }
             if let Some(result) = version_argv(bytes)? {
@@ -3912,6 +3912,10 @@ fn with_request_limits<T>(
 /// FR-961).
 #[derive(Clone, Copy, Debug, Default)]
 pub struct RequestOverrides<'a> {
+    /// The caller's fully resolved scalar evaluation budget. When supplied,
+    /// this effective budget replaces request accounting for calls and clause
+    /// selections, and configures each verification-plan step.
+    pub accounting: Option<&'a filament_exact::ScalarLimits>,
     /// The `clocks` object, as the driver's `--clocks` file carries it. A request
     /// that also carries `clocks` is refused `invalid-request` at stage `request`.
     pub clocks: Option<&'a serde_json::value::RawValue>,
@@ -4058,7 +4062,15 @@ fn prepare_run_bytes_with_sources(
             reason: "member is repeated".to_owned(),
         });
     }
-    let request: wire::Request = request_with_overrides(bytes, overrides)?;
+    let mut request: wire::Request = request_with_overrides(bytes, overrides)?;
+    if let Some(accounting) = overrides.accounting {
+        if let Some(call) = &mut request.call {
+            call.accounting = wire::Accounting::from_limits(*accounting);
+        }
+        if let Some(clause) = &mut request.clause {
+            clause.accounting = wire::Accounting::from_limits(*accounting);
+        }
+    }
     // FR-1031: the first refusal in table order is the selection conflict.
     refuse_transfer_selection_conflict(&request)?;
     // FR-1045: reject malformed correlation selection before any selected

@@ -1,0 +1,7 @@
+Caller-supplied scalar accounting could not reach the coordinated run entrypoint, and source verification plans ignored caller clocks, compile-stage limits and observation limits. The public `RequestOverrides` now carries `accounting: Option<&filament_exact::ScalarLimits>`: the caller's fully resolved effective scalar budget. Drivers can borrow their existing `Call.accounting` while request function, arguments and object world remain request-owned.
+
+Source/package calls and item-generated call/clause requests use that exact budget through their existing readers. Source plans use the normal clock override reader and caller `SpineLimits`, and pass scalar accounting and observation limits into their existing analyze coordinator. Existing duplicate-clock refusals and typed budget failures are preserved.
+
+The public execution signatures remain `run_with_limits_and_overrides` and `run_with_providers_and_limits_and_overrides`; callers add the accounting borrow to the same `RequestOverrides` already passed to either entry. QSL-2760 remains open until the real driver adopts this forwarding API.
+
+Focused acceptance command: `cargo test --locked -p fsl-command --test it caller_overrides_ -- --test-threads=1`. It covers the provider-aware call/items budget path plus plan clocks, S1 limits, observation admission and runtime scalar accounting. The named command is currently running; its actual result will be recorded before handoff. The root owns the final exact-head integration check and merge slot.
