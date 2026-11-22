@@ -44,24 +44,24 @@ relationships:
 
 ## Description
 
-A run request supplies function arguments as JSON, and a run result reports
-the value a function returned as JSON. Both SHALL use one value form, the
-**run value form**: FR-106's closed value grammar, the grammar a snapshot's
-fields and an invocation's parameters and result already use, with the
-tuple, union-payload, identity-reference and population forms below added
-for run documents. Every value of every declared type that has an FSpec
-FR-181 typed canonical form can be passed as an argument and returned as a
-result.
+A public run request supplies function arguments as JSON, and a public run
+result reports the value a function returned as JSON. Both SHALL use FSpec
+FR-181's tagged canonical values under "Canonical command boundary" below;
+a Population argument retains the separate `{"population":P}` selection.
+Every value of every declared type that has an FSpec FR-181 typed canonical
+form can be passed as an argument and returned as a result. A completed
+value can be passed back unchanged as an argument of a later run, so a
+caller can chain runs, and consumers of the standard envelope (FSpec
+FR-550) and an FSL public run document read the same values.
 
-One form serves both directions for three reasons. A value read in one place
-reads the same way in every other, so one reader and one writer exist. A
-completed result can be passed back unchanged as an argument of a later run,
-so a caller can chain runs. And every form maps one to one onto an FSpec
-FR-181 typed canonical form (ADR-034 CS-2), so a consumer of the standard
-envelope (FSpec FR-550) and a consumer of an FSL run document read the same
-values.
+The **native run value form** below is FR-106's closed value grammar with
+tuple, union-payload, identity-reference and population forms added. It is
+the internal admission representation and the contract of the separately
+exposed spine and clause readers. It SHALL NOT be accepted as an alternative
+to canonical values at the public command boundary. Its correspondence to
+FSpec FR-181 remains ADR-034 CS-2's one-to-one mapping.
 
-The run value form applies to:
+The public canonical boundary applies to:
 
 - each `value` of `call.arguments` in a native-run/1 request (FR-100);
 - each `value` of the `arguments` of FR-312's `function` selection and of
@@ -402,6 +402,12 @@ top-level population never refuses with it.
 
 ### Examples
 
+These examples exercise the public command's canonical boundary. The native
+forms above remain the separate internal reader contract. `Nc`, `Np` and
+`Nt` below are the canonical declaration names of `Color`, `P` and `Tp`
+from the compiled identity fixture, as written in the canonical results of
+functions returning `Color::Green`, `P{x: 1, y: 2}` and `Tp(2, 1)`.
+
 The **identity fixture** is this unit, each function returning its argument:
 
 ```fsl
@@ -432,37 +438,36 @@ function id_opt using v(a: Option<Int[0, 9]>): Option<Int[0, 9]> pure { a }
 
 | Function | Argument `value` | Completed `value` |
 | --- | --- | --- |
-| `id_bool` | `{"boolean": true}` | `{"boolean": true}` |
-| `id_bool` | `1` | `{"boolean": true}` |
-| `id_big` | `{"integer": "1267650600228229401496703205376"}` | the same |
-| `id_big` | `7` | `{"integer": "7"}` |
-| `id_rat` | `{"kind": "rational", "numerator": "4", "denominator": "6"}` | `{"kind": "rational", "numerator": "2", "denominator": "3"}` |
-| `id_dec` | `{"kind": "decimal", "coefficient": "150", "scale": "2"}` | the same |
-| `id_flt` | `{"kind": "float64", "bits": "3ff0000000000000"}` | the same |
-| `id_str` | `{"kind": "string", "text": "abc"}` | the same |
-| `id_txt` | `{"kind": "text", "text": "é"}` | `{"kind": "text", "text": "é"}` |
-| `id_enum` | `{"variant": {"type": "Color", "case": "Green"}}` | the same |
-| `id_rec` | `{"record": {"type": "P", "fields": {"x": {"integer": "1"}, "y": {"integer": "2"}}}}` | the same |
-| `id_tup` | `{"tuple": {"type": "Tp", "components": [{"integer": "2"}, {"integer": "1"}]}}` | the same |
-| `id_seq` | `{"sequence": [{"integer": "1"}, {"integer": "1"}]}` | the same |
-| `id_set` | `{"set": [{"integer": "3"}, {"integer": "1"}]}` | `{"set": [{"integer": "1"}, {"integer": "3"}]}` |
-| `id_opt` | `{"present": {"integer": "3"}}` | the same |
-| `id_opt` | `{"absent": {}}` | the same |
+| `id_bool` | `{"type":"boolean","value":true}` | the same |
+| `id_big` | `{"type":"integer","value":"1267650600228229401496703205376"}` | the same |
+| `id_big` | `{"type":"integer","value":"7"}` | the same |
+| `id_rat` | `{"type":"rational","numerator":"4","denominator":"6"}` | `{"type":"rational","numerator":"2","denominator":"3"}` |
+| `id_dec` | `{"type":"decimal","coefficient":"150","scale":"2"}` | the same |
+| `id_flt` | `{"type":"float64","bits":"3ff0000000000000"}` | the same |
+| `id_str` | `{"type":"string","value":"abc"}` | the same |
+| `id_txt` | `{"type":"text","value":"é"}` | `{"type":"text","value":"é"}` |
+| `id_enum` | `{"type":"enum","name":Nc,"member":"Green"}` | the same |
+| `id_rec` | `{"type":"record","name":Np,"fields":[{"name":"x","value":{"type":"integer","value":"1"}},{"name":"y","value":{"type":"integer","value":"2"}}]}` | the same |
+| `id_tup` | `{"type":"tuple","name":Nt,"components":[{"type":"integer","value":"2"},{"type":"integer","value":"1"}]}` | the same |
+| `id_seq` | `{"type":"sequence","elements":[{"type":"integer","value":"1"},{"type":"integer","value":"1"}]}` | the same |
+| `id_set` | `{"type":"set","elements":[{"type":"integer","value":"3"},{"type":"integer","value":"1"}]}` | `{"type":"set","elements":[{"type":"integer","value":"1"},{"type":"integer","value":"3"}]}` |
+| `id_opt` | `{"type":"option","value":{"type":"integer","value":"3"}}` | the same |
+| `id_opt` | `{"type":"option","value":null}` | the same |
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-650-AC-1 | Through `run`, each row of the identity-fixture table, as a native-run/1 `call` of its function with its argument `value`, returns one `spine-run-result/1` document whose `outcome` is `{"kind": "completed", "value": V}` with `V` the row's completed value, exit 0. | Test (TC-1700) |
-| FR-650-AC-2 | `id_big` called with `{"integer": "9223372036854775808"}` completes `{"integer": "9223372036854775808"}`, exit 0. The `value`s `9223372036854775808` (a bare JSON integer above the signed 64-bit range), `"7"`, `1.5`, `true`, `null` and `[1]` each refuse `invalid-request` at stage `request`, exit 20, no result document, naming `/call/arguments/0/value`. | Test (TC-1701) |
-| FR-650-AC-3 | Over the identity fixture, each refuses at stage `call`, exit 20, no result document, with `details.position` 0 and the `details.path` given: `id_str` with `{"kind": "text", "text": "a"}`, `invalid_runtime_input`/`wrong-value-kind`, `""`; `id_rec` with `fields` lacking `y`, `missing-member`, `/record/fields`; `id_rec` with an extra field `z`, `unknown-member`, `/record/fields/z`; `id_enum` with case `Blue`, `invalid-value`, `/variant/case`; `id_rat` with denominator `"0"`, `invalid-value`, `""`; `id_set` with `[{"integer": "1"}, {"integer": "1"}]`, `duplicate-member`, `/set/1`; `id_seq` with four elements, `cardinality_out_of_bound`/`above-maximum`, `""`; `id_tup` with one component, `invalid-value`, `/tuple/components`; `id_bool` with `2`, `invalid_runtime_input`/`invalid-value`, `""`. | Test (TC-1702) |
-| FR-650-AC-4 | Over FR-109-AC-4's `sameIdentity` unit as a native-run/1 `call` whose `snapshot` is the distinct-identities current snapshot: `a` `{"reference": {"population": P, "key": "root"}}` and `b` the same with key `child` completes `{"boolean": false}`, exit 0; `a` given instead as the identity-reference form of `root` completes the same; `b` with key `ghost` refuses `dangling_reference`/`absent-target-in-complete-population` at stage `call` with `details.position` 1, exit 20; the first request with `snapshot` removed refuses `invalid_runtime_input`/`missing-member` at stage `call`, `details.position` 0, `details.path` `/call/snapshot`, exit 20. A function over a Population parameter called with `{"population": P}` binds that population with the parameter's declared maximum and completes; with a population the snapshot does not hold it refuses `invalid_runtime_input`/`wrong-role-mapping` at stage `call`. | Test (TC-1703) |
-| FR-650-AC-5 | TC-792's present lookup, run from a native-run/1 file request whose `call.snapshot` holds the looked-up object, completes with `{"reference": {"universe": U, "type": T, "object_identity": O}}` equal to the returned reference's three components, exit 0; passing that completed value unchanged as the argument of a function `function same using v(r: Reference<T>): Reference<T> pure { r }` in the same request shape completes with the identical value. | Test (TC-1704) |
+| FR-650-AC-1 | Through the public `run` command, each row of the canonical identity-fixture table, as a native-run/1 `call` of its function with its argument `value`, returns one `spine-run-result/1` document whose `outcome` is `{"kind": "completed", "value": V}` with `V` the row's canonical completed value, exit 0. | Test (TC-1700) |
+| FR-650-AC-2 | `id_big` called with `{"type":"integer","value":"9223372036854775808"}` completes with that same canonical value, exit 0. The `value`s `9223372036854775808` (a bare JSON integer above the signed 64-bit range), `1`, `"7"`, `1.5`, `true`, `null` and `[1]` each refuse `invalid-request` at stage `request`, exit 20, no result document, naming `/call/arguments/0/value`. | Test (TC-1701) |
+| FR-650-AC-3 | Over the canonical identity-fixture table, each refuses at stage `call`, exit 20, no result document, with `details.position` 0 and the `details.path` given; codes not otherwise stated are `invalid_runtime_input`: `id_str` with `{"type":"text","value":"a"}`, `wrong-value-kind`, `""`; `id_rec` with `fields` lacking the `y` entry, `invalid-value`, `/fields`; `id_rec` with an extra third field entry named `z`, `invalid-value`, `/fields`; `id_enum` with member `Blue`, `invalid-value`, `/member`; `id_rat` with denominator `"0"`, `invalid-value`, `""`; `id_set` with `elements` containing integer `1` twice, `duplicate-member`, `/elements/1`; `id_seq` with four elements, `cardinality_out_of_bound`/`above-maximum`, `""`; `id_tup` with one component, `invalid-value`, `/components`; `id_bool` with `{"type":"integer","value":"2"}`, `wrong-value-kind`, `""`. | Test (TC-1702) |
+| FR-650-AC-4 | Over FR-109-AC-4's `sameIdentity` unit as a native-run/1 `call` whose `snapshot` is the distinct-identities current snapshot: `a` and `b` are FR-181 canonical references to `root` and `child`, carrying structural `universe` and `object_type` node ids and `identity` `"726f6f74"` and `"6368696c64"` respectively; the call completes `{"type":"boolean","value":false}`, exit 0. The corresponding canonical reference to `ghost` (`identity` `"67686f7374"`) as `b` refuses `dangling_reference`/`absent-target-in-complete-population` at stage `call` with `details.position` 1, exit 20; the first request with `snapshot` removed refuses `invalid_runtime_input`/`missing-member` at stage `call`, `details.position` 0, `details.path` `/call/snapshot`, exit 20. A function over a Population parameter called with `{"population": P}` binds that population with the parameter's declared maximum and completes; with a population the snapshot does not hold it refuses `invalid_runtime_input`/`wrong-role-mapping` at stage `call`. | Test (TC-1703) |
+| FR-650-AC-5 | TC-792's present lookup, run from a native-run/1 file request whose `call.snapshot` holds the looked-up object, completes with `{"type":"reference","universe":U,"object_type":T,"identity":O}`, where `U` and `T` are the structural declaration node ids and `O` is the lowercase hex encoding of the returned reference's exact identity bytes, exit 0; passing that completed value unchanged as the argument of a function `function same using v(r: Reference<T>): Reference<T> pure { r }` in the same request shape completes with the identical value. | Test (TC-1704) |
 | FR-650-AC-6 | From source, a unit declaring `function gives using v(): Sequence<Population<Config::ConfigVersion>[1]>[0, 1] pure { [] }`, or `function takes using v(a: Sequence<Population<Config::ConfigVersion>[1]>[0, 1]): Boolean pure { true }`, over the ConfigVersion model refuses at S3 `ill_typed`/`operator-ineligible`, category refusal, exit 20, and reaches no call. A native-run/1 request whose `package` member selects the fixture package `tests/fixtures/population-collection.checked-package.json` (the compiled ConfigVersion package with the result type of its function `gives`, and the parameter type of its function `takes`, rewritten to that collection type, as an IR producer can write them) refuses `unknown_required_feature`/`unsupported-feature` at stage `call`, exit 21, before any call, with `details` `{"function": "gives"}` for `gives` and `{"position": 0}` for `takes`. A function whose parameter or result type is `Quantity<s>`, `Map<String, Int[0, 9]>[0, 2]`, `Reference<Config::ConfigVersion>` or a top-level population does not refuse `unknown_required_feature`. | Test (TC-1705) |
 | FR-650-AC-16 | The run stage reads every parameter and result type through one exhaustive match over `ValueType` with no wildcard arm, each arm yielding the type's run value form or, only for a type holding a population below the top level, the `unknown_required_feature`/`unsupported-feature` refusal at stage `call`, exit 21, with `details` `{"position": P}` for a parameter and `{"function": "<the function string>"}` for a result, before any call. | Inspection (TC-2380) |
 | FR-650-AC-17 | `function id_imap using v(a: Map<Integer, Population<Config::ConfigVersion>[4]>[0, 2]): Map<Integer, Population<Config::ConfigVersion>[4]>[0, 2] pure { a }` is called with two entries given in the order key 10 then key 9, each value an identity reference. A first-reference search of the Map visits the reference under key 9 before the reference under key 10 (mathematical key order, although the run form array sorts `{"integer":"10"}` before `{"integer":"9"}` by RFC 8785 bytes). | Test (TC-2950) |
-| FR-650-AC-7 | FR-312's `function` selection admits the run value form: FR-109-AC-4's `sameIdentity` with `a` given as the identity-reference form of `child` and `b` as `{"reference": {"population": P, "key": "child"}}` reports `success`, `truth: true`, exit 0; a Boolean claim `function short using v(t: Text[0, 8; nfc]): Boolean pure { size(t) < 3 }` selected with `t` `{"kind": "text", "text": "ab"}` over the same snapshot reports `success`. | Test (TC-1706) |
-| FR-650-AC-8 | The `execute` outcome (FR-286) of FR-100-AC-1's `seven` carries `result` `{"kind": "completed", "value": {"integer": "7"}}`, and of `id_rec` with the table's record argument `result` `{"kind": "completed", "value": V}` with `V` that record; each `value` equals the `spine-run-result/1` document's for the same request. | Test (TC-1707) |
+| FR-650-AC-7 | The public run command's FR-312 `function` selection admits canonical arguments: FR-109-AC-4's `sameIdentity` with `a` and `b` both FR-181 canonical references to `child` reports `success`, `truth: true`, exit 0; a Boolean claim `function short using v(t: Text[0, 8; nfc]): Boolean pure { size(t) < 3 }` selected with `t` `{"type":"text","value":"ab"}` over the same snapshot reports `success`. | Test (TC-1706) |
+| FR-650-AC-8 | The `execute` outcome (FR-286) of FR-100-AC-1's `seven` carries `result` `{"kind":"completed","value":{"type":"integer","value":"7"}}`, and of `id_rec` with the table's canonical record argument `result` `{"kind":"completed","value":V}` with `V` that record; each `value` equals the `spine-run-result/1` document's for the same request. | Test (TC-1707) |
 | FR-650-AC-9 | Over FR-650-AC-5's `same` and the healthy current snapshot, a canonical reference to `child` completes as `{"type":"reference","universe":U,"object_type":T,"identity":"6368696c64"}`, where `U` and `T` are structural checked-package node ids, each with exactly `package`, `path` and `ordinal` (a JSON integer), naming the least root type's declaration and the object's most-specific type's declaration respectively; passed back unchanged it completes with the identical value. Replacing `universe` with a string of 64 lowercase hexadecimal characters refuses `invalid_runtime_input`/`wrong-value-kind`, message `reference conversion MalformedWire at /universe`, with `details` exactly `{"path":"/universe"}`; adding `x` to `object_type` refuses the same code and cause, message `reference conversion MalformedWire at /object_type`, with `details` exactly `{"path":"/object_type"}`. Each refusal is at stage `call`, exit 20, with no result document. | Test |
 | FR-650-AC-10 | Over a unit declaring `dimension Time; unit s : Time = rational(1, 1); unit ms : Time = rational(1, 1000) * s;`, let `Ums` and `Us` be the canonical unit strings written by zero-argument functions returning `3 ms / 2` and `1 s`. Calling `function id_q using v(a: Quantity<ms>): Quantity<ms> pure { a }` with `{"type":"decimal","coefficient":"150","scale":"2","unit":Ums}` completes `{"type":"rational","numerator":"3","denominator":"2","unit":Ums}`, exit 0; substituting `Us` refuses `invalid_runtime_input`/`wrong-value-kind` at `/unit`, stage `call`, exit 20. For an already checked identity function whose parameter and result carry the bounded quantity type from `0 ms` through `10 ms`, the canonical rational form with `unit` `Ums`, denominator `"1"` and numerator `"10"` completes unchanged; numerator `"11"` refuses `invalid_runtime_input`/`invalid-value` at `/magnitude`, stage `call`, exit 20. | Test |
 | FR-650-AC-11 | `function id_map using v(a: Map<String, Int[0, 9]>[0, 2]): Map<String, Int[0, 9]>[0, 2] pure { a }` called with `{"type":"map","entries":[{"key":{"type":"string","value":"b"},"value":{"type":"integer","value":"2"}},{"key":{"type":"string","value":"a"},"value":{"type":"integer","value":"1"}}]}` completes with the same entries ordered `a` then `b`, exit 0. It refuses, at stage `call`, exit 20: the key `a` given twice, `invalid_runtime_input`/`duplicate-member` at `/entries/1/key`; three entries, `cardinality_out_of_bound`/`above-maximum` at `""`; an entry without `value`, `invalid_runtime_input`/`missing-member` at `/entries/0`; an entry with a member `extra`, `invalid_runtime_input`/`unknown-member` at `/entries/0/extra`. A `text`-tagged key in this `Map<String, ...>` refuses `invalid_runtime_input`/`wrong-value-kind` at `/entries/0/key`. | Test |

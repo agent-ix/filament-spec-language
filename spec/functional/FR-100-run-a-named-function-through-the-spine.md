@@ -265,9 +265,11 @@ directly. Integer parameters retain exact integer/domain admission.
 
 ### File request encoding
 
-The native-run/1 argument encoding below is FR-650's run value form, with
-FR-098's signed-i64 canonical integer assignment kept for integer and
-Boolean parameters. Its reader converts each argument to the shared value
+The public native-run/1 argument encoding below is FR-650's canonical
+command boundary, using FSpec FR-181's tagged values and FR-650's population
+selection. FR-098's integer assignment belongs to the separate replay
+reader and is not bare-integer shorthand for this command. The command's
+reader converts each argument to the shared value
 for the same public entry. A Reference or Population argument resolves in
 the object world of the current snapshot `call.snapshot` names, admitted by
 FR-106 and the owning model admission; the reader never mints a population
@@ -328,11 +330,11 @@ A native-run/1 request (FR-026's closed envelope and shared limits). For a
     `_`.
   - `arguments`: an array of `{parameter, value}` objects, one per
     parameter, in any order. `parameter` is the parameter's declared name.
-    `value` is a value of FR-650's run value form for the parameter's
-    declared type (a JSON object), or a JSON integer in the signed 64-bit
-    range: the canonical integer assignment FR-098 replays, read by the same
-    rule, which an integer type's parameter takes as the integer and a
-    `Boolean` parameter takes as `0` (`false`) or `1` (`true`).
+    `value` is an FSpec FR-181 tagged canonical value for the parameter's
+    declared type, or FR-650's `{"population": P}` selection for a population
+    parameter. Integers use `{"type":"integer","value":"<decimal>"}`
+    at any magnitude; Booleans use `{"type":"boolean","value":true|false}`.
+    Untagged native forms and bare integers refuse at this command boundary.
   - `snapshot`: optional, the file of one current
     `filament.state.snapshot/v1` document whose objects and populations are
     the call's object world (FR-650).
@@ -365,12 +367,15 @@ call. A completed Reference SHALL retain the actual returned identity triple
 in `CallValue::Reference`, without dereferencing or narrowing it.
 An unexpected completed kind remains an internal invariant failure.
 
-A completed value is serialized in FR-650's run value form. A Reference is
-`{"reference": {"universe": U, "type": T, "object_identity": O}}`: `U` and
-`T` are the actual UniverseId and most-specific EffectiveId, written as
-FR-650 "Identity spellings" states (structural identity objects, never hex),
-and `O` is the exact nonempty UTF-8 object identity. No population binding or object fields are serialized as a
-Reference result.
+A completed value is serialized in FSpec FR-181's tagged canonical form,
+as FR-650's "Canonical command boundary" specifies. A Reference is
+`{"type":"reference","universe":U,"object_type":T,"identity":O}`:
+`U` is the structural declaration node id of the actual universe's least
+root type, `T` is the structural declaration node id of the returned object's
+most-specific type, and `O` is the lowercase hexadecimal encoding of its
+exact nonempty identity bytes. Each node id carries `package`, `path` and
+`ordinal`; neither node id is a digest or hexadecimal identity string. No
+population binding or object fields are serialized as a Reference result.
 
 For a call that reaches S6a, `command`'s outcome carries one
 `spine-run-result/1` JSON document as its result document and no refusal
@@ -394,8 +399,8 @@ carries. FR-286 preserves an incomplete `reasons` array unchanged. Its members a
 - `function`: the `function` string of the request.
 - `outcome`: exactly one of
   - `{"kind": "completed", "value": V}`, where `V` is the completed value
-    in FR-650's run value form for the function's declared result type:
-    `{"boolean": true|false}`, `{"integer": "<ASCII decimal>"}` (the
+    in FSpec FR-181's tagged canonical form for the function's declared result type:
+    `{"type":"boolean","value":true|false}`, `{"type":"integer","value":"<ASCII decimal>"}` (the
     integer written exactly in [FR-038](FR-038-encode-exact-protocol-numbers.md)'s
     integer spelling, at any magnitude), the Reference form above, or the
     form FR-650 gives every other kind;
@@ -573,7 +578,7 @@ exits with that code's exit status:
 | A request carrying neither `program` nor `package`, or both; or `package` beside `libraries`, `refinement_internals` or `integer_division` (FR-1039) | `request` | `invalid-request` | names `program`, or the second member; refused before any selected file is opened | 20 |
 | A clause-run request carrying `extraction` in a build without `quire-extraction` | `request` | `invalid-request` | names `extraction` | 20 |
 | A feature-enabled extraction request with `call` instead of `clause`, a package selection, or a clause-binding count other than one | `request` | `extraction-requires-run`; `extraction-package-conflict`; `extraction-clause-count` | as FR-031, produced by the FR-312 request reader; `{"actual": n}` for clause count | 20 |
-| A `call` that is not the closed object above; an argument `value` that is neither a JSON object nor a JSON integer in the signed 64-bit range (FR-650), naming `/call/arguments/<index>/value`; an `accounting` member that is not the closed counter object above or has a value that is not a JSON integer from 0 to `u64::MAX` | `request` | `invalid-request` | as FR-026 | 20 |
+| A `call` that is not the closed object above; an argument `value` that is not a JSON object, including any bare integer, naming `/call/arguments/<index>/value` (the canonical object's members are checked against the declared parameter at stage `call`, FR-650); an `accounting` member that is not the closed counter object above or has a value that is not a JSON integer from 0 to `u64::MAX` | `request` | `invalid-request` | as FR-026 | 20 |
 | A `call.relationships` selection without `call.snapshot`, or a missing, unknown or malformed member of the closed FR-1045 selection | `request` | `invalid-request` | the exact `/call/relationships` member path, before any selected-file read | 20 |
 | A malformed or invalid Producer interface 1.2 bundle in `call.relationships.producer` | `request` | `invalid-request` | `{"path":"/call/relationships/producer","cause":<Producer reader's exact cause text>}` | 20 |
 | An absent or malformed relationship instance `identity` on an entry that FR-1045's `relationship_identities` maps, or a snapshot relationship type with no declaration in the selected package, when FR-1045 is selected | `request` | `invalid-request` | `{"path":P}`, where `P` is the exact snapshot `identity` or `relationship` JSON Pointer; after snapshot read and before resolver evaluation | 20 |
@@ -741,10 +746,10 @@ apply to it.
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-100-AC-1 | A native-run/1 request selecting `tests/fixtures/spine-compile.native` (`edition "1-draft"`) with `call` `{"function": "seven", "arguments": []}` has exit code 0 and an outcome carrying no refusal envelope and one result document whose `format` is `spine-run-result/1`, whose `source` names the request's two labels and authored path, whose `function` is `seven`, and whose `outcome` is `{"kind": "completed", "value": {"integer": "7"}}`. | Test |
+| FR-100-AC-1 | A native-run/1 request selecting `tests/fixtures/spine-compile.native` (`edition "1-draft"`) with `call` `{"function": "seven", "arguments": []}` has exit code 0 and an outcome carrying no refusal envelope and one result document whose `format` is `spine-run-result/1`, whose `source` names the request's two labels and authored path, whose `function` is `seven`, and whose `outcome` is `{"kind": "completed", "value": {"type":"integer","value":"7"}}`. | Test |
 | FR-100-AC-2 | A program declaring `edition "0-draft"`, one declaring `edition "0-draft"` whose request carries `call` and `libraries`, and one declaring `edition "7-draft"` each refuse `unknown_edition` at stage `profile`, exit 20, no result document, with a `message` naming the file and the edition. A program with no header refuses `invalid_syntax` at stage `source`, exit 20, no result document. | Test |
 | FR-100-AC-3 | A `1-draft` function-run request carrying each forbidden member refuses `invalid-request` at stage `request`, exit 20, no result document, before model or library reads; a program `extraction` member with no feature refuses `invalid-request`, while the same `call` request in a build with `quire-extraction` refuses `extraction-requires-run`. A feature-enabled FR-031 clause-run request with one `clauses` binding is admitted to extraction; no-feature, package-bearing (`extraction-package-conflict`, from the request reader), missing-clause and duplicate-clause variants refuse as FR-031-AC-6 specifies. A request carrying neither `call` nor the FR-031 clause-run form refuses `invalid-request`. Values in `call.accounting` of `18446744073709551616`, `-1` or `1.5`, and a legacy `work_units` member directly in `call`, each refuse the same way. A `1-draft` request whose `libraries` supplies an imported library and whose `models` supplies a selected domain package runs successfully. | Test (TC-450, TC-109) |
-| FR-100-AC-4 | For a unit declaring `lt(a: Int[0, 9], b: Int[0, 9]): Boolean { a < b }`, `flag(b: Boolean): Boolean { b }`, `id(x: Int[0, 9]): Int[0, 9] { x }` and `px(p: Point): Digit`: `lt` with `b = 3` given before `a = 5` completes `{"boolean": false}`, exit 0; `flag(1)` completes `{"boolean": true}` and `id(4)` completes `{"integer": "4"}`. `flag(2)` and `id(12)` each refuse `invalid_runtime_input`/`invalid-value`, and `px(1)` `invalid_runtime_input`/`wrong-value-kind`, at stage `call`, exit 20, no result document, with `details` `{"position": 0, "path": ""}`. `flag` with `{"boolean": false}` completes `{"boolean": false}`, and `px` with the record `{"record": {"type": "Point", "fields": {"x": {"integer": "3"}, "y": {"integer": "4"}}}}` completes `{"integer": "3"}`. An argument naming `y`, `x` bound twice, and no argument each refuse `invalid_runtime_input` at stage `call`, with `details` `{"parameter": "y"}`, `{"parameter": "x"}` and `{"parameter": "x"}`. A `value` of `true`, `"7"`, `1.5` or `9223372036854775808` refuses `invalid-request` at stage `request`, exit 20, naming `/call/arguments/0/value`. | Test |
+| FR-100-AC-4 | For a unit declaring `lt(a: Int[0, 9], b: Int[0, 9]): Boolean { a < b }`, `flag(b: Boolean): Boolean { b }`, `id(x: Int[0, 9]): Int[0, 9] { x }` and `px(p: Point): Digit`, write each integer argument `n` as `{"type":"integer","value":"n"}` and each Boolean as `{"type":"boolean","value":B}`. `lt` with integer `b = 3` given before integer `a = 5` completes `{"type":"boolean","value":false}`, exit 0; `flag(true)` completes `{"type":"boolean","value":true}` and `id(4)` completes `{"type":"integer","value":"4"}`. `id(12)` refuses `invalid_runtime_input`/`invalid-value`; `flag` with integer `2` and `px` with integer `1` each refuse `invalid_runtime_input`/`wrong-value-kind`, at stage `call`, exit 20, no result document, with `details` `{"position": 0, "path": ""}`. `flag` with canonical false completes `{"type":"boolean","value":false}`, and `px` with the record `{"type":"record","name":Np,"fields":[{"name":"x","value":{"type":"integer","value":"3"}},{"name":"y","value":{"type":"integer","value":"4"}}]}`, where `Np` is Point's canonical declaration name, completes `{"type":"integer","value":"3"}`. An argument naming `y`, `x` bound twice, and no argument each refuse `invalid_runtime_input` at stage `call`, with `details` `{"parameter": "y"}`, `{"parameter": "x"}` and `{"parameter": "x"}`. A `value` of `true`, `"7"`, `1.5`, `1` or `9223372036854775808` refuses `invalid-request` at stage `request`, exit 20, naming `/call/arguments/0/value`; `{"integer":"7"}` refuses at stage `call`, exit 20, under FR-650's canonical typed reader. | Test |
 | FR-100-AC-5 | `function` `nope`, `module.seven`, `""`, `seven.`, and `7x` each refuse `missing_declaration` at stage `call`, exit 20, no result document, with `details` `{"function": <that string>}`. `corner`, whose declared result is the record `Point`, called with the AC-4 record completes with that record in FR-650's record form, exit 0. A function whose declared result type has no FSpec FR-181 form refuses `unknown_required_feature`/`unsupported-feature` at stage `call`, exit 21, before any call, with a non-null `cause` and `details` `{"function": <the function string>}` (FR-650-AC-6). A `1-draft` source with a syntax error refuses at stage `source` (`invalid_syntax`), and one declaring `inv(x: Int[0, 9]): Boolean { 1 / x > 0 }` refuses at stage `check` with `ill_typed` (integer `/` with no `Rational` expected type); each has exit code 20 and no result document (FR-027-AC-8). | Test |
 | FR-100-AC-6 | `seven` with `call.accounting` `{"work_units": 0}` returns a result document whose outcome is `{"kind": "incomplete", "limit": "work_units"}`, exit 22. | Test |
 | FR-100-AC-7 | `fsl_replay::spine::run` called directly over each AC-1, AC-4, AC-5 and AC-6 input returns the same outcome category, value, code, reason, counter, and parameter name or position `command`'s result document or refusal envelope carries for it. The root crate names `fsl-eval` in no dependency table (TC-390). | Test |
