@@ -194,6 +194,20 @@ mod remaining;
 #[test]
 #[trace("FR-940", "FR-630", "FR-144", "FR-149")]
 fn identity_refinement_package_matches_source_without_source() {
+    refinement_package_matches_source_without_source("refinement");
+}
+
+/// A refinement declaration cannot stand in for a different temporal property.
+/// Both routes retain their exact refusal after all source files are removed.
+#[test]
+#[trace("FR-940", "FR-630", "FR-626")]
+fn unrelated_temporal_kinds_do_not_run_package_refinement() {
+    for item_kind in ["deadlock-freedom", "time-lock-freedom", "race-freedom"] {
+        refinement_package_matches_source_without_source(item_kind);
+    }
+}
+
+fn refinement_package_matches_source_without_source(item_kind: &str) {
     use fsl_foundation::source::SourceLabel;
     use serde_json::{json, Value};
 
@@ -210,6 +224,7 @@ fn identity_refinement_package_matches_source_without_source() {
         json!(root.join("fsl-conformance/cases/counter-step-package.json"));
     request["request"]["documents"][0]["file"] =
         json!(root.join("fsl-conformance/cases/counter-step-v0.json"));
+    request["request"]["items"][0]["temporal"]["item_kind"] = json!(item_kind);
     let source_request = directory.path().join("source.json");
     std::fs::write(&source_request, serde_json::to_vec(&request).unwrap()).unwrap();
     let prepared = command::prepare_analyze(&source_request, command::RunLimits::default())
@@ -224,17 +239,34 @@ fn identity_refinement_package_matches_source_without_source() {
     let source = command::analyze(&source_request, &crate::negotiation::Fr290, &Cancel::new())
         .expect("source refinement analysis settles before package comparison");
     let source_value = source.value.as_value().clone();
-    assert_eq!(source.exit_code, 0, "source fixture: {source_value}");
-    assert_eq!(source_value["items"][0]["record"]["result"], "proved");
-    assert_eq!(
-        source_value["items"][0]["record"]["certification"],
-        "certified"
-    );
-    assert_eq!(
-        source_value["items"][0]["record"]["backend"],
-        fsl_analyze::model_check::manifest::BACKEND_ID,
-        "the fixture selects EN-1's actual refinement checker: {source_value}"
-    );
+    if item_kind == "refinement" {
+        assert_eq!(source.exit_code, 0, "source fixture: {source_value}");
+        assert_eq!(source_value["items"][0]["record"]["result"], "proved");
+        assert_eq!(
+            source_value["items"][0]["record"]["certification"],
+            "certified"
+        );
+        assert_eq!(
+            source_value["items"][0]["record"]["backend"],
+            fsl_analyze::model_check::manifest::BACKEND_ID,
+            "the fixture selects EN-1's actual refinement checker: {source_value}"
+        );
+    } else {
+        let (exit, cause) = match item_kind {
+            "deadlock-freedom" | "time-lock-freedom" => (20, "unknown-claim"),
+            "race-freedom" => (21, "unsupported-requested-capability"),
+            other => panic!("uncovered temporal item kind {other}"),
+        };
+        assert_eq!(source.exit_code, exit, "{item_kind}: {source_value}");
+        let item = &source_value["items"][0];
+        assert_eq!(
+            item["record"]["diagnostic"]["cause"], cause,
+            "{source_value}"
+        );
+        assert!(item["certificate"].is_null(), "{source_value}");
+        assert!(item["counterexample"].is_null(), "{source_value}");
+        assert!(item["replay"].is_null(), "{source_value}");
+    }
 
     let compile = json!({"format": "native-compile/1", "request": {
         "program": request["request"]["program"],

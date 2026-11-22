@@ -1222,6 +1222,14 @@ fn resolve_names<'s>(
                     view.package().term(&found.declaration),
                     Some(filament_contract_model::CheckedTerm::Refinement { .. })
                 ) {
+                    // Derived deadlock and time-lock items name a model alias,
+                    // not a refinement declaration, as on the source route.
+                    if matches!(
+                        item_kind,
+                        Some(ItemKind::DeadlockFreedom | ItemKind::TimeLockFreedom)
+                    ) {
+                        return Ok(Named::Settled(unknown_claim(index, name)));
+                    }
                     return Ok(Named::Refinement {
                         index,
                         name,
@@ -3277,7 +3285,8 @@ impl<'a> WorkInputs<'_, 'a> {
                 probability::item(self.input, self.binding, &self.limits, item, form)
             }
             (Some(ItemForm::Temporal(form)), Some(Route::Refinement(subject)))
-                if item.kind == Capability::TemporalSatisfaction =>
+                if item.kind == Capability::TemporalSatisfaction
+                    && matches!(form.item_kind, ItemKind::Formula | ItemKind::Refinement) =>
             {
                 subject.configured(form.clone()).item(item.request_index)
             }
