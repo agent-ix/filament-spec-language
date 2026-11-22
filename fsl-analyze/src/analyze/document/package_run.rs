@@ -622,8 +622,10 @@ fn settle_package_run_inner(
             } => match reads.value(index, name, selection, claim.as_ref())? {
                 Resolution::Settled(settled) => resolved.push(settled),
                 Resolution::Claim(claim, target) => {
-                    value_claims.push(claim.item.claim.clone());
-                    routes.insert(index, Route::Value(Box::new(target)));
+                    if let Some(target) = target {
+                        value_claims.push(claim.item.claim.clone());
+                        routes.insert(index, Route::Value(Box::new(target)));
+                    }
                     resolved.push(ResolvedItem::Claim(claim));
                 }
             },
@@ -1573,7 +1575,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         name: &str,
         selection: &ItemSelection,
         selected_claim: Option<&OccurrenceKey>,
-    ) -> Result<Resolution<PackageValue<'a>>, PackageRunError> {
+    ) -> Result<Resolution<Option<PackageValue<'a>>>, PackageRunError> {
         let pending = || {
             PackageRunError::Pending(PendingPackageFamily {
                 request_index: Some(index),
@@ -1604,11 +1606,59 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             Err(fsl_replay::value_check::PackageSelection::Selection(
                 fsl_replay::value_check::Selection::NoForm,
             )) if selected_claim.is_none() => {
-                return Ok(Resolution::Settled(invalid_kind(
-                    index,
-                    Some(name),
-                    "inapplicable-kind",
-                )));
+                let declared = self.package.declared_names();
+                let owners = declared
+                    .iter()
+                    .filter(|(declared, _)| declared == name)
+                    .collect::<Vec<_>>();
+                let [(_, owner)] = owners.as_slice() else {
+                    return Err(pending());
+                };
+                let node = self
+                    .package
+                    .package()
+                    .resolved_graph()
+                    .nodes
+                    .iter()
+                    .find(|node| &node.node_id == *owner)
+                    .ok_or_else(pending)?;
+                let occurrence = node.occurrences.first().ok_or_else(pending)?;
+                let claim = OccurrenceKey::new(
+                    self.package.node_key(owner).ok_or_else(pending)?,
+                    filament_exact::Origin::new(
+                        filament_exact::Role::new("declaration"),
+                        occurrence.ordinal,
+                    ),
+                );
+                let kind = Capability::ValueValidity;
+                let named = selection.backend.as_deref().map(BackendId::new);
+                let candidates = tie(
+                    self.registry.candidates(kind, named.as_ref()),
+                    kind,
+                    named.as_ref(),
+                );
+                return Ok(Resolution::Claim(
+                    Box::new(ResolvedClaim {
+                        item: ClaimItem {
+                            request_index: index,
+                            claim,
+                            kind,
+                            extent: ExtentClassification::Bounded,
+                            backend: named,
+                            candidates: candidate_list(&candidates),
+                            options: options(
+                                selection,
+                                selection.options.clone().unwrap_or_default(),
+                            ),
+                            form: None,
+                        },
+                        claim_name: name.to_owned(),
+                        candidates,
+                        subject: self.own_subject(index, selection)?,
+                        unrouted: selection.unrouted(),
+                    }),
+                    None,
+                ));
             }
             Err(refusal) => {
                 return Err(PackageRunError::Pending(PendingPackageFamily {
@@ -1726,11 +1776,11 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 subject: own_subject,
                 unrouted,
             }),
-            PackageValue {
+            Some(PackageValue {
                 target,
                 result_bound: body.semantic_type.clone(),
                 record,
-            },
+            }),
         ))
     }
 

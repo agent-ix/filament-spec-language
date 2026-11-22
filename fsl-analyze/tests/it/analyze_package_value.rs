@@ -83,7 +83,10 @@ fn a_package_value_item_over_a_scalar_function_is_inapplicable() {
         WIDE,
         json!([{"claim": "Wide", "kind": "value-validity"}]),
     );
-    assert_eq!(item["disposition"]["cause"], "inapplicable-kind", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "inapplicable-kind",
+        "{item}"
+    );
 }
 
 /// An enum parameter enumerates and spells the same first counterexample
@@ -93,11 +96,15 @@ fn a_package_value_item_over_a_scalar_function_is_inapplicable() {
 fn a_package_value_clause_over_an_enum_parameter_equals_the_source() {
     let item = assert_parity(
         "package-value-enum-parameter",
-        "enum Status { READY, DONE }\nfunction Ready using v(s: Status): Boolean pure { s = Status::READY }\n",
+        "ordered enum Status { ZED, ALPHA, MID }\nfunction Ready using v(s: Status): Boolean pure { s = Status::MID }\n",
         json!([{"claim": "Ready", "kind": "value-validity"}]),
     );
     assert_eq!(label(&item), "refuted", "{item}");
     assert_eq!(item["replay"]["reproduced"], true, "{item}");
+    assert_eq!(
+        item["counterexample"]["values"][0]["value"]["member"], "ZED",
+        "{item}"
+    );
 }
 
 /// FR-940-AC-13: value items mixed with a temporal clause keep the request's
