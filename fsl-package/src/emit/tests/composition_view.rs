@@ -141,22 +141,147 @@ fn composition_views_keep_member_regions_and_owner_bound_targets() {
                 assert_eq!(left, right);
                 let mut budget =
                     filament_contract_model::NativeJoinBudget::new(1_000_000, 1_000_000);
-                let target = source_view
-                    .supply_context_with_budget(left, &mut budget)
-                    .expect("the scheduling context has an authenticated component owner");
-                let byte_target = byte_view
-                    .supply_context_with_budget(right, &mut budget)
-                    .expect("the byte context has the same authenticated owner");
-                assert_eq!(target.owner().name(), byte_target.owner().name());
+                let targets = source_view
+                    .supply_contexts_with_budget(left, &mut budget)
+                    .expect("every authenticated context candidate");
+                let byte_targets = byte_view
+                    .supply_contexts_with_budget(right, &mut budget)
+                    .expect("every byte-backed context candidate");
                 assert_eq!(
-                    target.owner().structural_key(target.node()),
-                    byte_target.owner().structural_key(byte_target.node())
+                    targets.len(),
+                    2,
+                    "both libraries legitimately retain this model declaration"
                 );
-                assert!(target.owner().term(target.node()).is_some());
+                assert_eq!(targets.len(), byte_targets.len());
+                for (target, byte_target) in targets.iter().zip(&byte_targets) {
+                    assert_eq!(target.owner().name(), byte_target.owner().name());
+                    assert_eq!(
+                        target.owner().structural_key(target.node()),
+                        byte_target.owner().structural_key(byte_target.node())
+                    );
+                    assert!(target.owner().term(target.node()).is_some());
+                }
+                use crate::checked_v2::EvaluationWitnessSupplier;
+                let mut witnesses = Vec::new();
+                for target in &targets {
+                    let source = match target.owner().name() {
+                        "test/producer" => &world.producer.package,
+                        "test/consumer" => &world.consumer.package,
+                        _ => panic!("the actual fixture's authenticated component owner"),
+                    };
+                    let emitted = emit_checked(source).expect("genuine owning source emission");
+                    let selected = crate::SourceWitnessSupplier::new(&emitted)
+                        .supply(target.owner(), &mut budget)
+                        .expect("actual owning-stage identity witnesses")
+                        .identities
+                        .expect("actual complete selected rows");
+                    witnesses.push(selected);
+                }
+                let rows = targets
+                    .iter()
+                    .zip(&witnesses)
+                    .map(|(target, selected)| {
+                        let structural = target
+                            .owner()
+                            .structural_key(target.node())
+                            .expect("authentic structural target");
+                        selected
+                            .declaration_rows()
+                            .find(|row| row.structural_node == *structural)
+                            .expect("the actual uniquely keyed model declaration row")
+                    })
+                    .collect::<Vec<_>>();
+                let context_locus = filament_contract_model::NativeJoinLocus {
+                    source: filament_contract_model::NativeJoinLocusSource::Package,
+                    form: "composition_model_context",
+                };
+                let mut context_budget =
+                    filament_contract_model::NativeJoinBudget::new(1_000_000, 1_000_000);
+                let common = crate::composition_context::common_rows(
+                    &rows,
+                    &mut context_budget,
+                    context_locus,
+                )
+                .expect("identical authenticated domain contexts coalesce without a library owner");
+                assert_eq!(common.selected_document(), "test/orders");
+                let paid = context_budget.consumed();
+                let mut reversed = rows.clone();
+                reversed.reverse();
+                let mut reverse_budget =
+                    filament_contract_model::NativeJoinBudget::new(1_000_000, 1_000_000);
+                assert_eq!(
+                    crate::composition_context::common_rows(
+                        &reversed,
+                        &mut reverse_budget,
+                        context_locus
+                    )
+                    .expect("candidate order does not select a different context"),
+                    common
+                );
+                let mut exact =
+                    filament_contract_model::NativeJoinBudget::new(paid.work, paid.storage);
+                assert_eq!(
+                    crate::composition_context::common_rows(&rows, &mut exact, context_locus)
+                        .expect("exact context comparison allowance"),
+                    common
+                );
+                assert_eq!(exact.consumed(), paid);
+                for (work, storage, kind) in [
+                    (
+                        paid.work - 1,
+                        1_000_000,
+                        filament_contract_model::NativeJoinChargeKind::Work,
+                    ),
+                    (
+                        1_000_000,
+                        paid.storage - 1,
+                        filament_contract_model::NativeJoinChargeKind::Storage,
+                    ),
+                ] {
+                    let mut short = filament_contract_model::NativeJoinBudget::new(work, storage);
+                    let Err(crate::CompositionModelContextRefusal::Native(error)) =
+                        crate::composition_context::common_rows(&rows, &mut short, context_locus)
+                    else {
+                        panic!("unpaid context comparison/materialization stays native");
+                    };
+                    assert_eq!(error.denied(), short.first_unpaid());
+                    assert_eq!(error.denied().expect("unpaid").kind, kind);
+                    assert_eq!(error.locus(), short.first_unpaid_locus());
+                    assert_eq!(
+                        error.configured_bound(),
+                        Some(match kind {
+                            filament_contract_model::NativeJoinChargeKind::Work => work,
+                            filament_contract_model::NativeJoinChargeKind::Storage => storage,
+                        })
+                    );
+                }
+                let different = witnesses[0]
+                    .declaration_rows()
+                    .find(|row| {
+                        matches!(
+                            row.exact_identity,
+                            filament_contract_model::SelectedExactIdentity::Object(_)
+                        ) && row.structural_node != rows[0].structural_node
+                    })
+                    .expect("another genuine object declaration of this admitted model");
+                let mut ample =
+                    filament_contract_model::NativeJoinBudget::new(1_000_000, 1_000_000);
+                assert!(matches!(
+                    crate::composition_context::common_rows(
+                        &[rows[0], different],
+                        &mut ample,
+                        context_locus
+                    ),
+                    Err(crate::CompositionModelContextRefusal::ConflictingContexts)
+                ));
+                assert!(matches!(
+                    crate::composition_context::common_rows(&[], &mut ample, context_locus),
+                    Err(crate::CompositionModelContextRefusal::MissingObject)
+                ));
                 let copied = left.clone();
                 assert_eq!(
                     source_view
-                        .supply_context_with_budget(&copied, &mut budget)
+                        .supply_contexts_with_budget(&copied, &mut budget)
                         .err(),
                     Some(CompositionViewRefusal::UnknownTarget)
                 );
