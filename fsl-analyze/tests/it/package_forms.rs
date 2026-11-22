@@ -4,6 +4,8 @@
 //! returns, for a Counter unit compiled into its FR-517 handoff and the
 //! `BarePackage` of the handoff's files.
 
+mod hyper;
+
 use std::collections::BTreeMap;
 
 use filament_exact::{LimitKind, Meter, ScalarLimits, Value};

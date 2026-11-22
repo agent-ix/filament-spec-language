@@ -148,6 +148,8 @@ pub use checked_v2::{
     V2ReadRefusal, WitnessSupplyFailure,
 };
 #[cfg(feature = "std")]
+pub use checked_views::BareHyperTerm;
+#[cfg(feature = "std")]
 pub use emit::write_operand_slots;
 #[cfg(feature = "std")]
 pub use emit::{
