@@ -54,6 +54,36 @@ enum Shape {
 }
 
 impl<'p> BarePackage<'p> {
+    /// The bounded dense route's no-over Boolean-literal state-graph form.
+    /// Data-bearing predicates retain a typed pending result until their
+    /// package evaluator declarations are available on that route.
+    pub fn direct_dense_state_graph_form(
+        &self,
+        claim: &OccurrenceKey,
+    ) -> Result<PackageStateGraphForm, BareClauseRefusal> {
+        let parts = self.state_graph_parts(claim)?;
+        let pending = || BareClauseRefusal::Pending {
+            fact: "dense-state-graph-predicate",
+            node: parts.node.node_id.clone(),
+        };
+        if parts.root.over().is_some() {
+            return Err(pending());
+        }
+        for key in parts.root.from().into_iter().chain([parts.root.target()]) {
+            let node = self.node_by_key(key)?.ok_or_else(pending)?;
+            let is_boolean = node.body.literal_read().is_some_and(|literal| {
+                matches!(
+                    (literal.kind, literal.value),
+                    (LiteralKind::Boolean, CheckedLiteralValue::Boolean(_))
+                )
+            });
+            if !is_boolean {
+                return Err(pending());
+            }
+        }
+        self.state_graph_claim_form(claim)
+    }
+
     fn state_graph_parts(&self, claim: &OccurrenceKey) -> Result<Parts<'p>, BareSelectionFailure> {
         let package = self.package();
         self.witness()?;

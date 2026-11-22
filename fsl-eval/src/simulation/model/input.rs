@@ -843,10 +843,12 @@ impl<'p> PackageModelInput<'p> {
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
         position_limit: u64,
     ) -> Result<fsl_semantics::check::CheckedStateGraphClaim, PendingClauseForm> {
-        let form = self
-            .package
-            .state_graph_claim_form(claim)
-            .map_err(PendingClauseForm::Read)?;
+        let form = if self.time_sources.is_empty() {
+            self.package.state_graph_claim_form(claim)
+        } else {
+            self.package.direct_dense_state_graph_form(claim)
+        }
+        .map_err(PendingClauseForm::Read)?;
         fsl_semantics::check::CheckedStateGraphClaim::of_package_form(
             form,
             self.world.types(),

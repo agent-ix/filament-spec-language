@@ -56,6 +56,23 @@ fn package_direct_dense_clocks_preserve_initial_and_delay_identity() {
     assert_eq!(source.places().len(), 2);
     assert_eq!(source.model().place_nodes(), bytes.model().place_nodes());
     assert_eq!(source.model().clocks(), bytes.model().clocks());
+    let data_fields = |timed: &TimedSystem<'_, '_>| {
+        timed
+            .system()
+            .input()
+            .types
+            .attributes(timed.model().clocks()[0].owner())
+            .expect("the timed object's complete data declaration")
+            .iter()
+            .map(|attribute| attribute.field().clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        data_fields(&source).len(),
+        4,
+        "phase and all three Boolean fields"
+    );
+    assert_eq!(data_fields(&source), data_fields(&bytes));
     for (source, bytes) in source.places().iter().zip(bytes.places()) {
         assert_eq!(source.object(), bytes.object());
         assert_eq!(source.clock(), bytes.clock());
@@ -182,6 +199,12 @@ fn package_direct_dense_model_items_match_source_cli_results() {
     assert_eq!(label(&source.item(1)), "refuted", "{}", source.document());
     for index in 0..2 {
         assert_eq!(
+            bytes.item(index)["record"]["backend"],
+            "en-6",
+            "{}",
+            bytes.document()
+        );
+        assert_eq!(
             label(&bytes.item(index)),
             label(&source.item(index)),
             "{}",
@@ -216,6 +239,44 @@ fn dense_replay_rejects_incomplete_certificate_coverage() {
         ),
     );
     let request = world.request();
+    let emission = fsl_package::emit_checked(&world.package, EmitLimits::fixture()).expect("emit");
+    let admitted = fsl_package::admit_checked_package(
+        emission.package().bytes(),
+        request.packages,
+        V2ReadLimits::fixture(),
+    )
+    .expect("admit bytes");
+    let identities = emission
+        .identity_rows(&admitted, &mut V2ReadLimits::fixture().native_join_budget())
+        .expect("identities");
+    let equality = emission
+        .equality_witness(&admitted, &mut V2ReadLimits::fixture().native_join_budget())
+        .expect("equality");
+    let handoff = Handoff {
+        admitted,
+        identities,
+        equality,
+    };
+    let bare = bare(&handoff);
+    let input = PackageModelInput::of(&bare, request.packages, ModelNormalizationLimits::default())
+        .expect("dense tables and complete data declarations");
+    let reach = world
+        .package
+        .graph()
+        .state_graph_claim("Reach")
+        .expect("Reach");
+    assert!(
+        matches!(
+            input.state_graph_claim(reach.occurrence().expect("occurrence"), 1000),
+            Err(fsl_eval::simulation::model::PendingClauseForm::Read(
+                fsl_package::BareClauseRefusal::Pending {
+                    fact: "dense-state-graph-predicate",
+                    ..
+                }
+            ))
+        ),
+        "the bounded package CLI route keeps data-bearing predicates explicitly pending"
+    );
     let system = world.system();
     let timed = TimedSystem::new(&system, "M").expect("timed source");
     let graph = explore_timed_state_graph(&timed, ZoneCheckLimits::default(), &Cancel::new())
