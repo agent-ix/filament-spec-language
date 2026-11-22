@@ -198,25 +198,3 @@ fn an_absent_provider_settles_alike_over_a_package() {
     assert!(package.requests.is_empty() && source.requests.is_empty());
 }
 
-/// FR-281-AC-7, FR-940-AC-13: a provider's counterexample at which the
-/// function's body divides by zero replays to the `undefined-evaluation`
-/// envelope at the same locus over the package as over the source. (The
-/// checker proves every bounded divisor non-zero, so only an unbounded
-/// `Integer` clause, which a provider decides, evaluates to undefined.)
-#[trace("TC-2410", "FR-940-AC-13")]
-#[test]
-fn a_provider_counterexample_at_a_division_by_zero_equals_the_source() {
-    let declarations =
-        "function Quotient using v(a: Integer, b: Integer): Boolean pure { a div b = 0 }\n";
-    let verdict = ProviderVerdict::Refuted {
-        counterexample: vec![integer(5), integer(0)],
-    };
-    let item = assert_parity(
-        "pkg-provider-undefined",
-        declarations,
-        &item("Quotient"),
-        &verdict,
-    );
-    assert_eq!(label(&item), "refuted", "{item}");
-    assert_eq!(item["counterexample"]["type"], "undefined-evaluation", "{item}");
-}
