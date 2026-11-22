@@ -1388,7 +1388,7 @@ fn a_protocol_subject_refuses_a_closure_step_before_executing_the_prefix() {
 #[trace("TC-525", "FR-338-AC-31")]
 #[trace("TC-525", "FR-127-AC-1")]
 #[test]
-#[ignore = "QSL-2852: Echo on-each TP-3 protocol check returns Key(Unresolved), so the fair uncounted-loop judgement is not reached"]
+#[ignore = "QSL-2886: Echo on-each TP-3 protocol check returns Key(Unresolved), so the fair uncounted-loop judgement is not reached"]
 fn an_on_each_tp3_debt_after_the_origin_is_judged_by_the_fair_uncounted_loop() {
     use fsl_replay::{
         CertificateLocus, CertificateRejection, CertificateRule, Certification, ModelCheckLimit,

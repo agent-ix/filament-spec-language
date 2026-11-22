@@ -380,7 +380,7 @@ fn row_preflight_names_the_first_unpaid_byte_and_legacy_whole_path_refuses() {
 #[trace("FR-531-AC-41", "TC-3133", "FSpec-FR-322-AC-510")]
 #[trace("TC-738", "FR-264-AC-8")]
 #[test]
-#[ignore = "QSL-2852: two 100,000-step families exceed the 12 GB queue watchdog (14.3 GB peak, 10m11s wall, killed); run this exact test in its named lane"]
+#[ignore = "QSL-2894: two 100,000-step families exceed the 12 GB queue watchdog (14.3 GB peak, 10m11s wall, killed); run this exact test in its named lane"]
 fn two_100000_step_families_measure_complete_wire_and_native_work() {
     on_small_stack(100_000, true);
 }

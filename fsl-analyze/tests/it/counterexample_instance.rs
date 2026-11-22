@@ -21,7 +21,7 @@ use crate::counter::{
 #[trace("TC-520", "FR-125-AC-16")]
 #[trace("FSpec-TC-290", "FSpec-FR-361-AC-10")]
 #[test]
-#[ignore = "QSL-2852: the counterexample reports instance `b` where the test expects the first refuted instance `a`"]
+#[ignore = "QSL-2889: the counterexample reports instance `b` where the test expects the first refuted instance `a`"]
 fn the_first_refuted_instance_is_reported_over_a_shorter_later_one() {
     let mut documents = Documents::new(document(false));
     let initial = vec![documents.start("s0", &[("a", 0), ("b", 3)])];

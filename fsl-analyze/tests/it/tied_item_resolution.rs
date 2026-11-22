@@ -472,7 +472,7 @@ fn contract_verdict(row: ContractRow) -> fsl_analyze::provider::ProviderVerdict 
 /// none of the last three recording a counterexample.
 #[trace("TC-2725", "FR-968-AC-3")]
 #[test]
-#[ignore = "QSL-2852: no operation-contract item reaches a provider, ProviderVerdict carries no contract counterexample (contract_verdict), and the verdict is not settled by FR-968"]
+#[ignore = "QSL-2889: no operation-contract item reaches a provider, ProviderVerdict carries no contract counterexample (contract_verdict), and the verdict is not settled by FR-968"]
 fn a_provider_contract_verdict_settles_after_replay() {
     use fsl_analyze::provider::ProviderVerdict;
     let settle = |name: &str, verdict: ProviderVerdict| {
