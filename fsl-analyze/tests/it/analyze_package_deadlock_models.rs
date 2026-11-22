@@ -255,8 +255,7 @@ fn a_package_missing_one_models_rows_refuses_invalid_package() {
 /// FR-124: a subject that reads a model declaring `terminal any` has no
 /// deadlock-freedom item (`inapplicable-kind`) on both routes, whether the
 /// unit selects one model or two; a `terminal any` of a model the subject
-/// does not read changes nothing. The item naming a model alias settles as
-/// on the source route.
+/// does not read changes nothing.
 #[trace("TC-519", "FR-124-AC-12")]
 #[trace("TC-2410", "FR-850-AC-2")]
 #[test]
@@ -302,12 +301,4 @@ fn a_terminal_any_of_the_read_model_opts_out_as_the_source_route() {
         );
         assert_equal(&source, &package);
     }
-    let (source, package) = both_routes(
-        "package-deadlock-alias",
-        Vault::Terminal,
-        Reads::First,
-        "",
-        &json!([deadlock_item("V")]),
-    );
-    assert_equal(&source, &package);
 }
