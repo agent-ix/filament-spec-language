@@ -35,6 +35,19 @@ pub struct BareWorld {
 }
 
 impl BareWorld {
+    /// Restore dense-model data declarations through S3's production
+    /// assembly over the already admitted model views and authenticated time
+    /// declarations. The model retains its normalization owners and meters.
+    pub fn read_dense_model_data(
+        &mut self,
+        model: &mut fsl_semantics::model::state::StateModel,
+        sources: &[fsl_semantics::check::ModelTimeSource],
+        units: &BTreeMap<String, filament_exact::UnitId>,
+    ) -> Result<(), fsl_semantics::check::AssemblyRefusal> {
+        self.types = model.read_dense_data_types(sources, units)?.clone();
+        Ok(())
+    }
+
     /// The package's record, source tuple and source union declarations.
     pub fn types(&self) -> &TypeEnvironment {
         &self.types

@@ -55,6 +55,8 @@ mod bare_term;
 #[cfg(feature = "std")]
 mod bare_terminal;
 #[cfg(feature = "std")]
+mod bare_timed;
+#[cfg(feature = "std")]
 mod bare_units;
 #[cfg(feature = "std")]
 mod bare_world;

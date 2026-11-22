@@ -360,6 +360,24 @@ pub fn settle_package_run(
             // rows, so `of` never gives this one.
             | PendingPackageForm::SourceModel(_)) => PackageRunError::Input(refusal),
         })?;
+    if input
+        .as_ref()
+        .is_some_and(|input| !input.input().time_sources.is_empty())
+    {
+        if named
+            .iter()
+            .any(|item| !matches!(item, Named::Settled(_) | Named::StateGraph { .. }))
+        {
+            return Err(PackageRunError::Pending(PendingPackageFamily {
+                request_index: None,
+                note: None,
+                family: PendingFamily::ModelForm(UnreadModelForm::TimedModel),
+                node: package
+                    .first_unread_model_form()
+                    .map(|(_, node)| node.clone()),
+            }));
+        }
+    }
     let mut registry = Registry::new();
     for descriptor in engines.registrations() {
         registry
@@ -1531,7 +1549,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                             self.registry,
                             named.as_ref(),
                         ),
-                        false,
+                        !input.input().time_sources.is_empty(),
                     ),
                     fsl_route::StateGraphFormKind::of(subject.claim().form()),
                 ),

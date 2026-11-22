@@ -11,6 +11,481 @@ use ix_trace_rs::trace;
 
 use crate::counter::{document, package_with_clauses, subject, Documents, CONTRACT, UNLIMITED};
 
+const DIRECT_DENSE: &str =
+    "dimension Time;\nunit ms : Time = rational(1, 1);\ntime M dense unit ms;\n";
+
+/// Dense delay tables preserve the original clock identities and exact valuations.
+#[trace("FR-940-AC-6", "FR-120")]
+#[test]
+fn package_direct_dense_clocks_preserve_initial_and_delay_identity() {
+    use filament_exact::{Integer, Rational};
+    use fsl_eval::simulation::model::TimedSystem;
+    let world = crate::timed_world::world(
+        &crate::timed_world::document(&["z", "a"], &[]),
+        "",
+        DIRECT_DENSE,
+    );
+    let request = world.request();
+    let emission = fsl_package::emit_checked(&world.package, EmitLimits::fixture()).expect("emit");
+    let admitted = fsl_package::admit_checked_package(
+        emission.package().bytes(),
+        request.packages,
+        V2ReadLimits::fixture(),
+    )
+    .expect("admit bytes");
+    let identities = emission
+        .identity_rows(&admitted, &mut V2ReadLimits::fixture().native_join_budget())
+        .expect("identities");
+    let equality = emission
+        .equality_witness(&admitted, &mut V2ReadLimits::fixture().native_join_budget())
+        .expect("equality");
+    let handoff = Handoff {
+        admitted,
+        identities,
+        equality,
+    };
+    let bare = bare(&handoff);
+    let input = PackageModelInput::of(&bare, request.packages, ModelNormalizationLimits::default())
+        .expect("dense tables");
+    let source = world.system();
+    let mut bytes_request = request.clone();
+    bytes_request.input = input.input();
+    let bytes = ModelSystem::new(bytes_request).expect("bytes system");
+    let source = TimedSystem::new(&source, "M").expect("source timed");
+    let bytes = TimedSystem::new(&bytes, "test/timed").expect("bytes timed");
+    assert_eq!(source.places().len(), 2);
+    let identities = |timed: &TimedSystem<'_, '_>| {
+        (0..timed.places().len())
+            .map(|place| {
+                timed
+                    .clock_place_identity(place)
+                    .filter(|identity| !identity.is_empty())
+                    .expect("each clock place has its original canonical identity")
+            })
+            .collect::<Vec<_>>()
+    };
+    let source_identities = identities(&source);
+    let bytes_identities = identities(&bytes);
+    assert_eq!(source_identities, bytes_identities);
+    for identities in [&source_identities, &bytes_identities] {
+        assert_eq!(
+            identities
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len(),
+            identities.len(),
+            "the two original clock fields have distinct canonical identities"
+        );
+    }
+    assert_eq!(source.model().clocks(), bytes.model().clocks());
+    let data_fields = |timed: &TimedSystem<'_, '_>| {
+        timed
+            .system()
+            .input()
+            .types
+            .attributes(timed.model().clocks()[0].owner())
+            .expect("the timed object's complete data declaration")
+            .iter()
+            .map(|attribute| attribute.field().clone())
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(
+        data_fields(&source).len(),
+        4,
+        "phase and all three Boolean fields"
+    );
+    assert_eq!(data_fields(&source), data_fields(&bytes));
+    for (source, bytes) in source.places().iter().zip(bytes.places()) {
+        assert_eq!(source.object(), bytes.object());
+        assert_eq!(source.clock(), bytes.clock());
+    }
+    let source_initial = source.initial();
+    let bytes_initial = bytes.initial();
+    assert_eq!(source_initial.len(), 1);
+    assert_eq!(source_initial[0].clocks().values().len(), 2);
+    assert!(source_initial[0]
+        .clocks()
+        .values()
+        .iter()
+        .all(Rational::is_zero));
+    assert_eq!(source_initial[0].clocks(), bytes_initial[0].clocks());
+    let delay = Rational::new(Integer::from(3_i64), Integer::from(2_i64)).expect("delay");
+    let source_delayed = source
+        .delay(&source_initial[0], &delay)
+        .expect("source delay")
+        .expect("admissible");
+    let bytes_delayed = bytes
+        .delay(&bytes_initial[0], &delay)
+        .expect("bytes delay")
+        .expect("admissible");
+    assert_eq!(source_delayed.clocks().values(), &[delay.clone(), delay]);
+    assert_eq!(source_delayed.clocks(), bytes_delayed.clocks());
+    assert_eq!(
+        input.input().time_sources[0].span,
+        world.package.graph().time_sources()[0].span
+    );
+    let table = input.input();
+    let original = &world.package.graph().time_sources()[0].nominal_nodes;
+    assert_eq!(table.time_sources[0].nominal_nodes.len(), 2);
+    for (read, original) in table.time_sources[0].nominal_nodes.iter().zip(original) {
+        assert_eq!(read.key, original.key);
+        assert_eq!(read.form, original.form);
+        assert_eq!(read.origin, original.origin);
+        assert_eq!(read.dependencies, original.dependencies);
+        assert!(read.nominal_payload().is_some());
+    }
+}
+
+/// Unsupported timed definitions do not publish partially reconstructed tables.
+#[trace("FR-940-AC-6")]
+#[test]
+fn package_direct_dense_reader_refuses_derived_units_and_timed_guards() {
+    for body in [
+        crate::timed_world::DENSE.to_owned(),
+        format!("{DIRECT_DENSE}pre Guard using v on M::Call::send {{ self.x >= 1 ms }}\n"),
+    ] {
+        let world = crate::timed_world::world(
+            &crate::timed_world::document(&["x"], &[("send", &[])]),
+            "",
+            &body,
+        );
+        let request = world.request();
+        let emission =
+            fsl_package::emit_checked(&world.package, EmitLimits::fixture()).expect("emit");
+        let admitted = fsl_package::admit_checked_package(
+            emission.package().bytes(),
+            request.packages,
+            V2ReadLimits::fixture(),
+        )
+        .expect("admit bytes");
+        let identities = emission
+            .identity_rows(&admitted, &mut V2ReadLimits::fixture().native_join_budget())
+            .expect("identities");
+        let equality = emission
+            .equality_witness(&admitted, &mut V2ReadLimits::fixture().native_join_budget())
+            .expect("equality");
+        let handoff = Handoff {
+            admitted,
+            identities,
+            equality,
+        };
+        let bare = bare(&handoff);
+        assert!(matches!(
+            PackageModelInput::of(&bare, request.packages, ModelNormalizationLimits::default()),
+            Err(fsl_eval::simulation::model::PendingPackageForm::Form {
+                form: fsl_package::UnreadModelForm::TimedModel,
+                ..
+            })
+        ));
+        assert!(
+            PackageModelInput::of_timed_trace(
+                &bare,
+                request.packages,
+                ModelNormalizationLimits::default()
+            )
+            .is_ok(),
+            "supplied timed traces preserve their wider admitted model boundary"
+        );
+    }
+}
+
+/// Real analyze model items select the timed engine on both intake routes.
+#[trace("FR-850", "FR-940-AC-6")]
+#[test]
+#[ignore = "QSL-2766: package false StateGraph claim is classified as declaration family; CLI Source/Bare parity remains unsupported"]
+fn package_direct_dense_model_items_match_source_cli_results() {
+    use crate::analyze_cli_support::{analyze, label, package_selection, request_over, Workspace};
+    use serde_json::json;
+    let body =
+        format!("{DIRECT_DENSE}possible Yes using v {{ true }}\npossible No using v {{ false }}\n");
+    let world = crate::timed_world::world(&crate::timed_world::document(&["x"], &[]), "", &body);
+    let ws = Workspace::new("package-direct-dense-items");
+    let path = request_over(
+        &ws,
+        std::str::from_utf8(&world.unit).expect("unit"),
+        &world.document,
+        &world.snapshots.values().cloned().collect::<Vec<_>>(),
+        json!({"items": [{"claim": "Yes"}, {"claim": "No"}]}),
+    );
+    let source = analyze(&path);
+    let document: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("JSON");
+    let (selected, _) = package_selection(&ws, &document["request"]);
+    let package_path = ws.write(
+        "package-analyze.json",
+        json!({"format": "native-analyze/1", "request": selected})
+            .to_string()
+            .as_bytes(),
+    );
+    let bytes = analyze(&package_path);
+    assert_eq!(label(&source.item(0)), "proved", "{}", source.document());
+    assert_eq!(label(&source.item(1)), "refuted", "{}", source.document());
+    for index in 0..2 {
+        assert_eq!(
+            bytes.item(index)["record"]["backend"],
+            "en-6",
+            "{}",
+            bytes.document()
+        );
+        assert_eq!(
+            label(&bytes.item(index)),
+            label(&source.item(index)),
+            "{}",
+            bytes.document()
+        );
+        assert_eq!(
+            bytes.item(index)["record"]["method"],
+            source.item(index)["record"]["method"]
+        );
+    }
+    assert_eq!(bytes.exit, source.exit);
+}
+
+/// Missing graph coverage cannot become a false-claim replay decision.
+#[trace("FR-940-AC-6", "FR-170-AC-4", "FR-245-AC-7")]
+#[test]
+fn dense_replay_rejects_incomplete_certificate_coverage() {
+    use filament_exact::{Cancel, Integer};
+    use fsl_analyze::zone_check::{explore_timed_state_graph, ZoneCheckLimits};
+    use fsl_eval::simulation::model::{TimedSystem, DEFAULT_MAX_CLOCKS};
+    use fsl_replay::{GraphEvidence, ModelPath, ReplayRefusal, TrapClosure};
+    use fsl_route::deadlock::{ItemObligation, ObligationKind};
+    let world = crate::timed_world::world(
+        &crate::timed_world::document(&["x"], &[("send", &["phase"])]),
+        "",
+        &format!(
+            "{DIRECT_DENSE}\
+            pre Enabled using v on M::Call::send {{ self.phase = 0 }}\n\
+            post SetPhase using v on M::Call::send {{ self.phase = 1 }}\n\
+            possible Reach using v over (c: M::Call) {{ c.phase = 1 }}\n\
+            possible Never using v over (c: M::Call) {{ c.phase = 2 }}\n"
+        ),
+    );
+    let request = world.request();
+    let emission = fsl_package::emit_checked(&world.package, EmitLimits::fixture()).expect("emit");
+    let admitted = fsl_package::admit_checked_package(
+        emission.package().bytes(),
+        request.packages,
+        V2ReadLimits::fixture(),
+    )
+    .expect("admit bytes");
+    let identities = emission
+        .identity_rows(&admitted, &mut V2ReadLimits::fixture().native_join_budget())
+        .expect("identities");
+    let equality = emission
+        .equality_witness(&admitted, &mut V2ReadLimits::fixture().native_join_budget())
+        .expect("equality");
+    let handoff = Handoff {
+        admitted,
+        identities,
+        equality,
+    };
+    let bare = bare(&handoff);
+    let input = PackageModelInput::of(&bare, request.packages, ModelNormalizationLimits::default())
+        .expect("dense tables and complete data declarations");
+    let reach = world
+        .package
+        .graph()
+        .state_graph_claim("Reach")
+        .expect("Reach");
+    assert!(
+        matches!(
+            input.state_graph_claim(reach.occurrence().expect("occurrence"), 1000),
+            Err(fsl_eval::simulation::model::PendingClauseForm::Read(
+                fsl_package::BareClauseRefusal::Pending {
+                    fact: "dense-state-graph-predicate",
+                    ..
+                }
+            ))
+        ),
+        "the bounded package CLI route keeps data-bearing predicates explicitly pending"
+    );
+    let system = world.system();
+    let timed = TimedSystem::new(&system, "M").expect("timed source");
+    let graph = explore_timed_state_graph(&timed, ZoneCheckLimits::default(), &Cancel::new())
+        .expect("closed graph");
+    assert_eq!(graph.nodes.len(), 2, "phase 0 and phase 1");
+    assert_eq!(graph.edges.len(), 1, "the actual phase-changing operation");
+    let instance = fsl_eval::model_subject::ModelInstance {
+        population: request.universes[0].population.clone(),
+        key: "c".to_owned(),
+    };
+    let nodes = graph
+        .nodes
+        .iter()
+        .map(|node| fsl_replay::CertNode {
+            state_key: fsl_eval::simulation::StateKey::from_canonical_bytes(
+                system.state_key(&node.state).expect("state key").0,
+            ),
+            automaton_state: 0,
+            zone: fsl_replay::Zone::universe(2),
+            locked: false,
+            product: None,
+        })
+        .collect::<Vec<_>>();
+    let edges = graph
+        .edges
+        .iter()
+        .map(|edge| fsl_replay::CertEdge {
+            from: edge.from,
+            to: edge.to,
+            transition: Some(edge.transition.clone()),
+            part: Some(edge.part_index),
+            task_transition: None,
+            horizon: None,
+            silent: None,
+        })
+        .collect::<Vec<_>>();
+    let certificate =
+        |claim: &fsl_semantics::check::CheckedStateGraphClaim| fsl_replay::ZoneCertificate {
+            obligation: ItemObligation {
+                subject: (),
+                kind: ObligationKind::StateGraphAuthored(
+                    claim.occurrence().expect("occurrence").clone(),
+                ),
+                reductions: Default::default(),
+            },
+            scale: Integer::one(),
+            lu_bounds: fsl_replay::LuBounds {
+                lower: vec![None],
+                upper: vec![None],
+            },
+            nodes: nodes.clone(),
+            edges: edges.clone(),
+            initials: graph.initials.clone(),
+            components: None,
+            non_zeno: None,
+            divergence: None,
+            admitted: None,
+            state_graph: None,
+            refinement: None,
+            task_product: None,
+        };
+    let replay = |claim: &fsl_semantics::check::CheckedStateGraphClaim, certificate| {
+        let occurrence = claim.occurrence().expect("occurrence").clone();
+        let obligation = fsl_package::ObligationIdentity::new(occurrence.node().clone(), None, 0);
+        let envelope = fsl_replay::GraphEvidenceEnvelope::new(
+            obligation.clone(),
+            occurrence.clone(),
+            occurrence.node().clone(),
+            Vec::new(),
+            request.meter,
+            Vec::new(),
+            fsl_foundation::BackendId::new("en-1"),
+            GraphEvidence::Trap {
+                stem: ModelPath {
+                    initial: 0,
+                    steps: Vec::new(),
+                },
+                closure: TrapClosure::StateGraph,
+                over: Some(instance.clone()),
+            },
+        )
+        .with_zone_certificate(certificate);
+        let mut wire = crate::model_settle::request(
+            &world.package,
+            &[],
+            &world.document,
+            world.snapshots.iter(),
+            &world.unit,
+        );
+        wire.replay_target = fsl_replay::RequestTargetWire::default();
+        wire.obligation_identity = obligation;
+        wire.backend = "en-1".to_owned();
+        wire.accounting_limits = request.meter;
+        wire.source = fsl_replay::ReplaySource::ModelGraph(Box::new(envelope));
+        fsl_replay::replay_model_graph(
+            wire,
+            &fsl_replay::ModelTraceSubject {
+                timed: Some(fsl_replay::TimedReplay {
+                    model: "M".to_owned(),
+                    exploration: Default::default(),
+                    max_clocks: DEFAULT_MAX_CLOCKS,
+                    digital: false,
+                }),
+                initial: request.initial.clone(),
+                universes: request.universes.clone(),
+                expansion: request.expansion,
+                stutter_closure: false,
+            },
+            fsl_replay::ReplayLimits::default(),
+        )
+    };
+    let reach = world
+        .package
+        .graph()
+        .state_graph_claim("Reach")
+        .expect("Reach");
+    let valid = certificate(reach);
+    let over = system
+        .bound_reference(reach.over().expect("over").object.clone(), &instance)
+        .expect("bound c");
+    assert_eq!(
+        fsl_replay::check_zone_certificate(
+            fsl_replay::ZoneCertificateRequest {
+                simulation: request.clone(),
+                model: "M",
+                max_clocks: DEFAULT_MAX_CLOCKS,
+                item: fsl_replay::CertifiedItem::StateGraph {
+                    claim: reach,
+                    over: Some(&over)
+                },
+            },
+            &valid.obligation,
+            |obligation| match &obligation.kind {
+                ObligationKind::StateGraphAuthored(occurrence) =>
+                    fsl_replay::CertificateItem::StateGraph(occurrence),
+                _ => fsl_replay::CertificateItem::Other,
+            },
+            &valid,
+            fsl_replay::CertificateCheckLimits::default(),
+            &Cancel::new()
+        )
+        .expect("valid certificate checked"),
+        fsl_replay::ZoneCertificateVerdict::Accepted
+    );
+    let fsl_replay::ReplayResult::ModelGraph(actual) =
+        replay(reach, valid.clone()).expect("intact coverage admits")
+    else {
+        panic!("graph result");
+    };
+    assert_ne!(
+        actual.settlement,
+        fsl_replay::GraphReplaySettlement::Reproduced,
+        "the reachable phase-1 target defeats the forged trap"
+    );
+    let mut missing_initial = valid.clone();
+    missing_initial.initials = vec![graph.edges[0].to];
+    let mut missing_successor = valid;
+    missing_successor.edges.clear();
+    for tampered in [missing_initial, missing_successor] {
+        assert!(
+            matches!(
+                replay(reach, tampered),
+                Err(ReplayRefusal::ModelGraphMismatch {
+                    member: "zone_certificate"
+                })
+            ),
+            "coverage failure must refuse before deciding the claim"
+        );
+    }
+    let never = world
+        .package
+        .graph()
+        .state_graph_claim("Never")
+        .expect("Never");
+    let fsl_replay::ReplayResult::ModelGraph(actual) =
+        replay(never, certificate(never)).expect("complete false-claim certificate admits")
+    else {
+        panic!("graph result");
+    };
+    assert_eq!(
+        actual.settlement,
+        fsl_replay::GraphReplaySettlement::Reproduced,
+        "complete graph coverage still replays a genuine false claim"
+    );
+}
+
 /// The Counter domain package with no operation.
 fn still_document() -> Vec<u8> {
     crate::model_world::still_counter().document

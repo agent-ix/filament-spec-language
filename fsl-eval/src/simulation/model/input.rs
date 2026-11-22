@@ -429,6 +429,7 @@ struct ProbabilisticParts {
     model_selections: Vec<DomainPackageRef>,
     operations: OperationTable,
     probabilistic: CheckedProbabilisticModel,
+    unit_names: std::collections::BTreeMap<String, filament_exact::UnitId>,
 }
 
 impl ProbabilisticParts {
@@ -520,6 +521,7 @@ impl ProbabilisticParts {
             model_selections,
             operations,
             probabilistic,
+            unit_names,
         })
     }
 }
@@ -577,6 +579,8 @@ pub struct PackageModelInput<'p> {
     rewards: PackageRewards,
     terminals: Vec<fsl_package::BareTerminal>,
     state_clauses: Vec<StateClauseEntry>,
+    timed_models: Vec<TimedModel>,
+    time_sources: Vec<ModelTimeSource>,
 }
 
 impl<'p> PackageModelInput<'p> {
@@ -591,7 +595,9 @@ impl<'p> PackageModelInput<'p> {
     /// `probabilistic` nodes carry, rebuilt as S3 records them against the
     /// selected domain packages (FSL FR-740), and its rewards are the ones
     /// its `reward` nodes carry, evaluated through their clause functions. It
-    /// carries no claim of the model, and its delay tables are empty.
+    /// carries no claim of the model. A dense time source with a source-owned
+    /// base Time dimension, direct unit and required direct clock fields is
+    /// read into delay tables; other timed forms refuse the input.
     ///
     /// # Errors
     ///
@@ -634,11 +640,9 @@ impl<'p> PackageModelInput<'p> {
         normalization: fsl_semantics::model::accounting::ModelNormalizationLimits,
         timed_trace: bool,
     ) -> Result<Self, PendingPackageForm> {
-        let unread = if timed_trace {
-            package.first_unread_timed_trace_form()
-        } else {
-            package.first_unread_model_form()
-        };
+        // Timed nodes are validated in full below before a simulation input
+        // is published. Supplied trace stamps keep their existing route.
+        let unread = package.first_unread_timed_trace_form();
         if let Some((form, node)) = unread {
             return Err(PendingPackageForm::Form {
                 form,
@@ -646,12 +650,26 @@ impl<'p> PackageModelInput<'p> {
             });
         }
         let ProbabilisticParts {
-            world,
-            model,
+            mut world,
+            mut model,
             model_selections,
             operations,
             probabilistic,
+            unit_names,
         } = ProbabilisticParts::read(package, packages, normalization, false)?;
+        let (timed_models, time_sources) = if timed_trace {
+            (Vec::new(), Vec::new())
+        } else {
+            package
+                .direct_dense_tables(&model)
+                .map_err(|node| PendingPackageForm::Form {
+                    form: UnreadModelForm::TimedModel,
+                    node,
+                })?
+        };
+        world
+            .read_dense_model_data(&mut model, &time_sources, &unit_names)
+            .map_err(PendingPackageForm::Operations)?;
         let rewards = PackageRewards::of(package, world.clone(), &probabilistic)?;
         // FR-940: the state clauses by their `claim_names` rows (FSpec
         // FR-322), in source order, as the source route lists them.
@@ -685,6 +703,8 @@ impl<'p> PackageModelInput<'p> {
             rewards,
             state_clauses,
             terminals,
+            timed_models,
+            time_sources,
         })
     }
 
@@ -826,10 +846,12 @@ impl<'p> PackageModelInput<'p> {
         claim: &fsl_foundation::source::provenance::OccurrenceKey,
         position_limit: u64,
     ) -> Result<fsl_semantics::check::CheckedStateGraphClaim, PendingClauseForm> {
-        let form = self
-            .package
-            .state_graph_claim_form(claim)
-            .map_err(PendingClauseForm::Read)?;
+        let form = if self.time_sources.is_empty() {
+            self.package.state_graph_claim_form(claim)
+        } else {
+            self.package.direct_dense_state_graph_form(claim)
+        }
+        .map_err(PendingClauseForm::Read)?;
         fsl_semantics::check::CheckedStateGraphClaim::of_package_form(
             form,
             self.world.types(),
@@ -915,8 +937,8 @@ impl<'p> PackageModelInput<'p> {
             operations: &self.operations,
             model_selections: &self.model_selections,
             source_packages: &[],
-            timed_models: &[],
-            time_sources: &[],
+            timed_models: &self.timed_models,
+            time_sources: &self.time_sources,
             probabilistic: &self.probabilistic,
             state_clauses: self.state_clauses.clone(),
             terminals: Ok(self
@@ -971,6 +993,16 @@ const PACKAGE_FORM: InternalFault = InternalFault::new("FR-940", "package-form-o
 /// route, the package route through [`CheckedPackageEvaluation`] over the
 /// package's forms.
 pub trait ModelEvaluator: sealed::Sealed + Sync {
+    /// The actual admitted package form of a state-graph occurrence, when
+    /// this evaluator owns package forms. Used to authenticate a certificate's
+    /// claim against its root and declaration metadata before evaluating it.
+    fn package_state_graph_form(
+        &self,
+        _claim: &fsl_foundation::source::provenance::OccurrenceKey,
+    ) -> Option<fsl_semantics::check::PackageStateGraphForm> {
+        None
+    }
+
     /// FR-107: one state clause, by name, over its admitted observations.
     ///
     /// # Errors
@@ -2092,6 +2124,13 @@ const NO_SOURCE_FOOTPRINT: FootprintRefusal = FootprintRefusal::Unresolved {
 };
 
 impl ModelEvaluator for BarePackage<'_> {
+    fn package_state_graph_form(
+        &self,
+        claim: &fsl_foundation::source::provenance::OccurrenceKey,
+    ) -> Option<fsl_semantics::check::PackageStateGraphForm> {
+        self.state_graph_claim_form(claim).ok()
+    }
+
     fn package_protocol_observation(
         &self,
         model: &DomainPackageRef,
