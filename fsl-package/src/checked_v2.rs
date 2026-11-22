@@ -822,12 +822,7 @@ pub(crate) fn read_checked_package_v2_at(
             u128::try_from(bytes.len()).unwrap_or(u128::MAX),
         )));
     }
-    #[cfg(test)]
-    tphase("ir-read-begin");
-    let ir_result = read_checked_package(bytes, limits.for_ir(), evidence);
-    #[cfg(test)]
-    tphase("ir-read-returned");
-    match ir_result {
+    match read_checked_package(bytes, limits.for_ir(), evidence) {
         CheckedPackageDispatchResult::AdmittedV2(package) => {
             if package.name() != identity.as_str() {
                 return refused(V2ReadRefusal::IdentityMismatch {
@@ -856,8 +851,6 @@ pub(crate) fn read_checked_package_v2_at(
                     return refused(V2ReadRefusal::Fault(InternalFault::new("I2", invariant)));
                 }
             };
-            #[cfg(test)]
-            tphase("timed-models-done");
             let graph = match wire_graph(&package) {
                 Ok(graph) => graph,
                 Err(_) => {
@@ -880,8 +873,6 @@ pub(crate) fn read_checked_package_v2_at(
                     .join("::");
                 exports.push((name, key.clone()));
             }
-            #[cfg(test)]
-            tphase("exports-done");
             let source_map = match package_source_map(&graph, package.source_map()) {
                 Ok(source_map) => source_map,
                 Err(defect) => return refused(defect.into()),
@@ -1230,8 +1221,6 @@ pub fn read_evaluation_emission<'package>(
     let read = reader.read_emitted(package, emission, identity.clone())?;
     let mut closure = reader.admitted;
     closure.insert(identity.clone(), Arc::clone(&read.admitted));
-    #[cfg(test)]
-    tphase("read-emitted-done");
     let reader_nodes = reader_node_keys(&read.admitted).map_err(|_| ImportViewRefusal::Read {
         package: identity,
         refusal: Box::new(StageFailure::Fault(InternalFault::new(
@@ -1239,8 +1228,6 @@ pub fn read_evaluation_emission<'package>(
             "admitted-reader-graph-has-structural-keys",
         ))),
     })?;
-    #[cfg(test)]
-    tphase("reader-node-keys-done");
     let admitted_identity = LibraryName::of_package(&read.admitted);
     Ok(AdmittedPackageRead {
         source: package,
@@ -1371,8 +1358,6 @@ impl AdmittedPackageRead<'_> {
                 ),
             ))
         };
-        #[cfg(test)]
-        tphase("view-begin");
         let supplied = match self.witnesses.supply(&self.read.admitted, &mut budget) {
             Ok(supplied) => supplied,
             Err(WitnessSupplyFailure::Exhausted(native)) => {
@@ -1420,8 +1405,6 @@ impl AdmittedPackageRead<'_> {
                 Ok((admitted, emission))
             })
             .collect::<Result<Vec<_>, ViewFailure>>()?;
-        #[cfg(test)]
-        tphase("view-before-project");
         let slots = project_package(
             &self.read.admitted,
             &self.emission,
@@ -1702,17 +1685,4 @@ impl ClosureReader<'_> {
         }
         Ok(())
     }
-}
-
-/// TEMPORARY (QSL-2825): phase timing.
-#[cfg(test)]
-pub(crate) fn tphase(label: &str) {
-    use std::sync::Mutex;
-    use std::time::Instant;
-    static LAST: Mutex<Option<Instant>> = Mutex::new(None);
-    let mut last = LAST.lock().unwrap();
-    let now = Instant::now();
-    let dt = last.map_or(0, |at| now.duration_since(at).as_millis());
-    *last = Some(now);
-    eprintln!("TIME label={label} dt_ms={dt}");
 }

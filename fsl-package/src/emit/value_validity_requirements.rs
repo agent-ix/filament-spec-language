@@ -41,7 +41,9 @@ pub(super) fn append(
     graph: &CheckedGraph,
     nodes: &mut Vec<CheckedSemanticNodeV2>,
     source_map: &mut Vec<CheckedSourceMapEntry>,
-    regions: &impl Fn(&filament_semantic_value::location::ExpressionLocation) -> Option<fsl_foundation::source::provenance::SourceRegion>,
+    regions: &impl Fn(
+        &filament_semantic_value::location::ExpressionLocation,
+    ) -> Option<fsl_foundation::source::provenance::SourceRegion>,
 ) -> Result<Records, EmitRefusal> {
     let mut records = HashMap::new();
     if !graph
@@ -62,9 +64,6 @@ pub(super) fn append(
     let mut types_written = false;
     let mut ordinals = BTreeMap::<String, u64>::new();
     let mut owners = HashMap::<String, (NodeKey, CheckedNodeId)>::new();
-    let mut tt = [0_u128; 8];
-    let mut tmark = std::time::Instant::now();
-    macro_rules! lap { ($i:expr) => {{ let n = std::time::Instant::now(); tt[$i] += (n - tmark).as_micros(); tmark = n; }}; }
     for (claim, source) in graph.requirements().iter() {
         if source.requirements().kind() != Capability::ValueValidity {
             continue;
@@ -83,7 +82,6 @@ pub(super) fn append(
                 entry.insert((key, id))
             }
         };
-        lap!(0);
         let application = node_id(ids, claim.node());
         let result_bound = node_id(ids, source.result_bound().node());
         let location = graph
@@ -96,7 +94,6 @@ pub(super) fn append(
             start: region.start(),
             end: region.end(),
         };
-        lap!(1);
         if !types_written {
             push_scalar_type(nodes, source_map, &integer, "integer", &region);
             push_scalar_type(nodes, source_map, &boolean, "boolean", &region);
@@ -127,7 +124,6 @@ pub(super) fn append(
             .map(|key| node_id(ids, key))
             .collect::<Vec<_>>();
         objects.sort();
-        lap!(2);
         let mut operands = vec![
             PathSegment::Node(owner_key.clone()),
             PathSegment::Node(claim.node().clone()),
@@ -162,9 +158,7 @@ pub(super) fn append(
             0,
         )
         .map_err(encoding)?;
-        lap!(3);
         let id = node_id(ids, key);
-        lap!(4);
         let ordinal = ordinals.entry(owner_name.to_owned()).or_default();
         let occurrence = CheckedOccurrence {
             role: CheckedOccurrenceRole::Generated,
@@ -213,7 +207,6 @@ pub(super) fn append(
                 claim_aggregate(objects.iter().map(reference).collect()),
             ),
         ]);
-        lap!(5);
         nodes.push(CheckedSemanticNodeV2 {
             node_id: id.clone(),
             schema_version: GRAPH_V2.into(),
@@ -231,7 +224,6 @@ pub(super) fn append(
             check_mode: None,
             body,
         });
-        lap!(6);
         source_map.push(CheckedSourceMapEntry {
             node_id: id.clone(),
             role: occurrence.role,
@@ -257,9 +249,7 @@ pub(super) fn append(
         {
             return Err(EmitRefusal::SourceMapInvariant);
         }
-        lap!(7);
     }
-    eprintln!("TIME append laps_us={tt:?}");
     Ok(records)
 }
 

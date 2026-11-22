@@ -7078,16 +7078,12 @@ fn emit_package_inner(
         .collect();
     // FSpec FR-491: a component's subject and clauses are nodes of a
     // dependency, whose operands this package names by their position there.
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7081");
     let foreign = ForeignNodes::of(package, limits)?;
     let abstraction = package
         .abstraction()
         .map(|relation| graph.abstraction_nodes(relation))
         .transpose()
         .map_err(EmitRefusal::Abstraction)?;
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7087");
     let candidates = candidates_of(ids, &foreign, graph, abstraction.as_ref(), &declared_forms)?;
     // Nodes the emitter writes beside the graph's own: each model root, and
     // each model-owned time unit node a `duration` window is typed by.
@@ -7105,8 +7101,6 @@ fn emit_package_inner(
         .model_roots()
         .map(|(selection, _)| selection.identity.as_str())
         .collect();
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7104");
     let omitted = omissions(
         ids,
         &candidates,
@@ -7131,8 +7125,6 @@ fn emit_package_inner(
     if kept.is_empty() && graph.refinements().is_empty() && graph.task_sets().claims().is_empty() {
         return Err(EmitRefusal::NothingToEmit { omitted });
     }
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7128");
     let order = graph_order(&kept);
     let emitted_keys: HashSet<NodeKey> =
         kept.iter().map(|candidate| candidate.key.clone()).collect();
@@ -7203,8 +7195,6 @@ fn emit_package_inner(
             )
         })
         .collect();
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7198");
     let (mut source_map, mut sources) = source_map(&order, &regions)?;
     sources.extend(graph.sources().into_iter().map(source_artifact));
     let wire_nodes = order
@@ -7219,14 +7209,10 @@ fn emit_package_inner(
             },
         )
         .collect::<Result<Vec<_>, _>>()?;
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7212");
     let mut nodes = wire_nodes;
     for node in &mut nodes {
         rewrite_source_keys_in_clock_place(node, &source_keys)?;
     }
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7216");
     let mut emitted_refinements = Vec::new();
     let mut step_rows = Vec::new();
     let mut timed_substitutions = Vec::new();
@@ -7249,8 +7235,6 @@ fn emit_package_inner(
     // FR-322: the sidecar is ordered by owner node id, then ordinal.
     step_rows
         .sort_by(|left, right| (&left.node_id, left.ordinal).cmp(&(&right.node_id, right.ordinal)));
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7238");
     if !graph.time_sources().is_empty() {
         let text_type = match literal_type(&nodes, "text") {
             Some(id) => id,
@@ -7543,8 +7527,6 @@ fn emit_package_inner(
     // FSpec FR-370: a `duration` window typed by a model-owned time unit
     // names that unit's nodes, which S3 does not lower; each is written once,
     // located at the clause that names it.
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7530");
     for temporal in graph.temporal_clauses() {
         let mut model_nodes = temporal.clause().duration_window_model_nodes().peekable();
         if model_nodes.peek().is_none() {
@@ -7560,8 +7542,6 @@ fn emit_package_inner(
             write_time_nominal(ids, graph, nominal, &region, &mut nodes, &mut source_map)?;
         }
     }
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7545");
     append_model_roots(
         ids,
         graph.model_roots(),
@@ -7569,13 +7549,9 @@ fn emit_package_inner(
         &mut nodes,
         &mut source_map,
     );
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7552");
     normalize_model_declaration_occurrences(&mut nodes, &mut source_map)?;
     probabilistic::append_probabilistic_nodes(ids, graph, &mut nodes, &mut source_map)?;
     probabilistic::write_claim_bodies(ids, graph, &mut nodes, &mut source_map)?;
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7555");
     let mut schedulability_claim_rows = append_schedulability_claims(
         ids,
         graph,
@@ -7584,12 +7560,8 @@ fn emit_package_inner(
         &mut nodes,
         &mut source_map,
     )?;
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7563");
     let value_validity_records =
         value_validity_requirements::append(ids, graph, &mut nodes, &mut source_map, &regions)?;
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7565");
     let (mut profile_selections, mut laws) = split_laws(&order);
     for refinement in emitted_refinements {
         let selection = CheckedSelection {
@@ -7638,8 +7610,6 @@ fn emit_package_inner(
         laws.push(profile.definition().clone());
     }
 
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7613");
     let (edition, definition_selections) =
         catalog_selections(graph.header_layers(), &laws, graph.extension_selections());
     let root = DefinitionRole::Root.identity();
@@ -7653,11 +7623,7 @@ fn emit_package_inner(
         refinement_internals: None,
         dependency_clock_selections: dependency_clock_selections(package),
     };
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7626");
     let inspection_source_map = inspection_source_map(ids, &source_map)?;
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7627");
     let emitted_node_ids = write_index_segments(
         ids,
         &mut nodes,
@@ -7668,8 +7634,6 @@ fn emit_package_inner(
     )?;
     let producer_node_ids =
         producer_node_ids_after_timed_rekey(&emitted_node_ids, &timed_substitutions)?;
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7637");
     let WrittenTemporalRows {
         bindings: temporal_bindings,
         names: temporal_clause_names,
@@ -7683,8 +7647,6 @@ fn emit_package_inner(
         &source_map,
         temporal_selections,
     )?;
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7650");
     let claim_names = claim_name_rows(
         graph,
         ids,
@@ -7693,24 +7655,18 @@ fn emit_package_inner(
         &nodes,
         &source_map,
     )?;
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7658");
     let equality_producer_identity_rows = equality_producer_emission_rows_excluding(
         graph,
         &producer_node_ids,
         &source_map,
         &omitted_keys,
     )?;
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7664");
     let equality_fact_witness_rows = equality_fact_witness_rows(
         graph,
         &producer_node_ids,
         &nodes,
         &equality_producer_identity_rows,
     )?;
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7670");
     let checked_term_data = checked_term_data(
         graph,
         &emitted_node_ids,
@@ -7722,8 +7678,6 @@ fn emit_package_inner(
         &source_keys,
         limits.output_bytes,
     )?;
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7681");
     let selected_operation_member_rows = selected_operation_member_rows
         .into_iter()
         .map(|(key, mut row)| {
@@ -7768,8 +7722,6 @@ fn emit_package_inner(
             Ok(row)
         })
         .collect::<Result<Vec<_>, EmitRefusal>>()?;
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7725");
     let selected_source_unit_rows = graph
         .source_unit_nodes()
         .filter_map(|unit| {
@@ -7789,27 +7741,17 @@ fn emit_package_inner(
             ))
         })
         .collect();
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7744");
     let (selected_enum_declaration_rows, selected_enum_member_rows) =
         source_enum_rows(graph, &emitted_node_ids)?;
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7746");
     let selected_model_enum_shape_rows = model_enum_shape_rows(graph, &emitted_node_ids)?;
     let selected_model_union_rows = model_union_rows(graph, &emitted_node_ids)?;
     let selected_source_union_rows = source_union_rows(graph, &emitted_node_ids)?;
     let selected_source_record_rows = source_record_rows(graph, &emitted_node_ids)?;
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7750");
     let (selected_source_object_rows, source_object_member_facts, source_object_operations) =
         source_object_rows(graph, &emitted_node_ids)?;
     let selected_source_operation_rows = source_operation_rows(graph, &emitted_node_ids)?;
     let selected_source_tuple_rows = source_tuple_rows(graph, &emitted_node_ids)?;
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7754");
     let relation_rows = model_relation_requirements::rows(graph, &emitted_node_ids)?;
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7755");
     let requirement_rows = value_validity_requirements::rows(
         ids,
         graph,
@@ -7817,25 +7759,13 @@ fn emit_package_inner(
         &value_validity_records,
         &relation_rows,
     )?;
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7762");
     let selected_source_collection_rows = source_collection_rows(graph, &emitted_node_ids)?;
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7763");
     let operation_effects = graph
         .operation_effects()
         .filter(|rows| operation_effects_are_carried(rows, &nodes));
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7766");
     let operation_body_rows = operation_body_rows(graph, &emitted_node_ids, &nodes);
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7767");
     let correlation_rows = protocol_correlation_rows(graph, &producer_node_ids, &source_map)?;
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7768");
     let operand_rows = write_operand_slots(&mut nodes, limits)?;
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7769");
     let semantic_graph = CheckedSemanticGraphV2 {
         graph_version: GRAPH_V2.into(),
         nodes,
@@ -7849,8 +7779,6 @@ fn emit_package_inner(
         catalog: diagnostics_catalog(),
         entries: Vec::new(),
     };
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7782");
     let package = EmittedPackage::new(graph.package_name(), |name| {
         encode_checked_package_v2_with_protocol_correlation_occurrences(
             name,
@@ -7880,8 +7808,6 @@ fn emit_package_inner(
         )
         .map_err(EmitRefusal::from)
     })?;
-    #[cfg(test)]
-    crate::checked_v2::tphase("emit-before-L7811");
     let mut evidence = own_evidence(&lock);
     supply_extension_definitions(&mut evidence, graph, &order)?;
     Ok(Emission {
