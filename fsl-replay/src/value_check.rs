@@ -93,6 +93,8 @@ pub enum PackageSelection {
     /// parameter or result type, or a body operation, the reader has no form
     /// for.
     Unread(BareSelectionFailure),
+    /// The typed row retains node-held references without an authoritative holder.
+    UnresolvedRequirementHolder,
 }
 
 /// What of a parameter's domain the arm cannot enumerate.
@@ -408,6 +410,22 @@ impl<'p> ValueTarget<'p> {
         let is_clause_key = *claim.node() == body.node
             && ["declaration", "claim"].contains(&claim.origin().role().as_str())
             && body.occurrences.contains(claim);
+        if !is_clause_key
+            && package.requirement_items().iter().any(|row| {
+                row.record.as_ref().is_some_and(|record| {
+                    package.node_key(&record.owner).as_ref() == Some(selected.node)
+                        && (package.node_key(&row.claim).is_none()
+                            || package.node_key(&record.application).is_none()
+                            || package.node_key(&record.result_bound).is_none()
+                            || record
+                                .path_condition
+                                .iter()
+                                .any(|guard| package.node_key(&guard.guard).is_none()))
+                })
+            })
+        {
+            return Err(PackageSelection::UnresolvedRequirementHolder);
+        }
         let record = package.requirement_items().iter().find(|row| {
             package.node_key(&row.claim).as_ref() == Some(claim.node())
                 && row.occurrence.role == filament_contract_model::CheckedOccurrenceRole::Expression

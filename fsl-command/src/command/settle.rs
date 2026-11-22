@@ -4,8 +4,8 @@
 
 use filament_exact::Cancel;
 use fsl_analyze::analyze::document::{
-    resolve_call_items_from_view, settle_run, AnalyzeDocumentError, AnalyzeRun, CallItem,
-    Negotiate, SettledRun, SubjectSelection,
+    resolve_call_items, settle_run, AnalyzeDocumentError, AnalyzeRun, CallItem, Negotiate,
+    SettledRun, SubjectSelection,
 };
 use fsl_analyze::analyze::{AnalyzeLimits, Engines, SourceProvision};
 use fsl_semantics::model::observation::DocumentProvision;
@@ -79,18 +79,7 @@ pub(super) fn settle_call(
             .register(descriptor.clone())
             .map_err(|_| RunCause::AnalyzeFault)?;
     }
-    let read = fsl_package::read_evaluation_package(
-        package,
-        fsl_semantics::library::LibraryName::new(super::package_name(checked.source().identity()))
-            .map_err(|_| RunCause::AnalyzeFault)?,
-        packages,
-        fsl_package::V2ReadLimits::bounded(u64::MAX),
-        AnalyzeLimits::unbounded().emit,
-    )
-    .map_err(|_| RunCause::AnalyzeFault)?;
-    let resolved =
-        resolve_call_items_from_view(package, &read, members.function(), &items, &registry)
-            .map_err(|_| RunCause::AnalyzeFault)?;
+    let resolved = resolve_call_items(package, members.function(), &items, &registry);
     let mut provision = SourceProvision::default();
     for source in std::iter::once(checked.source()).chain(checked.libraries()) {
         provision.insert(source.reference(), source.text().as_bytes().to_vec());

@@ -1251,7 +1251,12 @@ fn settle_value_call(
             ));
         }
         let claim = fsl_foundation::source::provenance::OccurrenceKey::new(
-            bare.node_key(&row.claim).ok_or(RunCause::AnalyzeFault)?,
+            bare.node_key(&row.claim).ok_or_else(|| RunCause::AnalyzePackage {
+                code: fsl_foundation::Code::UnsupportedConstruct,
+                cause: Some("not-yet-implemented".to_owned()),
+                pointer: Some("/call/requirements".to_owned()),
+                message: "value-validity-record-unresolved-holder: typed requirement references have no document-held identity".to_owned(),
+            })?,
             filament_exact::Origin::new(
                 filament_exact::Role::new("expression"),
                 row.occurrence.ordinal,
@@ -1315,6 +1320,14 @@ fn settle_value_call(
         fsl_analyze::analyze::document::PackageRunError::Document(
             fsl_analyze::analyze::document::AnalyzeDocumentError::Refused(refusal),
         ) => RunCause::AnalyzeRefused(Box::new(refusal)),
+        other @ fsl_analyze::analyze::document::PackageRunError::Pending(_) => {
+            RunCause::AnalyzePackage {
+                code: fsl_foundation::Code::UnsupportedConstruct,
+                cause: Some("not-yet-implemented".to_owned()),
+                pointer: Some("/call/requirements".to_owned()),
+                message: other.to_string(),
+            }
+        }
         other => invalid("call.requirements", other.to_string()),
     })
 }

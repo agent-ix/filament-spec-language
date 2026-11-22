@@ -1303,52 +1303,13 @@ fn work<'a>(
                     .get(backend.id())
                     .is_some_and(|engine| engine.provider().is_some())
             }) {
-                let clause_item = || {
-                    crate::provider::routed_item(
-                        package,
-                        engines.registrations(),
-                        item.request_index,
-                        &item.claim,
-                        item.backend.as_ref(),
-                    )
-                };
-                let routed = match shared {
-                    Some(shared) => {
-                        let bare = fsl_package::BarePackage::new(shared.admitted);
-                        let rows = shared
-                            .admitted
-                            .requirement_items()
-                            .iter()
-                            .filter(|row| {
-                                super::document::package_value::occurrence(&bare, row).as_ref()
-                                    == Some(&item.claim)
-                            })
-                            .collect::<Vec<_>>();
-                        match rows.as_slice() {
-                            [row] => {
-                                let mut registry = fsl_route::Registry::new();
-                                let registered = engines.registrations().all(|descriptor| {
-                                    registry.register(descriptor.clone()).is_ok()
-                                });
-                                registered
-                                    .then(|| {
-                                        super::document::package_value::requirement_item(
-                                            &bare,
-                                            row,
-                                            item.request_index,
-                                            &registry,
-                                            item.backend.as_ref(),
-                                        )
-                                        .ok()
-                                    })
-                                    .flatten()
-                            }
-                            [] => clause_item(),
-                            _ => None,
-                        }
-                    }
-                    None => clause_item(),
-                }
+                let routed = crate::provider::routed_item(
+                    package,
+                    engines.registrations(),
+                    item.request_index,
+                    &item.claim,
+                    item.backend.as_ref(),
+                )
                 .map(|routed| routed.with_options(item.options.backend_options.clone()));
                 crate::provider::provider_item_over(
                     item.request_index,
