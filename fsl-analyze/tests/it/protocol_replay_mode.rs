@@ -588,6 +588,286 @@ fn the_incremental_assessment_member_reports_each_prefix() {
     );
 }
 
+// ---- FR-895 "Enabledness": predecessors through choice, parallel, repeat ----
+
+/// The enabledness obligation of the observation at `position`, naming `node`.
+fn enabledness<'a>(
+    assessment: &'a fsl_analyze::protocol_analysis::recording::RecordingAssessment,
+    node: &str,
+    position: usize,
+) -> &'a fsl_analyze::protocol_analysis::recording::RecordingObligation {
+    assessment
+        .obligations
+        .iter()
+        .find(|entry| {
+            entry.obligation.kind == "enabledness"
+                && entry.obligation.node.as_deref() == Some(node)
+                && entry.witness == [position]
+        })
+        .unwrap_or_else(|| panic!("enabledness of {node} at {position}: {assessment:#?}"))
+}
+
+/// Assert `node` at `position` is `satisfied`.
+fn assert_enabled(source: &str, recording: &Value, node: &str, position: usize) {
+    use fsl_analyze::protocol_analysis::recording::{assess_recording, RecordingVerdict};
+    let package = crate::litmus::package_called("analysis-unit", source);
+    let assessed = assess_recording(&package, recording.to_string().as_bytes()).expect("readable");
+    let found = enabledness(&assessed, node, position);
+    assert_eq!(found.verdict, RecordingVerdict::Satisfied, "{found:#?}");
+    assert_eq!(found.cause, None, "{found:#?}");
+}
+
+/// Assert `node` at `position` is `violated`, cause `unexpected`.
+fn assert_unexpected(source: &str, recording: &Value, node: &str, position: usize) {
+    use fsl_analyze::protocol_analysis::recording::{
+        assess_recording, RecordingCause, RecordingVerdict,
+    };
+    let package = crate::litmus::package_called("analysis-unit", source);
+    let assessed = assess_recording(&package, recording.to_string().as_bytes()).expect("readable");
+    let found = enabledness(&assessed, node, position);
+    assert_eq!(found.verdict, RecordingVerdict::Violated, "{found:#?}");
+    assert_eq!(found.cause, Some(RecordingCause::Unexpected), "{found:#?}");
+}
+
+/// `Flow` with a `Tell` channel and a step in each case of `Decide`
+/// (`Dropped` in `no`, `Told` in `yes`) and a send `Note` after the choice.
+fn choice_protocol() -> String {
+    let mut source = order_protocol(true)
+        .replace(
+            "capacity 4 overflow reject;\n",
+            "capacity 4 overflow reject;\n\
+             channel Tell from Seller to Buyer carries Ack ordering unordered delivery exactly-once-premise capacity 4 overflow reject;\n",
+        )
+        .replace(
+            "sequence Cancel { }",
+            "sequence Cancel { send Dropped via Tell as (dropped: Ack) { true }; }",
+        )
+        .replace(
+            "sequence Ship { }",
+            "sequence Ship { send Told via Tell as (told: Ack) { true }; }",
+        );
+    let finish = source.find("finish Done").expect("finish terminal");
+    let close = source[..finish]
+        .rfind(" }")
+        .expect("the main sequence closes");
+    source.insert_str(close, " send Note via Tell as (note: Ack) { true };");
+    source
+}
+
+/// A closed recording of [`choice_protocol`] from `observations`, `Seller`
+/// order `seller`, and the `Placed` to `Got` correlation.
+fn choice_recording(observations: Value, seller: Value) -> Value {
+    recording(
+        observations,
+        json!({"Buyer": [0], "Seller": seller}),
+        json!([{"send": 0, "receive": 1}]),
+    )
+}
+
+/// FR-895-AC-12 (TC-2531): after a `choice`, only the steps of the case
+/// taken are predecessors; `Told` taken in `yes` and `Dropped` of the untaken
+/// `no` never observed, `Note` is enabled.
+#[trace("TC-2531", "FR-895-AC-12")]
+#[test]
+fn a_step_after_a_choice_needs_only_the_taken_case() {
+    let observations = json!([
+        observation("send", "Placed", "Buyer", "m-1"),
+        observation("receive", "Got", "Seller", "m-1"),
+        chosen_yes(),
+        observation("send", "Decide::yes::Ship::Told", "Seller", "m-2"),
+        observation("send", "Note", "Seller", "m-3"),
+    ]);
+    assert_enabled(
+        &choice_protocol(),
+        &choice_recording(observations, json!([1, 2, 3, 4])),
+        "Flow::Main::Note",
+        4,
+    );
+}
+
+/// FR-895-AC-13 (TC-2531): the same recording without `Told`, a step of the
+/// taken case, leaves `Note` `violated`, cause `unexpected`.
+#[trace("TC-2531", "FR-895-AC-13")]
+#[test]
+fn a_step_after_a_choice_is_unexpected_without_the_taken_cases_steps() {
+    let observations = json!([
+        observation("send", "Placed", "Buyer", "m-1"),
+        observation("receive", "Got", "Seller", "m-1"),
+        chosen_yes(),
+        observation("send", "Note", "Seller", "m-3"),
+    ]);
+    assert_unexpected(
+        &choice_protocol(),
+        &choice_recording(observations, json!([1, 2, 3])),
+        "Flow::Main::Note",
+        3,
+    );
+}
+
+/// `Flow` with a `parallel` of two `Buyer` events under `join all` before
+/// `Placed`.
+fn parallel_protocol() -> String {
+    order_protocol(false).replace(
+        "run sequence Main {",
+        "run sequence Main { parallel Both memory sc { branch left sequence Left { event L by Buyer as (l: Ack) { true }; } branch right sequence Right { event R by Buyer as (r: Ack) { true }; } } join all [left, right];",
+    )
+}
+
+/// A closed recording of [`parallel_protocol`], all `Buyer` observations in
+/// array order.
+fn parallel_recording(observations: Value) -> Value {
+    let count = observations.as_array().expect("observations").len();
+    json!({
+        "format": "filament.protocol-recording/1", "protocol": "Flow",
+        "observations": observations,
+        "local_order": {"Buyer": (0..count).collect::<Vec<_>>()},
+        "correlations": [],
+        "closure": {"state": "closed", "premises": [
+            {"kind": "execution", "node": "Flow::Done"},
+            {"kind": "branch", "node": "Flow::Main::Both::left"},
+            {"kind": "branch", "node": "Flow::Main::Both::right"}
+        ]}
+    })
+}
+
+/// A `Buyer` event at `Flow::Main::Both::<branch>::<name>`.
+fn branch_event(branch: &str, body: &str, name: &str) -> Value {
+    json!({"kind": "event", "node": format!("Flow::Main::Both::{branch}::{body}::{name}"),
+           "role": "Buyer", "instance": "w-1", "keys": {}, "record": {"ok": true}})
+}
+
+/// FR-895-AC-14 (TC-2531): after a `parallel` under `join all`, the steps of
+/// every branch are predecessors: `Placed` after `L` and `R` is enabled.
+#[trace("TC-2531", "FR-895-AC-14")]
+#[test]
+fn a_step_after_an_all_join_needs_every_branch() {
+    let observations = json!([
+        branch_event("left", "Left", "L"),
+        branch_event("right", "Right", "R"),
+        observation("send", "Placed", "Buyer", "m-1"),
+    ]);
+    assert_enabled(
+        &parallel_protocol(),
+        &parallel_recording(observations),
+        "Flow::Main::Placed",
+        2,
+    );
+}
+
+/// FR-895-AC-15 (TC-2531): `Placed` after `L` alone, `R` never observed in a
+/// closed recording, is `violated`, cause `unexpected`; and `R` alone is
+/// enabled, since a branch's steps have no order against a sibling branch.
+#[trace("TC-2531", "FR-895-AC-15")]
+#[test]
+fn a_step_after_an_all_join_is_unexpected_without_a_branch_and_branches_are_unordered() {
+    let observations = json!([
+        branch_event("left", "Left", "L"),
+        observation("send", "Placed", "Buyer", "m-1"),
+    ]);
+    assert_unexpected(
+        &parallel_protocol(),
+        &parallel_recording(observations),
+        "Flow::Main::Placed",
+        1,
+    );
+    assert_enabled(
+        &parallel_protocol(),
+        &parallel_recording(json!([branch_event("right", "Right", "R")])),
+        "Flow::Main::Both::right::Right::R",
+        0,
+    );
+}
+
+/// `Flow` whose `Placed`, `Got` and `Decide` run in a `repeat` `Loop` of at
+/// most two iterations.
+fn repeat_protocol() -> String {
+    let mut source = order_protocol(true).replace(
+        "run sequence Main {",
+        "run sequence Main { repeat Loop by Seller visible () max 2 while { true } sequence Body {",
+    );
+    let finish = source.find("finish Done").expect("finish terminal");
+    let close = source[..finish]
+        .rfind(" }")
+        .expect("the main sequence closes");
+    source.replace_range(close..close + 2, " } exhausted sequence Out { } }");
+    source
+}
+
+/// A closed recording of [`repeat_protocol`].
+fn repeat_recording(
+    observations: Value,
+    seller: Value,
+    buyer: Value,
+    correlations: Value,
+) -> Value {
+    json!({
+        "format": "filament.protocol-recording/1", "protocol": "Flow",
+        "observations": observations,
+        "local_order": {"Buyer": buyer, "Seller": seller},
+        "correlations": correlations,
+        "closure": {"state": "closed", "premises": [
+            {"kind": "execution", "node": "Flow::Done"},
+            {"kind": "branch", "node": "Flow::Main::Loop::Body::Decide::no"},
+            {"kind": "branch", "node": "Flow::Main::Loop::Body::Decide::yes"}
+        ]}
+    })
+}
+
+/// An observation at `Flow::Main::Loop::Body::<node>` without an instance.
+fn looped(kind: &str, node: &str, role: &str, message: &str) -> Value {
+    json!({"kind": kind, "node": format!("Flow::Main::Loop::Body::{node}"), "role": role,
+           "keys": {"message": message, "delivery": format!("d-{message}")},
+           "record": {"ok": true}})
+}
+
+/// FR-895-AC-16 (TC-2531): in a `repeat`, the second `Got` is enabled by the
+/// second `Placed`.
+#[trace("TC-2531", "FR-895-AC-16")]
+#[test]
+fn an_iteration_is_enabled_by_its_own_earlier_steps() {
+    let observations = json!([
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped("send", "Placed", "Buyer", "m-2"),
+        looped("receive", "Got", "Seller", "m-2"),
+    ]);
+    assert_enabled(
+        &repeat_protocol(),
+        &repeat_recording(
+            observations,
+            json!([1, 3]),
+            json!([0, 2]),
+            json!([{"send": 0, "receive": 1}, {"send": 2, "receive": 3}]),
+        ),
+        "Flow::Main::Loop::Body::Got",
+        3,
+    );
+}
+
+/// FR-895-AC-17 (TC-2531): a second `Got` with no second `Placed` is
+/// `violated`, cause `unexpected`, though the first iteration's `Placed`
+/// precedes it.
+#[trace("TC-2531", "FR-895-AC-17")]
+#[test]
+fn an_earlier_iteration_does_not_enable_a_later_one() {
+    let observations = json!([
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped("receive", "Got", "Seller", "m-2"),
+    ]);
+    assert_unexpected(
+        &repeat_protocol(),
+        &repeat_recording(
+            observations,
+            json!([1, 2]),
+            json!([0]),
+            json!([{"send": 0, "receive": 1}]),
+        ),
+        "Flow::Main::Loop::Body::Got",
+        2,
+    );
+}
+
 // ---- FR-1032: the recording's document identity ---------------------------
 
 /// FR-895-AC-7's closed, conforming recording of `Flow`.

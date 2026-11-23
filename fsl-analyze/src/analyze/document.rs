@@ -4796,6 +4796,7 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
         "closure",
         "global",
         "projections",
+        "prefixes",
         "recording",
         "verdict",
     ] {
