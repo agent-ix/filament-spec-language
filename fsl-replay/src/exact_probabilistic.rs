@@ -95,7 +95,7 @@ pub fn settle_exact_prob_build_issue(
     subject: SubjectLimits<'_>,
 ) -> ExactProbBuildRecord {
     let incomplete = |limit, value| ExactProbBuildRecord {
-        value: TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value }),
+        value: TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value, required: None }),
         diagnostic: None,
     };
     let failed = |diagnostic| ExactProbBuildRecord {
@@ -290,6 +290,7 @@ mod tests {
                 TerminalValue::Incomplete(IncompleteCause::LimitReached {
                     limit: ModelCheckLimit::ExactProbMaxStates,
                     value: 1_000,
+                    required: None,
                 }),
                 None,
             ),
@@ -311,6 +312,7 @@ mod tests {
                 TerminalValue::Incomplete(IncompleteCause::LimitReached {
                     limit: ModelCheckLimit::MaxCandidates,
                     value: 2,
+                    required: None,
                 }),
                 None,
             ),
@@ -368,6 +370,7 @@ mod tests {
                         counter: filament_exact::LimitKind::WorkUnits,
                     },
                     value: 4_096,
+                    required: None,
                 }),
                 None,
             ),
@@ -420,6 +423,7 @@ mod tests {
                         counter: filament_exact::LimitKind::WorkUnits,
                     },
                     value: 9,
+                    required: None,
                 }),
                 None,
             ),

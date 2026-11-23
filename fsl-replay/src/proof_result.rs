@@ -486,17 +486,9 @@ pub enum IncompleteCause {
         limit: ModelCheckLimit,
         /// The value the run used for it.
         value: u64,
-    },
-    /// FR-191, FSpec FR-331: a statistical method with a fixed sample count
-    /// `N` needs more than a limit allows. Wire cause `limit-reached` with
-    /// `limit`, `value`, `setting` and `required`, the `N`.
-    PreflightLimit {
-        /// The limit `N` exceeds.
-        limit: ModelCheckLimit,
-        /// The value the run used for it.
-        value: u64,
-        /// The required sample count.
-        required: u64,
+        /// FR-191, FSpec FR-331: the sample count `N` a fixed-N statistical
+        /// method requires, set only by its preflight stop.
+        required: Option<Integer>,
     },
     /// FSpec FR-331: a bounded task-automaton search stopped at a choice it
     /// cannot resolve (continuous demand or jitter, or a full job queue).
@@ -524,9 +516,7 @@ impl IncompleteCause {
         match self {
             Self::TimedOut => "timed-out",
             Self::Cancelled { .. } => "cancelled",
-            Self::ResourceExhausted | Self::LimitReached { .. } | Self::PreflightLimit { .. } => {
-                "limit-reached"
-            }
+            Self::ResourceExhausted | Self::LimitReached { .. } => "limit-reached",
             Self::PrecisionBudget { .. } => "precision-budget",
             Self::UnresolvedDynamics | Self::CertificateUnchecked => "bounded-search-incomplete",
         }
@@ -3067,6 +3057,7 @@ mod tests {
                     form: crate::statistical::ClaimForm::Probability,
                     comparison: crate::statistical::BoundComparison::GreaterOrEqual,
                     threshold: half.clone(),
+                    level: None,
                 },
                 estimate: None,
                 interval: None,

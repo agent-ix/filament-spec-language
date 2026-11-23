@@ -102,6 +102,7 @@ impl<'c> Work<'c> {
             IncompleteCause::LimitReached {
                 limit: ModelCheckLimit::ZoneMaxCheckWork,
                 value: self.limit,
+                required: None,
             },
         ))
     }
@@ -825,7 +826,7 @@ fn within_range(
 fn budgets<O>(certificate: &ZoneCertificate<O>, limits: CertificateCheckLimits) -> Step<(), O> {
     let stop = |limit, value| {
         Err(Halt::Verdict(ZoneCertificateVerdict::Stopped(
-            IncompleteCause::LimitReached { limit, value },
+            IncompleteCause::LimitReached { limit, value, required: None },
         )))
     };
     let edges = u64::try_from(certificate.edges.len()).unwrap_or(u64::MAX);

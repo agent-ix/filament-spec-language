@@ -546,7 +546,8 @@ fn qpa_stops_at_the_demand_point_limit_naming_it() {
         analyze(&subject, &limits, &Cancel::new()),
         ClosedFormOutcome::Stopped(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::ScheduleMaxDemandPoints,
-            value: 3
+            value: 3,
+            required: None,
         })
     );
 }
@@ -734,6 +735,7 @@ fn a_stopped_analysis_settles_incomplete() {
     let cause = IncompleteCause::LimitReached {
         limit: ModelCheckLimit::ScheduleMaxDemandPoints,
         value: 3,
+        required: None,
     };
     let outcome = ClosedFormOutcome::Stopped(cause.clone());
     assert_eq!(

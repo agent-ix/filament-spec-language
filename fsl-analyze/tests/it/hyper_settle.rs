@@ -181,7 +181,8 @@ fn a_refutation_that_does_not_replay_settles_with_no_counterexample() {
         stopped.value,
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxWitnessSet,
-            value: 0
+            value: 0,
+            required: None,
         })
     );
     assert_eq!(stopped.limit_reached, Some(reached));
@@ -383,7 +384,8 @@ fn a_stopped_run_names_its_limit_its_value_and_its_count() {
         record.value,
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxWitnessSet,
-            value: 0
+            value: 0,
+            required: None,
         })
     );
     assert_eq!(

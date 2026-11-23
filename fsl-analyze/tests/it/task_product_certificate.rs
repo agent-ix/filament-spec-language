@@ -910,6 +910,7 @@ fn a_work_limit_below_the_graph_is_incomplete() {
             fsl_replay::IncompleteCause::LimitReached {
                 limit: fsl_replay::ModelCheckLimit::ZoneMaxCheckWork,
                 value: 1,
+                required: None,
             }
         ))
     );
@@ -1329,6 +1330,7 @@ fn the_certificate_budgets_and_cancellation_stop_the_task_product_check() {
             fsl_replay::IncompleteCause::LimitReached {
                 limit: fsl_replay::ModelCheckLimit::CertificateMaxEdges,
                 value: 1,
+                required: None,
             }
         ))
     );
@@ -1342,6 +1344,7 @@ fn the_certificate_budgets_and_cancellation_stop_the_task_product_check() {
             fsl_replay::IncompleteCause::LimitReached {
                 limit: fsl_replay::ModelCheckLimit::CertificateMaxBytes,
                 value: 1,
+                required: None,
             }
         ))
     );

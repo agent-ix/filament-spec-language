@@ -395,6 +395,7 @@ pub(crate) fn settle(
         ContractOutcome::MaxCases(value) => incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::ContractCheckMaxCases,
             value,
+            required: None,
         }),
         ContractOutcome::Cancelled(source) => incomplete(IncompleteCause::Cancelled { source }),
         ContractOutcome::Stopped {
@@ -405,10 +406,12 @@ pub(crate) fn settle(
             Some(ExpansionLimit::EvaluationMeter(counter)) => IncompleteCause::LimitReached {
                 limit: ModelCheckLimit::EvaluationMeter { counter },
                 value: fsl_replay::meter_bound(&meter, counter),
+                required: None,
             },
             Some(ExpansionLimit::MaxCandidates) => IncompleteCause::LimitReached {
                 limit: ModelCheckLimit::MaxCandidates,
                 value: max_candidates,
+                required: None,
             },
             None => IncompleteCause::ResourceExhausted,
         }),

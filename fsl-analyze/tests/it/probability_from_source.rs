@@ -1048,7 +1048,7 @@ fn statistical_refusals_and_budgets_from_source() {
     );
     // The default Okamoto count exceeds the budget, so nothing is drawn.
     assert_eq!(item["record"]["cause"]["limit"], "max_samples", "{item}");
-    assert_eq!(item["record"]["cause"]["required"], 922, "{item}");
+    assert_eq!(item["record"]["cause"]["required"], "922", "{item}");
     assert_eq!(item["record"]["cause"]["value"], 10, "{item}");
     assert_eq!(
         item["request"]["probabilistic"]["limits"]["max_samples"], 10,
@@ -1077,7 +1077,7 @@ fn a_tiny_indifference_region_settles_incomplete_before_sampling() {
         item["record"]["cause"],
         json!({"kind": "limit-reached", "limit": "max_samples",
             "value": 16_777_216, "setting": "statistical.max_samples",
-            "required": 921_034_038}),
+            "required": "921034038"}),
         "{item}"
     );
 }

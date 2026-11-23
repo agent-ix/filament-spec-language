@@ -302,16 +302,20 @@ impl BoundComparison {
     }
 }
 
-/// The FR-413 claim-bound object `{type, comparison, threshold}` a verdict
-/// carries (FR-410 `bound`).
+/// The claim's own bound, `{type, comparison, threshold}` and, for a
+/// quantile claim, its `level`, which a verdict carries (FR-410 `bound`).
+/// The comparison and threshold are the claim's as written, never a
+/// reduction of them.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerdictBound {
     /// The claim's form, which names the bound's `type`.
     pub form: ClaimForm,
-    /// The comparison.
+    /// The claim's comparison.
     pub comparison: BoundComparison,
-    /// The threshold.
+    /// The claim's threshold: a quantile claim's `c`.
     pub threshold: Rational,
+    /// A quantile claim's level `q`; absent for every other form.
+    pub level: Option<Rational>,
 }
 
 /// A test's or a claim's decision (FR-189).
@@ -593,14 +597,14 @@ pub enum StatisticalStop {
     /// A method with a fixed sample count `N` known before drawing needs
     /// more than a budget allows (FR-191): the run stops with no draw,
     /// naming the budget, the value it was set to and the `N` the method
-    /// requires, which saturates at `u64::MAX`.
+    /// requires, exactly.
     PreflightLimit {
         /// The budget `N` exceeds.
         limit: StatisticalLimit,
         /// Its value in the run.
         value: u64,
         /// The sample count the method requires.
-        required: u64,
+        required: filament_exact::Integer,
     },
     /// A sample's expansion stopped (ADR-024 ST-10), for example on the
     /// clause meter.

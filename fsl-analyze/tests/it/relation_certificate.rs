@@ -414,7 +414,8 @@ fn hp1_checker_owns_its_tuple_allowance_and_names_first_unpaid_tuple() {
         cause,
         IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxRelationTuples,
-            value: 63
+            value: 63,
+            required: None,
         }
     );
     assert_eq!(tuple.count, 64);
@@ -855,14 +856,14 @@ fn hp1_checker_state_transition_and_cancellation_stops_never_certify() {
         assert_eq!(
             fixture.check(&proof, limits).expect("graph limit"),
             ProductClosureCheck::Stopped {
-                cause: IncompleteCause::LimitReached { limit, value: 1 },
+                cause: IncompleteCause::LimitReached { limit, value: 1, required: None },
                 tuple: None
             }
         );
         let record = fixture.settle(proof.clone(), limits);
         assert_eq!(
             record.value,
-            TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value: 1 })
+            TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value: 1, required: None })
         );
         assert_eq!(record.count, None);
         assert!(record.counterexample.is_none());

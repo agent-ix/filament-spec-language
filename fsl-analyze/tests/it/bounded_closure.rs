@@ -460,7 +460,7 @@ fn a_stopped_bounded_check_names_what_stopped_it() {
     let proof = certificate(&clause.run());
     let request = clause.request();
     let stop = |limit, value| {
-        TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached { limit, value })
+        TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached { limit, value, required: None })
     };
     let mut states = ModelCheckLimits::default();
     states.limits.max_states = 2;

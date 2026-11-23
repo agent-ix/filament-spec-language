@@ -1243,7 +1243,7 @@ fn a_certificate_check_settles_accepted_rejected_or_stopped_with_the_named_setti
     for (record, limit, value, setting) in limit_stops {
         assert_eq!(
             record.value,
-            TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value })
+            TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value, required: None })
         );
         assert_eq!(record.limit_reached, Some(ReachedLimit { limit, value }));
         assert_eq!(limit.setting(), setting);
@@ -1369,7 +1369,7 @@ fn a_stopped_check_names_what_stopped_it() {
     let request = invariant.request(&world, UNLIMITED);
     let defaults = ModelCheckLimits::default();
     let stop = |limit, value| {
-        TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached { limit, value })
+        TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached { limit, value, required: None })
     };
     let mut states = defaults;
     states.limits.max_states = 2;
@@ -1420,7 +1420,8 @@ fn a_stopped_check_names_what_stopped_it() {
         record.value,
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxStates,
-            value: 2
+            value: 2,
+            required: None,
         })
     );
     assert_eq!(
@@ -1557,7 +1558,8 @@ fn key_admission_is_bounded_and_cancellable() {
         check_closure(&request, &certificate, &limits, &Cancel::new()).expect("checked"),
         TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxStates,
-            value: 4
+            value: 4,
+            required: None,
         })
     );
     certificate.states.reverse();
@@ -1982,6 +1984,7 @@ fn hyper_product_certificate_is_recomputed_and_rejects_tampering() {
             cause: fsl_replay::IncompleteCause::LimitReached {
                 limit: fsl_replay::ModelCheckLimit::MaxStates,
                 value: 1,
+                required: None,
             },
             tuple: None
         }
@@ -2103,6 +2106,7 @@ fn hyper_product_rejection_and_checker_stop_never_settle_certified() {
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxStates,
             value: 1,
+            required: None,
         })
     );
     assert_eq!(record.label, ResultLabel::Failed);

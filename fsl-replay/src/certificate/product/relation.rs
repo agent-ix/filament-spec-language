@@ -119,7 +119,7 @@ fn rejection(rule: CertificateRule, key: &StateKey) -> ProductClosureCheck {
 }
 
 fn stopped(limit: ModelCheckLimit, value: u64) -> ProductClosureRefusal {
-    ProductClosureRefusal::Stopped(IncompleteCause::LimitReached { limit, value })
+    ProductClosureRefusal::Stopped(IncompleteCause::LimitReached { limit, value, required: None })
 }
 
 fn poll(cancel: &Cancel) -> Result<(), ProductClosureRefusal> {
@@ -412,6 +412,7 @@ pub(super) fn check(
                 cause: IncompleteCause::LimitReached {
                     limit: ModelCheckLimit::MaxRelationTuples,
                     value: limits.max_relation_tuples,
+                    required: None,
                 },
                 tuple: Some(HyperTupleStop {
                     count: ordinal,

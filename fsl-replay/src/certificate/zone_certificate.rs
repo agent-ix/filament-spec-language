@@ -810,6 +810,7 @@ fn automaton_stop(limit: u64) -> ZoneCertificateVerdict {
     ZoneCertificateVerdict::Stopped(IncompleteCause::LimitReached {
         limit: ModelCheckLimit::MaxAutomatonStates,
         value: limit,
+        required: None,
     })
 }
 
@@ -1601,6 +1602,7 @@ impl<O> Checker<'_, '_, O> {
                 IncompleteCause::LimitReached {
                     limit: ModelCheckLimit::CertificateMaxEdges,
                     value: self.max_edges,
+                    required: None,
                 },
             )));
         }
@@ -1625,7 +1627,7 @@ impl<O> Checker<'_, '_, O> {
     fn budgets(&self, limits: CertificateCheckLimits) -> Step<(), O> {
         let stop = |limit, value| {
             Err(Halt::Verdict(ZoneCertificateVerdict::Stopped(
-                IncompleteCause::LimitReached { limit, value },
+                IncompleteCause::LimitReached { limit, value, required: None },
             )))
         };
         let edges = u64::try_from(self.certificate.edges.len()).unwrap_or(u64::MAX);
@@ -2819,7 +2821,7 @@ impl<O> Checker<'_, '_, O> {
     fn unsound(&self, verdict: &StepVerdict) -> Step<(), O> {
         let stop = |limit, value| {
             Err(Halt::Verdict(ZoneCertificateVerdict::Stopped(
-                IncompleteCause::LimitReached { limit, value },
+                IncompleteCause::LimitReached { limit, value, required: None },
             )))
         };
         match verdict {
@@ -4260,6 +4262,7 @@ fn sequence_work<O>(
             IncompleteCause::LimitReached {
                 limit: ModelCheckLimit::CertificateMaxEdges,
                 value: limit,
+                required: None,
             },
         )));
     }
@@ -4614,6 +4617,7 @@ mod state_graph_sequence_tests {
                 IncompleteCause::LimitReached {
                     limit: ModelCheckLimit::CertificateMaxEdges,
                     value: 256,
+                    required: None,
                 }
             )))
         ));

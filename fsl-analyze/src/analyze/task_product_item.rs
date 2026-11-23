@@ -576,6 +576,7 @@ fn prove<'a>(
                     verdict: ProofVerdict::Stopped(fsl_replay::IncompleteCause::LimitReached {
                         limit: fsl_replay::ModelCheckLimit::ZoneMaxCheckWork,
                         value,
+                        required: None,
                     }),
                     certificate: None,
                 }

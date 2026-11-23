@@ -667,7 +667,8 @@ fn a_replay_a_limit_stopped_settles_incomplete_naming_the_limit() {
         record.value,
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxStates,
-            value: 2
+            value: 2,
+            required: None,
         })
     );
     assert_eq!(record.execution, Execution::ResourceIncomplete);
@@ -751,6 +752,7 @@ fn each_outcome_settles_its_row_of_the_map() {
     let limit_reached = IncompleteCause::LimitReached {
         limit: ModelCheckLimit::MaxStates,
         value: 2,
+        required: None,
     };
     assert_eq!(
         stopped.value,
@@ -865,7 +867,7 @@ fn a_meter_or_candidate_stop_settles_naming_its_setting() {
         );
         assert_eq!(
             record.value,
-            TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value })
+            TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value, required: None })
         );
         assert_eq!(
             (record.label, record.basis, record.execution, record.truth),

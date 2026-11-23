@@ -595,6 +595,7 @@ fn settle<T: SubjectTransition>(
                     IncompleteCause::LimitReached {
                         limit,
                         value: bound.value,
+                        required: None,
                     },
                     Some(ReachedLimit {
                         limit,
@@ -807,6 +808,7 @@ impl Row {
             (IncompleteCause::ResourceExhausted, Some(reached)) => IncompleteCause::LimitReached {
                 limit: reached.limit,
                 value: reached.value,
+                required: None,
             },
             (cause, _) => cause,
         };
@@ -829,13 +831,12 @@ impl Row {
             }
             Ok(TemporalCertificateCheck::Stopped(cause)) => {
                 let limit_reached = match cause {
-                    IncompleteCause::LimitReached { limit, value } => {
+                    IncompleteCause::LimitReached { limit, value, .. } => {
                         Some(ReachedLimit { limit, value })
                     }
                     IncompleteCause::TimedOut
                     | IncompleteCause::Cancelled { .. }
                     | IncompleteCause::ResourceExhausted
-                    | IncompleteCause::PreflightLimit { .. }
                     | IncompleteCause::UnresolvedDynamics
                     | IncompleteCause::CertificateUnchecked
                     | IncompleteCause::PrecisionBudget { .. } => None,

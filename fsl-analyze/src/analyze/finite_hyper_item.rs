@@ -233,6 +233,7 @@ pub(super) fn item<'a>(
                                         counter: incomplete.limit_kind,
                                     },
                                     value: incomplete.limit,
+                                    required: None,
                                 });
                                 return FiniteTupleOutcome::Incomplete;
                             }

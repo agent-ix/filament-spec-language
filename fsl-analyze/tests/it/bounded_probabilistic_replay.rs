@@ -738,6 +738,7 @@ fn interval_bounds_and_precision_budget_cannot_be_cast_into_bounded_refutations(
                     &TerminalValue::Incomplete(fsl_replay::IncompleteCause::LimitReached {
                         limit: fsl_replay::ModelCheckLimit::ExactProbMaxRationalBits,
                         value: 1,
+                        required: None,
                     })
                 );
             }

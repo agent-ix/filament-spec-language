@@ -360,7 +360,7 @@ fn the_case_budget_settles_incomplete_naming_max_cases() {
         0,
     );
     let record = run(&world, &clause(&world, "Small"), Some(2));
-    let TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value }) =
+    let TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value, .. }) =
         terminal(&record)
     else {
         panic!("expected limit-reached: {:?}", terminal(&record));

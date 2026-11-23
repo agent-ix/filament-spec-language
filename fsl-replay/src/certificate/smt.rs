@@ -150,7 +150,7 @@ impl Budget<'_> {
         let total = counter.get().saturating_add(count);
         if total > value {
             return Err(Halt::Check(SmtProofCheck::Stopped(
-                IncompleteCause::LimitReached { limit, value },
+                IncompleteCause::LimitReached { limit, value, required: None },
             )));
         }
         counter.set(total);

@@ -16,9 +16,10 @@ use fsl_eval::simulation::{weighted_choice, ChoicePoint, TotalAboveDrawRange, We
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::selection::DefinitionRef;
 use fsl_replay::statistical::{
-    ClaimForm, Confidence, Coverage, Decision, MeasureValue, StatisticalLimit, StatisticalLimits,
+    BoundComparison, ClaimForm, Confidence, Coverage, Decision, MeasureValue, StatisticalLimit, StatisticalLimits,
     StatisticalMethod, StatisticalOutcome, StatisticalRefusal, StatisticalStop,
-    StatisticalUnsupported, StatisticalVerdict, TestResult, UndecidedCause, WitnessValue,
+    StatisticalUnsupported, StatisticalVerdict, TestResult, UndecidedCause, VerdictBound,
+    WitnessValue,
 };
 use fsl_replay::{UndefinedEvaluation, UndefinedLocus, UndefinedSite};
 use ix_trace_rs::trace;
@@ -108,6 +109,7 @@ fn claim(
 fn p95() -> StatisticalClaim {
     let (_, bound) = reduce_quantile(ratio(95, 100), QuantileComparison::AtMost, int(5));
     StatisticalClaim::new(ClaimForm::Quantile, bound, confidence(ratio(1, 100))).expect("P95")
+        .with_quantile(ratio(95, 100), QuantileComparison::AtMost, int(5))
 }
 
 fn one_test() -> Vec<TestSubject> {
@@ -288,6 +290,7 @@ fn p95_settles_by_okamoto_and_by_sprt() {
             int(milliseconds),
         );
         StatisticalClaim::new(ClaimForm::Quantile, bound, confidence(ratio(1, 100))).expect("P95")
+        .with_quantile(ratio(95, 100), QuantileComparison::AtMost, int(milliseconds))
     };
     let five = at(5);
     let two = at(2);
@@ -1112,7 +1115,7 @@ fn max_samples_stops_a_run_before_its_method_completes() {
         StatisticalStop::PreflightLimit {
             limit: StatisticalLimit::MaxSamples,
             value: 1_000_000,
-            required: 9_210_341,
+            required: Integer::from(9_210_341_u64),
         }
     );
     assert_eq!(
@@ -1133,7 +1136,7 @@ fn max_samples_stops_a_run_before_its_method_completes() {
         StatisticalStop::PreflightLimit {
             limit: StatisticalLimit::MaxDraws,
             value: 1_000_000,
-            required: 9_210_341,
+            required: Integer::from(9_210_341_u64),
         }
     );
     assert_eq!((partial.samples, partial.draws, probe.calls), (0, 0, 0));
@@ -1143,6 +1146,39 @@ fn max_samples_stops_a_run_before_its_method_completes() {
     assert_eq!(verdict.decision, Decision::Accepted);
     assert_eq!(verdict.basis.samples, 9_210_341);
     assert_eq!(StatisticalLimits::default().max_samples, 16_777_216);
+}
+
+/// FR-191-AC-1: a `max_draws` equal to `N` admits the run, which draws `N`
+/// samples and settles; one below `N` stops before any draw.
+// FR-191-AC-6 (workers) is tracked by QSL-2943 and left untagged here.
+#[trace("TC-624", "FR-191-AC-1")]
+#[test]
+fn a_max_draws_equal_to_the_sample_count_admits_the_run() {
+    let claim = p95();
+    let tests = one_test();
+    let sampler = sampler_ref();
+    let mut equal = request(&claim, &tests, StatisticalMethod::Okamoto, &sampler);
+    equal.limits.max_draws = 23_026;
+    let verdict = completed(run(equal, &mut Service::new(5)));
+    assert_eq!(verdict.decision, Decision::Accepted);
+    assert_eq!((verdict.basis.samples, verdict.basis.draws), (23_026, 23_026));
+
+    let mut below = request(&claim, &tests, StatisticalMethod::Okamoto, &sampler);
+    below.limits.max_draws = 23_025;
+    let mut probe = fixed(Ok(Sample::Event(true)));
+    let outcome = run(below, &mut probe);
+    let StatisticalOutcome::Stopped { stop, partial, .. } = outcome else {
+        panic!("expected Stopped, got {outcome:?}");
+    };
+    assert_eq!(
+        stop,
+        StatisticalStop::PreflightLimit {
+            limit: StatisticalLimit::MaxDraws,
+            value: 23_025,
+            required: Integer::from(23_026_u64),
+        }
+    );
+    assert_eq!((partial.samples, partial.draws, probe.calls), (0, 0, 0));
 }
 
 /// FR-191-AC-2: the activation variant with SPRT and `max_draws` 1,000 stops
@@ -1708,7 +1744,7 @@ fn max_samples_stops_before_the_next_draw_and_stops_carry_provenance() {
         StatisticalStop::PreflightLimit {
             limit: StatisticalLimit::MaxSamples,
             value: 9_210_340,
-            required: 9_210_341,
+            required: Integer::from(9_210_341_u64),
         }
     );
     assert_eq!(partial.samples, 0);
@@ -1728,7 +1764,7 @@ fn max_samples_stops_before_the_next_draw_and_stops_carry_provenance() {
         StatisticalStop::PreflightLimit {
             limit: StatisticalLimit::MaxDraws,
             value: 1_000,
-            required: 23_026,
+            required: Integer::from(23_026_u64),
         }
     );
     assert_eq!((partial.samples, partial.draws), (0, 0));
@@ -1782,30 +1818,81 @@ fn clopper_pearson_compares_its_sample_count_with_the_budgets_before_drawing() {
         StatisticalStop::PreflightLimit {
             limit: StatisticalLimit::MaxDraws,
             value: 5_000_000,
-            required: 9_210_341,
+            required: Integer::from(9_210_341_u64),
         }
     );
     assert_eq!((partial.samples, partial.draws, probe.calls), (0, 0, 0));
 }
 
-/// FR-192: a completed verdict carries the bound the claim was judged
-/// against, accepted or not.
-#[trace("TC-627", "FR-192-AC-2", "FR-192-AC-9")]
+/// FR-192-AC-2, FR-410: an accepted, a rejected and an undecided verdict
+/// each carry the claim's own bound as written (its comparison, its
+/// threshold, and a quantile's level beside them), not the reduced
+/// probability bound.
+#[trace("TC-627", "FR-192-AC-2")]
 #[test]
-fn a_verdict_carries_the_claims_bound() {
-    let claim = p95();
+fn a_verdict_carries_the_claims_own_bound() {
     let tests = one_test();
     let sampler = sampler_ref();
-    let verdict = completed(run(
-        request(&claim, &tests, StatisticalMethod::Sprt, &sampler),
+    let quantile = |comparison: QuantileComparison, c: i64| {
+        let (_, bound) = reduce_quantile(ratio(95, 100), comparison, int(c));
+        StatisticalClaim::new(ClaimForm::Quantile, bound, confidence(ratio(1, 100)))
+            .expect("quantile claim")
+            .with_quantile(ratio(95, 100), comparison, int(c))
+    };
+
+    let at_most = quantile(QuantileComparison::AtMost, 5);
+    let accepted = completed(run(
+        request(&at_most, &tests, StatisticalMethod::Sprt, &sampler),
         &mut Service::new(5),
     ));
+    assert_eq!(accepted.decision, Decision::Accepted);
     assert_eq!(
-        verdict.bound,
+        accepted.bound,
+        VerdictBound {
+            form: ClaimForm::Quantile,
+            comparison: BoundComparison::LessOrEqual,
+            threshold: int(5),
+            level: Some(ratio(19, 20)),
+        }
+    );
+
+    let at_least = quantile(QuantileComparison::AtLeast, 2);
+    let rejected = completed(run(
+        request(&at_least, &tests, StatisticalMethod::Sprt, &sampler),
+        &mut Service::new(5),
+    ));
+    assert_eq!(rejected.decision, Decision::Rejected);
+    assert_eq!(
+        rejected.bound,
         VerdictBound {
             form: ClaimForm::Quantile,
             comparison: BoundComparison::GreaterOrEqual,
-            threshold: claim.bound().threshold.clone(),
+            threshold: int(2),
+            level: Some(ratio(19, 20)),
+        }
+    );
+
+    let tight = long_run(Comparison::AtMost, ratio(9995, 10000));
+    let undecided = completed(run(
+        request(
+            &tight,
+            &tests,
+            StatisticalMethod::Regenerative { min_cycles: 100 },
+            &sampler,
+        ),
+        &mut Avail::default(),
+    ));
+    assert_eq!(
+        undecided.decision,
+        Decision::Undecided(UndecidedCause::IndifferenceRegion)
+    );
+    assert_eq!(
+        undecided.bound,
+        VerdictBound {
+            form: ClaimForm::LongRunFraction,
+            comparison: BoundComparison::LessOrEqual,
+            threshold: ratio(1999, 2000),
+            level: None,
         }
     );
 }
@@ -1949,7 +2036,7 @@ fn item(outcome: &StatisticalOutcome, index: usize) -> fsl_replay::OutcomeItem {
 /// test and `α' = 1/100`; the SPRT result at 2 ms settles `measured`,
 /// rejected, with no interval; FR-190-AC-1's result settles accepted with
 /// asymptotic coverage.
-#[trace("TC-627", "FR-192-AC-2", "FR-192-AC-9")]
+#[trace("TC-627", "FR-192-AC-2")]
 #[test]
 fn okamoto_sprt_and_regenerative_results_settle_measured() {
     let tests = one_test();
@@ -1961,6 +2048,7 @@ fn okamoto_sprt_and_regenerative_results_settle_measured() {
             int(milliseconds),
         );
         StatisticalClaim::new(ClaimForm::Quantile, bound, confidence(ratio(1, 100))).expect("P95")
+        .with_quantile(ratio(95, 100), QuantileComparison::AtMost, int(milliseconds))
     };
     let five = at(5);
     let two = at(2);
@@ -2025,6 +2113,7 @@ fn a_rejected_measurement_fails_the_gate_as_a_violation() {
             int(milliseconds),
         );
         StatisticalClaim::new(ClaimForm::Quantile, bound, confidence(ratio(1, 100))).expect("P95")
+        .with_quantile(ratio(95, 100), QuantileComparison::AtMost, int(milliseconds))
     };
     let (five, two) = (at(5), at(2));
     let accepted = run(
@@ -2134,7 +2223,8 @@ fn an_undefined_sample_settles_measured_rejected() {
 fn the_first_violating_samples_are_kept_in_trace_order() {
     let (_, bound) = reduce_quantile(ratio(95, 100), QuantileComparison::AtMost, int(2));
     let two = StatisticalClaim::new(ClaimForm::Quantile, bound, confidence(ratio(1, 100)))
-        .expect("P95 at 2 ms");
+        .expect("P95 at 2 ms")
+        .with_quantile(ratio(95, 100), QuantileComparison::AtMost, int(2));
     let tests = one_test();
     let sampler = sampler_ref();
     let mut witnessed = ServiceSteps(Service::new(2));
@@ -2182,7 +2272,8 @@ fn the_first_violating_samples_are_kept_in_trace_order() {
 fn witnesses_interleave_across_tests_by_trace_index() {
     let (_, bound) = reduce_quantile(ratio(95, 100), QuantileComparison::AtMost, int(2));
     let two = StatisticalClaim::new(ClaimForm::Quantile, bound, confidence(ratio(1, 100)))
-        .expect("P95 at 2 ms");
+        .expect("P95 at 2 ms")
+        .with_quantile(ratio(95, 100), QuantileComparison::AtMost, int(2));
     let tests = two_tests();
     let sampler = sampler_ref();
     let mut witnessed = ServiceSteps(Service::new(2));
@@ -2342,13 +2433,21 @@ fn four_sample_claim(
 ) -> StatisticalClaim {
     let confidence = Confidence::new(alpha.clone(), alpha, iota).expect("confidence");
     let bound = match form {
-        ClaimForm::Quantile => reduce_quantile(theta, QuantileComparison::AtMost, int(at_most)).1,
+        ClaimForm::Quantile => {
+            reduce_quantile(theta.clone(), QuantileComparison::AtMost, int(at_most)).1
+        }
         _ => Bound {
             comparison: Comparison::AtLeast,
-            threshold: theta,
+            threshold: theta.clone(),
         },
     };
-    StatisticalClaim::new(form, bound, confidence).expect("claim")
+    let claim = StatisticalClaim::new(form, bound, confidence).expect("claim");
+    match form {
+        ClaimForm::Quantile => {
+            claim.with_quantile(theta, QuantileComparison::AtMost, int(at_most))
+        }
+        _ => claim,
+    }
 }
 
 /// A stub whose sample at trace index `i` is the `i`-th of `measures`, a
@@ -2585,7 +2684,9 @@ fn an_at_least_quantile_claims_estimate_is_its_strict_probability() {
     // `m = 2`: `α' = 21/100`, `ι = 1/5` give `N = ⌈ln(100/21) / (2/25)⌉ = 20`.
     let confidence =
         Confidence::new(ratio(21, 50), ratio(21, 50), ratio(1, 5)).expect("confidence");
-    let claim = StatisticalClaim::new(ClaimForm::Quantile, bound, confidence).expect("claim");
+    let claim = StatisticalClaim::new(ClaimForm::Quantile, bound, confidence)
+        .expect("claim")
+        .with_quantile(ratio(1, 2), QuantileComparison::AtLeast, int(3));
     let tests = [
         TestSubject {
             initial: 0,

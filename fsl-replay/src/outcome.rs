@@ -488,7 +488,7 @@ pub struct ItemCause {
     value: Option<u64>,
     /// A fixed-N statistical preflight stop's required sample count.
     #[serde(skip_serializing_if = "Option::is_none")]
-    required: Option<u64>,
+    required: Option<String>,
     /// An `insufficient-data` cause's window count.
     #[serde(skip_serializing_if = "Option::is_none")]
     count: Option<u64>,
@@ -1430,12 +1430,7 @@ impl OutcomeItem {
                 let mut item = ItemCause::kind(cause.as_str());
                 match cause {
                     IncompleteCause::Cancelled { source } => item.source = Some(*source),
-                    IncompleteCause::LimitReached { limit, value } => {
-                        item.limit = Some(CauseLimit::Name(limit.as_str()));
-                        item.value = Some(*value);
-                        item.setting = Some(limit.setting());
-                    }
-                    IncompleteCause::PreflightLimit {
+                    IncompleteCause::LimitReached {
                         limit,
                         value,
                         required,
@@ -1443,7 +1438,7 @@ impl OutcomeItem {
                         item.limit = Some(CauseLimit::Name(limit.as_str()));
                         item.value = Some(*value);
                         item.setting = Some(limit.setting());
-                        item.required = Some(*required);
+                        item.required = required.as_ref().map(ToString::to_string);
                     }
                     IncompleteCause::PrecisionBudget { lower, upper } => {
                         item.lower = Some((**lower).clone());
@@ -2026,6 +2021,9 @@ fn statistical_verdict_wire(
     }
     if let Some(interval) = statistical_interval_wire(verdict.interval.as_ref()) {
         value["interval"] = interval;
+    }
+    if let Some(level) = &verdict.bound.level {
+        value["bound"]["level"] = rational_wire(level);
     }
     Ok(value)
 }

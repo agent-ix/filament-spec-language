@@ -55,6 +55,20 @@ pub struct StatisticalClaim {
     pub(crate) timed: bool,
     /// The checked finite horizon for a timed sample, in the model unit.
     timed_horizon: Option<filament_exact::Rational>,
+    /// A quantile claim as written, which its reduced `bound` replaces for
+    /// the counts.
+    quantile: Option<QuantileClaim>,
+}
+
+/// A quantile claim as written: `quantile level of M comparison threshold`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct QuantileClaim {
+    /// The level `q`.
+    pub level: Rational,
+    /// The comparison with `c`.
+    pub comparison: QuantileComparison,
+    /// The threshold `c`.
+    pub threshold: Rational,
 }
 
 /// Why a form, a bound and confidence parameters are not a claim EN-4
@@ -97,7 +111,53 @@ impl StatisticalClaim {
             confidence,
             timed: false,
             timed_horizon: None,
+            quantile: None,
         })
+    }
+
+    /// This claim with the quantile claim it was reduced from.
+    #[must_use]
+    pub fn with_quantile(
+        mut self,
+        level: Rational,
+        comparison: QuantileComparison,
+        threshold: Rational,
+    ) -> Self {
+        self.quantile = Some(QuantileClaim {
+            level,
+            comparison,
+            threshold,
+        });
+        self
+    }
+
+    /// The claim's own bound as a verdict states it (FR-410 `bound`): its
+    /// comparison and threshold as written, and a quantile claim's level.
+    /// `None` for a quantile claim built without its written form.
+    pub fn verdict_bound(&self) -> Option<fsl_replay::statistical::VerdictBound> {
+        use fsl_replay::statistical::{BoundComparison, VerdictBound};
+        match (self.form, &self.quantile) {
+            (ClaimForm::Quantile, Some(written)) => Some(VerdictBound {
+                form: self.form,
+                comparison: match written.comparison {
+                    QuantileComparison::AtLeast => BoundComparison::GreaterOrEqual,
+                    QuantileComparison::AtMost => BoundComparison::LessOrEqual,
+                },
+                threshold: written.threshold.clone(),
+                level: Some(written.level.clone()),
+            }),
+            (ClaimForm::Quantile, None) => None,
+            (_, _) => Some(VerdictBound {
+                form: self.form,
+                comparison: match self.bound.comparison {
+                    Comparison::AtLeast => BoundComparison::GreaterOrEqual,
+                    Comparison::AtMost => BoundComparison::LessOrEqual,
+                    Comparison::Below => return None,
+                },
+                threshold: self.bound.threshold.clone(),
+                level: None,
+            }),
+        }
     }
 
     /// The claim's form.
