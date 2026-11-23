@@ -2359,24 +2359,37 @@ fn check_argv(directory: &Path, bytes: &[u8]) -> Result<Option<RunResult>> {
     let mut index = 1;
     while index < arguments.len() {
         match arguments[index] {
-            "--markdown" if !markdown => {
+            "--markdown" => {
+                if markdown {
+                    return Err(check_option_refusal(
+                        "--markdown",
+                        "is given more than once",
+                    ));
+                }
                 markdown = true;
                 index += 1;
             }
-            "--format" if format.is_none() && index + 1 < arguments.len() => {
-                format = Some(arguments[index + 1]);
+            option @ ("--format" | "--extensions") => {
+                let slot = if option == "--format" {
+                    &mut format
+                } else {
+                    &mut extensions_file
+                };
+                if slot.is_some() {
+                    return Err(check_option_refusal(option, "is given more than once"));
+                }
+                match arguments.get(index + 1) {
+                    Some(value) if !value.starts_with('-') => *slot = Some(*value),
+                    _ => return Err(check_option_refusal(option, "expects a value")),
+                }
                 index += 2;
             }
-            "--extensions" if extensions_file.is_none() && index + 1 < arguments.len() => {
-                extensions_file = Some(arguments[index + 1]);
-                index += 2;
+            argument if argument.starts_with('-') => {
+                return Err(check_option_refusal(argument, "is not recognized"));
             }
-            argument if !argument.starts_with("--") => {
+            argument => {
                 positionals.push(argument);
                 index += 1;
-            }
-            _ => {
-                return Err(check_argv_refusal());
             }
         }
     }
@@ -2420,16 +2433,7 @@ fn check_argv(directory: &Path, bytes: &[u8]) -> Result<Option<RunResult>> {
     };
     if markdown {
         let (authority, name) = identity.expect("markdown requires the document labels");
-        let document = check_markdown_document(directory, authority, name, source, extensions)?;
-        let exit_code = document.category().exit_code();
-        let document = serde_json::to_value(&document).map_err(RunCause::Output)?;
-        return Ok(Some(RunResult {
-            exit_code,
-            value: NativeResult::check_document(document),
-            outcome: None,
-            requirements: None,
-            sources: crate::Sources::default(),
-        }));
+        return check_markdown_argv(directory, authority, name, source, extensions).map(Some);
     }
     let source_path = Path::new(source);
     let source_path = if source_path.is_absolute() {
@@ -2455,6 +2459,48 @@ fn check_argv(directory: &Path, bytes: &[u8]) -> Result<Option<RunResult>> {
     }))
 }
 
+#[cfg(feature = "quire-extraction")]
+fn check_markdown_argv(
+    directory: &Path,
+    authority: &str,
+    name: &str,
+    source: &str,
+    extensions: Vec<CheckExtensionInput>,
+) -> Result<RunResult> {
+    let document = check_markdown_document(directory, authority, name, source, extensions)?;
+    let exit_code = document.category().exit_code();
+    let document = serde_json::to_value(&document).map_err(RunCause::Output)?;
+    Ok(RunResult {
+        exit_code,
+        value: NativeResult::check_document(document),
+        outcome: None,
+        requirements: None,
+        sources: crate::Sources::default(),
+    })
+}
+
+#[cfg(not(feature = "quire-extraction"))]
+fn check_markdown_argv(
+    _directory: &Path,
+    _authority: &str,
+    _name: &str,
+    _source: &str,
+    _extensions: Vec<CheckExtensionInput>,
+) -> Result<RunResult> {
+    Err(RunCause::ClauseRequest {
+        member: "--markdown".to_owned(),
+        reason: "this build of fsl-command has no Markdown extraction (feature quire-extraction)"
+            .to_owned(),
+    })
+}
+
+fn check_option_refusal(option: &str, reason: &str) -> RunCause {
+    RunCause::ClauseRequest {
+        member: option.to_owned(),
+        reason: format!("check option {option} {reason}"),
+    }
+}
+
 fn check_argv_refusal() -> RunCause {
     RunCause::ClauseRequest {
         member: "argv".to_owned(),
@@ -2465,6 +2511,7 @@ fn check_argv_refusal() -> RunCause {
 
 /// FR-662, FSpec FR-563: check every `ix:native` fence of one Markdown
 /// document, naming each body `<identity>#<clause id>`.
+#[cfg(feature = "quire-extraction")]
 fn check_markdown_document(
     directory: &Path,
     authority: &str,
