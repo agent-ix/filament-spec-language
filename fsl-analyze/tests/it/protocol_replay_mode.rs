@@ -390,6 +390,104 @@ fn an_earlier_own_receive_listed_first_but_ordered_later_is_unexpected() {
     assert_eq!(note["cause"], "unexpected", "{item}");
 }
 
+/// The labels of `assessments`, one per observation prefix.
+fn prefix_labels(
+    assessments: &[fsl_analyze::protocol_analysis::recording::RecordingAssessment],
+) -> Vec<&str> {
+    assessments
+        .iter()
+        .map(|assessment| assessment.global.label)
+        .collect()
+}
+
+/// Every obligation `violated` in a prefix is `violated` in the next.
+fn assert_violations_persist(
+    assessments: &[fsl_analyze::protocol_analysis::recording::RecordingAssessment],
+) {
+    use fsl_analyze::protocol_analysis::recording::RecordingVerdict;
+    for pair in assessments.windows(2) {
+        for violated in pair[0]
+            .obligations
+            .iter()
+            .filter(|entry| entry.verdict == RecordingVerdict::Violated)
+        {
+            let next = pair[1]
+                .obligations
+                .iter()
+                .find(|entry| entry.obligation == violated.obligation)
+                .unwrap_or_else(|| panic!("{:?} survives", violated.obligation));
+            assert_eq!(next.verdict, RecordingVerdict::Violated, "{:?}", next);
+        }
+    }
+}
+
+/// FR-895-AC-6, FSpec FR-059-AC-4: feeding the conforming recording one
+/// observation at a time leaves every prefix `inconclusive` while it is open,
+/// and the last prefix equals the batch assessment, `proved`.
+#[trace("TC-2531", "FR-895-AC-6", "FSpec-FR-059-AC-4")]
+#[test]
+fn incremental_assessment_of_a_conforming_recording_ends_at_the_batch_verdict() {
+    use fsl_analyze::protocol_analysis::recording::{
+        assess_recording, assess_recording_incrementally,
+    };
+    let package = crate::litmus::package_called("analysis-unit", &told_protocol());
+    let bytes = told_recording([0, 1, 2, 3, 4, 5], json!([1, 2, 4, 5])).to_string();
+    let incremental = assess_recording_incrementally(&package, bytes.as_bytes()).expect("prefixes");
+    assert_eq!(
+        prefix_labels(&incremental),
+        [
+            "inconclusive",
+            "inconclusive",
+            "inconclusive",
+            "inconclusive",
+            "inconclusive",
+            "proved"
+        ]
+    );
+    assert_violations_persist(&incremental);
+    let batch = assess_recording(&package, bytes.as_bytes()).expect("batch");
+    assert_eq!(incremental.last(), Some(&batch));
+}
+
+/// FR-895-AC-6, FR-895-AC-5: `Seller`'s local order puts `Note` before `Got`.
+/// The first two prefixes are undecided; the prefix that adds `Note`
+/// violates `Note`'s enabledness at once and every later prefix keeps it,
+/// ending at the batch verdict, `refuted`.
+#[trace("TC-2531", "FR-895-AC-6", "FSpec-FR-059-AC-4")]
+#[test]
+fn incremental_assessment_reports_a_violation_from_the_prefix_that_shows_it() {
+    use fsl_analyze::protocol_analysis::recording::{
+        assess_recording, assess_recording_incrementally, RecordingCause, RecordingVerdict,
+    };
+    let package = crate::litmus::package_called("analysis-unit", &told_protocol());
+    let bytes = told_recording([0, 1, 2, 3, 4, 5], json!([2, 1, 4, 5])).to_string();
+    let incremental = assess_recording_incrementally(&package, bytes.as_bytes()).expect("prefixes");
+    assert_eq!(
+        prefix_labels(&incremental),
+        [
+            "inconclusive",
+            "inconclusive",
+            "refuted",
+            "refuted",
+            "refuted",
+            "refuted"
+        ]
+    );
+    assert_violations_persist(&incremental);
+    let note = incremental[2]
+        .obligations
+        .iter()
+        .find(|entry| {
+            entry.obligation.kind == "enabledness"
+                && entry.obligation.node.as_deref() == Some("Flow::Main::Note")
+        })
+        .expect("Note enabledness");
+    assert_eq!(note.verdict, RecordingVerdict::Violated);
+    assert_eq!(note.cause, Some(RecordingCause::Unexpected));
+    let batch = assess_recording(&package, bytes.as_bytes()).expect("batch");
+    assert_eq!(incremental.last(), Some(&batch));
+}
+
 // ---- FR-1032: the recording's document identity ---------------------------
 
 /// FR-895-AC-7's closed, conforming recording of `Flow`.

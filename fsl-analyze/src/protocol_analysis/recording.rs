@@ -395,6 +395,63 @@ pub fn assess_recording(
     assess_recording_with_population(package, bytes, None)
 }
 
+/// Assess a recording incrementally (FR-895 "Incremental assessment"): feed
+/// its observations one at a time and return the assessment after each, so
+/// entry `k - 1` is the assessment of the first `k` observations.
+///
+/// A prefix keeps the local order and correlations among its own
+/// observations and is `open`, since observations may still arrive; only the
+/// last prefix carries the recording's own closure record, so the last entry
+/// equals [`assess_recording`] of the whole recording.
+pub fn assess_recording_incrementally(
+    package: &fsl_package::CheckedPackage,
+    bytes: &[u8],
+) -> Result<Vec<RecordingAssessment>, RecordingRefusal> {
+    let whole: serde_json::Value = serde_json::from_slice(bytes).map_err(|error| {
+        RecordingRefusal::new(
+            "invalid-value",
+            format!("recording is not valid JSON: {error}"),
+            None,
+        )
+    })?;
+    let count = whole["observations"].as_array().map_or(0, Vec::len);
+    let mut assessments = Vec::with_capacity(count);
+    for prefix in 1..=count {
+        let mut document = whole.clone();
+        if prefix < count {
+            document["observations"] = whole["observations"]
+                .as_array()
+                .map_or_else(Vec::new, |all| all[..prefix].to_vec());
+            if let Some(orders) = whole["local_order"].as_object() {
+                let kept = orders.iter().map(|(role, order)| {
+                    let order: Vec<_> = order
+                        .as_array()
+                        .map_or_else(Vec::new, |all| all.clone())
+                        .into_iter()
+                        .filter(|index| index.as_u64().is_some_and(|index| index < prefix as u64))
+                        .collect();
+                    (role.clone(), serde_json::Value::Array(order))
+                });
+                document["local_order"] = kept.collect::<serde_json::Map<_, _>>().into();
+            }
+            if let Some(correlations) = whole["correlations"].as_array() {
+                document["correlations"] = correlations
+                    .iter()
+                    .filter(|pair| {
+                        ["send", "receive"].iter().all(|end| {
+                            pair[end].as_u64().is_some_and(|index| index < prefix as u64)
+                        })
+                    })
+                    .cloned()
+                    .collect();
+            }
+            document["closure"] = serde_json::json!({"state": "open", "premises": []});
+        }
+        assessments.push(assess_recording(package, document.to_string().as_bytes())?);
+    }
+    Ok(assessments)
+}
+
 /// Assess a recording with its optional activated role population.
 pub fn assess_recording_with_population(
     package: &fsl_package::CheckedPackage,
