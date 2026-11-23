@@ -148,8 +148,7 @@ fn equality_witness_materializes_complete_original_rows_at_exact_shared_bounds()
         .iter()
         .filter(|row| {
             row.checked_application().package == row.structural_node().package
-                && emission
-                    .wire_nodes
+                && typed_nodes(&emission)
                     .iter()
                     .any(|node| &node.node_id == row.structural_node())
         })
@@ -405,8 +404,7 @@ fn final_row_membership_matches_the_original_filter_after_carry_and_rekey() {
     foreign.checked_application.package = "different-application-package".into();
     facts.push(foreign);
     let omitted = facts[0].structural_node.clone();
-    let remaining: Vec<_> = emission
-        .wire_nodes
+    let remaining: Vec<_> = typed_nodes(&emission)
         .iter()
         .filter(|node| node.node_id != omitted)
         .cloned()
@@ -435,7 +433,7 @@ fn final_row_membership_matches_the_original_filter_after_carry_and_rekey() {
     };
     let mut carried =
         super::super::monitor_plan::carry_rows(&retained, &[(omitted.clone(), renamed.clone())]);
-    let mut final_nodes = Vec::clone(&emission.wire_nodes);
+    let mut final_nodes = typed_nodes(&emission);
     for node in &mut final_nodes {
         if node.node_id == omitted {
             node.node_id = renamed.clone();

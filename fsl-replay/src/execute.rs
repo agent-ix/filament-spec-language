@@ -2244,11 +2244,7 @@ pub(crate) fn recompile_with_temporal_selections(
             ));
         }
     }
-    check_recorded_modes(
-        request.package().functions(),
-        compiled.emitted.emission(),
-        limits.spine.package.emit(),
-    )?;
+    check_recorded_modes(request.package().functions(), compiled.emitted.emission())?;
     request
         .package()
         .admit(&evidence, limits.spine.imports.for_ir())
@@ -3264,18 +3260,13 @@ fn charges(consumed: impl IntoIterator<Item = (LimitKind, u64)>) -> ScalarLimits
 fn check_recorded_modes(
     recorded: &[crate::request::FunctionRecord],
     recompiled: &fsl_package::Emission,
-    limits: fsl_package::EmitLimits,
 ) -> Result<(), ReplayRefusal> {
     let recompiled_modes = recompiled
-        .function_check_modes(limits)
-        .map_err(|refusal| ReplayRefusal::Recompile {
-            refusal: Box::new(CompileRefusal::Emit(refusal, None)),
-            pointer: None,
-        })?
-        .into_iter()
+        .function_check_modes()
+        .iter()
         .map(|(id, mode)| {
             (
-                quire_canonical::to_vec(&id, quire_canonical::Limits::new(u64::MAX))
+                quire_canonical::to_vec(id, quire_canonical::Limits::new(u64::MAX))
                     .unwrap_or_default(),
                 mode.map(str::to_owned),
             )
