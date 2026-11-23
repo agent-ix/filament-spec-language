@@ -39,10 +39,10 @@ Scope: FR-317-AC-6.
 
 ## Notes
 
-The live test
+The live tests
 `fsl-semantics/tests/it/variant_fields.rs::undeclared_variant_cases_name_the_declared_owner_for_model_variants_and_source_enums`
-still asserts `missing_declaration`/`missing-name` for the source enum's
-`Status::Unknown`, which contradicts FR-317-AC-6. The coder implementing
-FR-317-AC-6 flips that half of it to `ill_typed`/`type-mismatch` in the same
-change that removes the `ignore` from
-`an_unknown_member_of_a_source_enum_refuses_type_mismatch_like_a_model_variant_case`.
+and `an_unknown_member_of_a_source_enum_refuses_type_mismatch_like_a_model_variant_case`
+both assert `ill_typed`/`type-mismatch` for an unknown source enum member
+(`Status::Unknown`, `Status::Pending`), as FR-317-AC-6 states. The first was
+renamed from `..._keep_source_enum_names_missing`; its earlier `missing-name`
+expectation for `Status::Unknown` is superseded by FR-317-AC-6.

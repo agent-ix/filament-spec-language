@@ -258,6 +258,11 @@ fn some_takes_the_expected_bounded_element_type() {
     // bounded element type of the other operand (FSpec FR-143-AC-21).
     assert_checks("function g using v(y: Option<Int[0, 9]>): Boolean pure { y = Some(3) }");
     assert_checks("function g using v(y: Option<Int[0, 9]>): Boolean pure { y != Some(3) }");
+    assert_refused(
+        "function g using v(y: Option<Int[0, 9]>): Boolean pure { y != Some(30) }",
+        Code::IllTyped,
+        "type-mismatch",
+    );
     assert_checks(
         "function g using v(z: Option<Option<Int[0, 9]>>): Boolean pure { Some(Some(3)) = z }",
     );
