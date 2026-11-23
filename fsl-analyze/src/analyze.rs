@@ -926,6 +926,9 @@ pub struct ItemDetail {
     /// The `task_product` part of the FSpec FR-418 certificate the checker
     /// accepted, for a proved task-product item.
     pub task_certificate: Option<serde_json::Value>,
+    /// FR-290: why an external provider's refutation had no usable
+    /// counterexample, for the item's one `diagnostics` entry (FR-621).
+    pub unusable_counterexample: Option<crate::provider::UnusableCounterexample>,
 }
 
 /// FR-941: what a `finite-replay` item reports of a protocol claim beyond its
@@ -988,6 +991,7 @@ impl ItemDetail {
                 .or_else(|| record.zone_check.as_deref().and_then(|zone| zone.non_zeno)),
             memory_bound: protocol.and_then(|protocol| protocol.memory_bound),
             finite_replay: record.finite_replay.clone(),
+            unusable_counterexample: record.unusable_counterexample,
             hybrid_certificate: record.hybrid_certificate.clone(),
             hybrid_disagreement: record.hybrid_disagreement.clone(),
             task_search: record
@@ -2267,6 +2271,10 @@ pub struct AnalyzeRecord {
     pub replayed_steps: Option<u64>,
     /// FR-941: what a `finite-replay` item reports of a protocol claim.
     pub finite_replay: Option<FiniteReplayDetail>,
+    /// Why an external provider's refutation had no usable counterexample
+    /// (FR-290): the item is `inconclusive`/`replay-parity` and writes one
+    /// item diagnostic with this reason (FR-621 `diagnostics`).
+    pub unusable_counterexample: Option<crate::provider::UnusableCounterexample>,
 }
 
 /// How an item settled.
@@ -2312,6 +2320,7 @@ impl AnalyzeRecord {
             task_product_counterexample: None,
             finite_hyper_counterexample: None,
             state_graph: None,
+            unusable_counterexample: None,
         }
     }
 
@@ -3108,6 +3117,9 @@ fn settle(
                 }
                 Some(crate::provider::ProviderCounterexample::Mismatch(found)) => {
                     settled.interface_mismatch = Some(found);
+                }
+                Some(crate::provider::ProviderCounterexample::Unusable(reason)) => {
+                    settled.unusable_counterexample = Some(reason);
                 }
                 None => {}
             }
