@@ -613,7 +613,7 @@ fn assess_with_input(
     bytes: &[u8],
     population: Option<&[ActivatedRolePopulation]>,
 ) -> Result<RecordingAssessment, RecordingRefusal> {
-    let document: RecordingDocument = serde_json::from_slice(bytes)
+    let mut document: RecordingDocument = serde_json::from_slice(bytes)
         .map_err(|error| RecordingRefusal::new("invalid-value", error.to_string(), None))?;
     if document.format != FORMAT {
         return Err(RecordingRefusal::new(
