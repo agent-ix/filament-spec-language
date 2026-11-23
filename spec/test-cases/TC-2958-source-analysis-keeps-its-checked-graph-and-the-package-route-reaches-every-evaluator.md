@@ -13,7 +13,7 @@ relationships:
 Verify that analysis from source decides every item family over its compiled
 package, that a selected package reaches the source-checked evaluators through
 their package forms with equal records, and that the package route settles every item
-family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6, FR-940-AC-18, FR-940-AC-21 and FR-940-AC-22: a source run whose compiled package the strict reader refuses on read-back settles as the reader's typed refusal, and a refused replay package read settles only the replaying item `inconclusive` `replay_refused`.
+family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6, FR-940-AC-18, FR-940-AC-21, FR-940-AC-22 and FR-940-AC-28: a source run whose compiled package the strict reader refuses on read-back settles as the reader's typed refusal, and a refused replay package read settles only the replaying item `inconclusive` `replay_refused`.
 
 ## Test Procedure
 
@@ -35,10 +35,17 @@ family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6, FR-940-AC-18
    over the handoff directory with `replay.input_bytes` below the
    emission's length, and over source again with a test-only emitter that
    fails at the replay's emission.
+7. Analyze a unit containing an operation-contract item from source. Compile
+   it with a handoff, analyze that exact claim through the `package` route,
+   and compare the requirement row, request index, typed operation-contract
+   record, selected `ContractClaim`, subject, case limit, item record and
+   process exit. Then submit a malformed operation-contract record through
+   the strict reader and verify no engine runs.
 
 Tests: `fsl-analyze/tests/it/analyze_package_selection.rs` (steps 1 to 3),
 `fsl-analyze/tests/it/hyper_wire.rs` (step 4) and
-`fsl-analyze/tests/it/package_refusal_route.rs` (steps 5 and 6).
+`fsl-analyze/tests/it/package_refusal_route.rs` (steps 5 and 6), and the
+named `operation_contract_package_route_matches_source` case for step 7.
 
 ## Expected Results
 
@@ -58,3 +65,6 @@ Tests: `fsl-analyze/tests/it/analyze_package_selection.rs` (steps 1 to 3),
   and never `proved` for `ReachThree`; `Bounded` `proved`; no whole-run
   refusal; with the failing emitter, `AtMostTwo` settles `failed` with
   `analyze`/`package-emission`.
+- Step 7: both valid routes return equal operation-contract item records and
+  the same process exit; malformed package data is refused by admission before
+  engine execution, never as "requirement record has no package form".
