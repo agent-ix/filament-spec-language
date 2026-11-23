@@ -1330,6 +1330,31 @@ pub(super) fn follow_final_collections(
     Ok(())
 }
 
+/// FSpec FR-322: a node's `dependencies` ascend by the structural keys of
+/// the nodes they name. A renamed entry changes the structural key of every
+/// node that holds it as an operand (a call of the entry), so the order of a
+/// node depending on two such calls can change; each list is sorted again by
+/// the final keys. A list naming a node this graph does not hold (a dependency
+/// package's node, which no rename reaches) keeps its order.
+fn order_dependencies(nodes: &mut [CheckedSemanticNodeV2]) -> Result<(), EmitRefusal> {
+    let graph =
+        fsl_semantics::check::wire_id::WireGraph::new(nodes.iter().map(|node| &node.node_id))
+            .map_err(|_| invariant("the writer's graph ids resolve"))?;
+    for node in nodes.iter_mut() {
+        let Ok(mut keyed) = node
+            .dependencies
+            .iter()
+            .map(|id| graph.key(id).map(|key| (key, id.clone())))
+            .collect::<Result<Vec<_>, _>>()
+        else {
+            continue;
+        };
+        keyed.sort_by(|(left, _), (right, _)| left.cmp(right));
+        node.dependencies = keyed.into_iter().map(|(_, id)| id).collect();
+    }
+    Ok(())
+}
+
 /// The shared tail: index the graph, encode and wrap the bytes.
 pub(super) fn finish(
     base: &CheckedPackageV2,
@@ -1341,6 +1366,7 @@ pub(super) fn finish(
     limits: crate::checked::EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
     let lock = base.lock().clone();
+    order_dependencies(&mut nodes)?;
     let requirement_rows = super::value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
     let operand_rows = super::write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {
