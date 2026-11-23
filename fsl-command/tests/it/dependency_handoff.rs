@@ -381,11 +381,7 @@ fn replay_boundary(
         exact["items"], unlimited["items"],
         "no root is charged a second time: {exact}"
     );
-    (
-        baseline,
-        exact,
-        refused["items"][0]["record"]["cause"].clone(),
-    )
+    (baseline, exact, refused["items"][0]["record"]["cause"].clone())
 }
 
 /// FR-850-AC-15: both routes refuse the same request with the same code, cause
@@ -393,7 +389,11 @@ fn replay_boundary(
 /// artifact (all sizes are known before any work), and the source route's is the
 /// size reached when the bound was crossed: above the bound and at most that
 /// total. Both routes admit at the total (asserted by `replay_boundary`).
-fn assert_bound_rule(source: (u64, &Value), package: (u64, &Value), external_bytes: u64) {
+fn assert_bound_rule(
+    source: (u64, &Value),
+    package: (u64, &Value),
+    external_bytes: u64,
+) {
     let (source_baseline, source_cause) = source;
     let (package_baseline, package_cause) = package;
     for member in ["kind", "code", "cause", "setting"] {
@@ -492,10 +492,7 @@ fn transitive_library_claim_analysis_and_replay_equal_source_after_source_deleti
     )
     .unwrap()
     .len();
-    assert!(
-        first_external_bytes < external_bytes,
-        "a later library follows the one that crosses"
-    );
+    assert!(first_external_bytes < external_bytes, "a later library follows the one that crosses");
     assert!(external_bytes > 0);
     let (source_baseline, source_exact, source_cause) = replay_boundary(
         directory,

@@ -215,12 +215,7 @@ fn request(directory: &Path, member: &str, body: Value) -> Output {
     request_with_supplied(directory, member, body, None)
 }
 
-fn request_with_supplied(
-    directory: &Path,
-    member: &str,
-    body: Value,
-    supplied: Option<Value>,
-) -> Output {
+fn request_with_supplied(directory: &Path, member: &str, body: Value, supplied: Option<Value>) -> Output {
     let mut inner = json!({
         "models": [{"format":"semantic-ir/2.0.0", "source":
             source("spine-model.semantic-ir.json", "SpineModel")}],
@@ -858,8 +853,7 @@ fn function_selection_admits_an_identity_reference() {
     assert_eq!(document["disposition"]["truth"], true, "{document}");
 }
 
-const POPULATION_CLAIMS: &str =
-    "function nonempty using v(p: Population<Config::ConfigVersion>[4]): \
+const POPULATION_CLAIMS: &str = "function nonempty using v(p: Population<Config::ConfigVersion>[4]): \
     Boolean pure { size(allInstances<Config::ConfigVersion>(p)) > 0 }\n";
 
 fn function_claim(directory: &Path, name: &str, arguments: Value) -> Output {
@@ -883,10 +877,7 @@ fn direct_report(directory: &Path) -> (i32, Option<bool>) {
         panic!("a clause request");
     };
     let report = fsl_replay::spine::run_clause(*prepared.into_request()).unwrap();
-    (
-        report.disposition.category().exit_code() as i32,
-        report.disposition.truth(),
-    )
+    (report.disposition.category().exit_code() as i32, report.disposition.truth())
 }
 
 /// FR-312-AC-11: a `function` selection accepts FR-181's tagged canonical
@@ -908,14 +899,8 @@ fn function_selection_admits_canonical_reference_arguments() {
     let distinct = json!([
         {"parameter": "a", "value": crate::support::canonical_reference::config_version("root")},
         {"parameter": "b", "value": crate::support::canonical_reference::config_version("child")}]);
-    let document = claim_document(
-        &function_claim(directory.path(), "sameIdentity", distinct),
-        10,
-    );
-    assert_eq!(
-        document["disposition"]["category"], "violation",
-        "{document}"
-    );
+    let document = claim_document(&function_claim(directory.path(), "sameIdentity", distinct), 10);
+    assert_eq!(document["disposition"]["category"], "violation", "{document}");
     assert_eq!(document["disposition"]["truth"], false, "{document}");
     assert_eq!(direct_report(directory.path()), (10, Some(false)));
 }
@@ -947,14 +932,8 @@ fn function_selection_refuses_a_population_the_snapshot_does_not_hold() {
         "population": format!("ix://{}/no_such_history", spine::PACKAGE_IDENTITY)}}]);
     let document = claim_document(&function_claim(directory.path(), "nonempty", absent), 20);
     assert_eq!(document["disposition"]["stage"], "admit", "{document}");
-    assert_eq!(
-        document["disposition"]["refusal"]["code"], "invalid_runtime_input",
-        "{document}"
-    );
-    assert_eq!(
-        document["disposition"]["refusal"]["cause"], "wrong-role-mapping",
-        "{document}"
-    );
+    assert_eq!(document["disposition"]["refusal"]["code"], "invalid_runtime_input", "{document}");
+    assert_eq!(document["disposition"]["refusal"]["cause"], "wrong-role-mapping", "{document}");
     assert!(document["disposition"]["truth"].is_null(), "{document}");
     assert_eq!(direct_report(directory.path()), (20, None));
 }
@@ -972,10 +951,7 @@ fn function_selection_refuses_a_reference_the_snapshot_does_not_hold() {
         {"parameter": "b", "value": crate::support::canonical_reference::config_version("ghost")}]);
     let document = claim_document(&function_claim(directory.path(), "sameIdentity", ghost), 20);
     assert_eq!(document["disposition"]["stage"], "admit", "{document}");
-    assert_eq!(
-        document["disposition"]["refusal"]["code"], "dangling_reference",
-        "{document}"
-    );
+    assert_eq!(document["disposition"]["refusal"]["code"], "dangling_reference", "{document}");
     assert_eq!(
         document["disposition"]["refusal"]["cause"], "absent-target-in-complete-population",
         "{document}"
@@ -998,80 +974,29 @@ fn function_selection_refuses_mistyped_and_untagged_arguments() {
     let mut unknown_type = canonical_child();
     unknown_type["object_type"]["path"] = json!(["model", "object_type", "ix://elsewhere/Nothing"]);
     let held = json!({"population": population()});
-    let same = |a: Value| {
-        json!([
-        {"parameter": "a", "value": a}, {"parameter": "b", "value": canonical_child()}])
-    };
+    let same = |a: Value| json!([
+        {"parameter": "a", "value": a}, {"parameter": "b", "value": canonical_child()}]);
     let nonempty = |p: Value| json!([{"parameter": "p", "value": p}]);
     for (name, arguments, code, cause) in [
-        (
-            "sameIdentity",
-            same(held.clone()),
-            "invalid_runtime_input",
-            "wrong-value-kind",
-        ),
-        (
-            "sameIdentity",
-            same(json!({"type": "text", "value": "ab"})),
-            "invalid_runtime_input",
-            "wrong-value-kind",
-        ),
-        (
-            "sameIdentity",
-            same(json!({"reference": child()})),
-            "invalid_runtime_input",
-            "wrong-value-kind",
-        ),
-        (
-            "sameIdentity",
-            same(unknown_type),
-            "invalid_runtime_input",
-            "wrong-value-kind",
-        ),
-        (
-            "nonempty",
-            nonempty(canonical_child()),
-            "invalid_runtime_input",
-            "wrong-value-kind",
-        ),
-        (
-            "nonempty",
-            nonempty(json!({"type": "text", "value": "ab"})),
-            "invalid_runtime_input",
-            "wrong-value-kind",
-        ),
-        (
-            "nonempty",
-            nonempty(json!({"type": "population", "population": population()})),
-            "invalid_runtime_input",
-            "wrong-value-kind",
-        ),
-        (
-            "nonempty",
-            nonempty(json!({"populaton": population()})),
-            "invalid_runtime_input",
-            "unknown-member",
-        ),
-        (
-            "nonempty",
-            nonempty(json!({})),
-            "invalid_runtime_input",
-            "missing-member",
-        ),
+        ("sameIdentity", same(held.clone()), "invalid_runtime_input", "wrong-value-kind"),
+        ("sameIdentity", same(json!({"type": "text", "value": "ab"})),
+            "invalid_runtime_input", "wrong-value-kind"),
+        ("sameIdentity", same(json!({"reference": child()})),
+            "invalid_runtime_input", "wrong-value-kind"),
+        ("sameIdentity", same(unknown_type), "invalid_runtime_input", "wrong-value-kind"),
+        ("nonempty", nonempty(canonical_child()), "invalid_runtime_input", "wrong-value-kind"),
+        ("nonempty", nonempty(json!({"type": "text", "value": "ab"})),
+            "invalid_runtime_input", "wrong-value-kind"),
+        ("nonempty", nonempty(json!({"type": "population", "population": population()})),
+            "invalid_runtime_input", "wrong-value-kind"),
+        ("nonempty", nonempty(json!({"populaton": population()})),
+            "invalid_runtime_input", "unknown-member"),
+        ("nonempty", nonempty(json!({})), "invalid_runtime_input", "missing-member"),
     ] {
-        let document = claim_document(
-            &function_claim(directory.path(), name, arguments.clone()),
-            20,
-        );
+        let document = claim_document(&function_claim(directory.path(), name, arguments.clone()), 20);
         let refusal = &document["disposition"]["refusal"];
-        assert_eq!(
-            document["disposition"]["stage"], "admit",
-            "{arguments}: {document}"
-        );
-        assert!(
-            document["disposition"]["truth"].is_null(),
-            "{arguments}: {document}"
-        );
+        assert_eq!(document["disposition"]["stage"], "admit", "{arguments}: {document}");
+        assert!(document["disposition"]["truth"].is_null(), "{arguments}: {document}");
         assert_eq!(refusal["code"], code, "{arguments}: {document}");
         assert_eq!(refusal["cause"], cause, "{arguments}: {document}");
     }
@@ -1094,21 +1019,17 @@ fn shop_reference(key: &str) -> Value {
 /// `directory`.
 fn write_shop_outcomes(directory: &Path) {
     let order = "ix://example/shop-outcomes/Order";
-    let population = |name: &str| {
-        json!({
+    let population = |name: &str| json!({
         "identity": format!("ix://example/shop-outcomes/{name}"), "displayName": name,
         "kind": {"module": "example/shop-outcomes", "name": "population"},
         "members": [order], "extent": "closed",
         "origin": {"generated": {"generatorVersion": "1.0.0",
             "generatorIdentity": format!("ix://example/shop-outcomes/{name}"),
-            "inputIdentities": [format!("ix://example/shop-outcomes/{name}")]}}})
-    };
-    let construct = |name: &str, meaning: &str| {
-        json!({
+            "inputIdentities": [format!("ix://example/shop-outcomes/{name}")]}}});
+    let construct = |name: &str, meaning: &str| json!({
         "kind": {"module": "example/shop-outcomes", "name": name},
         "moduleVersion": "1.0.0",
-        "construct": {"identity": "none", "shape": "record", "members": {}, "meaning": meaning}})
-    };
+        "construct": {"identity": "none", "shape": "record", "members": {}, "meaning": meaning}});
     let model = json!({
         "contractVersion": "2.0.0", "canonicalization": {"algorithm": "rfc8785-v1"},
         "source": {"identity": "ix://example/shop-outcomes/spec", "version": "1.0.0",
@@ -1143,34 +1064,21 @@ fn write_shop_outcomes(directory: &Path) {
         Boolean pure { lookup<Shop::Order>(p, r) absent undefined = r }\n\
         function missingOrder using v(p: Population<Shop::Order>[0], r: Shop::Order): \
         Shop::Order pure { lookup<Shop::Order>(p, r) absent undefined }\n";
-    std::fs::write(
-        directory.join("model.json"),
-        serde_json::to_vec(&model).unwrap(),
-    )
-    .unwrap();
-    std::fs::write(
-        directory.join("data.json"),
-        serde_json::to_vec(&snapshot).unwrap(),
-    )
-    .unwrap();
+    std::fs::write(directory.join("model.json"), serde_json::to_vec(&model).unwrap()).unwrap();
+    std::fs::write(directory.join("data.json"), serde_json::to_vec(&snapshot).unwrap()).unwrap();
     std::fs::write(directory.join("rules.fsl"), rules).unwrap();
 }
 
 fn shop_request(directory: &Path, member: &str, body: Value) -> Output {
-    let source = |file: &str, identity: &str| {
-        json!({"file": file, "authority": "example",
-        "identity": identity, "document": "shop", "formal_revision": 1})
-    };
+    let source = |file: &str, identity: &str| json!({"file": file, "authority": "example",
+        "identity": identity, "document": "shop", "formal_revision": 1});
     let mut inner = json!({
         "models": [{"format": "semantic-ir/2.0.0",
             "source": source("model.json", "example/shop-outcomes/model")}],
         "program": {"source": source("rules.fsl", "example:shop/claim-functions")}});
     inner[member] = body;
-    std::fs::write(
-        directory.join("request.json"),
-        serde_json::to_vec(&json!({"format": "native-run/1", "request": inner})).unwrap(),
-    )
-    .unwrap();
+    std::fs::write(directory.join("request.json"),
+        serde_json::to_vec(&json!({"format": "native-run/1", "request": inner})).unwrap()).unwrap();
     run_file(&directory.join("request.json"))
 }
 
@@ -1187,28 +1095,17 @@ fn shop_undefined_lookup_requests_run_with_typed_arguments() {
     let arguments = json!([
         {"parameter": "p", "value": {"population": "ix://example/shop-outcomes/orders"}},
         {"parameter": "r", "value": shop_reference("target")}]);
-    let output = shop_request(
-        directory.path(),
-        "clause",
-        json!({
+    let output = shop_request(directory.path(), "clause", json!({
         "selection": {"function": {"name": "undefinedClaim", "arguments": arguments,
             "snapshot": "current"}},
-        "observations": {"current": "data.json"}}),
-    );
+        "observations": {"current": "data.json"}}));
     let document = claim_document(&output, 10);
-    assert_eq!(
-        document["disposition"]["category"], "violation",
-        "{document}"
-    );
+    assert_eq!(document["disposition"]["category"], "violation", "{document}");
     assert_eq!(document["disposition"]["truth"], false, "{document}");
     assert_eq!(direct_report(directory.path()), (10, Some(false)));
 
-    let output = shop_request(
-        directory.path(),
-        "call",
-        json!({
-        "function": "missingOrder", "snapshot": "data.json", "arguments": arguments}),
-    );
+    let output = shop_request(directory.path(), "call", json!({
+        "function": "missingOrder", "snapshot": "data.json", "arguments": arguments}));
     assert_eq!(output.status.code(), Some(10), "{output:?}");
 }
 
@@ -1246,22 +1143,12 @@ fn function_selection_requires_a_current_snapshot() {
     }
 }
 
-fn canonical_function_claim(
-    directory: &Path,
-    name: &str,
-    arguments: Value,
-    supplied: Option<Value>,
-) -> Output {
-    request_with_supplied(
-        directory,
-        "clause",
-        json!({
-            "observations": observations(), "selection": {"function": {
-                "name": name, "snapshot": "current", "arguments": arguments
-            }}
-        }),
-        supplied,
-    )
+fn canonical_function_claim(directory: &Path, name: &str, arguments: Value, supplied: Option<Value>) -> Output {
+    request_with_supplied(directory, "clause", json!({
+        "observations": observations(), "selection": {"function": {
+            "name": name, "snapshot": "current", "arguments": arguments
+        }}
+    }), supplied)
 }
 
 const CANONICAL_CLAIMS: &str = "function short using v(t: Text[0, 8; nfc]): Boolean pure { size(t) < 3 }\n\
@@ -1274,51 +1161,27 @@ fn canonical_function_selection_authenticates_references_and_scalar_kinds() {
     let directory = tempfile::tempdir().unwrap();
     write_cases(directory.path());
     extend_unit(directory.path(), CANONICAL_CLAIMS);
-    let good = canonical_function_claim(
-        directory.path(),
-        "short",
-        json!([
-            {"parameter": "t", "value": {"type": "text", "value": "ab"}}
-        ]),
-        None,
-    );
+    let good = canonical_function_claim(directory.path(), "short", json!([
+        {"parameter": "t", "value": {"type": "text", "value": "ab"}}
+    ]), None);
     assert_eq!(good.status.code(), Some(0), "{good:?}");
     let document: Value = serde_json::from_slice(&good.stdout).unwrap();
     assert_eq!(document["disposition"]["truth"], true, "{document}");
 
     let mut foreign = canonical_child();
-    foreign["universe"] =
-        json!({"package": "other/package", "path": ["ConfigVersion"], "ordinal": 0});
+    foreign["universe"] = json!({"package": "other/package", "path": ["ConfigVersion"], "ordinal": 0});
     let mut malformed = canonical_child();
     malformed["universe"] = json!("0".repeat(64));
     for (name, arguments, code, cause, path) in [
-        (
-            "sameIdentity",
-            json!([
-                {"parameter": "a", "value": foreign}, {"parameter": "b", "value": canonical_child()}
-            ]),
-            "foreign_reference",
-            "foreign-universe",
-            "/universe",
-        ),
-        (
-            "sameIdentity",
-            json!([
-                {"parameter": "a", "value": malformed}, {"parameter": "b", "value": canonical_child()}
-            ]),
-            "invalid_runtime_input",
-            "wrong-value-kind",
-            "/universe",
-        ),
-        (
-            "short",
-            json!([
-                {"parameter": "t", "value": {"type": "integer", "value": "1"}}
-            ]),
-            "invalid_runtime_input",
-            "wrong-value-kind",
-            "",
-        ),
+        ("sameIdentity", json!([
+            {"parameter": "a", "value": foreign}, {"parameter": "b", "value": canonical_child()}
+        ]), "foreign_reference", "foreign-universe", "/universe"),
+        ("sameIdentity", json!([
+            {"parameter": "a", "value": malformed}, {"parameter": "b", "value": canonical_child()}
+        ]), "invalid_runtime_input", "wrong-value-kind", "/universe"),
+        ("short", json!([
+            {"parameter": "t", "value": {"type": "integer", "value": "1"}}
+        ]), "invalid_runtime_input", "wrong-value-kind", ""),
     ] {
         let output = canonical_function_claim(directory.path(), name, arguments, None);
         assert_eq!(output.status.code(), Some(20), "{output:?}");
@@ -1337,53 +1200,31 @@ fn canonical_function_selection_refuses_native_argument_shortcuts() {
     let directory = tempfile::tempdir().unwrap();
     write_cases(directory.path());
     extend_unit(directory.path(), CANONICAL_CLAIMS);
-    let bare = canonical_function_claim(
-        directory.path(),
-        "positive",
-        json!([
-            {"parameter": "n", "value": 1}
-        ]),
-        None,
-    );
+    let bare = canonical_function_claim(directory.path(), "positive", json!([
+        {"parameter": "n", "value": 1}
+    ]), None);
     assert_eq!(bare.status.code(), Some(20), "{bare:?}");
     assert!(bare.stdout.is_empty());
     let failure: Value = serde_json::from_slice(&bare.stderr).unwrap();
     assert_eq!(failure["code"], "invalid-request", "{failure}");
     assert_eq!(failure["stage"], "request", "{failure}");
     for (name, arguments) in [
-        (
-            "positive",
-            json!([{"parameter": "n", "value": {"integer": "1"}}]),
-        ),
-        (
-            "sameIdentity",
-            json!([
-                {"parameter": "a", "value": {"reference": child()}},
-                {"parameter": "b", "value": canonical_child()}
-            ]),
-        ),
+        ("positive", json!([{"parameter": "n", "value": {"integer": "1"}}])),
+        ("sameIdentity", json!([
+            {"parameter": "a", "value": {"reference": child()}},
+            {"parameter": "b", "value": canonical_child()}
+        ])),
     ] {
         let output = canonical_function_claim(directory.path(), name, arguments, None);
         assert_eq!(output.status.code(), Some(20), "{output:?}");
         let document: Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(
-            document["disposition"]["refusal"]["code"], "invalid_runtime_input",
-            "{document}"
-        );
-        assert_eq!(
-            document["disposition"]["refusal"]["cause"], "wrong-value-kind",
-            "{document}"
-        );
+        assert_eq!(document["disposition"]["refusal"]["code"], "invalid_runtime_input", "{document}");
+        assert_eq!(document["disposition"]["refusal"]["cause"], "wrong-value-kind", "{document}");
         assert!(document["disposition"]["truth"].is_null(), "{document}");
     }
-    let canonical = canonical_function_claim(
-        directory.path(),
-        "positive",
-        json!([
-            {"parameter": "n", "value": {"type": "integer", "value": "1"}}
-        ]),
-        None,
-    );
+    let canonical = canonical_function_claim(directory.path(), "positive", json!([
+        {"parameter": "n", "value": {"type": "integer", "value": "1"}}
+    ]), None);
     assert_eq!(canonical.status.code(), Some(0), "{canonical:?}");
 }
 
@@ -1393,12 +1234,10 @@ fn canonical_function_selection_spends_one_cumulative_supplied_allowance() {
     let directory = tempfile::tempdir().unwrap();
     write_cases(directory.path());
     extend_unit(directory.path(), CANONICAL_CLAIMS);
-    let limits = |conversion, admission| {
-        json!({
-            "conversion_work_units": conversion, "admission_work_units": admission,
-            "numeric_magnitude_bits": 4096
-        })
-    };
+    let limits = |conversion, admission| json!({
+        "conversion_work_units": conversion, "admission_work_units": admission,
+        "numeric_magnitude_bits": 4096
+    });
     let one = json!([{"parameter": "t", "value": {"type": "text", "value": "ab"}}]);
     let two = json!([
         {"parameter": "a", "value": {"type": "text", "value": "ab"}},
@@ -1411,21 +1250,13 @@ fn canonical_function_selection_spends_one_cumulative_supplied_allowance() {
         ("bothShort", two, 34, 1_000, 0),
         ("short", one, 17, 0, 22),
     ] {
-        let output = canonical_function_claim(
-            directory.path(),
-            name,
-            arguments,
-            Some(limits(conversion, admission)),
-        );
+        let output = canonical_function_claim(directory.path(), name, arguments, Some(limits(conversion, admission)));
         assert_eq!(output.status.code(), Some(expected), "{output:?}");
         let document: Value = serde_json::from_slice(&output.stdout).unwrap();
         if expected == 0 {
             assert_eq!(document["disposition"]["truth"], true, "{document}");
         } else {
-            assert_eq!(
-                document["disposition"]["category"], "incomplete",
-                "{document}"
-            );
+            assert_eq!(document["disposition"]["category"], "incomplete", "{document}");
             assert!(document["disposition"]["truth"].is_null(), "{document}");
             assert!(document["disposition"]["outcome"].is_null(), "{document}");
         }
@@ -1438,40 +1269,20 @@ fn canonical_function_selection_retains_the_prepared_cancellation_handle() {
     let directory = tempfile::tempdir().unwrap();
     write_cases(directory.path());
     extend_unit(directory.path(), CANONICAL_CLAIMS);
-    let output = canonical_function_claim(
-        directory.path(),
-        "short",
-        json!([
-            {"parameter": "t", "value": {"type": "text", "value": "ab"}}
-        ]),
-        None,
-    );
+    let output = canonical_function_claim(directory.path(), "short", json!([
+        {"parameter": "t", "value": {"type": "text", "value": "ab"}}
+    ]), None);
     assert_eq!(output.status.code(), Some(0), "{output:?}");
-    let prepared = fsl_command::command::prepare_run(
-        &directory.path().join("request.json"),
-        fsl_command::command::RunLimits::default(),
-    )
-    .unwrap();
-    let fsl_command::command::PreparedRun::Clause(prepared) = prepared else {
-        panic!("a clause request");
-    };
+    let prepared = fsl_command::command::prepare_run(&directory.path().join("request.json"), fsl_command::command::RunLimits::default()).unwrap();
+    let fsl_command::command::PreparedRun::Clause(prepared) = prepared else { panic!("a clause request"); };
     let request = *prepared.into_request();
-    let fsl_replay::spine::ClauseRunSelection::CanonicalFunction { cancel, .. } =
-        &request.selection
-    else {
-        panic!("a canonical function selection");
-    };
+    let fsl_replay::spine::ClauseRunSelection::CanonicalFunction { cancel, .. } = &request.selection else { panic!("a canonical function selection"); };
     cancel.cancel(filament_exact::CancelCause::Requested);
     let report = fsl_replay::spine::run_clause(request).unwrap();
     assert_eq!(report.disposition.category().exit_code(), 22);
     assert!(report.disposition.truth().is_none());
-    let fsl_replay::spine::ClauseDisposition::ArgumentRefusal(refusal) = report.disposition else {
-        panic!("original cancellation refusal");
-    };
-    assert_eq!(
-        refusal.cancel_cause(),
-        Some(filament_exact::CancelCause::Requested)
-    );
+    let fsl_replay::spine::ClauseDisposition::ArgumentRefusal(refusal) = report.disposition else { panic!("original cancellation refusal"); };
+    assert_eq!(refusal.cancel_cause(), Some(filament_exact::CancelCause::Requested));
 }
 /// FR-651-AC-4: the most severe item decides the exit, and an item's budget
 /// is its own.

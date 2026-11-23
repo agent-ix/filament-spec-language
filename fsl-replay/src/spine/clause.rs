@@ -1943,9 +1943,7 @@ fn run_clause_reading_with_source_map(
             return Ok(report(ClauseDisposition::ExtractionClauseCount { actual }));
         }
         Err(fsl_foundation::diagnostic::StageFailure::Cancelled(cause)) => {
-            return Ok(report(ClauseDisposition::ArgumentRefusal(Box::new(
-                RunRefusal::Cancelled(cause),
-            ))));
+            return Ok(report(ClauseDisposition::ArgumentRefusal(Box::new(RunRefusal::Cancelled(cause)))));
         }
         Err(failure) => {
             let disposition = match front_end::refusal_or_fault(failure) {
@@ -2072,15 +2070,9 @@ fn run_clause_reading_with_source_map(
             snapshot,
             snapshot_path.as_deref(),
         ),
-        ClauseRunSelection::CanonicalFunction {
-            ref name,
-            ref arguments,
-            ref snapshot,
-            supplied,
-            ref cancel,
-        } => Ok(run_canonical_function(
-            &run, &models, name, arguments, snapshot, supplied, cancel,
-        )),
+        ClauseRunSelection::CanonicalFunction { ref name, ref arguments, ref snapshot, supplied, ref cancel } => {
+            Ok(run_canonical_function(&run, &models, name, arguments, snapshot, supplied, cancel))
+        }
         ClauseRunSelection::Frame {
             ref operation,
             ref invocation,
@@ -2724,21 +2716,9 @@ fn run_compiled_clause_selection(
                 ),
             ))
         }),
-        ClauseRunSelection::CanonicalFunction {
-            name,
-            arguments,
-            snapshot,
-            supplied,
-            cancel,
-        } => run_canonical_function(
-            &run,
-            &compiled.models,
-            name,
-            arguments,
-            snapshot,
-            *supplied,
-            cancel,
-        ),
+        ClauseRunSelection::CanonicalFunction { name, arguments, snapshot, supplied, cancel } => {
+            run_canonical_function(&run, &compiled.models, name, arguments, snapshot, *supplied, cancel)
+        }
         ClauseRunSelection::Frame {
             operation,
             invocation,
@@ -3499,59 +3479,34 @@ fn run_canonical_function(
         Err(disposition) => return run.report(*disposition),
     };
     let (environment, admission_usage) = match admit_current_snapshot(
-        run.package.graph().model_inputs(),
-        run.package.graph().scope().types(),
-        run.packages,
-        run.model_limits,
-        run.provisions.snapshots,
-        &snapshot.reference,
-        run.observation_limits,
+        run.package.graph().model_inputs(), run.package.graph().scope().types(),
+        run.packages, run.model_limits, run.provisions.snapshots,
+        &snapshot.reference, run.observation_limits,
     ) {
         Ok(admitted) => admitted,
-        Err(failure) => {
-            return run.report(ClauseDisposition::SnapshotAdmission {
-                failure,
-                document: snapshot.reference.clone(),
-                path: snapshot.path.clone(),
-            })
-        }
+        Err(failure) => return run.report(ClauseDisposition::SnapshotAdmission {
+            failure, document: snapshot.reference.clone(), path: snapshot.path.clone(),
+        }),
     };
     let mut call = super::Call::new(name.to_owned(), Vec::new(), run.accounting, supplied);
     call.canonical_values = true;
     call.wire_arguments = arguments.to_vec();
     call.snapshot = Some(super::CallSnapshot {
-        observation: snapshot.clone(),
-        limits: run.observation_limits,
-        relationship_selection: None,
-        relationship_extents: None,
-        relationship_navigation: None,
+        observation: snapshot.clone(), limits: run.observation_limits,
+        relationship_selection: None, relationship_extents: None, relationship_navigation: None,
     });
     let mut meter = Meter::new(run.accounting).with_cancel(cancel.clone());
     let outcome = super::call::with_admitted_call(
-        run.package,
-        models,
+        run.package, models,
         super::call::CallSources {
-            package_name: run.package_name,
-            packages: run.packages,
-            model_limits: run.model_limits,
+            package_name: run.package_name, packages: run.packages, model_limits: run.model_limits,
         },
-        &call,
-        &selected,
-        &environment,
-        cancel,
+        &call, &selected, &environment, cancel,
         |_, bound, objects, supplied_run| {
-            let evaluation = run
-                .package
-                .call_supplied(
-                    &selected.name,
-                    bound,
-                    objects,
-                    &mut meter,
-                    &mut supplied_run
-                        .lock()
-                        .expect("conversion and execution do not unwind"),
-                )
-                .map_err(convert_call_failure)?;
+            let evaluation = run.package.call_supplied(
+                &selected.name, bound, objects, &mut meter,
+                &mut supplied_run.lock().expect("conversion and execution do not unwind"),
+            ).map_err(convert_call_failure)?;
             convert_outcome(evaluation, run.package.graph(), run.sources)
         },
     );

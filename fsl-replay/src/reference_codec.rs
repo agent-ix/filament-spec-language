@@ -2551,7 +2551,9 @@ mod tests {
             },
             key: object_key.to_owned(),
         };
-        let bind = |environment: &ObjectEnvironment, views: &[EffectiveView], population: &str| {
+        let bind = |environment: &ObjectEnvironment,
+                    views: &[EffectiveView],
+                    population: &str| {
             let key = DeclarationKey {
                 package: type_key.package.clone(),
                 node: population.to_owned(),

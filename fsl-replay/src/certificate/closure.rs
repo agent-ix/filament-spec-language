@@ -484,10 +484,15 @@ fn check_protocol(
         request.max_messages,
     ) {
         SubjectMemory::Sc => {
-            let system = new_protocol_system(model, subject, Sc, loop_proof_target(request.item))
-                .map_err(ClosureRefusal::Protocol)?
-                .with_max_live_instances(live_instances)
-                .with_cycle_keys(BTreeSet::new());
+            let system = new_protocol_system(
+                model,
+                subject,
+                Sc,
+                loop_proof_target(request.item),
+            )
+            .map_err(ClosureRefusal::Protocol)?
+            .with_max_live_instances(live_instances)
+            .with_cycle_keys(BTreeSet::new());
             check_protocol_system(
                 &system,
                 system.model(),
@@ -506,10 +511,15 @@ fn check_protocol(
                 member: MemoryBoundMember::MaxStoreBuffer,
                 value: tso.max_store_buffer(),
             };
-            let system = new_protocol_system(model, subject, tso, loop_proof_target(request.item))
-                .map_err(ClosureRefusal::Protocol)?
-                .with_max_live_instances(live_instances)
-                .with_cycle_keys(BTreeSet::new());
+            let system = new_protocol_system(
+                model,
+                subject,
+                tso,
+                loop_proof_target(request.item),
+            )
+            .map_err(ClosureRefusal::Protocol)?
+            .with_max_live_instances(live_instances)
+            .with_cycle_keys(BTreeSet::new());
             check_protocol_system(
                 &system,
                 system.model(),
@@ -528,10 +538,15 @@ fn check_protocol(
                 member: MemoryBoundMember::MaxMessages,
                 value: ra.max_messages(),
             };
-            let system = new_protocol_system(model, subject, ra, loop_proof_target(request.item))
-                .map_err(ClosureRefusal::Protocol)?
-                .with_max_live_instances(live_instances)
-                .with_cycle_keys(BTreeSet::new());
+            let system = new_protocol_system(
+                model,
+                subject,
+                ra,
+                loop_proof_target(request.item),
+            )
+            .map_err(ClosureRefusal::Protocol)?
+            .with_max_live_instances(live_instances)
+            .with_cycle_keys(BTreeSet::new());
             check_protocol_system(
                 &system,
                 system.model(),

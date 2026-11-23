@@ -4894,11 +4894,7 @@ fn library_packages_are_charged_as_each_is_emitted() {
     };
     assert_eq!(limit.setting(), Setting::ReplayInputBytes);
     assert_eq!(limit.configured_bound(), 0);
-    assert_eq!(
-        limit.actual(),
-        first as u128,
-        "the second library never ran"
-    );
+    assert_eq!(limit.actual(), first as u128, "the second library never ran");
     assert_eq!(
         super::UNIT_FINISHES.with(std::cell::Cell::get),
         1,

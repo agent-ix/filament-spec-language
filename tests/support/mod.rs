@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shared helpers for the root integration-test binary.
 
-pub mod canonical_reference;
 #[path = "../../examples/config-version/spine_corpus.rs"]
 pub mod config_version_spine;
+pub mod canonical_reference;
 pub mod front_end;
 pub(crate) mod plan_model;
 #[path = "../../fsl-semantics/tests/support/abstraction.rs"]

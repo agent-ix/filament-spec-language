@@ -1227,8 +1227,9 @@ fn type_report(graph: &fsl_semantics::check::CheckedGraph, source: &RawSourceRef
     let owns = |node: &fsl_semantics::check::SemanticNode| {
         node.owner() == Some(&Owner::Source(owner.clone()))
     };
-    let regions =
-        |location: &filament_semantic_value::location::ExpressionLocation| graph.region(location);
+    let regions = |location: &filament_semantic_value::location::ExpressionLocation| {
+        graph.region(location)
+    };
     let occurrence_span = |key: &filament_exact::NodeKey,
                            origin: &filament_exact::Origin|
      -> Option<fsl_foundation::Span> {

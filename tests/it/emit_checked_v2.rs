@@ -283,12 +283,10 @@ fn the_switch_transition_reads_back_typed_subject_input_post_claim_and_source() 
     };
     assert_eq!(anchor_body.execution_point, None, "a no-point anchor");
     let anchored = anchor_body.members.iter().find_map(|member| match member {
-        CheckedTerm::Binding { name, value, .. } if name.as_ref() == "operation" => {
-            match &**value {
-                CheckedTerm::Literal { value, .. } => value.as_str(),
-                _ => None,
-            }
-        }
+        CheckedTerm::Binding { name, value, .. } if name.as_ref() == "operation" => match &**value {
+            CheckedTerm::Literal { value, .. } => value.as_str(),
+            _ => None,
+        },
         _ => None,
     });
     assert_eq!(anchored, operation["name"].as_str());

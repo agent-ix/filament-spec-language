@@ -357,7 +357,8 @@ fn unknown_package_relationship_in_mapping_refuses_after_package_admission() {
     assert_eq!(document["code"], "invalid-request", "{document}");
     assert_eq!(document["stage"], "request", "{document}");
     assert_eq!(
-        document["details"]["path"], "/call/relationships/relationship_identities/0/relationship",
+        document["details"]["path"],
+        "/call/relationships/relationship_identities/0/relationship",
         "{document}"
     );
 }
@@ -848,7 +849,8 @@ fn assert_identity_refusal(rows: Vec<Value>) {
     assert_eq!(failure["code"], "invalid-request", "{failure}");
     assert_eq!(failure["stage"], "request", "{failure}");
     assert_eq!(
-        failure["details"]["path"], "/call/snapshot/relationships/0/instances/0/identity",
+        failure["details"]["path"],
+        "/call/snapshot/relationships/0/instances/0/identity",
         "{failure}"
     );
 }
@@ -1053,7 +1055,8 @@ fn unknown_relationship_type_in_correlation_is_invalid_request_after_snapshot_re
     assert_eq!(failure["code"], "invalid-request", "{failure}");
     assert_eq!(failure["stage"], "request", "{failure}");
     assert_eq!(
-        failure["details"]["path"], "/call/snapshot/relationships/0/relationship",
+        failure["details"]["path"],
+        "/call/snapshot/relationships/0/relationship",
         "{failure}"
     );
 

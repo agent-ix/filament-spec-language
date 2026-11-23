@@ -2,9 +2,9 @@
 //! QSL-2740: execute source aggregates over explicit reservation and refund
 //! populations, retaining group identity, repeated values, and completeness.
 
-use crate::command_harness::{run_file, Output};
+use crate::command_harness::{Output, run_file};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::path::Path;
 
 const PACKAGE: &str = "test/workflow-aggregates";

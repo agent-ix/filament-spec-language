@@ -296,8 +296,7 @@ fn parent_order_decision_path(
                     && matches!(
                         semantic.node(key.clone()).map(|node| node.body()),
                         Some(BodyTerm::Application(ApplicationTerm {
-                            operator: Operator::Binary,
-                            ..
+                            operator: Operator::Binary, ..
                         }))
                     )
             })
@@ -414,10 +413,7 @@ fn clause_run_command_uses_explicit_current_self_and_anchor() {
         assert_eq!(anchor.name, "validate");
         let report = run_clause(decoded).expect("the decoded command request reports");
         let witness = report.witness.as_ref().expect("a comparison witness");
-        assert_eq!(
-            witness.deciding_comparison.as_ref(),
-            Some(&expected_path[1])
-        );
+        assert_eq!(witness.deciding_comparison.as_ref(), Some(&expected_path[1]));
         assert_eq!(
             witness.decision_path.as_deref(),
             Some(expected_path.as_slice())

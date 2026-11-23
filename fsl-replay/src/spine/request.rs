@@ -43,8 +43,7 @@ pub struct SuppliedObservation {
 
 impl std::fmt::Debug for SuppliedObservation {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        formatter
-            .debug_struct("SuppliedObservation")
+        formatter.debug_struct("SuppliedObservation")
             .field("reference", &self.reference)
             .field("path", &self.path)
             .field("format", &self.format)
@@ -1916,42 +1915,29 @@ pub fn read_canonical_clause_run_request(
     cancel: filament_exact::Cancel,
 ) -> Result<ClauseRunRequest, ClauseRequestReadError> {
     let canonical = match &parts.selection {
-        ClauseSelectionPartsKind::Function {
-            name,
-            arguments,
-            snapshot,
-        } => {
+        ClauseSelectionPartsKind::Function { name, arguments, snapshot } => {
             let observation = named(&parts.observations, snapshot)?;
             if observation.format != "filament.state.snapshot/v1"
                 || observation.role.as_deref() != Some("current")
             {
                 return Err(invalid("snapshot", "function requires a current snapshot"));
             }
-            let wire_arguments = arguments
-                .iter()
-                .enumerate()
-                .map(|(index, (parameter, value))| {
-                    let value: serde_json::Value = serde_json::from_str(value.get())
-                        .map_err(|error| invalid("arguments.value", error.to_string()))?;
-                    if !value.is_object() {
-                        return Err(invalid(
-                            format!("clause.selection.function.arguments/{index}/value"),
-                            "expected a typed canonical value object",
-                        ));
-                    }
-                    Ok(super::WireArgument {
-                        parameter: parameter.clone(),
-                        value,
-                        selected_object: None,
-                    })
+            let wire_arguments = arguments.iter().enumerate().map(|(index, (parameter, value))| {
+                let value: serde_json::Value = serde_json::from_str(value.get())
+                    .map_err(|error| invalid("arguments.value", error.to_string()))?;
+                if !value.is_object() {
+                    return Err(invalid(
+                        format!("clause.selection.function.arguments/{index}/value"),
+                        "expected a typed canonical value object",
+                    ));
+                }
+                Ok(super::WireArgument {
+                    parameter: parameter.clone(), value, selected_object: None,
                 })
-                .collect::<Result<Vec<_>, ClauseRequestReadError>>()?;
+            }).collect::<Result<Vec<_>, ClauseRequestReadError>>()?;
             Some(ClauseRunSelection::CanonicalFunction {
-                name: name.clone(),
-                arguments: wire_arguments,
-                snapshot: observation.clone(),
-                supplied,
-                cancel,
+                name: name.clone(), arguments: wire_arguments,
+                snapshot: observation.clone(), supplied, cancel,
             })
         }
         ClauseSelectionPartsKind::Clause(_)

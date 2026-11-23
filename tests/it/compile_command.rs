@@ -1272,7 +1272,10 @@ fn a_library_source_over_the_default_dependent_byte_ceiling_can_be_raised() {
     .expect("raising the aggregate ceiling does not raise the per-source S1 ceiling");
     let s1_failure = s1_error.value().unwrap();
     assert_eq!(s1_failure["code"], "stage_limit_exceeded", "{s1_failure}");
-    assert_eq!(s1_failure["cause"], "input-bytes-exceeded", "{s1_failure}");
+    assert_eq!(
+        s1_failure["cause"], "input-bytes-exceeded",
+        "{s1_failure}"
+    );
     assert_eq!(s1_failure["stage"], "source", "{s1_failure}");
     assert!(
         s1_failure["message"]

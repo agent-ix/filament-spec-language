@@ -624,10 +624,7 @@ fn tc_451_step_1_arguments_bind_by_declared_name() {
     spine_run_request(
         directory.path(),
         &program,
-        call(
-            "flag",
-            json!([{"parameter": "b", "value": {"type": "boolean", "value": true}}]),
-        ),
+        call("flag", json!([{"parameter": "b", "value": {"type": "boolean", "value": true}}])),
     );
     let output = run(directory.path());
     assert_eq!(output.status.code(), Some(0));
@@ -641,10 +638,7 @@ fn tc_451_step_1_arguments_bind_by_declared_name() {
     spine_run_request(
         directory.path(),
         &program,
-        call(
-            "id",
-            json!([{"parameter": "x", "value": {"type": "integer", "value": "4"}}]),
-        ),
+        call("id", json!([{"parameter": "x", "value": {"type": "integer", "value": "4"}}])),
     );
     let output = run(directory.path());
     assert_eq!(output.status.code(), Some(0));
@@ -663,18 +657,9 @@ fn tc_451_step_1_arguments_bind_by_declared_name() {
 fn tc_451_step_2_wrong_value_kind_refuses_at_call() {
     let program = std::fs::read(RUN_FIXTURE).unwrap();
     for (function, arguments) in [
-        (
-            "flag",
-            json!([{"parameter": "b", "value": {"type": "integer", "value": "2"}}]),
-        ),
-        (
-            "id",
-            json!([{"parameter": "x", "value": {"type": "integer", "value": "12"}}]),
-        ),
-        (
-            "px",
-            json!([{"parameter": "p", "value": {"type": "integer", "value": "1"}}]),
-        ),
+        ("flag", json!([{"parameter": "b", "value": {"type": "integer", "value": "2"}}])),
+        ("id", json!([{"parameter": "x", "value": {"type": "integer", "value": "12"}}])),
+        ("px", json!([{"parameter": "p", "value": {"type": "integer", "value": "1"}}])),
     ] {
         let directory = tempfile::tempdir().unwrap();
         spine_run_request(directory.path(), &program, call(function, arguments));
@@ -699,10 +684,7 @@ fn tc_451_step_2_wrong_value_kind_refuses_at_call() {
 fn tc_451_step_3_argument_binding_names_the_parameter() {
     let program = std::fs::read(RUN_FIXTURE).unwrap();
     for (arguments, parameter) in [
-        (
-            json!([{"parameter": "y", "value": {"type": "integer", "value": "4"}}]),
-            "y",
-        ),
+        (json!([{"parameter": "y", "value": {"type": "integer", "value": "4"}}]), "y"),
         (
             json!([{"parameter": "x", "value": {"type": "integer", "value": "1"}}, {"parameter": "x", "value": {"type": "integer", "value": "2"}}]),
             "x",
@@ -749,10 +731,7 @@ fn tc_451_step_6_compile_refusals_carry_their_own_stage() {
         spine_run_request(
             directory.path(),
             &program,
-            call(
-                function,
-                json!([{"parameter": "x", "value": {"type": "integer", "value": "1"}}]),
-            ),
+            call(function, json!([{"parameter": "x", "value": {"type": "integer", "value": "1"}}])),
         );
         let output = run(directory.path());
         assert_eq!(
@@ -1234,10 +1213,7 @@ fn child_result_is_read_under_single_threaded_libtest() {
     spine_run_request(directory.path(), &program, call("seven", json!([])));
     let single = run_child(directory.path(), "request.json", Some("1"));
     assert!(single.starts_with("child-result 0 "), "{single}");
-    assert!(
-        single.contains("\"type\":\"integer\",\"value\":\"7\""),
-        "{single}"
-    );
+    assert!(single.contains("\"type\":\"integer\",\"value\":\"7\""), "{single}");
     assert_eq!(run_child(directory.path(), "request.json", None), single);
 }
 
@@ -1301,10 +1277,7 @@ const RECURSION: &str = "language \"ix:native\" edition \"1-draft\";\n\
 /// stdout and stderr as JSON (`Value::Null` when empty).
 fn run_recursion(n: i64, members: Value) -> (Option<i32>, Value, Value) {
     let directory = tempfile::tempdir().unwrap();
-    let mut request = call(
-        "d",
-        json!([{"parameter": "n", "value": {"type": "integer", "value": n.to_string()}}]),
-    );
+    let mut request = call("d", json!([{"parameter": "n", "value": {"type": "integer", "value": n.to_string()}}]));
     for (member, value) in members.as_object().expect("an object") {
         request[member] = value.clone();
     }
@@ -1404,10 +1377,7 @@ fn native_run_live_occurrence_limit_default_and_zero_are_accepted() {
     );
 
     let directory = tempfile::tempdir().unwrap();
-    let mut selected = call(
-        "d",
-        json!([{"parameter": "n", "value": {"type": "integer", "value": "1"}}]),
-    );
+    let mut selected = call("d", json!([{"parameter": "n", "value": {"type": "integer", "value": "1"}}]));
     selected["evaluation"] = json!({"live_occurrences": 0});
     spine_run_request(directory.path(), RECURSION.as_bytes(), selected);
     let prepared = fsl_command::command::prepare_run(

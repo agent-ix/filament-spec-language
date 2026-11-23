@@ -212,13 +212,11 @@ fn a_package_with_no_emission_names_product_identity() {
         fsl_foundation::IdentityLimits::default(),
     );
     declarations.types = filament_semantic_value::declaration::TypeEnvironment::new(
-        [
-            filament_semantic_value::declaration::CompositeDeclaration::new(
-                fixture_node(255),
-                "FixturePlaceholder",
-                filament_semantic_value::declaration::CompositeShape::Record(vec![]),
-            ),
-        ],
+        [filament_semantic_value::declaration::CompositeDeclaration::new(
+            fixture_node(255),
+            "FixturePlaceholder",
+            filament_semantic_value::declaration::CompositeShape::Record(vec![]),
+        )],
         [],
     )
     .unwrap();

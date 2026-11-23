@@ -1206,13 +1206,7 @@ pub(crate) fn run_compiled(
         }
     }
     with_admitted_call(
-        package,
-        models,
-        sources,
-        call,
-        &selected,
-        objects,
-        cancel,
+        package, models, sources, call, &selected, objects, cancel,
         |forms, arguments, objects, supplied_run| {
             let evaluation = execute(
                 package,
@@ -1239,9 +1233,7 @@ pub(crate) fn run_compiled(
                 cancel,
             )
             .map_err(|failure| match failure {
-                filament_eval::CallFailure::Cancelled(cause) => {
-                    Box::new(RunRefusal::Cancelled(cause))
-                }
+                filament_eval::CallFailure::Cancelled(cause) => Box::new(RunRefusal::Cancelled(cause)),
                 other => convert_call_failure(other),
             })?;
             // FND-016: the unit's and every resolved library's source, reused
