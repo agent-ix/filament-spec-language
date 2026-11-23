@@ -389,26 +389,81 @@ fn option_history_initials_prove_or_refuse() {
     }
 }
 
-/// FR-630-AC-4, FR-135-AC-6: a nested-reference row checks and proves.
+/// Give the Counter of every model and snapshot in `ws` the field `chain:
+/// Sequence<Reference<Counter>>[0, 2]`, holding the one reference `[a]` in
+/// each snapshot.
+fn add_counter_chain(ws: &Workspace) {
+    let edit = |name: &str, change: &dyn Fn(&mut Value)| {
+        let path = ws.path(name);
+        let mut document: Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("the file reads"))
+                .expect("the file is JSON");
+        change(&mut document);
+        ws.write(name, document.to_string().as_bytes());
+    };
+    for name in ["model.json", "spec.json"] {
+        edit(name, &|document| {
+            let package = document["package"]["identity"]
+                .as_str()
+                .expect("a package")
+                .to_owned();
+            let counter = document["types"]
+                .as_array_mut()
+                .expect("types")
+                .iter_mut()
+                .find(|declared| declared["identity"] == format!("ix://{package}/Counter"))
+                .expect("the Counter type");
+            let fields = counter["fields"].as_array_mut().expect("fields");
+            let mut chain = fields[0].clone();
+            chain["identity"] = json!(format!("ix://{package}/Counter/chain"));
+            chain["name"] = json!("chain");
+            chain["typeRef"] = json!(format!("ix://{package}/Counter"));
+            chain["multiplicity"] =
+                json!({"lower": 0, "upper": 2, "ordered": true, "unique": false});
+            chain["origin"]["generated"]["inputIdentities"] =
+                json!([format!("ix://{package}/Counter/chain")]);
+            fields.push(chain);
+        });
+    }
+    for name in ["start.json", "spec-start.json", "spec-start-one.json"] {
+        edit(name, &|document| {
+            let package = document["model"]["identity"]
+                .as_str()
+                .expect("a model")
+                .to_owned();
+            let population = format!("ix://{package}/counters");
+            for object in document["populations"][0]["objects"]
+                .as_array_mut()
+                .expect("objects")
+            {
+                object["fields"]["chain"] = json!({"sequence": [
+                    {"reference": {"population": population, "key": "a"}}
+                ]});
+            }
+        });
+    }
+}
+
+/// FR-630-AC-4, FR-135-AC-6: a `Sequence<Reference<Counter>>[0, 2]` row
+/// mapped to the abstract `Sequence<Reference<Counter>>[0, 2]` checks, its
+/// reference lifted element by element, and the refinement item settles
+/// `proved` and `certified`.
 #[trace("TC-1590", "FR-630-AC-4")]
 #[trace("TC-1590", "FR-135-AC-6")]
 #[test]
-#[ignore = "QSL-2945: nested-reference rows are refused not-yet-implemented until the lifting feature lands; the test body also needs rewriting to the FR-630-AC-4 row (a Sequence<Reference<Ring>>[0, 2] field mapped to Sequence<Reference<Queue>>[0, 2]), its history row does not parse at S1"]
 fn a_nested_reference_row_checks_and_proves() {
-    let body = "record Slots { held: Option<Reference<M::Counter>>; }\n".to_owned()
-        + &refinement(
-            "Nested",
-            "self.value",
-            "history M::Counter slot : Slots = Slots { held: none } on M::Counter::inc \
-             { Slots { held: some(self) } };\n",
-        );
     let ws = Workspace::new("family-nested-reference");
-    let run = analyze(&refinement_request(
+    let path = refinement_request(
         &ws,
-        &body,
+        &refinement("Nested", "self.value; chain = self.chain", ""),
         json!([{"claim": "Nested", "kind": "refinement", "temporal": {"item_kind": "refinement"}}]),
-    ));
-    assert_eq!(label(&run.item(0)), "proved");
+    );
+    add_counter_chain(&ws);
+    let run = analyze(&path);
+    assert_eq!(run.document()["aggregate"]["status"], "complete");
+    let item = run.item(0);
+    assert_eq!(label(&item), "proved", "{item}");
+    assert_eq!(item["record"]["certification"], "certified", "{item}");
 }
 
 /// FR-631-AC-1: non-interference proves for the secure vault and refutes

@@ -3087,9 +3087,9 @@ fn quantity_literal_nodes_are_referenced_by_their_operations() {
 
 /// Two copies of the config-version model, each with a state machine, as
 /// the abstract `A` and concrete `C` of a refinement `R` written by `rows`.
-/// `ConfigVersion` keeps only its `versionNumber` field (`parent` is an
-/// `Option<Reference<_>>`, whose row is a nested reference row the default
-/// build does not support), and its operations are `operations`, each
+/// `ConfigVersion` keeps only its `versionNumber` field (`parent`, an
+/// `Option<Reference<_>>`, is dropped to keep the rows small), and its
+/// operations are `operations`, each
 /// shaped as `attemptUpdate` is.
 pub(super) fn rows_refinement(rows: &str, operations: &[&str]) -> (String, Vec<Vec<u8>>) {
     rows_refinement_with(rows, operations, RowsModel::default())

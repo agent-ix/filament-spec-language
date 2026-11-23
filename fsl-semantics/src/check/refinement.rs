@@ -47,7 +47,7 @@ use filament_exact::{
     IntegerInterval, NodeKey, Presence, ValueType,
 };
 use filament_semantic_value::catalog::InternalFault;
-use filament_semantic_value::declaration::{CompositeShape, FieldDeclaration, TypeEnvironment};
+use filament_semantic_value::declaration::TypeEnvironment;
 use filament_semantic_value::fairness::{
     FairnessConstraint, FairnessGranularity, FairnessKind, FairnessOperation,
 };
@@ -135,11 +135,10 @@ pub enum UnsupportedFeature {
     /// A non-empty resolved internal list (FR-147, FSpec FR-375's
     /// `refinement-internal-list`).
     RefinementInternalList,
-    /// A field row whose type nests a `Reference` in an option, record,
-    /// tuple (a record by position), union or collection, other than a whole-population `Set<Reference<T>>`
-    /// (FR-135): the lifting of ADR-020 RM-3 reaches no further than the
-    /// reference itself.
-    NestedReferenceRow,
+    /// A history row whose declared type has values with no FR-181 typed
+    /// canonical form (an enum or a decimal), which a product state could not
+    /// key (FR-138).
+    HistoryRow,
     /// An abstract-operation application as the right side of a protocol
     /// step row: FR-136 binds `self` to the concrete receiver, and a
     /// protocol step has none that the requirement names.
@@ -152,7 +151,7 @@ impl UnsupportedFeature {
         match self {
             Self::ProtocolAbstractSide => "protocol-abstract-side",
             Self::RefinementInternalList => "refinement-internal-list",
-            Self::NestedReferenceRow => "nested-reference-row",
+            Self::HistoryRow => "history-row",
             Self::ProtocolStepApplication => "protocol-step-application",
         }
     }
@@ -2188,80 +2187,6 @@ fn conforms(types: &TypeEnvironment, actual: &ValueType, required: &ValueType) -
     }
 }
 
-/// Whether `value_type` holds a `Reference` below its top level (FR-135
-/// "Refinement features the build does not check"). A plain `Reference<T>`
-/// is lifted by the object map; a reference inside an option, record, tuple,
-/// union or collection is not. A tuple is a record by position, so it is
-/// caught with the record and the union.
-fn nests_reference(types: &TypeEnvironment, value_type: &ValueType) -> Result<bool, &'static str> {
-    match value_type {
-        ValueType::Reference(_) => Ok(false),
-        other => holds_reference(types, other, &mut Vec::new()),
-    }
-}
-
-/// Whether `value_type` is or contains a `Reference`. `seen` holds the
-/// composite declarations being walked, so a declaration that names itself
-/// is walked once. A composite with no declaration is an internal fault.
-fn holds_reference(
-    types: &TypeEnvironment,
-    value_type: &ValueType,
-    seen: &mut Vec<NodeKey>,
-) -> Result<bool, &'static str> {
-    let any = |candidates: &mut dyn Iterator<Item = &ValueType>,
-               seen: &mut Vec<NodeKey>|
-     -> Result<bool, &'static str> {
-        for candidate in candidates {
-            if holds_reference(types, candidate, seen)? {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    };
-    match value_type {
-        ValueType::Reference(_) => Ok(true),
-        ValueType::Option(payload) => holds_reference(types, payload, seen),
-        ValueType::Collection(collection) => holds_reference(types, collection.element(), seen),
-        ValueType::Map(map) => holds_reference(types, map.values(), seen),
-        ValueType::Composite(key) => {
-            if seen.contains(key) {
-                return Ok(false);
-            }
-            seen.push(key.clone());
-            let declaration = types
-                .composite(key.clone())
-                .ok_or("composite-type-has-a-declaration")?;
-            match declaration.shape() {
-                CompositeShape::Record(fields) => {
-                    any(&mut fields.iter().map(FieldDeclaration::value_type), seen)
-                }
-                CompositeShape::Tuple(positions) => any(&mut positions.iter(), seen),
-                CompositeShape::Union(members) => any(
-                    &mut members.iter().flat_map(|member| member.positions()),
-                    seen,
-                ),
-            }
-        }
-        ValueType::Boolean
-        | ValueType::Integer
-        | ValueType::Int(_)
-        | ValueType::Rational(_)
-        | ValueType::Decimal(_)
-        | ValueType::Float(_)
-        | ValueType::Quantity(_)
-        | ValueType::BoundedQuantity(_)
-        | ValueType::CarriedQuantity(_)
-        | ValueType::Text(_)
-        | ValueType::String
-        | ValueType::Uuid
-        | ValueType::Timestamp
-        | ValueType::Bytes
-        | ValueType::JsonObject
-        | ValueType::Enum(_)
-        | ValueType::Population(_) => Ok(false),
-    }
-}
-
 /// `value_type` with each reference to an abstract object type that an
 /// object row maps replaced by a reference to the concrete type it is mapped
 /// from (ADR-020 RM-3 reference lifting).
@@ -2280,7 +2205,7 @@ fn lift(lifting: &BTreeMap<EffectiveId, EffectiveId>, value_type: &ValueType) ->
         }
         ValueType::Map(map) => ValueType::Map(std::sync::Arc::new(
             filament_exact::MapType::new(
-                map.key().clone(),
+                lift(lifting, map.key()),
                 lift(lifting, map.values()),
                 map.bound(),
             )
@@ -2434,7 +2359,6 @@ pub(crate) fn check_refinement<'f: 'c, 'a, 'c>(
         lifting: BTreeMap::new(),
         maps_complete: true,
         baseline: 0,
-        profile: declaration.selection.identity.clone(),
         populations: None,
         history: Vec::new(),
         protocol_subject: matches!(form.abstract_side, AbstractSideForm::Protocol { .. }),
@@ -2868,8 +2792,6 @@ struct Checker<'c, 'a> {
     /// How many refusals the header already holds, which say nothing of the
     /// maps.
     baseline: usize,
-    /// The identity of the profile the declaration selects.
-    profile: String,
     /// The concrete populations a row may name, resolved on first use.
     populations: Option<PopulationScope>,
     /// The history fields a row may read (FR-138), in scope once their rows'
@@ -3372,7 +3294,6 @@ impl<'c, 'a> Checker<'c, 'a> {
                     operation: None,
                     label: format!("{}.{written}", target.name),
                     range_agnostic: false,
-                    field_row: true,
                 },
                 cx,
             );
@@ -3481,10 +3402,8 @@ impl<'c, 'a> Checker<'c, 'a> {
             operation,
             label,
             range_agnostic,
-            field_row,
         } = context;
         let populations = self.population_scope();
-        let mut outcome: Option<Nested> = None;
         let typed = (|| {
             let mut typer = Typer::new(
                 declarations.scope,
@@ -3517,30 +3436,6 @@ impl<'c, 'a> Checker<'c, 'a> {
             // coercion into it.
             let body = typer.infer(&expression.expression, required, &location)?;
             let types = declarations.scope.types();
-            if field_row {
-                let root = body.root();
-                // A whole population is the one nesting a row may have.
-                let whole_population = matches!(root.kind(), NodeKind::PopulationObjects { .. });
-                if !whole_population {
-                    match nests_reference(types, root.value_type()) {
-                        Ok(false) => {}
-                        Ok(true) => {
-                            outcome = Some(Nested::Row);
-                            return Err(CheckRefusal::ill_typed(
-                                &location,
-                                IllTypedCause::TypeMismatch,
-                            ));
-                        }
-                        Err(invariant) => {
-                            outcome = Some(Nested::Fault(invariant));
-                            return Err(CheckRefusal::ill_typed(
-                                &location,
-                                IllTypedCause::TypeMismatch,
-                            ));
-                        }
-                    }
-                }
-            }
             let uses = match required {
                 None => Vec::new(),
                 Some(required)
@@ -3581,22 +3476,10 @@ impl<'c, 'a> Checker<'c, 'a> {
                     spans: expression.spans.clone(),
                 })
             }
-            Err(_) if outcome.is_some() => {
-                match (outcome, expression.spans.at(&[])) {
-                    (Some(Nested::Row), Some(span)) => self.findings.refuse(
-                        span,
-                        RefinementCause::Unsupported {
-                            feature: UnsupportedFeature::NestedReferenceRow,
-                            profile: self.profile.clone(),
-                        },
-                    ),
-                    (Some(Nested::Fault(invariant)), _) => self.fault(invariant),
-                    _ => self.fault("row-expression-has-a-span"),
-                }
-                None
-            }
             Err(refusal) => {
-                match expression.spans.span_at(&refusal.location)
+                match expression
+                    .spans
+                    .span_at(&refusal.location)
                     .or_else(|| expression.spans.at(&[]))
                 {
                     Some(span) => self
@@ -3992,7 +3875,6 @@ impl<'c, 'a> Checker<'c, 'a> {
                         operation: Some(concrete.name().to_owned()),
                         label: format!("step {}", concrete.name()),
                         range_agnostic: false,
-                        field_row: false,
                     };
                     let Some(row) = self.check_row_as(expression, None, context, cx) else {
                         complete = false;
@@ -4072,7 +3954,6 @@ impl<'c, 'a> Checker<'c, 'a> {
             operation: Some(concrete.name().to_owned()),
             label: format!("step {}", concrete.name()),
             range_agnostic: false,
-            field_row: false,
         };
         let mut complete = true;
         let receiver_type = lift(&self.lifting, &ValueType::Reference(target_type.id.clone()));
@@ -4212,14 +4093,6 @@ impl<'c, 'a> Checker<'c, 'a> {
     }
 }
 
-/// What the nesting check of a field row found.
-enum Nested {
-    /// The row's type nests a reference.
-    Row,
-    /// A composite type of the row has no declaration.
-    Fault(&'static str),
-}
-
 /// How a row expression is typed: its parameters, the clause kind it reads
 /// as and the concrete operation whose arguments it may name.
 struct RowContext {
@@ -4233,10 +4106,6 @@ struct RowContext {
     /// to run time: a history update (FR-138), whose value is computed and
     /// not a literal.
     range_agnostic: bool,
-    /// Whether the row defines an abstract field (FR-135), which a type that
-    /// nests a reference refuses `nested-reference-row` before any other
-    /// check of the row's type.
-    field_row: bool,
 }
 
 fn refuse_with(location: &Location, cause: CheckCause) -> CheckRefusal {
@@ -4541,39 +4410,9 @@ mod tests {
         ))
     }
 
-    /// FR-135: a reference nested in a map's values is not lifted by the
-    /// object map, so it is a refinement feature the build does not check,
-    /// as one nested in an option or a collection is. A map of a value
-    /// without a reference, and a bounded quantity, hold none. No FSL
-    /// criterion pins the map arm itself.
-    #[test]
-    fn a_reference_in_a_map_value_is_a_nested_reference() {
-        let types = TypeEnvironment::new([], []).expect("an empty environment");
-        assert_eq!(
-            nests_reference(&types, &map_of(reference(1), None)),
-            Ok(true)
-        );
-        assert_eq!(
-            nests_reference(&types, &map_of(map_of(reference(1), None), None)),
-            Ok(true)
-        );
-        assert_eq!(
-            nests_reference(&types, &map_of(ValueType::Boolean, None)),
-            Ok(false)
-        );
-        let bounded = ValueType::BoundedQuantity(std::sync::Arc::new(
-            filament_exact::BoundedQuantityType::new(
-                filament_exact::UnitId::compound(vec![(node(5), Integer::one())]),
-                None,
-                None,
-            )
-            .expect("in the unit"),
-        ));
-        assert_eq!(nests_reference(&types, &bounded), Ok(false));
-    }
-
     /// ADR-020 RM-3: the object map lifts a reference at any depth in a map's
-    /// values, and the map keeps its bound; a bounded quantity is unchanged.
+    /// keys and values, and the map keeps its bound; a bounded quantity is
+    /// unchanged.
     #[test]
     fn lifting_reaches_a_reference_inside_a_map_value() {
         let abstract_type = effective(1);
@@ -4591,6 +4430,15 @@ mod tests {
         assert_eq!(
             lift(&lifting, &map_of(ValueType::Boolean, None)),
             map_of(ValueType::Boolean, None)
+        );
+        let keyed = |key, values| {
+            ValueType::Map(std::sync::Arc::new(
+                filament_exact::MapType::new(key, values, None).expect("a leaf key"),
+            ))
+        };
+        assert_eq!(
+            lift(&lifting, &keyed(reference(1), reference(1))),
+            keyed(reference(2), reference(2))
         );
     }
 }
