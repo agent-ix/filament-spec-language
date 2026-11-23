@@ -306,8 +306,8 @@ fn a_fence_without_an_ordering_is_refused() {
 /// Verifies the parse only and claims no criterion.
 /// A refinement declaration holds explicit `step`
 /// rows whose left side is a concrete operation or a protocol step class
-/// (`fork`, `join`, `cend`, `duplicate`, `lose`, `spawn`, `retire`,
-/// `activate`, or a node, template, channel or role by name, or `memory`) and
+/// (`fork`, `join`, `cend`, `cfail`, `ctimeout`, `cexpire`, `duplicate`, `lose`,
+/// `spawn`, `retire`, `activate`, or a node, template, channel or role by name, or `memory`) and
 /// whose right side is an abstract application, `stutter`, `any` or `node`.
 #[test]
 fn a_refinement_parses_its_step_rows() {
@@ -320,6 +320,9 @@ fn a_refinement_parses_its_step_rows() {
         "step join Fill::Both -> stutter;",
         "step Fill::Done -> stutter;",
         "step cend Fill::Refund -> stutter;",
+        "step cfail Fill::Refund -> stutter;",
+        "step ctimeout Fill::Refund -> stutter;",
+        "step cexpire Fill::Refund -> stutter;",
         "step duplicate Fill::ch -> any;",
         "step lose Fill::ch -> any;",
         "step spawn Fill::Workers -> stutter;",
@@ -366,6 +369,9 @@ fn a_refinement_parses_its_step_rows() {
         "fork ",
         "join ",
         "cend ",
+        "cfail ",
+        "ctimeout ",
+        "cexpire ",
         "duplicate ",
         "lose ",
         "spawn ",
