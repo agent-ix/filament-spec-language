@@ -124,36 +124,72 @@ fn unguarded_record_keeps_an_empty_path_condition() {
         .all(|record| record.path_condition.is_empty()));
 }
 
-/// FSpec FR-825: the timed-model writer re-encodes an admitted base package
-/// and carries its requirement rows with the record nodes they name, so the
-/// strict reader admits the result with the same records.
-#[trace("FR-940-AC-1", "FR-576-AC-1")]
+
+/// FSpec FR-825 package order over hand-built rows: claim key first, then
+/// role spelling, ordinal and capability spelling on ties. The `NodeKey`
+/// order used for the claim equals the order of the structural ids the reader
+/// compares (`CheckedNodeId`'s order), including nested operand keys and
+/// ordinals.
+#[trace("FR-940-AC-1")]
 #[test]
-fn the_timed_model_writer_carries_value_validity_rows() {
-    let (_, emission, records) = emitted_records(GUARDED);
-    let admitted = match filament_contract_model::read_checked_package(
-        emission.package().bytes(),
-        CheckedPackageReadLimits::bounded(),
-        emission.evidence(),
-    ) {
-        filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(admitted) => admitted,
-        other => panic!("the scalar base must read: {other:?}"),
+fn package_order_sorts_by_claim_key_then_role_ordinal_and_kind() {
+    use filament_contract_model::{
+        CheckedNodeId, CheckedOccurrence, CheckedOccurrenceRole, RequirementExtent,
+        RequirementItemRow,
     };
-    let timed = crate::emit::emit_timed_models(&admitted, &[], crate::EmitLimits::fixture())
-        .expect("a package without timed nodes re-emits");
-    let reread = match filament_contract_model::read_checked_package(
-        timed.package().bytes(),
-        CheckedPackageReadLimits::bounded(),
-        timed.evidence(),
-    ) {
-        filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(reread) => reread,
-        other => panic!("the re-emitted value-validity rows must read: {other:?}"),
+    use filament_exact::{NodeKey, PathSegment};
+
+    let text = |value: &str| PathSegment::Text(value.to_owned());
+    let leaf = |name: &str, ordinal| NodeKey::new("p", vec![text(name)], ordinal).unwrap();
+    let nested = |inner: NodeKey| NodeKey::new("p", vec![text("b"), PathSegment::Node(inner)], 0).unwrap();
+    let keys = [
+        nested(leaf("z", 0)),
+        leaf("b", 1),
+        nested(leaf("a", 0)),
+        leaf("b", 0),
+        NodeKey::new("o", vec![text("z")], 0).unwrap(),
+        NodeKey::new("p", vec![text("b"), text("c")], 0).unwrap(),
+    ];
+    let ids = fsl_semantics::check::wire_id::StructuralIds::default();
+    let mut by_key = keys.to_vec();
+    by_key.sort();
+    let mut by_id = keys.to_vec();
+    by_id.sort_by_cached_key(|key| crate::emit::node_id(&ids, key));
+    assert_eq!(by_key, by_id, "NodeKey order is the reader's structural-id order");
+
+    let claim = CheckedNodeId {
+        package: "p".into(),
+        path: Vec::new(),
+        ordinal: 0,
     };
-    assert_eq!(reread.requirement_items(), admitted.requirement_items());
-    let carried = reread
-        .requirement_items()
-        .iter()
-        .filter_map(|row| row.record.clone())
+    let row = |role, ordinal, kind| RequirementItemRow {
+        claim: claim.clone(),
+        occurrence: CheckedOccurrence { role, ordinal },
+        kind,
+        extent: RequirementExtent::Bounded,
+        record: None,
+    };
+    let tie = leaf("b", 0);
+    let first = leaf("a", 0);
+    let rows = vec![
+        (tie.clone(), row(CheckedOccurrenceRole::Expression, 1, CapabilityKind::ValueValidity)),
+        (tie.clone(), row(CheckedOccurrenceRole::Expression, 0, CapabilityKind::ValueValidity)),
+        (tie.clone(), row(CheckedOccurrenceRole::Claim, 3, CapabilityKind::TemporalSatisfaction)),
+        (tie.clone(), row(CheckedOccurrenceRole::Expression, 0, CapabilityKind::OperationContract)),
+        (first, row(CheckedOccurrenceRole::Generated, 9, CapabilityKind::ValueValidity)),
+    ];
+    let ordered = super::package_order(rows)
+        .into_iter()
+        .map(|row| (row.occurrence.role, row.occurrence.ordinal, row.kind))
         .collect::<Vec<_>>();
-    assert_eq!(carried, records);
+    assert_eq!(
+        ordered,
+        [
+            (CheckedOccurrenceRole::Generated, 9, CapabilityKind::ValueValidity),
+            (CheckedOccurrenceRole::Claim, 3, CapabilityKind::TemporalSatisfaction),
+            (CheckedOccurrenceRole::Expression, 0, CapabilityKind::OperationContract),
+            (CheckedOccurrenceRole::Expression, 0, CapabilityKind::ValueValidity),
+            (CheckedOccurrenceRole::Expression, 1, CapabilityKind::ValueValidity),
+        ]
+    );
 }

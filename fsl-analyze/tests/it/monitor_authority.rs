@@ -18,9 +18,34 @@ use ix_trace_rs::trace;
 
 use crate::monitor_root::{authored, root_of, target, LIMITS};
 
-fn native_budget() -> filament_contract_model::NativeJoinBudget {
+/// The shared native budget for one handoff of `root`. Its read-storage limit
+/// is the measured read storage of the strict read of `root`'s own emission,
+/// so the fixture tracks the package the writer emits rather than a fixed
+/// allowance that a larger package outgrows. No requirement these tests
+/// trace sets a read-storage figure (FR-251-AC-46 and AC-48 bound the owner
+/// admission and the canonical order); the exact and one-short read-storage
+/// bounds are `complete_handoffs_measure_work_logical_storage_and_read_storage_on_one_budget`.
+fn native_budget(root: &PlanRoot) -> filament_contract_model::NativeJoinBudget {
     filament_contract_model::NativeJoinBudget::new(100_000_000, 100_000_000)
-        .with_read_storage_limit(100_000_000)
+        .with_read_storage_limit(strict_read_storage(root))
+}
+
+/// The read storage the strict read of `root`'s emission requests under an
+/// unlimited read-storage allowance.
+fn strict_read_storage(root: &PlanRoot) -> u64 {
+    let mut budget = filament_contract_model::NativeJoinBudget::new(u64::MAX, u64::MAX)
+        .with_read_storage_limit(u64::MAX);
+    match filament_contract_model::read_checked_package_with_budget(
+        root.emission().package().bytes(),
+        LIMITS,
+        root.emission().evidence(),
+        &mut budget,
+    ) {
+        filament_contract_model::CheckedPackageBudgetedDispatchResult::AdmittedV2(_) => {
+            budget.read_storage_consumed()
+        }
+        other => panic!("the fixture's own emission reads strictly: {other:?}"),
+    }
 }
 
 fn native_locus() -> filament_contract_model::NativeJoinLocus {
@@ -83,6 +108,7 @@ fn admit(
 ) -> Result<AdmittedPlanAuthority, PlanAuthorityRefusal> {
     let source = root.checked_unit().source().identity().clone();
     let claim = root.plan().subject().clone();
+    let mut budget = native_budget(&root);
     root.admit_authority(
         PlanAuthoritySelection {
             source: &source,
@@ -93,7 +119,7 @@ fn admit(
         },
         progress,
         limits,
-        &mut native_budget(),
+        &mut budget,
         native_locus(),
     )
 }
@@ -225,7 +251,10 @@ fn complete_handoffs_measure_work_logical_storage_and_read_storage_on_one_budget
                 native_locus(),
             )
         };
-        let mut measured = native_budget();
+        // Measured under an unlimited read-storage allowance; the exact and
+        // one-short read-storage bounds below come from this measurement.
+        let mut measured = filament_contract_model::NativeJoinBudget::new(100_000_000, 100_000_000)
+            .with_read_storage_limit(u64::MAX);
         let original = handoff(&mut measured).unwrap();
         let need = measured.consumed();
         let read_need = measured.read_storage_consumed();
@@ -503,6 +532,7 @@ fn independent_source_subject_clock_and_foreign_emission_selections_refuse() {
                 PlanAuthorityRefusalCode::Selection
             }
         };
+        let mut budget = native_budget(&root);
         let result = root.admit_authority(
             PlanAuthoritySelection {
                 source: &source,
@@ -513,7 +543,7 @@ fn independent_source_subject_clock_and_foreign_emission_selections_refuse() {
             },
             Some(view),
             limits(),
-            &mut native_budget(),
+            &mut budget,
             native_locus(),
         );
         let error = result.unwrap_err();
@@ -535,6 +565,7 @@ fn independent_source_subject_clock_and_foreign_emission_selections_refuse() {
     .unwrap();
     let source = original.checked_unit().source().identity().clone();
     let claim = original.plan().subject().clone();
+    let mut budget = native_budget(&foreign);
     let error = foreign
         .admit_authority(
             PlanAuthoritySelection {
@@ -546,7 +577,7 @@ fn independent_source_subject_clock_and_foreign_emission_selections_refuse() {
             },
             Some(view),
             limits(),
-            &mut native_budget(),
+            &mut budget,
             native_locus(),
         )
         .unwrap_err();
@@ -670,6 +701,7 @@ fn changing_only_the_independent_checked_claim_node_role_or_ordinal_refuses_clai
             fsl_foundation::source::provenance::OccurrenceKey::new(selected_node, occurrence),
             original.clause_name(),
         );
+        let mut budget = native_budget(&root);
         let error = root
             .admit_authority(
                 PlanAuthoritySelection {
@@ -681,7 +713,7 @@ fn changing_only_the_independent_checked_claim_node_role_or_ordinal_refuses_clai
                 },
                 Some(view),
                 limits(),
-                &mut native_budget(),
+                &mut budget,
                 native_locus(),
             )
             .unwrap_err();

@@ -2056,6 +2056,9 @@ fn emit_checked_never_returns_incomplete_across_the_fixture_set() {
             }
             Err(EmitRefusal::TimedModelWriterInvariant(_)) => Seen::TimedModelWriterInvariant,
             Err(EmitRefusal::MonitorPlanInvariant(_)) => Seen::MonitorPlanInvariant,
+            Err(EmitRefusal::RequirementRowCarry(_)) => {
+                panic!("emit_checked writes its own requirement rows; only a re-encoder carries them")
+            }
             Err(EmitRefusal::MonitorPlanAmbiguous { .. }) => Seen::MonitorPlanAmbiguous,
             Err(EmitRefusal::MonitorBaseRefused(_)) => Seen::MonitorBaseRefused,
             Err(EmitRefusal::RefinementSubjectNotEmitted) => Seen::RefinementSubjectNotEmitted,
