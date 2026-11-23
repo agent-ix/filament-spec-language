@@ -1902,6 +1902,9 @@ mod tests {
     #[ix_trace_rs::trace("FR-251-AC-9", "FR-940")]
     #[test]
     fn final_writer_carries_guards_conversions_and_unbounded_extents() {
+        // contract-ir reader defect A (QSL-2776 chain): `init`'s else branch
+        // holds a scalar operation (`x * 1`, not `x`) until the reader accepts
+        // a branch frame no record cites.
         let rekeyed = rekeyed_final(
             "function init using v(x: Int[0, 9], p: Boolean): Int[0, 10] pure { if p then x + 1 else x * 1 }\n\
              function on_event using v(n: Integer): Integer pure { n + 1 }\n\

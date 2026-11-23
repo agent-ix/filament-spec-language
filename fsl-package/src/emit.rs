@@ -3166,7 +3166,13 @@ fn omissions(
     decodes: &dyn Fn(CheckedNodeTag, &str) -> bool,
     external: &HashSet<NodeKey>,
     models: &BTreeSet<&str>,
-    record_names: &dyn Fn() -> Result<Vec<value_validity_requirements::RecordNames>, EmitRefusal>,
+    record_names: &dyn Fn() -> Result<
+        (
+            Vec<value_validity_requirements::RecordNames>,
+            value_validity_requirements::GuardRows,
+        ),
+        EmitRefusal,
+    >,
 ) -> Result<Vec<(usize, OmittedNode)>, EmitRefusal> {
     let mut omitted: Vec<Option<OmissionCause>> = vec![None; candidates.order.len()];
     for (position, candidate) in candidates.values().enumerate() {
@@ -3204,8 +3210,23 @@ fn omissions(
     // Each shared application, to the owners of its records; `None` once an
     // owner is no candidate, which is never omitted.
     let mut applications: BTreeMap<usize, Option<Vec<usize>>> = BTreeMap::new();
+    // The shared guard rows: each row's children, the records ending at it and
+    // the rows that guard each node, so an omitted guard takes the records of
+    // its whole subtree with it, each row once.
+    let mut row_children: Vec<Vec<usize>> = Vec::new();
+    let mut row_targets: Vec<Vec<usize>> = Vec::new();
+    let mut rows_guarding: HashMap<NodeKey, Vec<usize>> = HashMap::new();
     if !pending.is_empty() {
-        for record in record_names()? {
+        let (records, guard_rows) = record_names()?;
+        row_children.resize_with(guard_rows.rows.len(), Vec::new);
+        row_targets.resize_with(guard_rows.rows.len(), Vec::new);
+        for (row, (parent, guard)) in guard_rows.rows.into_iter().enumerate() {
+            if let Some(parent) = parent {
+                row_children[parent].push(row);
+            }
+            rows_guarding.entry(guard).or_default().push(row);
+        }
+        for record in records {
             let claim = candidates.index.get(&record.claim).copied();
             let target = match &record.owner {
                 Some(owner) => {
@@ -3227,8 +3248,12 @@ fn omissions(
             for name in record.names {
                 record_named_by.entry(name).or_default().push(target);
             }
+            if let Some(row) = record.guards {
+                row_targets[row].push(target);
+            }
         }
     }
+    let mut row_done = vec![false; row_children.len()];
     loop {
         while let Some(gone) = pending.pop_front() {
             let gone_key = &candidates.order[gone].key;
@@ -3243,6 +3268,21 @@ fn omissions(
                         candidates.order[gone].id.clone(),
                     ));
                     pending.push_back(dependent);
+                }
+            }
+            let mut rows: Vec<usize> = rows_guarding.get(gone_key).cloned().unwrap_or_default();
+            while let Some(row) = rows.pop() {
+                if std::mem::replace(&mut row_done[row], true) {
+                    continue;
+                }
+                rows.extend(&row_children[row]);
+                for &dependent in &row_targets[row] {
+                    if omitted[dependent].is_none() {
+                        omitted[dependent] = Some(OmissionCause::NamesOmittedNode(
+                            candidates.order[gone].id.clone(),
+                        ));
+                        pending.push_back(dependent);
+                    }
                 }
             }
         }

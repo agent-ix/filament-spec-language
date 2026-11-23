@@ -98,6 +98,10 @@ fn bare_parameter_guard_is_one_shared_frame_per_outcome() {
     assert!(frames[0].holds && !frames[1].holds, "then frame first, else frame second");
     assert_eq!(frames[0].guard, frames[1].guard, "both read the one parameter");
     assert_eq!(frames[0].occurrence, frames[1].occurrence);
+    // contract-ir reader defect B (QSL-2776 chain): the reader derives the
+    // guard node's first `expression` occurrence (0) although the checker's
+    // ordinal for the read is 1; this value changes once B makes numbering
+    // package-wide.
     assert_eq!(
         frames[0].occurrence, 0,
         "the first `expression` occurrence of the guard node, as the reader derives it"
@@ -215,7 +219,9 @@ fn wire_frames(emission: &Emission) -> (Vec<(Option<u64>, bool)>, Vec<Option<u64
 
 /// FSpec FR-825-AC-6's source with one branch holding no scalar operation:
 /// that branch's frame is held by no record, so the table holds only the frame
-/// of the branch with the `+`.
+/// of the branch with the `+`. Read from the wire, not the reader: contract-ir
+/// reader defect A (QSL-2776 chain) refuses this package until it accepts a
+/// missing branch frame, after which this test reads it through the reader.
 #[trace("FR-825-AC-6", "FR-062-AC-17")]
 #[test]
 fn a_branch_without_a_scalar_operation_holds_no_frame() {
@@ -232,6 +238,8 @@ fn a_branch_without_a_scalar_operation_holds_no_frame() {
 
 /// FSpec FR-825-AC-2: nested guards share every prefix once. `>=` is
 /// unguarded, `<` holds the `n >= 0` frame, `+` holds the whole `if` condition.
+/// Read from the wire, not the reader: contract-ir reader defect A (QSL-2776
+/// chain) refuses the `else true` branch's frame until it is fixed.
 #[trace("FR-825-AC-2", "FR-062-AC-17")]
 #[test]
 fn nested_guards_share_every_prefix_in_one_table() {
@@ -336,7 +344,7 @@ fn reordering_frames_remaps_every_record_citation() {
         package: "p".into(),
         path: [Segment::Name("claim".into()), Segment::Name(name.into())]
             .into_iter()
-            .chain(frame.map(|frame| Segment::Name("path_condition".into())))
+            .chain(frame.map(|_| Segment::Name("path_condition".into())))
             .chain(frame.map(|frame| Segment::Name(frame.to_string().into())))
             .chain([Segment::Name("roots".into())])
             .collect(),

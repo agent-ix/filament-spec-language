@@ -674,6 +674,9 @@ fn the_timed_model_writer_carries_value_validity_rows_through_a_rename() {
         "profile v = \"filament.model.complete/v1\";\n\
          profile t = \"filament.temporal.complete/v1\";\n",
     );
+    // contract-ir reader defect A (QSL-2776 chain): the else branch holds a
+    // scalar operation (`x * 1`, not `x`) until the reader accepts a branch
+    // frame no record cites.
     let unit = format!(
         "{unit}dimension Time;\nunit ms : Time = rational(1, 1);\ntime Config tick ConfigVersion::attemptUpdate period 1 ms unit ms;\n\
          function f using v(x: Int[0, 9], p: Boolean): Int[0, 10] pure {{ if p then x + 1 else x * 1 }}\n"

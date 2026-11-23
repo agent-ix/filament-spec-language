@@ -428,6 +428,10 @@ fn shared_application(package: &CheckedPackage) -> OccurrenceKey {
 /// `a`, its record, row and source-map entry, but not the application it
 /// shares with the written `b`, whose record is the application's only
 /// written record.
+///
+/// Red until contract-ir reader defect B (QSL-2776 chain) is fixed: the reader
+/// derives a node shared by two owners as occurrence 0 in each, and refuses the
+/// second owner's record at `body/members/5`.
 #[trace("FR-062-AC-9", "FR-940-AC-1")]
 #[test]
 fn an_omitted_owner_leaves_a_shared_application_with_the_written_owners_record() {
@@ -1033,6 +1037,10 @@ fn constructions(wire: &Value) -> Vec<(String, &Value)> {
 /// integer payload argument by the exact conversion a function-call argument
 /// gets, an `Integer` argument and a literal take none, and each payload term
 /// has the member's declared payload type node.
+///
+/// Red until contract-ir reader defect B (QSL-2776 chain) is fixed: functions
+/// share the `x` conversion node, and the reader refuses the second owner's
+/// record at `body/members/5`.
 #[trace("TC-3134", "FR-317-AC-7")]
 #[test]
 fn a_union_payload_argument_takes_the_exact_conversion_a_call_argument_takes() {
