@@ -2514,7 +2514,9 @@ fn external_package_bound(refusal: ReplayRefusal) -> ReplayRefusal {
 
 /// The `replay.input_bytes` limit `refusal` reports, seen through a library
 /// path that wraps it.
-fn replay_input_limit(refusal: &CompileRefusal) -> Option<&fsl_foundation::diagnostic::LimitExceeded> {
+fn replay_input_limit(
+    refusal: &CompileRefusal,
+) -> Option<&fsl_foundation::diagnostic::LimitExceeded> {
     match refusal {
         CompileRefusal::Limit(limit) if limit.setting() == Setting::ReplayInputBytes => Some(limit),
         CompileRefusal::Dependency { refusal, .. } => replay_input_limit(refusal),

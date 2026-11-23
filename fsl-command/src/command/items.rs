@@ -402,8 +402,15 @@ pub(super) fn run_bytes(
                     if let (Some(parameter), Some(object)) =
                         (population_parameters.get(&index), object.as_ref())
                     {
-                        let fsl_replay::spine::ClauseRunSelection::CanonicalFunction { arguments, .. } = &mut request.selection else {
-                            return Err(refused("function", "an expanded function has canonical arguments"));
+                        let fsl_replay::spine::ClauseRunSelection::CanonicalFunction {
+                            arguments,
+                            ..
+                        } = &mut request.selection
+                        else {
+                            return Err(refused(
+                                "function",
+                                "an expanded function has canonical arguments",
+                            ));
                         };
                         bind_population_wire_argument(arguments, parameter, object)?;
                     }

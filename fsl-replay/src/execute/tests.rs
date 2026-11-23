@@ -1939,10 +1939,7 @@ fn actual_empty_admitted_identity_fault_propagates_from_package_into_replay_fail
     let objects = ObjectEnvironment::default()
         .with_population(binding)
         .unwrap()
-        .with_population_completeness(std::collections::BTreeMap::from([(
-            population.node,
-            true,
-        )]));
+        .with_population_completeness(std::collections::BTreeMap::from([(population.node, true)]));
     let span = fsl_foundation::Span { start: 0, end: 0 };
     let source = Expression::size(
         Expression::all_instances(

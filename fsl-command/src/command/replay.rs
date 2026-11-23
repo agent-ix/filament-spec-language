@@ -9,9 +9,10 @@ use std::path::Path;
 use fsl_foundation::serde_object::Object;
 use serde_json::{json, Value};
 
+use super::limits::CommandLimits;
 use super::{
     check_file_count, intake_with_bytes, wire, FileCounts, NativeResult, Result, RunCause,
-    RunResult,
+    RunError, RunLimits, RunResult,
 };
 use crate::replay_request::RequestDefect;
 
@@ -42,6 +43,34 @@ pub(super) fn is_replay_request(bytes: &[u8]) -> bool {
     })
 }
 
+/// FR-862: replay the `native-replay/1` request at `path` under the caller's
+/// byte ceilings and `caller`'s settings (FR-255-AC-24). `replay.input_bytes`
+/// bounds the replay reads; every other set stage or accounting setting
+/// replaces the request's own entry for it.
+///
+/// # Errors
+///
+/// The request file's read refusals, `format` for a request of another
+/// format, and the replay request reader's and replay's own refusals.
+pub fn replay_with_limits(
+    path: &Path,
+    limits: RunLimits,
+    caller: &CommandLimits,
+) -> std::result::Result<RunResult, Box<RunError>> {
+    super::with_request_limits(path, limits.request_bytes, |directory, bytes| {
+        if !is_replay_request(bytes) {
+            return Err(RunCause::Format);
+        }
+        run_bytes(
+            directory,
+            path.to_str(),
+            bytes,
+            limits.dependent_bytes,
+            caller,
+        )
+    })
+}
+
 /// Read the `native-replay/1` request `bytes`, whose byte provision files
 /// resolve against `directory` under `dependent_bytes`, and replay it.
 pub(super) fn run_bytes(
@@ -49,12 +78,13 @@ pub(super) fn run_bytes(
     request_path: Option<&str>,
     bytes: &[u8],
     dependent_bytes: usize,
+    caller: &CommandLimits,
 ) -> Result<RunResult> {
     let Object(envelope): Object<wire::Envelope<'_>> = serde_json::from_slice(bytes)?;
-    let limits = fsl_replay::ReplayLimits::default();
+    let limits = fsl_replay::ReplayLimits::default().with_input_bytes(caller.replay_input_bytes());
     let mut intake = intake_with_bytes(directory, FileCounts::default(), dependent_bytes)?;
     let mut files = 0_usize;
-    let request = crate::replay_request::read(
+    let mut request = crate::replay_request::read(
         envelope.request.get().as_bytes(),
         limits.input_bytes,
         |path, _| {
@@ -74,6 +104,7 @@ pub(super) fn run_bytes(
         },
         Vec::new(),
     )?;
+    caller.apply_to_replay(&mut request.stage_limits, &mut request.accounting_limits);
     let result = fsl_replay::replay(request, limits);
     match result {
         Ok(result) => {

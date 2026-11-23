@@ -96,7 +96,10 @@ fn run_applies_request_extension_definitions() {
     let result = fsl_command::command::run(&request, &crate::negotiation::Fr290)
         .unwrap_or_else(|error| panic!("{}", error.value().unwrap()));
     assert_eq!(result.exit_code, 0, "{}", result.value);
-    assert!(result.value.to_string().contains("\"type\":\"integer\",\"value\":\"7\""));
+    assert!(result
+        .value
+        .to_string()
+        .contains("\"type\":\"integer\",\"value\":\"7\""));
 }
 
 /// FR-660: source-only check admits the extension form supplied in its check

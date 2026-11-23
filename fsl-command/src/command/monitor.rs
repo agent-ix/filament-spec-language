@@ -11,9 +11,7 @@ use filament_exact::Cancel;
 use filament_semantic_value::catalog::Category;
 use fsl_analyze::analyze::document::{Negotiate, RegistryEntry, SettledRun};
 use fsl_analyze::analyze::Engine;
-use fsl_analyze::monitor::{
-    MonitorClause, MonitorLimits, MonitorRefusal, SettleTrigger, Settlement,
-};
+use fsl_analyze::monitor::{MonitorClause, MonitorRefusal, SettleTrigger, Settlement};
 use fsl_analyze::monitor_session::{
     ClauseStatus, MonitorObservation, MonitorOpen, MonitorPosition, MonitorSession, MonitorStamp,
     MonitorState, MonitorStep, MonitorTraceKind,
@@ -24,10 +22,11 @@ use fsl_foundation::source::Source;
 use fsl_replay::spine::{
     read_cover, read_ledger, read_lower_boundary, read_progress_assertion, read_sample_text,
     read_trace_binding, write_clause_run_result, write_ledger, OverObject, ProgressLowerBoundary,
-    SpineLimits, TimestampedMissingValuation, TimestampedOrderKey,
+    TimestampedMissingValuation, TimestampedOrderKey,
 };
 use serde_json::{json, Value};
 
+use super::limits::{CommandLimits, MonitorPreparationLimits};
 use super::settle::Settle;
 use super::{
     check_sources, intake_with_bytes, request, request_integer_division, require_native_header,
@@ -659,6 +658,7 @@ fn drive(
     directory: &Path,
     bytes: &[u8],
     dependent_bytes: usize,
+    caller: &CommandLimits,
     source: Records<'_>,
     sink: &mut dyn FnMut(&MonitorEvent),
     settle: &Settle<'_>,
@@ -718,7 +718,7 @@ fn drive(
         &mut intake,
         std::slice::from_ref(&program),
         false,
-        SpineLimits::default(),
+        caller.spine(),
         integer_division,
         None,
         |intake, checked, selections, _, packages, libraries, _, _, _, _| {
@@ -776,14 +776,7 @@ fn drive(
                 .transpose()?;
             let mut sources: Vec<Source> = vec![program_source];
             sources.extend(libraries.iter().map(|library| library.source().clone()));
-            let limits = MonitorLimits {
-                observation: Default::default(),
-                normalization: SpineLimits::default().model,
-                accounting: super::call_accounting(&wire::Accounting::default()),
-                max_window_values: fsl_analyze::monitor::DEFAULT_MAX_WINDOW_VALUES,
-                retained_positions: fsl_analyze::monitor::DEFAULT_RETAINED_POSITIONS,
-                retained_identities: fsl_analyze::monitor::DEFAULT_RETAINED_IDENTITIES,
-            };
+            let limits = caller.monitor_limits();
             let open = || MonitorOpen {
                 clauses: inputs.clauses.clone(),
                 kind: inputs.kind,
@@ -1050,6 +1043,7 @@ pub fn monitor(
     sink: &mut dyn FnMut(&MonitorEvent),
     routing: MonitorProviders<'_>,
     limits: RunLimits,
+    caller: &CommandLimits,
     cancel: &Cancel,
 ) -> std::result::Result<MonitorSummary, Box<RunError>> {
     let MonitorProviders {
@@ -1073,6 +1067,7 @@ pub fn monitor(
             directory,
             bytes,
             limits.dependent_bytes,
+            caller,
             Records::Stream(Box::new(records.map(|line| {
                 line.map_err(|error| RunCause::Io {
                     path: path.to_path_buf(),
@@ -1095,11 +1090,16 @@ pub(super) fn run_bytes(
     dependent_bytes: usize,
     settle: &Settle<'_>,
 ) -> Result<RunResult> {
+    let caller = CommandLimits::monitor(MonitorPreparationLimits {
+        work: u64::MAX,
+        storage: u64::MAX,
+    });
     let mut events = Vec::new();
     let summary = drive(
         directory,
         bytes,
         dependent_bytes,
+        &caller,
         Records::Batch,
         &mut |event| events.push(event.as_value().clone()),
         settle,

@@ -18,6 +18,7 @@ use fsl_analyze::provider::ProviderOptions;
 use fsl_eval::simulation::protocol::{MemorySelection, MemorySelectionRefusal, ResolvedMemory};
 use fsl_semantics::model::observation::DocumentProvision;
 
+use super::limits::CommandLimits;
 use super::settle::Settle;
 use super::{
     check_sources, intake_with_bytes, request, request_integer_division, require_native_header,
@@ -299,7 +300,7 @@ pub fn prepare_analyze(
 }
 
 fn prepare_bytes(directory: &Path, bytes: &[u8], limits: RunLimits) -> Result<PreparedAnalyze> {
-    match read(directory, bytes, limits)? {
+    match read(directory, bytes, limits, &CommandLimits::analyze())? {
         Readout::Source(input, _) => Ok(PreparedAnalyze {
             input: Box::new(input),
         }),
@@ -718,18 +719,23 @@ mod package_intake_tests {
 
 /// The request's inputs and the intake that read them, which still charges
 /// the libraries and domain packages compilation reads.
-fn read<'d>(directory: &'d Path, bytes: &[u8], limits: RunLimits) -> Result<Readout<'d>> {
+fn read<'d>(
+    directory: &'d Path,
+    bytes: &[u8],
+    limits: RunLimits,
+    caller: &CommandLimits,
+) -> Result<Readout<'d>> {
     let dependent_bytes = limits.dependent_bytes;
-    let replay = fsl_replay::ReplayLimits::default().with_input_bytes(limits.replay_input_bytes);
     let mut request: wire::AnalyzeRequest = request(bytes).map_err(|cause| match cause {
         RunCause::Json(error) => invalid("request", error.to_string()),
         cause => cause,
     })?;
     validate_items(request.items.as_deref())?;
     if let Some(package) = &request.package {
-        let (admitted, mut intake) = admit_package(directory, dependent_bytes, &request, package)?;
+        let (admitted, mut intake) =
+            admit_package(directory, dependent_bytes, &request, package, caller)?;
         let memory = read_memory(&request.memory)?;
-        let members = Box::new(read_run_members(&request, &mut intake, replay)?);
+        let members = Box::new(read_run_members(&request, &mut intake, caller)?);
         return Ok(Readout::Package(PackageSelection {
             admitted,
             members,
@@ -759,7 +765,7 @@ fn read<'d>(directory: &'d Path, bytes: &[u8], limits: RunLimits) -> Result<Read
         documents,
         mut subject,
         limits,
-    } = read_run_members(&request, &mut intake, replay)?;
+    } = read_run_members(&request, &mut intake, caller)?;
     subject.memory.clone_from(&memory);
     let compile = wire::CompileRequest {
         models: Some(request.models),
@@ -806,7 +812,13 @@ pub fn analyze(
     negotiate: &dyn Negotiate,
     cancel: &Cancel,
 ) -> std::result::Result<RunResult, Box<RunError>> {
-    analyze_with_limits(path, RunLimits::default(), negotiate, cancel)
+    analyze_with_limits(
+        path,
+        RunLimits::default(),
+        &CommandLimits::analyze(),
+        negotiate,
+        cancel,
+    )
 }
 
 /// [`analyze`] under the caller's request and dependent-file byte ceilings.
@@ -817,12 +829,14 @@ pub fn analyze(
 pub fn analyze_with_limits(
     path: &Path,
     limits: RunLimits,
+    caller: &CommandLimits,
     negotiate: &dyn Negotiate,
     cancel: &Cancel,
 ) -> std::result::Result<RunResult, Box<RunError>> {
     analyze_with_providers_and_limits(
         path,
         limits,
+        caller,
         negotiate,
         Vec::new(),
         &ProviderOptions::default(),
@@ -852,6 +866,7 @@ pub fn analyze_with_providers(
     analyze_with_providers_and_limits(
         path,
         RunLimits::default(),
+        &CommandLimits::analyze(),
         negotiate,
         providers,
         options,
@@ -868,19 +883,28 @@ pub fn analyze_with_providers(
 pub fn analyze_with_providers_and_limits(
     path: &Path,
     limits: RunLimits,
+    caller: &CommandLimits,
     negotiate: &dyn Negotiate,
     providers: Vec<Engine>,
     options: &ProviderOptions,
     cancel: &Cancel,
 ) -> std::result::Result<RunResult, Box<RunError>> {
     super::with_request_limits(path, limits.request_bytes, |directory, bytes| {
-        let (input, mut intake) = match read(directory, bytes, limits)? {
+        let (input, mut intake) = match read(directory, bytes, limits, caller)? {
             Readout::Source(input, intake) => (input, intake),
             Readout::Package(selection) => {
                 return run_package(selection, negotiate, providers, options, cancel);
             }
         };
-        let mut result = run_input(&mut intake, input, negotiate, providers, options, cancel)?;
+        let mut result = run_input(
+            &mut intake,
+            input,
+            caller,
+            negotiate,
+            providers,
+            options,
+            cancel,
+        )?;
         result.sources = crate::Sources::from_sources(intake.sources.iter().cloned());
         Ok(result)
     })
@@ -909,6 +933,7 @@ pub(super) fn engines_with(providers: Vec<Engine>, options: &ProviderOptions) ->
 fn run_input(
     intake: &mut super::Intake<'_>,
     input: AnalyzeInput,
+    caller: &CommandLimits,
     negotiate: &dyn Negotiate,
     providers: Vec<Engine>,
     options: &ProviderOptions,
@@ -942,7 +967,7 @@ fn run_input(
         intake,
         sources,
         false,
-        fsl_replay::spine::SpineLimits::default(),
+        caller.spine(),
         integer_division,
         None,
         |_intake, checked, selections, _, packages, libraries, _, _, _, _| {
@@ -1100,6 +1125,7 @@ fn admit_package<'d>(
     dependent_bytes: usize,
     request: &wire::AnalyzeRequest,
     package: &wire::HandoffSelection,
+    caller: &CommandLimits,
 ) -> Result<(AdmittedHandoff, super::Intake<'d>)> {
     if request.program.is_some() {
         return Err(invalid(
@@ -1170,10 +1196,14 @@ fn admit_package<'d>(
             cause => cause,
         },
     )?;
-    let limits =
-        fsl_package::V2ReadLimits::bounded(fsl_replay::spine::I2_NATIVE_JOIN_STORAGE_DEFAULT);
-    let loaded = super::handoff::admit(&mut intake, &handoff, bytes, &supplied, limits)
-        .map_err(super::handoff::AdmissionFailure::for_analyze)?;
+    let loaded = super::handoff::admit(
+        &mut intake,
+        &handoff,
+        bytes,
+        &supplied,
+        caller.spine().imports,
+    )
+    .map_err(super::handoff::AdmissionFailure::for_analyze)?;
     Ok((
         AdmittedHandoff {
             package: loaded.package,
@@ -1372,11 +1402,11 @@ struct RunMembers {
 fn read_run_members(
     request: &wire::AnalyzeRequest,
     intake: &mut super::Intake<'_>,
-    replay: fsl_replay::ReplayLimits,
+    caller: &CommandLimits,
 ) -> Result<RunMembers> {
     let documents = read_documents(intake, &request.documents, request.items.as_deref())?;
     let mut limits = analyze_limits(&request.limits, request.deadline_ms);
-    limits.replay = replay;
+    caller.apply_to_analyze(&mut limits);
     let subject = read_subject(request.subject.clone(), &documents)?;
     Ok(RunMembers {
         documents,

@@ -1523,15 +1523,17 @@ pub fn claim_binding(
     let filament_exact::ValueType::Reference(object) = &over.value_type else {
         return Err(ExactProbabilityGraphError::UnsupportedBinding);
     };
-    let mut instances = system.instances(&over.value_type).map_err(|error| match error {
-        fsl_eval::simulation::NotSimulated::RequiresBound(_) => {
-            ExactProbabilityGraphError::RequiresBound
-        }
-        fsl_eval::simulation::NotSimulated::Extent(fsl_semantics::family::ClassifyFailure::Limit(
-            _,
-        )) => ExactProbabilityGraphError::ExtentLimit,
-        _ => ExactProbabilityGraphError::ExpansionRefused,
-    })?;
+    let mut instances = system
+        .instances(&over.value_type)
+        .map_err(|error| match error {
+            fsl_eval::simulation::NotSimulated::RequiresBound(_) => {
+                ExactProbabilityGraphError::RequiresBound
+            }
+            fsl_eval::simulation::NotSimulated::Extent(
+                fsl_semantics::family::ClassifyFailure::Limit(_),
+            ) => ExactProbabilityGraphError::ExtentLimit,
+            _ => ExactProbabilityGraphError::ExpansionRefused,
+        })?;
     let (Some(instance), None) = (instances.pop(), instances.pop()) else {
         return Err(ExactProbabilityGraphError::UnsupportedBinding);
     };
@@ -3182,7 +3184,13 @@ mod tests {
                 choices.push(vec![edge(3, 1, 1)]);
             }
             let mut states = BTreeMap::new();
-            states.insert(key(0), CheckerState { terminal: None, choices });
+            states.insert(
+                key(0),
+                CheckerState {
+                    terminal: None,
+                    choices,
+                },
+            );
             for target in 1..=3 {
                 states.insert(key(target), terminal());
             }
@@ -3234,7 +3242,10 @@ mod tests {
         match check(&graph(false), rational(0), &[0]) {
             ExactProbabilityCertificateCheck::Rejected(rejection) => {
                 assert_eq!(rejection.rule, ProbabilityCertificateRule::InequalityFails);
-                assert_eq!(rejection.at, ProbabilityCertificateLocus::ProductState(key(0)));
+                assert_eq!(
+                    rejection.at,
+                    ProbabilityCertificateLocus::ProductState(key(0))
+                );
             }
             other => panic!("expected a rejection, got {other:?}"),
         }

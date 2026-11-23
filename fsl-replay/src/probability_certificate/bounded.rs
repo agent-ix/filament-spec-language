@@ -65,10 +65,7 @@ impl Control {
         monitor: &QualifiedBoundedMonitor,
         state: StateId,
     ) -> Result<Self, ExactProbabilityGraphError> {
-        match monitor
-            .state(state)
-            .map_err(monitor_failure)?
-        {
+        match monitor.state(state).map_err(monitor_failure)? {
             BoundedState::Open { .. } | BoundedState::Idle => Ok(Self::Running(state)),
             BoundedState::Accept => Ok(Self::Decided(true)),
             BoundedState::Reject => Ok(Self::Decided(false)),
@@ -88,9 +85,7 @@ impl Control {
 
     fn rank(self, monitor: &QualifiedBoundedMonitor) -> Result<u64, ExactProbabilityGraphError> {
         match self {
-            Self::Running(state) => monitor
-                .rank(state)
-                .map_err(monitor_failure),
+            Self::Running(state) => monitor.rank(state).map_err(monitor_failure),
             Self::Decided(_) => Ok(0),
         }
     }

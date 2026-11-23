@@ -138,6 +138,11 @@ settings! {
     ModelCheckMaxStoreBuffer => "model_check.max_store_buffer", "EN-1 weak memory", NodeCount;
     ModelCheckMaxMessages => "model_check.max_messages", "EN-1 weak memory", NodeCount;
     ExpansionMaxCandidates => "expansion.max_candidates", "model-subject expansion", NodeCount;
+    MonitorMaxWindowValues => "monitor.max_window_values", "monitor window aggregates", NodeCount;
+    MonitorRetainedPositions => "monitor.retained_positions", "monitor evidence retention", NodeCount;
+    MonitorRetainedIdentities => "monitor.retained_identities", "monitor evidence retention", NodeCount;
+    MonitorPreparationWorkUnits => "monitor.preparation_work_units", "monitor plan preparation", WorkBudget;
+    MonitorPreparationStorage => "monitor.preparation_storage", "monitor plan read storage", LogicalStorage;
     InspectMaxViewEntries => "inspect.max_view_entries", "typed view construction", NodeCount;
     ProgressCoveredPositions => "progress.covered_positions", "progress ledger", NodeCount;
 }

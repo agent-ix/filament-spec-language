@@ -314,11 +314,11 @@ pub use protocol_proof::{
 pub mod query_proof;
 mod request;
 pub use request::{
-    read_canonical_clause_run_request, read_clause_run_request, read_clause_selection, read_cover, read_lower_boundary,
-    read_progress_assertion, read_sample_text, read_trace_binding, AnchorWire, BindingWire,
-    ClauseArgumentWire, ClauseRequestParts, ClauseRequestReadError, ClauseRunSelectionWire,
-    ClauseSelectionParts, ClauseSelectionPartsKind, ClauseSelectionWire, CoverWire,
-    FrameSelectionWire, FunctionSelectionWire, LowerBoundaryWire, ObjectReferenceWire,
+    read_canonical_clause_run_request, read_clause_run_request, read_clause_selection, read_cover,
+    read_lower_boundary, read_progress_assertion, read_sample_text, read_trace_binding, AnchorWire,
+    BindingWire, ClauseArgumentWire, ClauseRequestParts, ClauseRequestReadError,
+    ClauseRunSelectionWire, ClauseSelectionParts, ClauseSelectionPartsKind, ClauseSelectionWire,
+    CoverWire, FrameSelectionWire, FunctionSelectionWire, LowerBoundaryWire, ObjectReferenceWire,
     ObservationLimitsWire, OrderKeyWire, ProgressWire, RelationWire, SuppliedObservation,
     TemporalTraceParts, TimestampedParts,
 };
@@ -689,6 +689,11 @@ impl CompileRefusal {
                 | Setting::ModelCheckMaxStoreBuffer
                 | Setting::ModelCheckMaxMessages
                 | Setting::ExpansionMaxCandidates
+                | Setting::MonitorMaxWindowValues
+                | Setting::MonitorRetainedPositions
+                | Setting::MonitorRetainedIdentities
+                | Setting::MonitorPreparationWorkUnits
+                | Setting::MonitorPreparationStorage
                 | Setting::TemporalEvidenceFormulaNodes
                 | Setting::TemporalEvidenceInstances
                 | Setting::TemporalEvidencePositions

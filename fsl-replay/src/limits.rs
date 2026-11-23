@@ -318,7 +318,12 @@ impl CallerLimits {
         for (setting, bound) in fsl_foundation::setting::parse_operands(operands)? {
             match setting {
                 SettingName::Stage(setting) => {
-                    limits.set_bound(setting, bound);
+                    if !limits.set_bound(setting, bound) {
+                        return Err(UsageRefusal {
+                            operand: format!("{}={bound}", setting.name()),
+                            cause: fsl_foundation::UsageCause::UnknownSetting,
+                        });
+                    }
                 }
                 SettingName::Accounting(setting) => limits.accounting.set_bound(setting, bound),
             }
@@ -536,6 +541,11 @@ mod tests {
     #[test]
     fn the_settings_operation_and_a_request_take_every_setting() {
         for setting in Setting::ALL {
+            // The monitor settings belong to the monitor command's own limits
+            // (`fsl_command::command::CommandLimits`), not to a replayed stage.
+            if setting.name().starts_with("monitor.") {
+                continue;
+            }
             let operand = format!("{}=123456789", setting.name());
             let limits = CallerLimits::from_operands([operand.as_str()]).unwrap();
             assert_eq!(bound_of(&limits, *setting), 123_456_789, "{setting}");

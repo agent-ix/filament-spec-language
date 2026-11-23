@@ -773,9 +773,7 @@ mod tests {
     #[trace("FR-650-AC-1", "FSpec-FR-181-AC-26")]
     fn canonical_json_storage_failure_is_not_an_input_defect() {
         let path = Path::new();
-        assert!(
-            canonical_json_result("[]", JsonObject::from_json_text("[]"), &path).is_ok()
-        );
+        assert!(canonical_json_result("[]", JsonObject::from_json_text("[]"), &path).is_ok());
         for text in ["{", "{\"a\": 1}"] {
             let Err(ReadStop::Defect(error)) =
                 canonical_json_result(text, JsonObject::from_json_text(text), &path)
