@@ -332,7 +332,9 @@ neither SHALL be trusted as a qualitative result supplied by EN-5.
   claim binding, no clocks, rewards or authored fairness, and FR-196's
   existing Markov successor restrictions. Only exact minimum AtLeast,
   maximum AtMost and single-resolved-distribution workload proofs SHALL be
-  admitted. Cyclic, nested temporal, bounded, event-predicate and other
+  admitted. A cyclic subject SHALL NOT be encoded as this profile; its
+  proof uses the closed cyclic until and always document profiles below.
+  Nested temporal, bounded, event-predicate and other
   profile/optimization/kind cases SHALL remain explicitly unsupported.
 - The checker SHALL bind the actual checked occurrence, infinite-trace
   profile, formula and S3 binding before evaluating A/B/P through qualified
@@ -558,6 +560,115 @@ ordinal, action-key transport, qualitative-set field or formula AST is added.
   DTMC producer SHALL retain its existing profile preference. No completed
   runtime, full repository/all-expansion FR-201-AC-30 assurance or shared
   FR-413 witness transport is claimed by this specification.
+
+### Closed cyclic until and always document profiles
+
+For checked untimed infinite-trace unbounded `holds(A) until holds(B)` and
+`always holds(P)` claims over checked state predicates whose original
+reachable graph has a cycle apart from implicit terminal stutter, the codec
+SHALL admit two separate closed proof profiles,
+`"filament.probability-objective/cyclic-dtmc-state-predicate/v1"` and
+`"filament.probability-objective/cyclic-mdp-state-predicate/v1"`. They SHALL
+NOT change the admission, canonical bytes or meaning of any existing
+profile, and an acyclic subject SHALL keep the acyclic state-predicate
+profile. The objective SHALL contain exactly `profile`, `event`, `targets`,
+`optimization` and `fairness`; `event` SHALL be `"until"` or `"always"` and
+`fairness` SHALL be the empty array. The document body SHALL be the existing
+exact `identity`, `objective`, `kind`, `values` and `ranking` body with
+`kind` `"exact"`, under the reachability profile's canonical bytes, strict
+decoding, rational representation, full-key ordering and coverage, and
+identity rules. No policy, component partition, bound-side member, formula
+AST or additional body field is added.
+
+- Admission. The DTMC profile SHALL apply the cyclic DTMC eventual
+  profile's subject admission: one semantic enabled distribution per
+  original live state under every scheduler, or a workload fully resolved to
+  one distribution per live state. The MDP profile SHALL apply the cyclic
+  MDP eventual profile's every-scheduler admission and reconstruct every
+  enabled semantic action; it admits no workload. Admission SHALL cover the
+  whole original reachable graph, including states beyond a decided state.
+  An eligible DTMC producer SHALL retain the DTMC profile. Fairness, clocks,
+  rewards, nested temporal, bounded and event-predicate forms, multiple
+  initials or bindings, an unresolved workload and non-exact kinds SHALL
+  remain explicitly unsupported by these profiles rather than be encoded as
+  them.
+- Decided states. The checker SHALL read A, B or P at position 0 and at
+  each reached state with the actual checked occurrence, infinite-trace
+  profile and binding, and SHALL decide states exactly as
+  [FR-202](FR-202-replay-a-probabilistic-witness.md)'s checked-subject
+  event-avoidance check decides them for always and until (Checked-subject
+  long-run, reward and event-avoidance subsystem entry), including its
+  treatment of a genuine model terminal. It SHALL build, with its own
+  bounded graph algorithms, the classification graph reachable from the
+  initial state that absorbs every decided state and expands every other
+  state over its rebuilt actions.
+- Component classification. The checker SHALL derive the maximal end
+  components of the classification graph; under one distribution per live
+  state these are its bottom strongly connected components, and a decided
+  state is its own absorbing component. It SHALL classify each component as
+  FR-202's event-avoidance check classifies a bottom component, so a
+  component with no decided state rejects for until and accepts for always.
+  A producer-supplied component set, classification or target set SHALL NOT
+  be evidence.
+- Violated quantity. As FR-202 defines it, the violated quantity of a
+  `>= θ` bound is the probability of reaching the union of rejecting
+  components, and that of a `<= θ` bound is the probability of reaching the
+  union of accepting components; this union is the violating union. Values
+  SHALL be the violated quantity, not the claim's probability. Under every
+  scheduler, `optimization` SHALL be `"maximum"` for either bound side: the
+  minimum claim probability under `>= θ` is one minus the maximum
+  probability of reaching the rejecting union, and the maximum claim
+  probability under `<= θ` is the maximum probability of reaching the
+  accepting union, because almost every path of a finite process eventually
+  remains in one end component, and a scheduler that reaches a component
+  can remain in it. Under a workload, `optimization` SHALL be `"workload"`.
+  The checker SHALL derive optimization from the checked claim.
+- Certificate graph and targets. The certificate graph is the
+  classification graph with its violating-union states not expanded.
+  `targets` SHALL be exactly the violating-union states that graph reaches,
+  and values and ranks SHALL cover exactly that graph; a state reachable
+  only through the violating union contributes no row. The checker SHALL
+  compare `targets` with its own derived set before it checks any value or
+  rank row; a difference SHALL refuse objective mismatch without
+  acceptance.
+- Value and rank conditions. Over the certificate graph, with `targets` in
+  place of reached P states, the DTMC profile SHALL apply the cyclic DTMC
+  eventual profile's target, terminal, Prob0, non-target bottom-component,
+  harmonic-equality and shortest-distance rank conditions, and the MDP
+  profile SHALL apply the cyclic MDP eventual profile's maximum conditions:
+  maximum Bellman equality over every reconstructed action, its zero-valued
+  boundary Z, rank 0 on targets and Z, tight-action lower-rank progress and
+  all-action closure of Z. Decided states and components outside the
+  violating union therefore have value 0 and rank 0.
+- Threshold. With `v` the checked initial value, the checker SHALL accept a
+  `>= θ` claim exactly when `v <= 1 − θ` and a `<= θ` claim exactly when
+  `v <= θ`, inclusive as in the other proof profiles, and SHALL otherwise
+  reject `ThresholdMissed` at the initial state. These are the inclusive
+  complements of FR-202's strict refutation comparisons, so an exact value
+  is proved or refuted on exactly one side. Existing S3 endpoint admission
+  is unchanged: source thresholds 0 and 1 are refused.
+- Rejections. Wrong values SHALL reject `InequalityFails` and wrong ranks
+  `RankBroken`, each at the first failing complete key in canonical order;
+  structural coverage errors SHALL reject `Malformed` at `values` or
+  `ranking`. Identity conflict SHALL refuse before enumeration, and a
+  changed event, targets, optimization, fairness or profile SHALL refuse
+  objective mismatch. Source spelling is not an identity field.
+- Emission. EN-5 SHALL certify every `proved` claim in these admitted
+  shapes with the profile's exact document, converting its own solution to
+  the violated quantity (for example, one minus the claim value under
+  `>= θ`). It SHALL NOT settle such a claim `unsupported` because of the
+  cycle. A `Bounds` result for these forms SHALL NOT be serialized as an
+  exact document; this profile does not establish FR-1042 `base` admission
+  for these objectives, and EN-5 SHALL move to its exact method before it
+  emits a proof.
+- Original, classification and certificate graph construction, end-component
+  and bottom-component decomposition, reverse reachability, distance and
+  progress passes, predicate evaluation, full-key materialization, parsing
+  and exact sums SHALL obey the caller controls, typed stops and
+  cancellation of the cyclic DTMC and MDP eventual profiles, preserving
+  nonacceptance without truth values. These proof profiles do not define
+  FR-202 refutation handling, fair until or always certificates or the
+  FSpec FR-413 wire.
 
 ### General checking conditions
 
@@ -1528,6 +1639,12 @@ initial states/bindings and refutations remain outside this profile.
 | FR-201-AC-54 | Over FSpec FR-407-AC-18's model with the further action `stay` at `s0` (FR-196-AC-16), for `probability >= rational(1, 2)` over every scheduler, the `Optimum` certificate whose `reset` has `x(s0) = 1/2`, `x` at the state after `a` from which `g` is unreachable `1/2`, policy `b` at `s0` and ranks 1 and 2 is accepted: under `stay` and `Reset`, `1/2 <= 1/2`, under `a`, `1/2 <= 1/4 + (3/4)(1/2) = 5/8`, under `b`, `1/2 <= 1/2`. A `reset` with `x(s0) = 0` and policy `stay` is rejected `RankBroken` at `s0` with `part` `reset`, since `stay` has no successor of smaller rank; with policy `b` it is rejected `InequalityFails` at `s0`, since `F_b(x) = 1/2`. So the improper value 0 is never certified. For `<= rational(9, 10)` the `reset` with `y(s0) = 1` and policy `a` (`1/4 + (3/4)(1) = 1`) is accepted and the claim is refuted. | Test (TC-3061) |
 | FR-201-AC-55 | On FR-201-AC-54's `stay` model, for `<= rational(9, 10)` over every scheduler, an `Optimum` certificate whose `reset` has `y(s0) = 1/2`, policy `b` and no row for the state `u` after `a` from which `g` is unreachable is rejected `Malformed` at `values` and proves nothing. Read with `u` as 0, it would pass `F_a(y) = 1/4 <= 1/2`, although the true maximum is 1. With `u` at `1/2` it is rejected `InequalityFails` at `s0` with `part` `reset` (`F_a(y) = 5/8`). Without a fairness set, a `Randomized` `reset` policy entry is rejected `Malformed` at `policy`. | Test (TC-3061) |
 | FR-201-AC-57 | Over the engines `Coin` model (initially tails, as in its `data/coin-tails.json`; `flip` sets heads or tails with equal weight), with the `ev` profile under every scheduler on origin, `probability <= 0.5 [ holds(c.heads) ]` is admitted as `eventually[0,0] holds(c.heads)`: position 0 decides rejection, the maximum is `ExactValue{0}`, `targets` is empty, the initial key has value 0 and rank 0, `fsl-probability-check` accepts the `reachability/v1` `Exact` document with side `AtMost`, and the item settles `proved`. Over a fixture the test authors, the same `Coin` model with its one coin initially heads (the examples supply no such fixture), `probability >= 0.5 [ holds(c.heads) ]` decides acceptance at position 0, `targets` is the initial key, the minimum is `ExactValue{1}` with rank 0, the document is accepted with side `AtLeast`, and the item settles `proved`. For each claim, the verdict, optimization, target and decided structure, values, ranks and settlement equal those of the same claim spelled `eventually[0,0] holds(c.heads)`. The initial value replaced by `1/2` is rejected `InequalityFails` at the initial key under either spelling. No new profile string or document member appears. | Test (TC-3195) |
+| FR-201-AC-58 | Workload chain: `s` satisfies P and moves to `t` and to `u` with `1/2` each; `t` does not satisfy P and returns to `s`; `u` satisfies P and loops at `u`. `always holds(P)` has value `1/2`. For `probability >= 1/2` the checker derives the rejecting union `{t}` and accepts the `cyclic-dtmc-state-predicate/v1` document with targets `{t}`, values `s = 1/2`, `t = 1`, `u = 0` and ranks 1, 0, 0, since `1/2 <= 1 − 1/2`. For `probability <= 1/2` it derives the accepting union `{u}` and accepts targets `{u}`, values `s = 1/2`, `t = 0`, `u = 1`, ranks 1, 0, 0. Both accept at equality. The same documents for `>= 3/5` and `<= 2/5` reject `ThresholdMissed` at `s`. `t` absorbs despite its return to `s`. Values `s = 1`, `t = 1`, `u = 1` under targets `{t}` satisfy harmonic equality at `s` but reject `InequalityFails` at `u`, whose all-P component accepts and is outside the union. A document with empty targets and every value 0 offered for `<= 2/5` refuses objective mismatch before any row check. | Test |
+| FR-201-AC-59 | Workload chain: `s` satisfies A and not B and moves to `b` with `1/4`, to `n` with `1/4` and to `c` with `1/2`; `b` satisfies B and not A and `n` satisfies neither, and each returns to `s`; `c` and `d` satisfy A and not B and alternate deterministically. `holds(A) until holds(B)` has value `1/4`. For `probability >= 1/4` the checker classifies `{c, d}`, which holds no decided state, as rejecting and derives the rejecting union `{n, c, d}`; it accepts targets `{c, n}`, values `s = 3/4`, `b = 0`, `c = 1`, `n = 1` and ranks 1, 0, 0, 0, with no row for `d`, which is reachable only through `c` (`3/4 <= 3/4`). For `probability <= 1/4` it accepts targets `{b}`, values `s = 1/4`, `b = 1` and 0 at `n`, `c` and `d`, rank 1 at `s` and 0 elsewhere. `>= 3/10` and `<= 1/5` reject `ThresholdMissed` at `s`. Rank 2 at `s` rejects `RankBroken` at `s`. For the false claim `probability >= 1/2`, a producer document with targets `{n}` and harmonic values `s = 1/4`, `n = 1`, `b = c = d = 0`, whose initial value would pass `1/4 <= 1/2`, refuses objective mismatch because the checker derives `{c, n}`. | Test |
+| FR-201-AC-60 | Every scheduler: `s` satisfies P with actions `a`, to terminal P state `g` with `3/4` and to `f` with `1/4`, and `b`, to `s` with `1/2`, `f` with `1/4` and `g` with `1/4`; `f` does not satisfy P and returns to `s`. The minimum of `always holds(P)` is `1/2` and the maximum `3/4`. For `probability >= 1/2` the `cyclic-mdp-state-predicate/v1` document with optimization `maximum`, targets `{f}`, values `s = 1/2`, `f = 1`, `g = 0` and ranks 1, 0, 0 is accepted: `Q_a = 1/4`, `Q_b = 1/2` is tight and reaches `f` of rank 0, and `1/2 <= 1/2`. For `probability <= 3/4` targets `{g}`, values `s = 3/4`, `g = 1`, `f = 0` and ranks 1, 0, 0 are accepted: `Q_a = 3/4` is tight, `Q_b = 5/8`. `>= 3/5` and `<= 7/10` reject `ThresholdMissed`. The single-policy value `s = 1/4` of action `a` under targets `{f}`, offered for the false claim `>= 3/4`, rejects `InequalityFails` at `s` since `Q_b = 3/8`. Rank 0 at `s` in the `<= 3/4` document rejects `RankBroken` at `s`. A `workload` optimization refuses objective mismatch. | Test |
+| FR-201-AC-61 | Every scheduler, end components: (i) `s` satisfies A and not B with actions `wait`, to `s`, and `go`, to a B state `b`. For `probability >= 1/2 [holds(A) until holds(B)]` the checker derives the end component `{s}` under `wait` as rejecting, since it holds no decided state, so the only row is the initial target `s` with value 1 and rank 0, and the document rejects `ThresholdMissed` (`1 > 1/2`), as the minimum is 0. A producer document with empty targets and values `s = 0`, `b = 0`, which satisfies maximum Bellman equality, refuses objective mismatch. (ii) `ok` satisfies P with actions `stay`, to `ok`, and `leave`, to `down`; `down` does not satisfy P and returns to `ok`. For `probability <= 1/2 [always holds(P)]` the checker derives `{ok}` under `stay` as accepting, so `ok` is the only row with value 1 and rank 0 and the document rejects `ThresholdMissed`; empty targets with values 0 refuse objective mismatch. For `probability >= 1/2` the targets are `{down}`; values `ok = 1`, `down = 1` with ranks 1, 0 reject `ThresholdMissed`, and `ok = 0` rejects `InequalityFails` at `ok` since `Q_leave = 1`. | Test |
+| FR-201-AC-62 | EN-5 settles AC-59's `probability >= 1/4` and AC-60's `probability >= 1/2` claims `proved` with their exact values and emits the AC-59 and AC-60 documents, which round-trip byte for byte and which `fsl-probability-check` accepts in a process with no `fsl-analyze` linkage; neither claim settles `unsupported` because of its cycle. An acyclic until or always subject keeps `state-predicate/v1` bytes and verdicts; a cyclic subject's document offered under `state-predicate/v1` is unsupported. Changing `event`, `optimization`, `fairness` or `profile`, a foreign identity, a model-only key, a foreign binding, missing, duplicate, extra or out-of-order rows, nonreduced rationals or noncanonical bytes prevent acceptance with the existing rule and locus. Fairness, clocks, rewards, nested, bounded or event-predicate forms, multiple initials or bindings, an unresolved workload and `lower`, `upper` or interval documents issue no proof in these profiles. | Test |
+| FR-201-AC-63 | Pre-cancellation, Requested or Deadline cancellation and byte, state, edge, work, storage, representation and arithmetic exhaustion during original admission, classification-graph construction, end-component and bottom-component decomposition, certificate-graph construction, predicate evaluation, full-key materialization, Bellman or harmonic sums and rank passes over AC-59 and AC-60 preserve the actual typed cause with no accepted truth or proof. An undefined predicate is not read as false. | Test |
 | FR-201-AC-70 | FR-199-AC-2's `Avail2`: `up` (P) steps to `up` with 1999/2000 and to `down` with 1/2000; not-P `down` chooses `repair_fast` (to `up` 9/10, `down` 1/10) or `repair_slow` (to `up` 1/2, `down` 1/2). The checker derives the single MEC `{up, down}` with both repairs staying. Minimum: component value and gain 1000/1001, bias `up` 0 and `down` -2000/1001 (`repair_slow` tight; `repair_fast` gives -1200/1001 >= -2000/1001), V(up) = V(down) = 1000/1001, both ranks 0; it accepts Every AtLeast 999/1000 and AtLeast 1000/1001, and AtLeast 1001/1002 rejects ThresholdMissed. Maximum: value and gain 1800/1801, bias `down` -2000/1801 (`repair_fast` tight; `repair_slow` gives -2800/1801 <= -2000/1801), V 1800/1801; it accepts Every AtMost 1800/1801, and AtMost 999/1000 rejects ThresholdMissed. A minimum document carrying the maximum's component (value and gain 1800/1801, bias `down` -2000/1801) rejects InequalityFails at `down`, since -2000/1801 > -2800/1801 under `repair_slow`; one carrying the equal-weight workload value 1400/1401 as value and gain, with the bias -2000/1401 that satisfies `up`, rejects InequalityFails at `down` (-2000/1401 > -2400/1401). | Test (TC-3190) |
 | FR-201-AC-71 | `Loop`: P state `c1` has `stay` to not-P `c2` and `quit` to P-terminal `g` with 3/4 and not-P-terminal `f` with 1/4; `c2` steps to `c1`; initial `c1`. The checker derives MECs `{c1, c2}` (staying actions `stay` and `c2`'s step, `quit` leaving), `{g}` and `{f}` (terminal stutter), with rho 1/2, 1 and 0 and biases `c1` 0, `c2` -1/2 (choose the fixture's canonical key order `c1` before `c2`). Minimum: V(c1) = V(c2) = 1/2, V(g) = 1, V(f) = 0, every state in S with rank 0; it accepts Every AtLeast 1/2 and AtLeast 2/5, and AtLeast 3/5 rejects ThresholdMissed. Maximum: V(c1) = V(c2) = 3/4 through `quit`, S = {g, f}, ranks c1 = 1, c2 = 2; it accepts Every AtMost 3/4 and AtMost 4/5, and AtMost 7/10 rejects ThresholdMissed. | Test (TC-3190) |
 | FR-201-AC-72 | In AC-71, the bogus maximum V(c1) = V(c2) = 1 and the bogus minimum V(c1) = V(c2) = 0 satisfy every Bellman equation through the `stay` cycle but leave c1 and c2 outside S with only the cycle tight, so each rejects RankBroken at c1 when rank(c1) <= rank(c2) and otherwise at c2. Giving component `{c1, c2}` value and gain 3/4 (so c1 and c2 would join S) rejects InequalityFails in the component check before V is read: with bias c2 = -3/4 at c1, with c2 = -1/4 at c2. | Test (TC-3190) |
