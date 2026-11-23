@@ -335,6 +335,16 @@ impl ReplayRequest {
         Ok(())
     }
 
+    /// The `replay.input_bytes` allowance a recompile charges each library
+    /// package against as the package is emitted, so the bound refuses before
+    /// the closure's later libraries and the root unit are compiled.
+    pub(crate) fn external_package_allowance(&self) -> crate::spine::ExternalPackageBytes {
+        crate::spine::ExternalPackageBytes {
+            spent: self.encoded_input_bytes as u128,
+            bound: self.replay_limits.input_bytes,
+        }
+    }
+
     /// The complete raw package retained for native admission before evaluation.
     pub fn package(&self) -> &ReplayPackage {
         &self.package

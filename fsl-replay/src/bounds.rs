@@ -68,7 +68,7 @@ impl SettingLimits for ReplayLimits {
 /// [`filament_semantic_value::catalog::CatalogCoded`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 #[error(
-    "stage_limit_exceeded/input-bytes-exceeded: encoded size {actual} exceeds the configured reader bound of {bound} bytes; raise `replay.input_bytes`"
+    "stage_limit_exceeded/input-bytes-exceeded: encoded size {actual} exceeds the configured reader bound of {bound} bytes; {actual} is the size reached when the bound was crossed and later inputs may add more, so raise `replay.input_bytes` past it"
 )]
 pub struct BoundExceeded {
     /// The configured `replay.input_bytes` bound.
