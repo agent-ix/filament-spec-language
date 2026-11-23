@@ -108,7 +108,8 @@ pub struct ModelCheckRequest<'a> {
   only initial state is initial state `i`, with the request's seed, trace
   index `i × witness_samples + r` and step ceiling the lesser of
   `max_walk_steps` and the search horizon `max_depth`. Its observer SHALL
-  evaluate the target and closure condition at each expanded state. If the
+  evaluate the target at each visited state and closure only when the
+  expansion is complete. If the
   call completes normally, its completed trace is used as the sampled walk.
   If the observer stops at a target state, the returned prefix becomes the
   witness path and the engine constructs its `SampleProvenance` with

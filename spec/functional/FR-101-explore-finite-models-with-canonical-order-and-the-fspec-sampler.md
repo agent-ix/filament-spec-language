@@ -214,11 +214,15 @@ pub struct SampleObservation<'a, S, T, F> {
     pub step: usize,
     pub state: &'a S,
     pub key: &'a StateKey,
-    /// The complete, canonically ordered expansion of `state`.
-    pub successors: &'a [(T, S)],
-    pub findings: &'a [F],
+    /// Either the complete, canonically ordered expansion or its stop cause.
+    pub expansion: SampleExpansion<'a, T, S, F>,
     /// The edge selected to enter this state, absent at step zero.
     pub incoming: Option<&'a Step<T>>,
+}
+
+pub enum SampleExpansion<'a, T, S, F> {
+    Complete { successors: &'a [(T, S)], findings: &'a [F] },
+    Stopped(&'a ExpansionStop),
 }
 
 pub enum ObserverDecision { Continue, Stop }
@@ -439,10 +443,13 @@ Provenance records the seed, the trace index and the sampler identity
 
 `sample_request_observed` performs the same request checks, initial-state
 choice, successor ordering, draw sequence and step accounting as
-`sample_request`. At each visited state it expands that state once, then calls
-the observer with the state, its key, the complete canonical successor list,
-findings, incoming selected edge and step index, before selecting another
-successor. `Continue` proceeds with the ordinary walk. `Stop` returns
+`sample_request`. At each visited state it obtains that state's expansion
+result once, then calls the observer with the state, its key, either the
+complete canonical successor list and findings or the expansion stop cause,
+the incoming selected edge and the step index, before selecting another
+successor. The observer is called even when expansion stops, so a caller can
+evaluate that state. `Continue` proceeds with the ordinary walk, or returns
+the ordinary stopped trace when expansion stopped. `Stop` returns
 `ObservedSample::ObserverStopped` with exactly the sampled prefix through that
 state, including its findings, but no `Trace` and no `SampleProvenance`.
 Reaching a normal terminal state or `max_steps` returns
@@ -538,6 +545,7 @@ repository (this repository's TC-210 is a witness-envelope case).
 | FR-101-AC-20 | For each explorer that keeps a seen set (`explore_request`, `explore_request_parallel` and the product explorers of FR-126 and FR-142), a `SeenSetProbe` whose `hash` returns one constant for every key returns a result equal to the default probe's, over a system of 100 distinct states and over two initial states whose keys differ and whose hashes are equal (both admitted): the same `Stats.states` 100, frontier, findings and, for the model checker, verdict and counterexample. Two other hash functions give the same result. Equal full key bytes still coalesce into one state. No `StateKey`, trace, frontier, finding or certificate carries the hash. | Test (TC-1417) |
 | FR-101-AC-21 | For a system whose checked types admit a `PackedLayout`, `unpack(pack(s))` is `s` and its canonical key bytes equal those of `s`, for every reachable state of a 200-state system; two reachable states have equal packed forms exactly when their canonical key bytes are equal, checked over every pair, including `float64` zero against negative zero (two states) and an integer at each end of its declared range. A state that holds a value outside the layout's domain is explored, and coalesces with another exactly when their canonical key bytes are equal. | Test (TC-1417) |
 | FR-101-AC-22 | For each explorer whose system has checked types and so a `PackedLayout` (the FR-126 and FR-142 product explorers; not the generic `explore_request` over an opaque `TransitionSystem`, which has none and runs with `Packing::Auto` as `Off`), a run with `Packing::Auto` and one with `Packing::Off` return byte-equal results: every `StateKey` in the frontier, the trace, the findings and a replay is the canonical key bytes; `replay` of a trace from one run succeeds against the other; no output holds a packed form. | Test (TC-1417) |
+| FR-101-AC-23 | For the same bounded system, sampler, seed, trace index and step ceiling, `sample_request_observed` with an observer that always returns `Continue` returns `Completed` byte-equal to `sample_request`, including findings and provenance, and makes the same draws. An observer that returns `Stop` at step `k` receives that state's expansion result (the complete canonical expansion and findings, or its stop cause) and returns `ObserverStopped` with the exact prefix through `k`, including incoming edges and available findings, and no `Trace` or `SampleProvenance`; no successor after `k` is selected and no further draw is made. | Test (TC-454) |
 
 FR-101-AC-5 withdrawn clause: the `KeyMismatch` refusal (recorded key compared with the recomputed successor key), retired because no FSL check could fail on it.
 
