@@ -63,3 +63,18 @@ is left at the request level.
 
 fsl-bench uses `Limits::default().max_states`, which is the FR-255 published default of 10,000,000.
 Agreed: a benchmark should run the default configuration, and chunking now bounds the overshoot.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs | Escape Cause |
+| --- | --- | --- | --- | --- |
+| FND-004 | low | The `body_locations` bytes are not added to the running `OutputMeter`. `checked_body_locations` gets `meter.bound` and counts its own total from zero, so the floor charged before and after the body rows leaves them out. A package whose source map plus body rows plus later rows exceeds the bound, when no one of those does alone, is refused only at the final encode, after the remaining rows are built. This is sound (it never refuses a package that fits) but refuses later than it could. Fix: pass the meter, or add the body rows' charged total to `meter.charged`. | fsl-package/src/emit.rs:4752-4759 | implementation-bug-despite-evidence |
+| FND-005 | low | `OutputMeter::charge` builds a new `quire_canonical::Writer` for every row and canonically encodes every charged section (source map, temporal, claim, equality, dispatch, protocol-location, probabilistic and requirement rows) a second time. The roughly 3% success-path cost in the PR body was measured on a `let` chain, where only the source map is large; packages heavy in claims or term data pay the second encode, and the per-row writer buffers, on more bytes. Measure a term-data-heavy package, or reuse one writer's buffers across rows. | fsl-package/src/emit.rs:520-543 | implementation-bug-despite-evidence |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The test now uses `nested_let_package(1_000)` (no body rows) at bound N/10, so only the source-map charge can refuse early; main refuses at the final encode there. A second test pins the claim-name charge, and the PR records it failing with that charge removed (331440 against 333849). |
+| FND-002 | accepted-no-change | Measured at about 3% in a debug build. Removing it needs quire-canonical to accept pre-encoded canonical bytes (a raw-value write on `Writer`), which belongs in agent-ix/quire-canonical, not this PR. FND-005 tracks the wider cost of the per-section meter. |
+| FND-003 | fixed | Workers are spawned once per search inside one `thread::scope` and take chunks over per-worker mpsc channels; a chunk costs channel hand-offs, not spawns. On the PR body's fsl-bench numbers, 4 workers went 18.96 to 11.9 ms against 9.25 ms on main; the rest is the chunk barrier the refusal bound needs. |

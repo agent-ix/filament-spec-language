@@ -39,3 +39,10 @@ SR-3554001). The protocol chunking is deterministic and refuses within one chunk
 request-level `input_bytes` check runs before `package_input` and `admit_package` on all three
 package routes. fsl-bench's 10,000,000 is the FR-255 default, which is correct for a benchmark.
 FND-001 can be deferred, since the ticket stays open. FND-002 is a spec follow-up.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | deferred | Partly closed: the source map and the temporal, claim, equality, dispatch, protocol-location, probabilistic and requirement row sections are charged as each is built. Still open, and stated in the PR body under "Still open on QSL-2849", with the PR marked Refs: per-row metering and the semantic nodes, which are built before the source map is complete. The work left after the last charge (operation bodies, correlation rows, operand slots, the final encode) stays on QSL-2849. |
+| FND-002 | deferred | A spec-only change (an early-refusal AC in FR-264 Behavior 5 and FR-126) outside this code PR. Track it on QSL-2849 or as a spec follow-up. |

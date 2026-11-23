@@ -382,6 +382,56 @@ fn a_bound_below_the_typed_rows_refuses_before_the_later_rows_are_built() {
     );
 }
 
+/// QSL-2849: body-location rows count into the same running total as the
+/// sections before them, so a package that overruns only when its sections are
+/// summed refuses inside the body rows, before the rows after them are built.
+/// The bound sits below the summed sections and above the body-location rows
+/// alone, which the rows' own meter did not refuse.
+#[trace("TC-738", "FR-264-AC-6")]
+#[test]
+fn body_location_rows_count_into_the_shared_total() {
+    let package = nested_not_package(1_000);
+    let emit = |bound: u64| {
+        crate::emit::emit_checked_uncached(&package, &Cancel::new(), EmitLimits::new(bound))
+    };
+    let emitted = emit(u64::MAX).expect("a raised output limit emits");
+    let bytes = u64::try_from(emitted.package().bytes().len()).expect("a fixture length");
+    let wire: serde_json::Value =
+        serde_json::from_slice(emitted.package().bytes()).expect("the package is JSON");
+    let map = serde_json::to_vec(&wire["source_map"])
+        .expect("a section")
+        .len() as u64;
+    let rows = serde_json::to_vec(&wire["checked_term_data"]["body_locations"])
+        .expect("a section")
+        .len() as u64;
+    let bound = map + rows / 2;
+    assert!(
+        rows < bound,
+        "the rows alone fit the bound: {rows} against {bound}"
+    );
+
+    let allocations = |bound: u64| {
+        let mut outcome = None;
+        let info = allocation_counter::measure(|| {
+            outcome = Some(emit(bound));
+        });
+        let limit = limit_of(
+            outcome
+                .expect("emission ran")
+                .expect_err("a bound below N refuses"),
+        );
+        assert_eq!(limit.configured_bound(), bound);
+        assert_eq!(limit.actual(), u128::from(bound) + 1);
+        info.count_total
+    };
+    let _ = allocation_counter::measure(|| {});
+    let (early, late) = (allocations(bound), allocations(bytes - 1));
+    assert!(
+        early.saturating_mul(4) < late.saturating_mul(3),
+        "refusing inside the body rows skips the work after them: {early} against {late}"
+    );
+}
+
 fn emitted_byte_count_of(package: &CheckedPackage) -> usize {
     emitted_at(package, u64::MAX)
         .expect("a raised output limit emits")
