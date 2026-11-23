@@ -71,19 +71,27 @@ message never activates and does not count against the claim.
   `{"kind": "no-instance"}` (FR-127; the outcome document spells a cause under `kind`, FR-291-AC-1, while FSpec FR-331's bare `type` is the provider-entry spelling), before any state is
   explored, and SHALL NOT settle it `proved`: a claim about every member of
   an empty population carries no evidence about the model.
+- For a nonempty instance set, FSL SHALL check the analysis profile before
+  evaluating any instance's activation, value or evidence. If the form is
+  outside the admitted profile, FSL SHALL settle the item by the unsupported
+  profile boundary below and SHALL NOT require per-instance evidence. The
+  empty-instance `no-instance` result above takes precedence when the set is
+  empty.
 
 ### Activation and conditioning
 
+- The following activation and conditioning rules apply only after the
+  analysis profile admits the request.
 - Each instance SHALL be read from its run's first activating position, the
   first position at which `g` holds for that instance's object, or position 0
   when the claim has no guard, and SHALL be conditioned on the run activating
   (FSpec FR-407 "Activation"). A run that never activates is not counted.
-- An instance SHALL hold vacuously when no first activating state is
-  reachable (FR-196 "Conditioned readings"): under a workload its activation
+- Under an admitted profile, an instance SHALL hold vacuously when no first
+  activating state is reachable (FR-196 "Conditioned readings"): under a workload its activation
   has probability 0, and under every scheduler no scheduler activates. No
   activated run exists to violate it. Such an instance never makes the item `refuted` and never makes it `inconclusive`.
-- An activated instance's value SHALL be the conditioned value of FR-196
-  "Conditioned readings": under a workload that leaves no choice the exact
+- Under an admitted profile, an activated instance's value SHALL be the
+  conditioned value of FR-196 "Conditioned readings": under a workload that leaves no choice the exact
   ratio of `Pr(E and act)` to `Pr(act)`, and under every scheduler or a
   workload with free delays the optimum over the schedulers that activate,
   by the reset construction. Its proof carries FR-201's
@@ -91,11 +99,13 @@ message never activates and does not count against the claim.
 
 ### Settling the item
 
-- Each instance SHALL be settled with the claim's evidence kind (FR-741): an
-  exact instance by its exact value against the bound, a statistical instance
+- Under an admitted profile, each instance SHALL be settled with the claim's
+  evidence kind (FR-741): an exact instance by its exact value against the
+  bound, a statistical instance
   by its measurement.
-- The item SHALL be `refuted` when any instance fails, and its counterexample
-  SHALL name the first failing instance in key order, so a rerun names the
+- Under an admitted profile, the item SHALL be `refuted` when any instance
+  fails, and its counterexample SHALL name the first failing instance in key
+  order, so a rerun names the
   same instance.
 - Otherwise, for an admitted analysis profile, the item SHALL be `proved`
   under exact evidence, or `measured`
@@ -112,11 +122,12 @@ message never activates and does not count against the claim.
   free-delay optima, statistical evidence, cyclic continuation graphs,
   property forms other than unbounded eventuality reachability, timed
   subjects, and authored fairness. This is an evidence/profile boundary, not
-  a refusal of the `on each` activation: the source reader and analyzer admit
-  the activation and its instances, and the same form without `on each` may
-  have a profile. For an unsupported profile form, at least one actual
-  instance is present in the acceptance cases below, so `unsupported` is not
-  `no-instance`.
+  a refusal of the `on each` activation: the source reader admits the
+  activation, and the same form without `on each` may have a profile. Profile
+  rejection occurs after instance formation but before per-instance
+  evaluation; the empty-instance `no-instance` result takes precedence. For
+  an unsupported profile form, at least one actual instance is present in the
+  acceptance cases below, so `unsupported` is not `no-instance`.
 - An in-profile on-each claim whose guard or target read is undefined at a
   reachable state of an instance's phase graph likewise settles `unsupported`
   with the FR-272 diagnostic `unsupported_construct`/`not-yet-implemented`
