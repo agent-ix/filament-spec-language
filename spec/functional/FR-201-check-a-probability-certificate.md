@@ -863,6 +863,49 @@ process, by its own graph code, and read none of them from the certificate.
   checked in the order `numerator`, `denominator`, or `post`, `reset`, and
   the first failing part is reported.
 
+### Closed on-each reachability conditional profile
+
+For a checked `probabilistic` claim whose activation is `on each (x: T)`
+(FR-875), whose form is untimed unbounded `eventually` reachability in the
+infinite-trace profile, with no authored fairness and a workload that leaves
+no choice, the codec SHALL admit the `Conditional` `Ratio` certificate of
+"Conditional certificates" as a document of the separate
+`"filament.probability-objective/on-each-reachability/v1"` objective. Every
+other on-each form stays unsupported by this profile rather than encoded as
+it.
+
+- The objective SHALL have exactly `profile` and `optimization`; `profile`
+  SHALL be the identifier above and `optimization` SHALL be `"workload"`. It
+  carries no `targets` and no `fairness`: the checker rederives the target
+  and the activation guard from the checked claim, as "Conditional
+  certificates" has it rebuild the activating states.
+- The document SHALL have `kind` `"conditional"` and a `conditional` object
+  of mode `"ratio"` with a `numerator` and a `denominator`, each a `values`
+  array of `{state, value}` rows in FSpec FR-412's spelling.
+- The checker SHALL rebuild, for every instance of `T` in the checked start
+  snapshots (in product with any `over` instance, FR-875 "Instances"), the
+  model graph from each initial state with each product key carrying FR-196's
+  `instance` and `activation` members, so a state before the guard first holds
+  and the same model state after it have distinct keys. `numerator` and
+  `denominator` SHALL each cover exactly the rebuilt reachable keys of all
+  instances, one row each; a missing, extra or duplicate row is rejected
+  `Malformed` at `values`.
+- `numerator` SHALL satisfy at every key the Bellman equality of the form's
+  value with every never-activating path valued 0, and `denominator` the
+  Bellman equality of the reachability of the first activating states; an
+  equality that fails is rejected `InequalityFails` at that key with `part`
+  naming `numerator` or `denominator`.
+- At each initial key from which a first activating state is reachable, the
+  numerator's value over the denominator's SHALL be compared with the
+  threshold, and a failing comparison rejects `ThresholdMissed` by
+  "Conditional certificates". An initial key whose denominator is 0 is
+  confirmed vacuous by the checker's own reachability search and holds
+  vacuously.
+- When every instance is vacuous, the claim SHALL be certified only by an
+  accepted `Vacuous` conditional certificate; a `Ratio` document of this
+  profile is rejected `InequalityFails` at the first initial complete product
+  key in canonical order, as "Conditional certificates" states.
+
 ### Verdict path
 
 - FSL's settlement map in `fsl-replay` SHALL run the checker on the
@@ -1667,6 +1710,7 @@ initial states/bindings and refutations remain outside this profile.
 | FR-201-AC-73 | In AC-71, a producer-supplied component list that omits `{c1, c2}` (treating c1 and c2 as transient) with minimum V(c1) = V(c2) = 3/4 and ranks c1 = 1, c2 = 2 satisfies every offered Bellman and rank condition, yet would prove a false Every AtLeast 3/4 (true minimum 1/2); it rejects InequalityFails at the first key of `{c1, c2}` by the partition check. Splitting `{c1, c2}` into `{c1}` and `{c2}`, or adding `g` to it, rejects InequalityFails at the smallest differing key. AC-70/71 documents round-trip canonically through a fresh checker without analyzer/provider linkage; a `policy` member, missing or extra rows, wrong objective, identity or binding, and model-only keys prevent acceptance with the specified rule/locus. | Test (TC-3190) |
 | FR-201-AC-74 | The AC-71 claims written `using` the event-position false-extension profile settle the same values and accept the same documents as under the infinite-trace profile: terminal `g` keeps value 1 by stutter rather than 0 by false extension. A workload long-run claim under that profile likewise uses the DTMC profiles (FR-201-AC-27's chain accepts at 1800/1801). Neither settles `unsupported`/`not-yet-implemented` for its profile. Weighted or fair every-scheduler, timed, multi-post and multiple initial/binding claims emit no MDP long-run document; pre-cancellation and exhaustion during MEC refinement or exact sums retain their typed cause with no accepted truth; zero direct instances retain UnsupportedBinding/unsupported. | Test (TC-3190) |
 | FR-201-AC-75 | For a checked root `holds(c.heads)` with no temporal operator, `QualifiedBoundedMonitor::supports` and `QualifiedBoundedMonitor::supports_observations` both return true under the event-position false-extension profile and both return false under the infinite-trace profile. Under the event-position profile the monitor's initial canonical monitor-state key and decided verdict for the tails and heads initial observations equal those of `eventually[0,0] holds(c.heads)` apart from the checked formula context. For a temporal clause whose formula is a root `holds(c.heads)`, `bounded_shape` and `closure_shape` return what they return without this reading (no bounded shape), and `BoundedTranslation::clause` over an origin clause under the infinite-trace profile still refuses it `NotTranslated`. | Test (TC-3195) |
+| FR-201-AC-76 | Over the `Link` model under `Even` with a start snapshot holding `m` undelivered and `n` delivered, the on-each claim `E` of FR-875 at `rational(9, 10)` has the `on-each-reachability/v1` `Ratio` document whose `numerator` is `391/400` and `denominator` is `1` at `m`'s initial key and whose `numerator` and `denominator` are `0` at `n`'s initial key; the checker accepts it with `m` the one compared instance (`391/400 >= 9/10`) and `n` vacuous, and at `rational(99, 100)` rejects `ThresholdMissed` since `391/400 < 99/100`. Over a start snapshot holding only `n`, the same document is rejected `InequalityFails` at the initial key of `n`, and a `Vacuous` certificate is accepted. A document with the numerator at `m`'s initial key changed to `1/2` is rejected `InequalityFails` with `part` `numerator`. | Test (TC-3208) |
 
 ## Dependencies
 
