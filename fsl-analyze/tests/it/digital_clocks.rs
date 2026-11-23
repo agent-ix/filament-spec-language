@@ -1387,6 +1387,33 @@ fn zero_delay_cycle_is_decided_with_time_divergence() {
     }
 }
 
+/// FR-204-AC-16 (TC-2175): the guardless, resetless `Retx` with an instant
+/// `spin` at `x >= 2 ms` has a zero-time end component at `x = 2 ms`, while
+/// `send`'s zero-delay self-loop at `x = 0 ms` and `x = 1 ms` lies in no
+/// component. Every scheduler that lets time pass delivers with probability 1:
+/// `send` delivers with 9/10 and repeats with 1/10, and at `x = 2 ms` the
+/// component's only exit is `send`, worth `(9/10) / (1 - 1/10) = 1`. So the
+/// minimum and maximum are both 1.
+#[trace("TC-2175", "FR-204-AC-16")]
+#[test]
+fn zero_delay_loop_beside_an_end_component_is_decided() {
+    let world = retx_with(
+        &[("send", &["late", "x"]), ("spin", &["retried"])],
+        "",
+        false,
+        "pre Spin using v on M::Call::spin { self.x >= 2 ms }\n\
+         post Spun using v on M::Call::spin { self.retried = not pre(self.retried) }\n",
+        &every_claims(),
+    );
+    let built = product(&world, "Deadline");
+    for bound in [
+        Bound::AtLeast(ratio(99, 100)),
+        Bound::AtMost(ratio(999, 1000)),
+    ] {
+        assert_eq!(exact_initial(&built, bound), Some(ratio(1, 1)));
+    }
+}
+
 /// FR-204-AC-17 (TC-2176): a time-locked state is terminal.
 #[trace("TC-2176", "FR-204-AC-17")]
 #[test]
