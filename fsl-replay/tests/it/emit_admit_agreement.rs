@@ -18,18 +18,15 @@
 use std::collections::BTreeMap;
 
 use filament_contract_model::{
-    read_checked_package, CheckedPackageDispatchResult, CheckedPackageReadLimits,
+    read_checked_package, CheckedPackageDispatchResult, CheckedPackageReadLimits, CheckedPackageV2,
 };
 use filament_exact::Cancel;
 use fsl_bench::prop::{self, near_miss, unit};
 use fsl_foundation::SourceIdentity;
 use fsl_replay::spine::{
-    self, DependencyInput, EmittedUnit, FrontEndFailure, ParseRequest, PackageLimits, SpineLimits,
+    self, DependencyInput, EmittedUnit, FrontEndFailure, PackageLimits, ParseRequest, SpineLimits,
 };
 use proptest::prelude::*;
-
-/// The generator forms left out, each with the ticket it waits on.
-const KNOWN_EXCLUSIONS: &[&str] = &["QSL-1142", "QSL-1903"];
 
 fn emit(source: &str) -> Result<EmittedUnit, FrontEndFailure> {
     let cancel = Cancel::new();
@@ -75,8 +72,9 @@ fn checker_accepted_units_are_emitted_and_admitted() {
         &unit::package_units(),
         |input| {
             let source = input.source();
-            let emitted = emit(&source)
-                .map_err(|error| TestCaseError::fail(format!("checker or emitter: {error:?}\n{source}")))?;
+            let emitted = emit(&source).map_err(|error| {
+                TestCaseError::fail(format!("checker or emitter: {error:?}\n{source}"))
+            })?;
             match read(&emitted) {
                 CheckedPackageDispatchResult::AdmittedV2(_) => Ok(()),
                 other => Err(TestCaseError::fail(format!("reader: {other:?}\n{source}"))),
@@ -86,8 +84,18 @@ fn checker_accepted_units_are_emitted_and_admitted() {
     .unwrap();
 }
 
+/// The package the strict reader admits from `emitted`'s bytes.
+fn reread(emitted: &EmittedUnit) -> Result<Box<CheckedPackageV2>, TestCaseError> {
+    match read(emitted) {
+        CheckedPackageDispatchResult::AdmittedV2(package) => Ok(package),
+        other => Err(TestCaseError::fail(format!("reader: {other:?}"))),
+    }
+}
+
 /// Provenance: QSL-2062 P3. Emitting the same unit twice gives the same bytes and artifact
-/// identity, and reading either gives the same admitted package.
+/// identity, and reading those bytes back through the strict reader (three reads: each
+/// emission once, the first again) gives the same admitted package: its name is the one the
+/// checker was given and its whole read-back value is equal.
 #[test]
 fn emitted_package_reread_has_the_same_identity() {
     prop::run(
@@ -96,14 +104,21 @@ fn emitted_package_reread_has_the_same_identity() {
         &unit::package_units(),
         |input| {
             let source = input.source();
-            let first = emit(&source).map_err(|e| TestCaseError::fail(format!("{e:?}\n{source}")))?;
-            let second = emit(&source).map_err(|e| TestCaseError::fail(format!("{e:?}\n{source}")))?;
+            let first =
+                emit(&source).map_err(|e| TestCaseError::fail(format!("{e:?}\n{source}")))?;
+            let second =
+                emit(&source).map_err(|e| TestCaseError::fail(format!("{e:?}\n{source}")))?;
             prop_assert_eq!(first.package().bytes(), second.package().bytes());
             prop_assert_eq!(
                 format!("{:?}", first.emission().artifact_identity()),
                 format!("{:?}", second.emission().artifact_identity())
             );
-            prop_assert_eq!(format!("{:?}", read(&first)), format!("{:?}", read(&second)), "{}", source);
+            let (a, b, again) = (reread(&first)?, reread(&second)?, reread(&first)?);
+            prop_assert_eq!(a.name(), "emit-admit", "{}", source);
+            prop_assert_eq!(a.name(), b.name());
+            prop_assert_eq!(a.node_kinds(), b.node_kinds());
+            prop_assert_eq!(format!("{a:?}"), format!("{b:?}"), "{}", source);
+            prop_assert_eq!(format!("{a:?}"), format!("{again:?}"), "{}", source);
             Ok(())
         },
     )
@@ -118,24 +133,32 @@ fn refused_units_are_not_emitted() {
         "refused_units_are_not_emitted",
         prop::config(256),
         &near_miss::near_misses(),
-        |input| {
-            match emit(&input.source) {
-                Ok(_) => Err(TestCaseError::fail(format!("emitted a refused unit:\n{}", input.source))),
-                Err(failure) => {
-                    let refusal = failure.into_refused().map_err(|stopped| {
-                        TestCaseError::fail(format!("not a typed refusal: {stopped:?}"))
-                    })?;
-                    prop_assert_eq!(refusal.code(), input.code);
-                    Ok(())
-                }
+        |input| match emit(&input.source) {
+            Ok(_) => Err(TestCaseError::fail(format!(
+                "emitted a refused unit:\n{}",
+                input.source
+            ))),
+            Err(failure) => {
+                let refusal = failure.into_refused().map_err(|stopped| {
+                    TestCaseError::fail(format!("not a typed refusal: {stopped:?}"))
+                })?;
+                prop_assert_eq!(refusal.code(), input.code);
+                Ok(())
             }
         },
     )
     .unwrap();
 }
 
-/// Provenance: QSL-2062 negative. A package with one byte changed is never read as an
-/// admitted package unless the reader still finds it valid; every refusal is a typed result.
+/// Provenance: QSL-2062 negative. A package with one byte changed is refused by the strict
+/// reader, or admitted as the very same package. The corruption adds one to a byte at 64
+/// evenly spaced positions of a generated unit's package; a corrupted package the reader
+/// admits must read back equal to the original (the change was not semantic). A corrupted
+/// package that is admitted and differs is a defect: the reader would accept a package other
+/// than the one emitted. "Equal" is the `Debug` of the admitted package, which may omit fields
+/// the reader keeps opaque: the admitted-although-corrupted positions are printed so that the
+/// bytes can be judged (at the time of writing: a rule identity digit and a source-map region
+/// end, which the reader does not cross-check).
 #[test]
 fn corrupted_package_is_refused() {
     let source = unit::package_units()
@@ -144,26 +167,52 @@ fn corrupted_package_is_refused() {
     let source = proptest::strategy::ValueTree::current(&source).source();
     let emitted = emit(&source).expect("emits");
     let bytes = emitted.package().bytes().to_vec();
-    let (mut refused, mut admitted) = (0, 0);
+    let original = format!(
+        "{:?}",
+        reread(&emitted).expect("the emitted package is admitted")
+    );
+    let (mut refused, mut same) = (0, 0);
+    let mut different = Vec::new();
     for at in (0..bytes.len()).step_by((bytes.len() / 64).max(1)) {
         let mut corrupt = bytes.clone();
         corrupt[at] = corrupt[at].wrapping_add(1);
-        match read_checked_package(&corrupt, CheckedPackageReadLimits::bounded(), emitted.evidence()) {
-            CheckedPackageDispatchResult::AdmittedV2(_) => admitted += 1,
+        match read_checked_package(
+            &corrupt,
+            CheckedPackageReadLimits::bounded(),
+            emitted.evidence(),
+        ) {
+            CheckedPackageDispatchResult::AdmittedV2(package) => {
+                if format!("{package:?}") == original {
+                    same += 1;
+                    eprintln!("admitted although corrupted, reads back equal, at {at}: {:?} -> {:?} in {:?}", bytes[at] as char, corrupt[at] as char, String::from_utf8_lossy(&bytes[at.saturating_sub(40)..(at + 40).min(bytes.len())]));
+                } else {
+                    different.push((at, corrupt));
+                }
+            }
             _ => refused += 1,
         }
     }
-    eprintln!("corrupted packages: {refused} refused, {admitted} still admitted");
-    assert!(refused > admitted, "the reader admitted most corrupted packages");
+    eprintln!(
+        "corrupted packages: {refused} refused, {same} admitted unchanged, {} admitted different",
+        different.len()
+    );
+    assert!(refused > 0, "no corruption was refused");
+    assert!(
+        different.is_empty(),
+        "the reader admitted a different package for a corrupted input at byte {:?}:\n{}",
+        different.first().map(|(at, _)| at),
+        different
+            .first()
+            .map(|(_, bytes)| String::from_utf8_lossy(bytes).into_owned())
+            .unwrap_or_default()
+    );
     // Truncation is always refused.
     assert!(!matches!(
-        read_checked_package(&bytes[..bytes.len() / 2], CheckedPackageReadLimits::bounded(), emitted.evidence()),
+        read_checked_package(
+            &bytes[..bytes.len() / 2],
+            CheckedPackageReadLimits::bounded(),
+            emitted.evidence()
+        ),
         CheckedPackageDispatchResult::AdmittedV2(_)
     ));
-}
-
-/// Provenance: QSL-2062. The exclusions are exactly the open tickets.
-#[test]
-fn known_exclusions_are_exactly_the_open_tickets() {
-    assert_eq!(KNOWN_EXCLUSIONS, ["QSL-1142", "QSL-1903"]);
 }

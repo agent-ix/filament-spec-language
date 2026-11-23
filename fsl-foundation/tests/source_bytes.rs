@@ -4,8 +4,8 @@
 //!
 //! Properties 2 and the parse half of 3 live in `fsl-cst/tests/it/source_bytes.rs`
 //! (`fsl-cst` depends on `fsl-foundation`, so the CST cannot be built from here).
-use fsl_bench::prop;
 use fsl_foundation::source::{Source, SourceIdentity, SourceReadCause};
+use fsl_proptest_policy as prop;
 use proptest::prelude::*;
 
 const BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
@@ -158,10 +158,19 @@ fn valid_utf8_source_is_always_read() {
 /// Provenance: QSL-2059 negative. Each refused form is refused with its cause.
 #[test]
 fn refused_forms_are_refused() {
-    assert_eq!(read(&[0xEF, 0xBB, 0xBF, b'a']).unwrap_err(), SourceReadCause::Bom);
+    assert_eq!(
+        read(&[0xEF, 0xBB, 0xBF, b'a']).unwrap_err(),
+        SourceReadCause::Bom
+    );
     assert_eq!(read(b"a\0b").unwrap_err(), SourceReadCause::Nul);
-    assert_eq!(read(&[0xFF, b'a']).unwrap_err(), SourceReadCause::InvalidUtf8);
-    assert_eq!(read(&[0xC0, 0x80]).unwrap_err(), SourceReadCause::InvalidUtf8);
+    assert_eq!(
+        read(&[0xFF, b'a']).unwrap_err(),
+        SourceReadCause::InvalidUtf8
+    );
+    assert_eq!(
+        read(&[0xC0, 0x80]).unwrap_err(),
+        SourceReadCause::InvalidUtf8
+    );
 }
 
 /// Provenance: QSL-2059. FR-001 closes the reader refusals to invalid UTF-8, BOM and

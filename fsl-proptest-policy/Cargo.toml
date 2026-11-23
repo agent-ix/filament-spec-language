@@ -1,0 +1,21 @@
+[package]
+name = "fsl-proptest-policy"
+version = "0.1.0"
+publish = false
+edition = "2021"
+rust-version = "1.98"
+license = "AGPL-3.0-or-later"
+description = "QSL-2054: the one property-test policy every FSL property suite shares (case count, fixed RNG seed, bounded shrinking, seed-only regression files, elapsed-time report)."
+
+# Depends on `proptest` only, so a layer-1 or layer-0 crate can dev-depend on it
+# without reaching the rest of the workspace. No crate depends on it in
+# `[dependencies]`; `fsl-bench` re-exports it for its generators.
+[dependencies]
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[lints.clippy]
+all = "deny"

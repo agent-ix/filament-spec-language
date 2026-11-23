@@ -11,11 +11,11 @@
 use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use fsl_bench::prop;
 use fsl_cst::cst::{CstElement, CstNode, LosslessCst, TokenClass};
 use fsl_cst::grammar::generate::{covering_derivations, Derivation};
 use fsl_cst::{Limits, ParsedSource, Production};
 use fsl_foundation::source::SourceIdentity;
+use fsl_proptest_policy as prop;
 use proptest::prelude::*;
 
 const GAPS: &[&str] = &[
@@ -30,7 +30,13 @@ fn identity() -> SourceIdentity {
 }
 
 fn parse(source: &str) -> Option<ParsedSource> {
-    fsl_cst::parse(identity(), "unit.native", source.as_bytes(), Limits::default()).ok()
+    fsl_cst::parse(
+        identity(),
+        "unit.native",
+        source.as_bytes(),
+        Limits::default(),
+    )
+    .ok()
 }
 
 /// One derived unit with a random layout and an optional dropped token.
@@ -231,8 +237,12 @@ fn check(source: &str, law: Law, format: Formatter) -> Verdict {
                     "significant tokens changed",
                     format!(
                         "first differing token index {at}: {:?} vs {:?}\nbefore: {}\nafter: {}",
-                        before.get(at).map(|t| String::from_utf8_lossy(t).into_owned()),
-                        after.get(at).map(|t| String::from_utf8_lossy(t).into_owned()),
+                        before
+                            .get(at)
+                            .map(|t| String::from_utf8_lossy(t).into_owned()),
+                        after
+                            .get(at)
+                            .map(|t| String::from_utf8_lossy(t).into_owned()),
                         text(&before),
                         text(&after)
                     ),
@@ -381,9 +391,15 @@ fn generated_units_reach_every_production_family() {
         .filter(|production| **production != Production::ExtensionDeclaration)
         .filter(|production| !reached.contains(production))
         .collect();
-    assert!(missing.is_empty(), "productions never generated: {missing:?}");
+    assert!(
+        missing.is_empty(),
+        "productions never generated: {missing:?}"
+    );
     let families: Vec<_> = FAMILIES.iter().filter(|p| !reached.contains(p)).collect();
-    assert!(families.is_empty(), "families never generated: {families:?}");
+    assert!(
+        families.is_empty(),
+        "families never generated: {families:?}"
+    );
 }
 
 /// Provenance: QSL-2058 negative. A formatter that drops one token fails the

@@ -234,11 +234,11 @@ mod operator_laws {
     //! fixed-sample and timestamped finite-window profiles read their positions through
     //! their own letters and are not covered here.
     use filament_exact::Meter;
-    use fsl_bench::prop;
     use fsl_eval::temporal::{
         evaluate, evaluate_at, AtomReading, CaptureReading, LetterStop, TemporalLetters,
         TemporalOutcome, TemporalPosition, TemporalRefusal, TemporalTrace,
     };
+    use fsl_proptest_policy as prop;
     use fsl_semantics::check::{FormulaNode, FormulaNodeId, SCALAR_LIMITS_UNLIMITED};
     use proptest::prelude::*;
 
@@ -379,7 +379,8 @@ mod operator_laws {
             high: Some(low + width),
         });
         if open {
-            prop_oneof![4 => bounded, 1 => (0u8..=3).prop_map(|low| Span { low, high: None })].boxed()
+            prop_oneof![4 => bounded, 1 => (0u8..=3).prop_map(|low| Span { low, high: None })]
+                .boxed()
         } else {
             bounded.boxed()
         }
@@ -482,10 +483,18 @@ mod operator_laws {
                 AtomReading::False
             })
         }
-        fn activation(&mut self, _: TemporalPosition, _: &mut Meter) -> Result<AtomReading, LetterStop> {
+        fn activation(
+            &mut self,
+            _: TemporalPosition,
+            _: &mut Meter,
+        ) -> Result<AtomReading, LetterStop> {
             Ok(AtomReading::True)
         }
-        fn captures(&mut self, _: TemporalPosition, _: &mut Meter) -> Result<CaptureReading, LetterStop> {
+        fn captures(
+            &mut self,
+            _: TemporalPosition,
+            _: &mut Meter,
+        ) -> Result<CaptureReading, LetterStop> {
             Ok(CaptureReading::Fixed)
         }
         fn counts_step(&self, _: TemporalPosition) -> bool {
@@ -539,8 +548,15 @@ mod operator_laws {
         Ok(())
     }
 
-    fn suite(name: &'static str, strategy: impl Strategy<Value = (Run, F, F, Span)>, law: fn(&Run, &F, &F, Span) -> Result<(), TestCaseError>) {
-        prop::run(name, prop::config(256), &strategy, |(run, x, y, i)| law(&run, &x, &y, i)).unwrap();
+    fn suite(
+        name: &'static str,
+        strategy: impl Strategy<Value = (Run, F, F, Span)>,
+        law: fn(&Run, &F, &F, Span) -> Result<(), TestCaseError>,
+    ) {
+        prop::run(name, prop::config(256), &strategy, |(run, x, y, i)| {
+            law(&run, &x, &y, i)
+        })
+        .unwrap();
     }
 
     /// A run with formulas that match its profile's span rules.
@@ -564,7 +580,13 @@ mod operator_laws {
     }
 
     /// `a release b` against `not (not a until not b)`, with `until` spelled as `spelling`.
-    fn release_law_with(run: &Run, x: &F, y: &F, i: Span, spelling: UntilSpelling) -> Result<(), TestCaseError> {
+    fn release_law_with(
+        run: &Run,
+        x: &F,
+        y: &F,
+        i: Span,
+        spelling: UntilSpelling,
+    ) -> Result<(), TestCaseError> {
         let right = Not(b(Until(i, b(Not(b(x.clone()))), b(Not(b(y.clone()))))));
         agree(
             run,
@@ -577,17 +599,278 @@ mod operator_laws {
         agree(
             run,
             &real(&Triggered(i, b(x.clone()), b(y.clone()))),
-            &real(&Not(b(Since(i, b(Not(b(x.clone()))), b(Not(b(y.clone()))))))),
+            &real(&Not(b(Since(
+                i,
+                b(Not(b(x.clone()))),
+                b(Not(b(y.clone()))),
+            )))),
         )
     }
 
-    /// Provenance: QSL-2060 P1 (FR-043, FR-327). `always a` is `not eventually not a`.
+    // ---- The explicit-semantics reference -------------------------------------------------
+    //
+    // A direct reading of the temporal requirement over an explicit trace, written by
+    // quantifying over positions and sharing nothing with `fsl-eval/src/temporal/plan.rs`
+    // (which implements `always`, `release`, `historically` and `triggered` as Boolean duals of a
+    // single scan). Position `i` is a signed integer so the pre-origin extension is reachable.
+    //
+    // - FR-327 "Bounded-profile evaluation": a position after the closed trace reads every atom
+    //   false; a position before 0 reads every atom false, and Boolean, future and past operators
+    //   are evaluated there from those values (an offset is never skipped).
+    // - FR-329 "Exact evaluation": under a lasso, position `p >= n` reads the observation of
+    //   position `prefix + ((p - prefix) mod L)`; `p until[a,*] q` holds when `q` holds at some
+    //   `j >= i+a` and `p` at every `k` with `i+a <= k < j`; `p since[a,*] q` holds when `q`
+    //   holds at some `j <= i-a` and `p` at every `k` with `j < k <= i-a`. The unbounded and
+    //   lower-bounded past operators range over positions 0 through `i - a` only (FR-327).
+    // - FSpec FR-091 / FR-092 offsets: `until[a,b]` is `exists j in [i+a, i+b]` with `q` at `j`
+    //   and `p` at every `k` in `[i+a, j)`; `release[a,b]` is `forall j in [i+a, i+b]` of `q` at
+    //   `j` or `p` at some `k` in `[i+a, j)`; the past operators mirror them with `since[a,b]`
+    //   being `exists j in [i-b, i-a]` with `q` at `j` and `p` at every `k` in `(j, i-a]`.
+    //
+    // It is two-valued, so it covers the closed trace and the lasso exactly. A finite prefix of
+    // the infinite-trace profile is three-valued (FR-328): there the reference checks that a
+    // settled verdict is confirmed by every sampled extension (a holds or a violation depends
+    // on no continuation) and that the evaluator reports pending in no other case.
+
+    /// The valuation bit of atom `bit` at position `p` of `run`, read as FR-327 / FR-329 say.
+    fn atom_at(run: &Run, bit: u8, p: i64) -> bool {
+        let n = run.valuations.len() as i64;
+        let index = if p < 0 {
+            return false;
+        } else if p < n {
+            p
+        } else if run.shape == Shape::Lasso {
+            let prefix = run.prefix as i64;
+            prefix + (p - prefix) % (n - prefix)
+        } else {
+            return false;
+        };
+        run.valuations[index as usize] >> bit & 1 == 1
+    }
+
+    /// The positions an interval selects from `i`, as an inclusive range `lo..=hi`.
+    /// A future `[a,*]` stops a settling margin after the later of `i + a` and the loop start:
+    /// a subformula with past operators reads back at most `R` positions (FR-329 "Exact
+    /// evaluation"), so from `prefix + R` on its truth repeats every loop; the generated
+    /// formulas reach back at most 18 positions plus one loop per unbounded past operator, and
+    /// the margin is 24 positions plus four loops.
+    fn future_range(run: &Run, i: i64, s: Span) -> (i64, i64) {
+        let lo = i + i64::from(s.low);
+        let hi = match s.high {
+            Some(h) => i + i64::from(h),
+            None => {
+                let l = (run.valuations.len() - run.prefix) as i64;
+                lo.max(run.prefix as i64) + 24 + 4 * l
+            }
+        };
+        (lo, hi)
+    }
+
+    /// The positions a past interval selects from `i`: `[i-b, i-a]`, or `[0, i-a]` for `[a,*]`.
+    fn past_range(i: i64, s: Span) -> (i64, i64) {
+        let hi = i - i64::from(s.low);
+        let lo = match s.high {
+            Some(h) => i - i64::from(h),
+            None => 0,
+        };
+        (lo, hi)
+    }
+
+    /// Whether `f` holds at position `i` of `run`: the definition, quantifier by quantifier.
+    fn sat(f: &F, run: &Run, i: i64) -> bool {
+        let any = |(lo, hi): (i64, i64), test: &dyn Fn(i64) -> bool| (lo..=hi).any(test);
+        let all = |(lo, hi): (i64, i64), test: &dyn Fn(i64) -> bool| (lo..=hi).all(test);
+        match f {
+            Atom(bit) => atom_at(run, *bit, i),
+            True => true,
+            False => false,
+            Not(x) => !sat(x, run, i),
+            And(x, y) => sat(x, run, i) && sat(y, run, i),
+            Or(x, y) => sat(x, run, i) || sat(y, run, i),
+            Eventually(s, x) => any(future_range(run, i, *s), &|j| sat(x, run, j)),
+            Always(s, x) => all(future_range(run, i, *s), &|j| sat(x, run, j)),
+            Once(s, x) => any(past_range(i, *s), &|j| sat(x, run, j)),
+            Historically(s, x) => all(past_range(i, *s), &|j| sat(x, run, j)),
+            Until(s, x, y) => {
+                let (lo, hi) = future_range(run, i, *s);
+                (lo..=hi).any(|j| sat(y, run, j) && (lo..j).all(|k| sat(x, run, k)))
+            }
+            Release(s, x, y) => {
+                let (lo, hi) = future_range(run, i, *s);
+                (lo..=hi).all(|j| sat(y, run, j) || (lo..j).any(|k| sat(x, run, k)))
+            }
+            Since(s, x, y) => {
+                let (lo, hi) = past_range(i, *s);
+                (lo..=hi).any(|j| sat(y, run, j) && (j + 1..=hi).all(|k| sat(x, run, k)))
+            }
+            Triggered(s, x, y) => {
+                let (lo, hi) = past_range(i, *s);
+                (lo..=hi).all(|j| sat(y, run, j) || (j + 1..=hi).any(|k| sat(x, run, k)))
+            }
+        }
+    }
+
+    /// `Some(truth)` for a settled outcome, `None` otherwise.
+    fn settled(outcome: &Result<TemporalOutcome, TemporalRefusal>) -> Option<bool> {
+        match outcome {
+            Ok(TemporalOutcome::Holds) => Some(true),
+            Ok(TemporalOutcome::Violated { .. }) => Some(false),
+            _ => None,
+        }
+    }
+
+    /// A finite prefix's continuation: a loop of one to three further valuations.
+    fn extensions() -> impl Strategy<Value = Vec<u8>> {
+        proptest::collection::vec(0u8..8, 1..=3)
+    }
+
+    /// The implementation against the reference at every represented position.
+    fn definition_law(run: &Run, extension: &[u8], f: &F) -> Result<(), TestCaseError> {
+        let fixture = clause(run, &real(f));
+        for position in 0..run.valuations.len() as u64 {
+            let got = at(run, &fixture, position);
+            if run.shape == Shape::Prefix {
+                // Three-valued (FR-328): every continuation confirms a settled verdict.
+                let Some(truth) = settled(&got) else {
+                    prop_assert!(
+                        matches!(got, Ok(TemporalOutcome::Pending)),
+                        "unsettled but not pending: {:?} for {} at {} on {:?}",
+                        got,
+                        real(f),
+                        position,
+                        run.valuations
+                    );
+                    continue;
+                };
+                let mut valuations = run.valuations.clone();
+                valuations.extend_from_slice(extension);
+                let lasso = Run {
+                    shape: Shape::Lasso,
+                    valuations,
+                    prefix: run.valuations.len(),
+                };
+                prop_assert_eq!(
+                    truth,
+                    sat(f, &lasso, position as i64),
+                    "prefix verdict {:?} of {} at {} on {:?} is contradicted by the continuation {:?}",
+                    got, real(f), position, run.valuations, extension
+                );
+            } else {
+                prop_assert_eq!(
+                    settled(&got),
+                    Some(sat(f, run, position as i64)),
+                    "{} at {} on {:?} ({:?}, prefix {})",
+                    real(f),
+                    position,
+                    run.valuations,
+                    run.shape,
+                    run.prefix
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// Run `definition_law` on formulas whose top operator is `top`.
+    fn against_the_definition(name: &'static str, top: fn(Span, F, F) -> F) {
+        let strategy = (inputs(), extensions());
+        prop::run(
+            name,
+            prop::config(256),
+            &strategy,
+            |((run, x, y, i), extension)| definition_law(&run, &extension, &top(i, x, y)),
+        )
+        .unwrap();
+    }
+
+    /// Provenance: QSL-2060 P1 (FR-327, FR-328, FR-329). `eventually` is the quantifier over its interval.
+    #[test]
+    fn eventually_matches_its_definition() {
+        against_the_definition("eventually_matches_its_definition", |i, x, _| {
+            Eventually(i, b(x))
+        });
+    }
+
+    /// Provenance: QSL-2060 P1. `always` is the universal quantifier over its interval (not the dual).
+    #[test]
+    fn always_matches_its_definition() {
+        against_the_definition("always_matches_its_definition", |i, x, _| Always(i, b(x)));
+    }
+
+    /// Provenance: QSL-2060 P2. `until` is a witness of the right operand with the left operand
+    /// held from the start of the interval up to it.
+    #[test]
+    fn until_matches_its_definition() {
+        against_the_definition("until_matches_its_definition", |i, x, y| {
+            Until(i, b(x), b(y))
+        });
+    }
+
+    /// Provenance: QSL-2060 P2. `release` is stated directly (the right operand holds up to and
+    /// including its first release), not as the dual of `until`.
+    #[test]
+    fn release_matches_its_definition() {
+        against_the_definition("release_matches_its_definition", |i, x, y| {
+            Release(i, b(x), b(y))
+        });
+    }
+
+    /// Provenance: QSL-2060 P3. `since` is a witness of the right operand in the past with the
+    /// left operand held after it up to the end of the interval.
+    #[test]
+    fn since_matches_its_definition() {
+        against_the_definition("since_matches_its_definition", |i, x, y| {
+            Since(i, b(x), b(y))
+        });
+    }
+
+    /// Provenance: QSL-2060 P3. `triggered` is stated directly, not as the dual of `since`.
+    #[test]
+    fn triggered_matches_its_definition() {
+        against_the_definition("triggered_matches_its_definition", |i, x, y| {
+            Triggered(i, b(x), b(y))
+        });
+    }
+
+    /// Provenance: QSL-2060 P3. `once` and `historically`, whose pre-origin reading FR-327 fixes.
+    #[test]
+    fn once_and_historically_match_their_definitions() {
+        against_the_definition(
+            "once_and_historically_match_their_definitions",
+            |i, x, y| Or(b(Once(i, b(x))), b(Historically(i, b(y)))),
+        );
+    }
+
+    /// Provenance: QSL-2060 P1 to P3. Whole generated formulas, every operator nested.
+    #[test]
+    fn nested_formulas_match_the_definition() {
+        let strategy = (
+            runs().prop_flat_map(|run| {
+                let open = run.shape.open_spans();
+                (Just(run), formula(open))
+            }),
+            extensions(),
+        );
+        prop::run(
+            "nested_formulas_match_the_definition",
+            prop::config(256),
+            &strategy,
+            |((run, f), extension)| definition_law(&run, &extension, &f),
+        )
+        .unwrap();
+    }
+
+    /// Provenance: QSL-2060 P1 (FR-043, FR-327). Consistency check, not a definition test: `always a`
+    /// is `not eventually not a`. `plan.rs` implements `always` as exactly this dual, so the two sides
+    /// share their code; `always_matches_its_definition` tests the operator against the reference.
     #[test]
     fn always_is_not_eventually_not() {
         suite("always_is_not_eventually_not", inputs(), always_law);
     }
 
-    /// Provenance: QSL-2060 P2. `a release b` is `not (not a until not b)`.
+    /// Provenance: QSL-2060 P2. Consistency check, not a definition test: `a release b` is
+    /// `not (not a until not b)`, which is how `plan.rs` implements `release`; see
+    /// `release_matches_its_definition` for the test against the reference.
     #[test]
     fn release_is_the_dual_of_until() {
         suite("release_is_the_dual_of_until", inputs(), |r, x, y, i| {
@@ -595,7 +878,9 @@ mod operator_laws {
         });
     }
 
-    /// Provenance: QSL-2060 P3. `a triggered b` is `not (not a since not b)`.
+    /// Provenance: QSL-2060 P3. Consistency check, not a definition test: `a triggered b` is
+    /// `not (not a since not b)`, which is how `plan.rs` implements `triggered`; see
+    /// `triggered_matches_its_definition` for the test against the reference.
     #[test]
     fn since_and_triggered_are_dual() {
         suite("since_and_triggered_are_dual", inputs(), since_law);
@@ -606,22 +891,43 @@ mod operator_laws {
     /// of `a` with every atom replaced by `false`.
     #[test]
     fn once_one_one_is_the_previous_position() {
-        prop::run("once_one_one_is_the_previous_position", prop::config(256), &inputs(), |(run, x, _, _)| {
-            let one = Span { low: 1, high: Some(1) };
-            let once = clause(&run, &real(&Once(one, b(x.clone()))));
-            let plain = clause(&run, &real(&x));
-            for position in 1..run.valuations.len() as u64 {
-                let (got, want) = (at(&run, &once, position), at(&run, &plain, position - 1));
-                // `Violated { at }` names the position evaluated; compare the verdict kind and value.
-                prop_assert_eq!(verdict(&got), verdict(&want), "once[1,1] ({}) at {} on {:?}", real(&x), position, run.valuations);
-            }
-            if x.propositional() {
-                let false_world = clause(&run, &real(&x.atoms_false()));
-                let (got, want) = (at(&run, &once, 0), at(&run, &false_world, 0));
-                prop_assert_eq!(verdict(&got), verdict(&want), "once[1,1] ({}) at 0 on {:?}", real(&x), run.valuations);
-            }
-            Ok(())
-        })
+        prop::run(
+            "once_one_one_is_the_previous_position",
+            prop::config(256),
+            &inputs(),
+            |(run, x, _, _)| {
+                let one = Span {
+                    low: 1,
+                    high: Some(1),
+                };
+                let once = clause(&run, &real(&Once(one, b(x.clone()))));
+                let plain = clause(&run, &real(&x));
+                for position in 1..run.valuations.len() as u64 {
+                    let (got, want) = (at(&run, &once, position), at(&run, &plain, position - 1));
+                    // `Violated { at }` names the position evaluated; compare the verdict kind and value.
+                    prop_assert_eq!(
+                        verdict(&got),
+                        verdict(&want),
+                        "once[1,1] ({}) at {} on {:?}",
+                        real(&x),
+                        position,
+                        run.valuations
+                    );
+                }
+                if x.propositional() {
+                    let false_world = clause(&run, &real(&x.atoms_false()));
+                    let (got, want) = (at(&run, &once, 0), at(&run, &false_world, 0));
+                    prop_assert_eq!(
+                        verdict(&got),
+                        verdict(&want),
+                        "once[1,1] ({}) at 0 on {:?}",
+                        real(&x),
+                        run.valuations
+                    );
+                }
+                Ok(())
+            },
+        )
         .unwrap();
     }
 
@@ -637,22 +943,39 @@ mod operator_laws {
     /// whenever position `i + l` is represented.
     #[test]
     fn bounded_intervals_shift() {
-        prop::run("bounded_intervals_shift", prop::config(256), &inputs(), |(run, x, _, i)| {
-            let Some(high) = i.high else { return Ok(()) };
-            let shifted = Span { low: 0, high: Some(high - i.low) };
-            let wide = clause(&run, &real(&Eventually(i, b(x.clone()))));
-            let narrow = clause(&run, &real(&Eventually(shifted, b(x.clone()))));
-            for position in 0..run.valuations.len() as u64 {
-                let target = position + u64::from(i.low);
-                if target >= run.valuations.len() as u64 {
-                    continue;
+        prop::run(
+            "bounded_intervals_shift",
+            prop::config(256),
+            &inputs(),
+            |(run, x, _, i)| {
+                let Some(high) = i.high else { return Ok(()) };
+                let shifted = Span {
+                    low: 0,
+                    high: Some(high - i.low),
+                };
+                let wide = clause(&run, &real(&Eventually(i, b(x.clone()))));
+                let narrow = clause(&run, &real(&Eventually(shifted, b(x.clone()))));
+                for position in 0..run.valuations.len() as u64 {
+                    let target = position + u64::from(i.low);
+                    if target >= run.valuations.len() as u64 {
+                        continue;
+                    }
+                    let (got, want) = (at(&run, &wide, position), at(&run, &narrow, target));
+                    prop_assert_eq!(
+                        verdict(&got),
+                        verdict(&want),
+                        "eventually{} ({}) at {} vs eventually{} at {} on {:?}",
+                        i.text(),
+                        real(&x),
+                        position,
+                        shifted.text(),
+                        target,
+                        run.valuations
+                    );
                 }
-                let (got, want) = (at(&run, &wide, position), at(&run, &narrow, target));
-                prop_assert_eq!(verdict(&got), verdict(&want), "eventually{} ({}) at {} vs eventually{} at {} on {:?}",
-                    i.text(), real(&x), position, shifted.text(), target, run.valuations);
-            }
-            Ok(())
-        })
+                Ok(())
+            },
+        )
         .unwrap();
     }
 
@@ -660,28 +983,48 @@ mod operator_laws {
     /// and `always[l,u] a` is the same split with `and`, for `l <= m < u`.
     #[test]
     fn bounded_intervals_split() {
-        prop::run("bounded_intervals_split", prop::config(256), &(inputs(), 0u8..8), |((run, x, _, i), cut)| {
-            let high = i.high.map_or(i.low + 3, |h| h);
-            if high <= i.low {
-                return Ok(());
-            }
-            let m = i.low + cut % (high - i.low);
-            let (head, tail) = (
-                Span { low: i.low, high: Some(m) },
-                Span { low: m + 1, high: i.high },
-            );
-            let whole = Span { low: i.low, high: i.high };
-            agree(
-                &run,
-                &real(&Eventually(whole, b(x.clone()))),
-                &real(&Or(b(Eventually(head, b(x.clone()))), b(Eventually(tail, b(x.clone()))))),
-            )?;
-            agree(
-                &run,
-                &real(&Always(whole, b(x.clone()))),
-                &real(&And(b(Always(head, b(x.clone()))), b(Always(tail, b(x.clone()))))),
-            )
-        })
+        prop::run(
+            "bounded_intervals_split",
+            prop::config(256),
+            &(inputs(), 0u8..8),
+            |((run, x, _, i), cut)| {
+                let high = i.high.map_or(i.low + 3, |h| h);
+                if high <= i.low {
+                    return Ok(());
+                }
+                let m = i.low + cut % (high - i.low);
+                let (head, tail) = (
+                    Span {
+                        low: i.low,
+                        high: Some(m),
+                    },
+                    Span {
+                        low: m + 1,
+                        high: i.high,
+                    },
+                );
+                let whole = Span {
+                    low: i.low,
+                    high: i.high,
+                };
+                agree(
+                    &run,
+                    &real(&Eventually(whole, b(x.clone()))),
+                    &real(&Or(
+                        b(Eventually(head, b(x.clone()))),
+                        b(Eventually(tail, b(x.clone()))),
+                    )),
+                )?;
+                agree(
+                    &run,
+                    &real(&Always(whole, b(x.clone()))),
+                    &real(&And(
+                        b(Always(head, b(x.clone()))),
+                        b(Always(tail, b(x.clone()))),
+                    )),
+                )
+            },
+        )
         .unwrap();
     }
 
@@ -695,13 +1038,24 @@ mod operator_laws {
             &(formula(false), proptest::collection::vec(0u8..8, 1..=6)),
             |(f, valuations)| {
                 let fx = fixture(EVENT, OVER, "on origin", &real(&f));
-                let mut letters = Bits { fixture: &fx, valuations: &valuations };
+                let mut letters = Bits {
+                    fixture: &fx,
+                    valuations: &valuations,
+                };
                 let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
-                let trace = TemporalTrace::Lasso { prefix: 0, loop_len: valuations.len() as u64 };
+                let trace = TemporalTrace::Lasso {
+                    prefix: 0,
+                    loop_len: valuations.len() as u64,
+                };
                 let refused = evaluate(&fx.clause, trace, &mut letters, &mut meter);
                 prop_assert!(
-                    matches!(refused, Err(TemporalRefusal::LassoUnderBoundedProfile { .. })),
-                    "{}: {:?}", real(&f), refused
+                    matches!(
+                        refused,
+                        Err(TemporalRefusal::LassoUnderBoundedProfile { .. })
+                    ),
+                    "{}: {:?}",
+                    real(&f),
+                    refused
                 );
                 Ok(())
             },
@@ -715,13 +1069,19 @@ mod operator_laws {
     fn swapped_until_is_caught() {
         let mut config = prop::config(256);
         config.failure_persistence = None;
-        let outcome = prop::run("swapped_until_is_caught", config, &inputs(), |(run, x, y, i)| {
-            release_law_with(&run, &x, &y, i, UntilSpelling::Weak)
-        });
+        let outcome = prop::run(
+            "swapped_until_is_caught",
+            config,
+            &inputs(),
+            |(run, x, y, i)| release_law_with(&run, &x, &y, i, UntilSpelling::Weak),
+        );
         match outcome {
             Err(proptest::test_runner::TestError::Fail(_, (run, x, y, _))) => {
                 assert!(run.valuations.len() <= 3, "trace did not shrink: {run:?}");
-                assert!(real(&x).len() + real(&y).len() <= 120, "formula did not shrink: {x:?} {y:?}");
+                assert!(
+                    real(&x).len() + real(&y).len() <= 120,
+                    "formula did not shrink: {x:?} {y:?}"
+                );
             }
             other => panic!("the swapped until went unnoticed: {other:?}"),
         }

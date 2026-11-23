@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-use fsl_bench::prop::{config_with_overrides, SeedPersistence};
+use fsl_proptest_policy::{config_with_overrides, SeedPersistence};
 use proptest::test_runner::{TestCaseError, TestError, TestRunner};
 use std::cell::{Cell, RefCell};
 

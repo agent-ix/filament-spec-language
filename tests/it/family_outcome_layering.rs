@@ -289,7 +289,10 @@ fn workspace_dependencies() -> Vec<PackageDependencies> {
 /// `[dependencies]`, has no `[build-dependencies]`, and its `[dev-dependencies]` may also name the lower layers
 /// `fsl-forms` and `fsl-cst` (FR-091-AC-13's call of a function compiled
 /// from source; `serde_json` moved here too, once its one shipped
-/// caller -- the deleted v2 function-package codec -- was deleted). Every other
+/// caller -- the deleted v2 function-package codec -- was deleted). The leaf
+/// `fsl-proptest-policy` (QSL-2054; it depends on `proptest` alone) may be a
+/// dev-dependency of `fsl-foundation`, `fsl-cst` and `fsl-eval`; `fsl-cst` also names
+/// itself there for its own `test-support` feature. Every other
 /// workspace crate, `fsl-source` and this crate included, is refused. Cargo already
 /// refuses a normal-dependency cycle back to this crate, but accepts a
 /// dev-dependency one, so the dev table is checked here.
@@ -329,12 +332,12 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
         (
             "fsl-foundation",
             &["filament-exact"][..],
-            &["fsl-bench"][..],
+            &["fsl-proptest-policy"][..],
         ),
         (
             "fsl-cst",
             &["fsl-foundation", "filament-exact"][..],
-            &["fsl-bench", "fsl-cst"][..],
+            &["fsl-cst", "fsl-proptest-policy"][..],
         ),
         (
             "fsl-forms",
@@ -377,7 +380,7 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
                 "filament-exact",
                 "filament-semantic-value",
             ][..],
-            &["fsl-bench", "fsl-cst", "fsl-forms"][..],
+            &["fsl-cst", "fsl-forms", "fsl-proptest-policy"][..],
         ),
     ] {
         let package = packages

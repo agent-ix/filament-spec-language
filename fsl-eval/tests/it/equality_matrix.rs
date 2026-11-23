@@ -4101,9 +4101,7 @@ mod table_properties {
                     && q.d <= i128::from(*du)
             }
             Ty::Dec(lo, hi, smin, smax) => match decimal_form(q, *smin) {
-                Some((c, s)) => {
-                    s <= *smax && i128::from(*lo) <= c && c <= i128::from(*hi)
-                }
+                Some((c, s)) => s <= *smax && i128::from(*lo) <= c && c <= i128::from(*hi),
                 None => false,
             },
             Ty::Qty(_) => true,
@@ -4127,12 +4125,7 @@ mod table_properties {
     /// The rational a member of `from` becomes when converted into `to`, per the
     /// reference rules; `None` when the standard defines no conversion.
     fn converted(from: &Ty, to: &Ty, q: Q) -> Option<Q> {
-        let numeric = |ty: &Ty| {
-            matches!(
-                ty,
-                Ty::Integer | Ty::Int(..) | Ty::Rat(..) | Ty::Dec(..)
-            )
-        };
+        let numeric = |ty: &Ty| matches!(ty, Ty::Integer | Ty::Int(..) | Ty::Rat(..) | Ty::Dec(..));
         match (from, to) {
             (Ty::Qty(a), Ty::Qty(b)) => {
                 let ((da, fa), (db, fb)) = (unit(*a), unit(*b));
@@ -4288,7 +4281,12 @@ mod table_properties {
             }
             (Ty::Rat(nl, nu, dl, du), 0) => {
                 let (l, h) = shift(*nl, *nu);
-                Ty::Rat(l.min(h), h.max(l), (*dl + c % 2).max(1), (*du + d % 3).max(*dl).max(1))
+                Ty::Rat(
+                    l.min(h),
+                    h.max(l),
+                    (*dl + c % 2).max(1),
+                    (*du + d % 3).max(*dl).max(1),
+                )
             }
             (Ty::Rat(nl, nu, _, du), _) if *du == 1 => {
                 let (l, h) = shift(*nl, *nu);
@@ -4297,7 +4295,12 @@ mod table_properties {
             (Ty::Dec(lo, hi, smin, smax), 0) => {
                 let (l, h) = shift(*lo, *hi);
                 let (l, h) = (l.min(h), h.max(l));
-                Ty::Dec(l, h, smin.saturating_sub((c.unsigned_abs() % 2) as u32), smax + (d.unsigned_abs() % 2) as u32)
+                Ty::Dec(
+                    l,
+                    h,
+                    smin.saturating_sub((c.unsigned_abs() % 2) as u32),
+                    smax + (d.unsigned_abs() % 2) as u32,
+                )
             }
             (Ty::Dec(lo, hi, smin, smax), 1) => {
                 let _ = (smin, smax);
@@ -4318,7 +4321,13 @@ mod table_properties {
             8 => scalar(),
             1 => scalar().prop_map(|ty| Ty::Opt(Box::new(ty))),
         ];
-        let target = (source, (-6i64..=6, -6i64..=6, -6i64..=6, -6i64..=6), 0u8..4, scalar(), 0u8..4)
+        let target = (
+            source,
+            (-6i64..=6, -6i64..=6, -6i64..=6, -6i64..=6),
+            0u8..4,
+            scalar(),
+            0u8..4,
+        )
             .prop_map(|(source, moves, family, other, pick)| {
                 let near_target = match &source {
                     Ty::Opt(inner) => Ty::Opt(Box::new(near(inner, moves.into(), family))),
@@ -4358,7 +4367,11 @@ mod table_properties {
                 EqualityOperand::typed(to),
                 &EnumMemberIndex::default(),
             )
-            .map_err(|refusal| format!("{source:?} -> {target:?} admitted but the checker refuses `=`: {refusal:?}"))?;
+            .map_err(|refusal| {
+                format!(
+                    "{source:?} -> {target:?} admitted but the checker refuses `=`: {refusal:?}"
+                )
+            })?;
         for q in samples(source, target) {
             let Some(image) = converted(source, target, q) else {
                 continue;
@@ -4366,7 +4379,9 @@ mod table_properties {
             if !member(target, image) {
                 continue; // reported by `lossy_conversions_are_not_admitted`
             }
-            let (Some(left), Some(right)) = (value_of(source, q, units), value_of(target, image, units)) else {
+            let (Some(left), Some(right)) =
+                (value_of(source, q, units), value_of(target, image, units))
+            else {
                 continue;
             };
             let outcome = checked.evaluate(&env, &left, &right, &mut Meter::new(UNLIMITED));
@@ -4404,8 +4419,38 @@ mod table_properties {
         })
     }
 
+    /// P2's other direction (completeness): a pair the reference says is exactly representable,
+    /// that is every boundary sample of the source survives into the target (or the two types are
+    /// identical), found while `admits` says no. Floats and options convert only to the identical
+    /// type, so they are lossless only when `source == target`.
+    pub fn lossless_pair_refused(
+        admits: &dyn Fn(&Ty, &Ty) -> bool,
+        source: &Ty,
+        target: &Ty,
+    ) -> Option<String> {
+        if admits(source, target) {
+            return None;
+        }
+        let lossless = if source == target {
+            true
+        } else if matches!(source, Ty::F32 | Ty::F64 | Ty::Opt(_))
+            || matches!(target, Ty::F32 | Ty::F64 | Ty::Opt(_))
+        {
+            false
+        } else {
+            let members = samples(source, target);
+            !members.is_empty()
+                && members.into_iter().all(|q| {
+                    converted(source, target, q).is_some_and(|image| member(target, image))
+                })
+        };
+        lossless.then(|| {
+            format!("{source:?} -> {target:?} is exactly representable, but the table refuses it")
+        })
+    }
+
     fn config() -> proptest::test_runner::Config {
-        fsl_bench::prop::config(256)
+        fsl_proptest_policy::config(256)
     }
 
     /// Provenance: QSL-2057 P1 (FR-149-AC-10). Every admitted pair converts every sampled member without loss.
@@ -4413,7 +4458,7 @@ mod table_properties {
     fn admitted_conversions_lose_nothing() {
         let units = units();
         let admits = |s: &Ty, t: &Ty| real_table(&units, s, t);
-        fsl_bench::prop::run(
+        fsl_proptest_policy::run(
             "admitted_conversions_lose_nothing",
             config(),
             &pairs(),
@@ -4430,7 +4475,7 @@ mod table_properties {
     fn lossy_conversions_are_not_admitted() {
         let units = units();
         let admits = |s: &Ty, t: &Ty| real_table(&units, s, t);
-        fsl_bench::prop::run(
+        fsl_proptest_policy::run(
             "lossy_conversions_are_not_admitted",
             config(),
             &pairs(),
@@ -4440,6 +4485,38 @@ mod table_properties {
             },
         )
         .unwrap();
+    }
+
+    /// Provenance: QSL-2057 P2, completeness direction (FR-149-AC-10). A pair the reference says is
+    /// exactly representable is admitted: the table is not needlessly strict.
+    #[test]
+    fn lossless_conversions_are_admitted() {
+        let units = units();
+        let admits = |s: &Ty, t: &Ty| real_table(&units, s, t);
+        fsl_proptest_policy::run(
+            "lossless_conversions_are_admitted",
+            config(),
+            &pairs(),
+            |(source, target)| match lossless_pair_refused(&admits, &source, &target) {
+                Some(why) => Err(TestCaseError::fail(why)),
+                None => Ok(()),
+            },
+        )
+        .unwrap();
+    }
+
+    /// Provenance: QSL-2057 negative. A table without the widening row `Int[0, 3]` to `Int[0, 9]`
+    /// fails the completeness property with that pair named, and a table that keeps it does not.
+    #[test]
+    fn a_missing_row_is_caught() {
+        let units = units();
+        let (narrow, wide) = (Ty::Int(0, 3), Ty::Int(0, 9));
+        let missing = |s: &Ty, t: &Ty| real_table(&units, s, t) && !(s == &narrow && t == &wide);
+        let named =
+            lossless_pair_refused(&missing, &narrow, &wide).expect("the missing row is caught");
+        assert!(named.contains("Int(0, 3) -> Int(0, 9)"), "{named}");
+        let real = |s: &Ty, t: &Ty| real_table(&units, s, t);
+        assert_eq!(lossless_pair_refused(&real, &narrow, &wide), None);
     }
 
     /// The generator reaches both admitted and refused rows; the rates are printed.
@@ -4458,8 +4535,14 @@ mod table_properties {
             }
         }
         eprintln!("pair generator: {admitted}/{total} admitted, {lossy_refused}/{total} refused");
-        assert!(admitted * 5 >= total, "admitted rows under 20%: {admitted}/{total}");
-        assert!(lossy_refused * 5 >= total, "refused rows under 20%: {lossy_refused}/{total}");
+        assert!(
+            admitted * 5 >= total,
+            "admitted rows under 20%: {admitted}/{total}"
+        );
+        assert!(
+            lossy_refused * 5 >= total,
+            "refused rows under 20%: {lossy_refused}/{total}"
+        );
     }
 
     /// A hand-written wrong table: the real rows, plus `Int[a,b]` to `Int[c,d]` whenever the ranges overlap.
@@ -4479,21 +4562,30 @@ mod table_properties {
         let wrong = wrong_table(&units);
         let named = lossy_member_admitted(&wrong, &Ty::Int(0, 300), &Ty::Int(0, 255))
             .expect("the wrong row must be caught");
-        assert!(named.contains("Int(0, 300)") && named.contains("is lost"), "{named}");
+        assert!(
+            named.contains("Int(0, 300)") && named.contains("is lost"),
+            "{named}"
+        );
         // P1 sees it too, through the real checker.
-        assert!(conversion_loses_nothing(&units, &wrong, &Ty::Int(0, 300), &Ty::Int(0, 255)).is_err());
+        assert!(
+            conversion_loses_nothing(&units, &wrong, &Ty::Int(0, 300), &Ty::Int(0, 255)).is_err()
+        );
 
         let mut config = config();
         config.failure_persistence = None;
-        let outcome = fsl_bench::prop::run("wrong_row_is_caught", config, &pairs(), |(s, t)| {
-            match lossy_member_admitted(&wrong, &s, &t) {
-                Some(why) => Err(TestCaseError::fail(why)),
-                None => Ok(()),
-            }
-        });
+        let outcome =
+            fsl_proptest_policy::run("wrong_row_is_caught", config, &pairs(), |(s, t)| {
+                match lossy_member_admitted(&wrong, &s, &t) {
+                    Some(why) => Err(TestCaseError::fail(why)),
+                    None => Ok(()),
+                }
+            });
         match outcome {
             Err(proptest::test_runner::TestError::Fail(_, (Ty::Int(a, b), Ty::Int(c, d)))) => {
-                assert!(b - a <= 8 && d - c <= 8, "did not shrink: Int({a},{b}) -> Int({c},{d})");
+                assert!(
+                    b - a <= 8 && d - c <= 8,
+                    "did not shrink: Int({a},{b}) -> Int({c},{d})"
+                );
             }
             other => panic!("the wrong row went unnoticed or shrank badly: {other:?}"),
         }
@@ -4519,13 +4611,18 @@ mod table_properties {
         assert!(!real_table(&units, &Ty::F32, &Ty::F64));
         assert!(!real_table(&units, &Ty::F64, &Ty::F32));
         // Whatever the generator draws, a float pair is admitted only when identical.
-        fsl_bench::prop::run(
+        fsl_proptest_policy::run(
             "floats_against_exact_types_are_refused",
             config(),
             &pairs(),
             |(s, t)| {
                 let float = matches!(s, Ty::F32 | Ty::F64) || matches!(t, Ty::F32 | Ty::F64);
-                prop_assert!(!float || s == t || !real_table(&units, &s, &t), "{:?} -> {:?}", s, t);
+                prop_assert!(
+                    !float || s == t || !real_table(&units, &s, &t),
+                    "{:?} -> {:?}",
+                    s,
+                    t
+                );
                 Ok(())
             },
         )

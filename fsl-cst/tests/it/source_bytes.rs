@@ -4,9 +4,9 @@
 //!
 //! These live in `fsl-cst` because `fsl-cst` depends on `fsl-foundation`; the
 //! reader properties are in `fsl-foundation/tests/source_bytes.rs`.
-use fsl_bench::prop;
 use fsl_cst::{Limits, ParsedSource};
 use fsl_foundation::SourceIdentity;
+use fsl_proptest_policy as prop;
 use proptest::prelude::*;
 
 const HOST: &str = "language \"ix:native\" edition \"1-draft\";\r\n// note\n/* block */ profile v = \"filament.value.complete/v1\";\nfunction f using v(x: Integer): Integer pure { x + 1 }\n";
@@ -120,7 +120,9 @@ fn arbitrary_bytes_never_panic_in_the_parser() {
 /// A leaf builder that drops the last byte of any leaf longer than one byte,
 /// standing in for a CST that loses a byte.
 fn drops_a_byte(spelling: &[u8]) -> Vec<u8> {
-    let keep = spelling.len().saturating_sub(usize::from(spelling.len() > 1));
+    let keep = spelling
+        .len()
+        .saturating_sub(usize::from(spelling.len() > 1));
     spelling[..keep].to_vec()
 }
 
@@ -130,18 +132,13 @@ fn drops_a_byte(spelling: &[u8]) -> Vec<u8> {
 fn dropped_byte_is_caught() {
     let mut config = prop::config(256);
     config.failure_persistence = None;
-    let outcome = prop::run(
-        "dropped_byte_is_caught",
-        config,
-        &byte_strings(),
-        |bytes| {
-            let Ok(parsed) = parse(&bytes) else {
-                return Ok(());
-            };
-            prop_assert_eq!(concatenate(&parsed, drops_a_byte), bytes);
-            Ok(())
-        },
-    );
+    let outcome = prop::run("dropped_byte_is_caught", config, &byte_strings(), |bytes| {
+        let Ok(parsed) = parse(&bytes) else {
+            return Ok(());
+        };
+        prop_assert_eq!(concatenate(&parsed, drops_a_byte), bytes);
+        Ok(())
+    });
     match outcome {
         Err(proptest::test_runner::TestError::Fail(_, minimal)) => {
             assert!(minimal.len() <= 8, "did not shrink: {minimal:02x?}");
@@ -150,12 +147,18 @@ fn dropped_byte_is_caught() {
     }
 }
 
-/// Provenance: QSL-2059 negative. A bare CR is read (FR-001) and then refused by
-/// the parser: the parse is not admissible and carries a located diagnostic.
+/// Provenance: QSL-2059 negative. A characterization, not a requirement test: no requirement
+/// in `spec/` states the lexical rule for line terminators (FR-001 refuses only invalid UTF-8, a
+/// BOM and NUL at read, so a bare CR is read unchanged; `fsl-cst`'s lexer skips `\r\n` but not a
+/// bare `\r`). The test records that the parser refuses it, with a located diagnostic. It carries
+/// no `#[trace]` tag until a requirement covers it.
 #[test]
 fn bare_cr_is_refused_by_the_parser() {
     let parsed = parse(b"language \"ix:native\" edition \"1-draft\";\rprofile v = \"x\";\n")
         .expect("the reader keeps a bare CR");
-    assert!(!parsed.is_admissible(), "a bare CR parsed as admissible source");
+    assert!(
+        !parsed.is_admissible(),
+        "a bare CR parsed as admissible source"
+    );
     assert!(!parsed.diagnostics().is_empty());
 }
