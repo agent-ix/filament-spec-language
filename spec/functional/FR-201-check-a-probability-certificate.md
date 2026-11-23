@@ -1016,11 +1016,32 @@ is introduced.
   remain their existing boundary; this specification claims no complete
   FR-201-AC-30/all-expansion qualification or FR-413 transport.
 
+### Long-run claim profile admission
+
+FSpec FR-407 defines `long_run_fraction holds(P)` as the expectation of the
+limit of the fraction over `[0, n]`, with P a state predicate read at every
+position and a window that reaches a terminal state continuing on its
+stutter steps; it places no temporal-profile restriction on the form.
+The long-run operand has no temporal operator, so a profile's operator
+admission and its event-position false extension do not apply to it. For an
+untimed subject, every long-run document profile below SHALL therefore
+admit the claim under any temporal profile FSpec FR-407 admits for it, other
+than the timed profile, and SHALL decide and certify it identically: a
+terminal state takes FR-196's terminal stutter with its P label retained,
+never a false extension. In particular a claim `using` the event-position
+false-extension profile (`filament.temporal.event-position.false-extension/v1`)
+SHALL settle the same verdict, value and document conditions as the same
+claim under the infinite-trace profile, and SHALL NOT settle
+`unsupported`/`not-yet-implemented` for its profile. The selected profile
+remains part of the checked claim the certificate's identity binds. A
+long-run claim under the timed profile, including `weighted by delay`,
+remains outside these profiles.
+
 ### Closed unweighted DTMC long-run document profile
 
 For a checked unweighted `long-run fraction holds(P)` claim under an
-authored workload in the untimed infinite-trace profile, the codec SHALL
-admit the separate objective profile
+authored workload, admitted as "Long-run claim profile admission" states,
+the codec SHALL admit the separate objective profile
 `"filament.probability-objective/dtmc-long-run/v1"`. The objective SHALL have
 exactly `profile`, `predicate_states`, `optimization` and `fairness`;
 `optimization` SHALL be `"workload"` and `fairness` SHALL be the empty
@@ -1124,8 +1145,9 @@ not from that set, values, component rows or a producer's graph.
   or a missing component. Weighted forms are outside this profile;
   a zero-weight component of those forms takes its unweighted fraction
   (FR-199) and is certified by the weighted document below.
-  General MDP/every-scheduler, fairness, timed, multi-post, weighted and
-  interval proof documents, including shared FR-413 wire, remain outside
+  Unweighted every-scheduler proofs use the closed MDP long-run document
+  profile below. Fairness, timed, multi-post, weighted and interval proof
+  documents, including shared FR-413 wire, remain outside
   this profile. Long-run refutations use FR-202's separate subsystem
   counterexample role without widening this proof profile. All earlier profiles retain their bytes,
   admission and verdicts. No upstream budget API is claimed delivered by
@@ -1240,6 +1262,116 @@ another same-dimension UnitId SHALL NOT substitute for that identity.
   Earlier profile bytes, meanings and verdicts SHALL remain unchanged.
   This contract is not a claim of completed implementation or whole-runtime
   allocation qualification.
+
+### Closed MDP long-run document profile
+
+For a checked unweighted `long-run fraction holds(P)` claim over every
+scheduler with an empty checked fairness set, admitted as "Long-run claim
+profile admission" states, the codec SHALL admit the separate objective
+profile `"filament.probability-objective/mdp-long-run/v1"`. Its objective
+SHALL have exactly `profile`, `predicate_states`, `optimization` and
+`fairness`. `predicate_states` retains the unweighted DTMC profile's
+independently compared complete original-graph key set. Source `Every`
+AtLeast SHALL select `"minimum"` and `Every` AtMost `"maximum"`; no other
+direction is added. `fairness` SHALL be the empty array. The certified
+value is FR-199's: each maximal end component (MEC) C takes its optimal
+fraction `rho_C` over the schedulers that stay in C, and the claim's value
+is the minimum or maximum over every scheduler of the expected `rho` of the
+component a behaviour ends in.
+
+- Admission SHALL require an untimed finite Markov subject, one initial
+  state, at most one actual S3 binding and FR-196's single-post-per-draw
+  restrictions. The finite graph MAY cycle and MAY offer several actions at
+  a state. The checker SHALL reconstruct EVERY enabled semantic action and
+  its typed draws from the checked subject, as the cyclic MDP eventual
+  profile does, and SHALL NOT merge distinct actions into one distribution.
+  A terminal state's only action is FR-196's implicit terminal stutter, a
+  probability-one self-loop on its same complete key with its P label
+  retained; no synthetic key or operation identity is invented. P states
+  SHALL NOT absorb an enabled transition. Zero direct `over` instances
+  retain `UnsupportedBinding` and the unsupported EN-5 disposition with no
+  invented evidence. Workload claims keep the DTMC profiles above.
+  Weighted, fairness, timed, multi-post, multiple initial/binding and
+  interval proof documents remain outside this profile, as does shared
+  FR-413 wire. Source threshold endpoint admission is unchanged.
+- The document SHALL have exactly `identity`, `objective`, `kind`,
+  `values`, `ranking` and `components`, with `kind` `"long-run"`; `policy`
+  SHALL be absent. `values` and `ranking` SHALL each cover exactly the
+  entire independently rebuilt reachable graph in decoded complete-key
+  order; values are exact rationals in [0,1] and ranks natural numbers.
+  Components retain the DTMC profile's `{value, gain, bias}` shape, row
+  ordering, normalization (bias zero at C's first complete key) and
+  structural rejections; `value` and `gain` are both `rho_C`.
+- The checker SHALL derive the MECs itself with its own bounded graph
+  algorithms: starting from every reachable state and every enabled action
+  (including terminal stutter), it repeatedly computes the positive-support
+  SCCs of the retained actions, removes every action with a
+  positive-probability successor outside its source state's SCC, and drops
+  every state left without an action, until nothing changes. Each remaining
+  SCC is a MEC C, and the actions retained at s are its staying actions
+  `A_C(s)`. The components' bias-key sets SHALL equal exactly these MECs,
+  disjointly and completely; a state in no MEC SHALL occur in no component.
+  A producer's component list, action sets, SCC numbering or qualitative
+  labels are not evidence and SHALL NOT replace this derivation, even
+  when every offered equation holds.
+- At each s in C and each `a` in `A_C(s)` let
+  `T_a(s) = [P(s)] - rho_C + sum_t p(s,a,t) * h(t)`. For maximum the
+  checker SHALL require `h(s) >= T_a(s)` for every staying action and
+  `h(s) = T_a(s)` for at least one; for minimum, `h(s) <= T_a(s)` for every
+  staying action and equality for at least one. Actions outside `A_C(s)`
+  do not enter these conditions. Summing the inequalities along any
+  scheduler that stays in C bounds its expected fraction by `rho_C`; any
+  selection of one tight staying action per state is a memoryless policy
+  staying in C whose every recurrent class has, by the equalities,
+  fraction exactly `rho_C`. So `rho_C` is the exact in-component optimum
+  without trusting Dinkelbach's iteration. The component policy is the
+  canonical-first tight staying action per state in full-product-action
+  order, selected by the checker; the document transports no policy.
+- The combination reuses the cyclic MDP eventual profile's rules with a
+  stopping payoff in place of target value 1. For every reachable s and
+  every enabled action a, including leaving actions, let
+  `Q_a(V,s) = sum_t p(s,a,t) * V(t)`. For maximum the checker SHALL check
+  `V(s) = max(rho_C, max_a Q_a(V,s))` at s in MEC C and
+  `V(s) = max_a Q_a(V,s)` at a state in no MEC; for minimum the same with
+  `min`. The stopping set S is the states s in a MEC C with
+  `V(s) = rho_C`. Every state in S SHALL have rank 0 and every other state
+  a positive rank. For both optimizations, EVERY state outside S SHALL
+  admit SOME tight action (`Q_a(V,s) = V(s)`) with a positive-probability
+  successor of strictly smaller rank; a nontight action's progress and a
+  probability-zero edge SHALL NOT count. The Bellman inequalities bound
+  every scheduler, since every behaviour ends almost surely in an end
+  component inside some MEC; the tight progressing actions reach S almost
+  surely, where the component policy realizes `rho_C`. V is therefore the
+  exact extremum, and a Bellman fixed point carried by a cycle that never
+  reaches S fails ranking. Ranks need not equal producer distances.
+- The checker SHALL check, in this order, the MEC partition, then every
+  component's conditions, then V, then ranks, then the threshold, each
+  reporting its first failing complete key. A partition mismatch SHALL
+  reject `InequalityFails` at the smallest complete key whose claimed
+  membership differs from its derived MEC membership (a state in no MEC
+  has none), so an omitted MEC uses its first key. `gain` different from
+  `value`, nonzero first bias, a failed staying-action inequality or no
+  tight staying action SHALL reject `InequalityFails` at that key; a
+  failed V equation SHALL reject `InequalityFails`; a wrong rank or missing
+  tight progress SHALL reject `RankBroken`. The initial V SHALL be
+  compared with the threshold inclusively; a miss SHALL reject
+  `ThresholdMissed` at the initial key and is not a refutation. Identity
+  conflict refuses before enumeration; a changed predicate set,
+  optimization, fairness or profile refuses objective mismatch.
+  Structural member, coverage and ordering errors retain `Malformed` at
+  `values`, `ranking` or `components`. Every-scheduler long-run
+  refutations use FR-202's checked-subject subsystem entry over the
+  witness scheduler's induced chain and do not widen this proof profile.
+- The checker SHALL solve no equation, compute no stationary distribution
+  and run no policy or value iteration. Source/document/key admission,
+  all-action/draw reconstruction, MEC refinement passes, predicate
+  evaluation, exact sums, tightness and ranking SHALL retain the actual
+  caller byte/state/edge/work/storage/representation/arithmetic controls
+  and cancellation with typed causes and no accepted truth value on a
+  stop. Undefined P or source evaluation retains typed nonacceptance and is
+  not coerced to false, zero or a missing action. Earlier profiles retain
+  their bytes, admission and verdicts. This contract is not a claim of
+  completed implementation.
 
 ### Closed bounded fair eventual document profile
 
@@ -1383,6 +1515,11 @@ initial states/bindings and refutations remain outside this profile.
 | FR-201-AC-54 | Over FSpec FR-407-AC-18's model with the further action `stay` at `s0` (FR-196-AC-16), for `probability >= rational(1, 2)` over every scheduler, the `Optimum` certificate whose `reset` has `x(s0) = 1/2`, `x` at the state after `a` from which `g` is unreachable `1/2`, policy `b` at `s0` and ranks 1 and 2 is accepted: under `stay` and `Reset`, `1/2 <= 1/2`, under `a`, `1/2 <= 1/4 + (3/4)(1/2) = 5/8`, under `b`, `1/2 <= 1/2`. A `reset` with `x(s0) = 0` and policy `stay` is rejected `RankBroken` at `s0` with `part` `reset`, since `stay` has no successor of smaller rank; with policy `b` it is rejected `InequalityFails` at `s0`, since `F_b(x) = 1/2`. So the improper value 0 is never certified. For `<= rational(9, 10)` the `reset` with `y(s0) = 1` and policy `a` (`1/4 + (3/4)(1) = 1`) is accepted and the claim is refuted. | Test (TC-3061) |
 | FR-201-AC-55 | On FR-201-AC-54's `stay` model, for `<= rational(9, 10)` over every scheduler, an `Optimum` certificate whose `reset` has `y(s0) = 1/2`, policy `b` and no row for the state `u` after `a` from which `g` is unreachable is rejected `Malformed` at `values` and proves nothing. Read with `u` as 0, it would pass `F_a(y) = 1/4 <= 1/2`, although the true maximum is 1. With `u` at `1/2` it is rejected `InequalityFails` at `s0` with `part` `reset` (`F_a(y) = 5/8`). Without a fairness set, a `Randomized` `reset` policy entry is rejected `Malformed` at `policy`. | Test (TC-3061) |
 | FR-201-AC-57 | Over the engines `Coin` model (initially tails, as in its `data/coin-tails.json`; `flip` sets heads or tails with equal weight), with the `ev` profile under every scheduler on origin, `probability <= 0.5 [ holds(c.heads) ]` is admitted as `eventually[0,0] holds(c.heads)`: position 0 decides rejection, the maximum is `ExactValue{0}`, `targets` is empty, the initial key has value 0 and rank 0, `fsl-probability-check` accepts the `reachability/v1` `Exact` document with side `AtMost`, and the item settles `proved`. Over a fixture the test authors, the same `Coin` model with its one coin initially heads (the examples supply no such fixture), `probability >= 0.5 [ holds(c.heads) ]` decides acceptance at position 0, `targets` is the initial key, the minimum is `ExactValue{1}` with rank 0, the document is accepted with side `AtLeast`, and the item settles `proved`. For each claim, the verdict, optimization, target and decided structure, values, ranks and settlement equal those of the same claim spelled `eventually[0,0] holds(c.heads)`. The initial value replaced by `1/2` is rejected `InequalityFails` at the initial key under either spelling. No new profile string or document member appears. | Test (TC-3195) |
+| FR-201-AC-70 | FR-199-AC-2's `Avail2`: `up` (P) steps to `up` with 1999/2000 and to `down` with 1/2000; not-P `down` chooses `repair_fast` (to `up` 9/10, `down` 1/10) or `repair_slow` (to `up` 1/2, `down` 1/2). The checker derives the single MEC `{up, down}` with both repairs staying. Minimum: component value and gain 1000/1001, bias `up` 0 and `down` -2000/1001 (`repair_slow` tight; `repair_fast` gives -1200/1001 >= -2000/1001), V(up) = V(down) = 1000/1001, both ranks 0; it accepts Every AtLeast 999/1000 and AtLeast 1000/1001, and AtLeast 1001/1002 rejects ThresholdMissed. Maximum: value and gain 1800/1801, bias `down` -2000/1801 (`repair_fast` tight; `repair_slow` gives -2800/1801 <= -2000/1801), V 1800/1801; it accepts Every AtMost 1800/1801, and AtMost 999/1000 rejects ThresholdMissed. A minimum document carrying the maximum's component (value and gain 1800/1801, bias `down` -2000/1801) rejects InequalityFails at `down`, since -2000/1801 > -2800/1801 under `repair_slow`; one carrying the equal-weight workload value 1400/1401 as value and gain, with the bias -2000/1401 that satisfies `up`, rejects InequalityFails at `down` (-2000/1401 > -2400/1401). | Test (TC-3190) |
+| FR-201-AC-71 | `Loop`: P state `c1` has `stay` to not-P `c2` and `quit` to P-terminal `g` with 3/4 and not-P-terminal `f` with 1/4; `c2` steps to `c1`; initial `c1`. The checker derives MECs `{c1, c2}` (staying actions `stay` and `c2`'s step, `quit` leaving), `{g}` and `{f}` (terminal stutter), with rho 1/2, 1 and 0 and biases `c1` 0, `c2` -1/2 (choose the fixture's canonical key order `c1` before `c2`). Minimum: V(c1) = V(c2) = 1/2, V(g) = 1, V(f) = 0, every state in S with rank 0; it accepts Every AtLeast 1/2 and AtLeast 2/5, and AtLeast 3/5 rejects ThresholdMissed. Maximum: V(c1) = V(c2) = 3/4 through `quit`, S = {g, f}, ranks c1 = 1, c2 = 2; it accepts Every AtMost 3/4 and AtMost 4/5, and AtMost 7/10 rejects ThresholdMissed. | Test (TC-3190) |
+| FR-201-AC-72 | In AC-71, the bogus maximum V(c1) = V(c2) = 1 and the bogus minimum V(c1) = V(c2) = 0 satisfy every Bellman equation through the `stay` cycle but leave c1 and c2 outside S with only the cycle tight, so each rejects RankBroken at c1 when rank(c1) <= rank(c2) and otherwise at c2. Giving component `{c1, c2}` value and gain 3/4 (so c1 and c2 would join S) rejects InequalityFails in the component check before V is read: with bias c2 = -3/4 at c1, with c2 = -1/4 at c2. | Test (TC-3190) |
+| FR-201-AC-73 | In AC-71, a producer-supplied component list that omits `{c1, c2}` (treating c1 and c2 as transient) with minimum V(c1) = V(c2) = 3/4 and ranks c1 = 1, c2 = 2 satisfies every offered Bellman and rank condition, yet would prove a false Every AtLeast 3/4 (true minimum 1/2); it rejects InequalityFails at the first key of `{c1, c2}` by the partition check. Splitting `{c1, c2}` into `{c1}` and `{c2}`, adding `g` to it, or adding a transient key rejects InequalityFails at the smallest differing key. AC-70/71 documents round-trip canonically through a fresh checker without analyzer/provider linkage; a `policy` member, missing or extra rows, wrong objective, identity or binding, and model-only keys prevent acceptance with the specified rule/locus. | Test (TC-3190) |
+| FR-201-AC-74 | The AC-71 claims written `using` the event-position false-extension profile settle the same values and accept the same documents as under the infinite-trace profile: terminal `g` keeps value 1 by stutter rather than 0 by false extension. A workload long-run claim under that profile likewise uses the DTMC profiles (FR-201-AC-27's chain accepts at 1800/1801). Neither settles `unsupported`/`not-yet-implemented` for its profile. Weighted or fair every-scheduler, timed, multi-post and multiple initial/binding claims emit no MDP long-run document; pre-cancellation and exhaustion during MEC refinement or exact sums retain their typed cause with no accepted truth; zero direct instances retain UnsupportedBinding/unsupported. | Test (TC-3190) |
 | FR-201-AC-75 | For a checked root `holds(c.heads)` with no temporal operator, `QualifiedBoundedMonitor::supports` and `QualifiedBoundedMonitor::supports_observations` both return true under the event-position false-extension profile and both return false under the infinite-trace profile. Under the event-position profile the monitor's initial canonical monitor-state key and decided verdict for the tails and heads initial observations equal those of `eventually[0,0] holds(c.heads)` apart from the checked formula context. For a temporal clause whose formula is a root `holds(c.heads)`, `bounded_shape` and `closure_shape` return what they return without this reading (no bounded shape), and `BoundedTranslation::clause` over an origin clause under the infinite-trace profile still refuses it `NotTranslated`. | Test (TC-3195) |
 
 ## Dependencies
