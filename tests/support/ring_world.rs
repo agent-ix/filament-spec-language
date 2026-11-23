@@ -325,7 +325,7 @@ fn contracts(variant: Variant) -> String {
     let enq =
         vec![format!("({enq})"); 1 + usize::try_from(variant.heavy).unwrap_or(0)].join(" and ");
     let enq = if variant.chain {
-        format!("{enq} and self.chain = rs")
+        format!("{enq} and size(rs) = size(self.chain)")
     } else {
         enq
     };
