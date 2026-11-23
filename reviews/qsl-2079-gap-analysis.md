@@ -344,10 +344,10 @@ The structured scope below lists every reviewed function/file, including clean u
       "excerpt": "docs/native-error-codes.md"
     },
     {
-      "id": "docs/qsl-2079-producer-validation.md",
-      "path": "docs/qsl-2079-producer-validation.md",
+      "id": "docs/diagnostic-producer-validation.md",
+      "path": "docs/diagnostic-producer-validation.md",
       "role": "examined",
-      "excerpt": "docs/qsl-2079-producer-validation.md"
+      "excerpt": "docs/diagnostic-producer-validation.md"
     },
     {
       "id": "FR-122-AC-3",
