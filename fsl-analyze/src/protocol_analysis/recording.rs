@@ -3400,7 +3400,64 @@ fn observation_enabled(
             return Some(false);
         }
     }
+    if matches!(
+        observation.kind,
+        ObservationKind::Send | ObservationKind::Receive
+    ) && !earlier_own_steps_observed(protocol, document, observation, &ancestry)
+    {
+        return Some(false);
+    }
     Some(true)
+}
+
+/// Whether every earlier `send` or `receive` of the observing role in each
+/// enclosing `sequence` of `observation`'s node was itself observed in the
+/// same instance: the observed step is enabled only in the state those
+/// earlier steps reach (FSpec FR-059, FR-895 "Enabledness").
+fn earlier_own_steps_observed(
+    protocol: &CheckedProtocol,
+    document: &RecordingDocument,
+    observation: &Observation,
+    ancestry: &[&fsl_semantics::check::CheckedControl],
+) -> bool {
+    let owner_of = |node: ProtocolNodeId| {
+        protocol
+            .owners
+            .iter()
+            .find(|entry| entry.node == node)
+            .map(|entry| entry.role)
+    };
+    let Some(own_role) = ancestry.last().and_then(|target| owner_of(target.node)) else {
+        return true;
+    };
+    ancestry.windows(2).all(|pair| {
+        let [parent, child] = pair else {
+            return true;
+        };
+        if parent.kind.label() != "sequence" {
+            return true;
+        }
+        let earlier = parent
+            .children
+            .iter()
+            .take_while(|sibling| **sibling != child.node);
+        earlier.into_iter().all(|sibling| {
+            let Some(control) = protocol.controls.control(*sibling) else {
+                return true;
+            };
+            if !matches!(control.kind.label(), "send" | "receive")
+                || owner_of(control.node) != Some(own_role)
+            {
+                return true;
+            }
+            let name = format!("{}::{}", protocol.name, control.path.join("::"));
+            document.observations.iter().any(|entry| {
+                entry.node == name
+                    && entry.instance == observation.instance
+                    && entry.role_instance == observation.role_instance
+            })
+        })
+    })
 }
 
 fn control_repeat_limit(

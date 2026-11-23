@@ -61,34 +61,33 @@ fn root() -> serde_json::Value {
 /// no payload; bound to 1 it settles as the literal capacity 1 does.
 #[trace("TC-2523", "FR-891-AC-2", "FSpec-FR-785-AC-6")]
 #[test]
-#[ignore = "QSL-2885: the Flow claim is refused invalid_runtime_input/missing-member `temporal.profile` before the capacities binding is read"]
 fn a_symbolic_capacity_settles_from_the_capacities_binding() {
-    let root = json!({"observation": {"authority": "test", "identity": "protocol-claim"},
-        "subject": {"tag": "object", "universe": "u", "type": "e", "object_identity": "flow-1"}});
-    let item = json!({"claim": "Flow", "kind": "realizability", "assessed_root": root});
-    let symbolic = order_protocol(true).replace("capacity 4", "capacity symbolic(Bound)");
-    let run = |name: &str, unit: &str, extra: serde_json::Value| {
+    let binding = json!({"type": "model-binding", "selection": "test/litmus"});
+    let run = |name: &str, unit: &str, capacities: Option<serde_json::Value>| {
         let ws = Workspace::new(name);
-        let mut members = json!({"items": [item.clone()]});
-        for (key, value) in extra.as_object().expect("extra members") {
-            members[key] = value.clone();
+        let mut subject = json!({"protocol": {"protocol": "Flow",
+            "over": {"reference": {"population": "ix://test/litmus/cores", "key": "core"}},
+            "roles": {"Buyer": binding, "Seller": binding}}});
+        if let Some(capacities) = capacities {
+            subject["protocol"]["capacities"] = capacities;
         }
-        analyze(&litmus_request(&ws, unit, members)).item(0)
+        let item = json!({"claim": "Flow", "kind": "realizability", "assessed_root": root(),
+            "premises": {"role_knowledge": [], "environment": []},
+            "temporal": {"profile": "bounded", "max_depth": 16, "max_history": 16,
+                         "subject": subject}});
+        analyze(&litmus_request(&ws, unit, json!({"items": [item]}))).item(0)
     };
-    let unbound = run("capacity-unbound", &symbolic, json!({}));
+    let symbolic = order_protocol(true).replace("capacity 4", "capacity symbolic(Bound)");
+    let unbound = run("capacity-unbound", &symbolic, None);
     assert_eq!(label(&unbound), "inconclusive", "{unbound}");
     let text = unbound.to_string();
     assert!(text.contains("premise-not-stated"), "{text}");
     assert!(!text.contains("requires-bound"), "{text}");
-    let bound = run(
-        "capacity-bound",
-        &symbolic,
-        json!({"subject": {"capacities": {"Bound": "1"}}}),
-    );
+    let bound = run("capacity-bound", &symbolic, Some(json!({"Bound": "1"})));
     let literal = run(
         "capacity-literal",
         &order_protocol(true).replace("capacity 4", "capacity 1"),
-        json!({}),
+        None,
     );
     assert_eq!(label(&bound), label(&literal), "{bound} {literal}");
 }

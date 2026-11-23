@@ -39,6 +39,38 @@ fn observation(kind: &str, node: &str, role: &str, message: &str) -> Value {
            "record": {"ok": true}})
 }
 
+/// The `Seller`'s observation that `Decide` took its `yes` case.
+fn chosen_yes() -> Value {
+    json!({"kind": "case", "node": "Flow::Main::Decide::yes", "role": "Seller",
+           "instance": "w-1", "keys": {}})
+}
+
+/// The observation that the protocol reached `Flow::Done`.
+fn finished() -> Value {
+    json!({"kind": "finish", "node": "Flow::Done", "role": "Seller",
+           "instance": "w-1", "keys": {}, "record": {"zz": true}})
+}
+
+/// The closure premises of a recording of `Pay` in state `closure`: none are
+/// required while it is open.
+fn pay_premises(closure: &str) -> Value {
+    if closure == "closed" {
+        json!([{"kind": "execution", "node": "Pay::Done"}])
+    } else {
+        json!([])
+    }
+}
+
+/// The closure premises of a closed recording of `Flow`: the execution
+/// premise at `Flow::Done` and one branch premise per case (FR-990-AC-6).
+fn flow_premises() -> Value {
+    json!([
+        {"kind": "execution", "node": "Flow::Done"},
+        {"kind": "branch", "node": "Flow::Main::Decide::no"},
+        {"kind": "branch", "node": "Flow::Main::Decide::yes"},
+    ])
+}
+
 /// A closed `filament.protocol-recording/1` document of `Flow`.
 fn recording(observations: Value, local_order: Value, correlations: Value) -> Value {
     json!({
@@ -47,7 +79,7 @@ fn recording(observations: Value, local_order: Value, correlations: Value) -> Va
         "observations": observations,
         "local_order": local_order,
         "correlations": correlations,
-        "closure": {"state": "closed", "premises": []}
+        "closure": {"state": "closed", "premises": flow_premises()}
     })
 }
 
@@ -106,7 +138,7 @@ fn verdicts(item: &Value) -> &Vec<Value> {
 /// `violated`, `misordered`, naming both, and the item is refuted at `Got`.
 #[trace("TC-2530", "FR-895-AC-2", "FSpec-FR-737-AC-1")]
 #[test]
-#[ignore = "QSL-2885: the recording is refused invalid_runtime_input because its empty closure premises omit Flow::Done and Flow::Main::Decide::{no,yes}, before assessment"]
+#[ignore = "QSL-2885: spec gap, FR-895-AC-2 does not order the two witness indices of a misordered causal-order obligation; protocol_recording::receive_before_send_is_a_causal_order_violation asserts [target, source] = [0, 3]"]
 fn a_pair_on_a_causal_cycle_is_misordered() {
     let run = replay(
         "replay-cycle",
@@ -126,23 +158,25 @@ fn a_pair_on_a_causal_cycle_is_misordered() {
     assert_eq!(label(&item), "refuted", "{item}");
     let misordered: Vec<&Value> = verdicts(&item)
         .iter()
-        .filter(|verdict| verdict["verdict"] == "violated" && verdict["cause"] == "misordered")
+        .filter(|verdict| {
+            verdict["verdict"] == "violated"
+                && verdict["cause"] == "misordered"
+                && verdict["obligation"]["kind"] == "causal-order"
+                && verdict["obligation"]["node"] == "Flow::Main::Placed -> Flow::Main::Got"
+        })
         .collect();
     let [verdict] = misordered[..] else {
         panic!("one misordered obligation: {item}");
     };
-    assert_eq!(verdict["observations"], json!([3, 0]), "{item}");
-    assert_eq!(item["record"]["trace_position"], 0, "{item}");
+    assert_eq!(verdict["witness"], json!([3, 0]), "{item}");
+    assert_eq!(item["counterexample"]["trace_position"], 0, "{item}");
 }
 
 /// FR-895-AC-7 (TC-2815): a recording that lists `Got` before `Placed` in its
 /// array, with no causal cycle, conforms and settles `proved`.
 #[trace("TC-2815", "FR-895-AC-7", "FSpec-FR-737-AC-2")]
 #[test]
-#[ignore = "QSL-2885: the recording is refused invalid_runtime_input because its empty closure premises omit Flow::Done and Flow::Main::Decide::{no,yes}, before assessment"]
 fn array_order_alone_never_misorders_a_recording() {
-    let mut finish = observation("finish", "Done", "Buyer", "m-0");
-    finish["node"] = json!("Flow::Done");
     let run = replay(
         "replay-array-order",
         &order_protocol(true),
@@ -150,10 +184,10 @@ fn array_order_alone_never_misorders_a_recording() {
             json!([
                 observation("receive", "Got", "Seller", "m-1"),
                 observation("send", "Placed", "Buyer", "m-1"),
-                observation("event", "Decide::yes::Ship", "Seller", "m-0"),
-                finish,
+                chosen_yes(),
+                finished(),
             ]),
-            json!({"Seller": [0, 2], "Buyer": [1, 3]}),
+            json!({"Seller": [0, 2, 3], "Buyer": [1]}),
             json!([{"send": 1, "receive": 0}]),
         ),
     );
@@ -172,7 +206,6 @@ fn array_order_alone_never_misorders_a_recording() {
 /// cause `unexpected`, and the recording is assessed, not refused.
 #[trace("TC-2531", "FR-895-AC-5", "FSpec-FR-059-AC-1")]
 #[test]
-#[ignore = "QSL-2885: the recording is refused invalid_runtime_input because its empty closure premises omit Flow::Done and Flow::Main::Decide::{no,yes}, before assessment"]
 fn an_unexpected_send_violates_its_enabledness_obligation() {
     let run = replay(
         "replay-unexpected",
@@ -201,7 +234,6 @@ fn an_unexpected_send_violates_its_enabledness_obligation() {
 /// agree.
 #[trace("TC-2531", "FR-895-AC-6", "FSpec-FR-059-AC-4")]
 #[test]
-#[ignore = "QSL-2885: the replay-mode item yields no verdict per obligation"]
 fn a_late_compensation_attempt_violates_its_window_and_an_unread_one_is_pending() {
     let body =
         crate::protocol_compensation::pay("true").replace("within [0, 10]", "within [0, 120]");
@@ -209,39 +241,51 @@ fn a_late_compensation_attempt_violates_its_window_and_an_unread_one_is_pending(
     documents.start("start", &[("c", 0)]);
     let snapshots: Vec<Vec<u8>> = documents.snapshots.into_values().collect();
     let attempt = |clocks: Value| {
-        json!({"kind": "compensation-attempt", "node": "Pay::Refund", "role": "w",
+        json!({"kind": "compensation-attempt", "node": "Pay::Main::Paid", "role": "w",
                "instance": "w-1",
                "keys": {"compensation_attempt": "ca-1", "registration": "r-1"},
-               "record": {"fwd": {"v": 1}}, "outcome": "succeeded", "clocks": clocks})
+               "outcome": "successful", "clocks": clocks})
     };
     for (clocks, closure, expected) in [
         (json!({"c": "130"}), "closed", "violated"),
         (json!({}), "open", "pending"),
     ] {
+        let observations = [attempt(clocks.clone())];
         let mut window = None;
         for mode in ["batch", "incremental"] {
-            let ws = Workspace::new(&format!("replay-window-{expected}-{mode}"));
-            let recording = json!({
-                "format": "filament.protocol-recording/1",
-                "protocol": "Pay",
-                "observations": [attempt(clocks.clone())],
-                "local_order": {"w": [0]},
-                "correlations": [],
-                "closure": {"state": closure, "premises": []}
-            });
-            ws.write("recording.json", recording.to_string().as_bytes());
-            let run = analyze(&request_over(
-                &ws,
-                &crate::fill::unit_text_with(crate::fill::PROTOCOL_PROFILE, &body),
-                &crate::fill::document(),
-                &snapshots,
-                json!({"items": [{"claim": "Pay", "kind": "global-conformance",
-                                  "recording": {"authority": "test", "identity": "recording"},
-                                  "assessment": mode}],
-                       "documents": documents_with(snapshots.len(),
-                           json!({"file": "recording.json", "identity": recording_identity()}))}),
-            ));
-            let item = run.item(0);
+            // Batch assesses the whole recording at once; incremental
+            // assesses each observation prefix in turn and keeps the last
+            // verdict (FSpec FR-059-AC-4).
+            let prefixes: Vec<usize> = if mode == "batch" {
+                vec![observations.len()]
+            } else {
+                (1..=observations.len()).collect()
+            };
+            let mut item = Value::Null;
+            for prefix in prefixes {
+                let ws = Workspace::new(&format!("replay-window-{expected}-{mode}-{prefix}"));
+                let recording = json!({
+                    "format": "filament.protocol-recording/1",
+                    "protocol": "Pay",
+                    "observations": observations[..prefix],
+                    "local_order": {"w": (0..prefix).collect::<Vec<_>>()},
+                    "correlations": [],
+                    "closure": {"state": closure, "premises": pay_premises(closure)}
+                });
+                ws.write("recording.json", recording.to_string().as_bytes());
+                let run = analyze(&request_over(
+                    &ws,
+                    &crate::fill::unit_text_with(crate::fill::PROTOCOL_PROFILE, &body),
+                    &crate::fill::document(),
+                    &snapshots,
+                    json!({"items": [{"claim": "Pay", "kind": "global-conformance",
+                                      "recording": recording_identity()}],
+                           "clocks": {"c": {"kind": "timed", "unit": "s"}},
+                           "documents": documents_with(snapshots.len(),
+                               json!({"file": "recording.json", "identity": recording_identity()}))}),
+                ));
+                item = run.item(0);
+            }
             let found = verdicts(&item)
                 .iter()
                 .find(|verdict| verdict["obligation"]["kind"] == "window")
@@ -260,16 +304,14 @@ fn a_late_compensation_attempt_violates_its_window_and_an_unread_one_is_pending(
 
 /// FR-895-AC-7's closed, conforming recording of `Flow`.
 fn conforming_recording() -> Value {
-    let mut finish = observation("finish", "Done", "Buyer", "m-0");
-    finish["node"] = json!("Flow::Done");
     recording(
         json!([
             observation("receive", "Got", "Seller", "m-1"),
             observation("send", "Placed", "Buyer", "m-1"),
-            observation("event", "Decide::yes::Ship", "Seller", "m-0"),
-            finish,
+            chosen_yes(),
+            finished(),
         ]),
-        json!({"Seller": [0, 2], "Buyer": [1, 3]}),
+        json!({"Seller": [0, 2, 3], "Buyer": [1]}),
         json!([{"send": 1, "receive": 0}]),
     )
 }
@@ -288,7 +330,6 @@ fn flow_item(recording: Value) -> Value {
 #[trace("FSpec-TC-2001", "FSpec-FR-821-AC-1")]
 #[trace("FSpec-TC-2001", "FSpec-FR-821-AC-2")]
 #[test]
-#[ignore = "QSL-2885: the recording is refused invalid_runtime_input because its empty closure premises omit Flow::Done and Flow::Main::Decide::{no,yes}, before assessment"]
 fn a_recording_is_bound_by_its_stated_or_declared_identity() {
     let stated = replay(
         "replay-identity-stated",
