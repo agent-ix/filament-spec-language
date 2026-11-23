@@ -35,3 +35,19 @@ CONDITIONAL. FR-866-AC-3 is met: the compile-path message now names the identity
 - tests/it/request_surface_s1.rs three un-ignored tests (examined): only the `#[ignore]` lines are removed; assertions are byte-identical.
 - tests/it/check_imports.rs a_missing_model_names_the_identity_and_the_inputs_that_supply_it (examined): only `#[ignore]` removed. It discriminates through the backticked `` `models` `` the hint text lacks.
 - Repo-wide grep for the removed help text (`supply --model`, `compile request's models member`): no test or spec example pinned it.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-006 | low | The fix changed the catch-all from `--`-prefixed to `-`-prefixed, so a positional that starts with `-` (`check -spec.md`) and the conventional `--` end-of-options marker are now both refused as unrecognized options. An `--extensions`/`--format` value starting with `-` is refused as a missing value. Before this PR, `check -spec.md` matched the legacy `["check", source]` form and checked the file. FSpec FR-563 does not define dash-led operands. A `./-spec.md` spelling still works, so nothing is unreachable, but the legacy one-operand form changed behaviour with no `--` escape. | fsl-command/src/command.rs:2310-2329 |
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | e761dccd: `check_markdown_document` is `#[cfg(feature = "quire-extraction")]`; `check_markdown_argv` has a gated body and a `cfg(not)` body refusing `--markdown` with "this build of fsl-command has no Markdown extraction (feature quire-extraction)". |
+| FND-002 | fixed | e761dccd: `check_argv_refuses_each_malformed_grammar` (13 cases, each exit 20, `invalid-request`, stage `request` and its full message), plus `check_extensions_accepts_the_one_operand_form`. |
+| FND-003 | fixed | e761dccd: fsl-replay/tests/it/native_fence_failure.rs, 4 tests covering all 5 arms (Refused and RefusedWithPayload equal; Limit and LimitWithPayload equal; Cancelled; Fault). Run with `--features quire-extraction`: 4 passed. |
+| FND-004 | fixed | e761dccd: a repeated option refuses "check option X is given more than once". A missing value, or a value starting with `-`, refuses "check option X expects a value" naming the flag. |
+| FND-005 | fixed | e761dccd: the detail is now "no domain package supplied for identity \"<id>\"; supply it with --model <id>=<file> on fsl check or in the request's `models` member". |
