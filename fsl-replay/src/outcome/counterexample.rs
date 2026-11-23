@@ -1200,25 +1200,25 @@ fn mapping_row(row: &crate::refinement::MappingRowRef) -> Result<String, Counter
 fn refinement(failure: &RefinementFailure) -> Result<Json, CounterexampleWireError> {
     Ok(match failure {
         RefinementFailure::InitialNotAbstract { initial } => {
-            json!({"kind": "InitialNotAbstract", "initial": initial})
+            json!({"kind": "InitialNotAbstract", "initial": initial.to_string()})
         }
         RefinementFailure::StutterChanged { position } => {
-            json!({"kind": "StutterChanged", "position": position})
+            json!({"kind": "StutterChanged", "position": position.to_string()})
         }
         RefinementFailure::NoAbstractMatch { position } => {
-            json!({"kind": "NoAbstractMatch", "position": position})
+            json!({"kind": "NoAbstractMatch", "position": position.to_string()})
         }
         RefinementFailure::AbstractClockGuard {
             position,
             operation,
         } => json!({
             "kind": "AbstractClockGuard",
-            "position": position,
+            "position": position.to_string(),
             "operation": operation,
         }),
         RefinementFailure::AbstractTimeInvariant { position, model } => json!({
             "kind": "AbstractTimeInvariant",
-            "position": position,
+            "position": position.to_string(),
             "model": model,
         }),
         RefinementFailure::AbstractStepRejected {
@@ -1227,7 +1227,7 @@ fn refinement(failure: &RefinementFailure) -> Result<Json, CounterexampleWireErr
             cause,
         } => json!({
             "kind": "AbstractStepRejected",
-            "position": position,
+            "position": position.to_string(),
             "transition": model_transition(transition)?,
             "cause": match cause {
                 StepRejection::Precondition { clause } => {
@@ -1251,7 +1251,7 @@ fn refinement(failure: &RefinementFailure) -> Result<Json, CounterexampleWireErr
         }
         RefinementFailure::RefusalNotPermitted { position, label } => json!({
             "kind": "RefusalNotPermitted",
-            "position": position,
+            "position": position.to_string(),
             "label": serde_json::to_value(label)
                 .map_err(|_| CounterexampleWireError::Unspelled("observation label"))?,
         }),
@@ -1260,13 +1260,13 @@ fn refinement(failure: &RefinementFailure) -> Result<Json, CounterexampleWireErr
             direction,
         } => json!({
             "kind": "TerminalSuccessMismatch",
-            "position": position,
+            "position": position.to_string(),
             "direction": serde_json::to_value(direction)
                 .map_err(|_| CounterexampleWireError::Unspelled("terminal success direction"))?,
         }),
         RefinementFailure::Undefined { position, row } => json!({
             "kind": "Undefined",
-            "position": position,
+            "position": position.to_string(),
             "row": mapping_row(row)?,
         }),
     })
@@ -3384,7 +3384,7 @@ mod tests {
         let wire = temporal_wire(&found, None, None).expect("spelled");
         assert_eq!(
             wire["refinement_failure"],
-            json!({"kind": "StutterChanged", "position": 1})
+            json!({"kind": "StutterChanged", "position": "1"})
         );
     }
 

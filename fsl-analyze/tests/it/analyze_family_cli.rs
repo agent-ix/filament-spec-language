@@ -1431,7 +1431,6 @@ fn set_elapsed(ws: &Workspace, path: &str, ms: i64) {
 /// the bound itself) it is proved.
 #[trace("TC-2971", "FR-630-AC-6")]
 #[test]
-#[ignore = "QSL-2887: decimal-string ruling pending FR-379 amendment; writer emits number"]
 fn an_image_outside_an_abstract_unit_bound_is_initial_not_abstract() {
     let body = "dimension Time;\nunit s : Time = rational(1, 1);\nunit ms : Time = rational(1, 1000) * s;\n\
          refinement Late using t0 abstract Spec concrete M {\n\

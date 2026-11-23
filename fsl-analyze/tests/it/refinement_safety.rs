@@ -307,7 +307,7 @@ fn an_undefined_items_row_refutes_at_the_first_non_empty_queue() {
     let wire = fsl_replay::temporal_wire(&counterexample, None, Some(&claim))
         .expect("the failure is spelled");
     assert_eq!(wire["refinement_failure"]["kind"], "Undefined");
-    assert_eq!(wire["refinement_failure"]["position"], 1);
+    assert_eq!(wire["refinement_failure"]["position"], "1");
     let row_text = wire["refinement_failure"]["row"]
         .as_str()
         .expect("FR-379's row is one string");
