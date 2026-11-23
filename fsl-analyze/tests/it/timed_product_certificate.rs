@@ -1317,7 +1317,6 @@ fn elapsed_quantile_altered_transform_value_is_rejected() {
 /// FR-877-AC-2: `<= 1 ms` is refuted.
 #[trace("TC-2494", "FR-877-AC-2")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-4")]
-#[ignore = "QSL-2889: refutation needs the timed witness replay"]
 #[test]
 fn elapsed_quantile_at_most_refutes() {
     let world = quantiles();
@@ -1376,11 +1375,57 @@ fn elapsed_quantile_altered_upper_value_is_rejected() {
 /// FR-877-AC-4: at a transform maximum of exactly 0 the tight search reaches
 /// the activated initial state, so the claim is refuted, never proved.
 #[trace("TC-2494", "FR-877-AC-4")]
-#[ignore = "QSL-2889: a refutation needs the timed witness replay (draco/qsl-2156-cycles)"]
 #[test]
 fn elapsed_quantile_tight_search_refutes() {
     let world = quantiles();
-    assert!(is_refuted(&settle(&world, "Tight")));
+    let record = settle(&world, "Tight");
+    assert!(is_refuted(&record), "{record:#?}");
+    let mass = record
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("the refutation carries its witness")
+        .mass()
+        .clone();
+    assert_eq!(mass, ratio(9, 10));
+}
+
+/// FR-877-AC-2: the refutation of `<= 1 ms` is a path set the checker prices
+/// itself: every run exceeds 1 ms under the scheduler that delays the first
+/// send, so the counted mass is 1.
+#[trace("TC-2494", "FR-877-AC-2")]
+#[test]
+fn elapsed_quantile_at_most_refutation_carries_its_replayed_mass() {
+    let world = quantiles();
+    let record = settle(&world, "AtMostOne");
+    assert!(is_refuted(&record), "{record:#?}");
+    let mass = record
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("the refutation carries its witness")
+        .mass()
+        .clone();
+    assert_eq!(mass, ratio(1, 1));
+}
+
+/// FR-877-AC-2, AC-4: a refutation is evidence only when the checker's own
+/// replay of the elapsed product reproduces it, so a witness whose paths do
+/// not end in a decided measure the refutation counts settles nothing, for the
+/// digital `<=` claim and for the region `>=` claim.
+#[trace("TC-2494", "FR-877-AC-2")]
+#[trace("TC-2494", "FR-877-AC-4")]
+#[test]
+fn altered_elapsed_quantile_witness_is_not_refuted() {
+    let world = quantiles();
+    for claim in ["AtMostOne", "Tight"] {
+        let record = settle_witness_tampered(&world, claim, |witness| {
+            let initial = witness.initial_key.clone();
+            for path in &mut witness.paths {
+                path.steps.last_mut().expect("a step").post_key = initial.clone();
+            }
+        });
+        assert!(!is_refuted(&record), "{claim}: {record:#?}");
+        assert!(record.probabilistic_counterexample.is_none());
+    }
 }
 
 /// FR-921-AC-2: a key whose cap of `x` is changed is malformed.
