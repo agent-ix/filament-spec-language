@@ -485,7 +485,7 @@ fn public_compile_intake_inputs_reach_io_json_and_wire_codes() {
         (
             "wire.json",
             br#"{"format":"producer.future/99","request":{}}"#.as_slice(),
-            CompleteCode::UnknownWire,
+            CompleteCode::InvalidRequest,
         ),
     ] {
         let path = directory.path().join(name);
@@ -1015,7 +1015,7 @@ fn original_extraction_requests_reach_combination_refusal_producers() {
     let source = serde_json::json!({"file":"original.md","authority":"producer-tests","identity":"original:markdown","document":"ParcelGuide","formal_revision":1});
     let program = serde_json::json!({"source":source,"extraction":{"body":{"authority":"producer-tests","identity":"original:body","document":"ParcelRule"}},"clauses":[{"clause":"ParcelRule","package":"original-parcels"}]});
     let base =
-        serde_json::json!({"format":"native-run/1","request":{"models":[],"program":program}});
+        serde_json::json!({"format":"native-run/1","request":{"models":[],"program":program,"clause":{"selection":{},"observations":{}}}});
     let mut cases = Vec::new();
     let mut package = base.clone();
     package["request"]["package"] = serde_json::json!({"file":"absent.package.json"});
