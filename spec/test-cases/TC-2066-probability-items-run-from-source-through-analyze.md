@@ -16,7 +16,7 @@ relationships:
 
 Verify every probability item class through a `native-analyze/1` request compiled from source.
 
-Scope: FR-741-AC-1 to FR-741-AC-4, FR-1042-AC-6, FR-1043-AC-4.
+Scope: FR-741-AC-1 to FR-741-AC-4, FR-1042-AC-6 and AC-15, FR-1043-AC-4.
 
 ## Test Procedure
 
@@ -24,6 +24,7 @@ Scope: FR-741-AC-1 to FR-741-AC-4, FR-1042-AC-6, FR-1043-AC-4.
 2. Run the exact items of FR-741-AC-2 and check each certificate with `fsl-probability-check` in a separate process.
 3. Run the refuting exact item and the timed exact item of FR-741-AC-3.
 4. Run the refused items of FR-741-AC-4.
+5. For AC-15, check interval documents with scalar bit lengths exactly at and one above `max(max_rational_bits, 16 * max_precision_bits)` under precision-dominated, rational-limit-dominated and equal-term requests. Run each document through producer output and the separate replay checker; assert the limit setting for each case.
 
 Tag the tests `#[trace("TC-2066", "FR-741-AC-n")]`.
 
