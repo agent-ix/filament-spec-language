@@ -610,16 +610,16 @@ name = "filament-contract-model"
 version = "0.1.2"
 source = "git+https://github.com/agent-ix/filament-contract-ir?rev=bd932cf8ba7efabc054f1d77a1a6548b538aebc4#bd932cf8ba7efabc054f1d77a1a6548b538aebc4"
 dependencies = [
- "filament-exact 0.3.0 (git+https://github.com/agent-ix/filament-exact?rev=08a5a1763ef4bd1ea7d1147717c959af5a3522cc)",
- "filament-semantic-value 0.1.5 (git+https://github.com/agent-ix/filament-semantic-value?rev=4274b4eb4abeae4ccd457a6de681625acb8fc57d)",
- "filament-verification-contracts",
+ "filament-exact 0.3.0 (git+https://github.com/agent-ix/filament-exact?rev=a58474cc105a86f3307a11def3fc001e2459679f)",
+ "filament-semantic-value 0.1.5 (git+https://github.com/agent-ix/filament-semantic-value?rev=31d807ccb8ffd5a88beb0b1a570b80acb099f5e9)",
+ "filament-verification-contracts 0.2.1 (git+https://github.com/agent-ix/filament-verification-contracts?rev=cd0c8ef67e5d4263ce12773831cedd771246e5e5)",
  "filament-walk",
  "ix-trace-rs",
  "jsonschema 0.17.1",
  "num-bigint",
  "num-integer",
  "num-traits",
- "quire-canonical 0.3.2",
+ "quire-canonical 0.3.1",
  "serde",
  "serde_json",
  "serde_path_to_error",
@@ -785,6 +785,23 @@ dependencies = [
 name = "filament-specification-qualification"
 version = "0.1.1"
 source = "git+https://github.com/agent-ix/filament-specification?rev=3200a4ed7f18fbbf5d934c22d3c3fa467914ddca#3200a4ed7f18fbbf5d934c22d3c3fa467914ddca"
+
+[[package]]
+name = "filament-verification-contracts"
+version = "0.2.1"
+source = "git+https://github.com/agent-ix/filament-verification-contracts?rev=cd0c8ef67e5d4263ce12773831cedd771246e5e5#cd0c8ef67e5d4263ce12773831cedd771246e5e5"
+dependencies = [
+ "jsonschema 0.55.1",
+ "quire-canonical 0.3.1",
+ "regress",
+ "schemars",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "time",
+ "typify",
+]
 
 [[package]]
 name = "filament-verification-contracts"
@@ -970,7 +987,7 @@ dependencies = [
  "filament-exact 0.3.0 (git+https://github.com/agent-ix/filament-exact?rev=08a5a1763ef4bd1ea7d1147717c959af5a3522cc)",
  "filament-semantic-value 0.1.5 (git+https://github.com/agent-ix/filament-semantic-value?rev=4274b4eb4abeae4ccd457a6de681625acb8fc57d)",
  "filament-specification-qualification",
- "filament-verification-contracts",
+ "filament-verification-contracts 0.2.1 (git+https://github.com/agent-ix/filament-verification-contracts?rev=e6eebb660c6d9b3dee25d643923d3984cbc745b6)",
  "fsl-analyze",
  "fsl-command",
  "fsl-cst",
