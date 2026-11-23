@@ -219,6 +219,60 @@ fn assert_emitted_bodies(emission: &crate::emit::Emission, label: &str) {
         .expect("the emitted package has no trailing bytes");
 }
 
+/// A node reduced to the length of its record's `path_condition` aggregate,
+/// or `None` for any node that is no `value_validity` record.
+#[derive(serde::Deserialize)]
+#[serde(from = "RawNode")]
+struct GuardMembers(Option<usize>);
+
+#[derive(serde::Deserialize)]
+struct RawNode {
+    semantic_form: String,
+    body: serde_json::Value,
+}
+
+impl From<RawNode> for GuardMembers {
+    fn from(node: RawNode) -> Self {
+        if node.semantic_form != "value_validity" {
+            return Self(None);
+        }
+        // The record's members are `owner`, `application`, `occurrence`,
+        // `result_bound`, `conversion`, `path_condition`, ...
+        let members = node.body["members"][5]["value"]["members"]
+            .as_array()
+            .expect("a record's path condition is an aggregate");
+        Self(Some(members.len()))
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct Graph {
+    nodes: Vec<GuardMembers>,
+}
+
+#[derive(serde::Deserialize)]
+struct FrameShape {
+    semantic_graph: Graph,
+    #[serde(default)]
+    path_condition_frames: Vec<IgnoredAny>,
+}
+
+/// FR-062-AC-17: the unique frame rows, the records, and the records citing a
+/// terminal frame of a package, each record carrying at most one member in its
+/// `path_condition` and never an expanded guard list.
+fn frame_shape(emission: &crate::emit::Emission) -> (usize, usize, usize) {
+    let shape: FrameShape = serde_json::from_slice(emission.package.bytes())
+        .expect("the emitted package has its semantic graph and frames");
+    let records = shape.semantic_graph.nodes.iter().filter_map(|node| node.0);
+    let (mut all, mut guarded) = (0, 0);
+    for members in records {
+        assert!(members <= 1, "a record cites one terminal frame id, not a guard list");
+        all += 1;
+        guarded += members;
+    }
+    (shape.path_condition_frames.len(), guarded, all)
+}
+
 /// Counts complete debug output without retaining its bytes.
 #[derive(Default)]
 struct DebugByteCount {
@@ -513,12 +567,67 @@ fn every_nested_form_emits_in_the_stratified_grammar_at_2_and_1000_levels() {
                     )
                     .unwrap_or_else(|refusal| panic!("{form:?} x{levels} emits: {refusal:?}"));
                     assert_emitted_bodies(&emission, &format!("{form:?} x{levels}"));
+                    if matches!(form, Form::DistinctGuards) {
+                        let (frames, guarded, records) = frame_shape(&emission);
+                        let bytes = emission.package.bytes().len();
+                        eprintln!(
+                            "DISTINCT_GUARDS levels={levels} frames={frames} \
+                             guarded_records={guarded} records={records} bytes={bytes}"
+                        );
+                        assert!(frames <= levels, "at most one shared frame per guard level");
+                        assert!(guarded >= frames, "each frame is cited by a record");
+                    }
                 })
                 .expect("the thread spawns")
                 .join()
                 .unwrap_or_else(|_| panic!("{form:?} x{levels} completes on a 512 KiB stack"));
         }
     }
+}
+
+/// The `(frames, guarded records, records, wire bytes)` of the
+/// nested-distinct-guards form at `levels`, emitted on the small stack.
+fn distinct_guards_shape(levels: usize) -> (usize, usize, usize, usize) {
+    use fsl_semantics::check::depth_forms::{declarations, Form};
+    std::thread::Builder::new()
+        .stack_size(STACK)
+        .spawn(move || {
+            let graph = declarations(Form::DistinctGuards, levels)
+                .check(
+                    CheckMode::Linked,
+                    CheckingLimits::default(),
+                    &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+                )
+                .unwrap_or_else(|refusals| panic!("x{levels} checks: {refusals:?}"));
+            let package = CheckedPackage::link(graph);
+            let emission =
+                crate::emit::emit_package(&package, whole_unit, crate::EmitLimits::fixture())
+                    .unwrap_or_else(|refusal| panic!("x{levels} emits: {refusal:?}"));
+            let (frames, guarded, records) = frame_shape(&emission);
+            (frames, guarded, records, emission.package.bytes().len())
+        })
+        .expect("the thread spawns")
+        .join()
+        .unwrap_or_else(|_| panic!("x{levels} completes on a 512 KiB stack"))
+}
+
+/// FR-062-AC-17: the 1,000-level guarded body emits at most 1,000 shared
+/// condition frames and every guarded record cites one terminal frame id, and
+/// the package grows linearly with depth: doubling the depth less than
+/// two-and-a-half-folds the bytes (the per-record guard prefix it replaces
+/// would roughly quadruple them).
+#[trace("TC-3161", "FR-062-AC-17")]
+#[test]
+fn nested_guards_emit_shared_frames_and_linear_bytes() {
+    let (half_frames, half_guarded, _, half_bytes) = distinct_guards_shape(500);
+    let (frames, guarded, records, bytes) = distinct_guards_shape(1_000);
+    assert_eq!((half_frames, frames), (499, 999), "one frame per nested guard level but the last");
+    assert_eq!((half_guarded, guarded), (998, 1_998), "two guarded records per level but the last");
+    assert_eq!(records, 2_000, "two scalar records per level");
+    assert!(
+        bytes * 2 < half_bytes * 5,
+        "{half_bytes} bytes at 500 levels and {bytes} at 1000 are not linear"
+    );
 }
 
 /// `function f using v(a: Boolean): Boolean pure { a and (a and (… a)) }`
