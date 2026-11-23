@@ -1198,6 +1198,21 @@ pub struct ProtocolConformanceOutput {
     /// Whether the global counterexample replay reproduced its violation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub replay: Option<ConformanceReplayOutput>,
+    /// One assessment per observation prefix of an `incremental` recording
+    /// assessment (FR-896).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prefixes: Option<Vec<ConformancePrefixOutput>>,
+}
+
+/// The assessment of the first `observations` observations of a recording.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ConformancePrefixOutput {
+    /// How many observations the prefix holds.
+    pub observations: usize,
+    /// The prefix's global label.
+    pub label: String,
+    /// One result per protocol obligation of the prefix.
+    pub obligations: Vec<ConformanceObligationOutput>,
 }
 
 /// The per-channel `max_messages` method bound a protocol run used.
@@ -4275,6 +4290,7 @@ mod tests {
                 }]),
                 recording: None,
                 replay: Some(ConformanceReplayOutput { reproduced: true }),
+                prefixes: None,
             });
         let wire = serde_json::to_value(item).expect("serializes");
         assert_eq!(wire["result"], "tested");

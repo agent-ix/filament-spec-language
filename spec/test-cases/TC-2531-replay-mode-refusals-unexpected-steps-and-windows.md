@@ -5,12 +5,14 @@ type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-895
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-896
+    type: verifies
 ---
 # TC-2531: Replay mode refuses unreadable recordings and reports unexpected steps and windows
 
 ## Description
 
-Verify that replay mode refuses unreadable recordings and reports unexpected steps and windows. Scope: FR-895-AC-4, FR-895-AC-5, FR-895-AC-6.
+Verify that replay mode refuses unreadable recordings and reports unexpected steps and windows. Scope: FR-895-AC-4, FR-895-AC-5, FR-895-AC-6, FR-895-AC-9, FR-895-AC-10, FR-895-AC-11, FR-895-AC-12 to FR-895-AC-28, FR-896-AC-5, FR-896-AC-6.
 
 Catches a recording defect reported as behaviour, or behaviour refused as a defect.
 

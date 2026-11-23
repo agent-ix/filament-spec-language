@@ -39,6 +39,38 @@ fn observation(kind: &str, node: &str, role: &str, message: &str) -> Value {
            "record": {"ok": true}})
 }
 
+/// The `Seller`'s observation that `Decide` took its `yes` case.
+fn chosen_yes() -> Value {
+    json!({"kind": "case", "node": "Flow::Main::Decide::yes", "role": "Seller",
+           "instance": "w-1", "keys": {}})
+}
+
+/// The observation that the protocol reached `Flow::Done`.
+fn finished() -> Value {
+    json!({"kind": "finish", "node": "Flow::Done", "role": "Seller",
+           "instance": "w-1", "keys": {}, "record": {"zz": true}})
+}
+
+/// The closure premises of a recording of `Pay` in state `closure`: none are
+/// required while it is open.
+fn pay_premises(closure: &str) -> Value {
+    if closure == "closed" {
+        json!([{"kind": "execution", "node": "Pay::Done"}])
+    } else {
+        json!([])
+    }
+}
+
+/// The closure premises of a closed recording of `Flow`: the execution
+/// premise at `Flow::Done` and one branch premise per case (FR-990-AC-6).
+fn flow_premises() -> Value {
+    json!([
+        {"kind": "execution", "node": "Flow::Done"},
+        {"kind": "branch", "node": "Flow::Main::Decide::no"},
+        {"kind": "branch", "node": "Flow::Main::Decide::yes"},
+    ])
+}
+
 /// A closed `filament.protocol-recording/1` document of `Flow`.
 fn recording(observations: Value, local_order: Value, correlations: Value) -> Value {
     json!({
@@ -47,7 +79,7 @@ fn recording(observations: Value, local_order: Value, correlations: Value) -> Va
         "observations": observations,
         "local_order": local_order,
         "correlations": correlations,
-        "closure": {"state": "closed", "premises": []}
+        "closure": {"state": "closed", "premises": flow_premises()}
     })
 }
 
@@ -106,7 +138,6 @@ fn verdicts(item: &Value) -> &Vec<Value> {
 /// `violated`, `misordered`, naming both, and the item is refuted at `Got`.
 #[trace("TC-2530", "FR-895-AC-2", "FSpec-FR-737-AC-1")]
 #[test]
-#[ignore = "QSL-2885: the recording is refused invalid_runtime_input because its empty closure premises omit Flow::Done and Flow::Main::Decide::{no,yes}, before assessment"]
 fn a_pair_on_a_causal_cycle_is_misordered() {
     let run = replay(
         "replay-cycle",
@@ -126,23 +157,25 @@ fn a_pair_on_a_causal_cycle_is_misordered() {
     assert_eq!(label(&item), "refuted", "{item}");
     let misordered: Vec<&Value> = verdicts(&item)
         .iter()
-        .filter(|verdict| verdict["verdict"] == "violated" && verdict["cause"] == "misordered")
+        .filter(|verdict| {
+            verdict["verdict"] == "violated"
+                && verdict["cause"] == "misordered"
+                && verdict["obligation"]["kind"] == "causal-order"
+                && verdict["obligation"]["node"] == "Flow::Main::Placed -> Flow::Main::Got"
+        })
         .collect();
     let [verdict] = misordered[..] else {
         panic!("one misordered obligation: {item}");
     };
-    assert_eq!(verdict["observations"], json!([3, 0]), "{item}");
-    assert_eq!(item["record"]["trace_position"], 0, "{item}");
+    assert_eq!(verdict["witness"], json!([0, 3]), "{item}");
+    assert_eq!(item["counterexample"]["trace_position"], 0, "{item}");
 }
 
 /// FR-895-AC-7 (TC-2815): a recording that lists `Got` before `Placed` in its
 /// array, with no causal cycle, conforms and settles `proved`.
 #[trace("TC-2815", "FR-895-AC-7", "FSpec-FR-737-AC-2")]
 #[test]
-#[ignore = "QSL-2885: the recording is refused invalid_runtime_input because its empty closure premises omit Flow::Done and Flow::Main::Decide::{no,yes}, before assessment"]
 fn array_order_alone_never_misorders_a_recording() {
-    let mut finish = observation("finish", "Done", "Buyer", "m-0");
-    finish["node"] = json!("Flow::Done");
     let run = replay(
         "replay-array-order",
         &order_protocol(true),
@@ -150,10 +183,10 @@ fn array_order_alone_never_misorders_a_recording() {
             json!([
                 observation("receive", "Got", "Seller", "m-1"),
                 observation("send", "Placed", "Buyer", "m-1"),
-                observation("event", "Decide::yes::Ship", "Seller", "m-0"),
-                finish,
+                chosen_yes(),
+                finished(),
             ]),
-            json!({"Seller": [0, 2], "Buyer": [1, 3]}),
+            json!({"Seller": [0, 2, 3], "Buyer": [1]}),
             json!([{"send": 1, "receive": 0}]),
         ),
     );
@@ -172,7 +205,6 @@ fn array_order_alone_never_misorders_a_recording() {
 /// cause `unexpected`, and the recording is assessed, not refused.
 #[trace("TC-2531", "FR-895-AC-5", "FSpec-FR-059-AC-1")]
 #[test]
-#[ignore = "QSL-2885: the recording is refused invalid_runtime_input because its empty closure premises omit Flow::Done and Flow::Main::Decide::{no,yes}, before assessment"]
 fn an_unexpected_send_violates_its_enabledness_obligation() {
     let run = replay(
         "replay-unexpected",
@@ -201,7 +233,6 @@ fn an_unexpected_send_violates_its_enabledness_obligation() {
 /// agree.
 #[trace("TC-2531", "FR-895-AC-6", "FSpec-FR-059-AC-4")]
 #[test]
-#[ignore = "QSL-2885: the replay-mode item yields no verdict per obligation"]
 fn a_late_compensation_attempt_violates_its_window_and_an_unread_one_is_pending() {
     let body =
         crate::protocol_compensation::pay("true").replace("within [0, 10]", "within [0, 120]");
@@ -209,67 +240,1355 @@ fn a_late_compensation_attempt_violates_its_window_and_an_unread_one_is_pending(
     documents.start("start", &[("c", 0)]);
     let snapshots: Vec<Vec<u8>> = documents.snapshots.into_values().collect();
     let attempt = |clocks: Value| {
-        json!({"kind": "compensation-attempt", "node": "Pay::Refund", "role": "w",
+        json!({"kind": "compensation-attempt", "node": "Pay::Main::Paid", "role": "w",
                "instance": "w-1",
                "keys": {"compensation_attempt": "ca-1", "registration": "r-1"},
-               "record": {"fwd": {"v": 1}}, "outcome": "succeeded", "clocks": clocks})
+               "outcome": "successful", "clocks": clocks})
     };
     for (clocks, closure, expected) in [
         (json!({"c": "130"}), "closed", "violated"),
         (json!({}), "open", "pending"),
     ] {
-        let mut window = None;
-        for mode in ["batch", "incremental"] {
-            let ws = Workspace::new(&format!("replay-window-{expected}-{mode}"));
-            let recording = json!({
-                "format": "filament.protocol-recording/1",
-                "protocol": "Pay",
-                "observations": [attempt(clocks.clone())],
-                "local_order": {"w": [0]},
-                "correlations": [],
-                "closure": {"state": closure, "premises": []}
-            });
-            ws.write("recording.json", recording.to_string().as_bytes());
-            let run = analyze(&request_over(
+        let ws = Workspace::new(&format!("replay-window-{expected}"));
+        let recording = json!({
+            "format": "filament.protocol-recording/1",
+            "protocol": "Pay",
+            "observations": [attempt(clocks)],
+            "local_order": {"w": [0]},
+            "correlations": [],
+            "closure": {"state": closure, "premises": pay_premises(closure)}
+        });
+        ws.write("recording.json", recording.to_string().as_bytes());
+        let assess = |assessment: &str| {
+            analyze(&request_over(
                 &ws,
                 &crate::fill::unit_text_with(crate::fill::PROTOCOL_PROFILE, &body),
                 &crate::fill::document(),
                 &snapshots,
                 json!({"items": [{"claim": "Pay", "kind": "global-conformance",
-                                  "recording": {"authority": "test", "identity": "recording"},
-                                  "assessment": mode}],
+                                  "recording": recording_identity(),
+                                  "assessment": assessment}],
+                       "clocks": {"c": {"kind": "timed", "unit": "s"}},
                        "documents": documents_with(snapshots.len(),
                            json!({"file": "recording.json", "identity": recording_identity()}))}),
-            ));
-            let item = run.item(0);
-            let found = verdicts(&item)
+            ))
+            .item(0)
+        };
+        let window = |item: &Value| {
+            verdicts(item)
                 .iter()
                 .find(|verdict| verdict["obligation"]["kind"] == "window")
                 .cloned()
-                .unwrap_or_else(|| panic!("a window obligation: {item}"));
-            assert_eq!(found["verdict"], expected, "{mode}: {item}");
-            match &window {
-                None => window = Some(found),
-                Some(batch) => assert_eq!(batch, &found, "batch equals incremental"),
-            }
+                .unwrap_or_else(|| panic!("a window obligation: {item}"))
+        };
+        let item = assess("batch");
+        assert_eq!(window(&item)["verdict"], expected, "{item}");
+        // Batch and incremental assessment give equal verdicts: the single
+        // observation's prefix is the whole recording, and its window
+        // verdict is the batch one.
+        let incremental = assess("incremental");
+        let prefixes = incremental["prefixes"].as_array().expect("one prefix");
+        assert_eq!(prefixes.len(), 1, "{incremental}");
+        assert_eq!(window(&prefixes[0])["verdict"], expected, "{incremental}");
+        assert_eq!(
+            prefixes[0]["obligations"], item["obligations"],
+            "{incremental}"
+        );
+    }
+}
+
+/// A closed recording of the `Tell` protocol: `Placed`, `Got`, `Note`,
+/// `Heard`, the `yes` case and `Done`, with `Seller`'s local order
+/// `seller_order` over those indices and `observations` listing them in
+/// the given array order.
+fn told_recording(array_order: [usize; 6], seller_order: Value) -> Value {
+    let canonical = [
+        observation("send", "Placed", "Buyer", "m-1"),
+        observation("receive", "Got", "Seller", "m-1"),
+        observation("send", "Note", "Seller", "m-2"),
+        observation("receive", "Heard", "Buyer", "m-2"),
+        chosen_yes(),
+        finished(),
+    ];
+    // `array_order[n]` is the canonical index listed at array position `n`.
+    let at = |canonical_index: usize| {
+        array_order
+            .iter()
+            .position(|listed| *listed == canonical_index)
+            .expect("every observation is listed")
+    };
+    let remap = |order: &Value| -> Value {
+        order
+            .as_array()
+            .expect("an order")
+            .iter()
+            .map(|index| json!(at(index.as_u64().expect("an index") as usize)))
+            .collect()
+    };
+    recording(
+        Value::Array(
+            array_order
+                .iter()
+                .map(|index| canonical[*index].clone())
+                .collect(),
+        ),
+        json!({"Seller": remap(&seller_order), "Buyer": remap(&json!([0, 3]))}),
+        json!([
+            {"send": at(0), "receive": at(1)},
+            {"send": at(2), "receive": at(3)},
+        ]),
+    )
+}
+
+/// The enabledness verdict of `Flow::Main::Note` in `item`.
+fn note_enabledness(item: &Value) -> &Value {
+    verdicts(item)
+        .iter()
+        .find(|verdict| {
+            verdict["obligation"]["kind"] == "enabledness"
+                && verdict["obligation"]["node"] == "Flow::Main::Note"
+        })
+        .unwrap_or_else(|| panic!("a Note enabledness verdict: {item}"))
+}
+
+/// FR-895-AC-9: `Seller` sending `Note` after its `Got` is enabled, and the
+/// recording settles `proved`.
+#[trace("TC-2531", "FR-895-AC-9", "FSpec-FR-059-AC-1")]
+#[test]
+fn a_send_after_its_earlier_own_receive_is_enabled() {
+    let run = replay(
+        "replay-told-accepted",
+        &told_protocol(),
+        &told_recording([0, 1, 2, 3, 4, 5], json!([1, 2, 4, 5])),
+    );
+    let item = run.item(0);
+    assert_eq!(label(&item), "proved", "{item}");
+    assert_eq!(note_enabledness(&item)["verdict"], "satisfied", "{item}");
+}
+
+/// FR-895-AC-10: `Seller`'s local order puts `Note` before its `Got`, so
+/// `Got` does not precede `Note` and `Note`'s enabledness is `violated`,
+/// cause `unexpected`, though `Got` is in the recording.
+#[trace("TC-2531", "FR-895-AC-10", "FSpec-FR-059-AC-1")]
+#[test]
+fn a_send_before_its_earlier_own_receive_is_unexpected() {
+    let run = replay(
+        "replay-told-before",
+        &told_protocol(),
+        &told_recording([0, 1, 2, 3, 4, 5], json!([2, 1, 4, 5])),
+    );
+    let item = run.item(0);
+    assert_eq!(label(&item), "refuted", "{item}");
+    let note = note_enabledness(&item);
+    assert_eq!(note["verdict"], "violated", "{item}");
+    assert_eq!(note["cause"], "unexpected", "{item}");
+}
+
+/// FR-895-AC-10: the array position of `Got` never makes it precede `Note`:
+/// listed first in the array but after `Note` in `Seller`'s local order, it
+/// leaves `Note`'s enabledness `violated`, cause `unexpected`.
+#[trace("TC-2531", "FR-895-AC-10", "FSpec-FR-737-AC-2")]
+#[test]
+fn an_earlier_own_receive_listed_first_but_ordered_later_is_unexpected() {
+    let run = replay(
+        "replay-told-listed-first",
+        &told_protocol(),
+        &told_recording([1, 0, 2, 3, 4, 5], json!([2, 1, 4, 5])),
+    );
+    let item = run.item(0);
+    assert_eq!(label(&item), "refuted", "{item}");
+    let note = note_enabledness(&item);
+    assert_eq!(note["verdict"], "violated", "{item}");
+    assert_eq!(note["cause"], "unexpected", "{item}");
+}
+
+/// The labels of `assessments`, one per observation prefix.
+fn prefix_labels(
+    assessments: &[fsl_analyze::protocol_analysis::recording::RecordingAssessment],
+) -> Vec<String> {
+    assessments
+        .iter()
+        .map(|assessment| assessment.global.label.clone())
+        .collect()
+}
+
+/// Every obligation `violated` in a prefix is `violated` in the next.
+fn assert_violations_persist(
+    assessments: &[fsl_analyze::protocol_analysis::recording::RecordingAssessment],
+) {
+    use fsl_analyze::protocol_analysis::recording::RecordingVerdict;
+    for pair in assessments.windows(2) {
+        for violated in pair[0]
+            .obligations
+            .iter()
+            .filter(|entry| entry.verdict == RecordingVerdict::Violated)
+        {
+            let next = pair[1]
+                .obligations
+                .iter()
+                .find(|entry| entry.obligation == violated.obligation)
+                .unwrap_or_else(|| panic!("{:?} survives", violated.obligation));
+            assert_eq!(next.verdict, RecordingVerdict::Violated, "{:?}", next);
         }
     }
+}
+
+/// FR-895-AC-11, FSpec FR-059-AC-4: feeding the conforming recording one
+/// observation at a time leaves every prefix `inconclusive` while it is open,
+/// and the last prefix equals the batch assessment, `proved`.
+#[trace("TC-2531", "FR-895-AC-11", "FSpec-FR-059-AC-4")]
+#[test]
+fn incremental_assessment_of_a_conforming_recording_ends_at_the_batch_verdict() {
+    use fsl_analyze::protocol_analysis::recording::{
+        assess_recording, assess_recording_incrementally,
+    };
+    let package = crate::litmus::package_called("analysis-unit", &told_protocol());
+    let bytes = told_recording([0, 1, 2, 3, 4, 5], json!([1, 2, 4, 5])).to_string();
+    let incremental = assess_recording_incrementally(&package, bytes.as_bytes()).expect("prefixes");
+    assert_eq!(
+        prefix_labels(&incremental),
+        [
+            "inconclusive",
+            "inconclusive",
+            "inconclusive",
+            "inconclusive",
+            "inconclusive",
+            "proved"
+        ]
+    );
+    assert_violations_persist(&incremental);
+    let batch = assess_recording(&package, bytes.as_bytes()).expect("batch");
+    assert_eq!(incremental.last(), Some(&batch));
+}
+
+/// FR-895-AC-11, FR-895-AC-10: `Seller`'s local order puts `Note` before
+/// `Got`. In causal order the first prefix is undecided; the second holds
+/// `Note` unordered after `Placed`, so `Note`'s enabledness is `violated`
+/// from the second prefix on and every later prefix keeps it, ending at the
+/// batch verdict, `refuted`.
+#[trace("TC-2531", "FR-895-AC-11", "FSpec-FR-059-AC-4")]
+#[test]
+fn incremental_assessment_reports_a_violation_from_the_prefix_that_shows_it() {
+    use fsl_analyze::protocol_analysis::recording::{
+        assess_recording, assess_recording_incrementally, RecordingCause, RecordingVerdict,
+    };
+    let package = crate::litmus::package_called("analysis-unit", &told_protocol());
+    let bytes = told_recording([0, 1, 2, 3, 4, 5], json!([2, 1, 4, 5])).to_string();
+    let incremental = assess_recording_incrementally(&package, bytes.as_bytes()).expect("prefixes");
+    assert_eq!(
+        prefix_labels(&incremental),
+        [
+            "inconclusive",
+            "refuted",
+            "refuted",
+            "refuted",
+            "refuted",
+            "refuted"
+        ]
+    );
+    assert_violations_persist(&incremental);
+    let note = incremental[1]
+        .obligations
+        .iter()
+        .find(|entry| {
+            entry.obligation.kind == "enabledness"
+                && entry.obligation.node.as_deref() == Some("Flow::Main::Note")
+        })
+        .expect("Note enabledness");
+    assert_eq!(note.verdict, RecordingVerdict::Violated);
+    assert_eq!(note.cause, Some(RecordingCause::Unexpected));
+    let batch = assess_recording(&package, bytes.as_bytes()).expect("batch");
+    assert_eq!(incremental.last(), Some(&batch));
+}
+
+/// One `Flow` replay item with `assessment` set to `assessment`.
+fn assessed_item(assessment: &str) -> Value {
+    json!([{"claim": "Flow", "kind": "global-conformance",
+            "recording": recording_identity(), "assessment": assessment}])
+}
+
+/// FR-896-AC-5 (TC-2531): `assessment` `incremental` carries one prefix
+/// assessment per observation, the violation shows from the prefix that adds
+/// `Note`, and the last prefix equals the item's own obligations; `batch`
+/// carries no prefixes; another word, or no recording, refuses the request.
+#[trace("TC-2531", "FR-896-AC-5", "FR-895-AC-6")]
+#[test]
+fn the_incremental_assessment_member_reports_each_prefix() {
+    let probe = told_recording([0, 1, 2, 3, 4, 5], json!([2, 1, 4, 5]));
+    let entry = json!({"file": "recording.json", "identity": recording_identity()});
+    let run = |name: &str, assessment: &str| {
+        replay_with(
+            name,
+            &told_protocol(),
+            &probe,
+            entry.clone(),
+            assessed_item(assessment),
+        )
+    };
+
+    let item = run("replay-incremental", "incremental").item(0);
+    assert_eq!(label(&item), "refuted", "{item}");
+    let prefixes = item["prefixes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("one prefix each: {item}"));
+    let labels: Vec<&str> = prefixes
+        .iter()
+        .map(|prefix| prefix["label"].as_str().expect("a label"))
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "inconclusive",
+            "refuted",
+            "refuted",
+            "refuted",
+            "refuted",
+            "refuted"
+        ],
+        "{item}"
+    );
+    let counts: Vec<u64> = prefixes
+        .iter()
+        .map(|prefix| prefix["observations"].as_u64().expect("a count"))
+        .collect();
+    assert_eq!(counts, [1, 2, 3, 4, 5, 6], "{item}");
+    let note = |prefix: &Value| {
+        prefix["obligations"]
+            .as_array()
+            .expect("obligations")
+            .iter()
+            .find(|verdict| {
+                verdict["obligation"]["kind"] == "enabledness"
+                    && verdict["obligation"]["node"] == "Flow::Main::Note"
+            })
+            .cloned()
+            .expect("a Note enabledness verdict")
+    };
+    for prefix in &prefixes[1..] {
+        let note = note(prefix);
+        assert_eq!(note["verdict"], "violated", "{item}");
+        assert_eq!(note["cause"], "unexpected", "{item}");
+    }
+    assert_eq!(
+        prefixes[5]["obligations"], item["obligations"],
+        "the last prefix is the batch assessment"
+    );
+
+    for assessment in ["batch"] {
+        let item = run("replay-batch", assessment).item(0);
+        assert!(item.get("prefixes").is_none(), "{item}");
+        assert_eq!(item["obligations"], prefixes[5]["obligations"], "{item}");
+    }
+    let none = replay_with(
+        "replay-no-assessment",
+        &told_protocol(),
+        &probe,
+        entry.clone(),
+        flow_item(recording_identity()),
+    )
+    .item(0);
+    assert!(none.get("prefixes").is_none(), "{none}");
+    assert_eq!(none["obligations"], prefixes[5]["obligations"], "{none}");
+
+    let refused = |name: &str, items: Value, names: &str| {
+        let run = replay_with(name, &told_protocol(), &probe, entry.clone(), items);
+        assert_eq!(run.exit, 20, "{name}");
+        let document = run.document();
+        assert_eq!(
+            document["diagnostics"][0]["code"], "invalid-request",
+            "{name}: {document}"
+        );
+        assert!(document.to_string().contains(names), "{name}: {document}");
+    };
+    // A word other than `batch` or `incremental` is no value of the member.
+    refused(
+        "replay-assessment-word",
+        assessed_item("streaming"),
+        "streaming",
+    );
+    refused(
+        "replay-assessment-no-recording",
+        json!([{"claim": "Flow", "kind": "global-conformance",
+                "assessment": "incremental"}]),
+        "/items/0/assessment",
+    );
+}
+
+// ---- FR-895 "Enabledness": predecessors through choice, parallel, repeat ----
+
+/// The enabledness obligation of the observation at `position`, naming `node`.
+fn enabledness<'a>(
+    assessment: &'a fsl_analyze::protocol_analysis::recording::RecordingAssessment,
+    node: &str,
+    position: usize,
+) -> &'a fsl_analyze::protocol_analysis::recording::RecordingObligation {
+    assessment
+        .obligations
+        .iter()
+        .find(|entry| {
+            entry.obligation.kind == "enabledness"
+                && entry.obligation.node.as_deref() == Some(node)
+                && entry.witness == [position]
+        })
+        .unwrap_or_else(|| panic!("enabledness of {node} at {position}: {assessment:#?}"))
+}
+
+/// The checked package of `source`: a `P` unit of the `fill` fixture, else a
+/// `Flow` unit of the litmus fixture.
+fn package_of(source: &str) -> fsl_package::CheckedPackage {
+    if source.contains("protocol P using") {
+        crate::fill::package(source)
+    } else {
+        crate::litmus::package_called("analysis-unit", source)
+    }
+}
+
+/// Assert `node` at `position` is `satisfied`.
+fn assert_enabled(source: &str, recording: &Value, node: &str, position: usize) {
+    use fsl_analyze::protocol_analysis::recording::{assess_recording, RecordingVerdict};
+    let package = package_of(source);
+    let assessed = assess_recording(&package, recording.to_string().as_bytes()).expect("readable");
+    let found = enabledness(&assessed, node, position);
+    assert_eq!(found.verdict, RecordingVerdict::Satisfied, "{found:#?}");
+    assert_eq!(found.cause, None, "{found:#?}");
+}
+
+/// Assert `node` at `position` is `violated`, cause `unexpected`.
+fn assert_unexpected(source: &str, recording: &Value, node: &str, position: usize) {
+    use fsl_analyze::protocol_analysis::recording::{
+        assess_recording, RecordingCause, RecordingVerdict,
+    };
+    let package = package_of(source);
+    let assessed = assess_recording(&package, recording.to_string().as_bytes()).expect("readable");
+    let found = enabledness(&assessed, node, position);
+    assert_eq!(found.verdict, RecordingVerdict::Violated, "{found:#?}");
+    assert_eq!(found.cause, Some(RecordingCause::Unexpected), "{found:#?}");
+}
+
+/// `Flow` with a `Tell` channel and a step in each case of `Decide`
+/// (`Dropped` in `no`, `Told` in `yes`) and a send `Note` after the choice.
+fn choice_protocol() -> String {
+    let mut source = order_protocol(true)
+        .replace(
+            "capacity 4 overflow reject;\n",
+            "capacity 4 overflow reject;\n\
+             channel Tell from Seller to Buyer carries Ack ordering unordered delivery exactly-once-premise capacity 4 overflow reject;\n",
+        )
+        .replace(
+            "sequence Cancel { }",
+            "sequence Cancel { send Dropped via Tell as (dropped: Ack) { true }; }",
+        )
+        .replace(
+            "sequence Ship { }",
+            "sequence Ship { send Told via Tell as (told: Ack) { true }; }",
+        );
+    let finish = source.find("finish Done").expect("finish terminal");
+    let close = source[..finish]
+        .rfind(" }")
+        .expect("the main sequence closes");
+    source.insert_str(close, " send Note via Tell as (note: Ack) { true };");
+    source
+}
+
+/// A closed recording of [`choice_protocol`] from `observations`, `Seller`
+/// order `seller`, and the `Placed` to `Got` correlation.
+fn choice_recording(observations: Value, seller: Value) -> Value {
+    recording(
+        observations,
+        json!({"Buyer": [0], "Seller": seller}),
+        json!([{"send": 0, "receive": 1}]),
+    )
+}
+
+/// FR-895-AC-12 (TC-2531): after a `choice`, only the steps of the case
+/// taken are predecessors; `Told` taken in `yes` and `Dropped` of the untaken
+/// `no` never observed, `Note` is enabled.
+#[trace("TC-2531", "FR-895-AC-12")]
+#[test]
+fn a_step_after_a_choice_needs_only_the_taken_case() {
+    let observations = json!([
+        observation("send", "Placed", "Buyer", "m-1"),
+        observation("receive", "Got", "Seller", "m-1"),
+        chosen_yes(),
+        observation("send", "Decide::yes::Ship::Told", "Seller", "m-2"),
+        observation("send", "Note", "Seller", "m-3"),
+    ]);
+    assert_enabled(
+        &choice_protocol(),
+        &choice_recording(observations, json!([1, 2, 3, 4])),
+        "Flow::Main::Note",
+        4,
+    );
+}
+
+/// FR-895-AC-13 (TC-2531): the same recording without `Told`, a step of the
+/// taken case, leaves `Note` `violated`, cause `unexpected`.
+#[trace("TC-2531", "FR-895-AC-13")]
+#[test]
+fn a_step_after_a_choice_is_unexpected_without_the_taken_cases_steps() {
+    let observations = json!([
+        observation("send", "Placed", "Buyer", "m-1"),
+        observation("receive", "Got", "Seller", "m-1"),
+        chosen_yes(),
+        observation("send", "Note", "Seller", "m-3"),
+    ]);
+    assert_unexpected(
+        &choice_protocol(),
+        &choice_recording(observations, json!([1, 2, 3])),
+        "Flow::Main::Note",
+        3,
+    );
+}
+
+/// `Flow` with a `parallel` of two `Buyer` events under `join all` before
+/// `Placed`.
+fn parallel_protocol() -> String {
+    order_protocol(false).replace(
+        "run sequence Main {",
+        "run sequence Main { parallel Both memory sc { branch left sequence Left { event L by Buyer as (l: Ack) { true }; } branch right sequence Right { event R by Buyer as (r: Ack) { true }; } } join all [left, right];",
+    )
+}
+
+/// A closed recording of [`parallel_protocol`], all `Buyer` observations in
+/// array order.
+fn parallel_recording(observations: Value) -> Value {
+    let count = observations.as_array().expect("observations").len();
+    json!({
+        "format": "filament.protocol-recording/1", "protocol": "Flow",
+        "observations": observations,
+        "local_order": {"Buyer": (0..count).collect::<Vec<_>>()},
+        "correlations": [],
+        "closure": {"state": "closed", "premises": [
+            {"kind": "execution", "node": "Flow::Done"},
+            {"kind": "branch", "node": "Flow::Main::Both::left"},
+            {"kind": "branch", "node": "Flow::Main::Both::right"}
+        ]}
+    })
+}
+
+/// A `Buyer` event at `Flow::Main::Both::<branch>::<name>`.
+fn branch_event(branch: &str, body: &str, name: &str) -> Value {
+    json!({"kind": "event", "node": format!("Flow::Main::Both::{branch}::{body}::{name}"),
+           "role": "Buyer", "instance": "w-1", "keys": {}, "record": {"ok": true}})
+}
+
+/// FR-895-AC-14 (TC-2531): after a `parallel` under `join all`, the steps of
+/// every branch are predecessors: `Placed` after `L` and `R` is enabled.
+#[trace("TC-2531", "FR-895-AC-14")]
+#[test]
+fn a_step_after_an_all_join_needs_every_branch() {
+    let observations = json!([
+        branch_event("left", "Left", "L"),
+        branch_event("right", "Right", "R"),
+        observation("send", "Placed", "Buyer", "m-1"),
+    ]);
+    assert_enabled(
+        &parallel_protocol(),
+        &parallel_recording(observations),
+        "Flow::Main::Placed",
+        2,
+    );
+}
+
+/// FR-895-AC-15 (TC-2531): `Placed` after `L` alone, `R` never observed in a
+/// closed recording, is `violated`, cause `unexpected`; and `R` alone is
+/// enabled, since a branch's steps have no order against a sibling branch.
+#[trace("TC-2531", "FR-895-AC-15")]
+#[test]
+fn a_step_after_an_all_join_is_unexpected_without_a_branch_and_branches_are_unordered() {
+    let observations = json!([
+        branch_event("left", "Left", "L"),
+        observation("send", "Placed", "Buyer", "m-1"),
+    ]);
+    assert_unexpected(
+        &parallel_protocol(),
+        &parallel_recording(observations),
+        "Flow::Main::Placed",
+        1,
+    );
+    assert_enabled(
+        &parallel_protocol(),
+        &parallel_recording(json!([branch_event("right", "Right", "R")])),
+        "Flow::Main::Both::right::Right::R",
+        0,
+    );
+}
+
+/// `Flow` whose `Placed`, `Got` and `Decide` run in a `repeat` `Loop` of at
+/// most two iterations.
+fn repeat_protocol() -> String {
+    let mut source = order_protocol(true).replace(
+        "run sequence Main {",
+        "run sequence Main { repeat Loop by Seller visible () max 2 while { true } sequence Body {",
+    );
+    let finish = source.find("finish Done").expect("finish terminal");
+    let close = source[..finish]
+        .rfind(" }")
+        .expect("the main sequence closes");
+    source.replace_range(close..close + 2, " } exhausted sequence Out { } }");
+    source
+}
+
+/// A closed recording of [`repeat_protocol`].
+fn repeat_recording(
+    observations: Value,
+    seller: Value,
+    buyer: Value,
+    correlations: Value,
+) -> Value {
+    json!({
+        "format": "filament.protocol-recording/1", "protocol": "Flow",
+        "observations": observations,
+        "local_order": {"Buyer": buyer, "Seller": seller},
+        "correlations": correlations,
+        "closure": {"state": "closed", "premises": [
+            {"kind": "execution", "node": "Flow::Done"},
+            {"kind": "branch", "node": "Flow::Main::Loop::Body::Decide::no"},
+            {"kind": "branch", "node": "Flow::Main::Loop::Body::Decide::yes"}
+        ]}
+    })
+}
+
+/// An observation at `Flow::Main::Loop::Body::<node>`.
+fn looped(kind: &str, node: &str, role: &str, message: &str) -> Value {
+    json!({"kind": kind, "node": format!("Flow::Main::Loop::Body::{node}"), "role": role,
+           "instance": "w-1",
+           "keys": {"message": message, "delivery": format!("d-{message}")},
+           "record": {"ok": true}})
+}
+
+/// FR-895-AC-16 (TC-2531): in a `repeat`, the second `Got` is enabled by the
+/// second `Placed`.
+#[trace("TC-2531", "FR-895-AC-16")]
+#[test]
+fn an_iteration_is_enabled_by_its_own_earlier_steps() {
+    let observations = json!([
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped("send", "Placed", "Buyer", "m-2"),
+        looped("receive", "Got", "Seller", "m-2"),
+    ]);
+    assert_enabled(
+        &repeat_protocol(),
+        &repeat_recording(
+            observations,
+            json!([1, 3]),
+            json!([0, 2]),
+            json!([{"send": 0, "receive": 1}, {"send": 2, "receive": 3}]),
+        ),
+        "Flow::Main::Loop::Body::Got",
+        3,
+    );
+}
+
+/// FR-895-AC-17 (TC-2531): a second `Got` with no second `Placed` is
+/// `violated`, cause `unexpected`, though the first iteration's `Placed`
+/// precedes it.
+#[trace("TC-2531", "FR-895-AC-17")]
+#[test]
+fn an_earlier_iteration_does_not_enable_a_later_one() {
+    let observations = json!([
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped("receive", "Got", "Seller", "m-2"),
+    ]);
+    assert_unexpected(
+        &repeat_protocol(),
+        &repeat_recording(
+            observations,
+            json!([1, 2]),
+            json!([0]),
+            json!([{"send": 0, "receive": 1}]),
+        ),
+        "Flow::Main::Loop::Body::Got",
+        2,
+    );
+}
+
+/// [`repeat_protocol`] with an event `After` of `Seller` after the `repeat`.
+fn repeat_then_protocol() -> String {
+    let mut source = repeat_protocol();
+    let finish = source.find("finish Done").expect("finish terminal");
+    let close = source[..finish]
+        .rfind(" }")
+        .expect("the main sequence closes");
+    source.insert_str(close, " event After by Seller as (af: Ack) { true };");
+    source
+}
+
+/// The `After` event of [`repeat_then_protocol`].
+fn after() -> Value {
+    json!({"kind": "event", "node": "Flow::Main::After", "role": "Seller",
+           "instance": "w-1", "keys": {}, "record": {"ok": true}})
+}
+
+/// The `Decide` case observation `case` (`yes` or `no`) of `Seller` in the
+/// loop body.
+fn looped_case(case: &str) -> Value {
+    json!({"kind": "case", "node": format!("Flow::Main::Loop::Body::Decide::{case}"),
+           "role": "Seller", "instance": "w-1", "keys": {}})
+}
+
+/// A closed recording of [`repeat_then_protocol`] from `observations`:
+/// `Buyer` sends at `buyer`, `Seller` observations at `seller`, and
+/// correlations `(send, receive)`.
+fn after_recording(
+    observations: Value,
+    buyer: &[usize],
+    seller: &[usize],
+    correlations: &[(usize, usize)],
+) -> Value {
+    repeat_recording(
+        observations,
+        json!(seller),
+        json!(buyer),
+        Value::Array(
+            correlations
+                .iter()
+                .map(|(send, receive)| json!({"send": send, "receive": receive}))
+                .collect(),
+        ),
+    )
+}
+
+/// FR-895-AC-20 (TC-2531): a step after a `repeat` run zero times is enabled,
+/// and one after two iterations is enabled by the last iteration's steps.
+#[trace("TC-2531", "FR-895-AC-20")]
+#[test]
+fn a_step_after_a_repeat_needs_its_last_iteration() {
+    let source = repeat_then_protocol();
+    assert_enabled(
+        &source,
+        &after_recording(json!([after()]), &[], &[0], &[]),
+        "Flow::Main::After",
+        0,
+    );
+    let observations = json!([
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped_case("yes"),
+        looped("send", "Placed", "Buyer", "m-2"),
+        looped("receive", "Got", "Seller", "m-2"),
+        looped_case("yes"),
+        after(),
+    ]);
+    assert_enabled(
+        &source,
+        &after_recording(observations, &[0, 3], &[1, 2, 4, 5, 6], &[(0, 1), (3, 4)]),
+        "Flow::Main::After",
+        6,
+    );
+}
+
+/// FR-895-AC-21 (TC-2531): the second iteration's `Got` missing leaves
+/// `After` `violated`, cause `unexpected`, once closed, though the first
+/// iteration's `Got` precedes it, and `pending` while the closure is open.
+#[trace("TC-2531", "FR-895-AC-21")]
+#[test]
+fn an_earlier_iteration_does_not_enable_a_step_after_the_repeat() {
+    use fsl_analyze::protocol_analysis::recording::{assess_recording, RecordingVerdict};
+    let source = repeat_then_protocol();
+    let observations = json!([
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped_case("yes"),
+        looped_case("yes"),
+        after(),
+    ]);
+    let closed = after_recording(observations, &[0], &[1, 2, 3, 4], &[(0, 1)]);
+    assert_unexpected(&source, &closed, "Flow::Main::After", 4);
+    let mut open = closed;
+    open["closure"] = json!({"state": "open", "premises": []});
+    let assessed =
+        assess_recording(&package_of(&source), open.to_string().as_bytes()).expect("readable");
+    assert_eq!(
+        enabledness(&assessed, "Flow::Main::After", 4).verdict,
+        RecordingVerdict::Pending
+    );
+}
+
+/// FR-895-AC-22 (TC-2531): iterations that take different cases each judge
+/// their own: `yes` in the first iteration and `no` in the last leave `After`
+/// enabled; with the last iteration's `Got` missing it is `violated`.
+#[trace("TC-2531", "FR-895-AC-22")]
+#[test]
+fn iterations_taking_different_cases_each_use_their_own() {
+    let source = repeat_then_protocol();
+    let observations = json!([
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped_case("yes"),
+        looped("send", "Placed", "Buyer", "m-2"),
+        looped("receive", "Got", "Seller", "m-2"),
+        looped_case("no"),
+        after(),
+    ]);
+    assert_enabled(
+        &source,
+        &after_recording(observations, &[0, 3], &[1, 2, 4, 5, 6], &[(0, 1), (3, 4)]),
+        "Flow::Main::After",
+        6,
+    );
+    let without_got = json!([
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped_case("yes"),
+        looped("send", "Placed", "Buyer", "m-2"),
+        looped_case("no"),
+        after(),
+    ]);
+    assert_unexpected(
+        &source,
+        &after_recording(without_got, &[0, 3], &[1, 2, 4, 5], &[(0, 1)]),
+        "Flow::Main::After",
+        5,
+    );
+}
+
+/// [`repeat_then_protocol`] with an event `Shipped` in the `yes` case.
+fn repeat_case_step_protocol() -> String {
+    repeat_then_protocol().replace(
+        "sequence Ship { }",
+        "sequence Ship { event Shipped by Seller as (sh: Ack) { true }; }",
+    )
+}
+
+/// `Shipped` of the loop body's `yes` case.
+fn shipped() -> Value {
+    json!({"kind": "event", "node": "Flow::Main::Loop::Body::Decide::yes::Ship::Shipped",
+           "role": "Seller", "instance": "w-1", "keys": {}, "record": {"ok": true}})
+}
+
+/// FR-895-AC-23 (TC-2531): a step of the case taken in the last iteration is
+/// a predecessor of `After`, and a step of a case taken only in an earlier
+/// iteration is not.
+#[trace("TC-2531", "FR-895-AC-23")]
+#[test]
+fn a_case_step_in_the_last_iteration_precedes_the_step_after_the_repeat() {
+    let source = repeat_case_step_protocol();
+    let first = [
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped_case("yes"),
+        shipped(),
+    ];
+    let second = |case: &str, extra: Vec<Value>| {
+        let mut observations = first.to_vec();
+        observations.extend([
+            looped("send", "Placed", "Buyer", "m-2"),
+            looped("receive", "Got", "Seller", "m-2"),
+            looped_case(case),
+        ]);
+        observations.extend(extra);
+        observations.push(after());
+        observations
+    };
+    let seller = |count: usize| {
+        (0..count)
+            .filter(|index| *index != 0 && *index != 4)
+            .collect::<Vec<_>>()
+    };
+    // `yes` twice, `Shipped` in both: enabled.
+    let both = second("yes", vec![shipped()]);
+    let count = both.len();
+    assert_enabled(
+        &source,
+        &after_recording(json!(both), &[0, 4], &seller(count), &[(0, 1), (4, 5)]),
+        "Flow::Main::After",
+        count - 1,
+    );
+    // `yes` twice, the last `Shipped` missing: violated.
+    let missing = second("yes", vec![]);
+    let count = missing.len();
+    assert_unexpected(
+        &source,
+        &after_recording(json!(missing), &[0, 4], &seller(count), &[(0, 1), (4, 5)]),
+        "Flow::Main::After",
+        count - 1,
+    );
+    // `yes` then `no`: the first iteration's `Shipped` is not required.
+    let other = second("no", vec![]);
+    let count = other.len();
+    assert_enabled(
+        &source,
+        &after_recording(json!(other), &[0, 4], &seller(count), &[(0, 1), (4, 5)]),
+        "Flow::Main::After",
+        count - 1,
+    );
+}
+
+/// [`repeat_then_protocol`] whose `exhausted` path holds an event `X`.
+fn repeat_exhausted_protocol() -> String {
+    repeat_then_protocol().replace(
+        "exhausted sequence Out { }",
+        "exhausted sequence Out { event X by Seller as (x: Ack) { true }; }",
+    )
+}
+
+/// `X` of the `exhausted` path.
+fn exhausted_x() -> Value {
+    json!({"kind": "event", "node": "Flow::Main::Loop::Out::X", "role": "Seller",
+           "instance": "w-1", "keys": {}, "record": {"ok": true}})
+}
+
+/// FR-895-AC-24 (TC-2531): the `exhausted` path is an alternative exit run
+/// once after the last iteration, not part of an iteration: after two
+/// iterations and `X`, `After` and `X` are enabled; `X` without the last
+/// iteration's `Got` is `violated`, cause `unexpected`.
+#[trace("TC-2531", "FR-895-AC-24")]
+#[test]
+fn the_exhausted_path_follows_the_last_iteration_and_precedes_the_step_after() {
+    let source = repeat_exhausted_protocol();
+    let full = json!([
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped_case("yes"),
+        looped("send", "Placed", "Buyer", "m-2"),
+        looped("receive", "Got", "Seller", "m-2"),
+        looped_case("yes"),
+        exhausted_x(),
+        after(),
+    ]);
+    let recording = after_recording(full, &[0, 3], &[1, 2, 4, 5, 6, 7], &[(0, 1), (3, 4)]);
+    assert_enabled(&source, &recording, "Flow::Main::Loop::Out::X", 6);
+    assert_enabled(&source, &recording, "Flow::Main::After", 7);
+    let without_got = json!([
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped_case("yes"),
+        looped("send", "Placed", "Buyer", "m-2"),
+        looped_case("yes"),
+        exhausted_x(),
+    ]);
+    assert_unexpected(
+        &source,
+        &after_recording(without_got, &[0, 3], &[1, 2, 4, 5], &[(0, 1)]),
+        "Flow::Main::Loop::Out::X",
+        5,
+    );
+}
+
+/// [`parallel_protocol`] under `join any`.
+fn any_join_protocol() -> String {
+    parallel_protocol().replace(
+        "join all [left, right];",
+        "join any [left, right] outstanding continue;",
+    )
+}
+
+/// FR-895-AC-25 (TC-2531): after a `parallel` under `join any`, the branches
+/// whose steps were all observed are predecessors, and an unobserved branch
+/// is not: `Placed` after `L` alone is enabled; `L` observed after `Placed`
+/// leaves `Placed` `violated`, cause `unexpected`.
+#[trace("TC-2531", "FR-895-AC-25")]
+#[test]
+fn a_step_after_an_any_join_needs_the_observed_branches() {
+    let source = any_join_protocol();
+    assert_enabled(
+        &source,
+        &parallel_recording(json!([
+            branch_event("left", "Left", "L"),
+            observation("send", "Placed", "Buyer", "m-1"),
+        ])),
+        "Flow::Main::Placed",
+        1,
+    );
+    assert_unexpected(
+        &source,
+        &parallel_recording(json!([
+            observation("send", "Placed", "Buyer", "m-1"),
+            branch_event("left", "Left", "L"),
+        ])),
+        "Flow::Main::Placed",
+        0,
+    );
+}
+
+/// `P` with `Start`, two `await`s `W1` and `W2` after it, and `End`.
+fn await_protocol() -> String {
+    let wait = |name: &str, seen: &str, binder: &str| {
+        format!(
+            "await {name} after Start using t0 clock \"c\" within [0,1] \
+             match event {seen} by w as ({binder}: Boolean) {{ true }}; \
+             then sequence T{name} {{ }} timeout sequence O{name} {{ }} "
+        )
+    };
+    let run = format!(
+        "sequence Main {{ event Start by w as (st: Boolean) {{ true }}; {}{}event End by w as (en: Boolean) {{ true }}; }}",
+        wait("W1", "Seen1", "s1"),
+        wait("W2", "Seen2", "s2"),
+    );
+    crate::fill::contracts("self.v = 0") + &crate::fill::protocol("P", "", &run, "d")
+}
+
+/// A closed recording of [`await_protocol`]: events by `w` in local order.
+fn await_recording(nodes: &[&str]) -> Value {
+    let observations: Vec<Value> = nodes
+        .iter()
+        .map(|node| {
+            json!({"kind": "event", "node": format!("P::Main::{node}"), "role": "w",
+                   "instance": "w-1", "keys": {}, "record": {"ok": true}})
+        })
+        .collect();
+    json!({
+        "format": "filament.protocol-recording/1", "protocol": "P",
+        "observations": observations,
+        "local_order": {"w": (0..nodes.len()).collect::<Vec<_>>()},
+        "correlations": [],
+        "closure": {"state": "closed", "premises": [{"kind": "execution", "node": "P::Done"}]}
+    })
+}
+
+/// FR-895-AC-18 (TC-2531): `await` siblings are unordered and supply no
+/// predecessors: the event matched by `W2` and `End` are enabled with `Start`
+/// observed and `W1`'s match never observed.
+#[trace("TC-2531", "FR-895-AC-18")]
+#[test]
+fn await_siblings_are_not_predecessors_of_each_other() {
+    let source = await_protocol();
+    let recording = await_recording(&["Start", "W2::Seen2", "End"]);
+    assert_enabled(&source, &recording, "P::Main::W2::Seen2", 1);
+    assert_enabled(&source, &recording, "P::Main::End", 2);
+}
+
+/// FR-895-AC-19 (TC-2531): without `Start`, the step before the `await`s,
+/// the event matched by `W2` and `End` are `violated`, cause `unexpected`.
+#[trace("TC-2531", "FR-895-AC-19")]
+#[test]
+fn a_step_after_awaits_still_needs_the_steps_before_them() {
+    let source = await_protocol();
+    let recording = await_recording(&["W2::Seen2", "End"]);
+    assert_unexpected(&source, &recording, "P::Main::W2::Seen2", 0);
+    assert_unexpected(&source, &recording, "P::Main::End", 1);
+}
+
+/// FR-895-AC-26 (TC-2531): incremental prefixes follow the recording's causal
+/// order, never the array position. `After` listed before the second
+/// iteration in the array is a causal successor of it, so no prefix holds
+/// `After` before its last iteration is complete: it is absent from every
+/// prefix but the last, where it is `satisfied`, and no obligation ever
+/// moves from `violated`, or from `satisfied` to `pending`.
+#[trace("TC-2531", "FR-895-AC-26")]
+#[test]
+fn incremental_prefixes_follow_causal_order_so_a_verdict_never_returns_to_pending() {
+    let observations = json!([
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped_case("yes"),
+        after(),
+        looped("send", "Placed", "Buyer", "m-2"),
+        looped("receive", "Got", "Seller", "m-2"),
+        looped_case("yes"),
+    ]);
+    let recording = after_recording(observations, &[0, 4], &[1, 2, 5, 6, 3], &[(0, 1), (4, 5)]);
+    let item = replay_with(
+        "replay-causal-prefixes",
+        &repeat_then_protocol(),
+        &recording,
+        json!({"file": "recording.json", "identity": recording_identity()}),
+        assessed_item("incremental"),
+    )
+    .item(0);
+    let prefixes = item["prefixes"].as_array().expect("prefixes");
+    assert_eq!(prefixes.len(), 7, "{item}");
+    let after_verdicts: Vec<Option<&str>> = prefixes
+        .iter()
+        .map(|prefix| {
+            prefix["obligations"]
+                .as_array()
+                .expect("obligations")
+                .iter()
+                .find(|verdict| {
+                    verdict["obligation"]["kind"] == "enabledness"
+                        && verdict["obligation"]["node"] == "Flow::Main::After"
+                })
+                .map(|verdict| verdict["verdict"].as_str().expect("a verdict"))
+        })
+        .collect();
+    assert_eq!(
+        after_verdicts,
+        [None, None, None, None, None, None, Some("satisfied")],
+        "{item}"
+    );
+    assert_every_verdict_only_advances(prefixes, &[0, 1, 2, 4, 5, 6, 3]);
+    for prefix in &prefixes[..6] {
+        for channel in prefix["obligations"]
+            .as_array()
+            .expect("obligations")
+            .iter()
+            .filter(|entry| entry["obligation"]["kind"] == "channel-premise")
+        {
+            assert_eq!(channel["verdict"], "pending", "{prefix}");
+        }
+    }
+    assert_eq!(
+        prefixes[6]["obligations"], item["obligations"],
+        "the last prefix is the batch assessment"
+    );
+}
+
+/// Every obligation of every prefix keeps its verdict's direction in the
+/// next prefix: `pending` becomes a decision, `satisfied` may become
+/// `violated`, nothing leaves `violated` and nothing returns to `pending`.
+///
+/// `order` lists the recording's observation indices in causal order, so
+/// prefix `k` holds `order[..k]` renumbered by array position. An
+/// enabledness obligation is paired across prefixes by its observation's
+/// original index, so repeated steps (which share one id) are each checked
+/// and a regression cannot be masked by another occurrence becoming decided;
+/// every other obligation is compared per id as a multiset.
+fn assert_every_verdict_only_advances(prefixes: &[Value], order: &[usize]) {
+    let original = |prefix: usize, local: u64| -> usize {
+        let mut kept = order[..=prefix].to_vec();
+        kept.sort_unstable();
+        kept[usize::try_from(local).expect("a local index")]
+    };
+    // (id, original index of an enabledness observation) to its verdict.
+    let keyed = |prefix: usize| {
+        let mut verdicts = std::collections::BTreeMap::new();
+        let mut tally: std::collections::BTreeMap<String, (usize, usize)> =
+            std::collections::BTreeMap::new();
+        for entry in prefixes[prefix]["obligations"]
+            .as_array()
+            .expect("obligations")
+        {
+            let id = entry["obligation"].to_string();
+            let verdict = entry["verdict"].as_str().expect("a verdict").to_owned();
+            if entry["obligation"]["kind"] == "enabledness" {
+                let local = entry["witness"][0].as_u64().expect("the observation");
+                verdicts.insert((id, original(prefix, local)), verdict);
+            } else {
+                let counts = tally.entry(id).or_default();
+                counts.0 += usize::from(verdict == "violated");
+                counts.1 += usize::from(verdict != "pending");
+            }
+        }
+        (verdicts, tally)
+    };
+    for step in 0..prefixes.len().saturating_sub(1) {
+        let ((before, before_tally), (after, after_tally)) = (keyed(step), keyed(step + 1));
+        for (key, was) in &before {
+            let Some(now) = after.get(key) else {
+                continue;
+            };
+            assert!(
+                was != "violated" || now == "violated",
+                "{key:?}: {was} became {now}"
+            );
+            assert!(
+                was != "satisfied" || now != "pending",
+                "{key:?}: {was} became {now}"
+            );
+        }
+        for (id, (violated, decided)) in &before_tally {
+            let Some((next_violated, next_decided)) = after_tally.get(id) else {
+                continue;
+            };
+            assert!(
+                next_violated >= violated && next_decided >= decided,
+                "{id}: violated {violated} -> {next_violated}, decided {decided} -> {next_decided}"
+            );
+        }
+    }
+}
+
+/// The helper pairs the occurrences of a repeated step by observation: a
+/// regressed occurrence is caught even when another occurrence of the same id
+/// becomes decided in the same prefix and keeps the counts equal.
+#[test]
+fn the_monotonicity_check_pairs_occurrences_of_a_repeated_step_by_observation() {
+    let id = json!({"kind": "enabledness", "node": "Flow::Main::Placed", "instance": "w-1"});
+    let first = |verdict: &str| json!({"obligation": id, "verdict": verdict, "witness": [0]});
+    let second = |verdict: &str| json!({"obligation": id, "verdict": verdict, "witness": [1]});
+    let advancing = [
+        json!({"obligations": [first("satisfied")]}),
+        json!({"obligations": [first("satisfied"), second("pending")]}),
+        json!({"obligations": [first("satisfied"), second("violated")]}),
+    ];
+    assert_every_verdict_only_advances(&advancing, &[0, 1, 2]);
+    let masked = std::panic::catch_unwind(|| {
+        let masked = [
+            json!({"obligations": [first("violated")]}),
+            json!({"obligations": [first("violated"), second("pending")]}),
+            json!({"obligations": [first("satisfied"), second("violated")]}),
+        ];
+        assert_every_verdict_only_advances(&masked, &[0, 1, 2]);
+    });
+    assert!(
+        masked.is_err(),
+        "a violated first occurrence turning satisfied is not masked by the second"
+    );
+    let went_back = std::panic::catch_unwind(|| {
+        let went_back = [
+            json!({"obligations": [first("satisfied")]}),
+            json!({"obligations": [first("satisfied"), second("satisfied")]}),
+            json!({"obligations": [first("satisfied"), second("pending")]}),
+        ];
+        assert_every_verdict_only_advances(&went_back, &[0, 1, 2]);
+    });
+    assert!(
+        went_back.is_err(),
+        "a second occurrence going pending fails"
+    );
+}
+
+/// `After`'s enabledness verdict in each prefix, `None` where the prefix has
+/// no such obligation yet.
+fn after_verdicts(prefixes: &[Value]) -> Vec<Option<&str>> {
+    node_verdicts(prefixes, "Flow::Main::After")
+}
+
+/// The enabledness verdict of `node` in each prefix, `None` where the prefix
+/// has no such obligation yet.
+fn node_verdicts<'a>(prefixes: &'a [Value], node: &str) -> Vec<Option<&'a str>> {
+    prefixes
+        .iter()
+        .map(|prefix| {
+            prefix["obligations"]
+                .as_array()
+                .expect("obligations")
+                .iter()
+                .find(|verdict| {
+                    verdict["obligation"]["kind"] == "enabledness"
+                        && verdict["obligation"]["node"] == node
+                })
+                .map(|verdict| verdict["verdict"].as_str().expect("a verdict"))
+        })
+        .collect()
+}
+
+/// FR-895-AC-28 (TC-2531): under `join any … outstanding continue` the other
+/// branch keeps running after the join (ADR-027 ST-7), so a branch counts as
+/// a predecessor only when its steps were observed causally before the step.
+/// `L`, `Placed`, `R` is `satisfied` for `Placed` in batch and from the
+/// second prefix on; `R`, `L`, `Placed` (both branches before) stays
+/// `satisfied`; under `join all`, `L`, `Placed`, `R` is `violated`, cause
+/// `unexpected`.
+#[trace("TC-2531", "FR-895-AC-28")]
+#[test]
+fn a_branch_finishing_after_an_any_join_does_not_violate_the_step() {
+    let left = || branch_event("left", "Left", "L");
+    let right = || branch_event("right", "Right", "R");
+    let placed = || observation("send", "Placed", "Buyer", "m-1");
+    let incremental = |name: &str, source: &str, observations: Value| {
+        let mut recording = parallel_recording(observations);
+        recording["closure"] = json!({"state": "open", "premises": []});
+        replay_with(
+            name,
+            source,
+            &recording,
+            json!({"file": "recording.json", "identity": recording_identity()}),
+            assessed_item("incremental"),
+        )
+        .item(0)
+    };
+    let source = any_join_protocol();
+
+    let late = incremental(
+        "replay-any-join-late-branch",
+        &source,
+        json!([left(), placed(), right()]),
+    );
+    let prefixes = late["prefixes"].as_array().expect("prefixes");
+    assert_eq!(
+        node_verdicts(prefixes, "Flow::Main::Placed"),
+        [None, Some("satisfied"), Some("satisfied")],
+        "{late}"
+    );
+    assert_every_verdict_only_advances(prefixes, &[0, 1, 2]);
+    assert_enabled(
+        &source,
+        &parallel_recording(json!([left(), placed(), right()])),
+        "Flow::Main::Placed",
+        1,
+    );
+
+    let early = incremental(
+        "replay-any-join-both-before",
+        &source,
+        json!([right(), left(), placed()]),
+    );
+    let prefixes = early["prefixes"].as_array().expect("prefixes");
+    assert_eq!(
+        node_verdicts(prefixes, "Flow::Main::Placed"),
+        [None, None, Some("satisfied")],
+        "{early}"
+    );
+    assert_every_verdict_only_advances(prefixes, &[0, 1, 2]);
+
+    assert_unexpected(
+        &parallel_protocol(),
+        &parallel_recording(json!([left(), placed(), right()])),
+        "Flow::Main::Placed",
+        1,
+    );
+}
+
+/// FR-895-AC-27 (TC-2531): an iteration begun concurrently with `After` does
+/// not reopen it. The AC-26 recording with a third `Placed` by `Buyer` after
+/// the second, unordered with `After`, closure `open`, leaves `After`
+/// `satisfied` in the seventh prefix and the eighth: the last iteration is
+/// the one begun causally before `After`.
+#[trace("TC-2531", "FR-895-AC-27")]
+#[test]
+fn an_iteration_begun_concurrently_with_the_step_does_not_reopen_it() {
+    let observations = json!([
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped_case("yes"),
+        after(),
+        looped("send", "Placed", "Buyer", "m-2"),
+        looped("receive", "Got", "Seller", "m-2"),
+        looped_case("yes"),
+        looped("send", "Placed", "Buyer", "m-3"),
+    ]);
+    let mut recording = after_recording(
+        observations,
+        &[0, 4, 7],
+        &[1, 2, 5, 6, 3],
+        &[(0, 1), (4, 5)],
+    );
+    recording["closure"] = json!({"state": "open", "premises": []});
+    let item = replay_with(
+        "replay-concurrent-iteration",
+        &repeat_then_protocol(),
+        &recording,
+        json!({"file": "recording.json", "identity": recording_identity()}),
+        assessed_item("incremental"),
+    )
+    .item(0);
+    let prefixes = item["prefixes"].as_array().expect("prefixes");
+    assert_eq!(prefixes.len(), 8, "{item}");
+    assert_eq!(
+        after_verdicts(prefixes),
+        [
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("satisfied"),
+            Some("satisfied")
+        ],
+        "{item}"
+    );
+    assert_every_verdict_only_advances(prefixes, &[0, 1, 2, 4, 5, 6, 3, 7]);
+    assert_eq!(prefixes[7]["obligations"], item["obligations"], "{item}");
 }
 
 // ---- FR-1032: the recording's document identity ---------------------------
 
 /// FR-895-AC-7's closed, conforming recording of `Flow`.
 fn conforming_recording() -> Value {
-    let mut finish = observation("finish", "Done", "Buyer", "m-0");
-    finish["node"] = json!("Flow::Done");
     recording(
         json!([
             observation("receive", "Got", "Seller", "m-1"),
             observation("send", "Placed", "Buyer", "m-1"),
-            observation("event", "Decide::yes::Ship", "Seller", "m-0"),
-            finish,
+            chosen_yes(),
+            finished(),
         ]),
-        json!({"Seller": [0, 2], "Buyer": [1, 3]}),
+        json!({"Seller": [0, 2, 3], "Buyer": [1]}),
         json!([{"send": 1, "receive": 0}]),
     )
 }
@@ -288,7 +1607,6 @@ fn flow_item(recording: Value) -> Value {
 #[trace("FSpec-TC-2001", "FSpec-FR-821-AC-1")]
 #[trace("FSpec-TC-2001", "FSpec-FR-821-AC-2")]
 #[test]
-#[ignore = "QSL-2885: the recording is refused invalid_runtime_input because its empty closure premises omit Flow::Done and Flow::Main::Decide::{no,yes}, before assessment"]
 fn a_recording_is_bound_by_its_stated_or_declared_identity() {
     let stated = replay(
         "replay-identity-stated",

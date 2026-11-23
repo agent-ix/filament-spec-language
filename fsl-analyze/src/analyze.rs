@@ -3752,6 +3752,7 @@ mod tests {
             }]),
             recording: None,
             replay: None,
+            prefixes: None,
         };
         let document = analyze_document_routed_with_conformance(
             &[terminal],

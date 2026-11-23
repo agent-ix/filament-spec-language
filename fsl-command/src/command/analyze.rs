@@ -1539,6 +1539,12 @@ pub(super) fn validate_items(items: Option<&[ItemSelection]>) -> Result<()> {
                 "recording is only valid on a global-conformance item",
             ));
         }
+        if item.assessment.is_some() && item.recording.is_none() {
+            return Err(invalid(
+                &format!("/items/{position}/assessment"),
+                "assessment requires a recording",
+            ));
+        }
         if let Some(population) = &item.population {
             if item.kind.as_deref()
                 != Some(fsl_semantics::check::Capability::GlobalConformance.to_wire())

@@ -726,6 +726,7 @@ fn claim_item<F: CompositionFront>(
             traces: None,
             recording: None,
             population: None,
+            assessment: None,
             backend_options,
             protocol_analysis: None,
         },

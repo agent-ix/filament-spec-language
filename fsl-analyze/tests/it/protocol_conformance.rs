@@ -315,10 +315,21 @@ fn only_a_closed_recording_closure_gives_complete_success() {
             .iter()
             .filter(|entry| entry["verdict"] != "pending")
             .filter(|entry| entry["obligation"]["kind"] != "closure")
+            .filter(|entry| entry["obligation"]["kind"] != "channel-premise")
             .cloned()
             .collect()
     };
     assert_eq!(decided(&open), decided(&closed));
+    // A channel premise is never satisfied by the absence of a violation: it
+    // is `pending` while the closure is open and `satisfied` once closed.
+    let premise = |item: &Value| {
+        obligations(item)
+            .iter()
+            .find(|entry| entry["obligation"]["kind"] == "channel-premise")
+            .map(|entry| entry["verdict"].clone())
+    };
+    assert_eq!(premise(&open), Some(json!("pending")));
+    assert_eq!(premise(&closed), Some(json!("satisfied")));
     let contradicted = run("contradicted");
     assert_eq!(label(&contradicted), "inconclusive");
     assert_eq!(contradicted["global"]["cause"], "open-history");
