@@ -1378,7 +1378,15 @@ fn elapsed_quantile_altered_upper_value_is_rejected() {
 #[test]
 fn elapsed_quantile_tight_search_refutes() {
     let world = quantiles();
-    assert!(is_refuted(&settle(&world, "Tight")));
+    let record = settle(&world, "Tight");
+    assert!(is_refuted(&record), "{record:#?}");
+    let mass = record
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("the refutation carries its witness")
+        .mass()
+        .clone();
+    assert_eq!(mass, ratio(9, 10));
 }
 
 /// FR-877-AC-2: the refutation of `<= 1 ms` is a path set the checker prices

@@ -202,22 +202,38 @@ fn tight_policy(product: &ProbProduct, values: &[Rational]) -> Option<Vec<Option
 /// attaining the transform's extremum, over the decided measures the refutation
 /// counts (`M > c` or censored for `<= c`, `M < c` for `>= c`). The checker's
 /// own replay of the same product must reproduce it.
-#[allow(clippy::too_many_arguments)]
-fn refute(
-    system: &ModelSystem<'_>,
-    claim: &fsl_semantics::check::CheckedProbabilisticClaim,
-    product: &ProbProduct,
-    values: &[Rational],
+/// What `refute` reads: the claim over the built product and its transform values.
+struct Refutation<'a> {
+    system: &'a ModelSystem<'a>,
+    claim: &'a fsl_semantics::check::CheckedProbabilisticClaim,
+    product: &'a ProbProduct,
+    values: &'a [Rational],
     start: crate::exact_probabilistic::ProbStateId,
-    q: &Rational,
+    q: &'a Rational,
     at_least: bool,
-    binding: Option<&filament_exact::ObjectReference>,
-    limits: &crate::exact_probabilistic::ExactProbLimits,
-    cancel: &Cancel,
-    subject: SubjectLimits<'_>,
-    tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
-) -> EngineReport {
+    binding: Option<&'a filament_exact::ObjectReference>,
+    limits: &'a crate::exact_probabilistic::ExactProbLimits,
+    cancel: &'a Cancel,
+    subject: SubjectLimits<'a>,
+    tamper_witness: Option<&'a dyn Fn(&mut ProbabilisticCounterexample)>,
+}
+
+fn refute(request: Refutation<'_>) -> EngineReport {
     use crate::exact_probabilistic::{produce_quantile_witness, WitnessError, WitnessScope};
+    let Refutation {
+        system,
+        claim,
+        product,
+        values,
+        start,
+        q,
+        at_least,
+        binding,
+        limits,
+        cancel,
+        subject,
+        tamper_witness,
+    } = request;
     let Some(policy) = tight_policy(product, values) else {
         return not_yet();
     };
@@ -233,22 +249,32 @@ fn refute(
     } else {
         MonitorVerdict::Reject
     };
+    let measure = |state: &crate::exact_probabilistic::ProbKey| {
+        matches!(
+            state.monitor,
+            Some(MonitorState::Measure {
+                phase: MeasurePhase::Complete | MeasurePhase::Censored,
+                ..
+            })
+        )
+    };
+    // The replay prices against the mass of decided measures, so a run that
+    // ends in a decided state that is no measure's end is a nonactivation the
+    // producer must leave out of the mass too.
+    let never = product
+        .states
+        .iter()
+        .enumerate()
+        .map(|(index, state)| decided.contains_key(&index) && !measure(state))
+        .collect::<Vec<_>>();
     let accepting = product
         .states
         .iter()
         .enumerate()
         .map(|(index, state)| {
-            matches!(
-                state.monitor,
-                Some(MonitorState::Measure {
-                    phase: MeasurePhase::Complete | MeasurePhase::Censored,
-                    ..
-                })
-            ) && decided.get(&index) == Some(&counted)
+            never[index] || (measure(state) && decided.get(&index) == Some(&counted))
         })
         .collect::<Vec<_>>();
-    // Every decided measure is activated, so no run is a nonactivation.
-    let never = vec![false; product.states.len()];
     let produced = match produce_quantile_witness(
         product,
         &policy,
@@ -384,20 +410,20 @@ pub(super) fn run(
             Ok(binding) => binding,
             Err(_) => return not_yet(),
         };
-        return refute(
-            &system,
+        return refute(Refutation {
+            system: &system,
             claim,
-            &product,
-            &values,
-            *start,
+            product: &product,
+            values: &values,
+            start: *start,
             q,
             at_least,
-            binding.as_ref().map(|binding| &binding.reference),
-            &limits,
+            binding: binding.as_ref().map(|binding| &binding.reference),
+            limits: &limits,
             cancel,
             subject,
             tamper_witness,
-        );
+        });
     }
     let values = values
         .into_iter()
