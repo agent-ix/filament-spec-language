@@ -324,7 +324,7 @@ fn append_operation_contract(
     let key = operation_contract_key(
         claim,
         &checked_occurrence,
-        source.result_bound().node(),
+        &source.result_bound().node(),
         source.requirements().invariant_clause(),
         operation_key.as_ref(),
         &model_object_keys,
