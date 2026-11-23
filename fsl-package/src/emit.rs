@@ -488,6 +488,26 @@ fn output_limit(bound: u64, actual: u128) -> fsl_foundation::diagnostic::LimitEx
     )
 }
 
+/// A sink that keeps no bytes: the writer's own byte ceiling does the metering.
+struct Discard;
+
+impl quire_canonical::Sink for Discard {
+    fn write_bytes(&mut self, _bytes: &[u8]) -> Result<(), quire_canonical::Error> {
+        Ok(())
+    }
+}
+
+/// Charge the canonical bytes of `source_map` against `emit.output_bytes`,
+/// stopping at the first byte past the bound (FR-264 Behavior 5).
+fn charge_source_map(
+    source_map: &[CheckedSourceMapEntry],
+    limits: EmitLimits,
+) -> Result<(), EmitRefusal> {
+    quire_canonical::encode(&mut Discard, source_map, limits.canonical())
+        .map(drop)
+        .map_err(EmitRefusal::from)
+}
+
 /// Give an emission-size refusal the first checked source occurrence. The
 /// byte ceiling is charged while the canonical artifact is written, so the
 /// encoder itself has no source offset to report; the package's first
@@ -7810,6 +7830,10 @@ fn emit_package_inner(
         &mut schedulability_claim_rows,
         &foreign,
     )?;
+    // The source map is complete and is written verbatim into the package, so
+    // its canonical bytes are a floor on the package's. Charge them before the
+    // typed rows below are built, rather than after the final encode.
+    charge_source_map(&source_map, limits)?;
     let producer_node_ids =
         producer_node_ids_after_timed_rekey(&emitted_node_ids, &timed_substitutions)?;
     let WrittenTemporalRows {

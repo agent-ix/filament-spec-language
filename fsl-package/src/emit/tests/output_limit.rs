@@ -289,3 +289,47 @@ fn a_package_with_body_location_rows_is_emitted_at_its_exact_length() {
     assert_eq!(limit.configured_bound(), n - 1);
     assert!(limit.actual() > u128::from(n - 1));
 }
+
+/// QSL-2849: the source map is written verbatim, so a bound below its bytes
+/// refuses before any typed row is built. Allocations are counted, not time:
+/// a refusal the source map causes costs the same allocations at bound 0 and
+/// bound 1, and far fewer than a refusal only the final encode can cause.
+#[trace("TC-738", "FR-264-AC-6")]
+#[test]
+fn a_bound_below_the_source_map_refuses_before_the_typed_rows_are_built() {
+    let package = nested_not_package(1_000);
+    let bytes = u64::try_from(emitted_byte_count_of(&package)).expect("a fixture length");
+
+    let allocations = |bound: u64| {
+        let mut outcome = None;
+        let info = allocation_counter::measure(|| {
+            outcome = Some(emitted_at(&package, bound));
+        });
+        let refusal = outcome
+            .expect("emission ran")
+            .expect_err("a bound below N refuses");
+        let limit = limit_of(refusal);
+        assert_eq!(limit.configured_bound(), bound);
+        assert_eq!(limit.actual(), u128::from(bound) + 1);
+        info.count_total
+    };
+    // Initialize the measurement machinery before observing the emitter.
+    let _ = allocation_counter::measure(|| {});
+
+    let early = allocations(0);
+    assert_eq!(allocations(1), early, "both refuse at the same point");
+    let late = allocations(bytes - 1);
+    eprintln!("early={early} late={late}");
+    assert!(
+        early.saturating_mul(2) < late,
+        "an early refusal skips the typed rows: {early} against {late}"
+    );
+}
+
+fn emitted_byte_count_of(package: &CheckedPackage) -> usize {
+    crate::emit::emit_checked(package, EmitLimits::new(u64::MAX))
+        .expect("a raised output limit emits")
+        .package()
+        .bytes()
+        .len()
+}

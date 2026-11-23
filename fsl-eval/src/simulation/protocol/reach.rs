@@ -177,6 +177,11 @@ struct Node<S, T> {
     steps: Vec<(T, usize)>,
 }
 
+/// The states each worker expands between two admissions: the most work done
+/// past the state that crosses `max_states`, and the most successor sets held
+/// unadmitted, per worker.
+const EXPANSIONS_PER_WORKER: usize = 64;
+
 /// The breadth-first search behind [`ProtocolSystem::reachable`] over any
 /// state and transition type: `initial` gives the initial states with their
 /// keys and `expand` a state's successors in admission order. Returns the
@@ -221,14 +226,20 @@ where
         let (key, state) = entry?;
         admit(state, key, &mut nodes, &mut frontier)?;
     }
+    // A level is expanded and admitted a chunk at a time, so a level that
+    // overruns `max_states` refuses within one chunk of the state that
+    // crosses the budget rather than after the whole level is expanded.
+    let chunk = worker_limit.get().saturating_mul(EXPANSIONS_PER_WORKER);
     while !frontier.is_empty() {
         let level = std::mem::take(&mut frontier);
-        let (expanded, used) = expand_level(&expand, &nodes, &level, worker_limit);
-        workers = workers.max(used);
-        for (at, successors) in level.into_iter().zip(expanded) {
-            for (transition, state, key) in successors? {
-                let next = admit(state, key, &mut nodes, &mut frontier)?;
-                nodes[at].steps.push((transition, next));
+        for positions in level.chunks(chunk) {
+            let (expanded, used) = expand_level(&expand, &nodes, positions, worker_limit);
+            workers = workers.max(used);
+            for (&at, successors) in positions.iter().zip(expanded) {
+                for (transition, state, key) in successors? {
+                    let next = admit(state, key, &mut nodes, &mut frontier)?;
+                    nodes[at].steps.push((transition, next));
+                }
             }
         }
     }
@@ -516,6 +527,51 @@ mod tests {
                 "initial".to_owned()
             )))
         );
+    }
+
+    /// QSL-2849: a level that overruns `max_states` is refused within one
+    /// chunk of the state that crosses the budget, not after the whole level
+    /// is expanded. The expansions are counted, not timed.
+    #[trace("FR-126-AC-23")]
+    #[test]
+    fn a_level_over_the_state_budget_refuses_within_one_chunk_of_expansions() {
+        const LEVEL: u64 = 1_000;
+        const BUDGET: usize = 1_500;
+        // State 0 has `LEVEL` children; each child has one new child of its
+        // own, so child `i` is the state whose successor is the 500th past
+        // the 1,001 admitted by the first level.
+        let successors = |state: &u64| {
+            let next: Vec<u64> = match *state {
+                0 => (1..=LEVEL).collect(),
+                child if child <= LEVEL => vec![LEVEL + child],
+                _ => Vec::new(),
+            };
+            Ok(next
+                .into_iter()
+                .map(|next| (next, next, key(next)))
+                .collect())
+        };
+        for worker_limit in [1, 2, 4, 8] {
+            let expansions = AtomicUsize::new(0);
+            let counted = |state: &u64| {
+                expansions.fetch_add(1, Ordering::Relaxed);
+                successors(state)
+            };
+            assert_eq!(
+                search(initial(), counted, workers(worker_limit), BUDGET).err(),
+                Some(ReachRefusal::Limit(Limit::States(BUDGET)))
+            );
+            // The budget is crossed by the 500th level state's successor.
+            let crossing = 500;
+            let chunk = worker_limit * EXPANSIONS_PER_WORKER;
+            let expected = 1 + crossing.div_ceil(chunk) * chunk;
+            assert_eq!(
+                expansions.load(Ordering::Relaxed),
+                expected,
+                "{worker_limit} workers"
+            );
+            assert!(expected < 1 + LEVEL as usize, "the level is not expanded whole");
+        }
     }
 
     /// A worker's panic reaches the caller with its own payload.
