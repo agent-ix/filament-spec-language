@@ -114,6 +114,7 @@ fn request(with_dependency: bool) -> ReplayRequestWire {
         program.as_bytes(),
         documents.iter().map(Vec::as_slice),
         &dependencies,
+        &fsl_replay::RequestClocks::default(),
         &selection,
     )
     .expect("actual source compilation issues the function site");

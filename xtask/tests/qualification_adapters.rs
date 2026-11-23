@@ -297,6 +297,7 @@ fn replay_fixture_source(source: &str) -> Fixture {
         source.as_bytes(),
         [],
         &fsl_replay::DependencyInput::default(),
+        &fsl_replay::RequestClocks::default(),
         &fsl_replay::QualifiedName::new(vec![fsl_replay::Identifier::new("negative").unwrap()])
             .unwrap(),
     )
@@ -1058,6 +1059,7 @@ fn genuine_witness_replay_retains_record_absence_regions_and_disagreement() {
         undefined_source.as_bytes(),
         [],
         &fsl_replay::DependencyInput::default(),
+        &fsl_replay::RequestClocks::default(),
         &fsl_replay::QualifiedName::new(vec![fsl_replay::Identifier::new("negative").unwrap()])
             .unwrap(),
     )

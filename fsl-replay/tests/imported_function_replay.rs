@@ -11,7 +11,7 @@ use fsl_replay::{
     call_site, replay, CallSite, CanonicalAssignment, Code, DependencyEntryWire, DependencyInput,
     EnvironmentLabels, EvaluatedValue, FunctionSite, Identifier, ImportedFunctionName,
     ImportedFunctionSite, InputArmResult, InputSettlement, LibraryName, ObjectEnvironmentRef,
-    QualifiedName, ReplayLimits, ReplayRefusal, ReplayRequestWire, ReplayResult, ReplaySource,
+    QualifiedName, ReplayLimits, RequestClocks, ReplayRefusal, ReplayRequestWire, ReplayResult, ReplaySource,
     RequestTargetWire, SourceIdentity, StateEnvironment, SuppliedLibrary, WitnessValue,
 };
 use ix_trace_rs::trace;
@@ -82,6 +82,16 @@ fn imported(
     libraries: Vec<SuppliedLibrary>,
     name: &str,
 ) -> CallSite<ImportedFunctionSite> {
+    imported_under(unit, libraries, name, &RequestClocks::default())
+}
+
+/// [`imported`] compiled under `clocks` (FR-121, FR-640).
+fn imported_under(
+    unit: &str,
+    libraries: Vec<SuppliedLibrary>,
+    name: &str,
+    clocks: &RequestClocks,
+) -> CallSite<ImportedFunctionSite> {
     call_site(
         SourceIdentity::new("a", "u"),
         "fixture".to_owned(),
@@ -89,6 +99,7 @@ fn imported(
         unit.as_bytes(),
         [],
         &DependencyInput::new(libraries).expect("a dependency input"),
+        clocks,
         &ImportedFunctionName {
             library: lib("test/units"),
             function: id(name),
@@ -106,6 +117,7 @@ fn own(unit: &str, libraries: Vec<SuppliedLibrary>, name: &str) -> CallSite<Func
         unit.as_bytes(),
         [],
         &DependencyInput::new(libraries).expect("a dependency input"),
+        &RequestClocks::default(),
         &function(name),
     )
     .unwrap_or_else(|refusal| panic!("{name}: {refusal}"))
@@ -579,8 +591,8 @@ fn supplied_dependency_internal_lists_reach_the_library_semantic_owner() {
 /// program's call of the library function recompiles under the clocks the
 /// proof ran under and gives the same value as a library with no clause.
 #[trace("FR-640-AC-8", "FR-640-AC-9")]
+#[trace("TC-444", "FR-121-AC-38")]
 #[test]
-#[ignore = "QSL-2901: replay still refuses a library whose bounded temporal rule `Late` has no selected clock configuration"]
 fn a_replay_recompiles_a_library_that_uses_its_own_clock() {
     let clocked = library(
         "test/units",
@@ -595,7 +607,14 @@ fn a_replay_recompiles_a_library_that_uses_its_own_clock() {
     );
     let unit = unit_source("test/units", "u", UNIT_BODY);
     let libraries = [clocked];
-    let big = imported(&unit, libraries.to_vec(), "big");
+    let clocks = RequestClocks::new(BTreeMap::from([(
+        "plant-ms".to_owned(),
+        filament_contract_model::ClockConfiguration::TimestampedEvent {
+            timestamp_unit: "ms".into(),
+        },
+    )]))
+    .expect("a well-formed clock");
+    let big = imported_under(&unit, libraries.to_vec(), "big", &clocks);
     let located = Located {
         package: big.package.clone(),
         site: big.site.function.clone(),

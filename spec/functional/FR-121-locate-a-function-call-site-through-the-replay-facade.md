@@ -111,6 +111,15 @@ site from text.
   documents of its byte provision.
 - `dependencies`: the `DependencyInput` of supplied libraries (ADR-015
   D-1), built by `DependencyInput::new`.
+- `clocks`: the `RequestClocks` (FR-640) the unit and its libraries compile under,
+  keyed by clock name. A `temporal` clause of the unit or of a library on a
+  clock whose profile needs a configuration is compiled with the member of
+  that name, so the located package carries the `temporal_bindings` rows a
+  replay recompiles under (FR-640-AC-8). An empty `clocks` selects nothing:
+  a clause that needs a configuration then refuses with the emitter's
+  `MissingTemporalClockSelection`, as before, and a unit with no such clause
+  compiles as it does without the parameter. A member no declaration reads is
+  refused `unused-clock-selection` (FR-640-AC-9).
 - `selection`: a `QualifiedName` naming a function, an `OperationName`
   naming an operation `M::T::op` as model alias, owner and operation
   identifiers, the owner `T` an object type, a process or a state machine
@@ -465,6 +474,7 @@ site from text.
 | FR-121-AC-35 | For the AC-32 unit, `{test/other, big}` with `test/other` also supplied but imported by no `import`, `{test/absent, big}` naming no supplied library, and, for a unit importing only `test/wrap` whose source imports `test/units`, `{test/units, big}` (a transitive-only library) each refuse `CallSiteRefusal::UnknownImport`, pairing the `ImportedFunctionName` with the unit's compiled package's own `package_id`, with code `missing_import` and a message leading with `missing_import/missing-selection`; each maps by `TerminalValue::from_call_site_refusal` to `Declined` with `InvalidInput` and its code. | Test (TC-516) |
 | FR-121-AC-36 | For the AC-32 unit, `{test/units, nope}` refuses `CallSiteRefusal::UnknownImportedFunction` (code `missing_declaration`, message leading with `missing_declaration/missing-name`), pairing the `ImportedFunctionName` with `test/units`'s `package_id`. With `test/units` also declaring a record `R` and `function first using v(r: R): Boolean pure { true }`, `{test/units, first}` refuses `CallSiteRefusal::NotImportable` (code `ill_typed`, message leading with `ill_typed/operator-ineligible`), paired with `test/units`'s `package_id`. | Test (TC-516) |
 | FR-121-AC-37 | For FR-577-AC-3's unit (the bank withdrawal postcondition with no precondition), `call_site` refuses `CallSiteRefusal::Compile` whose `region` is `Some`, names the unit's source and spans exactly the byte offsets of the text `pre(self.balance) - amount`, and whose `code` is `undefined_expression`. | Test (TC-1416) |
+| FR-121-AC-38 | `call_site` over a program that imports a library whose `temporal` clause `Late` writes clock `plant-ms`, with `clocks` holding the member `plant-ms`, returns the site of a library function and a package whose `temporal_bindings` hold the `plant-ms` row; a `replay` of that site recompiles under those rows and gives the function's value; with an empty `clocks`, `call_site` refuses `MissingTemporalClockSelection` naming `Late`. | Test (TC-444) |
 
 ## Dependencies
 
