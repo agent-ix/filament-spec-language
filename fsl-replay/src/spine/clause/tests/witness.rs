@@ -591,9 +591,12 @@ fn assert_snapshot_refusal(
         report.disposition.stage(),
         crate::spine::ClauseRunStage::Admit
     );
-    let crate::spine::ClauseDisposition::Admit(
-        fsl_semantics::model::observation::AdmissionFailure::Refused(record),
-    ) = &report.disposition
+    // A current snapshot refuses as `SnapshotAdmission`, which keeps the
+    // document labels for FR-663's locus.
+    let crate::spine::ClauseDisposition::SnapshotAdmission {
+        failure: fsl_semantics::model::observation::AdmissionFailure::Refused(record),
+        ..
+    } = &report.disposition
     else {
         panic!(
             "expected the {cause} snapshot refusal, got {:?}",
@@ -628,8 +631,8 @@ fn assert_snapshot_refusal(
 /// FR-106-AC-3: admission items identify the object, member and source JSON
 /// pointer for snapshot defects; a valid snapshot has no admission item.
 #[trace("TC-465", "FR-106-AC-3")]
+#[trace("TC-465", "FR-106-AC-82")]
 #[test]
-#[ignore = "QSL-2899: the missing-member snapshot refusal for the ConfigVersion fixture is not produced as the test expects; admission refuses with invalid_runtime_input/missing-member at a different member and path"]
 fn snapshot_admission_refusal_witnesses_name_object_member_and_path() {
     assert_snapshot_refusal(
         "missing-member",
