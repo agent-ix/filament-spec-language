@@ -870,3 +870,167 @@ fn an_exact_engine_value_cannot_settle_refuted_after_bounded_replay_disagrees() 
         assert!(record.exact_probabilistic.is_none());
     }
 }
+
+#[trace("TC-3196", "FR-202-AC-40")]
+#[test]
+fn an_unwindowed_atom_claim_replays_exactly_as_eventually_at_horizon_zero() {
+    let mut outcomes = Vec::new();
+    for spelling in ["holds(m.delivered)", "eventually[0,0] holds(m.delivered)"] {
+        let claims = format!(
+            "probabilistic AtLeast using ev on M over (m: M::Msg) under every scheduler on origin {{ probability >= 0.5 [ {spelling} ] }}\n\
+             probabilistic AtMost using ev on M over (m: M::Msg) under every scheduler on origin {{ probability <= 0.5 [ {spelling} ] }}"
+        );
+        let tails = World::new(&model(&claims));
+        let mut heads_model = model(&claims);
+        heads_model.initial["delivered"] = serde_json::json!({"boolean": true});
+        let heads = World::new(&heads_model);
+
+        // Step 1: the tails state rejects at position 0.
+        let witness = evidence(&tails, "AtLeast");
+        assert_eq!(witness.paths.len(), 1);
+        assert!(witness.paths[0].steps.is_empty());
+        assert!(witness.scheduler.is_empty());
+        let refuted = mass(&tails, &witness);
+        assert_eq!(refuted, ratio(1, 1));
+        assert_eq!(mass(&tails, &witness), refuted);
+
+        // Step 2: the same empty path, rebuilt for the opposite claim, is parity.
+        let mut opposite = witness.clone();
+        opposite.item = fsl_replay::probabilistic_claim_identity(tails.claim("AtMost")).unwrap();
+        rekey(&tails, "AtMost", &mut opposite);
+        assert!(matches!(
+            replay(&tails, &opposite, &ExactProbLimits::default(), &Cancel::new()),
+            Ok(ProbabilityWitnessReplay::Parity)
+        ));
+
+        // Step 3: the heads state offered over the tails subject is refused.
+        let accepting = evidence(&heads, "AtMost");
+        let mut forged = witness.clone();
+        forged.initial = accepting.initial.clone();
+        forged.initial_key = accepting.initial_key.clone();
+        no_token(&tails, &forged);
+
+        // Step 4: the heads fixture refutes the at-most claim with an empty path.
+        assert!(accepting.paths[0].steps.is_empty());
+        let heads_mass = mass(&heads, &accepting);
+        assert_eq!(heads_mass, ratio(1, 1));
+        outcomes.push((refuted, heads_mass));
+    }
+    assert_eq!(outcomes[0], outcomes[1]);
+}
+
+fn proof_document(world: &World, claim: &str) -> Vec<u8> {
+    let records = analyze_items(
+        &Engines::fsl().unwrap(),
+        vec![exact_probabilistic_item(
+            RequestIndex::new(0),
+            world.request(claim, ModelCheckLimits::default()),
+        )],
+        &Cancel::new(),
+    );
+    let terminal = records[0].terminal().expect("a settled claim");
+    assert!(
+        matches!(terminal.value(), TerminalValue::Proved { .. }),
+        "{:?}",
+        terminal.value()
+    );
+    terminal
+        .exact_certificate_document()
+        .expect("a proof carries its document")
+        .to_vec()
+}
+
+fn check_document(
+    world: &World,
+    claim: &str,
+    bytes: &[u8],
+) -> fsl_replay::ExactProbabilityCertificateCheck {
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let item = fsl_replay::probabilistic_claim_identity(world.claim(claim)).unwrap();
+    let limits = fsl_replay::ProbabilityDocumentLimits::for_exact(
+        &ExactProbLimits::default(),
+        fsl_replay::AccountingLimits::default().0,
+    );
+    fsl_replay::check_probability_certificate_document(
+        &system,
+        world.package.graph().probabilistic_model().claims(),
+        &item,
+        bytes,
+        limits,
+        &Cancel::new(),
+    )
+    .unwrap()
+}
+
+#[trace("TC-3195", "FR-201-AC-57")]
+#[test]
+fn an_unwindowed_atom_claim_is_proved_exactly_as_eventually_at_horizon_zero() {
+    // (initial value, claim operator, expected value, expected side, targets)
+    for (delivered, operator, value, at_least, targets) in [
+        (false, "<=", 0_i64, false, 0_usize),
+        (true, ">=", 1, true, 1),
+    ] {
+        let mut shapes = Vec::new();
+        for spelling in ["holds(m.delivered)", "eventually[0,0] holds(m.delivered)"] {
+            let claims = format!(
+                "probabilistic Atom using ev on M over (m: M::Msg) under every scheduler on origin {{ probability {operator} 0.5 [ {spelling} ] }}"
+            );
+            let mut fixture = model(&claims);
+            fixture.initial["delivered"] = serde_json::json!({"boolean": delivered});
+            let world = World::new(&fixture);
+            let bytes = proof_document(&world, "Atom");
+            let document: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            assert_eq!(
+                document["objective"]["profile"],
+                "filament.probability-objective/reachability/v1"
+            );
+            assert_eq!(document["kind"], "exact");
+            assert_eq!(
+                document["objective"]["targets"].as_array().unwrap().len(),
+                targets
+            );
+            let values = document["values"].as_array().unwrap();
+            assert_eq!(values.len(), 1);
+            assert_eq!(
+                values[0]["value"],
+                serde_json::json!({"numerator": value.to_string(), "denominator": "1"})
+            );
+            assert_eq!(document["ranking"].as_array().unwrap()[0]["rank"], 0);
+            let fsl_replay::ExactProbabilityCertificateCheck::Accepted(accepted) =
+                check_document(&world, "Atom", &bytes)
+            else {
+                panic!("the atom document is accepted");
+            };
+            assert_eq!(accepted.value(), &ratio(value, 1));
+            assert_eq!(
+                accepted.side(),
+                if at_least {
+                    fsl_replay::ProbabilityBoundSide::AtLeast
+                } else {
+                    fsl_replay::ProbabilityBoundSide::AtMost
+                }
+            );
+            // The initial value replaced by 1/2 fails at the initial key.
+            let mut changed = document.clone();
+            changed["values"][0]["value"] =
+                serde_json::json!({"numerator": "1", "denominator": "2"});
+            let changed = serde_json::to_vec(&changed).unwrap();
+            let rejected = check_document(&world, "Atom", &changed);
+            let fsl_replay::ExactProbabilityCertificateCheck::Rejected(rejection) = rejected
+            else {
+                panic!("a changed initial value is rejected");
+            };
+            assert_eq!(
+                rejection.rule,
+                fsl_replay::ProbabilityCertificateRule::InequalityFails
+            );
+            shapes.push((
+                document["objective"]["optimization"].clone(),
+                document["objective"]["targets"].as_array().unwrap().len(),
+                values[0]["value"].clone(),
+                document["ranking"][0]["rank"].clone(),
+            ));
+        }
+        assert_eq!(shapes[0], shapes[1]);
+    }
+}
