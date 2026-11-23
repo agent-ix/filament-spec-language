@@ -282,6 +282,81 @@ fn rational_bits_limit(
     )
 }
 
+/// How a failed claim-binding, claim-identity or checker-graph step settles: a
+/// cancel or a reached state or edge budget names itself; the forms the bounded
+/// graph does not build (a cycle, a multi-state draw, several initial states or
+/// bindings, another claim form) are `not-yet-implemented`; the rest are the
+/// engine's own faults.
+fn graph_failure(
+    error: ExactProbabilityGraphError,
+    limits: &crate::exact_probabilistic::ExactProbLimits,
+    subject: SubjectLimits<'_>,
+) -> EngineReport {
+    let configured = |bound: usize| u64::try_from(bound).unwrap_or(u64::MAX);
+    match error {
+        ExactProbabilityGraphError::Cancelled(cause) => {
+            settled(&ExactProbBuildIssue::Cancelled(cause), subject)
+        }
+        ExactProbabilityGraphError::LimitReached => settled(
+            &ExactProbBuildIssue::Limit {
+                limit: ModelCheckLimit::ExactProbMaxStates,
+                value: configured(limits.model.limits.max_states),
+            },
+            subject,
+        ),
+        ExactProbabilityGraphError::EdgeLimitReached | ExactProbabilityGraphError::TooManyEdges => {
+            settled(
+                &ExactProbBuildIssue::Limit {
+                    limit: ModelCheckLimit::ExactProbMaxTransitions,
+                    value: configured(limits.model.limits.max_transitions),
+                },
+                subject,
+            )
+        }
+        ExactProbabilityGraphError::Cycle
+        | ExactProbabilityGraphError::UnsupportedDraw
+        | ExactProbabilityGraphError::UnsupportedInitial
+        | ExactProbabilityGraphError::UnsupportedBinding
+        | ExactProbabilityGraphError::UnsupportedClaimForm => not_yet(),
+        ExactProbabilityGraphError::RequiresBound => EngineReport::Refused(Refusal::RequiresBound),
+        ExactProbabilityGraphError::ExtentLimit => EngineReport::Refused(Refusal::Incomplete(
+            fsl_replay::IncompleteCause::ResourceExhausted,
+        )),
+        ExactProbabilityGraphError::AutomatonStateLimit { limit } => settled(
+            &ExactProbBuildIssue::Limit {
+                limit: ModelCheckLimit::ExactProbMaxAutomatonStates,
+                value: limit,
+            },
+            subject,
+        ),
+        // A refusal whose cause the checker graph does not keep (a key that
+        // will not encode, an undecided or refused expansion): not an engine
+        // fault, since a model can cause it.
+        ExactProbabilityGraphError::ExpansionRefused => not_yet(),
+        ExactProbabilityGraphError::MissingSuccessor
+        | ExactProbabilityGraphError::InvalidDigitalKey
+        | ExactProbabilityGraphError::ClaimNotBound => broken(),
+    }
+}
+
+/// How a failed qualified bounded monitor settles: a formula outside the
+/// admitted shape is `not-yet-implemented`, the monitor's state budget is the
+/// product's `max_automaton_states` (as the product build reports it), and any
+/// other refusal is the engine's.
+fn bounded_monitor_failure(
+    error: fsl_eval::automaton::QualifiedBoundedError,
+    subject: SubjectLimits<'_>,
+) -> EngineReport {
+    use fsl_eval::automaton::QualifiedBoundedError;
+    match error {
+        QualifiedBoundedError::Translation(_) => not_yet(),
+        QualifiedBoundedError::Automaton(error) => {
+            build_refusal(crate::exact_probabilistic::automaton_refusal(error), subject)
+        }
+        QualifiedBoundedError::Key(_) => broken(),
+    }
+}
+
 /// Dyadic refinement reached its maximum precision with the threshold still inside
 /// `[lower, upper]`.
 fn precision_budget(lower: Rational, upper: Rational, subject: SubjectLimits<'_>) -> EngineReport {
@@ -394,11 +469,11 @@ fn run_timed(
         .collect::<Vec<_>>();
     let identity = match fsl_replay::probabilistic_claim_identity(claim) {
         Ok(identity) => identity,
-        Err(_) => return not_yet(),
+        Err(error) => return graph_failure(error, &limits, subject),
     };
     let binding = match claim_binding(&system, claim) {
         Ok(binding) => binding,
-        Err(_) => return not_yet(),
+        Err(error) => return graph_failure(error, &limits, subject),
     };
     if !holds {
         return replay_timed_refutation(
@@ -763,7 +838,7 @@ fn run_timed_mean(
     }
     let identity = match fsl_replay::probabilistic_claim_identity(claim) {
         Ok(identity) => identity,
-        Err(_) => return not_yet(),
+        Err(error) => return graph_failure(error, &limits, subject),
     };
     let values = solved.values;
     let mut certificate = match certificate_of(
@@ -783,7 +858,7 @@ fn run_timed_mean(
     };
     let included = match mean_time_reachable_before_target(&product, &target) {
         Some(included) => included,
-        None => return not_yet(),
+        None => return broken(),
     };
     let included_keys = product
         .states
@@ -845,7 +920,7 @@ fn run_timed_mean(
     })();
     let binding = match claim_binding(&system, claim) {
         Ok(binding) => binding,
-        Err(_) => return not_yet(),
+        Err(error) => return graph_failure(error, &limits, subject),
     };
     checked_report(checked, certificate, binding, extremum, subject)
 }
@@ -938,8 +1013,9 @@ fn run(
     }
     let document_limits = ProbabilityDocumentLimits::for_exact(&limits, meter);
     let reward_system = if expected_reward {
-        let Ok(item) = fsl_replay::probabilistic_claim_identity(claim) else {
-            return not_yet();
+        let item = match fsl_replay::probabilistic_claim_identity(claim) {
+            Ok(item) => item,
+            Err(error) => return graph_failure(error, &limits, subject),
         };
         let admitted = ModelSystem::new_with_cancel(simulation.clone(), cancel);
         if let Some(cause) = cancel.tripped() {
@@ -966,7 +1042,9 @@ fn run(
         let Some(profile) =
             fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
         else {
-            return not_yet();
+            // The checker refuses a non-temporal profile (`not-temporal-profile`,
+            // fsl-semantics probabilistic/claim.rs), so a checked claim has one.
+            return broken();
         };
         if !fsl_eval::automaton::QualifiedBoundedMonitor::supports_observations(
             formula.formula(),
@@ -1047,7 +1125,9 @@ fn run(
         let Some(profile) =
             fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
         else {
-            return not_yet();
+            // The checker refuses a non-temporal profile (`not-temporal-profile`,
+            // fsl-semantics probabilistic/claim.rs), so a checked claim has one.
+            return broken();
         };
         if !fsl_eval::automaton::QualifiedBoundedMonitor::supports(formula.formula(), profile) {
             return not_yet();
@@ -1138,8 +1218,9 @@ fn run(
         Bound::AtLeast(threshold) => value >= threshold,
         Bound::AtMost(threshold) => value <= threshold,
     };
-    let Ok(item) = fsl_replay::probabilistic_claim_identity(claim) else {
-        return not_yet();
+    let item = match fsl_replay::probabilistic_claim_identity(claim) {
+        Ok(item) => item,
+        Err(error) => return graph_failure(error, &limits, subject),
     };
     let admitted = match reward_system {
         Some(system) => Ok(system),
@@ -1153,8 +1234,7 @@ fn run(
     };
     let binding = match claim_binding(&system, claim) {
         Ok(binding) => binding,
-        Err(ExactProbabilityGraphError::UnsupportedBinding) => return not_yet(),
-        Err(_) => return broken(),
+        Err(error) => return graph_failure(error, &limits, subject),
     };
     let reference = binding.as_ref().map(|bound| &bound.reference);
     if !holds {
@@ -1181,7 +1261,7 @@ fn run(
                 let context =
                     match fsl_replay::probabilistic_formula_monitor_context(claim, reference) {
                         Ok(context) => context,
-                        Err(_) => return not_yet(),
+                        Err(error) => return graph_failure(error, &limits, subject),
                     };
                 match fsl_eval::automaton::QualifiedBoundedMonitor::from_monitor(
                     formula.formula(),
@@ -1190,7 +1270,7 @@ fn run(
                     limits.model.max_automaton_states,
                 ) {
                     Ok(monitor) => Some(monitor),
-                    Err(_) => return not_yet(),
+                    Err(error) => return bounded_monitor_failure(error, subject),
                 }
             }
             (None, _) => None,
@@ -1216,7 +1296,7 @@ fn run(
             let context = match fsl_replay::probabilistic_formula_monitor_context(claim, reference)
             {
                 Ok(context) => context,
-                Err(_) => return not_yet(),
+                Err(error) => return graph_failure(error, &limits, subject),
             };
             let monitor = match fsl_eval::automaton::QualifiedBoundedMonitor::from_monitor(
                 formula.formula(),
@@ -1225,10 +1305,7 @@ fn run(
                 limits.model.max_automaton_states,
             ) {
                 Ok(monitor) => monitor,
-                Err(fsl_eval::automaton::QualifiedBoundedError::Translation(_)) => {
-                    return not_yet();
-                }
-                Err(_) => return broken(),
+                Err(error) => return bounded_monitor_failure(error, subject),
             };
             bounded_certificate_of(
                 &product,
@@ -1443,10 +1520,11 @@ fn document_failure(error: ProbabilityDocumentError, subject: SubjectLimits<'_>)
                 "mixed-infinite-coverage",
             )),
         ),
-        ProbabilityDocumentError::Unsupported | ProbabilityDocumentError::UndefinedPredicate(_) => {
-            not_yet()
-        }
-        ProbabilityDocumentError::MalformedMember(_)
+        ProbabilityDocumentError::Unsupported => not_yet(),
+        // The product build reports a first undefined read itself (`ProbBuild::Undefined`);
+        // one the checker finds after a build that saw none is a disagreement between them.
+        ProbabilityDocumentError::UndefinedPredicate(_)
+        | ProbabilityDocumentError::MalformedMember(_)
         | ProbabilityDocumentError::Malformed
         | ProbabilityDocumentError::MissingMember(_)
         | ProbabilityDocumentError::Noncanonical
@@ -2055,8 +2133,9 @@ fn replay_produced_witness(
 ) -> EngineReport {
     use crate::exact_probabilistic::ProductAction;
     let measure = claim.bounded_measure();
-    let Ok(item) = fsl_replay::probabilistic_claim_identity(claim) else {
-        return not_yet();
+    let item = match fsl_replay::probabilistic_claim_identity(claim) {
+        Ok(item) => item,
+        Err(error) => return graph_failure(error, &limits, subject),
     };
     let initials = system.initial();
     let [first] = initials.as_slice() else {
@@ -2108,7 +2187,7 @@ fn replay_produced_witness(
         }
         let action = match replay_choice(&action) {
             Ok(action) => action,
-            Err(_) => return not_yet(),
+            Err(error) => return document_failure(error, subject),
         };
         scheduler.push((key, action));
     }
@@ -2166,7 +2245,7 @@ fn replay_produced_witness(
             }
             let choice = match replay_choice(&step.action) {
                 Ok(choice) => choice,
-                Err(_) => return not_yet(),
+                Err(error) => return document_failure(error, subject),
             };
             let Some(to) = product.states.get(step.to.index()) else {
                 return broken();
@@ -2278,7 +2357,7 @@ fn replay_produced_witness(
                     }
                 }
                 if candidates.is_empty() {
-                    return not_yet();
+                    return broken();
                 }
                 for candidate in candidates {
                     if u64::try_from(next.len().saturating_add(paths.len())).unwrap_or(u64::MAX)
@@ -2471,38 +2550,7 @@ fn finish_replay(
         Err(ProbabilityWitnessError::Limit { limit, value }) => {
             settled(&ExactProbBuildIssue::Limit { limit, value }, subject)
         }
-        Err(ProbabilityWitnessError::Graph(ExactProbabilityGraphError::Cancelled(cause))) => {
-            settled(&ExactProbBuildIssue::Cancelled(cause), subject)
-        }
-        Err(ProbabilityWitnessError::Graph(ExactProbabilityGraphError::LimitReached)) => settled(
-            &ExactProbBuildIssue::Limit {
-                limit: ModelCheckLimit::ExactProbMaxStates,
-                value: u64::try_from(limits.model.limits.max_states).unwrap_or(u64::MAX),
-            },
-            subject,
-        ),
-        Err(ProbabilityWitnessError::Graph(
-            ExactProbabilityGraphError::EdgeLimitReached | ExactProbabilityGraphError::TooManyEdges,
-        )) => settled(
-            &ExactProbBuildIssue::Limit {
-                limit: ModelCheckLimit::ExactProbMaxTransitions,
-                value: u64::try_from(limits.model.limits.max_transitions).unwrap_or(u64::MAX),
-            },
-            subject,
-        ),
-        Err(ProbabilityWitnessError::Graph(
-            ExactProbabilityGraphError::Cycle
-            | ExactProbabilityGraphError::UnsupportedDraw
-            | ExactProbabilityGraphError::UnsupportedInitial
-            | ExactProbabilityGraphError::UnsupportedBinding
-            | ExactProbabilityGraphError::UnsupportedClaimForm,
-        )) => not_yet(),
-        Err(ProbabilityWitnessError::Graph(
-            ExactProbabilityGraphError::ExpansionRefused
-            | ExactProbabilityGraphError::MissingSuccessor
-            | ExactProbabilityGraphError::InvalidDigitalKey
-            | ExactProbabilityGraphError::ClaimNotBound,
-        )) => broken(),
+        Err(ProbabilityWitnessError::Graph(error)) => graph_failure(error, limits, subject),
     }
 }
 
@@ -2513,19 +2561,27 @@ fn canonical_action(
     key_of: &impl Fn(
         &crate::exact_probabilistic::ProbKey,
     ) -> Result<ProbabilityProductKey, ProbabilityDocumentError>,
-) -> Result<fsl_replay::ProductAction, ()> {
+) -> Result<fsl_replay::ProductAction, ProbabilityDocumentError> {
+    // A stopped expansion keeps its budget; any other schedule failure is a
+    // product the engine built that the system cannot write.
+    let unscheduled = |error| match error {
+        fsl_replay::ProductActionError::Stopped(stop) => {
+            ProbabilityDocumentError::Build(Box::new(ExactProbBuildIssue::Expansion(stop)))
+        }
+        _ => ProbabilityDocumentError::Malformed,
+    };
     use crate::exact_probabilistic::ProductAction as AnalyzerAction;
     Ok(match choice {
         AnalyzerAction::Identity(identity) => fsl_replay::ProductAction::Identity(
-            fsl_replay::Schedule::of(system, identity).map_err(|_| ())?,
+            fsl_replay::Schedule::of(system, identity).map_err(unscheduled)?,
         ),
         AnalyzerAction::PostState(target) => {
             let target = product
                 .states
                 .iter()
                 .find(|state| *state == target.as_ref())
-                .ok_or(())?;
-            fsl_replay::ProductAction::PostState(key_of(target).map_err(|_| ())?)
+                .ok_or(ProbabilityDocumentError::Malformed)?;
+            fsl_replay::ProductAction::PostState(key_of(target)?)
         }
         AnalyzerAction::TerminalStutter => fsl_replay::ProductAction::TerminalStutter,
         AnalyzerAction::UnitDelay => fsl_replay::ProductAction::UnitDelay,
@@ -2534,12 +2590,12 @@ fn canonical_action(
         AnalyzerAction::IdleObserve => fsl_replay::ProductAction::IdleObserve,
         AnalyzerAction::WorkloadResolve { identity, delay } => {
             fsl_replay::ProductAction::WorkloadResolve {
-                schedule: fsl_replay::Schedule::of(system, identity).map_err(|_| ())?,
+                schedule: fsl_replay::Schedule::of(system, identity).map_err(unscheduled)?,
                 delay: *delay,
             }
         }
         AnalyzerAction::FreeDelays(rows) => {
-            fsl_replay::ProductAction::free_delays(system, rows).map_err(|_| ())?
+            fsl_replay::ProductAction::free_delays(system, rows).map_err(unscheduled)?
         }
     })
 }
@@ -2688,14 +2744,15 @@ fn replay_timed_refutation(
     let produced = match produce_witness(product, policy, scope, initial, &accepting, &past, limits)
     {
         Ok(Some(produced)) => produced,
-        Ok(None) => return broken(),
+        Ok(None) => return not_yet(),
         Err(crate::exact_probabilistic::WitnessError::Limit { limit, value }) => {
             return settled(&ExactProbBuildIssue::Limit { limit, value }, subject);
         }
         Err(_) => return broken(),
     };
-    let Ok(item) = fsl_replay::probabilistic_claim_identity(claim) else {
-        return not_yet();
+    let item = match fsl_replay::probabilistic_claim_identity(claim) {
+        Ok(item) => item,
+        Err(error) => return graph_failure(error, &limits, subject),
     };
     let initials = system.initial();
     let [first] = initials.as_slice() else {
@@ -2710,8 +2767,9 @@ fn replay_timed_refutation(
     let Some(initial_state) = product.states.get(initial.index()) else {
         return broken();
     };
-    let Ok(initial_key) = key_of(initial_state) else {
-        return not_yet();
+    let initial_key = match key_of(initial_state) {
+        Ok(key) => key,
+        Err(error) => return document_failure(error, subject),
     };
     let mut paths = Vec::with_capacity(produced.paths.len());
     for path in produced.paths {
@@ -2727,11 +2785,13 @@ fn replay_timed_refutation(
             let Some(to) = product.states.get(step.to.index()) else {
                 return broken();
             };
-            let Ok(post_key) = key_of(to) else {
-                return not_yet();
+            let post_key = match key_of(to) {
+                Ok(key) => key,
+                Err(error) => return document_failure(error, subject),
             };
-            let Ok(choice) = canonical_action(system, product, &step.action, &key_of) else {
-                return not_yet();
+            let choice = match canonical_action(system, product, &step.action, &key_of) {
+                Ok(choice) => choice,
+                Err(error) => return document_failure(error, subject),
             };
             let (action, transition, draw, post, resume) = match &step.action {
                 ProductAction::Identity(identity)
@@ -2781,7 +2841,7 @@ fn replay_timed_refutation(
                             // A clock-guarded operation is not enabled at the bare
                             // model state; take its step from the timed state the
                             // previous key names.
-                            let Some((transition, post, resume)) = timed_step_for(
+                            let (transition, post, resume) = match timed_step_for(
                                 system,
                                 claim,
                                 &state,
@@ -2789,8 +2849,11 @@ fn replay_timed_refutation(
                                 identity,
                                 &step.elapsed,
                                 wanted.as_ref(),
-                            ) else {
-                                return not_yet();
+                            ) {
+                                Ok(found) => found,
+                                Err(failure) => {
+                                    return timed_step_failure(failure, cancel, subject);
+                                }
                             };
                             (
                                 Some(identity.clone()),
@@ -2858,9 +2921,11 @@ fn timed_key_discrete(key: &ProbabilityProductKey) -> Option<serde_json::Value> 
 /// returns that operation's transition, the model state right after it (what a
 /// single recorded transition produces) and the model state at the end of the
 /// chain (what the product key names, and where the next step starts).
-/// `None` when no such chain reaches the wanted model state, or the previous
-/// key is a region key: a region refutation through a clock-guarded step
-/// therefore settles not-yet.
+/// A previous key that is a region key, or a chain still open after `CHAIN`
+/// operations, is [`TimedStepFailure::Unbuilt`] (a region refutation through a
+/// clock-guarded step therefore settles not-yet); a step expansion or key
+/// encoding that stops names its stop; only a search that exhausted every
+/// chain without reaching the wanted state is a fault.
 fn timed_step_for(
     system: &ModelSystem<'_>,
     claim: &fsl_semantics::check::CheckedProbabilisticClaim,
@@ -2869,30 +2934,39 @@ fn timed_step_for(
     identity: &fsl_eval::simulation::model::ScheduledIdentity,
     elapsed: &Rational,
     wanted: Option<&serde_json::Value>,
-) -> Option<(
-    filament_semantic_value::model_transition::ModelTransition,
-    fsl_eval::simulation::model::ModelSimState,
-    fsl_eval::simulation::model::ModelSimState,
-)> {
+) -> Result<
+    (
+        filament_semantic_value::model_transition::ModelTransition,
+        fsl_eval::simulation::model::ModelSimState,
+        fsl_eval::simulation::model::ModelSimState,
+    ),
+    TimedStepFailure,
+> {
     use fsl_eval::simulation::model::{TimedState, TimedSystem};
-    let valuation = fsl_replay::digital_key_clocks(system, claim, previous)?;
-    let timed = TimedSystem::new(system, claim.subject.alias.as_str()).ok()?;
+    let valuation = fsl_replay::digital_key_clocks(system, claim, previous)
+        .ok_or(TimedStepFailure::Unbuilt)?;
+    let timed = TimedSystem::new(system, claim.subject.alias.as_str())
+        .map_err(TimedStepFailure::Subject)?;
     // A tie among the zero-time operations of one instant: the product never
     // resolves more of them in one step than a small model has operations, and
     // each level multiplies the frontier, so the search stays short.
     const CHAIN: usize = 4;
-    let reaches = |from: TimedState| {
-        type First = Option<(
-            filament_semantic_value::model_transition::ModelTransition,
-            fsl_eval::simulation::model::ModelSimState,
-        )>;
+    type First = Option<(
+        filament_semantic_value::model_transition::ModelTransition,
+        fsl_eval::simulation::model::ModelSimState,
+    )>;
+    type Found = (
+        filament_semantic_value::model_transition::ModelTransition,
+        fsl_eval::simulation::model::ModelSimState,
+        fsl_eval::simulation::model::ModelSimState,
+    );
+    // The chain found, or whether the search stopped with chains still open.
+    let reaches = |from: TimedState| -> Result<Result<Found, bool>, TimedStepFailure> {
         let mut frontier: Vec<(TimedState, First)> = vec![(from, None)];
         for level in 0..CHAIN {
             let mut next = Vec::new();
             for (at, first) in frontier {
-                let Ok(steps) = timed.steps(&at) else {
-                    continue;
-                };
+                let steps = timed.steps(&at).map_err(TimedStepFailure::Stopped)?;
                 for (step, post) in steps {
                     let first = if level == 0 {
                         if step.operation() != identity.operation
@@ -2904,23 +2978,80 @@ fn timed_step_for(
                     } else {
                         first.clone()
                     };
-                    let key = system.state_key(post.discrete()).ok()?.0;
-                    let discrete: serde_json::Value = serde_json::from_slice(&key).ok()?;
+                    let key = system
+                        .state_key(post.discrete())
+                        .map_err(|error| {
+                            TimedStepFailure::Key(ProbabilityDocumentError::KeyEncoding(error))
+                        })?
+                        .0;
+                    let discrete: serde_json::Value =
+                        serde_json::from_slice(&key).map_err(|_| TimedStepFailure::Fault)?;
                     if Some(&discrete) == wanted {
-                        let (transition, after_first) = first?;
-                        return Some((transition, after_first, post.discrete().clone()));
+                        let (transition, after_first) = first.ok_or(TimedStepFailure::Fault)?;
+                        return Ok(Ok((transition, after_first, post.discrete().clone())));
                     }
                     next.push((post, first));
                 }
             }
             frontier = next;
         }
-        None
+        Ok(Err(!frontier.is_empty()))
     };
+    let mut open = false;
     for clocks in [valuation.delayed(elapsed), valuation] {
-        if let Some(found) = reaches(TimedState::new(state.clone(), clocks)) {
-            return Some(found);
+        match reaches(TimedState::new(state.clone(), clocks))? {
+            Ok(found) => return Ok(found),
+            Err(still_open) => open |= still_open,
         }
     }
-    None
+    Err(if open {
+        TimedStepFailure::Unbuilt
+    } else {
+        TimedStepFailure::Fault
+    })
+}
+
+/// Why a timed witness step could not be realized in the model.
+enum TimedStepFailure {
+    /// A region key, or a zero-time chain longer than the search follows: a
+    /// generality of the replay that is not built.
+    Unbuilt,
+    /// The timed subject could not be built again.
+    Subject(fsl_eval::simulation::model::TimedSubjectRefusal),
+    /// A step expansion stopped.
+    Stopped(fsl_eval::simulation::model::TimedStop),
+    /// A state key did not encode.
+    Key(ProbabilityDocumentError),
+    /// Every chain was searched and none reaches the model state the engine
+    /// produced.
+    Fault,
+}
+
+/// How a timed step the replay could not realize settles.
+fn timed_step_failure(
+    failure: TimedStepFailure,
+    cancel: &Cancel,
+    subject: SubjectLimits<'_>,
+) -> EngineReport {
+    use fsl_eval::simulation::model::TimedStop;
+    if let Some(cause) = cancel.tripped() {
+        return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
+    }
+    match failure {
+        TimedStepFailure::Unbuilt => not_yet(),
+        TimedStepFailure::Subject(refusal) => EngineReport::Refused(subject_refusal(&refusal)),
+        TimedStepFailure::Stopped(TimedStop::MaxClocks { max_clocks }) => settled(
+            &ExactProbBuildIssue::Limit {
+                limit: ModelCheckLimit::MaxClocks,
+                value: max_clocks,
+            },
+            subject,
+        ),
+        TimedStepFailure::Stopped(TimedStop::Expansion(stop)) => {
+            settled(&ExactProbBuildIssue::Expansion(stop), subject)
+        }
+        TimedStepFailure::Stopped(_) => settled(&ExactProbBuildIssue::UndecidedSuccessor, subject),
+        TimedStepFailure::Key(error) => document_failure(error, subject),
+        TimedStepFailure::Fault => broken(),
+    }
 }
