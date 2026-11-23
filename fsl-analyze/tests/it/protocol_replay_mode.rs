@@ -2663,7 +2663,7 @@ fn a_choice_before_an_inner_repeat_does_not_count_toward_the_iteration() {
     };
     for outstanding in ["cancel", "continue"] {
         let source = nested_repeat_cancel_protocol(
-            "choice Pick by Buyer visible () { case a when { true } sequence CA { } case b when { true } sequence CB { } } ",
+            "choice Pick by Buyer visible () { case a when { true } sequence CA { } case b when { false } sequence CB { } } ",
         )
         .replace("outstanding cancel", &format!("outstanding {outstanding}"));
         let item = nested_cancel_item(
