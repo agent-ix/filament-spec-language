@@ -92,9 +92,10 @@ refinement rows.
 
 8. Through both the source and bare checked routes, admit TC-464 steps 7
    and 8's `Call` snapshot and evaluate `ref(self.x)`; read the kernel
-   value of `r`, `maybe`, `refs` and the `ref` result, and hex-encode each
-   text. Then admit, one at a time, `r` with an identity whose text has one
-   uppercase hex letter, one with prefix `place/v1`, one whose `J` is
+   value of `r`, `maybe`, `refs` and the `ref` result, compare each text
+   with the snapshot `key` it was admitted from, and re-emit each value as a
+   snapshot reference. Then admit, one at a time, `r` with a `key` that has
+   one uppercase hex letter, one with prefix `place/v1`, one whose `J` is
    `[["slot","0","0"]]` over a path with no collection step, one whose
    `S` names another authenticated declaration scope, one whose `P` names
    another population declaration, and the stored `x` identity after `x` is
@@ -140,8 +141,8 @@ refinement rows.
   entry, declared type scope and typed path is unchanged (FR-230-AC-49).
 - Step 8: each value is a filament-exact clock-place reference typed
   `ValueType::ClockReference` with the population universe and the exact
-  `place/v2` text, never an `ObjectReference`, and its hex equals the wire
-  `identity`. The three malformed identities and the two foreign-scope
+  `place/v2` text, never an `ObjectReference`; its text equals the snapshot
+  `key` byte for byte and re-emission gives the same `key`. The three malformed identities and the two foreign-scope
   identities refuse `invalid_runtime_input`/`invalid-value` at `r`; the
   removed-`x` identity refuses
   `dangling_reference`/`absent-target-in-complete-population`. Both routes
