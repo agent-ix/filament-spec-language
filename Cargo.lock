@@ -950,6 +950,7 @@ version = "0.1.0"
 dependencies = [
  "filament-exact",
  "fsl-bench",
+ "fsl-cst",
  "fsl-foundation",
  "ix-trace-rs",
  "logos",

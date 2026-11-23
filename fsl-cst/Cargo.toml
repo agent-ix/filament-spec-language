@@ -33,6 +33,7 @@ missing_docs = "warn"
 all = "deny"
 
 [dev-dependencies]
+fsl-cst = { path = ".", features = ["test-support"] }
 # QSL-2058/2059: the shared property policy and generators.
 fsl-bench = { path = "../fsl-bench", features = ["property-generators"] }
 proptest = { version = "1.12.0", default-features = false, features = ["std"] }

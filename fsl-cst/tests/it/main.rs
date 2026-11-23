@@ -15,6 +15,7 @@ mod cst_identity;
 mod decimal_constructor;
 mod deep_sources;
 mod expression_syntax;
+mod format_properties;
 mod formatter_style;
 mod guarantee_declaration;
 mod hybrid_declaration;
