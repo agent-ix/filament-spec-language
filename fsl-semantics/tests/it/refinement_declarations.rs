@@ -1775,7 +1775,7 @@ fn a_strong_row_checks_as_strong() {
 }
 
 /// A checked `refinement` declaration S4 cannot write yet (a `history`
-/// row, whose reads have no node form) is refused at package build, so a
+/// row with a present `Option` initial, which has no package form yet, QSL-3011) is refused at package build, so a
 /// package is never built with an identity equal to the same package
 /// without it.
 #[trace("TC-540")]
@@ -1787,7 +1787,7 @@ fn a_checked_refinement_refuses_not_emitted_at_package_build() {
         &[("Spec", SPEC, &spec), ("Impl", CAS, &cas)],
         &with_refinement_rows(
             cas_refines_counter(),
-            "history Impl::Counter.last : Int[0, 1] = 0 { on Impl::Counter::peek : 0; }\n",
+            "history Impl::Counter.last : Option<Int[0, 1]> = 0 { }\n",
         ),
     );
     let refusals = declarations
@@ -2102,7 +2102,7 @@ fn only_the_refinement_beside_a_terminal_is_refused() {
         "terminal Halt using v on Spec any;\n{}",
         with_refinement_rows(
             cas_refines_counter(),
-            "history Impl::Counter.last : Int[0, 1] = 0 { on Impl::Counter::peek : 0; }\n",
+            "history Impl::Counter.last : Option<Int[0, 1]> = 0 { }\n",
         )
     );
     let (_, declarations) = assemble("", &[("Spec", SPEC, &spec), ("Impl", CAS, &cas)], &body);

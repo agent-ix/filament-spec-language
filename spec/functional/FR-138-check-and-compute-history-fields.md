@@ -67,6 +67,9 @@ exactly as they were.
   their canonical literals, as FR-630 decides. A decimal's canonical literal
   retains its scale (FR-120-AC-16), so `decimal(150, 1)` and `decimal(15, 0)`
   are two values with two keys, and equal literals key equally.
+
+**Present `Option` initial through the package route (current).** A history row typed `Option<T>` with a present initial (for example `Option<Phase> = Phase::OPEN`) checks at S3 and computes in replay, as FR-138-AC-9 states. The package route does not lower it yet: the checked package admits a history initial only as a `literal` term or a reference to a `literal` node, and a present option is an `option_value` node, so the refinement is refused `unsupported_construct`/`not-yet-implemented` as not emitted. A `none` initial lowers. This is the current implementation gap, not a requirement; it closes with QSL-3011 once filament-contract-ir accepts an `option_value` history initial.
+
 - Any other declared type SHALL be a bounded value type (finite domain); an
   unbounded type SHALL refuse `ill_typed`/`type-mismatch` at the type.
 - A history field whose name equals a declared field of the concrete type,
