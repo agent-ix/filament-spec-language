@@ -1945,14 +1945,14 @@ fn a_malformed_slot_domain_is_refused_at_its_locus() {
     // A binder typed Boolean instead of the slot domain's Integer.
     refused(
         &|wire| {
-            eprintln!("DBGQ {quantified0}", quantified0 = wire["semantic_graph"]["nodes"][quantifier]);
-            let quantified = wire["semantic_graph"]["nodes"][quantifier].to_string();
-            let parameter = nodes(wire)
+            // The quantifier's own id holds its binder as an index segment.
+            let parameter = wire["semantic_graph"]["nodes"][quantifier]["node_id"]["path"]
+                .as_array()
+                .expect("a path")
                 .iter()
-                .position(|node| {
-                    node["semantic_form"] == "parameter"
-                        && quantified.contains(&node["node_id"].to_string())
-                })
+                .filter_map(|segment| segment["node"].as_u64())
+                .filter_map(|at| usize::try_from(at).ok())
+                .find(|&at| nodes(wire)[at]["semantic_form"] == "parameter")
                 .expect("the binder parameter the quantifier names");
             wire["semantic_graph"]["nodes"][parameter]["semantic_type"] = boolean.clone();
         },
