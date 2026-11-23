@@ -56,7 +56,9 @@ tagged `#[trace("TC-3170", "FR-1047-AC-n")]` with the criterion it backs.
   repeated or wrong-kind member. The run, compile, analyze, monitor and
   export examples refuse only at stage `file` naming a file the example
   names, the evidence example settles `unimplemented-meaning`, and the
-  replay example reads no provisioned file. Each one-member removal refuses
+  replay example, having decoded in full, refuses at stage `file` naming
+  `entry.fsl`; with that file written beside `request.json` it is refused
+  neither for an empty lock `sources` nor as `missing_import`. Each one-member removal refuses
   `invalid-request` at stage `request` with `details.missing` holding that
   member's pointer, or its group's pointer array for `program` and `call`.
 - Step 5 refuses with `/request/records` as the one missing entry.
