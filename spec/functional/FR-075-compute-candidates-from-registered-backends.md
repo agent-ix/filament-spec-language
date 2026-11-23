@@ -207,8 +207,12 @@ of a probabilistic item" when the request names both evidence kinds. Each `Requi
   `OccurrenceKey` of the `expression` occurrence for the narrow that
   directly wraps this record's scalar application, or `None` when the
   record's result bound is the application's own result type;
-- the record's path condition, as the same borrowed shared-chain view of
-  canonical `PathGuard` values returned by `RequirementRecord::path_condition()`;
+- the record's `Option<PathConditionFrameId>` terminal reference, also
+  exposed by `RequirementItem::path_condition_frame()`, and its borrowed
+  `path_condition()` view of canonical `PathGuard` values obtained by walking
+  the shared frame table once per iteration. `RequirementMap::path_condition_frames()`
+  exposes that table by borrow to consumers such as the driver; items built
+  from one map share it;
 - for a `probabilistic-satisfaction` record, its evidence kind, by the
   rule of "Evidence kind of a probabilistic item" below;
 - its requirements: `hybrid-dynamics` for a `temporal-satisfaction` record

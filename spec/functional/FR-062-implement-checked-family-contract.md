@@ -246,6 +246,14 @@ chooses the Rust spelling) holds:
   constructed as the body is checked; it SHALL NOT retain one expanded guard
   vector per scalar operation.
 
+`RequirementMap::path_condition_frames()` SHALL borrow the one package-local
+condition-frame table. `RequirementItem::path_condition_frame()` SHALL return
+the item's `Option<PathConditionFrameId>` terminal reference; its
+`path_condition()` SHALL return a borrowed `PathConditionView` over that id and
+the map's table, iterating guards outermost first. The view SHALL allocate no
+per-item guard vector. `PathConditionFrameId` SHALL be valid only with its
+owning map.
+
 **Owner.** The owner of a record is the qualified name of the `Value`
 function declaration whose body holds its claim site, as the checked graph
 holds that name. The checker SHALL record the owner as a single field of each
