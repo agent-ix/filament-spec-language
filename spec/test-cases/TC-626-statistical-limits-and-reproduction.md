@@ -18,18 +18,18 @@ Scope: FR-191-AC-1 to FR-191-AC-5.
 
 Fixtures: `NoFault`, `P95`, FR-189-AC-4's activation variant, FR-190-AC-2's transient variant, a two-test variant of `Service`, FR-189-AC-7's `Wide` model for the `Unsupported` outcome.
 
-1. `NoFault` with Okamoto at `max_samples` 1,000,000 and at 9,210,341; a request omitting `max_samples`.
+1. `NoFault` with Okamoto at `max_samples` 1,000,000 and 9,210,341; with `max_draws` 1,000,000 and 9,210,341; a request omitting `max_samples`.
 2. The activation variant at `max_draws` 1,000; the transient variant; a cancelled `Cancel` handle; a regenerative run at a `max_draws` below one cycle's steps.
 3. `P95` with SPRT and seed 7 twice; with `max_samples` 100 and then the default; with seed 8.
 4. The two-test variant; `P95` with Okamoto and with SPRT.
-5. `NoFault` at `max_samples` 9,210,340 and 9,210,341; read the provenance of the stopped outcome and of the `Wide` model's `Unsupported` outcome (FR-189-AC-7), and the stop of a run cancelled by its handle.
+5. `NoFault` with Okamoto at `max_samples` 9,210,340 and 9,210,341; read the provenance of the stopped outcome and of the `Wide` model's `Unsupported` outcome (FR-189-AC-7), and the stop of a run cancelled by its handle.
 
 Tag the tests `#[trace("TC-626", "FR-191-AC-n")]`.
 
 ## Expected Results
 
-- Step 1: `Stopped` naming `statistical.max_samples` and 1,000,000 with no decision; decided; default 16,777,216.
-- Step 2: `Stopped` naming `statistical.max_draws` and `Cancelled`, neither with a decision; the regenerative run `Stopped` `Limit{MaxDraws, value}`; the transient variant `Stopped` with `Limit{MaxCycleSteps, value}`, no decision, `limit-reached` naming `statistical.max_cycle_steps`.
+- Step 1: at either fixed-N limit 1,000,000, `Stopped` is a preflight stop naming the exceeded setting, its configured value 1,000,000 and required `N = 9,210,341`, with zero samples and zero draws for every test; at either limit 9,210,341 the run decides; default `max_samples` is 16,777,216.
+- Step 2: SPRT `Stopped` naming `statistical.max_draws` with `partial.samples = 0`, `partial.draws = 1,000`, and `Cancelled`, neither with a decision; the regenerative run `Stopped` `Limit{MaxDraws, value}` with `partial.draws = value`, `partial.samples = 0`; the transient variant `Stopped` with `Limit{MaxCycleSteps, value}`, no decision, `partial.draws` equal to walk steps reached and `limit-reached` naming `statistical.max_cycle_steps`.
 - Step 3: byte-equal results; equal samples at trace indices 0 to 99; seed 8 recorded, equal obligation identity, a differing sample.
 - Step 4: per-test provenance with test 1 starting at trace 1 in steps of 2; the method changes and the obligation identity does not.
-- Step 5: complete at exactly 9,210,341, `Limit{MaxSamples, 9,210,340}` after 9,210,340 counted; provenance on both outcomes; `Cancelled` for the cancelled run.
+- Step 5: at 9,210,340, `PreflightLimit{MaxSamples, value: 9,210,340, required: 9,210,341}` with zero samples and draws; at 9,210,341, complete; provenance on both outcomes; `Cancelled` for the cancelled run.
