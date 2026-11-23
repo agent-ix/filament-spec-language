@@ -2621,7 +2621,10 @@ mod tests {
         assert!(
             run_with_runner(
                 workspace_root(),
-                &[OsString::from("fsl-analyze/src/analyze/exact.rs")],
+                &[
+                    OsString::from("--preflight"),
+                    OsString::from("fsl-analyze/src/analyze/exact.rs"),
+                ],
                 &runner
             )
             .is_err()
