@@ -102,7 +102,12 @@ const EMIT_CONSUMERS: &[ItFilter] = &[
         rule: ItRule::Fixed("run_requirement_items"),
     },
 ];
+const PROBABILITY_CHECK_MODULES: ItFilter = ItFilter {
+    package: "fsl-probability-check",
+    rule: ItRule::AllModules("fsl-probability-check"),
+};
 const REPLAY_CONSUMERS: &[ItFilter] = &[
+    PROBABILITY_CHECK_MODULES,
     ItFilter {
         package: "fsl-command",
         rule: ItRule::Fixed("dependency_handoff"),
@@ -167,6 +172,7 @@ const ROUTE_PARITY_CONSUMERS: &[ItFilter] = &[
     },
 ];
 const EXACT_CONSUMERS: &[ItFilter] = &[
+    PROBABILITY_CHECK_MODULES,
     ItFilter {
         package: "fsl-analyze",
         rule: ItRule::Fixed("probabilistic"),
@@ -1273,12 +1279,16 @@ fn apply_it_filters(
     Ok(())
 }
 
+fn integration_root(package: &str) -> String {
+    match package {
+        "filament-spec-language" => "tests/it/main.rs".to_owned(),
+        "fsl-probability-check" => format!("tools/{package}/tests/it/main.rs"),
+        _ => format!("{package}/tests/it/main.rs"),
+    }
+}
+
 fn add_all_it_modules(workspace_root: &Path, package: &str, recipe: &mut Recipe) -> Result<()> {
-    let main = if package == "filament-spec-language" {
-        "tests/it/main.rs".to_owned()
-    } else {
-        format!("{package}/tests/it/main.rs")
-    };
+    let main = integration_root(package);
     let path = workspace_root.join(&main);
     if !path.exists() {
         add_whole_library(recipe, package);
@@ -1343,11 +1353,7 @@ fn add_all_it_modules(workspace_root: &Path, package: &str, recipe: &mut Recipe)
 
 #[cfg(test)]
 fn top_level_integration_modules(workspace_root: &Path, package: &str) -> Result<Vec<String>> {
-    let main = if package == "filament-spec-language" {
-        "tests/it/main.rs".to_owned()
-    } else {
-        format!("{package}/tests/it/main.rs")
-    };
+    let main = integration_root(package);
     let path = workspace_root.join(&main);
     let source = fs::read_to_string(&path).map_err(|error| {
         Error::MergeGateRecipe(format!(
@@ -1959,6 +1965,37 @@ mod tests {
             timed: false,
             threads: None,
             no_match_is_note: false,
+        }
+    }
+
+    #[test]
+    fn exact_probabilistic_and_certificate_paths_run_every_probability_check_module() {
+        for path in [
+            "fsl-analyze/src/analyze/exact.rs",
+            "fsl-analyze/src/analyze/exact/measure.rs",
+            "fsl-replay/src/certificate.rs",
+        ] {
+            let recipe = plan(workspace_root(), &[path]);
+            for module in [
+                "bounded",
+                "cyclic",
+                "reward",
+                "roundtrip",
+                "state_predicate",
+                "cyclic_reward",
+                "cyclic_mdp",
+                "bounded_fair",
+                "cyclic_mdp_reward",
+                "certificate_kinds",
+                "timed_product",
+            ] {
+                assert!(
+                    recipe
+                        .selectors
+                        .contains(&selector("fsl-probability-check", module)),
+                    "{path} must run fsl-probability-check module {module}"
+                );
+            }
         }
     }
 

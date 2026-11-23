@@ -17,7 +17,7 @@ them. For spec-only changes it prints `NO CARGO: spec-only change.`
 | Changed paths | Local controls | Consumer controls |
 | --- | --- | --- |
 | `fsl-package/src/emit/**` | `fsl-package` lib `emit` tests, one thread, skip 100k tests and the 2/1000 nested-form stress test | Analyze IT filters `monitor_`, `timed_`, `hyper`, `probabilistic`; command IT `run_requirement_items`; each large emitter and replay control runs alone with timing enabled |
-| `fsl-analyze/src/analyze/exact.rs`, `exact/**` | Touched library module | Analyze IT `probabilistic` and `timed_` |
+| `fsl-analyze/src/analyze/exact.rs`, `exact/**` | Touched library module | Analyze IT `probabilistic` and `timed_`; every `fsl-probability-check` IT module |
 | `fsl-analyze/src/zone_check/**` | Touched library module | Analyze IT `timed_`, plus the focused `timed_within_200` and `timed_within_201` regressions |
 | `fsl-analyze/src/analyze/request.rs`, `fsl-analyze/src/analyze.rs` | Touched library module | The four analyze IT engine filters plus the source/package parity modules `analyze_package_selection`, `analyze_request_wire`, `analyze_package_provider` |
 | Other `fsl-analyze/src/**` | Touched library module | All four analyze IT engine filters: `monitor_`, `timed_`, `hyper`, `probabilistic` |

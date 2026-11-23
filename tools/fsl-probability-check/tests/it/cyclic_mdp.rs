@@ -197,18 +197,48 @@ fn strict_rows_boundaries_and_quantitative_source_scope_are_closed() {
         }
     });
     assert_eq!(run(&boundary).1["rule"], "rank-broken");
-    for threshold in ["0", "1"] {
-        let mut outside = request.clone();
-        replace_source(
-            &mut outside,
-            &source(
-                "0: 5, 1: 2, 2: 3",
-                "0: 5, 1: 4, 2: 1",
-                ">=",
-                threshold,
-                "m.delivered",
-            ),
+    for (threshold, form) in [
+        ("0", fsl_semantics::check::QualitativeForm::Possible),
+        ("1", fsl_semantics::check::QualitativeForm::Always),
+    ] {
+        let outside_source = source(
+            "0: 5, 1: 2, 2: 3",
+            "0: 5, 1: 4, 2: 1",
+            ">=",
+            threshold,
+            "m.delivered",
         );
+        let failure =
+            match super::bounded::try_compile_source_with(&outside_source, domain().as_bytes()) {
+                Ok(_) => panic!("threshold {threshold} must refuse before a checked unit exists"),
+                Err(failure) => failure,
+            };
+        let fsl_foundation::diagnostic::StageFailure::Refused(refusal) = &failure else {
+            panic!("threshold {threshold} retains its S3 refusal: {failure:?}");
+        };
+        let fsl_replay::spine::CompileRefusal::Check { refusals, .. } = refusal.as_ref() else {
+            panic!("threshold {threshold} is a checking refusal: {refusal:?}");
+        };
+        let [fsl_semantics::check::CheckRefusal {
+            cause: fsl_semantics::check::CheckCause::Probabilistic(cause),
+            ..
+        }] = refusals.as_slice()
+        else {
+            panic!("one refusal for threshold {threshold}: {refusals:?}");
+        };
+        let fsl_semantics::check::ProbabilisticCause::QualitativeThreshold {
+            claim,
+            qualitative_form,
+            ..
+        } = cause.as_ref()
+        else {
+            panic!("threshold {threshold} is a qualitative-threshold refusal: {cause:?}");
+        };
+        assert_eq!(claim, "Likely");
+        assert_eq!(*qualitative_form, Some(form));
+        let mut outside = request.clone();
+        outside["source"]["content"] = json!(outside_source);
+        outside["byte_provision"][0][2] = json!(outside_source.as_bytes());
         assert_ne!(run(&outside).0, 0);
     }
 }
