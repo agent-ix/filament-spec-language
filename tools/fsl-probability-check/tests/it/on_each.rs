@@ -454,3 +454,16 @@ fn a_document_written_exactly_to_the_profile_is_accepted_and_an_extra_member_is_
         }
     }
 }
+
+/// FR-201-AC-80's timed clause, accepted half: an on-each document offered
+/// against a timed domain is refused, never accepted.
+#[trace("TC-3209", "FR-201-AC-80")]
+#[test]
+fn an_on_each_document_offered_against_a_timed_domain_is_refused() {
+    let mut offered = super::timed_product::timed_request();
+    offered["certificate"] = certified(&[("m", false)])["certificate"].clone();
+    replace_source_and_rebind(&mut offered, &super::timed_product::on_each_timed_source());
+    let (code, output) = run(&offered);
+    assert_ne!(code, 0, "{output}");
+    assert_ne!(output["status"], "accepted", "{output}");
+}

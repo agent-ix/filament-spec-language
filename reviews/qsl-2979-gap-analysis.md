@@ -60,3 +60,6 @@ FND-002 and FND-003 should be fixed in this PR's new test, not in the frozen fiv
 | FND-002 | still-open | FR-741-AC-5 and FR-201-AC-76's numerator `391/400` at `m`'s initial key is still asserted nowhere at that key (see SR-3599001 FND-010) |
 | FND-003 | fixed | on_each.rs no longer carries the FR-201-AC-51 tag. Its tests are tagged FR-201-AC-76..80 (TC-3208/3209) and FR-741-AC-5 |
 | FND-004 | fixed | `restrict_spelled_states` and its prose criterion id are removed, and the profile is owned by FR-201 "Closed on-each reachability conditional profile" (#3603) |
+| FND-002 | fixed | Round 2: on_each.rs asserts `391/400` and `1` at `m`'s initial key and `0`/`0` at `n`'s (FR-201-AC-76, FR-741-AC-5) |
+| FND-005 | still-open | Round 2 retagged the limit test to `TC-2066`/`FR-741-AC-2`. FR-741-AC-2 is about accepted certificates across forms (P95 ratio, value bounds, long-run ...), not a state limit, and no FR-741 AC covers an on-each `max_states` stop (FR-741-AC-6 is about work units). The binding is still wrong. Drop the AC tag and keep it as an untagged regression test, or add an FR-741 Budgets AC for it |
+| FND-006 | fixed | Round 2: the analyze test now uses the AC-80 clauses (authored fairness, and every scheduler) and asserts `unsupported`/`not-yet-implemented`, no cause and no certificate. on_each.rs covers the cyclic, fair and timed clauses |

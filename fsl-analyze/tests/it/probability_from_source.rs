@@ -1859,7 +1859,6 @@ fn exact_limits_from_source_reach_the_engine() {
 /// FR-741 Budgets over FR-875: a state limit reached while an `on each` item
 /// builds its phase graph settles `incomplete` naming `exact_prob.max_states`
 /// like every other exact item, never `failed`.
-#[trace("TC-2066", "FR-741-AC-2")]
 #[test]
 fn probabilistic_on_each_state_limit_settles_incomplete_naming_the_limit() {
     let document = run_from(

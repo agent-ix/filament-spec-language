@@ -148,3 +148,8 @@ pub(super) fn on_each_timed_source() -> String {
         "under every scheduler on each (k: M::Msg) when (not k.delivered) { probability >= 0.99 [ eventually[0 ms, 4 ms] holds(k.delivered) ] }",
     )
 }
+
+/// A request holding a timed proof, whose certificate a test may swap.
+pub(super) fn timed_request() -> Value {
+    certified(&retx(">= 1 ms", NO_TOGGLE, DEADLINE))
+}
