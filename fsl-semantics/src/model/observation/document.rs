@@ -5135,7 +5135,7 @@ mod tests {
     #[test]
     fn raw_clock_data_refusal_keeps_its_typed_value_locus() {
         let types = TypeEnvironment::default();
-        let clock = ValueType::Reference(crate::check::clock_reference_target());
+        let clock = ValueType::ClockReference;
         let raw = reference("ix://model/calls", "place/v1/not-a-v2-identity");
         for (raw, slot, path) in [
             (raw.clone(), clock.clone(), Vec::new()),
@@ -5157,12 +5157,15 @@ mod tests {
             let mut references =
                 References::over(&[], &types, &[]).expect("empty declared catalog");
             let record = admit_form(&mut references, raw.form(), &slot, None)
-                .expect_err("transported Clock DATA remains unsupported before decoding");
+                .expect_err("transported Clock DATA is refused typed until QSL-3002");
             assert_eq!(record.catalog.code(), Code::UnknownRequiredFeature.as_str());
             assert_eq!(record.catalog.cause(), "unsupported-feature");
             assert_eq!(
                 record.fields,
-                BTreeMap::from([("reason", "missing-route-neutral-place-identity".to_owned())])
+                BTreeMap::from([(
+                    "reason",
+                    "clock-reference-admission-pending-qsl-3002".to_owned()
+                )])
             );
             assert_eq!(record.path, path);
         }
