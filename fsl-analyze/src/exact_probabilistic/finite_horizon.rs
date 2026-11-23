@@ -320,6 +320,15 @@ fn collapse_zero_time_components(
         if !has_cycle(&zero_graph)? {
             return Ok(None);
         }
+        // `UnboundedError::Singular` below needs a first-action policy with a
+        // closed class, and every such class is an end component of the full
+        // graph. It cannot arise from a product this crate builds: a timed
+        // bounded-event product carries a deadline monitor, so `has_deadline`
+        // adds the full-graph end components and this branch is not reached;
+        // an untimed product has only zero-delay edges, so its closed classes
+        // are zero-time end components and this branch is not reached either.
+        // Here every action leaves its zero-delay cycle with positive
+        // probability, so each policy is proper and its system is regular.
         let graph = Graph::with_terminals(product, terminal).map_err(|error| match error {
             UnboundedError::InvalidState => FhError::InvalidState,
             UnboundedError::MissingAction => FhError::MissingAction,
@@ -1708,5 +1717,112 @@ mod tests {
         assert_eq!(limits.max_rational_bits, 65_536);
         assert_eq!(limits.max_policy_iterations, 10_000);
         assert_eq!(limits.max_witness_paths, 1_024);
+    }
+
+    /// A one-state product whose only zero-delay action leaves its state with
+    /// probability 1/2 and returns to it with probability 1/2: a zero-delay
+    /// cycle with no end component. `timed_first` puts a delaying self-loop
+    /// ahead of it, the one shape whose first-action policy never leaves the
+    /// state; `deadline` gives the state the deadline monitor every timed
+    /// bounded-event product carries.
+    fn leaky_zero_delay_cycle(timed_first: bool, deadline: bool) -> ProbProduct {
+        let key = |model, monitor| super::super::ProbKey {
+            binding: None,
+            model: vec![model],
+            monitor,
+            accumulator: None,
+            pending: None,
+            certificate_state: None,
+        };
+        let start = key(
+            0,
+            deadline.then_some(MonitorState::Deadline {
+                kind: fsl_eval::probabilistic::DeadlineKind::Eventually,
+                phase: fsl_eval::probabilistic::DeadlinePhase::Pending,
+            }),
+        );
+        let edge = |choice: ProductAction, to: usize, probability, elapsed| ProbEdge {
+            from: ProbStateId(0),
+            choice,
+            action: None,
+            draw: None,
+            to: ProbStateId(to),
+            probability,
+            elapsed,
+            rewards: Vec::new(),
+        };
+        let mut edges = Vec::new();
+        if timed_first {
+            edges.push(edge(
+                ProductAction::PostState(Box::new(start.clone())),
+                0,
+                rational(1, 1),
+                rational(1, 1),
+            ));
+        }
+        let leave = ProductAction::PostState(Box::new(key(1, None)));
+        edges.push(edge(leave.clone(), 0, rational(1, 2), rational(0, 1)));
+        edges.push(edge(leave, 1, rational(1, 2), rational(0, 1)));
+        ProbProduct {
+            states: vec![start, key(1, None), key(2, None)],
+            kind: ProductKind::Mdp,
+            edges,
+            initial: vec![(0, None, ProbStateId(0))],
+            decided: Vec::new(),
+            labels: vec![Vec::new(); 3],
+            fairness_operations: Vec::new(),
+            fairness: Vec::new(),
+        }
+    }
+
+    fn settle_leaky_zero_delay_cycle(
+        product: &ProbProduct,
+        objective: FhObjective,
+    ) -> Result<FhResult, FhError> {
+        let terminal = [None, Some(rational(1, 1)), Some(rational(0, 1))];
+        backward_induction_with_policy_limit(
+            product,
+            &terminal,
+            objective,
+            &rational(1, 2),
+            64,
+            4,
+            8,
+            10_000,
+        )
+    }
+    /// A zero-delay cycle that leaves its state with positive probability and
+    /// forms no end component is a transient system: it has a unique value,
+    /// the objective's exact expectation of its exit.
+    /// Trace: TC-632
+    #[trace("TC-632")]
+    #[test]
+    fn leaky_zero_delay_cycle_without_an_end_component_has_its_exit_value() {
+        let product = leaky_zero_delay_cycle(false, false);
+        for objective in [FhObjective::Min, FhObjective::Max] {
+            let result = settle_leaky_zero_delay_cycle(&product, objective);
+            assert!(matches!(
+                result,
+                Ok(FhResult::Exact { ref values, .. }) if values[0] == rational(1, 1)
+            ));
+        }
+    }
+
+    /// A timed bounded-event product keeps its deadline monitor in the state,
+    /// so a delaying self-loop ahead of the leaky zero-delay action is an end
+    /// component the collapse decides before the policy iteration whose
+    /// singular system could otherwise surface as a cycle.
+    /// Trace: TC-632
+    #[trace("TC-632")]
+    #[test]
+    fn deadline_product_decides_a_delaying_loop_beside_a_leaky_zero_delay_cycle() {
+        let product = leaky_zero_delay_cycle(true, true);
+        for objective in [FhObjective::Min, FhObjective::Max] {
+            let result = settle_leaky_zero_delay_cycle(&product, objective);
+            assert!(matches!(
+                result,
+                Ok(FhResult::Exact { ref values, .. }) if values[0] == rational(1, 1)
+            ));
+        }
     }
 }
