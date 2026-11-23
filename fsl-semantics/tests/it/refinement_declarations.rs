@@ -1248,7 +1248,12 @@ fn two_object_rows_from_one_concrete_type_conflict() {
          object Q::Cell from R::Ring { value = self.size; }\n\
          }";
     let found = refused(&models, body);
-    let conflict = only(&found);
+    assert_eq!(
+        found.len(),
+        2,
+        "the conflict and the dropped row's missing row"
+    );
+    let conflict = &found[0];
     assert_eq!(
         conflict.code_and_cause(),
         (Code::InvalidModelBinding, Some("conflicting-binding"))
@@ -1256,6 +1261,18 @@ fn two_object_rows_from_one_concrete_type_conflict() {
     assert_eq!(
         conflict.at,
         "object Q::Cell from R::Ring { value = self.size; }"
+    );
+    let RefinementCause::Conflicting { name, first } = conflict.refinement() else {
+        panic!("a conflict: {:?}", conflict.refinement());
+    };
+    assert_eq!(name, "R::Ring");
+    assert_eq!(
+        &conflict.unit[first.start..first.end],
+        "object Q::Queue from R::Ring { size = self.size; }"
+    );
+    assert_eq!(
+        found[1].code_and_cause(),
+        (Code::MissingDeclaration, Some("missing-name"))
     );
 }
 
