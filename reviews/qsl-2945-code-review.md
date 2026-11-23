@@ -85,3 +85,20 @@ or move it to a ticket.
 | FND-007 | fixed | a_step_argument_nesting_references_reaches_the_abstract_operation_lifted runs `put` through `check_step` and asserts that the taken `enq`'s `rs` holds the `Queue` references `b` and `a`, in order (the node-row site is FND-011) |
 | FND-008 | still-open | The fix enforces the one-row-per-concrete-type assumption with a new S3 refusal, and that refusal regresses legal models (FND-010). Replay still does not read the abstract parameter's declared type, so a concrete type with two rows still lifts by its first row, in `lift_reference` as well as `lift_own` |
 | FND-009 | fixed | FR-140 now has "When two concrete map keys lift to one abstract key, `map_state` SHALL return `MappingFailure::Fault`"; tested by two_keys_lifting_to_one_abstract_key_are_a_fault |
+
+## New findings (disposition pass 3)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-012 | medium | The receiver of an abstract-operation step row is lifted with no declared type (`StepArgument::Receiver => None`), so it lifts by the first object row from its concrete type. Its abstract type is known: it is the type that declares the abstract operation, which S3 types the receiver against (`receiver_type = lift(&self.lifting, &ValueType::Reference(target_type.id))`, RM-5). With `object Q::Cell from C::Call` written before `object Q::Queue from C::Call`, a `-> enq(self, ..)` row lifts the receiver to a `Cell` and applies `Queue::enq` to it. Pass `Reference(<declaring type of operation>)` as the receiver's declared type. | fsl-replay/src/refinement/step.rs:1916 |
+| FND-013 | medium | FR-140-AC-17 is tested only through `choose_row` with string stand-ins. Nothing exercises `lift_reference` building its candidates from `abstract_system.type_identity(row.abstract_type())` and comparing them with the `EffectiveId` of a declared `ValueType::Reference`. If those identities ever differ in form, `choose_row` silently falls back to the first row, and every current test still passes. A `map_state` test over a refinement with two rows from one concrete type and a field declared with the second row's type is needed. | fsl-replay/src/refinement/map.rs:598-622 |
+| FND-014 | low | `choose_row` matches the declared type by exact identity only. A field or parameter declared with an abstract supertype of one candidate's type (for example `Reference<P>` with `Cell <: P`) matches nothing and falls back to the first row, which may be the unrelated `Queue`. Choosing the candidate whose abstract type conforms to the declared type (and treating more than one conforming candidate as ambiguous) would follow RM-3. | fsl-replay/src/refinement/map.rs:625-637 |
+| FND-015 | low | Protocol node-row arguments are lifted with `None` (first row). S3 types them against the node record's field types (refinement.rs, `conforms(actual, &lift(&self.lifting, field))`), so the declared types exist and could be passed. No fixture has an argument-bearing node row, so this path has no `check_step` test. | fsl-replay/src/refinement/step.rs:2045 |
+
+## Dispositions (round 3)
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-008 | fixed | Replay now lifts step-row parameters against the abstract parameter's declared type (`operation_parameter_types`, `lift_value(.., declared, ..)` and `choose_row`); the receiver and node-row fallback is new FND-012 and FND-015 |
+| FND-010 | fixed | The S3 refusal, FR-135-AC-13 and its test are removed; refinement.rs is byte-identical to its state before round 2; `fsl-semantics --test it clock_places` passes |
+| FND-011 | fixed | `a_step_argument_naming_an_unmapped_type_is_undetermined_at_the_argument` asserts `Undetermined(Mapping)` with `UnmappedType(SubRing)` at `Argument { Slot/put, Parameter(1) }`; the node-row site moves to FND-015 |

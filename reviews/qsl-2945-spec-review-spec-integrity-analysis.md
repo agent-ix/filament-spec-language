@@ -71,3 +71,17 @@ to avoid.
 | --- | --- | --- |
 | FND-005 | fixed | FR-141 has a new SHALL bullet for lifting nested references in the receiver and arguments, plus FR-141-AC-13 and TC-546 step 8 |
 | FND-006 | fixed | FR-135-AC-6 and FR-140-AC-16 now say the map clause is checked by unit tests of `lift()` / `lift_nested`, because no validated package declares a map type |
+
+## New findings (disposition pass 3)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-009 | medium | FR-141 now states that the receiver lifts "from the first such row". That contradicts ADR-020 RM-5, under which the receiver is typed against the abstract operation's receiver (the type that declares the operation), and RM-3, which gives the abstract type per abstract population and not by source order. Making declaration order decide the receiver's abstract type is a rule RM-3 does not contain. The receiver's type is determined and should be stated as such. For node-row arguments the record field types are also known; "first row" there is a shortcut, not a rule from ADR-020. | spec/functional/FR-141-decide-one-concrete-step-against-the-abstract-model.md:164-167 |
+| FND-010 | low | FR-140's new fallback, "When the declared type names none of those rows' abstract types, it SHALL lift by the first of those rows in declaration order", picks an arbitrary abstract object when the declared type is a supertype of one candidate. RM-3 gives no such order rule. Either specify conformance-based choice, or refuse the ambiguous case at S3. | spec/functional/FR-140-evaluate-the-refinement-mapping-at-a-state.md:145-150 |
+
+## Dispositions (round 3)
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-007 | fixed | The FR-135 one-row SHALL and FR-135-AC-13 are removed (TC-540 scope too); FR-140 now states RM-2 multi-row sourcing with declared-type choice |
+| FND-008 | fixed | FR-141-AC-13 now names the `size(rs) = size(self.chain)` postcondition; the ring_world doc comment and TC step number are corrected |

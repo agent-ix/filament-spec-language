@@ -610,41 +610,75 @@ fn lift_reference(
         .filter(|row| row.concrete_type() == concrete_type)
         .map(|row| (row, abstract_system.type_identity(row.abstract_type())))
         .collect();
-    let row = choose_row(&candidates, declared)
-        .ok_or_else(|| Lifting::Unmapped(concrete_type.clone()))?;
+    let row = match choose_row(&candidates, declared, &|sub, sup| {
+        abstract_system.type_conforms(sub, sup)
+    }) {
+        Ok(row) => row,
+        Err(RowChoice::NoRow) => return Err(Lifting::Unmapped(concrete_type.clone())),
+        Err(RowChoice::Ambiguous) => return Err(Lifting::Fault),
+    };
     abstract_system
         .object_reference(row.abstract_type(), reference.object().as_str())
         .map_err(|_| Lifting::Fault)
 }
 
+/// Why no object row lifts a reference.
+#[derive(Debug, Eq, PartialEq)]
+enum RowChoice {
+    /// No object row names the concrete type.
+    NoRow,
+    /// Several rows name it and the declared type, if any, does not pick one.
+    Ambiguous,
+}
+
 /// The object row that lifts a reference to a concrete type, among the
 /// `candidates` that name that type as their source, each with its abstract
-/// type's identity (ADR-020 RM-2, RM-3): the row whose abstract type is the
-/// `declared` one, when the declared type names one of them, and otherwise
-/// the first row in declaration order.
+/// type's identity (ADR-020 RM-2, RM-3). A lone candidate is the row. Among
+/// several, the row whose abstract type conforms to the `declared` type and
+/// is the most specific such (it conforms to every other conforming one); no
+/// conforming candidate, no most specific one, or no declared type is
+/// [`RowChoice::Ambiguous`].
 fn choose_row<T: Copy>(
     candidates: &[(T, Option<EffectiveId>)],
     declared: Option<&EffectiveId>,
-) -> Option<T> {
-    declared
-        .and_then(|declared| {
-            candidates
-                .iter()
-                .find(|(_, identity)| identity.as_ref() == Some(declared))
+    conforms: &dyn Fn(&EffectiveId, &EffectiveId) -> bool,
+) -> Result<T, RowChoice> {
+    match candidates {
+        [] => return Err(RowChoice::NoRow),
+        [(only, _)] => return Ok(*only),
+        _ => {}
+    }
+    let declared = declared.ok_or(RowChoice::Ambiguous)?;
+    let conforming: Vec<_> = candidates
+        .iter()
+        .filter_map(|(row, identity)| {
+            identity
+                .as_ref()
+                .filter(|identity| conforms(identity, declared))
+                .map(|identity| (*row, identity))
         })
-        .or_else(|| candidates.first())
+        .collect();
+    conforming
+        .iter()
+        .find(|(_, identity)| {
+            conforming
+                .iter()
+                .all(|(_, other)| conforms(identity, other))
+        })
         .map(|(row, _)| *row)
+        .ok_or(RowChoice::Ambiguous)
 }
 
 /// `value` as the abstract model reads it: a reference maps to the abstract
 /// reference with the same key (RM-3), and so does a reference nested in an
 /// option, collection or map; any other value is unchanged. Used for the
 /// receiver and arguments of an abstract-operation `step` row. `declared` is
-/// the abstract parameter's declared type, which picks the object row where a
-/// concrete type is the source of several (RM-2, RM-3); a protocol node row
-/// has none here, so the abstract type is the value's own type with each
-/// reference type replaced by the abstract type of the first object row that
-/// maps it.
+/// the abstract parameter's declared type, or for the receiver the type that
+/// declares the operation, which picks the object row where a concrete type
+/// is the source of several (RM-2, RM-3); a protocol node row has none here,
+/// so the abstract type is the value's own type with each reference type
+/// replaced by the abstract type of the one object row that maps it, and a
+/// type several rows map is a fault.
 pub(super) fn lift_value(
     refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
@@ -661,12 +695,14 @@ pub(super) fn lift_value(
     lift_own(
         &mut reference,
         &mut |concrete| {
-            let row = refinement
-                .objects()
-                .find(|row| {
-                    concrete_system.type_identity(row.concrete_type()).as_ref() == Some(concrete)
-                })
-                .ok_or(Lifting::Fault)?;
+            let mut rows = refinement.objects().filter(|row| {
+                concrete_system.type_identity(row.concrete_type()).as_ref() == Some(concrete)
+            });
+            // A type several rows name has no abstract type without a
+            // declared one.
+            let (Some(row), None) = (rows.next(), rows.next()) else {
+                return Err(Lifting::Fault);
+            };
             abstract_system
                 .type_identity(row.abstract_type())
                 .ok_or(Lifting::Fault)
@@ -1080,26 +1116,69 @@ mod tests {
     }
 
     /// FR-140-AC-17 (TC-1086 step 11): of the object rows that name a concrete
-    /// type as their source (`Queue` and `Cell` from `Call`), the declared
-    /// type picks its own row, and a declared type naming neither picks the
-    /// first.
+    /// type as their source (`Queue` and `Cell` from `Call`), the row whose
+    /// abstract type conforms to the declared type, the most specific one;
+    /// none, or several with no most specific, or no declared type, is
+    /// ambiguous, and a lone row is the row.
     #[trace("TC-1086", "FR-140-AC-17")]
     #[test]
     fn the_declared_type_picks_among_rows_from_one_concrete_type() {
         let (queue, cell) = (effective("Queue"), effective("Cell"));
+        let (parent, other, special) = (
+            effective("Parent"),
+            effective("Other"),
+            effective("Special"),
+        );
+        // `Cell` and `Queue` both specialize `Parent`, and `Special`
+        // specializes `Cell`.
+        let conforms = |sub: &EffectiveId, sup: &EffectiveId| {
+            sub == sup
+                || (*sup == parent && (*sub == cell || *sub == queue || *sub == special))
+                || (*sub == special && *sup == cell)
+        };
         let rows = [
             ("queue row", Some(queue.clone())),
             ("cell row", Some(cell.clone())),
         ];
-        assert_eq!(choose_row(&rows, Some(&cell)), Some("cell row"));
-        assert_eq!(choose_row(&rows, Some(&queue)), Some("queue row"));
+        assert_eq!(choose_row(&rows, Some(&cell), &conforms), Ok("cell row"));
+        assert_eq!(choose_row(&rows, Some(&queue), &conforms), Ok("queue row"));
         assert_eq!(
-            choose_row(&rows, Some(&effective("Other"))),
-            Some("queue row")
+            choose_row(&rows, Some(&parent), &conforms),
+            Err(RowChoice::Ambiguous)
         );
-        assert_eq!(choose_row(&rows, None), Some("queue row"));
+        assert_eq!(
+            choose_row(&rows, Some(&other), &conforms),
+            Err(RowChoice::Ambiguous)
+        );
+        assert_eq!(
+            choose_row(&rows, None, &conforms),
+            Err(RowChoice::Ambiguous)
+        );
+        // A supertype of exactly one candidate picks it.
+        let supertype = [
+            ("queue row", Some(queue.clone())),
+            ("special row", Some(special.clone())),
+        ];
+        assert_eq!(
+            choose_row(&supertype, Some(&cell), &conforms),
+            Ok("special row")
+        );
+        // Of two conforming candidates the most specific wins.
+        let nested = [
+            ("cell row", Some(cell.clone())),
+            ("special row", Some(special)),
+        ];
+        assert_eq!(
+            choose_row(&nested, Some(&parent), &conforms),
+            Ok("special row")
+        );
+        let lone = [("queue row", Some(queue))];
+        assert_eq!(choose_row(&lone, Some(&other), &conforms), Ok("queue row"));
         let none: [(&str, Option<EffectiveId>); 0] = [];
-        assert_eq!(choose_row(&none, Some(&cell)), None);
+        assert_eq!(
+            choose_row(&none, Some(&cell), &conforms),
+            Err(RowChoice::NoRow)
+        );
     }
 
     /// FR-140-AC-16: two concrete map keys that lift to one abstract key are

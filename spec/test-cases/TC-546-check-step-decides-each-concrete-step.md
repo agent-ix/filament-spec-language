@@ -16,7 +16,7 @@ Verify `check_initial` and `check_step` over functional mappings, with `_`
 arguments and bound results, with hidden fields tracked as a candidate set,
 and with protocol step-class rows.
 
-Scope: FR-141-AC-1 to FR-141-AC-5, FR-141-AC-11 to FR-141-AC-13 and FR-138-AC-8.
+Scope: FR-141-AC-1 to FR-141-AC-5, FR-141-AC-11 to FR-141-AC-14 and FR-138-AC-8.
 
 ## Test Procedure
 
@@ -33,6 +33,8 @@ Fixtures: `CasRefinesCounter` and its lost-update model (ADR-020 §8);
 7. On `Coin` with a `reveal` no candidate allows, with a completion undecided while another is accepted, and over FR-138-AC-8's failed `writes` update (FR-141-AC-12, FR-138-AC-8).
 
 8. On the `chain` variant of `RingIsQueue` (FR-141-AC-13), run `put(1)` over ring `a` whose `chain` is `[b, a]`.
+
+9. On the `twin` variant of `RingIsQueue` with the `Cell` row first (FR-141-AC-14), run `put(1)` on ring `r`.
 
 Tag the tests `#[trace("TC-546", "FR-141-AC-n")]`, and the test of step 7 also `#[trace("TC-546", "FR-138-AC-8")]`.
 
@@ -52,5 +54,7 @@ Tag the tests `#[trace("TC-546", "FR-141-AC-n")]`, and the test of step 7 also `
 - Step 7: `NoAbstractMatch{position}`; `Undetermined(UndecidedSuccessor)`; `Undetermined(MappingUndetermined)` naming the `writes` update.
 - Step 8: passes as `Taken::Abstract([enq(a, 1, [b, a])])`, the one abstract
   transition whose `rs` is the lifted chain.
+- Step 9: passes as `Taken::Abstract([enq(r, 1)])` whose receiver is the
+  `Queue` `r`.
 
 Every call passes the concrete `ModelSystem` and the abstract system (FR-141).

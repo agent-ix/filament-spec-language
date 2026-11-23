@@ -1906,6 +1906,9 @@ fn evaluate_arguments(
     bindings.extend(resolved.arguments.iter().cloned());
     let object = object_of(concrete_system, &pre.concrete, &resolved.receiver);
     let parameters = abstract_system.operation_parameter_types(operation);
+    let receiver_type = abstract_system
+        .operation_declaring_type(operation)
+        .map(filament_exact::ValueType::Reference);
     let evaluate = |expression: &dyn MappingExpression,
                     argument: StepArgument|
      -> Result<Value, StepVerdict> {
@@ -1913,7 +1916,7 @@ fn evaluate_arguments(
             StepArgument::Parameter(index) => {
                 parameters.as_ref().and_then(|found| found.get(index))
             }
-            StepArgument::Receiver => None,
+            StepArgument::Receiver => receiver_type.as_ref(),
         };
         let at = MappingRowRef::Argument {
             operation: concrete_operation.clone(),

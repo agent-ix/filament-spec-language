@@ -161,10 +161,13 @@ decides.
 - `check_step` SHALL lift a reference nested inside an option, collection or
   map value of the row's receiver or of an argument, at every depth, to the
   abstract `Reference<T_A>` with the same key (FR-140), before it applies the
-  abstract operation, taking the abstract type of each reference from the
-  abstract parameter's declared type where a concrete type is the source of
-  several object rows, and from the first such row for the receiver and for
-  a protocol node row's arguments. An argument whose reference names an object of a type no
+  abstract operation, taking the abstract type of each reference, where a
+  concrete type is the source of several object rows, from the abstract
+  parameter's declared type for an argument and from the type that declares
+  the abstract operation for the receiver (ADR-020 RM-5), by FR-140's
+  conformance rule. A protocol node row's arguments carry no declared type
+  in this build's replay: a concrete type that several object rows name is a
+  `StepVerdict::Fault` there, and one row names it uniquely. An argument whose reference names an object of a type no
   object row maps SHALL return `Undetermined(MappingUndetermined)` naming the
   argument and the `UnmappedType` cause.
 - `check_initial` SHALL return `Undefined` with position 0 when FR-140
@@ -284,6 +287,7 @@ how it evaluates them and what it reports:
 | FR-141-AC-10 | Fixture `Reads`: a refinement whose row is `put -> enq(R, A1, A2)` over a model where each of the receiver `R`, the arguments `A1` and `A2`, the post-history update `H` and a post-state row `P` can be chosen as cheap, over-budget (costing more than the meter B, so incomplete), undefined (division by zero), out of type (`H` only) or of an unmapped type (`P` only). `check_step` returns: `Undefined` at `A1` for `R` over-budget and `A1` undefined; `Undefined` at `P` for `A1` over-budget and `P` undefined; `Undefined` at `A1` for `A1` and `A2` both undefined; `Undetermined(MappingUndetermined)` naming `H` for `H` out of type and `P` over-budget; `Undetermined` naming `P` for `P` of an unmapped type and nothing undefined; `Undefined` at `R` for `R` and `A1` both undefined; `Undefined` at `A1` for `A1` and `P` both undefined; `Undetermined(MappingUndetermined)` naming `A1` for `A1` over-budget and `H` out of type; `Undefined` at `H` for `H` and `P` both undefined; and `StepVerdict::Fault` for a swapped system with `A1` undefined (FSpec FR-377-AC-12, TC-315 step 9). | Test (TC-555) |
 | FR-141-AC-11 | Fixture `Coin3`: `Coin` (FR-141-AC-4) with three concrete initial states: index 0 with all fields false and 0, index 1 with `face` 1 and index 2 with `tossed` true. `check_initial` on index 0 passes and on index 1 and 2 fails `InitialNotAbstract{initial: 1}` and `InitialNotAbstract{initial: 2}`. `check_step` of the lost-update `commitB` step of AC-1 with `ConcreteStep.position` 3 fails `AbstractStepRejected{position: 3, …}` with `abstract_successors` 1; `Coin`'s `toss` with `side` hidden from the initial state at index 0 passes with `abstract_successors` 2. | Test (TC-546) |
 | FR-141-AC-13 | Over `RingIsQueue` whose concrete `Ring` and abstract `Queue` both have `chain: Sequence<Reference<_>>[0, 2]` and whose abstract `enq` also takes `rs: Sequence<Reference<Queue>>[0, 2]` with the postcondition `size(rs) = size(self.chain)`, the row `put -> enq(self.ring, x, self.ring.chain)` over ring `a` with `chain` `[b, a]` passes `put(1)` as the one abstract `enq(a, 1, [b, a])`, `rs` being the `Queue` references `b` and `a`, in that order; and with ring `c`, a `SubRing` no object row names, in the chain, the same step returns `Undetermined(MappingUndetermined)` naming the argument `rs` with `UnmappedType(SubRing)`. | Test (TC-546) |
+| FR-141-AC-14 | Over the `twin` variant of `RingIsQueue` (`Queue` and `Cell` both mapped from `Ring`, with the `Cell` row written first), the row `put -> enq(self.ring, x)` passes `put(1)` as the one abstract `enq` applied to the `Queue` `r`, not the `Cell`, the receiver lifting against the type that declares `enq`. | Test (TC-546) |
 | FR-141-AC-12 | Over `Coin` (FR-141-AC-4) with the pre set `[side 1]` and the concrete `reveal` setting `face` 0, which no candidate completion allows, the step fails `NoAbstractMatch{position}`, not `AbstractStepRejected`. Over `Coin` with `function m using v(i: Int[0, 1]): Integer pure { 1 mod i }` checked under `CheckMode::Kernel` and `toss`'s Linked postcondition `self.tossed and m(self.side) = 0`, undecided for one completion while another is accepted, `check_step` returns `Undetermined(UndecidedSuccessor)`, and the accepted member is not passed alone. The zero-divisor operation is inside `m`'s genuine checked body; an inline unproved `mod` in the postcondition refuses before evaluation under FR-495 and FR-952. FR-138-AC-8's undetermined `writes` update gives `Undetermined(MappingUndetermined)` naming the update. | Test (TC-546) |
 
 ## Dependencies

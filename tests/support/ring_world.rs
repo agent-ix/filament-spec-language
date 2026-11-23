@@ -87,6 +87,11 @@ pub struct Variant {
     /// the fixture in the layer the unit selects, and the test asserts the
     /// lifted `rs` itself exactly (FR-141-AC-13).
     pub chain: bool,
+    /// The abstract package also declares `Cell { value: Digit }` in a
+    /// population `cells`, and the abstract `Queue` a `twin: Reference<Cell>`:
+    /// `Queue` and `Cell` can both be mapped from the one concrete `Ring`
+    /// (FR-140-AC-17, [`twin_refinement`]).
+    pub twin: bool,
     /// The abstract `Queue` has an optional `head: Digit?` field
     /// (FR-140-AC-11).
     pub optional_head: bool,
@@ -177,11 +182,17 @@ fn queue_document(variant: Variant) -> Vec<u8> {
         queue_fields(variant),
         vec![enq, deq],
     ));
-    ring_queue::document(
-        QUEUE,
-        types,
-        vec![ring_queue::population(QUEUE, "queues", "Queue")],
-    )
+    let mut populations = vec![ring_queue::population(QUEUE, "queues", "Queue")];
+    if variant.twin {
+        types.push(ring_queue::object_type(
+            QUEUE,
+            "Cell",
+            vec![ring_queue::single(QUEUE, "Cell", "value", &digit)],
+            Vec::new(),
+        ));
+        populations.push(ring_queue::population(QUEUE, "cells", "Cell"));
+    }
+    ring_queue::document(QUEUE, types, populations)
 }
 
 /// The fields of the abstract `Queue` of `variant`.
@@ -200,6 +211,14 @@ fn queue_fields(variant: Variant) -> Vec<Json> {
             "Queue",
             "next",
             &node(QUEUE, "Queue"),
+        ));
+    }
+    if variant.twin {
+        fields.push(ring_queue::single(
+            QUEUE,
+            "Queue",
+            "twin",
+            &node(QUEUE, "Cell"),
         ));
     }
     if variant.chain {
@@ -367,6 +386,33 @@ pub fn ring_is_queue(items: &str) -> String {
     )
 }
 
+/// `RingIsQueue` over the `twin` variant: the one concrete `Ring` is the
+/// source of both `Q::Queue` (whose `twin = self` is a `Reference<Cell>`
+/// field) and `Q::Cell`, written in the order `cell_first` says.
+pub fn twin_refinement(cell_first: bool) -> String {
+    let queue = format!(
+        "object Q::Queue from R::Ring {{ {} twin = self; }}",
+        items_row(Variant::default())
+    );
+    let cell = "object Q::Cell from R::Ring { value = self.head; }";
+    let (first, second) = if cell_first {
+        (cell.to_owned(), queue)
+    } else {
+        (queue, cell.to_owned())
+    };
+    format!(
+        "invariant Anything using v on R::Ring at current {{ true }}\n\
+         refinement RingIsQueue using inf abstract Q concrete R {{\n\
+         population Q::queues from R::rings;\n\
+         population Q::cells from R::rings;\n\
+         {first}\n\
+         {second}\n\
+         step R::Slot::put -> Q::Queue::enq(self.ring, x);\n\
+         step R::Slot::take -> Q::Queue::deq(self.ring);\n\
+         }}"
+    )
+}
+
 /// The unit text: both models, the contracts of `variant` and `refinement`.
 fn unit_text(
     documents: &fsl_semantics::model::intake::PackageInput,
@@ -512,19 +558,26 @@ impl RingWorld {
         if variant.chain {
             queue_fields["chain"] = json!({"sequence": []});
         }
+        if variant.twin {
+            queue_fields["twin"] =
+                json!({"reference": {"population": node(QUEUE, "cells"), "key": "r"}});
+        }
         if variant.xy {
             queue_fields["x"] = json!({"integer": "0"});
             queue_fields["y"] = json!({"integer": "0"});
         }
-        let queue_initial = snapshot(
-            QUEUE,
-            vec![
-                json!({"population": node(QUEUE, "queues"), "complete": true,
-                "objects": [{"key": "r", "type": node(QUEUE, "Queue"),
-                    "fields": queue_fields}]}),
-            ],
-            &mut snapshots,
-        );
+        let mut queue_populations = vec![
+            json!({"population": node(QUEUE, "queues"), "complete": true,
+            "objects": [{"key": "r", "type": node(QUEUE, "Queue"),
+                "fields": queue_fields}]}),
+        ];
+        if variant.twin {
+            queue_populations.push(json!({"population": node(QUEUE, "cells"),
+                "complete": true,
+                "objects": [{"key": "r", "type": node(QUEUE, "Cell"),
+                    "fields": {"value": {"integer": "0"}}}]}));
+        }
+        let queue_initial = snapshot(QUEUE, queue_populations, &mut snapshots);
         let mut ring_fields = json!({"head": {"integer": "0"}, "size": {"integer": "0"}});
         if variant.next {
             ring_fields["next"] =

@@ -50,9 +50,10 @@ FR-140-AC-7.
     each (unit tests of `lift_nested`; no validated package declares a map
     type yet).
 11. Choose the row that lifts a reference to a type two object rows name,
-    with the declared type naming the first, the second and neither (unit
-    test of the row choice; the fixture that declares both fields is the
-    clock refinement's `Queue` and `Cell` rows from `Call`, which S3 checks).
+    with the declared type naming the first, the second, a supertype and
+    neither (unit test of the row choice), and map the ring world's `twin`
+    variant, whose `Queue` and `Cell` rows both name `Ring`, in both row
+    orders.
 
 Tag the tests `#[trace("TC-1086", "<AC id>")]`.
 
@@ -83,5 +84,7 @@ Tag the tests `#[trace("TC-1086", "<AC id>")]`.
   `some` payloads lift and `none` stays `none`; the sequence of options lifts
   in order; the map's keys and values lift with the entries in order; an
   unmapped reference in any of them is `Unmapped`.
-- Step 11: the declared type picks its row; a declared type naming neither
-  picks the first row.
+- Step 11: `twin` lifts to the `Cell` reference `r` whichever row is written
+  first; the declared type picks its row, a supertype of one candidate picks
+  that one, of both the more specific, and a declared type that picks none is
+  `Ambiguous`.

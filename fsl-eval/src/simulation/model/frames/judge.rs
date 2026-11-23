@@ -237,6 +237,30 @@ impl ModelSystem<'_> {
         Ok(None)
     }
 
+    /// The effective identity of the object type that declares the operation
+    /// `operation` names; `None` when this subject declares no such operation.
+    pub fn operation_declaring_type(
+        &self,
+        operation: &DeclarationKey,
+    ) -> Option<filament_exact::EffectiveId> {
+        let text = declaration_text(operation, CanonicalLimits::new(u64::MAX)).ok()?;
+        self.applications
+            .values()
+            .flatten()
+            .find(|found| found.text == text)
+            .map(|found| found.declaring.clone())
+    }
+
+    /// Whether the object type `sub` is `sup` or one of its subtypes in this
+    /// subject's model.
+    pub fn type_conforms(
+        &self,
+        sub: &filament_exact::EffectiveId,
+        sup: &filament_exact::EffectiveId,
+    ) -> bool {
+        self.types.conforms(sub.clone(), sup.clone())
+    }
+
     /// The declared parameter types of the operation `operation` names, in
     /// declaration order; `None` when this subject declares no such operation.
     pub fn operation_parameter_types(
