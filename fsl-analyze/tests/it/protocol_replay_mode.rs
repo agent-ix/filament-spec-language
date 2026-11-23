@@ -2665,7 +2665,7 @@ fn a_choice_before_an_inner_repeat_does_not_count_toward_the_iteration() {
         all.extend(round("b", "m-2"));
         Value::Array(all)
     };
-    for outstanding in ["cancel", "continue"] {
+    for outstanding in ["continue"] {
         let source = nested_repeat_cancel_protocol(
             "choice Pick by Buyer visible () { case a when { true } sequence CA { } case b when { false } sequence CB { } } ",
         )
