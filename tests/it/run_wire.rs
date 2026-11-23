@@ -2707,7 +2707,17 @@ fn an_items_deadline_expiring_mid_settlement_leaves_the_stream_unchanged() {
         Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {}
         Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
             cancel.cancel(filament_exact::CancelCause::Deadline);
-            panic!("monitor worker did not finish after the provider was released");
+            match completed.recv_timeout(std::time::Duration::from_secs(10)) {
+                Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    let _ = run.join();
+                    panic!(
+                        "monitor worker finished only after the completion watchdog cancelled it"
+                    );
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    panic!("monitor worker remains stuck after cancellation and the completion watchdog");
+                }
+            }
         }
     }
     let (summary, seen) = run.join().expect("the monitor thread completes");
