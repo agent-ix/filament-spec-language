@@ -1712,3 +1712,19 @@ mod carried_quantity_tests {
         assert!(TypeLeafWire::of(&carried()).is_none());
     }
 }
+
+#[cfg(test)]
+mod clock_reference_tests {
+    use super::*;
+    use crate::test_clock_reference::clock_reference;
+    use ix_trace_rs::trace;
+
+    /// FR-230-AC-71: the cause wire has no form for a clock-place reference
+    /// value or type, so neither is written.
+    #[trace("FR-230-AC-71", "TC-3084")]
+    #[test]
+    fn a_clock_reference_has_no_cause_wire_form() {
+        assert!(TypeLeafWire::of(&ValueType::ClockReference).is_none());
+        assert!(ScalarWire::of(&clock_reference()).is_none());
+    }
+}

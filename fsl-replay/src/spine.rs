@@ -4520,3 +4520,20 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod clock_reference_tests {
+    use super::value_type_source;
+    use ix_trace_rs::trace;
+
+    /// FR-230-AC-71: a clock-place reference type is spelled as the
+    /// `Reference<Clock>` the source writes.
+    #[trace("FR-230-AC-71", "TC-3084")]
+    #[test]
+    fn a_clock_reference_type_is_spelled_as_a_clock_reference() {
+        assert_eq!(
+            value_type_source(&filament_exact::ValueType::ClockReference),
+            "Reference<Clock>"
+        );
+    }
+}
