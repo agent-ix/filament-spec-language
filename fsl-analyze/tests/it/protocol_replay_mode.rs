@@ -1577,6 +1577,139 @@ fn an_iteration_begun_concurrently_with_the_step_does_not_reopen_it() {
     assert_eq!(prefixes[7]["obligations"], item["obligations"], "{item}");
 }
 
+const PLACED: &str = "Flow::Main::Placed";
+const LEFT_STEP: &str = "Flow::Main::Both::left::Left::L";
+const RIGHT_STEP: &str = "Flow::Main::Both::right::Right::R";
+
+/// The incremental item of an open recording of `Buyer` observations over
+/// `source`.
+fn parallel_incremental(name: &str, source: &str, observations: &Value) -> Value {
+    let mut recording = parallel_recording(observations.clone());
+    recording["closure"] = json!({"state": "open", "premises": []});
+    replay_with(
+        name,
+        source,
+        &recording,
+        json!({"file": "recording.json", "identity": recording_identity()}),
+        assessed_item("incremental"),
+    )
+    .item(0)
+}
+
+/// Assert the `node` enabledness verdicts of the incremental `item`'s prefixes,
+/// that every obligation only advances over them and that the last prefix is
+/// the item's own assessment.
+fn assert_prefix_verdicts(item: &Value, node: &str, expected: &[Option<&str>]) {
+    let prefixes = item["prefixes"].as_array().expect("prefixes");
+    assert_eq!(node_verdicts(prefixes, node), expected, "{item}");
+    let order: Vec<usize> = (0..prefixes.len()).collect();
+    assert_every_verdict_only_advances(prefixes, &order);
+    assert_eq!(
+        prefixes[prefixes.len() - 1]["obligations"],
+        item["obligations"],
+        "the last prefix is the batch assessment"
+    );
+}
+
+/// [`any_join_protocol`] with `outstanding cancel`.
+fn cancel_join_protocol() -> String {
+    any_join_protocol().replace("outstanding continue", "outstanding cancel")
+}
+
+/// FR-895-AC-29 (TC-2531): under `outstanding cancel` a cancelled branch
+/// takes no further step (ADR-027 ST-7). With `join any`, `L`, `Placed`, `R`
+/// leaves `R`, observed causally after the cancel, `violated`, cause
+/// `unexpected`, in batch and from the third prefix, while `L` and `Placed`
+/// stay `satisfied`; under `outstanding continue` the same recording leaves
+/// `R` `satisfied`.
+#[trace("TC-2531", "FR-895-AC-29")]
+#[test]
+fn a_cancelled_branch_takes_no_step_after_the_cancel() {
+    let left = || branch_event("left", "Left", "L");
+    let right = || branch_event("right", "Right", "R");
+    let placed = || observation("send", "Placed", "Buyer", "m-1");
+    let late = json!([left(), placed(), right()]);
+    let cancel = cancel_join_protocol();
+    assert_enabled(&cancel, &parallel_recording(late.clone()), LEFT_STEP, 0);
+    assert_enabled(&cancel, &parallel_recording(late.clone()), PLACED, 1);
+    assert_unexpected(&cancel, &parallel_recording(late.clone()), RIGHT_STEP, 2);
+    let item = parallel_incremental("replay-cancel-late-branch", &cancel, &late);
+    assert_prefix_verdicts(&item, RIGHT_STEP, &[None, None, Some("violated")]);
+    assert_prefix_verdicts(&item, LEFT_STEP, &[Some("satisfied"); 3]);
+    assert_enabled(
+        &any_join_protocol(),
+        &parallel_recording(late.clone()),
+        RIGHT_STEP,
+        2,
+    );
+    let item = parallel_incremental("replay-continue-late-branch", &any_join_protocol(), &late);
+    assert_prefix_verdicts(&item, RIGHT_STEP, &[None, None, Some("satisfied")]);
+}
+
+/// `parallel_protocol` with `join predicate(<name>)` over `left` and `right`
+/// and the function `<name>` of the two branch completions given by `body`.
+fn predicate_join_protocol(name: &str, body: &str, outstanding: &str) -> String {
+    let source = parallel_protocol().replace(
+        "join all [left, right];",
+        &format!("join predicate({name}) [left, right] outstanding {outstanding};"),
+    );
+    format!(
+        "function {name} using v(left: Boolean, right: Boolean): Boolean pure {{ {body} }}\n{source}"
+    )
+}
+
+/// FR-895-AC-30 (TC-2531): a `predicate` join is reached when its function
+/// holds over the branches finished causally before the step (FR-218
+/// "Predicate joins"). With `left and right`, `L`, `R`, `Placed` leaves
+/// `Placed` `satisfied`, and `L`, `Placed`, `R` leaves it `violated`, cause
+/// `unexpected`, since the join was not reached when `Placed` was observed;
+/// incrementally the second recording gives `Placed` `pending` then
+/// `violated`.
+#[trace("TC-2531", "FR-895-AC-30")]
+#[test]
+fn a_predicate_join_is_reached_when_its_function_holds_over_the_finished_branches() {
+    let left = || branch_event("left", "Left", "L");
+    let right = || branch_event("right", "Right", "R");
+    let placed = || observation("send", "Placed", "Buyer", "m-1");
+    let both = predicate_join_protocol("both", "left and right", "continue");
+    let accepted = json!([left(), right(), placed()]);
+    assert_enabled(&both, &parallel_recording(accepted.clone()), PLACED, 2);
+    let item = parallel_incremental("replay-predicate-both-accepted", &both, &accepted);
+    assert_prefix_verdicts(&item, PLACED, &[None, None, Some("satisfied")]);
+    let violated = json!([left(), placed(), right()]);
+    assert_unexpected(&both, &parallel_recording(violated.clone()), PLACED, 1);
+    let item = parallel_incremental("replay-predicate-both-violated", &both, &violated);
+    assert_prefix_verdicts(&item, PLACED, &[None, Some("pending"), Some("violated")]);
+}
+
+/// FR-895-AC-31 (TC-2531): a predicate that reads only one branch is reached
+/// when that branch has finished, whatever the other did. With `left` as the
+/// function, `L`, `Placed`, `R` leaves `Placed` `satisfied` and `R` observed
+/// after the cancel `violated`, cause `unexpected`, under `outstanding
+/// cancel` and `satisfied` under `outstanding continue`; `R`, `Placed` leaves
+/// `Placed` `violated`, cause `unexpected`, once closed, since `L` was never
+/// observed.
+#[trace("TC-2531", "FR-895-AC-31")]
+#[test]
+fn a_predicate_over_one_branch_cancels_and_enables_by_that_branch_alone() {
+    let left = || branch_event("left", "Left", "L");
+    let right = || branch_event("right", "Right", "R");
+    let placed = || observation("send", "Placed", "Buyer", "m-1");
+    let late = json!([left(), placed(), right()]);
+    let cancel = predicate_join_protocol("left_only", "left", "cancel");
+    assert_enabled(&cancel, &parallel_recording(late.clone()), PLACED, 1);
+    assert_unexpected(&cancel, &parallel_recording(late.clone()), RIGHT_STEP, 2);
+    let item = parallel_incremental("replay-predicate-left-cancel", &cancel, &late);
+    assert_prefix_verdicts(&item, PLACED, &[None, Some("satisfied"), Some("satisfied")]);
+    assert_prefix_verdicts(&item, RIGHT_STEP, &[None, None, Some("violated")]);
+    let keep = predicate_join_protocol("left_only", "left", "continue");
+    assert_enabled(&keep, &parallel_recording(late.clone()), RIGHT_STEP, 2);
+    let right_first = json!([right(), placed()]);
+    assert_unexpected(&keep, &parallel_recording(right_first.clone()), PLACED, 1);
+    let item = parallel_incremental("replay-predicate-left-unfinished", &keep, &right_first);
+    assert_prefix_verdicts(&item, PLACED, &[None, Some("pending")]);
+}
+
 // ---- FR-1032: the recording's document identity ---------------------------
 
 /// FR-895-AC-7's closed, conforming recording of `Flow`.
