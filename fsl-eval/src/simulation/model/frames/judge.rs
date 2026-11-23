@@ -237,6 +237,27 @@ impl ModelSystem<'_> {
         Ok(None)
     }
 
+    /// The declared parameter types of the operation `operation` names, in
+    /// declaration order; `None` when this subject declares no such operation.
+    pub fn operation_parameter_types(
+        &self,
+        operation: &DeclarationKey,
+    ) -> Option<Vec<filament_exact::ValueType>> {
+        let text = declaration_text(operation, CanonicalLimits::new(u64::MAX)).ok()?;
+        self.applications
+            .values()
+            .flatten()
+            .find(|found| found.text == text)
+            .map(|found| {
+                found
+                    .declaration
+                    .parameters()
+                    .iter()
+                    .map(|(_, value_type)| value_type.clone())
+                    .collect()
+            })
+    }
+
     /// Judge `request.operation` at `request.receiver` against the candidate
     /// post-state: one [`Judged`] for each argument vector, in FR-120's
     /// argument order.

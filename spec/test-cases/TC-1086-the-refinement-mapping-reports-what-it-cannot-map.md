@@ -18,7 +18,7 @@ the two `ModelSystem` arguments and the `over_model` refusal, the order in
 which failures are returned, the `only-not-one` reason, and a mapped state
 with no relationship extent.
 
-Scope: FR-140-AC-6 to FR-140-AC-14, FR-140-AC-16, FR-120-AC-14.
+Scope: FR-140-AC-6 to FR-140-AC-14, FR-140-AC-16, FR-140-AC-17, FR-120-AC-14.
 
 ## Test Procedure
 
@@ -49,6 +49,10 @@ FR-140-AC-7.
     `Map<Reference<_>, Reference<_>>` value, with an unmapped reference in
     each (unit tests of `lift_nested`; no validated package declares a map
     type yet).
+11. Choose the row that lifts a reference to a type two object rows name,
+    with the declared type naming the first, the second and neither (unit
+    test of the row choice; the fixture that declares both fields is the
+    clock refinement's `Queue` and `Cell` rows from `Call`, which S3 checks).
 
 Tag the tests `#[trace("TC-1086", "<AC id>")]`.
 
@@ -79,3 +83,5 @@ Tag the tests `#[trace("TC-1086", "<AC id>")]`.
   `some` payloads lift and `none` stays `none`; the sequence of options lifts
   in order; the map's keys and values lift with the entries in order; an
   unmapped reference in any of them is `Unmapped`.
+- Step 11: the declared type picks its row; a declared type naming neither
+  picks the first row.

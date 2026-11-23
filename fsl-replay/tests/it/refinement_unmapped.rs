@@ -11,7 +11,7 @@ use fsl_eval::temporal::UndefinedCause;
 use fsl_replay::ObjectKey;
 use fsl_replay::{
     check_step, map_state, ConcreteStep, EvalFailure, HistoryValues, MappingFailure, MappingRowRef,
-    RefinementPosition, StepVerdict, Taken,
+    RefinementPosition, StepArgument, StepVerdict, Taken, Undetermined,
 };
 use fsl_semantics::model::state::ModelState;
 use ix_trace_rs::trace;
@@ -127,7 +127,7 @@ fn chain_world() -> RingWorld {
     )
 }
 
-/// FR-141-AC-13 (TC-546 step 13): `put` on ring `a`, whose `chain` is `[b,
+/// FR-141-AC-13 (TC-546 step 8): `put` on ring `a`, whose `chain` is `[b,
 /// a]`, passes as the one abstract `enq(a, 1, rs)` whose argument `rs` is
 /// the `Queue` references `[b, a]` the post state's `chain` holds, so the
 /// postcondition `self.chain = rs` holds: the argument row's nested concrete
@@ -245,6 +245,96 @@ fn a_step_argument_nesting_references_reaches_the_abstract_operation_lifted() {
             ("b", "ix://example/ring-queue-spec/Queue"),
             ("a", "ix://example/ring-queue-spec/Queue")
         ]
+    );
+}
+
+/// FR-141-AC-13 (TC-546 step 8): an argument that nests a reference to a
+/// `SubRing`, which no object row names, is `Undetermined(MappingUndetermined)`
+/// at the argument `rs` with `UnmappedType(SubRing)`, before the abstract
+/// operation is applied.
+#[trace("TC-546", "FR-141-AC-13")]
+#[test]
+fn a_step_argument_naming_an_unmapped_type_is_undetermined_at_the_argument() {
+    let world = chain_world();
+    let concrete = world.concrete_system(UNLIMITED);
+    let abstracted = world.abstract_system(UNLIMITED);
+    let state = |size: i64, value: i64, with_sub: bool| {
+        let chain: &[(&str, &str)] = if with_sub {
+            &[("c", "SubRing")]
+        } else {
+            &[("b", "Ring")]
+        };
+        let mut rings = vec![
+            RingSpec {
+                size,
+                chain,
+                ..ring("a", "Ring", None)
+            },
+            ring("b", "Ring", None),
+        ];
+        if with_sub {
+            rings.push(ring("c", "SubRing", None));
+        }
+        custom_state(
+            &concrete,
+            &rings,
+            &[("a0", "a", 0, value), ("a1", "a", 1, 0)],
+        )
+    };
+    let (pre, post) = (state(0, 0, true), state(1, 1, true));
+    let put = operation_identity_text(&key(RING, "Slot/put")).expect("an identity text");
+    let wanted = concrete.state_key_of(&post).expect("a key").0;
+    let (transition, reached) = concrete
+        .expand_state(&pre)
+        .expect("the state expands")
+        .successors
+        .into_iter()
+        .find(|(transition, reached)| {
+            transition.operation() == put
+                && concrete.state_key_of(reached.state()).expect("a key").0 == wanted
+        })
+        .expect("put takes the ring from empty to one item");
+    // The position's abstract state is the image of the same ring without
+    // the `SubRing`, which maps.
+    let clean = map_state(
+        world.refinement(),
+        &concrete,
+        &abstracted,
+        &state(0, 0, false),
+        &HistoryValues::default(),
+    )
+    .expect("the clean state maps")
+    .visible;
+    let verdict = check_step(
+        world.refinement(),
+        &concrete,
+        &abstracted,
+        &RefinementPosition {
+            concrete: pre.clone(),
+            history: HistoryValues::default(),
+            abstract_states: vec![clean],
+            abstract_protocol_states: Vec::new(),
+        },
+        &ConcreteStep {
+            position: 1,
+            transition: Some(&transition),
+            post: &reached,
+        },
+    )
+    .verdict;
+    let StepVerdict::Undetermined(Undetermined::Mapping(undetermined)) = verdict else {
+        panic!("the argument is undetermined: {verdict:?}");
+    };
+    assert_eq!(
+        undetermined.cause,
+        EvalFailure::UnmappedType(key(RING, "SubRing"))
+    );
+    assert_eq!(
+        undetermined.row,
+        MappingRowRef::Argument {
+            operation: key(RING, "Slot/put"),
+            argument: StepArgument::Parameter(2),
+        }
     );
 }
 

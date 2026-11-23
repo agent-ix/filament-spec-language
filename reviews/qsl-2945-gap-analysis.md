@@ -67,3 +67,10 @@ have a tagged test that asserts exact codes and values. The gaps are FND-001
 | FND-002 | fixed | The depth-2 `maybes` row checks at S3; the replay two-carriers test passes |
 | FND-003 | fixed | The Option and Map arms now have unit tests (see SR-20261123010001 FND-001) |
 | FND-004 | fixed | FR-630-AC-4 and TC-1590 step 4 now name the Counter fixture and still state the shape; Ring to Queue stays tested at S3 by a_row_nesting_a_reference_is_lifted_element_by_element (FR-135-AC-6) and in replay by FR-140-AC-16 |
+
+## Dispositions (round 2)
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-005 | fixed | Retagged `#[trace("TC-546", "FR-141-AC-13")]` |
+| FND-006 | fixed | TC-540 step 6 now lists the depth-two row, the box/tuple/union rows pending QSL-2959, and FR-135-AC-13 |

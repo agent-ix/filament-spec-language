@@ -504,7 +504,15 @@ fn lift_field(
         return Ok(None);
     };
     lift_nested(
-        &mut |reference| lift_reference(refinement, concrete_system, abstract_system, reference),
+        &mut |reference, declared| {
+            lift_reference(
+                refinement,
+                concrete_system,
+                abstract_system,
+                reference,
+                declared,
+            )
+        },
         &field.value_type,
         value,
     )
@@ -517,14 +525,25 @@ fn lift_field(
 /// every depth (FR-140, FR-630). `reference` lifts one reference. A value of
 /// a leaf type is unchanged; an option, collection or map value whose
 /// declared type has another shape is a fault. A reference nested in a
-/// record, tuple or union is not lifted (QSL-2959).
+/// record, tuple or union is not lifted (QSL-2959). `reference` is given the
+/// abstract object type the declared type names for the reference, when it
+/// names one.
 fn lift_nested(
-    reference: &mut dyn FnMut(&ObjectReference) -> Result<ObjectReference, Lifting>,
+    reference: &mut dyn FnMut(
+        &ObjectReference,
+        Option<&EffectiveId>,
+    ) -> Result<ObjectReference, Lifting>,
     declared: &ValueType,
     value: Value,
 ) -> Result<Value, Lifting> {
     match (value, declared) {
-        (Value::Reference(found), _) => reference(&found).map(Value::Reference),
+        (Value::Reference(found), declared) => {
+            let target = match declared {
+                ValueType::Reference(target) => Some(target),
+                _ => None,
+            };
+            reference(&found, target).map(Value::Reference)
+        }
         (Value::Option(option), ValueType::Option(payload_type)) => {
             let payload = option
                 .payload()
@@ -581,33 +600,66 @@ fn lift_reference(
     concrete_system: &ModelSystem<'_>,
     abstract_system: &ModelSystem<'_>,
     reference: &ObjectReference,
+    declared: Option<&EffectiveId>,
 ) -> Result<ObjectReference, Lifting> {
     let concrete_type = concrete_system
         .type_key_of(reference)
         .ok_or(Lifting::Fault)?;
-    let row = refinement
+    let candidates: Vec<_> = refinement
         .objects()
-        .find(|row| row.concrete_type() == concrete_type)
+        .filter(|row| row.concrete_type() == concrete_type)
+        .map(|row| (row, abstract_system.type_identity(row.abstract_type())))
+        .collect();
+    let row = choose_row(&candidates, declared)
         .ok_or_else(|| Lifting::Unmapped(concrete_type.clone()))?;
     abstract_system
         .object_reference(row.abstract_type(), reference.object().as_str())
         .map_err(|_| Lifting::Fault)
 }
 
+/// The object row that lifts a reference to a concrete type, among the
+/// `candidates` that name that type as their source, each with its abstract
+/// type's identity (ADR-020 RM-2, RM-3): the row whose abstract type is the
+/// `declared` one, when the declared type names one of them, and otherwise
+/// the first row in declaration order.
+fn choose_row<T: Copy>(
+    candidates: &[(T, Option<EffectiveId>)],
+    declared: Option<&EffectiveId>,
+) -> Option<T> {
+    declared
+        .and_then(|declared| {
+            candidates
+                .iter()
+                .find(|(_, identity)| identity.as_ref() == Some(declared))
+        })
+        .or_else(|| candidates.first())
+        .map(|(row, _)| *row)
+}
+
 /// `value` as the abstract model reads it: a reference maps to the abstract
 /// reference with the same key (RM-3), and so does a reference nested in an
 /// option, collection or map; any other value is unchanged. Used for the
-/// receiver and arguments of an abstract-operation `step` row, which carry no
-/// declared type here, so the abstract type is the value's own type with each
-/// reference type replaced by the abstract type of the object row that maps it.
+/// receiver and arguments of an abstract-operation `step` row. `declared` is
+/// the abstract parameter's declared type, which picks the object row where a
+/// concrete type is the source of several (RM-2, RM-3); a protocol node row
+/// has none here, so the abstract type is the value's own type with each
+/// reference type replaced by the abstract type of the first object row that
+/// maps it.
 pub(super) fn lift_value(
     refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
     abstract_system: &ModelSystem<'_>,
+    declared: Option<&ValueType>,
     value: Value,
 ) -> Result<Value, Lifting> {
+    let mut reference = |found: &ObjectReference, target: Option<&EffectiveId>| {
+        lift_reference(refinement, concrete_system, abstract_system, found, target)
+    };
+    if let Some(declared) = declared {
+        return lift_nested(&mut reference, declared, value);
+    }
     lift_own(
-        &mut |found| lift_reference(refinement, concrete_system, abstract_system, found),
+        &mut reference,
         &mut |concrete| {
             let row = refinement
                 .objects()
@@ -626,7 +678,10 @@ pub(super) fn lift_value(
 /// `value` with each nested reference lifted by `reference`, read as the
 /// type its own type becomes when `types` lifts each reference type.
 fn lift_own(
-    reference: &mut dyn FnMut(&ObjectReference) -> Result<ObjectReference, Lifting>,
+    reference: &mut dyn FnMut(
+        &ObjectReference,
+        Option<&EffectiveId>,
+    ) -> Result<ObjectReference, Lifting>,
     types: &mut dyn FnMut(&EffectiveId) -> Result<EffectiveId, Lifting>,
     value: Value,
 ) -> Result<Value, Lifting> {
@@ -857,7 +912,10 @@ mod tests {
 
     /// Lifts `Ring` references to `Queue` references with the same key; a
     /// `Sub` reference is unmapped.
-    fn ring_to_queue(found: &ObjectReference) -> Result<ObjectReference, Lifting> {
+    fn ring_to_queue(
+        found: &ObjectReference,
+        _declared: Option<&EffectiveId>,
+    ) -> Result<ObjectReference, Lifting> {
         if *found.object_type() == effective("Ring") {
             Ok(reference_to("Queue", found.object().as_str()))
         } else {
@@ -1021,6 +1079,29 @@ mod tests {
         assert!(matches!(unmapped, Err(Lifting::Unmapped(_))));
     }
 
+    /// FR-140-AC-17 (TC-1086 step 11): of the object rows that name a concrete
+    /// type as their source (`Queue` and `Cell` from `Call`), the declared
+    /// type picks its own row, and a declared type naming neither picks the
+    /// first.
+    #[trace("TC-1086", "FR-140-AC-17")]
+    #[test]
+    fn the_declared_type_picks_among_rows_from_one_concrete_type() {
+        let (queue, cell) = (effective("Queue"), effective("Cell"));
+        let rows = [
+            ("queue row", Some(queue.clone())),
+            ("cell row", Some(cell.clone())),
+        ];
+        assert_eq!(choose_row(&rows, Some(&cell)), Some("cell row"));
+        assert_eq!(choose_row(&rows, Some(&queue)), Some("queue row"));
+        assert_eq!(
+            choose_row(&rows, Some(&effective("Other"))),
+            Some("queue row")
+        );
+        assert_eq!(choose_row(&rows, None), Some("queue row"));
+        let none: [(&str, Option<EffectiveId>); 0] = [];
+        assert_eq!(choose_row(&none, Some(&cell)), None);
+    }
+
     /// FR-140-AC-16: two concrete map keys that lift to one abstract key are
     /// a fault, not a mapped map.
     #[trace("TC-1086", "FR-140-AC-16")]
@@ -1048,9 +1129,10 @@ mod tests {
             ],
         )
         .expect("a map");
-        let mut to_one_key = |_: &ObjectReference| -> Result<ObjectReference, Lifting> {
-            Ok(reference_to("Queue", "k"))
-        };
+        let mut to_one_key =
+            |_: &ObjectReference, _: Option<&EffectiveId>| -> Result<ObjectReference, Lifting> {
+                Ok(reference_to("Queue", "k"))
+            };
         let lifted = lift_nested(
             &mut to_one_key,
             &ValueType::Map(std::sync::Arc::new(map_type("Queue"))),

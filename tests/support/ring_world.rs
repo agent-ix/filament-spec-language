@@ -83,7 +83,9 @@ pub struct Variant {
     /// the abstract `Queue` has `chain: Sequence<Reference<Queue>>[0, 2]`,
     /// and `rings` admits the subtype `SubRing` (FR-140-AC-16). The abstract
     /// `enq` also takes `rs: Sequence<Reference<Queue>>[0, 2]`, whose
-    /// postcondition requires `self.chain = rs` (FR-141-AC-13).
+    /// postcondition requires `size(rs) = size(self.chain)`: a size check keeps
+    /// the fixture in the layer the unit selects, and the test asserts the
+    /// lifted `rs` itself exactly (FR-141-AC-13).
     pub chain: bool,
     /// The abstract `Queue` has an optional `head: Digit?` field
     /// (FR-140-AC-11).

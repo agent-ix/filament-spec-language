@@ -1885,10 +1885,10 @@ fn evaluate_arguments(
         return Err(fault("an-abstract-row-names-an-operation"));
     };
     let StepTarget::Abstract {
+        operation,
         receiver,
         arguments,
         binds_result,
-        ..
     } = row.target()
     else {
         return Err(fault("an-abstract-row-names-an-operation"));
@@ -1905,29 +1905,39 @@ fn evaluate_arguments(
     let mut bindings = vec![Value::Reference(resolved.receiver.clone())];
     bindings.extend(resolved.arguments.iter().cloned());
     let object = object_of(concrete_system, &pre.concrete, &resolved.receiver);
+    let parameters = abstract_system.operation_parameter_types(operation);
     let evaluate = |expression: &dyn MappingExpression,
                     argument: StepArgument|
      -> Result<Value, StepVerdict> {
+        let declared = match argument {
+            StepArgument::Parameter(index) => {
+                parameters.as_ref().and_then(|found| found.get(index))
+            }
+            StepArgument::Receiver => None,
+        };
         let at = MappingRowRef::Argument {
             operation: concrete_operation.clone(),
             argument,
         };
         match expression.read(concrete_system, &observed, bindings.clone()) {
             Err(_) => Err(fault("argument-row-evaluates")),
-            Ok(RowReading::Value(value)) => {
-                lift_value(refinement, concrete_system, abstract_system, value).map_err(|lifting| {
-                    match lifting {
-                        Lifting::Unmapped(concrete_type) => StepVerdict::Undetermined(
-                            Undetermined::Mapping(Box::new(MappingUndetermined {
-                                row: at.clone(),
-                                object: object.clone(),
-                                cause: EvalFailure::UnmappedType(concrete_type),
-                            })),
-                        ),
-                        Lifting::Fault => fault("argument-lifts"),
-                    }
-                })
-            }
+            Ok(RowReading::Value(value)) => lift_value(
+                refinement,
+                concrete_system,
+                abstract_system,
+                declared,
+                value,
+            )
+            .map_err(|lifting| match lifting {
+                Lifting::Unmapped(concrete_type) => StepVerdict::Undetermined(
+                    Undetermined::Mapping(Box::new(MappingUndetermined {
+                        row: at.clone(),
+                        object: object.clone(),
+                        cause: EvalFailure::UnmappedType(concrete_type),
+                    })),
+                ),
+                Lifting::Fault => fault("argument-lifts"),
+            }),
             Ok(RowReading::Undefined(cause)) => {
                 let Ok((bytes, _)) = concrete_system.state_key_of(step.post.state()) else {
                     return Err(fault("post-state-encodes"));
@@ -2032,7 +2042,7 @@ fn evaluate_node_arguments(
         let evaluated = match expression.read(concrete_system, &observed, bindings.clone()) {
             Err(_) => return Err(fault("node-row-argument-evaluates")),
             Ok(RowReading::Value(value)) => {
-                match lift_value(refinement, concrete_system, abstract_system, value) {
+                match lift_value(refinement, concrete_system, abstract_system, None, value) {
                     Ok(value) => Ok(value),
                     Err(Lifting::Unmapped(concrete_type)) => Err(StepVerdict::Undetermined(
                         Undetermined::Mapping(Box::new(MappingUndetermined {

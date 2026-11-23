@@ -70,3 +70,18 @@ or move it to a ticket.
 | FND-004 | fixed | lift_value now lifts nested references through lift_own; see FND-007 and FND-008 for the test gap and the approach |
 | FND-005 | fixed | The touched hunks are rustfmt-clean; the one remaining fsl-analyze diff (analyze_family_cli.rs:414, the hyper_world import) is also on main |
 | FND-006 | fixed | The import is now `use filament_exact::{EffectiveId, ObjectReference, Value, ValueType};` and the build no longer warns |
+
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-010 | high | The new S3 refusal of two object rows from one concrete type refuses a model ADR-020 allows. `tests/support/ring_queue.rs:568` `clock_refinement` maps `Q::Queue` and `Q::Cell` both from `C::Call`: RM-2 lets one concrete population be the source of two abstract populations, and RM-3 picks the most-specific type per abstract population. Reproduced: `fsl-semantics --test it clock_places::a_refinement_row_ref_lowers_with_the_binder_as_owner` now fails with `Conflicting { name: "C::Call" }`. fsl-eval `clock_reference_v2` and `refinement_row_clock_places` use the same fixture (not run). | fsl-semantics/src/check/refinement.rs:3126-3138 |
+| FND-011 | low | No `check_step` test covers the protocol node-row argument site (`step.rs:2035`), or the new FR-141 rule that an argument naming an unmapped type returns `Undetermined(MappingUndetermined)` with `UnmappedType`. Only the pass path of an abstract-operation row is tested. | fsl-replay/src/refinement/step.rs:2035 |
+
+## Dispositions (round 2)
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-007 | fixed | a_step_argument_nesting_references_reaches_the_abstract_operation_lifted runs `put` through `check_step` and asserts that the taken `enq`'s `rs` holds the `Queue` references `b` and `a`, in order (the node-row site is FND-011) |
+| FND-008 | still-open | The fix enforces the one-row-per-concrete-type assumption with a new S3 refusal, and that refusal regresses legal models (FND-010). Replay still does not read the abstract parameter's declared type, so a concrete type with two rows still lifts by its first row, in `lift_reference` as well as `lift_own` |
+| FND-009 | fixed | FR-140 now has "When two concrete map keys lift to one abstract key, `map_state` SHALL return `MappingFailure::Fault`"; tested by two_keys_lifting_to_one_abstract_key_are_a_fault |

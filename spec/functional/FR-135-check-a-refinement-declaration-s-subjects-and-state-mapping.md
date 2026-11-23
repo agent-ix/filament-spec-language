@@ -142,10 +142,7 @@ A typed `CheckRefusal` with a span, and no `CheckedRefinement`, on refusal.
   `missing_declaration`/`missing-name`, naming the abstract type; two rows
   SHALL refuse `invalid_model_binding`/`conflicting-binding`; a `from` type
   outside the source population SHALL refuse
-  `invalid_model_binding`/`malformed-declaration`. Two object-type rows
-  whose `from` names the same concrete object type SHALL refuse
-  `invalid_model_binding`/`conflicting-binding` at the second row, so a
-  reference to a concrete type lifts to exactly one abstract type.
+  `invalid_model_binding`/`malformed-declaration`.
 - A `state_machine` declaration's declared fields are a field set in the
   model state and SHALL be represented by one `object` row naming that
   `state_machine` declaration as the row's abstract type and a concrete
@@ -292,7 +289,6 @@ standing.
 | FR-135-AC-9 | A refinement given a non-empty resolved internal list refuses `unsupported_construct`/`not-yet-implemented` naming `refinement-internal-list` at the first token of the name after `abstract`, once for the refinement, with no `subject` member, no `CheckedRefinement` and the classification `unsupported` (FR-341-AC-5); a list with a resolution defect reports the defect and not this pair (FR-147-AC-7, AC-11). | Test (TC-540) |
 | FR-135-AC-10 | The header `abstract Spec::Twice concrete Impl` is read as FSpec FR-375's `abstract-subject` (model alias `Spec`, protocol `Twice`), and `abstract Spec concrete Impl` as a model subject; the concrete side never names a protocol, and a refinement whose step rows name one protocol clause of `Impl` records it as `concrete_protocol`, one whose rows name none records `None` (FR-136-AC-6). | Test (TC-540) |
 | FR-135-AC-11 | A mapped `state_machine` declaration has one `object` row whose target and source are both state-machine declarations; its declared fields check through that row without a population row. Omitting the row refuses `missing_declaration`/`missing-name`; duplicating it refuses `invalid_model_binding`/`conflicting-binding`; pairing it with an object type refuses `invalid_model_binding`/`malformed-declaration`. `CasRefinesCounter` over the object-type-only `Spec` and `Impl` models checks with its existing population and object rows, with no `state_machine` declaration or synthetic subject. | Test (TC-540) |
-| FR-135-AC-13 | A refinement with the rows `object Q::Queue from R::Ring { ... }` and `object Q::Cell from R::Ring { ... }` (two abstract types mapped from the one concrete `Ring`) refuses `invalid_model_binding`/`conflicting-binding` at the second row, naming `R::Ring` and the first row, and, the second row being dropped, `missing_declaration`/`missing-name` for its abstract type `Cell`, with no `CheckedRefinement`. | Test (TC-540) |
 | FR-135-AC-12 | For each selected abstract and concrete model package, the checked refinement binding retains that selection's canonical identity and version; it does not use the source alias or a declaration as a representative. A model-only header binds to the whole-model identity; protocol refinement retains the same abstract model identity plus its exact protocol-clause key. Zero, one and multiple object types or state machines are all valid cardinalities for the same binding rule. The binding is derived from existing model selection state and adds no FCD field. | Test (TC-540) |
 
 ## Dependencies

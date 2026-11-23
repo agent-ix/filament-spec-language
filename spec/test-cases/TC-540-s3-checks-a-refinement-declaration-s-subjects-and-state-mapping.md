@@ -15,7 +15,7 @@ object rows into a `CheckedRefinement`, refuses each missing, duplicated,
 misplaced or ill-typed row at its span, lifts references, records hidden
 fields and puts the declaration in the package identity.
 
-Scope: FR-135-AC-1 to FR-135-AC-10, FR-135-AC-13.
+Scope: FR-135-AC-1 to FR-135-AC-10.
 
 ## Test Procedure
 
@@ -41,8 +41,7 @@ Fixtures: ADR-020 §8's `CasRefinesCounter` unit, with `Spec` local and with
    then the `Sequence<Reference<Queue>>[0, 2]` field mapped by a
    `Sequence<Reference<Slot>>[0, 2]` row. Also a `Sequence<Option<Reference<
    Ring>>>[0, 2]` row (two carriers deep), the box, tuple and union rows
-   (pending QSL-2959: they refuse `ill_typed`/`type-mismatch` until then),
-   and two object rows from `Ring` (FR-135-AC-13).
+   (pending QSL-2959: they refuse `ill_typed`/`type-mismatch` until then).
 7. Check `RingIsQueue` with a relationship declared on the abstract `Queue`.
 8. Check `RingIsQueue` in a unit that selects no layer of its own, then with
    a Boolean row naming a protocol of the unit.
@@ -73,8 +72,7 @@ Tag the tests `#[trace("TC-540", "FR-135-AC-n")]`.
   reference lifted through the `Queue` from `Ring` row; the `Slot` row refuses
   `ill_typed`/`type-mismatch` at the row's expression with no
   `CheckedRefinement`; the depth-two row checks; the box, tuple and union
-  rows are specified as lifted and their test is ignored until QSL-2959; the
-  second `Ring` row refuses `invalid_model_binding`/`conflicting-binding`.
+  rows are specified as lifted and their test is ignored until QSL-2959.
 - Step 7: `unsupported_construct`/`declaration-form` at the alias `Q`; no
   `CheckedRefinement`.
 - Step 8: the rows check; then `unsupported_construct`/`expression-form` at

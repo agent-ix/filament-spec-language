@@ -57,3 +57,17 @@ to avoid.
 | FND-002 | fixed | FR-135 (two places), FR-140 and FR-630 now agree: option, collection and map are lifted; record, tuple and union are pending QSL-2959 and refuse ill_typed/type-mismatch until then |
 | FND-003 | fixed | FR-135 and FR-140 name map and state that reference-typed keys are lifted and entries keep their order |
 | FND-004 | fixed | FR-140 now reads "`map_state` SHALL lift a reference nested inside an option, collection or map value ..." |
+
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-007 | high | The new FR-135 SHALL and FR-135-AC-13 ("Two object-type rows whose `from` names the same concrete object type SHALL refuse `invalid_model_binding`/`conflicting-binding`") contradict ADR-020 RM-2 and RM-3. Those rules let one concrete population be the source of several abstract populations and choose the most-specific abstract type per abstract population, and the existing clock-refinement fixture relies on it (`Q::Queue` and `Q::Cell` from `C::Call`). | spec/functional/FR-135-check-a-refinement-declaration-s-subjects-and-state-mapping.md:141-148 |
+| FND-008 | low | FR-141-AC-13 states the `enq` postcondition `self.chain = rs`, but the fixture uses `size(rs) = size(self.chain)` (ring_world.rs:327), and the `Variant::chain` doc comment repeats the stale text. The test's doc comment cites "TC-546 step 13"; the step is 8. The lifted `rs` itself is asserted exactly, so the AC is still verified, but its wording describes a fixture that does not exist. | spec/functional/FR-141-decide-one-concrete-step-against-the-abstract-model.md:283 |
+
+## Dispositions (round 2)
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-005 | fixed | FR-141 has a new SHALL bullet for lifting nested references in the receiver and arguments, plus FR-141-AC-13 and TC-546 step 8 |
+| FND-006 | fixed | FR-135-AC-6 and FR-140-AC-16 now say the map clause is checked by unit tests of `lift()` / `lift_nested`, because no validated package declares a map type |
