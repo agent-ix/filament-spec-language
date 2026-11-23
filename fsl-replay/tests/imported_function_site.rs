@@ -315,7 +315,7 @@ fn a_same_named_unit_function_is_never_the_imported_site() {
 /// FR-121-AC-35: a library the unit does not import directly -- supplied but
 /// unimported, absent, or reached only through another library -- refuses
 /// `UnknownImport` paired with the unit's package.
-#[trace("TC-516")]
+#[trace("TC-516", "TC-3199", "FR-865-AC-19", "FR-865-AC-24", "FR-286-AC-40")]
 #[test]
 fn a_library_without_a_direct_import_refuses_unknown_import() {
     let other = supplied("test/other", "other", BIG);
@@ -354,6 +354,34 @@ fn a_library_without_a_direct_import_refuses_unknown_import() {
         assert!(refusal
             .to_string()
             .starts_with("missing_import/missing-selection"));
+        let one = fsl_replay::OutcomeDiagnostic::from_call_site_refusal(&refusal);
+        let document = fsl_replay::OutcomeDocument::new(
+            fsl_replay::Operation::Check,
+            None,
+            filament_semantic_value::catalog::Category::Refusal,
+        )
+        .with_diagnostics(vec![one]);
+        let wire: serde_json::Value =
+            serde_json::from_slice(&document.to_bytes().unwrap()).unwrap();
+        let schema: serde_json::Value =
+            serde_json::from_str(fsl_replay::outcome::OUTCOME_SCHEMA_1).unwrap();
+        let schema = jsonschema::JSONSchema::options()
+            .with_draft(jsonschema::Draft::Draft202012)
+            .compile(&schema)
+            .unwrap();
+        assert!(schema.is_valid(&wire), "{wire}");
+        let diagnostic = wire["diagnostics"][0].clone();
+        assert_eq!(diagnostic["code"], "missing_import", "{diagnostic}");
+        assert_eq!(diagnostic["cause"], "missing-selection", "{diagnostic}");
+        assert_eq!(
+            diagnostic["selection"], "unimported-library",
+            "{diagnostic}"
+        );
+        assert_eq!(
+            diagnostic["hint"],
+            "Call a function of a library that the unit imports directly, or add the import.",
+            "{diagnostic}"
+        );
         assert_eq!(
             TerminalValue::from_call_site_refusal(&refusal),
             TerminalValue::Declined {

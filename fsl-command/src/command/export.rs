@@ -320,6 +320,25 @@ fn request_without_export(
     .map_err(RunCause::Output)
 }
 
+/// FR-1047: a `native-run/1` envelope whose `request` is not a JSON object is
+/// refused naming `/request`, before the request members are read.
+pub(super) fn require_object_request(bytes: &[u8]) -> Result<()> {
+    let Ok(super::Object(envelope)) =
+        serde_json::from_slice::<super::Object<wire::Envelope<'_>>>(bytes)
+    else {
+        return Ok(());
+    };
+    if envelope.format == fsl_foundation::wire_format::WireFormat::RunRequest.as_str()
+        && !envelope.request.get().starts_with('{')
+    {
+        return Err(RunCause::ClauseRequest {
+            member: "/request".to_owned(),
+            reason: "expected an object".to_owned(),
+        });
+    }
+    Ok(())
+}
+
 /// Admit the raw tree before any selection or dependent file is inspected.
 /// The shared reader preserves duplicate names until it can refuse them;
 /// the typed envelope rejects additional top-level members.

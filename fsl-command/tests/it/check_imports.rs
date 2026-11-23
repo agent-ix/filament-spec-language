@@ -223,3 +223,144 @@ fn check_source_over_s1_input_bytes_refuses_at_s1_like_compile() {
     assert_eq!(fits["category"], "success", "{fits}");
     assert_eq!(fits["last_stage"], "S4", "{fits}");
 }
+
+const CONFIG_UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
+    profile v = \"filament.model.complete/v1\";\n\
+    model Config = \"example/config-version\";\n\
+    invariant NoCycle using v on Config::ConfigVersion at current { not reaches(self, self, parent) }\n";
+
+/// The text `fsl check` writes for `outcome`.
+fn text_of(outcome: &command::CheckOutcome) -> String {
+    fsl_inspect::render_outcome(
+        outcome.document(),
+        fsl_inspect::RenderForm::Text,
+        &fsl_command::render_sources(outcome.sources()),
+        fsl_replay::RenderLimits::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("the document renders")
+    .value()
+    .as_str()
+    .to_owned()
+}
+
+/// The message of the one diagnostic of a refused `check_outcome`.
+fn refusal_message(path: &Path, inputs: &CheckInputs) -> (String, String) {
+    let document = document(&command::check_outcome(path, inputs));
+    assert_eq!(document["category"], "refusal", "{document}");
+    assert_eq!(
+        document["diagnostics"][0]["code"], "invalid-request",
+        "{document}"
+    );
+    (
+        document["diagnostics"][0]["message"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+        document["diagnostics"]
+            .as_array()
+            .unwrap()
+            .len()
+            .to_string(),
+    )
+}
+
+/// FR-866-AC-8: a `--model` no declaration selects names the identities the
+/// source selects, in source order and each once.
+#[test]
+#[trace("TC-3200", "FR-866-AC-8")]
+fn unselected_model_message_lists_the_identities_the_source_selects() {
+    let text = "language \"ix:native\" edition \"1-draft\";\n\
+        profile v = \"filament.model.complete/v1\";\n\
+        model Config = \"example/config-version\";\n\
+        model Other = \"example/other\";\n\
+        model Again = \"example/config-version\";\n\
+        invariant NoCycle using v on Config::ConfigVersion at current { not reaches(self, self, parent) }\n";
+    let (_directory, path) = source(text);
+    let inputs = CheckInputs {
+        models: vec![(
+            "example:shop/model".to_owned(),
+            PathBuf::from("missing.json"),
+        )],
+        ..CheckInputs::default()
+    };
+    let (message, count) = refusal_message(&path, &inputs);
+    assert_eq!(
+        message,
+        "invalid clause request member --model: --model example:shop/model is not selected by the source; the source selects: example/config-version, example/other"
+    );
+    assert_eq!(count, "1");
+    assert_eq!(
+        text_of(&command::check_outcome(&path, &inputs)),
+        format!("check: refusal (exit 20)\n<no-source>: invalid-request: {message}\n")
+    );
+}
+
+/// FR-866-AC-9: a unit with no `model` declaration selects no models.
+#[test]
+#[trace("TC-3200", "FR-866-AC-9")]
+fn unselected_model_message_says_the_source_selects_no_models() {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/spine-compile.native");
+    let inputs = CheckInputs {
+        models: vec![(
+            "example:shop/model".to_owned(),
+            PathBuf::from("missing.json"),
+        )],
+        ..CheckInputs::default()
+    };
+    let (message, _) = refusal_message(&path, &inputs);
+    assert_eq!(
+        message,
+        "invalid clause request member --model: --model example:shop/model is not selected by the source; the source selects no models"
+    );
+}
+
+/// FR-866-AC-10: the `--library` refusal keeps its message.
+#[test]
+#[trace("TC-3200", "FR-866-AC-10")]
+fn unselected_library_message_is_unchanged() {
+    let (_directory, path) = source(CONFIG_UNIT);
+    let inputs = CheckInputs {
+        libraries: vec![("example/none".to_owned(), PathBuf::from("missing.fsl"))],
+        ..CheckInputs::default()
+    };
+    let (message, _) = refusal_message(&path, &inputs);
+    assert_eq!(
+        message,
+        "invalid clause request member --library: --library example/none is not selected by the source"
+    );
+}
+
+/// FR-865-AC-17 and FR-286-AC-40: the missing-model refusal of `check_outcome`
+/// carries `selection` `model`, the model row's hint, and renders that hint.
+#[test]
+#[trace("TC-3199", "FR-865-AC-17", "FR-865-AC-24", "FR-286-AC-40")]
+fn missing_model_refusal_carries_its_selection_hint_and_text() {
+    let (_directory, path) = source(CONFIG_UNIT);
+    let outcome = command::check_outcome(&path, &CheckInputs::default());
+    let document = document(&outcome);
+    let diagnostic = &document["diagnostics"][0];
+    let hint = "Supply the model in the request's models member, or with --model <identity>=<file> on fsl check.";
+    assert_eq!(diagnostic["selection"], "model", "{document}");
+    assert_eq!(diagnostic["hint"], hint, "{document}");
+    let text = fsl_inspect::render_outcome(
+        outcome.document(),
+        fsl_inspect::RenderForm::Text,
+        &fsl_command::render_sources(outcome.sources()),
+        fsl_replay::RenderLimits::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("the document renders")
+    .value()
+    .as_str()
+    .to_owned();
+    assert!(
+        text.lines().any(|line| line == format!("  hint: {hint}")),
+        "{text}"
+    );
+    assert!(!text.contains("Import the package that supplies the selected name."));
+    assert!(
+        text.starts_with("check: refusal (exit 20) at stage intake\n"),
+        "{text}"
+    );
+}

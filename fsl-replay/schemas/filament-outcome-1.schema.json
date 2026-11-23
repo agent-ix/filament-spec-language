@@ -17,6 +17,7 @@
     "aggregate": {"$ref": "#/$defs/aggregate"}
   },
   "allOf": [
+    {"if": {"properties": {"result": {"type": "object", "properties": {"kind": {"const": "packaged"}}, "required": ["kind"]}}, "required": ["result"]}, "then": {"properties": {"result": {"type": "object", "required": ["kind", "package"], "properties": {"kind": {"const": "packaged"}, "package": {"type": "object", "required": ["bytes", "output", "handoff"], "properties": {"bytes": {"type": "integer", "minimum": 0}, "output": {"type": ["string", "null"]}, "handoff": {"type": ["string", "null"]}}, "additionalProperties": false}}, "additionalProperties": false}}}},
     {"if": {"properties": {"operation": {"not": {"enum": ["analyze", "execute"]}}}, "required": ["operation"]}, "then": {"properties": {"items": {"items": {"required": ["result"]}}}}},
     {"if": {"properties": {"operation": {"const": "analyze"}}, "required": ["operation"]}, "then": {"required": ["aggregate", "registry"]}},
     {"if": {"properties": {"operation": {"const": "execute"}}, "required": ["operation"]}, "then": {"properties": {"registry": {"type": "array"}}}},
@@ -50,6 +51,7 @@
         "cause": {"type": ["string", "null"]}, "code": {"type": "string"},
         "construct": {"type": "string"}, "declaration": {"type": "string"},
         "details": {"oneOf": [{"type": "null"}, {"type": "object", "minProperties": 1, "properties": {"function": {"type": "string"}, "position": {"type": "integer", "minimum": 0}, "path": {"type": "string"}, "parameter": {"type": "string"}, "model_identity": {"type": "string"}, "population": {"type": "object"}, "expected": {"type": "object"}, "member": {"type": "string"}, "type": {"type": "object"}, "required": {"type": "object"}, "supplied": {"type": "object"}, "stage": {"type": "string"}, "invariant": {"type": "string"}, "capability": {"type": "string"}, "missing": {"type": "array", "items": {"oneOf": [{"type": "string"}, {"type": "array", "items": {"type": "string"}}]}}, "accepted": {"type": "array", "items": {"type": "string"}}}, "unevaluatedProperties": false}]},
+        "selection": {"enum": ["model", "library", "sibling-unit", "unimported-library", "function-owner", "byte-provision", "extension-definition", "source", "package-reference"]},
         "hint": {"type": "string", "minLength": 1, "pattern": "^[^\\u0000-\\u001F\\u007F-\\u009F]*\\.$"},
         "label": {"enum": ["authority", "identity"]},
         "locus": {"oneOf": [{"type": "null"}, {"$ref": "#/$defs/locus"}]}, "message": {"type": "string"},

@@ -225,3 +225,53 @@ fn malformed_raw_internal_list_refuses_at_its_full_carrier_location() {
         })
     ));
 }
+
+/// FR-286-AC-40: a package the strict reader refuses as a missing import
+/// writes `selection` `package-reference` and that row's hint, whichever cause
+/// the reader named, for the replay's `Package` and `PackageWithIdentity`.
+#[test]
+#[trace("TC-3203", "FR-286-AC-40")]
+fn a_missing_import_package_refusal_writes_the_package_reference_selection() {
+    let emission = emitted();
+    let mut wire = small(7);
+    wire.package = crate::request::mutate_raw_package(&wire.package, |package| {
+        package["semantic_graph"]["nodes"][0]["node_tag"] = serde_json::json!("unknown_native_tag");
+    });
+    let CheckedPackageDispatchResult::Refused(mut native) =
+        filament_contract_model::read_checked_package(
+            wire.package.bytes(),
+            CheckedPackageReadLimits::bounded(),
+            emission.evidence(),
+        )
+    else {
+        panic!("the native owner refuses this graph");
+    };
+    native.code = filament_contract_model::CheckedPackageRefusalCode::MissingImport;
+    for named in [None, Some("invalid-value"), Some("missing-selection")] {
+        let admission = crate::ReplayPackageAdmissionRefusal::Refused {
+            refusal: Box::new(native.clone()),
+            cause: named.map(Into::into),
+        };
+        for refusal in [
+            ReplayRefusal::Package(admission.clone()),
+            ReplayRefusal::PackageWithIdentity {
+                refusal: admission.clone(),
+                identity: None,
+            },
+        ] {
+            assert_eq!(refusal.code(), Code::MissingImport);
+            assert_eq!(refusal.cause(), Some("missing-selection"), "{named:?}");
+            let document = crate::OutcomeDocument::from_replay_refusal(&refusal);
+            let diagnostic = document.diagnostics().first().expect("one diagnostic");
+            let wire = crate::outcome::assert_diagnostic_valid(diagnostic);
+            assert_eq!(wire["code"], "missing_import", "{wire}");
+            assert_eq!(wire["cause"], "missing-selection", "{wire}");
+            assert_eq!(wire["selection"], "package-reference", "{wire}");
+            assert_eq!(
+                wire["hint"],
+                "Supply the domain package or library that the package names, in the request's models or libraries member.",
+                "{wire}"
+            );
+        }
+    }
+}

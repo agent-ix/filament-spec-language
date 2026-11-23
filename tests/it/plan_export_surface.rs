@@ -1331,7 +1331,7 @@ fn an_export_outcome_renders_as_four_lines() {
     assert_eq!(
         text.lines().collect::<Vec<_>>(),
         [
-            "export: success (exit 0) at S4".to_owned(),
+            "export: success (exit 0) at stage packaging".to_owned(),
             "target: tla filament.output.tla2/v1".to_owned(),
             format!("bytes written: {length}"),
             "output: m.tla".to_owned(),

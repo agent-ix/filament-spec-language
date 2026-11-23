@@ -275,3 +275,194 @@ fn malformed_requests_refuse_invalid_request() {
         );
     }
 }
+
+/// The text `fsl compile` writes for the compile of `path`: FR-865's renderer over the
+/// document alone, with the sources the compile admitted.
+fn text_of(path: &std::path::Path, overrides: &RequestOverrides<'_>) -> String {
+    let outcome = fsl_command::command::compile_outcome_with_overrides(path, overrides)
+        .expect("the compile succeeds");
+    let sources = fsl_command::render_sources(outcome.sources());
+    fsl_inspect::render_outcome(
+        outcome.document(),
+        fsl_inspect::RenderForm::Text,
+        &sources,
+        fsl_replay::RenderLimits::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("the document renders")
+    .value()
+    .as_str()
+    .to_owned()
+}
+
+/// FR-286-AC-39, FR-810-AC-6: the compile document names the package's length
+/// and the path of each file written, joined to the request file's directory.
+#[test]
+#[trace("TC-3203", "FR-286-AC-39", "FR-810-AC-6")]
+fn compile_document_names_the_package_and_where_it_was_written() {
+    let case = Case::new();
+    case.write("reqs/parcel.fsl", SOURCE.as_bytes());
+    let mut member = request("parcel.fsl");
+    member["request"]["output"] = json!({"package": "spine.package.json"});
+    let with_output = case.json("reqs/with-output.json", &member);
+    let written = plain(&with_output);
+    let document = written.expect("package", "success", 0);
+    let bytes = written.package.as_ref().expect("package bytes");
+    let output = case.path("reqs/spine.package.json");
+    assert_eq!(
+        document["result"],
+        json!({"kind": "packaged", "package": {
+            "bytes": bytes.len(), "output": output.to_string_lossy(), "handoff": null}}),
+        "{document}"
+    );
+    assert_eq!(document["artifacts"], json!([]), "{document}");
+    assert_eq!(
+        &std::fs::read(&output).expect("the file at the named path"),
+        bytes
+    );
+
+    let bare = case.json("reqs/bare.json", &request("parcel.fsl"));
+    let unwritten = plain(&bare);
+    assert_eq!(
+        unwritten.expect("package", "success", 0)["result"],
+        json!({"kind": "packaged", "package": {
+            "bytes": bytes.len(), "output": null, "handoff": null}})
+    );
+
+    let cli = case.path("cli.package.json");
+    let overrides = RequestOverrides {
+        output: Some(&cli),
+        ..RequestOverrides::default()
+    };
+    let given = compile(&bare, None, &overrides);
+    assert_eq!(
+        given.expect("package", "success", 0)["result"]["package"]["output"],
+        json!(cli.to_string_lossy())
+    );
+    assert!(cli.exists());
+
+    let mut with_handoff = request("parcel.fsl");
+    with_handoff["request"]["handoff"] = json!({"directory": "handoff", "package_name": "parcel",
+        "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}});
+    let handed = plain(&case.json("reqs/handoff.json", &with_handoff));
+    let handoff = case.path("reqs/handoff");
+    assert_eq!(
+        handed.expect("package", "success", 0)["result"],
+        json!({"kind": "packaged", "package": {
+            "bytes": bytes.len(), "output": null, "handoff": handoff.to_string_lossy()}})
+    );
+    assert!(handoff.is_dir());
+}
+
+/// FR-286-AC-39: a compile refusal and a `check` outcome have `result` `null`.
+#[test]
+#[trace("TC-3203", "FR-286-AC-39")]
+fn compile_refusal_and_check_have_a_null_result() {
+    let (_case, path) = parcel(b"\xff");
+    let refused = plain(&path);
+    assert_eq!(
+        refused.document["result"],
+        Value::Null,
+        "{}",
+        refused.document
+    );
+    let checked = fsl_command::command::check_outcome(
+        &_case.write("check.fsl", SOURCE.as_bytes()),
+        &fsl_command::command::CheckInputs::default(),
+    );
+    let document: Value = serde_json::from_slice(&checked.document().to_bytes().unwrap()).unwrap();
+    assert_eq!(document["result"], Value::Null, "{document}");
+}
+
+/// FR-865-AC-12 to AC-15: the text of each compile document, rendered from the
+/// document alone.
+#[test]
+#[trace(
+    "TC-3198",
+    "FR-865-AC-12",
+    "FR-865-AC-13",
+    "FR-865-AC-14",
+    "FR-865-AC-15"
+)]
+fn compile_text_says_what_was_produced_and_where() {
+    let case = Case::new();
+    case.write("reqs/parcel.fsl", SOURCE.as_bytes());
+    let mut member = request("parcel.fsl");
+    member["request"]["output"] = json!({"package": "spine.package.json"});
+    let with_output = case.json("reqs/with-output.json", &member);
+    let bytes = plain(&case.json("reqs/bare.json", &request("parcel.fsl")))
+        .package
+        .expect("package bytes")
+        .len();
+    let header = "package: success (exit 0) at stage packaging\n";
+    let produced = format!("produced: checked package ({bytes} bytes)\n");
+
+    let output = case.path("reqs/spine.package.json");
+    assert_eq!(
+        text_of(&with_output, &RequestOverrides::default()),
+        format!(
+            "{header}{produced}written to: {}\n",
+            output.to_string_lossy()
+        )
+    );
+    assert_eq!(
+        text_of(&case.path("reqs/bare.json"), &RequestOverrides::default()),
+        format!(
+            "{header}{produced}nothing written: no --output option, output member or handoff member was given\n"
+        )
+    );
+    let mut with_handoff = request("parcel.fsl");
+    with_handoff["request"]["handoff"] = json!({"directory": "handoff", "package_name": "parcel",
+        "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}});
+    let handoff = case.path("reqs/handoff");
+    assert_eq!(
+        text_of(
+            &case.json("reqs/handoff.json", &with_handoff),
+            &RequestOverrides::default()
+        ),
+        format!(
+            "{header}{produced}handoff written to: {}\n",
+            handoff.to_string_lossy()
+        )
+    );
+}
+
+/// FR-865-AC-17: the compile request with `models` `[]` over a unit selecting
+/// a model refuses `missing_import`/`missing-selection` with `selection`
+/// `model`, that row's hint, and the hint line in its text.
+#[test]
+#[trace("TC-3199", "FR-865-AC-17", "FR-865-AC-24", "FR-286-AC-40")]
+fn compile_without_the_selected_model_carries_the_model_selection() {
+    let unit = "language \"ix:native\" edition \"1-draft\";\n\
+        profile v = \"filament.model.complete/v1\";\n\
+        model Config = \"example/config-version\";\n\
+        invariant NoCycle using v on Config::ConfigVersion at current { not reaches(self, self, parent) }\n";
+    let (case, path) = parcel(unit.as_bytes());
+    let outcome = plain(&path);
+    let diagnostic = outcome.refused("package", 20, "missing_import");
+    let hint = "Supply the model in the request's models member, or with --model <identity>=<file> on fsl check.";
+    assert_eq!(diagnostic["cause"], "missing-selection", "{diagnostic}");
+    assert_eq!(diagnostic["selection"], "model", "{diagnostic}");
+    assert_eq!(diagnostic["hint"], hint, "{diagnostic}");
+    let Err(error) = fsl_command::command::compile_outcome_with_overrides(&path, &RequestOverrides::default())
+    else {
+        panic!("the compile is refused");
+    };
+    let document = error.outcome_document(fsl_replay::Operation::Package);
+    let text = fsl_inspect::render_outcome(
+        &document,
+        fsl_inspect::RenderForm::Text,
+        &fsl_command::render_sources(&error.sources),
+        fsl_replay::RenderLimits::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("the document renders")
+    .value()
+    .as_str()
+    .to_owned();
+    assert!(
+        text.lines().any(|line| line == format!("  hint: {hint}")),
+        "{text}"
+    );
+    drop(case);
+}
