@@ -9,11 +9,11 @@ use fsl_package::protocol_view::{
 };
 use fsl_replay::protocol_analysis::{
     node_text, replay_projection_counterexample, Action, AnalysisOutcome, AssessedRoot,
-    AssessedRootDraft, BranchMerge, ChoiceBasis, Correspondence, DecisionOwner, GlobalEventKind,
-    GlobalStructure, InconclusiveCause, LocalEvent, LocalEventId, LocalEventKind, LocalGraph,
-    MergeEvidence, MissingMember, PremiseRefusal, ProjectionBoundsDraft, ProjectionCounterexample,
-    ProjectionDecision, ProjectionKeyDraft, ProjectionWitness, ProtocolAnalysisKey,
-    ProtocolAnalysisResult, ProtocolPremises, RunBudget, RunLimit,
+    AssessedRootDraft, BranchMerge, ChoiceBasis, Correspondence, DecisionKind, DecisionOwner,
+    GlobalEventKind, GlobalStructure, InconclusiveCause, LocalEvent, LocalEventId, LocalEventKind,
+    LocalGraph, MergeEvidence, MissingMember, PremiseRefusal, ProjectionBoundsDraft,
+    ProjectionCounterexample, ProjectionDecision, ProjectionKeyDraft, ProjectionWitness,
+    ProtocolAnalysisKey, ProtocolAnalysisResult, ProtocolPremises, RunBudget, RunLimit,
 };
 use fsl_replay::spine::StructureError;
 use fsl_replay::ModelCheckLimit;
@@ -185,9 +185,10 @@ pub fn project(
     let mut evidence = Vec::new();
     let mut best: Option<Candidate> = None;
     for event in structure.events() {
-        let GlobalEventKind::Choice { cases, .. } = &event.kind else {
+        let Some(point) = structure.decision_point(&event.at) else {
             continue;
         };
+        let cases = &point.cases;
         if structure
             .depth(&event.at)
             .is_some_and(|depth| depth > max_depth)
@@ -199,10 +200,11 @@ pub fn project(
         };
         let mut merged = Vec::new();
         if basis == ChoiceBasis::MustMerge {
-            for (first, (_, case_first)) in cases.iter().enumerate() {
-                for (_, case_second) in &cases[first + 1..] {
+            for (first, case_first) in cases.iter().enumerate() {
+                for case_second in &cases[first + 1..] {
                     match structure.merge(
                         role,
+                        &event.at,
                         case_first,
                         case_second,
                         max_depth,
@@ -255,6 +257,7 @@ pub fn project(
                 }
             }
         }
+        merged.retain(|(first, second)| first != second);
         merged.sort();
         merged.dedup();
         evidence.push(MergeEvidence {
@@ -346,10 +349,14 @@ impl Candidate {
         role: &CheckedNodeId,
         root: &AssessedRoot,
     ) -> Result<ProjectionCounterexample, ProjectionRefusal> {
-        let owner = match structure.event(&self.choice).map(|event| &event.kind) {
-            Some(GlobalEventKind::Choice { owner, .. }) => DecisionOwner::Role(owner.clone()),
-            _ => DecisionOwner::Environment,
-        };
+        let point = structure.decision_point(&self.choice);
+        let owner = point
+            .as_ref()
+            .and_then(|point| point.owner)
+            .map_or(DecisionOwner::Environment, |owner| {
+                DecisionOwner::Role(owner.clone())
+            });
+        let kind = point.map_or(DecisionKind::Choice, |point| point.kind);
         let deciding = self
             .a
             .action
@@ -360,6 +367,7 @@ impl Candidate {
             key,
             role: role.clone(),
             decision: ProjectionDecision::Choice {
+                point: kind,
                 choice: self.choice.node,
                 owner,
                 cases: [self.a.case, self.b.case],

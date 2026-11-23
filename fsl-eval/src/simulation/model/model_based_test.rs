@@ -1438,6 +1438,14 @@ fn run_model_based_value_function(
     let mut partitions = Vec::new();
     for (index, (parameter, value_type)) in function.parameters.iter().enumerate() {
         let bits = max_value_bits.and_then(|bits| u8::try_from(bits).ok());
+        // A Clock reference is a place of an admitted object: a bare function
+        // parameter has no population or declaration table to range it over,
+        // and `&[]` would enumerate only its absence, so it is refused.
+        if !super::domain::clock_reference_paths(value_type, types).is_empty() {
+            return Err(ModelBasedTestError::ValueDomain {
+                parameter: parameter.clone(),
+            });
+        }
         let domain =
             Domain::of_bounded(value_type, &[], types, &orders, bits).ok_or_else(|| {
                 ModelBasedTestError::ValueDomain {

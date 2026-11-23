@@ -48,6 +48,7 @@ mod identity_golden_vectors;
 mod ieee_profiles;
 mod import_view_names;
 mod integer_division;
+mod interval_soundness;
 mod library_resolution;
 mod model_admission_limits;
 #[cfg(feature = "test-support")]

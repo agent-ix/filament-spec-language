@@ -18,7 +18,7 @@ use std::collections::BTreeMap;
 
 use filament_exact::ValueType;
 
-use super::domain::{Domain, Odometer};
+use super::domain::Odometer;
 use super::walk::{exhausted, stop};
 use super::{
     encode, identity_limits, state_document, ClauseOutcome, ModelSimState, ModelSystem, BROKEN,
@@ -217,7 +217,8 @@ impl ModelSystem<'_> {
         value_type: &ValueType,
         objects: &[ObjectReference],
     ) -> Result<Vec<Value>, ExpansionStop> {
-        let domain = Domain::of(value_type, objects, self.types, &self.record_orders)
+        let domain = self
+            .domain_with_clocks(value_type, objects)
             .ok_or_else(|| exhausted(ExpansionLimit::MaxCandidates))?;
         if domain.len() > u128::from(self.limits.max_candidates) {
             return Err(exhausted(ExpansionLimit::MaxCandidates));
@@ -369,13 +370,9 @@ impl ModelSystem<'_> {
                 .get(&object.type_identity)
                 .and_then(|fields| fields.iter().find(|declared| declared.key == *field))
                 .ok_or_else(|| stop(BROKEN))?;
-            let domain = Domain::of(
-                &declared.value_type,
-                &references,
-                self.types,
-                &self.record_orders,
-            )
-            .ok_or_else(|| exhausted(ExpansionLimit::MaxCandidates))?;
+            let domain = self
+                .domain_with_clocks(&declared.value_type, &references)
+                .ok_or_else(|| exhausted(ExpansionLimit::MaxCandidates))?;
             domains.push((domain, declared.optional));
         }
         let radices: Vec<u128> = domains

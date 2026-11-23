@@ -30,6 +30,7 @@ mod document;
 mod reward;
 #[cfg(feature = "test-support")]
 pub use reward::RewardProbabilityPhase;
+mod cyclic_state;
 mod state_predicate;
 pub use bounded::probabilistic_formula_monitor_context;
 mod source;

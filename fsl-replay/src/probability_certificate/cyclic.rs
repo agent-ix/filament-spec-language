@@ -101,6 +101,42 @@ pub(super) fn enumerate_graph<P: StatePredicate>(
     stop_at_target: bool,
     full_key: bool,
 ) -> Result<CheckerGraph, ProbabilityDocumentError> {
+    enumerate_graph_capturing(
+        system,
+        target,
+        binding,
+        workload,
+        limits,
+        cancel,
+        identity,
+        meter,
+        storage,
+        stop_at_target,
+        full_key,
+        None,
+    )
+}
+
+/// The model states a graph enumeration reached, by complete key.
+pub(super) type CapturedStates = std::cell::RefCell<BTreeMap<ProbabilityProductKey, ModelSimState>>;
+
+/// [`enumerate_graph`], retaining each reached model state in `capture` so a
+/// caller can read predicates at the states of the graph it rebuilt.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn enumerate_graph_capturing<P: StatePredicate>(
+    system: &ModelSystem<'_>,
+    target: Option<&P>,
+    binding: Option<&ObjectReference>,
+    workload: Option<&Workload>,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    identity: fsl_foundation::IdentityLimits,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
+    stop_at_target: bool,
+    full_key: bool,
+    capture: Option<&CapturedStates>,
+) -> Result<CheckerGraph, ProbabilityDocumentError> {
     let scope = std::cell::RefCell::new((meter, storage));
     let stopped = std::cell::RefCell::new(None);
     let mut issue = None;
@@ -169,7 +205,21 @@ pub(super) fn enumerate_graph<P: StatePredicate>(
             })
         },
         ModelVisitPhase::BeforeTarget,
-        &mut |_, _, _| {
+        &mut |key, state, _| {
+            if let Some(capture) = capture {
+                let mut borrowed = scope.borrow_mut();
+                let (_, storage) = &mut *borrowed;
+                if let Err(error) = charge(
+                    storage,
+                    limits.storage_bytes,
+                    captured_cost(key.as_bytes().len()),
+                ) {
+                    *stopped.borrow_mut() = Some(error);
+                    return Err(ExactProbabilityGraphError::ExpansionRefused);
+                }
+                drop(borrowed);
+                capture.borrow_mut().insert(key.clone(), state.clone());
+            }
             visit(cancel, scope.borrow_mut().0).map_err(|error| {
                 *stopped.borrow_mut() = Some(error);
                 ExactProbabilityGraphError::ExpansionRefused
@@ -203,7 +253,18 @@ pub(super) fn enumerate_graph<P: StatePredicate>(
     })
 }
 
-fn charge(used: &mut u64, bound: u64, bytes: usize) -> Result<(), ProbabilityDocumentError> {
+/// Bytes a captured model state holds: the clone and its key twice.
+pub(super) fn captured_cost(key_bytes: usize) -> usize {
+    key_bytes
+        .saturating_mul(2)
+        .saturating_add(std::mem::size_of::<ModelSimState>())
+}
+
+pub(super) fn charge(
+    used: &mut u64,
+    bound: u64,
+    bytes: usize,
+) -> Result<(), ProbabilityDocumentError> {
     let actual = used.saturating_add(u64::try_from(bytes).unwrap_or(u64::MAX));
     if actual > bound {
         return Err(ProbabilityDocumentError::Limit {
@@ -300,7 +361,7 @@ pub(super) fn enumerate<P: StatePredicate>(
 
 /// Iterative Kosaraju plus a reverse breadth-first search. Graph boundaries
 /// are checker-derived; no SCC or qualitative producer labels enter here.
-fn analyze(
+pub(super) fn analyze(
     graph: &mut CheckerGraph,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
@@ -446,7 +507,7 @@ fn analyze(
     Ok(ranks)
 }
 
-fn visit(
+pub(super) fn visit(
     cancel: &Cancel,
     meter: &mut filament_exact::Meter,
 ) -> Result<(), ProbabilityDocumentError> {

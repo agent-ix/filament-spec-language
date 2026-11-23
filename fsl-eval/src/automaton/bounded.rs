@@ -145,18 +145,18 @@ impl BoundedTranslation {
         if !context.profile.is_bounded() || context.activation != ContextActivation::Origin {
             return Err(TranslationRefusal::NotTranslated(NotTranslated));
         }
-        Self::in_profile(formula, context)
+        let shape = qualified_formula_shape(formula, context.profile);
+        Self::in_profile(shape, context)
     }
 
     /// The translation of a bounded operator under a bounded or the
     /// infinite-trace profile; [`Self::formula`] admits the bounded ones
     /// alone.
     fn in_profile(
-        formula: &CheckedFormula,
+        shape: Option<(BoundedKind, u64, FormulaNodeId)>,
         context: &StateContext,
     ) -> Result<Self, TranslationRefusal> {
-        let (kind, upper, atom) = bounded_formula_shape(formula)
-            .ok_or(TranslationRefusal::NotTranslated(NotTranslated))?;
+        let (kind, upper, atom) = shape.ok_or(TranslationRefusal::NotTranslated(NotTranslated))?;
         // A bounded clause is keyed under "origin" or "each", an
         // infinite-trace one under "infinite" (FR-338); an `on each` clause
         // with a `when` guard is keyed "each-when" under every profile.
@@ -207,7 +207,7 @@ impl BoundedTranslation {
         if context.profile != clause.profile() || context.activation != activation {
             return Err(TranslationRefusal::NotTranslated(NotTranslated));
         }
-        Self::in_profile(clause.formula(), context)
+        Self::in_profile(bounded_formula_shape(clause.formula()), context)
     }
 
     /// Whether the clause reads the infinite trace: a terminal state then
@@ -636,4 +636,24 @@ pub(super) fn bounded_formula_shape(
         Some(FormulaNode::Holds { .. })
     )
     .then_some((kind, upper, *operand))
+}
+
+/// The shape the qualified probability path reads: [`bounded_formula_shape`],
+/// or, under the event-position false-extension profile, a root `holds(P)`
+/// with no temporal operator as `eventually[0,0] holds(P)` (FR-201). The
+/// checked formula itself is never rewritten.
+pub(super) fn qualified_formula_shape(
+    formula: &CheckedFormula,
+    profile: TemporalProfile,
+) -> Option<(BoundedKind, u64, FormulaNodeId)> {
+    if profile == TemporalProfile::EventPositionFalseExtension {
+        let root = formula.root();
+        if matches!(
+            formula.nodes().get(root.index()),
+            Some(FormulaNode::Holds { .. })
+        ) {
+            return Some((BoundedKind::Eventually, 0, root));
+        }
+    }
+    bounded_formula_shape(formula)
 }

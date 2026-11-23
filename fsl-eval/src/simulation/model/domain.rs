@@ -527,13 +527,23 @@ impl Domain {
                 Space::of(value_type, objects, types, orders, &mut Vec::new())
                     .map(|space| Self::Space(Box::new(space)))
             }
+            // FR-106 "Clock-reference domains": the candidates are the declared
+            // clock-place identities of the admitted owners, supplied among
+            // `objects` by the model system, never derived from an owner.
             ValueType::Reference(target)
                 if fsl_semantics::model::clock_reference::is_clock_type(target) =>
             {
-                // Timed declarations and selector bounds do not authenticate
-                // the original population of a generated clock reference.
-                // The model admission boundary reports this unsupported domain.
-                None
+                Some(Self::Reference(
+                    objects
+                        .iter()
+                        .filter(|object| {
+                            fsl_semantics::model::clock_reference::is_clock_type(
+                                object.object_type(),
+                            )
+                        })
+                        .cloned()
+                        .collect(),
+                ))
             }
             ValueType::Reference(target) => Some(Self::Reference(
                 objects
@@ -1643,6 +1653,13 @@ mod tests {
         )
     }
 
+    fn value_type_target(value_type: &ValueType) -> filament_exact::EffectiveId {
+        match value_type {
+            ValueType::Reference(target) => target.clone(),
+            other => panic!("expected a reference type, got {other:?}"),
+        }
+    }
+
     fn integer(value: &Value) -> String {
         match value {
             Value::Integer(integer) => integer.to_string(),
@@ -1650,11 +1667,12 @@ mod tests {
         }
     }
 
-    /// Timed declarations alone cannot authenticate generated clock references;
-    /// ordinary object references still enumerate their actual owners.
+    /// A clock-reference domain holds exactly the supplied declared-place
+    /// identities, never an owner object; ordinary object references still
+    /// enumerate their actual owners.
     #[trace("TC-3084", "FR-1040-AC-8")]
     #[test]
-    fn legacy_timed_context_does_not_enumerate_clock_reference_domains() {
+    fn clock_reference_domains_hold_exactly_the_supplied_place_identities() {
         use filament_semantic_value::checking::{CheckMode, CheckingLimits};
         use fsl_semantics::model::accounting::ModelNormalizationLimits;
         use fsl_semantics::model::intake::{admit_unit, package_input};
@@ -1738,17 +1756,43 @@ mod tests {
             .expect("checked native clock reference target")
             .key();
         let value_type = ValueType::Reference(target);
-        assert!(
-            Domain::of_bounded(
-                &value_type,
-                &references,
-                graph.scope().types(),
-                &RecordOrders::new(),
-                None,
-            )
-            .is_none(),
-            "checked templates and real owners do not supply original population provenance"
+        let owners_only = Domain::of_bounded(
+            &value_type,
+            &references,
+            graph.scope().types(),
+            &RecordOrders::new(),
+            None,
+        )
+        .expect("a clock reference domain is finite");
+        assert_eq!(
+            owners_only.len(),
+            0,
+            "an owner object is never a clock-place identity"
         );
+        let place = |name: &str| {
+            ObjectReference::new(
+                c1.universe().clone(),
+                value_type_target(&value_type),
+                filament_exact::ObjectId::new(name).expect("place id"),
+            )
+        };
+        let candidates = [c1.clone(), place("place-a"), c2.clone(), place("place-b")];
+        let supplied = Domain::of_bounded(
+            &value_type,
+            &candidates,
+            graph.scope().types(),
+            &RecordOrders::new(),
+            None,
+        )
+        .expect("a clock reference domain is finite");
+        assert_eq!(supplied.len(), 2);
+        for (index, name) in [(0, "place-a"), (1, "place-b")] {
+            let Some(Value::Reference(actual)) = supplied.nth(index) else {
+                panic!("a clock reference candidate");
+            };
+            assert_eq!(actual, place(name));
+        }
+        assert!(supplied.nth(2).is_none());
         let ordinary = Domain::of(
             &ValueType::Reference(collection.owner()),
             &references,
@@ -1766,11 +1810,11 @@ mod tests {
         assert!(ordinary.nth(2).is_none());
     }
 
-    /// An unauthenticated clock leaf cannot leave an empty or partial domain
-    /// through optional values, collections, records, tuples or union cases.
+    /// A supplied clock identity enumerates through optional values, collections,
+    /// records, tuples and union cases, and the domain size is exact.
     #[trace("TC-3084", "FR-1040-AC-8")]
     #[test]
-    fn unauthenticated_clock_reference_domains_refuse_nested_carriers() {
+    fn clock_reference_domains_enumerate_through_nested_carriers() {
         use filament_semantic_value::declaration::{FieldDeclaration, ObjectTypeDeclaration};
 
         let target = filament_exact::EffectiveId::new(
@@ -1778,6 +1822,11 @@ mod tests {
             filament_exact::OriginalDeclarationKey::new("filament/native", "Clock"),
         );
         let clock = ValueType::Reference(target.clone());
+        let place = ObjectReference::new(
+            crate::test_ids::universe_id(b"clock-owner"),
+            target.clone(),
+            filament_exact::ObjectId::new("place-a").expect("place id"),
+        );
         let record = crate::test_ids::node_key([21]);
         let tuple = crate::test_ids::node_key([22]);
         let union = crate::test_ids::node_key([23]);
@@ -1823,19 +1872,36 @@ mod tests {
             clock.clone(),
             Some(CardinalityBound::new(0, 2).expect("bounded collection")),
         ));
-        for value_type in [
-            clock.clone(),
-            ValueType::option(clock),
-            ValueType::option(sequence.clone()),
-            sequence,
-            ValueType::Composite(record),
-            ValueType::Composite(tuple),
-            ValueType::Composite(union),
+        // One identity: a bare clock holds it, an option adds absence, a
+        // sequence of at most two holds the empty and each repetition, a
+        // record multiplies its optional clock (2) by its flag (2), a tuple
+        // its flag by the clock, and a union sums its two cases.
+        for (value_type, size) in [
+            (clock.clone(), 1),
+            (ValueType::option(clock), 2),
+            (ValueType::option(sequence.clone()), 4),
+            (sequence, 3),
+            (ValueType::Composite(record), 4),
+            (ValueType::Composite(tuple), 2),
+            (ValueType::Composite(union), 3),
         ] {
-            assert!(
-                Domain::of(&value_type, &[], &types, &RecordOrders::new()).is_none(),
-                "no authenticated clock domain for {value_type:?}"
-            );
+            let domain = Domain::of(
+                &value_type,
+                std::slice::from_ref(&place),
+                &types,
+                &RecordOrders::new(),
+            )
+            .unwrap_or_else(|| panic!("a clock domain for {value_type:?}"));
+            assert_eq!(domain.len(), size, "domain size of {value_type:?}");
+            assert!(domain.nth(size).is_none());
+            let mut seen = 0;
+            while let Some(value) = domain.nth(seen) {
+                seen += 1;
+                if let Value::Reference(reference) = value {
+                    assert_eq!(reference, place);
+                }
+            }
+            assert_eq!(seen, size);
         }
     }
 

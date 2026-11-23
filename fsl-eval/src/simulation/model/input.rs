@@ -171,6 +171,10 @@ pub struct ModelCheckInput<'a> {
     pub source_packages: &'a [DomainPackage],
     /// The timed model of each time source, in time-source order (FR-230).
     pub timed_models: &'a [TimedModel],
+    /// The authenticated declaration table of the clock places, which a
+    /// `Reference<Clock>` identity is validated and enumerated against;
+    /// `None` when the route supplies no table.
+    pub clock_declarations: Option<&'a fsl_semantics::model::clock_reference::normalization::ClockDeclarationTable>,
     /// The model time sources (FR-230).
     pub time_sources: &'a [ModelTimeSource],
     /// The `random`, `reward` and `workload` declarations (FR-185).
@@ -220,6 +224,7 @@ impl<'a> ModelCheckInput<'a> {
             model_selections: graph.model_selections(),
             source_packages: graph.source_packages(),
             timed_models: graph.timed_models(),
+            clock_declarations: Some(graph.clock_declaration_table()),
             time_sources: graph.time_sources(),
             probabilistic: graph.probabilistic_model(),
             state_clauses: graph
@@ -1028,6 +1033,7 @@ impl<'p> PackageModelInput<'p> {
             model_selections: &self.model_selections,
             source_packages: &[],
             timed_models: &self.timed_models,
+            clock_declarations: None,
             time_sources: &self.time_sources,
             probabilistic: &self.probabilistic,
             state_clauses: self.state_clauses.clone(),

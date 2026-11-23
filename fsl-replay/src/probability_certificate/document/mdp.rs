@@ -146,7 +146,13 @@ pub fn probability_proof_document(
             cyclic_mdp: false,
             fairness: Vec::new(),
         }),
-        Err(error) if may_retry(&error) => construct(system, claims, item, certificate, &mut cx),
+        Err(error)
+            if may_retry(&error)
+                || (error == ProbabilityDocumentError::ObjectiveMismatch
+                    && super::super::cyclic_state::is_claim(claim)) =>
+        {
+            construct(system, claims, item, certificate, &mut cx)
+        }
         Err(error) => Err(error),
     }
 }
@@ -174,7 +180,7 @@ pub fn cyclic_mdp_probability_certificate_document(
     if !matches!(
         bind_claim(claims, item, cancel)?.form,
         ProbForm::Reach {
-            target: ReachTarget::Eventually(_),
+            target: ReachTarget::Eventually(_) | ReachTarget::Until(..) | ReachTarget::Always(_),
             ..
         }
     ) {
@@ -231,6 +237,12 @@ pub enum CyclicMdpProbabilityPhase {
     Progress,
     /// Deriving an unchecked producer progress witness.
     Ranks,
+    /// Classification graph of an until or always claim: decided states absorb.
+    Classification,
+    /// Maximal end components of the classification graph.
+    Components,
+    /// Certificate graph with the violating union not expanded.
+    CertificateGraph,
 }
 
 struct Context<'a, 'control> {
@@ -428,6 +440,7 @@ fn subject(
         ProbabilityObjective,
         Bound,
         Option<super::super::reward::RewardGraph>,
+        Option<ProbabilityStateEvent>,
     ),
     ProbabilityDocumentError,
 > {
@@ -438,8 +451,8 @@ fn subject(
     let claim = bind_claim(claims, item, cx.cancel)?;
     if cx.reward {
         cx.tick(CyclicMdpProbabilityPhase::OriginalAdmission)?;
-        if let Some(control) = cx.reward_control {
-            return reward_subject(
+        let found = if let Some(control) = cx.reward_control {
+            reward_subject(
                 system,
                 claims,
                 item,
@@ -449,19 +462,72 @@ fn subject(
                 &mut cx.meter,
                 &mut cx.storage,
                 control,
-            );
-        }
-        return reward_subject(
+            )
+        } else {
+            reward_subject(
+                system,
+                claims,
+                item,
+                cx.limits,
+                cx.cancel,
+                cx.identity,
+                &mut cx.meter,
+                &mut cx.storage,
+                &super::super::reward::RewardControl::new(cx.cancel),
+            )
+        };
+        return found
+            .map(|(graph, objective, bound, reward)| (graph, objective, bound, reward, None));
+    }
+    if super::super::cyclic_state::is_claim(claim) {
+        let binding = claim_binding(system, claim)?;
+        let reference = binding.as_ref().map(|bound| &bound.reference);
+        let workload = claim_workload(system, claim)?;
+        let observe = std::cell::RefCell::new(&mut cx.observe);
+        let found = super::super::cyclic_state::certificate_graph(
             system,
-            claims,
-            item,
+            claim,
+            super::super::cyclic_state::Profile::Mdp,
+            reference,
+            workload,
             cx.limits,
             cx.cancel,
             cx.identity,
             &mut cx.meter,
             &mut cx.storage,
-            &super::super::reward::RewardControl::new(cx.cancel),
-        );
+            &mut |stage| {
+                if let Some(observe) = observe.borrow_mut().as_mut() {
+                    observe(match stage {
+                        super::super::cyclic_state::Stage::Original => {
+                            CyclicMdpProbabilityPhase::OriginalAdmission
+                        }
+                        super::super::cyclic_state::Stage::Classification => {
+                            CyclicMdpProbabilityPhase::Classification
+                        }
+                        super::super::cyclic_state::Stage::Components => {
+                            CyclicMdpProbabilityPhase::Components
+                        }
+                        super::super::cyclic_state::Stage::Certificate => {
+                            CyclicMdpProbabilityPhase::CertificateGraph
+                        }
+                    });
+                }
+                Ok(())
+            },
+        )?;
+        let violated = super::super::cyclic_state::violated_bound(
+            &found.bound,
+            cx.limits,
+            cx.cancel,
+            &mut cx.meter,
+        )?;
+        return Ok((
+            found.graph,
+            found.objective,
+            violated,
+            None,
+            Some(found.event),
+        ));
     }
     let ProbForm::Reach {
         bound,
@@ -541,6 +607,7 @@ fn subject(
         graph,
         claim_objective(&claim.scheduler, bound),
         bound.clone(),
+        None,
         None,
     ))
 }
@@ -890,7 +957,24 @@ fn construct(
         bind_claim(claims, item, cx.cancel)?.form,
         ProbForm::ExpectedReward { .. }
     );
-    let (graph, objective, _, reward) = subject(system, claims, item, cx)?;
+    let (graph, objective, _, reward, event) = subject(system, claims, item, cx)?;
+    let converted;
+    let certificate = if event.is_some() {
+        let ProbForm::Reach { bound, .. } = &bind_claim(claims, item, cx.cancel)?.form else {
+            return Err(ProbabilityDocumentError::Unsupported);
+        };
+        converted = super::super::cyclic_state::violated_values(
+            &graph,
+            certificate,
+            bound,
+            cx.limits,
+            cx.cancel,
+            &mut cx.meter,
+        )?;
+        &converted
+    } else {
+        certificate
+    };
     let values = match rows(&graph, certificate, cx)? {
         CertificateValues::Complete(values) => values,
         CertificateValues::Rejected(_) => {
@@ -927,7 +1011,7 @@ fn construct(
             cyclic_dtmc: false,
             identity: item.clone(),
             targets,
-            event: None,
+            event,
             failures: Vec::new(),
             reward: reward.map(|reward| reward.objective),
             optimization: objective,
@@ -1005,7 +1089,7 @@ fn check_with_context(
     {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
-    let (graph, objective, bound, reward) = subject(system, claims, item, &mut cx)?;
+    let (graph, objective, bound, reward, event) = subject(system, claims, item, &mut cx)?;
     let mut targets = document.targets.iter();
     let mut target_match = true;
     for (key, state) in &graph.states {
@@ -1018,6 +1102,7 @@ fn check_with_context(
         target_match = false;
     }
     if document.optimization != objective
+        || document.event != event
         || !target_match
         || document.reward.as_ref() != reward.as_ref().map(|reward| &reward.objective)
     {
@@ -1057,6 +1142,18 @@ fn check_with_context(
         return Ok(rejected(rule, key));
     }
     let mut result = check_threshold(&graph, &values, &bound, limits, cancel)?;
+    if event.is_some() {
+        let ProbForm::Reach { bound, .. } = &bind_claim(claims, item, cancel)?.form else {
+            return Err(ProbabilityDocumentError::Unsupported);
+        };
+        result = super::super::cyclic_state::claim_acceptance(
+            result,
+            bound,
+            limits,
+            cancel,
+            &mut cx.meter,
+        )?;
+    }
     if let ExactProbabilityCertificateCheck::Accepted(accepted) = &mut result {
         accepted.document = Some(bytes.into());
     }

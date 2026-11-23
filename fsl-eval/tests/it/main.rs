@@ -123,6 +123,7 @@ mod timed_subject;
 mod timed_trace;
 mod total_functions;
 mod type_invariants;
+mod typed_value_differential;
 mod unbounded_set_call;
 mod union_value_profile;
 mod value_properties;

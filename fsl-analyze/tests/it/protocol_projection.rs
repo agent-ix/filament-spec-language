@@ -1020,15 +1020,20 @@ fn a_timed_await_package_is_admitted_at_its_binding_row() {
     assert_eq!(admitted.temporal_bindings().map(|rows| rows.len()), Some(1));
 }
 
-/// FR-890-AC-2: a repeat projects onto a role in its body with its authored bound.
+/// FR-890-AC-2: a repeat projects onto a role in its body with its authored
+/// bound when the role's continue and exit first receives differ by message
+/// type: the body receives `Ack` and the exit receives `PickMsg`, both from
+/// `Warehouse`.
 #[trace("FR-890-AC-2", "TC-2521")]
 #[test]
 fn repeat_projects() {
     let package = flow(
         "sequence Main { repeat Loop by Buyer visible () max 2 while { true } \
-         sequence Body { send O via Order as (o: Ack) { true }; \
-         receive R via Order of O as (r: Ack) { true }; } \
-         exhausted sequence Spent { } }",
+         sequence Body { send O via Back as (o: Ack) { true }; \
+         receive R via Back of O as (r: Ack) { true }; } \
+         exhausted sequence Spent { } \
+         send X via Back2 as (x: PickMsg) { true }; \
+         receive Y via Back2 of X as (y: PickMsg) { true }; }",
     );
     let mut asked = request(&package, "Seller");
     asked.profile = Some("bounded".to_owned());
@@ -1485,7 +1490,6 @@ fn join_projects(
 /// to tell them apart is refuted, not answered `unsupported`.
 #[trace("TC-2521", "FR-890-AC-2", "FSpec-FR-735-AC-2")]
 #[test]
-#[ignore = "QSL-2889: a repeat answers unsupported instead of merging its continue and exit alternatives"]
 fn an_unmerged_repeat_is_refuted_for_the_role_it_hides_from() {
     let package = flow(
         "sequence Main { repeat Loop by Buyer visible () max 2 while { true } \
@@ -1663,6 +1667,7 @@ fn protocol_counterexample_outcomes_keep_both_projection_decisions() {
         assert_eq!(decision["kind"], kind);
         match &native.decision {
             ProjectionDecision::Choice {
+                point: _,
                 choice,
                 owner,
                 cases,

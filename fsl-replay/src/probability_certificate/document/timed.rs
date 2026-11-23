@@ -3322,14 +3322,15 @@ fn same_choice(left: &[ProbabilityEdge], right: &[ProbabilityEdge]) -> bool {
 }
 
 /// FR-204's choices of a running state under a workload, each a distribution
-/// the workload's weights fix: the race of the one identity whose delay a
-/// `discrete` distribution gives (with the scheduler's free delays after the
+/// the workload's weights fix: the race of the identities whose delays
+/// `discrete` distributions give (with the scheduler's free delays after the
 /// draw when free identities race too, `FreeDelays`), or, when no given
 /// delay races, the time-passing choices and one resolution of the free
 /// identity enabled now (`WorkloadResolve`).
 ///
-/// More than one racing given delay is not mirrored and refuses. So do the two
-/// states where the `WorkloadResolve` reading and ADR-026 SD-1 and SD-3 (the
+/// Several racing given delays race together: the least draw wins and the
+/// workload's weights order the identities tied at it. Two states
+/// refuse, where the `WorkloadResolve` reading and ADR-026 SD-1 and SD-3 (the
 /// scheduler picks each free identity's delay inside its window) give
 /// different verdicts, until the standard rules between them: several free
 /// identities enabled now, and a free identity that the unit delay disables.
@@ -3375,11 +3376,8 @@ fn digital_workload_choices(
         .iter()
         .filter(|window| window.given.is_none())
         .collect();
-    if racers.len() > 1 {
-        return Err(ProbabilityDocumentError::Unsupported);
-    }
     let mut choices: Vec<Vec<ProbabilityEdge>> = Vec::new();
-    let Some((racer_index, support)) = racers.pop() else {
+    if racers.is_empty() {
         // The free identities enabled now.
         let free_now: Vec<&fsl_eval::simulation::model::Action> = enabled
             .iter()
@@ -3461,14 +3459,59 @@ fn digital_workload_choices(
             choices.push(resolve);
         }
         return Ok(choices);
-    };
-    let racer = &windows[racer_index].identity;
+    }
+    let racing: Vec<&fsl_eval::simulation::model::ScheduledIdentity> = racers
+        .iter()
+        .map(|(index, _)| &windows[*index].identity)
+        .collect();
+    // The given vectors: the product of every racer's conditioned support,
+    // each with the product of the conditioned probabilities (FR-204). Each
+    // vector is at least one edge, so a product above the edge limit is
+    // refused before any vector is built.
+    let edge_limit = u64::try_from(run.limits.edges).unwrap_or(u64::MAX);
+    let rows = racers.iter().fold(1_u64, |rows, (_, support)| {
+        rows.saturating_mul(u64::try_from(support.len()).unwrap_or(u64::MAX))
+    });
+    if rows > edge_limit {
+        return Err(ProbabilityDocumentError::Limit {
+            limit: ProbabilityDocumentLimit::Edges,
+            bound: edge_limit,
+            actual: rows,
+        });
+    }
+    let mut joint: Vec<(Vec<u64>, Rational)> = vec![(Vec::new(), one())];
+    for (_, support) in &racers {
+        let mut next = Vec::new();
+        for (prefix, weight) in &joint {
+            for (delay, share) in support {
+                poll(run.cancel)?;
+                let mut draws = prefix.clone();
+                draws.push(*delay);
+                next.push((draws, weight.mul(share)));
+            }
+        }
+        joint = next;
+    }
+    let tied_given =
+        |least: u64, draws: &[u64]| -> Vec<fsl_eval::simulation::model::ScheduledIdentity> {
+            racing
+                .iter()
+                .zip(draws)
+                .filter(|(_, draw)| **draw == least)
+                .map(|(identity, _)| (*identity).clone())
+                .collect()
+        };
     if free.is_empty() {
-        // The racer alone: one race, no scheduler choice.
+        // Given delays alone: the least draw wins, ties by the workload's
+        // weights; one race, no scheduler choice.
         let mut race = Vec::new();
-        for (delay, share) in support {
-            let states =
-                run.race_states(&trajectory, delay, std::slice::from_ref(racer), &share)?;
+        for (draws, share) in joint {
+            let least = draws
+                .iter()
+                .copied()
+                .min()
+                .ok_or(ProbabilityDocumentError::Malformed)?;
+            let states = run.race_states(&trajectory, least, &tied_given(least, &draws), &share)?;
             run.choice_of(states, &mut race, reached, pending, storage)?;
             charge_work(meter, run.cancel, 1)?;
         }
@@ -3476,13 +3519,19 @@ fn digital_workload_choices(
         return Ok(choices);
     }
     // FR-204 `FreeDelays`: the scheduler picks every free identity's delay in
-    // its window after the given delay is drawn, so a row is one drawn delay
-    // with its options (one per assignment of the free delays). The action
-    // that picks option `a(g)` at each row `g` is one scheduler choice, and its
-    // value factors by row (`Σ_g P(g) opt_a Q(g, a)`); the options of a row
-    // that are the same distribution are one option.
+    // its window after the given delay is drawn, so a row is one drawn vector
+    // of the given delays with its options (one per assignment of the free
+    // delays). The action that picks option `a(g)` at each row `g` is one
+    // scheduler choice, and its value factors by row
+    // (`Σ_g P(g) opt_a Q(g, a)`); the options of a row that are the same
+    // distribution are one option.
     let mut per_draw: Vec<Vec<Vec<ProbabilityEdge>>> = Vec::new();
-    for (draw, share) in support {
+    for (draws, share) in &joint {
+        let draw = draws
+            .iter()
+            .copied()
+            .min()
+            .ok_or(ProbabilityDocumentError::Malformed)?;
         let mut assignment = vec![0_usize; free.len()];
         let mut options: Vec<Vec<ProbabilityEdge>> = Vec::new();
         'assignments: loop {
@@ -3499,16 +3548,13 @@ fn digital_workload_choices(
                 })
                 .collect::<Result<_, _>>()?;
             let least = chosen.iter().copied().fold(draw, u64::min);
-            let mut tied = Vec::new();
-            if draw == least {
-                tied.push(racer.clone());
-            }
+            let mut tied = tied_given(least, draws);
             for (window, delay) in free.iter().zip(&chosen) {
                 if *delay == least {
                     tied.push(window.identity.clone());
                 }
             }
-            let states = run.race_states(&trajectory, least, &tied, &share)?;
+            let states = run.race_states(&trajectory, least, &tied, share)?;
             let mut option = Vec::new();
             run.choice_of(states, &mut option, reached, pending, storage)?;
             if !options.iter().any(|seen| same_choice(seen, &option)) {
@@ -3534,7 +3580,6 @@ fn digital_workload_choices(
     // choices are listed here: every function from a drawn delay to one of its
     // options. The edge limit is checked against the edges of the listing
     // before any choice is built, never against a count of choices.
-    let edge_limit = u64::try_from(run.limits.edges).unwrap_or(u64::MAX);
     let mut functions = 1_u64;
     let mut edges_per_function = 0_u64;
     for options in &per_draw {

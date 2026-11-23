@@ -1052,6 +1052,13 @@ fn outcome(
             observe,
         )
         .map(|(verdict, _)| verdict)
+        // A counterexample replay keeps its refusal for an undefined reading.
+        .map_err(|error| match error {
+            ProbabilityDocumentError::UndefinedPredicate(_) => {
+                ProbabilityDocumentError::Graph(ExactProbabilityGraphError::ExpansionRefused)
+            }
+            other => other,
+        })
         .map_err(bounded::document_error),
     }
 }

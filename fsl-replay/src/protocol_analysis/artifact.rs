@@ -10,7 +10,7 @@ use filament_exact::ObjectReference;
 use fsl_package::protocol_view::PortRef;
 
 use super::{
-    node_text, Action, BranchMerge, ChoiceBasis, GlobalStructure, MissingMember,
+    node_text, Action, BranchMerge, ChoiceBasis, DecisionKind, GlobalStructure, MissingMember,
     ProtocolAnalysisKey,
 };
 use crate::identity::TracePosition;
@@ -169,9 +169,12 @@ pub enum DecisionOwner {
 /// (FR-890-AC-5).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProjectionDecision {
-    /// A choice whose branches do not merge for the projected role.
+    /// A choice or repeat guard read whose branches do not merge for the
+    /// projected role.
     Choice {
-        /// The choice node.
+        /// Whether the decision point is a `choice` or a `repeat`.
+        point: DecisionKind,
+        /// The decision point's node.
         choice: CheckedNodeId,
         /// The choice owner.
         owner: DecisionOwner,
@@ -452,6 +455,7 @@ pub fn replay_projection_counterexample(
     let ce = counterexample;
     match &ce.decision {
         ProjectionDecision::Choice {
+            point: _,
             choice,
             owner: DecisionOwner::Role(_),
             cases,
@@ -476,10 +480,7 @@ pub fn replay_projection_counterexample(
                     if !structure.successors(&previous).contains(&step) {
                         return Err(WalkDisagreement::StepNotSuccessor(step.clone()));
                     }
-                    let inside = structure
-                        .event(step)
-                        .is_some_and(|event| event.within.contains(case));
-                    if !inside {
+                    if !structure.in_branch(&choice_port, case, step) {
                         return Err(WalkDisagreement::WrongBranch);
                     }
                     previous = step.clone();
@@ -497,7 +498,14 @@ pub fn replay_projection_counterexample(
                 }
             }
             let mut unlimited = u64::MAX;
-            match structure.merge(&ce.role, &cases[0], &cases[1], max_depth, &mut unlimited) {
+            match structure.merge(
+                &ce.role,
+                &choice_port,
+                &cases[0],
+                &cases[1],
+                max_depth,
+                &mut unlimited,
+            ) {
                 BranchMerge::Cut | BranchMerge::Exhausted => Err(WalkDisagreement::Cut),
                 BranchMerge::Merged(_) => Err(WalkDisagreement::NotTheStatedDivergence),
                 BranchMerge::Diverged(found) => {
