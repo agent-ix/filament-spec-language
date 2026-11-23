@@ -50,7 +50,7 @@ use fsl_replay::UndefinedEvaluation;
 
 pub use claim::{
     reduce_quantile, require_statistical, Bound, ClaimRefusal, Comparison, MeasureEvent,
-    QuantileClaim, QuantileComparison, StatisticalClaim,
+    QuantileComparison, StatisticalClaim,
 };
 pub use model::{
     check_statistical, witness_reader, witness_reader_with_timed_sampling, ModelWitnessReader,
@@ -1098,13 +1098,7 @@ fn check_sampled_with_meter<S: BehaviourSampler>(
         }
     }
     let decision = claim_decision(&results);
-    let bound = request
-        .claim
-        .verdict_bound()
-        .ok_or(fault(InternalFault::new(
-            "statistical",
-            "claim-bound-as-written",
-        )))?;
+    let bound = request.claim.verdict_bound().clone();
     let chosen = least_favourable(&results, request.claim.bound().comparison);
     Ok(StatisticalOutcome::Completed(Box::new(
         StatisticalVerdict {

@@ -1968,6 +1968,7 @@ fn a_preflight_limit_reached_cause_carries_its_required_count() {
     }
 
     for required in [
+        json!(""),
         json!("0"),
         json!("-5"),
         json!("007"),

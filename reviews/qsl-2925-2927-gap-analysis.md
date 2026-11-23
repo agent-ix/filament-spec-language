@@ -39,3 +39,22 @@ The reviewer also ran a semantic check of test intent against the ACs (no user o
 - Untagged and outside this diff (predate the PR, not findings here): FR-191-AC-3/4, whose tests carry only `TC-626` with the AC in a doc comment; FR-191-AC-7 (workers); FR-192-AC-4; FR-192-AC-8.
 - Bindings checked: max_samples_stops_a_run_before_its_method_completes, FR-191-AC-1, correct. max_draws_and_cancellation_stop_with_no_decision, FR-191-AC-2, correct. max_samples_stops_before_the_next_draw_and_stops_carry_provenance, FR-191-AC-5, correct. clopper_pearson_compares_its_sample_count_with_the_budgets_before_drawing, FR-191-AC-1, correct. a_tiny_indifference_region_settles_incomplete_before_sampling, FR-741-AC-4 and FR-191-AC-1, correct; FR-192-AC-9 partial. okamoto_sprt_and_regenerative_results_settle_measured, FR-192-AC-9, wrong (FND-002). statistical_*_from_source, FR-192-AC-2, partial: a different claim from AC-2's.
 - Semantic review: by the reviewer, over the changed tests only.
+
+## New findings (disposition pass 1)
+
+Re-review of head 31645dfc36813a83879e598d85fe71cf3b28fe9d. Cargo was again not run: eight other cargo jobs were running on the host.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-006 | low | The from-source quantile path is not exercised end to end. `model.rs` now captures the written `(q, comparison, c)`, but no source quantile claim (in particular `>= c`) asserts its verdict `bound` with `level`. No undefined-evaluation rejection asserts its `bound`, which FR-410 requires there too. The unit tests build the claim with `with_quantile` by hand | fsl-analyze/src/statistical/model.rs:626-680; fsl-analyze/src/statistical/tests.rs:1838-1908 |
+| FND-007 | low | `a_tiny_indifference_region_settles_incomplete_before_sampling` still carries the whole `FR-192-AC-9` tag. That AC's reader clause is deferred to QSL-2944, and its bound clause is tested under FR-192-AC-2, so the matrix shows AC-9 as covered | fsl-analyze/tests/it/probability_from_source.rs:1063 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | deferred | QSL-2943. FR-191-AC-6 (workers) is specified and not built. It is left untagged, with a comment in tests.rs |
+| FND-002 | fixed | The wrong FR-192-AC-9 tag is removed. `a_verdict_carries_the_claims_own_bound` asserts accepted (quantile `<= 5`), rejected (quantile `>= 2`) and undecided (long-run `<= 1999/2000`) bounds with independently written exact values (level 19/20) |
+| FND-003 | fixed | `a_max_draws_equal_to_the_sample_count_admits_the_run`: `max_draws` 23,026 completes with (23026, 23026); 23,025 stops with PreflightLimit, zero counts and zero calls |
+| FND-004 | rejected | The FR-331 incomplete cause has no partial-count member by design, so zero samples and draws cannot be observed on the wire. The unit tests assert them (probe.calls == 0), which is the right level |
+| FND-005 | fixed | Two schema tests were added. The preflight cause is written by the real pipeline and validated against the pinned `LimitReached`, with exact `"921034038"`. The bound is serialized by the single writer `verdict_bound_wire` and validated against `ProbabilisticBound`, with exact members per form. Neither is a tautology: the schema comes from FSpec |

@@ -286,8 +286,8 @@ impl StatisticalLimit {
 pub enum BoundComparison {
     /// `>= θ`, written `greater-or-equal`.
     GreaterOrEqual,
-    /// `<= θ`, written `less-or-equal`. The strict bound a quantile claim
-    /// reduces to is written the same way, as FR-413 has no other spelling.
+    /// `<= θ`, written `less-or-equal`: the claim's own operator. A quantile
+    /// claim's reduced strict bound is never written; FR-413 forbids it.
     LessOrEqual,
 }
 

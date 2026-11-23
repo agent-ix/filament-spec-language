@@ -1060,7 +1060,8 @@ fn statistical_refusals_and_budgets_from_source() {
 /// makes the fixed sample count about 9.2e8, far above the default
 /// `max_samples`, settles `incomplete` before any sample, naming the limit,
 /// the configured value and the required count, with no draw.
-#[trace("TC-2066", "FR-741-AC-4", "FR-191-AC-1", "FR-192-AC-9")]
+// FR-192-AC-9's reader clause is deferred (QSL-2944), so it is not tagged.
+#[trace("TC-2066", "FR-741-AC-4", "FR-191-AC-1")]
 #[test]
 fn a_tiny_indifference_region_settles_incomplete_before_sampling() {
     let claim = "probabilistic Delivered using ev on M over (m: M::Msg) under Even on origin \

@@ -1281,7 +1281,8 @@ fn read_text(value: &Value, pointer: &str) -> Result<String, Defect> {
 /// no sign, no leading zero, not zero.
 fn read_positive_decimal(value: &Value, pointer: &str) -> Result<String, Defect> {
     let text = read_text(value, pointer)?;
-    let canonical = text.bytes().all(|byte| byte.is_ascii_digit()) && !text.starts_with('0');
+    let canonical = matches!(text.as_bytes().first(), Some(b'1'..=b'9'))
+        && text.bytes().all(|byte| byte.is_ascii_digit());
     if canonical {
         Ok(text)
     } else {

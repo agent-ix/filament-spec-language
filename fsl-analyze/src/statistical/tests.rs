@@ -107,10 +107,13 @@ fn claim(
 /// ADR-024 §7.2's `P95` at `c` milliseconds: `quantile 0.95 of M <= c`,
 /// reduced to `Pr(M <= c) >= 0.95` at `ι = 1/100`.
 fn p95() -> StatisticalClaim {
-    let (_, bound) = reduce_quantile(ratio(95, 100), QuantileComparison::AtMost, int(5));
-    StatisticalClaim::new(ClaimForm::Quantile, bound, confidence(ratio(1, 100)))
-        .expect("P95")
-        .with_quantile(ratio(95, 100), QuantileComparison::AtMost, int(5))
+    StatisticalClaim::quantile(
+        ratio(95, 100),
+        QuantileComparison::AtMost,
+        int(5),
+        confidence(ratio(1, 100)),
+    )
+    .expect("P95")
 }
 
 fn one_test() -> Vec<TestSubject> {
@@ -285,18 +288,13 @@ fn p95_settles_by_okamoto_and_by_sprt() {
     let tests = one_test();
     let sampler = sampler_ref();
     let at = |milliseconds: i64| {
-        let (_, bound) = reduce_quantile(
+        StatisticalClaim::quantile(
             ratio(95, 100),
             QuantileComparison::AtMost,
             int(milliseconds),
-        );
-        StatisticalClaim::new(ClaimForm::Quantile, bound, confidence(ratio(1, 100)))
-            .expect("P95")
-            .with_quantile(
-                ratio(95, 100),
-                QuantileComparison::AtMost,
-                int(milliseconds),
-            )
+            confidence(ratio(1, 100)),
+        )
+        .expect("P95")
     };
     let five = at(5);
     let two = at(2);
@@ -1843,10 +1841,13 @@ fn a_verdict_carries_the_claims_own_bound() {
     let tests = one_test();
     let sampler = sampler_ref();
     let quantile = |comparison: QuantileComparison, c: i64| {
-        let (_, bound) = reduce_quantile(ratio(95, 100), comparison, int(c));
-        StatisticalClaim::new(ClaimForm::Quantile, bound, confidence(ratio(1, 100)))
-            .expect("quantile claim")
-            .with_quantile(ratio(95, 100), comparison, int(c))
+        StatisticalClaim::quantile(
+            ratio(95, 100),
+            comparison,
+            int(c),
+            confidence(ratio(1, 100)),
+        )
+        .expect("quantile claim")
     };
 
     let at_most = quantile(QuantileComparison::AtMost, 5);
@@ -2051,18 +2052,13 @@ fn okamoto_sprt_and_regenerative_results_settle_measured() {
     let tests = one_test();
     let sampler = sampler_ref();
     let at = |milliseconds: i64| {
-        let (_, bound) = reduce_quantile(
+        StatisticalClaim::quantile(
             ratio(95, 100),
             QuantileComparison::AtMost,
             int(milliseconds),
-        );
-        StatisticalClaim::new(ClaimForm::Quantile, bound, confidence(ratio(1, 100)))
-            .expect("P95")
-            .with_quantile(
-                ratio(95, 100),
-                QuantileComparison::AtMost,
-                int(milliseconds),
-            )
+            confidence(ratio(1, 100)),
+        )
+        .expect("P95")
     };
     let five = at(5);
     let two = at(2);
@@ -2121,18 +2117,13 @@ fn a_rejected_measurement_fails_the_gate_as_a_violation() {
     let tests = one_test();
     let sampler = sampler_ref();
     let at = |milliseconds: i64| {
-        let (_, bound) = reduce_quantile(
+        StatisticalClaim::quantile(
             ratio(95, 100),
             QuantileComparison::AtMost,
             int(milliseconds),
-        );
-        StatisticalClaim::new(ClaimForm::Quantile, bound, confidence(ratio(1, 100)))
-            .expect("P95")
-            .with_quantile(
-                ratio(95, 100),
-                QuantileComparison::AtMost,
-                int(milliseconds),
-            )
+            confidence(ratio(1, 100)),
+        )
+        .expect("P95")
     };
     let (five, two) = (at(5), at(2));
     let accepted = run(
@@ -2240,10 +2231,13 @@ fn an_undefined_sample_settles_measured_rejected() {
 #[trace("TC-628")]
 #[test]
 fn the_first_violating_samples_are_kept_in_trace_order() {
-    let (_, bound) = reduce_quantile(ratio(95, 100), QuantileComparison::AtMost, int(2));
-    let two = StatisticalClaim::new(ClaimForm::Quantile, bound, confidence(ratio(1, 100)))
-        .expect("P95 at 2 ms")
-        .with_quantile(ratio(95, 100), QuantileComparison::AtMost, int(2));
+    let two = StatisticalClaim::quantile(
+        ratio(95, 100),
+        QuantileComparison::AtMost,
+        int(2),
+        confidence(ratio(1, 100)),
+    )
+    .expect("P95 at 2 ms");
     let tests = one_test();
     let sampler = sampler_ref();
     let mut witnessed = ServiceSteps(Service::new(2));
@@ -2289,10 +2283,13 @@ fn the_first_violating_samples_are_kept_in_trace_order() {
 #[trace("TC-628")]
 #[test]
 fn witnesses_interleave_across_tests_by_trace_index() {
-    let (_, bound) = reduce_quantile(ratio(95, 100), QuantileComparison::AtMost, int(2));
-    let two = StatisticalClaim::new(ClaimForm::Quantile, bound, confidence(ratio(1, 100)))
-        .expect("P95 at 2 ms")
-        .with_quantile(ratio(95, 100), QuantileComparison::AtMost, int(2));
+    let two = StatisticalClaim::quantile(
+        ratio(95, 100),
+        QuantileComparison::AtMost,
+        int(2),
+        confidence(ratio(1, 100)),
+    )
+    .expect("P95 at 2 ms");
     let tests = two_tests();
     let sampler = sampler_ref();
     let mut witnessed = ServiceSteps(Service::new(2));
@@ -2451,20 +2448,20 @@ fn four_sample_claim(
     iota: Rational,
 ) -> StatisticalClaim {
     let confidence = Confidence::new(alpha.clone(), alpha, iota).expect("confidence");
-    let bound = match form {
-        ClaimForm::Quantile => {
-            reduce_quantile(theta.clone(), QuantileComparison::AtMost, int(at_most)).1
-        }
-        _ => Bound {
-            comparison: Comparison::AtLeast,
-            threshold: theta.clone(),
-        },
-    };
-    let claim = StatisticalClaim::new(form, bound, confidence).expect("claim");
     match form {
-        ClaimForm::Quantile => claim.with_quantile(theta, QuantileComparison::AtMost, int(at_most)),
-        _ => claim,
+        ClaimForm::Quantile => {
+            StatisticalClaim::quantile(theta, QuantileComparison::AtMost, int(at_most), confidence)
+        }
+        _ => StatisticalClaim::new(
+            form,
+            Bound {
+                comparison: Comparison::AtLeast,
+                threshold: theta,
+            },
+            confidence,
+        ),
     }
+    .expect("claim")
 }
 
 /// A stub whose sample at trace index `i` is the `i`-th of `measures`, a
@@ -2701,9 +2698,9 @@ fn an_at_least_quantile_claims_estimate_is_its_strict_probability() {
     // `m = 2`: `α' = 21/100`, `ι = 1/5` give `N = ⌈ln(100/21) / (2/25)⌉ = 20`.
     let confidence =
         Confidence::new(ratio(21, 50), ratio(21, 50), ratio(1, 5)).expect("confidence");
-    let claim = StatisticalClaim::new(ClaimForm::Quantile, bound, confidence)
-        .expect("claim")
-        .with_quantile(ratio(1, 2), QuantileComparison::AtLeast, int(3));
+    let claim =
+        StatisticalClaim::quantile(ratio(1, 2), QuantileComparison::AtLeast, int(3), confidence)
+            .expect("claim");
     let tests = [
         TestSubject {
             initial: 0,

@@ -43,3 +43,27 @@ Cargo was not run by the reviewer: nine other cargo jobs were running on the hos
 - Merged-clause checklist (FR-191 Budgets, FR-192 map/Behavior, FR-741-AC-4, FSpec FR-408/FR-410/FR-413/FR-331). Implemented: the preflight for both fixed-N methods; the max_samples-then-max_draws order; equality admits; zero draws; `partial` counts 0; the undefined sample is never drawn; SPRT and regenerative unchanged; the wire `required` only on the preflight; `bound` on all three decisions. Gaps: FND-001 (range of `required`), FND-005/006 (quantile/type spelling), FND-007 (reader).
 - Changed assertions are justified by the amended ACs and are not weakened. FR-191-AC-1 now asserts the exact stop, zero samples, draws and sampler calls, and adds the max_draws case. FR-191-AC-2 moves to SPRT with `(1000, 0)`, as the amended AC-2 states. FR-191-AC-5 is now the preflight stop with zero calls and adds the activation `required: 23_026` case. The FR-189-AC-12 tests move max_draws to 30,000, above Okamoto's 23,026, so the stop-at-limit path is still exercised. The witness-replay expectation changes to `PreflightLimit`, `required: 23_026`.
 - Driver lane still to cover (CLI repro not run here): staged-sampling-claim-missed (ι=0.00005) should settle `incomplete` at once with `required: 921034038`; method selection spellings (`{"type":"sprt"}`, `{"type":"clopper-pearson"}`); the docs PRs filament-docs#130 and filament-examples#103.
+
+## New findings (disposition pass 1)
+
+Re-review of head 31645dfc36813a83879e598d85fe71cf3b28fe9d (merge-base f98d2037). The FSpec pin is now 3200a4ed (#820, on FSpec origin/main).
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-009 | medium | `read_positive_decimal` admits the empty string. `"".bytes().all(is_ascii_digit)` is vacuously true and `!"".starts_with('0')` holds, so `required: ""` is read and written back, although the pinned schema `^[1-9][0-9]*$` refuses it. The new planner test does not try `""` | fsl-replay/src/planner/entry.rs:1282-1290; fsl-replay/src/planner/tests.rs:1972-1990 |
+| FND-010 | medium | The 3200a4ed pin also adopts #820's FR-379 change: `refinement_failure.initial` and `position` are now `U64String`. The FSL counterexample writer still emits JSON numbers (`{"kind": "StutterChanged", "position": 1}`), and its own test asserts the number. With this PR's pin, the refinement wire contradicts the pinned schema, and no ticket tracks it | fsl-replay/src/outcome/counterexample.rs:1200-1210; fsl-replay/src/outcome/counterexample.rs:3377-3388 |
+| FND-011 | low | Stale doc on `BoundComparison::LessOrEqual`: "The strict bound a quantile claim reduces to is written the same way". That contradicts FR-413 (a writer SHALL NOT serialize the reduced comparison) and the new behaviour | fsl-replay/src/statistical.rs:289-291 |
+| FND-012 | low | A public `StatisticalClaim::new(ClaimForm::Quantile, ..)` built without `with_quantile` is accepted, and fails only at verdict time with InternalFault `claim-bound-as-written`. The written quantile could be a required argument of a quantile constructor rather than an optional builder step | fsl-analyze/src/statistical/claim.rs:118-162; fsl-analyze/src/statistical.rs:1101-1107 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `required` is an exact `Integer`, written as decimal text, and the saturation is gone (grep finds no statistical `unwrap_or(u64::MAX)`). The pinned FR-331 schema (3200a4ed) is `^[1-9][0-9]*$` |
+| FND-002 | fixed | `IncompleteCause::LimitReached{limit, value, required: Option<Integer>}`; the sibling variant is removed. The engine-level `StatisticalStop::PreflightLimit` is FR-191's own name |
+| FND-003 | fixed | The planner INCOMPLETE table admits optional `required` and reads it as canonical positive decimal text. Zero, signed, zero-padded, decimal and numeric values are refused. The empty string is not refused: new FND-009 |
+| FND-004 | fixed | `count` is computed once. `fixed` and the preflight share it |
+| FND-005 | fixed | `verdict_bound()` writes the claim's own comparison and threshold and the quantile `level`, matching FR-413 at 3200a4ed. The strict reduction stays internal |
+| FND-006 | fixed | #820 closes `type` to probability, quantile, mean-of-fraction and long-run-fraction, which `bound_type` matches |
+| FND-007 | deferred | QSL-2944. The reader clause is untracked in code and left untagged. One test still carries the whole FR-192-AC-9 tag (see gap FND-007) |
+| FND-008 | deferred | QSL-2942. #3552 merged as 5b9c3ec3 with the non-conformant test assertion `{"comparison": ">=", ...}` at subsystem_refutation.rs:295-297. The writer counterexample.rs:2120 is unchanged on main |
