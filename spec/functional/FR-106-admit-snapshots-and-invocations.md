@@ -51,6 +51,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-208
     type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-415
+    type: depends_on
+  - target: ix://agent-ix/filament-specification/FR-829
+    type: depends_on
 ---
 # FR-106: Read and admit state snapshots and invocations as the spine clause-execution input
 
@@ -427,6 +431,64 @@ refuse distinct declared places that collide within one model scope as
 `conflicting_declaration`/`duplicate-declaration`, naming both declaration
 origins and producing no partial place table or admitted observation.
 
+For model checking, the candidate domain of a `Reference<Clock>` value SHALL
+contain exactly the canonical `place/v2` identities of declared clock-place
+templates for admitted owner objects in the same selected model universe and
+their valid collection-slot selectors. A candidate SHALL be included only
+when its owner is in the exact admitted population and each selector is
+valid for the declared place template. The finite model
+domain SHALL include both reference identities already admitted from the
+input snapshots and identities producible by checked `ref(place)` terms; it
+SHALL preserve every admitted input identity even when a slot selector is
+outside the exploration-derived range or the slot is currently absent.
+`model_check.max_clocks` bounds live clock valuations and selectors enumerated
+for exploration; it SHALL NOT truncate or refuse otherwise-valid reference
+data supplied by the input. An absent optional place can still have a
+`Reference<Clock>` identity (`ref` of that declared optional place is defined
+by FSpec FR-829); `deref` of an absent optional place or inactive slot remains
+subject to FR-415's presence guards. Selectors not valid for the declared
+place template SHALL NOT be admitted as input identities. The domain SHALL
+use clock-place declarations, owner object identities and selectors, and
+SHALL NOT derive place identity from a map key, allocation ordinal or
+state-node id. The same rule applies recursively to `Option`, `Sequence`,
+`Map` values, record, tuple and union carriers, preserving their value shape
+and presence; Map keys do not identify clock places.
+
+The candidate set SHALL be finite when the admitted owner populations are
+finite and each traversed collection slot has a declared finite capacity.
+When a generic model check has a clock-reference slot without a finite
+selector maximum, it SHALL return `NotSimulated::RequiresBound` with the
+corresponding `ClockReferenceDomain` (member, clock-place template and slot)
+before exploring states. The timed engine SHALL derive selector maxima from
+its `model_check.max_clocks` bound and SHALL apply those maxima before its
+other refinement gates for identities producible by exploration. It SHALL
+also retain all valid input reference identities as data, without treating
+them as live places or charging them against `max_clocks`. If a timed state
+exceeds the live-clock bound, the result SHALL be the existing incomplete
+`TimedStop::MaxClocks` limit naming `model_check.max_clocks`; no partial state
+enumeration is a completed analysis. A member whose ordinary type extent is
+unbounded SHALL retain its existing `RequiresBound` refusal. A model without
+the complete owner population authority needed to validate an input identity
+SHALL retain its existing typed unbounded-domain refusal rather than inventing
+a reference target.
+
+Clock references SHALL remain data identities throughout evaluation. The
+`filament.op.clock_reference.ref` value of `ref(self.x)` SHALL equal the
+candidate for that exact declared place; `=` and `!=` SHALL compare canonical
+place identities (including owner, declared path and selectors), never clock
+readings. The state key SHALL include the full canonical reference value, so
+states that differ only by the referenced place remain distinct while states
+that differ only in clock readings and retain the same reference remain one
+data identity, as FR-1040-AC-8 requires. Source and Bare snapshot admission
+SHALL resolve transported references against that same declared-place table;
+an old identity for a removed place SHALL refuse as
+`dangling_reference`/`absent-target-in-complete-population`, even when a
+retained place reuses an internal ordinal.
+
+This contract applies FSpec FR-415's clock-place and cardinality rules and
+`scalar_type`/`clock_reference` and `filament.op.clock_reference.ref` from
+FSpec FR-829, using FR-230's canonical `place/v2` identity.
+
 > Implementation boundary (QSL-2178 STEP1): the admission requirement above
 > and AC-72/AC-73 remain unmet. Source and Bare raw snapshot, context,
 > parameter and record-sample admission refuse external Clock references as
@@ -452,10 +514,8 @@ origins and producing no partial place table or admitted observation.
 > `population-qualified-object-identity`, both populations and the key.
 > One population and populations with distinct keys remain supported. This
 > partial boundary leaves the same-key population identity criteria unmet;
-> map-keyed clock identities also remain unsupported.
-> Clock-reference domain enumeration is also deferred: model construction
-> refuses `unknown_required_feature`/`unsupported-feature`, naming
-> `clock-reference-enumeration`, before reward or frame probing. Ordinary
+> map-keyed clock identities also remain unsupported. Clock-reference
+> enumeration follows the normative domain contract above; ordinary
 > native-Clock timed simulation retains its existing bounds and selectors.
 > An unseeded refinement-row receiver supplies no population authority and
 > is not a v2 Clock-reference producer; seeded clause and protocol inputs
@@ -1457,6 +1517,10 @@ completeness.
 | FR-106-AC-75 | A relationship declaration absent from the selected package refuses `invalid-request` at its exact snapshot reference path after read and before resolver evaluation when `call.relationships` is selected; with no correlation selection the same reference keeps `invalid_runtime_input`/`wrong-role-mapping`. | Test (`tests/it/native_run_relationships.rs::unknown_relationship_type_in_correlation_is_invalid_request_after_snapshot_read`, `tests/it/native_run_relationships.rs::unknown_relationship_type_without_correlation_keeps_wrong_role_mapping`) |
 | FR-106-AC-76 | On source and bare checked routes, TC-464 steps 7 and 8 use the same authenticated declarations and actual evaluated references. Raw scalar, present optional and sequence values retain equal full canonical references across routes, including their outer universe; equal local owner keys in two populations remain distinct. With `x` declared before `y`, removing `x`, retaining `y` and preserving scope, population, owner and data-field declarations refuses every stored old `x` reference under AC-73, regardless of internal allocation order; none is admitted as `y`. | Test (TC-464) |
 | FR-106-AC-77 | For each route, TC-464 step 9's declared-table/admission entry over two distinct declaration origins whose normalized scope and full declared path coincide refuses `conflicting_declaration`/`duplicate-declaration`, naming both origins, and produces no partial place table, admitted observation or truth value. Two aliases of the same authenticated declaration and canonical normalized declared path instead supply one table view and admit the otherwise valid snapshot. | Test (TC-464) |
+| FR-106-AC-78 | Over `fsl-analyze/tests/it/timed_refinement.rs::clock_reference_selectors_use_the_timed_profile_before_refinement_gates`, the generic concrete model check without timed selector maxima returns `NotSimulated::RequiresBound` and names the `ClockReferenceDomain` for `r` and its unbounded place slot. The timed refinement derives selector maxima from `model_check.max_clocks` before refinement gates and admits the hidden abstract field. With `max_zone_bytes` set to 4 MiB, the timed check stops exactly at `TimedStop::Zone(ZoneCheckLimit::MaxZoneBytes(4 MiB))`, not at the generic bound refusal. The distinct over-range input-reference case is specified in AC-81. | Test (TC-3084) |
+| FR-106-AC-79 | Over TC-464 steps 7 and 8's `Call` fixture, `r: Reference<Clock>`, `maybe: Option<Reference<Clock>>` and `refs: Sequence<Reference<Clock>>` store the canonical `place/v2` identity produced by `ref(self.x)` for that exact owner and place; Source and Bare admit the same full reference values, and calls reading those fields return them as data. `actual_clock_references_roundtrip_as_data_through_source_and_bare` checks the roundtrip and place-identity equality; `removing_x_never_rebinds_its_actual_reference_to_y_at_the_reused_ordinal` checks that a removed declaration stays dangling when `y` reuses its ordinal; `clock_reference_scope_disagreement_is_invalid_input_on_source_and_bare` checks authenticated scope mismatch. Distinct owners and declared places remain distinct even when clock readings are equal; changing only clock readings does not change the reference value, while `=` and `!=` compare place identity, never clock readings. | Test (TC-464) |
+| FR-106-AC-80 | A finite reference domain includes identities producible within the declared or exploration-derived selector range plus every valid `Reference<Clock>` identity admitted from the initial snapshots, including identities for absent slots with indices greater than the `model_check.max_clocks`-derived selector maximum. Those seed values remain available for equality, state-key encoding and data propagation without being truncated, refused or counted as live clocks; selectors invalid for the declared template still refuse `invalid_runtime_input`/`invalid-value`. The generic model check without a selector maximum returns `NotSimulated::RequiresBound` with the relevant `ClockReferenceDomain`; the timed check derives exploration selectors from `model_check.max_clocks`, and a state exceeding the live-clock limit stops incomplete with `TimedStop::MaxClocks` naming `model_check.max_clocks`, without a completed or partial state result. An unbounded ordinary carrier or missing complete owner-population authority retains its existing typed `RequiresBound` refusal. The out-of-range seed value is exercised by AC-81, not by AC-78. | Test (TC-3084, TC-464) |
+| FR-106-AC-81 | In the planned `fsl-eval/tests/it/clock_reference_v2.rs::clock_reference_seed_ref_outside_timed_selector_range_remains_admitted` vector, extend the TC-464 `Call` fixture with `q: Sequence<Clock>` having no declared maximum, use a complete `calls` population containing `c1` with `q` empty, and set `r` to `{"reference":{"population":<calls declaration> ,"key":<canonical place/v2 id>}}`. Construct that id from `P` = `Call`'s `calls` population declaration, `K` = `c1`, `S` = the selected `Call` model scope, `T` = the declared `Call.q` collection-of-Clock path, and `J` = `[["slot","1","7"]]`. With `model_check.max_clocks` 4 and the fixture's four live scalar places, slot 7 is outside the derived selector range but valid for the unbounded declared template. Source and Bare admission retain `r` as the exact reference data value; `q[7]` is not a live clock, and a stored-field read, equality comparison and state-key encoding preserve the identity. The timed engine admits the input without refusing or truncating that reference. | Test (TC-464) |
 
 ## Dependencies
 
