@@ -1456,19 +1456,32 @@ fn an_on_each_tp3_debt_after_the_origin_is_judged_by_the_fair_uncounted_loop() {
     let subject = adversarial.subject("Echo");
     let system = crate::fill::concrete_sc_system(&subject).with_cycle_keys(BTreeSet::new());
     let origin = system.initial().remove(0);
-    let (_, sent) = system
-        .successors(&origin)
-        .expect("expansion")
-        .successors
-        .into_iter()
-        .find(|(step, _)| step.kind() == StepKind::Send)
-        .expect("the send is enabled");
+    let step = |from, kind| {
+        system
+            .successors(from)
+            .expect("expansion")
+            .successors
+            .into_iter()
+            .find(|(step, _)| step.kind() == kind)
+            .unwrap_or_else(|| panic!("a {kind:?} step is enabled"))
+            .1
+    };
+    let sent = step(&origin, StepKind::Send);
+    let copied = step(&sent, StepKind::Duplicate);
+    // The least passing product state: the receive that follows the copy
+    // leaves the receiver done with the copy still queued, whose key orders
+    // before every state that still has the receive pending.
+    let received = step(&copied, StepKind::Receive);
     let key = |state| {
         let (bytes, _) = system.state_key(state).expect("encodes");
         fsl_eval::simulation::StateKey::from_canonical_bytes(bytes)
     };
     assert_ne!(at.model_state, key(&origin), "not at the origin");
-    assert_eq!(at.model_state, key(&sent), "at the loop's product state");
+    assert_eq!(
+        at.model_state,
+        key(&received),
+        "at the byte-least product state of a fair component"
+    );
 
     let mut limits = ModelCheckLimits::default();
     limits.limits.max_states = certificate.states.len() - 1;
