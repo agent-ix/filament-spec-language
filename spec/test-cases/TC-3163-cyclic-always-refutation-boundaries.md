@@ -20,15 +20,16 @@ probability `1/2` each; `t` does not satisfy P and returns to `s`; `u`
 satisfies P and loops at `u`. Analyze `always holds(P)` with no window at
 `>= 1/2`, `<= 1/2`, `>= 3/5` and `<= 2/5`. Offer the `>= 3/5` certificate
 for `>= 1/2` and the `<= 2/5` certificate for `<= 1/2`. Offer a
-rejecting-union certificate that gives `u` value 1.
+rejecting-union certificate that gives `u` value 1 and rank 1.
 
 ## Expected Results
 
-The value is `1/2`. `>= 1/2` and `<= 1/2` settle `proved` as before, with no
-counterexample. `>= 3/5` settles `refuted` with the rejecting-union
+The value is `1/2`. `>= 1/2` and `<= 1/2` are each not refuted: EN-5 emits
+no counterexample and starts no path-set search, and their proof-side
+outcome is unchanged by FR-202. `>= 3/5` settles `refuted` with the rejecting-union
 certificate `x(s) = 1/2`, `x(t) = 1`, ranks 1 and 0. `<= 2/5` settles
 `refuted` with the accepting-union certificate `x(s) = 1/2`, `x(u) = 1`,
 ranks 1 and 0. At `>= 1/2` and `<= 1/2` the same certificates sit at
 equality, reject `ThresholdMissed` at the initial key and yield no token.
-Giving `u` value 1 in the rejecting-union certificate rejects `RankBroken`
+Giving `u` value 1 and rank 1 in the rejecting-union certificate rejects `RankBroken`
 at `u`.

@@ -29,7 +29,8 @@ The first chain has value 0. Its component has no decided state and is
 rejecting; the certificate with value 1 and rank 0 at both states gives
 `1 > 1/2` and the item settles `refuted`. The second chain has value `1/2`.
 `>= 3/5` is refuted with the rejecting union `{n}` and certificate
-`x(s) = 1/2`, `x(n) = 1`; `<= 2/5` is refuted with the accepting union
-`{b}` and certificate `x(s) = 1/2`, `x(b) = 1`. `b` and `n` absorb despite
-their return to `s`. At `>= 1/2` and `<= 1/2` an equal certificate yields no
-token.
+`x(s) = 1/2`, `x(n) = 1`, ranks `s` 1 and `n` 0; `<= 2/5` is refuted with
+the accepting union `{b}` and certificate `x(s) = 1/2`, `x(b) = 1`, ranks
+`s` 1 and `b` 0. `b` and `n` absorb despite their return to `s`. At
+`>= 1/2` and `<= 1/2` the same certificates sit at equality, reject
+`ThresholdMissed` at the initial key and yield no token.

@@ -33,5 +33,6 @@ chain, checks the certificate and `1 > 1/10`, and the item settles
 `refuted`, `decisive-counterexample`, retaining the replayed counterexample.
 It does not settle `unsupported` or stop `incomplete`. The `1/10`
 certificate rejects `ThresholdMissed` at the initial key and settles
-`inconclusive`. With `down` satisfying P the value is 1 and the claim
-settles `proved` as before, with no counterexample and no path-set search.
+`inconclusive`. With `down` satisfying P the value is 1: the claim is not
+refuted, EN-5 emits no counterexample and starts no path-set search, and its
+proof-side outcome is the one FR-201 gives today, unchanged by FR-202.
