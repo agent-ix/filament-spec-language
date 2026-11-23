@@ -3487,6 +3487,7 @@ fn value_type_source(value_type: &filament_exact::ValueType) -> String {
         ValueType::Reference(id) => format!("Reference[{}]", effective_spelling(id)),
         ValueType::Population(Some(maximum)) => format!("Population<_>[{maximum}]"),
         ValueType::Population(None) => "Population<_>".to_owned(),
+        ValueType::ClockReference => "Reference<Clock>".to_owned(),
     }
 }
 

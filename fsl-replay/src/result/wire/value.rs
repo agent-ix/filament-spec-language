@@ -836,6 +836,7 @@ impl TypeLeafWire {
             ValueType::Population(maximum) => Self::Population {
                 maximum: maximum.map(|maximum| maximum.to_string()),
             },
+            ValueType::ClockReference => return None,
             ValueType::Option(_)
             | ValueType::Collection(_)
             | ValueType::BoundedQuantity(_)
@@ -1049,6 +1050,7 @@ impl ScalarWire {
                     .unwrap_or_default(),
                 object_identity: reference.object().as_str().to_owned(),
             },
+            Value::ClockReference(_) => return None,
             Value::Option(_)
             | Value::Composite(_)
             | Value::Collection(_)

@@ -205,6 +205,7 @@ impl Forms<'_> {
                 CompositeShape::Tuple(_) => "tuple",
                 CompositeShape::Union(_) => "union",
             },
+            ValueType::ClockReference => return Err(wrong_kind(path)),
             ValueType::Population(_) => return Err(ReadStop::Fault("population-already-read")),
         };
         // FSpec FR-181-AC-20: a Quantity is also read from its decimal form.
@@ -366,6 +367,7 @@ impl Forms<'_> {
                     run: position.run,
                 },
             ),
+            ValueType::ClockReference => Err(wrong_kind(path)),
             ValueType::Population(_) => Err(ReadStop::Fault("population-already-read")),
         }
     }

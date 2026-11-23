@@ -94,6 +94,9 @@ impl ReplayPackage {
             CheckedPackageDispatchResult::CatalogUnavailable(error) => {
                 Err(ReplayPackageAdmissionRefusal::CatalogUnavailable(error))
             }
+            CheckedPackageDispatchResult::HostAllocationFailed(_) => {
+                Err(ReplayPackageAdmissionRefusal::HostAllocationFailed)
+            }
         }
     }
 
@@ -486,6 +489,10 @@ pub enum ReplayPackageAdmissionRefusal {
     /// The native reader's operation catalog is unreadable; nothing was judged.
     #[error("replay package reader catalog unavailable: {0}")]
     CatalogUnavailable(filament_contract_model::CatalogReadError),
+    /// The host refused an allocation the read had admitted: a tool fault, not a
+    /// judgement of the package.
+    #[error("replay package read: the host refused an allocation")]
+    HostAllocationFailed,
 }
 
 impl ReplayPackageAdmissionRefusal {
@@ -518,6 +525,7 @@ impl ReplayPackageAdmissionRefusal {
                 fsl_foundation::Code::RuntimeInvariant
             }
             Self::Incomplete(_) => fsl_foundation::Code::StageLimitExceeded,
+            Self::HostAllocationFailed => fsl_foundation::Code::ResourceExhausted,
         }
     }
 
@@ -526,7 +534,10 @@ impl ReplayPackageAdmissionRefusal {
     pub fn cause(&self) -> Option<&str> {
         match self {
             Self::Refused { cause, .. } => cause.as_deref(),
-            Self::Catalog { .. } | Self::CatalogUnavailable(_) | Self::Incomplete(_) => None,
+            Self::Catalog { .. }
+            | Self::CatalogUnavailable(_)
+            | Self::Incomplete(_)
+            | Self::HostAllocationFailed => None,
         }
     }
 
@@ -538,7 +549,7 @@ impl ReplayPackageAdmissionRefusal {
                 refusal.loci.first().and_then(|locus| locus.path.as_ref())
             }
             Self::Incomplete(limit) => limit.path.as_ref(),
-            Self::CatalogUnavailable(_) => None,
+            Self::CatalogUnavailable(_) | Self::HostAllocationFailed => None,
         };
         package_pointer(path.map(|path| path.as_str()))
     }

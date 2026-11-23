@@ -3202,6 +3202,7 @@ fn witness_type(
         ValueType::Map(_)
         | ValueType::BoundedQuantity(_)
         | ValueType::CarriedQuantity(_)
+        | ValueType::ClockReference
         | ValueType::Population(_) => Err(ReplayRefusal::Input(InputRefusal::WrongValueKind {
             parameter,
         })),

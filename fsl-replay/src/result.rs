@@ -683,6 +683,7 @@ pub(crate) fn value_bytes(value: &Value) -> usize {
             }
             Value::Enum(_) => 32 + 4,
             Value::Population(_) => 32,
+            Value::ClockReference(reference) => 64 + reference.text().len(),
             Value::Reference(reference) => 64 + reference.object().as_str().len(),
             Value::Collection(collection) => {
                 pending.extend(collection.elements());
