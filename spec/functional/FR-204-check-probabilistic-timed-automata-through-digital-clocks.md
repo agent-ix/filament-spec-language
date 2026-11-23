@@ -250,7 +250,9 @@ unsupported cause `DelayDistribution{operation}`.
 | FR-204-AC-15 | Over `Retx` with `delay M::Call::send ~ discrete { 1 ms: 1, 2 ms: 1 };`, `Deadline` over every scheduler builds an MDP product with no `DelayDistribution` refusal. | Test (TC-2174) |
 | FR-204-AC-16 | Over the `Retx` variant whose `send` has no guard and no reset, `Deadline` over every scheduler builds a product with no `ZeroDelayCycle` refusal, and its exact minimum and maximum are both `1`. | Test (TC-2175) |
 | FR-204-AC-17 | Under a workload, `Retx` with `delay M::Call::send ~ discrete { 5 ms: 1 };`, whose `send` window excludes its only delay, builds a product whose time-locked state is terminal, with no `NotStochastic` refusal. | Test (TC-2176) |
-| FR-204-AC-18 | Under the workload `Skew` (weights `A` 1, `B` 2, `C` 3), the model `Trio` of the worked example below, whose `A`, `B` and `C` race with the given delays `discrete { 1 ms: 1, 2 ms: 1 }`, `discrete { 2 ms: 1, 3 ms: 1 }` and `discrete { 2 ms: 1, 3 ms: 3 }`, has at its initial state four race edges, each `Identity(A)`, with `A` at 1 ms `1/2`, `A` at 2 ms `53/192`, `B` at 2 ms `7/48` and `C` at 2 ms `5/64`, and no `FreeDelays` or `WorkloadResolve` action; `probability >= 0.13 [eventually[0 ms, 3 ms] holds(t.b)]` settles `proved`, `ExactValue{7/48}`, `probability >= 0.07 [eventually[0 ms, 3 ms] holds(t.c)]` settles `proved`, `ExactValue{5/64}`, `probability <= 0.8 [eventually[0 ms, 3 ms] holds(t.a)]` settles `proved`, `ExactValue{149/192}`, and `probability >= 0.5 [eventually[0 ms, 1 ms] holds(t.a)]` settles `proved`, `ExactValue{1/2}`; a certificate whose values order ties evenly (`b`: `11/96`) or by canonical order (`b`: `0`) is rejected `InequalityFails` at the initial state's `ProbabilisticProductState`. | Test (TC-3204) |
+| FR-204-AC-18 | Under the workload `Skew` (weights `A` 1, `B` 2, `C` 3), the model `Trio` of the worked example below, whose `A`, `B` and `C` race with the given delays `discrete { 1 ms: 1, 2 ms: 1 }`, `discrete { 2 ms: 1, 3 ms: 1 }` and `discrete { 2 ms: 1, 3 ms: 3 }`, has at its initial state exactly four race edges and no other action (no `UnitDelay`, `FreeDelays` or `WorkloadResolve`), each edge `Identity(A)`, with `A` at 1 ms `1/2`, `A` at 2 ms `53/192`, `B` at 2 ms `7/48` and `C` at 2 ms `5/64`; `probability >= 0.13 [eventually[0 ms, 3 ms] holds(t.b)]` settles `proved`, `ExactValue{7/48}`, `probability >= 0.07 [eventually[0 ms, 3 ms] holds(t.c)]` settles `proved`, `ExactValue{5/64}`, `probability <= 0.8 [eventually[0 ms, 3 ms] holds(t.a)]` settles `proved`, `ExactValue{149/192}`, and `probability >= 0.5 [eventually[0 ms, 1 ms] holds(t.a)]` settles `proved`, `ExactValue{1/2}`; the `t.b` item's `Exact` certificate with values computed with even ties (initial value `11/96`) and the one computed with ties taken in canonical order (initial value `0`) are each rejected `InequalityFails` at the initial state's `ProbabilisticProductState`, and the test submits both. | Test (TC-3204) |
+| FR-204-AC-19 | Under the workload `Share` (weights `fire` 4, `G` 1), the model `Pair` of the worked example below, whose operation `fire` has the two tied identities `F1` and `F2` with `discrete { 2 ms: 1 }` and whose `G` has `discrete { 2 ms: 1, 3 ms: 1 }`, divides `fire`'s weight between `F1` and `F2` (2 each against `G` 1): its initial state has exactly three race edges and no other action, `F1` at 2 ms `9/20`, `F2` at 2 ms `9/20` and `G` at 2 ms `1/10`; `probability >= 0.45 [eventually[0 ms, 3 ms] holds(n1.hit)]` and `probability <= 0.45 [eventually[0 ms, 3 ms] holds(n1.hit)]` each settle `proved`, `ExactValue{9/20}`; the `n1.hit` item's `Exact` certificates with the weight not divided (initial value `17/36`) and with even ties (initial value `5/12`) are each rejected `InequalityFails` at the initial state's `ProbabilisticProductState`, and the test submits both. | Test (TC-3205) |
+| FR-204-AC-20 | Under the workload `Order` (weights `X` 1, `Y` 2, `Z` 3), the model `Chain` of the worked example below, whose `X`, `Y` and `Z` tie at 2 ms and each fire when still enabled at its turn, orders the tie without replacement by the weights, so `probability >= 0.58 [eventually[0 ms, 3 ms] holds(c.n = 3 and c.last = X)]` settles `proved`, `ExactValue{7/12}`, `probability <= 0.2 [eventually[0 ms, 3 ms] holds(c.n = 3 and c.last = Z)]` settles `proved`, `ExactValue{3/20}`, and `last = Y` has value `4/15`; the `c.last = Z` item's `Exact` certificates with the first pick weighted and the rest in canonical order (initial value `1/2`), with even orders (initial value `1/3`) and with canonical order (initial value `1`) are each rejected `InequalityFails`, and the test submits all three. | Test (TC-3206) |
 
 ## Worked example: given delays racing under weights
 
@@ -287,7 +289,9 @@ units of `1/192`.
 Totals: `A` `149/192`, `B` `28/192 = 7/48`, `C` `15/192 = 5/64`, and
 `149 + 28 + 15 = 192`. `A` wins at 1 ms with `96/192 = 1/2` and at 2 ms with
 `53/192`. The exact values of the claims are `P(b) = 7/48`, `P(c) = 5/64`,
-`P(a within 2 ms) = 149/192` and `P(a within 1 ms) = 1/2`. Breaking ties
+`P(a) = 149/192` over the window `[0 ms, 3 ms]` the claim uses (all of
+`A`'s mass is by 2 ms, so `[0 ms, 2 ms]` gives the same) and
+`P(a) = 1/2` over `[0 ms, 1 ms]`. Breaking ties
 evenly changes the three tie rows to `A`/`B` 18/18, `A`/`C` 6/6 and
 `A`/`B`/`C` 4/4/4, giving `A` 160, `B` 22, `C` 10 (of 192), so `P(b) = 11/96`,
 `P(c) = 5/96`: with `0.13` and `0.07` the even checker refutes what the
@@ -298,9 +302,85 @@ three-way tie `A` first is `1/6`, `B` first `1/3` and `C` first `1/2`, and the
 second pick is weighted over the remaining two (`ABC` `1/6 · 2/5 = 1/15`,
 `ACB` `1/6 · 3/5 = 1/10`, `BAC` `1/3 · 1/4 = 1/12`, `BCA` `1/3 · 3/4 = 1/4`,
 `CAB` `1/2 · 1/3 = 1/6`, `CBA` `1/2 · 2/3 = 1/3`; total 1). Each operation
-sets `Done`, so only the first is enabled at its turn; the identities' weights
-are distinct operations here, so no operation's weight is shared among tied
-identities.
+sets `Done`, so only the first is enabled at its turn. `A`, `B` and `C` are
+three distinct operations of one identity each, so no operation's weight is
+shared among tied identities here; AC-19 covers that case and AC-20 covers
+the picks after the first.
+
+The `t.b` certificates of AC-18 are `Exact` documents. Their Bellman equality
+fails at the initial state, where the rebuilt successors weight the ties by
+`Skew` (value `7/48`) and the document says `11/96` or `0`; every state after
+the race has `phase = Done` and no race, so the initial state is the first
+failing key. A `Lower` or value-bounds document with `11/96` or `0` would
+satisfy its lower inequality, and meets FR-201's `ThresholdMissed` against
+`0.13` instead; AC-18 is stated for the `Exact` kind only.
+
+## Worked example: an operation's weight shared among its identities
+
+Model `Pair` (`time dense unit ms`) has `phase` (`Idle` or `Done`), a
+population of two `Node` objects `n1` and `n2` each with `hit`, and the flag
+`g`. The operation `Node::fire` has one identity per object (`F1` for `n1`,
+`F2` for `n2`), guarded by `phase = Idle`, setting `Done` and its object's
+`hit`, with `delay Pair::fire ~ discrete { 2 ms: 1 };` for each identity; the
+operation `G` is guarded by `phase = Idle`, sets `Done` and `g`, with
+`delay Pair::G ~ discrete { 2 ms: 1, 3 ms: 1 };`. The invariant is
+`x <= 3 ms` while `Idle`. The workload `Share` weights `fire` 4 and `G` 1.
+ADR-026 SD-3 orders the tied identities by the operation weights and then
+uniformly within an operation, so the weight of `fire` is divided between
+its two tied identities: `F1` and `F2` carry 2 each against `G` 1 when all
+three tie, and 2 each between themselves when `G` draws 3 ms.
+
+| `G` draw | Probability | Race | `F1` wins | `F2` wins | `G` wins |
+|---|---|---|---|---|---|
+| 2 ms | `1/2` | three-way tie at 2 ms, weights 2, 2, 1 over 5 | `1/2 · 2/5 = 1/5` | `1/5` | `1/2 · 1/5 = 1/10` |
+| 3 ms | `1/2` | `F1`, `F2` tie at 2 ms, weights 2, 2 | `1/2 · 1/2 = 1/4` | `1/4` | 0 |
+| Total | `1` | | `1/5 + 1/4 = 9/20` | `9/20` | `1/10` |
+
+`9/20 + 9/20 + 1/10 = 9/20 + 9/20 + 2/20 = 20/20`. All three edges are at
+2 ms. A checker that gives each of `F1` and `F2` the whole weight 4 (the
+operation's weight not divided) gets `F1` `4/9` for the `G` draw 2 row, so
+`F1` wins `1/2 · 4/9 + 1/4 = 2/9 + 1/4 = 8/36 + 9/36 = 17/36` and `G` wins
+`1/2 · 1/9 = 1/18`. A checker that ties evenly gets `F1` `1/2 · 1/3 + 1/4 =
+1/6 + 1/4 = 5/12` and `G` `1/6`. Over 180, `9/20 = 81`, `17/36 = 85` and
+`5/12 = 75`. Against the threshold `0.45 = 9/20`, the claim `>= 0.45` holds
+at 81 and 85 and fails at 75, and the claim `<= 0.45` holds at 81 and 75 and
+fails at 85, so the pair holds only at the exact value. The `G` edge mass is
+`1/10` (exact), `1/18` undivided and `1/6` even.
+
+## Worked example: picks after the first
+
+Model `Chain` (`time dense unit ms`) has the counter `n` (`Int[0, 3]`, initially
+0) and `last` (`None`, `X`, `Y` or `Z`, initially `None`), and the flags `x`,
+`y`, `z`. The operations `X`, `Y` and `Z` are guarded by `not x`, `not y` and
+`not z` respectively (no shared guard), each sets its flag, increments `n` and
+sets `last` to its own name, and each declares `delay Chain::X ~ discrete { 2 ms: 1 };`
+(and the same for `Y` and `Z`). All three tie at 2 ms with certainty, the
+model delays once and takes them in the drawn order at that instant, each
+still enabled at its turn, so all three fire and `last` is the final one of
+the order. The workload `Order` weights `X` 1, `Y` 2 and `Z` 3. The order is
+drawn without replacement:
+
+| Order | Probability | `last` |
+|---|---|---|
+| `XYZ` | `1/6 · 2/5 = 1/15` | `Z` |
+| `XZY` | `1/6 · 3/5 = 1/10` | `Y` |
+| `YXZ` | `1/3 · 1/4 = 1/12` | `Z` |
+| `YZX` | `1/3 · 3/4 = 1/4` | `X` |
+| `ZXY` | `1/2 · 1/3 = 1/6` | `Y` |
+| `ZYX` | `1/2 · 2/3 = 1/3` | `X` |
+
+Over 60: `4 + 6 + 5 + 15 + 10 + 20 = 60`. `P(last = X) = 1/4 + 1/3 = 7/12`,
+`P(last = Y) = 1/10 + 1/6 = 3/30 + 5/30 = 4/15` and
+`P(last = Z) = 1/15 + 1/12 = 4/60 + 5/60 = 3/20`; over 60 these are 35, 16 and
+9, total 60. A checker that weights the first pick only and takes the rest in
+canonical order gets `XYZ` `1/6`, `YXZ` `1/3` and `ZXY` `1/2`, so `last = X`
+`0`, `Y` `1/2` and `Z` `1/2`. A checker that orders evenly gets `1/3` each. A
+checker that takes canonical order gets `last = Z` with 1. The claims hold
+only at the exact values: `probability >= 0.58 [eventually[0 ms, 3 ms]
+holds(c.n = 3 and c.last = X)]` (`7/12 = 0.5833`) refutes under all three
+wrong rules (`0`, `1/3`, `0`), and `probability <= 0.2 [eventually[0 ms,
+3 ms] holds(c.n = 3 and c.last = Z)]` (`3/20 = 0.15`) refutes under all
+three (`1/2`, `1/3`, `1`).
 
 ## Rulings
 

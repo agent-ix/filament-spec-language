@@ -16,7 +16,7 @@ Scope: FR-204-AC-18.
 
 ## Test Procedure
 
-Build `Trio` (FR-204-AC-18) under the workload `Skew` weighting `A` 1, `B` 2 and `C` 3, and decide the four exact claims; rebuild the product through the checker and compare its edges and values; submit a certificate carrying the evenly-tied value `11/96` for `t.b`. Test: `fsl-analyze/tests/it/digital_clocks.rs` `given_delays_race_under_unequal_weights`.
+Build `Trio` (FR-204-AC-18) under the workload `Skew` weighting `A` 1, `B` 2 and `C` 3, and decide the four exact claims; rebuild the product through the checker and compare its edges and values; submit the `t.b` `Exact` certificates computed with even ties (`11/96`) and with ties in canonical order (`0`). Test: `fsl-analyze/tests/it/digital_clocks.rs` `given_delays_race_under_unequal_weights`.
 
 Tag the tests `#[trace("TC-3204", "FR-204-AC-18")]`.
 
@@ -24,4 +24,4 @@ Tag the tests `#[trace("TC-3204", "FR-204-AC-18")]`.
 
 - Four race edges at the initial state, each `Identity(A)`: `A` at 1 ms `1/2`, `A` at 2 ms `53/192`, `B` at 2 ms `7/48`, `C` at 2 ms `5/64`; no `FreeDelays`, no `WorkloadResolve`.
 - `t.b` `ExactValue{7/48}`, `t.c` `ExactValue{5/64}`, `t.a` within 3 ms `ExactValue{149/192}`, `t.a` within 1 ms `ExactValue{1/2}`, all `proved` at the stated thresholds.
-- A certificate with `11/96` for `t.b` is rejected `InequalityFails` at the initial state.
+- Both certificates (`11/96` and `0`) are rejected `InequalityFails` at the initial state.
