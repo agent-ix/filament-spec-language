@@ -520,36 +520,142 @@ fn cyclic_until_and_always_documents_are_checked_by_a_core_only_process() {
         );
         assert_eq!(
             doc["objective"]["event"],
-            if event.starts_with("always") { "always" } else { "until" }
+            if event.starts_with("always") {
+                "always"
+            } else {
+                "until"
+            }
         );
-        assert_eq!(doc["objective"]["optimization"], if scheduler == "Even" { "workload" } else { "maximum" });
+        assert_eq!(
+            doc["objective"]["optimization"],
+            if scheduler == "Even" {
+                "workload"
+            } else {
+                "maximum"
+            }
+        );
         assert!(doc["objective"].get("failures").is_none());
-        for changed in [
-            mutate(&request, |doc| {
-                doc["objective"]["event"] =
-                    json!(if event.starts_with("always") { "until" } else { "always" })
-            }),
-            mutate(&request, |doc| doc["objective"]["targets"] = json!([])),
-            mutate(&request, |doc| {
-                doc["objective"]["profile"] =
-                    json!("filament.probability-objective/state-predicate/v1");
-                doc["objective"]["failures"] = json!([]);
-            }),
-            mutate(&request, |doc| doc["objective"]["fairness"] = json!(["foreign"])),
-            mutate(&request, |doc| {
-                doc["values"].as_array_mut().unwrap().pop();
-            }),
-            mutate(&request, |doc| {
-                for row in doc["ranking"].as_array_mut().unwrap() {
-                    row["rank"] = json!(0);
-                }
-            }),
-            mutate(&request, |doc| {
-                doc["values"][0]["value"] = json!({"numerator":"1","denominator":"1"})
-            }),
+        // Each altered document is stopped by the existing rule and locus.
+        for (label, changed, code, status, rule, at) in [
+            (
+                "event",
+                mutate(&request, |doc| {
+                    doc["objective"]["event"] = json!(if event.starts_with("always") {
+                        "until"
+                    } else {
+                        "always"
+                    })
+                }),
+                2,
+                "refused",
+                None,
+                None,
+            ),
+            (
+                "targets",
+                mutate(&request, |doc| doc["objective"]["targets"] = json!([])),
+                2,
+                "refused",
+                None,
+                None,
+            ),
+            (
+                "profile",
+                mutate(&request, |doc| {
+                    doc["objective"]["profile"] =
+                        json!("filament.probability-objective/state-predicate/v1");
+                    doc["objective"]["failures"] = json!([]);
+                }),
+                2,
+                "unsupported",
+                None,
+                None,
+            ),
+            (
+                "fairness",
+                mutate(&request, |doc| {
+                    doc["objective"]["fairness"] = json!(["foreign"])
+                }),
+                2,
+                "unsupported",
+                None,
+                None,
+            ),
+            (
+                "dropped row",
+                mutate(&request, |doc| {
+                    doc["values"].as_array_mut().unwrap().pop();
+                }),
+                1,
+                "rejected",
+                Some("malformed"),
+                Some("member"),
+            ),
+            (
+                "ranks",
+                mutate(&request, |doc| {
+                    for row in doc["ranking"].as_array_mut().unwrap() {
+                        row["rank"] = json!(0);
+                    }
+                }),
+                1,
+                "rejected",
+                Some("rank-broken"),
+                Some("product_key"),
+            ),
+            (
+                "initial value",
+                mutate(&request, |doc| {
+                    doc["values"][0]["value"] = json!({"numerator":"1","denominator":"1"})
+                }),
+                1,
+                "rejected",
+                Some("inequality-fails"),
+                Some("product_key"),
+            ),
         ] {
-            let (code, output) = run(&changed);
-            assert_ne!(code, 0, "altered document accepted: {output}");
+            let (actual, output) = run(&changed);
+            assert_eq!(actual, code, "{label}: {output}");
+            assert_eq!(output["status"], status, "{label}: {output}");
+            if let Some(rule) = rule {
+                assert_eq!(output["rule"], rule, "{label}: {output}");
+            }
+            if let Some(at) = at {
+                assert!(output["at"].get(at).is_some(), "{label}: {output}");
+            }
+        }
+        for (label, changed, status, reason) in [
+            (
+                "nonreduced",
+                mutate(&request, |doc| {
+                    doc["values"][0]["value"] = json!({"numerator":"2","denominator":"4"})
+                }),
+                "refused",
+                "invalid_runtime_input: malformed probability certificate",
+            ),
+            (
+                "lower",
+                mutate(&request, |doc| doc["kind"] = json!("lower")),
+                "unsupported",
+                "unsupported probability certificate profile",
+            ),
+            (
+                "upper",
+                mutate(&request, |doc| doc["kind"] = json!("upper")),
+                "unsupported",
+                "unsupported probability certificate profile",
+            ),
+            (
+                "interval",
+                mutate(&request, |doc| doc["kind"] = json!("interval")),
+                "unsupported",
+                "unsupported probability certificate profile",
+            ),
+        ] {
+            let (actual, output) = run(&changed);
+            assert_eq!(actual, 2, "{label}: {output}");
+            assert_eq!(output["status"], status, "{label}: {output}");
+            assert_eq!(output["reason"], reason, "{label}: {output}");
         }
         let stricter = if operator == ">=" { "0.95" } else { "0.05" };
         let mut stronger = request.clone();

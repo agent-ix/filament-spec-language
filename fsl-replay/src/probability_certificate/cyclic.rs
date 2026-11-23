@@ -207,6 +207,20 @@ pub(super) fn enumerate_graph_capturing<P: StatePredicate>(
         ModelVisitPhase::BeforeTarget,
         &mut |key, state, _| {
             if let Some(capture) = capture {
+                let mut borrowed = scope.borrow_mut();
+                let (_, storage) = &mut *borrowed;
+                if let Err(error) = charge(
+                    storage,
+                    limits.storage_bytes,
+                    key.as_bytes()
+                        .len()
+                        .saturating_mul(2)
+                        .saturating_add(std::mem::size_of::<ModelSimState>()),
+                ) {
+                    *stopped.borrow_mut() = Some(error);
+                    return Err(ExactProbabilityGraphError::ExpansionRefused);
+                }
+                drop(borrowed);
                 capture.borrow_mut().insert(key.clone(), state.clone());
             }
             visit(cancel, scope.borrow_mut().0).map_err(|error| {

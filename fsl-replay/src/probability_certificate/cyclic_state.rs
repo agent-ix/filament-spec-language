@@ -186,7 +186,7 @@ pub(super) fn certificate_graph(
 
     stage(Stage::Components)?;
     let keys: Vec<&ProbabilityProductKey> = classified.keys().collect();
-    let components = end_components(&classified, cancel, meter)?;
+    let components = end_components(&classified, limits, storage, cancel, meter)?;
     // The verdict a decided state or a component must have to violate the
     // claim: a `>= θ` claim is violated by a rejection, a `<= θ` claim by an
     // acceptance. A component holding no decided state accepts for always
@@ -277,6 +277,8 @@ pub(super) fn certificate_graph(
 /// these are the bottom strongly connected components.
 fn end_components(
     states: &BTreeMap<ProbabilityProductKey, CheckerState>,
+    limits: ProbabilityDocumentLimits,
+    storage: &mut u64,
     cancel: &Cancel,
     meter: &mut filament_exact::Meter,
 ) -> Result<Vec<Vec<usize>>, ProbabilityDocumentError> {
@@ -286,6 +288,21 @@ fn end_components(
         .map(|(position, key)| (key, position))
         .collect();
     let count = states.len();
+    let edges = states
+        .values()
+        .flat_map(|state| state.choices.iter())
+        .map(Vec::len)
+        .sum::<usize>();
+    let pass = count.saturating_mul(
+        std::mem::size_of::<Vec<usize>>().saturating_add(8 * std::mem::size_of::<usize>()),
+    );
+    charge(
+        storage,
+        limits.storage_bytes,
+        edges
+            .saturating_mul(std::mem::size_of::<usize>())
+            .saturating_add(pass),
+    )?;
     let mut actions: Vec<Vec<Vec<usize>>> = Vec::with_capacity(count);
     for state in states.values() {
         visit(cancel, meter)?;
@@ -309,6 +326,7 @@ fn end_components(
     let mut result = Vec::new();
     let mut work = vec![(0..count).collect::<Vec<usize>>()];
     while let Some(mut set) = work.pop() {
+        charge(storage, limits.storage_bytes, pass.saturating_add(edges.saturating_mul(std::mem::size_of::<usize>())))?;
         let mut member = vec![false; count];
         for state in &set {
             member[*state] = true;
@@ -501,6 +519,10 @@ pub(super) fn claim_acceptance(
         return Ok(check);
     };
     accepted.value = claim_value(bound, &accepted.value, limits, cancel, meter)?;
+    for row in &mut accepted.certificate.values {
+        visit(cancel, meter)?;
+        row.value = claim_value(bound, &row.value, limits, cancel, meter)?;
+    }
     accepted.side = match bound {
         Bound::AtLeast(_) => ProbabilityBoundSide::AtLeast,
         Bound::AtMost(_) => ProbabilityBoundSide::AtMost,

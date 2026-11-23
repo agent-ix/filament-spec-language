@@ -7,9 +7,7 @@ use std::process::{Command, Stdio};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use filament_checked::key::DeclarationKey;
 use filament_exact::Cancel;
-use fsl_analyze::analyze::{
-    analyze_items, exact_probabilistic_item, DispositionKind, Engines, Settlement,
-};
+use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines, Settlement};
 use fsl_analyze::exact_probabilistic::{ExactProbLimits, ProductRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, PopulationUniverse};
@@ -1128,7 +1126,7 @@ fn bounded_wrong_source_and_nonexact_rows_never_produce_an_accepted_document() {
             );
         } else {
             assert!(
-                matches!(&terminal, Settlement::Disposed(disposed) if disposed.kind == DispositionKind::Unsupported),
+                matches!(&terminal, Settlement::Terminal(record) if record.value() == &fsl_replay::TerminalValue::Incomplete(fsl_replay::IncompleteCause::LimitReached { limit: fsl_replay::ModelCheckLimit::ExactProbMaxRationalBits, value: 1 })),
                 "{terminal:?}"
             );
         }
@@ -1368,6 +1366,7 @@ fn an_unwindowed_atom_claim_is_checked_exactly_as_eventually_at_horizon_zero() {
             let (code, rejected) = run(&changed);
             assert_eq!(code, 1, "{event}: {rejected}");
             assert_eq!(rejected["rule"], "inequality-fails");
+            assert_eq!(rejected["at"]["product_key"], doc["values"][0]["state"]);
             let values: Vec<Value> = doc["values"]
                 .as_array()
                 .unwrap()
