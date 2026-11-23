@@ -859,6 +859,225 @@ fn function_selection_admits_an_identity_reference() {
     assert_eq!(document["disposition"]["truth"], true, "{document}");
 }
 
+fn canonical_reference(key: &str) -> Value {
+    let mut reference = canonical_child();
+    reference["identity"] = json!(key.bytes().map(|byte| format!("{byte:02x}")).collect::<String>());
+    reference
+}
+
+const POPULATION_CLAIMS: &str = "function nonempty using v(p: Population<Config::ConfigVersion>[4]): \
+    Boolean pure { size(allInstances<Config::ConfigVersion>(p)) > 0 }\n\
+    function undefinedClaim using v(p: Population<Config::ConfigVersion>[0], r: Config::ConfigVersion): \
+    Boolean pure { lookup<Config::ConfigVersion>(p, r) absent undefined = r }\n\
+    function missingVersion using v(p: Population<Config::ConfigVersion>[0], r: Config::ConfigVersion): \
+    Config::ConfigVersion pure { lookup<Config::ConfigVersion>(p, r) absent undefined }\n";
+
+fn empty_population() -> String {
+    format!("ix://{}/empty_history", spine::PACKAGE_IDENTITY)
+}
+
+/// Declare a complete, empty `ConfigVersion` population `empty_history` in
+/// the model and the healthy snapshot.
+fn add_empty_population(directory: &Path) {
+    let model_path = directory.join("spine-model.semantic-ir.json");
+    let mut model: Value = serde_json::from_slice(&std::fs::read(&model_path).unwrap()).unwrap();
+    let mut empty = model["populations"][0].clone();
+    empty["identity"] = json!(empty_population());
+    empty["displayName"] = json!(empty_population());
+    empty["origin"]["generated"]["generatorIdentity"] = json!(empty_population());
+    empty["origin"]["generated"]["inputIdentities"] = json!([empty_population()]);
+    model["populations"].as_array_mut().unwrap().push(empty);
+    std::fs::write(&model_path, serde_json::to_vec(&model).unwrap()).unwrap();
+    let snapshot_path = directory.join("spine-snapshot.json");
+    let mut snapshot: Value = serde_json::from_slice(&std::fs::read(&snapshot_path).unwrap()).unwrap();
+    snapshot["populations"].as_array_mut().unwrap().push(json!({
+        "population": empty_population(), "complete": true, "objects": []}));
+    std::fs::write(&snapshot_path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+}
+
+fn function_claim(directory: &Path, name: &str, arguments: Value) -> Output {
+    canonical_function_claim(directory, name, arguments, None)
+}
+
+fn claim_document(output: &Output, exit: i32) -> Value {
+    assert_eq!(output.status.code(), Some(exit), "{output:?}");
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+/// The report of the request the CLI just ran, rebuilt as the admitted
+/// `ClauseRunRequest` and run in process: its exit and truth.
+fn direct_report(directory: &Path) -> (i32, Option<bool>) {
+    let prepared = fsl_command::command::prepare_run(
+        &directory.join("request.json"),
+        fsl_command::command::RunLimits::default(),
+    )
+    .unwrap();
+    let fsl_command::command::PreparedRun::Clause(prepared) = prepared else {
+        panic!("a clause request");
+    };
+    let report = fsl_replay::spine::run_clause(*prepared.into_request()).unwrap();
+    (report.disposition.category().exit_code() as i32, report.disposition.truth())
+}
+
+/// FR-312-AC-11: a `function` selection accepts FR-181's tagged canonical
+/// `reference` form for each Reference argument.
+#[test]
+#[trace("TC-1706", "FR-312-AC-11")]
+fn function_selection_admits_canonical_reference_arguments() {
+    let directory = tempfile::tempdir().unwrap();
+    write_cases(directory.path());
+    extend_unit(directory.path(), SAME);
+    let same = json!([
+        {"parameter": "a", "value": canonical_reference("child")},
+        {"parameter": "b", "value": canonical_reference("child")}]);
+    let document = claim_document(&function_claim(directory.path(), "sameIdentity", same), 0);
+    assert_eq!(document["disposition"]["category"], "success", "{document}");
+    assert_eq!(document["disposition"]["truth"], true, "{document}");
+    assert_eq!(direct_report(directory.path()), (0, Some(true)));
+
+    let distinct = json!([
+        {"parameter": "a", "value": canonical_reference("root")},
+        {"parameter": "b", "value": canonical_reference("child")}]);
+    let document = claim_document(&function_claim(directory.path(), "sameIdentity", distinct), 10);
+    assert_eq!(document["disposition"]["category"], "violation", "{document}");
+    assert_eq!(document["disposition"]["truth"], false, "{document}");
+    assert_eq!(direct_report(directory.path()), (10, Some(false)));
+}
+
+/// FR-312-AC-11: a Population parameter takes `{"population": P}`
+/// resolved in the selected snapshot.
+#[test]
+#[trace("TC-1706", "FR-312-AC-11")]
+fn function_selection_admits_a_population_argument() {
+    let directory = tempfile::tempdir().unwrap();
+    write_cases(directory.path());
+    extend_unit(directory.path(), POPULATION_CLAIMS);
+    let held = json!([{"parameter": "p", "value": {"population": population()}}]);
+    let document = claim_document(&function_claim(directory.path(), "nonempty", held), 0);
+    assert_eq!(document["disposition"]["category"], "success", "{document}");
+    assert_eq!(document["disposition"]["truth"], true, "{document}");
+    assert_eq!(direct_report(directory.path()), (0, Some(true)));
+}
+
+/// FR-312-AC-11: a Population the snapshot does not hold refuses at stage
+/// `admit` as `invalid_runtime_input`/`wrong-role-mapping`.
+#[test]
+#[trace("TC-1706", "FR-312-AC-11")]
+fn function_selection_refuses_a_population_the_snapshot_does_not_hold() {
+    let directory = tempfile::tempdir().unwrap();
+    write_cases(directory.path());
+    extend_unit(directory.path(), POPULATION_CLAIMS);
+    let absent = json!([{"parameter": "p", "value": {
+        "population": format!("ix://{}/no_such_history", spine::PACKAGE_IDENTITY)}}]);
+    let document = claim_document(&function_claim(directory.path(), "nonempty", absent), 20);
+    assert_eq!(document["disposition"]["stage"], "admit", "{document}");
+    assert_eq!(document["disposition"]["refusal"]["code"], "invalid_runtime_input", "{document}");
+    assert_eq!(document["disposition"]["refusal"]["cause"], "wrong-role-mapping", "{document}");
+    assert!(document["disposition"]["truth"].is_null(), "{document}");
+    assert_eq!(direct_report(directory.path()), (20, None));
+}
+
+/// FR-312-AC-11: a canonical reference whose identity names no object of
+/// the selected snapshot refuses as FR-100's dangling reference.
+#[test]
+#[trace("TC-1706", "FR-312-AC-11")]
+fn function_selection_refuses_a_reference_the_snapshot_does_not_hold() {
+    let directory = tempfile::tempdir().unwrap();
+    write_cases(directory.path());
+    extend_unit(directory.path(), SAME);
+    let ghost = json!([
+        {"parameter": "a", "value": canonical_reference("child")},
+        {"parameter": "b", "value": canonical_reference("ghost")}]);
+    let document = claim_document(&function_claim(directory.path(), "sameIdentity", ghost), 20);
+    assert_eq!(document["disposition"]["stage"], "admit", "{document}");
+    assert_eq!(document["disposition"]["refusal"]["code"], "dangling_reference", "{document}");
+    assert_eq!(
+        document["disposition"]["refusal"]["cause"], "absent-target-in-complete-population",
+        "{document}"
+    );
+    assert!(document["disposition"]["truth"].is_null(), "{document}");
+    assert_eq!(direct_report(directory.path()), (20, None));
+}
+
+/// FR-312-AC-11: a reference whose universe or object type names no
+/// declaration of the package refuses; an argument of the wrong kind for its
+/// parameter refuses `wrong-value-kind`; the untagged `reference` and
+/// `type: population` spellings are not canonical.
+#[test]
+#[trace("TC-1706", "FR-312-AC-11")]
+fn function_selection_refuses_mistyped_and_untagged_arguments() {
+    let directory = tempfile::tempdir().unwrap();
+    write_cases(directory.path());
+    extend_unit(directory.path(), SAME);
+    extend_unit(directory.path(), POPULATION_CLAIMS);
+    let held = json!({"population": population()});
+    let mut unknown_type = canonical_child();
+    unknown_type["object_type"]["path"] = json!(["model", "object_type", "ix://elsewhere/Nothing"]);
+    for (name, arguments) in [
+        ("sameIdentity", json!([
+            {"parameter": "a", "value": held.clone()},
+            {"parameter": "b", "value": canonical_child()}])),
+        ("nonempty", json!([{"parameter": "p", "value": canonical_child()}])),
+        ("nonempty", json!([{"parameter": "p", "value": {"type": "text", "value": "ab"}}])),
+        ("nonempty", json!([{"parameter": "p", "value": {"type": "population", "population": population()}}])),
+        ("sameIdentity", json!([
+            {"parameter": "a", "value": {"reference": child()}},
+            {"parameter": "b", "value": canonical_child()}])),
+        ("sameIdentity", json!([
+            {"parameter": "a", "value": unknown_type},
+            {"parameter": "b", "value": canonical_child()}])),
+    ] {
+        let output = function_claim(directory.path(), name, arguments.clone());
+        assert_eq!(output.status.code(), Some(20), "{arguments}: {output:?}");
+        let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let refusal = &document["disposition"]["refusal"];
+        assert_eq!(document["disposition"]["stage"], "admit", "{arguments}: {document}");
+        assert!(refusal["code"].is_string(), "{arguments}: {document}");
+        assert!(document["disposition"]["truth"].is_null(), "{arguments}: {document}");
+        assert_ne!(document["disposition"]["category"], "fault", "{arguments}: {document}");
+        if arguments[0]["value"].get("reference").is_some() || arguments[0]["value"].get("population").is_some()
+            || name == "nonempty"
+        {
+            assert_eq!(refusal["code"], "invalid_runtime_input", "{arguments}: {document}");
+            assert_eq!(refusal["cause"], "wrong-value-kind", "{arguments}: {document}");
+        }
+    }
+}
+
+/// The two shop cases of QSL-2882: a Population and a Reference argument
+/// reach `lookup`, which is undefined outside the selected population, so
+/// the claim is refuted (exit 10) and the call completes undefined.
+#[test]
+#[trace("TC-1706", "FR-312-AC-11")]
+fn undefined_lookup_claim_with_population_and_reference_arguments_is_refuted() {
+    let directory = tempfile::tempdir().unwrap();
+    write_cases(directory.path());
+    add_empty_population(directory.path());
+    extend_unit(directory.path(), POPULATION_CLAIMS);
+    let arguments = json!([
+        {"parameter": "p", "value": {"population": empty_population()}},
+        {"parameter": "r", "value": canonical_reference("target_absent_from_p")}]);
+    // `child` lives in config_history, not in the empty population.
+    let arguments = {
+        let mut arguments = arguments;
+        arguments[1]["value"] = canonical_reference("child");
+        arguments
+    };
+    let document = claim_document(
+        &function_claim(directory.path(), "undefinedClaim", arguments.clone()), 10);
+    assert_eq!(document["disposition"]["category"], "violation", "{document}");
+    assert_eq!(document["disposition"]["truth"], false, "{document}");
+    assert_eq!(direct_report(directory.path()), (10, Some(false)));
+
+    let output = request(
+        directory.path(),
+        "call",
+        json!({"function": "missingVersion", "snapshot": "spine-snapshot.json",
+            "arguments": arguments}),
+    );
+    assert_eq!(output.status.code(), Some(10), "{output:?}");
+}
+
 /// Function selections still require a current snapshot; FR-652's item
 /// admission of pre/post snapshots does not change FR-312's function reader.
 #[test]
