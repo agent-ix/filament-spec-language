@@ -393,10 +393,10 @@ fn an_earlier_own_receive_listed_first_but_ordered_later_is_unexpected() {
 /// The labels of `assessments`, one per observation prefix.
 fn prefix_labels(
     assessments: &[fsl_analyze::protocol_analysis::recording::RecordingAssessment],
-) -> Vec<&str> {
+) -> Vec<String> {
     assessments
         .iter()
-        .map(|assessment| assessment.global.label)
+        .map(|assessment| assessment.global.label.clone())
         .collect()
 }
 
