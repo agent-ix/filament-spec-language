@@ -378,14 +378,17 @@ fn zeno_only_unit() -> String {
          temporal NoLateReply using tt over (c: M::Call) clock \"model-time\" on origin \
          {{ always holds(not c.late) }}\n"
     );
-    crate::analyze_family_cli::rpc_unit_with(4, ">= 0", ">=", &claims)
-        // FR-244-AC-7 names the possible claim `Replied`; this fixture gives
-        // the unit's `post Replied` clause another name so the two do not clash.
-        .replace("post Replied using", "post ReplyEffect using")
-        .replace(
+    let text = crate::analyze_family_cli::rpc_unit_with(4, ">= 0", ">=", &claims);
+    // FR-244-AC-7 names the possible claim `Replied`; this fixture gives the
+    // unit's `post Replied` clause another name so the two do not clash.
+    let renamed = text.replace("post Replied using", "post ReplyEffect using");
+    assert_ne!(renamed, text, "the unit declares `post Replied`");
+    let zeno = renamed.replace(
         "time invariant ServerDeadline when { self.inflight } { self.x <= 3 ms }",
         "time invariant ServerDeadline when { true } { self.x <= 0 ms }",
-    )
+    );
+    assert_ne!(zeno, renamed, "the unit declares the server deadline");
+    zeno
 }
 
 /// FR-244-AC-7, FR-245-AC-11: a state-graph item's certificate certifies the

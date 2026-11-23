@@ -47,7 +47,45 @@ fn the_search_for_an_earlier_refuted_instance_shares_the_budget() {
     );
 }
 
+/// FR-125: a search over the earlier instances that reaches its horizon without
+/// deciding them leaves the item incomplete; the later instance `b`, found at
+/// position 0, is not reported as the first refuted one. With `max_depth` 1,
+/// `a`'s two-step refutation is out of reach.
+#[trace("TC-520", "FR-125-AC-16")]
+#[test]
+fn an_undecided_search_for_an_earlier_instance_is_not_reported_as_refuted() {
+    let outcome = outcome_with(ModelCheckLimits::default(), Some(1), Default::default());
+    assert!(
+        matches!(outcome, ModelCheckOutcome::BoundReached { .. }),
+        "expected BoundReached, got {outcome:?}"
+    );
+}
+
+/// FR-125 on the reduced route: partial-order reduction reports the first
+/// refuted instance, as the unreduced route does.
+#[trace("TC-520", "FR-125-AC-16")]
+#[test]
+fn a_reduced_check_reports_the_first_refuted_instance() {
+    let reductions = fsl_route::reductions::Reductions {
+        partial_order: true,
+        ..Default::default()
+    };
+    let outcome = outcome_with(ModelCheckLimits::default(), None, reductions);
+    let ModelCheckOutcome::Violated { counterexample, .. } = outcome else {
+        panic!("expected Violated, got {outcome:?}");
+    };
+    assert_eq!(counterexample.over_binding, Some(instance("a")));
+}
+
 fn outcome_under(limits: ModelCheckLimits) -> ModelCheckOutcome {
+    outcome_with(limits, None, Default::default())
+}
+
+fn outcome_with(
+    limits: ModelCheckLimits,
+    max_depth: Option<usize>,
+    reductions: fsl_route::reductions::Reductions,
+) -> ModelCheckOutcome {
     let mut documents = Documents::new(document(false));
     let initial = vec![documents.start("s0", &[("a", 0), ("b", 3)])];
     let (package, clauses) = package_with_clauses(
@@ -69,9 +107,9 @@ fn outcome_under(limits: ModelCheckLimits) -> ModelCheckOutcome {
                 clause,
                 letters: &letters,
             },
-            max_depth: None,
+            max_depth,
             limits,
-            reductions: Default::default(),
+            reductions,
         },
         &Cancel::new(),
     )

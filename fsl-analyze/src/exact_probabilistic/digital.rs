@@ -731,25 +731,16 @@ fn each_ordering(
             None => operations.push((identity.operation.as_str(), weight, 1)),
         }
     }
-    // FR-187: an operation of weight 0 is drawn only when every tied
-    // operation has weight 0, and then they share the draw equally.
-    let any_positive = operations.iter().any(|(_, weight, _)| !weight.is_zero());
-    let unit = one();
-    let effective = |weight: &Rational| -> Option<Rational> {
-        if !any_positive {
-            Some(unit.clone())
-        } else if weight.is_zero() {
-            None
-        } else {
-            Some(weight.clone())
-        }
-    };
-    let total = operations
+    // FR-187: the draw weights are fsl-eval's, shared with `weighted_steps`.
+    let effective = fsl_eval::simulation::model::draw_weights(
+        operations.iter().map(|(_, weight, _)| *weight),
+    );
+    let total = effective
         .iter()
-        .filter_map(|(_, weight, _)| effective(weight))
-        .fold(zero(), |sum, weight| sum.add(&weight));
-    for (name, weight, count) in &operations {
-        let Some(weight) = effective(weight) else {
+        .flatten()
+        .fold(zero(), |sum, weight| sum.add(weight));
+    for ((name, _, count), weight) in operations.iter().zip(effective) {
+        let Some(weight) = weight else {
             continue;
         };
         let each = weight
