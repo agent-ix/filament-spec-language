@@ -52,3 +52,4 @@ FR-204.
 | FND | Outcome | Reason |
 | --- | --- | --- |
 | FND-001 | fixed | Spec PR #3594 merged FR-204-AC-18/19/20 (TC-3204/3205/3206). Tagged tests `given_delays_race_under_unequal_weights`, `operation_weight_is_shared_among_tied_identities` and `tied_operations_are_ordered_without_replacement` assert the merged numbers and rejections. |
+| FND-002 | deferred: QSL-2990 | The coder confirmed the limitation with sources and error text: a population read gives `MissingSegment`, and `over` with two objects gives `NotMarkov` / `UnsupportedBinding`. It is ticketed as QSL-2990 "FR-204-AC-19 Pair model not expressible". The test keeps the operation-weight rule under a one-object realisation. |

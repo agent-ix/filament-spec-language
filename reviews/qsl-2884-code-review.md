@@ -64,3 +64,6 @@ build.
 | FND-001 | fixed | Tests added for unequal weights, 3 racers, two given plus one free, a forged other-weights certificate and AC-18/19/20 (digital_clocks.rs, timed_product_certificate.rs). Values recomputed by hand: 121/160, 53/96, 5/8, 11/40. |
 | FND-002 | fixed | The product size is computed with u64 saturating_mul before `joint` is built and refused above `limits.edges` with `Limit{Edges}`. It saturates rather than wraps, so an overflowing product is refused for any edge limit below u64::MAX. |
 | FND-003 | fixed | Both doc comments now describe several given racers and a drawn vector per row. |
+| FND-004 | fixed | Round 2 (c46b86e1) restores `assert_eq!(built.kind, ProductKind::Dtmc);` in `discrete_delays_under_a_workload_are_a_chain`. |
+| FND-005 | fixed | Round 2 removes the FR-204-AC-18 tags from the three supporting tests. |
+| FND-006 | fixed | Round 2: both negatives assert `ProbabilityCertificateRule::InequalityFails` through `rejected_rule`, and the tampered item asserts `CertificateRule::InequalityFails`. The locus is asserted only in the digital_clocks.rs AC tests, which is enough here. |
