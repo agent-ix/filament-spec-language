@@ -360,7 +360,7 @@ all ten `model_check.*` settings, all nine `exact_prob.*` settings, all four
 `hybrid.max_solver_time`, `smt_encoding.max_constants`,
 `smt_encoding.max_applications`, `smt_encoding.max_monitor_atoms`,
 `smt_encoding.max_monitor_states`, `smt_encoding.max_candidates`,
-`smt_encoding.max_script_bytes`, `smt.max_solver_steps`, `smt.max_solver_time`,
+`smt_encoding.max_script_bytes`,
 `certificate_check.max_certificate_edges`,
 `certificate_check.max_certificate_bytes`,
 `certificate_check.max_working_bytes` and `certificate_check.max_rank` when
@@ -368,6 +368,8 @@ the corresponding analysis items are selected. Analyze does not consume
 `render.*`, `prepare.*`, `explore.*`, `progress.covered_positions`,
 `evaluation.live_occurrences`, `monitor.*`, `temporal_evidence.*` or
 `plan_search.*`.
+
+`smt.max_solver_steps` and `smt.max_solver_time` are not accepted by `analyze` or `monitor` and are refused as unavailable settings, because no engine reads a caller's bound for them. Accepting them, as an `analyze` and `monitor` caller limit when SMT items are selected, remains required and is pending an SMT consumer (QSL-2946); they stay accepted by the settings operation (FR-255-AC-14). FR-255-AC-24 enumerates the accepted settings and so excludes them until then.
 
 `monitor` SHALL accept the source, package, admission and evidence settings
 it uses: `s1.input_bytes`, `s1.tokens`, `s1.nodes`, `s1.work_units`, `s1.diagnostics`,
@@ -393,7 +395,7 @@ it uses: `s1.input_bytes`, `s1.tokens`, `s1.nodes`, `s1.work_units`, `s1.diagnos
 monitor also accepts all ten `model_check.*`, all nine `exact_prob.*`, all
 four `statistical.*`, all four `zone_check.*`, `schedule.max_demand_points`,
 `hybrid.max_solver_steps`, `hybrid.max_solver_time`, all six
-`smt_encoding.*`, `smt.max_solver_steps`, `smt.max_solver_time`,
+`smt_encoding.*`,
 `expansion.max_candidates`, `simulation.max_steps`, and the four applicable
 certificate-check settings `certificate_check.max_certificate_edges`,
 `certificate_check.max_certificate_bytes`,
