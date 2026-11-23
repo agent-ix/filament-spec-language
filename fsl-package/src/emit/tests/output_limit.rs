@@ -291,7 +291,8 @@ fn a_package_with_body_location_rows_is_emitted_at_its_exact_length() {
 }
 
 /// QSL-2849: the source map is written verbatim, so a bound below its bytes
-/// refuses before any typed row is built. Allocations are counted, not time:
+/// refuses before any typed row is built. Allocations are counted, not time: a
+/// refusal the source map causes (bound 0) allocates under two thirds of what a
 /// refusal at the final encode (bound `N - 1`) does; the first unpaid byte is
 /// exactly `bound + 1` in both.
 #[trace("TC-738", "FR-264-AC-6")]

@@ -562,7 +562,7 @@ mod tests {
                 Some(ReachRefusal::Limit(Limit::States(BUDGET)))
             );
             // The budget is crossed by the 500th level state's successor.
-            let crossing = 500;
+            let crossing: usize = 500;
             let chunk = worker_limit * EXPANSIONS_PER_WORKER;
             let expected = 1 + crossing.div_ceil(chunk) * chunk;
             assert_eq!(
