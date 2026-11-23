@@ -130,6 +130,21 @@ fn a_request_without_its_envelope_members_lists_only_those() {
     );
 }
 
+/// FR-1047-AC-2: an argument document is not a request envelope.
+#[test]
+#[trace("TC-3170", "FR-1047-AC-2")]
+fn an_argv_document_is_not_refused_as_a_missing_envelope() {
+    let (value, _) = refusal(Entry::Run, &json!({"argv": []}));
+    assert!(value["details"].get("missing").is_none(), "{value}");
+    assert!(
+        !value["message"]
+            .as_str()
+            .unwrap()
+            .contains("missing required"),
+        "{value}"
+    );
+}
+
 /// FR-1047-AC-3: the run entry dispatches a monitor request to its reader.
 #[test]
 #[trace("TC-3170", "FR-1047-AC-3")]
@@ -146,6 +161,19 @@ fn a_monitor_request_lists_the_monitor_members() {
         &document,
         "invalid request: missing required members /request/models, /request/program, /request/clauses, /request/trace",
         &json!({"missing": ["/request/models", "/request/program", "/request/clauses", "/request/trace"]}),
+    );
+    let mut example: Value =
+        serde_json::from_str(&command::request_example("native-monitor/1", None).unwrap()).unwrap();
+    assert!(example["request"]
+        .as_object_mut()
+        .unwrap()
+        .remove("records")
+        .is_none());
+    assert_refusal(
+        Entry::Run,
+        &example,
+        "invalid request: missing required member /request/records",
+        &json!({"missing": ["/request/records"]}),
     );
     let replay = json!({"format": "native-replay/1", "request": {}});
     let fourteen: Vec<String> = fsl_command::replay_request::MEMBERS
@@ -268,6 +296,80 @@ fn a_missing_export_member_names_its_shape() {
     );
 }
 
+/// FR-1047-AC-6: an export lacking its profile keeps FR-1015's refusal.
+#[test]
+#[trace("TC-3170", "FR-1047-AC-6")]
+fn an_export_lacking_its_profile_keeps_the_export_refusal() {
+    let mut document = counter_export(Path::new("absent.native"));
+    document["request"]["export"] = json!({"obligations": ["Capacity"]});
+    let (value, exit) = refusal(Entry::Export(ExportSelection::Ordinary), &document);
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(value["code"], "invalid_runtime_input", "{value}");
+    assert_eq!(
+        value["details"],
+        json!({"path": "/request/export/profile"}),
+        "{value}"
+    );
+    assert!(value["details"].get("missing").is_none(), "{value}");
+}
+
+/// FR-1047: the format rule precedes the request, even for a present
+/// `export` member.
+#[test]
+#[trace("TC-3170", "FR-1047-AC-5")]
+fn the_format_is_refused_before_a_present_export_member() {
+    assert_refusal(
+        Entry::Export(ExportSelection::Ordinary),
+        &json!({"format": "native-compile/1", "request": {"export": {}}}),
+        "invalid request: format native-compile/1 is not read by export; export reads native-run/1",
+        &json!({"path": "/format", "accepted": ["native-run/1"]}),
+    );
+}
+
+/// FR-1047 Behavior: an unknown or repeated member is refused for that
+/// defect, ahead of any missing member.
+#[test]
+#[trace("TC-3170", "FR-1047-AC-1")]
+fn an_unknown_or_repeated_member_wins_over_missing_members() {
+    let directory = tempfile::tempdir().unwrap();
+    let raw = [
+        r#"{"format":"native-run/1","request":{},"x":1}"#,
+        r#"{"format":"native-run/1","format":"native-run/1","request":{}}"#,
+        r#"{"format":"native-run/1","request":{"models":[],"models":[]}}"#,
+        r#"{"format":"native-run/1","request":{"z":1}}"#,
+    ];
+    for entry in [
+        Entry::Run,
+        Entry::RunReader,
+        Entry::Compile,
+        Entry::Analyze,
+        Entry::Monitor,
+        Entry::Export(ExportSelection::Ordinary),
+        Entry::Export(ExportSelection::Evidence),
+    ] {
+        for (index, text) in raw.iter().enumerate() {
+            let format = match entry {
+                Entry::Compile => "native-compile/1",
+                Entry::Analyze => "native-analyze/1",
+                Entry::Monitor => "native-monitor/1",
+                _ => "native-run/1",
+            };
+            let text = text.replace("native-run/1", format);
+            let path = directory.path().join(format!("request-{index}.json"));
+            std::fs::write(&path, &text).unwrap();
+            let (value, _) = call(entry, &path).expect("refused");
+            assert!(
+                value["details"].get("missing").is_none()
+                    && !value["message"]
+                        .as_str()
+                        .unwrap()
+                        .contains("missing required"),
+                "{text}: {value}"
+            );
+        }
+    }
+}
+
 /// The seven inputs of FR-1047-AC-7 with the entry that reads each.
 fn example_inputs() -> Vec<(&'static str, Option<ExportSelection>, Entry)> {
     vec![
@@ -325,14 +427,45 @@ fn every_request_example_is_read_back_and_each_member_is_required() {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("request.json");
         std::fs::write(&path, &text).unwrap();
-        if let Some((value, _)) = call(entry, &path) {
-            if format == "native-replay/1" {
-                // A replay request is admitted against its package's
-                // declarations; the example holds no real package, so that
-                // admission, and no other, refuses it.
-                assert_eq!(value["code"], "invalid_runtime_input", "{value}");
-                assert_eq!(value["stage"], "request", "{value}");
-            } else {
+        match (format, selection) {
+            ("native-replay/1", _) => {
+                // The request decodes in full: every member, the function
+                // target and its occurrence key. Only the package's own
+                // semantic admission refuses it, for a lock naming no
+                // source, and no provisioned file is read.
+                let (value, _) = call(entry, &path).expect("no package replays");
+                assert_eq!(value["code"], "invalid_package", "{value}");
+                assert_eq!(value["cause"], "invalid-value", "{value}");
+                assert!(
+                    value["message"]
+                        .as_str()
+                        .unwrap()
+                        .contains("/package/lock/sources: the list is empty"),
+                    "{value}"
+                );
+                let files: Vec<_> = std::fs::read_dir(directory.path())
+                    .unwrap()
+                    .map(|entry| entry.unwrap().file_name())
+                    .collect();
+                assert_eq!(files, ["request.json"], "{value}");
+            }
+            (_, Some(ExportSelection::Evidence)) => {
+                let result = command::export_with_limits_and_overrides(
+                    &path,
+                    ExportSelection::Evidence,
+                    RunLimits::default(),
+                    &RequestOverrides::default(),
+                )
+                .expect("the evidence example is accepted");
+                let document = serde_json::to_value(result.outcome.unwrap()).unwrap();
+                assert_eq!(
+                    document["diagnostics"][0]["cause"], "unimplemented-meaning",
+                    "{document}"
+                );
+            }
+            _ => {
+                let (value, _) = call(entry, &path)
+                    .unwrap_or_else(|| panic!("{format} {selection:?} names a missing program"));
                 assert_eq!(value["stage"], "file", "{format} {selection:?}: {value}");
                 assert_eq!(value["code"], "io-error", "{value}");
                 assert_eq!(
@@ -349,21 +482,37 @@ fn every_request_example_is_read_back_and_each_member_is_required() {
             let (value, exit) = refusal(entry, &reduced);
             assert_eq!(exit, 20, "{format} without {name}: {value}");
             assert_eq!(value["code"], "invalid-request", "{value}");
-            let missing = value["details"]["missing"]
-                .as_array()
-                .unwrap_or_else(|| panic!("{format} without {name}: no details.missing: {value}"));
-            let pointer = json!(format!("/request/{name}"));
-            let group = |entry: &Value| {
-                entry
-                    .as_array()
-                    .is_some_and(|group| group.contains(&pointer))
+            let pointer = format!("/request/{name}");
+            let expected = match one_of_group(format, selection, name) {
+                Some(group) => json!(group
+                    .iter()
+                    .map(|member| format!("/request/{member}"))
+                    .collect::<Vec<_>>()),
+                None => json!(pointer),
             };
-            assert!(
-                missing.contains(&pointer) || missing.iter().any(group),
+            assert_eq!(
+                value["details"],
+                json!({"missing": [expected]}),
                 "{format} {selection:?} without {name}: {value}"
             );
         }
     }
+}
+
+/// The one-of group of the run, export and analyze readings that holds `name`.
+fn one_of_group(
+    format: &str,
+    selection: Option<ExportSelection>,
+    name: &str,
+) -> Option<&'static [&'static str]> {
+    let groups: &'static [&'static [&'static str]] = match (format, selection) {
+        ("native-run/1", None) => &[&["program", "package"], &["call", "clause", "items"]],
+        ("native-run/1", Some(ExportSelection::Ordinary)) | ("native-analyze/1", _) => {
+            &[&["program", "package"]]
+        }
+        _ => &[],
+    };
+    groups.iter().copied().find(|group| group.contains(&name))
 }
 
 /// FR-1047-AC-8: an unknown format and a selection for another format.

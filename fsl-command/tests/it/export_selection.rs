@@ -138,7 +138,7 @@ fn deeply_nested_export_inputs_refuse_without_aborting() {
         (format!(r#""export":{selected}"#), "/request/export/z"),
         (
             format!(r#""z":{selected}"#),
-            "invalid request: missing required members /request/program | /request/package, /request/export: export reads a native-run/1 request whose request holds an export object with at least profile and obligations",
+            "invalid request: unknown field `z`",
         ),
         (
             format!(r#""export":{export},"package":{{"z":{deep}}}"#),

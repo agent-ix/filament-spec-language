@@ -140,7 +140,10 @@ pub(super) fn run_selected_bytes(
 ) -> Result<RunResult> {
     let document = admitted_document(bytes)?;
     // FR-1015: a defect inside a present `export` member keeps its own refusal.
-    if selection == ExportSelection::Ordinary {
+    if selection == ExportSelection::Ordinary
+        && document.get("format").and_then(Value::as_str)
+            == Some(fsl_foundation::wire_format::WireFormat::RunRequest.as_str())
+    {
         if let Some(member) = document
             .get("request")
             .and_then(Value::as_object)
@@ -154,11 +157,18 @@ pub(super) fn run_selected_bytes(
         }
     }
     super::request_shape::admit(super::request_shape::Family::Export(selection), bytes)?;
-    run_document(directory, bytes, document, limits, overrides)?.ok_or_else(|| {
-        RunCause::ClauseRequest {
-            member: "/request".to_owned(),
-            reason: "expected an object".to_owned(),
-        }
+    if let Some(result) = run_document(directory, bytes, document, limits, overrides)? {
+        return Ok(result);
+    }
+    // No `export` member to run: the request's own reader names its defect.
+    let compile = request_without_export(
+        bytes,
+        fsl_foundation::wire_format::WireFormat::CompileRequest,
+    )?;
+    let _: wire::CompileRequest = super::request(&compile)?;
+    Err(RunCause::ClauseRequest {
+        member: "/request".to_owned(),
+        reason: "expected an object".to_owned(),
     })
 }
 

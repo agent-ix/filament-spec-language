@@ -910,7 +910,21 @@ fn witness_leaf(
     })
 }
 mod tests {
+    use super::{closed_members, MEMBERS};
     use ix_trace_rs::trace;
+
+    /// FR-862-AC-1: every missing member is named at once, the pointer
+    /// naming the first.
+    #[test]
+    fn every_missing_member_is_named_at_once() {
+        let present = MEMBERS[1..MEMBERS.len() - 1].iter().copied();
+        let defect = closed_members(present).unwrap_err();
+        assert_eq!(
+            defect.to_string(),
+            "missing members /profile_selections, /byte_provision at \"/profile_selections\""
+        );
+        assert!(closed_members(MEMBERS.iter().copied()).is_ok());
+    }
 
     #[trace("TC-1325", "FR-350-AC-11")]
     #[test]

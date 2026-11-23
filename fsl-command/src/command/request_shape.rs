@@ -322,7 +322,7 @@ const REPLAY: &[Entry] = &[
     required(crate::replay_request::MEMBERS[2], Shape::Leaf("[]")),
     required(
         crate::replay_request::MEMBERS[3],
-        Shape::Leaf("{\"arguments\":false,\"members\":{\"function\":\"entry\"}}"),
+        Shape::Leaf(REPLAY_TARGET),
     ),
     required(
         crate::replay_request::MEMBERS[4],
@@ -476,6 +476,9 @@ pub(super) fn admit(family: Family, bytes: &[u8]) -> Result<()> {
         if !document.contains_key("request") {
             absent.push(Missing::Member("/request".to_owned()));
         }
+        if envelope_defect(&document, bytes) {
+            return Ok(());
+        }
         return Err(missing_members(&absent, None));
     };
     // A string `format` is checked before `request`.
@@ -494,6 +497,9 @@ pub(super) fn admit(family: Family, bytes: &[u8]) -> Result<()> {
         });
     };
     let Some(request) = document.get("request") else {
+        if envelope_defect(&document, bytes) {
+            return Ok(());
+        }
         return Err(missing_members(
             &[Missing::Member("/request".to_owned())],
             None,
@@ -525,18 +531,26 @@ pub(super) fn admit(family: Family, bytes: &[u8]) -> Result<()> {
             .any(|entry| matches!(entry, Missing::Member(found) if found == pointer))
             .then_some(sentence)
     });
-    // The export entry's selected member is the one thing it is asked for:
-    // its absence is always the refusal. Any other missing member yields to
-    // a defect the typed reader refuses first.
-    if sentence.is_none() && another_defect(family, format, &request) {
+    // An unknown, wrong-kind or repeated member is refused for that defect
+    // by the reader that owns it, ahead of any missing member.
+    if envelope_defect(&document, bytes) || another_defect(family, format, &request) {
         return Ok(());
     }
     Err(missing_members(&missing, sentence))
 }
 
+/// Whether the envelope carries a member beyond `format` and `request`, or
+/// any object of the document repeats a member name.
+fn envelope_defect(document: &BTreeMap<String, &RawValue>, bytes: &[u8]) -> bool {
+    document
+        .keys()
+        .any(|name| !matches!(name.as_str(), "format" | "request"))
+        || crate::unique_json::read(bytes).is_err()
+}
+
 /// Whether the request's typed reader refuses it for a defect other than a
-/// missing member (an unknown member, a wrong kind, a repeated member): that
-/// refusal belongs to the reader, not to this requirement.
+/// missing member (an unknown member or a wrong kind): that refusal belongs
+/// to the reader, not to this requirement.
 fn another_defect(
     family: Family,
     format: WireFormat,
@@ -544,31 +558,41 @@ fn another_defect(
 ) -> bool {
     use super::wire;
     use fsl_foundation::serde_object::Object;
-    let Ok(text) = serde_json::to_string(request) else {
+    let mut members = request.clone();
+    if matches!(family, Family::Export(_)) {
+        members.remove("export");
+        members.remove("export_evidence");
+    }
+    let Ok(text) = serde_json::to_string(&members) else {
         return false;
     };
     let error = match (format, family) {
-        (WireFormat::RunRequest, Family::Export(ExportSelection::Ordinary)) => {
-            let mut members = request.clone();
-            members.remove("export");
-            serde_json::to_string(&members)
-                .map(|text| serde_json::from_str::<Object<wire::CompileRequest>>(&text).err())
+        (WireFormat::RunRequest, Family::Export(_)) if members.contains_key("package") => {
+            serde_json::from_str::<Object<wire::Request>>(&text).err()
         }
-        (WireFormat::RunRequest, _) => {
-            Ok(serde_json::from_str::<Object<wire::Request>>(&text).err())
+        (WireFormat::RunRequest, Family::Export(_)) => {
+            serde_json::from_str::<Object<wire::CompileRequest>>(&text).err()
         }
+        (WireFormat::RunRequest, _) => serde_json::from_str::<Object<wire::Request>>(&text).err(),
         (WireFormat::CompileRequest, _) => {
-            Ok(serde_json::from_str::<Object<wire::CompileRequest>>(&text).err())
+            serde_json::from_str::<Object<wire::CompileRequest>>(&text).err()
         }
         (WireFormat::AnalyzeRequest, _) => {
-            Ok(serde_json::from_str::<Object<wire::AnalyzeRequest>>(&text).err())
+            serde_json::from_str::<Object<wire::AnalyzeRequest>>(&text).err()
         }
         (WireFormat::MonitorRequest, _) => {
-            Ok(serde_json::from_str::<Object<wire::MonitorRequest>>(&text).err())
+            serde_json::from_str::<Object<wire::MonitorRequest>>(&text).err()
         }
-        _ => return false,
+        _ => None,
     };
-    matches!(error, Ok(Some(error)) if !error.to_string().starts_with("missing field `"))
+    error.is_some_and(|error| !is_missing_member(&error))
+}
+
+/// Serde's derived readers report an absent required member as
+/// ``missing field `name` ``; every other error is another defect.
+fn is_missing_member(error: &serde_json::Error) -> bool {
+    error.classify() == serde_json::error::Category::Data
+        && error.to_string().starts_with("missing field `")
 }
 
 fn missing_members(missing: &[Missing], shape: Option<&str>) -> RunCause {
@@ -696,5 +720,29 @@ pub fn request_example(
 
 /// The one node of the replay example's package, and the obligation that
 /// names it.
-const NODE_PACKAGE: &str = "{\"semantic_graph\":{\"nodes\":[{\"node_id\":{\"ordinal\":0,\"package\":\"example\",\"path\":[\"entry\"]}}]}}";
+const NODE_PACKAGE: &str = "{\"lock\":{\"sources\":[]},\"name\":\"example\",\"semantic_graph\":{\"nodes\":[{\"check_mode\":\"linked\",\"declaration\":{\"qualified_name\":[\"entry\"]},\"node_id\":{\"ordinal\":0,\"package\":\"example\",\"path\":[\"entry\"]},\"node_tag\":\"function\"}]}}";
+const REPLAY_TARGET: &str = "{\"arguments\":false,\"members\":{\"function\":\"entry\"},\"occurrence_key\":{\"node_id\":{\"ordinal\":0,\"package\":\"example\",\"path\":[\"entry\"]},\"ordinal\":\"0\",\"role\":\"declaration\"},\"over\":null}";
 const NODE_OBLIGATION: &str = "{\"model\":null,\"node_id\":{\"ordinal\":0,\"package\":\"example\",\"path\":[\"entry\"]},\"ordinal\":0}";
+
+#[cfg(test)]
+mod tests {
+    use super::is_missing_member;
+
+    /// Serde words an absent required member as `missing field`; this pins
+    /// the wording `is_missing_member` classifies on.
+    #[test]
+    fn a_missing_member_is_told_apart_from_other_defects() {
+        #[derive(Debug, serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Probe {
+            #[allow(dead_code)]
+            needed: u8,
+        }
+        let absent = serde_json::from_str::<Probe>("{}").unwrap_err();
+        assert!(is_missing_member(&absent));
+        let unknown = serde_json::from_str::<Probe>(r#"{"needed":1,"z":1}"#).unwrap_err();
+        assert!(!is_missing_member(&unknown));
+        let wrong = serde_json::from_str::<Probe>(r#"{"needed":"x"}"#).unwrap_err();
+        assert!(!is_missing_member(&wrong));
+    }
+}
