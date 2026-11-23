@@ -468,8 +468,7 @@ fn check_outcome_inner(
             match fsl_replay::spine::select(&parsed, &packages, inputs.limits.model, &cancel) {
                 Ok(models) => models.into_value(),
                 Err(failure) => {
-                    let document = fsl_replay::OutcomeDocument::from_check(&Err(failure));
-                    return Ok(check_missing_model_help(document, &parsed, &inputs.models));
+                    return Ok(fsl_replay::OutcomeDocument::from_check(&Err(failure)));
                 }
             };
 
@@ -523,45 +522,6 @@ fn check_outcome_inner(
     let sources = crate::Sources::from_sources(intake.sources);
     run.map(|document| (document, sources.clone()))
         .map_err(|cause| Box::new((cause, sources)))
-}
-
-fn check_missing_model_help(
-    document: fsl_replay::OutcomeDocument,
-    parsed: &fsl_replay::spine::ParsedUnitSource,
-    supplied: &[(String, PathBuf)],
-) -> fsl_replay::OutcomeDocument {
-    let Some(diagnostic) = document.diagnostics().first() else {
-        return document;
-    };
-    if diagnostic.code() != Code::MissingImport.as_str()
-        || diagnostic.cause() != Some("missing-selection")
-    {
-        return document;
-    }
-    let Some(missing) = parsed.unit().selections().models.iter().find(|model| {
-        !supplied
-            .iter()
-            .any(|(identity, _)| identity == &model.identity)
-    }) else {
-        return document;
-    };
-    let message = format!(
-        "{}; supply --model {}=<file> or the compile request's models member",
-        diagnostic.message(),
-        missing.identity
-    );
-    fsl_replay::OutcomeDocument::new(
-        fsl_replay::Operation::Check,
-        Some(fsl_replay::OutcomeStage::I1),
-        document.category(),
-    )
-    .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
-        diagnostic.cause(),
-        diagnostic.code(),
-        diagnostic.locus().cloned(),
-        message,
-    )
-    .with_selection(Some(fsl_replay::outcome::hint::MissingSelection::Model))])
 }
 
 fn validate_check_selections(selections: &[(String, PathBuf)], option: &str) -> Result<()> {
@@ -2392,10 +2352,47 @@ fn check_argv(directory: &Path, bytes: &[u8]) -> Result<Option<RunResult>> {
     if arguments.first().copied() != Some("check") {
         return Ok(None);
     }
-    let (extensions, source) = match arguments.as_slice() {
-        ["check", source] => (Vec::new(), *source),
-        ["check", _authority, _name, source] => (Vec::new(), *source),
-        ["check", "--extensions", set_path, _authority, _name, source] => {
+    let mut markdown = false;
+    let mut format = None;
+    let mut extensions_file = None;
+    let mut positionals = Vec::new();
+    let mut index = 1;
+    while index < arguments.len() {
+        match arguments[index] {
+            "--markdown" if !markdown => {
+                markdown = true;
+                index += 1;
+            }
+            "--format" if format.is_none() && index + 1 < arguments.len() => {
+                format = Some(arguments[index + 1]);
+                index += 2;
+            }
+            "--extensions" if extensions_file.is_none() && index + 1 < arguments.len() => {
+                extensions_file = Some(arguments[index + 1]);
+                index += 2;
+            }
+            argument if !argument.starts_with("--") => {
+                positionals.push(argument);
+                index += 1;
+            }
+            _ => {
+                return Err(check_argv_refusal());
+            }
+        }
+    }
+    if format.is_some_and(|format| format != "json") {
+        return Err(RunCause::ClauseRequest {
+            member: "format".to_owned(),
+            reason: "check supports only json".to_owned(),
+        });
+    }
+    let (identity, source) = match positionals.as_slice() {
+        [source] if !markdown => (None, *source),
+        [authority, name, source] => (Some((*authority, *name)), *source),
+        _ => return Err(check_argv_refusal()),
+    };
+    let extensions = match extensions_file {
+        Some(set_path) => {
             let set_bytes = read_file(&directory.join(set_path), TOTAL_BYTES)?;
             let set: ExtensionSetFile = serde_json::from_slice(&set_bytes)?;
             if set.format != "filament.extension-set/v1" {
@@ -2404,8 +2401,7 @@ fn check_argv(directory: &Path, bytes: &[u8]) -> Result<Option<RunResult>> {
                     reason: "expected filament.extension-set/v1".to_owned(),
                 });
             }
-            let extensions = set
-                .extensions
+            set.extensions
                 .into_iter()
                 .map(|extension| CheckExtensionInput {
                     authority: extension.authority,
@@ -2418,17 +2414,23 @@ fn check_argv(directory: &Path, bytes: &[u8]) -> Result<Option<RunResult>> {
                         .collect(),
                     capabilities: extension.capabilities,
                 })
-                .collect();
-            (extensions, *source)
+                .collect()
         }
-        _ => {
-            return Err(RunCause::ClauseRequest {
-                member: "argv".to_owned(),
-                reason: "check expects a source or --extensions <file> <authority> <name> <source>"
-                    .to_owned(),
-            });
-        }
+        None => Vec::new(),
     };
+    if markdown {
+        let (authority, name) = identity.expect("markdown requires the document labels");
+        let document = check_markdown_document(directory, authority, name, source, extensions)?;
+        let exit_code = document.category().exit_code();
+        let document = serde_json::to_value(&document).map_err(RunCause::Output)?;
+        return Ok(Some(RunResult {
+            exit_code,
+            value: NativeResult::check_document(document),
+            outcome: None,
+            requirements: None,
+            sources: crate::Sources::default(),
+        }));
+    }
     let source_path = Path::new(source);
     let source_path = if source_path.is_absolute() {
         source_path.to_path_buf()
@@ -2451,6 +2453,97 @@ fn check_argv(directory: &Path, bytes: &[u8]) -> Result<Option<RunResult>> {
         requirements: None,
         sources: crate::Sources::default(),
     }))
+}
+
+fn check_argv_refusal() -> RunCause {
+    RunCause::ClauseRequest {
+        member: "argv".to_owned(),
+        reason: "check expects [--markdown] [--extensions <file>] [--format json] a source, or <authority> <name> <source> (--markdown requires the labels)"
+            .to_owned(),
+    }
+}
+
+/// FR-662, FSpec FR-563: check every `ix:native` fence of one Markdown
+/// document, naming each body `<identity>#<clause id>`.
+fn check_markdown_document(
+    directory: &Path,
+    authority: &str,
+    name: &str,
+    source: &str,
+    extensions: Vec<CheckExtensionInput>,
+) -> Result<fsl_replay::OutcomeDocument> {
+    let wire_extensions = extensions
+        .iter()
+        .map(|extension| wire::Extension {
+            authority: extension.authority.clone(),
+            identity: extension.identity.clone(),
+            file: extension
+                .file
+                .strip_prefix(directory)
+                .unwrap_or(&extension.file)
+                .to_string_lossy()
+                .into_owned(),
+            depends_on: extension
+                .depends_on
+                .iter()
+                .map(|(authority, identity)| wire::DefinitionReference {
+                    authority: authority.clone(),
+                    identity: identity.clone(),
+                })
+                .collect(),
+            capabilities: extension.capabilities.clone(),
+        })
+        .collect::<Vec<_>>();
+    validate_extension_entries(&wire_extensions)?;
+    let mut intake = intake_with_bytes(
+        directory,
+        FileCounts {
+            programs: 1,
+            models: 0,
+            observations: 0,
+            extensions: extensions.len(),
+        },
+        CheckInputs::default().dependent_bytes,
+    )?;
+    let document_source = intake.source_outside_budget(
+        &check_source_file(Path::new(source), authority, name, "CheckSource"),
+        "source",
+        TOTAL_BYTES,
+    )?;
+    let catalog = if wire_extensions.is_empty() {
+        None
+    } else {
+        Some(extension_catalog(&wire_extensions, &mut intake)?)
+    };
+    let packages = fsl_semantics::model::intake::PackageInput::new();
+    let dependencies = fsl_replay::spine::DependencyInput::new(Vec::new()).map_err(|refusal| {
+        RunCause::ClauseRequest {
+            member: "libraries".to_owned(),
+            reason: format!("{refusal:?}"),
+        }
+    })?;
+    let request = fsl_replay::spine::NativeFenceRequest {
+        original: document_source.source(),
+        packages: &packages,
+        dependencies: &dependencies,
+        extensions: catalog
+            .as_ref()
+            .map(|catalog| fsl_replay::spine::ProfileCatalogInput {
+                catalog,
+                limits: fsl_semantics::library::bundle::PackageLimits::default(),
+            }),
+        integer_division: None,
+    };
+    Ok(
+        match fsl_replay::spine::check_native_fences(
+            &request,
+            fsl_replay::spine::CheckLimits::default(),
+            &filament_exact::Cancel::new(),
+        ) {
+            Ok(report) => fsl_replay::OutcomeDocument::from_native_fences(&report.into_value()),
+            Err(failure) => fsl_replay::OutcomeDocument::from_native_fence_failure(&failure),
+        },
+    )
 }
 
 /// Inspect a checked-package handoff and return the command's successful

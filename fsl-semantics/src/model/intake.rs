@@ -1227,7 +1227,10 @@ pub fn admit(
             cause: ModelRefusalCause::MissingSelection {
                 identity: identity.to_owned(),
             },
-            detail: format!("no domain package supplied for identity {identity:?}"),
+            detail: format!(
+                "no domain package supplied for identity {identity:?}; supply it with \
+                 --model <identity>=<file> on fsl check or in a compile request's `models` member"
+            ),
         });
     };
     let document = PackageDocument::parse(bytes, limits)?;
@@ -8616,7 +8619,9 @@ mod tests {
                 cause: ModelRefusalCause::MissingSelection {
                     identity: "acme/orders".to_owned(),
                 },
-                detail: "no domain package supplied for identity \"acme/orders\"".to_owned(),
+                detail: "no domain package supplied for identity \"acme/orders\"; supply it with \
+                         --model <identity>=<file> on fsl check or in a compile request's `models` member"
+                    .to_owned(),
             }
         );
     }
