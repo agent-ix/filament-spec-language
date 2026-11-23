@@ -130,7 +130,8 @@ impl StageLimits {
     }
 
     /// Reads the wire entries, refusing the first whose name is no setting
-    /// of FR-255's tables or is `replay.input_bytes` or `format.output_bytes`.
+    /// of FR-255's tables or is `replay.input_bytes`, `format.output_bytes` or
+    /// one of the five `monitor.*` settings.
     fn decode(entries: BTreeMap<String, u64>) -> Result<Self, ReplayRequestRefusal> {
         entries
             .into_iter()

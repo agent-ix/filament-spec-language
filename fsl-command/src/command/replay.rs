@@ -50,13 +50,25 @@ pub(super) fn is_replay_request(bytes: &[u8]) -> bool {
 ///
 /// # Errors
 ///
-/// The request file's read refusals, `format` for a request of another
+/// `invalid-request` naming `limits` when `caller` was built for another
+/// operation, before any work; the request file's read refusals, `format` for a request of another
 /// format, and the replay request reader's and replay's own refusals.
 pub fn replay_with_limits(
     path: &Path,
     limits: RunLimits,
     caller: &CommandLimits,
 ) -> std::result::Result<RunResult, Box<RunError>> {
+    caller
+        .require(super::limits::LimitedOperation::Replay)
+        .map_err(|mismatch| {
+            Box::new(RunError {
+                cause: RunCause::ClauseRequest {
+                    member: "limits".to_owned(),
+                    reason: mismatch.to_string(),
+                },
+                sources: crate::Sources::default(),
+            })
+        })?;
     super::with_request_limits(path, limits.request_bytes, |directory, bytes| {
         if !is_replay_request(bytes) {
             return Err(RunCause::Format);

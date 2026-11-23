@@ -389,3 +389,122 @@ fn a_replay_package_member_refusal_uses_the_request_document_locus() {
     let document: Value = serde_json::from_slice(&outcome.to_bytes().unwrap()).unwrap();
     assert!(document["diagnostics"][0]["locus"].is_null(), "{document}");
 }
+
+/// The `CommandLimits` an entry point refuses when it belongs to another
+/// operation, before any work: the request path need not exist.
+#[test]
+#[trace("TC-721")]
+fn an_entry_point_refuses_the_limits_of_another_operation() {
+    use fsl_command::command::{CommandLimits, MonitorPreparationLimits, RunLimits};
+    let absent = Path::new("absent-request.json");
+    let monitor = CommandLimits::monitor(MonitorPreparationLimits {
+        work: 1,
+        storage: 1,
+    });
+    let error = fsl_command::command::analyze_with_limits(
+        absent,
+        RunLimits::default(),
+        &CommandLimits::replay(),
+        &crate::negotiation::Fr290,
+        &filament_exact::Cancel::new(),
+    )
+    .expect_err("analyze refuses replay limits");
+    assert_eq!(
+        error.cause.to_string(),
+        "invalid analyze request member limits: the `analyze` operation was given the limits of the `replay` operation"
+    );
+    let error = fsl_command::command::replay_with_limits(
+        absent,
+        RunLimits::default(),
+        &CommandLimits::analyze(),
+    )
+    .expect_err("replay refuses analyze limits");
+    assert_eq!(
+        error.cause.to_string(),
+        "invalid clause request member limits: the `replay` operation was given the limits of the `analyze` operation",
+    );
+    let error = fsl_command::command::monitor(
+        absent,
+        std::iter::empty(),
+        &mut |_| {},
+        fsl_command::command::MonitorProviders {
+            negotiate: &crate::negotiation::Fr290,
+            providers: Vec::new(),
+            options: &fsl_analyze::provider::ProviderOptions::default(),
+        },
+        RunLimits::default(),
+        &CommandLimits::analyze(),
+        &filament_exact::Cancel::new(),
+    )
+    .expect_err("monitor refuses analyze limits");
+    assert_eq!(
+        error.cause.to_string(),
+        "invalid clause request member limits: the `monitor` operation was given the limits of the `analyze` operation",
+    );
+    drop(monitor);
+}
+
+/// `replay_with_limits` reads the request, replays it, and applies the caller's
+/// settings: no setting reproduces the in-process replay, `replay.input_bytes`
+/// bounds the reader, and `accounting.work_units` reaches the replay's
+/// accounting.
+#[test]
+#[trace("TC-721")]
+fn replay_with_limits_applies_the_callers_settings() {
+    use fsl_command::command::{CommandLimits, RunLimits};
+    use fsl_foundation::{AccountingSetting, SettingName};
+    let fixture = Fixture::compile(OWN_VALUE, LIBRARY_HEAD, None);
+    let path = fixture.request_file(&fixture.package);
+    let settled = fsl_command::command::replay_with_limits(
+        &path,
+        RunLimits::default(),
+        &CommandLimits::replay(),
+    )
+    .expect("the request replays");
+    let expected = replay(fixture.wire(&fixture.package), ReplayLimits::default()).unwrap();
+    let expected: Value = serde_json::from_str(&expected.to_function_json().unwrap()).unwrap();
+    assert_eq!(settled.value.as_value(), &json!({"results": [expected]}));
+
+    let mut reader = CommandLimits::replay();
+    reader
+        .set(
+            SettingName::Stage(fsl_foundation::Setting::ReplayInputBytes),
+            1,
+        )
+        .unwrap();
+    let error = fsl_command::command::replay_with_limits(&path, RunLimits::default(), &reader)
+        .expect_err("a one-byte reader bound refuses the request");
+    assert_eq!(error.cause.to_string(), "invalid replay request: input bytes limit exceeded: required 4207, bound 1 at \"/package\"");
+
+    let mut accounting = CommandLimits::replay();
+    accounting
+        .set(SettingName::Accounting(AccountingSetting::WorkUnits), 0)
+        .unwrap();
+    let limited =
+        fsl_command::command::replay_with_limits(&path, RunLimits::default(), &accounting)
+            .expect("an exhausted budget settles, it does not refuse");
+    assert_eq!(limited.exit_code, 22);
+    let row = &limited.value.as_value()["results"][0];
+    assert_eq!(row["settlement"], "inconclusive", "{row}");
+    assert_eq!(row["limit"]["setting"], "accounting.work_units", "{row}");
+    assert_eq!(row["limit"]["bound"], "0", "{row}");
+
+    let mut stage = CommandLimits::replay();
+    stage
+        .set(SettingName::Stage(fsl_foundation::Setting::S1Tokens), 1)
+        .unwrap();
+    let error = fsl_command::command::replay_with_limits(&path, RunLimits::default(), &stage)
+        .expect_err("one token cannot recompile the program");
+    let outcome = error.outcome_document(fsl_replay::Operation::Replay);
+    let document: Value = serde_json::from_slice(&outcome.to_bytes().unwrap()).unwrap();
+    let diagnostic = &document["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "stage_limit_exceeded", "{document}");
+    assert_eq!(diagnostic["cause"], "token-count-exceeded", "{document}");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains("s1.tokens"),
+        "{document}"
+    );
+}

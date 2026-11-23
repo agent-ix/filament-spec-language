@@ -34,8 +34,8 @@ pub use analyze::{
 };
 pub use flow::{analyze_flow_report, FlowAnalyzeError};
 pub use limits::{
-    CommandLimits, LimitedOperation, MonitorPreparationLimits, PreparationBound,
-    PreparationRefusal, SettingUnavailable,
+    CommandLimits, LimitedOperation, MonitorPreparationLimits, OperationMismatch,
+    PreparationBound, PreparationRefusal, SettingUnavailable,
 };
 pub use monitor::{monitor, MonitorEvent, MonitorProviders, MonitorSummary};
 pub use output::NativeResult;

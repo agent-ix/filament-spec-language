@@ -68,6 +68,30 @@ impl std::fmt::Display for SettingUnavailable {
 
 impl std::error::Error for SettingUnavailable {}
 
+/// A [`CommandLimits`] built for one operation, handed to another entry point
+/// (FR-255 "Lifecycle caller-limit coverage": each operation exposes its own
+/// settings). The entry point refuses it before any work.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct OperationMismatch {
+    /// The operation whose entry point was called.
+    pub entry: LimitedOperation,
+    /// The operation the limits were built for.
+    pub given: LimitedOperation,
+}
+
+impl std::fmt::Display for OperationMismatch {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "the `{}` operation was given the limits of the `{}` operation",
+            self.entry.name(),
+            self.given.name()
+        )
+    }
+}
+
+impl std::error::Error for OperationMismatch {}
+
 /// Which monitor plan preparation allowance a refusal reached.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PreparationBound {
@@ -290,6 +314,22 @@ impl CommandLimits {
         self.operation
     }
 
+    /// Whether these limits belong to the `entry` operation.
+    ///
+    /// # Errors
+    ///
+    /// [`OperationMismatch`] when they were built for another operation.
+    pub fn require(&self, entry: LimitedOperation) -> Result<(), OperationMismatch> {
+        if self.operation == entry {
+            Ok(())
+        } else {
+            Err(OperationMismatch {
+                entry,
+                given: self.operation,
+            })
+        }
+    }
+
     /// Whether the operation exposes the stage `setting`.
     #[must_use]
     pub fn exposes(&self, setting: Setting) -> bool {
@@ -323,7 +363,9 @@ impl CommandLimits {
     }
 
     /// The monitor plan preparation bounds: the caller's starting values with
-    /// each `monitor.preparation_*` setting that was set.
+    /// each `monitor.preparation_*` setting that was set. FSL carries
+    /// these bounds and enforces none of them itself; the driver reads them
+    /// here for its own plan preparation.
     #[must_use]
     pub fn preparation(&self) -> MonitorPreparationLimits {
         let mut preparation = self.preparation;
@@ -529,7 +571,7 @@ mod tests {
     /// TC-721 step 11, for the settings exposed today: each operation exposes exactly its settings.
     #[trace("TC-721")]
     #[test]
-    fn each_operation_exposes_exactly_its_enumerated_settings() {
+    fn each_operation_exposes_the_settings_accepted_today() {
         assert_eq!(
             names(&CommandLimits::analyze()),
             expected(&["replay.input_bytes", "emit.output_bytes"])

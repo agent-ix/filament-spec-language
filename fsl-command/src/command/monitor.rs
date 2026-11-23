@@ -1030,7 +1030,17 @@ pub struct MonitorProviders<'a> {
 /// registry. A request without `items` calls neither the negotiator nor any
 /// provider.
 ///
+/// `caller` carries the monitor limits. FSL applies the stage settings, the
+/// window and the retention bounds. It also carries the plan preparation
+/// bounds, `monitor.preparation_work_units` and `monitor.preparation_storage`
+/// ([`CommandLimits::preparation`]), but FSL enforces neither: the driver
+/// enforces them in its own monitor plan preparation, and reports a reached
+/// one with [`MonitorPreparationLimits::refusal`].
+///
 /// # Errors
+///
+/// `invalid-request` naming `limits` when `caller` was built for another
+/// operation, before any work.
 ///
 /// `invalid-request` naming `providers` when a provider repeats a registered
 /// `BackendId`, before the request is read; the command-error envelope's
@@ -1051,6 +1061,14 @@ pub fn monitor(
         providers,
         options,
     } = routing;
+    caller
+        .require(super::limits::LimitedOperation::Monitor)
+        .map_err(|mismatch| {
+            Box::new(RunError {
+                cause: invalid("limits", mismatch.to_string()),
+                sources: crate::Sources::default(),
+            })
+        })?;
     let engines = super::analyze::engines_with(providers, options).map_err(|cause| {
         Box::new(RunError {
             cause,

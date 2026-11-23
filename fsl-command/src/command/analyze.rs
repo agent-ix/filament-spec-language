@@ -875,11 +875,12 @@ pub fn analyze_with_providers(
 }
 
 /// [`analyze_with_providers`] under the caller's request and dependent-file
-/// byte ceilings.
+/// byte ceilings and `caller`'s settings.
 ///
 /// # Errors
 ///
-/// As [`analyze_with_providers`].
+/// As [`analyze_with_providers`]; and `invalid-request` naming `limits` when
+/// `caller` was built for another operation, before any work.
 pub fn analyze_with_providers_and_limits(
     path: &Path,
     limits: RunLimits,
@@ -889,6 +890,14 @@ pub fn analyze_with_providers_and_limits(
     options: &ProviderOptions,
     cancel: &Cancel,
 ) -> std::result::Result<RunResult, Box<RunError>> {
+    caller
+        .require(super::limits::LimitedOperation::Analyze)
+        .map_err(|mismatch| {
+            Box::new(RunError {
+                cause: invalid("limits", mismatch.to_string()),
+                sources: crate::Sources::default(),
+            })
+        })?;
     super::with_request_limits(path, limits.request_bytes, |directory, bytes| {
         let (input, mut intake) = match read(directory, bytes, limits, caller)? {
             Readout::Source(input, intake) => (input, intake),

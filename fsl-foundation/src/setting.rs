@@ -325,6 +325,9 @@ pub enum UsageCause {
     NotAnAssignment,
     /// The name is not a setting of FR-255's table.
     UnknownSetting,
+    /// The setting is in FR-255's table but the limits type asked to hold it
+    /// has no field for it.
+    UnavailableSetting,
     /// The value is not a non-negative decimal integer that fits a bound.
     NotAnInteger,
     /// The setting was given more than once.

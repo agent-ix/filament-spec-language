@@ -321,7 +321,7 @@ impl CallerLimits {
                     if !limits.set_bound(setting, bound) {
                         return Err(UsageRefusal {
                             operand: format!("{}={bound}", setting.name()),
-                            cause: fsl_foundation::UsageCause::UnknownSetting,
+                            cause: fsl_foundation::UsageCause::UnavailableSetting,
                         });
                     }
                 }
@@ -420,6 +420,14 @@ mod tests {
 
     use super::*;
     use crate::request::StageLimits;
+
+    const MONITOR_SETTINGS: [Setting; 5] = [
+        Setting::MonitorMaxWindowValues,
+        Setting::MonitorRetainedPositions,
+        Setting::MonitorRetainedIdentities,
+        Setting::MonitorPreparationWorkUnits,
+        Setting::MonitorPreparationStorage,
+    ];
 
     fn bound_of(limits: &CallerLimits, setting: Setting) -> u64 {
         limits
@@ -543,7 +551,14 @@ mod tests {
         for setting in Setting::ALL {
             // The monitor settings belong to the monitor command's own limits
             // (`fsl_command::command::CommandLimits`), not to a replayed stage.
-            if setting.name().starts_with("monitor.") {
+            if MONITOR_SETTINGS.contains(setting) {
+                let operand = format!("{}=123456789", setting.name());
+                let refusal = CallerLimits::from_operands([operand.as_str()]).unwrap_err();
+                assert_eq!(refusal.cause, UsageCause::UnavailableSetting);
+                assert_eq!(
+                    refusal.to_string(),
+                    format!("usage: UnavailableSetting in `--limit {operand}`")
+                );
                 continue;
             }
             let operand = format!("{}=123456789", setting.name());
