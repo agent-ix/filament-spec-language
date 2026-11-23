@@ -11,16 +11,115 @@ use filament_contract_model::{
 use filament_exact::{NodeKey, PathSegment};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_semantics::check::wire_id::StructuralIds;
-use fsl_semantics::check::{Capability, CheckedGraph, NodeTag};
+use fsl_semantics::check::{Capability, CheckedGraph, NodeTag, RequirementRecord};
 use fsl_semantics::family::ClaimExtent;
 
 use super::{
     admitted_key, body_reference_targets, checked_literal_json, checked_occurrence,
     claim_aggregate, claim_binding, encoding, node_id, push_scalar_type, source_artifact,
-    EmitRefusal, GRAPH_V2,
+    EmitRefusal, OmissionCause, OmittedNode, GRAPH_V2,
 };
 
 type Records = HashMap<OccurrenceKey, ValueValidityRecord>;
+
+/// The omitted graph nodes, each with its omission cause.
+type Omitted = HashMap<NodeKey, OmissionCause>;
+
+/// The record nodes [`append`] writes, by claim, and the record nodes it
+/// omits because their owner function is omitted.
+pub(super) struct Appended {
+    pub(super) records: Records,
+    /// Each with cause `NamesOmittedNode` naming its omitted owner.
+    pub(super) omitted: Vec<OmittedNode>,
+}
+
+/// What a requirement record names (FSpec FR-825), grouped by what its
+/// omission takes with it in the omission closure (FR-062 "Packaging is
+/// all-or-nothing").
+pub(super) struct RecordNames {
+    /// The record's claim node; for a `value-validity` record, its
+    /// application, which other owners' records may share.
+    pub(super) claim: NodeKey,
+    /// The owner function of a `value-validity` record, whose body holds the
+    /// record's occurrence; `None` for every other kind.
+    pub(super) owner: Option<NodeKey>,
+    /// Every other node the record names: its extent's domain nodes, and for
+    /// a `value-validity` record the result bound's type node, the narrow,
+    /// every guard, every extent root and every object type.
+    pub(super) names: Vec<NodeKey>,
+}
+
+fn record_names_of(
+    graph: &CheckedGraph,
+    claim: &OccurrenceKey,
+    source: &RequirementRecord,
+) -> Result<RecordNames, EmitRefusal> {
+    let mut names = Vec::new();
+    if let ClaimExtent::Unbounded(domains) = source.requirements().extent() {
+        names.extend(domains.iter().map(|(key, _)| match key {
+            fsl_foundation::bound::DomainKey::Node { node, .. } => node.clone(),
+            fsl_foundation::bound::DomainKey::Population { member_type, .. } => member_type.clone(),
+        }));
+    }
+    let mut owner = None;
+    if source.requirements().kind() == Capability::ValueValidity {
+        let name = source.owner().ok_or(EmitRefusal::SourceMapInvariant)?;
+        owner = Some(
+            graph
+                .function_identity(name)
+                .ok_or(EmitRefusal::SourceMapInvariant)?,
+        );
+        names.push(source.result_bound().node());
+        names.extend(source.conversion_context().map(|key| key.node().clone()));
+        names.extend(
+            source
+                .path_condition()
+                .iter()
+                .map(|guard| guard.occurrence().node().clone()),
+        );
+        names.extend(source.extent_roots().iter().cloned());
+        names.extend(
+            graph
+                .item_object_nodes(claim)
+                .ok_or(EmitRefusal::SourceMapInvariant)?
+                .map_err(|_| EmitRefusal::SourceMapInvariant)?,
+        );
+    }
+    Ok(RecordNames {
+        claim: claim.node().clone(),
+        owner,
+        names,
+    })
+}
+
+/// What each requirement record of `graph` names, in requirement-map order.
+pub(super) fn record_names(graph: &CheckedGraph) -> Result<Vec<RecordNames>, EmitRefusal> {
+    graph
+        .requirements()
+        .iter()
+        .map(|(claim, source)| record_names_of(graph, claim, source))
+        .collect()
+}
+
+/// Whether a record the emitter writes names an omitted node. The omission
+/// closure omits the owner of a `value-validity` record, or the claim node of
+/// any other record, that names an omitted node, so this is an invariant
+/// check: a record is never dropped while its owner or claim is written.
+fn names_an_omitted_node(
+    graph: &CheckedGraph,
+    claim: &OccurrenceKey,
+    source: &RequirementRecord,
+    omitted: &Omitted,
+) -> Result<bool, EmitRefusal> {
+    if omitted.is_empty() {
+        return Ok(false);
+    }
+    let names = record_names_of(graph, claim, source)?;
+    Ok(std::iter::once(&names.claim)
+        .chain(&names.owner)
+        .chain(&names.names)
+        .any(|name| omitted.contains_key(name)))
+}
 
 fn reference(target: &CheckedNodeId) -> CheckedTerm {
     CheckedTerm::Reference {
@@ -42,14 +141,19 @@ pub(super) fn append(
     nodes: &mut Vec<CheckedSemanticNodeV2>,
     source_map: &mut Vec<CheckedSourceMapEntry>,
     regions: &impl Fn(&OccurrenceKey) -> Option<fsl_foundation::source::provenance::SourceRegion>,
-) -> Result<Records, EmitRefusal> {
+    omitted: &Omitted,
+) -> Result<Appended, EmitRefusal> {
     let mut records = HashMap::new();
+    let mut omissions = Vec::new();
     if !graph
         .requirements()
         .values()
         .any(|record| record.requirements().kind() == Capability::ValueValidity)
     {
-        return Ok(records);
+        return Ok(Appended {
+            records,
+            omitted: omissions,
+        });
     }
     let integer = node_id(
         ids,
@@ -74,25 +178,21 @@ pub(super) fn append(
                     .function_identity(owner_name)
                     .ok_or(EmitRefusal::SourceMapInvariant)?;
                 let id = node_id(ids, &key);
-                if !nodes.iter().any(|node| node.node_id == id) {
+                if !omitted.contains_key(&key) && !nodes.iter().any(|node| node.node_id == id) {
                     return Err(EmitRefusal::SourceMapInvariant);
                 }
                 entry.insert((key, id))
             }
         };
+        // A record is tied to its owner's occurrence: it is omitted exactly
+        // when its owner is, and then all of that owner's records are, so
+        // the `generated` ordinals of every written owner stay dense.
+        let owner_omitted = omitted.contains_key(&*owner_key);
+        if !owner_omitted && names_an_omitted_node(graph, claim, source, omitted)? {
+            return Err(EmitRefusal::SourceMapInvariant);
+        }
         let application = node_id(ids, claim.node());
         let result_bound = node_id(ids, source.result_bound().node());
-        let region = regions(claim).ok_or(EmitRefusal::SourceMapInvariant)?;
-        let region = CheckedSourceRegion {
-            source: source_artifact(region.source()),
-            start: region.start(),
-            end: region.end(),
-        };
-        if !types_written {
-            push_scalar_type(nodes, source_map, &integer, "integer", &region);
-            push_scalar_type(nodes, source_map, &boolean, "boolean", &region);
-            types_written = true;
-        }
         let conversion = source
             .conversion_context()
             .map(|key| (node_id(ids, key.node()), key.origin().ordinal()));
@@ -153,6 +253,24 @@ pub(super) fn append(
         )
         .map_err(encoding)?;
         let id = node_id(ids, key);
+        if owner_omitted {
+            omissions.push(OmittedNode {
+                node: id,
+                cause: OmissionCause::NamesOmittedNode(owner.clone()),
+            });
+            continue;
+        }
+        let region = regions(claim).ok_or(EmitRefusal::SourceMapInvariant)?;
+        let region = CheckedSourceRegion {
+            source: source_artifact(region.source()),
+            start: region.start(),
+            end: region.end(),
+        };
+        if !types_written {
+            push_scalar_type(nodes, source_map, &integer, "integer", &region);
+            push_scalar_type(nodes, source_map, &boolean, "boolean", &region);
+            types_written = true;
+        }
         let ordinal = ordinals.entry(owner_name.to_owned()).or_default();
         let occurrence = CheckedOccurrence {
             role: CheckedOccurrenceRole::Generated,
@@ -244,7 +362,10 @@ pub(super) fn append(
             return Err(EmitRefusal::SourceMapInvariant);
         }
     }
-    Ok(records)
+    Ok(Appended {
+        records,
+        omitted: omissions,
+    })
 }
 
 pub(super) fn rows(
@@ -253,6 +374,7 @@ pub(super) fn rows(
     emitted: &HashMap<NodeKey, CheckedNodeId>,
     records: &Records,
     existing: &[RequirementItemRow],
+    omitted: &Omitted,
 ) -> Result<Vec<RequirementItemRow>, EmitRefusal> {
     // Sidecar references remain document-held. Only the record body goes
     // through the containing node's operand-slot writer.
@@ -269,6 +391,24 @@ pub(super) fn rows(
         .collect();
     let mut rows = Vec::new();
     for (claim, source) in graph.requirements().iter() {
+        // A `value-validity` record has no row when its owner is omitted,
+        // and any other record none when its claim node is; the omission
+        // closure leaves no other written record naming an omitted node.
+        if !omitted.is_empty() {
+            let names = record_names_of(graph, claim, source)?;
+            let dropped = names
+                .owner
+                .as_ref()
+                .map_or(omitted.contains_key(&names.claim), |owner| {
+                    omitted.contains_key(owner)
+                });
+            if dropped {
+                continue;
+            }
+            if names_an_omitted_node(graph, claim, source, omitted)? {
+                return Err(EmitRefusal::SourceMapInvariant);
+            }
+        }
         let kind = match source.requirements().kind() {
             Capability::ValueValidity => CapabilityKind::ValueValidity,
             Capability::OperationContract => CapabilityKind::OperationContract,

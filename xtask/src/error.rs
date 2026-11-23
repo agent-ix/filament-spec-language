@@ -51,6 +51,8 @@ pub enum Code {
     ExamplesCheckInput,
     /// FR-765: the driver examples gate could not run or failed.
     ExamplesCheck,
+    /// QSL-2853: a merge-gate path or test filter could not produce a recipe.
+    MergeGateRecipe,
 }
 
 impl Code {
@@ -74,6 +76,7 @@ impl Code {
             Self::Qualification => "qualify",
             Self::ExamplesCheckInput => "examples-check-input",
             Self::ExamplesCheck => "examples-check",
+            Self::MergeGateRecipe => "merge-gate-recipe",
         }
     }
 }
@@ -162,6 +165,9 @@ pub enum Error {
         /// The child cargo status.
         status: std::process::ExitStatus,
     },
+    /// QSL-2853: a merge-gate path or filter could not produce a verified recipe.
+    #[error("merge-gate-recipe: {0}")]
+    MergeGateRecipe(String),
     /// A filesystem read or write failed.
     #[error("{path}: {source}")]
     Io {
@@ -521,6 +527,7 @@ impl Error {
             Self::ExamplesCheckSpawn { .. }
             | Self::ExamplesCheckFailed { .. }
             | Self::ExamplesCheckUnverified { .. } => Code::ExamplesCheck,
+            Self::MergeGateRecipe(_) => Code::MergeGateRecipe,
         }
     }
 
@@ -549,6 +556,7 @@ impl Error {
             | Code::CanonicalTypes
             | Code::Conformance
             | Code::TestSuites
+            | Code::MergeGateRecipe
             | Code::ExamplesCheck => 1,
             Code::Usage | Code::Io | Code::Metadata | Code::StringEdgeScan => 2,
             Code::ConsumerFacades => 2,
