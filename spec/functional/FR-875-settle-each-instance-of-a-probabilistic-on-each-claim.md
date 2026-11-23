@@ -100,6 +100,12 @@ message never activates and does not count against the claim.
   under statistical evidence, carrying the instances' evidence in FR-741's
   result members.
 - The item SHALL NOT be settled `unsupported` for its activation.
+- **Out-of-profile forms (current).** FR-201's `on-each-reachability/v1`
+  profile admits only the form its section states. An on-each claim outside it
+  (an every-scheduler optimum, statistical evidence, a cyclic continuation
+  graph, a timed subject, authored fairness or another form) settles
+  `unsupported` `not-yet-implemented` until QSL-2995. This is an
+  implementation gap and not a refusal of its activation.
 
 ## Acceptance Criteria
 

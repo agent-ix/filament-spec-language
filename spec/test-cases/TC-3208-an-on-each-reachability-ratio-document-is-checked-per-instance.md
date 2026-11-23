@@ -16,7 +16,7 @@ Scope: FR-201-AC-76, FR-201-AC-77.
 
 ## Test Procedure
 
-Build the document for the `m`/`n` snapshot and check it at `rational(9, 10)` and `rational(99, 100)`; build the document over a snapshot holding only `n` and check it, and check a `Vacuous` document there. Test: `tools/fsl-probability-check/tests/it/on_each.rs`.
+Build the document for the `m`/`n` snapshot and check it at `rational(9, 10)` and `rational(99, 100)`; build the document over a snapshot holding only `n` and check it, and check a `Vacuous` document there and over the `m`/`n` snapshot. Test: `tools/fsl-probability-check/tests/it/on_each.rs`.
 
 Tag the tests `#[trace("TC-3208", "FR-201-AC-76")]` and `#[trace("TC-3208", "FR-201-AC-77")]`.
 
@@ -24,4 +24,4 @@ Tag the tests `#[trace("TC-3208", "FR-201-AC-76")]` and `#[trace("TC-3208", "FR-
 
 - Accepted at `9/10` with numerator `391/400`, denominator `1` at `m`; `n` vacuous (`0`, `0`).
 - `ThresholdMissed` at `99/100`, at `m`'s initial key, no `part`.
-- Only `n`: the `Ratio` document `InequalityFails` at `n`'s initial key, no `part`; the `Vacuous` document accepted.
+- Only `n`: the `Ratio` document `InequalityFails` at `n`'s initial key, no `part`; the `Vacuous` document accepted; over the `m`/`n` snapshot the `Vacuous` document `InequalityFails` at `m`'s initial key, no `part`.

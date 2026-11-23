@@ -42,3 +42,10 @@ only-`n` contradiction is SR-3603001 FND-005.
 Partial. The numeric conjuncts are strong. The loci and the adverse cases
 need FND-001 and FND-002 before the criterion tells a correct checker from a
 merely plausible one.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | AC-76 pins ThresholdMissed at `m`'s initial key with no part. AC-78 pins every tamper at `m`'s initial key with its part. |
+| FND-002 | fixed | AC-78 adds the denominator-part and rank cases, AC-79 the row-coverage faults per part, and AC-80 the every-scheduler `mode` and out-of-profile cases. A denominator of 0 where activation is reachable is covered by the denominator Bellman check (AC-78). |

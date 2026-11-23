@@ -33,3 +33,9 @@ admit ...").
 ## Verdict
 
 EARS-conformant apart from FND-001's three clauses that are missing SHALL.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Lines 876-877 "SHALL stay unsupported", 928-930 "SHALL be confirmed vacuous ... SHALL hold vacuously", 931-934 "SHALL be rejected". |

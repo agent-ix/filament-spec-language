@@ -40,3 +40,17 @@ the AC-76 contradiction, are in SR-3603001 and are not repeated here.
 Structurally clean apart from FND-001. The ids are free and unique, quire
 validate is clean, the trace tag follows convention, and no stale
 `type`-spelled analyze cause remains in spec/.
+
+## New findings (disposition pass 1)
+
+Head 1afe025a0e745374f4015b3614bef662a192dba5. TC-3208 and TC-3209 are both absent from origin/main 7294c363 and unique in the branch. quire validate exits 0 on the changed spec files and on the committed reviews.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-002 | low | Two rules overlap on a repeated or out-of-order part row. The coverage bullet makes a missing, extra or duplicate row `Malformed` at the part, and says rows are "strictly ascending". The envelope bullet also imports the reachability profile's reader rejections, which reject duplicate and out-of-order keys at decode. So a duplicate row has two candidate results, and an out-of-order row has no rule in this profile. AC-79's "repeats it" depends on which applies. State that duplicate or out-of-order rows in a part are rejected `Malformed` at that part's `CertificateMember`, or say the reader refusal wins and give its locus. | spec/functional/FR-201-check-a-probability-certificate.md:889-890; spec/functional/FR-201-check-a-probability-certificate.md:906-909 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The table's Malformed row now lists the on-each part coverage fault (line 108), and the locus names the part, `numerator` or `denominator` (lines 906-909). |

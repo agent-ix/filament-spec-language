@@ -101,3 +101,24 @@ ranks or acyclicity the checker is unsound on cyclic graphs (FND-002).
 AC-76's only-`n` case contradicts the profile's own coverage rule (FND-005).
 FND-003 and FND-004 are spec gaps the code PR must agree with. Wording for
 each is above.
+
+## New findings (disposition pass 1)
+
+Head 1afe025a0e745374f4015b3614bef662a192dba5 (diff 32ca5b98..1afe025a).
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-007 | high | The profile's admission limit, as AC-80 tests it, contradicts FR-875. AC-80 says a claim of the on-each form "over a cyclic continuation graph, with authored fairness or over a timed subject stays unsupported", and the profile says every other on-each form "SHALL stay unsupported". FR-875 says an `on each` claim "settles from source exactly as an `on origin` claim does; it is never `unsupported` for its activation" and "SHALL NOT be settled `unsupported` for its activation". A cyclic on-origin eventual claim is certified by the closed cyclic DTMC profile, so a cyclic on-each claim settling `unsupported` is unsupported only because of its activation. Limiting the codec's admission is fine. Stating it as item settlement is not, unless FR-875 records the gap. Candidate: in AC-80 write "is not admitted by this profile: no `on-each-reachability/v1` document is written or accepted for it", and add to FR-875 Behavior "(current) An on-each claim outside FR-201's `on-each-reachability/v1` profile settles `unsupported` `not-yet-implemented` until QSL-2995; this is an implementation gap, not a refusal of its activation." Or name the item settlement explicitly as the owner's decision. | spec/functional/FR-201-check-a-probability-certificate.md:868-877; spec/functional/FR-201-check-a-probability-certificate.md:1749 |
+| FND-008 | medium | A `Vacuous` document offered where activation is reachable has no stated locus with several initial keys, and no AC tests it (author open question 3). The table and FSpec FR-412 say `InequalityFails` "at the initial state". Over AC-76's snapshot both `m` and `n` are initial keys, and "first in canonical order" alone could name `n`, from which nothing activates. Candidate: "A `Vacuous` document SHALL be rejected `InequalityFails` at the first initial complete product key, in canonical order, from which a first activating state is reachable, with no `part`". Add to AC-77: "the `Vacuous` document over AC-76's snapshot is rejected `InequalityFails` at `m`'s initial key with no `part`". | spec/functional/FR-201-check-a-probability-certificate.md:931-936 |
+| FND-009 | medium | The rank rule is ambiguous. "ranks SHALL be the checker-verified acyclic height ranks the profile above allows" can mean the ranks must equal the heights (terminal 0, live 1 + max successor), or only that height ranks are a valid choice. Under the first reading, a rank that satisfies CE-3 progress but is not the height (for example 5 at `m`'s initial key) has no stated rule, and AC-78's rank-0 `RankBroken` could instead be a height-mismatch rejection. reachability/v1 says "MAY emit". Candidate: "ranks SHALL satisfy CE-3 progress; the checker-verified acyclic height ranks are one valid ranking; a rank that breaks progress SHALL be rejected `RankBroken` (`RankMissing` when absent)". | spec/functional/FR-201-check-a-probability-certificate.md:910-920 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Lines 891-900: each part is a full `Exact` document with exactly identity, objective, kind "exact", values and ranking. A non-exact part or one without ranking is Malformed. |
+| FND-002 | fixed | Admission is limited to acyclic continuation graphs apart from terminal stutter (lines 871-872). Parts are checked by the Exact conditions, including CE-3 rank progress (lines 910-920). |
+| FND-003 | fixed | Lines 883-890 give the Ratio and Vacuous envelopes and import the reachability reader rules. |
+| FND-004 | fixed | Lines 921-928: ThresholdMissed is at the first failing initial complete key in canonical octet order, with no part, and the text notes FR-875's key order. |
+| FND-005 | fixed | AC-77 uses the document built over the only-n snapshot. The check order is stated at lines 935-936. |
+| FND-006 | fixed | FR-875:70 now cites FR-291-AC-1 for `kind` and names FSpec FR-331's bare `type` as the provider-entry spelling. |

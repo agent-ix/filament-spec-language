@@ -873,8 +873,9 @@ whose continuation graphs are acyclic apart from implicit terminal stutter
 that leaves no choice, the codec SHALL admit the `Conditional` `Ratio`
 certificate of "Conditional certificates" as a document of the separate
 `"filament.probability-objective/on-each-reachability/v1"` objective. Every
-other on-each form SHALL stay unsupported by this profile rather than be
-encoded as it.
+other on-each form is not admitted by this profile: no
+`on-each-reachability/v1` document SHALL be written or accepted for it, and
+it SHALL NOT be encoded as this profile.
 
 - The objective SHALL have exactly `profile` and `optimization`; `profile`
   SHALL be the identifier above and `optimization` SHALL be `"workload"`. It
@@ -904,17 +905,21 @@ encoded as it.
   `instance` and `activation` members, so a state before the guard first
   holds and the same model state after it have distinct keys. `values` and
   `ranking` of each part SHALL cover exactly the rebuilt reachable keys of all
-  instances, one row each, strictly ascending; a missing, extra or duplicate
-  row SHALL be rejected `Malformed` at `CertificateMember` naming that part
-  (`numerator` or `denominator`), before any arithmetic.
+  instances, one row each, strictly ascending by decoded complete key octets;
+  a missing, extra, duplicate or out-of-order row SHALL be rejected
+  `Malformed` at `CertificateMember` naming that part (`numerator` or
+  `denominator`), before any arithmetic. This decode-time rule is the reader
+  rejection the profile imports from the closed reachability document profile,
+  with its locus the part, and no other rule applies to such a row.
 - The checker SHALL check each part by the `Exact` conditions of "General
   checking conditions": Bellman equality at every live state, target value
   1 and non-target terminal value 0, and CE-3's positive-value rank progress.
   Equality alone SHALL NOT discharge the rank condition: on a cycle a waiting
   self-loop valued 1 satisfies equality without reaching its target, so a part
   whose ranks fail the progress condition SHALL be rejected `RankBroken` or
-  `RankMissing`, and ranks SHALL be the checker-verified acyclic height ranks
-  the profile above allows. A part that fails a condition SHALL be rejected
+  `RankMissing` when a rank is absent. The ranks SHALL satisfy CE-3 progress; the
+  checker-verified acyclic height ranks (terminal 0, live one plus the maximum
+  successor height) are one valid ranking and are not required. A part that fails a condition SHALL be rejected
   with the rule of that condition at the first failing key in canonical
   order, with `part` naming `numerator` or `denominator`; `numerator` is
   checked first.
@@ -931,7 +936,11 @@ encoded as it.
 - When every instance is vacuous, the claim SHALL be certified only by an
   accepted `Vacuous` document of this profile, and a `Ratio` document of this
   profile SHALL be rejected `InequalityFails` at the first initial complete
-  product key in canonical order, as "Conditional certificates" states. The
+  product key in canonical order, as "Conditional certificates" states. A
+  `Vacuous` document of this profile offered where a first activating state is
+  reachable SHALL be rejected `InequalityFails` at the first initial complete
+  product key, in canonical order, from which a first activating state is
+  reachable, with no `part`. The
   checks run in the order shape and coverage (`Malformed`), then the parts,
   then vacuity, then the threshold.
 - A `Ratio` document of this profile offered under every scheduler or under
@@ -1743,10 +1752,10 @@ initial states/bindings and refutations remain outside this profile.
 | FR-201-AC-74 | The AC-71 claims written `using` the event-position false-extension profile settle the same values and accept the same documents as under the infinite-trace profile: terminal `g` keeps value 1 by stutter rather than 0 by false extension. A workload long-run claim under that profile likewise uses the DTMC profiles (FR-201-AC-27's chain accepts at 1800/1801). Neither settles `unsupported`/`not-yet-implemented` for its profile. Weighted or fair every-scheduler, timed, multi-post and multiple initial/binding claims emit no MDP long-run document; pre-cancellation and exhaustion during MEC refinement or exact sums retain their typed cause with no accepted truth; zero direct instances retain UnsupportedBinding/unsupported. | Test (TC-3190) |
 | FR-201-AC-75 | For a checked root `holds(c.heads)` with no temporal operator, `QualifiedBoundedMonitor::supports` and `QualifiedBoundedMonitor::supports_observations` both return true under the event-position false-extension profile and both return false under the infinite-trace profile. Under the event-position profile the monitor's initial canonical monitor-state key and decided verdict for the tails and heads initial observations equal those of `eventually[0,0] holds(c.heads)` apart from the checked formula context. For a temporal clause whose formula is a root `holds(c.heads)`, `bounded_shape` and `closure_shape` return what they return without this reading (no bounded shape), and `BoundedTranslation::clause` over an origin clause under the infinite-trace profile still refuses it `NotTranslated`. | Test (TC-3195) |
 | FR-201-AC-76 | Over the `Link` model under `Even` with a start snapshot holding `m` undelivered and `n` delivered, the `on-each-reachability/v1` `Ratio` document for FR-875's claim `E` has, at `m`'s initial key, `numerator` `391/400` and `denominator` `1` (`m` activates at position 0) and, at `n`'s initial key, `0` and `0` (`n` never activates); at `rational(9, 10)` the checker accepts it with `m` the one compared instance (`391/400 >= 9/10`) and `n` vacuous, and at `rational(99, 100)` it rejects `ThresholdMissed` at `m`'s initial key with no `part` (`391/400 < 99/100`). | Test (TC-3208) |
-| FR-201-AC-77 | Over a start snapshot holding only `n` (delivered), the `Ratio` document built over that snapshot, whose rows are `n`'s with `numerator` `0` and `denominator` `0` at `n`'s initial key, is rejected `InequalityFails` at `n`'s initial key with no `part`, and the `Vacuous` document of the profile (`values` `[]`, `conditional` `{mode: "vacuous"}`, the same `objective`) is accepted on the side of a proof. | Test (TC-3208) |
-| FR-201-AC-78 | Over AC-76's snapshot, the document with `numerator` `1/2` at `m`'s initial key is rejected `InequalityFails` at `m`'s initial key with `part` `numerator` (the part's conditions run before the threshold); the document with `denominator` `1/2` there is rejected `InequalityFails` at `m`'s initial key with `part` `denominator`; and the document whose `numerator` ranking is `0` at `m`'s initial key is rejected `RankBroken` at that key with `part` `numerator`. | Test (TC-3209) |
-| FR-201-AC-79 | Over AC-76's snapshot, a `numerator` part that omits the row of `m`'s initial key, repeats it, or adds a row for a key the checker did not rebuild is rejected `Malformed` at `CertificateMember` `numerator`, and the same fault in the `denominator` part is rejected `Malformed` at `CertificateMember` `denominator`, before any arithmetic. | Test (TC-3209) |
-| FR-201-AC-80 | A `Ratio` document of the profile offered for FR-875's claim under every scheduler is rejected `Malformed` at `mode`; a claim of the on-each form over a cyclic continuation graph, with authored fairness or over a timed subject stays unsupported, with no accepted certificate. | Test (TC-3209) |
+| FR-201-AC-77 | Over a start snapshot holding only `n` (delivered), the `Ratio` document built over that snapshot, whose rows are `n`'s with `numerator` `0` and `denominator` `0` at `n`'s initial key, is rejected `InequalityFails` at `n`'s initial key with no `part`, and the `Vacuous` document of the profile (`values` `[]`, `conditional` `{mode: "vacuous"}`, the same `objective`) is accepted on the side of a proof. Over AC-76's snapshot the `Vacuous` document is rejected `InequalityFails` at `m`'s initial key with no `part`, since `m` activates. | Test (TC-3208) |
+| FR-201-AC-78 | Over AC-76's snapshot, the document with `numerator` `1/2` at `m`'s initial key is rejected `InequalityFails` at `m`'s initial key with `part` `numerator` (the part's conditions run before the threshold); the document with `denominator` `1/2` there is rejected `InequalityFails` at `m`'s initial key with `part` `denominator`; and the document whose `numerator` ranking is `0` at `m`'s initial key is rejected `RankBroken` at that key with `part` `numerator` (a rank of 0 leaves no successor of smaller rank, whatever ranking the part otherwise uses). | Test (TC-3209) |
+| FR-201-AC-79 | Over AC-76's snapshot, a `numerator` part that omits the row of `m`'s initial key, repeats it, lists two rows out of ascending order, or adds a row for a key the checker did not rebuild is rejected `Malformed` at `CertificateMember` `numerator`, and the same fault in the `denominator` part is rejected `Malformed` at `CertificateMember` `denominator`, before any arithmetic. | Test (TC-3209) |
+| FR-201-AC-80 | A `Ratio` document of the profile offered for FR-875's claim under every scheduler is rejected `Malformed` at `mode`; a claim of the on-each form over a cyclic continuation graph, with authored fairness or over a timed subject is not admitted by this profile: no `on-each-reachability/v1` document is written or accepted for it. | Test (TC-3209) |
 
 ## Dependencies
 
