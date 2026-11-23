@@ -177,6 +177,12 @@ pub fn settle_statistical(
                     value: *value,
                 }))
             }
+            StatisticalStop::SampleCountAboveLimit { limit, value, .. } => {
+                StatisticalRecord::of(TerminalValue::Incomplete(IncompleteCause::LimitReached {
+                    limit: ModelCheckLimit::Statistical(*limit),
+                    value: *value,
+                }))
+            }
             StatisticalStop::Expansion(stop) => expansion_stop(stop, subject),
             StatisticalStop::AutomatonStates { value } => {
                 StatisticalRecord::of(TerminalValue::Incomplete(IncompleteCause::LimitReached {
@@ -402,6 +408,10 @@ mod tests {
     fn completed(decision: Decision) -> StatisticalOutcome {
         StatisticalOutcome::Completed(Box::new(StatisticalVerdict {
             decision,
+            bound: crate::statistical::VerdictBound {
+                comparison: crate::statistical::BoundComparison::AtLeast,
+                threshold: ratio(99, 100),
+            },
             estimate: Some(ratio(97, 100)),
             interval: Some((ratio(96, 100), ratio(98, 100))),
             quantile: None,

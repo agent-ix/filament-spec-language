@@ -3050,6 +3050,10 @@ mod tests {
             let half = Rational::new(Integer::one(), Integer::from(2_u64)).unwrap();
             TerminalValue::Measured(Box::new(StatisticalVerdict {
                 decision,
+                bound: crate::statistical::VerdictBound {
+                    comparison: crate::statistical::BoundComparison::AtLeast,
+                    threshold: half.clone(),
+                },
                 estimate: None,
                 interval: None,
                 quantile: None,

@@ -331,6 +331,18 @@ fn statistical_method_from_source(method: &str, method_selection: Value) {
         "{first}"
     );
     assert_eq!(first["verdict"]["provenance"]["seed"], "7", "{first}");
+    // FSpec FR-410: the verdict states the bound it was judged against.
+    let (numerator, denominator) = if method == "regenerative" {
+        ("3", "10")
+    } else {
+        ("9", "10")
+    };
+    assert_eq!(
+        first["verdict"]["bound"],
+        json!({"comparison": ">=", "threshold": {
+            "numerator": numerator, "denominator": denominator}}),
+        "{first}"
+    );
     if method == "sprt" {
         assert!(first["verdict"]["interval"].is_null(), "{first}");
     } else {
@@ -1034,6 +1046,9 @@ fn statistical_refusals_and_budgets_from_source() {
         item.to_string().contains("statistical.max_samples"),
         "{item}"
     );
+    // The default Okamoto count exceeds the budget, so nothing is drawn.
+    assert_eq!(item["record"]["cause"]["limit"], "max_samples", "{item}");
+    assert_eq!(item["record"]["cause"]["value"], 10, "{item}");
     assert_eq!(
         item["request"]["probabilistic"]["limits"]["max_samples"], 10,
         "{item}"

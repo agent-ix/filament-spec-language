@@ -1993,6 +1993,10 @@ fn statistical_verdict_wire(
     // none is today (`omitted_witnesses` says why).
     let mut value = serde_json::json!({
         "decision": decision,
+        "bound": {
+            "comparison": verdict.bound.comparison.as_str(),
+            "threshold": rational_wire(&verdict.bound.threshold),
+        },
         "basis": basis,
         "provenance": provenance,
         "tests": tests,

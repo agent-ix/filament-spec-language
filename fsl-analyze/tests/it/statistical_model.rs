@@ -934,8 +934,8 @@ fn a_quantile_counts_only_activated_samples() {
 
 /// FR-189-AC-12's stop (TC-624 step 9), with an activation predicate that
 /// never holds in place of an activation of probability 0, which a weight
-/// cannot state: with `max_draws` 1,000, stops `MaxDraws` with no
-/// sample counted.
+/// cannot state: with `max_draws` 30,000 (above the 23,026 samples Okamoto
+/// needs), stops `MaxDraws` with no sample counted.
 #[trace("TC-624")]
 #[test]
 fn a_quantile_with_no_activation_stops_on_max_draws() {
@@ -949,7 +949,7 @@ fn a_quantile_with_no_activation_stops_on_max_draws() {
         "Never",
         StatisticalMethod::Okamoto,
         StatisticalLimits {
-            max_draws: 1_000,
+            max_draws: 30_000,
             ..StatisticalLimits::default()
         },
         DEFAULT_MAX_WITNESSES,
@@ -961,11 +961,11 @@ fn a_quantile_with_no_activation_stops_on_max_draws() {
         stop,
         StatisticalStop::Limit {
             limit: StatisticalLimit::MaxDraws,
-            value: 1_000
+            value: 30_000
         }
     );
     assert_eq!(partial.samples, 0);
-    assert_eq!(partial.draws, 1_000);
+    assert_eq!(partial.draws, 30_000);
 }
 
 /// Checks FR-189-AC-5 (TC-624 step 5), the `NotMarkov` clause: a `Health`

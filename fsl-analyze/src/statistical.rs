@@ -41,10 +41,11 @@ use fsl_eval::simulation::model::{ClauseOutcome, NotMarkov};
 use fsl_eval::simulation::{ExpansionStop, SampledStep};
 use fsl_foundation::selection::DefinitionRef;
 use fsl_replay::statistical::{
-    ClaimForm, Decision, MeasureValue, SampledUndefined, SampledWitness, StatisticalBasis,
-    StatisticalLimit, StatisticalLimits, StatisticalMethod, StatisticalOutcome,
+    BoundComparison, ClaimForm, Decision, MeasureValue, SampledUndefined, SampledWitness,
+    StatisticalBasis, StatisticalLimit, StatisticalLimits, StatisticalMethod, StatisticalOutcome,
     StatisticalProvenance, StatisticalRefusal, StatisticalStop, StatisticalUnsupported,
-    StatisticalVerdict, TestProvenance, TestResult, TraceRange, UndecidedCause, WitnessValue,
+    StatisticalVerdict, TestProvenance, TestResult, TraceRange, UndecidedCause, VerdictBound,
+    WitnessValue,
 };
 use fsl_replay::UndefinedEvaluation;
 
@@ -603,6 +604,29 @@ impl Plan<'_> {
                 StatisticalMethod::Sprt => None,
             },
         };
+        // A method with a fixed `N` compares it with the budgets before it
+        // draws (FR-191): `N` counted samples need at least `N` draws.
+        if matches!(
+            self.request.method,
+            StatisticalMethod::Okamoto | StatisticalMethod::ClopperPearson
+        ) {
+            let required = match self.request.method {
+                StatisticalMethod::ClopperPearson => {
+                    clopper_pearson_sample_count(&self.alpha, &self.beta, iota).map_err(fault)?
+                }
+                _ => okamoto_sample_count(&self.alpha, &self.beta, iota).map_err(fault)?,
+            };
+            for limit in [StatisticalLimit::MaxSamples, StatisticalLimit::MaxDraws] {
+                let value = limits.value(limit);
+                if required > Integer::from(value) {
+                    return Ok(TestEnd::Stopped(StatisticalStop::SampleCountAboveLimit {
+                        limit,
+                        value,
+                        required,
+                    }));
+                }
+            }
+        }
         let stride = u64::from(self.tests);
         loop {
             if fixed == Some(tally.counted) {
@@ -1091,6 +1115,14 @@ fn check_sampled_with_meter<S: BehaviourSampler>(
     Ok(StatisticalOutcome::Completed(Box::new(
         StatisticalVerdict {
             decision,
+            bound: VerdictBound {
+                comparison: match request.claim.bound().comparison {
+                    Cmp::AtLeast => BoundComparison::AtLeast,
+                    Cmp::AtMost => BoundComparison::AtMost,
+                    Cmp::Below => BoundComparison::Below,
+                },
+                threshold: request.claim.bound().threshold.clone(),
+            },
             estimate: chosen.and_then(|test| test.estimate.clone()),
             interval: chosen.and_then(|test| test.interval.clone()),
             quantile: chosen.and_then(|test| test.quantile.clone()),

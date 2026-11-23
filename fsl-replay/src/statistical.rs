@@ -269,6 +269,39 @@ impl StatisticalLimit {
     }
 }
 
+/// How a verdict's bound compares the measured value with its threshold.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum BoundComparison {
+    /// `>= θ`, written `>=`.
+    AtLeast,
+    /// `<= θ`, written `<=`.
+    AtMost,
+    /// `< θ`, written `<`: the strict bound a quantile claim reduces to.
+    Below,
+}
+
+impl BoundComparison {
+    /// The FR-413 `comparison` spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AtLeast => ">=",
+            Self::AtMost => "<=",
+            Self::Below => "<",
+        }
+    }
+}
+
+/// The bound a sampled result was judged against, shaped like FR-413's
+/// `counterexample.bound`.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerdictBound {
+    /// The comparison.
+    pub comparison: BoundComparison,
+    /// The threshold.
+    pub threshold: Rational,
+}
+
 /// A test's or a claim's decision (FR-189).
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Decision {
@@ -477,6 +510,8 @@ pub struct StatisticalVerdict {
     /// Accepted when every test accepts, Rejected when any rejects,
     /// Undecided otherwise.
     pub decision: Decision,
+    /// The bound the claim was judged against.
+    pub bound: VerdictBound,
     /// The least favourable test's estimate.
     pub estimate: Option<Rational>,
     /// The least favourable test's interval.
@@ -533,7 +568,7 @@ impl StatisticalVerdict {
 
 /// Why a run stopped before its method completed (FR-191; ADR-024 SV-4).
 /// A stopped run carries no decision.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StatisticalStop {
     /// A test would exceed a budget: the budget and the value it was set
     /// to; [`StatisticalLimit::setting`] names the member that raises it.
@@ -542,6 +577,17 @@ pub enum StatisticalStop {
         limit: StatisticalLimit,
         /// Its value in the run.
         value: u64,
+    },
+    /// A method with a fixed sample count `N` known before drawing needs
+    /// more than a budget allows: the run stops with no draw, naming the
+    /// budget, the value it was set to and the `N` the method requires.
+    SampleCountAboveLimit {
+        /// The budget `N` exceeds.
+        limit: StatisticalLimit,
+        /// Its value in the run.
+        value: u64,
+        /// The sample count the method requires.
+        required: filament_exact::Integer,
     },
     /// A sample's expansion stopped (ADR-024 ST-10), for example on the
     /// clause meter.
