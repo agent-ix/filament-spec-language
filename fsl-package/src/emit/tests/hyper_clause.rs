@@ -181,7 +181,7 @@ fn emit_finite<'a>(source: &str, documents: impl IntoIterator<Item = &'a [u8]>) 
 
 /// IR-1586: the finite hyper body names the profile of its own `using`
 /// clause, the second of two lock selections, never the first.
-#[trace("TC-2028", "FR-322-AC-464")]
+#[trace("FSpec-TC-2028", "FSpec-FR-322-AC-464")]
 #[test]
 fn a_finite_hyperproperty_names_its_own_profile_not_the_first_lock_selection() {
     let source = format!(
@@ -197,6 +197,15 @@ fn a_finite_hyperproperty_names_its_own_profile_not_the_first_lock_selection() {
     );
     let emission = emit_finite(&source, [document()]);
     let wire = wire(&emission);
+    crate::checked_v2::read_checked_package_v2(
+        emission.package.bytes(),
+        library(),
+        V2ReadLimits::fixture(),
+        &evidence(&wire),
+    )
+    .unwrap_or_else(|failure| {
+        panic!("the I2 reader admits the two-selection package: {failure:?}")
+    });
     let selected = |identity: &str| {
         json!({"role": "temporal_profile", "definition": {
             "authority": "agent-ix", "identity": identity}})
