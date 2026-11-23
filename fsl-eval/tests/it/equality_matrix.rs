@@ -4019,3 +4019,516 @@ fn map_equality_is_admitted_over_one_map_type() {
         })
     );
 }
+
+// ---- QSL-2057: the FR-149 equality-conversion table, with random bounds -----
+//
+// The oracle is an exact rational reference written here: a type is a membership
+// predicate over exact rationals (`n/d` in lowest terms, `i128`), a conversion
+// between numeric families keeps the rational and a conversion between quantity
+// units multiplies by the ratio of the two unit factors. The table
+// (`admits_equality_conversion`) and the checker are the code under test.
+
+mod table_properties {
+    use super::*;
+    use proptest::prelude::*;
+    use proptest::strategy::ValueTree;
+
+    /// A numeric type, drawn with random bounds, before it is a `ValueType`.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub enum Ty {
+        Integer,
+        Int(i64, i64),
+        Rat(i64, i64, i64, i64),
+        Dec(i64, i64, u32, u32),
+        F32,
+        F64,
+        /// 0 = metre, 1 = centimetre, 2 = second.
+        Qty(u8),
+        Opt(Box<Ty>),
+    }
+
+    /// An exact rational in lowest terms with a positive denominator.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct Q {
+        n: i128,
+        d: i128,
+    }
+
+    fn gcd(a: i128, b: i128) -> i128 {
+        if b == 0 {
+            a.abs()
+        } else {
+            gcd(b, a % b)
+        }
+    }
+
+    impl Q {
+        pub fn new(n: i128, d: i128) -> Self {
+            let g = gcd(n, d).max(1);
+            let sign = if d < 0 { -1 } else { 1 };
+            Self {
+                n: sign * n / g,
+                d: sign * d / g,
+            }
+        }
+        fn times(self, other: Self) -> Self {
+            Self::new(self.n * other.n, self.d * other.d)
+        }
+    }
+
+    fn pow10(k: u32) -> i128 {
+        10i128.pow(k)
+    }
+
+    /// Quantity unit: (dimension, factor to the dimension's reference unit).
+    fn unit(index: u8) -> (u8, Q) {
+        match index {
+            0 => (0, Q::new(1, 1)),
+            1 => (0, Q::new(1, 100)),
+            _ => (1, Q::new(1, 1)),
+        }
+    }
+
+    /// Whether `q` is a member of `ty`, from the declarations alone.
+    pub fn member(ty: &Ty, q: Q) -> bool {
+        match ty {
+            Ty::Integer => q.d == 1,
+            Ty::Int(lo, hi) => q.d == 1 && i128::from(*lo) <= q.n && q.n <= i128::from(*hi),
+            Ty::Rat(nl, nu, dl, du) => {
+                i128::from(*nl) <= q.n
+                    && q.n <= i128::from(*nu)
+                    && i128::from(*dl) <= q.d
+                    && q.d <= i128::from(*du)
+            }
+            Ty::Dec(lo, hi, smin, smax) => match decimal_form(q, *smin) {
+                Some((c, s)) => {
+                    s <= *smax && i128::from(*lo) <= c && c <= i128::from(*hi)
+                }
+                None => false,
+            },
+            Ty::Qty(_) => true,
+            Ty::F32 | Ty::F64 | Ty::Opt(_) => false,
+        }
+    }
+
+    /// `(coefficient, scale)` with `scale = max(minimal scale, smin)`, when `q` is decimal.
+    fn decimal_form(q: Q, smin: u32) -> Option<(i128, u32)> {
+        let mut scale = 0u32;
+        while pow10(scale) % q.d != 0 {
+            scale += 1;
+            if scale > 12 {
+                return None;
+            }
+        }
+        let scale = scale.max(smin);
+        Some((q.n * (pow10(scale) / q.d), scale))
+    }
+
+    /// The rational a member of `from` becomes when converted into `to`, per the
+    /// reference rules; `None` when the standard defines no conversion.
+    fn converted(from: &Ty, to: &Ty, q: Q) -> Option<Q> {
+        let numeric = |ty: &Ty| {
+            matches!(
+                ty,
+                Ty::Integer | Ty::Int(..) | Ty::Rat(..) | Ty::Dec(..)
+            )
+        };
+        match (from, to) {
+            (Ty::Qty(a), Ty::Qty(b)) => {
+                let ((da, fa), (db, fb)) = (unit(*a), unit(*b));
+                (da == db).then(|| q.times(Q::new(fa.n * fb.d, fa.d * fb.n)))
+            }
+            (a, b) if numeric(a) && numeric(b) => Some(q),
+            (a, b) if a == b => Some(q),
+            _ => None,
+        }
+    }
+
+    /// Boundary values of a type, one step inside and outside each limit.
+    fn limits(ty: &Ty) -> Vec<Q> {
+        let around = |lo: i64, hi: i64| {
+            [lo - 1, lo, lo + 1, hi - 1, hi, hi + 1, 0, 1, -1]
+                .into_iter()
+                .map(i128::from)
+                .collect::<Vec<_>>()
+        };
+        match ty {
+            Ty::Integer => [0, 1, -1, 300, -300, 70_000]
+                .into_iter()
+                .map(|n| Q::new(n, 1))
+                .collect(),
+            Ty::Int(lo, hi) => around(*lo, *hi).into_iter().map(|n| Q::new(n, 1)).collect(),
+            Ty::Rat(nl, nu, dl, du) => {
+                let denominators = [*dl, dl + 1, du - 1, *du, du + 1, 1, 2, 3];
+                around(*nl, *nu)
+                    .into_iter()
+                    .flat_map(|n| {
+                        denominators
+                            .into_iter()
+                            .filter(|d| *d >= 1)
+                            .map(move |d| Q::new(n, i128::from(d)))
+                    })
+                    .collect()
+            }
+            Ty::Dec(lo, hi, smin, smax) => {
+                let scales = [*smin, *smax, smax + 1, 0, 1, 2];
+                around(*lo, *hi)
+                    .into_iter()
+                    .flat_map(|c| scales.into_iter().map(move |s| Q::new(c, pow10(s))))
+                    .collect()
+            }
+            Ty::Qty(_) => [(0, 1), (1, 1), (-1, 1), (7, 3), (100, 1)]
+                .into_iter()
+                .map(|(n, d)| Q::new(n, d))
+                .collect(),
+            Ty::F32 | Ty::F64 | Ty::Opt(_) => Vec::new(),
+        }
+    }
+
+    /// Members of `source` worth converting: the limits of both types, kept when `source` has them.
+    pub fn samples(source: &Ty, target: &Ty) -> Vec<Q> {
+        let mut out: Vec<Q> = Vec::new();
+        for q in limits(source).into_iter().chain(limits(target)) {
+            if member(source, q) && !out.contains(&q) {
+                out.push(q);
+            }
+        }
+        out
+    }
+
+    fn value_type(ty: &Ty, units: &Units) -> ValueType {
+        match ty {
+            Ty::Integer => ValueType::Integer,
+            Ty::Int(lo, hi) => int_type(*lo, *hi),
+            Ty::Rat(a, b, c, d) => rational_type(*a, *b, *c, *d),
+            Ty::Dec(lo, hi, smin, smax) => {
+                decimal_type(*lo, *hi, u64::from(*smin), u64::from(*smax))
+            }
+            Ty::F32 => ValueType::Float(FloatType::exact(IeeeWidth::Binary32)),
+            Ty::F64 => ValueType::Float(FloatType::exact(IeeeWidth::Binary64)),
+            Ty::Qty(0) => ValueType::Quantity(units.m.clone()),
+            Ty::Qty(1) => ValueType::Quantity(units.cm.clone()),
+            Ty::Qty(_) => ValueType::Quantity(units.s.clone()),
+            Ty::Opt(member) => ValueType::option(value_type(member, units)),
+        }
+    }
+
+    /// The runtime value of `q` as a member of `ty`.
+    fn value_of(ty: &Ty, q: Q, units: &Units) -> Option<Value> {
+        let big = |n: i128| Integer::from(i64::try_from(n).expect("small reference values"));
+        match ty {
+            Ty::Integer | Ty::Int(..) => (q.d == 1).then(|| Value::Integer(big(q.n))),
+            Ty::Rat(..) => Some(Value::Rational(Rational::new(big(q.n), big(q.d)).ok()?)),
+            Ty::Dec(_, _, smin, _) => {
+                let (c, s) = decimal_form(q, *smin)?;
+                Some(Value::Decimal(Decimal::new(big(c), s)))
+            }
+            Ty::Qty(index) => {
+                let id = match index {
+                    0 => units.m.clone(),
+                    1 => units.cm.clone(),
+                    _ => units.s.clone(),
+                };
+                Some(Value::Quantity(Quantity::new(
+                    Rational::new(big(q.n), big(q.d)).ok()?,
+                    id,
+                )))
+            }
+            Ty::F32 | Ty::F64 | Ty::Opt(_) => None,
+        }
+    }
+
+    /// The code under test: the shared kernel's table.
+    pub fn real_table(units: &Units, source: &Ty, target: &Ty) -> bool {
+        use filament_semantic_value::declaration::admits_equality_conversion;
+        use filament_semantic_value::quantity::UnitScope;
+        admits_equality_conversion(
+            &value_type(source, units),
+            &value_type(target, units),
+            &UnitScope::new(&units.table),
+        )
+    }
+
+    // ---- generators ------------------------------------------------------
+
+    fn scalar() -> BoxedStrategy<Ty> {
+        prop_oneof![
+            1 => Just(Ty::Integer),
+            4 => (-50i64..=50, 0i64..=400).prop_map(|(lo, w)| Ty::Int(lo, lo + w)),
+            3 => (-20i64..=20, 0i64..=40, 1i64..=4, 0i64..=8)
+                .prop_map(|(nl, w, dl, dw)| Ty::Rat(nl, nl + w, dl, dl + dw)),
+            3 => (-50i64..=50, 0i64..=400, 0u32..=3, 0u32..=3)
+                .prop_map(|(lo, w, smin, sw)| Ty::Dec(lo, lo + w, smin, smin + sw)),
+            1 => Just(Ty::F32),
+            1 => Just(Ty::F64),
+            1 => (0u8..3).prop_map(Ty::Qty),
+        ]
+        .boxed()
+    }
+
+    /// A target near `source`: the same family with bounds moved by a few steps, or
+    /// another numeric family whose bounds start from the source's bounds.
+    fn near(source: &Ty, moves: [i64; 4], family: u8) -> Ty {
+        let [a, b, c, d] = moves;
+        let widen = |lo: i64, hi: i64| (lo - a.abs(), hi + b.abs());
+        let shift = |lo: i64, hi: i64| (lo + a, hi + b);
+        match (source, family % 4) {
+            (Ty::Int(lo, hi), 0) => {
+                let (l, h) = shift(*lo, *hi);
+                Ty::Int(l.min(h), h.max(l))
+            }
+            (Ty::Int(lo, hi), 1) => {
+                let (l, h) = widen(*lo, *hi);
+                Ty::Rat(l, h, 1, 1 + c.abs() % 3)
+            }
+            (Ty::Int(lo, hi), 2) => {
+                let s = (d.unsigned_abs() % 3) as u32;
+                let (l, h) = widen(*lo, *hi);
+                Ty::Dec(l * pow10(s) as i64, h * pow10(s) as i64 + c, s, s + 1)
+            }
+            (Ty::Rat(nl, nu, dl, du), 0) => {
+                let (l, h) = shift(*nl, *nu);
+                Ty::Rat(l.min(h), h.max(l), (*dl + c % 2).max(1), (*du + d % 3).max(*dl).max(1))
+            }
+            (Ty::Rat(nl, nu, _, du), _) if *du == 1 => {
+                let (l, h) = shift(*nl, *nu);
+                Ty::Int(l.min(h), h.max(l))
+            }
+            (Ty::Dec(lo, hi, smin, smax), 0) => {
+                let (l, h) = shift(*lo, *hi);
+                let (l, h) = (l.min(h), h.max(l));
+                Ty::Dec(l, h, smin.saturating_sub((c.unsigned_abs() % 2) as u32), smax + (d.unsigned_abs() % 2) as u32)
+            }
+            (Ty::Dec(lo, hi, smin, smax), 1) => {
+                let _ = (smin, smax);
+                let (l, h) = shift(*lo, *hi);
+                Ty::Rat(l.min(h) * 10, h.max(l) * 10, 1, 10 + c.abs() % 5)
+            }
+            (Ty::Dec(lo, hi, 0, 0), _) => {
+                let (l, h) = shift(*lo, *hi);
+                Ty::Int(l.min(h), h.max(l))
+            }
+            (Ty::Qty(u), _) => Ty::Qty(((i64::from(*u) + a.abs()) % 3) as u8),
+            (other, _) => other.clone(),
+        }
+    }
+
+    pub fn pairs() -> BoxedStrategy<(Ty, Ty)> {
+        let source = prop_oneof![
+            8 => scalar(),
+            1 => scalar().prop_map(|ty| Ty::Opt(Box::new(ty))),
+        ];
+        let target = (source, (-6i64..=6, -6i64..=6, -6i64..=6, -6i64..=6), 0u8..4, scalar(), 0u8..4)
+            .prop_map(|(source, moves, family, other, pick)| {
+                let near_target = match &source {
+                    Ty::Opt(inner) => Ty::Opt(Box::new(near(inner, moves.into(), family))),
+                    _ => near(&source, moves.into(), family),
+                };
+                let target = match pick {
+                    0 => other,
+                    1 => source.clone(),
+                    _ => near_target,
+                };
+                (source, target)
+            });
+        target.boxed()
+    }
+
+    fn environment(units: &Units) -> TypeEnvironment {
+        TypeEnvironment::default().with_units(units.table.clone())
+    }
+
+    /// P1 on one pair: when `admits` says the conversion is a row, the real checker
+    /// accepts the converted equality and every sampled member compares equal to its image.
+    pub fn conversion_loses_nothing(
+        units: &Units,
+        admits: &dyn Fn(&Ty, &Ty) -> bool,
+        source: &Ty,
+        target: &Ty,
+    ) -> Result<(), String> {
+        if !admits(source, target) {
+            return Ok(());
+        }
+        let env = environment(units);
+        let (from, to) = (value_type(source, units), value_type(target, units));
+        let checked = env
+            .check_equality(
+                EqualityOperator::Equal,
+                EqualityOperand::converted(from, to.clone()),
+                EqualityOperand::typed(to),
+                &EnumMemberIndex::default(),
+            )
+            .map_err(|refusal| format!("{source:?} -> {target:?} admitted but the checker refuses `=`: {refusal:?}"))?;
+        for q in samples(source, target) {
+            let Some(image) = converted(source, target, q) else {
+                continue;
+            };
+            if !member(target, image) {
+                continue; // reported by `lossy_conversions_are_not_admitted`
+            }
+            let (Some(left), Some(right)) = (value_of(source, q, units), value_of(target, image, units)) else {
+                continue;
+            };
+            let outcome = checked.evaluate(&env, &left, &right, &mut Meter::new(UNLIMITED));
+            if outcome != Outcome::Completed(true) {
+                return Err(format!(
+                    "{source:?} -> {target:?}: member {q:?} = {left:?} and its image {right:?} do not compare equal: {outcome:?}"
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// P2 on one pair: a member of `source` that the reference says does not survive
+    /// conversion, found among the boundary samples, while `admits` still says yes.
+    pub fn lossy_member_admitted(
+        admits: &dyn Fn(&Ty, &Ty) -> bool,
+        source: &Ty,
+        target: &Ty,
+    ) -> Option<String> {
+        if !admits(source, target) {
+            return None;
+        }
+        let non_numeric = |ty: &Ty| matches!(ty, Ty::F32 | Ty::F64 | Ty::Opt(_));
+        if source != target && (non_numeric(source) || non_numeric(target)) {
+            return Some(format!(
+                "{source:?} -> {target:?}: the standard's table admits only the identical type for floats and options"
+            ));
+        }
+        samples(source, target).into_iter().find_map(|q| {
+            let lost = match converted(source, target, q) {
+                None => true,
+                Some(image) => !member(target, image),
+            };
+            lost.then(|| format!("{source:?} -> {target:?} admitted, but the member {q:?} is lost"))
+        })
+    }
+
+    fn config() -> proptest::test_runner::Config {
+        fsl_bench::prop::config(256)
+    }
+
+    /// Provenance: QSL-2057 P1 (FR-149-AC-10). Every admitted pair converts every sampled member without loss.
+    #[test]
+    fn admitted_conversions_lose_nothing() {
+        let units = units();
+        let admits = |s: &Ty, t: &Ty| real_table(&units, s, t);
+        fsl_bench::prop::run(
+            "admitted_conversions_lose_nothing",
+            config(),
+            &pairs(),
+            |(source, target)| {
+                conversion_loses_nothing(&units, &admits, &source, &target)
+                    .map_err(TestCaseError::fail)
+            },
+        )
+        .unwrap();
+    }
+
+    /// Provenance: QSL-2057 P2 (FR-149-AC-10). A pair with a lossy member is not admitted.
+    #[test]
+    fn lossy_conversions_are_not_admitted() {
+        let units = units();
+        let admits = |s: &Ty, t: &Ty| real_table(&units, s, t);
+        fsl_bench::prop::run(
+            "lossy_conversions_are_not_admitted",
+            config(),
+            &pairs(),
+            |(source, target)| match lossy_member_admitted(&admits, &source, &target) {
+                Some(why) => Err(TestCaseError::fail(why)),
+                None => Ok(()),
+            },
+        )
+        .unwrap();
+    }
+
+    /// The generator reaches both admitted and refused rows; the rates are printed.
+    #[test]
+    fn pair_generator_reaches_admitted_and_refused_rows() {
+        let units = units();
+        let mut runner = proptest::test_runner::TestRunner::new(config());
+        let strategy = pairs();
+        let (mut admitted, mut lossy_refused, total) = (0, 0, 512);
+        for _ in 0..total {
+            let (s, t) = strategy.new_tree(&mut runner).unwrap().current();
+            if real_table(&units, &s, &t) {
+                admitted += 1;
+            } else if s != t {
+                lossy_refused += 1;
+            }
+        }
+        eprintln!("pair generator: {admitted}/{total} admitted, {lossy_refused}/{total} refused");
+        assert!(admitted * 5 >= total, "admitted rows under 20%: {admitted}/{total}");
+        assert!(lossy_refused * 5 >= total, "refused rows under 20%: {lossy_refused}/{total}");
+    }
+
+    /// A hand-written wrong table: the real rows, plus `Int[a,b]` to `Int[c,d]` whenever the ranges overlap.
+    fn wrong_table(units: &Units) -> impl Fn(&Ty, &Ty) -> bool + '_ {
+        move |source, target| {
+            real_table(units, source, target)
+                || matches!((source, target),
+                    (Ty::Int(a, b), Ty::Int(c, d)) if a <= d && c <= b)
+        }
+    }
+
+    /// Provenance: QSL-2057 negative. `Int[0, 300]` to `Int[0, 255]` as a table row fails
+    /// P2 with the lost member named, and a random wrong row shrinks to a small `Int` pair.
+    #[test]
+    fn wrong_row_is_caught() {
+        let units = units();
+        let wrong = wrong_table(&units);
+        let named = lossy_member_admitted(&wrong, &Ty::Int(0, 300), &Ty::Int(0, 255))
+            .expect("the wrong row must be caught");
+        assert!(named.contains("Int(0, 300)") && named.contains("is lost"), "{named}");
+        // P1 sees it too, through the real checker.
+        assert!(conversion_loses_nothing(&units, &wrong, &Ty::Int(0, 300), &Ty::Int(0, 255)).is_err());
+
+        let mut config = config();
+        config.failure_persistence = None;
+        let outcome = fsl_bench::prop::run("wrong_row_is_caught", config, &pairs(), |(s, t)| {
+            match lossy_member_admitted(&wrong, &s, &t) {
+                Some(why) => Err(TestCaseError::fail(why)),
+                None => Ok(()),
+            }
+        });
+        match outcome {
+            Err(proptest::test_runner::TestError::Fail(_, (Ty::Int(a, b), Ty::Int(c, d)))) => {
+                assert!(b - a <= 8 && d - c <= 8, "did not shrink: Int({a},{b}) -> Int({c},{d})");
+            }
+            other => panic!("the wrong row went unnoticed or shrank badly: {other:?}"),
+        }
+    }
+
+    /// Provenance: QSL-2057 negative (FR-149-AC-9, AC-22). A float format against a decimal,
+    /// an exact type or another width is refused, and is never sampled as admitted.
+    #[test]
+    fn floats_against_exact_types_are_refused() {
+        let units = units();
+        let exact = [
+            Ty::Integer,
+            Ty::Int(0, 3),
+            Ty::Rat(0, 3, 1, 2),
+            Ty::Dec(0, 100, 0, 2),
+        ];
+        for float in [Ty::F32, Ty::F64] {
+            for other in &exact {
+                assert!(!real_table(&units, &float, other), "{float:?} -> {other:?}");
+                assert!(!real_table(&units, other, &float), "{other:?} -> {float:?}");
+            }
+        }
+        assert!(!real_table(&units, &Ty::F32, &Ty::F64));
+        assert!(!real_table(&units, &Ty::F64, &Ty::F32));
+        // Whatever the generator draws, a float pair is admitted only when identical.
+        fsl_bench::prop::run(
+            "floats_against_exact_types_are_refused",
+            config(),
+            &pairs(),
+            |(s, t)| {
+                let float = matches!(s, Ty::F32 | Ty::F64) || matches!(t, Ty::F32 | Ty::F64);
+                prop_assert!(!float || s == t || !real_table(&units, &s, &t), "{:?} -> {:?}", s, t);
+                Ok(())
+            },
+        )
+        .unwrap();
+    }
+}

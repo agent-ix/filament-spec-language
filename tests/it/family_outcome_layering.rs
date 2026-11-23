@@ -326,11 +326,15 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
         );
     }
     for (crate_name, allowed, dev_only) in [
-        ("fsl-foundation", &["filament-exact"][..], &[][..]),
+        (
+            "fsl-foundation",
+            &["filament-exact"][..],
+            &["fsl-bench"][..],
+        ),
         (
             "fsl-cst",
             &["fsl-foundation", "filament-exact"][..],
-            &[][..],
+            &["fsl-bench", "fsl-cst"][..],
         ),
         (
             "fsl-forms",
@@ -373,7 +377,7 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
                 "filament-exact",
                 "filament-semantic-value",
             ][..],
-            &["fsl-cst", "fsl-forms"][..],
+            &["fsl-bench", "fsl-cst", "fsl-forms"][..],
         ),
     ] {
         let package = packages
