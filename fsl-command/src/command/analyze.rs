@@ -458,7 +458,6 @@ fn run_package(
             RunCause::AnalyzeRefused(Box::new(refusal))
         }
         PackageRunError::Document(AnalyzeDocumentError::Fault) => RunCause::AnalyzeFault,
-        PackageRunError::Component(failure) => native_join_cause(failure),
         PackageRunError::Composition { node, refusal } => {
             package_composition_cause(&node, &refusal)
         }
@@ -744,6 +743,47 @@ mod package_intake_tests {
                 Some("work-budget-exceeded" | "node-count-exceeded")
             ));
         }
+    }
+
+    /// FR-1044 "Current system behavior", FR-531: a native charge denied
+    /// while the package route reads a composition's admitted facts refuses
+    /// the request whole as `stage_limit_exceeded` (exit 22) naming the
+    /// `i2.*` setting of the denied charge; any other refusal of the admitted
+    /// rows is a fault.
+    #[trace("FR-1044-AC-10")]
+    #[test]
+    fn a_denied_composition_charge_names_its_native_join_setting() {
+        use filament_contract_model::{NativeJoinChargeKind, NativeJoinDeniedCharge};
+        use fsl_replay::planner::PackageCompositionRefusal;
+        let node = fsl_semantics::check::wire_id::structural_id(
+            &filament_exact::NodeKey::new(
+                "test",
+                vec![filament_exact::PathSegment::Text("Sys".to_owned())],
+                0,
+            )
+            .expect("node"),
+        );
+        for (kind, setting) in [
+            (NativeJoinChargeKind::Work, Setting::I2WorkUnits),
+            (NativeJoinChargeKind::Storage, Setting::I2NativeJoinStorage),
+        ] {
+            let refusal = PackageCompositionRefusal::Native {
+                denied: NativeJoinDeniedCharge { kind, amount: 1 },
+                locus: None,
+                configured_bound: 0,
+            };
+            let cause = package_composition_cause(&node, &refusal);
+            assert_eq!(cause.code().as_str(), "stage_limit_exceeded");
+            assert_eq!(cause.category().exit_code(), 22);
+            let RunCause::AnalyzePackage { message, .. } = cause else {
+                panic!("a typed limit refusal");
+            };
+            assert!(message.contains(&setting.to_string()), "{message}");
+        }
+        assert!(matches!(
+            package_composition_cause(&node, &PackageCompositionRefusal::Member),
+            RunCause::AnalyzeFault
+        ));
     }
 }
 

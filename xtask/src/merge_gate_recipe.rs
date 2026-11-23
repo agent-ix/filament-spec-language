@@ -135,42 +135,10 @@ const INSPECT_CONSUMERS: &[ItFilter] = &[ItFilter {
 /// The engine filters every analyze source change runs, then the modules that
 /// hold the source-route and package-route parity tests (FSL FR-940) for the
 /// shared request settlement: `request.rs` and `analyze.rs` decide an item's
-/// disposition for both routes.
+/// disposition for both routes. `document.rs` and `document/**` settle
+/// both routes' documents and compositions; `analyze_composition_cli` holds
+/// the composition parity tests (FR-1044-AC-10).
 const ROUTE_PARITY_CONSUMERS: &[ItFilter] = &[
-    ItFilter {
-        package: "fsl-analyze",
-        rule: ItRule::Fixed("monitor_"),
-    },
-    ItFilter {
-        package: "fsl-analyze",
-        rule: ItRule::Fixed("timed_"),
-    },
-    ItFilter {
-        package: "fsl-analyze",
-        rule: ItRule::Fixed("hyper"),
-    },
-    ItFilter {
-        package: "fsl-analyze",
-        rule: ItRule::Fixed("probabilistic"),
-    },
-    ItFilter {
-        package: "fsl-analyze",
-        rule: ItRule::Fixed("analyze_package_selection"),
-    },
-    ItFilter {
-        package: "fsl-analyze",
-        rule: ItRule::Fixed("analyze_request_wire"),
-    },
-    ItFilter {
-        package: "fsl-analyze",
-        rule: ItRule::Fixed("analyze_package_provider"),
-    },
-];
-/// The route parity modules, then the composition module: the shared
-/// document settlement (`document.rs`) and its package route and composition
-/// analysis (`document/**`) settle both routes, and FR-1044-AC-10's
-/// source/package composition parity tests live in `analyze_composition_cli`.
-const DOCUMENT_ROUTE_CONSUMERS: &[ItFilter] = &[
     ItFilter {
         package: "fsl-analyze",
         rule: ItRule::Fixed("monitor_"),
@@ -511,7 +479,7 @@ const RULES: &[Rule] = &[
         prefix: "fsl-analyze/src/analyze/document",
         package: Some("fsl-analyze"),
         lib: Some(LibRule::SourceModule),
-        it_filters: DOCUMENT_ROUTE_CONSUMERS,
+        it_filters: ROUTE_PARITY_CONSUMERS,
         large_input: &[],
         note: None,
         skips: &[],

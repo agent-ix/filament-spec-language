@@ -256,10 +256,6 @@ pub enum PackageRunError {
         /// The original refusal.
         refusal: fsl_replay::planner::PackageCompositionRefusal,
     },
-    /// A component package the request retains could not be joined as its
-    /// own package view under the invocation's native budget (FR-531).
-    #[error("component package views could not be joined: {0:?}")]
-    Component(fsl_package::NativeJoinFailure),
     /// The run was refused or faulted as the source route's is.
     #[error(transparent)]
     Document(#[from] AnalyzeDocumentError),
@@ -520,8 +516,9 @@ fn settle_package_run_inner(
         }
     }
     // FR-1044: each composition the default items select, read from its
-    // admitted facts, and each component package its premise items run over,
-    // joined as its own package view from the artifact the request retains.
+    // admitted facts, and each component package its premise items run over:
+    // the package view the request's own join already authenticated (no
+    // component is joined again).
     let mut facts: BTreeMap<RequestIndex, super::composition_item::CompositionFacts> =
         BTreeMap::new();
     for item in &named {
@@ -545,19 +542,11 @@ fn settle_package_run_inner(
             continue;
         }
         let admitted_before = &supply.dependencies[..at];
-        let component = BarePackage::new(&artifact.package)
-            .with_canonical_bytes(&artifact.bytes)
-            .with_dependency_artifacts(admitted_before, &mut budget)
-            .and_then(|component| {
-                component.with_supply(
-                    fsl_package::BareSupply {
-                        identities: &artifact.identities,
-                        equality: Some(&artifact.equality),
-                    },
-                    &mut budget,
-                )
-            })
-            .map_err(PackageRunError::Component)?;
+        let component = package
+            .dependency_views()
+            .iter()
+            .find(|view| view.package().name() == artifact.identity)
+            .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
         component_packages.push(ComponentPackage {
             artifact,
             admitted_before,
@@ -567,7 +556,7 @@ fn settle_package_run_inner(
     let component_inputs = component_packages
         .iter()
         .map(|component| {
-            PackageModelInput::of(&component.package, binding.packages, limits.normalization)
+            PackageModelInput::of(component.package, binding.packages, limits.normalization)
                 .map_err(input_refusal)
         })
         .collect::<Result<Vec<_>, _>>()?;
@@ -588,7 +577,7 @@ fn settle_package_run_inner(
                 (
                     component.artifact.identity.as_str(),
                     ClaimReads {
-                        package: &component.package,
+                        package: component.package,
                         input: Some(input),
                         package_bytes: &component.artifact.bytes,
                         supply: fsl_replay::HandoffSupply {
@@ -1018,17 +1007,22 @@ fn settle_package_run_inner(
                 own: super::super::DocumentGraphs::of_bytes(package_bytes),
                 // FSpec FR-322: an item over a component package, and a
                 // composition's component slots, index the graph of the
-                // component's retained admitted bytes.
-                dependencies: supply
-                    .dependencies
-                    .iter()
-                    .map(|artifact| {
-                        (
-                            artifact.identity.clone(),
-                            super::super::DocumentGraphs::of_bytes(&artifact.bytes),
-                        )
-                    })
-                    .collect(),
+                // component's retained admitted bytes. Only a run that selects
+                // a composition writes such an id, so only it reads them.
+                dependencies: if facts.is_empty() {
+                    BTreeMap::new()
+                } else {
+                    supply
+                        .dependencies
+                        .iter()
+                        .map(|artifact| {
+                            (
+                                artifact.identity.clone(),
+                                super::super::DocumentGraphs::of_bytes(&artifact.bytes),
+                            )
+                        })
+                        .collect()
+                },
             },
         },
         &settled,
@@ -3775,13 +3769,13 @@ fn input_refusal(refusal: PendingPackageForm) -> PackageRunError {
 }
 
 /// One component package a selected composition's premise items run over:
-/// its retained dependency artifact, joined as its own package view with
-/// the artifacts admitted before it (its own dependencies among them).
+/// its retained dependency artifact and the package view the request's join
+/// authenticated for it.
 struct ComponentPackage<'a> {
     artifact: &'a fsl_package::DependencyArtifact,
     /// The artifacts admitted before this one, which its replay admits first.
     admitted_before: &'a [fsl_package::DependencyArtifact],
-    package: BarePackage<'a>,
+    package: &'a BarePackage<'a>,
 }
 
 /// The package route's composition front end (FR-940, FR-1044): it resolves
@@ -3832,54 +3826,54 @@ impl<'r> super::composition_item::CompositionFront for PackageCompositions<'r> {
         index: RequestIndex,
         clause: &super::composition_item::GuaranteeClause,
         identity: &str,
-    ) -> Result<ResolvedItem, PackageRunError> {
+    ) -> Result<super::composition_item::GuaranteeResolution, PackageRunError> {
+        let fault = || PackageRunError::Document(AnalyzeDocumentError::Fault);
         let Some((_, reads)) = self
             .components
             .iter()
             .find(|(component, _)| *component == identity)
         else {
-            return Ok(super::composition_item::failed(index, &clause.name));
+            return Ok(super::composition_item::GuaranteeResolution::Settled(
+                super::composition_item::failed(index, &clause.name),
+            ));
         };
         let view = reads.package;
-        let Some(row) = view
+        // `from_view` authenticated the clause's owner and node: its name row
+        // in that owner must name the same declaration, else the facts
+        // disagree and the run faults rather than analyze another clause.
+        let row = view
             .clause_names()
             .iter()
             .find(|row| row.name.as_ref() == clause.name)
-        else {
-            return Ok(unknown_claim(index, &clause.name));
-        };
+            .ok_or_else(fault)?;
         let key = fsl_package::checked_views::temporal_subject(view.package(), &row.declaration)
             .ok()
             .and_then(|subject| subject.declaration_key())
-            .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
+            .ok_or_else(fault)?;
+        if key != clause.node {
+            return Err(fault());
+        }
         let claim = OccurrenceKey::new(
             key,
             filament_exact::Origin::new(filament_exact::Role::new("claim"), row.occurrence),
         );
         let selection = super::composition_item::guarantee_selection(clause);
         match reads.clause(index, &clause.name, &claim, &selection)? {
-            Resolution::Settled(settled) => Ok(settled),
+            Resolution::Settled(settled) => Ok(
+                super::composition_item::GuaranteeResolution::Settled(settled),
+            ),
             Resolution::Claim(claim, ClauseRoute { subject, protocol }) => {
-                let owner = super::ComponentOwner {
-                    identity: identity.to_owned(),
-                    owning_model: owner_of_clause(view, subject.clause()),
-                    family: Some(DeclarationFamily::TemporalTrace),
-                };
+                let owning_model = owner_of_clause(view, subject.clause());
                 self.claims.push(subject.occurrence().clone());
                 if let Some(input) = reads.input {
                     self.inputs.insert(index, input);
                 }
                 self.routes
                     .insert(index, Route::Clause { subject, protocol });
-                Ok(ResolvedItem::Composition(Box::new(
-                    super::composition_item::CompositionClaim {
-                        claim: *claim,
-                        owner: Some(owner),
-                        settled: None,
-                        required: Vec::new(),
-                        components: fsl_semantics::check::ComponentPackages::default(),
-                    },
-                )))
+                Ok(super::composition_item::GuaranteeResolution::Claim {
+                    claim,
+                    owning_model,
+                })
             }
         }
     }

@@ -35,7 +35,7 @@ use fsl_replay::planner::{
     SlotKey, SlotRole,
 };
 use fsl_replay::{DeclineCode, ProofRefusalCause, TerminalRecord};
-use fsl_route::request::{ExtentClassification, ItemKind};
+use fsl_route::request::ExtentClassification;
 use fsl_route::Registry;
 use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::check::{Capability, CheckedComposition, ComponentPackages, DeclarationFamily};
@@ -139,11 +139,16 @@ pub(super) struct GuaranteeClause {
     pub name: String,
     /// The clause's node in the component's package.
     pub node: NodeKey,
+    /// The identity of the component package that owns the clause: the
+    /// package of its `components` entry; `None` when no entry names the
+    /// component.
+    pub owner: Option<String>,
 }
 
 impl CompositionFacts {
     /// The facts of the checked declaration `composition` of `package`.
     pub(super) fn of_checked(package: &CheckedPackage, composition: &CheckedComposition) -> Self {
+        let components = composition.component_packages();
         let cycles = composition
             .cycles()
             .iter()
@@ -160,6 +165,9 @@ impl CompositionFacts {
                                 .guarantee
                                 .filter(|_| premise.derived.role == SlotRole::ComponentGuarantee)
                                 .map(|clause| GuaranteeClause {
+                                    owner: components
+                                        .of_component(&clause.component)
+                                        .map(str::to_owned),
                                     component: clause.component,
                                     name: clause.name,
                                     node: clause.node,
@@ -178,7 +186,7 @@ impl CompositionFacts {
             cycles,
             slots,
             assumptions: composition.item().assumptions,
-            components: composition.component_packages(),
+            components,
         }
     }
 
@@ -203,6 +211,8 @@ impl CompositionFacts {
                     component: clause.component.to_owned(),
                     name: clause.name.name.as_ref().to_owned(),
                     node: clause.node.clone(),
+                    // The owner `from_view` authenticated for the clause.
+                    owner: Some(clause.owner.package().name().to_owned()),
                 })
                 .ok_or(PackageCompositionRefusal::Member)
         };
@@ -252,7 +262,8 @@ impl CompositionFacts {
             })
             .collect();
         Ok(Self {
-            name: view.name().qualified_name.join("::"),
+            // The row's declared name, as the source route names it.
+            name: view.name().name.to_string(),
             node: projected.node().clone(),
             cycles,
             slots,
@@ -269,7 +280,7 @@ impl CompositionFacts {
             .iter()
             .flatten()
             .filter_map(|slot| slot.guarantee.as_ref())
-            .filter_map(|clause| self.components.of_component(&clause.component))
+            .filter_map(|clause| clause.owner.as_deref())
             .collect()
     }
 
@@ -317,9 +328,7 @@ pub(super) trait CompositionFront {
     fn component_graph(&self, identity: &str) -> Result<WireGraph, Unavailable>;
 
     /// The `temporal-satisfaction` item, at `index`, of the guarantee
-    /// `clause` over its component package `identity`: a
-    /// [`ResolvedItem::Composition`] naming its [`ComponentOwner`], or the
-    /// item settled as that package's resolution settles it.
+    /// `clause` resolved over its component package `identity`.
     ///
     /// # Errors
     ///
@@ -329,7 +338,21 @@ pub(super) trait CompositionFront {
         index: RequestIndex,
         clause: &GuaranteeClause,
         identity: &str,
-    ) -> Result<ResolvedItem, Self::Error>;
+    ) -> Result<GuaranteeResolution, Self::Error>;
+}
+
+/// How a route resolved a component guarantee's clause over its component
+/// package.
+pub(super) enum GuaranteeResolution {
+    /// The item settled as that package's resolution settles it.
+    Settled(ResolvedItem),
+    /// The clause's claim item over the component package.
+    Claim {
+        /// The claim item and its candidates.
+        claim: Box<ResolvedClaim>,
+        /// The model package owning the claim within the component.
+        owning_model: Option<String>,
+    },
 }
 
 /// What resolving one selection of a composition gives.
@@ -415,12 +438,12 @@ impl CompositionFront for Context<'_> {
         index: RequestIndex,
         clause: &GuaranteeClause,
         identity: &str,
-    ) -> Result<ResolvedItem, Self::Error> {
+    ) -> Result<GuaranteeResolution, Self::Error> {
         let Some(component) = LibraryName::new(identity)
             .ok()
             .and_then(|library| self.package.dependencies().get(&library).cloned())
         else {
-            return Ok(failed(index, &clause.name));
+            return Ok(GuaranteeResolution::Settled(failed(index, &clause.name)));
         };
         let resolved = resolve_one(
             &component,
@@ -431,24 +454,13 @@ impl CompositionFront for Context<'_> {
             self.binding,
         );
         let ResolvedItem::Claim(claim) = resolved else {
-            return Ok(resolved);
+            return Ok(GuaranteeResolution::Settled(resolved));
         };
-        let temporal_kind = match &claim.item.form {
-            Some(ItemForm::Temporal(form)) => form.item_kind,
-            _ => ItemKind::Formula,
-        };
-        let owner = ComponentOwner {
-            identity: component.graph().package_name().to_owned(),
-            owning_model: super::owning_model(&component, &claim.item.claim).map(str::to_owned),
-            family: crate::claim_family::claim_family(&component, temporal_kind, &claim.item.claim),
-        };
-        Ok(ResolvedItem::Composition(Box::new(CompositionClaim {
-            claim: *claim,
-            owner: Some(owner),
-            settled: None,
-            required: Vec::new(),
-            components: ComponentPackages::default(),
-        })))
+        let owning_model = super::owning_model(&component, &claim.item.claim).map(str::to_owned);
+        Ok(GuaranteeResolution::Claim {
+            claim,
+            owning_model,
+        })
     }
 }
 
@@ -762,13 +774,14 @@ fn premise_of(
         .guarantee
         .as_ref()
         .and_then(|clause| {
-            let identity = facts.components.of_component(&clause.component)?;
+            let identity = clause.owner.as_deref()?;
             LibraryName::new(identity).ok()?;
             Some(PremiseKind::Guarantee {
                 clause: GuaranteeClause {
                     component: clause.component.clone(),
                     name: clause.name.clone(),
                     node: clause.node.clone(),
+                    owner: clause.owner.clone(),
                 },
                 identity: identity.to_owned(),
                 assumed: !facts.assumed_at(slots, at).is_empty(),
@@ -840,22 +853,35 @@ fn premise_item<F: CompositionFront>(
             identity,
             assumed,
         } => {
-            let resolved = front.guarantee_item(index, &clause, &identity)?;
-            let ResolvedItem::Composition(mut claim) = resolved else {
-                return Ok(resolved);
+            let (mut claim, owning_model) = match front.guarantee_item(index, &clause, &identity)? {
+                GuaranteeResolution::Settled(settled) => return Ok(settled),
+                GuaranteeResolution::Claim {
+                    claim,
+                    owning_model,
+                } => (claim, owning_model),
             };
-            if assumed {
+            let settled = assumed.then(|| {
                 // FSpec FR-491: the slot is checked under peer guarantees, an
                 // assumption set no registered engine reads. Running the
                 // clause alone would settle another obligation under this
                 // slot's key.
-                claim.claim.item.candidates.clear();
-                claim.settled = Some(Box::new(unsupported(
-                    index,
-                    Capability::TemporalSatisfaction,
-                )));
-            }
-            Ok(ResolvedItem::Composition(claim))
+                claim.item.candidates.clear();
+                Box::new(unsupported(index, Capability::TemporalSatisfaction))
+            });
+            Ok(ResolvedItem::Composition(Box::new(CompositionClaim {
+                claim: *claim,
+                owner: Some(ComponentOwner {
+                    identity,
+                    owning_model,
+                    // FSpec FR-491: a component guarantee is a temporal
+                    // clause (the checker admits no other guarantee), so its
+                    // family is `temporal-trace` on either route.
+                    family: Some(DeclarationFamily::TemporalTrace),
+                }),
+                settled,
+                required: Vec::new(),
+                components: ComponentPackages::default(),
+            })))
         }
     }
 }

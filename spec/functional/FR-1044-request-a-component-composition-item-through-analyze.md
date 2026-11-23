@@ -361,6 +361,27 @@ two indices, over one shared set of premise items.
 
 ### Current system behavior
 
+- **An item naming a composition over a `package` handoff.** Over a
+  `package` handoff (FR-850), a request whose `items` name a composition
+  declaration is refused whole at the request stage: category
+  `unsupported`, `unsupported_construct`/`not-yet-implemented` naming the
+  composition-owning-work-permission family (`items[<i>] composition owning
+  execution is pending missing native before-work permission`), exit 21, no
+  item. In a package that declares a composition, an item whose name stays
+  unresolved after ordinary claim, declaration and model-alias resolution is
+  refused the same way naming the `unnamed-claim` family, and is never settled
+  `unknown-claim`. A name an ordinary row carries resolves as usual. A request
+  with no `items` is not refused: its default items settle as AC-10 states.
+- **Native budget of the `package` route.** The `package` route reads a
+  selected composition's admitted facts, and the component package views its
+  premise items run over, under the handoff's native-join budget (FR-531). The
+  views are the ones the handoff's own join authenticated, so no component is
+  joined again. The source route reads the checked declaration and charges no
+  native-join budget for it. When a charge is denied, the `package` request is
+  refused whole with `stage_limit_exceeded`, naming `i2.work_units` or
+  `i2.native_join_storage` for the denied charge, exit 22, no item. The source
+  request over the same unit still writes its items, so the two routes differ
+  only by this typed refusal.
 - **Text mode.** Text rendering of the outcome belongs to the external driver.
   No test in this repository exercises it, and this requirement does not
   weaken the text half of the fixture.

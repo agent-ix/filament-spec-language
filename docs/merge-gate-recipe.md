@@ -19,8 +19,8 @@ them. For spec-only changes it prints `NO CARGO: spec-only change.`
 | `fsl-package/src/emit/**` | `fsl-package` lib `emit` tests, one thread, skip 100k tests and the 2/1000 nested-form stress test | Analyze IT filters `monitor_`, `timed_`, `hyper`, `probabilistic`; command IT `run_requirement_items`; each large emitter and replay control runs alone with timing enabled |
 | `fsl-analyze/src/analyze/exact.rs`, `exact/**` | Touched library module | Analyze IT `probabilistic` and `timed_` |
 | `fsl-analyze/src/zone_check/**` | Touched library module | Analyze IT `timed_`, plus the focused `timed_within_200` and `timed_within_201` regressions |
-| `fsl-analyze/src/analyze/request.rs`, `fsl-analyze/src/analyze.rs` | Touched library module | The four analyze IT engine filters plus the source/package parity modules `analyze_package_selection`, `analyze_request_wire`, `analyze_package_provider` |
-| `fsl-analyze/src/analyze/document.rs`, `fsl-analyze/src/analyze/document/**` | Touched library module | As `request.rs`, plus the composition parity module `analyze_composition_cli` (FR-1044-AC-10) |
+| `fsl-analyze/src/analyze/request.rs`, `fsl-analyze/src/analyze.rs` | Touched library module | The four analyze IT engine filters plus the source/package parity modules `analyze_package_selection`, `analyze_request_wire`, `analyze_package_provider`, `analyze_composition_cli` |
+| `fsl-analyze/src/analyze/document.rs`, `fsl-analyze/src/analyze/document/**` | Touched library module | As `request.rs` |
 | Other `fsl-analyze/src/**` | Touched library module | All four analyze IT engine filters: `monitor_`, `timed_`, `hyper`, `probabilistic` |
 | `fsl-replay/src/**` | Touched replay library module | `fsl-command` IT `dependency_handoff`, `run_requirement_items`, `run_text_witness`; analyze IT `probabilistic_replay`, `bounded_probabilistic_replay`, `package_probabilistic` |
 | `fsl-eval/src/simulation/**` | Touched library module | Analyze IT `protocol_bounded_lasso`, `race_freedom`, `native_correlation` (concrete protocol state keys, message ordinals, delivery identities) |
