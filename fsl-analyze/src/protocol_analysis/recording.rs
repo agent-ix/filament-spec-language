@@ -3408,37 +3408,32 @@ fn observation_enabled(
             | ObservationKind::Attempt
             | ObservationKind::Effect
             | ObservationKind::Commit
-    ) && !earlier_own_steps_precede(protocol, document, position, &ancestry)
-    {
-        return Some(false);
+    ) {
+        match earlier_steps_precede(protocol, document, position, &ancestry) {
+            Some(true) => {}
+            decided => return decided,
+        }
     }
     Some(true)
 }
 
-/// Whether every earlier step of the observing role in each enclosing
-/// `sequence` of the observation's node was observed in the same instance
-/// and is a causal predecessor of the observation at `position`: the step is
-/// enabled only in the state the earlier observations reach (FSpec FR-059,
-/// FR-895 "Enabledness"; ADR-027 CI-1). Steps nested in earlier `sequence`
-/// siblings count; `choice`, `parallel` and `repeat` siblings are not
-/// inspected.
-fn earlier_own_steps_precede(
+/// Whether every causal predecessor of the observation at `position` that a
+/// `sequence` supplies, whatever its role or kind, was observed in the same
+/// instance causally before it (FR-895 "Enabledness"; ADR-027 CI-1). Steps
+/// nested in earlier `sequence` siblings count; `choice`, `parallel`,
+/// `repeat` and `await` siblings are not inspected.
+///
+/// A predecessor never observed, or observed but not yet ordered before the
+/// step, leaves the answer open (`None`) until the closure is `closed`,
+/// where it is `Some(false)`. A predecessor the step itself causally precedes
+/// is `Some(false)` at once: order only grows, so nothing can repair it.
+fn earlier_steps_precede(
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
     position: usize,
     ancestry: &[&fsl_semantics::check::CheckedControl],
-) -> bool {
+) -> Option<bool> {
     let observation = &document.observations[position];
-    let owner_of = |node: ProtocolNodeId| {
-        protocol
-            .owners
-            .iter()
-            .find(|entry| entry.node == node)
-            .map(|entry| entry.role)
-    };
-    let Some(own_role) = ancestry.last().and_then(|target| owner_of(target.node)) else {
-        return true;
-    };
     let mut pending = Vec::new();
     for pair in ancestry.windows(2) {
         let [parent, child] = pair else {
@@ -3460,23 +3455,40 @@ fn earlier_own_steps_precede(
         };
         match control.kind.label() {
             "sequence" => pending.extend(control.children.iter()),
-            "send" | "receive" | "event" | "attempt" | "effect" | "commit"
-                if owner_of(control.node) == Some(own_role) =>
-            {
+            "send" | "receive" | "event" | "attempt" | "effect" | "commit" => {
                 steps.push(format!("{}::{}", protocol.name, control.path.join("::")));
             }
             _ => {}
         }
     }
-    steps.iter().all(|name| {
-        document.observations.iter().enumerate().any(|(index, entry)| {
-            index != position
-                && entry.node == *name
-                && entry.instance == observation.instance
-                && entry.role_instance == observation.role_instance
-                && causally_after(protocol, document, position, index)
-        })
-    })
+    let closed = document.closure.state == "closed";
+    let mut answer = Some(true);
+    for name in &steps {
+        let observed: Vec<usize> = document
+            .observations
+            .iter()
+            .enumerate()
+            .filter(|(index, entry)| {
+                *index != position && entry.node == *name && entry.instance == observation.instance
+            })
+            .map(|(index, _)| index)
+            .collect();
+        if observed
+            .iter()
+            .any(|index| causally_after(protocol, document, position, *index))
+        {
+            continue;
+        }
+        if observed
+            .iter()
+            .any(|index| causally_after(protocol, document, *index, position))
+            || closed
+        {
+            return Some(false);
+        }
+        answer = None;
+    }
+    answer
 }
 
 fn control_repeat_limit(
