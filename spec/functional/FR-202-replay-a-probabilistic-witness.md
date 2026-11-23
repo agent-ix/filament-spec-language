@@ -205,6 +205,45 @@ race gives that post-key and elapsed amount.
 
 ### Replay
 
+#### Checked-subject long-run, reward and event-avoidance subsystem entry
+
+Layer 6 SHALL expose a checked-subject subsystem replay entry for untimed
+long-run fractions, expected rewards and unwindowed eventual claims with an
+empty fairness set and no timed choices, taking the checked package, admitted
+subject, actual claim occurrence and binding, typed FR-413 evidence, caller
+limits and cancellation. This entry's workload profile requires a resolved
+workload with no free choices. It SHALL bind the certificate to the item and
+claim in the checked package, then rebuild the workload-induced chain or the
+chain induced by the witness scheduler. A workload counterexample in this
+profile SHALL have no scheduler. An every-scheduler counterexample SHALL
+carry the deterministic memoryless scheduler required by FR-200; replay
+SHALL reject a missing, extra, non-deterministic or non-memoryless scheduler.
+Other replay profiles retain their existing workload and scheduler rules.
+
+For a long-run certificate the entry SHALL run the independent FR-412
+`long-run` checker over the rebuilt chain, including complete bottom
+component coverage and each gain-bias equation, then apply the strict
+refutation comparison in Behavior above. For an expected-reward certificate
+it SHALL run the independent FR-412 `lower` or `upper` checker over the
+rebuilt chain, including properness ranking when required, then apply the
+strict comparison. For an event-avoidance certificate it SHALL independently
+derive the induced chain's event-free bottom components, check the
+certificate's lower bound for the probability of reaching their union, and
+apply the strict complement comparison. The checker SHALL not use analyzer
+values, policy optimality assertions, an engine-built graph, or proof-side
+acceptance as a substitute for these checks.
+
+The entry SHALL return opaque reproduced evidence bound to the package,
+claim, binding, scheduler (when present), and checked certificate only after
+the certificate has passed its counterexample-role checks and a final
+cancellation poll. EN-5 SHALL settle `refuted` only with that matching
+evidence. A bare engine value, a proof-side acceptance without the strict
+refutation comparison, a certificate for another item or a disagreement
+SHALL produce no token. Rejections retain FR-201's typed rule and locus and
+settle `inconclusive`; exhaustion and cancellation retain the actual typed
+`incomplete` cause. This entry adds no proof-side acceptance and does not
+change the existing certificate document shapes.
+
 #### Checked-subject mean-certificate replay entry
 
 Layer 6 SHALL expose a checked-subject mean-certificate replay entry taking
@@ -564,6 +603,11 @@ timed enumerator.
 | FR-202-AC-28 | FR-1043-AC-8's minimum `11/48` with an accepted `upper` bound `1/4` refutes every-scheduler `>= 1/2`; its maximum `5/12` with an accepted `lower` bound `2/5` refutes every-scheduler `<= 1/3`. A valid `lower` minimum document with initial bound `1/5` at `>= 1/2`, and a valid `upper` maximum document with initial bound `1/2` at `<= 1/3`, each reject `Malformed` at `kind` and settle `inconclusive`, `CertificateRejected`; their conditions hold but their refutation roles are wrong. | Test |
 | FR-202-AC-29 | AC-27's exact `5/12` at `>= 5/12` or `<= 5/12`, and a valid workload `upper` bound `1/2` at `>= 1/2`, each reject `ThresholdMissed` at the initial key and settle `inconclusive`, `CertificateRejected`. Changing identity or base payoff/optimization retains the typed refusal; invalid certificate values settle `inconclusive`, `CertificateRejected{InequalityFails, at}`; a disagreeing witness policy settles `inconclusive`, `ReplayParity`; cancellation or a caller limit preserves its typed incomplete result without accepted evidence. | Test |
 | FR-202-AC-30 | A mean minimum refutation with a slack `upper < θ` for which both the optimizer's attaining action and a different canonical-first action satisfy every FR-1042 condition emits a witness matching the independently checked policy: with no hint it uses the canonical-first satisfying full-product action; with a representable valid hint it uses that hinted action. Both replay as refuted. An old optimizer witness disagreeing with the checked selection settles `inconclusive`, `ReplayParity`; implicit stutter or post-state selection uses the same rule without a fabricated policy identity. | Test |
+| FR-202-AC-31 | For the workload long-run fraction reproduction with transition weights 99:1 and claim `long-run fraction >= 0.995`, EN-5 emits no scheduler and its `long-run` subsystem certificate is independently checked against the rebuilt workload chain; because the checked initial value is below `0.995`, replay returns matching reproduced evidence and the item settles `refuted`. Equality, a proof-side acceptance without the strict comparison, or a bare engine value yields no token. | Test (TC-3156) |
+| FR-202-AC-32 | For the workload expected-total reproduction with transition weights 99:1 and claim `expected total <= 1`, EN-5 emits no scheduler and a `lower` expected-reward certificate whose checked initial lower bound is strictly greater than 1. Replay checks its FR-412 inequalities, binds the workload-induced chain, applies `> 1`, returns matching evidence and settles `refuted`; a bound equal to 1 or an unreplayed value does not. | Test (TC-3157) |
+| FR-202-AC-33 | For the no-random-line expected-total variation under every scheduler, use the claim `expected total >= 1` whose induced expected total is 0. The counterexample includes the optimizer's deterministic memoryless scheduler and an `upper` expected-reward certificate below 1. Replay rebuilds that scheduler's chain, checks the upper certificate and its properness evidence, applies `< 1` and settles `refuted`; omitting or changing the scheduler prevents acceptance. | Test (TC-3158) |
+| FR-202-AC-34 | For the unwindowed `eventually` variation under every scheduler without a `random` line, claim `probability >= 1/2` has value 0. EN-5 emits a deterministic memoryless scheduler and an event-avoidance `lower` subsystem certificate with initial lower bound `> 1/2`; replay independently derives the event-free bottom component, checks the certificate and strict complement comparison, and settles `refuted`. A cyclic avoiding chain is accepted without a finite path set; a component containing an event state, a missing scheduler, or equality yields no token. | Test (TC-3159) |
+| FR-202-AC-35 | An expected reward whose exact engine value is `+infinity` and whose claim is `expected total <= 1` settles `refuted` only when replay checks a finite `lower` certificate with initial lower bound `> 1`; the result carries the replayed counterexample and no infinite `ExactEntry` or fabricated finite exact value. If the value is finite and the same lower certificate conditions hold, the existing finite refutation path applies. A proof-side certificate is still checked with its original inclusive claim-side rule. | Test (TC-3160) |
 
 ## Dependencies
 

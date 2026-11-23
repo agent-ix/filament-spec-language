@@ -424,8 +424,11 @@ No policy, component partition, formula AST or additional body field is added.
   cancellation during any pass preserve typed nonacceptance without truth
   values. The raw-model-key owner budget prerequisite remains open; this
   profile does not invent an upstream API or establish that prerequisite.
-  Proof coverage alone is extended: FR-202 native cyclic refutations,
-  FSpec FR-413 wire, fairness, timed, long-run and reward coverage remain open.
+  This proof profile does not define FR-202 refutation handling. FR-202's
+  checked-subject entry separately admits the specified untimed eventual,
+  long-run and expected-reward subsystem refutations; this does not widen
+  proof-side admission or threshold checks. FSpec FR-413 wire, fairness and
+  timed refutation coverage remain outside this profile.
 
 ### Closed cyclic MDP eventual document profile
 
@@ -780,9 +783,10 @@ change the bytes or interpretation of either existing probability profile.
   SHALL obey caller byte/state/edge/arithmetic limits and cancellation,
   including metering full key, rank and value representations. No solver,
   equation solving, iteration or provider dependency is allowed in checking.
-  Cyclic, fair, long-run, timed, multi-post, interval and reward-refutation
-  extensions, including native FR-202 reward witnesses and FR-413 wire,
-  remain outside this profile.
+  Cyclic, fair, long-run, timed, multi-post and interval proof documents
+  remain outside this profile. Expected-reward refutations use the separate
+  FR-202 subsystem counterexample role; they do not admit a proof document
+  here or change the inclusive proof threshold.
 
 ### Closed cyclic DTMC expected-reward document profile
 
@@ -800,7 +804,10 @@ action transport, second reward expression or new unit algebra is added.
   state, at most one actual S3 binding, fully resolved workload and the
   existing one-post-state-per-draw Markov restrictions. General MDP or
   every-scheduler, authored fairness, timed, multi-post, interval and
-  refutation/infinity documents remain outside this profile. Preserve full
+  refutation documents remain outside this proof profile. Expected-reward
+  refutations, including an infinite true expectation against a finite upper
+  claim bound, use FR-202's separate subsystem counterexample role and do not
+  serialize an infinite numeric result. Preserve full
   original-subject validity, identity and Markov/workload admission; this
   profile SHALL NOT inherit the acyclic reward profile's original-DAG or
   all-original-terminals-are-B restrictions. Original graph admission and
@@ -850,9 +857,12 @@ action transport, second reward expression or new unit algebra is added.
   nontermination. An offered V=0/rank=0 finite document for a closed
   non-B zero-cost class SHALL reject `RankBroken` at its first complete key,
   not accept through its otherwise true Bellman equations. A producer
-  encountering infinity SHALL emit no document of this finite-only profile
-  and preserve the existing typed unsupported outcome; infinity SHALL NOT
-  become a finite rational, `broken()` result or FR-202 refutation.
+  encountering infinity SHALL NOT emit a document of this finite-only proof
+  profile. Infinity SHALL NOT become a finite rational or `broken()` result.
+  When it makes an expected-reward `<= θ` claim false, EN-5 SHALL instead
+  use FR-202's separate lower-certificate counterexample role; it does not
+  serialize infinity as an exact result value or settle the false claim as
+  unsupported.
 - Either workload bound side SHALL be checked inclusively at the initial
   complete key under existing S3 expected-reward admission. In particular,
   zero is a valid expected-reward threshold; the probability-threshold
@@ -897,8 +907,10 @@ is introduced.
   post-admission undefined/negative query evaluation retains typed
   nonacceptance. No missing or refused action, draw or reward becomes
   zero. Authored fairness, workload selection, timed/general temporal,
-  pending multi-post, multi-initial/binding, non-exact, refutation and
-  infinity documents remain outside this profile.
+  pending multi-post, multi-initial/binding and non-exact proof documents
+  remain outside this profile. Expected-reward refutations use FR-202's
+  separate subsystem counterexample role; an infinite expectation is not a
+  finite proof document and is not serialized as a numeric value.
 - The finite body SHALL cover EVERY state reachable with positive
   probability under ANY actual action from the initial state before
   first B, including reached B states. The selected extremum SHALL be
@@ -1053,7 +1065,10 @@ not from that set, values, component rows or a producer's graph.
   initial V against the checked threshold inclusively, and SHALL be
   emitted only after independent acceptance. Thresholds and S3 constant
   evaluation SHALL use the existing exact checked conversion and caller
-  limits. A valid document does not by itself become an FR-202 refutation.
+  limits. Proof-side acceptance retains its inclusive threshold and does not
+  itself become an FR-202 refutation. FR-202 may independently check the
+  same certificate conditions in a bound-specific counterexample role and
+  apply the strict refutation comparison before replay can settle refuted.
 - Conflicting identity SHALL refuse before enumeration. A changed
   predicate-state set, optimization or profile for an otherwise admitted
   claim SHALL refuse as objective mismatch before acceptance. Structural
@@ -1079,9 +1094,10 @@ not from that set, values, component rows or a producer's graph.
   or a missing component. Weighted forms are outside this profile;
   a zero-weight component of those forms takes its unweighted fraction
   (FR-199) and is certified by the weighted document below.
-  General MDP/every-scheduler, fairness, timed, multi-post, weighted,
-  interval and refutation profiles, including shared FR-413 wire, remain
-  explicitly unsupported here. All earlier profiles retain their bytes,
+  General MDP/every-scheduler, fairness, timed, multi-post, weighted and
+  interval proof documents, including shared FR-413 wire, remain outside
+  this profile. Long-run refutations use FR-202's separate subsystem
+  counterexample role without widening this proof profile. All earlier profiles retain their bytes,
   admission and verdicts. No upstream budget API is claimed delivered by
   this specification.
 
@@ -1107,8 +1123,10 @@ another same-dimension UnitId SHALL NOT substitute for that identity.
   threshold checks. Predicate-true states SHALL NOT absorb their outgoing
   transitions. Zero direct `over` instances retain `UnsupportedBinding`
   and the unsupported EN-5 disposition with no invented evidence. General
-  MDP/every-scheduler, fairness, timed, multi-post, interval and refutation
-  forms, including shared FR-413 wire, remain outside this profile.
+  MDP/every-scheduler, fairness, timed, multi-post and interval proof
+  documents, including shared FR-413 wire, remain outside this profile.
+  Long-run refutations use FR-202's separate subsystem counterexample role
+  without widening this proof profile.
 - The checker SHALL independently evaluate the named checked reward on
   every reachable semantic transition and typed draw, using FR-196's
   operation/receiver/non-random-argument identity and the checked expression.
@@ -1303,7 +1321,7 @@ initial states/bindings and refutations remain outside this profile.
 | FR-201-AC-23 | A DTMC s with probabilities 1/3 each to s, target g and non-target absorbing f has exact eventual probability 1/2; values (s,g,f)=(1/2,1,0), ranks (1,0,0) accept minimum AtLeast and maximum AtMost at 1/2. Target g absorbs despite its original outgoing cycle. An initial target has exact value 1 and accepts minimum AtLeast 1/2; a non-target terminal has exact value 0 under infinite stutter and accepts maximum AtMost 1/2. Thresholds 3/5 AtLeast and 2/5 AtMost reject ThresholdMissed for the mixed case. A target-free two-state closed cycle has exact values/ranks 0 and accepts maximum AtMost 1/2; assigning its states 1/2 despite valid harmonic equalities rejects. | Test |
 | FR-201-AC-24 | In a transient SCC, a goes to b with probability 1, b to a with 1/2, target g with 1/4 and closed failure f with 1/4. Values a=b=1/2, g=1, f=0 and ranks a=2,b=1,g=f=0 accept; both SCC members having condensation rank 1 rejects RankBroken. A fully authored workload at s choosing equally between deterministic return-to-s and a distribution g:1/3,f:2/3 resolves to s:1/2,g:1/6,f:1/3 and accepts exact value 1/3, rank 1 on either workload bound at equality; 2/5 AtLeast and 1/4 AtMost reject. | Test |
 | FR-201-AC-25 | AC-23/24 documents round-trip canonically; wrong values, distances, missing/extra coverage, foreign binding, altered complete model key, model-only key, changed derived targets/optimization or mismatched identity prevent acceptance. Changed source probabilities that falsify equations reject; equivalent source changes may accept. A live state with stay and exit scheduler choices refuses as unsupported even if a producer supplies a policy or equal values, including when that state lies beyond an early target. Unresolved workload, fairness, clocks, rewards, other formulas, multi-post and multiple bindings/initials remain unsupported. Existing profile bytes and verdicts are unchanged. | Test |
-| FR-201-AC-26 | AC-23/24 independently check with no solver dependency. Source/document/key byte, state/edge, graph work/storage and scalar/rational budgets are exercised at exhaustion, including SCC, reverse reachability and distance construction; actual typed limit and consumption are retained. Pre-cancellation and cancellation during each pass or exact sum stop without acceptance or truth values; no fabricated upstream key-budget API or cyclic refutation is claimed. | Test |
+| FR-201-AC-26 | AC-23/24 independently check with no solver dependency. Source/document/key byte, state/edge, graph work/storage and scalar/rational budgets are exercised at exhaustion, including SCC, reverse reachability and distance construction; actual typed limit and consumption are retained. Pre-cancellation and cancellation during each pass or exact sum stop without acceptance or truth values; no fabricated upstream key-budget API or shared FR-413 wire is claimed. | Test |
 | FR-201-AC-27 | Under Steady, the original up/down chain with up-to-up 1999/2000 and down-to-up 9/10 accepts a long-run document with one component value and gain 1800/1801, bias 0 at up and -2000/1801 at down (choose the fixture's canonical key order up before down), and both state values 1800/1801. Both workload bound sides accept at equality; AtLeast 1801/1802 and AtMost 999/1000 reject ThresholdMissed. These comparison thresholds lie strictly between 0 and 1 under the existing S3 admission policy. Changing the bias, setting transported gain to 0, or replacing long-run evidence by reachability values prevents acceptance. No P state absorbs its original transitions. | Test |
 | FR-201-AC-28 | A transient self-cycling s goes to s with 1/2, P-terminal g with 1/6 and not-P-terminal f with 1/3. Independent terminal stutter gives BSCCs {g} and {f}, respective component value/gain 1 and 0 and bias 0; values s=1/3,g=1,f=0 accept both workload bounds at 1/3. A two-state deterministic cycle alternates P and not-P and accepts rho=gain=1/2 with normalized biases 0,-1/2 in that key order, despite periodicity. Merging/splitting/omitting a BSCC, adding a transient bias member or changing transient V rejects; harmonic values alone cannot certify a wrong recurrent value. | Test |
 | FR-201-AC-29 | AC-27/28 documents round-trip canonically through a fresh checker process with no analyzer/provider dependency. Noncanonical rational/JSON/key encodings, duplicate or incomplete rows/components, foreign bindings, model-only keys, wrong normalization or missing components prevent acceptance. Identity conflict refuses before enumeration; a changed derived predicate set/optimization refuses objective mismatch. Equivalent source changes that preserve every checked condition may accept. Earlier profile bytes and verdicts remain unchanged. | Test |
