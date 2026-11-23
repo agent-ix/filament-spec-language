@@ -6,7 +6,8 @@ use std::collections::{BTreeMap, HashMap};
 use filament_contract_model::{
     CapabilityKind, CheckedNodeId, CheckedOccurrence, CheckedOccurrenceRole, CheckedSemanticNodeV2,
     CheckedSourceMapEntry, CheckedSourceRegion, CheckedTerm, DomainKey, DomainKind, LiteralKind,
-    RequirementExtent, RequirementGuard, RequirementItemRow, ValueValidityRecord,
+    PathConditionFrame, PathConditionFrameId, RequirementExtent, RequirementItemRow,
+    RequirementRecord as WireRecord, ValueValidityRecord,
 };
 use filament_exact::{NodeKey, PathSegment};
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -20,6 +21,8 @@ use super::{
     EmitRefusal, OmissionCause, OmittedNode, GRAPH_V2,
 };
 
+mod frames;
+
 type Records = HashMap<OccurrenceKey, ValueValidityRecord>;
 
 /// The omitted graph nodes, each with its omission cause.
@@ -29,6 +32,10 @@ type Omitted = HashMap<NodeKey, OmissionCause>;
 /// omits because their owner function is omitted.
 pub(super) struct Appended {
     pub(super) records: Records,
+    /// The shared path-condition frames the records cite (FSpec FR-825),
+    /// each guard in the id space of the emitted nodes; empty when no record
+    /// is guarded.
+    pub(super) frames: Vec<PathConditionFrame>,
     /// Each with cause `NamesOmittedNode` naming its omitted owner.
     pub(super) omitted: Vec<OmittedNode>,
 }
@@ -152,9 +159,11 @@ pub(super) fn append(
     {
         return Ok(Appended {
             records,
+            frames: Vec::new(),
             omitted: omissions,
         });
     }
+    let frames = frames::derive(ids, graph, nodes, omitted)?;
     let integer = node_id(
         ids,
         fsl_semantics::check::builtin_integer_type_key(graph.package_name()).map_err(encoding)?,
@@ -196,15 +205,11 @@ pub(super) fn append(
         let conversion = source
             .conversion_context()
             .map(|key| (node_id(ids, key.node()), key.origin().ordinal()));
-        let guards = source
-            .path_condition()
-            .iter()
-            .map(|guard| RequirementGuard {
-                guard: node_id(ids, guard.occurrence().node()),
-                occurrence: guard.occurrence().origin().ordinal(),
-                holds: guard.holds(),
-            })
-            .collect::<Vec<_>>();
+        let terminal = if owner_omitted {
+            None
+        } else {
+            frames.terminal(claim)
+        };
         let roots = source
             .extent_roots()
             .iter()
@@ -230,13 +235,9 @@ pub(super) fn append(
             operands.push(PathSegment::Node(context.node().clone()));
             operands.push(PathSegment::Text(context.origin().ordinal().to_string()));
         }
-        operands.push(PathSegment::Text("guards".to_owned()));
-        for guard in source.path_condition() {
-            operands.extend([
-                PathSegment::Node(guard.occurrence().node().clone()),
-                PathSegment::Text(guard.occurrence().origin().ordinal().to_string()),
-                PathSegment::Text(guard.holds().to_string()),
-            ]);
+        if let Some(terminal) = terminal {
+            operands.push(PathSegment::Text("path_condition".to_owned()));
+            operands.push(PathSegment::Text(terminal.0.to_string()));
         }
         operands.push(PathSegment::Text("roots".to_owned()));
         operands.extend(source.extent_roots().iter().cloned().map(PathSegment::Node));
@@ -286,30 +287,17 @@ pub(super) fn append(
             ]),
             None => claim_aggregate(Vec::new()),
         };
-        let guard_terms = guards
-            .iter()
-            .map(|guard| {
-                Ok(claim_aggregate(vec![
-                    claim_binding("guard", reference(&guard.guard)),
-                    claim_binding("occurrence", count(&integer, guard.occurrence)?),
-                    claim_binding(
-                        "holds",
-                        CheckedTerm::Literal {
-                            type_id: boolean.clone(),
-                            value_kind: LiteralKind::Boolean,
-                            value: checked_literal_json(&guard.holds)?,
-                        },
-                    ),
-                ]))
-            })
-            .collect::<Result<Vec<_>, EmitRefusal>>()?;
+        let frame_terms = match terminal {
+            Some(terminal) => vec![count(&integer, terminal.0 as u64)?],
+            None => Vec::new(),
+        };
         let body = claim_aggregate(vec![
             claim_binding("owner", reference(&owner)),
             claim_binding("application", reference(&application)),
             claim_binding("occurrence", count(&integer, claim.origin().ordinal())?),
             claim_binding("result_bound", reference(&result_bound)),
             claim_binding("conversion", conversion_term),
-            claim_binding("path_condition", claim_aggregate(guard_terms)),
+            claim_binding("path_condition", claim_aggregate(frame_terms)),
             claim_binding(
                 "extent_roots",
                 claim_aggregate(roots.iter().map(reference).collect()),
@@ -352,7 +340,7 @@ pub(super) fn append(
                     occurrence: claim.origin().ordinal(),
                     result_bound,
                     conversion,
-                    path_condition: guards,
+                    path_condition_frame: terminal,
                     extent_roots: roots,
                     objects,
                 },
@@ -364,6 +352,7 @@ pub(super) fn append(
     }
     Ok(Appended {
         records,
+        frames: frames.rows,
         omitted: omissions,
     })
 }
@@ -488,7 +477,7 @@ pub(super) fn rows(
         };
         let record = if kind == CapabilityKind::ValueValidity {
             let record = records.get(claim).ok_or(EmitRefusal::SourceMapInvariant)?;
-            Some(ValueValidityRecord {
+            Some(WireRecord::ValueValidity(ValueValidityRecord {
                 node: remap(&record.node)?,
                 owner: remap(&record.owner)?,
                 application: remap(&record.application)?,
@@ -501,17 +490,7 @@ pub(super) fn rows(
                         Ok((remap(node)?, *ordinal))
                     })
                     .transpose()?,
-                path_condition: record
-                    .path_condition
-                    .iter()
-                    .map(|guard| {
-                        Ok(RequirementGuard {
-                            guard: remap(&guard.guard)?,
-                            occurrence: guard.occurrence,
-                            holds: guard.holds,
-                        })
-                    })
-                    .collect::<Result<_, EmitRefusal>>()?,
+                path_condition_frame: record.path_condition_frame,
                 extent_roots: record
                     .extent_roots
                     .iter()
@@ -522,7 +501,7 @@ pub(super) fn rows(
                     .iter()
                     .map(&mut remap)
                     .collect::<Result<_, _>>()?,
-            })
+            }))
         } else {
             None
         };
@@ -535,6 +514,29 @@ pub(super) fn rows(
         }));
     }
     Ok(package_order(rows))
+}
+
+/// The frame table of the emitted package, each guard in the final id space of
+/// the document-held rows (FSpec FR-825).
+pub(super) fn frame_rows(
+    ids: &StructuralIds,
+    emitted: &HashMap<NodeKey, CheckedNodeId>,
+    frames: &[PathConditionFrame],
+) -> Result<Vec<PathConditionFrame>, EmitRefusal> {
+    let mut keys = ids.key_reader();
+    frames
+        .iter()
+        .map(|frame| {
+            let guard = emitted
+                .get(&keys.key(&frame.guard).map_err(|_| EmitRefusal::SourceMapInvariant)?)
+                .cloned()
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            Ok(PathConditionFrame {
+                guard,
+                ..frame.clone()
+            })
+        })
+        .collect()
 }
 
 /// The base package's requirement rows, for a writer that re-encodes an
@@ -552,10 +554,10 @@ pub(super) fn carry_rows(
     base: &filament_contract_model::CheckedPackageV2,
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut [CheckedSourceMapEntry],
-) -> Result<Vec<RequirementItemRow>, EmitRefusal> {
+) -> Result<(Vec<RequirementItemRow>, Vec<PathConditionFrame>), EmitRefusal> {
     let rows = base.requirement_items();
     if rows.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
     let base_nodes = &base.resolved_graph().nodes;
     let finals = nodes
@@ -582,6 +584,12 @@ pub(super) fn carry_rows(
         }
     };
     let mut rows = rows.to_vec();
+    // The shared frames keep their parent links; only each guard follows a
+    // rename. The frame table is no row: it is carried, never written anew.
+    let mut frames = base.path_condition_frames().to_vec();
+    for frame in &mut frames {
+        follow(&mut frame.guard);
+    }
     for row in &mut rows {
         follow(&mut row.claim);
         if let RequirementExtent::Unbounded(domains) = &mut row.extent {
@@ -592,19 +600,28 @@ pub(super) fn carry_rows(
                 }
             }
         }
-        if let Some(record) = &mut row.record {
-            follow(&mut record.node);
-            follow(&mut record.owner);
-            follow(&mut record.application);
-            follow(&mut record.result_bound);
-            if let Some((narrow, _)) = &mut record.conversion {
-                follow(narrow);
+        match &mut row.record {
+            Some(WireRecord::ValueValidity(record)) => {
+                follow(&mut record.node);
+                follow(&mut record.owner);
+                follow(&mut record.application);
+                follow(&mut record.result_bound);
+                if let Some((narrow, _)) = &mut record.conversion {
+                    follow(narrow);
+                }
+                record.extent_roots.iter_mut().for_each(follow);
+                record.objects.iter_mut().for_each(follow);
             }
-            for guard in &mut record.path_condition {
-                follow(&mut guard.guard);
+            Some(WireRecord::OperationContract(record)) => {
+                follow(&mut record.node);
+                follow(&mut record.result_bound);
+                record.operation.iter_mut().for_each(follow);
+                record.model_objects.iter_mut().for_each(follow);
+                for population in &mut record.populations {
+                    follow(&mut population.member_type);
+                }
             }
-            record.extent_roots.iter_mut().for_each(follow);
-            record.objects.iter_mut().for_each(follow);
+            None => {}
         }
     }
     // A rename changes the structural key of every node holding the renamed
@@ -613,6 +630,10 @@ pub(super) fn carry_rows(
     let graph =
         fsl_semantics::check::wire_id::WireGraph::new(nodes.iter().map(|node| &node.node_id))
             .map_err(|_| EmitRefusal::RequirementRowCarry("the writer's graph ids do not resolve"))?;
+    // Frames belong to the owner of the first record that cites them, in the
+    // base's own row order, and frames are in owner-key order (FSpec FR-825).
+    let frame_owners = frame_owners(&rows, &frames)?;
+    let permutation = frame_permutation(&graph, &frame_owners, &frames)?;
     let keyed = rows
         .into_iter()
         .map(|row| {
@@ -622,9 +643,149 @@ pub(super) fn carry_rows(
             Ok((key, row))
         })
         .collect::<Result<Vec<_>, EmitRefusal>>()?;
-    let rows = package_order(keyed);
+    let mut rows = package_order(keyed);
+    if let Some(new_ids) = permutation {
+        reorder_frames(&new_ids, &mut frames, &mut rows, nodes, source_map)?;
+    }
     renumber_records(&rows, nodes, source_map)?;
-    Ok(rows)
+    Ok((rows, frames))
+}
+
+/// Each frame's owner: the owner of the first record, in row order, whose
+/// chain holds it.
+fn frame_owners(
+    rows: &[RequirementItemRow],
+    frames: &[PathConditionFrame],
+) -> Result<Vec<Option<CheckedNodeId>>, EmitRefusal> {
+    let mut owners = vec![None; frames.len()];
+    for record in rows.iter().filter_map(|row| match &row.record {
+        Some(WireRecord::ValueValidity(record)) => Some(record),
+        _ => None,
+    }) {
+        let mut at = record.path_condition_frame;
+        while let Some(frame) = at {
+            let slot = owners.get_mut(frame.0).ok_or(EmitRefusal::RequirementRowCarry(
+                "a carried record cites a frame the table does not hold",
+            ))?;
+            if slot.is_some() {
+                break;
+            }
+            *slot = Some(record.owner.clone());
+            at = frames[frame.0].parent;
+        }
+    }
+    Ok(owners)
+}
+
+/// The new id of each frame when the owners' final key order differs from the
+/// table's order, `None` when the table is already canonical.
+fn frame_permutation(
+    graph: &fsl_semantics::check::wire_id::WireGraph,
+    owners: &[Option<CheckedNodeId>],
+    frames: &[PathConditionFrame],
+) -> Result<Option<Vec<usize>>, EmitRefusal> {
+    let keys = owners
+        .iter()
+        .map(|owner| {
+            owner
+                .as_ref()
+                .map(|owner| {
+                    graph.key(owner).map_err(|_| {
+                        EmitRefusal::RequirementRowCarry("a frame's owner is not a node of the graph")
+                    })
+                })
+                .transpose()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut order: Vec<usize> = (0..frames.len()).collect();
+    order.sort_by(|&left, &right| keys[left].cmp(&keys[right]).then(left.cmp(&right)));
+    if order.iter().enumerate().all(|(new, &old)| new == old) {
+        return Ok(None);
+    }
+    let mut new_ids = vec![0; frames.len()];
+    for (new, &old) in order.iter().enumerate() {
+        new_ids[old] = new;
+    }
+    Ok(Some(new_ids))
+}
+
+/// Put the frames at their new ids and re-point every record's terminal frame,
+/// its body binding, its identity path and the rows and source-map entries that
+/// name the record node. A parent is never moved after its child: a frame
+/// shared across owners would break that, so it is refused.
+fn reorder_frames(
+    new_ids: &[usize],
+    frames: &mut Vec<PathConditionFrame>,
+    rows: &mut [RequirementItemRow],
+    nodes: &mut [CheckedSemanticNodeV2],
+    source_map: &mut [CheckedSourceMapEntry],
+) -> Result<(), EmitRefusal> {
+    let mut moved: Vec<Option<PathConditionFrame>> = vec![None; frames.len()];
+    for (old, frame) in std::mem::take(frames).into_iter().enumerate() {
+        let parent = match frame.parent {
+            Some(parent) => {
+                let parent = new_ids[parent.0];
+                if parent >= new_ids[old] {
+                    return Err(EmitRefusal::RequirementRowCarry(
+                        "a renamed owner order places a frame before its parent",
+                    ));
+                }
+                Some(PathConditionFrameId(parent))
+            }
+            None => None,
+        };
+        moved[new_ids[old]] = Some(PathConditionFrame { parent, ..frame });
+    }
+    *frames = moved.into_iter().flatten().collect();
+    let mut renamed = BTreeMap::<CheckedNodeId, (CheckedNodeId, u64)>::new();
+    for row in rows.iter_mut() {
+        let Some(WireRecord::ValueValidity(record)) = &mut row.record else {
+            continue;
+        };
+        let Some(old) = record.path_condition_frame else {
+            continue;
+        };
+        let new = new_ids[old.0];
+        record.path_condition_frame = Some(PathConditionFrameId(new));
+        let mut id = record.node.clone();
+        let mut segments = id.path.iter_mut();
+        let cited = segments
+            .by_ref()
+            .find(|segment| {
+                matches!(segment, filament_contract_model::CheckedNodePathSegment::Name(name) if name.as_ref() == "path_condition")
+            })
+            .and_then(|_| segments.next())
+            .ok_or(EmitRefusal::RequirementRowCarry(
+                "a guarded record's identity path does not cite its terminal frame",
+            ))?;
+        *cited = filament_contract_model::CheckedNodePathSegment::Name(new.to_string().into());
+        renamed.insert(std::mem::replace(&mut record.node, id.clone()), (id, new as u64));
+    }
+    for node in nodes.iter_mut() {
+        let Some((id, frame)) = renamed.get(&node.node_id) else {
+            continue;
+        };
+        node.node_id = id.clone();
+        let CheckedTerm::Aggregate { members, .. } = &mut node.body else {
+            return Err(EmitRefusal::RequirementRowCarry("a carried record body is no aggregate"));
+        };
+        let Some(CheckedTerm::Binding { value, .. }) = members.get_mut(5) else {
+            return Err(EmitRefusal::RequirementRowCarry("a carried record has no path condition"));
+        };
+        let CheckedTerm::Aggregate { members, .. } = value.as_mut() else {
+            return Err(EmitRefusal::RequirementRowCarry("a carried path condition is no aggregate"));
+        };
+        let Some(CheckedTerm::Literal { value, .. }) = members.first_mut() else {
+            return Err(EmitRefusal::RequirementRowCarry("a carried path condition holds no frame"));
+        };
+        *value = checked_literal_json(frame)?;
+    }
+    for entry in source_map.iter_mut() {
+        if let Some((id, _)) = renamed.get(&entry.node_id) {
+            entry.node_id = id.clone();
+        }
+    }
+    Ok(())
 }
 
 /// FSpec FR-825: a function's `claim`/`value_validity` nodes carry
@@ -639,7 +800,10 @@ fn renumber_records(
 ) -> Result<(), EmitRefusal> {
     let mut next = BTreeMap::<&CheckedNodeId, u64>::new();
     let mut ordinals = BTreeMap::<&CheckedNodeId, u64>::new();
-    for record in rows.iter().filter_map(|row| row.record.as_ref()) {
+    for record in rows.iter().filter_map(|row| match &row.record {
+        Some(WireRecord::ValueValidity(record)) => Some(record),
+        _ => None,
+    }) {
         let ordinal = next.entry(&record.owner).or_default();
         ordinals.insert(&record.node, *ordinal);
         *ordinal += 1;
@@ -701,6 +865,15 @@ fn capability_wire(kind: CapabilityKind) -> &'static str {
         CapabilityKind::Composition => "composition",
         CapabilityKind::ProbabilisticSatisfaction => "probabilistic-satisfaction",
         CapabilityKind::Schedulability => "schedulability",
+    }
+}
+
+/// The value-validity record a row carries, for a test reading a package.
+#[cfg(test)]
+pub(super) fn value_record(row: &RequirementItemRow) -> Option<&ValueValidityRecord> {
+    match &row.record {
+        Some(WireRecord::ValueValidity(record)) => Some(record),
+        _ => None,
     }
 }
 
