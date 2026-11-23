@@ -10,13 +10,14 @@ relationships:
 
 ## Description
 
-Verify `check_native_fences` over one Markdown document. Scope: FR-662-AC-1, FR-662-AC-2.
+Verify `check_native_fences` over one Markdown document. Scope: FR-662-AC-1, FR-662-AC-2, FR-662-AC-4.
 
 ## Test Procedure
 
 1. Check FR-662-AC-1's `spec.md` with headings `Healthy` and `Broken` and a `text` fence.
 2. Add a second `ix:native` fence under one heading and one fence before the first heading.
 3. Check twice, then with a cancelled `Cancel`.
+4. Independently trigger a whole-document extraction refusal, an extraction/check limit, cancellation, and an internal fault before any fence item is produced.
 
 Tag the tests `#[trace("TC-1743", "<AC id>")]`.
 
@@ -25,3 +26,4 @@ Tag the tests `#[trace("TC-1743", "<AC id>")]`.
 - Step 1: two results; `Healthy` success, body identity `doc#Healthy`; `Broken` `ill_typed` naming the unit, its body span and the original line and column; document operation `check`, category refusal, exit 20.
 - Step 2: `extraction-clause-count` `{"actual": 2}` for both fences of the heading; `missing_declaration`/`missing-name` for the headless fence; other results unchanged.
 - Step 3: equal reports; `StageFailure::Cancelled` with no report.
+- Step 4: each result has operation `check`, no items and one operation-level diagnostic; extraction refusal is category `refusal`, no stage, exit 20; limit is `incomplete` with its catalog code, cause and reached stage, exit 22; cancellation is `incomplete` with no stage and its cancellation code and cause, exit 22; fault is `internal_failure` with no stage and the fault catalog code, exit 30.

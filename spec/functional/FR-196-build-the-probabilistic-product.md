@@ -120,7 +120,7 @@ pub struct ProbKey {
     pub accumulator: Option<Accumulator>,
     pub pending: Option<Pending>,                 // { identity: ScheduledIdentity, random: Vec<Value> }
 }
-pub struct ProbEdge { pub from: ProbStateId, pub choice: ProductAction, pub action: Option<ScheduledIdentity>, pub draw: Option<Vec<Value>>, pub to: ProbStateId, pub probability: Rational, pub rewards: Vec<(Identifier, Value)> }
+pub struct ProbEdge { pub from: ProbStateId, pub choice: ProductAction, pub action: Option<ScheduledIdentity>, pub fired: Vec<ScheduledIdentity>, pub draw: Option<Vec<Value>>, pub to: ProbStateId, pub probability: Rational, pub rewards: Vec<(Identifier, Value)> }
 ```
 
 `ProbEdge.rewards` holds every reward of the model for the step, in ascending
@@ -128,6 +128,19 @@ name order, each a value of the reward's own type. A resolution edge, the edge
 out of an intermediate state to one post-state, carries each reward at 0: the
 draw's rewards sit once on the edge that took the draw, and the resolution
 advances the accumulator with them exactly once.
+
+For an ordinary transition `fired` contains its single scheduled identity.
+For a same-instant ordered tie (FR-204 and ADR-024 PM-2), one outcome is one
+edge from the pre-delay key to the key after all still-enabled tied identities
+have been applied in order; `fired` contains that complete ordered sequence,
+`action` is the first identity, and the `draw` and `probability` retain the
+single delay and the exact mass of that sequence. The edge applies all
+intermediate state updates and rewards in order at that same elapsed time.
+No intermediate same-instant state is a product vertex. Certificate checking
+rebuilds and compares the complete edge label and destination at the source
+key; it does not accept a certificate for a prefix of the sequence. FR-202
+replay expands the ordered label to one trace position per firing identity,
+all at the edge's timestamp.
 
 Evidence of an undefined read:
 
@@ -673,10 +686,14 @@ A timed every-scheduler residual choice uses this same ordinary drawn
 alternative at the **already delayed** digital source state. Under every
 scheduler, delay distributions are unsupported; the admitted digital route
 has separate unit-delay moves then enabled discrete draws. Under a workload,
-a given-delay race is one edge with its exact probability, delay and discrete
-endpoint; a draw with multiple post-states stops NotMarkov under the existing
-admission. It is not a positive pending race. There is no drawn-timed tag
-or retained unapplied winning delay alternative. Supplying one refuses.
+a given-delay race outcome is one edge with its exact probability, delay and
+discrete endpoint. When the winning delay ties multiple identities, the edge
+records their complete ordered firing sequence, applies still-enabled
+identities in that order at the same instant, and ends only after the sequence
+is applied (FR-204). A draw with multiple post-states stops NotMarkov under
+the existing admission. It is not a positive pending race. There is no
+drawn-timed tag or retained unapplied winning delay alternative. Supplying
+one refuses.
 
 `schedule` is
 `[operation,receiver,arguments]`: operation is its existing WireNodeId

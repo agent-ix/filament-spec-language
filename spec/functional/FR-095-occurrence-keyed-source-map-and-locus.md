@@ -46,7 +46,7 @@ layer-4 I2 reader builds the package source map from a verified
   `SourceRegion` (`RawSourceRef`, byte start, byte end), with the value rules
   below.
 - `PackageSourceMap`: occurrence key → ordered, non-empty regions, carried
-  by the I2 reader's verified outcome.
+  by the I2 reader's structurally admitted outcome.
 - `Locus`: `Region(SourceRegion)`, `Occurrence(Location)`,
   `Artifact{identity, pointer}` or `Input{operand, member, pointer}`, with an
   RFC 6901 `JsonPointer`.
@@ -70,13 +70,25 @@ FR-322 does not define:
 
 ### The package source map is the wire's, keyed by occurrence
 
-When the I2 reader verifies a `filament.checked-package/v2` wire, its outcome
+When the I2 reader reads a `filament.checked-package/v2` wire, its outcome
 SHALL carry FSL's package source map built from the wire's `source_map`.
 The reader SHALL preserve the entry-to-region association and wire order
 defined by FSpec FR-322, and SHALL refuse as `invalid_source_map` when the
 entry cannot be represented by FSL's provenance types or refers to no
 semantic graph node. A node's occurrences SHALL be exactly the entries that
-name it.
+name it. This is structural admission only: the package reader receives no
+authored source bytes and SHALL NOT claim that an admitted region is within
+the source's byte length, on a UTF-8 scalar boundary, or the exact span of
+the syntax that produced the node.
+
+Before emitting a checked package, the producer SHALL validate each source-map
+region against the exact admitted source text and selected definition used to
+produce the corresponding occurrence. It SHALL verify source identity, byte
+bounds, UTF-8 scalar boundaries, and equality to the exact half-open span of
+that occurrence. A consumer SHALL bind each selected definition in the
+package lock to its own admitted definition before using source-map provenance
+or interpreting a rule identity for a decision; an opaque selection or region
+is not that binding.
 
 ### A location tag resolves through the map or refuses
 
@@ -126,6 +138,7 @@ locus's pointer SHALL be an RFC 6901 JSON pointer.
 | FR-095-AC-5 | A region locus denotes exactly its region; an occurrence locus denotes the two regions its mapped key holds, and an unmapped one refuses with the map's unknown-occurrence cause; an artifact locus refuses as naming no source region. | Test (TC-422) |
 | FR-095-AC-6 | `""`, `/`, `/source_map/0/regions` and `/a~1b/c~0d` parse as JSON pointers and keep their text; `source_map` refuses for a missing leading `/`, and `/a~2b` and `/a~` refuse for the `~` at byte 2. | Test (TC-422) |
 | FR-095-AC-7 | `Locus::Input{operand: "./out/handoff", member: Some("selection.json"), pointer: None}` refuses `regions` as naming no source region, as an artifact locus does, and keeps `operand` `./out/handoff` byte for byte (not `out/handoff` and not an absolute path); written on the wire it is exactly `{"kind": "input", "member": "selection.json", "operand": "./out/handoff", "pointer": null}`, and `Locus::Input{operand: "pkg.json", member: None, pointer: Some("/lock")}` is exactly `{"kind": "input", "member": null, "operand": "pkg.json", "pointer": "/lock"}`. `Locus::Artifact` over the package asked for as `{authority: "agent-ix", identity: "spine"}` at `/lock` is written with `identity` `{"authority": "agent-ix", "identity": "spine"}`, and no member of it holds a digest or a path. | Test (TC-422) |
+| FR-095-AC-8 | The producer emits the exact region for a selected source occurrence and refuses, before emission, an out-of-bounds region, a UTF-8-splitting region, a region for another occurrence, or a source identity that does not match the selected definition. The I2 package reader retains a structurally valid region without claiming source-byte verification; a consumer cannot use the map for a source-level decision until the selected definition is bound to its admitted definition. | Test (TC-423) |
 
 ## Dependencies
 

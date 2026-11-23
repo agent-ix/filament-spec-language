@@ -78,6 +78,21 @@ accepts both, so the reported interval is certified at both ends.
   which raising that setting resolves, with no certificate and no truth
   value.
 
+- A dyadic interval document SHALL use `scalar_bits = max(max_rational_bits,
+  16 * max_precision_bits)`, where `max_rational_bits` and
+  `max_precision_bits` are the request's `exact_prob` limits. The producer and
+  replay checker SHALL apply this same bound to every encoded rational scalar
+  in both documents, including the objective's `base`; the scalar's reduced
+  numerator and denominator SHALL each fit within `scalar_bits`. The
+  `16 * max_precision_bits` term bounds exact rational interval arithmetic
+  and dyadic endpoints while preserving a larger caller rational bound. When
+  the rational term is greater than or equal to the precision term, a scalar
+  size refusal SHALL name `exact_prob.max_rational_bits`; otherwise it SHALL
+  name `exact_prob.max_precision_bits`. Equality selects the rational setting.
+  The checker SHALL receive both original request values so it can reproduce
+  the same cap and setting provenance rather than treating the derived
+  `scalar_bits` as a caller setting.
+
 ### Document
 
 - The objective SHALL have exactly `profile` and `base`. The document SHALL
@@ -237,6 +252,7 @@ successor of strictly smaller rank whose value is positive (FSpec FR-412
 | FR-1042-AC-8 | Pre-cancellation, cancellation during either document's check, and exhaustion of each caller limit settle `incomplete` with the actual limit and no truth value; either document with another identity refuses before enumeration, and either with a changed `base` member refuses objective mismatch. | Test (TC-3151) |
 | FR-1042-AC-12 | For a bounded fraction mean over an initial terminal state with a false fraction predicate and window 2, the base's only continuation is terminal stutter and its value is 0. An `upper` minimum document with every value 0 and no policy rows, and a `lower` maximum document with every value 0, the rederived remaining-horizon ranks and no policy rows, are accepted. The checker retains the existing stutter action at each undecided key; no fabricated operation identity or new wire form is required. | Test |
 | FR-1042-AC-13 | At an intermediate state with two enabled post-state choices `a` and `b`, their successors reach event success with probability `1/4` and `3/4`, respectively. With correct successor values and ranks, a minimum `upper` initial bound `1/2` with no hint is accepted selecting `a`, and a maximum `lower` bound `1/2` with no hint is accepted selecting `b`. Initial bounds `1/8` for the upper and `7/8` for the lower reject `InequalityFails` there because no action satisfies. Post-state selection needs no fabricated TransitionIdentity row. | Test |
+| FR-1042-AC-15 | For `max_rational_bits = 128` and `max_precision_bits = 16`, both producer and replay accept interval-document scalars whose reduced numerator and denominator are at most 256 bits and refuse a scalar requiring 257 bits, naming `exact_prob.max_precision_bits`; with `max_rational_bits = 512` and `max_precision_bits = 16`, they accept a 512-bit scalar and refuse a 513-bit scalar, naming `exact_prob.max_rational_bits`; with `max_rational_bits = 256` and `max_precision_bits = 16`, they accept 256 bits and refuse 257 bits, naming `exact_prob.max_rational_bits` on equality. | Test (TC-2066) |
 | FR-1042-AC-14 | In AC-3, minimum `upper` `s` `1/4` with hint `go` rejects `InequalityFails` although `wait` satisfies, and the same document without that hint accepts selecting `wait`. A nonexistent hint rejects `InequalityFails` even when an enabled action satisfies. Maximum `lower` `s` 1 with hint `wait` rejects `RankBroken`; removing the hint does not accept it, since no action satisfies both inequality and progress. When several actions satisfy every condition, an omitted hint selects the first in canonical full-product-action order. | Test |
 
 ## Dependencies
