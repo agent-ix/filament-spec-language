@@ -896,6 +896,35 @@ fn after() -> Value {
            "instance": "w-1", "keys": {}, "record": {"ok": true}})
 }
 
+/// The `Decide` case observation `case` (`yes` or `no`) of `Seller` in the
+/// loop body.
+fn looped_case(case: &str) -> Value {
+    json!({"kind": "case", "node": format!("Flow::Main::Loop::Body::Decide::{case}"),
+           "role": "Seller", "instance": "w-1", "keys": {}})
+}
+
+/// A closed recording of [`repeat_then_protocol`] from `observations`:
+/// `Buyer` sends at `buyer`, `Seller` observations at `seller`, and
+/// correlations `(send, receive)`.
+fn after_recording(
+    observations: Value,
+    buyer: &[usize],
+    seller: &[usize],
+    correlations: &[(usize, usize)],
+) -> Value {
+    repeat_recording(
+        observations,
+        json!(seller),
+        json!(buyer),
+        Value::Array(
+            correlations
+                .iter()
+                .map(|(send, receive)| json!({"send": send, "receive": receive}))
+                .collect(),
+        ),
+    )
+}
+
 /// FR-895-AC-20 (TC-2531): a step after a `repeat` run zero times is enabled,
 /// and one after two iterations is enabled by the last iteration's steps.
 #[trace("TC-2531", "FR-895-AC-20")]
@@ -904,27 +933,24 @@ fn a_step_after_a_repeat_needs_its_last_iteration() {
     let source = repeat_then_protocol();
     assert_enabled(
         &source,
-        &repeat_recording(json!([after()]), json!([0]), json!([]), json!([])),
+        &after_recording(json!([after()]), &[], &[0], &[]),
         "Flow::Main::After",
         0,
     );
     let observations = json!([
         looped("send", "Placed", "Buyer", "m-1"),
         looped("receive", "Got", "Seller", "m-1"),
+        looped_case("yes"),
         looped("send", "Placed", "Buyer", "m-2"),
         looped("receive", "Got", "Seller", "m-2"),
+        looped_case("yes"),
         after(),
     ]);
     assert_enabled(
         &source,
-        &repeat_recording(
-            observations,
-            json!([1, 3, 4]),
-            json!([0, 2]),
-            json!([{"send": 0, "receive": 1}, {"send": 2, "receive": 3}]),
-        ),
+        &after_recording(observations, &[0, 3], &[1, 2, 4, 5, 6], &[(0, 1), (3, 4)]),
         "Flow::Main::After",
-        4,
+        6,
     );
 }
 
@@ -939,23 +965,217 @@ fn an_earlier_iteration_does_not_enable_a_step_after_the_repeat() {
     let observations = json!([
         looped("send", "Placed", "Buyer", "m-1"),
         looped("receive", "Got", "Seller", "m-1"),
+        looped_case("yes"),
         looped("send", "Placed", "Buyer", "m-2"),
+        looped_case("yes"),
         after(),
     ]);
-    let closed = repeat_recording(
-        observations,
-        json!([1, 3]),
-        json!([0, 2]),
-        json!([{"send": 0, "receive": 1}]),
-    );
-    assert_unexpected(&source, &closed, "Flow::Main::After", 3);
+    let closed = after_recording(observations, &[0, 3], &[1, 2, 4, 5], &[(0, 1)]);
+    assert_unexpected(&source, &closed, "Flow::Main::After", 5);
     let mut open = closed;
     open["closure"] = json!({"state": "open", "premises": []});
     let assessed =
         assess_recording(&package_of(&source), open.to_string().as_bytes()).expect("readable");
     assert_eq!(
-        enabledness(&assessed, "Flow::Main::After", 3).verdict,
+        enabledness(&assessed, "Flow::Main::After", 5).verdict,
         RecordingVerdict::Pending
+    );
+}
+
+/// FR-895-AC-22 (TC-2531): iterations that take different cases each judge
+/// their own: `yes` in the first iteration and `no` in the last leave `After`
+/// enabled; with the last iteration's `Got` missing it is `violated`.
+#[trace("TC-2531", "FR-895-AC-22")]
+#[test]
+fn iterations_taking_different_cases_each_use_their_own() {
+    let source = repeat_then_protocol();
+    let observations = json!([
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped_case("yes"),
+        looped("send", "Placed", "Buyer", "m-2"),
+        looped("receive", "Got", "Seller", "m-2"),
+        looped_case("no"),
+        after(),
+    ]);
+    assert_enabled(
+        &source,
+        &after_recording(observations, &[0, 3], &[1, 2, 4, 5, 6], &[(0, 1), (3, 4)]),
+        "Flow::Main::After",
+        6,
+    );
+    let without_got = json!([
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped_case("yes"),
+        looped("send", "Placed", "Buyer", "m-2"),
+        looped_case("no"),
+        after(),
+    ]);
+    assert_unexpected(
+        &source,
+        &after_recording(without_got, &[0, 3], &[1, 2, 4, 5], &[(0, 1)]),
+        "Flow::Main::After",
+        5,
+    );
+}
+
+/// [`repeat_then_protocol`] with an event `Shipped` in the `yes` case.
+fn repeat_case_step_protocol() -> String {
+    repeat_then_protocol().replace(
+        "sequence Ship { }",
+        "sequence Ship { event Shipped by Seller as (sh: Ack) { true }; }",
+    )
+}
+
+/// `Shipped` of the loop body's `yes` case.
+fn shipped() -> Value {
+    json!({"kind": "event", "node": "Flow::Main::Loop::Body::Decide::yes::Ship::Shipped",
+           "role": "Seller", "instance": "w-1", "keys": {}, "record": {"ok": true}})
+}
+
+/// FR-895-AC-23 (TC-2531): a step of the case taken in the last iteration is
+/// a predecessor of `After`, and a step of a case taken only in an earlier
+/// iteration is not.
+#[trace("TC-2531", "FR-895-AC-23")]
+#[test]
+fn a_case_step_in_the_last_iteration_precedes_the_step_after_the_repeat() {
+    let source = repeat_case_step_protocol();
+    let first = [
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped_case("yes"),
+        shipped(),
+    ];
+    let second = |case: &str, extra: Vec<Value>| {
+        let mut observations = first.to_vec();
+        observations.extend([
+            looped("send", "Placed", "Buyer", "m-2"),
+            looped("receive", "Got", "Seller", "m-2"),
+            looped_case(case),
+        ]);
+        observations.extend(extra);
+        observations.push(after());
+        observations
+    };
+    let seller = |count: usize| {
+        (0..count)
+            .filter(|index| *index != 0 && *index != 4)
+            .collect::<Vec<_>>()
+    };
+    // `yes` twice, `Shipped` in both: enabled.
+    let both = second("yes", vec![shipped()]);
+    let count = both.len();
+    assert_enabled(
+        &source,
+        &after_recording(json!(both), &[0, 4], &seller(count), &[(0, 1), (4, 5)]),
+        "Flow::Main::After",
+        count - 1,
+    );
+    // `yes` twice, the last `Shipped` missing: violated.
+    let missing = second("yes", vec![]);
+    let count = missing.len();
+    assert_unexpected(
+        &source,
+        &after_recording(json!(missing), &[0, 4], &seller(count), &[(0, 1), (4, 5)]),
+        "Flow::Main::After",
+        count - 1,
+    );
+    // `yes` then `no`: the first iteration's `Shipped` is not required.
+    let other = second("no", vec![]);
+    let count = other.len();
+    assert_enabled(
+        &source,
+        &after_recording(json!(other), &[0, 4], &seller(count), &[(0, 1), (4, 5)]),
+        "Flow::Main::After",
+        count - 1,
+    );
+}
+
+/// [`repeat_then_protocol`] whose `exhausted` path holds an event `X`.
+fn repeat_exhausted_protocol() -> String {
+    repeat_then_protocol().replace(
+        "exhausted sequence Out { }",
+        "exhausted sequence Out { event X by Seller as (x: Ack) { true }; }",
+    )
+}
+
+/// `X` of the `exhausted` path.
+fn exhausted_x() -> Value {
+    json!({"kind": "event", "node": "Flow::Main::Loop::Out::X", "role": "Seller",
+           "instance": "w-1", "keys": {}, "record": {"ok": true}})
+}
+
+/// FR-895-AC-24 (TC-2531): the `exhausted` path is an alternative exit run
+/// once after the last iteration, not part of an iteration: after two
+/// iterations and `X`, `After` and `X` are enabled; `X` without the last
+/// iteration's `Got` is `violated`, cause `unexpected`.
+#[trace("TC-2531", "FR-895-AC-24")]
+#[test]
+fn the_exhausted_path_follows_the_last_iteration_and_precedes_the_step_after() {
+    let source = repeat_exhausted_protocol();
+    let full = json!([
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped_case("yes"),
+        looped("send", "Placed", "Buyer", "m-2"),
+        looped("receive", "Got", "Seller", "m-2"),
+        looped_case("yes"),
+        exhausted_x(),
+        after(),
+    ]);
+    let recording = after_recording(full, &[0, 3], &[1, 2, 4, 5, 6, 7], &[(0, 1), (3, 4)]);
+    assert_enabled(&source, &recording, "Flow::Main::Loop::Out::X", 6);
+    assert_enabled(&source, &recording, "Flow::Main::After", 7);
+    let without_got = json!([
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped_case("yes"),
+        looped("send", "Placed", "Buyer", "m-2"),
+        looped_case("yes"),
+        exhausted_x(),
+    ]);
+    assert_unexpected(
+        &source,
+        &after_recording(without_got, &[0, 3], &[1, 2, 4, 5], &[(0, 1)]),
+        "Flow::Main::Loop::Out::X",
+        5,
+    );
+}
+
+/// [`parallel_protocol`] under `join any`.
+fn any_join_protocol() -> String {
+    parallel_protocol().replace(
+        "join all [left, right];",
+        "join any [left, right] outstanding continue;",
+    )
+}
+
+/// FR-895-AC-25 (TC-2531): after a `parallel` under `join any`, the branches
+/// whose steps were all observed are predecessors, and an unobserved branch
+/// is not: `Placed` after `L` alone is enabled; `L` observed after `Placed`
+/// leaves `Placed` `violated`, cause `unexpected`.
+#[trace("TC-2531", "FR-895-AC-25")]
+#[test]
+fn a_step_after_an_any_join_needs_the_observed_branches() {
+    let source = any_join_protocol();
+    assert_enabled(
+        &source,
+        &parallel_recording(json!([
+            branch_event("left", "Left", "L"),
+            observation("send", "Placed", "Buyer", "m-1"),
+        ])),
+        "Flow::Main::Placed",
+        1,
+    );
+    assert_unexpected(
+        &source,
+        &parallel_recording(json!([
+            observation("send", "Placed", "Buyer", "m-1"),
+            branch_event("left", "Left", "L"),
+        ])),
+        "Flow::Main::Placed",
+        0,
     );
 }
 
