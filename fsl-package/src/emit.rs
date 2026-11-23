@@ -9,7 +9,10 @@
 //! The emitter preserves graph order, occurrences, source regions, lock
 //! selections and omission causes. The IR encoder writes the envelope.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use std::{
+    collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque},
+    sync::Arc,
+};
 
 use filament_contract_model::{
     encode_checked_package_v2_with_protocol_correlation_occurrences, ApplicationOperator,
@@ -778,7 +781,7 @@ pub struct Emission {
     /// FR-322's feature-level report retained as typed data for inspection.
     pub(crate) capability_report: Vec<CheckedCapability>,
     /// The exact source correspondence emitted with these package bytes.
-    pub(crate) source_map: PackageSourceMap,
+    pub(crate) source_map: Arc<PackageSourceMap>,
     /// FSL's selected model-operation witnesses, keyed by the admitted anchor
     /// identities written in these bytes.
     pub(crate) selected_operation_member_rows:
@@ -1637,6 +1640,11 @@ impl Emission {
     /// The source map emitted with these package bytes.
     pub fn source_map(&self) -> &PackageSourceMap {
         &self.source_map
+    }
+
+    /// Share the admitted source map without cloning its package entries.
+    pub fn source_map_shared(&self) -> Arc<PackageSourceMap> {
+        Arc::clone(&self.source_map)
     }
 }
 
@@ -6712,7 +6720,7 @@ pub fn emit_timed_models(
         omitted: Vec::new(),
         evidence: own_evidence(&lock),
         capability_report,
-        source_map: inspection_source_map,
+        source_map: Arc::new(inspection_source_map),
         selected_operation_member_rows: Vec::new(),
         selected_tuple_declaration_rows: Vec::new(),
         selected_source_unit_rows: Vec::new(),
@@ -7895,7 +7903,7 @@ fn emit_package_inner(
         omitted,
         evidence,
         capability_report: capability_report.to_vec(),
-        source_map: inspection_source_map,
+        source_map: Arc::new(inspection_source_map),
         selected_operation_member_rows,
         selected_tuple_declaration_rows,
         selected_source_unit_rows,

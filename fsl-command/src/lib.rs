@@ -56,7 +56,12 @@ pub fn diagnostic_pairs() -> Vec<fsl_foundation::diagnostic::CatalogCode> {
 
 /// Build the renderer's source provision from the admitted sources in an outcome.
 pub fn render_sources(sources: &Sources) -> fsl_inspect::RenderSources {
-    fsl_inspect::RenderSources::from_sources(sources.as_slice().iter().cloned())
+    let render_sources =
+        fsl_inspect::RenderSources::from_sources(sources.as_slice().iter().cloned());
+    match sources.source_map_shared() {
+        Some(source_map) => render_sources.with_source_map(source_map),
+        None => render_sources,
+    }
 }
 
 #[cfg(test)]

@@ -1727,6 +1727,30 @@ pub fn run_clause(request: ClauseRunRequest) -> Result<ClauseRunReport, ClauseRu
     run_clause_with_temporal_selections(request, &[])
 }
 
+/// Run one clause and retain the checked emission's source map for text output.
+///
+/// The returned map shares the emission's admitted entries, so requesting
+/// source correspondence does not deep-clone the package map. Refusals before
+/// compilation complete return no map.
+pub fn run_clause_with_source_map(
+    request: ClauseRunRequest,
+) -> Result<
+    (
+        ClauseRunReport,
+        Option<std::sync::Arc<fsl_foundation::source::provenance::PackageSourceMap>>,
+    ),
+    ClauseRunRefusal,
+> {
+    let mut source_map = None;
+    let mut retain_map = |emission: &fsl_package::Emission| {
+        source_map = Some(emission.source_map_shared());
+    };
+    let report =
+        run_clause_reading_with_source_map(request, &[], false, None, None, Some(&mut retain_map))?;
+    drop(retain_map);
+    Ok((report, source_map))
+}
+
 /// [`run_clause`] with explicit clock configurations for checked temporal
 /// declarations in the selected source and its resolved libraries, keyed by
 /// each declaration's exact locus. Non-empty `temporal_selections` replace
@@ -1787,6 +1811,24 @@ fn run_clause_reading(
     valuation: bool,
     function_modes: Option<&BTreeMap<String, filament_semantic_value::checking::CheckMode>>,
     behaviours: Option<(&DocumentRef, usize)>,
+) -> Result<ClauseRunReport, ClauseRunRefusal> {
+    run_clause_reading_with_source_map(
+        request,
+        temporal_selections,
+        valuation,
+        function_modes,
+        behaviours,
+        None,
+    )
+}
+
+fn run_clause_reading_with_source_map(
+    request: ClauseRunRequest,
+    temporal_selections: &[fsl_package::TemporalClockSelection],
+    valuation: bool,
+    function_modes: Option<&BTreeMap<String, filament_semantic_value::checking::CheckMode>>,
+    behaviours: Option<(&DocumentRef, usize)>,
+    mut retain_source_map: Option<&mut dyn FnMut(&fsl_package::Emission)>,
 ) -> Result<ClauseRunReport, ClauseRunRefusal> {
     let unit = request.source.unit();
     if unit.bytes.is_empty() {
@@ -1911,6 +1953,9 @@ fn run_clause_reading(
             return Ok(report(disposition));
         }
     };
+    if let Some(retain_source_map) = retain_source_map.as_mut() {
+        retain_source_map(emitted.emission());
+    }
     let package = checked.package();
     // FND-016: the unit's and every resolved library's source, reused
     // exactly as the check already read them (mirroring `call::run`'s own
