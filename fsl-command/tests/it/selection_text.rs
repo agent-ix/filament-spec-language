@@ -2,7 +2,6 @@
 //! FR-865-AC-17..24 and FR-286-AC-40: each `selection` kind's producer
 //! document carries its hint, validates, and its text holds that hint line.
 
-use filament_exact::Identifier;
 use filament_semantic_value::catalog::Category;
 use fsl_analyze::analyze::{AnalyzeRefusal, ProvisionRefusal};
 use fsl_command::command::{self, CheckInputs, RunCause, RunError};
@@ -10,14 +9,16 @@ use fsl_foundation::selection::DefinitionRef;
 use fsl_foundation::{Code, SourceIdentity};
 use fsl_replay::spine::{CompileRefusal, UnitListRefusal};
 use fsl_replay::{
-    CallSiteRefusal, ImportedFunctionName, LibraryName, Operation, OutcomeDiagnostic,
-    OutcomeDocument, ReplayRefusal, ReplayRequestRefusal,
+    LibraryName, Operation, OutcomeDiagnostic, OutcomeDocument, ReplayRefusal, ReplayRequestRefusal,
 };
 use fsl_semantics::library::extension::ExtensionRefusal;
 use ix_trace_rs::trace;
-use serde_json::Value;
+use serde_json::{json, Value};
 
-use crate::cli_contract::assert_outcome_schema;
+use crate::cli_contract::compile::{
+    call_site_request, imported, libraries_of_ac_15, UNIT_OF_UNITS,
+};
+use crate::cli_contract::{assert_outcome_schema, Case};
 
 const MODEL: &str = "Supply the model in the request's models member, or with --model <identity>=<file> on fsl check.";
 const LIBRARY: &str = "Supply the library in the request's libraries member, or with --library <identity>=<file> on fsl check.";
@@ -134,18 +135,38 @@ fn the_sibling_unit_producer_text_holds_its_hint() {
     "FR-865-AC-24",
     "FR-286-AC-40"
 )]
+#[trace("TC-3210", "FR-027-AC-15")]
 fn the_unimported_library_producer_text_holds_its_hint() {
-    let refusal = CallSiteRefusal::UnknownImport {
-        selection: ImportedFunctionName {
-            library: LibraryName::new("test/other").unwrap(),
-            function: Identifier::new("big").unwrap(),
-        },
-        package: LibraryName::new("fixture").unwrap(),
+    let case = Case::new();
+    let owned = libraries_of_ac_15();
+    let libraries: Vec<(&str, &str)> = owned.iter().map(|(a, b)| (*a, b.as_str())).collect();
+    let path = call_site_request(
+        &case,
+        UNIT_OF_UNITS,
+        &libraries,
+        Some(imported("test/other", "big")),
+        json!({}),
+    );
+    let Err(error) = command::compile_outcome(&path) else {
+        panic!("the call_site selection of an unimported library is refused");
     };
-    assert_kind(
-        "unimported-library",
-        UNIMPORTED,
-        &document_of(OutcomeDiagnostic::from_call_site_refusal(&refusal)),
+    let document = error.outcome_document(Operation::Package);
+    assert_kind("unimported-library", UNIMPORTED, &document);
+    let text = fsl_inspect::render_outcome(
+        &document,
+        fsl_inspect::RenderForm::Text,
+        &fsl_command::render_sources(&error.sources),
+        fsl_replay::RenderLimits::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("the document renders")
+    .value()
+    .as_str()
+    .to_owned();
+    assert!(
+        text.lines()
+            .any(|line| line == format!("  hint: {UNIMPORTED}")),
+        "{text}"
     );
 }
 
@@ -188,7 +209,12 @@ fn the_byte_provision_producer_text_holds_its_hint() {
 }
 
 #[test]
-#[trace("TC-3199", "FR-865-AC-23", "FR-865-AC-24", "FR-286-AC-40")]
+#[trace(
+    "TC-3199",
+    "FR-865-AC-23",
+    "FR-865-AC-24",
+    "FR-286-AC-40"
+)]
 fn the_extension_definition_producer_text_holds_its_hint() {
     let refusal = CompileRefusal::Extension(ExtensionRefusal::MissingDependency {
         dependent: DefinitionRef::new("agent-ix", "ext.a").unwrap(),
@@ -203,7 +229,12 @@ fn the_extension_definition_producer_text_holds_its_hint() {
 }
 
 #[test]
-#[trace("TC-3199", "FR-865-AC-23", "FR-865-AC-24", "FR-286-AC-40")]
+#[trace(
+    "TC-3199",
+    "FR-865-AC-23",
+    "FR-865-AC-24",
+    "FR-286-AC-40"
+)]
 fn the_source_producer_text_holds_its_hint() {
     let refusal = AnalyzeRefusal::Provision(ProvisionRefusal {
         authority: "test".to_owned(),
@@ -215,7 +246,12 @@ fn the_source_producer_text_holds_its_hint() {
 /// The run's strict-reader package refusal: a missing import has the pair's
 /// `missing-selection` cause whether or not the reader named it.
 #[test]
-#[trace("TC-3199", "FR-865-AC-23", "FR-865-AC-24", "FR-286-AC-40")]
+#[trace(
+    "TC-3199",
+    "FR-865-AC-23",
+    "FR-865-AC-24",
+    "FR-286-AC-40"
+)]
 fn the_package_reference_producer_text_holds_its_hint() {
     for cause in [None, Some("missing-selection".to_owned())] {
         let error = RunError {

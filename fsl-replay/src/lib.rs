@@ -157,9 +157,9 @@ pub use call_requirements::{
     CallRequirements, RequirementsRun, RunWithRequirements,
 };
 pub use call_site::{
-    call_site, CallSite, CallSiteRefusal, CallSiteSelection, ClauseName, ClauseSite, FieldName,
-    FieldSite, FunctionSite, ImportedFunctionName, ImportedFunctionSite, OperationSite,
-    PopulationName, PopulationSite, ValueParitySite,
+    call_site, locate_in_checked, CallSite, CallSiteRefusal, CallSiteSelection, ClauseName,
+    ClauseSite, FieldName, FieldSite, FunctionSite, ImportedFunctionName, ImportedFunctionSite,
+    OperationSite, PopulationName, PopulationSite, ValueParitySite,
 };
 pub use certificate::closed_form::check::{
     check_closed_form, CertificateRefusal, ClaimTriple, ClosedFormResult,

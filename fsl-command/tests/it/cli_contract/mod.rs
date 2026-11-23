@@ -28,7 +28,7 @@ use fsl_replay::Operation;
 use serde_json::Value;
 
 mod analyze;
-mod compile;
+pub(crate) mod compile;
 mod export;
 mod machine_output;
 mod monitor;

@@ -70,6 +70,53 @@ fn request_integer_division(
     read_integer_division(value.as_ref(), "integer_division")
 }
 
+/// FR-027: the request's `call_site`, an object of exactly `kind`
+/// `"imported-function"`, `library` (a library identity) and `function` (a
+/// function identifier). Anything else, and a program that is an FR-480 array
+/// of units, refuses `invalid-request` naming `call_site`.
+fn request_call_site(
+    value: Option<&serde_json::Value>,
+    program_sources: usize,
+) -> Result<Option<fsl_replay::ImportedFunctionName>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let refuse = |reason: &str| RunCause::ClauseRequest {
+        member: "call_site".to_owned(),
+        reason: reason.to_owned(),
+    };
+    let serde_json::Value::Object(members) = value else {
+        return Err(refuse("must be an object"));
+    };
+    if let Some(extra) = members
+        .keys()
+        .find(|name| !matches!(name.as_str(), "kind" | "library" | "function"))
+    {
+        return Err(refuse(&format!("has the unknown member {extra}")));
+    }
+    let text = |name: &str| match members.get(name) {
+        Some(serde_json::Value::String(text)) => Ok(text.as_str()),
+        Some(_) => Err(refuse(&format!("member {name} must be a string"))),
+        None => Err(refuse(&format!("lacks the member {name}"))),
+    };
+    let kind = text("kind")?;
+    let library = text("library")?;
+    let function = text("function")?;
+    if kind != "imported-function" {
+        return Err(refuse("kind must be `imported-function`"));
+    }
+    let library = (!library.is_empty())
+        .then(|| fsl_semantics::library::LibraryName::new(library).ok())
+        .flatten()
+        .ok_or_else(|| refuse("library must be a library identity"))?;
+    let function = filament_exact::Identifier::new(function)
+        .map_err(|_| refuse("function must be an identifier"))?;
+    if program_sources > 1 {
+        return Err(refuse("is not supported for an array of program units"));
+    }
+    Ok(Some(fsl_replay::ImportedFunctionName { library, function }))
+}
+
 /// Caller byte ceilings for one command invocation (FR-312, FR-869).
 #[derive(Clone, Copy, Debug)]
 pub struct RunLimits {
@@ -1034,6 +1081,10 @@ pub enum RunCause {
     /// than malformed.
     #[error("the request's extension names an unknown required capability: {0}")]
     UnknownExtensionCapability(String),
+    /// FR-027: the request's `call_site` selection is refused over the checked
+    /// package, or locating it broke an invariant.
+    #[error("{0}")]
+    CallSite(Box<fsl_replay::CallSiteRefusal>),
     /// Spine compile of a `1-draft` program refused at one stage.
     #[error("{}", .0.refusal)]
     Spine(Box<SpineFailure>),
@@ -1293,6 +1344,7 @@ impl RunCause {
             #[cfg(feature = "quire-extraction")]
             Self::ExtractionFailure { code, .. } => *code,
             Self::Spine(failure) => failure.refusal.code(),
+            Self::CallSite(refusal) => refusal.code(),
             Self::ExtensionCatalog(_) => Code::InvalidPackage,
             Self::UnknownExtensionCapability(_) => Code::UnknownRequiredFeature,
             Self::SpineRun(refusal) => refusal.code(),
@@ -1353,6 +1405,12 @@ impl RunCause {
             | Self::ClauseOutput(_)
             | Self::ExportOutput { .. }
             | Self::TlFault(_) => filament_semantic_value::catalog::Category::InternalFailure,
+            Self::CallSite(refusal) => match **refusal {
+                fsl_replay::CallSiteRefusal::Fault(_) => {
+                    filament_semantic_value::catalog::Category::InternalFailure
+                }
+                _ => self.code().category(),
+            },
             Self::SpineRun(refusal) => refusal.category(),
             // FR-663/TC-1746: an unbounded plan parameter is a check-time
             // admission refusal. Other unsupported projections retain their
@@ -1430,6 +1488,12 @@ impl RunError {
                 self.category(),
             )
             .with_diagnostics(failure.refusal.outcome_diagnostics()),
+            RunCause::CallSite(refusal) => OutcomeDocument::new(
+                operation,
+                Some(fsl_replay::OutcomeStage::I1),
+                self.category(),
+            )
+            .with_diagnostics(vec![OutcomeDiagnostic::from_call_site_refusal(refusal)]),
             RunCause::SpineRun(refusal) => OutcomeDocument::from_run_refusal(operation, refusal),
             RunCause::AnalyzeRefused(refusal) => refusal.document(),
             RunCause::MonitorRefused(refusal) => refusal.document(),
@@ -2839,6 +2903,7 @@ fn compile_outcome_inner(
         let request: wire::CompileRequest = request_with_overrides(bytes, overrides)?;
         // FR-767: a malformed or unknown law refuses before any file is read.
         let integer_division = request_integer_division(request.integer_division.clone())?;
+        request_call_site(request.call_site.as_ref(), request.program.sources.len())?;
         validate_extension_entries(&request.extensions)?;
         if let Some(handoff) = &request.handoff {
             validate_handoff_request(handoff, request.program.sources.len())?;
@@ -2919,6 +2984,7 @@ fn compile_outcome_inner(
                     request.refinement_internals.is_some(),
                 ),
                 ("integer_division", request.integer_division.is_some()),
+                ("call_site", request.call_site.is_some()),
             ] {
                 if present {
                     return Err(RunCause::ClauseRequest {
@@ -3470,6 +3536,14 @@ fn complete_sources(
             );
             let document = fsl_replay::OutcomeDocument::from_package(&result);
             let emitted = result.map_err(failure)?.into_value();
+            if let Some(selection) = request_call_site(request.call_site.as_ref(), sources.len())? {
+                fsl_replay::locate_in_checked(
+                    &checked,
+                    &package_name(sources[0].source().identity()),
+                    &selection,
+                )
+                .map_err(RunCause::CallSite)?;
+            }
             let package_bytes = emitted.package().bytes().to_vec();
             let handoff_temporal_selections = if request.handoff.is_some() {
                 handoff_clock_selections(&checked, selections)

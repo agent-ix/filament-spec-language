@@ -718,6 +718,7 @@ fn drive(
         output: None,
         handoff: None,
         integer_division: None,
+        call_site: None,
         check_mode: filament_semantic_value::checking::CheckMode::Linked,
     };
     let program_source = program.source().clone();

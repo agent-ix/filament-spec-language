@@ -658,7 +658,7 @@ pub fn call_site<'a, S: CallSiteSelection>(
     clocks: &spine::RequestClocks,
     selection: &S,
 ) -> Result<CallSite<S::Site>, Box<CallSiteRefusal>> {
-    let library_name = LibraryName::new(&package_name).map_err(|_| {
+    LibraryName::new(&package_name).map_err(|_| {
         Box::new(CallSiteRefusal::Fault(InternalFault::new(
             "call-site",
             "package-name-is-a-library-name",
@@ -696,7 +696,7 @@ pub fn call_site<'a, S: CallSiteSelection>(
     let check_selections = clocks.check_selections(&parsed);
     let checked = spine::check_with_execution_points_and_source_inputs(
         &parsed,
-        package_name,
+        package_name.clone(),
         &Default::default(),
         spine::SourceInputs {
             temporal_selections: &check_selections,
@@ -720,14 +720,35 @@ pub fn call_site<'a, S: CallSiteSelection>(
     }
     .map_err(refusal)?
     .into_value();
-    let site = selection.locate(&sealed::Compiled {
-        package: checked.package(),
-        package_name: &library_name,
-        libraries: checked.shared_library_packages(),
-    })?;
+    let site = locate_in_checked(&checked, &package_name, selection)?;
     Ok(CallSite {
         package: emitted.package().bytes().to_vec(),
         site,
+    })
+}
+
+/// Locate `selection` in a unit that is already checked, named `package_name`
+/// (FR-121, FR-027): the location [`call_site`] makes after its own compile,
+/// with no parse, selection, check or emission of its own. A caller whose
+/// compile ran under its own inputs and limits locates over that compile's
+/// [`CheckedUnit`](spine::CheckedUnit) instead of compiling the unit again. A
+/// `package_name` that is not a library name is
+/// [`CallSiteRefusal::Fault`].
+pub fn locate_in_checked<S: CallSiteSelection>(
+    checked: &spine::CheckedUnit,
+    package_name: &str,
+    selection: &S,
+) -> Result<S::Site, Box<CallSiteRefusal>> {
+    let library_name = LibraryName::new(package_name).map_err(|_| {
+        Box::new(CallSiteRefusal::Fault(InternalFault::new(
+            "call-site",
+            "package-name-is-a-library-name",
+        )))
+    })?;
+    selection.locate(&sealed::Compiled {
+        package: checked.package(),
+        package_name: &library_name,
+        libraries: checked.shared_library_packages(),
     })
 }
 

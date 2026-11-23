@@ -396,7 +396,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
             types::Stage::Spine(fsl_replay::spine::SpineStage::Intake),
             types::Details::Native(diagnostic(&error.native)),
         ),
-        RunCause::ModelPackageInput(_) => (
+        RunCause::CallSite(_) | RunCause::ModelPackageInput(_) => (
             types::Stage::Spine(fsl_replay::spine::SpineStage::Intake),
             types::Details::None,
         ),
