@@ -106,7 +106,7 @@ pub use items::{
     protocol_item, statistical_item, timed_refinement_item, zone_item, DerivedItemMismatch,
     ModelItem, ProtocolItem, ProtocolReplayFn, RefinementReplayFn, TimedItem, TimedRefinementItem,
 };
-pub use simulation_item::{SimulationItem, SimulationMode, SimulationSelection};
+pub use simulation_item::{engine_conflict, SimulationItem, SimulationMode, SimulationSelection};
 pub use state_graph_item::PackageStateGraphSubject;
 
 use crate::provider::{
@@ -678,54 +678,14 @@ impl SubjectBinding<'_> {
     }
 }
 
-/// Every analysis-item engine setting a caller can pass to `analyze`, and to
-/// `monitor` beside routed `items` (FR-255 "Lifecycle caller-limit
-/// coverage"). `plan_search.*` is absent: neither operation executes it.
-pub const ENGINE_SETTINGS: [Setting; 44] = [
-    Setting::ModelCheckMaxStates,
-    Setting::ModelCheckMaxTransitions,
-    Setting::ModelCheckMaxAutomatonStates,
-    Setting::ModelCheckWitnessSamples,
-    Setting::ModelCheckMaxWalkSteps,
-    Setting::ModelCheckMaxWitnessSet,
-    Setting::ModelCheckMaxRelationTuples,
-    Setting::ModelCheckMaxLiveInstances,
-    Setting::ModelCheckMaxStoreBuffer,
-    Setting::ModelCheckMaxMessages,
-    Setting::ExpansionMaxCandidates,
+/// The analysis-item engine settings a caller can pass to `analyze`, and to
+/// `monitor` beside routed `items`, that the item adapters enforce (FR-255
+/// "Lifecycle caller-limit coverage"). A setting joins this list when its
+/// engine reads the caller's bound, so no accepted setting is ignored.
+/// `plan_search.*` is never listed: neither operation executes it.
+pub const ENGINE_SETTINGS: [Setting; 2] = [
     Setting::SimulationMaxSteps,
-    Setting::ExactProbMaxStates,
-    Setting::ExactProbMaxTransitions,
-    Setting::ExactProbMaxAutomatonStates,
-    Setting::ExactProbMaxIterations,
-    Setting::ExactProbPrecisionBits,
-    Setting::ExactProbMaxPrecisionBits,
-    Setting::ExactProbMaxRationalBits,
-    Setting::ExactProbMaxPolicyIterations,
-    Setting::ExactProbMaxWitnessPaths,
-    Setting::StatisticalMaxSamples,
-    Setting::StatisticalMaxDraws,
-    Setting::StatisticalMaxCycleSteps,
-    Setting::StatisticalMaxSampleSteps,
-    Setting::ZoneCheckMaxSymbolicStates,
-    Setting::ZoneCheckMaxSymbolicTransitions,
-    Setting::ZoneCheckMaxAutomatonStates,
-    Setting::ZoneCheckMaxZoneBytes,
-    Setting::CertificateCheckMaxCertificateEdges,
-    Setting::CertificateCheckMaxCertificateBytes,
-    Setting::CertificateCheckMaxWorkingBytes,
-    Setting::CertificateCheckMaxRank,
     Setting::ScheduleMaxDemandPoints,
-    Setting::HybridMaxSolverSteps,
-    Setting::HybridMaxSolverTime,
-    Setting::SmtEncodingMaxConstants,
-    Setting::SmtEncodingMaxApplications,
-    Setting::SmtEncodingMaxMonitorAtoms,
-    Setting::SmtEncodingMaxMonitorStates,
-    Setting::SmtEncodingMaxCandidates,
-    Setting::SmtEncodingMaxScriptBytes,
-    Setting::SmtMaxSolverSteps,
-    Setting::SmtMaxSolverTime,
 ];
 
 /// The engine settings the caller set for one run: a bound is present only

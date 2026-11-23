@@ -432,6 +432,14 @@ or `plan_search.*`; it also does not consume
 or `monitor.*`. It does not render output or explore a state graph. These
 settings SHALL be refused as operation-unavailable.
 
+A limit an analysis item states in its own `limits` or engine member and the
+same setting the caller passes through the caller-limit interface are one
+bound given twice: `analyze` and `monitor` SHALL refuse the request
+`invalid-request` at stage `request`, naming the item and the setting,
+before any work, so no run depends on which of the two bounds wins (as FR-312
+refuses `observation_limits` and FR-1015 refuses `export.limits`). A caller
+setting no item states takes effect for every item whose engine reads it.
+
 “All ten `accounting.*` settings” expands to `accounting.integer_bits`,
 `accounting.decimal_digits`, `accounting.scale_expansion`,
 `accounting.text_input_bytes`, `accounting.text_scalars`,
@@ -720,6 +728,7 @@ these names through the same operand grammar as the stage settings
 | FR-255-AC-22 | The settings operation lists `export.output_bytes`, `export.nodes` and `export.work_units` with defaults 16777216, 100000 and 16777216, equal to the defaults of `emit.output_bytes`, `s3.nodes` and `s3.work_units`; given `export.nodes=7` it changes only that export limit; and an export of FR-756-AC-1's counter under `export.work_units` 1 stops `incomplete` naming `export.work_units`, bound 1, exit 22. | Test (TC-2993) |
 | FR-255-AC-23 | Native analyze probability items with omitted candidate and accounting settings use local `expansion.max_candidates` 1000000 and cumulative `accounting.work_units` 1000000 for either engine. Supplying a different accounting bound B preserves B. The local ceiling stops as `max_candidates` with `expansion.max_candidates`; the cumulative bound stops as `work_units` with `accounting.work_units`. Neither default is `u64::MAX`, and starting an expansion or clause does not renew cumulative work. | Test |
 | FR-255-AC-24 | The `analyze`, `monitor` and `replay` command entry points accept exactly the operation-relevant caller-limit settings enumerated in “Lifecycle caller-limit coverage”; each accepted setting changes only its corresponding bound, while recognized but operation-unavailable settings are refused before work. In particular, monitor accepts `monitor.preparation_work_units` and `monitor.preparation_storage`, and replay accepts the stage settings it executes plus `replay.input_bytes` through its replay-reader argument, but not as a `stage_limits` member. | Test (TC-721) |
+| FR-255-AC-25 | An `analyze` request whose item states an engine limit in its own member (for example a `simulation` item with `max_steps` 5) and whose caller also passes that setting (`--limit simulation.max_steps=2`) is refused `invalid-request` naming the item and the setting, exit 20, with no item run; with the item silent, the caller's bound takes effect on the source route and the package route alike. | Test (TC-721) |
 
 ## Status
 

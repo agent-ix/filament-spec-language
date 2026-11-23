@@ -554,6 +554,10 @@ fn read_routed(
     if items.is_empty() {
         return Err(invalid("items", "is a non-empty array of analysis items"));
     }
+    let mut limits =
+        super::analyze::analyze_limits(&wire::AnalyzeLimits::default(), request.deadline_ms);
+    caller.apply_to_analyze(&mut limits);
+    super::analyze::refuse_engine_conflict(Some(&items), &limits)?;
     super::analyze::validate_items(Some(&items))?;
     let documents = super::analyze::read_documents(intake, &request.documents, Some(&items))?;
     let subject = super::analyze::read_subject(request.subject.take(), &documents)?;
@@ -562,12 +566,7 @@ fn read_routed(
         subject,
         memory: Vec::new(),
         items: Some(items),
-        limits: {
-            let mut limits =
-                super::analyze::analyze_limits(&wire::AnalyzeLimits::default(), request.deadline_ms);
-            caller.apply_to_analyze(&mut limits);
-            limits
-        },
+        limits,
         deadline_ms: request.deadline_ms,
     }))
 }
