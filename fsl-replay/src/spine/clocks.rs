@@ -62,8 +62,15 @@ impl RequestClocks {
     }
 
     /// The separate clock namespaces recorded by a proving package. Program
-    /// rows serve only its source; dependency rows serve library sources.
-    pub(crate) fn for_replay(
+    /// rows serve only its source (`program_source`, an authority and an
+    /// identity); dependency rows serve library sources. [`Self::get`] and
+    /// [`Self::iter`] read the program rows.
+    ///
+    /// # Errors
+    ///
+    /// The first [`InvalidClock`] among the program rows, then the dependency
+    /// rows.
+    pub fn for_replay(
         program_source: (String, String),
         program: BTreeMap<String, ClockConfiguration>,
         dependencies: BTreeMap<String, ClockConfiguration>,
