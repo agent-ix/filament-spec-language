@@ -22,3 +22,9 @@ Focused reviewer checks passed: `cargo test --locked -p fsl-analyze --test it --
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | medium | The 200/201 tests assert primary search states rather than FR-240 escape zones, so restoring the redundant horizon clock would still pass | fsl-analyze/tests/it/zone_search.rs:1483-1486 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `ZoneStats::divergence_states` is populated from `Run::escape_states`, and the 200/201 tests now assert the per-case divergence counts 206 and 207. |
