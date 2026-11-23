@@ -39,13 +39,16 @@
 //!   `d: Rational[1, 20; 1, 9]` is refused `unproved-rational-range` although
 //!   `rational(1, 1) / d` is proved. A quotient nested in another operation
 //!   (`(rational(1, 2) / d) + a`) is refused `unproved-rational-range` or
-//!   `ambiguous-literal`, so `/` is only the root operation, and a literal
-//!   nested below the root (`a + (rational(1, 1) + a)`) is refused
-//!   `unproved-rational-range`, so a literal is only an operand of the root.
-//!   Only the root of a rational expression is
-//!   typed at the declared domain; an intermediate typed at the wide domain
-//!   (for example by a `let`) is refused correctly (FR-495-AC-14), so a `let`
-//!   binds only a root.
+//!   `ambiguous-literal`, so `/` is only the root operation.
+//! - A rational operation's right operand must lie in its left operand's
+//!   domain: `a + (a + c)` is refused `unproved-rational-range` under
+//!   `Linked`, and under `Kernel` the right operand `-1/12` is refused
+//!   `rational_out_of_domain` against `a: Rational[-20, 20; 1, 9]`. So a
+//!   rational expression is a left-nested chain (`((a + b) * c) - 1/2`), a
+//!   literal is only a right operand, and only the root is typed at the
+//!   declared domain (an intermediate typed at the wide domain, for example by
+//!   a `let`, is refused correctly, FR-495-AC-14), so a `let` binds only a
+//!   root.
 //! - `min` and `max` are `reduce` over a `Sequence` only: `reduce` over a
 //!   `Set` or `Bag` is refused `operator-ineligible`.
 //! - Equality of two integers or text lengths is written over
@@ -1030,35 +1033,39 @@ fn binary(op: Op, left: Qe, right: Qe) -> Qe {
     Qe::Bin(op, Box::new(left), Box::new(right))
 }
 
-/// Rational operations: a tree of nested `+`, `-`, `*` and negation over the
-/// parameters, optionally combined with one literal at the root, or one
-/// division of a leaf at the root. Only the root is typed at the declared
-/// domain; the checker infers each intermediate interval exactly.
+/// Rational operations: a left-nested chain `((p op r) op r) ..` from a
+/// parameter `p`, each step a negation or an operation with a parameter or a
+/// literal on the right, or one division of a leaf at the root. Only the root
+/// is typed at the declared domain; the checker infers each intermediate
+/// interval exactly.
 fn qe_strategy(unguarded: bool) -> BoxedStrategy<Qe> {
     let literal = (1i64..=6, 1i64..=5).prop_map(|(n, d)| {
         let (n, d) = reduce(i128::from(n), i128::from(d));
         Qe::Lit(i64::try_from(n).unwrap(), i64::try_from(d).unwrap())
     });
     let parameter = (0usize..3).prop_map(Qe::Param);
-    let leaf = prop_oneof![literal.clone(), parameter.clone()];
-    let tree = parameter.prop_recursive(2, 8, 2, |inner| {
-        let op = proptest::sample::select(vec![Op::Add, Op::Subtract, Op::Multiply]);
-        prop_oneof![
-            inner.clone().prop_map(negate),
-            (op, inner.clone(), inner).prop_map(|(op, l, r)| binary(op, l, r)),
-        ]
-    });
+    let right = prop_oneof![literal, parameter.clone()];
     let op = proptest::sample::select(vec![Op::Add, Op::Subtract, Op::Multiply]);
+    let step = prop_oneof![
+        1 => Just(None),
+        4 => (op, right).prop_map(Some),
+    ];
+    let chain =
+        (parameter.clone(), proptest::collection::vec(step, 0..=3)).prop_map(|(start, steps)| {
+            steps.into_iter().fold(start, |left, step| match step {
+                Some((op, right)) => binary(op, left, right),
+                None => negate(left),
+            })
+        });
     // A parameter divisor can be zero, so it is a `Kernel` case.
     let safe = if unguarded {
         any::<bool>().boxed()
     } else {
         Just(true).boxed()
     };
+    let leaf = prop_oneof![parameter, (1i64..=6).prop_map(|n| Qe::Lit(n, 1))];
     prop_oneof![
-        3 => tree.clone(),
-        2 => (op.clone(), tree.clone(), literal.clone()).prop_map(|(op, l, r)| binary(op, l, r)),
-        1 => (op, literal, tree).prop_map(|(op, l, r)| binary(op, l, r)),
+        5 => chain,
         1 => (leaf, 0usize..3, safe).prop_map(|(l, p, safe)| Qe::Div(Box::new(l), p, safe)),
     ]
     .boxed()
@@ -2162,32 +2169,4 @@ fn near_miss_is_never_evaluated_to_a_value() {
         256,
         "every zero-spanning case is evaluated"
     );
-}
-
-#[test]
-fn probe_nested() {
-    let ps = "a: Rational[-20, 20; 1, 9], c: Rational[-20, 20; 1, 9]";
-    let w = "Rational[-1000000, 1000000; 1, 1000000]";
-    let args = vec![Arg::Rat(1, 4), Arg::Rat(-1, 3)];
-    for body in [
-        "a + c",
-        "a + (a + c)",
-        "(a + a) + c",
-        "(a + c) + a",
-        "(a + c) * a",
-        "a * (a + c)",
-        "a + (a * c)",
-        "(a + c) + (a + c)",
-        "a + (a + a)",
-        "(a + a) + a",
-    ] {
-        let source = unit(None, "", ps, w, body);
-        for mode in [CheckMode::Linked, CheckMode::Kernel] {
-            let r = match try_compile(&source, mode) {
-                Ok(p) => format!("{:?}", evaluate(&p, &args)),
-                Err(e) => e,
-            };
-            eprintln!("PROBE {mode:?} {body}: {r}");
-        }
-    }
 }
