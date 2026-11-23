@@ -434,7 +434,6 @@ fn timed_sampling_from_source() {
 /// digital-clock product and retains its independently checkable certificate.
 #[trace("TC-2066", "FR-741-AC-3")]
 #[test]
-#[ignore = "QSL-2884: EN-5 timed digital-clock dispatch and certificates (PR #3204) not landed yet"]
 fn pta_from_source() {
     let claim = "probabilistic TimedDelivery using t on M over (m: M::Msg) under Even on origin \
          { probability >= rational(95, 100) [ eventually[0 ms, 3 ms] holds(m.delivered) ] }";
@@ -624,7 +623,7 @@ fn an_exact_only_claim_with_statistical_evidence_is_unsupported() {
 #[trace("TC-2167", "FR-186-AC-10")]
 #[trace("FSpec-TC-1650", "FSpec-FR-407-AC-17")]
 #[test]
-#[ignore = "QSL-2884: source-route on-each probabilistic claims settle internal-failure (runtime_invariant, established-invariant-broken) before the expected per-instance verdict"]
+#[ignore = "QSL-2979: FR-875 on-each instance settlement is not built; the source route settles internal-failure"]
 fn probabilistic_on_each_settles_per_instance() {
     let claim = "probabilistic E using inf on M under Even \
          on each (k: M::Msg) when (not k.delivered) \
@@ -690,7 +689,7 @@ fn run_from(name: &str, claims: &str, start: Vec<u8>, items: Value) -> Value {
 #[trace("TC-2485", "FR-875-AC-1")]
 #[trace("FSpec-TC-1650", "FSpec-FR-407-AC-17")]
 #[test]
-#[ignore = "QSL-2884: source-route on-each probabilistic claims settle internal-failure (runtime_invariant, established-invariant-broken) before the expected per-instance verdict"]
+#[ignore = "QSL-2979: FR-875 on-each instance settlement is not built; the source route settles internal-failure"]
 fn probabilistic_on_each_empty_population() {
     let document = run_from(
         "on-each-empty",
@@ -708,7 +707,7 @@ fn probabilistic_on_each_empty_population() {
 #[trace("TC-2486", "FR-875-AC-2")]
 #[trace("FSpec-TC-1650", "FSpec-FR-407-AC-17")]
 #[test]
-#[ignore = "QSL-2884: source-route on-each probabilistic claims settle internal-failure (runtime_invariant, established-invariant-broken) before the expected per-instance verdict"]
+#[ignore = "QSL-2979: FR-875 on-each instance settlement is not built; the source route settles internal-failure"]
 fn probabilistic_on_each_never_activating_instance_is_vacuous() {
     let start = || link_start(&[("m", false), ("n", true)]);
     let proved = run_from(
@@ -736,7 +735,7 @@ fn probabilistic_on_each_never_activating_instance_is_vacuous() {
 /// instance in key order, and a rerun gives the same item.
 #[trace("TC-2487", "FR-875-AC-3")]
 #[test]
-#[ignore = "QSL-2884: source-route on-each probabilistic claims settle internal-failure (runtime_invariant, established-invariant-broken) before the expected per-instance verdict"]
+#[ignore = "QSL-2979: FR-875 on-each instance settlement is not built; the source route settles internal-failure"]
 fn probabilistic_on_each_names_first_failing_instance() {
     let once = || {
         run_from(
@@ -760,7 +759,7 @@ fn probabilistic_on_each_names_first_failing_instance() {
 /// counterexample's `instance` member.
 #[trace("TC-3062", "FR-741-AC-5")]
 #[test]
-#[ignore = "QSL-2884: conditional certificates and the counterexample instance member not implemented yet"]
+#[ignore = "QSL-2979: FR-875 on-each instance settlement and the conditional certificate are not built"]
 fn probabilistic_on_each_reports_conditional_certificate_and_instance() {
     let start = || link_start(&[("m", false), ("n", true)]);
     let proved = run_from(

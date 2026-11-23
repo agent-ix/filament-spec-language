@@ -1488,12 +1488,33 @@ fn read_run_members(
     let documents = read_documents(intake, &request.documents, request.items.as_deref())?;
     let mut limits = analyze_limits(&request.limits, request.deadline_ms);
     caller.apply_to_analyze(&mut limits);
+    refuse_engine_conflict(request.items.as_deref(), &limits)?;
     let subject = read_subject(request.subject.clone(), &documents)?;
     Ok(RunMembers {
         documents,
         subject,
         limits,
     })
+}
+
+/// FR-255 "Caller limits and item limits": an item that states an engine limit
+/// in its own member while the caller also set that setting is refused
+/// `invalid-request` naming the item's member and the setting, so no run
+/// depends on which of the two bounds wins (as FR-312 and FR-1015 refuse).
+pub(super) fn refuse_engine_conflict(
+    items: Option<&[ItemSelection]>,
+    limits: &AnalyzeLimits,
+) -> Result<()> {
+    match limits.engines.conflict(items.unwrap_or_default()) {
+        Some((position, setting)) => Err(invalid(
+            &format!("items[{position}]"),
+            format!(
+                "states a limit the caller also set with `--limit {}`; give it once",
+                setting.name()
+            ),
+        )),
+        None => Ok(()),
+    }
 }
 
 /// FR-620's item checks that need no compiled program: `recording` and

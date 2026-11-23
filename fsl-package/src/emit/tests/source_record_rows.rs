@@ -120,12 +120,12 @@ fn a_source_record_emits_its_declaration_and_ordered_member_rows() {
     // keeps `Option<T>`.
     assert_eq!(
         row.members[0].value_type,
-        ValueType::Composite(declaration(&package, "Point").key())
+        Some(ValueType::Composite(declaration(&package, "Point").key()))
     );
-    assert_eq!(row.members[1].value_type, ValueType::Boolean);
+    assert_eq!(row.members[1].value_type, Some(ValueType::Boolean));
     assert_eq!(
         row.members[2].value_type,
-        ValueType::Option(std::sync::Arc::new(ValueType::Integer))
+        Some(ValueType::Option(std::sync::Arc::new(ValueType::Integer)))
     );
 
     // The type nodes are the targets of the emitted bindings, in order.
@@ -138,11 +138,19 @@ fn a_source_record_emits_its_declaration_and_ordered_member_rows() {
     let rowed: Vec<(Value, Value)> = row
         .members
         .iter()
-        .map(|m| (json!(m.admitted_name.as_ref()), id_json(&m.type_node)))
+        .map(|m| {
+            (
+                json!(m.admitted_name.as_ref()),
+                id_json(m.type_node.as_ref().expect("a data member")),
+            )
+        })
         .collect();
     assert_eq!(rowed, bound);
     let point = row_of(&package, &emission, "Point");
-    assert_eq!(row.members[0].type_node, point.structural_node);
+    assert_eq!(
+        row.members[0].type_node,
+        Some(point.structural_node.clone())
+    );
 }
 
 #[trace("FR-092-AC-21", "TC-1021")]
@@ -154,7 +162,7 @@ fn a_recursive_record_row_names_type_nodes_in_its_own_recursion_group() {
     let row = row_of(&package, &emission, "Tree");
     assert_eq!(row.members.len(), 3);
     for member in &row.members[1..] {
-        let type_node = node_with_id(&wire, &member.type_node);
+        let type_node = node_with_id(&wire, member.type_node.as_ref().expect("a data member"));
         assert!(
             !type_node["recursion_group"].is_null(),
             "{} is in a recursion group",
@@ -168,13 +176,17 @@ fn a_recursive_record_row_names_type_nodes_in_its_own_recursion_group() {
         );
     }
     assert!(
-        node_with_id(&wire, &row.members[0].type_node)["recursion_group"].is_null(),
+        node_with_id(
+            &wire,
+            row.members[0].type_node.as_ref().expect("a data member")
+        )["recursion_group"]
+            .is_null(),
         "a scalar member is outside the group"
     );
     let tree = ValueType::Composite(row.record_key.clone());
     assert_eq!(
         row.members[2].value_type,
-        ValueType::Option(std::sync::Arc::new(tree))
+        Some(ValueType::Option(std::sync::Arc::new(tree)))
     );
 }
 
@@ -258,7 +270,7 @@ fn ir_admits_the_row_nodes_as_record_declarations_and_their_type_nodes() {
         assert_eq!(record.semantic_form.as_ref(), "record");
         for member in &row.members {
             assert!(
-                named(&member.type_node).is_some(),
+                named(member.type_node.as_ref().expect("a data member")).is_some(),
                 "{} names an admitted node",
                 member.admitted_name
             );
@@ -584,6 +596,7 @@ fn bindings_that_disagree_with_the_declaration_are_a_writer_fault() {
                 .map(|(n, k)| (n.as_str(), k.clone()))
                 .collect(),
             emitted,
+            None,
         )
     };
     assert_eq!(call(&bindings, &emitted).expect("they agree").len(), 3);

@@ -332,6 +332,8 @@ accepted only when that operation exposes the bound; an unavailable setting
 is refused before work starts. The lists name bounds each operation constructs
 or consumes, not every registered setting or default.
 
+When an item states an engine limit in its own member (a `simulation` item's `max_steps`, a probabilistic item's `limits` or `timed_sampling.max_sample_steps`) and the caller passes the setting that names the same bound, the request SHALL be refused `invalid-request` naming the item and the setting before any item runs, as FR-312 and FR-1015 refuse a bound stated twice; no run depends on which of the two bounds is larger. `certificate_check.max_rank` is accepted by `analyze` and `monitor` and carried with the caller's engine bounds; no item member states it.
+
 `analyze` SHALL accept these source, package, normalization, admission,
 observation, identity, I2-read and accounting settings:
 `s1.input_bytes`, `s1.tokens`, `s1.nodes`, `s1.work_units`, `s1.diagnostics`, `s3.nodes`,
@@ -358,7 +360,7 @@ all ten `model_check.*` settings, all nine `exact_prob.*` settings, all four
 `hybrid.max_solver_time`, `smt_encoding.max_constants`,
 `smt_encoding.max_applications`, `smt_encoding.max_monitor_atoms`,
 `smt_encoding.max_monitor_states`, `smt_encoding.max_candidates`,
-`smt_encoding.max_script_bytes`, `smt.max_solver_steps`, `smt.max_solver_time`,
+`smt_encoding.max_script_bytes`,
 `certificate_check.max_certificate_edges`,
 `certificate_check.max_certificate_bytes`,
 `certificate_check.max_working_bytes` and `certificate_check.max_rank` when
@@ -366,6 +368,8 @@ the corresponding analysis items are selected. Analyze does not consume
 `render.*`, `prepare.*`, `explore.*`, `progress.covered_positions`,
 `evaluation.live_occurrences`, `monitor.*`, `temporal_evidence.*` or
 `plan_search.*`.
+
+`smt.max_solver_steps` and `smt.max_solver_time` are not accepted by `analyze` or `monitor` and are refused as unavailable settings, because no engine reads a caller's bound for them. Accepting them, as an `analyze` and `monitor` caller limit when SMT items are selected, remains required and is pending an SMT consumer (QSL-2946); they stay accepted by the settings operation (FR-255-AC-14). FR-255-AC-24 enumerates the accepted settings and so excludes them until then.
 
 `monitor` SHALL accept the source, package, admission and evidence settings
 it uses: `s1.input_bytes`, `s1.tokens`, `s1.nodes`, `s1.work_units`, `s1.diagnostics`,
@@ -391,7 +395,7 @@ it uses: `s1.input_bytes`, `s1.tokens`, `s1.nodes`, `s1.work_units`, `s1.diagnos
 monitor also accepts all ten `model_check.*`, all nine `exact_prob.*`, all
 four `statistical.*`, all four `zone_check.*`, `schedule.max_demand_points`,
 `hybrid.max_solver_steps`, `hybrid.max_solver_time`, all six
-`smt_encoding.*`, `smt.max_solver_steps`, `smt.max_solver_time`,
+`smt_encoding.*`,
 `expansion.max_candidates`, `simulation.max_steps`, and the four applicable
 certificate-check settings `certificate_check.max_certificate_edges`,
 `certificate_check.max_certificate_bytes`,
@@ -431,6 +435,14 @@ or `plan_search.*`; it also does not consume
 `evaluation.live_occurrences`, `temporal_evidence.*`, `progress.covered_positions`,
 or `monitor.*`. It does not render output or explore a state graph. These
 settings SHALL be refused as operation-unavailable.
+
+A limit an analysis item states in its own `limits` or engine member and the
+same setting the caller passes through the caller-limit interface are one
+bound given twice: `analyze` and `monitor` SHALL refuse the request
+`invalid-request` at stage `request`, naming the item and the setting,
+before any work, so no run depends on which of the two bounds wins (as FR-312
+refuses `observation_limits` and FR-1015 refuses `export.limits`). A caller
+setting no item states takes effect for every item whose engine reads it.
 
 “All ten `accounting.*` settings” expands to `accounting.integer_bits`,
 `accounting.decimal_digits`, `accounting.scale_expansion`,
@@ -720,6 +732,7 @@ these names through the same operand grammar as the stage settings
 | FR-255-AC-22 | The settings operation lists `export.output_bytes`, `export.nodes` and `export.work_units` with defaults 16777216, 100000 and 16777216, equal to the defaults of `emit.output_bytes`, `s3.nodes` and `s3.work_units`; given `export.nodes=7` it changes only that export limit; and an export of FR-756-AC-1's counter under `export.work_units` 1 stops `incomplete` naming `export.work_units`, bound 1, exit 22. | Test (TC-2993) |
 | FR-255-AC-23 | Native analyze probability items with omitted candidate and accounting settings use local `expansion.max_candidates` 1000000 and cumulative `accounting.work_units` 1000000 for either engine. Supplying a different accounting bound B preserves B. The local ceiling stops as `max_candidates` with `expansion.max_candidates`; the cumulative bound stops as `work_units` with `accounting.work_units`. Neither default is `u64::MAX`, and starting an expansion or clause does not renew cumulative work. | Test |
 | FR-255-AC-24 | The `analyze`, `monitor` and `replay` command entry points accept exactly the operation-relevant caller-limit settings enumerated in “Lifecycle caller-limit coverage”; each accepted setting changes only its corresponding bound, while recognized but operation-unavailable settings are refused before work. In particular, monitor accepts `monitor.preparation_work_units` and `monitor.preparation_storage`, and replay accepts the stage settings it executes plus `replay.input_bytes` through its replay-reader argument, but not as a `stage_limits` member. | Test (TC-721) |
+| FR-255-AC-25 | An `analyze` request whose item states an engine limit in its own member (for example a `simulation` item with `max_steps` 5 or a probabilistic item with `limits.max_states` 5) and whose caller also passes that setting (`--limit simulation.max_steps=2`) is refused `invalid-request` naming the item and the setting, exit 20, with no item run; with the item silent, the caller's bound takes effect on the source route and the package route alike. | Test (TC-721) |
 
 ## Status
 

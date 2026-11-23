@@ -120,11 +120,40 @@ pub(crate) struct PackagePlace {
     pub(crate) source: bool,
 }
 
+/// One clock member of a source record, tuple or union payload, as FSpec
+/// FR-367 "Member entries" writes it: the FSpec FR-789 rendering of its type
+/// and its collection layers, outermost first.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceClockEntry {
+    /// The rendered type, as the member's `resolved_path` row spells it.
+    pub member_type: String,
+    /// Whether the member is optional.
+    pub optional: bool,
+    /// Each collection layer's kind, minimum and maximum (`unbounded` with
+    /// none).
+    pub collections: Vec<(String, String, String)>,
+}
+
+/// The authored members of a source record, tuple or union that holds a
+/// clock directly, in declaration order: `None` for a data member, which has
+/// a node, and the clock entry for a clock member, which has none.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SourceClockMembers {
+    /// A record's fields, each by name.
+    Record(Vec<(String, Option<SourceClockEntry>)>),
+    /// A tuple's positions.
+    Tuple(Vec<Option<SourceClockEntry>>),
+    /// A union's members, each by name with its payload positions.
+    Union(Vec<(String, Vec<Option<SourceClockEntry>>)>),
+}
+
 /// A source value type's clock paths and its FR-322 type identity.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SourceClockLayout {
     pub identity: String,
     pub places: Vec<SourceClockPlace>,
+    /// The authored members when the type holds a clock directly.
+    pub members: Option<SourceClockMembers>,
 }
 
 /// A clock component's path within a source-declared checked value type.
@@ -271,6 +300,42 @@ fn element_type(rendered: &str) -> &str {
         .iter()
         .find_map(|prefix| rendered.strip_prefix(prefix)?.strip_suffix('>'))
         .unwrap_or(rendered)
+}
+
+/// The rendered type of the member `field` whose held type renders as
+/// `declared`: the collection or `Option` around it. An optional collection
+/// member holds optional elements: `q: Sequence<Option<Clock>>[0, 2]` (FSpec
+/// FR-322's timed-slot-selector vectors, the presence place `q`). The one
+/// renderer of a source member's type: the clock places and a source
+/// object's clock entry both use it.
+fn field_member_type(
+    field: &crate::model::domain_package::FieldMemberRecord,
+    declared: String,
+) -> String {
+    let optional = matches!(field.presence, filament_exact::Presence::Optional);
+    let element = if optional {
+        format!("Option<{declared}>")
+    } else {
+        declared
+    };
+    if single(field) {
+        return element;
+    }
+    collection_type(
+        CollectionShape {
+            ordered: field.multiplicity.ordered,
+            unique: field.multiplicity.unique,
+            min: field.multiplicity.lower,
+            max: field.multiplicity.upper,
+            map: false,
+        },
+        &element,
+    )
+}
+
+/// The rendered type of a source object field typed `Clock` (FR-569-AC-17).
+pub fn clock_field_member_type(field: &crate::model::domain_package::FieldMemberRecord) -> String {
+    field_member_type(field, "ix://filament/native/Clock".to_owned())
 }
 
 /// Whether `field` holds one value: multiplicity `[1, 1]`, not a collection.
@@ -1315,6 +1380,7 @@ impl AdmittedModel {
                 layouts.insert(
                     node,
                     SourceClockLayout {
+                        members: None,
                         identity: key.node.clone(),
                         places: places
                             .into_iter()
@@ -1855,6 +1921,16 @@ impl AdmittedModel {
             .collect()
     }
 
+    /// The authored clock members of each source record, tuple and union
+    /// that holds a clock directly.
+    pub(crate) fn source_clock_members(
+        &self,
+    ) -> impl Iterator<Item = (&NodeKey, &SourceClockMembers)> {
+        self.source_places
+            .iter()
+            .filter_map(|(key, layout)| Some((key, layout.members.as_ref()?)))
+    }
+
     /// FR-230 "Places": every clock place of an object type of this
     /// package, in ascending declaration-key order of the object's fields
     /// and, below a field, of each record's fields. A field typed `Clock` is
@@ -1953,30 +2029,7 @@ impl AdmittedModel {
             crate::model::domain_package::ValueTypeRef::Resolved(_)
         );
         let element_identity = declared.clone();
-        let member_type = if !single(field) {
-            // An optional collection member holds optional elements:
-            // `q: Sequence<Option<Clock>>[0, 2]` (FSpec FR-322's
-            // timed-slot-selector vectors, the presence place `q`).
-            let element = if matches!(field.presence, filament_exact::Presence::Optional) {
-                format!("Option<{declared}>")
-            } else {
-                declared
-            };
-            collection_type(
-                CollectionShape {
-                    ordered: field.multiplicity.ordered,
-                    unique: field.multiplicity.unique,
-                    min: field.multiplicity.lower,
-                    max: field.multiplicity.upper,
-                    map: false,
-                },
-                &element,
-            )
-        } else if matches!(field.presence, filament_exact::Presence::Optional) {
-            format!("Option<{declared}>")
-        } else {
-            declared
-        };
+        let member_type = field_member_type(field, declared);
         at.members
             .push((member_type.clone(), Some(field.key.node.clone())));
         let mut reached = member_type;
@@ -3130,10 +3183,11 @@ impl<'a> Lowering<'a> {
         let effective = model
             .object_type_id(declaration)
             .ok_or_else(|| fault(location, KeyFault::UnknownDeclaration(declaration.clone())))?;
-        let fields =
-            self.scope.types().attributes(effective).ok_or_else(|| {
-                fault(location, KeyFault::UnknownDeclaration(declaration.clone()))
-            })?;
+        let fields = self
+            .scope
+            .types()
+            .attributes(effective.clone())
+            .ok_or_else(|| fault(location, KeyFault::UnknownDeclaration(declaration.clone())))?;
         let mut members = Vec::with_capacity(fields.len());
         for attribute in fields.iter() {
             let field = attribute.field();
@@ -3156,6 +3210,23 @@ impl<'a> Lowering<'a> {
                 ..content
             },
         );
+        // FR-569-AC-16 to AC-18: a data parameter of an operation the object
+        // declares is a member entry with its type's node.
+        let operations = self
+            .scope
+            .operations()
+            .declared_by(effective.clone())
+            .to_vec();
+        for operation in &operations {
+            for (parameter, value_type) in operation.parameters() {
+                let node = self.type_node(value_type, location)?;
+                self.record(node.clone(), OccurrenceRole::Generated, location.clone());
+                self.source_parameter_nodes.insert(
+                    (key.clone(), operation.name().to_owned(), parameter.clone()),
+                    node,
+                );
+            }
+        }
         Ok(key.clone())
     }
 

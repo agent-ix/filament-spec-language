@@ -69,7 +69,7 @@ use fsl_eval::simulation::model::PopulationUniverse;
 use fsl_eval::simulation::protocol::ProtocolTransition;
 use fsl_foundation::diagnostic::category_of;
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_foundation::{BackendId, RequestIndex};
+use fsl_foundation::{BackendId, RequestIndex, Setting};
 use fsl_package::CheckedPackage;
 use fsl_replay::statistical::StatisticalRecord;
 use fsl_replay::{
@@ -678,6 +678,137 @@ impl SubjectBinding<'_> {
     }
 }
 
+/// The analysis-item engine settings a caller can pass to `analyze`, and to
+/// `monitor` beside routed `items`, that the item adapters enforce (FR-255
+/// "Lifecycle caller-limit coverage"). A setting joins this list when its
+/// engine reads the caller's bound. `certificate_check.max_rank` is the one
+/// exception: it is accepted and carried in [`EngineBounds`], but no engine
+/// in this repository reads it yet (FR-255 states only that it is carried).
+/// `plan_search.*` is never listed: neither operation executes it.
+pub const ENGINE_SETTINGS: [Setting; 16] = [
+    Setting::SimulationMaxSteps,
+    Setting::ScheduleMaxDemandPoints,
+    Setting::ExactProbMaxStates,
+    Setting::ExactProbMaxTransitions,
+    Setting::ExactProbMaxAutomatonStates,
+    Setting::ExactProbMaxIterations,
+    Setting::ExactProbPrecisionBits,
+    Setting::ExactProbMaxPrecisionBits,
+    Setting::ExactProbMaxRationalBits,
+    Setting::ExactProbMaxPolicyIterations,
+    Setting::ExactProbMaxWitnessPaths,
+    Setting::StatisticalMaxSamples,
+    Setting::StatisticalMaxDraws,
+    Setting::StatisticalMaxCycleSteps,
+    Setting::StatisticalMaxSampleSteps,
+    Setting::CertificateCheckMaxRank,
+];
+
+/// The engine settings the caller set for one run: a bound is present only
+/// when the caller named it, so an item that states the same limit in its own
+/// `limits` member is refused rather than silently overridden (FR-255
+/// "Caller limits and item limits").
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EngineBounds {
+    values: [Option<u64>; ENGINE_SETTINGS.len()],
+}
+
+impl Default for EngineBounds {
+    fn default() -> Self {
+        Self {
+            values: [None; ENGINE_SETTINGS.len()],
+        }
+    }
+}
+
+impl EngineBounds {
+    fn index(setting: Setting) -> Option<usize> {
+        ENGINE_SETTINGS.iter().position(|engine| *engine == setting)
+    }
+
+    /// The caller's bound for `setting`, when it set one.
+    #[must_use]
+    pub fn get(&self, setting: Setting) -> Option<u64> {
+        Self::index(setting).and_then(|index| self.values[index])
+    }
+
+    /// Record the caller's `bound` for `setting`; `false` when `setting` is
+    /// no engine setting.
+    pub fn set(&mut self, setting: Setting, bound: u64) -> bool {
+        match Self::index(setting) {
+            Some(index) => {
+                self.values[index] = Some(bound);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Whether the caller set no engine setting.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.values.iter().all(Option::is_none)
+    }
+
+    /// The first item that states, in its own members, a limit the caller also
+    /// set (FR-255 "Caller limits and item limits"): its request position and
+    /// the setting. No run depends on which of the two bounds wins.
+    #[must_use]
+    pub fn conflict(&self, items: &[document::ItemSelection]) -> Option<(usize, Setting)> {
+        items.iter().enumerate().find_map(|(position, item)| {
+            self.stated(item)
+                .into_iter()
+                .find(|setting| self.get(*setting).is_some())
+                .map(|setting| (position, setting))
+        })
+    }
+
+    /// The settings `item` states in its own members.
+    fn stated(&self, item: &document::ItemSelection) -> Vec<Setting> {
+        use Setting as S;
+        let mut stated = Vec::new();
+        if item
+            .simulation
+            .as_ref()
+            .is_some_and(|simulation| simulation.max_steps.is_some())
+        {
+            stated.push(S::SimulationMaxSteps);
+        }
+        if let Some(probabilistic) = &item.probabilistic {
+            let limit = |member: &str| {
+                probabilistic
+                    .get("limits")
+                    .is_some_and(|limits| limits.get(member).is_some())
+            };
+            for (member, setting) in [
+                ("max_states", S::ExactProbMaxStates),
+                ("max_transitions", S::ExactProbMaxTransitions),
+                ("max_automaton_states", S::ExactProbMaxAutomatonStates),
+                ("max_iterations", S::ExactProbMaxIterations),
+                ("precision_bits", S::ExactProbPrecisionBits),
+                ("max_precision_bits", S::ExactProbMaxPrecisionBits),
+                ("max_rational_bits", S::ExactProbMaxRationalBits),
+                ("max_policy_iterations", S::ExactProbMaxPolicyIterations),
+                ("max_witness_paths", S::ExactProbMaxWitnessPaths),
+                ("max_samples", S::StatisticalMaxSamples),
+                ("max_draws", S::StatisticalMaxDraws),
+                ("max_cycle_steps", S::StatisticalMaxCycleSteps),
+            ] {
+                if limit(member) {
+                    stated.push(setting);
+                }
+            }
+            if probabilistic
+                .get("timed_sampling")
+                .is_some_and(|sampling| sampling.get("max_sample_steps").is_some())
+            {
+                stated.push(S::StatisticalMaxSampleSteps);
+            }
+        }
+        stated
+    }
+}
+
 /// The caller's shared accounting, observation, normalization and deadline
 /// limits for one analyze request (FR-277, FR-281).
 ///
@@ -711,6 +842,10 @@ pub struct AnalyzeLimits {
     /// The bound on each replay read the analysis starts
     /// (`replay.input_bytes`, FR-255; FR-940-AC-22).
     pub replay: fsl_replay::ReplayLimits,
+    /// The engine settings the caller named (FR-255 "Lifecycle caller-limit
+    /// coverage"), each over the published default and each refused when an
+    /// item states the same limit itself.
+    pub engines: EngineBounds,
 }
 
 impl AnalyzeLimits {
@@ -734,6 +869,7 @@ impl AnalyzeLimits {
             deadline: DeadlineSupply::Unbounded,
             emit: fsl_package::EmitLimits::new(fsl_replay::spine::EMIT_OUTPUT_BYTES_DEFAULT),
             replay: fsl_replay::ReplayLimits::default(),
+            engines: EngineBounds::default(),
         }
     }
 }

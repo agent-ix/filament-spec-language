@@ -110,29 +110,47 @@ that navigation over an ordered end reads that end's positions.
 An end that declares `ordered: true` and an upper bound above 1 is navigated
 as an ordered collection (FR-363), so its targets need an order the
 observation states. Each instance of a relationship with such an end SHALL
-carry, for that end, a position: a non-negative integer that ranks the
-instance among the instances of the extent that share its opposite-end
-reference. For the target end, the instances sharing one source reference
-are ranked; for the source end, those sharing one target reference. A
-navigation over the ordered end returns the destination references in
-ascending position. A relationship with no ordered end carries no position,
-and a single-valued ordered end needs none.
+carry, for that end, a position: a non-negative unsigned 64-bit integer that
+ranks the instance among the instances of the extent that share its
+opposite-end reference. For the target end, the instances sharing one source
+reference are ranked; for the source end, those sharing one target reference.
+In a snapshot, `positions` is an optional member of a relationship instance,
+whose value is an object with only the end names `source` and `target`; each
+present value is a canonical `U64String` (the decimal spelling of a value in
+`0..=u64::MAX`). A model-layer `RelationshipExtent` carries the same optional
+positions as unsigned 64-bit values. The member may be absent or empty when
+neither end needs a position. A navigation over the ordered end returns the
+destination references in ascending numeric position. A relationship with no
+ordered multi-valued end carries no position, and a single-valued ordered end
+needs none. A supplied position for an unordered or single-valued end is
+invalid.
 
-Admission SHALL decide positions with condition 4 below: an instance of an
-ordered end with no position for it, a position given for an end that is
-not ordered, and two instances that share an opposite-end reference and a
-position for the same end each refuse `invalid_runtime_input`/`invalid-value`
-at the later instance, retaining the relationship and the end. Positions need
-not be consecutive; only their order is read. `targets` and `sources` below
-keep canonical reference-key order; the ordered navigation re-ranks their
-result by position.
+Positions are unique only among instances of the same extent that share the
+opposite-end reference for the end being ordered; equal positions for
+different opposite-end references are valid. Positions need not be
+consecutive. `targets` and `sources` below keep canonical reference-key order;
+the ordered navigation re-ranks their result by position.
+
+Admission SHALL decide positions with extent condition 5 below, after the
+instance has passed condition 3's end-type checks and condition 4's repeated
+instance check. An ordered multi-valued end missing a position, a position
+supplied for an unordered or single-valued end, or a repeated position within
+one opposite-end group refuses `invalid_runtime_input`/`invalid-value` and
+retains the relationship and end. A missing position is located at the
+instance pointer; an extra or repeated position is located at the supplied
+`positions.<end>` member. A non-object `positions` or a non-string position
+refuses `invalid_runtime_input`/`wrong-value-kind` at the malformed member.
+A noncanonical decimal spelling, a negative spelling or a value above
+`u64::MAX` refuses `invalid_runtime_input`/`invalid-value` at the malformed
+member. An unknown key in `positions` refuses `invalid_runtime_input`/
+`unknown-member` at that key.
 
 
 ### Extent admission is the same for every way of building an extent
 
 Whether an extent is read from a snapshot (FR-106) or supplied by a
 model-layer caller, admission SHALL decide conditions 1 and 2 for each extent
-and conditions 3 and 4 for each instance of it, extent by extent and instance
+and conditions 3, 4 and 5 for each instance of it, extent by extent and instance
 by instance in the order supplied, and stop at the first failing condition:
 
 1. If the relationship names no navigation relationship of the admitted
@@ -164,6 +182,17 @@ by instance in the order supplied, and stop at the first failing condition:
    Then the repeats are separate instances, each one occurrence of the
    link. Repeating a link through an end that declares `unique: true` would
    put a reference in that end's set twice.
+5. For each end with `ordered: true` and an upper bound above 1, an instance
+   SHALL have that end's position. A position for an unordered or single-
+   valued end is invalid, and positions for one end SHALL be unique among
+   instances with the same opposite-end reference. A missing required
+   position refuses `invalid_runtime_input`/`invalid-value` at the instance
+   pointer; a position for an unordered or single-valued end, or a repeated
+   position, refuses the same code and cause at the supplied
+   `/positions/{end}` pointer. This condition is decided after condition 4
+   for the same instance and before the next instance is admitted. Position
+   member shape and `U64String` spelling are read by FR-106 before this
+   condition; unknown position keys refuse `unknown-member` there.
 
 Admission SHALL NOT compare the number of instances at an object with an end's
 `lower` or `upper` bound. An observation is evidence of a state, and a state
@@ -369,6 +398,9 @@ FR-363; a navigation site reaches the evaluator already resolved.
 | Two extents of one relationship | extent admission, condition 2 | `invalid_runtime_input`/`conflicting-identity` |
 | End object of a type that does not conform to the end type | extent admission, condition 3 | `invalid_runtime_input`/`wrong-value-kind` |
 | Repeated instance where an end is unique | extent admission, condition 4 | `invalid_runtime_input`/`conflicting-identity` |
+| Missing, extraneous or duplicate ordered-end position | extent admission, condition 5 | `invalid_runtime_input`/`invalid-value` at the instance or later `positions.<end>` member |
+| Malformed or noncanonical position value | snapshot wire read | `invalid_runtime_input`/`wrong-value-kind` or `invalid-value` at `positions.<end>` |
+| Unknown key in `positions` | snapshot wire read | `invalid_runtime_input`/`unknown-member` at that key |
 | Dangling end in a snapshot | snapshot admission, closure check | `dangling_reference`/`absent-target-in-complete-population` |
 | Required population of an instance not complete | snapshot admission, completeness check | `incomplete_population`/`incomplete-scope` |
 | End reference of a model-layer extent, absent, of a type that does not conform | extent admission, condition 3 | `invalid_runtime_input`/`wrong-value-kind` |
@@ -396,7 +428,8 @@ FR-363; a navigation site reaches the evaluator already resolved.
 | FR-364-AC-12 | Navigation over a model-layer extent whose target is missing and undecidable gives `incomplete_population`/`incomplete-scope` after `model.navigate` and the `collection.visit` of the targets before it, and no cardinality refusal even when the count is above `upper`; the first selected target that is not present decides between `dangling` and `undecidable`. | Test (TC-1041) |
 | FR-364-AC-13 | Condition 3 checks the type of every end of a model-layer extent whether the object is held or not: a missing `Tank` at the `Pump` end refuses `wrong-value-kind` naming the end, `Tank` and `Pump`; a missing `Pump` at that end admits and is decided by `resolve`; a reference whose type is no object type of the model refuses `wrong-value-kind`. A snapshot document end naming an unlisted key skips condition 3 and is decided by the closure rule. | Test (TC-1041) |
 | FR-364-AC-14 | A bundle is refused `invalid_runtime_input`/`conflicting-identity`, naming the first part (`manifest`, `closure`, `types`) whose key differs from the selected key, the selected key and the differing one, when that part carries another source identity under the same authority, another selected clause, another selected document identity, or another observation (a `pre` manifest with a `post` closure of one source and clause); a bundle whose parts all carry the selected key resolves a missing reference by its manifest. | Test (TC-1041) |
-| FR-364-AC-15 | For a relationship whose target end is ordered `{0,3}`, a snapshot entry whose instances for source `o1` carry target positions 7, 2 and 5 navigates from `o1` to the three targets in the order of positions 2, 5 and 7, whatever order the entry lists them in; an instance of that entry with no `positions.target`, an instance carrying `positions.source` for the unordered source end, and two instances of `o1` both at position 2 each refuse `invalid_runtime_input`/`invalid-value` at the later instance. Over an unordered unique `{1,unbounded}` end, a complete extent with no instance at the receiver refuses `cardinality_out_of_bound`/`below-minimum` and one with four instances returns the four references in reference-key order with no `above-maximum` decision. | Test (TC-1902) |
+| FR-364-AC-15 | For a relationship whose target end is ordered `{0,3}`, a snapshot entry whose instances for source `o1` carry `positions.target` `"7"`, `"2"` and `"5"` navigates from `o1` to the three targets in ascending numeric position, whatever order the entry lists them in. If the second instance omits `positions.target`, condition 5 refuses `invalid_runtime_input`/`invalid-value` at `/relationships/0/instances/1`; if it supplies `positions.source` for the unordered source end, the refusal is at `/relationships/0/instances/1/positions/source`; and if the second of two instances of `o1` repeats target position `"2"`, the refusal is at `/relationships/0/instances/1/positions/target`. A non-object `positions` refuses `wrong-value-kind` at `/relationships/0/instances/1/positions`; a JSON-number target position refuses `wrong-value-kind` at `/relationships/0/instances/1/positions/target`; a noncanonical or out-of-range decimal string refuses `invalid-value` at that target member; an unknown key `other` refuses `unknown-member` at `/relationships/0/instances/1/positions/other`. The missing, extraneous and duplicate position cases are condition 5, after condition 3 end-type and condition 4 repeated-instance checks. Over an unordered unique `{1,unbounded}` end, a complete extent with no instance at the receiver refuses `cardinality_out_of_bound`/`below-minimum` and one with four instances returns the four references in reference-key order with no `above-maximum` decision. | Test (TC-1902) |
+| FR-364-AC-16 | A model-layer `RelationshipExtent` on the same ordered `{0,3}` relationship with target positions `7`, `2` and `5` navigates in ascending position, regardless of instance-list order. Equal positions on instances with different source references admit; equal positions on instances sharing a source refuse `invalid_runtime_input`/`invalid-value` naming the relationship and `target`. Omitting a required position refuses the same code and cause naming the missing end; supplying one for the unordered source end or for a single-valued ordered end refuses the same code and cause naming that end. The source-group uniqueness, required-position and applicability decisions run after the current instance's end-type and repeated-instance checks and before admission of the next instance. | Test (TC-1902) |
 
 ## Dependencies
 

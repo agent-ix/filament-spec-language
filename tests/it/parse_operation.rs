@@ -280,6 +280,7 @@ fn parse_takes_caller_limits_as_given() {
         tokens: 1_000_000,
         nodes: 10_000_000,
         work_units: 256,
+        ..defaults
     };
     let (_, parsed) = parse_with(&identity, "deep.native", text.as_bytes(), raised);
     assert_eq!(parsed.category().exit_code(), 0);

@@ -93,26 +93,25 @@ fn refuted(world: &World, name: &str) -> ProbabilisticCounterexample {
     found
 }
 
-/// A claim that holds over a cyclic subject is not refuted and starts no
-/// path-set search. FR-202-AC-36/37 expect it `proved "as before"`, but the
-/// unwindowed state-predicate proof profile admits acyclic subjects only, so
-/// it keeps its existing `not-yet-implemented` disposition; widening that
-/// proof profile is outside this counterexample role.
+/// A claim that holds over a cyclic subject is not refuted, emits no
+/// counterexample and starts no path-set search. FR-202-AC-36/37 leave its
+/// proof-side outcome to the proof profile: the unwindowed cyclic
+/// state-predicate profile (QSL-2924) proves it, so it settles `proved`.
 fn holds_unrefuted(world: &World, name: &str) {
     let (record, searches) = settle_counted(world, name);
     assert_eq!(searches, 0, "{name}");
-    let fsl_analyze::analyze::Settlement::Disposed(disposed) = &record.settlement else {
-        panic!("{name}: {:?}", record.settlement);
-    };
-    assert_eq!(
-        disposed.kind,
-        fsl_analyze::analyze::DispositionKind::Unsupported
+    assert!(
+        matches!(
+            record
+                .terminal()
+                .unwrap_or_else(|| panic!("{name}: {:?}", record.settlement))
+                .value(),
+            TerminalValue::Proved { .. }
+        ),
+        "{name}: {:?}",
+        record.settlement
     );
-    assert_eq!(
-        disposed.diagnostic.as_ref().unwrap().code.cause(),
-        "not-yet-implemented"
-    );
-    assert!(record.probabilistic_counterexample.is_none());
+    assert!(record.probabilistic_counterexample.is_none(), "{name}");
 }
 
 fn document(found: &ProbabilisticCounterexample) -> Value {

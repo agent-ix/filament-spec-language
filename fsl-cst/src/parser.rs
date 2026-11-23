@@ -43,7 +43,7 @@ type Scan = (
     Vec<Recovery>,
 );
 
-const SYNTAX_DIAGNOSTIC_BOUND: usize = 100;
+pub(crate) const DEFAULT_SYNTAX_DIAGNOSTICS: usize = 100;
 const EXPECTED_ALTERNATIVE_BOUND: usize = 12;
 
 #[derive(Clone, Debug)]
@@ -144,14 +144,14 @@ pub(super) fn parse(
     let compounds = grammar::complete_compound_spellings(&grammar);
     let (tokens, significant, mut diagnostics, mut recoveries) =
         scan(&source, limits, &compounds, cancel)?;
-    if diagnostics.len() > SYNTAX_DIAGNOSTIC_BOUND {
-        let cut_span = diagnostics[SYNTAX_DIAGNOSTIC_BOUND]
+    if diagnostics.len() > limits.diagnostics {
+        let cut_span = diagnostics[limits.diagnostics]
             .byte_span()
             .unwrap_or(Span {
                 start: source.text().len(),
                 end: source.text().len(),
             });
-        diagnostics.truncate(SYNTAX_DIAGNOSTIC_BOUND);
+        diagnostics.truncate(limits.diagnostics);
         diagnostics.push(*super::diagnostic::error(
             &source,
             CompleteCode::InvalidSyntax,
@@ -160,7 +160,8 @@ pub(super) fn parse(
             cut_span.start,
             cut_span.end,
             format!(
-                "the diagnostic list was cut after {SYNTAX_DIAGNOSTIC_BOUND} syntax errors; raise s1.diagnostics to see the rest"
+                "the diagnostic list was cut after {} syntax errors; raise s1.diagnostics to see the rest",
+                limits.diagnostics
             ),
         ));
     }
@@ -434,6 +435,7 @@ fn parse_with_declaration_recovery(
             Outcome::Match(_) => {
                 append_omitted_diagnostic(
                     source,
+                    limits.diagnostics,
                     &mut diagnostics,
                     first_omitted_span,
                     omitted_count,
@@ -478,7 +480,7 @@ fn parse_with_declaration_recovery(
                     cancel,
                     failure.position,
                 ) {
-                    if scanned.len().saturating_add(diagnostics.len()) < SYNTAX_DIAGNOSTIC_BOUND {
+                    if scanned.len().saturating_add(diagnostics.len()) < limits.diagnostics {
                         diagnostics.push(*super::diagnostic::error(
                             source,
                             CompleteCode::InvalidSyntax,
@@ -494,12 +496,14 @@ fn parse_with_declaration_recovery(
                     }
                     append_omitted_diagnostic(
                         source,
+                        limits.diagnostics,
                         &mut diagnostics,
                         first_omitted_span,
                         omitted_count,
                     );
                     push_recovery(
                         &mut recoveries,
+                        limits.diagnostics,
                         Recovery {
                             kind: RecoveryKind::Insert,
                             span,
@@ -563,6 +567,7 @@ fn parse_with_declaration_recovery(
                     if recovered_any {
                         append_omitted_diagnostic(
                             source,
+                            limits.diagnostics,
                             &mut diagnostics,
                             first_omitted_span,
                             omitted_count,
@@ -630,6 +635,7 @@ fn parse_with_declaration_recovery(
                     ));
                     push_recovery(
                         &mut recoveries,
+                        limits.diagnostics,
                         Recovery {
                             kind: if failure.position == tokens.len() {
                                 RecoveryKind::Insert
@@ -718,7 +724,7 @@ fn parse_with_declaration_recovery(
                             },
                             str::to_owned,
                         );
-                        if scanned.len().saturating_add(diagnostics.len()) < SYNTAX_DIAGNOSTIC_BOUND
+                        if scanned.len().saturating_add(diagnostics.len()) < limits.diagnostics
                         {
                             diagnostics.push(*super::diagnostic::error(
                                 source,
@@ -735,12 +741,14 @@ fn parse_with_declaration_recovery(
                         }
                         append_omitted_diagnostic(
                             source,
+                            limits.diagnostics,
                             &mut diagnostics,
                             first_omitted_span,
                             omitted_count,
                         );
                         push_recovery(
                             &mut recoveries,
+                            limits.diagnostics,
                             Recovery {
                                 kind: RecoveryKind::Insert,
                                 span,
@@ -776,7 +784,7 @@ fn parse_with_declaration_recovery(
                         },
                         str::to_owned,
                     );
-                    if scanned.len().saturating_add(diagnostics.len()) < SYNTAX_DIAGNOSTIC_BOUND {
+                    if scanned.len().saturating_add(diagnostics.len()) < limits.diagnostics {
                         diagnostics.push(*super::diagnostic::error(
                             source,
                             CompleteCode::InvalidSyntax,
@@ -793,6 +801,7 @@ fn parse_with_declaration_recovery(
                 }
                 push_recovery(
                     &mut recoveries,
+                    limits.diagnostics,
                     Recovery {
                         kind: RecoveryKind::Delete,
                         span: region,
@@ -804,6 +813,7 @@ fn parse_with_declaration_recovery(
                 if next.is_none() && tokens.is_empty() {
                     append_omitted_diagnostic(
                         source,
+                        limits.diagnostics,
                         &mut diagnostics,
                         first_omitted_span,
                         omitted_count,
@@ -840,6 +850,7 @@ fn failure_span(source: &Source, tokens: &[Significant], position: usize) -> Spa
 
 fn append_omitted_diagnostic(
     source: &Source,
+    bound: usize,
     diagnostics: &mut Vec<CompleteDiagnostic>,
     first_omitted_span: Option<Span>,
     omitted_count: usize,
@@ -859,13 +870,13 @@ fn append_omitted_diagnostic(
         span.start,
         span.end,
         format!(
-            "the diagnostic list was cut after {SYNTAX_DIAGNOSTIC_BOUND} syntax errors; raise s1.diagnostics to see the rest"
+            "the diagnostic list was cut after {bound} syntax errors; raise s1.diagnostics to see the rest"
         ),
     ));
 }
 
-fn push_recovery(recoveries: &mut Vec<Recovery>, recovery: Recovery) {
-    if recoveries.len() < SYNTAX_DIAGNOSTIC_BOUND {
+fn push_recovery(recoveries: &mut Vec<Recovery>, bound: usize, recovery: Recovery) {
+    if recoveries.len() < bound {
         recoveries.push(recovery);
     }
 }

@@ -48,13 +48,20 @@ pub(super) fn schedule_item<'a>(
     package: &CheckedPackage,
     request_index: RequestIndex,
     claim: &OccurrenceKey,
+    max_demand_points: u64,
 ) -> Option<AnalyzeItem<'a>> {
     let (subject, name, unit) = match subject_of(package, claim) {
         Ok(found) => found,
         Err(Lowering::Absent) => return None,
         Err(Lowering::Refused(refusal)) => return Some(refused_item(request_index, refusal)),
     };
-    Some(subject_item(request_index, subject, name, unit))
+    Some(subject_item(
+        request_index,
+        subject,
+        name,
+        unit,
+        max_demand_points,
+    ))
 }
 
 /// The EN-7 item of a checked task set's `refusal`: the declined item the
@@ -82,9 +89,14 @@ pub(super) fn subject_item<'a>(
     subject: ScheduleSubject,
     name: String,
     unit: String,
+    max_demand_points: u64,
 ) -> AnalyzeItem<'a> {
     item(request_index, move |cancel| {
-        let outcome = schedulability::analyze(&subject, &ScheduleLimits::default(), cancel);
+        let outcome = schedulability::analyze(
+            &subject,
+            &ScheduleLimits { max_demand_points },
+            cancel,
+        );
         let value = fsl_replay::settle(&subject, &outcome, cancel);
         let miss = miss_wire(&name, &unit, &subject, &outcome);
         EngineReport::ClosedForm(Box::new(ClosedFormReport {

@@ -24,7 +24,7 @@ use fsl_replay::{
 };
 
 /// FR-247's published default for `max_demand_points`: 2^20.
-const DEFAULT_MAX_DEMAND_POINTS: u64 = 1_048_576;
+pub(crate) const DEFAULT_MAX_DEMAND_POINTS: u64 = 1_048_576;
 
 /// EN-7's caller-set limits (FR-247).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

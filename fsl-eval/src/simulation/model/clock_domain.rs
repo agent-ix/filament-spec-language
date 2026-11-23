@@ -1,0 +1,303 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+//! FR-106 "Clock-reference domains": the finite candidate set of a
+//! `Reference<Clock>` value, read from declared clock places, the exact
+//! admitted owner populations and the selector range, never from a map key,
+//! an allocation ordinal or a state-node id.
+
+use std::collections::BTreeSet;
+use std::sync::Arc;
+
+use filament_exact::{NodeKey, ObjectReference, ValueType};
+use fsl_semantics::model::clock_reference::identity::{
+    Decimal, PathEntry, PlaceIdentity, SlotIndex,
+};
+use fsl_semantics::model::clock_reference::{encode_identity, is_clock_type};
+
+use super::domain::{clock_reference_paths, ClockSelectorMaxima, Domain};
+use super::ModelSystem;
+
+/// Why a `Reference<Clock>` domain cannot be enumerated. None of these is an
+/// empty domain: a caller never ranges a hidden field or parameter over fewer
+/// values than FR-106 specifies.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum ClockDomainRefusal {
+    /// A declared place has a collection slot with no declared maximum and no
+    /// exploration-derived one; the bound check names it as `RequiresBound`.
+    UnboundedSlot {
+        /// The clock-place template.
+        clock: NodeKey,
+        /// The collection entry's position among the place's slots.
+        slot: usize,
+    },
+    /// A declared maximum is not a machine integer.
+    UnparseableMaximum {
+        /// The clock-place template.
+        clock: NodeKey,
+        /// The declared maximum, as written.
+        maximum: String,
+    },
+    /// The candidates exceed the expansion's candidate bound.
+    TooMany {
+        /// The `max_candidates` bound.
+        limit: u64,
+    },
+    /// This route carries no authenticated declaration table, so no owner
+    /// population authority validates a place identity.
+    MissingAuthority,
+}
+
+type Candidates = Result<Vec<ObjectReference>, ClockDomainRefusal>;
+
+impl ModelSystem<'_> {
+    /// Every valid `Reference<Clock>` identity of this model universe under the
+    /// declared selector maxima (FR-106 "Clock-reference domains"): the declared
+    /// clock places of each admitted owner, then each identity the initial
+    /// snapshots admitted.
+    ///
+    /// # Errors
+    ///
+    /// [`ClockDomainRefusal`] when the domain is not finite under the declared
+    /// maxima, exceeds the candidate bound, or the route has no declaration
+    /// table.
+    pub fn clock_reference_identities(
+        &self,
+    ) -> Result<Arc<Vec<ObjectReference>>, ClockDomainRefusal> {
+        self.clock_reference_candidates(None)
+    }
+
+    /// [`Self::clock_reference_identities`] under the exploration-derived
+    /// selector maxima `maxima` (one maximum per collection slot of each
+    /// clock-place template), as a timed subject derives them from its
+    /// `max_clocks` bound.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::clock_reference_identities`].
+    pub fn clock_reference_identities_under(
+        &self,
+        maxima: &std::collections::BTreeMap<NodeKey, Vec<u64>>,
+    ) -> Result<Arc<Vec<ObjectReference>>, ClockDomainRefusal> {
+        self.clock_reference_candidates(Some(maxima))
+    }
+
+    /// The candidates under the exploration-derived `selectors` when the caller
+    /// has them, else the declared maxima. Cached per distinct selector set, so
+    /// two timed subjects with different bounds never share one.
+    pub(super) fn clock_reference_candidates(
+        &self,
+        selectors: Option<&ClockSelectorMaxima>,
+    ) -> Result<Arc<Vec<ObjectReference>>, ClockDomainRefusal> {
+        let mut cache = self
+            .clock_candidates
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        cache
+            .entry(selectors.cloned())
+            .or_insert_with(|| {
+                self.build_clock_reference_candidates(selectors)
+                    .map(Arc::new)
+            })
+            .clone()
+    }
+
+    /// `objects` widened by the clock candidates when `value_type` holds a
+    /// Clock reference; `None` when those candidates cannot be enumerated.
+    pub(super) fn with_clock_candidates<'o>(
+        &self,
+        value_type: &ValueType,
+        objects: &'o [ObjectReference],
+        selectors: Option<&ClockSelectorMaxima>,
+    ) -> Option<std::borrow::Cow<'o, [ObjectReference]>> {
+        if clock_reference_paths(value_type, self.types).is_empty() {
+            return Some(std::borrow::Cow::Borrowed(objects));
+        }
+        let candidates = self.clock_reference_candidates(selectors).ok()?;
+        Some(std::borrow::Cow::Owned(
+            [objects, candidates.as_slice()].concat(),
+        ))
+    }
+
+    /// Whether `value_type` holds no Clock reference, or this universe's Clock
+    /// reference candidates can be enumerated for it.
+    pub(super) fn clock_candidates_exist(&self, value_type: &ValueType) -> bool {
+        clock_reference_paths(value_type, self.types).is_empty()
+            || self.clock_reference_candidates(None).is_ok()
+    }
+
+    /// FR-120's domain of `value_type` over `objects`, with the Clock
+    /// references of this universe where the type holds any; `None` when the
+    /// type has no finite domain here, so every route refuses or skips it as it
+    /// does an unbounded type, never ranging it over nothing.
+    pub(super) fn domain_with_clocks(
+        &self,
+        value_type: &ValueType,
+        objects: &[ObjectReference],
+    ) -> Option<Domain> {
+        let objects = self.with_clock_candidates(value_type, objects, None)?;
+        Domain::of(value_type, &objects, self.types, &self.record_orders)
+    }
+
+    fn build_clock_reference_candidates(
+        &self,
+        selectors: Option<&ClockSelectorMaxima>,
+    ) -> Candidates {
+        let Some(table) = self.input.clock_declarations else {
+            return Err(ClockDomainRefusal::MissingAuthority);
+        };
+        let limit = self.limits.max_candidates;
+        let mut found = Vec::new();
+        let mut seen = BTreeSet::new();
+        let mut charged: u128 = 0;
+        let limits =
+            quire_canonical::Limits::new(fsl_foundation::IdentityLimits::default().input_bytes);
+        let source = table.source_declarations();
+        for population in &self.populations {
+            let Some(keys) = self.universes.get(&population.key) else {
+                continue;
+            };
+            let scope = fsl_semantics::model::key::population_node_key(&population.key)
+                .ok()
+                .and_then(|node| source.declaration_scope_for_node(&node))
+                .or_else(|| source.catalog_scope(&population.key))
+                .cloned()
+                .or_else(|| source.scope(&population.key).ok());
+            let Some(scope) = scope else {
+                continue;
+            };
+            for key in keys {
+                let Some(object) = self
+                    .initial
+                    .iter()
+                    .find_map(|state| state.state.populations.get(&population.key)?.get(key))
+                else {
+                    continue;
+                };
+                let Ok(owner) = self.model.object_reference(&object.type_identity, key) else {
+                    continue;
+                };
+                for (node, place) in table.run_places() {
+                    if !self
+                        .types
+                        .conforms(owner.object_type().clone(), place.owner.clone())
+                    {
+                        continue;
+                    }
+                    let ranges = selector_ranges(&place.template.path, node, selectors)?;
+                    // Charge the count before any identity is built.
+                    let count = ranges.iter().fold(1_u128, |total, (_, maximum)| {
+                        total.saturating_mul(u128::from(*maximum))
+                    });
+                    charged = charged.saturating_add(count);
+                    if charged > u128::from(limit) {
+                        return Err(ClockDomainRefusal::TooMany { limit });
+                    }
+                    for indices in product(&ranges) {
+                        let identity = PlaceIdentity {
+                            population: scope.clone(),
+                            owner: key.clone(),
+                            template: place.template.as_ref().clone(),
+                            indices,
+                        };
+                        let Ok(reference) = encode_identity(&owner, &identity, limits) else {
+                            continue;
+                        };
+                        if seen.insert(reference.clone()) {
+                            found.push(reference);
+                        }
+                    }
+                }
+            }
+        }
+        let mut admitted = Vec::new();
+        for state in &self.initial {
+            for object in state
+                .state
+                .populations
+                .values()
+                .flat_map(|objects| objects.values())
+            {
+                for value in object.fields.values() {
+                    let mut named = Vec::new();
+                    if super::frames::collect_references(value, &mut named).is_err() {
+                        continue;
+                    }
+                    admitted.extend(
+                        named
+                            .into_iter()
+                            .filter(|reference| is_clock_type(reference.object_type()))
+                            .cloned(),
+                    );
+                }
+            }
+        }
+        admitted.sort();
+        for reference in admitted {
+            if seen.insert(reference.clone()) {
+                found.push(reference);
+            }
+        }
+        Ok(found)
+    }
+}
+
+/// The selector range of each collection entry on `path`, in path order.
+fn selector_ranges(
+    path: &[PathEntry],
+    node: &NodeKey,
+    selectors: Option<&ClockSelectorMaxima>,
+) -> Result<Vec<(Decimal, u64)>, ClockDomainRefusal> {
+    let derived = selectors.and_then(|maxima| maxima.get(node));
+    let mut slot = 0_usize;
+    let mut ranges = Vec::new();
+    for (position, entry) in path.iter().enumerate() {
+        let PathEntry::Collection { shape, .. } = entry else {
+            continue;
+        };
+        let maximum = match derived.and_then(|maxima| maxima.get(slot)).copied() {
+            Some(maximum) => maximum,
+            None => match &shape.maximum {
+                Some(declared) => declared.as_str().parse::<u64>().map_err(|_| {
+                    ClockDomainRefusal::UnparseableMaximum {
+                        clock: node.clone(),
+                        maximum: declared.as_str().to_owned(),
+                    }
+                })?,
+                None => {
+                    return Err(ClockDomainRefusal::UnboundedSlot {
+                        clock: node.clone(),
+                        slot,
+                    })
+                }
+            },
+        };
+        slot += 1;
+        let position =
+            u64::try_from(position).map_err(|_| ClockDomainRefusal::UnparseableMaximum {
+                clock: node.clone(),
+                maximum: position.to_string(),
+            })?;
+        ranges.push((Decimal::from(position), maximum));
+    }
+    Ok(ranges)
+}
+
+/// Every selector tuple below the given maxima, the first slot most
+/// significant, ascending.
+fn product(ranges: &[(Decimal, u64)]) -> Vec<Vec<SlotIndex>> {
+    let mut tuples = vec![Vec::new()];
+    for (position, maximum) in ranges {
+        let mut next = Vec::new();
+        for prefix in &tuples {
+            for index in 0..*maximum {
+                let mut tuple: Vec<SlotIndex> = prefix.clone();
+                tuple.push(SlotIndex {
+                    path_position: position.clone(),
+                    index: Decimal::from(index),
+                });
+                next.push(tuple);
+            }
+        }
+        tuples = next;
+    }
+    tuples
+}

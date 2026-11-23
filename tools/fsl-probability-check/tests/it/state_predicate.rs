@@ -432,3 +432,236 @@ fn every_independent_checker_poll_preserves_cancellation_including_graph_expansi
         }
     }
 }
+
+fn leaking_source(event: &str, scheduler: &str, operator: &str, threshold: &str) -> String {
+    source(event, scheduler, operator, threshold)
+        .replace(
+            "self.attempts - pre(self.attempts) = 1 and self.delivered = (not lost) }\npre Ready_send_b",
+            "self.attempts = pre(self.attempts) and self.delivered = (not lost) }\npre Ready_send_b",
+        )
+        .replace(
+            "post Sent_send_b using v on M::Msg::send_b { self.attempts - pre(self.attempts) = 1",
+            "post Sent_send_b using v on M::Msg::send_b { self.attempts - (if lost then 2 else 1) = 0",
+        )
+}
+
+#[trace("TC-3184", "TC-3186", "FR-201-AC-62", "FR-201-AC-64")]
+#[test]
+fn cyclic_until_and_always_documents_are_checked_by_a_core_only_process() {
+    // `send_a` loops while the message is lost, `send_b` gives up when it is.
+    for (event, scheduler, operator, threshold, numerator, denominator, profile) in [
+        (
+            "holds(m.attempts <= 2) until holds(m.delivered)",
+            "Even",
+            ">=",
+            "0.8",
+            "4",
+            "5",
+            "cyclic-dtmc-state-predicate",
+        ),
+        (
+            "holds(m.attempts <= 2) until holds(m.delivered)",
+            "Even",
+            "<=",
+            "0.8",
+            "4",
+            "5",
+            "cyclic-dtmc-state-predicate",
+        ),
+        (
+            "always holds(not m.delivered)",
+            "Even",
+            ">=",
+            "0.2",
+            "1",
+            "5",
+            "cyclic-dtmc-state-predicate",
+        ),
+        (
+            "always holds(not m.delivered)",
+            "Even",
+            "<=",
+            "0.2",
+            "1",
+            "5",
+            "cyclic-dtmc-state-predicate",
+        ),
+        (
+            "holds(m.attempts <= 2) until holds(m.delivered)",
+            "every scheduler",
+            ">=",
+            "0.75",
+            "3",
+            "4",
+            "cyclic-mdp-state-predicate",
+        ),
+        (
+            "always holds(not m.delivered)",
+            "every scheduler",
+            "<=",
+            "0.25",
+            "1",
+            "4",
+            "cyclic-mdp-state-predicate",
+        ),
+    ] {
+        let text = leaking_source(event, scheduler, operator, threshold);
+        let request = proof(&text, SNAPSHOT);
+        let (code, output) = run(&request);
+        assert_eq!(code, 0, "{event} {scheduler} {operator}: {output}");
+        assert_eq!(
+            output["value"],
+            json!({"numerator": numerator, "denominator": denominator})
+        );
+        let doc = document(&request);
+        assert_eq!(
+            doc["objective"]["profile"],
+            format!("filament.probability-objective/{profile}/v1")
+        );
+        assert_eq!(
+            doc["objective"]["event"],
+            if event.starts_with("always") {
+                "always"
+            } else {
+                "until"
+            }
+        );
+        assert_eq!(
+            doc["objective"]["optimization"],
+            if scheduler == "Even" {
+                "workload"
+            } else {
+                "maximum"
+            }
+        );
+        assert!(doc["objective"].get("failures").is_none());
+        // Each altered document is stopped by the existing rule and locus.
+        for (label, changed, code, status, rule, at) in [
+            (
+                "event",
+                mutate(&request, |doc| {
+                    doc["objective"]["event"] = json!(if event.starts_with("always") {
+                        "until"
+                    } else {
+                        "always"
+                    })
+                }),
+                2,
+                "refused",
+                None,
+                None,
+            ),
+            (
+                "targets",
+                mutate(&request, |doc| doc["objective"]["targets"] = json!([])),
+                2,
+                "refused",
+                None,
+                None,
+            ),
+            (
+                "profile",
+                mutate(&request, |doc| {
+                    doc["objective"]["profile"] =
+                        json!("filament.probability-objective/state-predicate/v1");
+                    doc["objective"]["failures"] = json!([]);
+                }),
+                2,
+                "unsupported",
+                None,
+                None,
+            ),
+            (
+                "fairness",
+                mutate(&request, |doc| {
+                    doc["objective"]["fairness"] = json!(["foreign"])
+                }),
+                2,
+                "unsupported",
+                None,
+                None,
+            ),
+            (
+                "dropped row",
+                mutate(&request, |doc| {
+                    doc["values"].as_array_mut().unwrap().pop();
+                }),
+                1,
+                "rejected",
+                Some("malformed"),
+                Some("member"),
+            ),
+            (
+                "ranks",
+                mutate(&request, |doc| {
+                    for row in doc["ranking"].as_array_mut().unwrap() {
+                        row["rank"] = json!(0);
+                    }
+                }),
+                1,
+                "rejected",
+                Some("rank-broken"),
+                Some("product_key"),
+            ),
+            (
+                "initial value",
+                mutate(&request, |doc| {
+                    doc["values"][0]["value"] = json!({"numerator":"1","denominator":"1"})
+                }),
+                1,
+                "rejected",
+                Some("inequality-fails"),
+                Some("product_key"),
+            ),
+        ] {
+            let (actual, output) = run(&changed);
+            assert_eq!(actual, code, "{label}: {output}");
+            assert_eq!(output["status"], status, "{label}: {output}");
+            if let Some(rule) = rule {
+                assert_eq!(output["rule"], rule, "{label}: {output}");
+            }
+            if let Some(at) = at {
+                assert!(output["at"].get(at).is_some(), "{label}: {output}");
+            }
+        }
+        for (label, changed, status, reason) in [
+            (
+                "nonreduced",
+                mutate(&request, |doc| {
+                    doc["values"][0]["value"] = json!({"numerator":"2","denominator":"4"})
+                }),
+                "refused",
+                "invalid_runtime_input: malformed probability certificate",
+            ),
+            (
+                "lower",
+                mutate(&request, |doc| doc["kind"] = json!("lower")),
+                "unsupported",
+                "unsupported probability certificate profile",
+            ),
+            (
+                "upper",
+                mutate(&request, |doc| doc["kind"] = json!("upper")),
+                "unsupported",
+                "unsupported probability certificate profile",
+            ),
+            (
+                "interval",
+                mutate(&request, |doc| doc["kind"] = json!("interval")),
+                "unsupported",
+                "unsupported probability certificate profile",
+            ),
+        ] {
+            let (actual, output) = run(&changed);
+            assert_eq!(actual, 2, "{label}: {output}");
+            assert_eq!(output["status"], status, "{label}: {output}");
+            assert_eq!(output["reason"], reason, "{label}: {output}");
+        }
+        let stricter = if operator == ">=" { "0.95" } else { "0.05" };
+        let mut stronger = request.clone();
+        replace_source(&mut stronger, &text.replace(threshold, stricter));
+        let (code, rejected) = run(&stronger);
+        assert_eq!(code, 1, "{rejected}");
+        assert_eq!(rejected["rule"], "threshold-missed");
+    }
+}

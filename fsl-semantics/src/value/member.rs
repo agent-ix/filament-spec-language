@@ -134,6 +134,16 @@ pub enum Member {
         /// The operation's own identifier.
         name: Identifier,
     },
+    /// A refinement's history field (FSpec FR-322 "Refinement row
+    /// expressions"): `{kind: "history", declaration, name}`, with
+    /// `declaration` the model declaration node of the history's concrete
+    /// object type.
+    History {
+        /// The concrete object type the history is added to.
+        declaration: NodeKey,
+        /// The history field's name.
+        name: Identifier,
+    },
     /// A generic declaration's type argument (position-independent: a
     /// declaration has at most one type argument in this catalog).
     TypeArgument {
@@ -281,6 +291,11 @@ impl DebugWith for Member {
                 .field("declaration", &NodeKeyDebug(declaration, table))
                 .field("name", &name)
                 .finish(),
+            Self::History { declaration, name } => f
+                .debug_struct("History")
+                .field("declaration", &NodeKeyDebug(declaration, table))
+                .field("name", &name)
+                .finish(),
             Self::TypeArgument { declaration, alias } => f
                 .debug_struct("TypeArgument")
                 .field("declaration", &NodeKeyDebug(declaration, table))
@@ -362,6 +377,7 @@ impl Member {
             | Self::Element { declaration }
             | Self::RelationshipEnd { declaration, .. }
             | Self::Operation { declaration, .. }
+            | Self::History { declaration, .. }
             | Self::TypeArgument { declaration, .. } => Some(declaration.clone()),
             Self::Fairness { target, .. } => target.node().cloned(),
             Self::ProfileOperator { .. }
@@ -391,6 +407,7 @@ impl Member {
             Self::Position { .. }
             | Self::Element { .. }
             | Self::Operation { .. }
+            | Self::History { .. }
             | Self::TypeArgument { .. }
             | Self::ProfileOperator { .. }
             | Self::StateClause { .. }

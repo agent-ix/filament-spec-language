@@ -16,6 +16,8 @@
 
 mod application;
 mod behaviours;
+mod clock_domain;
+pub use clock_domain::ClockDomainRefusal;
 mod cells;
 mod constraint;
 mod contract;
@@ -819,6 +821,14 @@ pub struct ModelSystem<'a> {
     input: ModelCheckInput<'a>,
     model: StateModel,
     universes: BTreeMap<DeclarationKey, Vec<String>>,
+    /// The clock-reference candidates of this model universe, built on first
+    /// use for each distinct set of exploration selector maxima.
+    clock_candidates: std::sync::Mutex<
+        BTreeMap<
+            Option<domain::ClockSelectorMaxima>,
+            Result<std::sync::Arc<Vec<ObjectReference>>, ClockDomainRefusal>,
+        >,
+    >,
     initial: Vec<ModelSimState>,
     /// FR-1000: subject-specific resolutions for checked reference literals.
     reference_bindings: ReferenceBindings,
@@ -1436,8 +1446,13 @@ impl<'a> ModelSystem<'a> {
         let input = request.input;
         let types = input.types;
         let only = selections.selections();
+        let selections = selections.with_clock_places(input.timed_models);
+        let selections = match input.clock_declarations {
+            Some(table) => selections.with_clock_declaration_table(table),
+            None => selections,
+        };
         let model = StateModel::new(
-            selections.with_clock_places(input.timed_models),
+            selections,
             types,
             request.packages,
             request.normalization,
@@ -1756,42 +1771,10 @@ impl<'a> ModelSystem<'a> {
             tuple_positions,
             clock_counts: counts,
             clock_bits: bits,
+            clock_candidates: Default::default(),
             bounded: std::sync::OnceLock::new(),
         };
-        // The shared enumeration routes do not yet carry an authenticated
-        // population beside each clock-owner candidate. Refuse those actual
-        // data domains before reward or frame probing can enumerate them.
-        system.check_clock_reference_enumeration()?;
         Ok(system)
-    }
-
-    fn check_clock_reference_enumeration(&self) -> Result<(), AdmissionFailure> {
-        for field in self.fields.values().flatten() {
-            if !domain::clock_reference_paths(&field.value_type, self.types).is_empty() {
-                return Err(refused(
-                    Code::UnknownRequiredFeature,
-                    "unsupported-feature",
-                    &[
-                        ("reason", "clock-reference-enumeration".to_owned()),
-                        ("member", field.key.node.clone()),
-                    ],
-                ));
-            }
-        }
-        for (node, path, value_type) in self.generation_domains() {
-            if !domain::clock_reference_paths(&value_type, self.types).is_empty() {
-                return Err(refused(
-                    Code::UnknownRequiredFeature,
-                    "unsupported-feature",
-                    &[
-                        ("reason", "clock-reference-enumeration".to_owned()),
-                        ("member", format!("{node:?}")),
-                        ("domain_path", format!("{path:?}")),
-                    ],
-                ));
-            }
-        }
-        Ok(())
     }
 
     /// The RFC 8785 key bytes and `filament.simulation.state-key/v1` state key of
@@ -2114,8 +2097,10 @@ impl<'a> ModelSystem<'a> {
         &self,
         value_type: &ValueType,
         objects: &[ObjectReference],
-        _selectors: Option<&domain::ClockSelectorMaxima>,
+        selectors: Option<&domain::ClockSelectorMaxima>,
     ) -> Option<domain::Domain> {
+        let objects = self.with_clock_candidates(value_type, objects, selectors)?;
+        let objects = objects.as_ref();
         let bits = match self
             .max_value_bits
             .load(std::sync::atomic::Ordering::Relaxed)
@@ -3080,6 +3065,24 @@ pub(super) fn clock_reference_domains(
         for path in domain::clock_reference_paths(value_type, system.types) {
             let mut member_path = base.clone();
             member_path.extend(path);
+            if system.input.clock_declarations.is_none() {
+                // No declaration table: no owner population authority validates
+                // a place identity, so the domain is refused as unbounded for
+                // every declared place (an empty slot names the missing authority).
+                for timed in system.input.timed_models {
+                    for template in timed.place_nodes() {
+                        clock_references.push(crate::simulation::ClockReferenceDomain {
+                            member: DomainKey::Node {
+                                node: node.clone(),
+                                path: member_path.clone(),
+                            },
+                            clock: template.clone(),
+                            slot: Vec::new(),
+                        });
+                    }
+                }
+                continue;
+            }
             for timed in system.input.timed_models {
                 for (clock, template) in timed.clocks().iter().zip(timed.place_nodes()) {
                     if selectors.is_some_and(|maxima| maxima.contains_key(template))

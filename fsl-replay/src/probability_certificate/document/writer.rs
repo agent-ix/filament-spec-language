@@ -231,10 +231,14 @@ impl Encode for Events<'_> {
             TIMED_PROFILE
         } else if self.cyclic_mdp && self.document.reward.is_some() {
             CYCLIC_MDP_REWARD_PROFILE
+        } else if self.cyclic_mdp && self.document.event.is_some() {
+            CYCLIC_MDP_STATE_PROFILE
         } else if self.cyclic_mdp {
             CYCLIC_MDP_PROFILE
         } else if self.document.cyclic_dtmc && self.document.reward.is_some() {
             CYCLIC_REWARD_PROFILE
+        } else if self.document.cyclic_dtmc && self.document.event.is_some() {
+            CYCLIC_STATE_PROFILE
         } else if self.document.cyclic_dtmc {
             CYCLIC_PROFILE
         } else if self.document.reward.is_some() {
@@ -259,12 +263,14 @@ impl Encode for Events<'_> {
                 ProbabilityStateEvent::Until => "until",
                 ProbabilityStateEvent::Always => "always",
             })?;
-            writer.name("failures")?;
-            writer.begin_array()?;
-            for (index, key) in self.document.failures.iter().enumerate() {
-                self.text.key(key, writer, index != 0)?;
+            if !(self.cyclic_mdp || self.document.cyclic_dtmc) {
+                writer.name("failures")?;
+                writer.begin_array()?;
+                for (index, key) in self.document.failures.iter().enumerate() {
+                    self.text.key(key, writer, index != 0)?;
+                }
+                writer.end_array()?;
             }
-            writer.end_array()?;
         }
         writer.name("targets")?;
         writer.begin_array()?;
@@ -395,7 +401,7 @@ pub(super) fn encode_fair_profile(
     if document.reward.is_some() && document.event.is_some() {
         return Err(ProbabilityDocumentError::Malformed);
     }
-    if document.cyclic_dtmc && document.event.is_some() {
+    if (cyclic_mdp || document.cyclic_dtmc) && !document.failures.is_empty() {
         return Err(ProbabilityDocumentError::Malformed);
     }
     let rows = document

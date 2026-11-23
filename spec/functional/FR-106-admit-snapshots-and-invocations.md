@@ -323,11 +323,15 @@ Snapshot, format `filament.state.snapshot/v1`:
   relationship of the selected package
   (`ix://<package>/relationship/<Name>-<verb>-<TargetName>`), `complete` is a
   boolean, and `instances` is an array of objects with `source` and `target`,
-  each an object reference `{"population": ..., "key": ...}` as in `self`, and,
-  only for a relationship one of whose ends declares `ordered: true`, a
-  `positions` object whose members are exactly the ordered ends, `source`
-  and/or `target`, each a non-negative decimal integer string (FR-364
-  "Positions of an ordered end"). An instance MAY also carry `identity`, the
+  each an object reference `{"population": ..., "key": ...}` as in `self`.
+  An instance MAY carry `positions`, an object whose only allowed members are
+  `source` and `target`; each present value is a canonical `U64String`, the
+  decimal spelling of an integer from 0 through `u64::MAX` (FR-364 "Positions
+  of an ordered end"). A position is required only for an end that is ordered
+  and has an upper bound above 1. An absent or empty `positions` object is
+  valid when neither end requires a position; a supplied position for an
+  unordered or single-valued end is refused by FR-364 condition 5. An instance
+  MAY also carry `identity`, the
   non-empty lowercase-hex spelling of its producer-supplied
   `RelationshipIdentity` bytes, as reference identity bytes are encoded in
   FSpec FR-181 and FR-480. The reader SHALL decode those bytes exactly, without
@@ -489,22 +493,45 @@ This contract applies FSpec FR-415's clock-place and cardinality rules and
 `scalar_type`/`clock_reference` and `filament.op.clock_reference.ref` from
 FSpec FR-829, using FR-230's canonical `place/v2` identity.
 
-> Implementation boundary (QSL-2178 STEP1): the admission requirement above
-> and AC-72/AC-73 remain unmet. Source and Bare raw snapshot, context,
-> parameter and record-sample admission refuse external Clock references as
+> Implementation state (QSL-2897 part 1): Source raw snapshot admission
+> decodes a transported `place/v2` identity and validates it against the
+> authenticated declaration table, the exact admitted owner population and the
+> original scope. A population or scope that disagrees refuses
+> `invalid_runtime_input`/`invalid-value`; an owner the complete population
+> does not list, or an undeclared place, refuses
+> `dangling_reference`/`absent-target-in-complete-population`; a selector the
+> declared template does not admit (missing, extra, at the wrong path position,
+> or at or above the declared maximum) refuses `invalid_runtime_input`/
+> `invalid-value` (AC-80). An incomplete population tolerates an unlisted
+> owner, with the scope, template and selector checks still applied. Running
+> Source tests prove these refusals and the field and nested `maybe` and
+> `refs` locus for removed-place and scope-disagreement identities; AC-72,
+> AC-73 and AC-76 stay unmet as two-route criteria until Bare passes. The
+> typed Rust `StateModel::observation` and `protocol_observation` interfaces
+> accept only states produced or already admitted within the same model run;
+> handcrafted Clock references are outside that trusted interface contract.
+> Map-keyed Clock-reference identities remain unsupported.
+>
+> The Clock-reference domain is built from the model system's declaration
+> table. A route that carries none (the package route, whose
+> `ModelCheckInput.clock_declarations` is `None`) refuses the domain as
+> `RequiresBound` with an empty slot rather than enumerating admitted seeds
+> alone; a candidate count above `max_candidates`, a declared maximum that is
+> not a machine integer, and an unbounded slot without a derived maximum each
+> refuse typed (`ClockDomainRefusal`). Every enumeration route reads this one
+> candidate set or refuses: field, parameter and result domains, the protocol
+> event, finish, channel, role and compensation record domains, and the
+> enumerability check of a compensation attempt type (a Clock leaf the set
+> cannot supply is reported unenumerable). A model-based value function whose
+> parameter holds a `Reference<Clock>` has no population to range it over and
+> is refused `invalid_model_binding`, never run over absence alone. No route
+> ranges a Clock reference over an empty or partial set.
+>
+> The Bare route is unmet: the Contract IR object-field projection reads no
+> `Reference<Clock>` data member, so Bare admission refuses
 > `unknown_required_feature`/`unsupported-feature`, naming
-> `missing-route-neutral-place-identity`, before interpreting a place ID.
-> The typed Rust `StateModel::observation` and `protocol_observation`
-> interfaces accept only states produced or already admitted within the same
-> model run; handcrafted Clock references are outside that trusted interface
-> contract. They do not authenticate hostile Rust caller values or references
-> transported from another model or run. Route-neutral identity is deferred
-> to STEP2, including map-keyed Clock-reference identities, which remain
-> unsupported. This note does not relax the required admission behavior.
-
-> STEP2 targets also include AC-76/AC-77, FR-1040-AC-9 and FR-230's
-> route-neutral identity criteria. They remain unmet until implementation
-> and acceptance proof; the STEP1 boundary above remains in force.
+> `missing-type-representation`, before any snapshot is read (QSL-2776). The
+> QSL-2776 handoff must supply the package route's declaration table.
 
 > Current STEP2 implementation boundary: the shared object closure cannot
 > retain two explicitly listed populations of the same declared type with
@@ -527,20 +554,15 @@ FSpec FR-829, using FR-230's canonical `place/v2` identity.
 > SourceOwner declaration-path comparison do not establish that missing
 > materialization capability. QSL-2178 retains this named remainder.
 
-> The current foundation does not admit transported Clock DATA on either
-> route. Source raw-value admission refuses
-> `unknown_required_feature`/`unsupported-feature`, naming
-> `missing-route-neutral-place-identity`, before decoding a place ID and
-> retaining the actual document and nested value locus. Bare may refuse
-> earlier with `missing-type-representation`; it does not claim the same
-> admission stage or field locus. This boundary covers raw scalar, present
-> optional and sequence Clock-reference values, not ordinary references or
-> native-Clock timed simulation. The five end-to-end acceptance tests retain
-> their original oracles as explicitly ignored QSL-2178 debt. Stored `self.r`
-> refinement evaluation, raw round-trip, removed-`x` rejection, scope checks
-> and alias-table snapshot admission remain unproved and unmet. Codec,
-> declaration-table, provenance, generated-reference and static readback
-> controls do not establish these end-to-end criteria. QSL-2178 stays open.
+> Source admits transported Clock DATA. Bare refuses it earlier, at
+> `missing-type-representation`, and does not claim the same admission stage
+> or field locus. This covers raw scalar, present optional and sequence
+> Clock-reference values, not ordinary references or native-Clock timed
+> simulation. The five end-to-end acceptance tests stay ignored until the Bare
+> route reads a `Reference<Clock>` data member (QSL-2776).
+> `raw_clock_data_admits_declared_and_refuses_undeclared_identities` exercises
+> Source admission and its dangling and invalid-value refusals at the value
+> locus.
 >
 > The Clock route and declaration-table criteria reviewed as AC-74/AC-75
 > are now AC-76/AC-77. The relationship criteria on the repaired main branch
@@ -1181,12 +1203,22 @@ completeness.
       object's type does not conform to the relationship's end type, then
       admission SHALL refuse `invalid_runtime_input`/`wrong-value-kind`,
       naming the relationship, the instance and the end (FR-364 condition 3).
-      An end naming a key the snapshot does not list is not decided here;
-      checks 7 and 8 decide it.
+      `positions` is a recognized relationship-instance member defined by
+      FR-364. Its value SHALL be an object whose only keys are `source` and
+      `target`, and each value SHALL be a canonical `U64String`; a wrong value
+      kind refuses `wrong-value-kind` at the malformed member, a noncanonical
+      or out-of-range spelling refuses `invalid-value`, and an unknown key
+      refuses `unknown-member`, each at its exact pointer. These wire-shape
+      checks follow condition 3's end-type check and precede FR-364 condition
+      4's repeated-instance check; condition 5's semantic position checks
+      follow condition 4. An end naming a key the snapshot does not list is
+      not decided here; checks 7 and 8 decide it.
    9. If an instance repeats an earlier instance of its entry and the
       relationship's two ends do not both declare `unique: false`, then
       admission SHALL refuse `invalid_runtime_input`/`conflicting-identity`
-      at the later instance (FR-364 condition 4). No instance count is
+      at the later instance (FR-364 condition 4). After that condition admits
+      this instance, FR-364 condition 5 decides its ordered-end positions
+      before admission advances to the next instance. No instance count is
       compared with an end's multiplicity bounds: a count outside `[lower,
       upper]` admits, and navigation refuses it (FR-364).
    10. If a snapshot says `current` and holds `contexts`, then admission SHALL
@@ -1466,7 +1498,7 @@ completeness.
 | FR-106-AC-21 | A Timestamp object in the UUID field `token`, a UUID object in the Timestamp field `stamp`, `{"integer":"5"}` in `stamp`, `{"integer":"5"}` and `{"boolean":true}` in `token`, a UUID object in the integer field `versionNumber` and in a `Reference` field, a Timestamp object inside `{"present": ...}` of the optional UUID `prior`, and a UUID object as an element of `seen` each refuse `invalid_runtime_input`/`wrong-value-kind` at the nested path (the sequence element with its index), including a Timestamp object with `nanoseconds` `"01"` in `token` and a UUID object with `text` `"X"` in `stamp`, which are `wrong-value-kind`, never `invalid-value`. The same cases in a parameter or result use the invocation binding as the path root. | Test (TC-1029) |
 | FR-106-AC-22 | An invocation changing `token` or `stamp` between two admitted payloads admits its frame when the selected `modifies` grant covers the field and refuses `frame_violation`/`unauthorized-change` naming `child` and the field without it; one whose post holds the same payload, with differently ordered members, is no change. Under `PostStateRange::Witness`, a post snapshot holding a noncanonical UUID or Timestamp still refuses `invalid-value`. With `observation.values` set to the exact count of a document holding a `token` and a `stamp`, the document admits; one less returns `stage_limit_exceeded`/`node-count-exceeded` at the last of those values in walk order. | Test (TC-1029) |
 | FR-106-AC-23 | TC-1035's `orders` snapshot of population `Q` (`s1`, `s2`, `p1`, `p2`, `p3`, `t1`) lists `Sys-composition-Pump` complete with instances `s1`-`p2` then `s1`-`p1`, and `Pump-housing-Tank` complete with `p1`-`t1` and `p2`-`t1`. Selected for an invariant on `Sys` with `self` `s1`, it admits one observation whose composition extent reads `targets` `[p1, p2]` and whose housing extent reads `sources` of `t1` `[p1, p2]`; reordering the entries, the instances and the JSON members gives the same admitted value. The same snapshot with no `relationships` member admits with both relationships unlisted (`complete` false); with `Sys-composition-Pump` listed `"complete": true` and `"instances": []` it admits with that extent complete and empty. A snapshot listing four instances `s1`-`p1` to `s1`-`p4` through `parts`, whose destination end is `{0,3}`, and one with no `Pump-housing-Tank` instance for `p3` through `home`, whose destination end is `{1,1}`, admit. | Test (TC-1035) |
-| FR-106-AC-24 | Each of checks 6.6 to 6.9 has one case that fails only it and returns exactly its code and cause, naming the relationship and the zero-based instance index: an entry without `instances`, an entry with an extra member, a `complete` of `"yes"`; a `relationship` that is a connection, and separately an unknown identity; two entries for one relationship; an instance without `target`, with an extra member, with a numeric `key`; a `population` naming no population of the package; a `Tank` `t1` at the `source` end of `Sys-composition-Pump`, and separately at its `target` end; a repeated `s1`-`p1` instance where the ends are unique. A repeated instance admits as two instances when both ends of the relationship declare `unique: false`, and refuses when only one does. Checks run entry by entry and instance by instance: a repeat at instance 1 with a wrong end type at instance 2 refuses the repeat, and a wrong end type at instance 0 of the first composition entry refuses before a second composition entry does. | Test (TC-1035) |
+| FR-106-AC-24 | Each of checks 6.6 to 6.9 has one case that fails only it and returns exactly its code and cause, naming the relationship and the zero-based instance index: an entry without `instances`, an entry with an unexpected member, a `complete` of `"yes"`; a `relationship` that is a connection, and separately an unknown identity; two entries for one relationship; an instance without `target`, an instance with an unexpected member other than FR-364's `positions`, with a numeric `key`; a `population` naming no population of the package; a `Tank` `t1` at the `source` end of `Sys-composition-Pump`, and separately at its `target` end; a repeated `s1`-`p1` instance where the ends are unique. A repeated instance admits as two instances when both ends of the relationship declare `unique: false`, and refuses when only one does. Checks run entry by entry and instance by instance: a repeat at instance 1 with a wrong end type at instance 2 refuses the repeat, and a wrong end type at instance 0 of the first composition entry refuses before a second composition entry does. | Test (TC-1035) |
 | FR-106-AC-25 | A target `t9` of a `Pump-housing-Tank` instance that `Q` does not list, with `Q` complete, refuses `dangling_reference`/`absent-target-in-complete-population` naming the relationship, the instance and end `target`, `t9` and `Q`; the same snapshot with `Q` `"complete": false` returns `Incomplete` with `incomplete_population`/`incomplete-scope` and no dangling record. A dangling `reference` value and a dangling instance end in one snapshot report the `reference` value. Over a variant in which the `Tank` object `t1` lives in a second population `Tanks` marked `"complete": false`, an instance `p1`-`t1` makes `Tanks` required and returns `Incomplete` naming `Tanks`, while the same snapshot without the instance admits. An extent listed `"complete": false` admits. An instance end naming an unlisted key of a population that is not complete, with no end in a required population, returns `Incomplete` naming that population; the same end naming a listed key admits. | Test (TC-1035) |
 | FR-106-AC-26 | An invocation of the operation `rehome` on `Pump`, selected for its postcondition `RehomePost`, whose pre snapshot lists `Pump-housing-Tank` complete with `p1`-`t1` and `p2`-`t1` and whose post lists it complete with `p1`-`t2` and `p2`-`t1` admits its frame when `rehome` modifies `Pump-housing-Tank`, and refuses `frame_violation`/`unauthorized-change` naming the relationship and the instance `p1`-`t1` `removed` when it does not. A post that deletes `p2` and drops `p2`-`t1` admits under a frame that deletes `Pump` and does not modify the relationship; a post that creates `p3` with `p3`-`t1` under a frame that creates `Pump` and does not modify the relationship refuses naming `p3`-`t1` `added`. A relationship listed in only one of the two snapshots changes nothing. | Test (TC-1035) |
 | FR-106-AC-27 | Each instance counts as one value against `observation.values`: a snapshot whose objects and instances reach the bound exactly admits and one more instance returns `stage_limit_exceeded`/`node-count-exceeded` naming `observation.values`, the bound and the count reached. An invocation selected for a precondition admits and gives its `PreCall` verdict when its `post` snapshot lists a malformed `relationships` entry. | Test (TC-1035) |

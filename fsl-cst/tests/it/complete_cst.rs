@@ -468,6 +468,28 @@ fn the_diagnostic_list_is_cut_at_its_bound() {
         .all(|diagnostic| diagnostic.limit().is_none()));
 }
 
+#[trace("TC-721", "FR-255-AC-24")]
+#[test]
+fn the_s1_diagnostics_setting_moves_only_the_report_cut() {
+    let body: String = (0..150)
+        .map(|n| format!("record R{n} {{ z: ; }}\n"))
+        .collect();
+    let mut limits = Limits::default();
+    assert!(fsl_foundation::SettingLimits::set_bound(
+        &mut limits,
+        fsl_foundation::Setting::S1Diagnostics,
+        10
+    ));
+    let parsed = recover_under(&body, limits).expect("a recovered unit");
+    assert_eq!(parsed.diagnostics().len(), 11);
+    assert_eq!(parsed.diagnostics()[10].cause.as_str(), "diagnostic-list-cut");
+    assert!(parsed.diagnostics()[10].message.contains("cut after 10 syntax errors"));
+    let limits = limits.with_diagnostics(1000);
+    let parsed = recover_under(&body, limits).expect("a recovered unit");
+    assert_eq!(parsed.diagnostics().len(), 150);
+    assert!(parsed.diagnostics().iter().all(|d| d.cause.as_str() != "diagnostic-list-cut"));
+}
+
 #[trace("TC-2154", "FR-762-AC-7")]
 #[test]
 fn a_recovered_unit_is_never_admitted() {

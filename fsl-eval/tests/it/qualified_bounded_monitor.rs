@@ -366,3 +366,100 @@ fn over_instance_keys_and_ordinary_reference_arguments_have_distinct_context_for
     assert_eq!(ordinary_value[1][3][0][1]["type"], "reference");
     assert_eq!(ordinary_value[1][3][0][1]["identity"], "c");
 }
+
+#[trace("TC-3195", "FR-201-AC-75")]
+#[test]
+fn qualified_bounded_monitor_reads_a_root_atom_as_eventually_at_horizon_zero() {
+    let atom = fixture(EVENT, "c: Counter", "on origin", "holds(true)");
+    let explicit = fixture(
+        EVENT,
+        "c: Counter",
+        "on origin",
+        "eventually[0,0] holds(true)",
+    );
+    let infinite = fixture(
+        crate::temporal_trace::INFINITE,
+        "c: Counter",
+        "on origin",
+        "holds(true)",
+    );
+    let formula = atom.clause.formula();
+    assert!(QualifiedBoundedMonitor::supports(
+        formula,
+        atom.clause.profile()
+    ));
+    assert!(QualifiedBoundedMonitor::supports_observations(
+        formula,
+        atom.clause.profile()
+    ));
+    assert!(!QualifiedBoundedMonitor::supports(
+        infinite.clause.formula(),
+        infinite.clause.profile()
+    ));
+    assert!(!QualifiedBoundedMonitor::supports_observations(
+        infinite.clause.formula(),
+        infinite.clause.profile()
+    ));
+
+    let atom_context = context(&atom.clause, 0);
+    let explicit_owner = BoundedTranslation::clause(&explicit.clause, &atom_context).unwrap();
+    let mut monitor = QualifiedBoundedMonitor::new(formula, &atom_context, 100).unwrap();
+    let mut observed =
+        QualifiedBoundedMonitor::for_observations(formula, &atom_context, 100).unwrap();
+    assert_eq!(
+        monitor.unread_key().unwrap(),
+        explicit_owner
+            .key(BoundedState::Open { remaining: 0 })
+            .unwrap()
+    );
+    assert_eq!(
+        observed.unread_key().unwrap(),
+        monitor.unread_key().unwrap()
+    );
+    let rejected = monitor.start(false).unwrap();
+    let accepted = monitor.start(true).unwrap();
+    assert_eq!(monitor.state(rejected).unwrap(), BoundedState::Reject);
+    assert_eq!(monitor.state(accepted).unwrap(), BoundedState::Accept);
+    assert_eq!(
+        monitor.key(rejected).unwrap(),
+        explicit_owner.key(BoundedState::Reject).unwrap()
+    );
+    assert_eq!(
+        monitor.key(accepted).unwrap(),
+        explicit_owner.key(BoundedState::Accept).unwrap()
+    );
+    assert_eq!(monitor.rank(rejected).unwrap(), 0);
+    assert_eq!(monitor.terminal(rejected).unwrap(), BoundedState::Reject);
+    assert_eq!(monitor.terminal(accepted).unwrap(), BoundedState::Accept);
+    let observed_rejected = observed.start(false).unwrap();
+    assert_eq!(
+        observed.key(observed_rejected).unwrap(),
+        monitor.key(rejected).unwrap()
+    );
+
+    let mut spelled = QualifiedBoundedMonitor::new(
+        explicit.clause.formula(),
+        &context(&explicit.clause, 0),
+        100,
+    )
+    .unwrap();
+    let spelled_rejected = spelled.start(false).unwrap();
+    let spelled_accepted = spelled.start(true).unwrap();
+    assert_eq!(
+        spelled.state(spelled_rejected).unwrap(),
+        BoundedState::Reject
+    );
+    assert_eq!(
+        spelled.state(spelled_accepted).unwrap(),
+        BoundedState::Accept
+    );
+
+    // The other consumers of the shared classification read no bounded shape.
+    assert!(fsl_eval::automaton::bounded_shape(&atom.clause).is_none());
+    assert!(fsl_eval::automaton::closure_shape(&atom.clause).is_none());
+    assert!(fsl_eval::automaton::closure_shape(&infinite.clause).is_none());
+    assert!(matches!(
+        BoundedTranslation::clause(&infinite.clause, &context(&infinite.clause, 0)),
+        Err(fsl_eval::automaton::TranslationRefusal::NotTranslated(_))
+    ));
+}

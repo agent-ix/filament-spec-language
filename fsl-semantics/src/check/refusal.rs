@@ -955,17 +955,6 @@ pub enum ProtocolConstruct {
     /// "Cyclic reference components" writes such a component with one
     /// recursion group; that emission is QSL-844.
     ReferenceCycle,
-    /// A `protocol` reference written directly in a protocol's own body (a
-    /// `check`/`send` constraint, an `each` guard, a `terminal when`
-    /// condition, a capture initializer or a `finish` constraint). FSpec
-    /// FR-464 "Binder scope" finds an expression's reads over its dependency
-    /// closure, which stops at a `function` node but not at a
-    /// `protocol_reference`, so the closure runs through the referenced
-    /// clause to its `finish` binder and IR's reader refuses the body
-    /// (`BinderScope`, `ModelStateRead`). FSL cannot prove the package
-    /// admitted until FSpec says whether the closure stops at the carrier;
-    /// a call to a function that reads the protocol is admitted. QSL-1121g.
-    ProtocolReferenceInBody,
     /// A `terminal when` condition that reads `over` under `activation on
     /// each`. FSpec FR-464 stage `terminal` and vector TC-947 TM11 admit it,
     /// but IR's reader (`protocol_body.rs` `check_finish_terminal`) lets only an `origin` protocol's terminal read
@@ -997,7 +986,7 @@ impl ProtocolConstruct {
             Self::TerminalReadsOverUnderEach => "IR-1069",
             Self::Control(_) => "QSL-1126",
             Self::ReferenceCycle => "QSL-844",
-            Self::ReferenceToAttemptProtocol | Self::ProtocolReferenceInBody => "QSL-1121g",
+            Self::ReferenceToAttemptProtocol => "QSL-1121g",
             Self::Relationships => "QSL-1141",
             Self::PostTestRepeat | Self::RepeatDecisionReadsBody => "STD-539",
         }
@@ -2800,6 +2789,7 @@ impl TryFrom<Setting> for CheckingLimitKind {
             | Setting::S1Tokens
             | Setting::S1Nodes
             | Setting::S1WorkUnits
+            | Setting::S1Diagnostics
             | Setting::S3DecimalScale
             | Setting::DependencyLibraries
             | Setting::DependencyImportEdges
@@ -2874,6 +2864,45 @@ impl TryFrom<Setting> for CheckingLimitKind {
             | Setting::MonitorPreparationWorkUnits
             | Setting::MonitorPreparationStorage
             | Setting::InspectMaxViewEntries
+
+            | Setting::SimulationMaxSteps
+            | Setting::ExactProbMaxStates
+            | Setting::ExactProbMaxTransitions
+            | Setting::ExactProbMaxAutomatonStates
+            | Setting::ExactProbMaxIterations
+            | Setting::ExactProbPrecisionBits
+            | Setting::ExactProbMaxPrecisionBits
+            | Setting::ExactProbMaxRationalBits
+            | Setting::ExactProbMaxPolicyIterations
+            | Setting::ExactProbMaxWitnessPaths
+            | Setting::StatisticalMaxSamples
+            | Setting::StatisticalMaxDraws
+            | Setting::StatisticalMaxCycleSteps
+            | Setting::StatisticalMaxSampleSteps
+            | Setting::ZoneCheckMaxSymbolicStates
+            | Setting::ZoneCheckMaxSymbolicTransitions
+            | Setting::ZoneCheckMaxAutomatonStates
+            | Setting::ZoneCheckMaxZoneBytes
+            | Setting::CertificateCheckMaxCertificateEdges
+            | Setting::CertificateCheckMaxCertificateBytes
+            | Setting::CertificateCheckMaxWorkingBytes
+            | Setting::CertificateCheckMaxRank
+            | Setting::ScheduleMaxDemandPoints
+            | Setting::HybridMaxSolverSteps
+            | Setting::HybridMaxSolverTime
+            | Setting::SmtEncodingMaxConstants
+            | Setting::SmtEncodingMaxApplications
+            | Setting::SmtEncodingMaxMonitorAtoms
+            | Setting::SmtEncodingMaxMonitorStates
+            | Setting::SmtEncodingMaxCandidates
+            | Setting::SmtEncodingMaxScriptBytes
+            | Setting::SmtMaxSolverSteps
+            | Setting::SmtMaxSolverTime
+            | Setting::PlanSearchMaxStates
+            | Setting::PlanSearchMaxWork
+            | Setting::PlanSearchMaxCertificateEntries
+            | Setting::PlanSearchMaxCheckWork
+            | Setting::PlanSearchMaxStateKeyBytes
             | Setting::ProgressCoveredPositions => Err(setting),
         }
     }

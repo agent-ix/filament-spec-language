@@ -60,6 +60,9 @@ const REWARD_PROFILE: &str = "filament.probability-objective/expected-reward/v1"
 const CYCLIC_REWARD_PROFILE: &str = "filament.probability-objective/dtmc-expected-reward/v1";
 const CYCLIC_PROFILE: &str = "filament.probability-objective/cyclic-dtmc-eventual/v1";
 const CYCLIC_MDP_PROFILE: &str = "filament.probability-objective/cyclic-mdp-eventual/v1";
+const CYCLIC_STATE_PROFILE: &str = "filament.probability-objective/cyclic-dtmc-state-predicate/v1";
+const CYCLIC_MDP_STATE_PROFILE: &str =
+    "filament.probability-objective/cyclic-mdp-state-predicate/v1";
 const CYCLIC_MDP_REWARD_PROFILE: &str =
     "filament.probability-objective/cyclic-mdp-expected-reward/v1";
 const BOUNDED_FAIR_PROFILE: &str = "filament.probability-objective/bounded-fair-eventual/v1";
@@ -552,7 +555,9 @@ fn profile_dispatch(
             }
             Some(quire_canonical::Node::String(measure::PROFILE)) => ProfileDispatch::Measure,
             Some(quire_canonical::Node::String(TIMED_PROFILE)) => ProfileDispatch::Timed,
-            Some(quire_canonical::Node::String(CYCLIC_MDP_PROFILE)) => ProfileDispatch::CyclicMdp,
+            Some(quire_canonical::Node::String(CYCLIC_MDP_PROFILE | CYCLIC_MDP_STATE_PROFILE)) => {
+                ProfileDispatch::CyclicMdp
+            }
             Some(quire_canonical::Node::String(CYCLIC_MDP_REWARD_PROFILE)) => {
                 ProfileDispatch::CyclicMdpReward
             }
@@ -843,7 +848,7 @@ fn read_document_profile(
     let root = parsed.root();
     let objective = root.get("objective");
     let outside_profile = matches!(root.get("kind").map(|node| node.node()), Some(quire_canonical::Node::String(kind)) if kind != "exact" && kind != "upper")
-        || matches!(objective.and_then(|node| node.get("profile")).map(|node| node.node()), Some(quire_canonical::Node::String(profile)) if if cyclic_mdp { !matches!(profile, CYCLIC_MDP_PROFILE | CYCLIC_MDP_REWARD_PROFILE) } else { !(allow_fair && profile == BOUNDED_FAIR_PROFILE) && profile != PROFILE && profile != STATE_PROFILE && profile != REWARD_PROFILE && profile != CYCLIC_PROFILE && profile != CYCLIC_REWARD_PROFILE && profile != TIMED_PROFILE })
+        || matches!(objective.and_then(|node| node.get("profile")).map(|node| node.node()), Some(quire_canonical::Node::String(profile)) if if cyclic_mdp { !matches!(profile, CYCLIC_MDP_PROFILE | CYCLIC_MDP_REWARD_PROFILE | CYCLIC_MDP_STATE_PROFILE) } else { !(allow_fair && profile == BOUNDED_FAIR_PROFILE) && profile != PROFILE && profile != STATE_PROFILE && profile != REWARD_PROFILE && profile != CYCLIC_PROFILE && profile != CYCLIC_REWARD_PROFILE && profile != CYCLIC_STATE_PROFILE && profile != TIMED_PROFILE })
         || matches!(objective.and_then(|node| node.get("event")).map(|node| node.node()), Some(quire_canonical::Node::String(event)) if !matches!(event, "until" | "always"))
         || matches!(objective.and_then(|node| node.get("optimization")).map(|node| node.node()), Some(quire_canonical::Node::String(operator)) if !matches!(operator, "minimum" | "maximum" | "workload" | "workload-minimum" | "workload-maximum"))
         || match objective
@@ -954,7 +959,7 @@ fn read_document_profile(
         || if cyclic_mdp {
             !matches!(
                 wire.objective.profile.as_str(),
-                CYCLIC_MDP_PROFILE | CYCLIC_MDP_REWARD_PROFILE
+                CYCLIC_MDP_PROFILE | CYCLIC_MDP_REWARD_PROFILE | CYCLIC_MDP_STATE_PROFILE
             )
         } else {
             !matches!(
@@ -964,6 +969,7 @@ fn read_document_profile(
                     | REWARD_PROFILE
                     | CYCLIC_PROFILE
                     | CYCLIC_REWARD_PROFILE
+                    | CYCLIC_STATE_PROFILE
                     | TIMED_PROFILE
             ) && !(allow_fair && wire.objective.profile == BOUNDED_FAIR_PROFILE)
         }
@@ -979,12 +985,16 @@ fn read_document_profile(
         }
     }
     let state_profile = wire.objective.profile == STATE_PROFILE;
+    let cyclic_state_profile = matches!(
+        wire.objective.profile.as_str(),
+        CYCLIC_STATE_PROFILE | CYCLIC_MDP_STATE_PROFILE
+    );
     let timed_profile = wire.objective.profile == TIMED_PROFILE;
     let reward_profile = matches!(
         wire.objective.profile.as_str(),
         REWARD_PROFILE | CYCLIC_REWARD_PROFILE | CYCLIC_MDP_REWARD_PROFILE
     );
-    if state_profile != wire.objective.event.is_some()
+    if (state_profile || cyclic_state_profile) != wire.objective.event.is_some()
         || state_profile != wire.objective.failures.is_some()
         || reward_profile != wire.objective.reward.is_some()
         || reward_profile != wire.objective.unit.is_some()
@@ -1019,7 +1029,7 @@ fn read_document_profile(
             .map(|key| decode_key(key, limits))
             .collect::<Result<Vec<_>, _>>()?,
     )?;
-    if cyclic_mdp && wire.objective.optimization == "workload" {
+    if cyclic_mdp && !cyclic_state_profile && wire.objective.optimization == "workload" {
         return Err(ProbabilityDocumentError::Unsupported);
     }
     let optimization = match wire.objective.optimization.as_str() {
@@ -1094,7 +1104,7 @@ fn read_document_profile(
     Ok(ProbabilityCertificateDocument {
         cyclic_dtmc: matches!(
             wire.objective.profile.as_str(),
-            CYCLIC_PROFILE | CYCLIC_REWARD_PROFILE
+            CYCLIC_PROFILE | CYCLIC_REWARD_PROFILE | CYCLIC_STATE_PROFILE
         ),
         identity,
         targets,
@@ -1150,7 +1160,9 @@ fn subject_graph_with_identity(
         && (!matches!(
             claim.form,
             ProbForm::Reach {
-                target: ReachTarget::Eventually(_),
+                target: ReachTarget::Eventually(_)
+                    | ReachTarget::Until(..)
+                    | ReachTarget::Always(_),
                 ..
             } | ProbForm::ExpectedReward { .. }
         ) || fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
@@ -1184,6 +1196,7 @@ fn subject_graph_with_identity(
     let mut state_event = None;
     let mut failures = Vec::new();
     let mut reward = None;
+    let mut violated = None;
     let (bound, enumerated) = match &claim.form {
         ProbForm::ExpectedReward {
             bound,
@@ -1217,6 +1230,31 @@ fn subject_graph_with_identity(
             .map(|(graph, ranks, costs)| {
                 reward = Some(costs);
                 (graph, Some(ranks))
+            });
+            (bound, result)
+        }
+        ProbForm::Reach {
+            bound,
+            target: ReachTarget::Until(..) | ReachTarget::Always(_),
+        } if cyclic_dtmc => {
+            let result = super::cyclic_state::certificate_graph(
+                system,
+                claim,
+                super::cyclic_state::Profile::Dtmc,
+                reference,
+                workload,
+                limits,
+                cancel,
+                identity,
+                meter,
+                storage,
+                &mut |_| Ok(()),
+            )
+            .and_then(|subject| {
+                let bound = super::cyclic_state::violated_bound(bound, limits, cancel, meter)?;
+                state_event = Some(subject.event);
+                violated = Some((subject.objective, bound));
+                Ok((subject.graph, subject.ranks))
             });
             (bound, result)
         }
@@ -1348,10 +1386,12 @@ fn subject_graph_with_identity(
     if reward.is_none() && !cyclic_dtmc {
         topological_order(&graph, cancel)?;
     }
+    let (objective, bound) =
+        violated.unwrap_or_else(|| (claim_objective(&claim.scheduler, bound), bound.clone()));
     Ok((
         graph,
-        claim_objective(&claim.scheduler, bound),
-        bound.clone(),
+        objective,
+        bound,
         bounded_ranks,
         state_event,
         failures,
@@ -1647,6 +1687,28 @@ fn construct_document(
             ranks.insert(key, rank);
         }
     }
+    let values = if cyclic_dtmc && event.is_some() {
+        let claim_bound = match &bind_claim(claims, item, cancel)?.form {
+            ProbForm::Reach { bound, .. } => bound.clone(),
+            _ => return Err(ProbabilityDocumentError::Unsupported),
+        };
+        super::cyclic_state::violated_values(
+            &graph,
+            certificate,
+            &claim_bound,
+            limits,
+            cancel,
+            meter,
+        )?
+        .values
+    } else {
+        certificate
+            .values
+            .iter()
+            .filter(|row| !stopped || graph.states.contains_key(&row.state))
+            .cloned()
+            .collect()
+    };
     Ok(ProbabilityCertificateDocument {
         cyclic_dtmc,
         identity: item.clone(),
@@ -1656,12 +1718,7 @@ fn construct_document(
         reward: reward.map(|reward| reward.objective),
         optimization,
         timed: None,
-        values: certificate
-            .values
-            .iter()
-            .filter(|row| !stopped || graph.states.contains_key(&row.state))
-            .cloned()
-            .collect(),
+        values,
         ranking: ranks.into_iter().collect(),
     })
 }
@@ -1935,6 +1992,14 @@ fn check_document_with_control(
         &mut meter,
         control,
     )?;
+    if document.cyclic_dtmc && event.is_some() {
+        let claim_bound = match &claim.form {
+            ProbForm::Reach { bound, .. } => bound,
+            _ => return Err(ProbabilityDocumentError::Unsupported),
+        };
+        check =
+            super::cyclic_state::claim_acceptance(check, claim_bound, limits, cancel, &mut meter)?;
+    }
     if let ExactProbabilityCertificateCheck::Accepted(accepted) = &mut check {
         accepted.document = Some(bytes.into());
     }

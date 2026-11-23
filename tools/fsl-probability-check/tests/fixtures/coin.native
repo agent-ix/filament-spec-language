@@ -1,0 +1,8 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile inf = "filament.temporal.infinite-trace/v1";
+model M = "test/coin-atom";
+pre Ready_toss using v on M::Coin::toss { not self.heads }
+post Tossed using v on M::Coin::toss { self.heads = lands }
+random Coin::toss(lands) ~ { true: 1, false: 1 };
+workload Even on M { weight Coin::toss = 1; }

@@ -985,8 +985,12 @@ pub(super) fn carry_rows(
                 presence: _,
                 type_node,
                 value_type: _,
+                member_type: _,
+                collections: _,
             } = member;
-            rekey.id(type_node);
+            if let Some(type_node) = type_node {
+                rekey.id(type_node);
+            }
         }
     }
     let mut source_objects = retained.selected_source_object_rows.clone();
