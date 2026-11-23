@@ -7963,6 +7963,20 @@ fn emit_package_nodes(
                 candidate.expression_region(claim.origin().ordinal(), &regions)
             })
             .or_else(|| graph.occurrence_region(claim.node().clone(), claim.origin()))
+            // A refinement's operation-contract claim is generated on the
+            // refinement's own node, which records no such occurrence; its
+            // span is the refinement's declaration.
+            .or_else(|| {
+                graph
+                    .refinements()
+                    .iter()
+                    .find(|refinement| {
+                        refinement
+                            .requirement_occurrence()
+                            .is_some_and(|key| key.node() == claim.node())
+                    })
+                    .and_then(|refinement| graph.refinement_declaration_region(refinement))
+            })
     };
     let value_validity = value_validity_requirements::append(
         ids,
