@@ -200,10 +200,20 @@ const ABSTRACTION_CONSUMERS: &[ItFilter] = &[
         rule: ItRule::Fixed("abstraction_relation_inert"),
     },
 ];
-const TIMED_CONSUMER: &[ItFilter] = &[ItFilter {
-    package: "fsl-analyze",
-    rule: ItRule::Fixed("timed_"),
-}];
+const TIMED_CONSUMER: &[ItFilter] = &[
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::Fixed("timed_"),
+    },
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::Fixed("timed_within_200"),
+    },
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::Fixed("timed_within_201"),
+    },
+];
 const ROOT_IT_MODULES: &[ItFilter] = &[ItFilter {
     package: "filament-spec-language",
     rule: ItRule::AllModules("filament-spec-language"),
@@ -357,10 +367,7 @@ const RULES: &[Rule] = &[
         prefix: "fsl-analyze/src/zone_check/",
         package: Some("fsl-analyze"),
         lib: Some(LibRule::SourceModule),
-        it_filters: &[ItFilter {
-            package: "fsl-analyze",
-            rule: ItRule::Fixed("timed_"),
-        }],
+        it_filters: TIMED_CONSUMER,
         large_input: &[],
         note: None,
         skips: &[],
@@ -1896,6 +1903,10 @@ mod tests {
         let recipe = plan(workspace_root(), &["fsl-analyze/src/provider.rs"]);
         for filter in ["monitor_", "timed_", "hyper", "probabilistic"] {
             assert!(recipe.selectors.contains(&selector("fsl-analyze", filter)));
+        }
+        let zone = plan(workspace_root(), &["fsl-analyze/src/zone_check/divergence.rs"]);
+        for filter in ["timed_", "timed_within_200", "timed_within_201"] {
+            assert!(zone.selectors.contains(&selector("fsl-analyze", filter)));
         }
     }
 

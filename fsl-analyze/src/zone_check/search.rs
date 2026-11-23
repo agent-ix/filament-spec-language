@@ -249,6 +249,8 @@ pub enum ZoneUndecided {
 pub struct ZoneStats {
     /// Stored symbolic states.
     pub symbolic_states: u64,
+    /// Stored states in FR-240 divergence searches.
+    pub divergence_states: u64,
     /// Retained edges, real and covering.
     pub retained_edges: u64,
     /// Claim-automaton states.
@@ -262,6 +264,9 @@ impl ZoneStats {
     fn plus(self, other: Self) -> Self {
         Self {
             symbolic_states: self.symbolic_states.saturating_add(other.symbolic_states),
+            divergence_states: self
+                .divergence_states
+                .saturating_add(other.divergence_states),
             retained_edges: self.retained_edges.saturating_add(other.retained_edges),
             automaton_states: self.automaton_states.saturating_add(other.automaton_states),
             zone_bytes: self.zone_bytes.saturating_add(other.zone_bytes),
@@ -1205,6 +1210,7 @@ impl<'r, 's, 'a> Run<'r, 's, 'a> {
     pub(super) fn stats(&self) -> ZoneStats {
         ZoneStats {
             symbolic_states: widen(self.nodes.len()),
+            divergence_states: self.escape_states,
             retained_edges: widen(self.edges.len()),
             automaton_states: self
                 .window

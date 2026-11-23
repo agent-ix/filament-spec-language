@@ -98,14 +98,28 @@ impl Run<'_, '_, '_> {
         upper: &[Option<BigInt>],
     ) -> Result<Escape, Halt> {
         let dense = self.timed.tick_period().is_none();
-        let (start, lower, upper) = if dense {
+        // The TT-2 horizon clock constrains which positions the claim reads,
+        // but it does not constrain whether the underlying model can diverge.
+        // Project it away before exploring that independent question. Keeping
+        // it in the divergence DBM makes every FR-240 zone carry an additional
+        // clock whose finite horizon is irrelevant to the escape graph.
+        let (zone, lower, upper) = if self.window.is_some() && self.auxiliary_timed.is_none() {
             let mut lower = lower.to_vec();
             let mut upper = upper.to_vec();
+            lower.pop();
+            upper.pop();
+            (zone.without_last_clock(), lower, upper)
+        } else {
+            (zone.clone(), lower.to_vec(), upper.to_vec())
+        };
+        let (start, lower, upper) = if dense {
+            let mut lower = lower;
+            let mut upper = upper;
             lower.push(Some(factor.clone()));
             upper.push(Some(factor.clone()));
             (zone.with_clock_at_zero(), lower, upper)
         } else {
-            (zone.clone(), lower.to_vec(), upper.to_vec())
+            (zone, lower, upper)
         };
         let mut start = start;
         // `z` counts from the symbolic state's entry; its own delays are
