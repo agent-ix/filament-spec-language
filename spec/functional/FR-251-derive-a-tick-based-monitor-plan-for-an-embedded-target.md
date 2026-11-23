@@ -51,12 +51,17 @@ engineer states.
 
 - A checked timed clause (FR-234).
 - `MonitorTarget { counter: Name, unit: TimeUnit, width_bits: u32,
-  uncertainty: ExactRational, max_event_rate: ExactRational,
-  max_reading_gap: u64 }`: the counter's width in bits; the rate in events
-  per counter unit, which defaults to one event per microsecond, converted
-  to the counter unit, and the caller may replace; and the required maximum
-  gap in ticks between consecutive readings, a premise of the target that
-  the caller states.
+  uncertainty: ExactRational, max_event_rate: Option<ExactRational>,
+  max_reading_gap: u64, max_activations: u64 }`: the counter's width in
+  bits; the maximum rate in events per counter unit, where `None` selects
+  one event per microsecond converted to the counter unit and `Some(rate)`
+  replaces that default; the required maximum gap in ticks between
+  consecutive readings; and the activation bound. The native-monitor/1
+  request form is defined by FR-644: it omits `max_activations`, which is
+  supplied by the `monitor.max_activations` caller setting, and admits a
+  `null` `max_event_rate` as `None`. `monitor.max_activations` is required
+  whenever a monitor target is supplied. The target's unit, rate, gap,
+  uncertainty and activation bound are premises of the plan.
 
 ## Outputs
 
