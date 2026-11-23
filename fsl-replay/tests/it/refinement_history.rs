@@ -781,73 +781,79 @@ fn a_history_field_named_like_a_subtype_field_is_refused() {
 }
 
 /// FR-138-AC-9 (TC-543): a history row typed `Decimal[0, 100; 0, 2;
-/// nearest-even]` refuses `unsupported_construct`/`not-yet-implemented` at
-/// the type, once, with `feature` `history-row`, `subject` `decimal` and no
-/// other diagnostic about the row; the same row typed as an enum, and typed
-/// `Option` of that enum, refuses with `subject` `enum`. `Int[0, 1]`, a
-/// Boolean and `Option<Int[0, 1]>` rows check.
+/// nearest-even]` with initial `decimal(0, 0)` checks, as does the same row
+/// typed as an enum and typed `Option` of that enum; each initial value keys
+/// in a product state by its canonical literal, and `Int[0, 1]`, a Boolean
+/// and `Option<Int[0, 1]>` rows check.
 #[trace("TC-543", "FR-138-AC-9")]
 #[test]
-fn a_history_type_with_no_key_form_is_unsupported() {
+fn decimal_and_enum_history_rows_check_and_key() {
     let unit = Unit::register();
-    let refusal = |declared: &str, initial: &str| {
+    for (declared, initial) in [
+        ("Int[0, 1]", "0"),
+        ("Boolean", "false"),
+        ("Option<Int[0, 1]>", "none"),
+        ("Decimal[0, 100; 0, 2; nearest-even]", "decimal(0, 0)"),
+        ("Decimal[0, 100; 0, 2; nearest-even]", "decimal(150, 1)"),
+        ("Phase", "Phase::SHUT"),
+        ("Option<Phase>", "none"),
+        ("Option<Phase>", "Phase::OPEN"),
+    ] {
+        let row = format!("history Impl::Register.d : {declared} = {initial} {{ }}");
+        let world = unit.world(&format!(
+            "enum Phase {{ OPEN, SHUT }}\n{}",
+            register_history(&format!("{LAST}\n{row}"))
+        ));
+        let checked: Vec<&str> = world
+            .refinement()
+            .history()
+            .iter()
+            .map(|row| row.field.as_str())
+            .collect();
+        assert_eq!(checked, ["last", "d"], "{declared} = {initial}");
+        let system = world.concrete_system(UNLIMITED);
+        let values = initial_history(
+            world.refinement(),
+            &system,
+            &world.concrete_state(&[("value", int(0))]),
+        );
+        let held = values.get(&register(&unit), "d").expect("the row keys");
+        assert!(
+            system.value_key(held).is_ok(),
+            "{declared} = {initial} keys"
+        );
+        assert!(values.key(&system).is_ok(), "{declared} = {initial}");
+    }
+}
+
+/// FR-138-AC-9, FR-138 "S3" (TC-543): a decimal or enum row whose initial
+/// literal is not a member of the declared type refuses
+/// `ill_typed`/`type-mismatch` at the literal, decided statically.
+#[trace("TC-543", "FR-138-AC-9")]
+#[test]
+fn a_decimal_or_enum_initial_outside_the_value_set_is_refused_at_the_literal() {
+    let unit = Unit::register();
+    for (declared, initial) in [
+        ("Decimal[0, 100; 0, 2; nearest-even]", "decimal(101, 0)"),
+        ("Decimal[0, 100; 0, 2; nearest-even]", "decimal(1, 3)"),
+        ("Decimal[0, 100; 0, 2; nearest-even]", "rational(1, 2)"),
+        ("Decimal[0, 100; 0, 2; nearest-even]", "0"),
+        ("Phase", "Phase::MISSING"),
+        ("Phase", "Other::OPEN"),
+        ("Phase", "0"),
+        ("Option<Phase>", "Other::OPEN"),
+    ] {
         let row = format!("history Impl::Register.d : {declared} = {initial} {{ }}");
         let found = unit.refused(&format!(
-            "enum Phase {{ OPEN, SHUT }}\n{}",
+            "enum Phase {{ OPEN, SHUT }}\nenum Other {{ OPEN }}\n{}",
             register_history(&format!("{LAST}\n{row}"))
         ));
         assert_eq!(
             codes(&found),
-            [(Code::UnsupportedConstruct, Some("not-yet-implemented"))],
-            "{declared}"
+            [(Code::IllTyped, Some("type-mismatch"))],
+            "{declared} = {initial}"
         );
-        assert_eq!(found[0].at, declared);
-        let fsl_semantics::check::CheckCause::Refinement(refusal) = &found[0].refusal.cause else {
-            panic!("a refinement refusal");
-        };
-        let fsl_semantics::check::RefinementCause::Unsupported {
-            feature, subject, ..
-        } = &refusal.cause
-        else {
-            panic!("an unsupported feature: {:?}", refusal.cause);
-        };
-        (feature.name(), *subject)
-    };
-    assert_eq!(
-        refusal("Decimal[0, 100; 0, 2; nearest-even]", "decimal(0, 0)"),
-        ("history-row", Some("decimal"))
-    );
-    assert_eq!(
-        refusal("Phase", "Phase::OPEN"),
-        ("history-row", Some("enum"))
-    );
-    assert_eq!(
-        refusal("Option<Phase>", "none"),
-        ("history-row", Some("enum"))
-    );
-
-    let bit = filament_exact::ValueType::Int(
-        filament_exact::IntegerInterval::new(0_i64.into(), 1_i64.into()).expect("a range"),
-    );
-    for (declared, initial, expected) in [
-        ("Int[0, 1]", "0", bit.clone()),
-        ("Boolean", "false", filament_exact::ValueType::Boolean),
-        (
-            "Option<Int[0, 1]>",
-            "none",
-            filament_exact::ValueType::option(bit),
-        ),
-    ] {
-        let row = format!("history Impl::Register.d : {declared} = {initial} {{ }}");
-        let world = unit.world(&register_history(&format!("{LAST}\n{row}")));
-        let checked: Vec<(&str, &filament_exact::ValueType)> = world
-            .refinement()
-            .history()
-            .iter()
-            .map(|row| (row.field.as_str(), &row.declared))
-            .collect();
-        assert_eq!(checked.len(), 2, "{declared}");
-        assert_eq!(checked[1], ("d", &expected), "{declared}");
+        assert_eq!(found[0].at, initial);
     }
 }
 

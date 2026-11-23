@@ -315,7 +315,6 @@ fn refinement_internals_are_a_request_member() {
 #[trace("TC-1590", "FR-630-AC-3")]
 #[trace("TC-1590", "FR-138-AC-9")]
 #[test]
-#[ignore = "QSL-2888: decimal and enum history rows are refused not-yet-implemented (S3 history.rs); PR 2"]
 fn decimal_and_enum_history_rows_check_and_prove() {
     for (name, rows) in [
         (
@@ -336,9 +335,10 @@ fn decimal_and_enum_history_rows_check_and_prove() {
             &body,
             json!([{"claim": name, "kind": "refinement", "temporal": {"item_kind": "refinement"}}]),
         ));
+        // The run reaches its last analysis stage: no compile refusal ended it.
         assert_eq!(
             run.document()["last_stage"],
-            Value::Null,
+            "S6c",
             "{name}: no compile refusal: {}",
             run.document()["diagnostics"]
         );

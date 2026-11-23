@@ -167,11 +167,7 @@ and not its range, so the range is left only at run time.
   FSpec FR-378 words the product key's order as "history-row order"; the key
   here orders by object, then field name. FSpec's wording should be aligned
   to it.
-- The enum and decimal refusal departs from FSpec in the three ways FR-135's
-  References state.
 - The history-row production, the `history-literal` spellings and the
   history-literal conformance rule: FSpec FR-375. The covering test for the
   `none`, `true`/`false` and enum-member cases, which FR-138 does not
-  restate, is FSpec TC-310 mutation 10 (FR-375-AC-9). This build refuses an
-  enum-typed history row before its literal is checked (FR-138-AC-9), so it
-  admits no enum-member history literal for now.
+  restate, is FSpec TC-310 mutation 10 (FR-375-AC-9).

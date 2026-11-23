@@ -236,18 +236,12 @@ subject once the feature is built.
   FR-341-AC-5 classifies `unsupported` (an FSL implementation gap).
 - The refusal's span is the span of the `<protocol>` name for a protocol
   abstract side. It names the feature, the refinement's name and the exact
-  selected profile identity (FSpec FR-272's payload for the code), and a
-  `subject` member when the feature is refused for one kind of type
-  (`history-row`, below). The payload of `protocol-abstract-side`,
-  `refinement-internal-list` and `nested-reference-row` has no `subject`
-  member.
+  selected profile identity (FSpec FR-272's payload for the code). The payload has no
+  `subject` member.
 - The refusal is decided before the feature's own checks, so no other
-  diagnostic about that row is reported, except that the `history-row` refusal
-  follows the checks FR-138 orders before it (the object type, the name
-  conflicts and the type form); the rest of the declaration is
+  diagnostic about that row is reported; the rest of the declaration is
   checked as usual and its own refusals are reported beside it.
-- This build's support set SHALL hold `history-row` for the history types its
-  history key can encode, which FR-138 checks, and `protocol-abstract-side`
+- This build's support set SHALL hold `protocol-abstract-side`
   and `refinement-internal-list`, which FR-147 checks, and `nested-reference-row`,
   whose rows FR-630 lifts element by element: a `Reference<T_C>` nested inside an
   option, record, union or collection value maps to the `Reference<T_A>` of the
@@ -307,10 +301,5 @@ standing.
 ## References
 
 - The FSpec half (grammar, semantics, wire node): FSpec FR-375 (Linear STD-133).
-  The `history-row` refusal departs from FSpec in three ways, which FSpec's
-  wording should be aligned to: FR-375 places it at the `history` keyword and
-  here it is at the declared type; FR-375 holds `history-row` for every history
-  row and FR-375-AC-9 admits enum-member literals, while this build holds it
-  for the types its history key encodes; and FSpec FR-272's `not-yet-implemented`
-  payload names the feature, the declaration and the profile only, where this
-  build adds the `subject` member.
+  This build checks every `history` row, so it holds no `history-row` refusal
+  (FR-138-AC-9).

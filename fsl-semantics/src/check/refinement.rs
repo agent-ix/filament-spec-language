@@ -135,10 +135,6 @@ pub enum UnsupportedFeature {
     /// A non-empty resolved internal list (FR-147, FSpec FR-375's
     /// `refinement-internal-list`).
     RefinementInternalList,
-    /// A history row whose declared type has values with no FR-181 typed
-    /// canonical form (an enum or a decimal), which a product state could not
-    /// key (FR-138).
-    HistoryRow,
     /// A field row whose type nests a `Reference` in an option, record,
     /// tuple (a record by position), union or collection, other than a whole-population `Set<Reference<T>>`
     /// (FR-135): the lifting of ADR-020 RM-3 reaches no further than the
@@ -156,7 +152,6 @@ impl UnsupportedFeature {
         match self {
             Self::ProtocolAbstractSide => "protocol-abstract-side",
             Self::RefinementInternalList => "refinement-internal-list",
-            Self::HistoryRow => "history-row",
             Self::NestedReferenceRow => "nested-reference-row",
             Self::ProtocolStepApplication => "protocol-step-application",
         }
@@ -2454,7 +2449,7 @@ pub(crate) fn check_refinement<'f: 'c, 'a, 'c>(
         internal,
     };
     checker.baseline = checker.findings.refusals.len();
-    let headers = checker.history_headers(form, &declaration.selection.identity);
+    let headers = checker.history_headers(form);
     let populations = checker.populations(form);
     let objects = checker.objects(form, cx);
     let StepRows {
