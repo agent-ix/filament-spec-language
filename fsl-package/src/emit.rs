@@ -497,10 +497,6 @@ impl quire_canonical::Sink for Discard {
     }
 }
 
-/// The canonical bytes one source-map entry or semantic node is assumed to
-/// stay under when deciding whether a ceiling can be reached early.
-const ASSUMED_BYTES_PER_ENTRY: u64 = 4096;
-
 /// A running floor on the emission's canonical bytes (FR-264 Behavior 5).
 ///
 /// Each section that reaches the package verbatim is charged as soon as it is
@@ -509,40 +505,31 @@ const ASSUMED_BYTES_PER_ENTRY: u64 = 4096;
 /// here is one the final encode would also return, with the same first unpaid
 /// byte.
 ///
-/// Charging encodes a section a second time, so the meter runs only when the
-/// ceiling is within [`ASSUMED_BYTES_PER_ENTRY`] bytes per entry of the
-/// package's size. A package far under its ceiling pays nothing, and the final
-/// encode remains the check for any package the meter skips.
+/// Charging encodes a section a second time, which costs about 3 percent of an
+/// emission.
 struct OutputMeter {
     bound: u64,
     charged: u64,
-    active: bool,
 }
 
-/// One section being charged: rows pushed into it are counted when the meter
-/// is active and ignored when it is not.
+/// One section being charged: the writer that counts the rows pushed into it.
 struct Section<'w> {
-    writer: Option<quire_canonical::Writer<'w, Discard>>,
+    writer: quire_canonical::Writer<'w, Discard>,
 }
 
 impl Section<'_> {
     /// Count the canonical bytes of one row.
     fn push<T: quire_canonical::Encode>(&mut self, row: &T) -> Result<(), EmitRefusal> {
-        if let Some(writer) = self.writer.as_mut() {
-            row.encode_into(writer)?;
-        }
+        row.encode_into(&mut self.writer)?;
         Ok(())
     }
 }
 
 impl OutputMeter {
-    /// A meter for a package of about `entries` source-map entries and nodes.
-    fn new(limits: EmitLimits, entries: usize) -> Self {
-        let entries = u64::try_from(entries).unwrap_or(u64::MAX);
+    fn new(limits: EmitLimits) -> Self {
         Self {
             bound: limits.output_bytes,
             charged: 0,
-            active: entries.saturating_mul(ASSUMED_BYTES_PER_ENTRY) > limits.output_bytes,
         }
     }
 
@@ -552,9 +539,6 @@ impl OutputMeter {
 
     /// Charge `bytes` that the package carries beyond the rows charged.
     fn charge_bytes(&mut self, bytes: u64) -> Result<(), EmitRefusal> {
-        if !self.active {
-            return Ok(());
-        }
         match self.charged.checked_add(bytes) {
             Some(total) if total <= self.bound => {
                 self.charged = total;
@@ -572,26 +556,16 @@ impl OutputMeter {
         fill: impl FnOnce(&mut Section<'_>) -> Result<R, EmitRefusal>,
     ) -> Result<R, EmitRefusal> {
         let mut sink = Discard;
-        let writer = self.active.then(|| {
-            quire_canonical::Writer::new(
-                &mut sink,
-                quire_canonical::Limits::new(self.bound - self.charged),
-            )
-        });
+        let writer = quire_canonical::Writer::new(
+            &mut sink,
+            quire_canonical::Limits::new(self.bound - self.charged),
+        );
         let mut section = Section { writer };
         let written = (|| {
-            if let Some(writer) = section.writer.as_mut() {
-                writer.begin_array()?;
-            }
+            section.writer.begin_array()?;
             let filled = fill(&mut section)?;
-            let bytes = match section.writer.take() {
-                Some(mut writer) => {
-                    writer.end_array()?;
-                    writer.finish()?
-                }
-                None => 2,
-            };
-            Ok((filled, bytes))
+            section.writer.end_array()?;
+            Ok((filled, section.writer.finish()?))
         })();
         match written {
             Ok((filled, bytes)) => {
@@ -605,7 +579,7 @@ impl OutputMeter {
 
     /// Charge the canonical bytes of `rows`.
     fn charge<T: quire_canonical::Encode>(&mut self, rows: &[T]) -> Result<(), EmitRefusal> {
-        if rows.is_empty() || !self.active {
+        if rows.is_empty() {
             return Ok(());
         }
         self.section(|section| {
@@ -7948,7 +7922,7 @@ fn emit_package_inner(
     // its canonical bytes are a floor on the package's. Charge them, and each
     // typed row section below as it is built, rather than after the final
     // encode.
-    let mut meter = OutputMeter::new(limits, source_map.len() + nodes.len());
+    let mut meter = OutputMeter::new(limits);
     meter.charge(&source_map)?;
     let producer_node_ids =
         producer_node_ids_after_timed_rekey(&emitted_node_ids, &timed_substitutions)?;
