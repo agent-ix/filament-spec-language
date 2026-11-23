@@ -1047,6 +1047,21 @@ impl StepMatch for Seams<'_> {
     }
 }
 
+/// The vault unit with `declaration` linked into its checked package, so the
+/// package carries the clause's `hyperproperty` node.
+pub(crate) fn package_with_clause(vault: Vault, declaration: &str) -> CheckedPackage {
+    let document = document(vault.busy(), false);
+    let text = unit_text(None, vault, false, &format!("{declaration}\n"));
+    let graph = declarations(&[document.as_slice()], &text)
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_eval::value::S6aRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("{text}: the unit checks: {refusals:?}"));
+    CheckedPackage::link(graph)
+}
+
 /// ADR-023 section 1's `NonInterference`, with `match` when asked.
 pub(crate) fn non_interference(matched: &str) -> String {
     format!(

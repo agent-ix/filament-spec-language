@@ -9,11 +9,11 @@ use filament_contract_model::{
 use ix_trace_rs::trace;
 use serde_json::Value;
 
-use crate::hyper_world::{non_interference, Vault, World, STARTS};
+use crate::hyper_world::{non_interference, package_with_clause, Vault};
 
 /// The emitted wire of `world`'s package.
-fn emitted(world: &World) -> (Vec<u8>, Value) {
-    let emission = fsl_package::emit_checked(&world.package, fsl_package::EmitLimits::fixture())
+fn emitted(package: &fsl_package::CheckedPackage) -> (Vec<u8>, Value) {
+    let emission = fsl_package::emit_checked(package, fsl_package::EmitLimits::fixture())
         .unwrap_or_else(|refusal| panic!("S4 emits the hyper clause: {refusal:?}"));
     let bytes = emission.package().bytes().to_vec();
     let wire = serde_json::from_slice(&bytes).expect("wire JSON");
@@ -57,14 +57,12 @@ fn admitted(bytes: &[u8], wire: &Value) -> bool {
 #[trace("FSpec-TC-2034", "FSpec-FR-402-AC-11")]
 #[test]
 fn an_object_free_hyper_wrapper_ranges_over_the_model_root() {
-    let world = World::new(
+    let package = package_with_clause(
         Vault::Secure,
-        false,
-        &STARTS,
         "hyper Whole using inf over behaviours () \
          forall trace a of V forall trace b of V { always holds(true) }",
     );
-    let (bytes, wire) = emitted(&world);
+    let (bytes, wire) = emitted(&package);
     let (over, dependencies) = wrapper_over(&wire);
     let target = node(&wire, &over);
     assert_eq!(
@@ -87,8 +85,8 @@ fn an_object_free_hyper_wrapper_ranges_over_the_model_root() {
 #[trace("FSpec-TC-2034", "FSpec-FR-402-AC-11")]
 #[test]
 fn a_model_root_over_on_a_wrapper_that_reads_a_slot_is_refused() {
-    let world = World::new(Vault::Secure, false, &STARTS, &non_interference(""));
-    let (_, mut wire) = emitted(&world);
+    let package = package_with_clause(Vault::Secure, &non_interference(""));
+    let (_, mut wire) = emitted(&package);
     let (over, _) = wrapper_over(&wire);
     assert_eq!(
         node(&wire, &over)["body"]["members"][0]["value"]["value"],
