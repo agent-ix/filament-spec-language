@@ -177,6 +177,9 @@ pub enum Error {
     /// Contract IR's reader had no operation catalog to read the package against.
     #[error("the reader had no operation catalog: {0}")]
     ReaderCatalogUnavailable(String),
+    /// The host refused an allocation Contract IR's reader had admitted; nothing was judged.
+    #[error("the host refused an allocation while reading the emitted package: {0}")]
+    ReaderHostAllocationFailed(String),
     /// The admitted package differs from the in-process checked unit.
     #[error("the admitted package differs from the checked unit: {detail}")]
     ReadBackDiffers {
@@ -255,7 +258,8 @@ impl Error {
             Self::Compile(_) => ErrorCode::Compile,
             Self::ReaderRefused(_)
             | Self::ReaderIncomplete(_)
-            | Self::ReaderCatalogUnavailable(_) => ErrorCode::Reader,
+            | Self::ReaderCatalogUnavailable(_)
+            | Self::ReaderHostAllocationFailed(_) => ErrorCode::Reader,
             Self::ReadBackDiffers { .. } | Self::SelectionMismatch(_) => ErrorCode::ReadBackDiffers,
             Self::CaseMismatch { .. } => ErrorCode::CaseMismatch,
             Self::Dependency { .. } => ErrorCode::Dependency,
@@ -493,6 +497,9 @@ fn admit(read: CheckedPackageDispatchResult) -> Result<Box<CheckedPackageV2>, Er
         }
         CheckedPackageDispatchResult::CatalogUnavailable(unavailable) => {
             Err(Error::ReaderCatalogUnavailable(format!("{unavailable:?}")))
+        }
+        CheckedPackageDispatchResult::HostAllocationFailed(failure) => {
+            Err(Error::ReaderHostAllocationFailed(format!("{failure:?}")))
         }
     }
 }

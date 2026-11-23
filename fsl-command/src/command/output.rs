@@ -362,6 +362,7 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
                     ConstructionCause::UuidNoncanonical => serde_json::json!({"cause": "uuid-noncanonical"}),
                     ConstructionCause::TimestampNoncanonical => serde_json::json!({"cause": "timestamp-noncanonical"}),
                     ConstructionCause::TimestampOutOfDomain => serde_json::json!({"cause": "timestamp-out-of-domain"}),
+                    ConstructionCause::PlaceIdNoncanonical => serde_json::json!({"cause": "place-id-noncanonical"}),
                 }
             });
             (
