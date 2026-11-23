@@ -26,3 +26,21 @@ Ticket: QSL-2887. The grammar change (`behaviours ()` admitted by an inner `opt`
 ## Verdict
 
 Not mergeable yet. Run one fix round for FND-001 to FND-003: assert the exact refusal code and pointer, and either correct or re-cite the two ignore reasons. Note that QSL-2887's acceptance ("the listed tests pass un-ignored") is not met, because two of the six tests stay ignored. Do not close the ticket on merge unless both ignores cite their live owners. The grammar change, the harness changes and the test deletion are sound. The Rust lane found no panics in non-test code and no API change. The only non-test edit is a grammar sequence and its doc comment.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-008 | low | Under the arch ruling, the unit-bound ignore still cites QSL-2887, and no open Linear ticket tracks the FR-379 amendment or the writer change. Two fixes are possible: keep QSL-2887 open after merge (the PR says "Refs", not "Closes"), or file a ticket for the FR-379 amendment and the writer change and cite it | fsl-analyze/tests/it/analyze_family_cli.rs:1434 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | assert_root_over_refused asserts Refused, InvalidModelBinding, MalformedDeclaration and the pointer /semantic_graph/nodes/{at}/body/arguments/0. The edit is made on the resolved wire, and write_operand_rows rewrites the operand rows (ffc49aae) |
+| FND-002 | fixed | The ignore cites QSL-2945 and the FR-630-AC-4 row rewrite |
+| FND-003 | rejected | Overridden by an arch ruling: `initial` is a decimal string, so the expected "0" is correct and the writer is wrong. The test stays ignored until the FR-379 amendment lands. The residual citation is FND-008 |
+| FND-004 | fixed | wrapper_index locates the wrapper through the hyperproperty's `body` member, by name |
+| FND-005 | fixed | clause_documents(vault, second) feeds both package_with_clause and read |
+| FND-006 | fixed | Added fsl-cst hyper_clause::a_clause_over_behaviours_with_no_object_parameter_parses and formatter_style::an_empty_behaviours_parameter_list_prints_canonically |
+| FND-007 | fixed | assert_eq!(label(&run.item(0)), "proved") |

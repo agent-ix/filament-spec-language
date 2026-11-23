@@ -21,3 +21,10 @@ Ticket: QSL-2887. This is a manual check of acceptance criteria against tests, s
 ## Verdict
 
 FR-631-AC-4 and the admitted half of FR-488-AC-28 are covered and pass. FR-630-AC-5 is covered by the remaining sibling test, and deleting the contradicting test is correct. FR-630-AC-4 and FR-135-AC-6 stay uncovered behind QSL-2945. FR-630-AC-6 stays uncovered behind the ignore discussed in the code-review SR, FND-003. The refusal half of FR-488-AC-28 is only partly covered (FND-001 here, and FND-001 in the code-review SR).
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Added a_wrapper_over_the_root_of_a_package_no_subject_names_is_refused (Whole over test/vault-other's model_root) and a_single_trace_clause_that_is_no_body_wrapper_cannot_range_over_a_model_root. Both assert the exact code, cause and pointer, and both pass |
+| FND-002 | fixed | The test asserts the bytes of program.fsl at the diagnostic locus equal `self.value + 3` |
