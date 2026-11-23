@@ -253,7 +253,7 @@ impl ModelSystem<'_> {
 
     /// Whether the object type `sub` is `sup` or one of its subtypes in this
     /// subject's model.
-    pub fn type_conforms(
+    pub fn identity_conforms(
         &self,
         sub: &filament_exact::EffectiveId,
         sup: &filament_exact::EffectiveId,

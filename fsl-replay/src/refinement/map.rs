@@ -611,7 +611,7 @@ fn lift_reference(
         .map(|row| (row, abstract_system.type_identity(row.abstract_type())))
         .collect();
     let row = match choose_row(&candidates, declared, &|sub, sup| {
-        abstract_system.type_conforms(sub, sup)
+        abstract_system.identity_conforms(sub, sup)
     }) {
         Ok(row) => row,
         Err(RowChoice::NoRow) => return Err(Lifting::Unmapped(concrete_type.clone())),
