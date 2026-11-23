@@ -174,6 +174,7 @@ fn run_stand_in_gate(line: &str) -> Output {
         format!("FSL_DRIVER_DIR={}", driver.display()),
         format!("FSL_EXAMPLES_DIR={}", examples.display()),
         "EXAMPLES_CHECK_TESTS=".to_owned(),
+        "EXAMPLES_ACCEPTANCE_RUN=".to_owned(),
     ])
 }
 

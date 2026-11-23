@@ -101,6 +101,47 @@ pub fn check_built_from(stdout: &str, language: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The commit a checkout is at, for the gate to name: the `HEAD` sha, with
+/// ` (dirty)` appended when tracked files differ from it, ` (dirty state unknown)`
+/// when `git status` fails, or `unknown (not a git checkout)` when git gives no `HEAD`.
+/// Untracked files do not count as dirty.
+pub fn checkout_revision(dir: &Path) -> String {
+    let git = |args: &[&str]| {
+        Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+    };
+    let Some(sha) = git(&["rev-parse", "HEAD"]).filter(|sha| !sha.is_empty()) else {
+        return "unknown (not a git checkout)".to_owned();
+    };
+    match git(&["status", "--porcelain", "--untracked-files=no"]) {
+        Some(status) if status.is_empty() => sha,
+        Some(_) => format!("{sha} (dirty)"),
+        None => format!("{sha} (dirty state unknown)"),
+    }
+}
+
+/// The lines the gate prints first, naming the revision of each checkout it
+/// uses, so a result says which driver and examples it ran against.
+pub fn revision_lines(driver: &Path, examples: &Path, language: &Path) -> String {
+    format!(
+        "examples-check: driver {} at {}\nexamples-check: examples {} at {}\nexamples-check: language {} at {}\n",
+        driver.display(),
+        checkout_revision(driver),
+        examples.display(),
+        checkout_revision(examples),
+        language.display(),
+        checkout_revision(language),
+    )
+}
+
 /// Runs the driver's examples gate over the named checkouts with `fsl` built
 /// from `workspace`.
 pub fn run(workspace: &Path) -> Result<String> {
@@ -108,6 +149,10 @@ pub fn run(workspace: &Path) -> Result<String> {
     let language = workspace
         .canonicalize()
         .map_err(|source| Error::io(workspace, source))?;
+    io::stdout()
+        .lock()
+        .write_all(revision_lines(&driver, &examples, &language).as_bytes())
+        .map_err(|source| Error::io("<stdout>", source))?;
     // The driver's own toolchain file and target directory apply: the
     // gate is the driver's test, built in the driver workspace. Its stdout
     // is read for the built-from line, then passed on.
@@ -146,4 +191,104 @@ pub fn run(workspace: &Path) -> Result<String> {
         examples.display(),
         language.display()
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn git(dir: &Path, args: &[&str]) {
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args([
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@t",
+                "-c",
+                "commit.gpgsign=false",
+            ])
+            .args(args)
+            .status()
+            .expect("run git");
+        assert!(status.success(), "git {args:?}");
+    }
+
+    fn head(dir: &Path) -> String {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .expect("run git");
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    }
+
+    fn committed() -> tempfile::TempDir {
+        let dir = tempfile::tempdir().expect("tempdir");
+        git(dir.path(), &["init", "-q"]);
+        std::fs::write(dir.path().join("f"), "a").expect("write");
+        git(dir.path(), &["add", "f"]);
+        git(dir.path(), &["commit", "-q", "-m", "m"]);
+        dir
+    }
+
+    #[test]
+    fn a_clean_checkout_is_named_by_its_head_commit() {
+        let dir = committed();
+        let revision = checkout_revision(dir.path());
+        assert_eq!(revision, head(dir.path()));
+        assert_eq!(revision.len(), 40);
+    }
+
+    #[test]
+    fn a_modified_checkout_is_marked_dirty() {
+        let dir = committed();
+        std::fs::write(dir.path().join("f"), "b").expect("write");
+        assert_eq!(
+            checkout_revision(dir.path()),
+            format!("{} (dirty)", head(dir.path()))
+        );
+    }
+
+    #[test]
+    fn untracked_files_do_not_make_a_checkout_dirty() {
+        let dir = committed();
+        std::fs::write(dir.path().join("untracked"), "x").expect("write");
+        assert_eq!(checkout_revision(dir.path()), head(dir.path()));
+    }
+
+    #[test]
+    fn a_checkout_whose_status_fails_is_marked_dirty_state_unknown() {
+        let dir = committed();
+        // A corrupt index makes `git status` fail while `rev-parse HEAD` works.
+        std::fs::write(dir.path().join(".git/index"), "garbage").expect("corrupt index");
+        assert_eq!(
+            checkout_revision(dir.path()),
+            format!("{} (dirty state unknown)", head(dir.path()))
+        );
+    }
+
+    #[test]
+    fn a_folder_that_is_not_a_checkout_is_named_unknown() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        assert_eq!(
+            checkout_revision(dir.path()),
+            "unknown (not a git checkout)"
+        );
+    }
+
+    #[test]
+    fn the_revision_lines_name_the_driver_examples_and_language_checkouts() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shown = dir.path().display();
+        let unknown = "unknown (not a git checkout)";
+        assert_eq!(
+            revision_lines(dir.path(), dir.path(), dir.path()),
+            format!(
+                "examples-check: driver {shown} at {unknown}\nexamples-check: examples {shown} at {unknown}\nexamples-check: language {shown} at {unknown}\n"
+            )
+        );
+    }
 }

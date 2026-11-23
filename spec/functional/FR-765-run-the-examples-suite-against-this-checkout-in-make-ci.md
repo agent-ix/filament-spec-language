@@ -20,6 +20,12 @@ own local gate, before the driver's lock moves to it. No hosted workflow runs
 the gate: hosted CI stays manual, and no workflow SHALL declare a `push` or
 `pull_request` trigger.
 
+Before running, `examples-check` prints the commit of the driver, examples and
+language checkouts it uses, marking a checkout with changes to tracked files
+`(dirty)`. After the gate it runs the `examples-acceptance` target: the ignored
+acceptance tests that read the examples checkout, run by exact name. The
+`EXAMPLES_ACCEPTANCE_RUN` variable names the command that runs that target;
+setting it empty skips the target, as the stand-in gate tests do.
 ## Rationale
 
 The examples suite records what `fsl` gives for every example. Hosted

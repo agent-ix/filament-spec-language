@@ -396,10 +396,17 @@ FSL_EXAMPLES_DIR ?= $(SIBLINGS)/filament-examples
 export FSL_DRIVER_DIR FSL_EXAMPLES_DIR
 EXAMPLES_XTASK ?= cargo run --locked --package xtask --
 EXAMPLES_CHECK_TESTS ?= cargo test --locked --package xtask --test examples_check
+# The ignored acceptance tests run as their own target; a test of the gate alone
+# empties this variable.
+EXAMPLES_ACCEPTANCE_RUN ?= $(MAKE) --no-print-directory examples-acceptance
 .PHONY: examples-check
 examples-check:
 	@$(EXAMPLES_XTASK) examples-check
 	$(EXAMPLES_CHECK_TESTS)
+	$(EXAMPLES_ACCEPTANCE_RUN)
+
+.PHONY: examples-acceptance
+examples-acceptance:
 	FSL_RUN_INPUTS_FIXTURES="$(FSL_EXAMPLES_DIR)/examples/run-inputs" cargo test --locked --package fsl-command --test it -- --ignored --exact cli_contract::run::canonical_run_acceptance_values_from_authoritative_examples cli_contract::run::canonical_run_acceptance_plans_retain_dispositions_and_severity
 	cargo test --locked --package filament-spec-language --test it -- --ignored --exact temporal_capture_run::the_canonical_false_guard_capture_example_is_inactive
 
