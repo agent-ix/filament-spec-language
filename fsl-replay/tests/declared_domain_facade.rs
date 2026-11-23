@@ -34,6 +34,7 @@ fn a_declared_domain_is_built_through_the_facade_alone() {
         UNIT.as_bytes(),
         [],
         &DependencyInput::default(),
+        &fsl_replay::RequestClocks::default(),
         &name,
     )
     .expect("the unit compiles and declares p");

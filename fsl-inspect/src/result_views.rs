@@ -407,6 +407,7 @@ mod tests {
             source,
             [],
             &fsl_replay::DependencyInput::default(),
+            &fsl_replay::RequestClocks::default(),
             &function,
         )
         .expect("the source locates seven");

@@ -36,6 +36,7 @@ fn site(source: &str, function: &str) -> crate::CallSite<crate::FunctionSite> {
         source.as_bytes(),
         [],
         &crate::DependencyInput::default(),
+        &crate::RequestClocks::default(),
         &name(&[function]),
     )
     .expect("the function is located")

@@ -58,6 +58,7 @@ pub fn run() {
         SOURCE.as_bytes(),
         [],
         &DependencyInput::default(),
+        &fsl_replay::RequestClocks::default(),
         &name,
     )
     .expect("function site");

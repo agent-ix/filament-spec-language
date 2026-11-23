@@ -148,6 +148,7 @@ fn request(source_order: Vec<&str>, documents: Vec<Vec<u8>>) -> ReplayRequestWir
         CALL_SITE_SEED.as_bytes(),
         std::iter::empty::<&[u8]>(),
         &DependencyInput::default(),
+        &fsl_replay::RequestClocks::default(),
         &selected(),
     )
     .expect("the function site is discoverable in the first source");
@@ -491,6 +492,7 @@ fn multi_source_dependency_request(
         LIBRARY_CALLER.as_bytes(),
         std::iter::empty::<&[u8]>(),
         &dependencies,
+        &fsl_replay::RequestClocks::default(),
         &selected(),
     )
     .expect("the call site resolves through the multi-unit dependency");

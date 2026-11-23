@@ -1656,6 +1656,7 @@ mod tests {
             source.as_bytes(),
             [],
             &DependencyInput::default(),
+            &crate::RequestClocks::default(),
             &name,
         )
         .expect("function site");
