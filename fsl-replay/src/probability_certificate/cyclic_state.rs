@@ -284,10 +284,6 @@ pub(super) fn certificate_graph(
     })
 }
 
-/// The maximal end components of the classification graph, as sorted state
-/// indexes. A decided state has no action, so it is its own absorbing
-/// component and appears in none of them. Under one distribution per state
-/// these are the bottom strongly connected components.
 /// Bytes of the retained successor lists (`edges` indices plus one list per
 /// state and action) and of the largest refinement step's vectors (membership,
 /// kept, adjacency, Tarjan numbering, stacks and parts), counted once.
@@ -300,6 +296,10 @@ fn end_component_peak(count: usize, edges: usize) -> usize {
         .saturating_mul(2)
 }
 
+/// The maximal end components of the classification graph, as sorted state
+/// indexes. A decided state has no action, so it is its own absorbing
+/// component and appears in none of them. Under one distribution per state
+/// these are the bottom strongly connected components.
 fn end_components(
     states: &BTreeMap<ProbabilityProductKey, CheckerState>,
     limits: ProbabilityDocumentLimits,
@@ -348,48 +348,63 @@ fn end_components(
     }
     let mut result = Vec::new();
     let mut work = vec![(0..count).collect::<Vec<usize>>()];
+    // Every vector below is sized to the work item's set, so a split into many
+    // components costs time proportional to the sets, which `visit` meters.
     while let Some(mut set) = work.pop() {
-        let mut member = vec![false; count];
-        for state in &set {
-            member[*state] = true;
-        }
+        let mut member = vec![true; set.len()];
+        let local = |set: &[usize], state: usize| set.binary_search(&state).ok();
         loop {
             let mut removed = false;
             let mut kept = Vec::with_capacity(set.len());
-            for state in &set {
+            for (at, state) in set.iter().enumerate() {
                 visit(cancel, meter)?;
-                let stays = actions[*state]
-                    .iter()
-                    .any(|action| !action.is_empty() && action.iter().all(|next| member[*next]));
+                let stays = member[at]
+                    && actions[*state].iter().any(|action| {
+                        !action.is_empty()
+                            && action
+                                .iter()
+                                .all(|next| local(&set, *next).is_some_and(|l| member[l]))
+                    });
                 if stays {
                     kept.push(*state);
                 } else {
-                    member[*state] = false;
+                    member[at] = false;
                     removed = true;
                 }
             }
-            set = kept;
             if !removed {
                 break;
             }
+            set = kept;
+            member = vec![true; set.len()];
         }
         if set.is_empty() {
             continue;
         }
-        let mut adjacent = vec![Vec::new(); count];
-        for state in &set {
+        let mut adjacent = vec![Vec::new(); set.len()];
+        for (at, state) in set.iter().enumerate() {
             for action in &actions[*state] {
                 visit(cancel, meter)?;
-                if !action.is_empty() && action.iter().all(|next| member[*next]) {
-                    adjacent[*state].extend(action.iter().copied());
+                if action.is_empty() {
+                    continue;
+                }
+                let targets: Option<Vec<usize>> =
+                    action.iter().map(|next| local(&set, *next)).collect();
+                if let Some(targets) = targets {
+                    adjacent[at].extend(targets);
                 }
             }
         }
-        let parts = strongly_connected(&set, &adjacent, count, cancel, meter)?;
+        let roots: Vec<usize> = (0..set.len()).collect();
+        let parts = strongly_connected(&roots, &adjacent, set.len(), cancel, meter)?;
         if parts.len() == 1 {
             result.push(set);
         } else {
-            work.extend(parts);
+            work.extend(parts.into_iter().map(|part| {
+                let mut part: Vec<usize> = part.into_iter().map(|at| set[at]).collect();
+                part.sort_unstable();
+                part
+            }));
         }
     }
     result.sort();
@@ -601,7 +616,18 @@ mod tests {
         states: &BTreeMap<ProbabilityProductKey, CheckerState>,
         storage_bytes: u64,
     ) -> Result<Vec<Vec<usize>>, ProbabilityDocumentError> {
-        let bound = limits_with(storage_bytes);
+        run_with_work(states, storage_bytes, None)
+    }
+
+    fn run_with_work(
+        states: &BTreeMap<ProbabilityProductKey, CheckerState>,
+        storage_bytes: u64,
+        work_units: Option<u64>,
+    ) -> Result<Vec<Vec<usize>>, ProbabilityDocumentError> {
+        let mut bound = limits_with(storage_bytes);
+        if let Some(work_units) = work_units {
+            bound.accounting.work_units = work_units;
+        }
         let cancel = Cancel::new();
         let mut meter = filament_exact::Meter::new(bound.accounting).with_cancel(cancel.clone());
         let mut storage = 0;
@@ -628,6 +654,40 @@ mod tests {
                 ..
             }) if bound == exact - 1
         ));
+    }
+
+    /// FR-201-AC-63: the work budget bounds end-component decomposition. A
+    /// line of self-looping states splits into one work item per state; the
+    /// per-item cost follows the item's set, so the total stays linear in the
+    /// state count instead of quadratic.
+    #[test]
+    fn end_component_work_is_linear_in_the_states_and_bounded_by_the_work_ceiling() {
+        let count = 512;
+        let states = line(count);
+        let storage = end_component_peak(count, 2 * count - 1) as u64;
+        let (mut low, mut high) = (0_u64, 1 << 24);
+        while low < high {
+            let middle = low + (high - low) / 2;
+            if run_with_work(&states, storage, Some(middle)).is_ok() {
+                high = middle;
+            } else {
+                low = middle + 1;
+            }
+        }
+        let least = low;
+        assert_eq!(
+            run_with_work(&states, storage, Some(least)).unwrap(),
+            vec![vec![count - 1]]
+        );
+        assert!(matches!(
+            run_with_work(&states, storage, Some(least - 1)),
+            Err(ProbabilityDocumentError::Accounting(_))
+        ));
+        // Count-sized vectors per item would cost count * count / 2 visits.
+        assert!(
+            least < 16 * count as u64,
+            "least work ceiling {least} is not linear in {count} states"
+        );
     }
 
     #[test]

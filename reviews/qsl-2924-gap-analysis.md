@@ -56,3 +56,10 @@ The expected values the tests do assert are independent. I recomputed them by ha
 | FND-004 | fixed | The bisection test asserts, for every sampled ceiling below the least accepted value, the limit's own typed cause (bytes, storage, states, edges, scalar bits, work, integer bits). For MDP it asserts the stages each one stops in. The DTMC profile has no observer, but the typed cause is asserted at every sample. The undefined predicate now goes through check_probability_certificate_document and yields UndefinedPredicate for both profiles. |
 | FND-005 | still-open | The fsl-analyze AC-57 tests now use a Coin fixture and assert the initial-key locus. The separate-process fsl-probability-check test (bounded.rs:1339-1392), which carries AC-57's "fsl-probability-check accepts" clause, still uses the Msg `link` source. The engines Coin model is not in this repo, so an in-repo Coin source like the new `coin()` fixture is the reachable equivalent. Low; the lead may accept it as is. |
 | FND-006 | fixed | Coin fixture used. The FR-202-AC-13 clause is tested: the step-1 counterexample offered unchanged for AtMost is Refused. |
+
+## Dispositions (round 2)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-005 | fixed | The process-level AC-57 test now uses a Coin source (coin.native, coin.snapshot.json, coin.semantic-ir.json), with tails and heads set through the snapshot. The universe comes from the snapshot rather than the hard-coded link population. Committing the semantic-IR as a static generated document follows the existing practice: link.semantic-ir.json in the same directory is also committed with no generator or sync check (last touched in #2711). This is not a regression; a regenerate-and-compare check would be a repo-wide improvement, not this PR's. |
+| FND-007 | fixed | a_timed_subject_issues_no_proof_in_the_cyclic_state_predicate_profiles builds a dense-clock subject for until and always and asserts exactly Err(Unsupported) from probability_proof_document. |

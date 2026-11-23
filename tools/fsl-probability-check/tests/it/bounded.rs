@@ -1370,13 +1370,19 @@ fn an_unwindowed_atom_claim_is_checked_exactly_as_eventually_at_horizon_zero() {
             let request = request.unwrap_or_else(|| panic!("{event}: {settlement:?}"));
             let (code, result) = run(&request);
             assert_eq!(code, 0, "{event}: {result}");
-            assert_eq!(result["value"], json!({"numerator": value, "denominator": "1"}));
+            assert_eq!(
+                result["value"],
+                json!({"numerator": value, "denominator": "1"})
+            );
             let doc = document(&request);
             assert_eq!(
                 doc["objective"]["profile"],
                 "filament.probability-objective/reachability/v1"
             );
-            assert_eq!(doc["objective"]["targets"].as_array().unwrap().len(), targets);
+            assert_eq!(
+                doc["objective"]["targets"].as_array().unwrap().len(),
+                targets
+            );
             assert_eq!(doc["values"].as_array().unwrap().len(), 1);
             assert_eq!(doc["ranking"][0]["rank"], 0);
             let changed = mutate(&request, |doc| {
@@ -1405,6 +1411,9 @@ fn an_unwindowed_atom_claim_is_checked_exactly_as_eventually_at_horizon_zero() {
                 ranks,
             ));
         }
-        assert_eq!(documents[0], documents[1], "the two spellings certify identically");
+        assert_eq!(
+            documents[0], documents[1],
+            "the two spellings certify identically"
+        );
     }
 }
