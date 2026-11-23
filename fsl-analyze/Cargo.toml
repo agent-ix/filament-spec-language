@@ -82,6 +82,9 @@ filament-eval = { workspace = true }
 # FR-159-AC-5 validates EN-1's manifest entry against FSpec's backend-provider
 # schema, read from the pinned standard package.
 jsonschema = { version = "0.17.1", default-features = false, features = ["draft202012"] }
+# QSL-2061: the reduction property suite.
+fsl-proptest-policy = { path = "../fsl-proptest-policy" }
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 
 [[test]]
 name = "it"
