@@ -49,9 +49,9 @@ use ix_trace_rs::trace;
 use serde_json::Value;
 
 use crate::fill::{
-    attempt, contracts, document, fill_unit, instance, package_over, package_with,
-    package_with_name, protocol, reachable, sc_system, single_object_document, subject,
-    tcb_01_event_position_selection, unit_text, universe, v, Documents,
+    attempt, concrete_sc_system, contracts, document, fill_unit, instance, package_over,
+    package_with, package_with_name, protocol, reachable, sc_system, single_object_document,
+    subject, tcb_01_event_position_selection, unit_text, universe, v, Documents,
 };
 use crate::model_settle::{envelope_at, request};
 
@@ -425,9 +425,10 @@ fn scheduling_adversarial_admits_the_lasso_that_starves_a_branch() {
         assert_eq!(step.transition.channel_queue(), Some(("Chatter::ch", 0)));
     }
     // `s` rests at `Done` throughout: its attempt is enabled at every loop
-    // state and no loop step is its.
+    // state and no loop step is its. The witness keeps concrete
+    // labels (FR-205-AC-13), so it replays on the concrete system.
     let subject = adversarial.subject();
-    let system = sc_system(&subject);
+    let system = concrete_sc_system(&subject);
     let s = ThreadPath::root(0).child("Both", "s", 0);
     let mut state = system.initial().remove(0);
     let mut loop_states = Vec::new();
