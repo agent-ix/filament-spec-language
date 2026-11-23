@@ -22,7 +22,7 @@ Verify the `selection` and `hint` of each missing_import producer and the text l
 4. Refuse FR-098-AC-33's `function_owner` `test/absent`.
 5. Refuse FR-071-AC-5's package reference with no byte-provision entry.
 6. Refuse a unit importing a supplied sibling unit as a library.
-7. Build the diagnostic of the `extension-definition` and `package-reference` producers of FR-286 "Missing selections" and render it.
+7. Build the diagnostic of the `source`, `extension-definition` and `package-reference` producers of FR-286 "Missing selections" and render it.
 8. Serialize each document to JSON.
 
 ## Expected Results
@@ -33,7 +33,7 @@ Verify the `selection` and `hint` of each missing_import producer and the text l
 - Step 4: `  hint: Name a function_owner that the program imports directly, or add the import.`, `selection` `function-owner`.
 - Step 5: `  hint: Add a byte_provision entry for the named source to the replay request.`, `selection` `byte-provision`.
 - Step 6: `  hint: Supply the imported unit as a library, not as a sibling unit.`, `selection` `sibling-unit`.
-- Step 7: the hint text of the table's row for `extension-definition` and `package-reference`.
+- Step 7: the hint text of the table's row for `source`, `extension-definition` and `package-reference`.
 - Step 8: each JSON `hint` equals the text line byte for byte; no line is `  hint: Import the package that supplies the selected name.`.
 
 Test: `fsl-replay`, `fsl-semantics`, `fsl-package`, `fsl-analyze` and `fsl-command` tests (one per producer).

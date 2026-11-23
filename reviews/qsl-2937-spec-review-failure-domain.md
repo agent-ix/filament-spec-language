@@ -56,6 +56,14 @@ Found at head 6b1b2799540a7015585d05a7aaf109ecf1501034 while checking the fix ro
 | FND-011 | low | Two producer type names in the table do not exist as written. `SiblingImport` is `UnitListRefusal::SiblingImport` (fsl-replay/src/spine.rs:838, 903), not `ImportRefusal::SiblingImport`. 'extension `ResolutionCause::MissingSelection`' is wrong: `ResolutionCause` is the bundle's tag (fsl-semantics/src/library/bundle.rs:628, 921), and the extension producer is `ExtensionRefusal::MissingDependency`, mapped to `ExtensionCause::MissingSelection` (fsl-semantics/src/library/extension.rs:270, 378). AC-40 and TC-3203 build each producer by these names. | spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md:575,580 |
 | FND-012 | low | 'a path that is not UTF-8 is written with each invalid byte as U+FFFD' is not what `Path::to_string_lossy` / `String::from_utf8_lossy` does. They write one U+FFFD per maximal invalid subsequence, so a truncated multi-byte sequence becomes one U+FFFD, not one per byte. Pin it as 'as `Path::to_string_lossy` writes it', or a test written to the letter will disagree with the obvious implementation. Lossy output is otherwise fine for a display path. | spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md:554-555 |
 
+## New findings (disposition pass 2)
+
+Found at head 025b75da86d4577a2a6010ae0d0d3fc54f54317f while checking the round-2 fixes.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-013 | medium | Dropping `source` rests on 'ProvisionRefusal is an item record'. That is true of `provider::run` (FR-280-AC-10), but the public `fsl_analyze::analyze::analyze` refuses the whole request with `AnalyzeRefusal::Provision` when `check_provision` fails (fsl-analyze/src/analyze/request.rs:527-528). `AnalyzeRefusal::document` then writes it as a document diagnostic of the pair, operation analyze, stage S4 (fsl-analyze/src/analyze.rs:1229-1237). So there is a second diagnostic producer without a `selection`, and the claim that `UnresolvedDependency` is 'the one diagnostic producer a caller's input cannot reach' is false. Whether a library caller's own provision counts as caller input is exactly what the Behavior proviso 'unless no caller input reaches it' leaves open. Name the `AnalyzeRefusal::Provision` document path as a second defensive, selection-less producer (and say why the command's own provision makes it unreachable from `fsl analyze`), or restore a kind for it. | spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md:589-603; spec/functional/FR-865-render-every-outcome-document-as-text-the-cli-default.md:254-256 |
+
 ## Dispositions
 
 Round 1, head 6b1b2799540a7015585d05a7aaf109ecf1501034 (rebased on origin/main; fix commit 6b1b279954).
@@ -70,3 +78,7 @@ Round 1, head 6b1b2799540a7015585d05a7aaf109ecf1501034 (rebased on origin/main; 
 | FND-006 | fixed | The path is the one the command opened: the member joined to the request file's directory, and the `--output` option as given. This matches `directory.join(&member.package)` with `path.parent()` (fsl-command/src/command.rs:2771, 3906). The U+FFFD wording is new FND-012. |
 | FND-007 | fixed | The label assertion is limited to the header and the labels of the table. |
 | FND-008 | fixed | `details` `null` is pinned in the AC and in the Behavior bullet. |
+| FND-009 | fixed | Round 2, head 025b75da86: The `source` kind and its misleading hint are removed. The remaining ProvisionRefusal document path is new FND-013. |
+| FND-010 | fixed | Round 2, head 025b75da86: The `dependency` kind is removed. The defensive `UnresolvedDependency` keeps the generic row, which still answers `hint_for(code, cause, None)` and so stays consistent with FR-286-AC-30 (23 pairs). |
+| FND-011 | fixed | Round 2, head 025b75da86: The names are corrected: `UnitListRefusal::SiblingImport`, `PackageError::MissingDefinition` (cause `ResolutionCause::MissingSelection`, bundle.rs:905-921), and `ExtensionRefusal::MissingDependency` (cause `ExtensionCause::MissingSelection`). All three exist on the branch. |
+| FND-012 | fixed | Round 2, head 025b75da86: The non-UTF-8 rule is now pinned to `Path::to_string_lossy`. |

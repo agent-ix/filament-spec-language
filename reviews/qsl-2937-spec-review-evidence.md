@@ -58,3 +58,4 @@ Round 1, head 6b1b2799540a7015585d05a7aaf109ecf1501034 (rebased on origin/main; 
 | FND-001 | fixed | AC-16 is a Driver test of `fsl compile` with and without `--output`, delegated as AC-3 is. See scope-boundary FND-004 for its header. |
 | FND-002 | fixed | The 'byte-equal to the bytes before' clauses are replaced by exact properties and schema validation. |
 | FND-003 | fixed | Each kind now cites a concrete source AC or an input: FR-099-AC-3, FR-121-AC-35, FR-098-AC-33, FR-071-AC-5 (all verified to exist and to state those refusals), and an explicit sibling-unit input. |
+| FND-004 | fixed | Round 2, head 025b75da86: AC-9 now covers only the 12 labels a document can hold. The `I2` and unknown-label cases are asserted on the public `stage_word` function, and TC-3197 step 2 follows. Both are now testable. The module path is integrity FND-007. |

@@ -48,6 +48,15 @@ Found at head 6b1b2799540a7015585d05a7aaf109ecf1501034 while checking the fix ro
 | --- | --- | --- | --- |
 | FND-005 | medium | 'Missing selections' says rows are also keyed by `selection` and that `hint_for` takes the selection as a third argument (FR-286:591-594). The Fix hints paragraph was edited in only one sentence. It still says 'Every hint comes from one catalog keyed by the diagnostic's code and cause', gives `HintRow { code, cause, text }` with no selection, gives the two-argument signature `hint_for(code: Code, cause: Option<&str>)`, and says 'The text is a function of the code and cause alone'. FR-286-AC-28, FR-286-AC-30, TC-3112 and TC-3113 still call `hint_for` with two arguments. Update the paragraph, the struct and the signature (and say how the two-argument call sites read), so that one section does not contradict the other. | spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md:591-594,606-615,944,946 |
 
+## New findings (disposition pass 2)
+
+Found at head 025b75da86d4577a2a6010ae0d0d3fc54f54317f while checking the round-2 fixes.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-006 | medium | FR-286 now contradicts itself on whether the pair always carries `selection`. The diagnostic-member table (FR-286:532) writes `selection` for a missing_import/missing-selection diagnostic 'always', and 'Missing selections' says 'Such a diagnostic SHALL carry `selection`' (FR-286:571). The same section then says `PluginReplayRefusal::UnresolvedDependency` writes the pair without a `selection` and carries the generic row (FR-286:595-603). Write the exception into both places, e.g. 'always, except the defensive producers this section names'. Then the schema note, AC-40 and the FR-865 Behavior bullet ('unless no caller input reaches it') agree on one rule. | spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md:532,571,595-603; spec/functional/FR-865-render-every-outcome-document-as-text-the-cli-default.md:254-256 |
+| FND-007 | low | The spec names the function `fsl_inspect::render::stage_word`, but `render` is a private module of fsl-inspect. `mod render;` and the re-export `pub use render::{render_outcome, ...}` are at fsl-inspect/src/lib.rs:215-216, so callers reach `fsl_inspect::render_outcome`. As written the path does not exist. Name it `fsl_inspect::stage_word` (re-exported like `render_outcome`), or state that `render` becomes a public module. | spec/functional/FR-865-render-every-outcome-document-as-text-the-cli-default.md:148 |
+
 ## Dispositions
 
 Round 1, head 6b1b2799540a7015585d05a7aaf109ecf1501034 (rebased on origin/main; fix commit 6b1b279954).
@@ -58,3 +67,4 @@ Round 1, head 6b1b2799540a7015585d05a7aaf109ecf1501034 (rebased on origin/main; 
 | FND-002 | fixed | The missing_import hint is now keyed by a serialized `selection`, which follows FR-286's own rule that distinct refusals get distinct keys. The text form writes the document's hint unchanged. Leftover inconsistencies in Fix hints are new FND-005. |
 | FND-003 | fixed | The item-record producers (FR-1044 component package, FR-280 absent source) are now explicitly excluded. No AC asks for a hint on them. |
 | FND-004 | fixed | A `package` document with `result` `null` renders the header line only. AC-1 and AC-15 pin it. |
+| FND-005 | fixed | Round 2, head 025b75da86: Fix hints is now keyed by code, cause and selection. `HintRow` has a `selection` field, `hint_for` takes three arguments everywhere, and FR-286-AC-28/29/30, TC-3112 and TC-3113 call it with `None`. AC-29 states that rows differing only by selection are not duplicates. |

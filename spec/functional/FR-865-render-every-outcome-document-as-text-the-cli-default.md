@@ -145,7 +145,8 @@ Each line is one FR-298 output unit, charged against `render.output_bytes`.
 ### Stage words
 
 The header names the stage in words: `render_outcome` writes the word that
-the public function `fsl_inspect::render::stage_word(label: &str) -> String`
+the public function `fsl_inspect::stage_word(label: &str) -> String`, re-exported at the crate
+root beside `render_outcome`,
 returns for the document's `last_stage` label. The map is a function of the
 text form alone; the JSON document keeps the label (FR-286).
 
@@ -253,7 +254,7 @@ exit code of the document's category.
   `selection` of a `missing_import` diagnostic.
 - When a producer refuses `missing_import`/`missing-selection`, it SHALL
   set `selection` on its `OutcomeDiagnostic` to the kind of FR-286 "Missing
-  selections", unless no caller input reaches it.
+  selections", except plugin replay's defensive `UnresolvedDependency`.
 - The driver's exit code for an invocation SHALL be equal in text mode and
   in machine mode.
 - If `--format` names a value other than `json` or `text`, then the driver
@@ -286,7 +287,7 @@ exit code of the document's category.
 | FR-865-AC-20 | The text of FR-098-AC-33's refusal of the `function_owner` `test/absent` holds the line `  hint: Name a function_owner that the program imports directly, or add the import.`, and its JSON `selection` is `function-owner`. | Test (TC-3199) |
 | FR-865-AC-21 | The text of FR-071-AC-5's refusal of a package reference with no matching byte-provision entry holds the line `  hint: Add a byte_provision entry for the named source to the replay request.`, and its JSON `selection` is `byte-provision`. | Test (TC-3199) |
 | FR-865-AC-22 | The text of a refusal of a unit whose `import "sibling/unit" as s;` names a supplied sibling unit of identity `sibling/unit` while no library is supplied as `sibling/unit` holds the line `  hint: Supply the imported unit as a library, not as a sibling unit.`, and its JSON `selection` is `sibling-unit`. | Test (TC-3199) |
-| FR-865-AC-23 | For each of the `extension-definition` and `package-reference` kinds, the diagnostic of its producer in FR-286 "Missing selections" renders a line `  hint: <text>` with `<text>` the table's text for the kind, byte for byte. | Test (TC-3199) |
+| FR-865-AC-23 | For each of the `source`, `extension-definition` and `package-reference` kinds, the diagnostic of its producer in FR-286 "Missing selections" renders a line `  hint: <text>` with `<text>` the table's text for the kind, byte for byte. | Test (TC-3199) |
 | FR-865-AC-24 | For every diagnostic of AC-17 to AC-23, the text's `  hint:` line equals the JSON diagnostic's `hint` member byte for byte, and no text line is `  hint: Import the package that supplies the selected name.`. | Test (TC-3199) |
 
 ## Dependencies

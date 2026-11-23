@@ -50,3 +50,4 @@ Round 1, head 6b1b2799540a7015585d05a7aaf109ecf1501034 (rebased on origin/main; 
 | FND-001 | fixed | Answered by the document-only rule. Text renders FSL's document, and the size, path and selection kind are serialized members, so equal JSON gives equal text. The driver-header residue is new FND-004. |
 | FND-002 | accepted-no-change | The author decided to leave `--library` bare. FR-866 records why, and FR-866-AC-10 pins the bare message, so the choice is explicit and tested. |
 | FND-003 | accepted-no-change | The Rationale states that explaining `  cause: missing-selection` is outside QSL-2937's four texts, so it is a recorded scope decision. |
+| FND-004 | fixed | Round 2, head 025b75da86: AC-16 and the driver bullet now say 'the text form ... with the CLI command `compile` in place of the operation in the header (driver FR-002-AC-13)'. That matches the driver contract. |
