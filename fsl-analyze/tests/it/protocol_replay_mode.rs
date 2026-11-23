@@ -2033,7 +2033,7 @@ fn many_label_protocol(labels: usize) -> String {
 
 /// FR-895-AC-34 (TC-2531): a predicate join names at most 10 labels; at the
 /// bound the recording is assessed, and above it, at 11 and at 64 labels, the
-/// assessment is refused `unsupported_construct`/`not-yet-implemented`,
+/// assessment is refused `stage_limit_exceeded`/`work-budget-exceeded`,
 /// naming the join and the bound, before any evaluation.
 #[trace("TC-2531", "FR-895-AC-34")]
 #[test]
@@ -2052,10 +2052,11 @@ fn a_predicate_join_over_too_many_labels_is_refused_naming_the_bound() {
         let package = package_of(&many_label_protocol(labels));
         let refusal = assess_recording(&package, empty.as_bytes())
             .expect_err("a predicate join over too many labels is refused");
-        assert!(refusal.is_unsupported(), "{labels}: {refusal}");
+        assert!(refusal.is_limit(), "{labels}: {refusal}");
+        assert_eq!(refusal.cause(), "predicate-join-label-bound");
         assert_eq!(
             refusal.code().to_string(),
-            "unsupported_construct/not-yet-implemented"
+            "stage_limit_exceeded/work-budget-exceeded"
         );
         let text = refusal.to_string();
         assert!(
@@ -2095,11 +2096,11 @@ fn a_predicate_that_is_never_true_leaves_the_join_unreached() {
 }
 
 /// FR-895-AC-34 (TC-2531): on the wire a predicate join over 11 labels
-/// settles the item `unsupported`, naming the join and the gap, whether the
+/// settles the item `declined`, `stage_limit_exceeded`, naming the join and the bound, whether the
 /// assessment is batch or incremental.
 #[trace("TC-2531", "FR-895-AC-34")]
 #[test]
-fn a_refused_predicate_join_settles_the_item_unsupported() {
+fn a_refused_predicate_join_settles_the_item_declined() {
     let recording = json!({
         "format": "filament.protocol-recording/1", "protocol": "Flow",
         "observations": [], "local_order": {}, "correlations": [],
@@ -2114,13 +2115,195 @@ fn a_refused_predicate_join_settles_the_item_unsupported() {
             assessed_item(assessment),
         )
         .item(0);
-        assert_eq!(label(&item), "unsupported", "{assessment}: {item}");
+        assert_eq!(label(&item), "declined", "{assessment}: {item}");
         let text = item.to_string();
         assert!(
-            text.contains("unsupported_construct")
+            text.contains("stage_limit_exceeded")
                 && text.contains("predicate-join-label-bound")
                 && text.contains("Flow::Main::Many"),
             "{assessment}: {item}"
         );
     }
+}
+
+/// [`repeat_protocol`] with a `parallel` `join any [left, right] outstanding
+/// cancel` of `L` and `R` first in the loop body.
+fn cancel_in_repeat_protocol() -> String {
+    repeat_protocol().replace(
+        "sequence Body {",
+        "sequence Body { parallel Both memory sc { branch left sequence Left { event L by Buyer as (l: Ack) { true }; } branch right sequence Right { event R by Buyer as (r: Ack) { true }; } } join any [left, right] outstanding cancel;",
+    )
+}
+
+/// An event of the body's `parallel` at `Flow::Main::Loop::Body::Both::<path>`.
+fn body_event(path: &str) -> Value {
+    json!({"kind": "event", "node": format!("Flow::Main::Loop::Body::Both::{path}"),
+           "role": "Buyer", "instance": "w-1", "keys": {}, "record": {"ok": true}})
+}
+
+/// The enabledness verdicts of every observation of `node` in `prefix`.
+fn node_verdicts_in(prefix: &Value, node: &str) -> Vec<String> {
+    prefix["obligations"]
+        .as_array()
+        .expect("obligations")
+        .iter()
+        .filter(|verdict| {
+            verdict["obligation"]["kind"] == "enabledness" && verdict["obligation"]["node"] == node
+        })
+        .map(|verdict| verdict["verdict"].as_str().expect("a verdict").to_owned())
+        .collect()
+}
+
+/// An open incremental assessment of `observations` over [`cancel_in_repeat_protocol`]:
+/// `Buyer`'s observations at `buyer` in order, `Seller`'s at `seller`, and
+/// the correlations `(send, receive)`.
+fn cancel_in_repeat_item(
+    name: &str,
+    observations: Value,
+    buyer: &[usize],
+    seller: &[usize],
+    correlations: &[(usize, usize)],
+) -> Value {
+    let mut recording = repeat_recording(
+        observations,
+        json!(seller),
+        json!(buyer),
+        Value::Array(
+            correlations
+                .iter()
+                .map(|(send, receive)| json!({"send": send, "receive": receive}))
+                .collect(),
+        ),
+    );
+    recording["closure"] = json!({"state": "open", "premises": []});
+    replay_with(
+        name,
+        &cancel_in_repeat_protocol(),
+        &recording,
+        json!({"file": "recording.json", "identity": recording_identity()}),
+        assessed_item("incremental"),
+    )
+    .item(0)
+}
+
+const BODY_LEFT: &str = "Flow::Main::Loop::Body::Both::left::Left::L";
+const BODY_RIGHT: &str = "Flow::Main::Loop::Body::Both::right::Right::R";
+
+/// FR-895-AC-37 (TC-2531): a `parallel` with an `outstanding cancel` join in
+/// a `repeat` body cancels per iteration: the first iteration's `Placed`
+/// does not put the second iteration's `L` and `R` after a cancel. The
+/// recording `L`, `R`, `Placed`, `Got`, `yes` twice leaves every `L` and `R`
+/// `satisfied` in batch and in every prefix; with the second `R` after the
+/// second `Placed` it is `violated`, cause `unexpected`.
+#[trace("TC-2531", "FR-895-AC-37")]
+#[test]
+fn a_cancel_in_a_repeat_body_cancels_per_iteration() {
+    let left = || body_event("left::Left::L");
+    let right = || body_event("right::Right::R");
+    let observations = json!([
+        left(),
+        right(),
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped_case("yes"),
+        left(),
+        right(),
+        looped("send", "Placed", "Buyer", "m-2"),
+        looped("receive", "Got", "Seller", "m-2"),
+        looped_case("yes"),
+    ]);
+    let item = cancel_in_repeat_item(
+        "replay-cancel-repeat-legit",
+        observations,
+        &[0, 1, 2, 5, 6, 7],
+        &[3, 4, 8, 9],
+        &[(2, 3), (7, 8)],
+    );
+    let prefixes = item["prefixes"].as_array().expect("prefixes");
+    assert_eq!(prefixes.len(), 10, "{item}");
+    for prefix in prefixes {
+        for node in [BODY_LEFT, BODY_RIGHT] {
+            assert!(
+                node_verdicts_in(prefix, node)
+                    .iter()
+                    .all(|verdict| verdict == "satisfied"),
+                "{node}: {prefix}"
+            );
+        }
+    }
+    assert_eq!(node_verdicts_in(&prefixes[9], BODY_RIGHT), ["satisfied"; 2]);
+    let order: Vec<usize> = (0..10).collect();
+    assert_every_verdict_only_advances(prefixes, &order);
+    assert_eq!(prefixes[9]["obligations"], item["obligations"], "{item}");
+
+    // The second `R` after the second `Placed`: the second iteration's join
+    // has fired, and the first `R`, `L` stay satisfied.
+    let after_own_placed = json!([
+        left(),
+        right(),
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped_case("yes"),
+        left(),
+        looped("send", "Placed", "Buyer", "m-2"),
+        right(),
+        looped("receive", "Got", "Seller", "m-2"),
+        looped_case("yes"),
+    ]);
+    let item = cancel_in_repeat_item(
+        "replay-cancel-repeat-violated",
+        after_own_placed,
+        &[0, 1, 2, 5, 6, 7],
+        &[3, 4, 8, 9],
+        &[(6, 8)],
+    );
+    let last = &item["prefixes"][9];
+    assert_eq!(
+        node_verdicts_in(last, BODY_LEFT),
+        ["satisfied"; 2],
+        "{item}"
+    );
+    assert_eq!(
+        node_verdicts_in(last, BODY_RIGHT),
+        ["satisfied", "violated"],
+        "{item}"
+    );
+}
+
+/// `Flow` whose `parallel` `join any [left, right] outstanding cancel` holds
+/// a `repeat` of `L` in branch `left`, then `Placed` after it.
+fn repeat_in_cancel_protocol() -> String {
+    order_protocol(false).replace(
+        "run sequence Main {",
+        "run sequence Main { parallel Both memory sc { branch left sequence Left { repeat Loop by Buyer visible () max 2 while { true } sequence Body { event L by Buyer as (l: Ack) { true }; } exhausted sequence Out { } } branch right sequence Right { event R by Buyer as (r: Ack) { true }; } } join any [left, right] outstanding cancel;",
+    )
+}
+
+/// FR-895-AC-38 (TC-2531): a `repeat` below the cancelling `parallel` does
+/// not change the cancel: the steps after the `parallel` are matched whatever
+/// the iteration of a repeat inside its branches. `L`, `L`, `Placed` leaves
+/// both `L` `satisfied`; `L`, `Placed`, `L` leaves the second `L` `violated`,
+/// cause `unexpected`.
+#[trace("TC-2531", "FR-895-AC-38")]
+#[test]
+fn a_repeat_inside_a_cancelling_branch_keeps_the_cancel_after_the_parallel() {
+    let source = repeat_in_cancel_protocol();
+    let node = "Flow::Main::Both::left::Left::Loop::Body::L";
+    let step = || {
+        json!({"kind": "event", "node": node, "role": "Buyer", "instance": "w-1",
+               "keys": {}, "record": {"ok": true}})
+    };
+    let placed = || observation("send", "Placed", "Buyer", "m-1");
+    let open = |observations: Value| {
+        let count = observations.as_array().expect("observations").len();
+        json!({
+            "format": "filament.protocol-recording/1", "protocol": "Flow",
+            "observations": observations,
+            "local_order": {"Buyer": (0..count).collect::<Vec<_>>()},
+            "correlations": [],
+            "closure": {"state": "open", "premises": []}
+        })
+    };
+    assert_enabled(&source, &open(json!([step(), step(), placed()])), node, 1);
+    assert_unexpected(&source, &open(json!([step(), placed(), step()])), node, 2);
 }

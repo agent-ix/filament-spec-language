@@ -236,12 +236,23 @@ pub struct RecordingEffectOccurrence {
 
 /// Why a recording could not be read against the checked protocol.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
-#[error("{}/{cause}: {detail}", self.family())]
+#[error("{}: {detail}", self.code())]
 pub struct RecordingRefusal {
     cause: &'static str,
     detail: String,
     position: Option<usize>,
-    unsupported: bool,
+    kind: RefusalKind,
+}
+
+/// Who a [`RecordingRefusal`] blames.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RefusalKind {
+    /// The recording: `invalid_runtime_input`.
+    Recording,
+    /// A bound of the assessment: `stage_limit_exceeded`.
+    Limit,
+    /// The evaluator, which broke an invariant: `runtime_invariant`.
+    Fault,
 }
 
 impl RecordingRefusal {
@@ -254,48 +265,57 @@ impl RecordingRefusal {
             cause,
             detail: detail.into(),
             position,
-            unsupported: false,
+            kind: RefusalKind::Recording,
         }
     }
 
-    /// A refusal for a recording the engine cannot assess: a capability the
-    /// engine lacks or a bound its assessment keeps, never a defect of the
-    /// recording.
-    pub(super) fn unsupported(cause: &'static str, detail: impl Into<String>) -> Self {
+    /// A refusal for a bound the assessment keeps, never a defect of the
+    /// recording; `cause` names the bound.
+    pub(super) fn limit(cause: &'static str, detail: impl Into<String>) -> Self {
         Self {
             cause,
             detail: detail.into(),
             position: None,
-            unsupported: true,
+            kind: RefusalKind::Limit,
         }
     }
 
-    /// Whether the engine, not the recording, is why it was refused.
-    pub fn is_unsupported(&self) -> bool {
-        self.unsupported
-    }
-
-    /// The catalog family: `unsupported_construct` for an engine gap,
-    /// `invalid_runtime_input` for a recording admission failure.
-    fn family(&self) -> &'static str {
-        if self.unsupported {
-            "unsupported_construct"
-        } else {
-            "invalid_runtime_input"
+    /// A refusal for an evaluator fault: an invariant of the checked package
+    /// broke.
+    pub(super) fn fault(cause: &'static str, detail: impl Into<String>) -> Self {
+        Self {
+            cause,
+            detail: detail.into(),
+            position: None,
+            kind: RefusalKind::Fault,
         }
     }
 
-    /// The catalog code for a recording admission failure, or for the engine
-    /// gap that stopped its assessment.
+    /// Whether the assessment kept a bound the recording exceeded.
+    pub fn is_limit(&self) -> bool {
+        self.kind == RefusalKind::Limit
+    }
+
+    /// Whether the evaluator, not the recording, is why it was refused.
+    pub fn is_fault(&self) -> bool {
+        self.kind == RefusalKind::Fault
+    }
+
+    /// The catalog code: `invalid_runtime_input` for a recording admission
+    /// failure, `stage_limit_exceeded` for a bound, `runtime_invariant` for
+    /// an evaluator fault.
     pub fn code(&self) -> CatalogCode {
-        if self.unsupported {
-            CatalogCode::new("unsupported_construct", "not-yet-implemented")
-        } else {
-            CatalogCode::new("invalid_runtime_input", self.cause)
+        match self.kind {
+            RefusalKind::Recording => CatalogCode::new("invalid_runtime_input", self.cause),
+            RefusalKind::Limit => CatalogCode::new("stage_limit_exceeded", "work-budget-exceeded"),
+            RefusalKind::Fault => {
+                CatalogCode::new("runtime_invariant", "established-invariant-broken")
+            }
         }
     }
 
-    /// The catalog cause of the refusal.
+    /// The cause of the refusal: the catalog cause for a recording failure,
+    /// the name of the bound or fault otherwise.
     pub fn cause(&self) -> &str {
         self.cause
     }
@@ -4240,12 +4260,57 @@ fn subtree_nodes(protocol: &CheckedProtocol, node: ProtocolNodeId, out: &mut BTr
     }
 }
 
+/// The iteration of the `repeat` at `repeat_level` of `ancestry` that the
+/// observation at `index` belongs to: its rank among the observations of its
+/// node, carried up through each `case` between the node and the `repeat` to
+/// the index of that case among the `choice`'s takings (the same occurrence
+/// pairing as the rules for steps in and after a `repeat`). `anchor` is the
+/// observation the iterations are counted before.
+fn iteration_index(
+    protocol: &CheckedProtocol,
+    document: &RecordingDocument,
+    anchor: usize,
+    index: usize,
+    ancestry: &[&fsl_semantics::check::CheckedControl],
+    repeat_level: usize,
+) -> usize {
+    let entry = &document.observations[index];
+    let order = causal_topological_order(protocol, document);
+    let rank = |other: &usize| order.iter().position(|item| item == other);
+    let mut own: Vec<usize> = (0..document.observations.len())
+        .filter(|other| {
+            document.observations[*other].node == entry.node
+                && document.observations[*other].instance == entry.instance
+        })
+        .collect();
+    own.sort_by_key(rank);
+    let mut occurrence = own
+        .iter()
+        .position(|other| *other == index)
+        .map_or(1, |nth| nth + 1);
+    for level in (repeat_level + 1..ancestry.len().saturating_sub(1)).rev() {
+        let (parent, child) = (ancestry[level], ancestry[level + 1]);
+        if child.kind.label() == "case" {
+            let name = qualified_name(protocol, child);
+            let taken = choice_observations(protocol, document, anchor, parent);
+            occurrence = taken
+                .iter()
+                .enumerate()
+                .filter(|(_, other)| document.observations[**other].node == name)
+                .nth(occurrence - 1)
+                .map_or(occurrence, |(nth, _)| nth + 1);
+        }
+    }
+    occurrence
+}
+
 /// Whether the step at `position` runs in a branch of a `parallel` whose
 /// `outstanding cancel` join has fired: the join step cancels the running
 /// branches and a cancelled thread takes no further step (ADR-027 ST-7). The
 /// join step may fire at any point after the policy holds, so the step is
 /// after the cancel only when an observation of a step after the `parallel`,
-/// which needs its join, or of `finish`, causally precedes it.
+/// which needs its join, or of `finish`, causally precedes it, in the same
+/// iteration of every `repeat` the `parallel` runs in.
 fn after_cancel(
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
@@ -4253,6 +4318,9 @@ fn after_cancel(
     ancestry: &[&fsl_semantics::check::CheckedControl],
 ) -> bool {
     let instance = &document.observations[position].instance;
+    let Some(root) = protocol.controls.root() else {
+        return false;
+    };
     (0..ancestry.len().saturating_sub(1)).any(|level| {
         let parallel = ancestry[level];
         let cancels = parallel.kind.label() == "parallel"
@@ -4263,29 +4331,66 @@ fn after_cancel(
         if !cancels {
             return false;
         }
-        // The steps after this `parallel` in every enclosing sequence.
-        let mut after = BTreeSet::new();
+        // The innermost `repeat` whose body holds this `parallel`.
+        let repeat_level = (0..level).rev().find(|candidate| {
+            ancestry[*candidate].kind.label() == "repeat"
+                && ancestry[*candidate].children.first() == Some(&ancestry[candidate + 1].node)
+        });
+        // The steps after this `parallel` in every enclosing sequence: those
+        // inside the `repeat` body count in the same iteration only.
+        let mut after_any = BTreeSet::new();
+        let mut after_same_iteration = BTreeSet::new();
         for outer in 0..level {
             if ancestry[outer].kind.label() != "sequence" {
                 continue;
             }
+            let target = if repeat_level.is_some_and(|repeat| outer > repeat) {
+                &mut after_same_iteration
+            } else {
+                &mut after_any
+            };
             for sibling in ancestry[outer]
                 .children
                 .iter()
                 .skip_while(|sibling| **sibling != ancestry[outer + 1].node)
                 .skip(1)
             {
-                subtree_nodes(protocol, *sibling, &mut after);
+                subtree_nodes(protocol, *sibling, target);
             }
         }
+        let own_iteration = repeat_level.map(|repeat| {
+            iteration_index(protocol, document, position, position, ancestry, repeat)
+        });
         document
             .observations
             .iter()
             .enumerate()
             .any(|(index, entry)| {
-                entry.instance == *instance
-                    && (after.contains(&entry.node) || entry.kind == ObservationKind::Finish)
-                    && causally_after(protocol, document, position, index)
+                if entry.instance != *instance
+                    || !causally_after(protocol, document, position, index)
+                {
+                    return false;
+                }
+                if after_any.contains(&entry.node) || entry.kind == ObservationKind::Finish {
+                    return true;
+                }
+                let (Some(repeat), Some(own)) = (repeat_level, own_iteration) else {
+                    return false;
+                };
+                if !after_same_iteration.contains(&entry.node) {
+                    return false;
+                }
+                let Some(target) = protocol
+                    .controls
+                    .controls
+                    .iter()
+                    .find(|control| qualified_name(protocol, control) == entry.node)
+                else {
+                    return false;
+                };
+                let mut path = Vec::new();
+                control_path(protocol, root.node, target.node, &mut path)
+                    && iteration_index(protocol, document, position, index, &path, repeat) == own
             })
     })
 }
@@ -4302,9 +4407,13 @@ pub(super) type JoinTables = BTreeMap<String, Vec<bool>>;
 /// subset of the joined labels (sorted, bit `i` set when label `i` has
 /// finished) whether `f` holds over those completions. A join naming more
 /// than [`MAX_PREDICATE_JOIN_LABELS`] labels is refused before any
-/// evaluation, as is a predicate join over a package read from its bytes,
-/// which cannot evaluate the function yet, and a function whose evaluation
-/// fails.
+/// evaluation, since its table holds one evaluation per subset. An admitted
+/// join function is total, pure and Boolean (FR-218, FSpec FR-146), so an
+/// evaluation that fails is an evaluator fault, refused as one.
+///
+/// A predicate join over a package read from its bytes has no table and no
+/// entry here: the package route admits no `parallel` (it refuses the
+/// selection), so `protocol.parallels` is empty there.
 fn predicate_join_tables(
     package: &CheckedPackage<'_>,
     protocol: &CheckedProtocol,
@@ -4321,7 +4430,7 @@ fn predicate_join_tables(
         let name = qualified_name(protocol, control);
         let labels = parallel.joined.len();
         if labels > MAX_PREDICATE_JOIN_LABELS {
-            return Err(RecordingRefusal::unsupported(
+            return Err(RecordingRefusal::limit(
                 "predicate-join-label-bound",
                 format!(
                     "join `{name}` names {labels} labels; a predicate join names at most \
@@ -4330,14 +4439,9 @@ fn predicate_join_tables(
             ));
         }
         let CheckedPackage::Source(source) = package else {
-            return Err(RecordingRefusal::unsupported(
-                "predicate-join-package-route",
-                format!(
-                    "join `{name}` is a predicate join, which an assessment over a package \
-                     read from its bytes cannot evaluate yet"
-                ),
-            ));
+            continue;
         };
+        let fault = |detail: String| RecordingRefusal::fault("predicate-join-evaluation", detail);
         let table = (0..1usize << labels)
             .map(|mask| {
                 let arguments = (0..labels)
@@ -4349,21 +4453,17 @@ fn predicate_join_tables(
                     arguments,
                     &mut recording_meter(),
                 )
-                .ok();
-                match evaluation.map(|evaluation| evaluation.outcome) {
-                    Some(FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(value)))) => {
-                        Some(value)
+                .map_err(|error| fault(format!("join `{name}`: {error:?}")))?;
+                match evaluation.outcome {
+                    FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(value))) => {
+                        Ok(value)
                     }
-                    _ => None,
+                    other => Err(fault(format!(
+                        "join `{name}`: its predicate gave {other:?}, not a Boolean"
+                    ))),
                 }
             })
-            .collect::<Option<Vec<bool>>>()
-            .ok_or_else(|| {
-                RecordingRefusal::unsupported(
-                    "predicate-join-evaluation",
-                    format!("the predicate of join `{name}` did not evaluate to a Boolean"),
-                )
-            })?;
+            .collect::<Result<Vec<bool>, RecordingRefusal>>()?;
         tables.insert(name, table);
     }
     Ok(tables)
