@@ -409,11 +409,13 @@ type Resolution = (
     Vec<(filament_exact::Identifier, filament_exact::Value)>,
 );
 
+#[derive(Clone)]
 enum Successor {
     Position(
         Rational,
         ModelSimState,
         Vec<(filament_exact::Identifier, filament_exact::Value)>,
+        Option<Vec<u8>>,
     ),
     Draw(
         Rational,
@@ -639,26 +641,29 @@ fn enumerate(
             })
             .collect()
     };
-    let key_of = |state: &ModelSimState,
-                  control: MonitorState,
-                  accumulator: &Accumulator,
+    let raw_of = |state: &ModelSimState,
                   meter: &mut filament_exact::Meter,
-                  storage: &mut u64| {
-        let raw = {
-            let mut admission =
-                ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
-            system
-                .state_key_bytes_with_budget(
-                    state,
-                    fsl_foundation::IdentityLimits::default(),
-                    &mut admission,
-                    cancel,
-                )
-                .map_err(|error| admission.refusal(error))?
-        };
+                  storage: &mut u64|
+     -> Result<Vec<u8>, ProbabilityDocumentError> {
+        let mut admission =
+            ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
+        system
+            .state_key_bytes_with_budget(
+                state,
+                fsl_foundation::IdentityLimits::default(),
+                &mut admission,
+                cancel,
+            )
+            .map_err(|error| admission.refusal(error))
+    };
+    let product_key = |raw: &[u8],
+                       control: MonitorState,
+                       accumulator: &Accumulator,
+                       meter: &mut filament_exact::Meter,
+                       storage: &mut u64| {
         measure_probability_product_key(
             binding,
-            &raw,
+            raw,
             control,
             accumulator,
             None,
@@ -671,6 +676,14 @@ fn enumerate(
     };
     let mut queue = VecDeque::new();
     let mut seen = BTreeSet::new();
+    // The canonical key of each queued model state, kept so a model state
+    // reached under many product keys is encoded once.
+    let mut raws: BTreeMap<ProbabilityProductKey, Vec<u8>> = BTreeMap::new();
+    // A model state's expansion, shared by every product state over it.
+    let mut expansions: BTreeMap<
+        Vec<u8>,
+        (Vec<Vec<Successor>>, Vec<Option<crate::ProductAction>>),
+    > = BTreeMap::new();
     let mut initials = Vec::new();
     for (index, initial) in initial.iter().enumerate() {
         poll(cancel)?;
@@ -681,7 +694,8 @@ fn enumerate(
             .map_err(ProbabilityDocumentError::from)?;
         let control = control.ok_or(ProbabilityDocumentError::Malformed)?;
         let accumulator = accumulator.ok_or(ProbabilityDocumentError::Malformed)?;
-        let root = key_of(initial, control, &accumulator, meter, storage)?;
+        let initial_raw = raw_of(initial, meter, storage)?;
+        let root = product_key(&initial_raw, control, &accumulator, meter, storage)?;
         charge(
             storage,
             limits.storage_bytes,
@@ -697,6 +711,7 @@ fn enumerate(
             root.clone(),
         ));
         if seen.insert(root.clone()) {
+            raws.insert(root.clone(), initial_raw);
             if seen.len() > limits.states {
                 return Err(exceeded(
                     ProbabilityDocumentLimit::States,
@@ -822,124 +837,174 @@ fn enumerate(
         let mut action_labels = Vec::new();
         let resolving = resolution.is_some();
         if terminal.is_none() {
-            let mut admission =
-                ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
-            let distributions = if let Some((posts, rewards)) = resolution {
-                posts
-                    .into_iter()
-                    .map(|post| {
-                        action_labels.push(None);
-                        vec![Successor::Position(rational(1), post, rewards.clone())]
-                    })
-                    .collect()
-            } else if let Some(workload) = workload {
-                let steps = system
-                    .weighted_steps_with_budget(
-                        &model,
-                        workload,
-                        fsl_foundation::IdentityLimits::default(),
-                        &mut admission,
-                        cancel,
-                    )
-                    .map_err(|error| distribution_error(error, &mut admission))?
-                    .map_err(|stop| {
-                        ProbabilityDocumentError::Build(Box::new(match stop {
-                            fsl_eval::simulation::model::Unsteppable::NotMarkov(cause) => {
-                                crate::ExactProbBuildIssue::NotMarkov(cause)
-                            }
-                            fsl_eval::simulation::model::Unsteppable::UndecidedSuccessor(_) => {
-                                crate::ExactProbBuildIssue::UndecidedSuccessor
-                            }
-                        }))
-                    })?;
-                action_labels.push(None);
-                vec![steps
-                    .into_iter()
-                    .map(|step| Successor::Position(step.probability, step.post, step.rewards))
-                    .collect::<Vec<_>>()]
+            let model_raw = if resolving {
+                None
             } else {
-                let actions = system
-                    .actions_with_budget(
-                        &model,
-                        fsl_foundation::IdentityLimits::default(),
-                        &mut admission,
-                        cancel,
-                    )
-                    .map_err(|error| distribution_error(error, &mut admission))?
-                    .map_err(|_| {
-                        ProbabilityDocumentError::Build(Box::new(
-                            crate::ExactProbBuildIssue::UndecidedSuccessor,
-                        ))
-                    })?;
-                if actions.is_empty() {
-                    let rewards = system.zero_rewards();
-                    action_labels.push(Some(crate::ProductAction::TerminalStutter));
-                    vec![vec![Successor::Position(
-                        rational(1),
-                        model.clone(),
-                        rewards,
-                    )]]
-                } else {
-                    let mut distributions = Vec::new();
-                    for action in actions {
-                        action_labels.push(Some(crate::ProductAction::Identity(
-                            crate::Schedule::of(system, &action.identity)
-                                .map_err(|_| ProbabilityDocumentError::Malformed)?,
-                        )));
-                        let mut distribution = Vec::new();
-                        for draw in action.draws {
-                            if draw.successors.is_empty() {
-                                let state = system
-                                    .state_key_bytes_with_budget(
-                                        &model,
-                                        fsl_foundation::IdentityLimits::default(),
-                                        &mut admission,
-                                        cancel,
-                                    )
-                                    .map_err(|error| admission.refusal(error))?;
-                                return Err(ProbabilityDocumentError::Build(Box::new(
-                                    crate::ExactProbBuildIssue::NotMarkov(Box::new(
-                                        fsl_eval::simulation::model::NotMarkov {
-                                            state:
-                                                fsl_eval::simulation::StateKey::from_canonical_bytes(
-                                                    state,
-                                                ),
-                                            transition: action.identity,
-                                            drawn_transition: draw.transition,
-                                            random: draw.random,
-                                            post_states: 0,
-                                            post_state_examples: Vec::new(),
-                                        },
-                                    )),
-                                )));
-                            }
-                            if draw.successors.len() == 1 {
-                                let (_, post) = draw
-                                    .successors
-                                    .into_iter()
-                                    .next()
-                                    .ok_or(ProbabilityDocumentError::Malformed)?;
-                                distribution.push(Successor::Position(
-                                    draw.probability,
-                                    post,
-                                    draw.rewards,
-                                ));
-                            } else {
-                                distribution.push(Successor::Draw(
-                                    draw.probability,
-                                    action.identity.clone(),
-                                    draw.random,
-                                    draw.successors.into_iter().map(|(_, post)| post).collect(),
-                                    draw.rewards,
-                                ));
-                            }
-                        }
-                        distributions.push(distribution);
-                    }
-                    distributions
-                }
+                Some(match raws.remove(&key) {
+                    Some(raw) => raw,
+                    None => raw_of(&model, meter, storage)?,
+                })
             };
-            drop(admission);
+            let cached = model_raw
+                .as_ref()
+                .and_then(|raw| expansions.get(raw))
+                .cloned();
+            let distributions = if let Some((distributions, labels)) = cached {
+                action_labels = labels;
+                distributions
+            } else {
+                let mut admission =
+                    ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
+                let distributions = if let Some((posts, rewards)) = resolution {
+                    posts
+                        .into_iter()
+                        .map(|post| {
+                            action_labels.push(None);
+                            vec![Successor::Position(
+                                rational(1),
+                                post,
+                                rewards.clone(),
+                                None,
+                            )]
+                        })
+                        .collect()
+                } else if let Some(workload) = workload {
+                    let steps = system
+                        .weighted_steps_with_budget(
+                            &model,
+                            workload,
+                            fsl_foundation::IdentityLimits::default(),
+                            &mut admission,
+                            cancel,
+                        )
+                        .map_err(|error| distribution_error(error, &mut admission))?
+                        .map_err(|stop| {
+                            ProbabilityDocumentError::Build(Box::new(match stop {
+                                fsl_eval::simulation::model::Unsteppable::NotMarkov(cause) => {
+                                    crate::ExactProbBuildIssue::NotMarkov(cause)
+                                }
+                                fsl_eval::simulation::model::Unsteppable::UndecidedSuccessor(_) => {
+                                    crate::ExactProbBuildIssue::UndecidedSuccessor
+                                }
+                            }))
+                        })?;
+                    action_labels.push(None);
+                    vec![steps
+                        .into_iter()
+                        .map(|step| {
+                            Successor::Position(step.probability, step.post, step.rewards, None)
+                        })
+                        .collect::<Vec<_>>()]
+                } else {
+                    let actions = system
+                        .actions_with_budget(
+                            &model,
+                            fsl_foundation::IdentityLimits::default(),
+                            &mut admission,
+                            cancel,
+                        )
+                        .map_err(|error| distribution_error(error, &mut admission))?
+                        .map_err(|_| {
+                            ProbabilityDocumentError::Build(Box::new(
+                                crate::ExactProbBuildIssue::UndecidedSuccessor,
+                            ))
+                        })?;
+                    if actions.is_empty() {
+                        let rewards = system.zero_rewards();
+                        action_labels.push(Some(crate::ProductAction::TerminalStutter));
+                        vec![vec![Successor::Position(
+                            rational(1),
+                            model.clone(),
+                            rewards,
+                            None,
+                        )]]
+                    } else {
+                        let mut distributions = Vec::new();
+                        for action in actions {
+                            action_labels.push(Some(crate::ProductAction::Identity(
+                                crate::Schedule::of(system, &action.identity)
+                                    .map_err(|_| ProbabilityDocumentError::Malformed)?,
+                            )));
+                            let mut distribution = Vec::new();
+                            for draw in action.draws {
+                                if draw.successors.is_empty() {
+                                    let state = system
+                                        .state_key_bytes_with_budget(
+                                            &model,
+                                            fsl_foundation::IdentityLimits::default(),
+                                            &mut admission,
+                                            cancel,
+                                        )
+                                        .map_err(|error| admission.refusal(error))?;
+                                    return Err(ProbabilityDocumentError::Build(Box::new(
+                                        crate::ExactProbBuildIssue::NotMarkov(Box::new(
+                                            fsl_eval::simulation::model::NotMarkov {
+                                                state:
+                                                    fsl_eval::simulation::StateKey::from_canonical_bytes(
+                                                        state,
+                                                    ),
+                                                transition: action.identity,
+                                                drawn_transition: draw.transition,
+                                                random: draw.random,
+                                                post_states: 0,
+                                                post_state_examples: Vec::new(),
+                                            },
+                                        )),
+                                    )));
+                                }
+                                if draw.successors.len() == 1 {
+                                    let (_, post) = draw
+                                        .successors
+                                        .into_iter()
+                                        .next()
+                                        .ok_or(ProbabilityDocumentError::Malformed)?;
+                                    distribution.push(Successor::Position(
+                                        draw.probability,
+                                        post,
+                                        draw.rewards,
+                                        None,
+                                    ));
+                                } else {
+                                    distribution.push(Successor::Draw(
+                                        draw.probability,
+                                        action.identity.clone(),
+                                        draw.random,
+                                        draw.successors.into_iter().map(|(_, post)| post).collect(),
+                                        draw.rewards,
+                                    ));
+                                }
+                            }
+                            distributions.push(distribution);
+                        }
+                        distributions
+                    }
+                };
+                drop(admission);
+                let mut distributions: Vec<Vec<Successor>> = distributions;
+                for successor in distributions.iter_mut().flatten() {
+                    if let Successor::Position(probability, post, _, post_raw) = successor {
+                        if !probability.is_zero() {
+                            *post_raw = Some(raw_of(post, meter, storage)?);
+                        }
+                    }
+                }
+                if let Some(raw) = &model_raw {
+                    charge(
+                        storage,
+                        limits.storage_bytes,
+                        u64::try_from(
+                            raw.len().saturating_mul(3).saturating_add(
+                                std::mem::size_of::<Successor>().saturating_mul(
+                                    distributions.iter().map(Vec::len).sum::<usize>(),
+                                ),
+                            ),
+                        )
+                        .unwrap_or(u64::MAX),
+                    )?;
+                    expansions.insert(raw.clone(), (distributions.clone(), action_labels.clone()));
+                }
+                distributions
+            };
             for distribution in distributions {
                 let mut choice = Vec::new();
                 for successor in distribution {
@@ -1033,7 +1098,8 @@ fn enumerate(
                         });
                         continue;
                     }
-                    let Successor::Position(probability, post, rewards) = successor else {
+                    let Successor::Position(probability, post, rewards, post_raw) = successor
+                    else {
                         return Err(ProbabilityDocumentError::Malformed);
                     };
                     poll(cancel)?;
@@ -1068,7 +1134,8 @@ fn enumerate(
                         .map_err(ProbabilityDocumentError::from)?;
                     let next = next.ok_or(ProbabilityDocumentError::Malformed)?;
                     let sums = sums.ok_or(ProbabilityDocumentError::Malformed)?;
-                    let target = key_of(&post, next, &sums, meter, storage)?;
+                    let post_raw = post_raw.ok_or(ProbabilityDocumentError::Malformed)?;
+                    let target = product_key(&post_raw, next, &sums, meter, storage)?;
                     charge(
                         storage,
                         limits.storage_bytes,
@@ -1089,6 +1156,7 @@ fn enumerate(
                                 u64::try_from(seen.len()).unwrap_or(u64::MAX),
                             ));
                         }
+                        raws.insert(target.clone(), post_raw);
                         queue.push_back((target.clone(), post, next, sums, post_truths, None));
                     }
                     choice.push(ProbabilityEdge {
