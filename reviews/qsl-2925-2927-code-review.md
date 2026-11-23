@@ -55,6 +55,14 @@ Re-review of head 31645dfc36813a83879e598d85fe71cf3b28fe9d (merge-base f98d2037)
 | FND-011 | low | Stale doc on `BoundComparison::LessOrEqual`: "The strict bound a quantile claim reduces to is written the same way". That contradicts FR-413 (a writer SHALL NOT serialize the reduced comparison) and the new behaviour | fsl-replay/src/statistical.rs:289-291 |
 | FND-012 | low | A public `StatisticalClaim::new(ClaimForm::Quantile, ..)` built without `with_quantile` is accepted, and fails only at verdict time with InternalFault `claim-bound-as-written`. The written quantile could be a required argument of a quantile constructor rather than an optional builder step | fsl-analyze/src/statistical/claim.rs:118-162; fsl-analyze/src/statistical.rs:1101-1107 |
 
+
+## New findings (disposition pass 2)
+
+Re-review of head faf6aec3dee4644e7e8d05aeb98f99584d045595 (merge-base 2665967f). Range-diff: commits 1 to 5 are identical to round 1 after the rebase; only faf6aec3 is new. Cargo was not run: titan was loaded.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-013 | low | No test covers the new `ClaimRefusal::QuantileWithoutLevel` arm: no test calls `StatisticalClaim::new(ClaimForm::Quantile, ..)` and expects the refusal | fsl-analyze/src/statistical/claim.rs:96-101 |
 ## Dispositions
 
 | FND | outcome | reason |
@@ -67,3 +75,7 @@ Re-review of head 31645dfc36813a83879e598d85fe71cf3b28fe9d (merge-base f98d2037)
 | FND-006 | fixed | #820 closes `type` to probability, quantile, mean-of-fraction and long-run-fraction, which `bound_type` matches |
 | FND-007 | deferred | QSL-2944. The reader clause is untracked in code and left untagged. One test still carries the whole FR-192-AC-9 tag (see gap FND-007) |
 | FND-008 | deferred | QSL-2942. #3552 merged as 5b9c3ec3 with the non-conformant test assertion `{"comparison": ">=", ...}` at subsystem_refutation.rs:295-297. The writer counterexample.rs:2120 is unchanged on main |
+| FND-009 | fixed | round 2: `read_positive_decimal` requires a first byte in 1..=9 and all ASCII digits; `json!("")` is now in the refusal loop |
+| FND-010 | fixed | round 2: `refinement()` writes every `initial` and `position` as `to_string()`, as FR-379 requires for every such member of `refinement_failure`. It is now consistent with the certificate locus writer (simulation.rs:247-262). refinement_safety.rs validates a written failure against the pinned `RefinementFailure` |
+| FND-011 | fixed | round 2: the doc now says the reduced strict bound is never written |
+| FND-012 | fixed | round 2: `StatisticalClaim::quantile(level, comparison, threshold, confidence)`. `new` refuses Quantile (QuantileWithoutLevel). `verdict_bound()` returns `&VerdictBound`, and the InternalFault path, `with_quantile` and `QuantileClaim` are gone (grep) |

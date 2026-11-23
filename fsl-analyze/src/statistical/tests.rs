@@ -2785,3 +2785,24 @@ fn the_quantile_is_the_nearest_rank_with_censored_samples_last() {
     );
     assert_eq!(tally_of(&[], 0).quantile(&half), None);
 }
+
+/// A quantile claim is built only through `StatisticalClaim::quantile`, which
+/// takes its written level: `new` refuses the quantile form with exactly
+/// `QuantileWithoutLevel`, whatever bound it is given, so no quantile claim
+/// reaches a verdict without the level it writes.
+#[test]
+fn a_quantile_claim_is_refused_without_its_written_level() {
+    let reduced = Bound {
+        comparison: Comparison::AtLeast,
+        threshold: ratio(19, 20),
+    };
+    assert_eq!(
+        StatisticalClaim::new(ClaimForm::Quantile, reduced, confidence(ratio(1, 100))),
+        Err(ClaimRefusal::QuantileWithoutLevel)
+    );
+    let (_, strict) = reduce_quantile(ratio(1, 2), QuantileComparison::AtLeast, int(3));
+    assert_eq!(
+        StatisticalClaim::new(ClaimForm::Quantile, strict, confidence(ratio(1, 10))),
+        Err(ClaimRefusal::QuantileWithoutLevel)
+    );
+}
