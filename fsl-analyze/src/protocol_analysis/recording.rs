@@ -3402,24 +3402,33 @@ fn observation_enabled(
     }
     if matches!(
         observation.kind,
-        ObservationKind::Send | ObservationKind::Receive
-    ) && !earlier_own_steps_observed(protocol, document, observation, &ancestry)
+        ObservationKind::Send
+            | ObservationKind::Receive
+            | ObservationKind::Event
+            | ObservationKind::Attempt
+            | ObservationKind::Effect
+            | ObservationKind::Commit
+    ) && !earlier_own_steps_precede(protocol, document, position, &ancestry)
     {
         return Some(false);
     }
     Some(true)
 }
 
-/// Whether every earlier `send` or `receive` of the observing role in each
-/// enclosing `sequence` of `observation`'s node was itself observed in the
-/// same instance: the observed step is enabled only in the state those
-/// earlier steps reach (FSpec FR-059, FR-895 "Enabledness").
-fn earlier_own_steps_observed(
+/// Whether every earlier step of the observing role in each enclosing
+/// `sequence` of the observation's node was observed in the same instance
+/// and is a causal predecessor of the observation at `position`: the step is
+/// enabled only in the state the earlier observations reach (FSpec FR-059,
+/// FR-895 "Enabledness"; ADR-027 CI-1). Steps nested in earlier `sequence`
+/// siblings count; `choice`, `parallel` and `repeat` siblings are not
+/// inspected.
+fn earlier_own_steps_precede(
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
-    observation: &Observation,
+    position: usize,
     ancestry: &[&fsl_semantics::check::CheckedControl],
 ) -> bool {
+    let observation = &document.observations[position];
     let owner_of = |node: ProtocolNodeId| {
         protocol
             .owners
@@ -3430,32 +3439,42 @@ fn earlier_own_steps_observed(
     let Some(own_role) = ancestry.last().and_then(|target| owner_of(target.node)) else {
         return true;
     };
-    ancestry.windows(2).all(|pair| {
+    let mut pending = Vec::new();
+    for pair in ancestry.windows(2) {
         let [parent, child] = pair else {
-            return true;
+            continue;
         };
-        if parent.kind.label() != "sequence" {
-            return true;
+        if parent.kind.label() == "sequence" {
+            pending.extend(
+                parent
+                    .children
+                    .iter()
+                    .take_while(|sibling| **sibling != child.node),
+            );
         }
-        let earlier = parent
-            .children
-            .iter()
-            .take_while(|sibling| **sibling != child.node);
-        earlier.into_iter().all(|sibling| {
-            let Some(control) = protocol.controls.control(*sibling) else {
-                return true;
-            };
-            if !matches!(control.kind.label(), "send" | "receive")
-                || owner_of(control.node) != Some(own_role)
+    }
+    let mut steps = Vec::new();
+    while let Some(node) = pending.pop() {
+        let Some(control) = protocol.controls.control(node) else {
+            continue;
+        };
+        match control.kind.label() {
+            "sequence" => pending.extend(control.children.iter()),
+            "send" | "receive" | "event" | "attempt" | "effect" | "commit"
+                if owner_of(control.node) == Some(own_role) =>
             {
-                return true;
+                steps.push(format!("{}::{}", protocol.name, control.path.join("::")));
             }
-            let name = format!("{}::{}", protocol.name, control.path.join("::"));
-            document.observations.iter().any(|entry| {
-                entry.node == name
-                    && entry.instance == observation.instance
-                    && entry.role_instance == observation.role_instance
-            })
+            _ => {}
+        }
+    }
+    steps.iter().all(|name| {
+        document.observations.iter().enumerate().any(|(index, entry)| {
+            index != position
+                && entry.node == *name
+                && entry.instance == observation.instance
+                && entry.role_instance == observation.role_instance
+                && causally_after(protocol, document, position, index)
         })
     })
 }
