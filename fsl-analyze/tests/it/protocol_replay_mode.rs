@@ -2628,3 +2628,59 @@ fn a_step_inside_an_inner_repeat_does_not_count_toward_the_iteration() {
         assert_nodes_satisfied(&item, &[NESTED_LEFT, NESTED_RIGHT], 14);
     }
 }
+
+/// FR-895-AC-42 (TC-2531): the cases of a `choice` do not count toward an
+/// iteration. With a `choice` taking `a` and then `b` before the inner
+/// `repeat` of the cancelling `parallel` and no `P`, the recording `a`, `A`,
+/// `L`, `R`, `Placed`, `Got`, `yes`, `b`, `B`, `L`, `R`, `Placed`, `Got`,
+/// `yes` leaves the second iteration's `L` and `R` `satisfied` in batch, as
+/// under `outstanding continue`.
+#[trace("TC-2531", "FR-895-AC-42")]
+#[test]
+fn a_choice_before_an_inner_repeat_does_not_count_toward_the_iteration() {
+    let step = |path: &str| {
+        json!({"kind": "event", "node": format!("Flow::Main::Loop::Body::{path}"),
+               "role": "Buyer", "instance": "w-1", "keys": {}, "record": {"ok": true}})
+    };
+    let pick = |case: &str| {
+        json!({"kind": "case", "node": format!("Flow::Main::Loop::Body::Pick::{case}"),
+               "role": "Buyer", "instance": "w-1", "keys": {}})
+    };
+    let round = |case: &str, lead: &str, message: &str| {
+        [
+            pick(case),
+            step(&format!("Pick::{case}::{lead}")),
+            step("Inner::IBody::Both::left::Left::L"),
+            step("Inner::IBody::Both::right::Right::R"),
+            looped("send", "Placed", "Buyer", message),
+            looped("receive", "Got", "Seller", message),
+            looped_case("yes"),
+        ]
+    };
+    let mut all = Vec::new();
+    all.extend(round("a", "CA::A", "m-1"));
+    all.extend(round("b", "CB::B", "m-2"));
+    for outstanding in ["cancel", "continue"] {
+        let source = nested_repeat_cancel_protocol(
+            "choice Pick by Buyer visible () { case a when { true } sequence CA { event A by Buyer as (a: Ack) { true }; } case b when { false } sequence CB { event B by Buyer as (b: Ack) { true }; } } ",
+        )
+        .replace("outstanding cancel", &format!("outstanding {outstanding}"));
+        let item = nested_cancel_item(
+            &format!("replay-choice-before-repeat-{outstanding}"),
+            &source,
+            Value::Array(all.clone()),
+            &[0, 1, 2, 3, 4, 7, 8, 9, 10, 11],
+            &[5, 6, 12, 13],
+            &[(4, 5), (11, 12)],
+        );
+        // Only the second iteration is asserted: QSL-3009 makes the first
+        // iteration's `L` and `R` violated, whatever the join policy.
+        for node in [NESTED_LEFT, NESTED_RIGHT] {
+            assert_eq!(
+                node_verdicts_in(&item, node).get(1).map(String::as_str),
+                Some("satisfied"),
+                "{outstanding} {node}: {item}"
+            );
+        }
+    }
+}

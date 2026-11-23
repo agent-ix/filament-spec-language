@@ -55,6 +55,13 @@ Head 16961b0ca6dbaf413ef426d9f87b5416e1fe2659. No new gap-analysis finding: the 
 | --- | --- | --- |
 | FND-003 | fixed | AC-39 test a_cancel_in_nested_repeats_cancels_per_iteration_of_each: legit two outer iterations (batch, every prefix, monotone, last equals batch), the violated R, and the undetermined no-P case |
 
-## Dispositions (fix round 4)
+## New findings (disposition pass 4, final)
 
-No new finding in this pass; the iteration derivation changed as stated in the code-review dispositions (FND-010, FND-011, FND-012).
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-004 | low | No test covers SR-3608001 FND-012 (steps under a `case` before the inner `repeat`). A test need not hit QSL-3009: over the probe C3 shape (choice a then b before the inner `repeat`, no `P`) assert only the second outer iteration's `L` and `R` batch verdicts `satisfied`, as under `continue`; the round-3 code gave them `violated`. Leave out the first iteration's verdicts and the all-obligation monotonicity helper, which QSL-3009 breaks | fsl-analyze/tests/it/protocol_replay_mode.rs:2540-2640 |
+
+## Dispositions (round 4)
+
+No open finding from earlier rounds. AC-40 (`a_skipped_branch_step_does_not_shift_the_iteration`) and AC-41
+(`a_step_inside_an_inner_repeat_does_not_count_toward_the_iteration`) back SR-3608001 FND-010 and FND-011.

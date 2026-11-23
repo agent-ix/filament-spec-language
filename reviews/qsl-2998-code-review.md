@@ -102,10 +102,28 @@ every other case as undetermined. That subsumes rules 28 and 29 and keeps rule 3
 | FND-008 | fixed | every enclosing repeat whose body holds both the parallel and the step is matched (repeat_iteration); probe N shape all satisfied (AC-39); three-deep nesting probe D sound. Residual soundness gaps in repeat_iteration are FND-010 to FND-012 |
 | FND-009 | fixed | the invariant is stated at the continue (package route refuses selection of a protocol with a parallel, rule 25); acceptable for a low |
 
-## Dispositions (fix round 4)
+## New findings (disposition pass 4, final)
 
-| Finding | Disposition |
-| --- | --- |
-| FND-010 (skipped iteration shifts the rank) | Fixed. `repeat_iteration` no longer ranks a node's observations; a repeat's iteration comes only from a step that runs once in every iteration (a step on the body's main sequence, at or before the step in program order), counted causally at or before the step. Test `a_skipped_branch_step_does_not_shift_the_iteration` (FR-895-AC-40): `P`, `L`, `Placed`, `Got`, `yes`, `P`, `L`, `R`, `Placed`, `Got`, `yes` leaves the second `R` satisfied in batch and every prefix, under `outstanding cancel` and `outstanding continue`. |
-| FND-011 (steps in an inner repeat over-counted) | Fixed. A step in an inner `repeat` never counts. Test `a_step_inside_an_inner_repeat_does_not_count_toward_the_iteration` (FR-895-AC-41), both outstanding policies. |
-| FND-012 (cases counted separately) | Fixed in the code: a step under a `case` never counts toward an iteration (rule 30). No test is added: the recording `a`, `L`, `R`, `Placed`, `Got`, `yes`, `b`, `L`, `R`, `Placed`, `Got`, `yes` over a `choice` before an inner `repeat` makes the first `L` `violated` in the prefix that shows `b`, under `outstanding continue` as well as `cancel`. That is the out-of-diff defect in merged #3595 code (a prefix verdict reversing with a choice before an inner repeat), a child ticket of QSL-2885, outside this PR. |
+Head e2c54e6b4c369708c08bc1da650bee5f25ec44b9; `git diff origin/main...head` holds no `dbg`, `eprintln!` or `println!`. Titan, coder's
+worktree at e2c54e6b, clean: `--test it` 6-filter set 104 passed, 0 failed; `--lib a_refused_prefix` 2 passed. Probes ran as a scratch test,
+each recording under `outstanding cancel` and `outstanding continue`, and were reverted (tree clean after). No legitimate recording gives a
+cancel-only violation: two inner repeats with the first run twice (T), choice before the inner repeat with and without `P` (C3, C2),
+`P`; choice; parallel in a single repeat with cases a then b (C5), a choice after the inner repeat (C6), only once-per-iteration steps after
+the parallel (O), skipped branch (S), three-deep nesting legit, skipped inner branch, and Mid run zero times then twice (D, D3, D4). Each
+violating shape gives exactly the late `R` `violated` and nothing else (Tv, C5v, C6v, D2). With no once-per-iteration step before the
+parallel the late `R` is missed, not false (Ov), as rule 31 states. Cancel verdicts monotone; last prefix equals batch in every probe.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-013 | low | `body.children.iter().scan(false, ..)` takes the children through `on_path` inclusive and silently takes them all if `on_path` is absent; `let end = body.children.iter().position(|child| *child == on_path.node)?;` then `body.children[..=end]` states the intent and fails closed | fsl-analyze/src/protocol_analysis/recording.rs:4288-4296 |
+
+Out of this diff (QSL-3009): the choice-with-different-cases reversal also shows in a single-level `repeat` (C5) and with the choice after
+the inner `repeat` (C6), on an obligation other than the cancel nodes; under `continue` too.
+
+## Dispositions (round 4)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-010 | fixed | iteration from once-per-iteration main-sequence steps only; skipped branch no longer shifts it (AC-40; probe S) |
+| FND-011 | fixed | steps in an inner repeat never count (rule 30; AC-41; probe T with I1 twice, Tv) |
+| FND-012 | fixed | steps under a case never count; probes C2, C3, C5, C6 give no cancel-only violation; no test (SR-3608002 FND-004) |

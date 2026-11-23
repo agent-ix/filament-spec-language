@@ -60,9 +60,20 @@ prefix equals batch in every probe.
 
 No round-2 spec finding was open; FND-004 stays fixed (rules 26 and 27 now split the same-iteration condition, one requirement each).
 
-## Dispositions (fix round 4)
+## Dispositions (round 4)
+
+Head e2c54e6b4c369708c08bc1da650bee5f25ec44b9. `quire validate` on FR-895 and TC-2531: exit 0. Rules 28 to 31 match `repeat_iteration`
+(main-sequence steps at or before the path; undetermined when none, unobserved, or disagreeing); one requirement each; rules 27 and 31
+cite rule 26, rule 5 cites rules 19 to 23; AC-37 to AC-41 in order; TC-2531 scope reaches AC-41.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-005 | fixed | rules 28 to 31 take the iteration only from once-per-iteration main-sequence steps; probes give no false cancel violation |
+| FND-006 | fixed | rule 29 names all three undetermined cases: no such step, not observed at or before, counts disagree |
+
+## Dispositions (trailing commit)
 
 | Finding | Disposition |
 | --- | --- |
-| FND-005 (rules 28 to 30) | Fixed. Rules 28 to 31 now state one requirement each: the iteration comes only from a step that runs exactly once in every iteration (28), when it is not determined (29), what does not count (30), and that an undetermined iteration is not counted toward rule 26 (31). Rules 32 and 33 renumbered. |
-| FND-006 (low, undetermined case) | Fixed in rule 29: not determined when no such step lies at or before the step in program order, when such a step was not observed at or before it, or when the counts differ. |
+| SR-3608001 FND-013 (`scan` takes all children when `on_path` is missing) | Fixed: `repeat_iteration` takes the position of `on_path` in the body's children and returns undetermined when it is missing, then reads `children[..=end]`. |
+| SR-3608002 FND-004 (FND-012 untested) | Fixed: test `a_choice_before_an_inner_repeat_does_not_count_toward_the_iteration` (FR-895-AC-42): choice `a` then `b` before the inner repeat, no `P`; only the second iteration's `L` and `R` batch verdicts are asserted `satisfied`, under cancel and continue. The first iteration is not asserted (QSL-3009). |

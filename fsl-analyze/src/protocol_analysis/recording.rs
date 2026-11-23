@@ -4284,16 +4284,13 @@ fn repeat_iteration(
     if body.kind.label() != "sequence" {
         return None;
     }
-    let counters: Vec<String> = body
+    let end = body
         .children
         .iter()
-        .scan(false, |passed, child| {
-            if *passed {
-                return None;
-            }
-            *passed = *child == on_path.node;
-            Some(*child)
-        })
+        .position(|child| *child == on_path.node)?;
+    let counters: Vec<String> = body.children[..=end]
+        .iter()
+        .copied()
         .filter_map(|child| protocol.controls.control(child))
         .filter(|control| {
             matches!(
