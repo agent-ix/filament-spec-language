@@ -1336,7 +1336,13 @@ fn clock_reference_enumeration_on_the_source_route() {
     fn bounds<'a>(
         world: &'a World,
         input: fsl_eval::simulation::model::ModelCheckInput<'a>,
-    ) -> Result<Result<(), NotSimulated>, fsl_semantics::model::observation::AdmissionFailure> {
+    ) -> Result<
+        (
+            Result<(), NotSimulated>,
+            Vec<filament_exact::ObjectReference>,
+        ),
+        fsl_semantics::model::observation::AdmissionFailure,
+    > {
         let result = ModelSystem::new(ModelSimulationRequest {
             emit: fsl_package::EmitLimits::fixture(),
             input,
@@ -1357,8 +1363,12 @@ fn clock_reference_enumeration_on_the_source_route() {
             },
             meter: METER,
         });
-        result
-            .map(|system| fsl_eval::simulation::model::check_model_bounds(&system, BOUND_POSITIONS))
+        result.map(|system| {
+            (
+                fsl_eval::simulation::model::check_model_bounds(&system, BOUND_POSITIONS),
+                system.clock_reference_identities().to_vec(),
+            )
+        })
     }
     for (document, bounded) in [
         (
@@ -1373,6 +1383,27 @@ fn clock_reference_enumeration_on_the_source_route() {
             fsl_eval::simulation::model::ModelCheckInput::source(&world.package),
         )
         .expect("source Clock-reference data members construct");
+        let (result, identities) = result;
+        // The declared scalar places of the one admitted owner `c`: x and y.
+        // An unbounded collection place contributes none.
+        let mut places: Vec<_> = identities
+            .iter()
+            .map(|reference| {
+                let identity =
+                    fsl_semantics::model::clock_reference::identity::PlaceIdentity::decode(
+                        reference.object().as_str(),
+                        quire_canonical::Limits::new(1 << 16),
+                    )
+                    .expect("a canonical place identity");
+                assert_eq!(identity.owner, "c");
+                assert!(identity.indices.is_empty());
+                format!("{:?}", identity.template.path)
+            })
+            .collect();
+        places.sort();
+        places.dedup();
+        assert_eq!(identities.len(), 2, "{identities:?}");
+        assert_eq!(places.len(), 2, "two distinct declared places");
         if bounded {
             assert!(result.is_ok(), "{result:?}");
         } else {

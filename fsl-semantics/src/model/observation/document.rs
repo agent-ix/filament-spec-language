@@ -1202,6 +1202,7 @@ pub(super) struct References<'a> {
     /// Validated data references to declared clock places, never objects.
     clock_references: Vec<(String, ObjectReference)>,
     population_nodes: BTreeMap<String, filament_exact::NodeKey>,
+    population_keys: BTreeMap<String, DeclarationKey>,
     origins: ReferenceOriginBuilder,
     pub(super) parameter_origins: BTreeMap<String, ReferenceOrigins>,
     pub(super) result_origins: ReferenceOrigins,
@@ -1223,6 +1224,7 @@ impl<'a> References<'a> {
         populations: &'a [RawPopulation],
     ) -> Result<Self, AdmissionFailure> {
         let mut population_nodes = BTreeMap::new();
+        let mut population_keys = BTreeMap::new();
         for view in views {
             for record in &view.view.domain_package().records {
                 if let crate::model::domain_package::DomainPackageRecord::Population(population) =
@@ -1235,6 +1237,9 @@ impl<'a> References<'a> {
                     population_nodes
                         .entry(population.key.node.clone())
                         .or_insert(node);
+                    population_keys
+                        .entry(population.key.node.clone())
+                        .or_insert_with(|| population.key.clone());
                 }
             }
         }
@@ -1267,6 +1272,7 @@ impl<'a> References<'a> {
             unresolved: Vec::new(),
             clock_references: Vec::new(),
             population_nodes,
+            population_keys,
             origins: ReferenceOriginBuilder::default(),
             parameter_origins: BTreeMap::new(),
             result_origins: ReferenceOrigins::default(),
@@ -1426,17 +1432,100 @@ impl<'a> References<'a> {
         Ok(target)
     }
 
-    /// Transported Clock DATA remains unsupported until both routes have
-    /// completed end-to-end declaration and owner admission. The shared
-    /// codec and trusted same-run values do not authorize RAW input.
+    /// Admit transported Clock DATA (FR-106 AC-72, AC-73, AC-76): a `place/v2`
+    /// identity names a declared clock place of an object of the snapshot's own
+    /// population. It is validated against the authenticated declaration table
+    /// and the actual owner; no allocation ordinal or map key is consulted.
     fn resolve_clock(
         &mut self,
-        _reference: &SelectedObject,
+        reference: &SelectedObject,
     ) -> Result<ObjectReference, AdmissionRecord> {
-        Err(
+        use crate::model::clock_reference::{
+            encode_identity, identity::DeclarationScope, is_declared_identity,
+            is_declared_owner_scope,
+        };
+        let missing_representation = || {
             admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
-                .with("reason", "missing-route-neutral-place-identity"),
+                .with("reason", "missing-type-representation")
+        };
+        let Some(table) = self
+            .views
+            .iter()
+            .find_map(|view| view.clock_declarations.as_ref())
+        else {
+            return Err(
+                admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
+                    .with("reason", "missing-route-neutral-place-identity"),
+            );
+        };
+        let limits = fsl_foundation::IdentityLimits::default();
+        let identity = super::decode_clock_identity(&reference.key, limits)?;
+        let (Some(node), Some(declaration)) = (
+            self.population_nodes.get(&reference.population),
+            self.population_keys.get(&reference.population),
+        ) else {
+            return Err(admission_record(Code::InvalidRuntimeInput, "invalid-value"));
+        };
+        let source = table.source_declarations();
+        let scope = match source
+            .declaration_scope_for_node(node)
+            .or_else(|| source.catalog_scope(declaration))
+        {
+            Some(scope) => scope.clone(),
+            // A declaration with no retained provenance is an original model
+            // declaration named by its own package and node.
+            None => source
+                .scope(declaration)
+                .map_err(|_| missing_representation())?,
+        };
+        let scope = &scope;
+        if matches!(scope, DeclarationScope::Source { .. }) {
+            return Err(missing_representation());
+        }
+        let dangling = || {
+            admission_record(
+                Code::DanglingReference,
+                "absent-target-in-complete-population",
+            )
+        };
+        let wire = (reference.population.as_str(), identity.owner.as_str());
+        let Some(owner) = self.admitted.get(&wire).cloned() else {
+            if self
+                .completeness
+                .get(reference.population.as_str())
+                .copied()
+                != Some(false)
+            {
+                return Err(dangling());
+            }
+            // An incomplete population need not list the owner (check 7).
+            let tolerated = object_reference(
+                self.views,
+                crate::check::clock_reference_target(),
+                &reference.key,
+            )
+            .map_err(|_| admission_record(Code::InvalidRuntimeInput, "invalid-value"))?;
+            self.clock_references
+                .push((reference.population.clone(), tolerated.clone()));
+            return Ok(tolerated);
+        };
+        if &identity.population != scope
+            || !is_declared_owner_scope(&identity.template.scope, &owner, table, self.types)
+        {
+            return Err(admission_record(Code::InvalidRuntimeInput, "invalid-value"));
+        }
+        if !is_declared_identity(&identity, scope, &owner, table, self.types) {
+            return Err(dangling());
+        }
+        let admitted = encode_identity(
+            &owner,
+            &identity,
+            quire_canonical::Limits::new(limits.input_bytes),
         )
+        .map_err(|_| admission_record(Code::InvalidRuntimeInput, "invalid-value"))?;
+        self.clock_references
+            .push((reference.population.clone(), admitted.clone()));
+        Ok(admitted)
     }
 }
 
@@ -2488,6 +2577,7 @@ pub fn admit_record_sample(
         unresolved: Vec::new(),
         clock_references: Vec::new(),
         population_nodes: BTreeMap::new(),
+        population_keys: BTreeMap::new(),
         origins: ReferenceOriginBuilder::default(),
         parameter_origins: BTreeMap::new(),
         result_origins: ReferenceOrigins::default(),
@@ -3631,12 +3721,16 @@ pub(super) fn admit_population_values<'t>(
                                 "{field_path}{}",
                                 pointer_of(&refusal_steps(raw.form(), &record))
                             );
+                            let mut steps =
+                                snapshot_field_steps(population_index, object_index, name);
+                            steps.extend(record.path.iter().cloned());
                             refuse(
                                 record
                                     .with("object", object.key.clone())
                                     .with("population", entry.population.clone())
                                     .with("field", name.to_owned())
-                                    .with("path", refusal_path),
+                                    .with("path", refusal_path)
+                                    .at(steps),
                             )
                         })?;
                 let origins = references.take_origins();

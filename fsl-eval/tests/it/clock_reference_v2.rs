@@ -431,7 +431,6 @@ fn assert_supplied_clock_data(
 /// complete-population admission still precedes declared-place membership.
 #[trace("FR-390-AC-23", "TC-464")]
 #[test]
-#[ignore = "QSL-2897: enumeration is built; these still need raw-v2 Clock DATA admission (FR-106-AC-72/73/76/77: Source missing-route-neutral-place-identity, Bare missing-type-representation)"]
 fn supplied_clock_data_validates_owner_population_on_source_and_bare() {
     let checked = fixture(false);
     let package = CheckedPackage::link(checked.graph);
@@ -530,7 +529,6 @@ fn supplied_clock_data_validates_owner_population_on_source_and_bare() {
 
 #[trace("TC-464", "TC-3084", "FR-106-AC-72", "FR-106-AC-76")]
 #[test]
-#[ignore = "QSL-2897: enumeration is built; these still need raw-v2 Clock DATA admission (FR-106-AC-72/73/76/77: Source missing-route-neutral-place-identity, Bare missing-type-representation)"]
 fn actual_clock_references_roundtrip_as_data_through_source_and_bare() {
     let checked = fixture(false);
     let package = CheckedPackage::link(checked.graph);
@@ -704,7 +702,6 @@ fn actual_clock_references_roundtrip_as_data_through_source_and_bare() {
 
 #[trace("TC-464", "FR-106-AC-73", "FR-106-AC-76")]
 #[test]
-#[ignore = "QSL-2897: enumeration is built; these still need raw-v2 Clock DATA admission (FR-106-AC-72/73/76/77: Source missing-route-neutral-place-identity, Bare missing-type-representation)"]
 fn removing_x_never_rebinds_its_actual_reference_to_y_at_the_reused_ordinal() {
     let checked = fixture(false);
     let package = CheckedPackage::link(checked.graph);
@@ -888,7 +885,6 @@ fn removing_x_never_rebinds_its_actual_reference_to_y_at_the_reused_ordinal() {
 /// dangling outcome for an old field removed from the correct declaration.
 #[trace("TC-464", "FR-230-AC-45")]
 #[test]
-#[ignore = "QSL-2897: enumeration is built; these still need raw-v2 Clock DATA admission (FR-106-AC-72/73/76/77: Source missing-route-neutral-place-identity, Bare missing-type-representation)"]
 fn clock_reference_scope_disagreement_is_invalid_input_on_source_and_bare() {
     use filament_eval::{CallAdmissionFailure, CallAdmissionLocus, CallFailure};
     use fsl_semantics::model::clock_reference::identity::{DeclarationScope, PlaceIdentity};
@@ -1148,7 +1144,6 @@ fn clock_reference_scope_disagreement_is_invalid_input_on_source_and_bare() {
 /// each same original declaration retain one entry and admit real data.
 #[trace("FR-106-AC-77", "TC-464")]
 #[test]
-#[ignore = "QSL-2897: enumeration is built; these still need raw-v2 Clock DATA admission (FR-106-AC-72/73/76/77: Source missing-route-neutral-place-identity, Bare missing-type-representation)"]
 fn declared_table_collision_refuses_both_origins_and_aliases_admit_on_both_routes() {
     use fsl_semantics::model::clock_reference::normalization::ClockDeclarationTable;
     use fsl_semantics::model::observation::ModelSelections;
@@ -1265,11 +1260,12 @@ fn declared_table_collision_refuses_both_origins_and_aliases_admit_on_both_route
     }
 }
 
-/// RAW Clock DATA is an explicit implementation boundary. Source refusal
-/// keeps its actual value locus; Bare may stop earlier at type projection.
+/// Source admits a declared Clock identity and refuses an undeclared or
+/// malformed one at its actual value locus (FR-106 AC-72, AC-73). The Bare
+/// route stops earlier, at type projection.
 #[trace("FR-106", "TC-464")]
 #[test]
-fn raw_clock_data_has_explicit_source_and_bare_refusals() {
+fn raw_clock_data_admits_declared_and_refuses_undeclared_identities() {
     let checked = fixture(false);
     let package = CheckedPackage::link(checked.graph);
     let read = fsl_package::read_evaluation_package(
@@ -1320,33 +1316,48 @@ fn raw_clock_data_has_explicit_source_and_bare_refusals() {
             &identity(),
             ObservationLimits::default(),
         );
-        let ObservationAdmission::Refused(record) = source else {
-            panic!("explicit Source boundary: {source:?}")
+        let catalog = if target == expected_place("c1", "x") {
+            assert!(
+                matches!(source, ObservationAdmission::Admitted(_)),
+                "the declared place admits: {source:?}"
+            );
+            None
+        } else if target.starts_with("place/v2/") {
+            Some(CatalogCode::new(
+                "dangling_reference",
+                "absent-target-in-complete-population",
+            ))
+        } else {
+            Some(CatalogCode::new("invalid_runtime_input", "invalid-value"))
         };
-        assert_eq!(
-            record,
-            AdmissionRecord {
-                catalog: CatalogCode::new("unknown_required_feature", "unsupported-feature"),
-                fields: BTreeMap::from([
-                    ("reason", "missing-route-neutral-place-identity".to_owned()),
-                    ("document", identity().identity),
-                    ("population", node(CLOCKS, "calls")),
-                    ("object", "c1".to_owned()),
-                    ("field", "r".to_owned()),
-                    ("target", target),
-                    ("path", "/populations/0/objects/0/fields/r".to_owned()),
-                ]),
-                path: vec![
-                    PathStep::Field("populations".to_owned()),
-                    PathStep::Index(0),
-                    PathStep::Field("objects".to_owned()),
-                    PathStep::Index(0),
-                    PathStep::Field("fields".to_owned()),
-                    PathStep::Field("r".to_owned())
-                ],
-                kernel: None,
-            }
-        );
+        if let Some(catalog) = catalog {
+            let ObservationAdmission::Refused(record) = source else {
+                panic!("typed Source refusal: {source:?}")
+            };
+            assert_eq!(
+                record,
+                AdmissionRecord {
+                    catalog,
+                    fields: BTreeMap::from([
+                        ("document", identity().identity),
+                        ("population", node(CLOCKS, "calls")),
+                        ("object", "c1".to_owned()),
+                        ("field", "r".to_owned()),
+                        ("target", target),
+                        ("path", "/populations/0/objects/0/fields/r".to_owned()),
+                    ]),
+                    path: vec![
+                        PathStep::Field("populations".to_owned()),
+                        PathStep::Index(0),
+                        PathStep::Field("objects".to_owned()),
+                        PathStep::Index(0),
+                        PathStep::Field("fields".to_owned()),
+                        PathStep::Field("r".to_owned())
+                    ],
+                    kernel: None,
+                }
+            );
+        }
         let admission = bare.admit_protocol_observation(
             &selected,
             &checked.packages,

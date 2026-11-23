@@ -625,6 +625,35 @@ pub fn admit_protocol_reference_seeds(
     Ok(())
 }
 
+/// Decode a transported `place/v2` identity under the runtime identity limits,
+/// mapping a malformed identity to `invalid-value` and a resource refusal to
+/// its typed limit record.
+pub(super) fn decode_clock_identity(
+    text: &str,
+    limits: fsl_foundation::IdentityLimits,
+) -> Result<super::clock_reference::identity::PlaceIdentity, AdmissionRecord> {
+    use super::clock_reference::identity::{IdentityError, PlaceIdentity};
+    PlaceIdentity::decode(text, quire_canonical::Limits::new(limits.input_bytes)).map_err(|error| {
+        match error {
+            IdentityError::Canonical(quire_canonical::Error::Limit(limit))
+            | IdentityError::Read(quire_canonical::ReadError::Limit(limit)) => {
+                limit_record(&LimitExceeded::new(
+                    Setting::IdentityInputBytes,
+                    limit.bound,
+                    u128::from(limit.required),
+                ))
+            }
+            IdentityError::Canonical(quire_canonical::Error::Allocation { requested })
+            | IdentityError::Read(quire_canonical::ReadError::Allocation { requested }) => {
+                allocation_failed_record(requested)
+            }
+            IdentityError::Malformed | IdentityError::Canonical(_) | IdentityError::Read(_) => {
+                admission_record(Code::InvalidRuntimeInput, "invalid-value")
+            }
+        }
+    })
+}
+
 fn admit_protocol_clock_seed(
     types: &TypeEnvironment,
     environment: &ObjectEnvironment,
@@ -636,7 +665,7 @@ fn admit_protocol_clock_seed(
         fsl_foundation::IdentityLimits,
     )>,
 ) -> Result<(), AdmissionRecord> {
-    use super::clock_reference::identity::{DeclarationScope, IdentityError, PlaceIdentity};
+    use super::clock_reference::identity::DeclarationScope;
 
     let Some((table, limits)) = context else {
         return Err(
@@ -644,27 +673,7 @@ fn admit_protocol_clock_seed(
                 .with("reason", "clock-reference-binder-authority"),
         );
     };
-    let identity = PlaceIdentity::decode(
-        reference.object().as_str(),
-        quire_canonical::Limits::new(limits.input_bytes),
-    )
-    .map_err(|error| match error {
-        IdentityError::Canonical(quire_canonical::Error::Limit(limit))
-        | IdentityError::Read(quire_canonical::ReadError::Limit(limit)) => {
-            limit_record(&LimitExceeded::new(
-                Setting::IdentityInputBytes,
-                limit.bound,
-                u128::from(limit.required),
-            ))
-        }
-        IdentityError::Canonical(quire_canonical::Error::Allocation { requested })
-        | IdentityError::Read(quire_canonical::ReadError::Allocation { requested }) => {
-            allocation_failed_record(requested)
-        }
-        IdentityError::Malformed | IdentityError::Canonical(_) | IdentityError::Read(_) => {
-            admission_record(Code::InvalidRuntimeInput, "invalid-value")
-        }
-    })?;
+    let identity = decode_clock_identity(reference.object().as_str(), limits)?;
     let declarations = table.source_declarations();
     let scope = declarations
         .declaration_scope_for_node(node)

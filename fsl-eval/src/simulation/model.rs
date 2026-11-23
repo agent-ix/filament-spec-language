@@ -16,6 +16,7 @@
 
 mod application;
 mod behaviours;
+mod clock_domain;
 mod cells;
 mod constraint;
 mod contract;
@@ -816,6 +817,9 @@ pub struct ModelSystem<'a> {
     input: ModelCheckInput<'a>,
     model: StateModel,
     universes: BTreeMap<DeclarationKey, Vec<String>>,
+    /// The clock-reference candidates of this model universe, built on first
+    /// use: index 0 without exploration selector maxima, index 1 with them.
+    clock_candidates: [std::sync::OnceLock<Vec<ObjectReference>>; 2],
     initial: Vec<ModelSimState>,
     /// FR-1000: subject-specific resolutions for checked reference literals.
     reference_bindings: ReferenceBindings,
@@ -1433,8 +1437,13 @@ impl<'a> ModelSystem<'a> {
         let input = request.input;
         let types = input.types;
         let only = selections.selections();
+        let selections = selections.with_clock_places(input.timed_models);
+        let selections = match input.clock_declarations {
+            Some(table) => selections.with_clock_declaration_table(table),
+            None => selections,
+        };
         let model = StateModel::new(
-            selections.with_clock_places(input.timed_models),
+            selections,
             types,
             request.packages,
             request.normalization,
@@ -1751,6 +1760,7 @@ impl<'a> ModelSystem<'a> {
             tuple_positions,
             clock_counts: counts,
             clock_bits: bits,
+            clock_candidates: Default::default(),
             bounded: std::sync::OnceLock::new(),
         };
         Ok(system)
@@ -2076,8 +2086,15 @@ impl<'a> ModelSystem<'a> {
         &self,
         value_type: &ValueType,
         objects: &[ObjectReference],
-        _selectors: Option<&domain::ClockSelectorMaxima>,
+        selectors: Option<&domain::ClockSelectorMaxima>,
     ) -> Option<domain::Domain> {
+        let widened;
+        let objects = if domain::clock_reference_paths(value_type, self.types).is_empty() {
+            objects
+        } else {
+            widened = [objects, self.clock_reference_candidates(selectors)].concat();
+            &widened
+        };
         let bits = match self
             .max_value_bits
             .load(std::sync::atomic::Ordering::Relaxed)
