@@ -261,6 +261,16 @@ const WORKSPACE_EMPTY: &[EmptySuite] = &[
         reason: NO_DOC_EXAMPLE,
     },
     EmptySuite {
+        source: "fsl-proptest-policy/src/lib.rs",
+        kind: SuiteKind::Tests,
+        reason: "no unit tests in src/; the crate's tests are its tests/it target",
+    },
+    EmptySuite {
+        source: "fsl-proptest-policy/src/lib.rs",
+        kind: SuiteKind::Doctests,
+        reason: NO_DOC_EXAMPLE,
+    },
+    EmptySuite {
         source: "fsl-route/src/lib.rs",
         kind: SuiteKind::Doctests,
         reason: NO_DOC_EXAMPLE,
