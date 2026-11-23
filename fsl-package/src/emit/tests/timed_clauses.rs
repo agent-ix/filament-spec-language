@@ -1598,7 +1598,8 @@ fn a_point_free_and_a_point_bound_reset_share_one_anchor() {
         .unwrap_or_else(|failure| panic!("the point-bound resets read back: {failure}"));
 }
 
-/// Reads `bytes`, an emitted package over `document`, through I2.
+/// Reads `bytes`, an emitted package over `document`, through I2. A refusal
+/// reads as its code and cause in the wire's spelling, then its locus.
 fn read_presence_package(document: &[u8], bytes: &[u8], wire: &Value) -> Result<(), String> {
     let mut evidence = CheckedPackageEvidence::new();
     for feature in wire["lock"]["required_features"]
@@ -1610,9 +1611,15 @@ fn read_presence_package(document: &[u8], bytes: &[u8], wire: &Value) -> Result<
     evidence
         .insert_domain_package_document(package_identity(document), document.to_vec())
         .expect("a fresh evidence key");
-    crate::checked_v2::read_checked_package_v2(bytes, library(), V2ReadLimits::fixture(), &evidence)
-        .map(|_| ())
-        .map_err(|failure| format!("{failure:?}"))
+    match crate::checked_v2::read_v2(bytes, library(), V2ReadLimits::fixture(), &evidence) {
+        Read::Verified { .. } => Ok(()),
+        Read::Refused(crate::checked_v2::V2ReadRefusal::Envelope { refusal, locus }) => {
+            let code = serde_json::to_value(refusal.code).expect("a code");
+            let cause = serde_json::to_value(refusal.cause).expect("a cause");
+            Err(format!("{code} {cause} {refusal:?} {locus:?}"))
+        }
+        other => Err(format!("{other:?}")),
+    }
 }
 
 /// The members of a clause body or guard part named `name`.

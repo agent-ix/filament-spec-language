@@ -8317,8 +8317,18 @@ fn walked_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
         | BodyTerm::ImplementationGuarantee(_)
         | BodyTerm::Composition(_) => {}
     }
+    // FSpec FR-772: a slot domain's path ends in the result type's operand
+    // segment once, and its `semantic_type` is that same node.
+    let names_result_type = matches!(
+        &content.body,
+        BodyTerm::Application(application)
+            if application.operator == Operator::Slots
+                && content.semantic_type.as_ref() == Some(&application.result_type)
+    );
     if let Some(semantic_type) = &content.semantic_type {
-        walk.node(semantic_type);
+        if !names_result_type {
+            walk.node(semantic_type);
+        }
     }
     walk.operands
 }
