@@ -2873,11 +2873,8 @@ fn check_formula<S: SubjectSystem>(
         }));
     }
     Ok(match outcome {
-        // A lasso is evaluated from its origin (ADR-018 section 6): a clause
-        // false only at a later activation is not the refutation EN-1 found.
-        Ok(TemporalOutcome::Violated { at }) if payload.lasso.is_some() && at.index() != 0 => {
-            (disagrees(Category::Success), Vec::new())
-        }
+        // A clause false from any activation, an `on each` activation after
+        // the origin included, is the refutation (FR-128).
         Ok(TemporalOutcome::Violated { .. }) => (
             ModelTraceSettlement::Reproduced {
                 value: ModelTraceValue::Truth(false),
