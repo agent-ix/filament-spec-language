@@ -1139,6 +1139,7 @@ dependencies = [
  "fsl-semantics",
  "fsl-source",
  "ix-trace-rs",
+ "jsonschema 0.17.1",
  "num-bigint",
  "num-integer",
  "num-traits",

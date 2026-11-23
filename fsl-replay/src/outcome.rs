@@ -3770,6 +3770,25 @@ fn category_str<S: Serializer>(category: &Category, serializer: S) -> Result<S::
     serializer.serialize_str(category.as_str())
 }
 
+/// FR-286-AC-40 (tests): the document holding `diagnostic` validates against
+/// `OUTCOME_SCHEMA_1`; returns the diagnostic's wire value.
+#[cfg(test)]
+pub(crate) fn assert_diagnostic_valid(diagnostic: &OutcomeDiagnostic) -> serde_json::Value {
+    let document = OutcomeDocument::new(Operation::Check, None, Category::Refusal)
+        .with_diagnostics(vec![diagnostic.clone()]);
+    let wire: serde_json::Value =
+        serde_json::from_slice(&document.to_bytes().expect("the document serializes"))
+            .expect("the document is JSON");
+    let schema: serde_json::Value =
+        serde_json::from_str(OUTCOME_SCHEMA_1).expect("the schema is JSON");
+    let schema = jsonschema::JSONSchema::options()
+        .with_draft(jsonschema::Draft::Draft202012)
+        .compile(&schema)
+        .expect("the schema compiles");
+    assert!(schema.is_valid(&wire), "{wire}");
+    wire["diagnostics"][0].clone()
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
@@ -5800,7 +5819,7 @@ mod tests {
                 "missing",
             )
             .with_selection(Some(kind));
-            let wire = serde_json::to_value(&diagnostic).unwrap();
+            let wire = assert_diagnostic_valid(&diagnostic);
             assert_eq!(wire["selection"], name, "{wire}");
             assert_eq!(wire["hint"], text, "{wire}");
         }
@@ -5831,7 +5850,7 @@ mod tests {
             dependent: DefinitionRef::new("agent-ix", "ext.a").unwrap(),
             dependency: DefinitionRef::new("agent-ix", "ext.gone").unwrap(),
         });
-        let wire = serde_json::to_value(OutcomeDiagnostic::from_compile_refusal(&refusal)).unwrap();
+        let wire = assert_diagnostic_valid(&OutcomeDiagnostic::from_compile_refusal(&refusal));
         assert_eq!(wire["code"], "missing_import", "{wire}");
         assert_eq!(wire["cause"], "missing-selection", "{wire}");
         assert_eq!(wire["selection"], "extension-definition", "{wire}");
@@ -5845,7 +5864,7 @@ mod tests {
             identity: "test/lib".to_owned(),
         }
         .diagnostic(0);
-        let wire = serde_json::to_value(defensive).unwrap();
+        let wire = assert_diagnostic_valid(&defensive);
         assert_eq!(wire["code"], "missing_import", "{wire}");
         assert_eq!(wire["cause"], "missing-selection", "{wire}");
         assert_eq!(wire.get("selection"), None, "{wire}");

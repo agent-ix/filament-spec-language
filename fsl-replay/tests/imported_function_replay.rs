@@ -347,6 +347,13 @@ fn an_owner_the_unit_does_not_import_refuses_typed() {
 
     let document = fsl_replay::OutcomeDocument::from_replay_refusal(&refusal);
     let wire: serde_json::Value = serde_json::from_slice(&document.to_bytes().unwrap()).unwrap();
+    let schema: serde_json::Value =
+        serde_json::from_str(fsl_replay::outcome::OUTCOME_SCHEMA_1).unwrap();
+    let schema = jsonschema::JSONSchema::options()
+        .with_draft(jsonschema::Draft::Draft202012)
+        .compile(&schema)
+        .unwrap();
+    assert!(schema.is_valid(&wire), "{wire}");
     let diagnostic = &wire["diagnostics"][0];
     assert_eq!(diagnostic["code"], "missing_import", "{wire}");
     assert_eq!(diagnostic["cause"], "missing-selection", "{wire}");

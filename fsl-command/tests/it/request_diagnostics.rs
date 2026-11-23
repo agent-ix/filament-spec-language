@@ -7,6 +7,7 @@ use std::path::Path;
 use fsl_command::command::{
     self, ExportSelection, MonitorProviders, RequestExampleError, RequestOverrides, RunLimits,
 };
+use fsl_replay::Operation;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
@@ -643,5 +644,75 @@ fn the_example_entry_refuses_an_unknown_format_and_a_misplaced_selection() {
     );
     for error in [&unknown, &misplaced] {
         assert_eq!(error.code().as_str(), "invalid-request");
+    }
+}
+
+/// The serialized outcome document of the refusal the run entry gives
+/// `document`, validated against `OUTCOME_SCHEMA_1`; its one diagnostic.
+fn refusal_diagnostic(document: &Value) -> Value {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("request.json");
+    std::fs::write(&path, document.to_string()).unwrap();
+    let Err(error) = command::run_with_providers(
+        &path,
+        &Fr290,
+        Vec::new(),
+        &fsl_analyze::provider::ProviderOptions::default(),
+        &filament_exact::Cancel::new(),
+    ) else {
+        panic!("the request is refused");
+    };
+    let serialized: Value = serde_json::to_value(error.outcome_document(Operation::Execute))
+        .expect("the document serializes");
+    crate::cli_contract::assert_outcome_schema(&serialized);
+    assert_eq!(serialized["category"], "refusal", "{serialized}");
+    assert_eq!(error.category().exit_code(), 20);
+    let diagnostics = serialized["diagnostics"].as_array().unwrap();
+    assert_eq!(diagnostics.len(), 1, "{serialized}");
+    diagnostics[0].clone()
+}
+
+/// FR-286-AC-38: the refusal documents of FR-1047-AC-1 and AC-5 serialize
+/// their details in the closed vocabulary and validate.
+#[test]
+#[trace("TC-3201", "FR-286-AC-38")]
+fn request_refusal_documents_serialize_missing_and_accepted_details() {
+    let missing = refusal_diagnostic(&json!({"format": RUN, "request": {}}));
+    assert_eq!(missing["code"], "invalid-request", "{missing}");
+    assert_eq!(
+        missing["details"],
+        json!({"missing": ["/request/models", ["/request/program", "/request/package"],
+            ["/request/call", "/request/clause", "/request/items"]]}),
+        "{missing}"
+    );
+    assert_eq!(
+        missing["message"],
+        "invalid request: missing required members /request/models, /request/program | /request/package, /request/call | /request/clause | /request/items"
+    );
+    let accepted = refusal_diagnostic(&json!({"format": "native-analyze/1", "request": {}}));
+    assert_eq!(accepted["code"], "invalid-request", "{accepted}");
+    assert_eq!(
+        accepted["details"],
+        json!({"accepted": ["native-run/1", "native-monitor/1", "native-replay/1"], "path": "/format"}),
+        "{accepted}"
+    );
+    assert_eq!(
+        accepted["message"],
+        "invalid request: format native-analyze/1 is not read by run; run reads native-run/1, native-monitor/1, native-replay/1"
+    );
+}
+
+/// FR-1047-AC-9: an export `request` that is not an object is refused naming
+/// `/request`, with no `missing` list; the spec scopes it to the export entry.
+#[test]
+#[trace("TC-3202", "FR-1047-AC-9")]
+fn an_export_request_that_is_not_an_object_is_refused_naming_the_request() {
+    for request in [json!(3), json!([]), json!("x"), json!(null), json!(true)] {
+        assert_refusal(
+            Entry::Export(ExportSelection::Ordinary),
+            &json!({"format": RUN, "request": request}),
+            "invalid clause request member /request: expected an object",
+            &Value::Null,
+        );
     }
 }

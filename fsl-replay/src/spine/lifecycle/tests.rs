@@ -192,7 +192,7 @@ fn sibling_import_diagnostic_carries_its_selection() {
     .map(|_| ())
     .unwrap_err();
     let diagnostic = crate::outcome::OutcomeDiagnostic::from_compile_refusal(&refused);
-    let wire = serde_json::to_value(&diagnostic).unwrap();
+    let wire = crate::outcome::assert_diagnostic_valid(&diagnostic);
     assert_eq!(wire["code"], "missing_import", "{wire}");
     assert_eq!(wire["cause"], "missing-selection", "{wire}");
     assert_eq!(wire["selection"], "sibling-unit", "{wire}");

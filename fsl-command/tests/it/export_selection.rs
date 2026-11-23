@@ -274,22 +274,3 @@ fn an_explicit_stdin_export_is_read_once_with_regular_file_parity() {
         assert_eq!(streamed, regular);
     }
 }
-
-/// FR-1047-AC-9: a `request` that is not an object is refused naming
-/// `/request`, with no `missing` list, since it has no members to list.
-#[test]
-#[trace("TC-3202", "FR-1047-AC-9")]
-fn an_export_request_that_is_not_an_object_is_refused_naming_the_request() {
-    let directory = tempfile::tempdir().unwrap();
-    let path = directory.path().join("request.json");
-    std::fs::write(&path, br#"{"format":"native-run/1","request":3}"#).unwrap();
-    let outcome = run(&path, ExportSelection::Ordinary, RunLimits::default());
-    assert_eq!(outcome["exit"], 20, "{outcome}");
-    let diagnostic = &outcome["document"]["diagnostics"][0];
-    assert_eq!(diagnostic["code"], "invalid-request", "{outcome}");
-    assert_eq!(
-        diagnostic["message"], "invalid clause request member /request: expected an object",
-        "{outcome}"
-    );
-    assert_eq!(diagnostic["details"], Value::Null, "{outcome}");
-}

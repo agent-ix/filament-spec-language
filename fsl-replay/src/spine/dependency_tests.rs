@@ -113,7 +113,7 @@ fn missing_library_diagnostic_carries_its_selection() {
     let missing = compile_as("u", &source, &DependencyInput::default())
         .expect_err("nothing supplies test/geometry");
     let diagnostic = crate::outcome::OutcomeDiagnostic::from_compile_refusal(&missing);
-    let wire = serde_json::to_value(&diagnostic).unwrap();
+    let wire = crate::outcome::assert_diagnostic_valid(&diagnostic);
     assert_eq!(wire["code"], "missing_import", "{wire}");
     assert_eq!(wire["cause"], "missing-selection", "{wire}");
     assert_eq!(wire["selection"], "library", "{wire}");

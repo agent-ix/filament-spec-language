@@ -229,6 +229,21 @@ const CONFIG_UNIT: &str = "language \"ix:native\" edition \"1-draft\";\n\
     model Config = \"example/config-version\";\n\
     invariant NoCycle using v on Config::ConfigVersion at current { not reaches(self, self, parent) }\n";
 
+/// The text `fsl check` writes for `outcome`.
+fn text_of(outcome: &command::CheckOutcome) -> String {
+    fsl_inspect::render_outcome(
+        outcome.document(),
+        fsl_inspect::RenderForm::Text,
+        &fsl_command::render_sources(outcome.sources()),
+        fsl_replay::RenderLimits::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("the document renders")
+    .value()
+    .as_str()
+    .to_owned()
+}
+
 /// The message of the one diagnostic of a refused `check_outcome`.
 fn refusal_message(path: &Path, inputs: &CheckInputs) -> (String, String) {
     let document = document(&command::check_outcome(path, inputs));
@@ -275,6 +290,10 @@ fn unselected_model_message_lists_the_identities_the_source_selects() {
         "invalid clause request member --model: --model example:shop/model is not selected by the source; the source selects: example/config-version, example/other"
     );
     assert_eq!(count, "1");
+    assert_eq!(
+        text_of(&command::check_outcome(&path, &inputs)),
+        format!("check: refusal (exit 20)\n<no-source>: invalid-request: {message}\n")
+    );
 }
 
 /// FR-866-AC-9: a unit with no `model` declaration selects no models.

@@ -83,12 +83,6 @@ pub(super) fn validate_bytes(bytes: &[u8]) -> Result<()> {
             })
         }
     }
-    if !envelope.request.get().starts_with('{') {
-        return Err(RunCause::ClauseRequest {
-            member: "/request".to_owned(),
-            reason: "expected an object".to_owned(),
-        });
-    }
     let mut duplicate_sources = false;
     let mut decoder = serde_json::Deserializer::from_str(envelope.request.get());
     let provisions = ProvisionsSeed {

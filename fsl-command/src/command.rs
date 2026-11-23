@@ -2006,9 +2006,14 @@ pub fn export_with_limits_and_overrides(
     limits: RunLimits,
     overrides: &RequestOverrides<'_>,
 ) -> std::result::Result<RunResult, Box<RunError>> {
-    with_request_limits(path, limits.request_bytes, |directory, bytes| {
-        export::run_selected_bytes(directory, bytes, selection, limits, overrides)
-    })
+    with_checked_request(
+        path,
+        limits.request_bytes,
+        export::require_object_request,
+        |directory, bytes| {
+            export::run_selected_bytes(directory, bytes, selection, limits, overrides)
+        },
+    )
 }
 
 /// FSL's run-side provider entry (FR-961): run the call the native-run/1
@@ -3989,6 +3994,17 @@ fn with_request_limits<T>(
     request_bytes: usize,
     action: impl FnOnce(&Path, &[u8]) -> Result<T>,
 ) -> std::result::Result<T, Box<RunError>> {
+    with_checked_request(path, request_bytes, |_| Ok(()), action)
+}
+
+/// [`with_request_limits`] with an entry's own check of the bytes, run before
+/// the shared provision validation.
+fn with_checked_request<T>(
+    path: &Path,
+    request_bytes: usize,
+    check: impl FnOnce(&[u8]) -> Result<()>,
+    action: impl FnOnce(&Path, &[u8]) -> Result<T>,
+) -> std::result::Result<T, Box<RunError>> {
     let bytes = read_file(path, request_bytes).map_err(|cause| {
         let cause = match cause {
             RunCause::Limit(LimitKind::FileBytes) => RunCause::Limit(LimitKind::RequestBytes {
@@ -4001,7 +4017,8 @@ fn with_request_limits<T>(
             sources: crate::Sources::default(),
         })
     })?;
-    runtime_sources::validate_bytes(&bytes)
+    check(&bytes)
+        .and_then(|()| runtime_sources::validate_bytes(&bytes))
         .and_then(|()| action(path.parent().unwrap_or(Path::new(".")), &bytes))
         .map_err(|cause| {
             Box::new(RunError {

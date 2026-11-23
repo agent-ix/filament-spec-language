@@ -354,10 +354,23 @@ fn a_library_without_a_direct_import_refuses_unknown_import() {
         assert!(refusal
             .to_string()
             .starts_with("missing_import/missing-selection"));
-        let diagnostic = serde_json::to_value(
-            fsl_replay::OutcomeDiagnostic::from_call_site_refusal(&refusal),
+        let one = fsl_replay::OutcomeDiagnostic::from_call_site_refusal(&refusal);
+        let document = fsl_replay::OutcomeDocument::new(
+            fsl_replay::Operation::Check,
+            None,
+            filament_semantic_value::catalog::Category::Refusal,
         )
-        .unwrap();
+        .with_diagnostics(vec![one]);
+        let wire: serde_json::Value =
+            serde_json::from_slice(&document.to_bytes().unwrap()).unwrap();
+        let schema: serde_json::Value =
+            serde_json::from_str(fsl_replay::outcome::OUTCOME_SCHEMA_1).unwrap();
+        let schema = jsonschema::JSONSchema::options()
+            .with_draft(jsonschema::Draft::Draft202012)
+            .compile(&schema)
+            .unwrap();
+        assert!(schema.is_valid(&wire), "{wire}");
+        let diagnostic = wire["diagnostics"][0].clone();
         assert_eq!(diagnostic["code"], "missing_import", "{diagnostic}");
         assert_eq!(diagnostic["cause"], "missing-selection", "{diagnostic}");
         assert_eq!(

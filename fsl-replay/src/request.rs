@@ -1377,9 +1377,9 @@ mod tests {
             ReplayRequest::decode(incomplete, crate::ReplayLimits::default()).unwrap_err();
         let document =
             crate::OutcomeDocument::from_replay_refusal(&crate::ReplayRefusal::Request(refused));
-        let wire: serde_json::Value =
-            serde_json::from_slice(&document.to_bytes().unwrap()).unwrap();
-        let diagnostic = &wire["diagnostics"][0];
+        let diagnostic = document.diagnostics().first().expect("one diagnostic");
+        let wire = crate::outcome::assert_diagnostic_valid(diagnostic);
+        let diagnostic = &wire;
         assert_eq!(diagnostic["code"], "missing_import", "{wire}");
         assert_eq!(diagnostic["cause"], "missing-selection", "{wire}");
         assert_eq!(diagnostic["selection"], "byte-provision", "{wire}");
