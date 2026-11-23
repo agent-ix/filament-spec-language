@@ -724,7 +724,7 @@ fn the_timed_model_writer_carries_value_validity_rows_through_a_rename() {
             .map(|node| node.node_id.clone())
             .expect("one time source")
     };
-    assert_ne!(source_id(&reread), source_id(&base), "the timed nodes are renamed");
+    assert_ne!(source_id(&*reread), source_id(&*base), "the timed nodes are renamed");
     assert_eq!(reread.requirement_items(), base.requirement_items());
     for record in reread
         .requirement_items()
