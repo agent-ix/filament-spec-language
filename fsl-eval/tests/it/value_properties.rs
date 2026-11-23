@@ -9,8 +9,8 @@
 //!
 //! Families generated: `Integer`, `Int[..]` (parameters and refused results),
 //! `div`/`rem` under each division law (euclidean, floor, truncating) and
-//! `mod`, `Rational` (nested `+`, `-`, `*`, `/` by a zero-free parameter,
-//! negation, comparison), `Decimal` under each of the six rounding modes (`+`,
+//! `mod`, `Rational` (nested `+`, `-`, `*` and negation, `/` of a leaf by a
+//! zero-free parameter, comparison), `Decimal` under each of the six rounding modes (`+`,
 //! `-`, `*`, `/`, negation, comparison), `Boolean`, `Text` length and
 //! comparison, `Option`, records, tuples, and the aggregates `sum`, `count`,
 //! `min` and `max` (as `reduce`), `exists`, `forall` over `Sequence`, `Set`
@@ -37,7 +37,9 @@
 //!   A parameter divisor is generated for the refusal properties.
 //! - A `rational(0, 1)` literal is not generated: `rational(0, 1) / d` with
 //!   `d: Rational[1, 20; 1, 9]` is refused `unproved-rational-range` although
-//!   `rational(1, 1) / d` is proved. Only the root of a rational expression is
+//!   `rational(1, 1) / d` is proved. A quotient nested in another operation
+//!   (`(rational(1, 2) / d) + a`) is refused `unproved-rational-range` or
+//!   `ambiguous-literal`, so `/` is only the root operation. Only the root of a rational expression is
 //!   typed at the declared domain; an intermediate typed at the wide domain
 //!   (for example by a `let`) is refused correctly (FR-495-AC-14), so a `let`
 //!   binds only a root.
@@ -54,13 +56,13 @@ use filament_exact::{
     ScalarLimits, TextPayload, TextProfile, TextType, Undefined, Value, ValueType,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
-use fsl_proptest_policy as prop;
-use ix_trace_rs::trace;
-use fsl_proptest_policy::value::VALUE_HEADER;
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
+use fsl_proptest_policy as prop;
+use fsl_proptest_policy::value::VALUE_HEADER;
 use fsl_semantics::check::{CheckRefusal, PackageDeclarations};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
+use ix_trace_rs::trace;
 use proptest::prelude::{any, BoxedStrategy, Just, Strategy};
 use proptest::prop_oneof;
 use proptest::test_runner::{TestCaseError, TestError};
@@ -1025,28 +1027,32 @@ fn binary(op: Op, left: Qe, right: Qe) -> Qe {
     Qe::Bin(op, Box::new(left), Box::new(right))
 }
 
-/// Nested rational operations. Only the root is typed at the declared domain;
-/// the checker infers each intermediate interval exactly.
+/// Rational operations: nested `+`, `-`, `*` and negation, or one division of
+/// a leaf at the root. Only the root is typed at the declared domain; the
+/// checker infers each intermediate interval exactly.
 fn qe_strategy(unguarded: bool) -> BoxedStrategy<Qe> {
     let literal = (1i64..=6, 1i64..=5).prop_map(|(n, d)| {
         let (n, d) = reduce(i128::from(n), i128::from(d));
         Qe::Lit(i64::try_from(n).unwrap(), i64::try_from(d).unwrap())
     });
     let leaf = prop_oneof![literal, (0usize..3).prop_map(Qe::Param)];
-    leaf.prop_recursive(2, 8, 2, move |inner| {
+    let tree = leaf.clone().prop_recursive(2, 8, 2, |inner| {
         let op = proptest::sample::select(vec![Op::Add, Op::Subtract, Op::Multiply]);
-        // A parameter divisor can be zero, so it is a `Kernel` case.
-        let safe = if unguarded {
-            any::<bool>().boxed()
-        } else {
-            Just(true).boxed()
-        };
         prop_oneof![
             inner.clone().prop_map(negate),
-            (op, inner.clone(), inner.clone()).prop_map(|(op, l, r)| binary(op, l, r)),
-            (inner, 0usize..3, safe).prop_map(|(l, p, safe)| Qe::Div(Box::new(l), p, safe)),
+            (op, inner.clone(), inner).prop_map(|(op, l, r)| binary(op, l, r)),
         ]
-    })
+    });
+    // A parameter divisor can be zero, so it is a `Kernel` case.
+    let safe = if unguarded {
+        any::<bool>().boxed()
+    } else {
+        Just(true).boxed()
+    };
+    prop_oneof![
+        4 => tree,
+        1 => (leaf, 0usize..3, safe).prop_map(|(l, p, safe)| Qe::Div(Box::new(l), p, safe)),
+    ]
     .boxed()
 }
 
@@ -1225,7 +1231,8 @@ impl DecType {
     /// Place the exact quotient `n/d` (`d` positive) at the declared scale.
     fn place(&self, n: i128, d: i128) -> Ref<i128> {
         let scaled = n * 10i128.pow(self.scale);
-        self.rounded.set(self.rounded.get() || scaled.rem_euclid(d) != 0);
+        self.rounded
+            .set(self.rounded.get() || scaled.rem_euclid(d) != 0);
         let units = round_units(scaled, d, self.mode).ok_or(Refuse::DecimalInexact)?;
         if self.admits(units) {
             Ok(units)
@@ -2064,9 +2071,7 @@ fn near_miss_is_never_evaluated_to_a_value() {
                         miss.source
                     )))
                 }
-                Ok(_) => {
-                    return Err(TestCaseError::fail(format!("accepted:\n{}", miss.source)))
-                }
+                Ok(_) => return Err(TestCaseError::fail(format!("accepted:\n{}", miss.source))),
             };
             for refusal in &refusals {
                 proptest::prop_assert_eq!(
@@ -2144,33 +2149,9 @@ fn near_miss_is_never_evaluated_to_a_value() {
         },
     )
     .unwrap();
-    assert_eq!(kernel_runs.get(), 256, "every zero-spanning case is evaluated");
-}
-
-#[test]
-fn probe_timing() {
-    use proptest::strategy::ValueTree;
-    let mut runner = proptest::test_runner::TestRunner::new(prop::config(1));
-    let strategy = well_typed_cases();
-    let mut sources = Vec::new();
-    let t = std::time::Instant::now();
-    for _ in 0..200 {
-        sources.push(strategy.new_tree(&mut runner).unwrap().current());
-    }
-    eprintln!("gen 200: {:?}", t.elapsed());
-    let t = std::time::Instant::now();
-    let parsed: Vec<_> = sources.iter().map(|c| parse(&c.source).unwrap()).collect();
-    eprintln!("parse 200: {:?}", t.elapsed());
-    let t = std::time::Instant::now();
-    for p in &parsed { fsl_cst::format::format(p).unwrap(); }
-    eprintln!("format 200: {:?}", t.elapsed());
-    let t = std::time::Instant::now();
-    for p in &parsed { production_tree(p); }
-    eprintln!("tree 200: {:?}", t.elapsed());
-    let t = std::time::Instant::now();
-    let pk: Vec<_> = sources.iter().filter_map(|c| try_compile(&c.source, mode_of(c)).ok()).collect();
-    eprintln!("compile(parse+check) 200: {:?} ({})", t.elapsed(), pk.len());
-    let t = std::time::Instant::now();
-    for (c, p) in sources.iter().zip(&pk) { let _ = evaluate(p, &c.args); }
-    eprintln!("eval 200: {:?}", t.elapsed());
+    assert_eq!(
+        kernel_runs.get(),
+        256,
+        "every zero-spanning case is evaluated"
+    );
 }
