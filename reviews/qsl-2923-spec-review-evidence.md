@@ -36,3 +36,13 @@ No applicable enforced AssuranceProfile was found; review set is the subset name
 - TC-3163 (spec/test-cases/TC-3163-cyclic-always-refutation-boundaries.md, examined): Verify FR-202-AC-37: both bound sides of a cyclic always claim, and the strict comparison at equality.
 - TC-3164 (spec/test-cases/TC-3164-refute-cyclic-always-over-every-scheduler.md, examined): Verify FR-202-AC-38: an every-scheduler always refutation carries and replays its deterministic memoryless witness scheduler.
 - TC-3165 (spec/test-cases/TC-3165-refute-cyclic-until.md, examined): Verify FR-202-AC-39: unwindowed until over a cyclic workload chain is refuted through the event-avoidance subsystem certificate on either bound side.
+
+## Dispositions
+
+Round 1, fix commit ab6cad3cda1b25490823424c05fce8c90fd260ec (diff d54fb98..ab6cad3).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Verified in ab6cad3 by hand; see after_excerpt in the Linear dispositions comment. |
+| FND-002 | fixed | Verified in ab6cad3 by hand; see after_excerpt in the Linear dispositions comment. |
+| FND-003 | fixed | Verified in ab6cad3 by hand; see after_excerpt in the Linear dispositions comment. |

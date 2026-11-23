@@ -42,3 +42,15 @@ No applicable enforced AssuranceProfile was found; review set is the subset name
 - FR-202 (spec/functional/FR-202-replay-a-probabilistic-witness.md, context_only): For a long-run certificate the entry SHALL run the independent FR-412 `long-run` checker over the rebuilt chain, including complete bottom component coverage and each gain-bias equation, then apply the strict refutation comparison in Behavior above. For an expected-reward certificate it SHALL run the independent FR-412 `lower` or `upper` checker over the rebuilt chain, including properness ranking when required, then apply the strict comparison. For an event-avoidance certificate it SHALL independently derive the induced chain's event-free bottom components, check the certificate's lower bo...
 - FR-202-AC-34 (spec/functional/FR-202-replay-a-probabilistic-witness.md, context_only): For the unwindowed `eventually` variation under every scheduler without a `random` line, claim `probability >= 1/2` has value 0. EN-5 emits a deterministic memoryless scheduler and an event-avoidance `lower` subsystem certificate with initial lower bound `> 1/2`; replay independently derives the event-free bottom component, checks the certificate and strict complement comparison, and settles `refuted`. A cyclic avoiding chain is accepted without a finite path set; a component containing an event state, a missing scheduler, or equality yields no token.
 - FR-201-AC-11 (spec/functional/FR-201-check-a-probability-certificate.md, context_only): Minimum AtLeast, maximum AtMost and resolved-workload exact proofs pass the profile checker at an attained threshold; a threshold strictly beyond the certified initial value fails. Unbounded cyclic, timed, reward, fair, multi-initial and multi-binding cases, bounded forms outside the admitted subset and non-exact kinds return explicit unsupported with no accepted certificate. Pre-cancelled input and exhausted byte/state/edge/arithmetic budgets stop without a truth value.
+
+## Dispositions
+
+Round 1, fix commit ab6cad3cda1b25490823424c05fce8c90fd260ec (diff d54fb98..ab6cad3).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Verified in ab6cad3 by hand; see after_excerpt in the Linear dispositions comment. |
+| FND-002 | fixed | Verified in ab6cad3 by hand; see after_excerpt in the Linear dispositions comment. |
+| FND-003 | fixed | Verified in ab6cad3 by hand; see after_excerpt in the Linear dispositions comment. |
+| FND-004 | deferred | Tracked in QSL-2936 (FSpec FR-412/FR-413: event-avoidance certificate for unwindowed always/until and the <= side; no path set on cyclic subjects), cited in the PR body. Out of scope for this FSL PR. |
+| FND-005 | fixed | Verified in ab6cad3 by hand; see after_excerpt in the Linear dispositions comment. |

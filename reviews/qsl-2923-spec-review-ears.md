@@ -31,3 +31,12 @@ No applicable enforced AssuranceProfile was found; review set is the subset name
 - FR-202 (spec/functional/FR-202-replay-a-probabilistic-witness.md, examined): For the unbounded and infinite-trace subsets this entry SHALL report a cyclic subject unsupported, without a token. Such a subject's refutation is the checked-subject subsystem entry's (Emission above); EN-5 SHALL NOT settle the item `unsupported` because this entry does not admit it. The checked-subject path-set subsets SHALL report unsupported for subsystem evidence, randomized schedulers, fairness, multiple initial states/instances, timed or other claim forms outside this slice. It SHALL NOT project them onto this slice. Mean subsystem evidence uses the separate checked-subject mean-cert...
 - FR-201 (spec/functional/FR-201-check-a-probability-certificate.md, examined): Admission SHALL require the existing unbounded acyclic model graph apart from implicit terminal stutter ... Cyclic, nested temporal, bounded, event-predicate and other profile/optimization/kind cases SHALL remain explicitly unsupported. ... Refutations of until and always over a cyclic subject use FR-202's checked-subject subsystem entry; they do not widen this proof profile's acyclic admission.
 - FR-201 (spec/functional/FR-201-check-a-probability-certificate.md, examined): FR-202's checked-subject entry separately admits the specified untimed eventual, always, until, long-run and expected-reward subsystem refutations, including over cyclic subjects; this does not widen proof-side admission or threshold checks.
+
+## Dispositions
+
+Round 1, fix commit ab6cad3cda1b25490823424c05fce8c90fd260ec (diff d54fb98..ab6cad3).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Verified in ab6cad3 by hand; see after_excerpt in the Linear dispositions comment. |
+| FND-002 | fixed | Verified in ab6cad3 by hand; see after_excerpt in the Linear dispositions comment. |
