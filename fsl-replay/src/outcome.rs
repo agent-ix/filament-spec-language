@@ -2586,8 +2586,8 @@ impl OutcomeDiagnostic {
     }
 
     fn for_operation(operation: Operation, refusal: &CompileRefusal, mut diagnostic: Self) -> Self {
-        if let (Operation::Replay, CompileRefusal::Limit(limit)) = (operation, refusal) {
-            diagnostic.message = limit.render(RequestKind::Replay).to_string();
+        if operation == Operation::Replay && refusal.limit().is_some() {
+            diagnostic.message = refusal.render_for(RequestKind::Replay);
         }
         diagnostic
     }
@@ -3752,8 +3752,7 @@ mod tests {
         assert_eq!(wire["operation"], "[]");
     }
 
-    /// Trace: FR-255-AC-3, the operation hint follows the entry point's accepted inputs.
-    #[trace("TC-931", "FR-255-AC-3", "TC-720", "FR-255-AC-2")]
+    #[trace("TC-720", "FR-255-AC-2")]
     #[test]
     fn run_limit_message_omits_stage_limits_while_replay_keeps_it() {
         let run_refusal = RunRefusal::Compile(Box::new(CompileRefusal::Limit(LimitExceeded::new(
@@ -3788,6 +3787,36 @@ mod tests {
     }
 
     #[trace("FR-1045-AC-6", "FR-100-AC-6")]
+    /// A limit reached while compiling a library keeps the library prefix and
+    /// names the replay request's `stage_limits` entry in replay output only.
+    #[trace("TC-720", "FR-255-AC-2")]
+    #[test]
+    fn a_library_limit_names_stage_limits_in_replay_output_only() {
+        let library = || CompileRefusal::Dependency {
+            path: vec![fsl_semantics::library::LibraryName::new("lib/a".to_owned()).unwrap()],
+            refusal: Box::new(CompileRefusal::Limit(LimitExceeded::new(
+                Setting::S1Tokens,
+                3,
+                4,
+            ))),
+        };
+        let replay = OutcomeDocument::from_replay(&Err(ReplayRefusal::Recompile {
+            refusal: Box::new(library()),
+            pointer: None,
+        }));
+        assert_eq!(
+            replay.diagnostics()[0].message(),
+            "the recompile refused at stage source: the library lib/a refused: S1 token limit 3 \
+             reached (4); raise it with `--limit s1.tokens=<n>` or the replay request's \
+             `stage_limits` entry `s1.tokens`"
+        );
+        assert_eq!(
+            library().to_string(),
+            "the library lib/a refused: S1 token limit 3 reached (4); raise it with \
+             `--limit s1.tokens=<n>`"
+        );
+    }
+
     #[test]
     fn post_snapshot_relationship_request_refusal_has_request_path_and_no_result() {
         let refusal = RunRefusal::RelationshipRequest {

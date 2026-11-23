@@ -278,12 +278,7 @@ impl LimitExceeded {
 /// request schema is known.
 impl core::fmt::Display for LimitExceeded {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        self.write_facts(formatter)?;
-        write!(
-            formatter,
-            "; raise it with `--limit {name}=<n>`",
-            name = self.setting.name()
-        )
+        core::fmt::Display::fmt(&self.render(RequestKind::NativeRun), formatter)
     }
 }
 

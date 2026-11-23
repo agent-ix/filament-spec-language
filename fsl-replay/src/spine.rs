@@ -468,6 +468,31 @@ pub enum CompileRefusal {
 }
 
 impl CompileRefusal {
+    /// The limit this refusal reports, directly or through the library
+    /// dependency chain whose innermost refusal it is.
+    pub fn limit(&self) -> Option<&LimitExceeded> {
+        match self {
+            Self::Limit(limit) => Some(limit),
+            Self::Dependency { refusal, .. } => refusal.limit(),
+            _ => None,
+        }
+    }
+
+    /// This refusal's message with a reached limit's advice rendered for
+    /// `request` (FR-255-AC-2), keeping the library prefix of a dependency
+    /// chain. Every other refusal renders as its `Display`.
+    pub fn render_for(&self, request: fsl_foundation::diagnostic::RequestKind) -> String {
+        match self {
+            Self::Limit(limit) => limit.render(request).to_string(),
+            Self::Dependency { path, refusal } => format!(
+                "the library {} refused: {}",
+                display_path(path),
+                refusal.render_for(request)
+            ),
+            other => other.to_string(),
+        }
+    }
+
     /// The catalog code of this refusal: the stage cause's own.
     pub fn code(&self) -> Code {
         match self {
