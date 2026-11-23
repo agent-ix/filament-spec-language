@@ -449,7 +449,7 @@ fn unbounded_operation_contract_item_is_written_requires_bound() {
     );
 }
 
-/// FR-290-AC-20, FR-281-AC-24, FR-621-AC-18, FR-286-AC-31: a refuted
+/// FR-290-AC-20, FR-281-AC-24, FR-621-AC-18: a refuted
 /// provider verdict carrying each closed unusable-counterexample reason in
 /// turn settles `inconclusive`/`replay-parity` with no `counterexample` or
 /// `replay`, exactly one item `diagnostics` entry spelling the reason, and
@@ -458,7 +458,6 @@ fn unbounded_operation_contract_item_is_written_requires_bound() {
 #[trace("TC-774", "FR-290-AC-20")]
 #[trace("TC-774", "FR-281-AC-24")]
 #[trace("TC-774", "FR-621-AC-18")]
-#[trace("TC-774", "FR-286-AC-31")]
 #[test]
 fn each_unusable_provider_counterexample_reason_settles_replay_parity_with_one_item_diagnostic() {
     use fsl_analyze::provider::UnusableCounterexample as Reason;
@@ -500,6 +499,31 @@ fn each_unusable_provider_counterexample_reason_settles_replay_parity_with_one_i
             assert_eq!(document["diagnostics"], json!([]), "{document}");
             assert_eq!(outcome.requests.len(), 1, "the provider is asked once");
             assert!(compiled.is_valid(&document), "{spelling}: {document}");
+            // The published schema declares the member and closes its entry:
+            // an unknown reason, an extra member, a missing member, or a
+            // second entry is rejected.
+            let mutate = |edit: &dyn Fn(&mut Json)| {
+                let mut mutated = document.clone();
+                edit(&mut mutated["items"][0]["diagnostics"]);
+                mutated
+            };
+            for (what, mutated) in [
+                (
+                    "unknown reason",
+                    mutate(&|d| d[0]["reason"] = json!("provider said so")),
+                ),
+                ("extra member", mutate(&|d| d[0]["message"] = json!("text"))),
+                (
+                    "missing reason",
+                    mutate(&|d| {
+                        d[0].as_object_mut().unwrap().remove("reason");
+                    }),
+                ),
+                ("wrong cause", mutate(&|d| d[0]["cause"] = json!("other"))),
+                ("empty array", mutate(&|d| *d = json!([]))),
+            ] {
+                assert!(!compiled.is_valid(&mutated), "{spelling}: {what}: {mutated}");
+            }
         }
         assert_eq!(reason.as_str(), spelling);
         assert_eq!(Reason::from_spelling(spelling), Some(reason));
