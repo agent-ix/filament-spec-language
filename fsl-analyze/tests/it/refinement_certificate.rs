@@ -530,7 +530,8 @@ fn a_transition_limit_stops_the_check() {
         check_with(&world, &certificate, &limits),
         TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxTransitions,
-            value: 1
+            value: 1,
+            required: None,
         })
     );
     let mut states = ModelCheckLimits::default();
@@ -539,7 +540,8 @@ fn a_transition_limit_stops_the_check() {
         check_with(&world, &certificate, &states),
         TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxStates,
-            value: 1
+            value: 1,
+            required: None,
         })
     );
 }
@@ -657,7 +659,8 @@ fn a_stale_or_stopped_check_settles_without_a_proof() {
         stopped.value,
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxTransitions,
-            value: 1
+            value: 1,
+            required: None,
         })
     );
     certificate.refinement = "OtherRefinement".to_owned();
@@ -889,9 +892,10 @@ fn a_concrete_contract_over_the_budget_stops_the_check() {
         check_under(&heavy, &certificate, b),
         TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::EvaluationMeter {
-                counter: filament_exact::LimitKind::WorkUnits
+                counter: filament_exact::LimitKind::WorkUnits,
             },
-            value: b
+            value: b,
+            required: None,
         })
     );
 }

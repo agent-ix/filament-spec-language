@@ -358,6 +358,7 @@ fn replayed(
                 IncompleteCause::LimitReached {
                     limit: reached.limit,
                     value: reached.value,
+                    required: None,
                 },
                 Some(reached),
             ),

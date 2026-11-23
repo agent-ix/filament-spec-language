@@ -17,7 +17,7 @@ fn parameter_name(node: &Value) -> &str {
 }
 
 fn resolved_parameter_name(node: &CheckedSemanticNodeV2) -> &str {
-    let CheckedTerm::Aggregate { members } = &node.body else {
+    let CheckedTerm::Aggregate { members, .. } = &node.body else {
         panic!("parameter aggregate");
     };
     members

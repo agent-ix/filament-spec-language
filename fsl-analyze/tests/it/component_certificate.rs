@@ -425,7 +425,11 @@ fn cancelled_after(polls: u32) -> Cancel {
 }
 
 fn limit(limit: ModelCheckLimit, value: u64) -> TemporalCertificateCheck {
-    TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached { limit, value })
+    TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached {
+        limit,
+        value,
+        required: None,
+    })
 }
 
 /// FR-339-AC-6, the `Ring` unit: five product states and nine edges over two

@@ -647,6 +647,100 @@ fn expected_reward(
     })
 }
 
+/// Refine `policy` so that it keeps every state some scheduler can hold away
+/// from `target` forever away from it: such a state takes its first choice
+/// whose successors all can be held away too. With `positive`, a state from
+/// which those states are reachable takes a choice that moves one step
+/// closer to them, so the target is avoided with positive probability
+/// wherever any scheduler can avoid it. Other states keep their selection.
+///
+/// Both passes are worklists, linear in states and edges; `tick` is charged
+/// once per edge and per state taken from a worklist.
+pub fn avoiding_policy<E: From<UnboundedError>>(
+    product: &ProbProduct,
+    target: &[bool],
+    policy: &[Option<usize>],
+    positive: bool,
+    tick: &mut impl FnMut() -> Result<(), E>,
+) -> Result<Vec<Option<usize>>, E> {
+    if target.len() != product.states.len() {
+        return Err(UnboundedError::InvalidState.into());
+    }
+    let graph = Graph::new(product)?;
+    let count = target.len();
+    let mut safe = target.iter().map(|target| !target).collect::<Vec<_>>();
+    // Per choice, its edges into states not (or no longer) held away; per
+    // state, its choices with none; per state, the (state, choice) edges in.
+    let mut leaks = Vec::with_capacity(count);
+    let mut held = vec![0_usize; count];
+    let mut into = vec![Vec::new(); count];
+    for (state, choices) in graph.choices.iter().enumerate() {
+        let mut counts = Vec::with_capacity(choices.len());
+        for (choice, edges) in choices.iter().enumerate() {
+            let mut leaking = 0_usize;
+            for edge in &edges.edges {
+                tick()?;
+                into[edge.to.index()].push((state, choice));
+                if !safe[edge.to.index()] {
+                    leaking += 1;
+                }
+            }
+            if leaking == 0 {
+                held[state] += 1;
+            }
+            counts.push(leaking);
+        }
+        leaks.push(counts);
+    }
+    let mut pending = (0..count)
+        .filter(|state| safe[*state] && held[*state] == 0)
+        .collect::<std::collections::VecDeque<_>>();
+    for state in &pending {
+        safe[*state] = false;
+    }
+    while let Some(lost) = pending.pop_front() {
+        tick()?;
+        for &(state, choice) in &into[lost] {
+            tick()?;
+            leaks[state][choice] += 1;
+            if leaks[state][choice] == 1 {
+                held[state] -= 1;
+                if safe[state] && held[state] == 0 {
+                    safe[state] = false;
+                    pending.push_back(state);
+                }
+            }
+        }
+    }
+    let mut refined = policy.to_vec();
+    refined.resize(count, None);
+    for state in 0..count {
+        if safe[state] {
+            refined[state] = leaks[state].iter().position(|leaking| *leaking == 0);
+        }
+    }
+    if positive {
+        // Breadth-first from the held-away states over edges into them: each
+        // newly reached state's recorded choice steps one level closer.
+        let mut reached = safe.clone();
+        let mut frontier = (0..count)
+            .filter(|state| safe[*state])
+            .collect::<std::collections::VecDeque<_>>();
+        while let Some(next) = frontier.pop_front() {
+            tick()?;
+            for &(state, choice) in &into[next] {
+                tick()?;
+                if !reached[state] && !target[state] {
+                    reached[state] = true;
+                    refined[state] = Some(choice);
+                    frontier.push_back(state);
+                }
+            }
+        }
+    }
+    Ok(refined)
+}
+
 /// Decide a workload's unweighted or reward-weighted long-run fraction
 /// exactly from its bottom strongly connected components (FR-199).
 pub fn decide_long_run_workload(

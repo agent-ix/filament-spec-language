@@ -205,17 +205,27 @@ and `FR-621`'s outcome document is unchanged.
 
 - `AnalysisView` SHALL expose the package's requirement records as Contract
   IR's typed read of FSpec FR-825's `requirement_items` rows and
-  `claim`/`value_validity` nodes: `requirement_items()` in package order, a
+  `claim`/`value_validity` and `claim`/`operation_contract` nodes:
+  `requirement_items()` in package order, a
   row's index being its record's request index, and
   `value_validity_records_of(owner)`, the indices of the rows a function
-  node owns. Both implementations read their admitted package, so the source
-  route's `AdmittedPackageRead` and the package route's `BarePackage` return
-  equal rows for a package and the bytes it was written to.
+  node owns. Value-validity records expose the owner, bound, conversion,
+  terminal frame, extent roots and object types; operation-contract records
+  expose the Boolean result bound, invariant marker, operation anchor, body
+  object references and population domains, with the exact extent on the row.
+  It SHALL also expose the admitted `path_condition_frames` table and a
+  borrowed outermost-first path-condition view for each value-validity record,
+  backed by its terminal frame id; an operation-contract record has no path
+  condition. The source route's `AdmittedPackageRead` and the package route's
+  `BarePackage` SHALL return equal rows, records, frames and views for
+  a package and the bytes it was written to; neither route materializes one
+  expanded guard vector per record.
 - On the package route, the settlement of a run call's items (FR-961 steps 4
   and 5) SHALL take each item from these rows: its claim, request index,
   kind and extent from the row, and its result bound, conversion context,
-  path condition, extent roots and referenced object types from the row's
-  record node. The FR-331 request item it writes, the candidates FR-075
+  shared path-condition view, extent roots and referenced object types from
+  the row's record node and frame table. The FR-331 request item it writes,
+  the candidates FR-075
   computes from that kind and extent, and the record the linked engine or
   provider settles SHALL equal the source route's for the same item. The
   linked engine evaluates the application, its guards and its bound from
@@ -225,6 +235,16 @@ and `FR-621`'s outcome document is unchanged.
   record's `extent_roots` name (FR-098). No item is rebuilt from the graph,
   none is dropped, and none settles `unsupported` for a fact these rows
   carry.
+- A package-route `operation-contract` item SHALL be built from its row and
+  `OperationContract` record plus the claim/form nodes in the package. Its
+  claim, request index, capability, extent, Boolean result bound, invariant
+  status, operation anchor, model references and populations SHALL equal the
+  source route's `RequirementRecord` and `ContractClaim`; the same request
+  selection, case bound and package subject reach the same contract checker.
+  It SHALL settle with the same item record and exit as source analysis. A
+  package missing this required form is a strict-reader refusal when
+  malformed, never the analysis refusal "requirement record has no package
+  form" and never `unsupported` for a valid record.
 
 ### Claim names
 
@@ -854,7 +874,7 @@ step.
 | FR-940-AC-10 | AC-4's Counter unit declares `BelowThree` and then `AtMostTwo`, both `always holds(c.value <= 2)`, which share one `temporal_clause` node. `claim_name("BelowThree")` returns that node's `claim` occurrence 0 and `claim_name("AtMostTwo")` returns occurrence 1, over the `AdmittedPackageRead` and over the `BarePackage` of its handoff directory. Each equals the source checked clause's `claim` origin and its `temporal_clause_names` row. With the two declarations swapped in source, the ordinals swap. A `program` request and a `package` request with the items `[{"claim": "BelowThree"}, {"claim": "AtMostTwo"}]`, and with `[{"claim": "AtMostTwo"}]` alone, each negotiate every item and settle it `refuted`, with `replay.reproduced` `true`, at its own declaration's occurrence key. The item records, counterexamples and replays are equal across the two routes. No item settles `unsupported` or `invalid-request`. | Test (TC-3026) |
 | FR-940-AC-11 | Over AC-4's Counter unit with the state-graph claims `possible ReachThree using v over (c: M::Counter) { c.value = 3 }`, `always possible Back ... { c.value = 0 }` written without `from`, `always possible FromOne ... from (c.value = 1) { c.value = 0 }` and `unique path Straight ... from (c.value = 0) to (c.value = 1)`, `BarePackage::state_graph_claim_form` of each claim's `claim_name` occurrence, rebuilt by `CheckedStateGraphClaim::of_package_form`, equals the source route's checked claim in name, span, `over`, form, capability, requirements and occurrence, `Back`'s `from` being the constant predicate; a `program` request and a `package` request over its handoff directory with those four items give equal item records, witnesses or counterexamples, replays and certificates, and no package-route record is `unsupported`; each predicate evaluated through the evaluator port under its FR-475 role, `from` or `target` (`Straight`'s end predicate under `target`), at each explored state gives the same value on both routes. | Test (TC-3034) |
 | FR-940-AC-12 | AC-8's colliding source unit refuses at S3 with `ambiguous_declaration`/`ambiguous-name` at the second `Bounded`, naming both declarations, exit `20`, no item settled; AC-8's package with the `ReachThree` row renamed `Bounded` refuses the whole `package` request at the request stage, category refusal, `ambiguous_declaration`/`ambiguous-name` with `details.path` `/claim_names/{i}/name` of that row, `items` `[]`, `last_stage` `null`, exit `20`, and runs no engine. | Test (TC-3034) |
-| FR-940-AC-13 | Over FR-531-AC-35's unit, the `AdmittedPackageRead` of its emission and the `BarePackage` of its written bytes return equal `requirement_items()` and equal `value_validity_records_of` for `f`, `f2`, `sq` and `g`, and their rows equal `CheckedGraph::requirements()` position for position. For FR-961-AC-1's `Even` unit, the FR-331 request items written on the package route from these rows (claim, request index, kind, extent, result bound, path condition, candidates) equal the source route's for the same registry, and the linked engine settles each item with the source route's record; for RR-12's `f` with `n` an `Integer`, each item is `unbounded` with one `integer` domain at `n`'s parameter node and `finite_bound_available` true on both routes. A test-only view whose record of `f`'s `+` row lacks its one guard makes the package-route linked engine's record differ from the source route's (the guard `n >= 0 and n < 10` is no longer assumed), so the comparison can fail. | Test (TC-2620) |
+| FR-940-AC-13 | Over FR-531-AC-35's unit, `AdmittedPackageRead` and the `BarePackage` of its written bytes return equal requirement rows, shared path-condition frames and outermost-first record views for `f`, `f2`, `sq` and `g`; the rows equal `CheckedGraph::requirements()` position for position and neither view retains an expanded vector per record. For FR-961-AC-1's `Even` unit, package-route request items (claim, request index, kind, extent, result bound, path condition and candidates) equal the source route's and the linked engine settles each item with the same record; the guard `n >= 0 and n < 10` is present in the view. A test-only view that drops or changes the terminal frame or one frame's guard makes the source/package result comparison fail. | Test (TC-2620) |
 | FR-940-AC-14 | For FR-1033-AC-1's `SB` unit and its handoff directory, the protocol clause the package route builds for `SB` from the admitted `protocol` nodes and `protocol_locations` rows equals S3's FR-218 checked clause in every member; the subject built on each route for `subject.protocol` with `roles` `w` and `c` bound to `test/litmus` binds `w` to `M::Cell` and `c` to `M::Core` with the same selection, the same `over` universe and the same resolved model of `SB::Both` (`Sc` with no `memory`, `Tso` with the `tso` entry); a `roles` entry for `w` naming a model the package does not select settles `declined` with `invalid_runtime_input`/`wrong-role-mapping` naming `w` on both routes. A test-only package whose `SB::Both` `parallel` node carries `memory` `tso` makes the package-built clause differ from the source clause, so the comparison can fail. | Test (TC-3050) |
 | FR-940-AC-15 | For FR-397-AC-30's and FR-397-AC-31's bodies, the source form and the package form of the expression evaluator, given the same inputs and remaining budget, write equal outcomes and equal charge logs; a package form that charges every `numeric_equal` node one `compare_ieee` writes a log for `p < q` with entries the source form lacks, so the comparison can fail. | Test (TC-3077) |
 | FR-940-AC-16 | Over AC-4's Counter unit with the hyper clauses `Equal` (`forall trace a of M forall trace b of M { always holds(c.value @ a <= 3 and c.value @ b <= 3) }`, universal, copy-swap symmetric), `Partner` (forall-exists equality), `CanReachThree` (single existential) and a projection-aligned clause with an `align skip` list and a `match` block holding one universal and one existential conjunct, `hyper_clause_form` of each clause's `claim_name` occurrence returns equal records over the `AdmittedPackageRead` and over the `BarePackage` of its handoff directory, and the clause `of_package_form` rebuilds equals S3's checked clause in name, span, profile, aliases, read object parameters, quantifier prefix with fairness sets, atom slots, conjunct count per part, `align skip`, form, copy-group classes and occurrence, and in formula arena, atom indices and copy generators after S3's atoms are renumbered by FR-532's atom index and only S3's formula `Holds` spans are canonicalized to the selected `claim_names` row's `declaration_region` span, preserving comparison of every semantic node kind, operator, level and operand structure; every `PackageHyperHolds.span` and rebuilt formula `Holds` span equals that declaration span; `condition` of every rebuilt atom is `None`. `Equal`'s rebuilt copy group is the class `[a, b]` with the generator `{first: 0, second: 1, atoms: [0]}` (FR-940 "The package normal form"), and that of a clause whose body is `always holds(c.value @ a <= 3)` alone is empty, on both routes. A test-only view that files the existential conjunct under `μ_U` makes the rebuilt clause differ from S3's, so the comparison can fail. | Test (TC-3126) |
@@ -869,6 +889,7 @@ step.
 | FR-940-AC-25 | AC-24's package requests still produce the same proved, refuted, undefined and budget-stopped records after the source unit is overwritten with invalid bytes and the handoff's `sources/` is deleted. With no source present, FR-163's checker accepts the secure certificate, rejects a variant that omits a reachable state with a certificate rejection, refuses variants that omit an applicable edge or alter its typed result as certificate-request input mismatches without a certificate verdict or proof, and under tuple allowance 63 stops at count 64 identifying the first unpaid tuple. Checking twice under 64 accepts twice, with fresh checker counters. | Test |
 | FR-940-AC-26 | Variants of AC-23's package with a duplicate or missing execution parameter level, an argument parameter with the wrong type, or an invalid step-relation body reference refuse the whole request before an engine runs, retaining the strict reader's code, cause and pointer. A test-only projection with a body model read that cannot be assigned to exactly one declared execution returns `MalformedNode` naming the relation node; its item has no verdict and a sibling valid item is unaffected. Neither case loads source or becomes a proved relation. | Test |
 | FR-940-AC-27 | AC-23's two-alias package carries `subject_declaration_order` entries `[A, B]` joining the same alias/root pairs as its first-use `subjects` entries `[B, A]`. The strict reader admits that witness and preserves `[A, B]`. Repeated aliases, unknown aliases, omitted aliases and an alias joined to the other subject's root each refuse with the reader's code, cause and member pointer. Distinct aliases sharing one root remain admitted. Removing only the optional member leaves the legacy package admitted globally, but its HP-1 model item settles `unsupported` with `unknown_required_feature`/`unsupported-feature`, reason `missing-subject-declaration-order`, and the owning package and relation node before exploration, while a sibling state item runs normally and no source is read. | Test |
+| FR-940-AC-28 | A unit with an operation-contract item is analyzed once from source and once from its emitted package. Both routes expose the same requirement row and typed record: claim occurrence and request index, `operation-contract` kind, extent, Boolean bound, invariant marker, operation anchor, model-object references and populations. The package route selects the same `ContractClaim`, uses the same subject and case limit, and settles an item record equal to the source route's with the same process exit. A valid emitted item never refuses with `requirement record has no package form`, is never dropped, and is never `unsupported` due to the record form. A malformed record is refused by admission with FR-825's exact code and pointer before any engine runs. | Test (TC-2958) |
 
 ## Dependencies
 

@@ -5,7 +5,9 @@
 //! over an event (ADR-024 PF-4).
 
 use filament_exact::Rational;
-use fsl_replay::statistical::{ClaimForm, Confidence, MeasureValue, StatisticalRefusal};
+use fsl_replay::statistical::{
+    BoundComparison, ClaimForm, Confidence, MeasureValue, StatisticalRefusal, VerdictBound,
+};
 use fsl_semantics::check::{CheckedProbabilisticClaim, ProbScheduler};
 
 use super::bounds::int;
@@ -51,6 +53,10 @@ pub struct StatisticalClaim {
     form: ClaimForm,
     bound: Bound,
     confidence: Confidence,
+    /// The claim's own bound as a verdict writes it (FR-410 `bound`), fixed
+    /// at construction: for a quantile its level, comparison and threshold
+    /// as written, never the reduced `bound` the counts decide.
+    verdict_bound: VerdictBound,
     /// Whether the checked claim selects the timed profile (FR-254).
     pub(crate) timed: bool,
     /// The checked finite horizon for a timed sample, in the model unit.
@@ -69,35 +75,94 @@ pub enum ClaimRefusal {
     /// A strict bound on a form other than a quantile.
     #[error("only a quantile claim reduces to a strict bound")]
     StrictBound,
+    /// A quantile claim built without its written level.
+    #[error("a quantile claim states its level and threshold: use `StatisticalClaim::quantile`")]
+    QuantileWithoutLevel,
 }
 
 impl StatisticalClaim {
-    /// A claim of `form` with `bound` and `confidence`.
+    /// A probability, mean-of-fraction or long-run-fraction claim with
+    /// `bound` and `confidence`.
     ///
     /// # Errors
     ///
     /// [`ClaimRefusal::NoIndifferenceRegion`] when `[θ − ι, θ + ι]` is not
-    /// inside `(0, 1)`; [`ClaimRefusal::StrictBound`] for a [`Comparison::Below`]
-    /// bound on a form other than [`ClaimForm::Quantile`].
+    /// inside `(0, 1)`; [`ClaimRefusal::StrictBound`] for a
+    /// [`Comparison::Below`] bound; [`ClaimRefusal::QuantileWithoutLevel`]
+    /// for [`ClaimForm::Quantile`], which [`StatisticalClaim::quantile`]
+    /// builds.
     pub fn new(
         form: ClaimForm,
         bound: Bound,
         confidence: Confidence,
     ) -> Result<Self, ClaimRefusal> {
+        if form == ClaimForm::Quantile {
+            return Err(ClaimRefusal::QuantileWithoutLevel);
+        }
+        let comparison = match bound.comparison {
+            Comparison::AtLeast => BoundComparison::GreaterOrEqual,
+            Comparison::AtMost => BoundComparison::LessOrEqual,
+            Comparison::Below => return Err(ClaimRefusal::StrictBound),
+        };
+        let verdict_bound = VerdictBound {
+            form,
+            comparison,
+            threshold: bound.threshold.clone(),
+            level: None,
+        };
+        Self::checked(form, bound, confidence, verdict_bound)
+    }
+
+    /// The claim `quantile level of M comparison threshold`, which the counts
+    /// decide as its reduced bound ([`reduce_quantile`]) and a verdict states
+    /// as written.
+    ///
+    /// # Errors
+    ///
+    /// [`ClaimRefusal::NoIndifferenceRegion`] when `[level − ι, level + ι]` is
+    /// not inside `(0, 1)`.
+    pub fn quantile(
+        level: Rational,
+        comparison: QuantileComparison,
+        threshold: Rational,
+        confidence: Confidence,
+    ) -> Result<Self, ClaimRefusal> {
+        let verdict_bound = VerdictBound {
+            form: ClaimForm::Quantile,
+            comparison: match comparison {
+                QuantileComparison::AtLeast => BoundComparison::GreaterOrEqual,
+                QuantileComparison::AtMost => BoundComparison::LessOrEqual,
+            },
+            threshold: threshold.clone(),
+            level: Some(level.clone()),
+        };
+        let (_, bound) = reduce_quantile(level, comparison, threshold);
+        Self::checked(ClaimForm::Quantile, bound, confidence, verdict_bound)
+    }
+
+    fn checked(
+        form: ClaimForm,
+        bound: Bound,
+        confidence: Confidence,
+        verdict_bound: VerdictBound,
+    ) -> Result<Self, ClaimRefusal> {
         let iota = confidence.indifference();
         if bound.threshold.sub(iota) <= int(0) || bound.threshold.add(iota) >= int(1) {
             return Err(ClaimRefusal::NoIndifferenceRegion);
-        }
-        if bound.comparison == Comparison::Below && form != ClaimForm::Quantile {
-            return Err(ClaimRefusal::StrictBound);
         }
         Ok(Self {
             form,
             bound,
             confidence,
+            verdict_bound,
             timed: false,
             timed_horizon: None,
         })
+    }
+
+    /// The claim's own bound as a verdict states it (FR-410 `bound`).
+    pub fn verdict_bound(&self) -> &VerdictBound {
+        &self.verdict_bound
     }
 
     /// The claim's form.

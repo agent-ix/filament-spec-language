@@ -33,6 +33,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-286
     type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-1047
+    type: references
 ---
 # FR-644: Stream observations through the monitor command
 
@@ -74,8 +76,12 @@ The request file, a closed JSON envelope `{"format": "native-monitor/1",
   from (FR-643);
 - `observations`: optional, a map from key to snapshot file, for records that name
   a snapshot by key.
-- `records`: optional, the relative path of a JSON Lines record file. With it,
-  `command::run` over the request reads that file as the whole record stream,
+- `records`: the relative path of a JSON Lines record file. It SHALL be
+  required when the request is run through `command::run` (a missing
+  `records` is listed as FR-1047 lists a missing required member), and the
+  `monitor` entry, which reads the record stream its caller gives, SHALL
+  refuse a request carrying it with `invalid-request` at stage `request`
+  naming `records`. `command::run` over the request reads that file as the whole record stream,
   runs it to its end and returns one `filament.monitor-run/1` result document
   `{"format", "events": [...], "summary"}` holding every event in order and the
   summary, with the summary's exit code. This is the batch form of the same

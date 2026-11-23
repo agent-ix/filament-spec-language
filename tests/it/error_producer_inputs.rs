@@ -485,7 +485,7 @@ fn public_compile_intake_inputs_reach_io_json_and_wire_codes() {
         (
             "wire.json",
             br#"{"format":"producer.future/99","request":{}}"#.as_slice(),
-            CompleteCode::UnknownWire,
+            CompleteCode::InvalidRequest,
         ),
     ] {
         let path = directory.path().join(name);
@@ -1016,9 +1016,11 @@ fn original_extraction_requests_reach_combination_refusal_producers() {
     let program = serde_json::json!({"source":source,"extraction":{"body":{"authority":"producer-tests","identity":"original:body","document":"ParcelRule"}},"clauses":[{"clause":"ParcelRule","package":"original-parcels"}]});
     let base =
         serde_json::json!({"format":"native-run/1","request":{"models":[],"program":program}});
+    let clause_selector = serde_json::json!({"selection":{},"observations":{}});
     let mut cases = Vec::new();
     let mut package = base.clone();
     package["request"]["package"] = serde_json::json!({"file":"absent.package.json"});
+    package["request"]["clause"] = clause_selector.clone();
     cases.push((package, CompleteCode::ExtractionPackageConflict));
     let mut call = base.clone();
     call["request"]["call"] = serde_json::json!({"function":"parcel_cost","arguments":[]});
@@ -1032,6 +1034,7 @@ fn original_extraction_requests_reach_combination_refusal_producers() {
     ] {
         let mut request = base.clone();
         request["request"]["program"]["clauses"] = bindings;
+        request["request"]["clause"] = clause_selector.clone();
         cases.push((request, CompleteCode::ExtractionClauseCount));
     }
     for (index, (request, code)) in cases.into_iter().enumerate() {

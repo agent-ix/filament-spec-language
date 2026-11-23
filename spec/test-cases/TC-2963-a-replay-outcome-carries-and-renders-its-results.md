@@ -29,6 +29,6 @@ Test: `tests/it/replay_request_file.rs`.
 
 - Step 1: `{"kind": "replayed", "results": [R]}`, `R` equal to the `results` row
   (`input`, `reproduced-without-witness`).
-- Step 2: the header `replay: success (exit 0) at S8`, then
+- Step 2: the header `replay: success (exit 0) at stage replay`, then
   `result 0: input reproduced-without-witness`.
 - Step 3: `result` `null`; refusal header and diagnostic, no `result` line.

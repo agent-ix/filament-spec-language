@@ -30,8 +30,8 @@ use fsl_semantics::library::LibraryName;
 
 mod package;
 use filament_contract_model::CheckedRefinementInternal;
-pub use package::{ReplayPackage, ReplayPackageAdmissionRefusal};
 pub(crate) use package::FunctionRecord;
+pub use package::{ReplayPackage, ReplayPackageAdmissionRefusal};
 
 /// The `filament.value.accounting/v1` scalar environment a replay starts from
 /// (FR-071's "state environment"). Opaque to #231: only the executor (#243)
@@ -90,8 +90,9 @@ impl StageLimits {
     /// These limits with the stage or accounting limit named `name` (FR-255's
     /// dotted name, such as `s1.input_bytes`) set to `bound`, replacing an
     /// earlier entry of that name (FR-399). Refuses, returning no limits, a
-    /// name that is no setting of FR-255's tables and `replay.input_bytes` and
-    /// `format.output_bytes`, which a request does not carry.
+    /// name that is no setting of FR-255's tables, and `replay.input_bytes`,
+    /// `format.output_bytes` and the `monitor.*` settings, which a request does
+    /// not carry.
     ///
     /// To compile a large source through `compile_admitted`, raise more than
     /// `s1.input_bytes`. An `s1.input_bytes` above `ReplayLimits.input_bytes`
@@ -105,7 +106,13 @@ impl StageLimits {
             Some(SettingName::Stage(setting))
                 if !matches!(
                     setting,
-                    Setting::ReplayInputBytes | Setting::FormatOutputBytes
+                    Setting::ReplayInputBytes
+                        | Setting::FormatOutputBytes
+                        | Setting::MonitorMaxWindowValues
+                        | Setting::MonitorRetainedPositions
+                        | Setting::MonitorRetainedIdentities
+                        | Setting::MonitorPreparationWorkUnits
+                        | Setting::MonitorPreparationStorage
                 ) =>
             {
                 self.stages.insert(setting, bound);
@@ -123,7 +130,8 @@ impl StageLimits {
     }
 
     /// Reads the wire entries, refusing the first whose name is no setting
-    /// of FR-255's tables or is `replay.input_bytes` or `format.output_bytes`.
+    /// of FR-255's tables or is `replay.input_bytes`, `format.output_bytes` or
+    /// one of the five `monitor.*` settings.
     fn decode(entries: BTreeMap<String, u64>) -> Result<Self, ReplayRequestRefusal> {
         entries
             .into_iter()

@@ -11,10 +11,10 @@
 //! relation (`sample_request`, producing a `Trace`). `replay` re-runs a
 //! `Trace` against a `TransitionSystem`, independently of the engine.
 //!
-//! `explore_request` and `sample_request` are the only public entries that
-//! explore or sample: `explore`, `sample` and `Sampler` are `pub(crate)`, so
-//! no caller skips the requires-bound check or the sampler's
-//! `GeneratorMismatch` check. `weighted_choice` is the generator's one
+//! `explore_request`, `sample_request` and `sample_request_observed` are the
+//! only public entries that explore or sample: `explore`, `sample` and
+//! `Sampler` are `pub(crate)`, so no caller skips the requires-bound check or
+//! the sampler's `GeneratorMismatch` check. `weighted_choice` is the generator's one
 //! selection function (FR-188): it reads draws at a choice point and runs no
 //! transition system. `sample_probabilistic` samples a probabilistic model
 //! under a workload (FR-188), over FR-187's step structure.
@@ -37,28 +37,32 @@ mod sampled;
 mod subject;
 mod trace;
 
-pub use choice::{weighted_choice, ChoicePoint, TotalAboveDrawRange, Weights, WeightsRefusal};
+pub use choice::{ChoicePoint, TotalAboveDrawRange, Weights, WeightsRefusal, weighted_choice};
 pub use discovery::{
-    enumerate_request, sampled_coverage, Coverage, Discovered, Enumeration, EnumerationBounds,
-    EnumerationEnd, EnumerationRequest, FrontierPosition,
+    Coverage, Discovered, Enumeration, EnumerationBounds, EnumerationEnd, EnumerationRequest,
+    FrontierPosition, enumerate_request, sampled_coverage,
 };
 pub use expansion::{Expansion, ExpansionLimit, ExpansionStop, StateFindings};
 pub use explore::{
-    explore_request, Exploration, Limits, Outcome, Stats, TransitionSystem, CANCELLED_STOP,
+    CANCELLED_STOP, Exploration, Limits, Outcome, Stats, TransitionSystem, explore_request,
 };
-pub use footprint::{any_affects, independent, Footprint, Location};
+pub use footprint::{Footprint, Location, any_affects, independent};
 pub use frontier::{Frontier, Limit};
 pub use key::{EncodingRefusal, StateKey};
-pub use not_simulated::{ClockReferenceDomain, NotSimulated, RequiresBound, Root, BOUND_POSITIONS};
+pub use not_simulated::{BOUND_POSITIONS, ClockReferenceDomain, NotSimulated, RequiresBound, Root};
 pub use progress::{FairLoop, ZeroProgress, ZeroProgressError};
 pub use reduction::{
     ConstraintValue, OfferedReductions, Permutation, SymmetryClass, SymmetryGroup,
 };
-pub use sample::{sample_request, sample_request_until, SampleRequest};
+pub use sample::{
+    ObservedSample, ObserverDecision, SampleExpansion, SampleObservation, SamplePrefix,
+    SampleRequest, SampleSuccessorRef, SampleSuccessors, sample_request, sample_request_observed,
+    sample_request_until,
+};
 pub use sampled::{
-    draw_timed_delay, replay_sampled, sample_probabilistic, ProbabilisticSampler, SampleStop,
-    SampledBehaviour, SampledDisagreement, SampledPosition, SampledRecord, SampledReplay,
-    SampledReplayRefusal, SampledStep, StepAt, TimedDelayRefusal,
+    ProbabilisticSampler, SampleStop, SampledBehaviour, SampledDisagreement, SampledPosition,
+    SampledRecord, SampledReplay, SampledReplayRefusal, SampledStep, StepAt, TimedDelayRefusal,
+    draw_timed_delay, replay_sampled, sample_probabilistic,
 };
 pub use subject::{Bounded, ConstraintError, Cut, SubjectSystem, SubjectTransition};
-pub use trace::{replay, ReplayError, SampleProvenance, Step, StopReason, Trace};
+pub use trace::{ReplayError, SampleProvenance, Step, StopReason, Trace, replay};

@@ -404,3 +404,187 @@ fn contract_package_keeps_unknown_names_and_candidate_refusals() {
         assert!(seen.lock().expect("the provider log").is_empty());
     }
 }
+
+/// FSpec FR-290-AC-14 (TC-950), FR-335-AC-2: a per-step contract item whose
+/// extent is unbounded, on the contract checker that advertises only `bounded`,
+/// is written `unsupported` with `requires_bound`/`requires-bound`, settled by
+/// its disposition, with no engine result members, when the request's extent
+/// says a finite bound is available.
+#[trace("FSpec-TC-950", "FSpec-FR-290-AC-14", "TC-845", "FR-335-AC-2")]
+#[test]
+fn unbounded_operation_contract_item_is_written_requires_bound() {
+    let ws = Workspace::new("contract-requires-bound-wire");
+    let path = crate::analyze_cli_support::staying_counter_request(
+        &ws,
+        "",
+        json!([{"claim": "Keeps", "kind": "operation-contract"}]),
+    );
+    let run = analyze_with_providers(&path, vec![]);
+    let item = run.item(0);
+    assert_eq!(
+        item["request"]["extent"],
+        json!({"classification": "unbounded", "finite_bound_available": true}),
+        "{item}"
+    );
+    assert_eq!(item["category"], "unsupported", "{item}");
+    let record = &item["record"];
+    assert_eq!(record["settled_by"], "disposition", "{item}");
+    assert_eq!(record["result"], "unsupported", "{item}");
+    assert_eq!(
+        record["diagnostic"],
+        json!({"code": "requires_bound", "cause": "requires-bound", "detail": {}}),
+        "{item}"
+    );
+    let mut members: Vec<&str> = record
+        .as_object()
+        .expect("a record object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    members.sort_unstable();
+    assert_eq!(
+        members,
+        ["diagnostic", "result", "settled_by"],
+        "a disposition has no backend, basis or certification: {item}"
+    );
+}
+
+/// FR-290-AC-20, FR-281-AC-24, FR-621-AC-18: a refuted
+/// provider verdict carrying each closed unusable-counterexample reason in
+/// turn settles `inconclusive`/`replay-parity` with no `counterexample` or
+/// `replay`, exactly one item `diagnostics` entry spelling the reason, and
+/// the document-level `diagnostics` unchanged; it validates against the
+/// published schema.
+#[trace("TC-774", "FR-290-AC-20")]
+#[trace("TC-774", "FR-281-AC-24")]
+#[trace("TC-774", "FR-621-AC-18")]
+#[test]
+fn each_unusable_provider_counterexample_reason_settles_replay_parity_with_one_item_diagnostic() {
+    use fsl_analyze::provider::UnusableCounterexample as Reason;
+    let schema: Json = serde_json::from_str(fsl_replay::outcome::OUTCOME_SCHEMA_1).unwrap();
+    let compiled = jsonschema::JSONSchema::options()
+        .with_draft(jsonschema::Draft::Draft202012)
+        .compile(&schema)
+        .expect("the schema compiles");
+    for (reason, spelling) in [
+        (Reason::PackageGraphUnreadable, "package-graph-unreadable"),
+        (Reason::NodeIdUnresolved, "node-id-unresolved"),
+        (
+            Reason::AssignmentNotClaimParameter,
+            "assignment-not-claim-parameter",
+        ),
+        (Reason::ClaimParameterUnassigned, "claim-parameter-unassigned"),
+        (
+            Reason::ParameterValueKindMismatch,
+            "parameter-value-kind-mismatch",
+        ),
+    ] {
+        let verdict = ProviderVerdict::RefutedUnusable { reason };
+        let (source, package) = both("unusable-reason", THREE, &item("Three"), &verdict);
+        let (left, right) = (source.run.document(), package.run.document());
+        assert_eq!(right["items"], left["items"], "{spelling}: {right}");
+        for outcome in [&source, &package] {
+            let document = outcome.run.document();
+            let item = &document["items"][0];
+            assert_eq!(label(item), "inconclusive", "{spelling}: {item}");
+            assert_eq!(item["record"]["cause"]["kind"], "replay-parity", "{item}");
+            assert!(item.get("counterexample").is_none(), "{item}");
+            assert!(item.get("replay").is_none(), "{item}");
+            assert!(item["record"].get("diagnostic").is_none(), "{item}");
+            assert_eq!(
+                item["diagnostics"],
+                json!([{"code": "invalid_result", "cause": "invalid-value", "reason": spelling}]),
+                "{item}"
+            );
+            assert_eq!(document["diagnostics"], json!([]), "{document}");
+            assert_eq!(outcome.requests.len(), 1, "the provider is asked once");
+            assert!(compiled.is_valid(&document), "{spelling}: {document}");
+            // The published schema declares the member and closes its entry:
+            // an unknown reason, an extra member, a missing member, or a
+            // second entry is rejected.
+            let mutate = |edit: &dyn Fn(&mut Json)| {
+                let mut mutated = document.clone();
+                edit(&mut mutated["items"][0]["diagnostics"]);
+                mutated
+            };
+            for (what, mutated) in [
+                (
+                    "unknown reason",
+                    mutate(&|d| d[0]["reason"] = json!("provider said so")),
+                ),
+                ("extra member", mutate(&|d| d[0]["message"] = json!("text"))),
+                (
+                    "missing reason",
+                    mutate(&|d| {
+                        d[0].as_object_mut().unwrap().remove("reason");
+                    }),
+                ),
+                ("wrong cause", mutate(&|d| d[0]["cause"] = json!("other"))),
+                ("empty array", mutate(&|d| *d = json!([]))),
+            ] {
+                assert!(!compiled.is_valid(&mutated), "{spelling}: {what}: {mutated}");
+            }
+        }
+        assert_eq!(reason.as_str(), spelling);
+        assert_eq!(Reason::from_spelling(spelling), Some(reason));
+    }
+}
+
+/// FR-290-AC-20: mapped assignments still replay, and carry no item
+/// `diagnostics` entry; a reproduced violation settles `refuted`.
+#[trace("TC-774", "FR-290-AC-20")]
+#[trace("TC-774", "FR-621-AC-18")]
+#[test]
+fn mapped_provider_assignments_keep_the_replay_path_and_write_no_item_diagnostic() {
+    let verdict = ProviderVerdict::Refuted {
+        counterexample: vec![integer(4)],
+    };
+    let item = assert_parity("unusable-control", THREE, &item("Three"), &verdict);
+    assert_eq!(label(&item), "refuted", "{item}");
+    assert!(item.get("diagnostics").is_none(), "{item}");
+    let unreplayed = ProviderVerdict::Refuted {
+        counterexample: vec![integer(3)],
+    };
+    let item = assert_parity("unusable-mapped", THREE, &self::item("Three"), &unreplayed);
+    assert_eq!(label(&item), "inconclusive", "{item}");
+    assert!(item.get("diagnostics").is_none(), "{item}");
+}
+
+/// FR-290-AC-20: several coexisting defects select the first reason in the
+/// declared order, whatever order they are found in; a spelling outside the
+/// closed set (a provider's own text) names no reason.
+#[trace("TC-774", "FR-290-AC-20")]
+#[test]
+fn coexisting_defects_select_the_declared_priority_and_unknown_spellings_name_no_reason() {
+    use fsl_analyze::provider::UnusableCounterexample as Reason;
+    let pairs = [
+        (
+            Reason::PackageGraphUnreadable,
+            Reason::NodeIdUnresolved,
+            Reason::PackageGraphUnreadable,
+        ),
+        (
+            Reason::NodeIdUnresolved,
+            Reason::AssignmentNotClaimParameter,
+            Reason::NodeIdUnresolved,
+        ),
+        (
+            Reason::AssignmentNotClaimParameter,
+            Reason::ClaimParameterUnassigned,
+            Reason::AssignmentNotClaimParameter,
+        ),
+        (
+            Reason::ClaimParameterUnassigned,
+            Reason::ParameterValueKindMismatch,
+            Reason::ClaimParameterUnassigned,
+        ),
+    ];
+    for (high, low, expected) in pairs {
+        assert_eq!(Reason::select([high, low]), Some(expected));
+        assert_eq!(Reason::select([low, high]), Some(expected));
+    }
+    assert_eq!(Reason::select([]), None);
+    for text in ["", "node-id-unresolved ", "Node-Id-Unresolved", "boom", "other"] {
+        assert_eq!(Reason::from_spelling(text), None, "{text:?}");
+    }
+}

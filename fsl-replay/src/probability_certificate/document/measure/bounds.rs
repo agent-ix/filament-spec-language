@@ -2,7 +2,8 @@
 //! Lower and upper fraction expectations in the mean-refutation role.
 use super::*;
 
-const PROFILE: &str = "filament.probability-objective/value-bounds/v1";
+pub(in crate::probability_certificate) const PROFILE: &str =
+    "filament.probability-objective/value-bounds/v1";
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -27,7 +28,9 @@ struct WireBound {
     policy: Option<Vec<WirePolicy>>,
 }
 
-pub(super) fn is_bound(bytes: &[u8]) -> Result<bool, ProbabilityDocumentError> {
+pub(in crate::probability_certificate) fn is_bound(
+    bytes: &[u8],
+) -> Result<bool, ProbabilityDocumentError> {
     #[derive(Deserialize)]
     struct Dispatch<'a> {
         #[serde(borrow)]

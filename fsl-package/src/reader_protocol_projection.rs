@@ -1162,7 +1162,7 @@ impl<'wire> WireIndex<'wire> {
     fn union_members(&self, declared: &CheckedNodeId) -> Option<UnionMembers<'_>> {
         let node = self.node(declared)?;
         if has_form(node, WireTag::CompositeType, WireForm::Union) {
-            let CheckedTerm::Aggregate { members } = &node.body else {
+            let CheckedTerm::Aggregate { members, .. } = &node.body else {
                 return None;
             };
             return Some(UnionMembers::Source(members));
@@ -1239,7 +1239,7 @@ impl<'wire> WireIndex<'wire> {
             return Some(ValueType::Composite(key));
         }
         let object = if has_form(declaration, WireTag::CompositeType, WireForm::Reference) {
-            let CheckedTerm::Aggregate { members } = &declaration.body else {
+            let CheckedTerm::Aggregate { members, .. } = &declaration.body else {
                 return None;
             };
             let target = reference_target(members.first()?)?;
@@ -2474,13 +2474,13 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     })?;
                 (NodeKind::Literal(CheckedLiteral(literal)), Vec::new(), None)
             }
-            CheckedTerm::Aggregate { members }
+            CheckedTerm::Aggregate { members, .. }
                 if has_form(node, WireTag::Value, WireForm::UnionValue) =>
             {
                 let (kind, children) = self.union_value(node, members, context, locals)?;
                 (kind, children, None)
             }
-            CheckedTerm::Aggregate { members }
+            CheckedTerm::Aggregate { members, .. }
                 if has_form(node, WireTag::Value, WireForm::TupleValue) =>
             {
                 let value_type = self.value_type(id)?;
@@ -2497,7 +2497,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     None,
                 )
             }
-            CheckedTerm::Aggregate { members }
+            CheckedTerm::Aggregate { members, .. }
                 if has_form(node, WireTag::Value, WireForm::OptionValue) =>
             {
                 let [member] = members.as_slice() else {
@@ -2506,7 +2506,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                 let child = self.project_argument(id, member, context, locals)?;
                 (NodeKind::OptionSome(child), vec![child], None)
             }
-            CheckedTerm::Aggregate { members }
+            CheckedTerm::Aggregate { members, .. }
                 if has_form(node, WireTag::Value, WireForm::CollectionValue) =>
             {
                 let value_type = self.value_type(id)?;
@@ -2523,7 +2523,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
                     None,
                 )
             }
-            CheckedTerm::Aggregate { members } => {
+            CheckedTerm::Aggregate { members, .. } => {
                 let (kind, children) = self.record_value(id, members, context, locals)?;
                 (kind, children, None)
             }
@@ -2617,7 +2617,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         let member = union_members
             .position(member_name)
             .ok_or_else(|| fault("reader-union-value-member-is-declared"))?;
-        let CheckedTerm::Aggregate { members } = value.as_ref() else {
+        let CheckedTerm::Aggregate { members, .. } = value.as_ref() else {
             return Err(fault("reader-union-value-has-payload-list").into());
         };
         let children = self.project_terms(&node.node_id, members.iter(), context, locals)?;
@@ -3484,10 +3484,10 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
             let member = union_members
                 .position(member_name)
                 .ok_or_else(|| fault("reader-union-case-arm-is-declared"))?;
-            let CheckedTerm::Aggregate { members } = value.as_ref() else {
+            let CheckedTerm::Aggregate { members, .. } = value.as_ref() else {
                 return Err(fault("reader-union-case-arm-has-body").into());
             };
-            let [CheckedTerm::Aggregate { members: binders }, body] = members.as_slice() else {
+            let [CheckedTerm::Aggregate { members: binders, .. }, body] = members.as_slice() else {
                 return Err(fault("reader-union-case-arm-has-binders-and-body").into());
             };
             let mut arm_locals = locals.clone();
@@ -3847,7 +3847,7 @@ impl<'wire> ReaderBuilder<'_, 'wire> {
         if !has_form(declaration, WireTag::CompositeType, WireForm::Record) {
             return Ok(None);
         }
-        let CheckedTerm::Aggregate { members } = &declaration.body else {
+        let CheckedTerm::Aggregate { members, .. } = &declaration.body else {
             return Err(fault("reader-record-declaration-has-members"));
         };
         let member_type = members
@@ -4098,7 +4098,7 @@ pub(crate) fn node_value_type(
             }
             // An optional lookup result retains its reference's selected object identity.
             if has_form(declaration, WireTag::CompositeType, WireForm::Option) {
-                if let CheckedTerm::Aggregate { members } = &declaration.body {
+                if let CheckedTerm::Aggregate { members, .. } = &declaration.body {
                     if let [CheckedTerm::Reference { target }] = members.as_slice() {
                         if index.node(target).is_some_and(|node| {
                             has_form(node, WireTag::CompositeType, WireForm::Reference)
@@ -4288,7 +4288,7 @@ fn clock_reference_carrier_type(
             }
             _ => return Ok(None),
         };
-        let CheckedTerm::Aggregate { members } = &node.body else {
+        let CheckedTerm::Aggregate { members, .. } = &node.body else {
             return Err(fault("reader-clock-carrier-has-admitted-aggregate").into());
         };
         let [CheckedTerm::Reference { target }] = members.as_slice() else {
@@ -4309,7 +4309,7 @@ fn reference_node_type(
     if !has_form(reference, WireTag::CompositeType, WireForm::Reference) {
         return Err(TypeError::Unsupported);
     }
-    let CheckedTerm::Aggregate { members } = &reference.body else {
+    let CheckedTerm::Aggregate { members, .. } = &reference.body else {
         return Err(TypeError::Unsupported);
     };
     let [CheckedTerm::Reference { target }] = members.as_slice() else {
@@ -4352,14 +4352,14 @@ fn population_node_type(
             )
         })
         .ok_or(TypeError::Unsupported)?;
-    let CheckedTerm::Aggregate { members } = &set.body else {
+    let CheckedTerm::Aggregate { members, .. } = &set.body else {
         return Err(TypeError::Unsupported);
     };
     let [CheckedTerm::Reference { target }] = members.as_slice() else {
         return Err(TypeError::Unsupported);
     };
     reference_node_type(index, target)?;
-    let CheckedTerm::Aggregate { members } = &population.body else {
+    let CheckedTerm::Aggregate { members, .. } = &population.body else {
         return Err(TypeError::Unsupported);
     };
     let maximum = match members.as_slice() {
@@ -4394,7 +4394,7 @@ fn is_collection_bounds(form: &str) -> bool {
 #[ix_trace_rs::string_edge]
 fn rational_range_type(node: &CheckedSemanticNodeV2) -> Result<ValueType, TypeError> {
     let bound = |wanted: &str| -> Option<filament_exact::Integer> {
-        let CheckedTerm::Aggregate { members } = &node.body else {
+        let CheckedTerm::Aggregate { members, .. } = &node.body else {
             return None;
         };
         members.iter().find_map(|member| {
@@ -4423,7 +4423,7 @@ fn rational_range_type(node: &CheckedSemanticNodeV2) -> Result<ValueType, TypeEr
 /// The integer a `min` or `max` member of a bounds node holds.
 #[ix_trace_rs::string_edge]
 fn bound_member(body: &CheckedTerm, wanted: &str) -> Option<u64> {
-    let CheckedTerm::Aggregate { members } = body else {
+    let CheckedTerm::Aggregate { members, .. } = body else {
         return None;
     };
     members.iter().find_map(|member| {
@@ -4481,7 +4481,7 @@ fn collection_node_type(
         _ => return Err(TypeError::Unsupported),
     };
     let element = match &collection.body {
-        CheckedTerm::Aggregate { members } => match members.as_slice() {
+        CheckedTerm::Aggregate { members, .. } => match members.as_slice() {
             [CheckedTerm::Reference { target }] => target,
             _ => return Err(fault("reader-collection-type-has-one-element").into()),
         },
@@ -4509,7 +4509,7 @@ fn collection_node_type(
 /// form.
 #[ix_trace_rs::string_edge]
 pub(crate) fn parameter_name(term: &CheckedTerm) -> Option<&str> {
-    let CheckedTerm::Aggregate { members } = term else {
+    let CheckedTerm::Aggregate { members, .. } = term else {
         return None;
     };
     members.iter().find_map(|member| {
@@ -4529,7 +4529,7 @@ pub(crate) fn parameter_name(term: &CheckedTerm) -> Option<&str> {
 /// form.
 #[ix_trace_rs::string_edge]
 fn parameter_level(term: &CheckedTerm) -> Option<u64> {
-    let CheckedTerm::Aggregate { members } = term else {
+    let CheckedTerm::Aggregate { members, .. } = term else {
         return None;
     };
     members.iter().find_map(|member| {
@@ -4664,7 +4664,7 @@ fn body_location_allowance(admitted: &CheckedPackageV2, function: &CheckedNodeId
         .map(|node| (&node.node_id, node))
         .collect();
     let function = nodes.get(function)?;
-    let CheckedTerm::Aggregate { members } = &function.body else {
+    let CheckedTerm::Aggregate { members, .. } = &function.body else {
         return None;
     };
     let start = members.iter().find_map(|term| match term {
@@ -4709,7 +4709,7 @@ fn body_location_allowance(admitted: &CheckedPackageV2, function: &CheckedNodeId
                     }
                 }
                 CheckedTerm::Application { arguments, .. } => terms.extend(arguments),
-                CheckedTerm::Aggregate { members } => terms.extend(members),
+                CheckedTerm::Aggregate { members, .. } => terms.extend(members),
                 CheckedTerm::Binding { value, .. } => terms.push(value),
                 _ => {}
             }
@@ -4805,7 +4805,7 @@ impl FunctionSelector<'_> {
 }
 
 fn function_parts(term: &CheckedTerm) -> Option<(&[CheckedTerm], &CheckedTerm)> {
-    let CheckedTerm::Aggregate { members } = term else {
+    let CheckedTerm::Aggregate { members, .. } = term else {
         return None;
     };
     let mut parameters = None;
@@ -4816,7 +4816,7 @@ fn function_parts(term: &CheckedTerm) -> Option<(&[CheckedTerm], &CheckedTerm)> 
         };
         match name.kind() {
             filament_contract_model::CheckedBindingNameKind::Parameters => {
-                let CheckedTerm::Aggregate { members } = value.as_ref() else {
+                let CheckedTerm::Aggregate { members, .. } = value.as_ref() else {
                     return None;
                 };
                 parameters = Some(members.as_slice());

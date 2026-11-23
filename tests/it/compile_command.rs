@@ -94,8 +94,13 @@ fn compile_refuses_runtime_request_shapes_without_reading_runtime_files() {
     std::fs::write(&path, serde_json::to_vec(&request).unwrap()).unwrap();
     let error = compile_in_process(directory.path()).unwrap_err();
     let value = error.value().unwrap();
-    assert_eq!(value["code"], "unknown_wire", "{value}");
-    assert_eq!(value["stage"], "envelope", "{value}");
+    assert_eq!(value["code"], "invalid-request", "{value}");
+    assert_eq!(value["stage"], "request", "{value}");
+    assert_eq!(
+        value["message"],
+        "invalid request: format native-run/1 is not read by compile; compile reads native-compile/1",
+        "{value}"
+    );
     assert!(value.get("artifact").is_none(), "{value}");
 
     for member in ["snapshots", "invocations", "selection", "package"] {

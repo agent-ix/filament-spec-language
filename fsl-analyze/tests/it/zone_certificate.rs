@@ -288,7 +288,11 @@ fn identity_and_budgets_are_checked_first() {
         assert_eq!(
             check(&world, &certificate, limits),
             Ok(ZoneCertificateVerdict::Stopped(
-                IncompleteCause::LimitReached { limit, value: 1 }
+                IncompleteCause::LimitReached {
+                    limit,
+                    value: 1,
+                    required: None
+                }
             ))
         );
     }
@@ -870,6 +874,7 @@ fn a_cycle_that_leaves_a_clock_unreset_is_accepted() {
                 IncompleteCause::LimitReached {
                     limit: ModelCheckLimit::CertificateMaxEdges,
                     value: listed,
+                    required: None,
                 }
             ))
         );

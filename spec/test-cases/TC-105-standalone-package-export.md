@@ -5,6 +5,8 @@ type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-027
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-1047
+    type: references
 ---
 ## Description
 
@@ -41,7 +43,10 @@ AC-2, steps 3 to 5 AC-3, step 6 AC-13.
 
 - Step 1: exit code 0; the outcome's package bytes are the
   `filament.checked-package/v2` bytes with no wrapper or newline.
-- Step 2: the native-run/1 request refuses `unknown_wire`; each runtime-only
+- Step 2: the native-run/1 request refuses `invalid-request` at the request
+  stage, exit code 20, with message exactly
+  `invalid request: format native-run/1 is not read by compile; compile reads native-compile/1`
+  (FR-1047); each runtime-only
   request member refuses `invalid-request` at the request stage, exit code 20,
   with no package bytes, and no model or runtime file is read.
 - Step 3: each refuses `invalid-request`, exit code 20, with no package

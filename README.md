@@ -26,7 +26,7 @@ model `example/config-version`:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/first-rule-dark.svg">
-  <img alt="An annotated FSL unit: (1) the header names the language and edition, (2) the profile says which part of the language the rules use, (3) the model line imports a domain package by exact identity, (4) invariants must hold for every object, (5) a post rule compares a value after an operation with its value before." src="docs/images/first-rule-light.svg">
+  <img alt="An annotated FSL unit: (1) the header names the language and edition, (2) the profile says which part of the language the rules use, (3) the model line imports a domain package by its identity, (4) invariants must hold for every object, (5) a post rule compares a value after an operation with its value before." src="docs/images/first-rule-light.svg">
 </picture>
 
 ```fsl stage=parse
@@ -96,7 +96,7 @@ Every check ends in one outcome, and the process exit code matches it:
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/outcomes-dark.svg">
-  <img alt="Every FSL check ends in exactly one outcome with its own exit code: success 0; violation or undefined 10; refused 20; unsupported 21; indeterminate 11; incomplete or inconclusive 22; internal failure 30; a clause still pending when its trace ends exits 0. Only success and violation are answers about the rule; the others say why no answer was given." src="docs/images/outcomes-light.svg">
+  <img alt="Every FSL check ends in exactly one outcome with its own exit code: success 0; violation or undefined 10; indeterminate 11; refused 20; unsupported 21; incomplete or inconclusive 22; internal failure 30; a clause still pending when its trace ends exits 0. Only success and violation are answers about the rule; the others say why no answer was given." src="docs/images/outcomes-light.svg">
 </picture>
 
 | Outcome | Exit | Meaning |
@@ -202,7 +202,7 @@ so unchecked input cannot reach an evaluator or backend.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/pipeline-dark.svg">
-<img alt="FSL compiles source through a lossless syntax tree and parsed forms into a checked graph, resolving names against domain models and dependency packages, then links a checked package. It can be evaluated by the reference evaluator or emitted as checked-package/v2 bytes for Contract IR and proof backends. A counterexample from an engine is replayed through the same compiler and evaluator to confirm it." src="docs/images/pipeline-light.svg">
+<img alt="FSL compiles source through a lossless syntax tree and parsed forms into a checked graph, resolving names against domain models and dependency packages, then links a checked package. The package goes three ways: to the reference evaluator, to native model checking, or as checked-package/v2 bytes to Contract IR and proof backends. A counterexample from any engine is replayed through the same compiler and evaluator to confirm it." src="docs/images/pipeline-light.svg">
 </picture>
 
 | Stage | Guarantees |
@@ -374,7 +374,7 @@ analyzers. The driver runs the chain. All of them use a set of shared `no_std` l
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/images/ecosystem-dark.svg">
-  <img alt="The Quire repositories. The main chain runs from the standard, filament-specification, to the compiler, filament-spec-language, then filament-contract-ir, filament-contract-codegen and filament-contract-runtime. filament-spec-language also feeds filament-protocol, and filament-contract-ir feeds filament-analyze. filament-observation feeds filament-protocol and filament-mltl. Above the chain, filament-driver runs it, filament-integration tests it and filament-verification plans verification. Below it, shared libraries used throughout: filament-eval, filament-exact, filament-semantic-value, filament-walk, quire-canonical and filament-verification-contracts." src="docs/images/ecosystem-light.svg">
+  <img alt="The Filament repositories. The main chain runs from the standard, filament-specification, to the compiler, filament-spec-language, then filament-contract-ir, filament-contract-codegen and filament-contract-runtime. filament-spec-language also feeds filament-protocol, and filament-contract-ir feeds filament-analyze. filament-observation feeds filament-protocol and filament-mltl. Above the chain, filament-driver runs it, filament-integration tests it and filament-verification plans verification. Below it, shared libraries used throughout: filament-eval, filament-exact, filament-semantic-value, filament-walk, quire-canonical and filament-verification-contracts." src="docs/images/ecosystem-light.svg">
 </picture>
 
 | Repository | Role | Relation to FSL |

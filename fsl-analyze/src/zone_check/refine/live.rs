@@ -183,6 +183,7 @@ impl Product<'_, '_> {
         let decided = self.decide_live(run, &mut live);
         let stats = ZoneStats {
             symbolic_states: widen(live.nodes.len()),
+            divergence_states: 0,
             retained_edges: widen(live.arcs.len()),
             automaton_states: 0,
             zone_bytes: live.nodes.iter().fold(0, |bytes: u64, node| {

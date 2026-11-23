@@ -219,7 +219,7 @@ fn member<'t>(
     use fsl_package::CheckedTerm;
     let members = match term {
         CheckedTerm::Application { arguments, .. } => arguments,
-        CheckedTerm::Aggregate { members } => members,
+        CheckedTerm::Aggregate { members, .. } => members,
         _ => return None,
     };
     members.iter().find_map(|term| match term {
@@ -480,6 +480,7 @@ impl<'a> PackageProtocolProgram<'a> {
             })?;
         let Some(fsl_package::CheckedTerm::Aggregate {
             members: capture_rows,
+            ..
         }) = member(&clause.body, "captures")
         else {
             return Err(PackageProgramRefusal::MissingIdentity(
@@ -549,7 +550,7 @@ impl<'a> PackageProtocolProgram<'a> {
         {
             let absent = || PackageProgramRefusal::MissingIdentity(control.node.node_id.clone());
             let body = &control.node.body;
-            let Some(fsl_package::CheckedTerm::Aggregate { members: proof }) =
+            let Some(fsl_package::CheckedTerm::Aggregate { members: proof, .. }) =
                 member(body, "proof")
             else {
                 return Err(absent());
@@ -591,7 +592,7 @@ impl<'a> PackageProtocolProgram<'a> {
                 }
                 _ => Err(absent()),
             };
-            let Some(fsl_package::CheckedTerm::Aggregate { members: maximum }) =
+            let Some(fsl_package::CheckedTerm::Aggregate { members: maximum, .. }) =
                 member(body, "maximum")
             else {
                 return Err(absent());
@@ -606,7 +607,7 @@ impl<'a> PackageProtocolProgram<'a> {
                 },
                 _ => return Err(absent()),
             };
-            let Some(fsl_package::CheckedTerm::Aggregate { members: exhausted }) =
+            let Some(fsl_package::CheckedTerm::Aggregate { members: exhausted, .. }) =
                 member(body, "exhausted")
             else {
                 return Err(absent());
@@ -708,7 +709,7 @@ impl<'a> PackageProtocolProgram<'a> {
         let mut related = BTreeMap::new();
         for control in &form.controls {
             if control.operation == ControlOperation::Recommend
-                && matches!(member(&control.node.body, "related"), Some(fsl_package::CheckedTerm::Aggregate { members }) if !members.is_empty())
+                && matches!(member(&control.node.body, "related"), Some(fsl_package::CheckedTerm::Aggregate { members, .. }) if !members.is_empty())
             {
                 return Err(PackageProgramRefusal::Correlation {
                     node: control.node.node_id.clone(),
@@ -718,7 +719,7 @@ impl<'a> PackageProtocolProgram<'a> {
                 control.operation,
                 ControlOperation::Send | ControlOperation::Receive | ControlOperation::Attempt
             ) {
-                let Some(fsl_package::CheckedTerm::Aggregate { members }) =
+                let Some(fsl_package::CheckedTerm::Aggregate { members, .. }) =
                     member(&control.node.body, "related")
                 else {
                     return Err(PackageProgramRefusal::MissingIdentity(

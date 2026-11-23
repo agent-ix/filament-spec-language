@@ -13,16 +13,18 @@
 //! undefined or refused reading of it. Each instance keeps the witness of
 //! the lowest walk index that found one and reads no later walk.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{
-    length_amount, Cancel, Charge, ChargePoint, Meter, ObjectReference, ScalarLimits,
+    Cancel, Charge, ChargePoint, Meter, ObjectReference, ScalarLimits, length_amount,
 };
+use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{
-    sample_model_walk_keyed, ModelSystem, ModelWalkSettings, PredicateReading, WalkMemo,
+    ModelSystem, ModelWalkSettings, PredicateReading, WalkMemo, sample_model_walk_observed_keyed,
 };
 use fsl_eval::simulation::{
-    NotSimulated, SampleProvenance, StateKey, StopReason, TransitionSystem,
+    NotSimulated, ObservedSample, ObserverDecision, SampleExpansion, SampleObservation,
+    SampleProvenance, StateKey, StopReason, TransitionSystem,
 };
 use fsl_foundation::selection::DefinitionRef;
 use fsl_replay::{
@@ -31,11 +33,11 @@ use fsl_replay::{
 use fsl_semantics::check::{CheckedStateGraphClaim, PredicateRole};
 
 use super::{
-    budget_is_ceiling, cancelled, expansion_stop, fault, sampler, step_ceiling, stopped,
-    trace_index, trace_indices_fit, Budgets, Halt, InstanceView,
+    Budgets, Halt, InstanceView, budget_is_ceiling, cancelled, expansion_stop, fault, sampler,
+    step_ceiling, stopped, trace_index, trace_indices_fit,
 };
-use crate::model_check::check::BOUND_POSITIONS;
 use crate::model_check::ModelCheckRefusal;
+use crate::model_check::check::BOUND_POSITIONS;
 
 /// An instance's identity within the request: item and instance index.
 type InstanceKey = (usize, usize);
@@ -148,7 +150,62 @@ struct Walk {
     found: Vec<Option<Found>>,
     steps: Vec<ModelStep>,
     budget_stopped: bool,
-    provenance: SampleProvenance,
+    provenance: Option<SampleProvenance>,
+}
+
+/// Incrementally proves that a sampled walk's observed subgraph is closed.
+/// Edge identity is the source key, transition identity and destination key.
+struct ObservedClosure<T> {
+    visited: BTreeSet<StateKey>,
+    outgoing: BTreeMap<StateKey, Vec<(T, StateKey)>>,
+    taken: BTreeMap<StateKey, Vec<(T, StateKey)>>,
+    previous: Option<StateKey>,
+}
+
+impl<T> Default for ObservedClosure<T> {
+    fn default() -> Self {
+        Self {
+            visited: BTreeSet::new(),
+            outgoing: BTreeMap::new(),
+            taken: BTreeMap::new(),
+            previous: None,
+        }
+    }
+}
+
+impl<T: Clone + Eq> ObservedClosure<T> {
+    fn observe<S, F>(&mut self, observation: &SampleObservation<'_, S, T, F>) -> bool {
+        if let (Some(source), Some(incoming)) = (&self.previous, observation.incoming) {
+            let edge = (incoming.transition.clone(), incoming.key.clone());
+            let edges = self.taken.entry(source.clone()).or_default();
+            if !edges.contains(&edge) {
+                edges.push(edge);
+            }
+        }
+        let repeated = !self.visited.insert(observation.key.clone());
+        let SampleExpansion::Complete { successors, .. } = &observation.expansion else {
+            self.previous = Some(observation.key.clone());
+            return false;
+        };
+        let edges = successors
+            .iter()
+            .map(|successor| (successor.transition.clone(), successor.key.clone()))
+            .collect();
+        self.outgoing
+            .entry(observation.key.clone())
+            .or_insert(edges);
+        self.previous = Some(observation.key.clone());
+        repeated
+            && self.outgoing.len() == self.visited.len()
+            && self.outgoing.iter().all(|(source, edges)| {
+                edges.iter().all(|(transition, destination)| {
+                    self.visited.contains(destination)
+                        && self.taken.get(source).is_some_and(|taken| {
+                            taken.contains(&(transition.clone(), destination.clone()))
+                        })
+                })
+            })
+    }
 }
 
 /// Phase 0 of one run.
@@ -241,7 +298,10 @@ impl Phase<'_, '_> {
                                     path,
                                     source: WitnessSource::Sampled(SampleProvenance {
                                         stopped: StopReason::Reached,
-                                        ..walk.provenance.clone()
+                                        ..walk
+                                            .provenance
+                                            .clone()
+                                            .ok_or_else(|| fault("target-walk-has-provenance"))?
                                     }),
                                 });
                             }
@@ -278,7 +338,8 @@ impl Phase<'_, '_> {
         let mut found: Vec<Option<Found>> = vec![None; targets.len()];
         let mut halt: Option<Result<Halt, ModelCheckRefusal>> = None;
         let mut position = 0;
-        let walked = sample_model_walk_keyed(
+        let mut closure = ObservedClosure::<ModelTransition>::default();
+        let walked = sample_model_walk_observed_keyed(
             self.system,
             initial,
             ModelWalkSettings {
@@ -290,12 +351,14 @@ impl Phase<'_, '_> {
                 cancel: Some(self.cancel),
             },
             &self.walks,
-            |state, key| {
+            |observation| {
+                let state = observation.state;
+                let key = observation.key;
                 let here = position;
                 position += 1;
                 if let Some(cancel) = cancelled(self.cancel) {
                     halt = Some(Ok(cancel));
-                    return true;
+                    return ObserverDecision::Stop;
                 }
                 let open: Vec<usize> = (0..targets.len())
                     .filter(|index| found[*index].is_none())
@@ -317,7 +380,7 @@ impl Phase<'_, '_> {
                                     ),
                                 )
                             })));
-                            return true;
+                            return ObserverDecision::Stop;
                         }
                     };
                     if reading.is_none() {
@@ -335,7 +398,7 @@ impl Phase<'_, '_> {
                     Ok(readings) => readings,
                     Err(stop) => {
                         halt = Some(expansion_stop(&stop, self.budgets));
-                        return true;
+                        return ObserverDecision::Stop;
                     }
                 }
                 .into_iter();
@@ -349,7 +412,7 @@ impl Phase<'_, '_> {
                     } else {
                         let Some(reading) = readings.next() else {
                             halt = Some(Err(fault("one-reading-per-target")));
-                            return true;
+                            return ObserverDecision::Stop;
                         };
                         truths.retain(key, target_indices[index], &reading);
                         reading
@@ -362,26 +425,47 @@ impl Phase<'_, '_> {
                         }
                     };
                 }
-                found.iter().all(Option::is_some)
+                if found.iter().all(Option::is_some) {
+                    return ObserverDecision::Stop;
+                }
+                if closure.observe(observation) {
+                    return ObserverDecision::Stop;
+                }
+                ObserverDecision::Continue
             },
         );
         if let Some(halt) = halt {
             return halt.map(Err);
         }
-        let trace = match walked {
-            Ok(trace) => trace,
+        let (trace_steps, provenance) = match walked {
+            Ok(ObservedSample::Completed(trace)) => {
+                let provenance = trace
+                    .provenance
+                    .ok_or_else(|| fault("sampled-trace-has-provenance"))?;
+                (trace.steps, Some(provenance))
+            }
+            Ok(ObservedSample::ObserverStopped(prefix)) => {
+                let provenance = found
+                    .iter()
+                    .any(|found| matches!(found, Some(Found::Target(_))))
+                    .then(|| SampleProvenance {
+                        seed: self.seed,
+                        trace,
+                        sampler: sampler.clone(),
+                        stopped: StopReason::Reached,
+                    });
+                (prefix.steps, provenance)
+            }
             Err(NotSimulated::KeyEncoding(refusal)) => {
-                return Err(ModelCheckRefusal::Encoding(refusal))
+                return Err(ModelCheckRefusal::Encoding(refusal));
             }
             Err(_) => return Err(fault("phase-zero-walk-samples")),
         };
-        let provenance = trace
-            .provenance
-            .ok_or_else(|| fault("sampled-trace-has-provenance"))?;
-        let budget_stopped = budget_is_ceiling(self.limits, self.horizon)
-            && provenance.stopped == StopReason::StepLimit;
-        let steps = trace
-            .steps
+        let budget_stopped = provenance.as_ref().is_some_and(|provenance| {
+            budget_is_ceiling(self.limits, self.horizon)
+                && provenance.stopped == StopReason::StepLimit
+        });
+        let steps: Vec<ModelStep> = trace_steps
             .into_iter()
             .map(|step| ModelStep {
                 transition: step.transition,
@@ -401,8 +485,16 @@ impl Phase<'_, '_> {
 #[cfg(test)]
 mod tests {
     use filament_exact::{CancelCause, LimitKind};
+    use filament_exact::{NodeKey, ValueType};
+    use filament_semantic_value::catalog::CatalogCode;
+    use filament_semantic_value::declaration::TypeEnvironment;
     use fsl_eval::simulation::model::ClauseOutcome;
+    use fsl_eval::simulation::{
+        Expansion, ExpansionStop, SampleRequest, sample_request, sample_request_observed,
+    };
+    use fsl_replay::{DEFAULT_WITNESS_SAMPLES, DEFAULT_WITNESS_SEED};
     use ix_trace_rs::trace;
+    use serde::Serialize;
 
     use super::*;
 
@@ -419,6 +511,287 @@ mod tests {
             work_units: u64::MAX,
             result_units: u64::MAX,
         }
+    }
+
+    #[derive(Serialize)]
+    struct Graph(Vec<Vec<(usize, usize)>>);
+
+    impl TransitionSystem for Graph {
+        type State = usize;
+        type TransitionId = usize;
+        type Key = usize;
+        type Finding = ();
+
+        fn initial(&self) -> Vec<Self::State> {
+            vec![0]
+        }
+
+        fn key(&self, state: &Self::State) -> Self::Key {
+            *state
+        }
+
+        fn successors(
+            &self,
+            state: &Self::State,
+        ) -> Result<Expansion<Self::TransitionId, Self::State, Self::Finding>, ExpansionStop>
+        {
+            Ok(Expansion {
+                successors: self.0[*state].to_vec(),
+                findings: Vec::new(),
+            })
+        }
+    }
+
+    struct StopsAtOne;
+
+    impl TransitionSystem for StopsAtOne {
+        type State = usize;
+        type TransitionId = usize;
+        type Key = usize;
+        type Finding = &'static str;
+
+        fn initial(&self) -> Vec<Self::State> {
+            vec![0]
+        }
+
+        fn key(&self, state: &Self::State) -> Self::Key {
+            *state
+        }
+
+        fn successors(
+            &self,
+            state: &Self::State,
+        ) -> Result<Expansion<Self::TransitionId, Self::State, Self::Finding>, ExpansionStop>
+        {
+            if *state == 1 {
+                return Err(ExpansionStop {
+                    cause: CatalogCode::new("resource_exhausted", "insufficient-next-charge"),
+                    limit: None,
+                });
+            }
+            Ok(Expansion {
+                successors: vec![(17, 1)],
+                findings: vec!["expanded-zero"],
+            })
+        }
+
+        fn state_findings(
+            &self,
+            state: &Self::State,
+        ) -> Option<Result<Vec<Self::Finding>, ExpansionStop>> {
+            Some(Ok(if *state == 1 {
+                vec!["stopped-one"]
+            } else {
+                vec!["state-zero"]
+            }))
+        }
+    }
+
+    fn closed_walk_steps(graph: &Graph, trace: u64, ceiling: usize) -> usize {
+        let sampler =
+            DefinitionRef::new("filament", "filament.simulation.sampler/v1").expect("sampler");
+        let domains: &[(NodeKey, &ValueType)] = &[];
+        let types = TypeEnvironment::default();
+        let mut closure = ObservedClosure::<usize>::default();
+        let result = sample_request_observed(
+            graph,
+            SampleRequest {
+                domains,
+                types: &types,
+                position_limit: BOUND_POSITIONS,
+                sampler: &sampler,
+                seed: DEFAULT_WITNESS_SEED,
+                trace,
+                max_steps: ceiling,
+                identity: fsl_foundation::IdentityLimits::default(),
+            },
+            |observation| {
+                if closure.observe(observation) {
+                    ObserverDecision::Stop
+                } else {
+                    ObserverDecision::Continue
+                }
+            },
+        )
+        .expect("sample request is bounded");
+        let ObservedSample::ObserverStopped(prefix) = result else {
+            panic!("walk did not prove closure before its ceiling");
+        };
+        prefix.steps.len()
+    }
+
+    /// FR-101-AC-23: an observer that continues preserves the ordinary trace,
+    /// including its findings and sampler provenance.
+    #[trace("FR-101-AC-23")]
+    #[test]
+    fn an_observer_that_continues_preserves_the_sampled_trace() {
+        let graph = Graph(vec![
+            vec![(1, 1), (2, 2)],
+            vec![(0, 0), (2, 2), (3, 3)],
+            vec![(0, 0), (1, 1), (3, 3)],
+            vec![(0, 0), (2, 2)],
+        ]);
+        let sampler =
+            DefinitionRef::new("filament", "filament.simulation.sampler/v1").expect("sampler");
+        let domains: &[(NodeKey, &ValueType)] = &[];
+        let types = TypeEnvironment::default();
+        let request = || SampleRequest {
+            domains,
+            types: &types,
+            position_limit: BOUND_POSITIONS,
+            sampler: &sampler,
+            seed: DEFAULT_WITNESS_SEED,
+            trace: 19,
+            max_steps: 32,
+            identity: fsl_foundation::IdentityLimits::default(),
+        };
+        let ordinary = sample_request(
+            &graph,
+            domains,
+            &types,
+            BOUND_POSITIONS,
+            &sampler,
+            DEFAULT_WITNESS_SEED,
+            19,
+            32,
+            fsl_foundation::IdentityLimits::default(),
+        )
+        .expect("ordinary trace");
+        let observed = sample_request_observed(&graph, request(), |_| ObserverDecision::Continue)
+            .expect("observed trace");
+        let ObservedSample::Completed(observed) = observed else {
+            panic!("always-continue observer must complete");
+        };
+        assert_eq!(observed, ordinary);
+    }
+
+    /// FR-101-AC-23: observers receive a stopped state's cause and can stop
+    /// with a prefix that does not become a completed trace.
+    #[trace("FR-101-AC-23")]
+    #[test]
+    fn observer_sees_stopped_expansions_before_the_sample_ends() {
+        let sampler =
+            DefinitionRef::new("filament", "filament.simulation.sampler/v1").expect("sampler");
+        let domains: &[(NodeKey, &ValueType)] = &[];
+        let types = TypeEnvironment::default();
+        let mut saw_stop = false;
+        let mut observations = 0;
+        let observed = sample_request_observed(
+            &StopsAtOne,
+            SampleRequest {
+                domains,
+                types: &types,
+                position_limit: BOUND_POSITIONS,
+                sampler: &sampler,
+                seed: DEFAULT_WITNESS_SEED,
+                trace: 0,
+                max_steps: 4,
+                identity: fsl_foundation::IdentityLimits::default(),
+            },
+            |observation| {
+                observations += 1;
+                match &observation.expansion {
+                    SampleExpansion::Stopped(stop) => {
+                        saw_stop = true;
+                        assert_eq!(observation.step, 1);
+                        assert_eq!(*observation.state, 1);
+                        let incoming = observation.incoming.expect("one edge reaches state one");
+                        assert_eq!(incoming.transition, 17);
+                        assert_eq!(incoming.ordinal, 0);
+                        assert_eq!(incoming.key.as_bytes(), b"1");
+                        assert_eq!(
+                            stop.cause,
+                            CatalogCode::new("resource_exhausted", "insufficient-next-charge")
+                        );
+                        ObserverDecision::Stop
+                    }
+                    SampleExpansion::Complete { .. } => ObserverDecision::Continue,
+                }
+            },
+        )
+        .expect("sample request is bounded");
+        let ObservedSample::ObserverStopped(prefix) = observed else {
+            panic!("observer stop must return a prefix");
+        };
+        assert!(saw_stop);
+        let initial = StateKey::from_canonical_bytes(b"0".to_vec());
+        let stopped = StateKey::from_canonical_bytes(b"1".to_vec());
+        assert_eq!(observations, 2, "the observer stopped before another draw");
+        assert_eq!(prefix.initial, initial);
+        assert_eq!(
+            prefix.steps,
+            vec![fsl_eval::simulation::Step {
+                transition: 17,
+                ordinal: 0,
+                key: stopped.clone(),
+            }]
+        );
+        assert_eq!(
+            prefix.findings,
+            vec![
+                fsl_eval::simulation::StateFindings {
+                    state: initial,
+                    depth: 0,
+                    findings: vec!["expanded-zero"],
+                },
+                fsl_eval::simulation::StateFindings {
+                    state: stopped,
+                    depth: 1,
+                    findings: vec!["stopped-one"],
+                },
+            ]
+        );
+    }
+
+    /// FR-166-AC-2: each seeded walk closes the complete 9-state/18-edge
+    /// worked graph within 512 transitions; record and bound the total work.
+    #[trace("FR-166-AC-2", "FR-166-AC-7")]
+    #[test]
+    fn observed_closure_bounds_the_nine_state_worked_graph() {
+        let mut edges = vec![Vec::new(); 9];
+        for version_a in 0..3 {
+            for version_b in 0..3 {
+                let state = version_a * 3 + version_b;
+                edges[state] = vec![
+                    (0, ((version_a + 1) % 3) * 3 + version_b),
+                    (1, version_a * 3 + (version_b + 1) % 3),
+                ];
+            }
+        }
+        let graph = Graph(edges);
+        assert_eq!(graph.0.len(), 9);
+        assert_eq!(graph.0.iter().map(Vec::len).sum::<usize>(), 18);
+        let steps: Vec<usize> = (0..DEFAULT_WITNESS_SAMPLES)
+            .map(|trace| closed_walk_steps(&graph, trace, 512))
+            .collect();
+        assert_eq!(steps.len(), DEFAULT_WITNESS_SAMPLES as usize);
+        assert!(steps.iter().all(|steps| *steps <= 512), "{steps:?}");
+        let total: usize = steps.iter().sum();
+        assert!(total <= 64 * 512, "total sampled steps: {total}");
+        assert_eq!(total, 3450, "total sampled steps: {steps:?}");
+    }
+
+    /// FR-166-AC-8: a seeded walk closes only after all outgoing edges of the
+    /// visited subgraph have been taken, within the published 256-step cap.
+    #[trace("FR-166-AC-8")]
+    #[test]
+    fn observed_closure_bounds_the_four_state_ten_edge_graph() {
+        let graph = Graph(vec![
+            vec![(1, 1), (2, 2)],
+            vec![(0, 0), (2, 2), (3, 3)],
+            vec![(0, 0), (1, 1), (3, 3)],
+            vec![(0, 0), (2, 2)],
+        ]);
+        assert_eq!(graph.0.len(), 4);
+        assert_eq!(graph.0.iter().map(Vec::len).sum::<usize>(), 10);
+        let steps: Vec<usize> = (0..DEFAULT_WITNESS_SAMPLES)
+            .map(|trace| closed_walk_steps(&graph, trace, 256))
+            .collect();
+        assert_eq!(steps.len(), DEFAULT_WITNESS_SAMPLES as usize);
+        assert!(steps.iter().all(|steps| *steps <= 256), "{steps:?}");
+        let total: usize = steps.iter().sum();
+        assert!(total <= 64 * 256, "total sampled steps: {total}");
+        assert_eq!(total, 1892, "total sampled steps: {steps:?}");
     }
 
     /// A cached truth belongs only to its state and target instance.

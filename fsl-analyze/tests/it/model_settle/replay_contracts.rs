@@ -157,7 +157,8 @@ fn returned_undefined_and_actual_state_limit_runs_settle_without_invented_outcom
         settled.value,
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxStates,
-            value: 1
+            value: 1,
+            required: None,
         })
     );
     assert_eq!(settled.label, ResultLabel::Failed);

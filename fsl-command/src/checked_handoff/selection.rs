@@ -856,7 +856,7 @@ fn binding_members<'a>(arguments: &'a [CheckedTerm], name: &str) -> Option<&'a [
             if matches!(bound.kind(), filament_contract_model::CheckedBindingNameKind::Other(other) if other == name) =>
         {
             match value.as_ref() {
-                CheckedTerm::Aggregate { members } => Some(members.as_slice()),
+                CheckedTerm::Aggregate { members, .. } => Some(members.as_slice()),
                 _ => None,
             }
         }
@@ -984,7 +984,7 @@ fn check_clause(row: &ClauseRow, package: &CheckedPackageV2) -> Result<(), Selec
 /// The aggregate at argument position `index`.
 fn binding_members_or_aggregate(arguments: &[CheckedTerm], index: usize) -> Option<&[CheckedTerm]> {
     match arguments.get(index)? {
-        CheckedTerm::Aggregate { members } => Some(members),
+        CheckedTerm::Aggregate { members, .. } => Some(members),
         _ => None,
     }
 }

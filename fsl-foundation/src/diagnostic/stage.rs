@@ -197,11 +197,58 @@ impl CatalogCoded for LimitExceeded {
     }
 }
 
-/// FR-255 Behavior 3, FSpec FR-461's rendering: the stage and counter, the
-/// configured bound, the count reached, the locus where known, and the
-/// setting that raises the limit at each entry point.
-impl core::fmt::Display for LimitExceeded {
+/// The request schema a limit message is rendered for (ADR-030 D-3,
+/// FR-255-AC-2). The recovery advice names a request member only when the
+/// active request schema defines it.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum RequestKind {
+    /// A native-run/1 request, a closed schema with no `stage_limits` member:
+    /// the advice names only the CLI `--limit` option.
+    NativeRun,
+    /// A replay request, whose `stage_limits` entry carries every stage
+    /// limit: the advice also names that entry.
+    Replay,
+}
+
+/// A [`LimitExceeded`] rendered for one [`RequestKind`] by
+/// [`LimitExceeded::render`].
+#[derive(Clone, Copy, Debug)]
+pub struct RenderedLimit<'a> {
+    limit: &'a LimitExceeded,
+    request: RequestKind,
+}
+
+impl LimitExceeded {
+    /// This limit rendered for `request`: the facts of its `Display`, then
+    /// the `--limit` advice, then the request-entry advice only where
+    /// `request`'s schema defines the entry (FR-255-AC-2).
+    #[must_use]
+    pub const fn render(&self, request: RequestKind) -> RenderedLimit<'_> {
+        RenderedLimit {
+            limit: self,
+            request,
+        }
+    }
+}
+
+impl core::fmt::Display for RenderedLimit<'_> {
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.limit.write_facts(formatter)?;
+        let name = self.limit.setting.name();
+        write!(formatter, "; raise it with `--limit {name}=<n>`")?;
+        if self.request == RequestKind::Replay {
+            write!(
+                formatter,
+                " or the replay request's `stage_limits` entry `{name}`"
+            )?;
+        }
+        Ok(())
+    }
+}
+
+impl LimitExceeded {
+    /// The stage and counter, the bound, the count reached and the locus.
+    fn write_facts(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // `emit.output_bytes` names bytes the E4 emitter writes. Keep its
         // catalog kind as input bytes (FR-264 Behavior 5), but render the
         // caller-facing counter using the output setting's name.
@@ -220,11 +267,18 @@ impl core::fmt::Display for LimitExceeded {
         if let Some(locus) = &self.locus {
             write!(formatter, " at {locus}")?;
         }
-        write!(
-            formatter,
-            "; raise it with `--limit {name}=<n>` or the request's `stage_limits` entry `{name}`",
-            name = self.setting.name()
-        )
+        Ok(())
+    }
+}
+
+/// FR-255 Behavior 3, FSpec FR-461's rendering for a caller that has no
+/// request: the stage and counter, the configured bound, the count reached,
+/// the locus where known, and the `--limit` option that raises the limit.
+/// It names no request entry; use [`LimitExceeded::render`] where the active
+/// request schema is known.
+impl core::fmt::Display for LimitExceeded {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(&self.render(RequestKind::NativeRun), formatter)
     }
 }
 
@@ -238,7 +292,7 @@ mod tests {
 
     use filament_exact::CancelCause;
 
-    use super::{LimitExceeded, StageFailure};
+    use super::{LimitExceeded, RequestKind, StageFailure};
     use crate::diagnostic::category_of;
     use crate::setting::Setting;
     use filament_semantic_value::catalog::CatalogCoded;
@@ -359,15 +413,33 @@ mod tests {
         }
     }
 
-    /// FR-255-AC-2's rendering, with no locus: the stage and counter, the
-    /// bound, the count reached and the setting at both entry points.
+    /// FR-255-AC-2's native-run/1 rendering: the facts and the CLI advice,
+    /// and no request entry, because the native-run/1 schema has none.
     #[trace("TC-720", "FR-255-AC-2")]
     #[test]
-    fn a_limit_renders_its_setting_at_every_entry_point() {
+    fn a_native_run_limit_names_the_cli_option_and_no_request_entry() {
+        let limit = LimitExceeded::new(Setting::S3Nodes, 4, 5);
+        let rendered = limit.render(RequestKind::NativeRun).to_string();
         assert_eq!(
-            LimitExceeded::new(Setting::S3Nodes, 4, 5).to_string(),
-            "S3 node limit 4 reached (5); raise it with `--limit s3.nodes=<n>` or the request's \
-             `stage_limits` entry `s3.nodes`"
+            rendered,
+            "S3 node limit 4 reached (5); raise it with `--limit s3.nodes=<n>`"
+        );
+        assert!(!rendered.contains("stage_limits"), "{rendered}");
+        assert_eq!(limit.to_string(), rendered);
+    }
+
+    /// FR-255-AC-2's replay rendering: the CLI advice, then the replay
+    /// request's `stage_limits` entry, which the replay schema defines.
+    #[trace("TC-720", "FR-255-AC-2")]
+    #[test]
+    fn a_replay_limit_also_names_the_stage_limits_entry() {
+        let rendered = LimitExceeded::new(Setting::S3Nodes, 4, 5)
+            .render(RequestKind::Replay)
+            .to_string();
+        assert_eq!(
+            rendered,
+            "S3 node limit 4 reached (5); raise it with `--limit s3.nodes=<n>` or the replay \
+             request's `stage_limits` entry `s3.nodes`"
         );
     }
 }

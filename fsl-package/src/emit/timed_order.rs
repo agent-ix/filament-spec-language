@@ -246,7 +246,7 @@ impl<'g> Graph<'g> {
     fn operation_name(&self, reference: &CheckedTerm) -> Result<Box<str>, OrderFault> {
         let anchor = self.node(target(reference)?)?;
         let members = match &anchor.body {
-            CheckedTerm::Aggregate { members } => members.as_slice(),
+            CheckedTerm::Aggregate { members, .. } => members.as_slice(),
             CheckedTerm::OperationAnchorBody(body) => body.members.as_slice(),
             _ => return Err(OrderFault::Malformed),
         };
@@ -289,7 +289,7 @@ impl<'g> Graph<'g> {
                 key.push(Token::Text(value_kind.as_wire().into()));
                 key.push(literal_token(*value_kind, value));
             }
-            CheckedTerm::Aggregate { members } => {
+            CheckedTerm::Aggregate { members, .. } => {
                 key.push(Token::Open);
                 for member in members {
                     self.term(member, key, depth + 1)?;
@@ -477,7 +477,7 @@ fn aggregate_at<'t>(body: &'t mut CheckedTerm, pointer: &str) -> Option<&'t mut 
     let mut at = body;
     while let Some(step) = steps.next() {
         at = match (step, at) {
-            ("members", CheckedTerm::Aggregate { members }) => match steps.next() {
+            ("members", CheckedTerm::Aggregate { members, .. }) => match steps.next() {
                 None => return Some(members),
                 Some(index) => members.get_mut(index.parse::<usize>().ok()?)?,
             },
@@ -539,7 +539,7 @@ fn rational(term: &CheckedTerm) -> Result<Rational, OrderFault> {
 
 fn members_of(term: &CheckedTerm) -> Result<&[CheckedTerm], OrderFault> {
     match term {
-        CheckedTerm::Aggregate { members } => Ok(members),
+        CheckedTerm::Aggregate { members, .. } => Ok(members),
         _ => Err(OrderFault::Malformed),
     }
 }
