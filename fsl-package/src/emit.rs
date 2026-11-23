@@ -7953,13 +7953,16 @@ fn emit_package_nodes(
         &mut nodes,
         &mut source_map,
     )?;
-    // Use the same recorded expression placement that supplies the
-    // application's source-map occurrence; `CheckedGraph::occurrence` is
-    // not the placement source for caller-built, spanless forms.
+    // Use the recorded expression placement that supplies an application's
+    // source-map occurrence, falling back to the checked occurrence span for
+    // claim-role records such as operation contracts.
     let value_validity_region = |claim: &OccurrenceKey| {
         candidates
-            .get(claim.node())?
-            .expression_region(claim.origin().ordinal(), &regions)
+            .get(claim.node())
+            .and_then(|candidate| {
+                candidate.expression_region(claim.origin().ordinal(), &regions)
+            })
+            .or_else(|| graph.occurrence_region(claim.node().clone(), claim.origin()))
     };
     let value_validity = value_validity_requirements::append(
         ids,
