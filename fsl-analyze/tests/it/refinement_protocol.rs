@@ -2245,7 +2245,7 @@ fn a_protocol_node_row_faults_when_its_reference_type_has_multiple_object_rows()
         .replace("abstract Q concrete R", "abstract Q::P concrete R")
         .replace(
             "step R::Slot::put -> Q::Queue::enq(self.ring, x);",
-            "step R::Slot::put -> node Q::P::a1(self.ring);",
+            "step R::Slot::put -> node Q::P::a1(self.ring, x);",
         )
         .replace(
             "step R::Slot::take -> Q::Queue::deq(self.ring);",
