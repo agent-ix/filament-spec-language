@@ -287,7 +287,7 @@ fn aggregate_fault() -> InternalFault {
 }
 
 fn aggregate_binding<'a>(term: &'a CheckedTerm, key: &str) -> Option<&'a CheckedTerm> {
-    let CheckedTerm::Aggregate { members } = term else {
+    let CheckedTerm::Aggregate { members, .. } = term else {
         return None;
     };
     members.iter().find_map(|member| match member {

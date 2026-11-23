@@ -39,7 +39,7 @@ fn pending(node: &CheckedNodeId, fact: &'static str) -> BareClauseRefusal {
 
 fn members(term: &CheckedTerm) -> Option<&[CheckedTerm]> {
     match term {
-        CheckedTerm::Aggregate { members } => Some(members),
+        CheckedTerm::Aggregate { members, .. } => Some(members),
         _ => None,
     }
 }

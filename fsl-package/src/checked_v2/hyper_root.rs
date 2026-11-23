@@ -78,7 +78,7 @@ fn is_hyper(node: &CheckedSemanticNodeV2) -> bool {
 /// string-edge): FR-402 names the member `body`.
 #[ix_trace_rs::string_edge]
 fn body_id(node: &CheckedSemanticNodeV2) -> Option<&CheckedNodeId> {
-    let CheckedTerm::Aggregate { members } = &node.body else {
+    let CheckedTerm::Aggregate { members, .. } = &node.body else {
         return None;
     };
     members.iter().find_map(|member| match member {

@@ -334,7 +334,7 @@ impl<'p> BarePackage<'p> {
         let CheckedTerm::Application { arguments, .. } = term else {
             return Err(BareClauseRefusal::from(fault("fairness-clause-is-admitted")).into());
         };
-        let [_, _, _, _, CheckedTerm::Aggregate { members }, _] = arguments.as_slice() else {
+        let [_, _, _, _, CheckedTerm::Aggregate { members, .. }, _] = arguments.as_slice() else {
             return Err(BareClauseRefusal::from(fault("fairness-clause-is-admitted")).into());
         };
         work.visit()?;
@@ -405,7 +405,7 @@ impl<'p> BarePackage<'p> {
         let CheckedTerm::Application { arguments, .. } = term else {
             return Err(malformed().into());
         };
-        let [_, _, _, _, CheckedTerm::Aggregate { members }, _] = arguments.as_slice() else {
+        let [_, _, _, _, CheckedTerm::Aggregate { members, .. }, _] = arguments.as_slice() else {
             return Err(malformed().into());
         };
         work.items(members.len())?;
@@ -961,7 +961,7 @@ impl BarePackage<'_> {
                 StateClauseKind::Precondition => Observation::Pre,
                 StateClauseKind::Postcondition => Observation::Post,
             };
-            let [CheckedTerm::Aggregate { members }, CheckedTerm::Reference { target: anchor }, _] =
+            let [CheckedTerm::Aggregate { members, .. }, CheckedTerm::Reference { target: anchor }, _] =
                 arguments.as_slice()
             else {
                 return Err(malformed());
@@ -1111,7 +1111,7 @@ impl<'p> BarePackage<'p> {
             StateClauseKind::Precondition => Observation::Pre,
             StateClauseKind::Postcondition => Observation::Post,
         };
-        let [CheckedTerm::Aggregate { members }, _anchor, CheckedTerm::Reference { target: body }] =
+        let [CheckedTerm::Aggregate { members, .. }, _anchor, CheckedTerm::Reference { target: body }] =
             arguments.as_slice()
         else {
             return Err(malformed());
@@ -1561,7 +1561,7 @@ impl<'p> BarePackage<'p> {
             |id: &CheckedNodeId| -> Result<(String, filament_exact::ValueType), W::Error> {
                 work.visit()?;
                 let parameter = lookup(id).ok_or_else(malformed)?;
-                let CheckedTerm::Aggregate { members } = &parameter.body else {
+                let CheckedTerm::Aggregate { members, .. } = &parameter.body else {
                     return Err(malformed().into());
                 };
                 let mut name = None;
@@ -1789,7 +1789,7 @@ impl BarePackage<'_> {
         use filament_contract_model::CheckedBindingNameKind;
 
         let names = |node: &CheckedSemanticNodeV2| -> Vec<String> {
-            let CheckedTerm::Aggregate { members } = &node.body else {
+            let CheckedTerm::Aggregate { members, .. } = &node.body else {
                 return Vec::new();
             };
             members

@@ -1097,7 +1097,7 @@ fn retained_source_tuple_rows_follow_the_plan_root_and_the_ir_join_accepts_them(
         .iter()
         .find(|node| node.node_id == collection.base_node)
         .expect("the collection node is admitted");
-    let filament_contract_model::CheckedTerm::Aggregate { members } = &base.body else {
+    let filament_contract_model::CheckedTerm::Aggregate { members, .. } = &base.body else {
         panic!("a collection body is an aggregate");
     };
     assert_eq!(

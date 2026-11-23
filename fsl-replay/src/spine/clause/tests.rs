@@ -3818,7 +3818,7 @@ fn s4_emits_exactly_the_fr_105_state_nodes() {
         .filter(|node| node.semantic_form() == "operation_anchor")
         .collect();
     assert_eq!(anchors.len(), 1, "{anchors:?}");
-    let fsl_semantics::check::BodyTerm::Aggregate(fsl_semantics::check::AggregateTerm { members }) =
+    let fsl_semantics::check::BodyTerm::Aggregate(fsl_semantics::check::AggregateTerm { members, .. }) =
         anchors[0].body()
     else {
         panic!("operation_anchor body must be an aggregate");
@@ -4449,6 +4449,7 @@ fn clause_parameters(
             );
             let fsl_semantics::check::BodyTerm::Aggregate(fsl_semantics::check::AggregateTerm {
                 members: bindings,
+                ..
             }) = node.body()
             else {
                 panic!("a parameter node's body is an aggregate");
@@ -5114,7 +5115,7 @@ fn s4_pre_clauses_via_config_version_and_sub_share_one_anchor_at_config_version(
         .semantic_graph()
         .node(anchor.clone())
         .expect("the anchor node is in the graph");
-    let fsl_semantics::check::BodyTerm::Aggregate(fsl_semantics::check::AggregateTerm { members }) =
+    let fsl_semantics::check::BodyTerm::Aggregate(fsl_semantics::check::AggregateTerm { members, .. }) =
         anchor_node.body()
     else {
         panic!("operation_anchor body must be an aggregate");

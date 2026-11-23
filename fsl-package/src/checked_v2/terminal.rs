@@ -73,7 +73,7 @@ fn reference(term: &CheckedTerm) -> Option<&filament_contract_model::CheckedNode
 
 /// The four bindings of a terminal body, in FR-476's order.
 fn bindings(node: &CheckedSemanticNodeV2) -> Option<[&CheckedTerm; 4]> {
-    let CheckedTerm::Aggregate { members } = &node.body else {
+    let CheckedTerm::Aggregate { members, .. } = &node.body else {
         return None;
     };
     let mut values = members.iter().map(|member| match member {
@@ -105,7 +105,7 @@ fn read_node(
     else {
         return Err(SHAPE);
     };
-    let CheckedTerm::Aggregate { members } = parameters else {
+    let CheckedTerm::Aggregate { members, .. } = parameters else {
         return Err(SHAPE);
     };
     let declaration = match mode.as_str() {

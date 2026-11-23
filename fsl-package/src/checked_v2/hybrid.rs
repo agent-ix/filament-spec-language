@@ -445,7 +445,7 @@ pub(crate) fn decimal_range_type(
 /// The members of the aggregate `term`.
 fn members(term: &CheckedTerm) -> Result<&[CheckedTerm], HybridReadError> {
     match term {
-        CheckedTerm::Aggregate { members } => Ok(members),
+        CheckedTerm::Aggregate { members, .. } => Ok(members),
         _ => Err(HybridReadError::Fault(SHAPE)),
     }
 }
