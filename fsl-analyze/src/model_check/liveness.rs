@@ -1717,6 +1717,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             }
             let settled_exhaustively = !run.dead_cut
                 && run.binding.applied.is_none()
+                && !self.request.partial_order
                 && !run.graph.states().iter().any(|state| {
                     state.findings.iter().any(|finding| {
                         matches!(
