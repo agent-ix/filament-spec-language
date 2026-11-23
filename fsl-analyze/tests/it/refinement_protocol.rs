@@ -2242,7 +2242,7 @@ fn a_protocol_node_row_faults_when_its_reference_type_has_multiple_object_rows()
         finish Done as (d: Boolean) { true };\n\
         }\n";
     let refinement = twin_refinement(true)
-        .replace("abstract Q concrete R", "abstract P concrete R")
+        .replace("abstract Q concrete R", "abstract Q::P concrete R")
         .replace(
             "step R::Slot::put -> Q::Queue::enq(self.ring, x);",
             "step R::Slot::put -> node Q::P::a1(self.ring);",
