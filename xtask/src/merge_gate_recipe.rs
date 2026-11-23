@@ -102,6 +102,10 @@ const EMIT_CONSUMERS: &[ItFilter] = &[
         rule: ItRule::Fixed("run_requirement_items"),
     },
 ];
+const PROBABILITY_CHECK_MODULES: ItFilter = ItFilter {
+    package: "fsl-probability-check",
+    rule: ItRule::AllModules("fsl-probability-check"),
+};
 const REPLAY_CONSUMERS: &[ItFilter] = &[
     ItFilter {
         package: "fsl-command",
@@ -126,6 +130,52 @@ const REPLAY_CONSUMERS: &[ItFilter] = &[
     ItFilter {
         package: "fsl-analyze",
         rule: ItRule::Fixed("package_probabilistic"),
+    },
+];
+/// Replay certificate and probability paths: the replay consumers plus every
+/// `fsl-probability-check` module, which checks certificates through them.
+const REPLAY_PROBABILITY_CONSUMERS: &[ItFilter] = &[
+    PROBABILITY_CHECK_MODULES,
+    ItFilter {
+        package: "fsl-command",
+        rule: ItRule::Fixed("dependency_handoff"),
+    },
+    ItFilter {
+        package: "fsl-command",
+        rule: ItRule::Fixed("run_requirement_items"),
+    },
+    ItFilter {
+        package: "fsl-command",
+        rule: ItRule::Fixed("run_text_witness"),
+    },
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::Fixed("probabilistic_replay"),
+    },
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::Fixed("bounded_probabilistic_replay"),
+    },
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::Fixed("package_probabilistic"),
+    },
+];
+/// Probabilistic front-end checks: the checker modules compile edited sources
+/// through them.
+const SEMANTICS_PROBABILITY_CONSUMERS: &[ItFilter] = &[
+    PROBABILITY_CHECK_MODULES,
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::Fixed("timed_"),
+    },
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::Fixed("timed_within_200"),
+    },
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::Fixed("timed_within_201"),
     },
 ];
 const INSPECT_CONSUMERS: &[ItFilter] = &[ItFilter {
@@ -167,6 +217,7 @@ const ROUTE_PARITY_CONSUMERS: &[ItFilter] = &[
     },
 ];
 const EXACT_CONSUMERS: &[ItFilter] = &[
+    PROBABILITY_CHECK_MODULES,
     ItFilter {
         package: "fsl-analyze",
         rule: ItRule::Fixed("probabilistic"),
@@ -524,6 +575,156 @@ const RULES: &[Rule] = &[
         package: Some("fsl-replay"),
         lib: Some(LibRule::SourceModule),
         it_filters: REPLAY_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-replay/src/certificate",
+        package: Some("fsl-replay"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: REPLAY_PROBABILITY_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-replay/src/probability_certificate",
+        package: Some("fsl-replay"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: REPLAY_PROBABILITY_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-replay/src/exact_probabilistic",
+        package: Some("fsl-replay"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: REPLAY_PROBABILITY_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-replay/src/spine",
+        package: Some("fsl-replay"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: REPLAY_PROBABILITY_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-replay/src/product_action.rs",
+        package: Some("fsl-replay"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: REPLAY_PROBABILITY_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-replay/src/identity.rs",
+        package: Some("fsl-replay"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: REPLAY_PROBABILITY_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-replay/src/limits.rs",
+        package: Some("fsl-replay"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: REPLAY_PROBABILITY_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-replay/src/proof_result",
+        package: Some("fsl-replay"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: REPLAY_PROBABILITY_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-replay/src/outcome",
+        package: Some("fsl-replay"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: REPLAY_PROBABILITY_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-replay/src/request",
+        package: Some("fsl-replay"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: REPLAY_PROBABILITY_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-replay/src/statistical",
+        package: Some("fsl-replay"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: REPLAY_PROBABILITY_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-replay/src/model_check/limits",
+        package: Some("fsl-replay"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: REPLAY_PROBABILITY_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-analyze/src/exact_probabilistic",
+        package: Some("fsl-analyze"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: EXACT_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-semantics/src/check/probabilistic",
+        package: Some("fsl-semantics"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: SEMANTICS_PROBABILITY_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-semantics/src/check/mod.rs",
+        package: Some("fsl-semantics"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: SEMANTICS_PROBABILITY_CONSUMERS,
         large_input: &[],
         note: None,
         skips: &[],
@@ -1033,6 +1234,9 @@ fn plan_path(workspace_root: &Path, path: &str, recipe: &mut Recipe) -> Result<(
         add_whole_library(recipe, "filament-spec-language");
         return Ok(());
     }
+    if let Some(relative) = path.strip_prefix("tools/fsl-probability-check/") {
+        return plan_probability_check(workspace_root, path, relative, recipe);
+    }
     if path.ends_with("/Cargo.toml") {
         apply_crate_fallback(path, workspace_root, recipe)?;
         return Ok(());
@@ -1082,6 +1286,29 @@ fn plan_path(workspace_root: &Path, path: &str, recipe: &mut Recipe) -> Result<(
         .notes
         .insert(format!("no targeted cargo tests for {path}"));
     Ok(())
+}
+
+/// The checker is a tool outside the `fsl-` crate directories: a changed IT module
+/// runs that module, and any other change (IT root, fixtures, source) runs
+/// every module.
+fn plan_probability_check(
+    workspace_root: &Path,
+    path: &str,
+    relative: &str,
+    recipe: &mut Recipe,
+) -> Result<()> {
+    let module = relative
+        .strip_prefix("tests/it/")
+        .filter(|module| *module != "main.rs");
+    if module.is_some() {
+        add_integration(
+            recipe,
+            "fsl-probability-check",
+            integration_module_filter(path)?,
+        );
+        return Ok(());
+    }
+    add_all_it_modules(workspace_root, "fsl-probability-check", recipe)
 }
 
 fn plan_test_path(workspace_root: &Path, path: &str, recipe: &mut Recipe) -> Result<()> {
@@ -1273,12 +1500,16 @@ fn apply_it_filters(
     Ok(())
 }
 
+fn integration_root(package: &str) -> String {
+    match package {
+        "filament-spec-language" => "tests/it/main.rs".to_owned(),
+        "fsl-probability-check" => format!("tools/{package}/tests/it/main.rs"),
+        _ => format!("{package}/tests/it/main.rs"),
+    }
+}
+
 fn add_all_it_modules(workspace_root: &Path, package: &str, recipe: &mut Recipe) -> Result<()> {
-    let main = if package == "filament-spec-language" {
-        "tests/it/main.rs".to_owned()
-    } else {
-        format!("{package}/tests/it/main.rs")
-    };
+    let main = integration_root(package);
     let path = workspace_root.join(&main);
     if !path.exists() {
         add_whole_library(recipe, package);
@@ -1343,11 +1574,7 @@ fn add_all_it_modules(workspace_root: &Path, package: &str, recipe: &mut Recipe)
 
 #[cfg(test)]
 fn top_level_integration_modules(workspace_root: &Path, package: &str) -> Result<Vec<String>> {
-    let main = if package == "filament-spec-language" {
-        "tests/it/main.rs".to_owned()
-    } else {
-        format!("{package}/tests/it/main.rs")
-    };
+    let main = integration_root(package);
     let path = workspace_root.join(&main);
     let source = fs::read_to_string(&path).map_err(|error| {
         Error::MergeGateRecipe(format!(
@@ -1459,6 +1686,7 @@ fn apply_crate_fallback(path: &str, workspace_root: &Path, recipe: &mut Recipe) 
                 if let Some(rule) = matching_rule("fsl-replay/src/fallback.rs") {
                     apply_rule(workspace_root, "fsl-replay/src/fallback.rs", rule, recipe)?;
                 }
+                apply_it_filters(workspace_root, &[PROBABILITY_CHECK_MODULES], None, recipe)?;
                 add_library(recipe, package, "execute::".to_owned(), true);
             }
             "fsl-semantics" => {
@@ -1960,6 +2188,128 @@ mod tests {
             threads: None,
             no_match_is_note: false,
         }
+    }
+
+    fn probability_check_modules() -> Vec<String> {
+        let modules = top_level_integration_modules(workspace_root(), "fsl-probability-check")
+            .expect("probability-check integration modules");
+        assert!(!modules.is_empty());
+        modules
+    }
+
+    fn runs_modules(recipe: &Recipe, modules: &[String]) -> bool {
+        modules
+            .iter()
+            .all(|module| recipe.selectors.contains(&selector("fsl-probability-check", module)))
+    }
+
+    #[test]
+    fn exact_probabilistic_and_certificate_paths_run_every_probability_check_module() {
+        let modules = probability_check_modules();
+        for path in [
+            "fsl-analyze/src/analyze/exact.rs",
+            "fsl-analyze/src/analyze/exact/measure.rs",
+            "fsl-analyze/src/exact_probabilistic.rs",
+            "fsl-analyze/src/exact_probabilistic/build.rs",
+            "fsl-replay/src/certificate.rs",
+            "fsl-replay/src/probability_certificate.rs",
+            "fsl-replay/src/exact_probabilistic.rs",
+            "fsl-replay/src/spine.rs",
+            "fsl-semantics/src/check/probabilistic.rs",
+            "fsl-semantics/src/check/probabilistic/model.rs",
+            "fsl-semantics/src/check/mod.rs",
+        ] {
+            let recipe = plan(workspace_root(), &[path]);
+            assert!(
+                runs_modules(&recipe, &modules),
+                "{path} must run every fsl-probability-check module"
+            );
+        }
+    }
+
+    #[test]
+    fn replay_surface_and_certificate_dependencies_run_every_probability_check_module() {
+        let modules = probability_check_modules();
+        for path in [
+            "fsl-replay/src/lib.rs",
+            "fsl-replay/Cargo.toml",
+            "fsl-replay/src/product_action.rs",
+            "fsl-replay/src/identity.rs",
+            "fsl-replay/src/limits.rs",
+            "fsl-replay/src/proof_result.rs",
+            "fsl-replay/src/outcome.rs",
+            "fsl-replay/src/request.rs",
+            "fsl-replay/src/statistical.rs",
+            "fsl-replay/src/model_check/limits.rs",
+        ] {
+            let recipe = plan(workspace_root(), &[path]);
+            assert!(
+                runs_modules(&recipe, &modules),
+                "{path} must run every fsl-probability-check module"
+            );
+        }
+    }
+
+    #[test]
+    fn unrelated_replay_paths_do_not_run_the_probability_check() {
+        let recipe = plan(workspace_root(), &["fsl-replay/src/refinement.rs"]);
+        assert!(
+            !recipe
+                .selectors
+                .iter()
+                .any(|item| item.package == "fsl-probability-check")
+        );
+    }
+
+    #[test]
+    fn probability_check_tool_changes_route_to_the_tool_package() {
+        let modules = probability_check_modules();
+        let module = plan(
+            workspace_root(),
+            &["tools/fsl-probability-check/tests/it/cyclic_mdp.rs"],
+        );
+        assert_eq!(
+            module
+                .selectors
+                .iter()
+                .filter(|item| item.package == "fsl-probability-check")
+                .collect::<Vec<_>>(),
+            vec![&selector("fsl-probability-check", "cyclic_mdp")]
+        );
+        assert!(
+            !module
+                .selectors
+                .iter()
+                .any(|item| item.package == "filament-spec-language")
+        );
+        for path in [
+            "tools/fsl-probability-check/tests/it/main.rs",
+            "tools/fsl-probability-check/src/main.rs",
+        ] {
+            let recipe = plan(workspace_root(), &[path]);
+            assert!(runs_modules(&recipe, &modules), "{path}");
+            assert!(
+                !recipe
+                    .notes
+                    .iter()
+                    .any(|note| note.contains("no targeted cargo tests")),
+                "{path}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_file_set_that_broke_the_checker_routes_to_it() {
+        let modules = probability_check_modules();
+        let recipe = plan(
+            workspace_root(),
+            &[
+                "tools/fsl-probability-check/tests/it/bounded.rs",
+                "fsl-semantics/src/check/mod.rs",
+                "fsl-semantics/src/check/probabilistic/model.rs",
+            ],
+        );
+        assert!(runs_modules(&recipe, &modules));
     }
 
     #[test]
