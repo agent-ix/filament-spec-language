@@ -1183,11 +1183,13 @@ fn plan_test_path(workspace_root: &Path, path: &str, recipe: &mut Recipe) -> Res
         if path.starts_with("xtask/tests/") {
             return Ok(());
         }
-        if let Some(it_path) = integration_path(path) {
+        // The module filter reads the path from its `tests/it/` segment, so
+        // the rule is applied to the whole changed path.
+        if integration_path(path).is_some() {
             if let Some(rule) = matching_rule(path) {
-                apply_rule(workspace_root, it_path, rule, recipe)?;
+                apply_rule(workspace_root, path, rule, recipe)?;
             } else {
-                add_integration(recipe, package, integration_module_filter(it_path)?);
+                add_integration(recipe, package, integration_module_filter(path)?);
             }
             return Ok(());
         }
@@ -1200,14 +1202,14 @@ fn plan_test_path(workspace_root: &Path, path: &str, recipe: &mut Recipe) -> Res
             return Ok(());
         }
     }
-    if let Some(it_path) = integration_path(path) {
+    if integration_path(path).is_some() {
         if let Some(rule) = matching_rule(path) {
-            apply_rule(workspace_root, it_path, rule, recipe)?;
+            apply_rule(workspace_root, path, rule, recipe)?;
         } else {
             add_integration(
                 recipe,
                 "filament-spec-language",
-                integration_module_filter(it_path)?,
+                integration_module_filter(path)?,
             );
         }
         return Ok(());
@@ -2087,6 +2089,23 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn a_changed_integration_module_runs_that_module() {
+        let recipe = plan(
+            workspace_root(),
+            &[
+                "fsl-analyze/tests/it/analyze_composition_cli.rs",
+                "tests/it/bare_package.rs",
+            ],
+        );
+        assert!(recipe
+            .selectors
+            .contains(&selector("fsl-analyze", "analyze_composition_cli")));
+        assert!(recipe
+            .selectors
+            .contains(&selector("filament-spec-language", "bare_package")));
     }
 
     #[test]
