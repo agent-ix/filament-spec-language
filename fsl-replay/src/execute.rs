@@ -147,6 +147,18 @@ pub enum PackageReadRefusal {
     Allocation,
 }
 
+/// A recompile refusal as a replay message: a reached limit also names the
+/// replay request's `stage_limits` entry, which the replay schema defines
+/// (FR-255-AC-2); every other refusal renders as it is.
+fn recompile_text(refusal: &CompileRefusal) -> String {
+    match refusal {
+        CompileRefusal::Limit(limit) => limit
+            .render(fsl_foundation::diagnostic::RequestKind::Replay)
+            .to_string(),
+        other => other.to_string(),
+    }
+}
+
 /// Why [`replay`] settled no verdict. Each variant is one ADR-013 O-26
 /// refusal, with its typed cause; none carries a partial result.
 #[derive(Debug, thiserror::Error)]
@@ -208,7 +220,7 @@ pub enum ReplayRefusal {
     },
     /// The recompile refused at one spine stage, or reached one of the
     /// stage limits the request carries (`stage_limit_exceeded`).
-    #[error("the recompile refused at stage {stage}: {refusal}", stage = .refusal.stage().as_str(), refusal = .refusal)]
+    #[error("the recompile refused at stage {stage}: {refusal}", stage = .refusal.stage().as_str(), refusal = recompile_text(.refusal))]
     Recompile {
         /// The stage refusal.
         refusal: Box<CompileRefusal>,
@@ -218,7 +230,7 @@ pub enum ReplayRefusal {
     },
     /// A compile stage reached an attributable protocol outcome and retained
     /// the ordered declaration results with its primary refusal or limit.
-    #[error("the recompile refused at stage {refusal_stage}: {refusal}", refusal_stage = .refusal.stage().as_str(), refusal = .refusal)]
+    #[error("the recompile refused at stage {refusal_stage}: {refusal}", refusal_stage = .refusal.stage().as_str(), refusal = recompile_text(.refusal))]
     RecompileWithProtocolResults {
         /// The primary stage refusal or limit, which determines category.
         refusal: Box<CompileRefusal>,

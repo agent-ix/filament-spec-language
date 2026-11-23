@@ -3781,7 +3781,8 @@ mod tests {
         let replay_message = replay.diagnostics()[0].message();
         assert_eq!(
             replay_message,
-            "S1 token limit 3 reached (4); raise it with `--limit s1.tokens=<n>` or the replay \
+            "the recompile refused at stage source: S1 token limit 3 reached (4); raise it with \
+             `--limit s1.tokens=<n>` or the replay \
              request's `stage_limits` entry `s1.tokens`"
         );
     }
