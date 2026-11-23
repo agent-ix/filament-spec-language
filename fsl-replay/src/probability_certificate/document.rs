@@ -16,8 +16,10 @@ pub use measure::{
     write_measure_probability_certificate, MeasurePayoffKind, MeasureProbabilityDocument,
 };
 mod fairness;
+pub(super) mod instances;
 #[cfg(feature = "test-support")]
 pub use fairness::BoundedFairProbabilityPhase;
+pub use instances::{on_each_outcome, replay_on_each_witness, OnEachOutcome};
 mod key;
 mod mdp;
 #[cfg(feature = "test-support")]
@@ -53,7 +55,8 @@ mod unit;
 mod value_bounds;
 mod writer;
 pub(super) use key::{
-    formula_product_key_with_budget, model_product_key, model_product_key_with_budget,
+    activated_product_key, formula_product_key_with_budget, model_product_key,
+    model_product_key_with_budget,
 };
 
 const PROFILE: &str = "filament.probability-objective/reachability/v1";
@@ -562,6 +565,7 @@ enum ProfileDispatch {
     CyclicMdp,
     CyclicMdpReward,
     BoundedFair,
+    OnEach,
 }
 
 fn profile_dispatch(
@@ -599,6 +603,7 @@ fn profile_dispatch(
             }
             Some(quire_canonical::Node::String(measure::PROFILE)) => ProfileDispatch::Measure,
             Some(quire_canonical::Node::String(TIMED_PROFILE)) => ProfileDispatch::Timed,
+            Some(quire_canonical::Node::String(instances::PROFILE)) => ProfileDispatch::OnEach,
             Some(quire_canonical::Node::String(CYCLIC_MDP_PROFILE | CYCLIC_MDP_STATE_PROFILE)) => {
                 ProfileDispatch::CyclicMdp
             }
@@ -674,6 +679,14 @@ fn decode_key(
     text: &str,
     limits: ProbabilityDocumentLimits,
 ) -> Result<ProbabilityProductKey, ProbabilityDocumentError> {
+    decode_key_with(text, limits, false)
+}
+
+fn decode_key_with(
+    text: &str,
+    limits: ProbabilityDocumentLimits,
+    on_each: bool,
+) -> Result<ProbabilityProductKey, ProbabilityDocumentError> {
     let bytes = URL_SAFE_NO_PAD
         .decode(text)
         .map_err(|_| ProbabilityDocumentError::Malformed)?;
@@ -713,7 +726,7 @@ fn decode_key(
     {
         return Err(ProbabilityDocumentError::Unsupported);
     }
-    key::admit_parts(&parts)?;
+    key::admit_parts(&parts, on_each)?;
     Ok(ProbabilityProductKey::from_canonical_bytes(bytes))
 }
 
@@ -1912,6 +1925,10 @@ fn check_document_bytes(
         ProfileDispatch::Timed => {
             return timed::check(system, claims, item, bytes, bound_side, limits, cancel)
         }
+        ProfileDispatch::OnEach => {
+            return instances::check(system, claims, item, bytes, limits, cancel)
+                .or_else(document_admission_error);
+        }
         ProfileDispatch::LongRun => {
             return long_run::check(system, claims, item, bytes, limits, cancel);
         }
@@ -2395,6 +2412,9 @@ pub(super) fn certificate_identity(
         .map_or(bytes, |(_, exact)| exact.as_slice());
     if profile_dispatch(bytes, limits, cancel)? == ProfileDispatch::Measure {
         return measure::identity(bytes, limits, cancel);
+    }
+    if profile_dispatch(bytes, limits, cancel)? == ProfileDispatch::OnEach {
+        return instances::identity(bytes, limits, cancel);
     }
     if profile_dispatch(bytes, limits, cancel)? == ProfileDispatch::LongRun {
         return long_run::certificate_identity(bytes, limits, cancel);

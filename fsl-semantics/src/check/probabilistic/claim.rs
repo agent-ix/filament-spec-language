@@ -533,6 +533,51 @@ pub enum ClaimActivation {
     },
 }
 
+impl ClaimActivation {
+    /// The object type whose population supplies the instances of an
+    /// `on each` activation, absent for `on origin`.
+    pub fn instance_type(&self) -> Option<&ValueType> {
+        match self {
+            Self::Origin => None,
+            Self::Each { value_type, .. } => Some(value_type),
+        }
+    }
+
+    /// The checked `when` guard of an `on each` activation as a state
+    /// predicate, absent for `on origin` and for an unguarded `on each`.
+    pub fn guard(&self) -> Option<ActivationGuard<'_>> {
+        match self {
+            Self::Each {
+                guard: Some(body),
+                guard_slots,
+                ..
+            } => Some(ActivationGuard {
+                body,
+                slots: *guard_slots,
+            }),
+            Self::Origin | Self::Each { guard: None, .. } => None,
+        }
+    }
+}
+
+/// An `on each` activation guard read as a state predicate: its slots are
+/// the claim's `over` parameter, when it has one, and the activation binder.
+#[derive(Clone, Copy, Debug)]
+pub struct ActivationGuard<'a> {
+    body: &'a CheckedBody,
+    slots: usize,
+}
+
+impl StatePredicate for ActivationGuard<'_> {
+    fn body(&self) -> Option<CheckedNode<'_>> {
+        Some(self.body.root())
+    }
+
+    fn slots(&self) -> usize {
+        self.slots
+    }
+}
+
 /// The admitted facts of an untimed, origin-activated exact eventuality.
 /// Its predicate is identified by its package node and owning claim, not by
 /// a reconstructed source body.

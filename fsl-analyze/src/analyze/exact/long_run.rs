@@ -221,6 +221,7 @@ pub(super) fn run(
         let mut witness = ProbabilisticCounterexample {
             item: item.clone(),
             binding: reference.cloned(),
+            instance: None,
             initial: first.clone(),
             initial_key,
             scheduler: Vec::new(),

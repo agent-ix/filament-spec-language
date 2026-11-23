@@ -77,6 +77,23 @@ impl ProbabilityProductKey {
         product_key(binding, model_bytes)
     }
 
+    /// This key with its `on each` instance and activation phase members set
+    /// (FR-196): the key of the same model state read as one instance of an
+    /// `on each` claim, waiting for or past its first activating position.
+    ///
+    /// # Errors
+    /// A malformed key, the exhausted certificate ceiling or the supplied
+    /// cancellation cause.
+    pub fn with_activation(
+        &self,
+        instance: &ObjectReference,
+        phase: ActivationPhase,
+        limits: ProbabilityDocumentIoLimits,
+        cancel: &Cancel,
+    ) -> Result<Self, ProbabilityDocumentError> {
+        document::activated_product_key(self, instance, phase, limits, cancel)
+    }
+
     /// Construct the unbounded FR-196 key with caller byte/storage admission.
     /// The input is the bare canonical form returned by `ModelSystem::state_key`.
     ///
@@ -148,6 +165,26 @@ impl ProbabilityProductKey {
             budget,
             cancel,
         )
+    }
+}
+
+/// Whether an `on each` instance still waits for its first activating
+/// position or has reached it (FR-196 "Canonical probability product key").
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub enum ActivationPhase {
+    /// The guard has not yet held for the instance.
+    Waiting,
+    /// The guard has held at or before this position.
+    Active,
+}
+
+impl ActivationPhase {
+    /// The phase's key spelling.
+    pub fn tag(self) -> &'static str {
+        match self {
+            Self::Waiting => "waiting",
+            Self::Active => "active",
+        }
     }
 }
 
@@ -721,7 +758,10 @@ pub struct ExactProbabilityAcceptance {
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct CheckedInitialValues {
     values: Vec<(u32, Option<Rational>)>,
-    binding: Option<crate::ExactBinding>,
+    // The instance each entry of `values` was read for, in the same order.
+    bindings: Vec<Option<crate::ExactBinding>>,
+    // The `on each` object beside an `over` binding, in the same order.
+    instances: Vec<Option<crate::ExactBinding>>,
 }
 
 impl ExactProbabilityAcceptance {
@@ -750,12 +790,29 @@ impl ExactProbabilityAcceptance {
             .map(|coverage| coverage.values.as_slice())
     }
 
+    pub(crate) fn initial_bindings(&self) -> Option<&[Option<crate::ExactBinding>]> {
+        self.initial_values
+            .as_ref()
+            .map(|coverage| coverage.bindings.as_slice())
+    }
+
+    pub(crate) fn initial_instances(&self) -> Option<&[Option<crate::ExactBinding>]> {
+        self.initial_values
+            .as_ref()
+            .map(|coverage| coverage.instances.as_slice())
+    }
+
     pub(crate) fn initial_entries_match(&self, entries: &[crate::ExactEntry]) -> bool {
         let Some(coverage) = &self.initial_values else {
             return true;
         };
         let mut offered = entries.iter();
-        for (initial, value) in &coverage.values {
+        for (((initial, value), binding), instance) in coverage
+            .values
+            .iter()
+            .zip(&coverage.bindings)
+            .zip(&coverage.instances)
+        {
             let Some(value) = value else {
                 continue;
             };
@@ -763,7 +820,8 @@ impl ExactProbabilityAcceptance {
                 return false;
             };
             if entry.initial != *initial
-                || entry.binding != coverage.binding
+                || entry.binding != *binding
+                || entry.instance != *instance
                 || entry.extremum.is_some()
                 || !matches!(&entry.value, crate::ExactOrBounds::Exact { value: offered } if offered.value() == value)
             {
@@ -2622,11 +2680,13 @@ mod tests {
             bound: None,
             initial_values: Some(CheckedInitialValues {
                 values: vec![(0, None), (1, Some(value.clone()))],
-                binding: None,
+                bindings: vec![None, None],
+                instances: vec![None, None],
             }),
         };
         let entry = crate::ExactEntry {
             initial: 1,
+            instance: None,
             binding: None,
             value: crate::ExactOrBounds::Exact {
                 value: crate::ExactRational::new(value),

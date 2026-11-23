@@ -4720,10 +4720,13 @@ fn certificate_kind(document: &Value) -> &'static str {
             "upper" => Some("upper"),
             _ => None,
         });
-    let long_run = document
-        .pointer("/objective/profile")
-        .and_then(Value::as_str)
-        .is_some_and(|profile| profile.contains("long-run"));
+    let profile = document.pointer("/objective/profile").and_then(Value::as_str);
+    if document.get("kind").and_then(Value::as_str) == Some("conditional")
+        && profile.is_some_and(|profile| profile.contains("on-each"))
+    {
+        return "conditional";
+    }
+    let long_run = profile.is_some_and(|profile| profile.contains("long-run"));
     bound.unwrap_or(if long_run { "long-run" } else { "exact" })
 }
 

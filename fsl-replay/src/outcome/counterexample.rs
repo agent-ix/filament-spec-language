@@ -2121,6 +2121,9 @@ fn probabilistic_wire_using(
         "bound": {"comparison": comparison, "threshold": rational(threshold)},
         "evidence": {"type": "path-set", "paths": paths},
     });
+    if let Some(instance) = &witness.instance {
+        written["instance"] = reference(instance)?;
+    }
     if let Some(subsystem) = &witness.subsystem {
         if !witness.paths.is_empty() {
             return Err(Unspelled("mixed probabilistic evidence"));

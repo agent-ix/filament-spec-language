@@ -389,8 +389,75 @@ fn automaton_key(node: NodeRef<'_>) -> bool {
         && matches!(parts.next().map(|part| part.node()), Some(Node::Array(state)) if state.len() > 0)
 }
 
-pub(super) fn admit_parts(parts: &[NodeRef<'_>]) -> Result<(), ProbabilityDocumentError> {
-    if !matches!(parts[2].node(), Node::Null) || !matches!(parts[3].node(), Node::Null) {
+/// The `on each` instance and activation phase members of a key (FR-196).
+struct Activated<'a> {
+    key: NodeRef<'a>,
+    instance: &'a ObjectReference,
+    phase: &'static str,
+}
+impl Encode for Activated<'_> {
+    fn encode_into<S: Sink + ?Sized>(
+        &self,
+        writer: &mut Writer<'_, S>,
+    ) -> Result<(), quire_canonical::Error> {
+        let Node::Array(parts) = self.key.node() else {
+            return Err(quire_canonical::Error::Serialize(
+                "a key is an array".into(),
+            ));
+        };
+        writer.begin_array()?;
+        for (index, part) in parts.enumerate() {
+            match index {
+                2 => fsl_eval::simulation::model::encode_reference(self.instance, writer)?,
+                3 => writer.string(self.phase)?,
+                _ => part.encode_into(writer)?,
+            }
+        }
+        writer.end_array()
+    }
+}
+
+/// `key` with its `instance` and `activation` members set.
+pub(crate) fn activated_product_key(
+    key: &ProbabilityProductKey,
+    instance: &ObjectReference,
+    phase: ActivationPhase,
+    limits: ProbabilityDocumentIoLimits,
+    cancel: &Cancel,
+) -> Result<ProbabilityProductKey, ProbabilityDocumentError> {
+    poll(cancel)?;
+    let admission = RefCell::new(writer::Admission::with_used(
+        limits.storage_bytes,
+        cancel,
+        0,
+    ));
+    let parsed = read(key.as_bytes(), limits.bytes, &admission)?;
+    let Node::Array(parts) = parsed.root().node() else {
+        return Err(ProbabilityDocumentError::Malformed);
+    };
+    if parts.len() != 8 {
+        return Err(ProbabilityDocumentError::Malformed);
+    }
+    let activated = Activated {
+        key: parsed.root(),
+        instance,
+        phase: phase.tag(),
+    };
+    let bytes = writer::encode_reserved(&activated, limits.bytes, &admission)?;
+    poll(cancel)?;
+    Ok(ProbabilityProductKey::from_canonical_bytes(bytes))
+}
+
+pub(super) fn admit_parts(
+    parts: &[NodeRef<'_>],
+    on_each: bool,
+) -> Result<(), ProbabilityDocumentError> {
+    let instance = !matches!(parts[2].node(), Node::Null);
+    let phase = matches!(parts[3].node(), Node::String("waiting" | "active"));
+    if instance != phase
+        || (!on_each && instance)
+        || (!instance && !matches!(parts[3].node(), Node::Null))
+    {
         return Err(ProbabilityDocumentError::Unsupported);
     }
     let Node::Array(mut model) = parts[4].node() else {
