@@ -1341,6 +1341,7 @@ pub(super) fn finish(
     limits: crate::checked::EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
     let lock = base.lock().clone();
+    let requirement_rows = super::value_validity_requirements::carry_rows(base, &nodes)?;
     let operand_rows = super::write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {
         graph_version: base.graph().graph_version.clone(),
@@ -1422,7 +1423,7 @@ pub(super) fn finish(
                 schedulability_claims: None,
                 operation_bodies: operation_bodies.as_deref(),
             },
-            None,
+            (!requirement_rows.is_empty()).then_some(requirement_rows.as_slice()),
             correlation_rows.as_deref(),
             &capability_report,
             &diagnostics,
@@ -1641,6 +1642,125 @@ mod tests {
                 .and_then(|locus| locus.path.as_ref())
                 .map(|path| path.as_str()),
             Some(expected_path.as_str()),
+            "{refusal:?}"
+        );
+    }
+
+    /// FSpec FR-825: each `claim`/`value_validity` node the final writer
+    /// carries from the base keeps the requirement row that names it, and a
+    /// record whose owner is a rekeyed entry names the entry's new id. A
+    /// package carrying the record nodes without their rows is refused at
+    /// `/requirement_items`.
+    #[ix_trace_rs::trace("FR-251-AC-9", "FR-940")]
+    #[test]
+    fn final_writer_carries_value_validity_rows_through_entry_rekey() {
+        let (_, checked) = super::super::tests::package_from_text(
+            "function init using v(x: Int[0, 9]): Integer pure { x + 1 }\n\
+             function on_event using v(x: Int[0, 9]): Integer pure { x + 2 }\n\
+             function on_watermark using v(x: Int[0, 9]): Integer pure { x + 3 }\n\
+             function on_gap using v(x: Int[0, 9]): Integer pure { x + 4 }\n\
+             function helper using v(x: Int[0, 9]): Integer pure { x + 5 }\n",
+        );
+        let limits = crate::checked::EmitLimits::new(1 << 20);
+        let retained = super::super::emit_checked(&checked, limits).expect("scalar functions emit");
+        let read_limits = crate::checked_v2::V2ReadLimits::fixture().for_ir();
+        let read = |bytes: &[u8]| read_checked_package(bytes, read_limits, retained.evidence());
+        let base = match read(retained.package().bytes()) {
+            CheckedPackageDispatchResult::AdmittedV2(package) => package,
+            other => panic!("the scalar base must read: {other:?}"),
+        };
+        let base_records = base
+            .requirement_items()
+            .iter()
+            .filter_map(|row| row.record.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(base_records.len(), 5, "one record per bounded addition");
+        let mut nodes = base.resolved_graph().nodes.clone();
+        let mut source_map = base.source_map().to_vec();
+        let mut changes = Vec::new();
+        for name in ["init", "on_event", "on_watermark", "on_gap"] {
+            let at = declared(&nodes, name, "a scalar entry is declared").unwrap();
+            let (parameters, body) = param_targets(&nodes[at]).unwrap();
+            let position = |id: &CheckedNodeId| -> u64 {
+                u64::try_from(nodes.iter().position(|node| node.node_id == *id).unwrap()).unwrap()
+            };
+            let parameters: Vec<_> = parameters.iter().map(position).collect();
+            let new = declaration_less_function_id(
+                base.name(),
+                &nodes[at].semantic_form,
+                &parameters,
+                position(&body),
+            );
+            let old = nodes[at].node_id.clone();
+            nodes[at].declaration = None;
+            nodes[at].owner = None;
+            nodes[at].occurrences = vec![CheckedOccurrence {
+                role: CheckedOccurrenceRole::Generated,
+                ordinal: 0,
+            }];
+            for entry in source_map.iter_mut().filter(|entry| entry.node_id == old) {
+                entry.role = CheckedOccurrenceRole::Generated;
+                entry.ordinal = 0;
+            }
+            changes.push((old, new));
+        }
+        rekey(&mut nodes, &mut source_map, &changes);
+        let final_emission = finish(
+            &base,
+            &retained,
+            &changes,
+            nodes,
+            source_map,
+            (*retained.source_map).clone(),
+            limits,
+        )
+        .expect("the final writer emits rekeyed scalar functions");
+        let final_package = match read(final_emission.package().bytes()) {
+            CheckedPackageDispatchResult::AdmittedV2(package) => package,
+            other => panic!("the final writer's value-validity rows must read: {other:?}"),
+        };
+        let final_records = final_package
+            .requirement_items()
+            .iter()
+            .filter_map(|row| row.record.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(final_records.len(), base_records.len());
+        let mut renamed_owners = 0;
+        for (before, after) in base_records.iter().zip(&final_records) {
+            let owner = changes
+                .iter()
+                .find(|(old, _)| *old == before.owner)
+                .map_or(&before.owner, |(_, new)| {
+                    renamed_owners += 1;
+                    new
+                });
+            assert_eq!(&after.owner, owner);
+            assert_eq!(after.node, before.node);
+            assert_eq!(after.application, before.application);
+        }
+        assert_eq!(renamed_owners, 4, "each entry's record follows its rekey");
+
+        let mut stripped: serde_json::Value =
+            serde_json::from_slice(final_emission.package().bytes()).unwrap();
+        stripped
+            .as_object_mut()
+            .unwrap()
+            .remove("requirement_items")
+            .expect("the final package carries requirement_items");
+        let stripped = serde_json::to_vec(&stripped).unwrap();
+        let refusal = match read(&stripped) {
+            CheckedPackageDispatchResult::Refused(refusal) => refusal,
+            other => panic!("record nodes without rows must be refused: {other:?}"),
+        };
+        assert_eq!(refusal.code, CheckedPackageRefusalCode::InvalidPackage);
+        assert_eq!(refusal.cause, Some(CheckedPackageRefusalCause::InvalidValue));
+        assert_eq!(
+            refusal
+                .loci
+                .first()
+                .and_then(|locus| locus.path.as_ref())
+                .map(|path| path.as_str()),
+            Some("/requirement_items"),
             "{refusal:?}"
         );
     }
