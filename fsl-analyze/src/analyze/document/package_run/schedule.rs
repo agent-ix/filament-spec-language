@@ -33,9 +33,9 @@ pub(super) struct ScheduleRoute {
 
 impl ScheduleRoute {
     /// The EN-7 item the source route builds over the same subject.
-    pub(super) fn item<'a>(self, index: RequestIndex) -> AnalyzeItem<'a> {
+    pub(super) fn item<'a>(self, index: RequestIndex, max_demand_points: u64) -> AnalyzeItem<'a> {
         match self.read {
-            Ok((subject, unit)) => schedule_item::subject_item(index, subject, self.name, unit),
+            Ok((subject, unit)) => schedule_item::subject_item(index, subject, self.name, unit, max_demand_points),
             Err(refusal) => schedule_item::refused_item(index, refusal),
         }
     }

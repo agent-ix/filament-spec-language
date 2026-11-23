@@ -1460,7 +1460,15 @@ fn work<'a>(
                 )
                 .unwrap_or_else(absent)
             } else {
-                super::schedule_item::schedule_item(package, item.request_index, &item.claim)
+                super::schedule_item::schedule_item(
+                    package,
+                    item.request_index,
+                    &item.claim,
+                    limits
+                        .engines
+                        .get(fsl_foundation::Setting::ScheduleMaxDemandPoints)
+                        .unwrap_or(crate::schedulability::DEFAULT_MAX_DEMAND_POINTS),
+                )
                     .unwrap_or_else(absent)
             }
         }
