@@ -44,7 +44,7 @@ pub(super) fn is_replay_request(bytes: &[u8]) -> bool {
 }
 
 /// FR-862: replay the `native-replay/1` request at `path` under the caller's
-/// byte ceilings and `caller`'s settings (FR-255-AC-24). `replay.input_bytes`
+/// byte ceilings and `caller`'s settings. `replay.input_bytes`
 /// bounds the replay reads; every other set stage or accounting setting
 /// replaces the request's own entry for it.
 ///

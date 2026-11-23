@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! The caller limits of the `analyze`, `monitor` and `replay` entry points
-//! (FR-255 "Lifecycle caller-limit coverage", FR-255-AC-24).
+//! (FR-255 "Lifecycle caller-limit coverage").
 //!
 //! [`CommandLimits`] is one operation's caller-limit object. It exposes
 //! exactly the settings that operation consumes, through the shared
@@ -46,7 +46,7 @@ impl LimitedOperation {
 }
 
 /// A recognized setting the operation does not expose, refused before any
-/// work (FR-255-AC-24).
+/// work.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SettingUnavailable {
     /// The operation that does not expose the setting.
@@ -526,8 +526,8 @@ mod tests {
         })
     }
 
-    /// FR-255-AC-24: each operation exposes exactly its settings.
-    #[trace("TC-721", "FR-255-AC-24")]
+    /// TC-721 step 11, for the settings exposed today: each operation exposes exactly its settings.
+    #[trace("TC-721")]
     #[test]
     fn each_operation_exposes_exactly_its_enumerated_settings() {
         assert_eq!(
@@ -562,8 +562,8 @@ mod tests {
         );
     }
 
-    /// FR-255-AC-24: each accepted setting changes only its own bound.
-    #[trace("TC-721", "FR-255-AC-24")]
+    /// TC-721 step 11, for the settings exposed today: each accepted setting changes only its own bound.
+    #[trace("TC-721")]
     #[test]
     fn each_accepted_setting_changes_only_its_bound() {
         for fresh in [CommandLimits::analyze(), monitor(), CommandLimits::replay()] {
@@ -579,9 +579,9 @@ mod tests {
         }
     }
 
-    /// FR-255-AC-24: a recognized setting the operation does not execute is
+    /// TC-721 step 11, for the settings exposed today: a recognized setting the operation does not execute is
     /// refused with its exact text and changes nothing.
-    #[trace("TC-721", "FR-255-AC-24")]
+    #[trace("TC-721")]
     #[test]
     fn an_unavailable_setting_is_refused_without_changing_a_bound() {
         let cases = [
@@ -620,9 +620,9 @@ mod tests {
         }
     }
 
-    /// FR-255-AC-24: every operation takes each accounting counter, and a
+    /// TC-721 step 11, for the settings exposed today: every operation takes each accounting counter, and a
     /// counter changes only its own bound.
-    #[trace("TC-721", "FR-255-AC-24")]
+    #[trace("TC-721")]
     #[test]
     fn every_operation_takes_each_accounting_counter() {
         for fresh in [CommandLimits::analyze(), monitor(), CommandLimits::replay()] {
@@ -640,10 +640,10 @@ mod tests {
         }
     }
 
-    /// FR-255-AC-24: monitor sets its two preparation bounds independently,
+    /// TC-721 step 11, for the settings exposed today: monitor sets its two preparation bounds independently,
     /// the caller supplies the starting values, and a reached bound names
     /// its setting.
-    #[trace("TC-721", "FR-255-AC-24")]
+    #[trace("TC-721")]
     #[test]
     fn monitor_preparation_work_and_storage_are_independent() {
         let mut limits = monitor();
@@ -700,10 +700,10 @@ mod tests {
         );
     }
 
-    /// FR-255-AC-24: `replay.input_bytes` reaches the reader argument and is
+    /// TC-721 step 11, for the settings exposed today: `replay.input_bytes` reaches the reader argument and is
     /// never a `stage_limits` member; every other set setting replaces the
     /// request's entry.
-    #[trace("TC-721", "FR-255-AC-24")]
+    #[trace("TC-721")]
     #[test]
     fn replay_input_bytes_reaches_the_reader_and_not_stage_limits() {
         let mut limits = CommandLimits::replay();
