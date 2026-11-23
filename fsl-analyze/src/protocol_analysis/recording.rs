@@ -419,9 +419,11 @@ pub fn assess_recording_incrementally(
     for prefix in 1..=count {
         let mut document = whole.clone();
         if prefix < count {
-            document["observations"] = whole["observations"]
-                .as_array()
-                .map_or_else(Vec::new, |all| all[..prefix].to_vec());
+            document["observations"] = serde_json::Value::Array(
+                whole["observations"]
+                    .as_array()
+                    .map_or_else(Vec::new, |all| all[..prefix].to_vec()),
+            );
             if let Some(orders) = whole["local_order"].as_object() {
                 let kept = orders.iter().map(|(role, order)| {
                     let order: Vec<_> = order
