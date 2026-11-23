@@ -845,7 +845,9 @@ enum Selected {
 }
 
 /// FR-1039 "A package that cannot run": a document whose `contract_version`
-/// is not the v2 contract is refused before the strict reader runs.
+/// is not the v2 contract is refused before the strict reader runs as
+/// `unknown_wire`/`unsupported-wire` at `/request/package/contract_version`
+/// (FR-1039-AC-3, never `invalid_package`).
 fn require_contract_version(bytes: &[u8]) -> Result<()> {
     #[derive(serde::Deserialize)]
     struct Contract {
@@ -862,11 +864,11 @@ fn require_contract_version(bytes: &[u8]) -> Result<()> {
         return Ok(());
     }
     Err(RunCause::AnalyzePackage {
-        code: fsl_foundation::Code::InvalidPackage,
-        cause: Some("unknown-contract-version".to_owned()),
+        code: fsl_foundation::Code::UnknownWire,
+        cause: Some("unsupported-wire".to_owned()),
         pointer: Some("/request/package/contract_version".to_owned()),
         message: format!(
-            "invalid_package/unknown-contract-version at /request/package/contract_version: \
+            "unknown_wire/unsupported-wire at /request/package/contract_version: \
              {version} is not {CONTRACT_VERSION}"
         ),
     })

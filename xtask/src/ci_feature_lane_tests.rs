@@ -572,6 +572,9 @@ fn aggregate_reaches_default_then_all_features_without_changing_recipe_order() {
         "arch-lint-qualified-core",
         "build-no-std",
         "examples-check",
+        "termination-scaling",
+        "parser-nesting-probes",
+        "string-edge-install",
     ];
     let overrides: Vec<&str> = other_checks
         .iter()

@@ -88,23 +88,6 @@ fn timestamped_clause(formula: &str) -> String {
 /// `ill_typed`/`type-mismatch`.
 #[trace("TC-2777", "FR-982-AC-4", "FSpec-TC-1901", "FSpec-FR-784-AC-3")]
 #[test]
-#[ignore = "QSL-2904: superseded FR-982-AC-4 fixture; W19 errata records that interval-less always is invalid under this profile"]
-fn superseded_fr982_ac4_unbounded_always_fixture_refuses_missing_interval() {
-    let numeric =
-        clause("always (count where holds(s.ok) over past[0,1] >= (s.k + 1) and holds(s.done))");
-    if let Err(refusals) = check_in(EVENTS, &numeric, CheckMode::Linked) {
-        panic!("a numeric threshold checks: {refusals:?}");
-    }
-    assert_refused_with(
-        EVENTS,
-        &clause("always (count where holds(s.ok) over past[0,1] >= (s.ok and s.done))"),
-        Code::IllTyped,
-        Some("type-mismatch"),
-    );
-}
-
-#[trace("TC-2777", "FR-982-AC-4", "FSpec-TC-1901", "FSpec-FR-784-AC-3")]
-#[test]
 fn a_parenthesized_threshold_is_typed_against_the_aggregate() {
     type Case<'a> = (&'a str, fn(&str) -> String, &'a str);
     let cases: [Case<'_>; 2] = [
