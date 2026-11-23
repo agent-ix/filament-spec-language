@@ -168,10 +168,14 @@ S2 has no limit of its own (FR-257). `replay.input_bytes` bounds the replay
 request and envelope bytes themselves, so it is raised from the library and
 the CLI, and a request's own `stage_limits` does not carry it. A configurable
 limit FSL adds later takes a name by the same rule and a row in this table.
-Another exception, besides the supplied-value ceilings of FR-277, is the monitor target's event rate, an exact fraction owned by
-FR-251 under the setting name `monitor.max_event_rate`: it is a member of the
-monitor target and not a table row, because every table row is an unsigned
-integer.
+Another exception, besides the supplied-value ceilings of FR-277, is the
+monitor target's event rate, an exact fraction owned by FR-251 under the
+setting name `monitor.max_event_rate`: it is a member of the monitor target
+and not a table row, because every table row is an unsigned integer.
+`monitor.max_activations` is an unsigned caller setting in the table. It is
+available only when a `native-monitor/1` request has `target`; the effective
+value is required in the monitor caller limits and supplies
+`MonitorTarget.max_activations`, without a duplicate value in `target`.
 
 For native identity joins performed by an I2 v2 read (FR-531), the reader
 builds one `NativeJoinBudget` for the pass. Its work allowance is the existing
@@ -299,6 +303,7 @@ its row (FR-315 "Size limits").
 | `certificate_check.max_working_bytes` | `max_working_bytes` | probability document writer/reader | `ExactProbLimits.document.storage_bytes`; source checker document storage ceiling | 1073741824 working bytes | FR-201, FR-282 |
 | `certificate_check.max_rank` | `max_rank` | exact reachability document writer | closed-profile Count representability ceiling; a stop requires a different supported representation, not a larger Count | 9007199254740991 rank units | FR-201 |
 | `schedule.max_demand_points` | `max_demand_points` | schedulability analysis | `ScheduleLimits` max_demand_points | 1048576 points | FR-247 |
+| `monitor.max_activations` | `max_activations` | unbounded temporal monitor instances | `MonitorTarget.max_activations` / plan-root `activation_capacity` (FR-251) | required caller value when `native-monitor/1` has `target`; no default for target preparation | FR-251 |
 | `monitor.max_window_values` | `max_window_values` | window aggregates | the monitor run's max_window_values | 1048576 values | FR-194 |
 | `monitor.retained_positions` | `retained_positions` | monitor evidence retention | the monitor run's retained_positions | 1048576 positions | FR-194, FR-643 |
 | `monitor.retained_identities` | `retained_identities` | monitor evidence retention | the monitor run's retained_identities | 1048576 identities | FR-194, FR-643 |
@@ -391,7 +396,12 @@ it uses: `s1.input_bytes`, `s1.tokens`, `s1.nodes`, `s1.work_units`, `s1.diagnos
 `library.single_artifact_bytes`, `intake.input_bytes`,
 `monitor.max_window_values`, `monitor.retained_positions`,
 `monitor.retained_identities`, `monitor.preparation_work_units`, and
-`monitor.preparation_storage`. If `items` requests provider-routed analysis,
+`monitor.preparation_storage`. It SHALL also accept `monitor.max_activations`
+if and only if the request has `target`; a present target requires an
+effective value for that setting. Without a target, an explicit
+`monitor.max_activations` is operation-unavailable and is refused before
+work. The preparation settings are accepted but unused without a target; with
+a target they bound plan preparation. If `items` requests provider-routed analysis,
 monitor also accepts all ten `model_check.*`, all nine `exact_prob.*`, all
 four `statistical.*`, all four `zone_check.*`, `schedule.max_demand_points`,
 `hybrid.max_solver_steps`, `hybrid.max_solver_time`, all six
@@ -731,7 +741,7 @@ these names through the same operand grammar as the stage settings
 | FR-255-AC-21 | The settings operation given `explore.workers=4` returns caller limits whose `workers.explore` is 4, `workers.model_check` and `workers.statistical` are 1 and every limit is at its default; likewise `model_check.workers=2` and `statistical.workers=8`. Given `explore.workers=0` it returns a usage refusal naming the operand with cause `invalid_runtime_input`/`invalid-value`; given `explore.threads=4` it refuses an unknown setting. None of the three worker names appears in the engine limit table, and `explore.workers=2` leaves `explore.states` at 10000000. | Test (TC-720) |
 | FR-255-AC-22 | The settings operation lists `export.output_bytes`, `export.nodes` and `export.work_units` with defaults 16777216, 100000 and 16777216, equal to the defaults of `emit.output_bytes`, `s3.nodes` and `s3.work_units`; given `export.nodes=7` it changes only that export limit; and an export of FR-756-AC-1's counter under `export.work_units` 1 stops `incomplete` naming `export.work_units`, bound 1, exit 22. | Test (TC-2993) |
 | FR-255-AC-23 | Native analyze probability items with omitted candidate and accounting settings use local `expansion.max_candidates` 1000000 and cumulative `accounting.work_units` 1000000 for either engine. Supplying a different accounting bound B preserves B. The local ceiling stops as `max_candidates` with `expansion.max_candidates`; the cumulative bound stops as `work_units` with `accounting.work_units`. Neither default is `u64::MAX`, and starting an expansion or clause does not renew cumulative work. | Test |
-| FR-255-AC-24 | The `analyze`, `monitor` and `replay` command entry points accept exactly the operation-relevant caller-limit settings enumerated in “Lifecycle caller-limit coverage”; each accepted setting changes only its corresponding bound, while recognized but operation-unavailable settings are refused before work. In particular, monitor accepts `monitor.preparation_work_units` and `monitor.preparation_storage`, and replay accepts the stage settings it executes plus `replay.input_bytes` through its replay-reader argument, but not as a `stage_limits` member. | Test (TC-721) |
+| FR-255-AC-24 | The `analyze`, `monitor` and `replay` command entry points accept exactly the operation-relevant caller-limit settings enumerated in “Lifecycle caller-limit coverage”; each accepted setting changes only its corresponding bound, while recognized but operation-unavailable settings are refused before work. Monitor accepts `monitor.preparation_work_units` and `monitor.preparation_storage`; for a request with `target`, it requires and accepts `monitor.max_activations`, which sets only `MonitorTarget.max_activations` / plan-root `activation_capacity`; without `target`, `monitor.max_activations` is operation-unavailable and no preparation occurs. With a target, each preparation setting is enforced: if its bound is one less than the preparation charge, the request returns `stage_limit_exceeded` before reading records with the exact `kind`, `bound`, `actual` and setting name of FR-255 Behavior 1; setting it to the measured charge permits preparation. Replay accepts the stage settings it executes plus `replay.input_bytes` through its replay-reader argument, but not as a `stage_limits` member. | Test (TC-721) |
 | FR-255-AC-25 | An `analyze` request whose item states an engine limit in its own member (for example a `simulation` item with `max_steps` 5 or a probabilistic item with `limits.max_states` 5) and whose caller also passes that setting (`--limit simulation.max_steps=2`) is refused `invalid-request` naming the item and the setting, exit 20, with no item run; with the item silent, the caller's bound takes effect on the source route and the package route alike. | Test (TC-721) |
 
 ## Status

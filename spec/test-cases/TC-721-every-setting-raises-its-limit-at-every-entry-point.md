@@ -5,6 +5,8 @@ type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-255
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-644
+    type: verifies
 ---
 # TC-721: Every setting raises its limit through the library, the replay request and the CLI
 
@@ -15,7 +17,7 @@ the settings operation refuses a malformed `--limit` operand before any
 stage runs, and that an
 unconfigured limit takes its default.
 
-Scope: FR-255-AC-4, FR-255-AC-5, FR-255-AC-6, FR-255-AC-15 to FR-255-AC-20, FR-255-AC-24 and FR-255-AC-25.
+Scope: FR-255-AC-4, FR-255-AC-5, FR-255-AC-6, FR-255-AC-15 to FR-255-AC-20, FR-255-AC-24 and FR-255-AC-25; FR-644-AC-15 to FR-644-AC-19.
 
 ## Test Procedure
 
@@ -53,11 +55,21 @@ Scope: FR-255-AC-4, FR-255-AC-5, FR-255-AC-6, FR-255-AC-15 to FR-255-AC-20, FR-2
     corresponding bound, and a recognized engine setting that the operation
     does not execute is refused before work. For monitor, separately set
     `monitor.preparation_work_units` and `monitor.preparation_storage` and
-    inspect the corresponding preparation bounds. Verify `replay.input_bytes`
-    reaches the replay-reader argument and is not accepted in request
-    `stage_limits`.
+    inspect the corresponding preparation bounds. For monitor requests with
+    `target`, supply `monitor.max_activations` and inspect the matching plan
+    activation capacity; omit `target` and verify that
+    `monitor.max_activations` is operation-unavailable while the preparation
+    settings cause no preparation. Verify `replay.input_bytes` reaches the
+    replay-reader argument and is not accepted in request `stage_limits`.
+12. For FR-644-AC-16's timed monitor request with a valid target and
+    `max_event_rate: null`, measure plan-preparation work W and storage S.
+    Run with work W and storage S; then independently run with work W-1 and
+    storage S-1. Confirm the refusal fields, setting names, and that no record
+    is read on either reached limit. Repeat the request without `target` and
+    confirm neither preparation counter is charged (FR-644-AC-15, AC-18,
+    AC-19; FR-255-AC-24).
 
-Tag the tests `#[trace("TC-721", "FR-255-AC-20")]`, `#[trace("TC-721", "FR-255-AC-4")]`, `#[trace("TC-721", "FR-255-AC-5")]`, `#[trace("TC-721", "FR-255-AC-6")]`, `#[trace("TC-721", "FR-255-AC-15")]`, `#[trace("TC-721", "FR-255-AC-16")]`, `#[trace("TC-721", "FR-255-AC-17")]`, `#[trace("TC-721", "FR-255-AC-18")]`, `#[trace("TC-721", "FR-255-AC-19")]`, `#[trace("TC-721", "FR-255-AC-24")]`, `#[trace("TC-721", "FR-255-AC-25")]`.
+Tag the tests `#[trace("TC-721", "FR-255-AC-20")]`, `#[trace("TC-721", "FR-255-AC-4")]`, `#[trace("TC-721", "FR-255-AC-5")]`, `#[trace("TC-721", "FR-255-AC-6")]`, `#[trace("TC-721", "FR-255-AC-15")]`, `#[trace("TC-721", "FR-255-AC-16")]`, `#[trace("TC-721", "FR-255-AC-17")]`, `#[trace("TC-721", "FR-255-AC-18")]`, `#[trace("TC-721", "FR-255-AC-19")]`, `#[trace("TC-721", "FR-255-AC-24")]`, `#[trace("TC-721", "FR-255-AC-25")]`, `#[trace("TC-721", "FR-644-AC-15")]`, `#[trace("TC-721", "FR-644-AC-16")]`, `#[trace("TC-721", "FR-644-AC-17")]`, `#[trace("TC-721", "FR-644-AC-18")]` and `#[trace("TC-721", "FR-644-AC-19")]`.
 
 ## Expected Results
 
@@ -87,5 +99,12 @@ Tag the tests `#[trace("TC-721", "FR-255-AC-20")]`, `#[trace("TC-721", "FR-255-A
   `EmitLimits` has no `Default`.
 - Step 11: each operation exposes exactly the names listed for it; accepted
   values change their matching bounds, unavailable names refuse before work,
-  the two monitor preparation bounds remain independent, and
-  `replay.input_bytes` reaches the reader only.
+  the monitor preparation bounds remain independent; a monitor target
+  requires `monitor.max_activations`, the value reaches only
+  `MonitorTarget.max_activations` / `activation_capacity`, and the setting is
+  unavailable without a target; `replay.input_bytes` reaches the reader only.
+- Step 12: a targetless monitor charges no preparation work or storage. With a
+  target, the exact measured work and storage bounds admit preparation, each
+  one-short bound refuses before reading records with `stage_limit_exceeded`
+  and its `kind`, `bound`, `actual` and setting fields, naming the corresponding
+  setting as FR-255 Behavior 1 states.

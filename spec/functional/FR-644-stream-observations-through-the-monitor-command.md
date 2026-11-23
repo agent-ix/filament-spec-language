@@ -35,6 +35,10 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-1047
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-251
+    type: depends_on
+  - target: ix://agent-ix/filament-spec-language/FR-255
+    type: depends_on
 ---
 # FR-644: Stream observations through the monitor command
 
@@ -74,6 +78,17 @@ The request file, a closed JSON envelope `{"format": "native-monitor/1",
 - `ledger`: optional, an FR-641 ledger file;
 - `state`: optional, the path of a `filament.monitor-state/1` checkpoint to resume
   from (FR-643);
+- `target`: optional, a closed object with the `MonitorTarget` inputs of
+  FR-251: `counter`, `unit`, `width_bits`, `uncertainty`, `max_event_rate` and
+  `max_reading_gap`. `counter` is a non-empty name; `unit` is the selected
+  time unit; `width_bits` is the counter width; `uncertainty` and a non-null
+  `max_event_rate` are exact rationals; and `max_reading_gap` is an unsigned
+  tick count. `max_event_rate` may be `null`, which selects FR-251's default
+  rate of one event per microsecond converted to the target unit. The request
+  target does not carry `max_activations`: the command obtains that value
+  from the `monitor.max_activations` caller setting (FR-255), required when
+  `target` is present. Without `target`, the monitor uses the existing path
+  and performs no plan preparation.
 - `observations`: optional, a map from key to snapshot file, for records that name
   a snapshot by key.
 - `records`: the relative path of a JSON Lines record file. It SHALL be
@@ -253,6 +268,25 @@ monitor is most likely to also prove over its model.
 - A request-file defect, a compile refusal, an `open` refusal or a `resume`
   refusal SHALL return the command-error envelope before any record is read, as
   FR-100 refuses a run request, exit 20.
+- The monitor request reader SHALL validate a present `target` against FR-251
+  before reading records. A malformed or inadmissible target SHALL return
+  `invalid-request` at stage `request`, exit 20, with message
+  `invalid request member /request/target: invalid MonitorTarget`, details
+  `{"path":"/request/target"}`, and a diagnostic naming `target`; the sink
+  receives no event. An absent `target` SHALL preserve the existing monitor
+  behavior and SHALL NOT prepare a plan.
+- When `target` is present, `command::monitor` SHALL prepare the monitor plan
+  before reading the first record. It SHALL derive the `PlanRoot` and its
+  authority from the request target and checked emission through
+  `PlanRoot::admit_authority` as FR-251 requires; downstream selection SHALL
+  use that admitted authority. It SHALL NOT perform a second strict read of
+  the same emission. Preparation SHALL enforce the caller-supplied
+  `monitor.preparation_work_units` and `monitor.preparation_storage` caller
+  bounds, and use the caller-supplied `monitor.max_activations` setting for the
+  plan's activation capacity. A reached preparation bound SHALL return
+  FR-255's `stage_limit_exceeded` outcome with `kind`, `bound`, `actual` and
+  `setting`, naming the setting and how to raise it, before any record is read
+  and with no event.
 - The driver's `monitor` verb SHALL take the request file operand and `--input
   <file>` (default standard input), write each event and the summary as one JSON
   line to standard output, and follow FR-287's stream, usage and exit rules.
@@ -335,6 +369,11 @@ is its own RFC 8785 re-encoding, and validates each event line against
 | FR-644-AC-12 | Every line of `fsl-command/tests/fixtures/monitor-golden/` equals the canonical encoding of the event or summary its stream gives, is its own RFC 8785 re-encoding, and validates against `MONITOR_EVENT_SCHEMA_1` or `MONITOR_SUMMARY_SCHEMA_1`. AC-7's record-2 event fails validation with `settlement` removed (an error at the root pointer, keyword `required`), with `/settlement/trigger` set to `"decide"` (an error at `/settlement/trigger`) and with a member `extra` added (an error at the root pointer); AC-7's record-0 event with a `settlement` added fails at the root pointer; AC-2's refusal event validates, and fails with `/disposition/member` removed (an error at `/disposition`) and with `clause` set to a clause name while its `disposition` stays the request refusal (an error at `/disposition`); AC-6's `through` refusal event validates; AC-7's summary with a `ledger` added fails, and AC-8's summary with `registry` removed fails, each at the root pointer. | Test (TC-3115) |
 | FR-644-AC-13 | Stream FR-643-AC-13's timestamped observations with `missing: [{"position": 18, "atom": A}]` on observation 18. Events and final summary match the session and batch reports, including `MissingValuation { position: 18, atom: A }` and exit 11. An omitted `missing` and `missing: []` give identical events and summary for the same timestamped stream. | Test |
 | FR-644-AC-14 | Between good timestamped observations, supply records with `missing: null`, a non-array value, entries with absent, unknown, duplicate or null members, negative, fractional, string or overflowing-u64 `position` or `atom`, and a duplicate top-level `missing`. Each yields one stage-`request` `invalid-request` refusal event naming the member and changes no session state; subsequent good records give the events and final clause reports of the stream without the refused records. A `missing` member on a progress record, or on a non-timestamped observation even as `[]`, is likewise refused naming `missing`. | Test |
+| FR-644-AC-15 | An AC-1 `native-monitor/1` request without `target` admits and streams as before; with `monitor.preparation_work_units=0` and `monitor.preparation_storage=0`, it performs no plan preparation and the same events and summary are returned. | Test (TC-721) |
+| FR-644-AC-16 | The `timed` `Ack` request for FR-251-AC-1's clause and target, with `target.max_event_rate: null` and `monitor.max_activations=8`, prepares one plan before reading the first record, uses the default event rate and activation capacity 8, and obtains the selected plan and package only through the authority returned by `PlanRoot::admit_authority`; the request at tick 0, `ack` at tick 2998 and completeness assertion through tick 2999 produce the same settled result as FR-251-AC-1. No plan is prepared before request validation or after the first record. | Test (TC-721) |
+| FR-644-AC-17 | A present `target` with an unknown or repeated member, a missing required member, wrong member type, invalid counter, invalid unit, out-of-range width, invalid uncertainty, invalid non-null rate or zero reading gap is refused `invalid-request`, stage `request`, exit 20, with message `invalid request member /request/target: invalid MonitorTarget`, details `{"path":"/request/target"}` and a diagnostic naming `target`; the monitor reads no record and the sink receives no event. A `null` `max_event_rate` is admitted. | Test (TC-721) |
+| FR-644-AC-18 | With AC-16's target and measured preparation work W, `monitor.preparation_work_units=W-1` returns `stage_limit_exceeded` before records with `kind` `work_units`, `bound` W-1, `actual` W and `setting` `monitor.preparation_work_units`; at W the plan is admitted and the stream runs. | Test (TC-721) |
+| FR-644-AC-19 | With AC-16's target and measured preparation storage S, `monitor.preparation_storage=S-1` returns `stage_limit_exceeded` before records with `kind` `storage`, `bound` S-1, `actual` S and `setting` `monitor.preparation_storage`; at S the plan is admitted and the stream runs. | Test (TC-721) |
 
 ## Dependencies
 
