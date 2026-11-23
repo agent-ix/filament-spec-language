@@ -66,3 +66,20 @@ FND-004 fix: drop the unrelated re-wraps and run the pinned `cargo fmt` on the P
 - FR-865-AC-19: examined. The test goes through `compile_outcome` and the text has the hint line. Clean.
 - FR-121-AC-35/36: examined. The replay `call_site` delegation is unchanged in behaviour. Tags are in SR-3617002.
 - Tests: not run (other cargo jobs active on titan).
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-005 | low | `a_one_unit_array_takes_a_call_site_like_the_single_program` is tagged `FR-027` only. FR-027-AC-21 (merged in #3620) now names that clause: "the same request with `call_site` valid and `program` an FR-480 array of exactly one unit behaves exactly like the single-object form". The test should carry `TC-3210`, `FR-027-AC-21` | fsl-command/tests/it/cli_contract/compile.rs:818-820 |
+
+## Dispositions
+
+Round 1, head 4973631532a165ed9224c593050d5963df9ccbe1, fix commit 4973631532 on merge-base bc77821e18. Checked by reading the code and running `quire matrix`; no cargo run.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | fsl-replay `a_package_name_that_is_no_library_name_is_a_fault` (imported_function_site.rs:453) shows `locate_in_checked` returns Ok for "fixture" and `CallSiteRefusal::Fault` for "". fsl-command `a_call_site_fault_is_an_internal_failure_at_stage_i1` (selection_text.rs:263) asserts category InternalFailure, exit 30, a schema-valid document, `last_stage` I1 and one diagnostic |
+| FND-002 | fixed | export.rs:219 refuses `call_site` with `output` and `handoff`. `a_compile_only_member_beside_an_export_refuses_naming_it` (export.rs:344, TC-3213/FR-1015-AC-18) asserts invalid-request naming each member, exit 20, `last_stage` null, and no files written |
+| FND-003 | fixed | Spec #3620 now states that an array of exactly one unit behaves as the single-object form (FR-027 statement, AC-21), so the code's `> 1` check is correct. `a_one_unit_array_takes_a_call_site_like_the_single_program` pins equal bytes and the same refusal (tag: FND-005) |
+| FND-004 | still-open | The non-own hunks are reverted: compile.rs:447 and the three selection_text.rs attributes now match main. The PR's own lines are still not clean under the pinned `cargo fmt --check` (1.98): the `PICK` const (compile.rs:475), and lines new in this round at command.rs:3539-3541, export.rs:361 and imported_function_site.rs:320/471/487. Fix: run `cargo fmt` on those lines only. Low; main is not fmt-clean either |

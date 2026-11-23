@@ -47,3 +47,12 @@ FND-002 fix: add `FR-121-AC-35` to the trace at :320 and `FR-121-AC-36` to the o
 - Stubs: none.
 - Semantic review: not run (not requested).
 - Plan completion: not assessed
+
+## Dispositions
+
+Round 1, head 4973631532a165ed9224c593050d5963df9ccbe1. `quire matrix --scope . --format tsv` re-run.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Spec #3620 (bc77821e18) removed the blank line. The matrix now lists FR-027-AC-14..21 as `tagged`: AC-15 at compile.rs:565 and selection_text.rs:139, AC-16..21 at compile.rs:593/607/638/665/693/728, and AC-19 at compile.rs:665 is now TC-3210/FR-027-AC-19 |
+| FND-002 | fixed | imported_function_site.rs:320 now carries `FR-121-AC-35` and :399 carries `FR-121-AC-36`. Both are `tagged` in the matrix |

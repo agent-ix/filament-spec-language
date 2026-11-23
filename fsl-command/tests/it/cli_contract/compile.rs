@@ -471,8 +471,7 @@ const LIBRARY_HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
     profile v = \"filament.value.complete/v1\";\n";
 const BIG: &str = "function big using v(x: Int[0, 9]): Boolean pure { x > 5 }\n";
 const SMALL: &str = "function small using v(x: Int[0, 9]): Boolean pure { x < 2 }\n";
-const PICK: &str =
-    "record R { a: Boolean; }\nfunction pick using v(r: R): Boolean pure { true }\n";
+const PICK: &str = "record R { a: Boolean; }\nfunction pick using v(r: R): Boolean pure { true }\n";
 pub(crate) const UNIT_OF_UNITS: &str = "import \"test/units\" as u;\n\
     function q using v(x: Int[0, 9]): Boolean pure { u::big(x) }\n";
 const UNIT_OF_WRAP: &str = "import \"test/wrap\" as w;\n\
@@ -816,7 +815,7 @@ fn a_malformed_call_site_refuses_invalid_request_naming_it() {
 /// FR-027: an array of one unit is the single-object program, so a valid
 /// `call_site` over it is located and changes nothing.
 #[test]
-#[trace("FR-027")]
+#[trace("TC-3210", "FR-027-AC-21")]
 fn a_one_unit_array_takes_a_call_site_like_the_single_program() {
     let libraries = [("test/units", BIG)];
     let single_case = Case::new();

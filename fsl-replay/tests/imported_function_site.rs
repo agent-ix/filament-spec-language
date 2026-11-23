@@ -317,7 +317,14 @@ fn a_same_named_unit_function_is_never_the_imported_site() {
 /// FR-121-AC-35: a library the unit does not import directly -- supplied but
 /// unimported, absent, or reached only through another library -- refuses
 /// `UnknownImport` paired with the unit's package.
-#[trace("TC-516", "FR-121-AC-35", "TC-3199", "FR-865-AC-19", "FR-865-AC-24", "FR-286-AC-40")]
+#[trace(
+    "TC-516",
+    "FR-121-AC-35",
+    "TC-3199",
+    "FR-865-AC-19",
+    "FR-865-AC-24",
+    "FR-286-AC-40"
+)]
 #[test]
 fn a_library_without_a_direct_import_refuses_unknown_import() {
     let other = supplied("test/other", "other", BIG);
@@ -468,7 +475,8 @@ fn a_package_name_that_is_no_library_name_is_a_fault() {
     )
     .expect("the unit parses")
     .into_value();
-    let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>()).expect("no packages");
+    let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
+        .expect("no packages");
     let models = spine::select(&parsed, &packages, limits.model, &cancel)
         .expect("the models select")
         .into_value();
@@ -484,7 +492,8 @@ fn a_package_name_that_is_no_library_name_is_a_fault() {
     .expect("the unit checks")
     .into_value();
 
-    let located = fsl_replay::locate_in_checked(&checked, "fixture", &imported("test/units", "big"));
+    let located =
+        fsl_replay::locate_in_checked(&checked, "fixture", &imported("test/units", "big"));
     assert!(located.is_ok(), "{:?}", located.err());
     let fault = fsl_replay::locate_in_checked(&checked, "", &imported("test/units", "big"))
         .expect_err("an empty package name is no library name");

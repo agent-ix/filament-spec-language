@@ -361,7 +361,11 @@ fn a_compile_only_member_beside_an_export_refuses_naming_it() {
         let outcome = plain(&case.json("export.json", &request));
         let refusal = outcome.refused("export", 20, "invalid-request");
         assert!(refusal.to_string().contains(name), "{name}: {refusal}");
-        assert!(outcome.document["last_stage"].is_null(), "{}", outcome.document);
+        assert!(
+            outcome.document["last_stage"].is_null(),
+            "{}",
+            outcome.document
+        );
         assert!(!case.path("out.json").exists() && !case.path("handoff").exists());
     }
 }
