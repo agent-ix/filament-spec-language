@@ -873,6 +873,7 @@ dependencies = [
  "fsl-forms",
  "fsl-foundation",
  "fsl-package",
+ "fsl-proptest-policy",
  "fsl-replay",
  "fsl-route",
  "fsl-semantics",
@@ -949,9 +950,12 @@ name = "fsl-cst"
 version = "0.1.0"
 dependencies = [
  "filament-exact",
+ "fsl-cst",
  "fsl-foundation",
+ "fsl-proptest-policy",
  "ix-trace-rs",
  "logos",
+ "proptest",
  "serde_json",
 ]
 
@@ -969,9 +973,11 @@ dependencies = [
  "fsl-forms",
  "fsl-foundation",
  "fsl-package",
+ "fsl-proptest-policy",
  "fsl-semantics",
  "ix-trace-rs",
  "proc-macro2",
+ "proptest",
  "quire-canonical",
  "serde",
  "serde_json",
@@ -1001,8 +1007,10 @@ version = "0.1.0"
 dependencies = [
  "filament-exact",
  "filament-semantic-value",
+ "fsl-proptest-policy",
  "hashbrown 0.17.1",
  "ix-trace-rs",
+ "proptest",
  "quire-canonical",
  "serde",
  "serde_json",
@@ -1103,6 +1111,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fsl-proptest-policy"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+]
+
+[[package]]
 name = "fsl-replay"
 version = "0.3.0"
 dependencies = [
@@ -1114,6 +1129,7 @@ dependencies = [
  "filament-observation",
  "filament-semantic-value",
  "filament-specification-qualification",
+ "fsl-bench",
  "fsl-cst",
  "fsl-eval",
  "fsl-forms",
@@ -1126,6 +1142,7 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
+ "proptest",
  "quire-canonical",
  "serde",
  "serde_json",

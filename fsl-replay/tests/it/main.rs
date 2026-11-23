@@ -23,6 +23,7 @@ mod hyper_smt_settle;
 mod indexed_read_stage;
 mod intake_refusal_outcome;
 mod integer_division_check;
+mod emit_admit_agreement;
 mod outcome_facade;
 mod parse_outcome_facade;
 mod probability_certificate;
