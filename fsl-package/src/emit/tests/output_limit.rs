@@ -292,13 +292,15 @@ fn a_package_with_body_location_rows_is_emitted_at_its_exact_length() {
 
 /// QSL-2849: the source map is written verbatim, so a bound below its bytes
 /// refuses before any typed row is built. Allocations are counted, not time: a
-/// refusal the source map causes (bound 0) allocates under two thirds of what a
+/// refusal the source map causes (bound N/10) allocates under two thirds of what a
 /// refusal at the final encode (bound `N - 1`) does; the first unpaid byte is
 /// exactly `bound + 1` in both.
 #[trace("TC-738", "FR-264-AC-6")]
 #[test]
 fn a_bound_below_the_source_map_refuses_before_the_typed_rows_are_built() {
-    let package = nested_not_package(1_000);
+    // A `let` chain has no body-location rows, which main already meters per
+    // row, so only the source-map charge can refuse early here.
+    let package = nested_let_package(1_000);
     let bytes = u64::try_from(emitted_byte_count_of(&package)).expect("a fixture length");
 
     let allocations = |bound: u64| {
@@ -317,7 +319,7 @@ fn a_bound_below_the_source_map_refuses_before_the_typed_rows_are_built() {
     // Initialize the measurement machinery before observing the emitter.
     let _ = allocation_counter::measure(|| {});
 
-    let early = allocations(0);
+    let early = allocations(bytes / 10);
     let late = allocations(bytes - 1);
     assert!(
         early.saturating_mul(3) < late.saturating_mul(2),
