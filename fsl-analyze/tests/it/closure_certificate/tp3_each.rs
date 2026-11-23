@@ -434,6 +434,7 @@ fn an_on_each_tp3_check_stops_or_rejects_an_undefined_atom_with_typed_results() 
         TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxStates,
             value: below,
+            required: None,
         })
     );
     let record = settle_model_check(&outcome, &limits, &request, &Cancel::new(), |_| {
@@ -444,6 +445,7 @@ fn an_on_each_tp3_check_stops_or_rejects_an_undefined_atom_with_typed_results() 
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxStates,
             value: below,
+            required: None,
         })
     );
 

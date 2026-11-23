@@ -164,6 +164,7 @@ fn a_state_budget_of_one_settles_incomplete() {
         &TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::ExactProbMaxStates,
             value: 1,
+            required: None,
         })
     );
     assert!(record.exact_probabilistic.is_none());
@@ -530,7 +531,8 @@ fn analyzer_document_budgets_preserve_stage_specific_stops_without_certification
             record.terminal().unwrap().value(),
             &TerminalValue::Incomplete(IncompleteCause::LimitReached {
                 limit: expected,
-                value: 0
+                value: 0,
+                required: None,
             })
         );
         assert_eq!(
@@ -986,13 +988,15 @@ fn undefined_replay_preserves_limits_and_cancellation_at_the_final_poll() {
                     "work",
                     TerminalValue::Incomplete(IncompleteCause::LimitReached {
                         limit: ModelCheckLimit::EvaluationMeter { .. },
-                        value: 0
+                        value: 0,
+                        required: None,
                     })
                 ) | (
                     "expansion",
                     TerminalValue::Incomplete(IncompleteCause::LimitReached {
                         limit: ModelCheckLimit::MaxCandidates,
-                        value: 0
+                        value: 0,
+                        required: None,
                     })
                 )
             ),
@@ -1436,6 +1440,7 @@ fn a_bounded_claim_past_the_rational_budget_settles_incomplete_naming_the_limit(
         &TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::ExactProbMaxRationalBits,
             value: 1024,
+            required: None,
         }),
         "{record:#?}"
     );

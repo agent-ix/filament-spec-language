@@ -702,6 +702,7 @@ fn each_timed_verdict_row_settles_as_stated() {
     let limit = IncompleteCause::LimitReached {
         limit: ModelCheckLimit::ZoneMaxSymbolicStates,
         value: 9,
+        required: None,
     };
     let record = settle(
         &proof,
@@ -919,6 +920,7 @@ fn vacuity_punctuality_and_budgets_settle_as_stated() {
     let limit = IncompleteCause::LimitReached {
         limit: ModelCheckLimit::ZoneMaxSymbolicStates,
         value: 2,
+        required: None,
     };
     assert_eq!(record.value, TerminalValue::Incomplete(limit.clone()));
     assert_eq!(limit.as_str(), "limit-reached");
@@ -1389,6 +1391,7 @@ fn the_remaining_timed_rows_settle_as_stated() {
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxStates,
             value: 1,
+            required: None,
         })
     );
     assert_eq!(
@@ -1642,6 +1645,7 @@ fn live_clocks_beyond_max_clocks_settle_limit_reached() {
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxClocks,
             value: 1,
+            required: None,
         })
     );
     assert_eq!(ModelCheckLimit::MaxClocks.as_str(), "max_clocks");

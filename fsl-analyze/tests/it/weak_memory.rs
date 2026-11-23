@@ -2537,6 +2537,7 @@ fn assert_candidate_stop(
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxCandidates,
             value: bound,
+            required: None,
         })
     );
     assert_eq!(record.limit_reached, Some(reached));

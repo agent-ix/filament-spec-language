@@ -79,6 +79,7 @@ impl ProtocolAnalysisSettlement {
                 value: TerminalValue::Incomplete(IncompleteCause::LimitReached {
                     limit: limit.limit,
                     value: limit.value,
+                    required: None,
                 }),
                 label: ResultLabel::Failed,
                 basis: SettlementBasis::Unavailable,

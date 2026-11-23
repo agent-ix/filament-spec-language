@@ -387,13 +387,16 @@ pub(crate) fn order_protocol(receive: bool) -> String {
 /// [`analyze`] under the run's `replay.input_bytes` (FR-255), the
 /// `RunLimits` value FR-940-AC-22 names.
 pub(crate) fn analyze_under_replay_bytes(request: &Path, replay_input_bytes: u64) -> Run {
-    let limits = fsl_command::command::RunLimits {
+    let mut caller = fsl_command::command::CommandLimits::analyze();
+    assert!(fsl_foundation::SettingLimits::set_bound(
+        &mut caller,
+        fsl_foundation::Setting::ReplayInputBytes,
         replay_input_bytes,
-        ..fsl_command::command::RunLimits::default()
-    };
+    ));
     match fsl_command::command::analyze_with_limits(
         request,
-        limits,
+        fsl_command::command::RunLimits::default(),
+        &caller,
         &Fr290,
         &filament_exact::Cancel::new(),
     ) {

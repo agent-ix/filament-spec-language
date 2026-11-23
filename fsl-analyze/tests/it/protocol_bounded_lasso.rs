@@ -1494,6 +1494,7 @@ fn an_on_each_tp3_debt_after_the_origin_is_judged_by_the_fair_uncounted_loop() {
         TemporalCertificateCheck::Stopped(fsl_replay::IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxStates,
             value: u64::try_from(certificate.states.len() - 1).expect("a small closure"),
+            required: None,
         })
     );
 }

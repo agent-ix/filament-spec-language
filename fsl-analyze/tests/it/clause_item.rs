@@ -290,6 +290,7 @@ fn the_same_clause_under_one_state_settles_incomplete_naming_the_state_budget() 
         &TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxStates,
             value: 1,
+            required: None,
         })
     );
 }

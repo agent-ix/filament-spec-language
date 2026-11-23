@@ -712,6 +712,11 @@ impl CompileRefusal {
                 | Setting::ModelCheckMaxStoreBuffer
                 | Setting::ModelCheckMaxMessages
                 | Setting::ExpansionMaxCandidates
+                | Setting::MonitorMaxWindowValues
+                | Setting::MonitorRetainedPositions
+                | Setting::MonitorRetainedIdentities
+                | Setting::MonitorPreparationWorkUnits
+                | Setting::MonitorPreparationStorage
                 | Setting::TemporalEvidenceFormulaNodes
                 | Setting::TemporalEvidenceInstances
                 | Setting::TemporalEvidencePositions

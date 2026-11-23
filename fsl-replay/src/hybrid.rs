@@ -293,6 +293,7 @@ impl SolverResult {
                 TerminalValue::Incomplete(IncompleteCause::LimitReached {
                     limit: ModelCheckLimit::SolverSteps,
                     value: *value,
+                    required: None,
                 })
             }
             SolverOutcome::NoInitialState => {
@@ -397,6 +398,7 @@ impl SolverResult {
                         counter: LimitKind::WorkUnits,
                     },
                     value: meter.work_units,
+                    required: None,
                 },
             ))
         };
@@ -690,6 +692,7 @@ impl HybridSettlement {
                     counter: LimitKind::WorkUnits,
                 },
                 value: meter.work_units,
+                required: None,
             }))
         };
         let unchecked = certificate.map(CertificateRecord::unchecked);
@@ -1545,6 +1548,7 @@ mod tests {
                         TerminalValue::Incomplete(IncompleteCause::LimitReached {
                             limit: ModelCheckLimit::SolverSteps,
                             value: 1,
+                            required: None,
                         }),
                         "{method:?} {outcome:?}"
                     );

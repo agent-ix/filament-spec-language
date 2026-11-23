@@ -42,6 +42,10 @@ fn call(entry: Entry, path: &Path) -> Option<(Value, u8)> {
                 options: &options,
             },
             RunLimits::default(),
+            &command::CommandLimits::monitor(command::MonitorPreparationLimits {
+                work: 16_777_216,
+                storage: 268_435_456,
+            }),
             &cancel,
         )
         .err(),
@@ -51,6 +55,7 @@ fn call(entry: Entry, path: &Path) -> Option<(Value, u8)> {
         Entry::Analyze => command::analyze_with_providers_and_limits(
             path,
             RunLimits::default(),
+            &command::CommandLimits::analyze(),
             &Fr290,
             Vec::new(),
             &options,

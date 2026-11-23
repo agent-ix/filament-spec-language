@@ -2868,6 +2868,11 @@ impl TryFrom<Setting> for CheckingLimitKind {
             | Setting::ModelCheckMaxStoreBuffer
             | Setting::ModelCheckMaxMessages
             | Setting::ExpansionMaxCandidates
+            | Setting::MonitorMaxWindowValues
+            | Setting::MonitorRetainedPositions
+            | Setting::MonitorRetainedIdentities
+            | Setting::MonitorPreparationWorkUnits
+            | Setting::MonitorPreparationStorage
             | Setting::InspectMaxViewEntries
             | Setting::ProgressCoveredPositions => Err(setting),
         }

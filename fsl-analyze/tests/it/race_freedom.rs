@@ -2099,6 +2099,7 @@ fn a_protocol_derived_items_caller_limits_reach_en1() {
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxStates,
             value: 1,
+            required: None,
         })
     );
 

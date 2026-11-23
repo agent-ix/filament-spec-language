@@ -585,24 +585,35 @@ impl Plan<'_> {
             | StatisticalMethod::ClopperPearson
             | StatisticalMethod::Regenerative { .. } => None,
         };
+        // The fixed sample count `N`, computed once; SPRT has none.
+        let count = match self.request.method {
+            StatisticalMethod::ClopperPearson => {
+                Some(clopper_pearson_sample_count(&self.alpha, &self.beta, iota).map_err(fault)?)
+            }
+            StatisticalMethod::Okamoto | StatisticalMethod::Regenerative { .. } => {
+                Some(okamoto_sample_count(&self.alpha, &self.beta, iota).map_err(fault)?)
+            }
+            StatisticalMethod::Sprt => None,
+        };
         // `None` when `N` exceeds every count a test can reach, so only a
         // budget ends the test.
-        let fixed = match sequential {
-            Some(_) => None,
-            None => match self.request.method {
-                StatisticalMethod::ClopperPearson => {
-                    clopper_pearson_sample_count(&self.alpha, &self.beta, iota)
-                        .map_err(fault)?
-                        .to_u64()
+        let fixed = count.as_ref().and_then(Integer::to_u64);
+        // A method with a fixed `N` compares it with the budgets before it
+        // draws (FR-191): `N` counted samples need at least `N` draws.
+        if let (StatisticalMethod::Okamoto | StatisticalMethod::ClopperPearson, Some(required)) =
+            (self.request.method, count)
+        {
+            for limit in [StatisticalLimit::MaxSamples, StatisticalLimit::MaxDraws] {
+                let value = limits.value(limit);
+                if required > Integer::from(value) {
+                    return Ok(TestEnd::Stopped(StatisticalStop::PreflightLimit {
+                        limit,
+                        value,
+                        required,
+                    }));
                 }
-                StatisticalMethod::Okamoto | StatisticalMethod::Regenerative { .. } => {
-                    okamoto_sample_count(&self.alpha, &self.beta, iota)
-                        .map_err(fault)?
-                        .to_u64()
-                }
-                StatisticalMethod::Sprt => None,
-            },
-        };
+            }
+        }
         let stride = u64::from(self.tests);
         loop {
             if fixed == Some(tally.counted) {
@@ -1087,10 +1098,12 @@ fn check_sampled_with_meter<S: BehaviourSampler>(
         }
     }
     let decision = claim_decision(&results);
+    let bound = request.claim.verdict_bound().clone();
     let chosen = least_favourable(&results, request.claim.bound().comparison);
     Ok(StatisticalOutcome::Completed(Box::new(
         StatisticalVerdict {
             decision,
+            bound,
             estimate: chosen.and_then(|test| test.estimate.clone()),
             interval: chosen.and_then(|test| test.interval.clone()),
             quantile: chosen.and_then(|test| test.quantile.clone()),

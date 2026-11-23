@@ -1279,6 +1279,7 @@ fn a_partial_order_run_a_limit_stops_settles_as_incomplete() {
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxStates,
             value: 3,
+            required: None,
         })
     );
     assert_eq!(

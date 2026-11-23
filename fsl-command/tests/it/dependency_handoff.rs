@@ -289,13 +289,16 @@ fn analyze(directory: &Path, request: Value, replay_input_bytes: u64) -> (u8, Va
         serde_json::to_vec(&json!({"format": "native-analyze/1", "request": request})).unwrap(),
     )
     .unwrap();
-    let limits = fsl_command::command::RunLimits {
+    let mut caller = fsl_command::command::CommandLimits::analyze();
+    assert!(fsl_foundation::SettingLimits::set_bound(
+        &mut caller,
+        fsl_foundation::Setting::ReplayInputBytes,
         replay_input_bytes,
-        ..Default::default()
-    };
+    ));
     match fsl_command::command::analyze_with_limits(
         &path,
-        limits,
+        fsl_command::command::RunLimits::default(),
+        &caller,
         &crate::negotiation::Fr290,
         &filament_exact::Cancel::new(),
     ) {

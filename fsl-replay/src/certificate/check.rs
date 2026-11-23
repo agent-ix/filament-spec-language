@@ -121,7 +121,11 @@ pub(super) fn finish(run: Step<()>) -> Result<TemporalCertificateCheck, ClosureR
 /// The stop at `limit`, set to `value`.
 pub(super) fn stopped(limit: ModelCheckLimit, value: u64) -> Halt {
     Halt::Check(TemporalCertificateCheck::Stopped(
-        IncompleteCause::LimitReached { limit, value },
+        IncompleteCause::LimitReached {
+            limit,
+            value,
+            required: None,
+        },
     ))
 }
 

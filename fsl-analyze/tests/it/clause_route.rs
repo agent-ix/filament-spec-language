@@ -174,6 +174,7 @@ fn analyze_settles_an_authored_clause_under_one_state_incomplete() {
         &TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxStates,
             value: 1,
+            required: None,
         })
     );
 }
