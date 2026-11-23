@@ -475,6 +475,7 @@ fn a_violated_quantity_past_the_rational_budget_settles_incomplete() {
         &TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::ExactProbMaxRationalBits,
             value: 1,
+            required: None,
         }),
         "{record:#?}"
     );

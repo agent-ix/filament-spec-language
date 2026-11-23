@@ -1126,7 +1126,7 @@ fn bounded_wrong_source_and_nonexact_rows_never_produce_an_accepted_document() {
             );
         } else {
             assert!(
-                matches!(&terminal, Settlement::Terminal(record) if record.value() == &fsl_replay::TerminalValue::Incomplete(fsl_replay::IncompleteCause::LimitReached { limit: fsl_replay::ModelCheckLimit::ExactProbMaxRationalBits, value: 1 })),
+                matches!(&terminal, Settlement::Terminal(record) if record.value() == &fsl_replay::TerminalValue::Incomplete(fsl_replay::IncompleteCause::LimitReached { limit: fsl_replay::ModelCheckLimit::ExactProbMaxRationalBits, value: 1, required: None })),
                 "{terminal:?}"
             );
         }
