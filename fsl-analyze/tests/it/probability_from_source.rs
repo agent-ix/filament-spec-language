@@ -1710,6 +1710,47 @@ fn measured_and_proved_items_validate_against_the_backend_provider_schema() {
     );
 }
 
+/// FR-741-AC-2 and FR-1042-AC-6: a `ValueBounds` item writes its `certificate`
+/// as the claim side's `lower` document and a `counterpart` beside it at item
+/// level with exactly `{kind, document, accepted}`, the `upper` document in
+/// FSpec's `ProbabilityCertificate` spelling; the record carries no
+/// `counterpart` member of its own.
+#[trace("TC-2066", "FR-741-AC-2")]
+#[trace("TC-2066", "FR-1042-AC-6")]
+#[test]
+fn a_value_bounds_item_writes_its_counterpart_at_item_level() {
+    const INTERVAL: &str =
+        "probabilistic Interval using ev on M over (m: M::Msg) under Even on origin \
+         { probability >= 0.9 [ eventually[0,2] holds(m.delivered) ] }";
+    let document = run(
+        "value-bounds-item",
+        INTERVAL,
+        json!([{"claim": "Interval", "probabilistic": {
+            "evidence": "exact", "limits": {"max_rational_bits": 4}}}]),
+    );
+    let item = &document["items"][0];
+    assert_eq!(label(item), "proved", "{item}");
+    assert_eq!(item["certificate"]["kind"], "lower", "{item}");
+    assert_eq!(item["certificate"]["accepted"], true, "{item}");
+    let counterpart = item["counterpart"].as_object().expect("a counterpart");
+    let mut members: Vec<&str> = counterpart.keys().map(String::as_str).collect();
+    members.sort_unstable();
+    assert_eq!(members, ["accepted", "document", "kind"], "{item}");
+    assert_eq!(counterpart["kind"], "upper", "{item}");
+    assert_eq!(counterpart["accepted"], true, "{item}");
+    assert_eq!(counterpart["document"]["kind"], "upper", "{item}");
+    assert_eq!(
+        counterpart["document"]["identity"], item["certificate"]["identity"],
+        "{item}"
+    );
+    assert_valid(
+        &provider_definition("ProbabilityCertificate"),
+        &counterpart["document"],
+        "the counterpart document",
+    );
+    assert!(item["record"].get("counterpart").is_none(), "{item}");
+}
+
 /// FR-322, FR-331: a real `refuted` item's claim locus is a schema-valid
 /// `Locus` whose node id holds index segments, never a nested node id.
 #[trace("TC-3154", "FR-621-AC-16")]
