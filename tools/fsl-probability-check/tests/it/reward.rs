@@ -160,10 +160,10 @@ fn two_step_named_reward_checks_minimum_maximum_and_both_workload_bounds() {
             "reward refutations have no proof document"
         );
         assert!(
-            matches!(settlement,
-            fsl_analyze::analyze::Settlement::Disposed(disposed)
-                if disposed.kind == fsl_analyze::analyze::DispositionKind::Unsupported),
-            "reward refutation remains outside the admitted native witness path"
+            matches!(&settlement,
+            fsl_analyze::analyze::Settlement::Terminal(terminal)
+                if terminal.value() == &fsl_replay::TerminalValue::Refuted),
+            "a failing expected-reward claim is refuted by a replayed certificate (FR-202): {settlement:?}"
         );
         if scheduler == "Even" {
             let changed_model =
