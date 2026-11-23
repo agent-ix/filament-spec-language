@@ -2089,3 +2089,34 @@ fn a_predicate_that_is_never_true_leaves_the_join_unreached() {
         RecordingVerdict::Pending
     );
 }
+
+/// FR-895-AC-34 (TC-2531): on the wire a predicate join over 11 labels
+/// settles the item `unsupported`, naming the join and the gap, whether the
+/// assessment is batch or incremental.
+#[trace("TC-2531", "FR-895-AC-34")]
+#[test]
+fn a_refused_predicate_join_settles_the_item_unsupported() {
+    let recording = json!({
+        "format": "filament.protocol-recording/1", "protocol": "Flow",
+        "observations": [], "local_order": {}, "correlations": [],
+        "closure": {"state": "open", "premises": []}
+    });
+    for assessment in ["batch", "incremental"] {
+        let item = replay_with(
+            &format!("replay-label-bound-{assessment}"),
+            &many_label_protocol(11),
+            &recording,
+            json!({"file": "recording.json", "identity": recording_identity()}),
+            assessed_item(assessment),
+        )
+        .item(0);
+        assert_eq!(label(&item), "unsupported", "{assessment}: {item}");
+        let text = item.to_string();
+        assert!(
+            text.contains("unsupported_construct")
+                && text.contains("predicate-join-label-bound")
+                && text.contains("Flow::Main::Many"),
+            "{assessment}: {item}"
+        );
+    }
+}

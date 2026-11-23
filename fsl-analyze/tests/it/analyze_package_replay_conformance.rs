@@ -78,24 +78,49 @@ fn assert_recording_charge_parity(ws: &Workspace, bytes: &[u8], document: &Value
     let mut budget = limits.native_join_limits().budget();
     let identities = ReadIdentityRows::read(
         &std::fs::read(ws.path(&format!("{HANDOFF}/identities.json"))).expect("identity rows"),
-        &admitted, &mut budget,
-    ).expect("the producer identity rows join");
-    let equality = std::fs::read(ws.path(&format!("{HANDOFF}/equality.json"))).ok()
+        &admitted,
+        &mut budget,
+    )
+    .expect("the producer identity rows join");
+    let equality = std::fs::read(ws.path(&format!("{HANDOFF}/equality.json")))
+        .ok()
         .map(|bytes| ReadEqualityRows::read(&bytes, &admitted).expect("equality rows join"));
-    let bare = BarePackage::new(&admitted).with_supply(BareSupply { identities: &identities, equality: equality.as_ref() }, &mut budget)
+    let bare = BarePackage::new(&admitted)
+        .with_supply(
+            BareSupply {
+                identities: &identities,
+                equality: equality.as_ref(),
+            },
+            &mut budget,
+        )
         .expect("the actual producer supply joins");
-    let owner = PackageModelInput::of(&bare, compiled.packages(), ModelNormalizationLimits::default())
-        .expect("native package input admits");
+    let owner = PackageModelInput::of(
+        &bare,
+        compiled.packages(),
+        ModelNormalizationLimits::default(),
+    )
+    .expect("native package input admits");
     let mut payload = document.clone();
-    payload.as_object_mut().expect("recording document").remove("identity");
+    payload
+        .as_object_mut()
+        .expect("recording document")
+        .remove("identity");
     let payload = serde_json::to_vec(&payload).expect("recording payload");
     let mut source_meter = Meter::new(crate::counter::UNLIMITED);
     let mut package_meter = Meter::new(crate::counter::UNLIMITED);
     let source = fsl_analyze::protocol_analysis::recording::recording_predicate_source(
-        compiled.checked(), &payload, "Flow::Main::Decide::yes", 2, &mut source_meter,
+        compiled.checked(),
+        &payload,
+        "Flow::Main::Decide::yes",
+        2,
+        &mut source_meter,
     );
     let package = fsl_analyze::protocol_analysis::recording::recording_predicate_package(
-        &owner.input(), &payload, "Flow::Main::Decide::yes", 2, &mut package_meter,
+        &owner.input(),
+        &payload,
+        "Flow::Main::Decide::yes",
+        2,
+        &mut package_meter,
     );
     assert!(matches!(source, Some(ExactValue::Boolean(true))));
     match (&package, &source) {
@@ -104,20 +129,43 @@ fn assert_recording_charge_parity(ws: &Workspace, bytes: &[u8], document: &Value
         }
         _ => panic!("recording predicate must evaluate to Boolean on both routes: package={package:?}, source={source:?}"),
     }
-    assert!(!source_meter.admitted_charges().is_empty(), "got.ok must read its recorded binder");
+    assert!(
+        !source_meter.admitted_charges().is_empty(),
+        "got.ok must read its recorded binder"
+    );
     assert!(!source_meter.charge_log_truncated());
     assert!(!package_meter.charge_log_truncated());
-    assert_eq!(package_meter.admitted_charges(), source_meter.admitted_charges());
+    assert_eq!(
+        package_meter.admitted_charges(),
+        source_meter.admitted_charges()
+    );
     let mut foreign = document.clone();
     foreign["protocol"] = json!("Foreign");
-    foreign.as_object_mut().expect("recording").remove("identity");
+    foreign
+        .as_object_mut()
+        .expect("recording")
+        .remove("identity");
     let foreign = serde_json::to_vec(&foreign).expect("foreign recording");
-    assert!(fsl_analyze::protocol_analysis::recording::recording_predicate_source(
-        compiled.checked(), &foreign, "Flow::Main::Decide::yes", 2, &mut Meter::new(crate::counter::UNLIMITED),
-    ).is_none());
-    assert!(fsl_analyze::protocol_analysis::recording::recording_predicate_package(
-        &owner.input(), &foreign, "Flow::Main::Decide::yes", 2, &mut Meter::new(crate::counter::UNLIMITED),
-    ).is_none());
+    assert!(
+        fsl_analyze::protocol_analysis::recording::recording_predicate_source(
+            compiled.checked(),
+            &foreign,
+            "Flow::Main::Decide::yes",
+            2,
+            &mut Meter::new(crate::counter::UNLIMITED),
+        )
+        .is_none()
+    );
+    assert!(
+        fsl_analyze::protocol_analysis::recording::recording_predicate_package(
+            &owner.input(),
+            &foreign,
+            "Flow::Main::Decide::yes",
+            2,
+            &mut Meter::new(crate::counter::UNLIMITED),
+        )
+        .is_none()
+    );
 }
 
 /// The package run's whole result equals the source run's.
@@ -211,10 +259,15 @@ fn a_recording_of_another_declared_protocol_refuses_on_both_routes() {
         json!({"items": [{"claim": "Other", "kind": "global-conformance",
             "recording": {"authority": "test", "identity": "recording"}}]}),
     );
-    let mut request: Value = serde_json::from_slice(&std::fs::read(&path).expect("request"))
-        .expect("request JSON");
-    ws.write("recording.json", recording_document("Other").to_string().as_bytes());
-    request["request"]["documents"].as_array_mut().expect("documents")
+    let mut request: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("request JSON");
+    ws.write(
+        "recording.json",
+        recording_document("Other").to_string().as_bytes(),
+    );
+    request["request"]["documents"]
+        .as_array_mut()
+        .expect("documents")
         .push(json!({"file": "recording.json"}));
     ws.write("analyze.json", request.to_string().as_bytes());
     let own = analyze(&path);
@@ -229,8 +282,14 @@ fn a_recording_of_another_declared_protocol_refuses_on_both_routes() {
     let item = source.item(0);
     assert_eq!(item["claim_name"], "Flow", "{item}");
     assert_eq!(label(&item), "declined", "{item}");
-    assert_eq!(item["record"]["diagnostic"]["code"], "invalid_runtime_input", "{item}");
-    assert_eq!(item["record"]["diagnostic"]["cause"], "invalid-value", "{item}");
+    assert_eq!(
+        item["record"]["diagnostic"]["code"], "invalid_runtime_input",
+        "{item}"
+    );
+    assert_eq!(
+        item["record"]["diagnostic"]["cause"], "invalid-value",
+        "{item}"
+    );
     assert!(item.get("global").is_none(), "{item}");
     assert!(item.get("obligations").is_none(), "{item}");
 
@@ -240,28 +299,50 @@ fn a_recording_of_another_declared_protocol_refuses_on_both_routes() {
     std::fs::remove_dir_all(&sources).expect("delete retained source files");
     assert!(!ws.path("program.fsl").exists());
     assert!(!sources.exists());
-    let package = analyze(&ws.write("other-protocol-package.json", json!({
-        "format": "native-analyze/1", "request": members,
-    }).to_string().as_bytes()));
+    let package = analyze(
+        &ws.write(
+            "other-protocol-package.json",
+            json!({
+                "format": "native-analyze/1", "request": members,
+            })
+            .to_string()
+            .as_bytes(),
+        ),
+    );
     assert_equal(&source, &package);
-    assert_eq!(package.stdout, source.stdout, "whole selected-protocol refusal");
+    assert_eq!(
+        package.stdout, source.stdout,
+        "whole selected-protocol refusal"
+    );
 }
 
 fn refused_routes(name: &str, item: Value, file: &str, document: &Value) -> (Run, Run) {
     let ws = Workspace::new(name);
     let path = litmus_request(&ws, &order_protocol(true), json!({"items": [item]}));
-    let mut request: Value = serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("JSON");
+    let mut request: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("JSON");
     ws.write(file, document.to_string().as_bytes());
-    request["request"]["documents"].as_array_mut().expect("documents").push(json!({"file": file}));
+    request["request"]["documents"]
+        .as_array_mut()
+        .expect("documents")
+        .push(json!({"file": file}));
     ws.write("analyze.json", request.to_string().as_bytes());
     let source = analyze(&path);
     assert_eq!(source.exit, 20, "{}", source.document());
     let (members, _) = package_selection(&ws, &request["request"]);
     std::fs::remove_file(ws.path("program.fsl")).expect("delete source program");
-    std::fs::remove_dir_all(ws.path(&format!("{HANDOFF}/sources"))).expect("delete retained source files");
+    std::fs::remove_dir_all(ws.path(&format!("{HANDOFF}/sources")))
+        .expect("delete retained source files");
     assert!(!ws.path("program.fsl").exists());
     assert!(!ws.path(&format!("{HANDOFF}/sources")).exists());
-    let package = analyze(&ws.write("refused-package.json", json!({"format": "native-analyze/1", "request": members}).to_string().as_bytes()));
+    let package = analyze(
+        &ws.write(
+            "refused-package.json",
+            json!({"format": "native-analyze/1", "request": members})
+                .to_string()
+                .as_bytes(),
+        ),
+    );
     (source, package)
 }
 
@@ -273,9 +354,12 @@ fn a_package_finite_replay_rejects_a_foreign_post_state_as_the_source_route() {
     let mut trace = trace_document("stale", &steps);
     trace["initial_state"] = json!(0);
     trace["prefix"][0]["post_state"]["key"] = json!("Zm9yZWlnbi1zdGF0ZQ");
-    let (source, package) = refused_routes("package-stale-protocol-state",
+    let (source, package) = refused_routes(
+        "package-stale-protocol-state",
         json!({"claim": "Flow", "kind": "finite-replay", "trace": {"authority": "test", "identity": "stale"}}),
-        "trace.json", &trace);
+        "trace.json",
+        &trace,
+    );
     assert_equal(&source, &package);
     assert_eq!(package.stdout, source.stdout, "whole stale-step refusal");
 }
@@ -288,9 +372,72 @@ fn a_package_recording_rejects_a_foreign_protocol_as_the_source_route() {
         "identity": {"authority": "test", "identity": "foreign"},
         "observations": [], "local_order": {}, "correlations": [],
         "closure": {"state": "open", "premises": []}});
-    let (source, package) = refused_routes("package-foreign-recording",
+    let (source, package) = refused_routes(
+        "package-foreign-recording",
         json!({"claim": "Flow", "kind": "global-conformance", "recording": {"authority": "test", "identity": "foreign"}}),
-        "recording.json", &recording);
+        "recording.json",
+        &recording,
+    );
     assert_equal(&source, &package);
-    assert_eq!(package.stdout, source.stdout, "whole foreign-protocol refusal");
+    assert_eq!(
+        package.stdout, source.stdout,
+        "whole foreign-protocol refusal"
+    );
+}
+
+/// FR-895-AC-36 (TC-2531): a predicate join over a package read from its
+/// bytes is not evaluated yet, so the item settles `unsupported`, naming the
+/// join, where the source route assesses the recording; the package route
+/// never reports the recording as open.
+#[trace("TC-2531", "FR-895-AC-36")]
+#[test]
+fn a_predicate_join_over_a_package_settles_unsupported_naming_the_join() {
+    let protocol = format!(
+        "function both using v(left: Boolean, right: Boolean): Boolean pure {{ left and right }}\n{}",
+        order_protocol(false).replace(
+            "run sequence Main {",
+            "run sequence Main { parallel Both memory sc { branch left sequence Left { event L by Buyer as (l: Ack) { true }; } branch right sequence Right { event R by Buyer as (r: Ack) { true }; } } join predicate(both) [left, right] outstanding continue;",
+        )
+    );
+    let recording = json!({
+        "format": "filament.protocol-recording/1", "protocol": "Flow",
+        "observations": [], "local_order": {}, "correlations": [],
+        "identity": {"authority": "test", "identity": "recording"},
+        "closure": {"state": "open", "premises": []}
+    });
+    let ws = Workspace::new("package-predicate-join");
+    let items = json!([{"claim": "Flow", "kind": "global-conformance",
+        "recording": {"authority": "test", "identity": "recording"}}]);
+    let path = litmus_request(&ws, &protocol, json!({"items": items}));
+    let mut request: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("json");
+    ws.write("recording.json", recording.to_string().as_bytes());
+    request["request"]["documents"]
+        .as_array_mut()
+        .expect("documents")
+        .push(json!({"file": "recording.json"}));
+    ws.write("analyze.json", request.to_string().as_bytes());
+    let source = analyze(&path);
+    assert_eq!(
+        label(&source.item(0)),
+        "inconclusive",
+        "{}",
+        source.document()
+    );
+    let (members, _) = package_selection(&ws, &request["request"]);
+    std::fs::remove_file(ws.path("program.fsl")).expect("the authored unit is removed");
+    let sources = ws.path(&format!("{HANDOFF}/sources"));
+    std::fs::remove_dir_all(&sources).expect("the handoff sources are removed");
+    let document = json!({"format": "native-analyze/1", "request": members});
+    let package = analyze(&ws.write("analyze-package.json", document.to_string().as_bytes()));
+    let item = package.item(0);
+    assert_eq!(label(&item), "unsupported", "{}", package.document());
+    let text = item.to_string();
+    assert!(
+        text.contains("unsupported_construct")
+            && text.contains("predicate-join-package-route")
+            && text.contains("Flow::Main::Both"),
+        "{}",
+        package.document()
+    );
 }
