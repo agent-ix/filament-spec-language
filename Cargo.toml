@@ -29,7 +29,7 @@ filament-eval = { git = "https://github.com/agent-ix/filament-eval", rev = "6077
 # IR-owned staged identity, operation-member, and model-enum witness joins.
 filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", rev = "bd932cf8ba7efabc054f1d77a1a6548b538aebc4" }
 # Observation's checked-value vocabulary aligned to the same exact/semantic-value revisions.
-filament-observation = { git = "https://github.com/agent-ix/filament-observation", rev = "6e0524170e83c6fae0c35a404592cd3cae24252f" }
+filament-observation = { git = "https://github.com/agent-ix/filament-observation", rev = "277e84329a77784b40f5dadfd103a8ed47525358" }
 
 [package]
 name = "filament-spec-language"
