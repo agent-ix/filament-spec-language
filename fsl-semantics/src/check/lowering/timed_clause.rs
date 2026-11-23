@@ -33,7 +33,7 @@ use crate::check::state_clause::ClauseOperation;
 use crate::check::timed_model::{
     CheckedTimedPredicate, ClockConstraint, ClockField, ClockId, ConstraintNodes,
     ConstraintTargetNodes, ElementBinding, GuardNodes, InvariantNodes, PartNodes, ResetNodes,
-    ResetTargetNodes, StateAlternative, TimedClauseNodes, TimedModel,
+    ResetTargetNodes, SlotRef, StateAlternative, TimedClauseNodes, TimedModel,
 };
 use crate::value::member::{AcceptedPoint, Member};
 
@@ -133,15 +133,6 @@ impl Lowering<'_> {
                     Some(_) => (input.part_site)(at, index),
                     None => location.clone(),
                 };
-                let mut conjuncts =
-                    self.self_presences(model.clocks(), part.presences(), context.clone(), &site)?;
-                if let Some(data) = part.data() {
-                    conjuncts.push(self.timed_predicate(data, &site)?);
-                }
-                let predicate = match self.conjunction(&conjuncts, &site)? {
-                    Some(predicate) => predicate,
-                    None => self.timed_true(location)?,
-                };
                 let slot_binders = if part.binders().is_empty() {
                     Vec::new()
                 } else {
@@ -155,6 +146,22 @@ impl Lowering<'_> {
                             Ok((binding.clone(), parameter))
                         })
                         .collect::<Result<Vec<_>, CheckRefusal>>()?
+                };
+                let mut conjuncts =
+                    self.self_presences(model.clocks(), part.presences(), context.clone(), &site)?;
+                conjuncts.extend(self.element_presences(
+                    model.clocks(),
+                    part.element_presences(),
+                    &slot_binders,
+                    context.clone(),
+                    &site,
+                )?);
+                if let Some(data) = part.data() {
+                    conjuncts.push(self.timed_predicate(data, &site)?);
+                }
+                let predicate = match self.conjunction(&conjuncts, &site)? {
+                    Some(predicate) => predicate,
+                    None => self.timed_true(location)?,
                 };
                 let binders = slot_binders
                     .iter()
@@ -978,6 +985,52 @@ impl Lowering<'_> {
             reads.push(if *present {
                 read
             } else {
+                self.typed_application(
+                    location,
+                    boolean,
+                    Operator::Unary,
+                    Operation::plain("filament.op.boolean.not"),
+                    vec![MemberTerm::Leaf(LeafTerm::reference(read))],
+                )?
+                .key()
+                .ok_or_else(unplaced)?
+            });
+        }
+        Ok(reads)
+    }
+
+    /// The `presence_read` of each element place of `presences` at its
+    /// binding's slot, with whether present (FR-930 "Shared binder"): the
+    /// slot term is the binding's own binder where a constraint of the part
+    /// reads it, and the literal of its held slot otherwise.
+    fn element_presences(
+        &mut self,
+        clocks: &[ClockField],
+        presences: &[(ClockId, ElementBinding, bool)],
+        slot_binders: &[(ElementBinding, NodeKey)],
+        context: EffectiveId,
+        location: &Location,
+    ) -> Result<Vec<NodeKey>, CheckRefusal> {
+        let mut reads = Vec::with_capacity(presences.len());
+        for (clock, binding, present) in presences {
+            let unplaced = || super::fault(location, KeyFault::UnkeyableRequirements);
+            let clock = clocks.get(clock.index()).ok_or_else(unplaced)?;
+            let place = self
+                .timed_place(clock.owner(), clock.path())
+                .ok_or_else(unplaced)?;
+            let owner = self.timed_self(context.clone(), location)?;
+            let slot = match slot_binders.iter().find(|(held, _)| held == binding) {
+                Some((_, parameter)) => parameter.clone(),
+                None => match binding.slot() {
+                    SlotRef::Held(at) => self.slot_literal_node(at, location)?,
+                    SlotRef::Family => return Err(unplaced()),
+                },
+            };
+            let read = self.presence_read(place, owner, &[slot], location)?;
+            reads.push(if *present {
+                read
+            } else {
+                let boolean = self.type_node(&ValueType::Boolean, location)?;
                 self.typed_application(
                     location,
                     boolean,

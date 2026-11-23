@@ -412,6 +412,30 @@ fn slot(
     clocks: &Clocks<'_>,
     budget: &mut PartBudget,
 ) -> Result<(Dnf, Dnf), CheckCause> {
+    // `present(e)`: the presence of the element place at this slot, which
+    // a clock constraint of `e` beside it relies on (FR-930 "Shared
+    // binder"). `present(e) implies W` holds where the slot is absent, and
+    // otherwise where `W` does, so `W`'s parts keep the slot present.
+    if let Some(presence) = binder_presence_literal(located, id, quantifier, binding, clocks) {
+        return Ok(presence);
+    }
+    if let Some(ExprNode::Binary {
+        operator: BinaryOperator::Implies,
+        left,
+        right,
+    }) = located.node(id)
+    {
+        if let Some((present, absent)) =
+            binder_presence_literal(located, *left, quantifier, binding, clocks)
+        {
+            let (positive, negative) =
+                slot(located, *right, quantifier, binding, clocks, budget)?;
+            return Ok((
+                [absent, budget.product(&present, &positive)?].concat(),
+                budget.product(&present, &negative)?,
+            ));
+        }
+    }
     if !located.reads_clock(id) {
         let literal = element_literal(located, id, quantifier, binding)?;
         return Ok((
@@ -483,6 +507,30 @@ fn slot(
         }
         _ => Err(timed(located.outside(id))),
     }
+}
+
+/// The presence of the element place `present(e)` at node `id` reads at the
+/// slot of `binding`, as the disjunctive forms of its presence and absence;
+/// `None` when the node is no `present` of the binder.
+fn binder_presence_literal(
+    located: &Located<'_>,
+    id: ExprId,
+    quantifier: &Quantifier<'_>,
+    binding: &ElementBinding,
+    clocks: &Clocks<'_>,
+) -> Option<(Dnf, Dnf)> {
+    if !binder_presence(located, id, quantifier.binder) {
+        return None;
+    }
+    let Some(ExprNode::Present(operand)) = located.node(id) else {
+        return None;
+    };
+    let clock = element_clock(located, *operand, quantifier, clocks)?;
+    let literal = DataLiteral::ElementPresence(clock, binding.clone());
+    Some((
+        vec![(vec![(literal.clone(), true)], Vec::new())],
+        vec![(vec![(literal, false)], Vec::new())],
+    ))
 }
 
 /// The clock place body node `id` reads of an element bound by the

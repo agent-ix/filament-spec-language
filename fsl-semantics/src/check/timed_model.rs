@@ -403,6 +403,7 @@ impl ElementBinding {
 pub struct ConvexPart {
     data: Option<CheckedTimedPredicate>,
     presences: Vec<(ClockId, bool)>,
+    element_presences: Vec<(ClockId, ElementBinding, bool)>,
     elements: Vec<ElementBinding>,
     binders: Vec<ElementBinding>,
     /// This part includes the size-zero branch of a bounded universal
@@ -456,6 +457,7 @@ impl ClockGuard {
             part.data.is_none()
                 && part.presences.is_empty()
                 && part.elements.is_empty()
+                && part.element_presences.is_empty()
                 && part.families.is_empty()
                 && !part.empty_collection_branch
                 && !part.clocks.is_empty()
@@ -477,6 +479,13 @@ impl ConvexPart {
     /// predicate over the bit, read at the state.
     pub fn presences(&self) -> &[(ClockId, bool)] {
         &self.presences
+    }
+
+    /// Each element place of a collection whose presence the part requires
+    /// at a slot, and whether present: `present(e)` of a quantifier body
+    /// that also constrains the binder's clock (FR-930 "Shared binder").
+    pub fn element_presences(&self) -> &[(ClockId, ElementBinding, bool)] {
+        &self.element_presences
     }
 
     /// The collection elements the data predicate reads, each a parameter
@@ -1718,6 +1727,9 @@ struct PartDraft {
     presences: Vec<(ClockId, bool)>,
     /// Each element the data predicate reads, with its quantifier's span.
     elements: Vec<(ElementBinding, Span)>,
+    /// Each element place whose presence the part requires, and whether
+    /// present (FR-930 "Shared binder").
+    element_presences: Vec<(ClockId, ElementBinding, bool)>,
     empty_collection_branch: bool,
     clocks: Vec<ClockConstraint>,
     /// Each quantifier family the part conjoins: its field, whether every
@@ -1991,21 +2003,36 @@ impl Clocks<'_> {
         if !self.bit_slots(form, *source) {
             return false;
         }
+        let is_binder = |at: ExprId| {
+            matches!(form.expression.get(at).map(|node| node.node()),
+                Some(ExprNode::Name(name)) if name.segments.len() == 1 && name.name == *binder)
+        };
+        let mut presence = false;
+        let mut other_read = false;
         let mut pending = vec![*body];
         while let Some(at) = pending.pop() {
             let Some(node) = form.expression.get(at).map(|node| node.node()) else {
                 continue;
             };
-            if let ExprNode::Present(operand) = node {
-                if matches!(form.expression.get(*operand).map(|node| node.node()),
-                    Some(ExprNode::Name(name)) if name.segments.len() == 1 && name.name == *binder)
-                {
-                    return true;
-                }
+            match node {
+                ExprNode::Present(operand) if is_binder(*operand) => presence = true,
+                _ if is_binder(at) => other_read = true,
+                _ => pending.extend(node.children()),
             }
-            pending.extend(node.children());
         }
-        false
+        // A body that also constrains the binder's clock (`present(e)
+        // implies e >= 1 ms`) is a quantified guard part read at each slot
+        // of a bounded collection (FR-930 "Shared binder"); only the
+        // unbounded family is still a presence read this slice does not
+        // take.
+        let bounded = matches!(
+            form.expression.get(*source).map(|node| node.node()),
+            Some(ExprNode::Field { field, .. })
+                if self.fields.iter().any(|clock| matches!(clock.path.as_slice(),
+                    [PlaceStep::Field(name), PlaceStep::Slot(shape)]
+                        if name == field && shape.max.is_some()))
+        );
+        presence && !(other_read && bounded)
     }
 
     /// Whether `id` of `form` is `r.f`, `f` an `Option<Clock>` field, or
@@ -2820,13 +2847,18 @@ enum DataLiteral {
     /// `present(self.v)` of an `Option<Clock>` place: its presence bit
     /// (FR-230 "Presence bit").
     Presence(ClockId),
+    /// `present(e)` of a quantifier's binder at one slot: the presence of
+    /// the element place at the binding's slot.
+    ElementPresence(ClockId, ElementBinding),
 }
 
 impl DataLiteral {
     /// The literal's own form, `None` for a node of the clause.
     fn form(&self) -> Option<&ExpressionForm> {
         match self {
-            Self::Site(_) | Self::Family(_) | Self::Presence(_) => None,
+            Self::Site(_) | Self::Family(_) | Self::Presence(_) | Self::ElementPresence(..) => {
+                None
+            }
             Self::Formed(form) | Self::Element(form, ..) => Some(form),
             Self::EmptyCollection(form) => Some(form),
         }
@@ -2848,6 +2880,10 @@ impl PartialEq for DataLiteral {
             }
             (Self::Family(left), Self::Family(right)) => std::rc::Rc::ptr_eq(left, right),
             (Self::Presence(left), Self::Presence(right)) => left == right,
+            (
+                Self::ElementPresence(left, left_binding),
+                Self::ElementPresence(right, right_binding),
+            ) => left == right && left_binding == right_binding,
             _ => false,
         }
     }
@@ -3180,7 +3216,9 @@ fn part_predicate(
                 DataLiteral::EmptyCollection(form) => form.clone(),
                 // A family and a presence bit are read at the state, not by
                 // the data predicate.
-                DataLiteral::Family(_) | DataLiteral::Presence(_) => return None,
+                DataLiteral::Family(_)
+                | DataLiteral::Presence(_)
+                | DataLiteral::ElementPresence(..) => return None,
             };
             if positive {
                 Some(cut)
@@ -3200,6 +3238,18 @@ fn draft_part(
     literals: Vec<(DataLiteral, bool)>,
     clocks: Vec<ClockConstraint>,
 ) -> Result<PartDraft, CheckCause> {
+    let (element_presences, literals): (Vec<_>, Vec<_>) = literals
+        .into_iter()
+        .partition(|(literal, _)| matches!(literal, DataLiteral::ElementPresence(..)));
+    let mut element_presences: Vec<(ClockId, ElementBinding, bool)> = element_presences
+        .into_iter()
+        .filter_map(|(literal, positive)| match literal {
+            DataLiteral::ElementPresence(clock, binding) => Some((clock, binding, positive)),
+            _ => None,
+        })
+        .collect();
+    element_presences.sort_by_key(|(clock, binding, positive)| (*clock, binding.slot, *positive));
+    element_presences.dedup();
     let (presences, literals): (Vec<_>, Vec<_>) = literals
         .into_iter()
         .partition(|(literal, _)| matches!(literal, DataLiteral::Presence(_)));
@@ -3215,9 +3265,14 @@ fn draft_part(
     presences.sort();
     presences.dedup();
     // FR-230-AC-39: a constraint on an `Option<Clock>` reads its clock only
-    // where the part establishes its presence.
+    // where the part establishes its presence, of the place or of the
+    // element at the constraint's own slot.
     if let Some(unproved) = clocks.iter().find(|constraint| {
-        located.bit(constraint.clock) && !presences.contains(&(constraint.clock, true))
+        located.bit(constraint.clock)
+            && !presences.contains(&(constraint.clock, true))
+            && !element_presences.iter().any(|(clock, binding, present)| {
+                *present && *clock == constraint.clock && constraint.binding() == Some(binding)
+            })
     }) {
         return Err(timed(TemporalCause::UnprovedPresence {
             span: unproved.span,
@@ -3268,6 +3323,7 @@ fn draft_part(
     Ok(PartDraft {
         data,
         presences,
+        element_presences,
         elements,
         empty_collection_branch,
         clocks,
@@ -5271,6 +5327,7 @@ fn check_part(
     Ok(ConvexPart {
         data,
         presences: part.presences,
+        element_presences: part.element_presences,
         elements: part
             .elements
             .into_iter()

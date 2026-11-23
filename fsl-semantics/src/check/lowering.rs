@@ -2893,6 +2893,25 @@ impl<'a> Lowering<'a> {
         Ok(LeafTerm::literal(integer, LiteralValue::Integer(value)))
     }
 
+    /// The `literal` node of the `Integer` `value`, a slot term of a timed
+    /// clause naming one held slot of a collection.
+    pub(super) fn slot_literal_node(
+        &mut self,
+        value: u64,
+        location: &Location,
+    ) -> Result<NodeKey, CheckRefusal> {
+        let integer = self.scalar("integer", location)?;
+        let node = self.insert_ref(
+            location,
+            NodeTag::Value,
+            "literal",
+            Some(integer.clone().into()),
+            None,
+            BodyTerm::literal_node(integer.into(), LiteralValue::Integer(Integer::from(value))),
+        )?;
+        require_admitted(node, location)
+    }
+
     /// A text literal typed at the builtin text scalar node (T3).
     fn text_literal(&mut self, value: &str, location: &Location) -> Result<LeafTerm, CheckRefusal> {
         let text = self.scalar("text", location)?;
