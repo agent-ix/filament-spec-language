@@ -21,6 +21,9 @@ use serde_json::{json, Value};
 const DOMAIN: &[u8] = include_bytes!("../fixtures/link.semantic-ir.json");
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
 const SOURCE: &str = include_str!("../fixtures/link.native");
+const COIN_DOMAIN: &[u8] = include_bytes!("../fixtures/coin.semantic-ir.json");
+const COIN_SNAPSHOT: &[u8] = include_bytes!("../fixtures/coin.snapshot.json");
+const COIN_SOURCE: &str = include_str!("../fixtures/coin.native");
 
 fn model_source() -> String {
     SOURCE.replace(
@@ -168,6 +171,17 @@ fn request_with_mode(
         .probabilistic_model()
         .claim("Likely")
         .unwrap();
+    // The universe is the snapshot's first population and its first object.
+    let shape: Value = serde_json::from_slice(snapshot).unwrap();
+    let universe_package = shape["model"]["identity"].as_str().unwrap().to_owned();
+    let universe_node = shape["populations"][0]["population"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let universe_key = shape["populations"][0]["objects"][0]["key"]
+        .as_str()
+        .unwrap()
+        .to_owned();
     let document = DocumentRef {
         authority: "test".to_owned(),
         identity: "s0".to_owned(),
@@ -183,10 +197,10 @@ fn request_with_mode(
         initial: vec![document],
         universes: vec![PopulationUniverse {
             population: DeclarationKey {
-                package: "test/link".to_owned(),
-                node: "ix://test/link/msgs".to_owned(),
+                package: universe_package.clone(),
+                node: universe_node.clone(),
             },
-            keys: vec!["m".to_owned()],
+            keys: vec![universe_key.clone()],
         }],
         observation: ObservationLimits::default(),
         expansion: ExpansionLimits {
@@ -268,7 +282,7 @@ fn request_with_mode(
         "byte_provision":[["test","bounded-certificate-source",source.as_bytes()]],
         "documents":[domain,snapshot],
         "initial":[{"authority":"test","identity":"s0"}],
-        "universes":[{"population":{"package":"test/link","node":"ix://test/link/msgs"},"keys":["m"]}],
+        "universes":[{"population":{"package":universe_package,"node":universe_node},"keys":[universe_key]}],
         "certificate":String::from_utf8(bytes.to_vec()).unwrap(),
         "limits":{"bytes":1_000_000,"storage_bytes":8_000_000,"states":100,"edges":1000,"scalar_bits":128,"expansion":100_000,"stages":{}},
     });
@@ -1337,18 +1351,23 @@ fn replace_source_and_rebind_with_mode(
 #[trace("TC-3195", "FR-201-AC-57")]
 #[test]
 fn an_unwindowed_atom_claim_is_checked_exactly_as_eventually_at_horizon_zero() {
-    for (delivered, operator, value, targets) in [(false, "<=", "0", 0), (true, ">=", "1", 1)] {
-        let mut snapshot: Value = serde_json::from_slice(SNAPSHOT).unwrap();
-        snapshot["populations"][0]["objects"][0]["fields"]["delivered"]["boolean"] =
-            json!(delivered);
+    // FR-201-AC-57's `Coin`: one coin, tails unless the snapshot says heads.
+    for (heads, operator, value, targets) in [(false, "<=", "0", 0), (true, ">=", "1", 1)] {
+        let mut snapshot: Value = serde_json::from_slice(COIN_SNAPSHOT).unwrap();
+        snapshot["populations"][0]["objects"][0]["fields"]["heads"]["boolean"] = json!(heads);
         let snapshot = serde_json::to_vec(&snapshot).unwrap();
         let mut documents = Vec::new();
-        for event in ["holds(m.delivered)", "eventually[0,0] holds(m.delivered)"] {
+        for event in ["holds(c.heads)", "eventually[0,0] holds(c.heads)"] {
             let source = format!(
-                "{}probabilistic Likely using inf on M over (m: M::Msg) under every scheduler on origin {{ probability {operator} 0.5 [ {event} ] }}\n",
-                model_source()
+                "{}probabilistic Likely using inf on M over (c: M::Coin) under every scheduler on origin {{ probability {operator} 0.5 [ {event} ] }}\n",
+                COIN_SOURCE.replace(
+                    "filament.temporal.infinite-trace/v1",
+                    "filament.temporal.event-position.false-extension/v1",
+                )
             );
-            let request = proof(&source, &snapshot);
+            let (request, settlement) =
+                request_with(&source, &snapshot, ExactProbLimits::default(), COIN_DOMAIN);
+            let request = request.unwrap_or_else(|| panic!("{event}: {settlement:?}"));
             let (code, result) = run(&request);
             assert_eq!(code, 0, "{event}: {result}");
             assert_eq!(result["value"], json!({"numerator": value, "denominator": "1"}));

@@ -146,7 +146,9 @@ pub fn probability_proof_document(
             cyclic_mdp: false,
             fairness: Vec::new(),
         }),
-        Err(error) if may_retry(&error) => construct(system, claims, item, certificate, &mut cx),
+        Err(error) if may_retry(&error) || (error == ProbabilityDocumentError::ObjectiveMismatch && super::super::cyclic_state::is_claim(claim)) => {
+            construct(system, claims, item, certificate, &mut cx)
+        }
         Err(error) => Err(error),
     }
 }

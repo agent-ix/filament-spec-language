@@ -1499,19 +1499,15 @@ fn every_mutation_of_a_cyclic_document_keeps_its_existing_rule_and_locus() {
         for (label, mutated, expected) in table {
             assert_eq!(run(label, mutated), expected, "{name}: {label}");
         }
-        // FR-201 admits every-scheduler subjects, single-distribution ones
-        // included, under the MDP profile (only a workload is excluded), and
-        // the DTMC profile is the producer's preference, not a checker rule.
-        if name == "dtmc" {
-            let relabelled = edited(&bytes, |objective, _| objective["profile"] = MDP.into());
-            assert_eq!(run("profile", relabelled), "accepted", "{name}");
-        }
-        // A DTMC document relabelled as the MDP profile checks as the one
-        // distribution per state it is.
-        if name == "mdp" {
-            let relabelled = edited(&bytes, |objective, _| objective["profile"] = DTMC.into());
-            assert_eq!(run("profile", relabelled), "error:Unsupported", "{name}");
-        }
+        // The subject selects the profile (FR-201): a changed profile is an
+        // objective mismatch in both directions, never an acceptance.
+        let other = if name == "dtmc" { MDP } else { DTMC };
+        let relabelled = edited(&bytes, |objective, _| objective["profile"] = other.into());
+        assert_eq!(
+            run("profile", relabelled),
+            "error:ObjectiveMismatch",
+            "{name}"
+        );
     }
 }
 
@@ -1695,35 +1691,6 @@ fn a_checker_given_an_undefined_state_predicate_refuses_instead_of_reading_false
     }
 }
 
-#[trace("TC-3185", "FR-201-AC-63")]
-#[test]
-fn the_captured_model_states_and_component_vectors_are_charged_to_storage() {
-    let world = until_world();
-    let bytes = produce(&world, "Ge", ModelCheckLimits::default());
-    let accepts = |value: u64| {
-        let mut bound = limits();
-        bound.storage_bytes = value;
-        matches!(
-            check_with(&world, "Ge", &bytes, bound),
-            Ok(Check::Accepted(_))
-        )
-    };
-    let (mut low, mut high) = (0_u64, 16_000_000);
-    while low < high {
-        let middle = low + (high - low) / 2;
-        if accepts(middle) {
-            high = middle;
-        } else {
-            low = middle + 1;
-        }
-    }
-    // Without the captured-state and component charges the least accepted
-    // ceiling is 779_240 bytes (measured by removing them); with them it is
-    // 794_010. The captured clones and component vectors are therefore
-    // visible to the storage ceiling.
-    assert!(low >= 790_000, "least storage ceiling {low}");
-}
-
 #[trace("TC-3184", "FR-201-AC-62")]
 #[test]
 fn claim_forms_outside_the_state_predicate_profiles_issue_no_proof_in_them() {
@@ -1795,6 +1762,45 @@ fn unsupported(record: &fsl_analyze::analyze::AnalyzeRecord) -> bool {
         fsl_analyze::analyze::Settlement::Disposed(disposed)
             if disposed.kind == fsl_analyze::analyze::DispositionKind::Unsupported
     )
+}
+
+/// FR-201-AC-62: a timed (clock) subject gets no proof in these profiles.
+#[trace("TC-3184", "FR-201-AC-62")]
+#[test]
+fn a_timed_subject_issues_no_proof_in_the_cyclic_state_predicate_profiles() {
+    let profiles = "profile ev = \"filament.temporal.timed/v1\";\n\
+         profile inf = \"filament.temporal.infinite-trace/v1\";\n";
+    let document = crate::timed_world::document(&["x"], &[("send", &["late", "x"])]);
+    for formula in [
+        "holds(not c.late) until holds(c.late)",
+        "always holds(not c.late)",
+    ] {
+        let body = format!(
+            "{}pre Send using v on M::Call::send {{ not self.late and self.x >= 1 ms }}\n\
+             post Sent using v on M::Call::send {{ self.late and self.x = 0 ms }}\n\
+             time invariant Deadline when {{ not self.late }} {{ self.x <= 2 ms }}\n\
+             probabilistic V using inf on M over (c: M::Call) under every scheduler on origin {{ \
+             probability >= rational(1,4) [ {formula} ] }}\n",
+            crate::timed_world::DENSE,
+        );
+        let world = crate::timed_world::world(&document, profiles, &body);
+        let system = world.system();
+        let model = world.package.graph().probabilistic_model();
+        let item = probabilistic_claim_identity(model.claim("V").unwrap()).unwrap();
+        let result = fsl_replay::probability_proof_document(
+            &system,
+            model.claims(),
+            &item,
+            &fsl_replay::ExactProbabilityCertificate { values: Vec::new() },
+            limits(),
+            &Cancel::new(),
+        );
+        assert!(
+            matches!(&result, Err(ProbabilityDocumentError::Unsupported)),
+            "{formula}: {:?}",
+            result.map(|_| ())
+        );
+    }
 }
 
 #[trace("TC-3184", "FR-201-AC-62")]

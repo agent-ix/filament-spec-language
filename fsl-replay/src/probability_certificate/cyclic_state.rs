@@ -4,7 +4,9 @@
 //! over the violating union. Nothing here reads a producer component set,
 //! classification or target set.
 
-use super::cyclic::{analyze, charge, enumerate_graph_capturing, visit, CapturedStates};
+use super::cyclic::{
+    analyze, captured_cost, charge, enumerate_graph_capturing, visit, CapturedStates,
+};
 use super::*;
 use fsl_eval::simulation::model::{TimedSubjectRefusal, TimedSystem};
 
@@ -98,11 +100,14 @@ pub(super) fn certificate_graph(
             TimedSystem::new(system, &claim.subject.alias),
             Err(TimedSubjectRefusal::NoTimedModel { .. })
         )
-        || (profile == Profile::Mdp && !matches!(claim.scheduler, ProbScheduler::Every))
         || *threshold <= rational(0)
         || *threshold >= rational(1)
     {
         return Err(ProbabilityDocumentError::Unsupported);
+    }
+    // The profile follows from the subject: a workload is a DTMC subject.
+    if profile == Profile::Mdp && !matches!(claim.scheduler, ProbScheduler::Every) {
+        return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
     stage(Stage::Original)?;
     let captured = CapturedStates::default();
@@ -120,10 +125,14 @@ pub(super) fn certificate_graph(
         true,
         Some(&captured),
     )?;
+    // The subject selects the profile (FR-201): the DTMC profile when every
+    // state has one distribution, the MDP profile otherwise. A document under
+    // the other profile is an objective mismatch.
+    let choosy = original
+        .states
+        .values()
+        .any(|state| state.choices.len() > 1);
     for state in original.states.values() {
-        if profile == Profile::Dtmc && state.choices.len() > 1 {
-            return Err(ProbabilityDocumentError::Unsupported);
-        }
         for choice in &state.choices {
             let mut mass = rational(0);
             for edge in choice {
@@ -183,6 +192,10 @@ pub(super) fn certificate_graph(
         classified.insert(key, state);
     }
     drop(captured);
+    // After classification, so an undefined predicate is reported first.
+    if (profile == Profile::Dtmc) == choosy {
+        return Err(ProbabilityDocumentError::ObjectiveMismatch);
+    }
 
     stage(Stage::Components)?;
     let keys: Vec<&ProbabilityProductKey> = classified.keys().collect();
@@ -275,6 +288,18 @@ pub(super) fn certificate_graph(
 /// indexes. A decided state has no action, so it is its own absorbing
 /// component and appears in none of them. Under one distribution per state
 /// these are the bottom strongly connected components.
+/// Bytes of the retained successor lists (`edges` indices plus one list per
+/// state and action) and of the largest refinement step's vectors (membership,
+/// kept, adjacency, Tarjan numbering, stacks and parts), counted once.
+fn end_component_peak(count: usize, edges: usize) -> usize {
+    let word = std::mem::size_of::<usize>();
+    let pass = count.saturating_mul(std::mem::size_of::<Vec<usize>>().saturating_add(8 * word));
+    edges
+        .saturating_mul(word)
+        .saturating_add(pass)
+        .saturating_mul(2)
+}
+
 fn end_components(
     states: &BTreeMap<ProbabilityProductKey, CheckerState>,
     limits: ProbabilityDocumentLimits,
@@ -293,15 +318,13 @@ fn end_components(
         .flat_map(|state| state.choices.iter())
         .map(Vec::len)
         .sum::<usize>();
-    let pass = count.saturating_mul(
-        std::mem::size_of::<Vec<usize>>().saturating_add(8 * std::mem::size_of::<usize>()),
-    );
+    // The peak, charged once: the cumulative counter would otherwise count
+    // the per-item vectors again for every refinement, though each is freed
+    // before the next is built.
     charge(
         storage,
         limits.storage_bytes,
-        edges
-            .saturating_mul(std::mem::size_of::<usize>())
-            .saturating_add(pass),
+        end_component_peak(count, edges),
     )?;
     let mut actions: Vec<Vec<Vec<usize>>> = Vec::with_capacity(count);
     for state in states.values() {
@@ -326,7 +349,6 @@ fn end_components(
     let mut result = Vec::new();
     let mut work = vec![(0..count).collect::<Vec<usize>>()];
     while let Some(mut set) = work.pop() {
-        charge(storage, limits.storage_bytes, pass.saturating_add(edges.saturating_mul(std::mem::size_of::<usize>())))?;
         let mut member = vec![false; count];
         for state in &set {
             member[*state] = true;
@@ -528,4 +550,91 @@ pub(super) fn claim_acceptance(
         Bound::AtMost(_) => ProbabilityBoundSide::AtMost,
     };
     Ok(ExactProbabilityCertificateCheck::Accepted(accepted))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn key(index: usize) -> ProbabilityProductKey {
+        ProbabilityProductKey::from_canonical_bytes(index.to_be_bytes().to_vec())
+    }
+
+    /// A line of states, each looping on itself and moving to the next: every
+    /// state is its own component, so refinement splits the whole set into
+    /// `count` work items.
+    fn line(count: usize) -> BTreeMap<ProbabilityProductKey, CheckerState> {
+        let edge = |target: usize| ProbabilityEdge {
+            target: key(target),
+            probability: rational(1),
+        };
+        (0..count)
+            .map(|index| {
+                let choice = if index + 1 < count {
+                    vec![edge(index), edge(index + 1)]
+                } else {
+                    vec![edge(index)]
+                };
+                (
+                    key(index),
+                    CheckerState {
+                        terminal: None,
+                        choices: vec![choice],
+                    },
+                )
+            })
+            .collect()
+    }
+
+    fn limits_with(storage_bytes: u64) -> ProbabilityDocumentLimits {
+        ProbabilityDocumentLimits {
+            bytes: 1_000_000,
+            storage_bytes,
+            states: 1024,
+            edges: 4096,
+            scalar_bits: 128,
+            accounting: crate::AccountingLimits::default().0,
+        }
+    }
+
+    fn run(
+        states: &BTreeMap<ProbabilityProductKey, CheckerState>,
+        storage_bytes: u64,
+    ) -> Result<Vec<Vec<usize>>, ProbabilityDocumentError> {
+        let bound = limits_with(storage_bytes);
+        let cancel = Cancel::new();
+        let mut meter = filament_exact::Meter::new(bound.accounting).with_cancel(cancel.clone());
+        let mut storage = 0;
+        end_components(states, bound, &mut storage, &cancel, &mut meter)
+    }
+
+    /// FR-201-AC-63: storage is charged at its peak once, so a subject with
+    /// many component splits is admitted at exactly the computed amount and
+    /// refused with the storage cause one byte below it.
+    #[test]
+    fn end_component_storage_is_charged_at_its_computed_peak_once() {
+        let count = 64;
+        let states = line(count);
+        let edges = 2 * count - 1;
+        let exact = end_component_peak(count, edges) as u64;
+        // Refinement splits the whole set into `count` singletons; only the last
+        // one (whose action stays inside it) is an end component.
+        assert_eq!(run(&states, exact).unwrap(), vec![vec![count - 1]]);
+        assert!(matches!(
+            run(&states, exact - 1),
+            Err(ProbabilityDocumentError::Limit {
+                limit: ProbabilityDocumentLimit::StorageBytes,
+                bound,
+                ..
+            }) if bound == exact - 1
+        ));
+    }
+
+    #[test]
+    fn a_captured_model_state_is_charged_its_key_twice_and_its_clone() {
+        assert_eq!(
+            captured_cost(10),
+            20 + std::mem::size_of::<fsl_eval::simulation::model::ModelSimState>()
+        );
+    }
 }

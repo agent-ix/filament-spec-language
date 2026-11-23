@@ -212,10 +212,7 @@ pub(super) fn enumerate_graph_capturing<P: StatePredicate>(
                 if let Err(error) = charge(
                     storage,
                     limits.storage_bytes,
-                    key.as_bytes()
-                        .len()
-                        .saturating_mul(2)
-                        .saturating_add(std::mem::size_of::<ModelSimState>()),
+                    captured_cost(key.as_bytes().len()),
                 ) {
                     *stopped.borrow_mut() = Some(error);
                     return Err(ExactProbabilityGraphError::ExpansionRefused);
@@ -254,6 +251,13 @@ pub(super) fn enumerate_graph_capturing<P: StatePredicate>(
         }
         other => other.into(),
     })
+}
+
+/// Bytes a captured model state holds: the clone and its key twice.
+pub(super) fn captured_cost(key_bytes: usize) -> usize {
+    key_bytes
+        .saturating_mul(2)
+        .saturating_add(std::mem::size_of::<ModelSimState>())
 }
 
 pub(super) fn charge(

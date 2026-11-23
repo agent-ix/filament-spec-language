@@ -39,3 +39,20 @@ The expected values the tests do assert are independent. I recomputed them by ha
 - Reverse gaps: none. Stubs: none. Semantic review: performed inline.
 - Out of scope, pre-existing on main: fsl-probability-check `bounded_wrong_source_and_nonexact_rows_never_produce_an_accepted_document` is stale since 4ebe69fa62 (QSL-2850).
 - Plan completion: not assessed
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-007 | low | AC-62's no-proof list names clocks, but neither claim-form test builds a timed (clock) subject for these profiles. Fairness, reward, event-predicate, bounded, nested, multiple bindings and initials, and incomplete and unresolved workloads are all covered. | fsl-analyze/tests/it/cyclic_state_certificate.rs:1727-1891 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | TC-3183 (i) wait/go and (ii) stay/leave are built with the spec's rows, ranks and rules (ThresholdMissed at s/ok, ObjectiveMismatch for empty targets, InequalityFails for ok = 0). A second test proves a wait EC is pruned (go keeps value 1/2) and that an accepting stay EC sits outside the union, under the MDP profile. |
+| FND-002 | fixed | The AC-58, AC-59 and AC-60 chains are built with the exact targets, per-row values and ranks. Covered: t absorbs despite its return edge; no row for d; single-policy s = 1/4 rejected InequalityFails at s; the false >= 1/2 claim with harmonic targets {n} refused ObjectiveMismatch; ThresholdMissed at the stricter bounds; RankBroken with rank 2 or 0 at s. |
+| FND-003 | fixed | The mutation table asserts exact outcomes for identity, model-only key, foreign binding, fairness, profile, event, nonreduced rational, noncanonical bytes, dropped, duplicate and reordered rows, and lower, upper and interval kinds, plus the CLI rule and locus. The new claim-form test is consistent with the AC-62 list: a bounded `always[0,3]` / `eventually[0,3]` under ev proves only under reachability/v1 (never these profiles); nested event-position is Unsupported; an unbounded nested form is refused at the front end (NotStatePredicate); multiple bindings and initials are Unsupported; incomplete and unresolved workloads are front-end refusals. A fully weighted workload chain proving under cyclic-dtmc-state-predicate/v1 is correct: the Admission bullet admits "a workload fully resolved by its authored semantics to one distribution per live state". Residual: clocks (FND-007); profile relabel (code-review FND-004). |
+| FND-004 | fixed | The bisection test asserts, for every sampled ceiling below the least accepted value, the limit's own typed cause (bytes, storage, states, edges, scalar bits, work, integer bits). For MDP it asserts the stages each one stops in. The DTMC profile has no observer, but the typed cause is asserted at every sample. The undefined predicate now goes through check_probability_certificate_document and yields UndefinedPredicate for both profiles. |
+| FND-005 | still-open | The fsl-analyze AC-57 tests now use a Coin fixture and assert the initial-key locus. The separate-process fsl-probability-check test (bounded.rs:1339-1392), which carries AC-57's "fsl-probability-check accepts" clause, still uses the Msg `link` source. The engines Coin model is not in this repo, so an in-repo Coin source like the new `coin()` fixture is the reachable equivalent. Low; the lead may accept it as is. |
+| FND-006 | fixed | Coin fixture used. The FR-202-AC-13 clause is tested: the step-1 counterexample offered unchanged for AtMost is Refused. |

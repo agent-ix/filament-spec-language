@@ -688,7 +688,12 @@ fn an_undefined_predicate_in_counterexample_replay_keeps_its_graph_refusal() {
         &Cancel::new(),
     );
     assert!(
-        matches!(&result, Err(ProbabilityWitnessError::Graph(_))),
+        matches!(
+            &result,
+            Err(ProbabilityWitnessError::Graph(
+                fsl_replay::ExactProbabilityGraphError::ExpansionRefused
+            ))
+        ),
         "{result:?}"
     );
 }
