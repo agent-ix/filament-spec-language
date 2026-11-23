@@ -475,6 +475,7 @@ fn undetermined(
 }
 
 /// Why a row's value could not be lifted into the abstract model.
+#[derive(Debug)]
 pub(super) enum Lifting {
     /// A reference names an object whose most-specific type no object row
     /// names.
@@ -835,6 +836,11 @@ mod tests {
         )
     }
 
+    /// The values' debug forms equal: `Value` has no equality of its own.
+    fn same(found: &Value, expected: &Value) {
+        assert_eq!(format!("{found:?}"), format!("{expected:?}"));
+    }
+
     fn reference_to(type_name: &str, key: &str) -> ObjectReference {
         let root = filament_exact::NodeKey::new(
             "test",
@@ -889,16 +895,16 @@ mod tests {
         let declared = ValueType::option(ValueType::Reference(effective("Queue")));
         let lifted = lift_nested(&mut ring_to_queue, &declared, option_of("a", "Ring"))
             .expect("the payload lifts");
-        assert_eq!(lifted, option_of("a", "Queue"));
+        same(&lifted, &option_of("a", "Queue"));
 
         let none = filament_exact::OptionValue::none(ValueType::Reference(effective("Ring")));
         let kept = lift_nested(&mut ring_to_queue, &declared, none).expect("none lifts");
-        assert_eq!(
-            kept,
-            filament_exact::OptionValue::from_admitted(
+        same(
+            &kept,
+            &filament_exact::OptionValue::from_admitted(
                 ValueType::Reference(effective("Queue")),
-                None
-            )
+                None,
+            ),
         );
 
         let unmapped = lift_nested(&mut ring_to_queue, &declared, option_of("a", "Sub"));
@@ -943,7 +949,7 @@ mod tests {
             map("Ring", "Ring", &[("a", "b"), ("c", "a")]),
         )
         .expect("the map lifts");
-        assert_eq!(lifted, map("Queue", "Queue", &[("a", "b"), ("c", "a")]));
+        same(&lifted, &map("Queue", "Queue", &[("a", "b"), ("c", "a")]));
 
         let value_unmapped = lift_nested(
             &mut ring_to_queue,
@@ -981,7 +987,7 @@ mod tests {
         ))));
         let lifted = lift_nested(&mut ring_to_queue, &declared, sequence("Ring"))
             .expect("the sequence lifts");
-        assert_eq!(lifted, sequence("Queue"));
+        same(&lifted, &sequence("Queue"));
     }
 
     /// FR-141 (TC-1086 step 10): the argument of an abstract-operation row
@@ -1008,7 +1014,7 @@ mod tests {
         };
         let lifted =
             lift_own(&mut ring_to_queue, &mut types, sequence("Ring")).expect("the argument lifts");
-        assert_eq!(lifted, sequence("Queue"));
+        same(&lifted, &sequence("Queue"));
         let kept = lift_own(&mut ring_to_queue, &mut types, Value::Boolean(true));
         assert!(matches!(kept, Ok(Value::Boolean(true))));
         let unmapped = lift_own(&mut ring_to_queue, &mut types, sequence("Sub"));
