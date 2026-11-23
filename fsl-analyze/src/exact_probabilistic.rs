@@ -103,6 +103,7 @@ pub(crate) use build::{
 };
 pub(crate) use digital::model_constraints;
 pub(crate) use digital::ELAPSED_REWARD;
+pub(crate) use fair::bottom_components;
 pub use fair::{
     decide_fair_bounded_event, decide_fair_expected_reward, decide_fair_long_run_mdp,
     decide_fair_reachability, maximal_fair_end_components, ActionChoice, FairBoundedResult,
@@ -117,14 +118,14 @@ pub use fsl_replay::FreeDelayRow;
 pub use rows::free_delays_choice;
 pub use settle::settle_product_refusal;
 pub use unbounded::{
-    decide_always, decide_expected_reward, decide_long_run_mdp, decide_long_run_workload,
-    decide_reachability, decide_reachability_threshold, decide_until, decide_until_threshold,
-    ComponentValue, ExtRational, GainBias, LongRunResult, UnboundedError, UnboundedObjective,
-    UnboundedOutcome, UnboundedResult,
+    avoiding_policy, decide_always, decide_expected_reward, decide_long_run_mdp,
+    decide_long_run_workload, decide_reachability, decide_reachability_threshold, decide_until,
+    decide_until_threshold, ComponentValue, ExtRational, GainBias, LongRunResult, UnboundedError,
+    UnboundedObjective, UnboundedOutcome, UnboundedResult,
 };
 pub use witness::{
-    action_steps, entry_choice, policy_action, produce_witness, witness_scheduler, EntryChoice,
-    ProducedPath, ProducedStep, ProducedWitness, WitnessError, WitnessScope,
+    action_steps, entry_choice, induced_chain, policy_action, produce_witness, witness_scheduler,
+    EntryChoice, ProducedPath, ProducedStep, ProducedWitness, WitnessError, WitnessScope,
 };
 pub(crate) use witness::{produce_quantile_witness, produce_witness_stopping, WitnessWork};
 

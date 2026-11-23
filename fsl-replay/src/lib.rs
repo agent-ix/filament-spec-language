@@ -503,9 +503,9 @@ pub use probability_certificate::{
     ProbabilityStateEvent, ProbabilitySubsystemCertificate, ProbabilityUndefinedWitness,
     ProbabilityVacuityAcceptance, ProbabilityWitnessError, ProbabilityWitnessPath,
     ProbabilityWitnessReplay, ProbabilityWitnessStep, RegionClockKey, RegionDeadlineKey,
-    RegionKeyKind, RegionProductKeyInput, ReproducedProbabilityWitness, TimedProbabilityForm,
-    TimedProbabilityObjective, TimedProbabilityRoute, WeightedLongRunProbabilityDocument,
-    WorkloadFreeDelayRefusal,
+    RegionKeyKind, RegionProductKeyInput, ReproducedProbabilityWitness, SubsystemBoundKind,
+    TimedProbabilityForm, TimedProbabilityObjective, TimedProbabilityRoute,
+    WeightedLongRunProbabilityDocument, WorkloadFreeDelayRefusal,
 };
 #[cfg(feature = "test-support")]
 pub use probability_certificate::{

@@ -30,7 +30,8 @@ pub use mdp::{
     cyclic_mdp_reward_probability_certificate_document, probability_proof_document,
     read_probability_proof_document, write_probability_proof_document, ProbabilityProofDocument,
 };
-mod long_run;
+pub(super) mod long_run;
+pub(super) mod refutation;
 #[cfg(feature = "test-support")]
 pub use long_run::{
     check_long_run_probability_certificate_observing,
@@ -43,6 +44,7 @@ pub use long_run::{
     write_weighted_long_run_probability_certificate, LongRunProbabilityComponent,
     LongRunProbabilityDocument, WeightedLongRunProbabilityDocument,
 };
+pub use refutation::SubsystemBoundKind;
 mod timed;
 pub use timed::digital_key_clocks;
 pub(super) use timed::{is_timed_deadline_claim, replay_timed_witness};

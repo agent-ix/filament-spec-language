@@ -512,6 +512,8 @@ struct Context<'a> {
     meter: filament_exact::Meter,
     storage: u64,
     identity: fsl_foundation::IdentityLimits,
+    /// Compare the initial value strictly against the failing side of the bound.
+    refutation: bool,
     #[cfg(feature = "test-support")]
     observe: Option<&'a mut dyn FnMut(LongRunProbabilityPhase)>,
 }
@@ -523,6 +525,7 @@ impl<'a> Context<'a> {
             meter: filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone()),
             storage: 0,
             identity: fsl_foundation::IdentityLimits::default(),
+            refutation: false,
             #[cfg(feature = "test-support")]
             observe: None,
         }
@@ -969,6 +972,32 @@ pub(super) fn check(
     check_with_context(system, claims, item, bytes, &mut cx)
 }
 
+/// FR-202's counterexample role: every proof-side condition over the rebuilt
+/// workload chain, then the strict refutation comparison instead of the
+/// inclusive claim-side threshold. Acceptance means the claim is refuted.
+pub(in crate::probability_certificate) fn check_refutation(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    bytes: &[u8],
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
+    let mut cx = Context::new(limits, cancel);
+    cx.refutation = true;
+    check_with_context(system, claims, item, bytes, &mut cx)
+}
+
+/// Admit canonical long-run or weighted long-run bytes without checking them.
+pub(in crate::probability_certificate) fn admit(
+    bytes: &[u8],
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> Result<(), ProbabilityDocumentError> {
+    let mut cx = Context::new(limits, cancel);
+    read(bytes, &mut cx).map(|_| ())
+}
+
 /// Check with a phase observer while retaining the original caller controls.
 #[cfg(feature = "test-support")]
 pub fn check_long_run_probability_certificate_observing(
@@ -1341,10 +1370,18 @@ fn check_graph(
         Bound::AtLeast(v) | Bound::AtMost(v) => v,
     };
     check_scalar(threshold, cx.limits)?;
-    if !match bound {
-        Bound::AtLeast(v) => *initial >= v,
-        Bound::AtMost(v) => *initial <= v,
-    } {
+    let on_side = if cx.refutation {
+        match bound {
+            Bound::AtLeast(v) => *initial < v,
+            Bound::AtMost(v) => *initial > v,
+        }
+    } else {
+        match bound {
+            Bound::AtLeast(v) => *initial >= v,
+            Bound::AtMost(v) => *initial <= v,
+        }
+    };
+    if !on_side {
         return Ok(rejected(
             ProbabilityCertificateRule::ThresholdMissed,
             graph.initial.clone(),

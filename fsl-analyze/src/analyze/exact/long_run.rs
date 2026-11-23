@@ -17,6 +17,7 @@ pub(super) fn run(
     request: ProductRequest<'_>,
     cancel: &Cancel,
     tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
+    tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
     let claim = request.claim;
     let ProbForm::LongRunFraction { bound, weight, .. } = &claim.form else {
@@ -153,13 +154,10 @@ pub(super) fn run(
     let Some(ExtRational::Finite(value)) = solution.values.get(initial.index()) else {
         return broken();
     };
-    if !match bound {
+    let holds = match bound {
         Bound::AtLeast(threshold) => value >= threshold,
         Bound::AtMost(threshold) => value <= threshold,
-    } {
-        // This profile authorizes proofs only, never an unverified refutation.
-        return not_yet();
-    }
+    };
     let reference = binding.as_ref().map(|b| &b.reference);
     let mut certificate = match values(&product, reference, &solution.values, &mut candidate) {
         Ok(certificate) => certificate,
@@ -169,6 +167,79 @@ pub(super) fn run(
         Ok(components) => components,
         Err(error) => return document_failure(error, subject),
     };
+    if !holds {
+        // FR-202: the same long-run evidence, checked over the rebuilt
+        // workload chain in its counterexample role, settles `refuted` only
+        // after replay reproduces the strict comparison.
+        let initial_key = match candidate.key(reference, &product.states[initial.index()].model) {
+            Ok(key) => key,
+            Err(error) => return document_failure(error, subject),
+        };
+        let subsystem = if weight.is_some() {
+            weighted_long_run_probability_certificate_document(
+                &system,
+                claims,
+                &item,
+                certificate.values,
+                components,
+                document_limits,
+                cancel,
+            )
+            .and_then(|document| {
+                fsl_replay::ProbabilitySubsystemCertificate::from_weighted_long_run(
+                    &document,
+                    document_limits,
+                    cancel,
+                )
+            })
+        } else {
+            long_run_probability_certificate_document(
+                &system,
+                claims,
+                &item,
+                certificate.values,
+                components,
+                document_limits,
+                cancel,
+            )
+            .and_then(|document| {
+                fsl_replay::ProbabilitySubsystemCertificate::from_long_run(
+                    &document,
+                    document_limits,
+                    cancel,
+                )
+            })
+        };
+        let subsystem = match subsystem {
+            Ok(subsystem) => subsystem,
+            Err(error) => return document_failure(error, subject),
+        };
+        let initials = system.initial();
+        let [first] = initials.as_slice() else {
+            return not_yet();
+        };
+        let mut witness = ProbabilisticCounterexample {
+            item: item.clone(),
+            binding: reference.cloned(),
+            initial: first.clone(),
+            initial_key,
+            scheduler: Vec::new(),
+            paths: Vec::new(),
+            subsystem: Some(Box::new(subsystem)),
+        };
+        if let Some(tamper) = tamper_witness {
+            tamper(&mut witness);
+        }
+        return finish_replay(
+            replay_witness(&system, &item, &witness, &limits, cancel),
+            claim,
+            &system,
+            &witness,
+            &[],
+            &limits,
+            subject,
+        );
+    }
     if let Some(tamper) = tamper {
         tamper(&mut certificate);
     }

@@ -156,6 +156,36 @@ pub fn policy_action(
         .map(|choice| (*choice).clone())
 }
 
+/// The chain `policy` induces on `product`: each state keeps only the edges
+/// of its selected choice, its first when it selects none. A DTMC is its own
+/// induced chain.
+pub fn induced_chain(product: &ProbProduct, policy: &[Option<usize>]) -> ProbProduct {
+    let mut chain = product.clone();
+    if product.kind == ProductKind::Dtmc {
+        return chain;
+    }
+    chain.kind = ProductKind::Dtmc;
+    chain.edges = product
+        .ids()
+        .flat_map(|state| {
+            let selected = policy.get(state.index()).copied().flatten().unwrap_or(0);
+            let action = choices_at(product, state)
+                .get(selected)
+                .map(|choice| (*choice).clone());
+            product
+                .outgoing(state)
+                .iter()
+                .filter(move |edge| {
+                    action
+                        .as_ref()
+                        .is_some_and(|action| same_action(action, &edge.choice))
+                })
+                .cloned()
+        })
+        .collect();
+    chain
+}
+
 /// The distinct choices of `state` in edge order.
 fn choices_at(product: &ProbProduct, state: ProbStateId) -> Vec<&ProductAction> {
     let mut choices: Vec<&ProductAction> = Vec::new();

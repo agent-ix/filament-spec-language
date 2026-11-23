@@ -647,6 +647,67 @@ fn expected_reward(
     })
 }
 
+/// Refine `policy` so that it keeps every state some scheduler can hold away
+/// from `target` forever away from it: such a state takes its first choice
+/// whose successors all can be held away too. With `positive`, a state from
+/// which those states are reachable takes its first choice that moves
+/// strictly closer to them, so the target is avoided with positive
+/// probability wherever any scheduler can avoid it. Other states keep their
+/// selection.
+pub fn avoiding_policy(
+    product: &ProbProduct,
+    target: &[bool],
+    policy: &[Option<usize>],
+    positive: bool,
+) -> Result<Vec<Option<usize>>, UnboundedError> {
+    if target.len() != product.states.len() {
+        return Err(UnboundedError::InvalidState);
+    }
+    let graph = Graph::new(product)?;
+    let held =
+        |choice: &Choice<'_>, safe: &[bool]| choice.edges.iter().all(|edge| safe[edge.to.index()]);
+    let mut safe = target.iter().map(|target| !target).collect::<Vec<_>>();
+    loop {
+        let mut changed = false;
+        for (index, choices) in graph.choices.iter().enumerate() {
+            if safe[index] && !choices.iter().any(|choice| held(choice, &safe)) {
+                safe[index] = false;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    let mut refined = policy.to_vec();
+    refined.resize(target.len(), None);
+    let mut reached = safe.clone();
+    for (index, choices) in graph.choices.iter().enumerate() {
+        if safe[index] {
+            refined[index] = choices.iter().position(|choice| held(choice, &safe));
+        }
+    }
+    while positive {
+        let previous = reached.clone();
+        for (index, choices) in graph.choices.iter().enumerate() {
+            if previous[index] || target[index] {
+                continue;
+            }
+            if let Some(choice) = choices
+                .iter()
+                .position(|choice| choice.edges.iter().any(|edge| previous[edge.to.index()]))
+            {
+                reached[index] = true;
+                refined[index] = Some(choice);
+            }
+        }
+        if reached == previous {
+            break;
+        }
+    }
+    Ok(refined)
+}
+
 /// Decide a workload's unweighted or reward-weighted long-run fraction
 /// exactly from its bottom strongly connected components (FR-199).
 pub fn decide_long_run_workload(
