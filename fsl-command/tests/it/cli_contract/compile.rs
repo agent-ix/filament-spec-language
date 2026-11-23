@@ -697,7 +697,7 @@ fn a_located_call_site_changes_nothing_in_the_outcome() {
         UNIT_OF_UNITS,
         &libraries,
         None,
-        json!({}),
+        writes_both(),
     ));
     let without_document = without.expect("package", "success", 0).clone();
 
@@ -707,7 +707,7 @@ fn a_located_call_site_changes_nothing_in_the_outcome() {
         UNIT_OF_UNITS,
         &libraries,
         Some(imported("test/units", "big")),
-        json!({"output": {"package": "out.json"}}),
+        writes_both(),
     );
     let with = plain(&path);
     let with_document = with.expect("package", "success", 0).clone();
@@ -718,6 +718,66 @@ fn a_located_call_site_changes_nothing_in_the_outcome() {
     );
     assert_eq!(with_document["last_stage"], without_document["last_stage"]);
     assert_eq!(with_document["diagnostics"], json!([]));
+    assert_eq!(
+        directory_files(&case.path("handoff")),
+        directory_files(&plain_case.path("handoff"))
+    );
+}
+
+fn directory_files(directory: &std::path::Path) -> std::collections::BTreeMap<String, Vec<u8>> {
+    fn collect(
+        root: &std::path::Path,
+        directory: &std::path::Path,
+        files: &mut std::collections::BTreeMap<String, Vec<u8>>,
+    ) {
+        for entry in std::fs::read_dir(directory).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                collect(root, &path, files);
+            } else {
+                let relative = path
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned();
+                files.insert(relative, std::fs::read(path).unwrap());
+            }
+        }
+    }
+
+    let mut files = std::collections::BTreeMap::new();
+    collect(directory, directory, &mut files);
+    files
+}
+
+/// FR-027-AC-22: a call_site request with a non-library program identity is
+/// refused as invalid request naming call_site.
+#[test]
+#[trace("TC-3210", "FR-027-AC-22")]
+fn a_call_site_with_a_non_library_program_identity_refuses_invalid_request() {
+    let case = Case::new();
+    let path = call_site_request(
+        &case,
+        UNIT_OF_UNITS,
+        &[("test/units", BIG)],
+        Some(imported("test/units", "big")),
+        writes_both(),
+    );
+    let mut request: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    request["request"]["program"]["source"]["identity"] = json!("");
+    let path = case.json("invalid-program-identity.json", &request);
+
+    let outcome = plain(&path);
+    let diagnostic = outcome.refused("package", 20, "invalid-request");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains("call_site"),
+        "{diagnostic}"
+    );
+    assert!(!case.path("out.json").exists());
+    assert!(!case.path("handoff").exists());
 }
 
 /// FR-027-AC-21: a malformed `call_site`, and one over a model unit or an
