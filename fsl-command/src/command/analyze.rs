@@ -331,6 +331,46 @@ struct PackageSelection {
     deadline_ms: Option<u64>,
 }
 
+/// FR-531 "Denial is its own typed refusal": a denied identity join names the
+/// `i2.*` setting, never a witness defect.
+fn native_join_cause(failure: fsl_package::NativeJoinFailure) -> RunCause {
+    let setting = failure
+        .setting()
+        .map_or_else(|| "i2.work_units".to_owned(), |setting| setting.to_string());
+    RunCause::AnalyzePackage {
+        code: fsl_foundation::Code::StageLimitExceeded,
+        cause: failure
+            .limit()
+            .map(|limit| limit.kind().catalog_cause().to_owned()),
+        pointer: None,
+        message: format!("stage_limit_exceeded: {setting}: {failure:?}"),
+    }
+}
+
+/// FR-1044: a composition whose admitted facts could not be read. A denied
+/// native charge names its `i2.*` setting (FR-531); any other refusal of an
+/// admitted package's own rows is an internal fault.
+fn package_composition_cause(
+    node: &fsl_package::CheckedNodeId,
+    refusal: &fsl_replay::planner::PackageCompositionRefusal,
+) -> RunCause {
+    let fsl_replay::planner::PackageCompositionRefusal::Native { denied, .. } = refusal else {
+        return RunCause::AnalyzeFault;
+    };
+    let setting = match denied.kind {
+        filament_contract_model::NativeJoinChargeKind::Work => fsl_foundation::Setting::I2WorkUnits,
+        filament_contract_model::NativeJoinChargeKind::Storage => {
+            fsl_foundation::Setting::I2NativeJoinStorage
+        }
+    };
+    RunCause::AnalyzePackage {
+        code: fsl_foundation::Code::StageLimitExceeded,
+        cause: None,
+        pointer: None,
+        message: format!("stage_limit_exceeded: {setting}: composition at {node:?}: {refusal}"),
+    }
+}
+
 /// FR-850, FR-940: analyze a `package` request over the `BarePackage` of
 /// its admitted package, read through `AnalysisView`, never compiling
 /// source, with the caller's `negotiate` under `cancel` and its deadline.
@@ -373,21 +413,7 @@ fn run_package(
                 &mut budget,
             )
         })
-        .map_err(|failure| {
-            // FR-531 "Denial is its own typed refusal": a denied identity
-            // join names the `i2.*` setting, never a witness defect.
-            let setting = failure
-                .setting()
-                .map_or_else(|| "i2.work_units".to_owned(), |setting| setting.to_string());
-            RunCause::AnalyzePackage {
-                code: fsl_foundation::Code::StageLimitExceeded,
-                cause: failure
-                    .limit()
-                    .map(|limit| limit.kind().catalog_cause().to_owned()),
-                pointer: None,
-                message: format!("stage_limit_exceeded: {setting}: {failure:?}"),
-            }
-        })?;
+        .map_err(native_join_cause)?;
     let RunMembers {
         documents,
         mut subject,
@@ -416,6 +442,7 @@ fn run_package(
         items: items.as_deref(),
         engines: &engines,
         limits,
+        budget,
     };
     let mut settled = with_deadline(cancel, deadline_ms, || {
         settle_package_run(run, negotiate, cancel)
@@ -432,6 +459,9 @@ fn run_package(
             RunCause::AnalyzeRefused(Box::new(refusal))
         }
         PackageRunError::Document(AnalyzeDocumentError::Fault) => RunCause::AnalyzeFault,
+        PackageRunError::Composition { node, refusal } => {
+            package_composition_cause(&node, &refusal)
+        }
         PackageRunError::Document(AnalyzeDocumentError::Identity(error)) => {
             super::identity_cause(error)
         }
@@ -714,6 +744,47 @@ mod package_intake_tests {
                 Some("work-budget-exceeded" | "node-count-exceeded")
             ));
         }
+    }
+
+    /// FR-1044 "Current system behavior", FR-531: a native charge denied
+    /// while the package route reads a composition's admitted facts refuses
+    /// the request whole as `stage_limit_exceeded` (exit 22) naming the
+    /// `i2.*` setting of the denied charge; any other refusal of the admitted
+    /// rows is a fault.
+    #[trace("FR-1044-AC-10")]
+    #[test]
+    fn a_denied_composition_charge_names_its_native_join_setting() {
+        use filament_contract_model::{NativeJoinChargeKind, NativeJoinDeniedCharge};
+        use fsl_replay::planner::PackageCompositionRefusal;
+        let node = fsl_semantics::check::wire_id::structural_id(
+            &filament_exact::NodeKey::new(
+                "test",
+                vec![filament_exact::PathSegment::Text("Sys".to_owned())],
+                0,
+            )
+            .expect("node"),
+        );
+        for (kind, setting) in [
+            (NativeJoinChargeKind::Work, Setting::I2WorkUnits),
+            (NativeJoinChargeKind::Storage, Setting::I2NativeJoinStorage),
+        ] {
+            let refusal = PackageCompositionRefusal::Native {
+                denied: NativeJoinDeniedCharge { kind, amount: 1 },
+                locus: None,
+                configured_bound: 0,
+            };
+            let cause = package_composition_cause(&node, &refusal);
+            assert_eq!(cause.code().as_str(), "stage_limit_exceeded");
+            assert_eq!(cause.category().exit_code(), 22);
+            let RunCause::AnalyzePackage { message, .. } = cause else {
+                panic!("a typed limit refusal");
+            };
+            assert!(message.contains(&setting.to_string()), "{message}");
+        }
+        assert!(matches!(
+            package_composition_cause(&node, &PackageCompositionRefusal::Member),
+            RunCause::AnalyzeFault
+        ));
     }
 }
 

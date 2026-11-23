@@ -1,34 +1,44 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-1044: the items a `compose` declaration selects through `analyze`.
 //!
-//! An item naming a checked `compose` declaration with `kind` `composition`
-//! selects the declaration's composition, under every rule. Its premise
-//! items, the component guarantees, are derived from the declaration, never
-//! supplied, and settle in the same request after the caller's items. A
-//! component guarantee is a clause of the component's own checked package, so
-//! its item is resolved over that package and run over it by the shared
-//! analyze path ([`CompositionClaim::package`]).
+//! An item naming a `compose` declaration with `kind` `composition` selects
+//! the declaration's composition, under every rule. Its premise items, the
+//! component guarantees, are derived from the declaration, never supplied,
+//! and settle in the same request after the caller's items. A component
+//! guarantee is a clause of the component's own package, so its item is
+//! resolved and run over that package ([`CompositionClaim::owner`]).
+//!
+//! One analysis serves both routes (FR-940): the source route reads the
+//! declaration's [`CompositionFacts`] from its checked composition, the
+//! `package` route from the admitted composition view, and everything after
+//! that (the cycle answer, the derived slot list, the routed item, the
+//! premise items and the restated `premises`) is read from those facts alone.
+//! Each route resolves a premise clause over the component package it holds
+//! ([`CompositionFront`]).
 //!
 //! No registered backend advertises `composition` by default, so a routed
 //! composition settles `unsupported` at negotiation. A declaration whose
 //! dependency graph holds a cycle settles `unsupported` before any premise is
 //! read or any request is written (FSpec FR-489 "Cycles").
 
-use std::collections::{BTreeMap, HashMap};
-use std::sync::Arc;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
+use filament_contract_model::NativeJoinBudget;
+use filament_exact::NodeKey;
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
-use fsl_package::CheckedPackage;
-use fsl_replay::planner::{composition_premises, CompositionPremise, ItemKey, SlotKey, SlotRole};
-use fsl_replay::{DeclineCode, ProofRefusalCause, TerminalRecord};
-use fsl_route::request::{ExtentClassification, ItemKind};
-use fsl_route::Registry;
-use fsl_semantics::check::{
-    Capability, CheckedComposition, ClauseRef, ComponentPackages, CompositionSlotKey,
+use fsl_package::{BarePackage, CheckedPackage, CompositionMemberValue, CompositionView};
+use fsl_replay::planner::{
+    composition_premises, DerivedSlot, ItemKey, PackageComposition, PackageCompositionRefusal,
+    SlotKey, SlotRole,
 };
+use fsl_replay::{DeclineCode, ProofRefusalCause, TerminalRecord};
+use fsl_route::request::ExtentClassification;
+use fsl_route::Registry;
+use fsl_semantics::check::wire_id::WireGraph;
+use fsl_semantics::check::{Capability, CheckedComposition, ComponentPackages, DeclarationFamily};
 use fsl_semantics::library::LibraryName;
 use serde_json::{json, Map, Value};
 
@@ -47,10 +57,9 @@ use crate::analyze::{
 pub struct CompositionClaim {
     /// The claim item and its candidates.
     pub claim: ResolvedClaim,
-    /// The checked package of the component the claim is a clause of, which
-    /// the item is analyzed over; `None` for a claim of the request's own
-    /// package.
-    pub package: Option<Arc<CheckedPackage>>,
+    /// The component package the claim is a clause of, which the item is
+    /// analyzed over; `None` for a claim of the request's own package.
+    pub owner: Option<ComponentOwner>,
     /// The record the item settles with before negotiation (FR-621 `S4`);
     /// `None` when negotiation settles it.
     pub settled: Option<Box<TerminalRecord>>,
@@ -66,6 +75,20 @@ pub struct CompositionClaim {
     pub components: ComponentPackages,
 }
 
+/// What negotiation and the writer read of the component package a premise
+/// item is analyzed over, as each route reads it from the package it holds.
+#[derive(Clone, Debug)]
+pub struct ComponentOwner {
+    /// The component package's identity: the item's `package` member and the
+    /// graph its node ids index (FSpec FR-322).
+    pub identity: String,
+    /// The model package owning the claim within the component, which the
+    /// certificate identity names (FSpec FR-412).
+    pub owning_model: Option<String>,
+    /// The declaration family of the claim within the component (FR-507).
+    pub family: Option<DeclarationFamily>,
+}
+
 /// A component-guarantee entry of a composition's `premises` and the item
 /// that settles it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -75,6 +98,261 @@ pub struct Guarantee {
     /// The request index of the item whose typed slot key (assumptions
     /// included) is the entry's.
     pub item: RequestIndex,
+}
+
+/// The facts of one `compose` declaration the composition analysis reads
+/// (FSpec FR-491): the same on both routes, built from the checked
+/// declaration ([`Self::of_checked`]) or from the admitted package's
+/// composition view ([`Self::of_admitted`]).
+pub(super) struct CompositionFacts {
+    /// The declared name `S`.
+    name: String,
+    /// The declaration's node: the item's anchor.
+    node: NodeKey,
+    /// Each dependency cycle's guarantees, in edge order, as
+    /// `Component::Clause`.
+    cycles: Vec<Vec<String>>,
+    /// The derived slot list in FSpec FR-491 order; `Err` when the
+    /// declaration derives none (a cycle, or a broken invariant).
+    slots: Result<Vec<SlotFacts>, ()>,
+    /// The item's `assumptions` member: per `component-guarantee` entry, the
+    /// `premises` indices of the peer guarantees it is checked under.
+    assumptions: Vec<Vec<usize>>,
+    /// The package of each `components` entry and of each named clause.
+    components: ComponentPackages,
+}
+
+/// One derived slot.
+pub(super) struct SlotFacts {
+    /// The slot's role and key, as the shared planner derives them.
+    derived: DerivedSlot,
+    /// The guarantee of a `component-guarantee` slot; `None` for every other
+    /// role.
+    guarantee: Option<GuaranteeClause>,
+}
+
+/// A guarantee clause a composition names: `component::name`.
+pub(super) struct GuaranteeClause {
+    /// The `components` entry's name.
+    pub component: String,
+    /// The clause's name in the component's package.
+    pub name: String,
+    /// The clause's node in the component's package.
+    pub node: NodeKey,
+    /// The identity of the component package that owns the clause: the
+    /// package of its `components` entry; `None` when no entry names the
+    /// component.
+    pub owner: Option<String>,
+}
+
+impl CompositionFacts {
+    /// The facts of the checked declaration `composition` of `package`.
+    pub(super) fn of_checked(package: &CheckedPackage, composition: &CheckedComposition) -> Self {
+        let components = composition.component_packages();
+        let cycles = composition
+            .cycles()
+            .iter()
+            .map(|cycle| cycle.guarantees.iter().map(ToString::to_string).collect())
+            .collect();
+        let slots = if composition.cycles().is_empty() {
+            composition_premises(package, composition.node())
+                .map(|premises| {
+                    premises
+                        .into_iter()
+                        .map(|premise| SlotFacts {
+                            guarantee: premise
+                                .slot
+                                .guarantee
+                                .filter(|_| premise.derived.role == SlotRole::ComponentGuarantee)
+                                .map(|clause| GuaranteeClause {
+                                    owner: components
+                                        .of_component(&clause.component)
+                                        .map(str::to_owned),
+                                    component: clause.component,
+                                    name: clause.name,
+                                    node: clause.node,
+                                }),
+                            derived: premise.derived,
+                        })
+                        .collect()
+                })
+                .map_err(|_| ())
+        } else {
+            Err(())
+        };
+        Self {
+            name: composition.name().to_owned(),
+            node: composition.node().clone(),
+            cycles,
+            slots,
+            assumptions: composition.item().assumptions,
+            components,
+        }
+    }
+
+    /// The facts of the admitted composition `view` of `root`, read with the
+    /// component packages `root` retains under the invocation's cumulative
+    /// native `budget` (FR-940).
+    ///
+    /// # Errors
+    ///
+    /// The original projection refusal; no missing package fact is replaced.
+    pub(super) fn of_admitted(
+        root: &BarePackage<'_>,
+        view: &CompositionView<'_>,
+        budget: &mut NativeJoinBudget,
+    ) -> Result<Self, PackageCompositionRefusal> {
+        let projected = PackageComposition::from_view(root, view, budget)?;
+        let clause_at = |at: usize| {
+            projected
+                .clauses()
+                .get(at)
+                .map(|clause| GuaranteeClause {
+                    component: clause.component.to_owned(),
+                    name: clause.name.name.as_ref().to_owned(),
+                    node: clause.node.clone(),
+                    // The owner `from_view` authenticated for the clause.
+                    owner: Some(clause.owner.package().name().to_owned()),
+                })
+                .ok_or(PackageCompositionRefusal::Member)
+        };
+        let mut cycles = Vec::with_capacity(projected.cycles().len());
+        for cycle in projected.cycles() {
+            let mut guarantees = Vec::with_capacity(cycle.guarantees.len());
+            for at in &cycle.guarantees {
+                let clause = clause_at(*at)?;
+                guarantees.push(format!("{}::{}", clause.component, clause.name));
+            }
+            cycles.push(guarantees);
+        }
+        let slots = if projected.cycles().is_empty() {
+            let mut slots = Vec::with_capacity(projected.slots().len());
+            for slot in projected.slots() {
+                let guarantee = if slot.derived.role == SlotRole::ComponentGuarantee {
+                    Some(clause_at(
+                        slot.guarantee.ok_or(PackageCompositionRefusal::Member)?,
+                    )?)
+                } else {
+                    None
+                };
+                slots.push(SlotFacts {
+                    derived: slot.derived.clone(),
+                    guarantee,
+                });
+            }
+            Ok(slots)
+        } else {
+            Err(())
+        };
+        let mut by_name = BTreeMap::new();
+        for member in view.members_with_budget(budget) {
+            if let CompositionMemberValue::Component(component) = member?.value() {
+                by_name.insert(
+                    component.name.as_ref().to_owned(),
+                    component.package.as_ref().to_owned(),
+                );
+            }
+        }
+        let by_clause = projected
+            .clauses()
+            .iter()
+            .filter_map(|clause| {
+                let package = by_name.get(clause.component)?;
+                Some((clause.node.clone(), package.clone()))
+            })
+            .collect();
+        Ok(Self {
+            // The row's declared name, as the source route names it.
+            name: view.name().name.to_string(),
+            node: projected.node().clone(),
+            cycles,
+            slots,
+            assumptions: projected.assumptions().to_vec(),
+            components: ComponentPackages::new(by_name, by_clause),
+        })
+    }
+
+    /// The identity of each component package a premise item of the
+    /// composition is analyzed over, in slot order; empty when the
+    /// declaration derives no slot.
+    pub(super) fn guarantee_packages(&self) -> Vec<&str> {
+        self.slots
+            .iter()
+            .flatten()
+            .filter_map(|slot| slot.guarantee.as_ref())
+            .filter_map(|clause| clause.owner.as_deref())
+            .collect()
+    }
+
+    /// The peer guarantee nodes the slot at `at` is checked under, sorted:
+    /// the clause nodes of the `component-guarantee` entries its
+    /// `assumptions` array names (FSpec FR-491 "Assumption binding"); empty
+    /// for a slot of another role.
+    fn assumed_at(&self, slots: &[SlotFacts], at: usize) -> Vec<NodeKey> {
+        let Some(slot) = slots.get(at) else {
+            return Vec::new();
+        };
+        if slot.derived.role != SlotRole::ComponentGuarantee {
+            return Vec::new();
+        }
+        let entry = slots[..at]
+            .iter()
+            .filter(|slot| slot.derived.role == SlotRole::ComponentGuarantee)
+            .count();
+        let peers: BTreeSet<&NodeKey> = self
+            .assumptions
+            .get(entry)
+            .into_iter()
+            .flatten()
+            .filter_map(|position| slots.get(*position)?.guarantee.as_ref())
+            .map(|clause| &clause.node)
+            .collect();
+        peers.into_iter().cloned().collect()
+    }
+}
+
+/// What each route supplies to the shared composition analysis: its
+/// registry and subject, and what it reads of a component package.
+pub(super) trait CompositionFront {
+    /// Why a premise item could not be resolved over the route's package.
+    type Error;
+
+    /// The request's registry.
+    fn registry(&self) -> &Registry;
+
+    /// The request's default subject.
+    fn subject(&self) -> &SubjectSelection;
+
+    /// The graph of the component package `identity`, which the ids of the
+    /// component's slots index (FSpec FR-322 "Scope"), or why it has none.
+    fn component_graph(&self, identity: &str) -> Result<WireGraph, Unavailable>;
+
+    /// The `temporal-satisfaction` item, at `index`, of the guarantee
+    /// `clause` resolved over its component package `identity`.
+    ///
+    /// # Errors
+    ///
+    /// As the route refuses the item's package form.
+    fn guarantee_item(
+        &mut self,
+        index: RequestIndex,
+        clause: &GuaranteeClause,
+        identity: &str,
+    ) -> Result<GuaranteeResolution, Self::Error>;
+}
+
+/// How a route resolved a component guarantee's clause over its component
+/// package.
+pub(super) enum GuaranteeResolution {
+    /// The item settled as that package's resolution settles it.
+    Settled(ResolvedItem),
+    /// The clause's claim item over the component package.
+    Claim {
+        /// The claim item and its candidates.
+        claim: Box<ResolvedClaim>,
+        /// The model package owning the claim within the component.
+        owning_model: Option<String>,
+    },
 }
 
 /// What resolving one selection of a composition gives.
@@ -98,24 +376,101 @@ pub(super) struct Premise {
 enum PremiseKind {
     /// A `component-guarantee` slot.
     Guarantee {
-        clause: ClauseRef,
-        library: LibraryName,
+        clause: GuaranteeClause,
+        /// The component package's identity.
+        identity: String,
         /// Whether the guarantee is checked under peer guarantees, which no
         /// registered engine reads.
         assumed: bool,
     },
-    /// A slot whose component or key the checked declaration does not
-    /// resolve: an invariant break, settled as a typed `failed` record.
+    /// A slot whose component or key the declaration does not resolve: an
+    /// invariant break, settled as a typed `failed` record.
     Unresolved { composition: String },
 }
 
-/// What a selection is resolved against.
+/// The source route's front end: the checked package and what the request
+/// reads beside it.
 pub(super) struct Context<'a> {
     pub package: &'a CheckedPackage,
     pub subject: &'a SubjectSelection,
     pub registry: &'a Registry,
     pub binding: &'a SubjectBinding<'a>,
     pub limits: &'a AnalyzeLimits,
+}
+
+impl CompositionFront for Context<'_> {
+    type Error = std::convert::Infallible;
+
+    fn registry(&self) -> &Registry {
+        self.registry
+    }
+
+    fn subject(&self) -> &SubjectSelection {
+        self.subject
+    }
+
+    fn component_graph(&self, identity: &str) -> Result<WireGraph, Unavailable> {
+        let Some(dependency) = LibraryName::new(identity)
+            .ok()
+            .and_then(|library| self.package.dependencies().get(&library).cloned())
+        else {
+            return Err(Unavailable::NotDependency);
+        };
+        let graph = match crate::provider::read_package(
+            &dependency,
+            self.binding.packages,
+            self.limits.emit,
+        ) {
+            Ok(read) => crate::analyze::DocumentGraphs::of_bytes(read.emission().package().bytes())
+                .map_err(Unavailable::Emission),
+            Err(crate::provider::NotAdmitted::Refused(refusal)) => {
+                Err(Unavailable::Refused(refusal))
+            }
+            Err(crate::provider::NotAdmitted::Other(refusal)) => Err(Unavailable::Emission(
+                GraphUnavailable::of_not_admitted(refusal),
+            )),
+        };
+        graph
+    }
+
+    fn guarantee_item(
+        &mut self,
+        index: RequestIndex,
+        clause: &GuaranteeClause,
+        identity: &str,
+    ) -> Result<GuaranteeResolution, Self::Error> {
+        let Some(component) = LibraryName::new(identity)
+            .ok()
+            .and_then(|library| self.package.dependencies().get(&library).cloned())
+        else {
+            return Ok(GuaranteeResolution::Settled(failed(index, &clause.name)));
+        };
+        let resolved = resolve_one(
+            &component,
+            self.subject,
+            index,
+            &guarantee_selection(clause),
+            self.registry,
+            self.binding,
+        );
+        let ResolvedItem::Claim(claim) = resolved else {
+            return Ok(GuaranteeResolution::Settled(resolved));
+        };
+        let owning_model = super::owning_model(&component, &claim.item.claim).map(str::to_owned);
+        Ok(GuaranteeResolution::Claim {
+            claim,
+            owning_model,
+        })
+    }
+}
+
+/// The selection a premise item of the guarantee `clause` is resolved from.
+pub(super) fn guarantee_selection(clause: &GuaranteeClause) -> ItemSelection {
+    ItemSelection {
+        claim: Some(clause.name.clone()),
+        kind: Some(Capability::TemporalSatisfaction.to_wire().to_owned()),
+        ..ItemSelection::default()
+    }
 }
 
 fn composition_named<'p>(
@@ -175,16 +530,11 @@ fn unsupported(index: RequestIndex, kind: Capability) -> TerminalRecord {
 /// The record of a composition whose dependency graph holds a cycle (FSpec
 /// FR-489 "Cycles"): `unsupported`, naming the kind `composition`, the form
 /// `fixed-point` and every cycle's guarantees in edge order.
-fn cyclic(index: RequestIndex, composition: &CheckedComposition) -> TerminalRecord {
-    let cycles: Vec<Vec<String>> = composition
-        .cycles()
-        .iter()
-        .map(|cycle| cycle.guarantees.iter().map(ToString::to_string).collect())
-        .collect();
+fn cyclic(index: RequestIndex, facts: &CompositionFacts) -> TerminalRecord {
     let mut detail = Map::new();
     detail.insert("kind".to_owned(), json!(Capability::Composition.to_wire()));
     detail.insert("form".to_owned(), json!("fixed-point"));
-    detail.insert("cycles".to_owned(), json!(cycles));
+    detail.insert("cycles".to_owned(), json!(facts.cycles));
     TerminalRecord::disposition_unsupported(
         index,
         fsl_route::NegotiationOutcome::UnsupportedRequestedCapability.code(),
@@ -201,11 +551,25 @@ pub(super) fn resolve(
 ) -> Option<Selected> {
     let name = selection.claim.as_deref()?;
     let composition = composition_named(ctx.package, name)?;
-    let settled = |item: ResolvedItem| {
-        Some(Selected {
-            item,
-            premises: Vec::new(),
-        })
+    Some(select(
+        ctx,
+        &CompositionFacts::of_checked(ctx.package, composition),
+        index,
+        selection,
+    ))
+}
+
+/// Resolve `selection` of the composition `facts` describe, on either route.
+pub(super) fn select<F: CompositionFront>(
+    front: &F,
+    facts: &CompositionFacts,
+    index: RequestIndex,
+    selection: &ItemSelection,
+) -> Selected {
+    let name = facts.name.as_str();
+    let settled = |item: ResolvedItem| Selected {
+        item,
+        premises: Vec::new(),
     };
     let Some(label) = selection.kind.as_deref() else {
         return settled(invalid_kind(index, Some(name), "absent-kind"));
@@ -215,17 +579,14 @@ pub(super) fn resolve(
         Err(_) => return settled(invalid_kind(index, Some(name), "unknown-kind")),
     };
     if kind != Capability::Composition {
-        // FR-507: only a composition applies to its own claim.
+        // FR-507: only a composition applies to its own claim, whose
+        // declaration family is `protocol` (FSpec FR-290's node table).
         let diagnostic = Diagnostic {
             code: CatalogCode::new("invalid_capability", "inapplicable-kind"),
             payload: Payload::Inapplicable {
                 request_index: index,
                 capability: kind,
-                family: crate::claim_family::claim_family(
-                    ctx.package,
-                    ItemKind::Formula,
-                    &occurrence(composition.node()),
-                ),
+                family: Some(DeclarationFamily::Protocol),
             },
         };
         return settled(ResolvedItem::Settled {
@@ -237,21 +598,20 @@ pub(super) fn resolve(
             )),
         });
     }
-    if !composition.cycles().is_empty() {
+    if !facts.cycles.is_empty() {
         return settled(ResolvedItem::Settled {
             claim_name: Some(name.to_owned()),
-            record: Box::new(cyclic(index, composition)),
+            record: Box::new(cyclic(index, facts)),
         });
     }
-    let slots = match composition_premises(ctx.package, composition.node()) {
-        Ok(slots) => slots,
-        Err(_) => return settled(failed(index, name)),
+    let Ok(slots) = facts.slots.as_ref() else {
+        return settled(failed(index, name));
     };
-    let Ok(listed) = list(&slots) else {
+    let Ok(listed) = list(slots) else {
         return settled(failed(index, name));
     };
     if let Some(caller) = selection.premises.as_ref() {
-        let restated = match restate(ctx, composition, &slots, index, caller) {
+        let restated = match restate(front, facts, slots, index, caller) {
             Ok(restated) => restated,
             Err(refused) => return settled(*refused),
         };
@@ -272,34 +632,34 @@ pub(super) fn resolve(
             });
         }
     }
-    let premises = premises_of(composition, &slots);
-    let item = routed(ctx, index, selection, name, composition, listed);
-    Some(Selected { item, premises })
+    let premises = premises_of(facts, slots);
+    let item = routed(front, index, selection, facts, listed);
+    Selected { item, premises }
 }
 
 /// The derived slot list a request's `premises` member spells, as
 /// `{role, key}`.
-fn list(slots: &[CompositionPremise]) -> Result<Vec<Value>, fsl_replay::planner::KeyWireError> {
+fn list(slots: &[SlotFacts]) -> Result<Vec<Value>, fsl_replay::planner::KeyWireError> {
     slots
         .iter()
-        .map(|premise| {
+        .map(|slot| {
             Ok(json!({
-                "role": premise.derived.role.as_str(),
-                "key": premise.derived.key.to_wire()?,
+                "role": slot.derived.role.as_str(),
+                "key": slot.derived.key.to_wire()?,
             }))
         })
         .collect()
 }
 
 /// The routed composition item (FSpec FR-331 `composition`).
-fn routed(
-    ctx: &Context<'_>,
+fn routed<F: CompositionFront>(
+    front: &F,
     index: RequestIndex,
     selection: &ItemSelection,
-    name: &str,
-    composition: &CheckedComposition,
+    facts: &CompositionFacts,
     listed: Vec<Value>,
 ) -> ResolvedItem {
+    let name = facts.name.as_str();
     let named = selection
         .backend
         .as_deref()
@@ -308,7 +668,7 @@ fn routed(
     if let Some(refused) = unknown_option(
         index,
         Some(name),
-        ctx.registry,
+        front.registry(),
         named.as_ref(),
         &backend_options,
     ) {
@@ -320,23 +680,23 @@ fn routed(
     }
     .unrouted_routing_options(false, false);
     claim_item(
-        ctx,
+        front,
         index,
-        (name, composition.node()),
+        (name, &facts.node),
         named,
         (backend_options, selection.required.unwrap_or(true)),
         CompositionItem {
             premises: listed,
-            assumptions: composition.item().assumptions,
-            components: composition.component_packages(),
+            assumptions: facts.assumptions.clone(),
+            components: facts.components.clone(),
         },
         unrouted,
     )
 }
 
 /// A composition item anchored at `node`.
-fn claim_item(
-    ctx: &Context<'_>,
+fn claim_item<F: CompositionFront>(
+    front: &F,
     index: RequestIndex,
     (name, node): (&str, &filament_exact::NodeKey),
     named: Option<fsl_foundation::BackendId>,
@@ -344,8 +704,8 @@ fn claim_item(
     form: CompositionItem,
     unrouted: bool,
 ) -> ResolvedItem {
-    let candidates = ctx
-        .registry
+    let candidates = front
+        .registry()
         .candidates(Capability::Composition, named.as_ref());
     let components = form.components.clone();
     let item = ClaimItem {
@@ -376,59 +736,62 @@ fn claim_item(
             item,
             claim_name: name.to_owned(),
             candidates,
-            subject: ctx.subject.clone(),
+            subject: front.subject().clone(),
             unrouted,
         },
-        package: None,
+        owner: None,
         settled: None,
         required: Vec::new(),
         components,
     }))
 }
 
-/// The premise items of `composition` in FSpec FR-491 order: each
-/// `component-guarantee` slot.
-fn premises_of(composition: &CheckedComposition, slots: &[CompositionPremise]) -> Vec<Premise> {
+/// The premise items of the composition `facts` describe, in FSpec FR-491
+/// order: each `component-guarantee` slot.
+fn premises_of(facts: &CompositionFacts, slots: &[SlotFacts]) -> Vec<Premise> {
     slots
         .iter()
         .enumerate()
-        .filter_map(|(slot, premise)| premise_of(composition, slot, premise))
+        .filter_map(|(at, slot)| premise_of(facts, slots, at, slot))
         .collect()
 }
 
-/// The premise item `premise` derives, `None` for a slot no item backs.
+/// The premise item the slot at `at` derives, `None` for a slot no item
+/// backs.
 fn premise_of(
-    composition: &CheckedComposition,
-    slot: usize,
-    premise: &CompositionPremise,
+    facts: &CompositionFacts,
+    slots: &[SlotFacts],
+    at: usize,
+    slot: &SlotFacts,
 ) -> Option<Premise> {
-    let SlotKey::Item(key) = &premise.derived.key else {
+    let SlotKey::Item(key) = &slot.derived.key else {
         return None;
     };
-    let unresolved = || PremiseKind::Unresolved {
-        composition: composition.name().to_owned(),
-    };
-    let Some(CompositionSlotKey::ComponentGuarantee(guarantee)) = &premise.slot.key else {
+    if slot.derived.role != SlotRole::ComponentGuarantee {
         return None;
-    };
-    let kind = premise
-        .slot
+    }
+    let kind = slot
         .guarantee
         .as_ref()
         .and_then(|clause| {
-            let component = composition
-                .components()
-                .iter()
-                .find(|component| component.name == clause.component)?;
+            let identity = clause.owner.as_deref()?;
+            LibraryName::new(identity).ok()?;
             Some(PremiseKind::Guarantee {
-                clause: clause.clone(),
-                library: LibraryName::new(component.subject.package.as_str()).ok()?,
-                assumed: !guarantee.assumptions.is_empty(),
+                clause: GuaranteeClause {
+                    component: clause.component.clone(),
+                    name: clause.name.clone(),
+                    node: clause.node.clone(),
+                    owner: clause.owner.clone(),
+                },
+                identity: identity.to_owned(),
+                assumed: !facts.assumed_at(slots, at).is_empty(),
             })
         })
-        .unwrap_or_else(unresolved);
+        .unwrap_or_else(|| PremiseKind::Unresolved {
+            composition: facts.name.clone(),
+        });
     Some(Premise {
-        slot: u64::try_from(slot).ok()?,
+        slot: u64::try_from(at).ok()?,
         key: key.clone(),
         kind,
     })
@@ -441,12 +804,16 @@ fn premise_of(
 /// guarantees, which is the item its own slot key (assumptions included)
 /// identifies, so a guarantee checked under other peers is never read as
 /// this one.
-pub(super) fn premise_items(
-    ctx: &Context<'_>,
+///
+/// # Errors
+///
+/// As `front` refuses a premise item's package form.
+pub(super) fn premise_items<F: CompositionFront>(
+    front: &mut F,
     groups: Vec<(RequestIndex, Vec<Premise>)>,
     resolved: &mut [ResolvedItem],
     first: usize,
-) -> Vec<ResolvedItem> {
+) -> Result<Vec<ResolvedItem>, F::Error> {
     let mut written: HashMap<ItemKey, RequestIndex> = HashMap::new();
     let mut items = Vec::new();
     for (composition, premises) in groups {
@@ -458,7 +825,7 @@ pub(super) fn premise_items(
                 None => {
                     let index = RequestIndex::new(first + items.len());
                     written.insert(premise.key.clone(), index);
-                    items.push(premise_item(ctx, index, premise));
+                    items.push(premise_item(front, index, premise)?);
                     index
                 }
             };
@@ -471,35 +838,27 @@ pub(super) fn premise_items(
             claim.required = required;
         }
     }
-    items
+    Ok(items)
 }
 
-fn premise_item(ctx: &Context<'_>, index: RequestIndex, premise: Premise) -> ResolvedItem {
+fn premise_item<F: CompositionFront>(
+    front: &mut F,
+    index: RequestIndex,
+    premise: Premise,
+) -> Result<ResolvedItem, F::Error> {
     match premise.kind {
-        PremiseKind::Unresolved { composition } => failed(index, &composition),
+        PremiseKind::Unresolved { composition } => Ok(failed(index, &composition)),
         PremiseKind::Guarantee {
             clause,
-            library,
+            identity,
             assumed,
         } => {
-            let Some(component) = ctx.package.dependencies().get(&library).cloned() else {
-                return failed(index, &clause.name);
-            };
-            let selection = ItemSelection {
-                claim: Some(clause.name.clone()),
-                kind: Some(Capability::TemporalSatisfaction.to_wire().to_owned()),
-                ..ItemSelection::default()
-            };
-            let resolved = resolve_one(
-                &component,
-                ctx.subject,
-                index,
-                &selection,
-                ctx.registry,
-                ctx.binding,
-            );
-            let ResolvedItem::Claim(mut claim) = resolved else {
-                return resolved;
+            let (mut claim, owning_model) = match front.guarantee_item(index, &clause, &identity)? {
+                GuaranteeResolution::Settled(settled) => return Ok(settled),
+                GuaranteeResolution::Claim {
+                    claim,
+                    owning_model,
+                } => (claim, owning_model),
             };
             let settled = assumed.then(|| {
                 // FSpec FR-491: the slot is checked under peer guarantees, an
@@ -509,19 +868,26 @@ fn premise_item(ctx: &Context<'_>, index: RequestIndex, premise: Premise) -> Res
                 claim.item.candidates.clear();
                 Box::new(unsupported(index, Capability::TemporalSatisfaction))
             });
-            ResolvedItem::Composition(Box::new(CompositionClaim {
+            Ok(ResolvedItem::Composition(Box::new(CompositionClaim {
                 claim: *claim,
-                package: Some(component),
+                owner: Some(ComponentOwner {
+                    identity,
+                    owning_model,
+                    // FSpec FR-491: a component guarantee is a temporal
+                    // clause (the checker admits no other guarantee), so its
+                    // family is `temporal-trace` on either route.
+                    family: Some(DeclarationFamily::TemporalTrace),
+                }),
                 settled,
                 required: Vec::new(),
                 components: ComponentPackages::default(),
-            }))
+            })))
         }
     }
 }
 
 /// Why a component package has no graph to resolve a key against.
-enum Unavailable {
+pub(super) enum Unavailable {
     /// The strict reader refused the package the run emitted for it.
     Refused(fsl_package::PackageAdmissionRefusal),
     /// The package emitted no complete admitted bytes, or they hold no
@@ -616,34 +982,34 @@ fn unavailable(index: RequestIndex, name: &str, failure: &Unavailable) -> Box<Re
 /// index segment), `malformed_wire`, with no cause, at the `node` member of an
 /// index segment the component graph does not hold; or the typed cause of a
 /// component package that has no graph.
-fn restate(
-    ctx: &Context<'_>,
-    composition: &CheckedComposition,
-    slots: &[CompositionPremise],
+fn restate<F: CompositionFront>(
+    front: &F,
+    facts: &CompositionFacts,
+    slots: &[SlotFacts],
     index: RequestIndex,
     caller: &Value,
 ) -> Result<Value, Box<ResolvedItem>> {
     use fsl_semantics::check::wire_id::{
         check_component_key_package, component_key_structural, key_holds_index_segment,
-        ComponentKeyRefusal, WireGraph,
+        ComponentKeyRefusal,
     };
     let Value::Array(entries) = caller else {
         return Ok(caller.clone());
     };
-    let packages = composition.component_packages();
+    let packages = &facts.components;
     let refuse = |code: CatalogCode, pointer: String| {
         let mut detail = Map::new();
         detail.insert("member".to_owned(), json!("premises"));
         detail.insert("pointer".to_owned(), json!(pointer));
         Box::new(ResolvedItem::Settled {
-            claim_name: Some(composition.name().to_owned()),
+            claim_name: Some(facts.name.clone()),
             record: Box::new(TerminalRecord::disposition_invalid_request(
                 index, code, detail,
             )),
         })
     };
     let mut restated = entries.clone();
-    let mut graphs: Option<BTreeMap<String, Result<WireGraph, Unavailable>>> = None;
+    let mut graphs: BTreeMap<String, Result<WireGraph, Unavailable>> = BTreeMap::new();
     for (at, entry) in restated.iter_mut().enumerate() {
         let key_pointer = format!("/items/{}/premises/{at}/key", index.get());
         let invalid = || {
@@ -659,8 +1025,8 @@ fn restate(
         let Some(key) = entry.get_mut("key") else {
             continue;
         };
-        let slot = slots.get(at).map(|premise| &premise.slot);
-        let package = slot
+        let package = slots
+            .get(at)
             .and_then(|slot| slot.guarantee.as_ref())
             .and_then(|clause| packages.of_component(&clause.component));
         check_component_key_package(package, key).map_err(|_| invalid())?;
@@ -670,21 +1036,24 @@ fn restate(
         if !key_holds_index_segment(key) {
             continue;
         }
-        let graphs = graphs.get_or_insert_with(|| component_graphs(ctx, composition));
+        let assumed = facts.assumed_at(slots, at);
+        let mut needed = vec![package];
+        needed.extend(assumed.iter().filter_map(|node| packages.of_clause(node)));
+        for identity in needed {
+            if !graphs.contains_key(identity) {
+                graphs.insert(identity.to_owned(), front.component_graph(identity));
+            }
+        }
         let graph_of = |package: &str| match graphs.get(package) {
             Some(Ok(graph)) => Ok(Some(graph)),
-            Some(Err(failure)) => Err(unavailable(index, composition.name(), failure)),
+            Some(Err(failure)) => Err(unavailable(index, &facts.name, failure)),
             None => Ok(None),
         };
         let Some(graph) = graph_of(package)? else {
             return Err(invalid());
         };
-        let assumed: &[filament_exact::NodeKey] = match slot.and_then(|slot| slot.key.as_ref()) {
-            Some(CompositionSlotKey::ComponentGuarantee(guarantee)) => &guarantee.assumptions,
-            _ => &[],
-        };
         let mut peers = Vec::with_capacity(assumed.len());
-        for node in assumed {
+        for node in &assumed {
             let peer = match packages.of_clause(node) {
                 Some(package) => graph_of(package)?,
                 None => None,
@@ -713,47 +1082,6 @@ fn restate(
         }
     }
     Ok(Value::Array(restated))
-}
-
-/// The graph of each component package of `composition`, by package identity:
-/// the graph the ids of the component's slots index (FSpec FR-322 "Scope"),
-/// or why it has none.
-fn component_graphs(
-    ctx: &Context<'_>,
-    composition: &CheckedComposition,
-) -> BTreeMap<String, Result<fsl_semantics::check::wire_id::WireGraph, Unavailable>> {
-    composition
-        .components()
-        .iter()
-        .map(|component| {
-            let package = component.subject.package.as_str();
-            let graph = match LibraryName::new(package)
-                .ok()
-                .and_then(|library| ctx.package.dependencies().get(&library).cloned())
-            {
-                None => Err(Unavailable::NotDependency),
-                Some(dependency) => {
-                    match crate::provider::read_package(
-                        &dependency,
-                        ctx.binding.packages,
-                        ctx.limits.emit,
-                    ) {
-                        Ok(read) => crate::analyze::DocumentGraphs::of_bytes(
-                            read.emission().package().bytes(),
-                        )
-                        .map_err(Unavailable::Emission),
-                        Err(crate::provider::NotAdmitted::Refused(refusal)) => {
-                            Err(Unavailable::Refused(refusal))
-                        }
-                        Err(crate::provider::NotAdmitted::Other(refusal)) => Err(
-                            Unavailable::Emission(GraphUnavailable::of_not_admitted(refusal)),
-                        ),
-                    }
-                }
-            };
-            (package.to_owned(), graph)
-        })
-        .collect()
 }
 
 #[cfg(test)]
