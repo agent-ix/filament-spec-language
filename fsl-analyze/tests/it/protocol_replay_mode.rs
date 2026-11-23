@@ -869,6 +869,64 @@ fn an_earlier_iteration_does_not_enable_a_later_one() {
     );
 }
 
+/// `P` with `Start`, two `await`s `W1` and `W2` after it, and `End`.
+fn await_protocol() -> String {
+    let wait = |name: &str, seen: &str, binder: &str| {
+        format!(
+            "await {name} after Start using t0 clock \"c\" within [0,1] \
+             match event {seen} by w as ({binder}: Boolean) {{ true }}; \
+             then sequence T{name} {{ }} timeout sequence O{name} {{ }} "
+        )
+    };
+    let run = format!(
+        "sequence Main {{ event Start by w as (st: Boolean) {{ true }}; {}{}event End by w as (en: Boolean) {{ true }}; }}",
+        wait("W1", "Seen1", "s1"),
+        wait("W2", "Seen2", "s2"),
+    );
+    crate::fill::contracts("self.v = 0") + &crate::fill::protocol("P", "", &run, "d")
+}
+
+/// A closed recording of [`await_protocol`]: events by `w` in local order.
+fn await_recording(nodes: &[&str]) -> Value {
+    let observations: Vec<Value> = nodes
+        .iter()
+        .map(|node| {
+            json!({"kind": "event", "node": format!("P::Main::{node}"), "role": "w",
+                   "instance": "w-1", "keys": {}, "record": {"ok": true}})
+        })
+        .collect();
+    json!({
+        "format": "filament.protocol-recording/1", "protocol": "P",
+        "observations": observations,
+        "local_order": {"w": (0..nodes.len()).collect::<Vec<_>>()},
+        "correlations": [],
+        "closure": {"state": "closed", "premises": [{"kind": "execution", "node": "P::Done"}]}
+    })
+}
+
+/// FR-895-AC-18 (TC-2531): `await` siblings are unordered and supply no
+/// predecessors: the event matched by `W2` and `End` are enabled with `Start`
+/// observed and `W1`'s match never observed.
+#[trace("TC-2531", "FR-895-AC-18")]
+#[test]
+fn await_siblings_are_not_predecessors_of_each_other() {
+    let source = await_protocol();
+    let recording = await_recording(&["Start", "W2::Seen2", "End"]);
+    assert_enabled(&source, &recording, "P::Main::W2::Seen2", 1);
+    assert_enabled(&source, &recording, "P::Main::End", 2);
+}
+
+/// FR-895-AC-19 (TC-2531): without `Start`, the step before the `await`s,
+/// the event matched by `W2` and `End` are `violated`, cause `unexpected`.
+#[trace("TC-2531", "FR-895-AC-19")]
+#[test]
+fn a_step_after_awaits_still_needs_the_steps_before_them() {
+    let source = await_protocol();
+    let recording = await_recording(&["W2::Seen2", "End"]);
+    assert_unexpected(&source, &recording, "P::Main::W2::Seen2", 0);
+    assert_unexpected(&source, &recording, "P::Main::End", 1);
+}
+
 // ---- FR-1032: the recording's document identity ---------------------------
 
 /// FR-895-AC-7's closed, conforming recording of `Flow`.
