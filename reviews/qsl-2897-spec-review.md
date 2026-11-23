@@ -36,4 +36,4 @@ Ticket: QSL-2897. Review of the FR-106 implementation-boundary notes this PR rew
 | --- | --- | --- |
 | FND-001 | fixed | The note now lists the proved Source causes and says AC-72, AC-73 and AC-76 stay unmet as two-route criteria until Bare passes. |
 | FND-002 | fixed | The note now states that the package route has `clock_declarations` `None`, that it refuses `RequiresBound`, and that QSL-2776 must supply the table. |
-| FND-003 | fixed | The note now lists the routes that read the one candidate set, the unenumerable report, and the model-based refusal, and ends with "no route ranges a Clock reference over an empty or partial set". |
+| FND-003 | fixed | The note now lists every enumeration route that reads the one candidate set or refuses, including the protocol record domains and the compensation enumerability check. It states that the model-based parameter case is refused. This matches the code at b5c45a96. |
