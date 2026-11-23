@@ -1419,7 +1419,16 @@ fn work<'a>(
                 item.backend.as_ref(),
             )
             .map(|routed| routed.with_options(item.options.backend_options.clone()));
-            let selection = fsl_replay::contract_check::select_contract(package, &item.claim);
+            let selection =
+                fsl_replay::contract_check::select_contract(package, &item.claim).map(|claim| {
+                    crate::contract_check::ContractRequest {
+                        package,
+                        claim,
+                        subject: simulation(input, binding, limits),
+                        abstract_subject: None,
+                        max_cases: item.options.max_cases,
+                    }
+                });
             crate::provider::contract_provider_item_over(
                 item.request_index,
                 backend.id(),
