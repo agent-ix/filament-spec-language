@@ -1945,6 +1945,7 @@ fn a_malformed_slot_domain_is_refused_at_its_locus() {
     // A binder typed Boolean instead of the slot domain's Integer.
     refused(
         &|wire| {
+            eprintln!("DBGQ {quantified0}", quantified0 = wire["semantic_graph"]["nodes"][quantifier]);
             let quantified = wire["semantic_graph"]["nodes"][quantifier].to_string();
             let parameter = nodes(wire)
                 .iter()
