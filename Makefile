@@ -346,7 +346,7 @@ fuzz-deep-input:
 # Each aggregate prerequisite depends on validation, rather than racing it as
 # a sibling under -j (or continuing past it under -k). Standalone lane commands
 # retain their existing behavior; this ordering belongs to the aggregate gate.
-CI_CHECKS := conformance check-no-committed-binaries ci-default-features ci-all-features test-deep-format ci-clean-build seam-probe string-edge route-lint checked-input canonical-types refinement-versioning facade-tests refinement-layering cargo-deny-bans ci-docs arch-lint-api-surface-fsl arch-lint-qualified-core build-no-std examples-check
+CI_CHECKS := conformance check-no-committed-binaries ci-default-features ci-all-features test-deep-format ci-clean-build seam-probe string-edge route-lint checked-input canonical-types refinement-versioning facade-tests refinement-layering cargo-deny-bans ci-docs arch-lint-api-surface-fsl arch-lint-qualified-core build-no-std examples-check termination-scaling parser-nesting-probes string-edge-install
 CI_TARGETS := $(CI_CHECKS)
 # The public aggregate validates the native documents before the xtask wrapper
 # runs the focused conformance lanes.
@@ -389,6 +389,8 @@ facade-tests:
 # negative check that a verdict this checkout no longer gives fails the target
 # (`xtask/tests/examples_check.rs`). Hosted CI stays manual; this is local.
 # A missing driver or examples checkout is an error, never a skip.
+# The ignored acceptance tests that read the examples checkout also run here by
+# exact name; FSL_RUN_INPUTS_FIXTURES is its authoritative run-inputs directory.
 FSL_DRIVER_DIR ?= $(SIBLINGS)/filament-driver
 FSL_EXAMPLES_DIR ?= $(SIBLINGS)/filament-examples
 export FSL_DRIVER_DIR FSL_EXAMPLES_DIR
@@ -398,6 +400,28 @@ EXAMPLES_CHECK_TESTS ?= cargo test --locked --package xtask --test examples_chec
 examples-check:
 	@$(EXAMPLES_XTASK) examples-check
 	$(EXAMPLES_CHECK_TESTS)
+	FSL_RUN_INPUTS_FIXTURES="$(FSL_EXAMPLES_DIR)/examples/run-inputs" cargo test --locked --package fsl-command --test it -- --ignored --exact cli_contract::run::canonical_run_acceptance_values_from_authoritative_examples cli_contract::run::canonical_run_acceptance_plans_retain_dispositions_and_severity
+	cargo test --locked --package filament-spec-language --test it -- --ignored --exact temporal_capture_run::the_canonical_false_guard_capture_example_is_inactive
+
+# Timing probe: wall time of the termination check over 5k to 40k self-recursive
+# members; asserts only the refusal count, so it runs by exact name in release.
+.PHONY: termination-scaling
+termination-scaling:
+	cargo test --locked --release --package fsl-semantics --lib -- --ignored --exact --nocapture check::termination::scaling::termination_scaling_over_self_recursive_members
+
+# Parser nesting probes: the longest chain of each shape the default ceilings
+# admit, and wall-clock parse time of long chains (release).
+.PHONY: parser-nesting-probes
+parser-nesting-probes:
+	cargo test --locked --package fsl-cst --test it -- --ignored --exact --nocapture nesting_levels::probe_longest_chains_at_default_ceilings
+	cargo test --locked --release --package fsl-cst --test it -- --ignored --exact --nocapture nesting_levels::probe_chain_parse_time
+
+# FR-064-AC-10: installs fsl-string-edge from its private Git source over the
+# network and runs it from outside FSL; needs network and private Git access.
+# `string-edge` above only runs the source scanner.
+.PHONY: string-edge-install
+string-edge-install:
+	cargo test --locked --package fsl-string-edge --test it -- --ignored --exact consumer::the_documented_git_install_and_library_dependency_work_outside_fsl
 
 # FR-059/FR-060 (ADR-011 §7.1 T-12, #215): architecture-conformance
 # checks over the FSL/IR/RT/CG ecosystem.

@@ -1570,7 +1570,7 @@ fn a_package_item_naming_a_local_clause_beside_a_composition_settles() {
 /// FR-1044-AC-10, second half, once the package route reads a composition:
 /// the same items, records and exit code as the source request.
 #[test]
-#[ignore = "QSL-2904: FR-1044-AC-10 execution remainder: owning worlds require the next library cohort's native before-work permission hook"]
+#[ignore = "QSL-2917: the package route answers a composition unit unsupported_construct/not-yet-implemented (exit 21, no items) where the source route settles items; needs the package-consumer composition API (FR-1044-AC-10), own ticket pending"]
 fn the_package_route_settles_the_same_items() {
     let ws = Workspace::new("compose-ac10-package-equal");
     let body = format!(
