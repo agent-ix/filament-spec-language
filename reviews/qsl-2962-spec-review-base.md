@@ -109,3 +109,21 @@ Not mergeable. The FR-027 diagnostic values are right to the byte, and the
 clause has a production producer (FND-002, FND-003). FR-027's "with FR-121's
 `call_site` entry" cannot compile the request as the command does (FND-001).
 FND-004 and FND-005 are gaps the wiring coder would otherwise have to decide.
+
+## New findings (disposition pass 1)
+
+Head cc626a9d4b451600aa8b511850b8655b34f2b21b (rebased on origin/main 3f0154a5).
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-006 | medium | The locate runs only after "its compile succeeds", but FR-027 does not say what is written when the locate refuses. The command writes the `output` file (fsl-command/src/command.rs:2992) and the `handoff` directory (command.rs:2979, `write_compile_handoff`) after `complete()` returns. A wiring that locates after those writes would refuse the compile and still leave a package file or a handoff on disk. FR-027 Outputs say only that intake and static failures carry no package bytes. Candidate: "...refuse the compile with no package bytes, writing no `output` file and no `handoff` directory". Add to AC-15: "no package bytes, and with `output` set no file is written". | spec/functional/FR-027-export-compiled-native-package.md:100; spec/functional/FR-027-export-compiled-native-package.md:161 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-027:100: "the command shall locate that selection over the request's own checked package, as FR-121's `call_site` does over a checked unit, with no second compile pass and no stage limits other than the request's own". |
+| FND-002 | fixed | The `package-reference` row is back to its origin/main text. The new "Producers no command reaches (current)" paragraph says `LibraryRefusal::MissingImport` "is written only by `resolve_libraries`, which no production entry calls; it writes no outcome diagnostic and has no row". This matches fsl-semantics/src/library/mod.rs:429 and checked_v2.rs:880-893. |
+| FND-003 | fixed | FR-286-AC-41 and TC-3211 are deleted, and no reference to them is left. The paragraph says `PackageError::MissingDefinition` "is a library-entry cause no command reaches today": `ExtensionRefusal::MissingDependency` refuses first, and `check_with_profile_catalog` "has no outcome-document conversion". Both match the code. |
+| FND-004 | fixed | FR-027:100: "or the request's `program` is a model unit or an FR-480 array of units, then the command shall refuse `invalid-request` naming `call_site`". FR-027-AC-21 tests both. |
+| FND-005 | fixed | FR-027:100 gives "category `refusal`, exit 20 (FR-285), at stage I1", and a `CallSiteRefusal::Fault` "settles internal-failure, exit 30". FR-027-AC-16 asserts category, exit and stage. |

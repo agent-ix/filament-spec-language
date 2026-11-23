@@ -33,3 +33,10 @@ unchanged text. The FR-121 Dependencies line is non-normative.
 
 Minor. Both are wording. They fall out of the SR-3611001 fixes, and the FR-027
 candidate also carries the category, exit and own-package wording.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-027:100 now reads "When a `1-draft` request carrying `call_site` is admitted and its compile succeeds, the command shall locate ...". The refusals read "If the selection is refused, then the command shall refuse the compile ..." and "If `call_site` is not an object ..., then the command shall refuse `invalid-request` naming `call_site`." |
+| FND-002 | fixed | The FR-286 note is now descriptive prose with no SHALL ("This is the current implementation gap, not a requirement"). |

@@ -46,3 +46,21 @@ message), `untestable` for FR-286-AC-41. Adverse-case coverage of FR-027's
 
 Partial. AC-15..17's values are strong and grounded. FND-001..003 tighten
 them. FR-286-AC-41 is untestable and should go.
+
+## New findings (disposition pass 1)
+
+Head cc626a9d4b451600aa8b511850b8655b34f2b21b.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-005 | medium | The new AC-18 and AC-19 are weakly pinned. AC-18 says the `hint` is "present exactly when the hint catalog has a row for the pair". The catalog has both rows: `missing_declaration`/`missing-name`, "Declare the name or import the package that declares it." (fsl-replay/src/outcome/hint.rs:218-222), and `ill_typed`/`operator-ineligible`, "Use an operator that accepts this type." (hint.rs:146-150). `OutcomeDiagnostic::new` sets that hint with no selection (outcome.rs:2511). Pin both texts; AC-19 asserts no hint at all. Neither AC asserts `locus`, `details`, `message`, category, exit or stage, though FR-027:100 gives every selection refusal category `refusal`, exit 20, stage I1. The exact messages, from call_site.rs:492 and 504 with `ImportedFunctionName` displayed as `library::function`: `missing_declaration/missing-name: package test/units declares no function test/units::nope` and `ill_typed/operator-ineligible: package test/units function test/units::first has a package-dependent signature`. Add "`locus` `null`, `details` `null`, that `message`, category `refusal`, exit 20, stage I1" to each. | spec/functional/FR-027-export-compiled-native-package.md:164-165 |
+| FND-006 | low | AC-21 leaves out two cases the text refuses. A `call_site` without `kind` is refused by "exactly those three members", and a `library` of `""` is not a library identity: `LibraryName::new` refuses only the empty string (fsl-semantics/src/library/mod.rs:53-59). Add "lacks `kind`" and "has `library` `\"\"`" to AC-21. | spec/functional/FR-027-export-compiled-native-package.md:167 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | AC-15 no longer has the item-level `Declined`/`InvalidInput` clause. |
+| FND-002 | fixed | AC-15 pins `message` exactly, as `missing_import/missing-selection: package <I> imports no library test/other` with `<I>` the program source's `identity` label. AC-16 asserts category `refusal`, exit 20 and stage I1. |
+| FND-003 | fixed | AC-18 covers `{test/units, nope}` (`missing_declaration`/`missing-name`, no `selection`). AC-19 covers `{test/units, first}` (`ill_typed`/`operator-ineligible`, no `selection`). Their pinning is FND-005. |
+| FND-004 | fixed | FR-286-AC-41 and TC-3211 are deleted. |

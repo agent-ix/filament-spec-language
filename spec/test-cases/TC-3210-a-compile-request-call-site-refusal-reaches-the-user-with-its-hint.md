@@ -32,8 +32,8 @@ The driver surface of `fsl compile` is tested in the filament-driver repository 
 
 ## Expected Results
 
-- Step 1: AC-15's diagnostic, byte for byte; category `refusal`, exit 20, stage I1; the text form holds `  hint: Call a function of a library that the unit imports directly, or add the import.`.
+- Step 1: AC-15's diagnostic, byte for byte, and no file at `output` and no `handoff` directory; category `refusal`, exit 20, stage I1; the text form holds `  hint: Call a function of a library that the unit imports directly, or add the import.`.
 - Step 2: AC-15's diagnostic naming `test/absent` and `test/units`.
-- Step 3: `missing_declaration`/`missing-name` and `ill_typed`/`operator-ineligible`, no `selection`.
+- Step 3: AC-18's and AC-19's diagnostics (`missing_declaration`/`missing-name`, `ill_typed`/`operator-ineligible`) with their hints and messages, no `selection`.
 - Step 4: the package bytes of the request without `call_site`.
 - Step 5: `invalid-request` naming `call_site`.

@@ -42,3 +42,13 @@ FND-001..003.
 Not clean. FND-001 is a real Inputs and Outputs contradiction. FND-003 leaves
 refusals that the wiring coder would have to decide. The rest are
 bookkeeping. Each has candidate wording.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-027 Inputs now list "the optional `call_site` member (a located imported-function selection that changes nothing in the outcome)" and say "no runtime artifacts or execution selection other than `call_site`". |
+| FND-002 | fixed | FR-027 gains `depends_on` FR-121 and FR-286 in `relationships` and in Dependencies. The FR-027 line in FR-121's Dependencies is gone, so FR-121 matches origin/main. |
+| FND-003 | fixed | FR-027:100: "If `call_site` is not an object with exactly those three members, or its `library` is not a library identity or its `function` is not an identifier ... refuse `invalid-request` naming `call_site`". FR-027-AC-21 lists the cases. |
+| FND-004 | fixed | TC-3210 names `fsl-command/tests/it/cli_contract/compile.rs` and `fsl-command/tests/it/selection_text.rs`, and says "The driver surface of `fsl compile` is tested in the filament-driver repository (FR-865-AC-16)". |
+| FND-005 | fixed | TC-3210 records that `the_unimported_library_producer_text_holds_its_hint` "builds `UnknownImport` by hand ... the code change re-points it through `compile_outcome` (step 1) and re-tags it, and until then it does not verify FR-865-AC-19". The code re-point belongs to the code ticket. |
