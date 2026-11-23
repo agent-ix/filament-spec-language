@@ -1763,6 +1763,7 @@ fn an_element_presence_quantifier_is_scoped_in_its_predicate() {
         .find(|node| node["node_id"] == guard_id)
         .expect("the guard");
     let dependencies = node["dependencies"].as_array_mut().expect("dependencies");
+    eprintln!("DBGD before {dependencies:?} param {parameter}");
     dependencies.push(parameter.clone());
     dependencies.sort_by_key(|id| order.iter().position(|held| held == id));
     dependencies.dedup();
