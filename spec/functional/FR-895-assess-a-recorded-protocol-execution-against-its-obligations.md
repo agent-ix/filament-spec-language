@@ -202,13 +202,14 @@ and FR-894's duplicate kinds. Every causal-order verdict, `satisfied` or
     `parallel` runs in SHALL count toward rule 26 only when it runs in the
     same iteration of that `repeat` as the cancelled step, for each such
     `repeat`.
-28. The iteration of a step of a `repeat` with no other `repeat` between
-    them SHALL be the step's rank among the observations of its node in
-    causal order, taken through each `case` to that case's rank among the
-    `choice`'s takings.
-29. The iteration of a step of a `repeat` with another `repeat` between them
-    SHALL be the most times any step before that other `repeat` in the body,
-    in program order, was observed causally before the step.
+28. The assessment SHALL take the iteration of a step of a `repeat`, with no
+    other `repeat` between them, as the step's rank among the observations
+    of its node in causal order, taken through each `case` to that case's
+    rank among the `choice`'s takings.
+29. The assessment SHALL take the iteration of a step of a `repeat`, with
+    another `repeat` between them, as the most times any step before that
+    other `repeat` in the body, in program order, was observed causally
+    before the step.
 30. The assessment SHALL NOT count a step toward rule 26 when either
     iteration is not determined, which is when no step precedes the inner
     `repeat` in the body: a missed violation, never a false one.
