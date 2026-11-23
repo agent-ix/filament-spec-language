@@ -927,9 +927,12 @@ fn reidentified(
     offered
 }
 
-#[trace("TC-3159", "FR-202-AC-34")]
+/// FR-202's checked-subject subsystem entry: "exhaustion and cancellation
+/// retain the actual typed `incomplete` cause" (no AC states it yet).
+#[trace("FR-202")]
 #[test]
 fn the_subsystem_entry_keeps_typed_limit_and_cancellation_causes() {
+    use std::sync::atomic::AtomicUsize;
     let world = World::new(&architecture(
         false,
         &claim(
@@ -939,9 +942,12 @@ fn the_subsystem_entry_keeps_typed_limit_and_cancellation_causes() {
         ),
     ));
     let found = evidence(&refuted(&world, "ComesUp"));
-    let system = ModelSystem::new(world.subject().simulation).unwrap();
-    let replay_with = |limits: &fsl_analyze::exact_probabilistic::ExactProbLimits,
-                       cancel: &Cancel| {
+    let replay_under = |meter: filament_exact::ScalarLimits,
+                        limits: &fsl_analyze::exact_probabilistic::ExactProbLimits,
+                        cancel: &Cancel| {
+        let mut simulation = world.subject().simulation;
+        simulation.meter = meter;
+        let system = ModelSystem::new(simulation).unwrap();
         fsl_replay::replay_probabilistic_witness(
             &world.package,
             &system,
@@ -951,24 +957,96 @@ fn the_subsystem_entry_keeps_typed_limit_and_cancellation_causes() {
             cancel,
         )
     };
-    let cancelled = Cancel::new();
-    cancelled.cancel(CancelCause::Requested);
-    let replayed = replay_with(
-        &fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
-        &cancelled,
-    );
-    assert!(
-        matches!(
-            replayed,
-            Err(ProbabilityWitnessError::Graph(
-                ExactProbabilityGraphError::Cancelled(CancelCause::Requested)
-            ))
-        ),
-        "{replayed:?}"
-    );
-    let mut one_state = fsl_analyze::exact_probabilistic::ExactProbLimits::default();
+    let defaults = fsl_analyze::exact_probabilistic::ExactProbLimits::default();
+    // A handle that cancels itself at its `at`-th meter charge.
+    let cancelling_at = |at: usize| {
+        let slot = Arc::new(OnceLock::<Cancel>::new());
+        let charges = Arc::new(AtomicUsize::new(0));
+        let (handle, counted) = (slot.clone(), charges.clone());
+        let cancel = Cancel::observing(move || {
+            if counted.fetch_add(1, Ordering::SeqCst) + 1 == at {
+                if let Some(cancel) = handle.get() {
+                    cancel.cancel(CancelCause::Requested);
+                }
+            }
+        });
+        slot.set(cancel.clone()).expect("set once");
+        (cancel, charges)
+    };
+    let (uncancelled, charges) = cancelling_at(usize::MAX);
+    assert!(matches!(
+        replay_under(prob_world::UNLIMITED, &defaults, &uncancelled),
+        Ok(ProbabilityWitnessReplay::Reproduced(_))
+    ));
+    let total = charges.load(Ordering::SeqCst);
+    assert!(total > 1, "the entry charges its own meter");
+    // Cancellation spread over the replay, through the entry's own checks
+    // up to its last charge before the final acceptance poll, keeps its
+    // cause. The last charge lies inside the entry, after every check.
+    let mut points = (1..total).step_by((total / 64).max(1)).collect::<Vec<_>>();
+    points.push(total);
+    for at in points {
+        let (cancel, _) = cancelling_at(at);
+        let replayed = replay_under(prob_world::UNLIMITED, &defaults, &cancel);
+        assert!(
+            matches!(
+                replayed,
+                Err(ProbabilityWitnessError::Graph(
+                    ExactProbabilityGraphError::Cancelled(CancelCause::Requested)
+                ))
+            ),
+            "cancel at charge {at} of {total}: {replayed:?}"
+        );
+    }
+    // Each work budget below the replay's need stops it at that budget.
+    let mut work = 1;
+    loop {
+        let meter = filament_exact::ScalarLimits {
+            work_units: work,
+            ..prob_world::UNLIMITED
+        };
+        match replay_under(meter, &defaults, &Cancel::new()) {
+            Ok(ProbabilityWitnessReplay::Reproduced(_)) => break,
+            replayed => assert!(
+                matches!(
+                    replayed,
+                    Err(ProbabilityWitnessError::Limit {
+                        limit: ModelCheckLimit::EvaluationMeter {
+                            counter: filament_exact::LimitKind::WorkUnits
+                        },
+                        value,
+                    }) if value == work
+                ),
+                "work_units {work}: {replayed:?}"
+            ),
+        }
+        work *= 2;
+    }
+    assert!(work > 1, "the entry spends work units");
+    // Each working-storage budget below the replay's need stops it there.
+    let mut storage = 1;
+    loop {
+        let mut limits = defaults;
+        limits.document.storage_bytes = storage;
+        match replay_under(prob_world::UNLIMITED, &limits, &Cancel::new()) {
+            Ok(ProbabilityWitnessReplay::Reproduced(_)) => break,
+            replayed => assert!(
+                matches!(
+                    replayed,
+                    Err(ProbabilityWitnessError::Limit {
+                        limit: ModelCheckLimit::CertificateMaxWorkingBytes,
+                        value,
+                    }) if value == storage
+                ),
+                "storage_bytes {storage}: {replayed:?}"
+            ),
+        }
+        storage *= 2;
+    }
+    assert!(storage > 1, "the entry retains working storage");
+    let mut one_state = defaults;
     one_state.model.limits.max_states = 1;
-    let replayed = replay_with(&one_state, &Cancel::new());
+    let replayed = replay_under(prob_world::UNLIMITED, &one_state, &Cancel::new());
     assert!(
         matches!(
             replayed,

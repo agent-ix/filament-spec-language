@@ -30,3 +30,11 @@ Ticket: QSL-2921. A planless gap analysis scoped to the criteria this PR impleme
 - Semantic review: run inline at the caller's request. Test-intent findings are recorded in the code-review SR (FND-005 to FND-008).
 - Reverse gaps: none. Stubs: none.
 - Plan completion: not assessed
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | deferred | Spec correction of FR-202-AC-33's degenerate example is tracked as QSL-2941. |
+| FND-002 | deferred | Flagged as optional vocabulary alignment, not a merge demand; this PR's original base predates #3551, so alignment with cyclic-*-state-predicate/v1 is a follow-up decision for the code lead. |
+| FND-003 | fixed | `the_subsystem_entry_keeps_typed_limit_and_cancellation_causes` drives the entry to `Limit{ExactProbMaxStates, 1}`. The cancellation half is weaker than it looks; see code-review FND-009. |

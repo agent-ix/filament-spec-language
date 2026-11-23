@@ -39,3 +39,22 @@ Reviewer runs (fresh): `cargo test -p fsl-analyze --test it --no-run`, then the 
 - Checked: independence (a), spec clauses and scheduler rules (b), certificate soundness (c), tests and traces (d), rust-review (f): no unsafe; no unwrap or panic in non-test code; checked integer conversions; BTreeMap and sorted scheduler for determinism; rational inputs bounded by `scalar_bits`; visits charged through `reward::visit`.
 - Changed assertions: `zero_reward_still_requires_properness...` (unsupported to refuted) follows FR-201-AC-36 (improper means infinite) plus FR-202-AC-35. The `cyclic::target_free_recurrence...` change (unsupported to Refuted) follows FR-202-AC-34 and AC-21. Neither change weakens the test, apart from FND-008.
 - Pre-existing failure: `cyclic_mdp::strict_rows_boundaries_and_quantitative_source_scope_are_closed` panics in the test helper's compile `unwrap` (tests/it/bounded.rs:79), because the front end refuses thresholds `0`/`1` as QualitativeThreshold (fsl-semantics/src/check/probabilistic.rs:909-927). That happens before any code this PR touches, and neither the front end nor that test differs between the merge-base, the PR head and origin/main. It is pre-existing. Confirmed by reasoning; it was not re-run on main.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-009 | low | The new limit/cancellation test's pre-cancelled call is caught by `replay_probabilistic_witness_impl`'s first `poll_cancel` before the subsystem entry is dispatched, so the entry's own cancellation (final acceptance poll, mid-check) is not exercised; no work/storage exhaustion case; and it is tagged TC-3159/FR-202-AC-34, whose text says nothing about limits or cancellation | fsl-analyze/tests/it/exact_probabilistic_item/subsystem_refutation.rs:933-982; fsl-replay/src/probability_certificate/witness.rs:572 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `reached`, `distances` (now one predecessor BFS) and `avoidance` charge `step(budget)` per state and edge, which polls cancellation and charges the candidate meter. `avoiding_policy` is now two linear worklists charged through `tick`. Pass 1 gives the same results; pass 2 keeps the BFS levels but may break ties between choices differently (still deterministic and still valid). |
+| FND-002 | fixed | One shared `bottom_components` in probability_certificate.rs, used by long_run.rs and refutation.rs, charges once per stack step, assigned node, predecessor edge and successor edge. long_run keeps exactly its old charge points and its Order-only phase observation. |
+| FND-003 | fixed | `avoidance` returns `Ok(None)` when a positive reached state has no distance to the union. |
+| FND-004 | fixed | `choice_indices` is removed. `refutation::scheduled_choices` walks only the chain the rows induce, under the document meter and storage. It still refuses non-identity, unsorted, missing, extra and unreached-state rows. |
+| FND-005 | fixed | TC-3160 asserts the decisive-counterexample basis and truth false, no exact certificate or document, no wire `value`, and the inclusive proof at `>= 1`. TC-3162 asserts the decisive basis, keeps the counterexample, and adds an acyclic control where `searches > 0`. |
+| FND-006 | fixed | The case is renamed `halved`. An AC-34 equality case (FR-412's chain at `>= 1/2`) now rejects ThresholdMissed at the initial key. |
+| FND-007 | fixed | A certificate naming only `ok` under `stay` rejects RankBroken at `ok`. |
+| FND-008 | fixed | The test is retagged FR-202-AC-21 and asserts `path_searches == 0`. `test-support` is enabled only on the fsl-analyze dev-dependency: resolver 2, no Cargo.lock change, not a production dependency. |
