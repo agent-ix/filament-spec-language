@@ -3,7 +3,7 @@ id: SR-20261123010001
 title: "Code review of filament-spec-language PR #3575: lift nested reference rows (option, collection, map)"
 type: SpecReview
 analysis: code-review
-scope: "agent-ix/filament-spec-language@af2554ebd81b6632cec71c046914f1ef2c2a102e; PR #3575 diff against origin/main 891e6137: fsl-semantics/src/check/refinement.rs, fsl-semantics/src/check/refinement/history.rs, fsl-semantics/src/check/refinement/protocol.rs, fsl-replay/src/refinement/map.rs, fsl-semantics/tests/it/refinement_declarations.rs, fsl-replay/tests/it/refinement_unmapped.rs, fsl-analyze/tests/it/analyze_family_cli.rs, fsl-analyze/tests/it/refinement_reads.rs, tests/support/ring_world.rs, fsl-package/src/emit/tests/admission_corpus.rs"
+scope: "agent-ix/filament-spec-language@fdb12c83954d3aba970b8f5f13be1d21c3f34833; PR #3575 full diff against origin/main 82a764c5, including the final protocol-node test-fixture arity fix"
 review_set: subset
 ---
 # Code review of filament-spec-language PR #3575
@@ -118,3 +118,24 @@ or move it to a ticket.
 | FND-013 | fixed | `a_reference_field_lifts_to_the_declared_type_among_two_rows` runs `map_state` over the real `twin` world in both row orders and asserts `twin` equals `abstracted.object_reference(Cell, "r")`, and that `cells` holds `r` |
 | FND-014 | fixed | `choose_row` picks by conformance (`identity_conforms`, the abstract type hierarchy), most specific wins; no match or ambiguity is `Lifting::Fault`; the unit test covers the supertype, nested and lone cases with exact values |
 | FND-015 | deferred | Node-row arguments still carry no declared type. FR-141 now states the interim rule (one row names the type uniquely; several rows give `StepVerdict::Fault`). No fixture has an argument-bearing node row, so the Fault branch has no test; this needs a follow-up ticket to pass the node record's field types, which S3 already uses |
+
+## Dispositions (round 5, head 011df2d0)
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-016 | deferred | QSL-2991 owns the inherited-operation receiver mismatch. S3 still types the receiver against the step row's target type in `refinement.rs`, while replay selects by the operation's declaring type; the follow-up remains out of this PR's scope. |
+| FND-017 | deferred | QSL-2991 owns same-population row selection. `map_state` still takes the first eligible row in declaration order, while S3 permits distinct abstract target rows for the same concrete type; the follow-up will choose the most-specific row or refuse ambiguity. |
+
+## Review refresh
+
+At head `011df2d0104bd90c5d087c8d7cbd3eb175aa15c2`, the test fixture hoists leading profile declarations into the unit preamble and qualifies the abstract protocol as `Q::P`. The ambiguity-test borrow failure was fixed by the earlier follow-up. Titan validation was still running when this review was recorded; see the code lead's Titan report for its final result. These test-fixture fixes introduce no new code-review finding.
+
+## Dispositions (round 6, head fdb12c83)
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-015 | fixed | `a_protocol_node_row_faults_when_its_reference_type_has_multiple_object_rows` now supplies the reference-bearing node-row argument and asserts `StepVerdict::Fault`, covering the previously untested ambiguous-row branch. The follow-up to pass declared node field types remains tracked by QSL-2991. |
+
+## Review refresh (head fdb12c83)
+
+The final fixture edit supplies both required node-row arguments (`self.ring, x`). It adds evidence for the interim rule already stated in FR-141; the type-forwarding enhancement remains in QSL-2991. FND-016 and FND-017 remain deferred there. No new finding.

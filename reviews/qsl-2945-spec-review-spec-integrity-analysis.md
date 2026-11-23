@@ -3,7 +3,7 @@ id: SR-20261123010003
 title: "Spec integrity review of filament-spec-language PR #3575: nested reference lifting"
 type: SpecReview
 analysis: integrity
-scope: "agent-ix/filament-spec-language@af2554ebd81b6632cec71c046914f1ef2c2a102e; spec/functional/FR-135, FR-140, FR-630 (context), spec/test-cases/TC-540, TC-1086, TC-1590 (context)"
+scope: "agent-ix/filament-spec-language@fdb12c83954d3aba970b8f5f13be1d21c3f34833; spec/decisions/ADR-020; spec/functional/FR-135, FR-140, FR-141, FR-630; spec/test-cases/TC-540, TC-546, TC-1086, TC-1590"
 review_set: subset
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-135
@@ -98,3 +98,13 @@ to avoid.
 | --- | --- | --- |
 | FND-009 | fixed | FR-141 now takes the receiver's type from the type that declares the abstract operation (RM-5), by FR-140's conformance rule; FR-141-AC-14 and TC-546 step 9 are added |
 | FND-010 | fixed | FR-140 replaces the first-row fallback with conformance and most-specific choice, and `MappingFailure::Fault` when none or no most-specific row conforms, stating that S3 admits no such row |
+
+## Dispositions (round 5, head 011df2d0)
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-011 | fixed | ADR-020 RM-3 now records the most-specific conforming row rule for a concrete type used by several abstract populations, including a fault when no unique most-specific type exists. |
+
+## Review refresh
+
+The amended RM-3 addresses the prior decision-record gap. The same-population case in code-review FND-017 remains tracked separately by QSL-2991; this review did not expand the PR beyond the Arch-assigned scope. The final fixture-only update adds test evidence but does not change the requirements.

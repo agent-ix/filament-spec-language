@@ -3,7 +3,7 @@ id: SR-20261123010002
 title: "Gap analysis of filament-spec-language PR #3575: nested reference lifting"
 type: SpecReview
 analysis: gap-analysis
-scope: "agent-ix/filament-spec-language@af2554ebd81b6632cec71c046914f1ef2c2a102e; PR #3575 diff: FR-135-AC-6, FR-140-AC-16, FR-630-AC-4, TC-540 step 6, TC-1086 step 10, TC-1590 step 4 and their tagged tests"
+scope: "agent-ix/filament-spec-language@fdb12c83954d3aba970b8f5f13be1d21c3f34833; PR #3575 diff against origin/main 82a764c5: FR-135-AC-6, FR-140-AC-16/17, FR-141-AC-13/14/15, FR-630-AC-4, TC-540, TC-546, TC-1086, TC-1590 and their tagged tests"
 review_set: subset
 ---
 # Gap analysis of filament-spec-language PR #3575
@@ -74,3 +74,7 @@ have a tagged test that asserts exact codes and values. The gaps are FND-001
 | --- | --- | --- |
 | FND-005 | fixed | Retagged `#[trace("TC-546", "FR-141-AC-13")]` |
 | FND-006 | fixed | TC-540 step 6 now lists the depth-two row, the box/tuple/union rows pending QSL-2959, and FR-135-AC-13 |
+
+## Review refresh (head fdb12c83)
+
+`quire matrix --scope . --format json` completed with exit 0. The current static matrix reports `FR-135-AC-6`, `FR-140-AC-16`, `FR-140-AC-17`, `FR-141-AC-13`, `FR-141-AC-14`, `FR-141-AC-15` and `FR-630-AC-4` as tagged. The `incomparable_conforming_rows_are_ambiguous` test binds `FR-140-AC-17`; the protocol node-row test binds `FR-141-AC-15`. The fixture corrections add no uncovered criterion. The evidence-backed `quoin matrix --repo . --json` could not build its matrix: exit 1, `CORE_REFUSED: request exceeds the accepted size`. Plan completion: not assessed. No new gap finding.
