@@ -3587,6 +3587,12 @@ impl<'a> WorkInputs<'_, 'a> {
             ExtentClassification::Bounded => fsl_route::Mode::Bounded,
             ExtentClassification::Unbounded { .. } => fsl_route::Mode::Unbounded,
         };
+        // FR-940: the source route's decision itself, not a copy of it.
+        built = super::super::request::contract_checker_bound(
+            built,
+            item,
+            &negotiated.disposition,
+        );
         built.required(item.options.required).disposed(
             negotiated.disposition.clone(),
             negotiated.diagnostic.clone(),
