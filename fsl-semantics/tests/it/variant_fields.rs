@@ -1444,6 +1444,25 @@ fn refusal_of(
     }
 }
 
+/// The path of `field` on the first object of the first population in a snapshot.
+fn snapshot_field_steps(field: &str) -> Vec<PathStep> {
+    snapshot_field_steps_then(field, [])
+}
+
+/// The path of `field` on the first object of the first population, continued by `rest`.
+fn snapshot_field_steps_then<const N: usize>(field: &str, rest: [PathStep; N]) -> Vec<PathStep> {
+    let mut steps = vec![
+        PathStep::Field("populations".to_owned()),
+        PathStep::Index(0),
+        PathStep::Field("objects".to_owned()),
+        PathStep::Index(0),
+        PathStep::Field("fields".to_owned()),
+        PathStep::Field(field.to_owned()),
+    ];
+    steps.extend(rest);
+    steps
+}
+
 /// TC-1010 steps 2 and 3 (FR-360-AC-10): each malformed form refuses
 /// `invalid_runtime_input` with its cause, and a value with several defects
 /// reports the first in FR-360 item 9's order.
@@ -1562,7 +1581,7 @@ fn each_malformed_variant_form_refuses_with_its_cause_in_item_9_order() {
         let (code, found, path, member) = refusal_of(&replay, value);
         assert_eq!((code, found), (invalid, cause), "{label}");
         assert_eq!(member.as_deref(), expected_member, "{label}");
-        assert!(path.is_empty(), "{label}: the value is the field itself");
+        assert_eq!(path, snapshot_field_steps("tier"), "{label}: the value is the field itself");
     }
 }
 
@@ -1580,7 +1599,10 @@ fn a_defect_in_a_nested_variant_value_is_refused_at_its_path() {
         panic!("a refusal, not {outcome:?}");
     };
     assert_eq!(record.catalog.cause(), "invalid-value");
-    assert_eq!(record.path, [PathStep::OptionValue]);
+    assert_eq!(
+        record.path,
+        snapshot_field_steps_then("backup", [PathStep::OptionValue])
+    );
 
     let outcome = replay.admit(json!({
         "tier": variant_json("Tier", "Gold"),
@@ -1590,7 +1612,10 @@ fn a_defect_in_a_nested_variant_value_is_refused_at_its_path() {
         panic!("a refusal, not {outcome:?}");
     };
     assert_eq!(record.catalog.cause(), "wrong-value-kind");
-    assert_eq!(record.path, [PathStep::Index(1)]);
+    assert_eq!(
+        record.path,
+        snapshot_field_steps_then("history", [PathStep::Index(1)])
+    );
 }
 
 // ---------------------------------------------------------------------------
