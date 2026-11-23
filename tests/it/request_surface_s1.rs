@@ -1213,7 +1213,7 @@ fn check_markdown_refuses_doubled_and_headless_fences() {
 /// Markdown file as native source and refuses it.
 #[test]
 #[trace("FSpec-TC-1243", "FSpec-FR-563-AC-2")]
-#[ignore = "QSL-2977: check argv does not parse --markdown or --format, so it refuses invalid-request instead of reporting per-fence items"]
+#[ignore = "QSL-2977: check argv does not parse --format, so the native-source check of a Markdown file refuses invalid-request instead of invalid_syntax, and --markdown is unparsed too"]
 fn check_without_markdown_reads_native_source() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join("spec.md"), "# Spec\n\ntext\n").unwrap();
