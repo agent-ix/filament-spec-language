@@ -1457,6 +1457,7 @@ pub(super) fn finish(
         )
         .map_err(EmitRefusal::from)
     })?;
+    let retained_nodes = super::RetainedNodes::of(&semantic_graph);
     let nodes = super::document_nodes(semantic_graph)?;
     let mut rows = carry_rows(retained, changes);
     follow_final_bindings(&mut rows.selected_source_record_rows, &nodes)?;
@@ -1492,11 +1493,11 @@ pub(super) fn finish(
         identity_row_selection: super::identity_rows::IdentityRowSelection::default(),
         equality_producer_identity_rows: rows.equality_producer_identity_rows,
         equality_fact_witness_rows: rows.equality_fact_witness_rows,
-        wire_nodes: std::sync::Arc::new(nodes),
+        retained_nodes,
         temporal_binding_rows: rows.temporal_binding_rows,
         temporal_rows: rows.temporal_rows,
     }
-    .with_identity_row_selection())
+    .with_identity_row_selection(&nodes))
 }
 
 /// Carry the original package-local/emitted filter onto final rows. This is

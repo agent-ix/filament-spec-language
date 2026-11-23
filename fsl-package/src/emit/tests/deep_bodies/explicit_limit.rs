@@ -82,9 +82,10 @@ fn ceilings(
     }
 }
 
-fn qualify(family: Family, count: usize, require_default_denial: bool) {
+/// The family's source, checked and linked. Source-derived finite S1/S3
+/// ceilings are fixed before checking, too.
+fn checked_family(family: Family, count: usize) -> (String, CheckedPackage) {
     let text = source(family, count);
-    // Source-derived finite S1/S3 ceilings are fixed before checking, too.
     let input = u64::try_from(text.len()).unwrap();
     let graph = deep_declarations(&text)
         .check(
@@ -95,7 +96,11 @@ fn qualify(family: Family, count: usize, require_default_denial: bool) {
             &fsl_semantics::check::test_support::ZeroRewardEvaluator,
         )
         .unwrap_or_else(|errors| panic!("{family:?}: checking failed ({} refusals)", errors.len()));
-    let package = CheckedPackage::link(graph);
+    (text, CheckedPackage::link(graph))
+}
+
+fn qualify(family: Family, count: usize, require_default_denial: bool) {
+    let (text, package) = checked_family(family, count);
     let body = package.graph().function_state(0).unwrap().body.body();
     let mut pending = vec![body.root()];
     let mut terms = Vec::with_capacity(count);
@@ -383,4 +388,83 @@ fn row_preflight_names_the_first_unpaid_byte_and_legacy_whole_path_refuses() {
 #[ignore = "QSL-2894: two 100,000-step families exceed the 12 GB queue watchdog (14.3 GB peak, 10m11s wall, killed); run this exact test in its named lane"]
 fn two_100000_step_families_measure_complete_wire_and_native_work() {
     on_small_stack(100_000, true);
+}
+
+/// Heap bytes per step of one emission of `family` at `count` steps, counted
+/// on the emitting thread by the allocation counter: the live peak while
+/// emitting, what the returned emission still holds, every byte allocated,
+/// and the bytes written.
+#[derive(Debug)]
+struct EmitHeap {
+    peak: u64,
+    retained: u64,
+    total: u64,
+    wire: u64,
+}
+
+fn emit_heap(family: Family, count: usize) -> EmitHeap {
+    std::thread::Builder::new()
+        .stack_size(STACK)
+        .spawn(move || {
+            let (_, package) = checked_family(family, count);
+            let mut emission = None;
+            let info = allocation_counter::measure(|| {
+                emission = Some(
+                    crate::emit::emit_checked(&package, crate::EmitLimits::new(1 << 32))
+                        .unwrap_or_else(|failure| {
+                            panic!("{family:?}: emission failed with code {:?}", failure.code())
+                        }),
+                );
+            });
+            let wire = emission.expect("emitted").package().bytes().len();
+            let steps = u64::try_from(count).unwrap();
+            EmitHeap {
+                peak: info.bytes_max / steps,
+                retained: u64::try_from(info.bytes_current.max(0)).unwrap() / steps,
+                total: info.bytes_total / steps,
+                wire: u64::try_from(wire).unwrap() / steps,
+            }
+        })
+        .unwrap()
+        .join()
+        .unwrap()
+}
+
+/// QSL-2894: emitting a deep chain holds a bounded heap per step, allocates
+/// a bounded number of bytes per step, and returns an emission (which the
+/// package remembers) that holds the bytes and the source map but not the
+/// typed nodes. Each ceiling is the value measured at 5,000 steps with about
+/// 12% headroom (Sum: live peak 53.8 KB, retained 8.8 KB, allocated 337 KB;
+/// Lets: 77.3 KB, 14.5 KB, 580 KB per step). Doubling the chain must not
+/// raise the bytes allocated per step beyond 10%, which a per-node rebuild
+/// of a growing prefix would.
+#[test]
+fn deep_chain_emission_heap_and_allocation_per_step_are_bounded() {
+    // (family, live peak, retained, allocated) in bytes per step.
+    for (family, peak, retained, total) in [
+        (Family::Sum, 60_000, 10_500, 375_000),
+        (Family::Lets, 86_000, 17_000, 640_000),
+    ] {
+        let single = emit_heap(family, 2_500);
+        let double = emit_heap(family, 5_000);
+        for measured in [&single, &double] {
+            assert!(measured.peak <= peak, "{family:?}: live peak {measured:?}");
+            assert!(
+                measured.retained <= retained,
+                "{family:?}: retained {measured:?}"
+            );
+            assert!(
+                measured.total <= total,
+                "{family:?}: allocated {measured:?}"
+            );
+            assert!(
+                2 * measured.retained <= 5 * measured.wire,
+                "{family:?}: the emission holds no more than the bytes and the source map {measured:?}"
+            );
+        }
+        assert!(
+            double.total * 10 <= single.total * 11,
+            "{family:?}: allocation per step grows with the chain: {single:?} then {double:?}"
+        );
+    }
 }

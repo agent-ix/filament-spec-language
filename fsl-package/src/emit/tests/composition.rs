@@ -690,7 +690,7 @@ fn composition_declaration_and_canonical_members_keep_their_authored_regions() {
             .expect("the named source clause in its own checked dependency")
             .identity();
         let emission = emit_checked(&dependency.package).expect("the genuine dependency emits");
-        let graph = WireGraph::new(emission.wire_nodes.iter().map(|node| &node.node_id))
+        let graph = WireGraph::of_package_bytes(emission.package().bytes())
             .expect("the dependency's document graph");
         let position = graph
             .keys()

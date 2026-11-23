@@ -553,12 +553,11 @@ fn function_check_modes_spell_the_ids_the_emitted_bytes_record() {
         })
         .collect();
     let typed: Vec<(Vec<u8>, Option<String>)> = emission
-        .function_check_modes(crate::EmitLimits::fixture())
-        .unwrap()
-        .into_iter()
+        .function_check_modes()
+        .iter()
         .map(|(id, mode)| {
             (
-                quire_canonical::to_vec(&id, quire_canonical::Limits::new(u64::MAX)).unwrap(),
+                quire_canonical::to_vec(id, quire_canonical::Limits::new(u64::MAX)).unwrap(),
                 mode.map(str::to_owned),
             )
         })
@@ -584,8 +583,15 @@ fn function_check_modes_spell_the_ids_the_emitted_bytes_record() {
 #[test]
 fn function_check_modes_key_an_indexed_function_id_by_its_operand_slot() {
     use filament_contract_model::{CheckedNodePathSegment as Segment, CheckedOperandEntry};
-    let mut emission = emit(&acme_dispatch_package("Order/count"));
-    let node = std::sync::Arc::make_mut(&mut emission.wire_nodes)
+    let package = acme_dispatch_package("Order/count");
+    let source = package.graph().source().clone();
+    let mut nodes = crate::emit::emitted_document_nodes(
+        &package,
+        move |_| Some(SourceRegion::new(source.clone(), 0, TEXT.len() as u64).unwrap()),
+        crate::EmitLimits::fixture(),
+    )
+    .expect("the package emits");
+    let node = nodes
         .iter_mut()
         .find(|node| &*node.node_tag == "function")
         .expect("a function node");
@@ -602,9 +608,16 @@ fn function_check_modes_key_an_indexed_function_id_by_its_operand_slot() {
         expected.node_id.path.last(),
         Some(&Segment::Operand(u64::try_from(slot).unwrap()))
     );
-    let modes = emission
-        .function_check_modes(crate::EmitLimits::fixture())
-        .unwrap();
+    // The retained modes are read from the graph the bytes are encoded
+    // from: every node after the same operand-slot pass.
+    let operand_rows = write_operand_slots(&mut nodes, crate::EmitLimits::fixture()).unwrap();
+    let retained =
+        crate::emit::RetainedNodes::of(&filament_contract_model::CheckedSemanticGraphV2 {
+            graph_version: GRAPH_V2.into(),
+            nodes,
+            operand_rows,
+        });
+    let modes = &retained.function_modes;
     assert_eq!(modes[0].0, expected.node_id);
     assert!(modes
         .iter()
