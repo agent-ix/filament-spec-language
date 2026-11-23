@@ -879,6 +879,86 @@ fn an_earlier_iteration_does_not_enable_a_later_one() {
     );
 }
 
+/// [`repeat_protocol`] with an event `After` of `Seller` after the `repeat`.
+fn repeat_then_protocol() -> String {
+    let mut source = repeat_protocol();
+    let finish = source.find("finish Done").expect("finish terminal");
+    let close = source[..finish]
+        .rfind(" }")
+        .expect("the main sequence closes");
+    source.insert_str(close, " event After by Seller as (af: Ack) { true };");
+    source
+}
+
+/// The `After` event of [`repeat_then_protocol`].
+fn after() -> Value {
+    json!({"kind": "event", "node": "Flow::Main::After", "role": "Seller",
+           "instance": "w-1", "keys": {}, "record": {"ok": true}})
+}
+
+/// FR-895-AC-20 (TC-2531): a step after a `repeat` run zero times is enabled,
+/// and one after two iterations is enabled by the last iteration's steps.
+#[trace("TC-2531", "FR-895-AC-20")]
+#[test]
+fn a_step_after_a_repeat_needs_its_last_iteration() {
+    let source = repeat_then_protocol();
+    assert_enabled(
+        &source,
+        &repeat_recording(json!([after()]), json!([0]), json!([]), json!([])),
+        "Flow::Main::After",
+        0,
+    );
+    let observations = json!([
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped("send", "Placed", "Buyer", "m-2"),
+        looped("receive", "Got", "Seller", "m-2"),
+        after(),
+    ]);
+    assert_enabled(
+        &source,
+        &repeat_recording(
+            observations,
+            json!([1, 3, 4]),
+            json!([0, 2]),
+            json!([{"send": 0, "receive": 1}, {"send": 2, "receive": 3}]),
+        ),
+        "Flow::Main::After",
+        4,
+    );
+}
+
+/// FR-895-AC-21 (TC-2531): the second iteration's `Got` missing leaves
+/// `After` `violated`, cause `unexpected`, once closed, though the first
+/// iteration's `Got` precedes it, and `pending` while the closure is open.
+#[trace("TC-2531", "FR-895-AC-21")]
+#[test]
+fn an_earlier_iteration_does_not_enable_a_step_after_the_repeat() {
+    use fsl_analyze::protocol_analysis::recording::{assess_recording, RecordingVerdict};
+    let source = repeat_then_protocol();
+    let observations = json!([
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped("send", "Placed", "Buyer", "m-2"),
+        after(),
+    ]);
+    let closed = repeat_recording(
+        observations,
+        json!([1, 3]),
+        json!([0, 2]),
+        json!([{"send": 0, "receive": 1}]),
+    );
+    assert_unexpected(&source, &closed, "Flow::Main::After", 3);
+    let mut open = closed;
+    open["closure"] = json!({"state": "open", "premises": []});
+    let assessed =
+        assess_recording(&package_of(&source), open.to_string().as_bytes()).expect("readable");
+    assert_eq!(
+        enabledness(&assessed, "Flow::Main::After", 3).verdict,
+        RecordingVerdict::Pending
+    );
+}
+
 /// `P` with `Start`, two `await`s `W1` and `W2` after it, and `End`.
 fn await_protocol() -> String {
     let wait = |name: &str, seen: &str, binder: &str| {

@@ -3619,14 +3619,18 @@ fn earlier_steps_precede(
     let closed = document.closure.state == "closed";
     let mut answer = Some(true);
     for pred in &preds {
-        let Predecessor::Node(name) = pred else {
-            // A choice whose taken case is not observed: undecided until
-            // the closure is closed.
-            if closed {
-                return Some(false);
+        let (name, last) = match pred {
+            Predecessor::Node(name) => (name, None),
+            Predecessor::Last(name, iterations) => (name, Some(*iterations)),
+            Predecessor::Undecided => {
+                // A choice whose taken case is not observed: undecided
+                // until the closure is closed.
+                if closed {
+                    return Some(false);
+                }
+                answer = None;
+                continue;
             }
-            answer = None;
-            continue;
         };
         let same_instance =
             |index: usize| document.observations[index].instance == observation.instance;
@@ -3641,7 +3645,13 @@ fn earlier_steps_precede(
         // n-th occurrence of a step inside the repeat answers to the n-th
         // occurrence of its predecessor, and earlier iterations never
         // satisfy a later one (FR-895 "Enabledness").
-        if repeat_prefix
+        if let Some(iterations) = last {
+            // After a `repeat`, only the last completed iteration's
+            // occurrence of the step is a predecessor.
+            let order = causal_topological_order(protocol, document);
+            observed.sort_by_key(|index| order.iter().position(|entry| entry == index));
+            observed = observed.get(iterations - 1).copied().into_iter().collect();
+        } else if repeat_prefix
             .as_ref()
             .is_some_and(|prefix| name.starts_with(prefix.as_str()))
         {
@@ -3682,6 +3692,9 @@ fn earlier_steps_precede(
 enum Predecessor {
     /// A step, by qualified node name.
     Node(String),
+    /// A step of a `repeat`'s body, by qualified node name, as its occurrence
+    /// in the last completed iteration: the given occurrence count.
+    Last(String, usize),
     /// A `choice` none of whose cases was observed.
     Undecided,
 }
@@ -3691,7 +3704,9 @@ enum Predecessor {
 /// the case actually taken, as its `case` observation and body, and no
 /// untaken case. A `parallel` supplies the steps of every branch its join
 /// requires: every branch under `join all`, otherwise the branches whose
-/// steps were all observed. A `repeat` and an `await` supply none.
+/// steps were all observed. A `repeat` supplies the steps of its last
+/// completed iteration (the most occurrences any of its body's steps has),
+/// none for zero iterations. An `await` supplies none.
 fn collect_predecessors(
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
@@ -3738,6 +3753,34 @@ fn collect_predecessors(
                 out.push(Predecessor::Undecided);
             }
         }
+        "repeat" => {
+            let mut body = Vec::new();
+            for child in &control.children {
+                collect_predecessors(protocol, document, observation, *child, &mut body);
+            }
+            let count = |name: &str| {
+                document
+                    .observations
+                    .iter()
+                    .filter(|entry| entry.node == name && entry.instance == observation.instance)
+                    .count()
+            };
+            let iterations = body
+                .iter()
+                .filter_map(|step| match step {
+                    Predecessor::Node(name) => Some(count(name)),
+                    _ => None,
+                })
+                .max()
+                .unwrap_or(0);
+            if iterations > 0 {
+                for step in body {
+                    if let Predecessor::Node(name) = step {
+                        out.push(Predecessor::Last(name, iterations));
+                    }
+                }
+            }
+        }
         "parallel" => {
             let policy_all = protocol
                 .parallels
@@ -3759,7 +3802,7 @@ fn collect_predecessors(
                     collect_predecessors(protocol, document, observation, *child, &mut steps);
                 }
                 let completed = steps.iter().all(|step| match step {
-                    Predecessor::Node(name) => observed(name),
+                    Predecessor::Node(name) | Predecessor::Last(name, _) => observed(name),
                     Predecessor::Undecided => false,
                 });
                 if policy_all || completed {
