@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! One policy for every property suite, without process environment mutation.
+//! One policy for every property suite, without process environment mutation,
+//! and the value and near-miss source generators that need `proptest` alone.
 
 use std::any::Any;
 use std::fmt;
@@ -160,3 +161,6 @@ pub fn run<S: Strategy>(
     );
     result
 }
+
+pub mod near_miss;
+pub mod value;

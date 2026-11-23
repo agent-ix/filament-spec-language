@@ -349,11 +349,38 @@ pub(super) fn raw_wire(emission: &Emission) -> Value {
     serde_json::from_slice(emission.package.bytes()).expect("the wire is JSON")
 }
 
+/// The emitted graph's typed nodes as IR's reader admits them from the bytes,
+/// each node-held operand resolved to its document index: the nodes the bytes
+/// were encoded from (an emission does not retain them).
+pub(crate) fn typed_nodes(emission: &Emission) -> Vec<CheckedSemanticNodeV2> {
+    match filament_contract_model::CheckedPackageV2::read(
+        emission.package.bytes(),
+        filament_contract_model::CheckedPackageReadLimits::bounded(),
+        emission.evidence(),
+    ) {
+        filament_contract_model::CheckedPackageV2ReadResult::Admitted(package) => {
+            package.resolved_graph().nodes.clone()
+        }
+        other => panic!("IR admits the emitted package: {other:?}"),
+    }
+}
+
+/// The id of every node the emitted bytes write, in graph order, each operand
+/// slot resolved to its document index. It reads only the ids, so it serves a
+/// writer fixture whose bytes IR refuses.
+pub(crate) fn typed_node_ids(emission: &Emission) -> Vec<CheckedNodeId> {
+    nodes(&wire(emission))
+        .iter()
+        .map(|node| serde_json::from_value(node["node_id"].clone()).expect("a node id"))
+        .collect()
+}
+
 #[trace("FSpec-TC-233", "FSpec-FR-322-AC-280", "TC-416", "FR-093-AC-9")]
 #[test]
 fn operand_slot_rows_preserve_the_retained_document_graph() {
-    let (_, emission) =
-        emit_from_text("function add using v(x: Integer): Integer pure { (x + 1) + 2 }\n");
+    let (_, package) =
+        package_from_text("function add using v(x: Integer): Integer pure { (x + 1) + 2 }\n");
+    let emission = emit_checked(&package).expect("the package emits");
     let mut graph: CheckedSemanticGraphV2 =
         serde_json::from_value(raw_wire(&emission)["semantic_graph"].clone()).unwrap();
     assert_eq!(graph.nodes.len(), graph.operand_rows.len());
@@ -366,7 +393,14 @@ fn operand_slot_rows_preserve_the_retained_document_graph() {
             )));
         }
     }
-    assert_eq!(document_nodes(graph).unwrap(), *emission.wire_nodes);
+    let graph_regions = package.graph();
+    let typed = emitted_document_nodes(
+        &package,
+        |location| graph_regions.region(location),
+        ceiling(),
+    )
+    .expect("the package emits");
+    assert_eq!(document_nodes(graph).unwrap(), typed);
     assert!(matches!(read_back(&emission), Read::Verified { .. }));
 }
 
@@ -389,7 +423,7 @@ fn operand_slot_numbering_visits_only_identity_paths_in_canonical_order() {
     );
     let (_, emission) = emit_from_text("function f using v(): Integer pure { 1 }\n");
     let graph = WireGraph::of_package_bytes(emission.package.bytes()).unwrap();
-    let mut nodes = Vec::clone(&emission.wire_nodes);
+    let mut nodes = typed_nodes(&emission);
     let foreign = CheckedTerm::DependencyReference {
         package: "dependency".into(),
         node: serde_json::from_value(value["e_external"]["node"].clone()).unwrap(),

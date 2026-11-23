@@ -6,7 +6,7 @@
 //! `cargo xtask
 //! canonical-types [<workspace>]` runs on demand, over this workspace or the
 //! one named. `cargo xtask pin-check` checks Agent-IX git dependency pins;
-//! `cargo xtask merge-gate-recipe <changed-path>...` prints verified test commands.
+//! `cargo xtask merge-gate-recipe [--preflight] <changed-path>...` prints test commands.
 #![forbid(unsafe_code)]
 
 use std::ffi::OsString;
@@ -32,7 +32,7 @@ const USAGE: &str = "usage: cargo xtask seam-probe\n       cargo xtask string-ed
                      cargo xtask canonical-types [<workspace>]\n       \
                      cargo xtask facade-tests [--tests <dir>] [--inventory <file>]\n       \
                      cargo xtask consumer-facades [--bindings <file>] [--inventory <file>]\n       \
-                     cargo xtask merge-gate-recipe <changed-path>...";
+                     cargo xtask merge-gate-recipe [--preflight] <changed-path>...";
 
 #[ix_trace_rs::string_edge]
 fn run(arguments: &[OsString]) -> Result<Outcome> {

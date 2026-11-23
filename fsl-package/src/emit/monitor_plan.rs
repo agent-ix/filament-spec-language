@@ -1331,6 +1331,15 @@ pub(super) fn follow_final_collections(
 }
 
 /// The shared tail: index the graph, encode and wrap the bytes.
+#[cfg(test)]
+thread_local! {
+    /// The typed nodes, with document-held operand indices, of the last plan
+    /// root this thread wrote. An [`Emission`] does not retain its typed nodes,
+    /// and IR refuses some writer fixtures' bytes, so tests read them here.
+    pub(super) static WRITTEN_NODES: std::cell::RefCell<Vec<CheckedSemanticNodeV2>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 pub(super) fn finish(
     base: &CheckedPackageV2,
     retained: &Emission,
@@ -1432,7 +1441,10 @@ pub(super) fn finish(
         )
         .map_err(EmitRefusal::from)
     })?;
+    let retained_nodes = super::RetainedNodes::of(&semantic_graph);
     let nodes = super::document_nodes(semantic_graph)?;
+    #[cfg(test)]
+    WRITTEN_NODES.with(|written| *written.borrow_mut() = nodes.clone());
     let mut rows = carry_rows(retained, changes);
     follow_final_bindings(&mut rows.selected_source_record_rows, &nodes)?;
     follow_final_positions(&mut rows.selected_source_tuple_rows, &nodes)?;
@@ -1467,11 +1479,11 @@ pub(super) fn finish(
         identity_row_selection: super::identity_rows::IdentityRowSelection::default(),
         equality_producer_identity_rows: rows.equality_producer_identity_rows,
         equality_fact_witness_rows: rows.equality_fact_witness_rows,
-        wire_nodes: std::sync::Arc::new(nodes),
+        retained_nodes,
         temporal_binding_rows: rows.temporal_binding_rows,
         temporal_rows: rows.temporal_rows,
     }
-    .with_identity_row_selection())
+    .with_identity_row_selection(&nodes))
 }
 
 /// Carry the original package-local/emitted filter onto final rows. This is

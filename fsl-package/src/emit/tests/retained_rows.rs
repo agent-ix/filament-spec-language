@@ -30,11 +30,13 @@ fn renamed(id: &CheckedNodeId) -> CheckedNodeId {
 /// equality fixture's producer and fact rows (unit, dimension, conversion),
 /// the enum fixture's enum rows and enum-member facts, and synthetic rows of
 /// the kinds those fixtures do not produce.
-fn composite() -> Emission {
+/// Also returns the ids of every node of the graphs merged into it.
+fn composite() -> (Emission, Vec<CheckedNodeId>) {
     let mut base = emitted_quantities(
         "dimension Time; unit s : Time = rational(1, 1); unit ms : Time = rational(1, 1000) * s;\n\
          function same using v(a: Quantity<ms>, b: Quantity<ms>): Boolean pure { a = b and convert<Quantity<ms>>(a) = b }",
     );
+    let mut node_ids = typed_node_ids(&base);
     let compound = emitted_quantities(
         "dimension Length; dimension Area = Length;\n\
          unit m : Length = rational(1, 1); unit cm : Length = rational(1, 100) * m;\n\
@@ -48,25 +50,25 @@ fn composite() -> Emission {
         .extend(compound.equality_producer_identity_rows.iter().cloned());
     base.equality_fact_witness_rows
         .extend(compound.equality_fact_witness_rows.iter().cloned());
-    std::sync::Arc::make_mut(&mut base.wire_nodes).extend(compound.wire_nodes.iter().cloned());
+    node_ids.extend(typed_node_ids(&compound));
     let enums = emitted_enums(UNIT);
     base.selected_model_enum_declaration_rows = enums.selected_model_enum_declaration_rows.clone();
     base.selected_model_enum_member_rows = enums.selected_model_enum_member_rows.clone();
     let (_, source_enums) = emit_from_text(super::source_enum_rows::STATUS);
     base.selected_enum_declaration_rows = source_enums.selected_enum_declaration_rows.clone();
     base.selected_enum_member_rows = source_enums.selected_enum_member_rows.clone();
-    std::sync::Arc::make_mut(&mut base.wire_nodes).extend(source_enums.wire_nodes.iter().cloned());
+    node_ids.extend(typed_node_ids(&source_enums));
     let (_, source_unions) = emit_from_text(super::source_union_rows::SHAPE);
     base.selected_source_union_rows = source_unions.selected_source_union_rows.clone();
     let (_, source_records) = emit_from_text(super::source_record_rows::RECORDS);
     base.selected_source_record_rows = source_records.selected_source_record_rows.clone();
-    std::sync::Arc::make_mut(&mut base.wire_nodes).extend(source_records.wire_nodes.iter().cloned());
-    std::sync::Arc::make_mut(&mut base.wire_nodes).extend(source_unions.wire_nodes.iter().cloned());
+    node_ids.extend(typed_node_ids(&source_records));
+    node_ids.extend(typed_node_ids(&source_unions));
     base.equality_producer_identity_rows
         .extend(enums.equality_producer_identity_rows.iter().cloned());
     base.equality_fact_witness_rows
         .extend(enums.equality_fact_witness_rows.iter().cloned());
-    std::sync::Arc::make_mut(&mut base.wire_nodes).extend(enums.wire_nodes.iter().cloned());
+    node_ids.extend(typed_node_ids(&enums));
     let id = |name: &str| CheckedNodeId {
         package: "p".into(),
         path: vec![filament_contract_model::CheckedNodePathSegment::Name(
@@ -168,16 +170,16 @@ fn composite() -> Emission {
             trace: None,
         }],
     };
-    base
+    (base, node_ids)
 }
 
-/// The renames of every node id any row of `emission` names.
-fn renames_of(emission: &Emission) -> Vec<(CheckedNodeId, CheckedNodeId)> {
-    let mut ids: Vec<CheckedNodeId> = emission
-        .wire_nodes
-        .iter()
-        .map(|node| node.node_id.clone())
-        .collect();
+/// The renames of every node id in `node_ids` (the nodes of the graphs merged
+/// into `emission`) and of every id any row of `emission` names.
+fn renames_of(
+    emission: &Emission,
+    node_ids: &[CheckedNodeId],
+) -> Vec<(CheckedNodeId, CheckedNodeId)> {
+    let mut ids: Vec<CheckedNodeId> = node_ids.to_vec();
     let mut push = |id: &CheckedNodeId| ids.push(id.clone());
     for row in &emission.selected_operation_member_rows {
         push(&row.anchor);
@@ -258,8 +260,8 @@ fn fact_ids(fact: &EqualityFactWitness) -> Vec<&CheckedNodeId> {
 #[trace("TC-1081", "FR-251-AC-42")]
 #[test]
 fn every_retained_row_kind_is_carried_with_its_node_ids_rekeyed() {
-    let emission = composite();
-    let changes = renames_of(&emission);
+    let (emission, node_ids) = composite();
+    let changes = renames_of(&emission, &node_ids);
     let rows = carry_rows(&emission, &changes);
 
     assert!(!emission.selected_operation_member_rows.is_empty());
@@ -494,7 +496,7 @@ fn emission_id(cause: &OmissionCause) -> CheckedNodeId {
 #[trace("TC-1081", "FR-251-AC-42")]
 #[test]
 fn a_row_naming_a_node_no_rename_touches_is_carried_unchanged() {
-    let emission = composite();
+    let (emission, _) = composite();
     let rows = carry_rows(&emission, &[]);
     assert_eq!(rows.omitted, emission.omitted);
     assert_eq!(
@@ -650,7 +652,8 @@ fn the_writers_renames_reach_the_rows_it_carries() {
         Some(bodies),
         "the plan writer carries the operation bodies"
     );
-    let after: Vec<&CheckedNodeId> = rooted.wire_nodes.iter().map(|n| &n.node_id).collect();
+    let after_ids = typed_node_ids(&rooted);
+    let after: Vec<&CheckedNodeId> = after_ids.iter().collect();
     let carried: Vec<&CheckedNodeId> = rooted.omitted().iter().map(|row| &row.node).collect();
     assert_eq!(carried.len(), 5);
     for (carried, before) in carried

@@ -9,7 +9,7 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    analyze, counter_request, counter_request_with, label, request_members, request_over, Workspace,
+    analyze, counter_request, label, request_members, request_over, Workspace,
 };
 
 /// The two items' results, in request order.
@@ -276,23 +276,38 @@ fn an_abstract_subject_of_another_package_is_an_invalid_request() {
 /// FR-630-AC-2: `refinement_internals` reaches compilation.
 #[trace("TC-1590", "FR-630-AC-2")]
 #[test]
-#[ignore = "QSL-2888: refinement_internals is not an analyze request member yet"]
 fn refinement_internals_are_a_request_member() {
-    let ws = Workspace::new("family-refinement-internals");
-    let mut request = request_members(Some(json!([
-        {"claim": "Same", "kind": "refinement", "temporal": {"item_kind": "refinement"}}
-    ])));
-    request["refinement_internals"] = json!({"Same": []});
-    let run = analyze(&counter_request_with(
-        &ws,
-        &format!(
-            "model Spec = \"test/counter\";\n{}",
-            refinement("Same", "self.value", "")
-        ),
-        request,
-    ));
-    assert_eq!(run.exit, 0, "{}", String::from_utf8_lossy(&run.stdout));
-    assert_eq!(label(&run.item(0)), "proved");
+    // FR-147's shape: an array of `{refinement, internal}` objects.
+    let with_internals = |name: &str, internals: Value| {
+        let ws = Workspace::new(name);
+        let path = refinement_request(
+            &ws,
+            &refinement("Same", "self.value", ""),
+            json!([{"claim": "Same", "kind": "refinement",
+                "temporal": {"item_kind": "refinement"}}]),
+        );
+        let mut request: Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("the request reads"))
+                .expect("the request is JSON");
+        request["request"]["refinement_internals"] = internals;
+        let path = ws.write("analyze.json", request.to_string().as_bytes());
+        analyze(&path)
+    };
+    // The member naming the program's refinement compiles with it.
+    let named = with_internals(
+        "family-refinement-internals",
+        json!([{"refinement": "Same", "internal": []}]),
+    );
+    assert_eq!(named.exit, 0, "{}", String::from_utf8_lossy(&named.stdout));
+    assert_eq!(label(&named.item(0)), "proved");
+    // It reaches compilation: a name that is no refinement of the program
+    // refuses there (FR-147 "Defects").
+    let unknown = with_internals(
+        "family-refinement-internals-unknown",
+        json!([{"refinement": "Nope", "internal": []}]),
+    );
+    assert_ne!(unknown.exit, 0, "{}", String::from_utf8_lossy(&unknown.stdout));
+    assert_eq!(unknown.document()["last_stage"], "S3", "{}", unknown.document());
 }
 
 /// FR-630-AC-3, FR-138-AC-9: decimal and enum history rows check and the
@@ -300,20 +315,19 @@ fn refinement_internals_are_a_request_member() {
 #[trace("TC-1590", "FR-630-AC-3")]
 #[trace("TC-1590", "FR-138-AC-9")]
 #[test]
-#[ignore = "QSL-2888: decimal and enum history rows are refused not-yet-implemented"]
+#[ignore = "QSL-2888: decimal and enum history rows are refused not-yet-implemented (S3 history.rs); PR 2"]
 fn decimal_and_enum_history_rows_check_and_prove() {
     for (name, rows) in [
         (
             "DecimalHistory",
-            "history M::Counter last : Decimal[0, 100; 0, 2; nearest-even] = decimal(0, 0) \
-             on M::Counter::inc {{ decimal(1, 0) }};\n",
+            "history M::Counter.last : Decimal[0, 100; 0, 2; nearest-even] = decimal(0, 0) \
+             { on M::Counter::inc : decimal(1, 0); }\n",
         ),
         (
             "EnumHistory",
-            "history M::Counter last : Phase = Phase::idle on M::Counter::inc {{ Phase::busy }};\n",
+            "history M::Counter.last : Phase = Phase::idle { on M::Counter::inc : Phase::busy; }\n",
         ),
     ] {
-        let rows = rows.replace("{{", "{").replace("}}", "}");
         let body =
             "enum Phase { idle, busy }\n".to_owned() + &refinement(name, "self.value", &rows);
         let ws = Workspace::new(&format!("family-history-{name}"));
@@ -325,7 +339,8 @@ fn decimal_and_enum_history_rows_check_and_prove() {
         assert_eq!(
             run.document()["last_stage"],
             Value::Null,
-            "{name}: no compile refusal"
+            "{name}: no compile refusal: {}",
+            run.document()["diagnostics"]
         );
         assert_eq!(label(&run.item(0)), "proved", "{name}");
     }

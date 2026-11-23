@@ -125,6 +125,7 @@ mod total_functions;
 mod type_invariants;
 mod unbounded_set_call;
 mod union_value_profile;
+mod value_properties;
 mod variant_fields;
 mod weighted_sampler;
 mod window_aggregates;

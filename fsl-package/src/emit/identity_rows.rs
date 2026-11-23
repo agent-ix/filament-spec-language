@@ -11,7 +11,7 @@ use filament_exact::{EffectiveId, MemberId, MemberOwner};
 use crate::native_row as charge;
 use crate::{IdentityFileRefusal, NativeRowError, ReadIdentityRows};
 
-use super::Emission;
+use super::{CheckedSemanticNodeV2, Emission};
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct IdentityRowSelection {
@@ -23,13 +23,13 @@ impl Emission {
     /// Derive producer membership again after every final carry/rekey. These
     /// flags avoid allocating structural comparisons in the budgeted adapter;
     /// they do not replace the subsequent native validation of the rows.
-    pub(super) fn with_identity_row_selection(mut self) -> Self {
+    pub(super) fn with_identity_row_selection(mut self, nodes: &[CheckedSemanticNodeV2]) -> Self {
         self.identity_row_selection.declarations =
             self.selected_exact_declaration_rows
                 .iter()
                 .enumerate()
                 .filter_map(|(index, row)| {
-                    self.wire_nodes.iter().any(|node| {
+                    nodes.iter().any(|node| {
                 fsl_semantics::model::intake::selected_exact_declaration_row_matches_node(row, node)
             }).then_some(index)
                 })
@@ -39,7 +39,7 @@ impl Emission {
             .iter()
             .enumerate()
             .filter_map(|(index, row)| {
-                self.wire_nodes
+                nodes
                     .iter()
                     .any(|node| {
                         fsl_semantics::model::intake::selected_exact_field_row_matches_node(

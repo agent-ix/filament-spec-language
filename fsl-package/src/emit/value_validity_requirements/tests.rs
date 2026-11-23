@@ -77,8 +77,8 @@ fn bare_parameter_guard_preserves_source_identity_and_occurrence() {
             source_guard.occurrence().origin().ordinal()
         );
         assert_eq!(guard.holds, source_guard.holds());
-        let node = emission
-            .wire_nodes
+        let nodes = crate::emit::tests::typed_nodes(&emission);
+        let node = nodes
             .iter()
             .find(|node| node.node_id == guard.guard)
             .expect("the guard is a document-held node");
