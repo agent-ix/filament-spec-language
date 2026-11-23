@@ -1498,6 +1498,13 @@ fn every_mutation_of_a_cyclic_document_keeps_its_existing_rule_and_locus() {
         for (label, mutated, expected) in table {
             assert_eq!(run(label, mutated), expected, "{name}: {label}");
         }
+        // FR-201 admits every-scheduler subjects, single-distribution ones
+        // included, under the MDP profile (only a workload is excluded), and
+        // the DTMC profile is the producer's preference, not a checker rule.
+        if name == "dtmc" {
+            let relabelled = edited(&bytes, |objective, _| objective["profile"] = MDP.into());
+            assert_eq!(run("profile", relabelled), "accepted", "{name}");
+        }
         // A DTMC document relabelled as the MDP profile checks as the one
         // distribution per state it is.
         if name == "mdp" {
@@ -1709,13 +1716,11 @@ fn the_captured_model_states_and_component_vectors_are_charged_to_storage() {
             low = middle + 1;
         }
     }
-    // One clone of the model state per reached state is held while the
-    // components are derived, and each state costs a component slot too.
-    let states = 5;
-    let floor = states
-        * (std::mem::size_of::<fsl_eval::simulation::model::ModelSimState>()
-            + std::mem::size_of::<Vec<usize>>());
-    assert!(low >= floor as u64, "storage floor {low} < {floor}");
+    // Without the captured-state and component charges the least accepted
+    // ceiling is 779_240 bytes (measured by removing them); with them it is
+    // 794_010. The captured clones and component vectors are therefore
+    // visible to the storage ceiling.
+    assert!(low >= 790_000, "least storage ceiling {low}");
 }
 
 #[trace("TC-3184", "FR-201-AC-62")]
@@ -1769,4 +1774,121 @@ fn claim_forms_outside_the_state_predicate_profiles_issue_no_proof_in_them() {
             ),
         }
     }
+}
+
+fn profile_of(record: &fsl_analyze::analyze::AnalyzeRecord) -> Option<String> {
+    record
+        .terminal()
+        .and_then(|terminal| terminal.exact_certificate_document())
+        .map(|bytes| {
+            json(bytes)["objective"]["profile"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+}
+
+fn unsupported(record: &fsl_analyze::analyze::AnalyzeRecord) -> bool {
+    matches!(
+        &record.settlement,
+        fsl_analyze::analyze::Settlement::Disposed(disposed)
+            if disposed.kind == fsl_analyze::analyze::DispositionKind::Unsupported
+    )
+}
+
+#[trace("TC-3184", "FR-201-AC-62")]
+#[test]
+fn bounded_nested_multiple_and_unresolved_forms_issue_no_proof_in_these_profiles() {
+    let until = |scope: &str| {
+        format!(
+            "probabilistic V using inf on M over (x: M::Item) under {scope} on origin {{ probability >= rational(1,4) [ {} until {} ] }}\n",
+            at(&[0, 3, 4]),
+            at(&[1])
+        )
+    };
+    let ev = "probabilistic V using ev on M over (x: M::Item) under every scheduler on origin";
+    let settle_v = |world: &World| settle(world, "V", ModelCheckLimits::default(), |_| {});
+    // Bounded forms are not these profiles: they keep the bounded document.
+    for form in [
+        format!("always[0,3] {}", at(&[0, 3, 4])),
+        format!("eventually[0,3] {}", at(&[1])),
+    ] {
+        let world = World::new(&until_chain(&format!(
+            "{ev} {{ probability >= rational(1,4) [ {form} ] }}\n"
+        )));
+        let profile = profile_of(&settle_v(&world)).expect("a bounded proof");
+        assert!(!profile.contains("state-predicate"), "{form}: {profile}");
+        assert_eq!(
+            profile, "filament.probability-objective/reachability/v1",
+            "{form}"
+        );
+    }
+    // A nested temporal form over an event-position claim is unsupported.
+    let nested = World::new(&until_chain(&format!(
+        "{ev} {{ probability >= rational(1,4) [ eventually[0,3] always[0,1] {} ] }}\n",
+        at(&[1])
+    )));
+    let record = settle_v(&nested);
+    assert!(
+        unsupported(&record) && profile_of(&record).is_none(),
+        "{record:#?}"
+    );
+    // An unbounded nested form is refused by the front end before any proof.
+    let refusals = World::try_new(&until_chain(&format!(
+        "probabilistic V using inf on M over (x: M::Item) under every scheduler on origin {{ probability >= rational(1,4) [ always eventually {} ] }}\n",
+        at(&[1])
+    )))
+    .err()
+    .expect("the front end refuses an unbounded nested form");
+    assert!(
+        format!("{refusals:?}").contains("NotStatePredicate"),
+        "{refusals:?}"
+    );
+    // Multiple bindings and multiple initial states are unsupported.
+    let claims = until("every scheduler");
+    let record = settle_v(&World::with_objects(&until_chain(&claims), &["x", "y"]));
+    assert!(
+        unsupported(&record) && profile_of(&record).is_none(),
+        "{record:#?}"
+    );
+    let model = until_chain(&claims);
+    let initials = [
+        model.initial.clone(),
+        serde_json::json!({"phase":{"integer":"3"}}),
+    ];
+    let record = settle_v(&World::with_initials(&model, &initials));
+    assert!(
+        unsupported(&record) && profile_of(&record).is_none(),
+        "{record:#?}"
+    );
+    // A workload that leaves an operation unweighted is refused by the front end.
+    let partial = until_chain(&format!(
+        "workload Even on M {{ weight Item::go = 1; }}\n{}",
+        until("Even")
+    ));
+    let refusals = World::try_new(&partial)
+        .err()
+        .expect("an incomplete workload is refused");
+    assert!(
+        format!("{refusals:?}").contains("IncompleteWorkload"),
+        "{refusals:?}"
+    );
+    // A workload that names no declaration is refused by the front end. (One
+    // that resolves every live state to one distribution is a supported
+    // DTMC subject, as AC-58 and AC-64 state.)
+    let refusals = World::try_new(&mdp_chain(&claim_text(
+        "Missing",
+        &format!("always {}", at(&[0, 1])),
+    )))
+    .err()
+    .expect("an unresolved workload is refused");
+    let text = format!("{refusals:?}");
+    assert!(
+        text.contains("UnresolvedWorkload") && text.contains("Missing"),
+        "{text}"
+    );
+}
+
+fn claim_text(scope: &str, event: &str) -> String {
+    format!("probabilistic V using inf on M over (x: M::Item) under {scope} on origin {{ probability >= rational(1,2) [ {event} ] }}\n")
 }

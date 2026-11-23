@@ -658,3 +658,37 @@ fn cancellation_inside_qualified_expansion_step_and_predicate_returns_no_token()
         }
     }
 }
+
+/// FR-201-AC-63: an undefined state predicate met while replaying a
+/// counterexample keeps the graph refusal replay always gave it; the typed
+/// `UndefinedPredicate` of the proof checker never reaches the replay.
+#[trace("TC-3185", "FR-201-AC-63")]
+#[test]
+fn an_undefined_predicate_in_counterexample_replay_keeps_its_graph_refusal() {
+    use filament_semantic_value::checking::CheckMode;
+    let defined = world(UNTIL, "every scheduler", ">=", "0.5");
+    let witness = evidence(&defined);
+    let mut undefined_model = model(
+        "holds(m.attempts = 0) until holds(if m.attempts = 1 then zero_mod(0) else m.delivered)",
+        "every scheduler",
+        ">=",
+        "0.5",
+    );
+    undefined_model.body.insert_str(
+        0,
+        "function zero_mod using vc(n: Int[0, 0]): Boolean pure { 1 mod n = 0 }\n",
+    );
+    let undefined = World::new_with_mode(&undefined_model, CheckMode::Kernel);
+    let mut offered = witness.clone();
+    offered.item = fsl_replay::probabilistic_claim_identity(undefined.claim("Claim")).unwrap();
+    let result = replay(
+        &undefined,
+        &offered,
+        &ExactProbLimits::default(),
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(&result, Err(ProbabilityWitnessError::Graph(_))),
+        "{result:?}"
+    );
+}
