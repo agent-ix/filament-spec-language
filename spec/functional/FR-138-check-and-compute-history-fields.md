@@ -64,7 +64,9 @@ exactly as they were.
   SHALL refuse `missing_declaration`/`missing-name`.
 - A declared type that is an enum type or a decimal type, or an option of one,
   SHALL check as a finite value type; the history key encodes its values by
-  their canonical literals, as FR-630 decides.
+  their canonical literals, as FR-630 decides. A decimal's canonical literal
+  retains its scale (FR-120-AC-16), so `decimal(150, 1)` and `decimal(15, 0)`
+  are two values with two keys, and equal literals key equally.
 - Any other declared type SHALL be a bounded value type (finite domain); an
   unbounded type SHALL refuse `ill_typed`/`type-mismatch` at the type.
 - A history field whose name equals a declared field of the concrete type,

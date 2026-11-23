@@ -346,6 +346,49 @@ fn decimal_and_enum_history_rows_check_and_prove() {
     }
 }
 
+/// FR-630-AC-3, FR-138-AC-9: an `Option` history row with a `none` initial
+/// proves through the package route, and an initial outside the payload type
+/// refuses at compile. A present initial has no checked-package form the
+/// package admits (QSL-2888 FND-001), so none is run here.
+#[trace("TC-1590", "FR-630-AC-3")]
+#[trace("TC-1590", "FR-138-AC-9")]
+#[test]
+fn option_history_initials_prove_or_refuse() {
+    let run_with = |declared: &str, initial: &str| {
+        let rows = format!("history M::Counter.last : {declared} = {initial} {{ }}\n");
+        let body = "enum Phase { idle, busy }\n".to_owned() + &refinement("Opt", "self.value", &rows);
+        let ws = Workspace::new("family-history-present-option");
+        analyze(&refinement_request(
+            &ws,
+            &body,
+            json!([{"claim": "Opt", "kind": "refinement", "temporal": {"item_kind": "refinement"}}]),
+        ))
+    };
+    for (declared, initial) in [
+        ("Option<Phase>", "none"),
+        ("Option<Int[0, 1]>", "none"),
+        ("Option<Decimal[0, 100; 0, 2; nearest-even]>", "none"),
+    ] {
+        let run = run_with(declared, initial);
+        assert_eq!(
+            run.document()["last_stage"],
+            "S6c",
+            "{declared} = {initial}: {}",
+            run.document()["diagnostics"]
+        );
+        assert_eq!(label(&run.item(0)), "proved", "{declared} = {initial}");
+    }
+    for (declared, initial) in [
+        ("Option<Int[0, 1]>", "5"),
+        ("Option<Phase>", "Phase::missing"),
+        ("Option<Decimal[0, 100; 0, 2; nearest-even]>", "decimal(101, 0)"),
+    ] {
+        let run = run_with(declared, initial);
+        assert_ne!(run.exit, 0, "{declared} = {initial}");
+        assert_eq!(run.document()["last_stage"], "S3", "{declared} = {initial}");
+    }
+}
+
 /// FR-630-AC-4, FR-135-AC-6: a nested-reference row checks and proves.
 #[trace("TC-1590", "FR-630-AC-4")]
 #[trace("TC-1590", "FR-135-AC-6")]

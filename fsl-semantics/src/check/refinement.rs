@@ -241,9 +241,6 @@ pub enum RefinementCause {
         feature: UnsupportedFeature,
         /// The identity of the profile the declaration selects.
         profile: String,
-        /// The kind of type or form the feature is refused for, when the
-        /// feature alone does not say.
-        subject: Option<&'static str>,
     },
     /// A row expression uses a form outside the value and model layers that
     /// the governing infinite-trace profile requires: `unsupported_construct`/
@@ -2360,7 +2357,6 @@ pub(crate) fn check_refinement<'f: 'c, 'a, 'c>(
                     RefinementCause::Unsupported {
                         feature: UnsupportedFeature::ProtocolAbstractSide,
                         profile: declaration.selection.identity.clone(),
-                        subject: None,
                     },
                 );
             }
@@ -2810,7 +2806,6 @@ fn internal_list(
             RefinementCause::Unsupported {
                 feature: UnsupportedFeature::RefinementInternalList,
                 profile: profile.to_owned(),
-                subject: None,
             },
         );
     };
@@ -3593,7 +3588,6 @@ impl<'c, 'a> Checker<'c, 'a> {
                         RefinementCause::Unsupported {
                             feature: UnsupportedFeature::NestedReferenceRow,
                             profile: self.profile.clone(),
-                            subject: None,
                         },
                     ),
                     (Some(Nested::Fault(invariant)), _) => self.fault(invariant),

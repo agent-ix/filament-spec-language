@@ -1188,15 +1188,13 @@ fn a_row_nesting_a_reference_other_than_a_whole_population_is_unsupported() {
         assert_eq!(nested.at, at);
         let RefinementCause::Unsupported {
             feature,
-            profile,
-            subject,
+            profile, ..
         } = nested.refinement()
         else {
             panic!("an unsupported feature: {:?}", nested.refinement());
         };
         assert_eq!(feature.name(), "nested-reference-row");
         assert_eq!(profile, "filament.temporal.infinite-trace/v1");
-        assert_eq!(subject, &None);
     }
 }
 

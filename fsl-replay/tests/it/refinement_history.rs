@@ -789,12 +789,15 @@ fn a_history_field_named_like_a_subtype_field_is_refused() {
 #[test]
 fn decimal_and_enum_history_rows_check_and_key() {
     let unit = Unit::register();
+    let mut keys = std::collections::BTreeMap::new();
     for (declared, initial) in [
         ("Int[0, 1]", "0"),
         ("Boolean", "false"),
         ("Option<Int[0, 1]>", "none"),
         ("Decimal[0, 100; 0, 2; nearest-even]", "decimal(0, 0)"),
         ("Decimal[0, 100; 0, 2; nearest-even]", "decimal(150, 1)"),
+        ("Decimal[0, 100; 0, 2; nearest-even]", "decimal(150, 1)"),
+        ("Decimal[0, 100; 0, 2; nearest-even]", "decimal(15, 0)"),
         ("Phase", "Phase::SHUT"),
         ("Option<Phase>", "none"),
         ("Option<Phase>", "Phase::OPEN"),
@@ -822,8 +825,15 @@ fn decimal_and_enum_history_rows_check_and_key() {
             system.value_key(held).is_ok(),
             "{declared} = {initial} keys"
         );
-        assert!(values.key(&system).is_ok(), "{declared} = {initial}");
+        let key = values.key(&system).expect("the history values key");
+        // Equal literals key equally.
+        if let Some(earlier) = keys.insert((declared, initial), key.clone()) {
+            assert_eq!(earlier, key, "{declared} = {initial}");
+        }
     }
+    // A decimal key keeps its scale (FR-120-AC-16): 15.0 and 15 are two values.
+    let decimal = "Decimal[0, 100; 0, 2; nearest-even]";
+    assert_ne!(keys[&(decimal, "decimal(150, 1)")], keys[&(decimal, "decimal(15, 0)")]);
 }
 
 /// FR-138-AC-9, FR-138 "S3" (TC-543): a decimal or enum row whose initial
