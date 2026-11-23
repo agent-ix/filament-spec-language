@@ -326,7 +326,7 @@ fn the_final_tuple_node_decides_each_position_type_node() {
             .iter_mut()
             .find(|node| node.node_id == row.structural_node)
             .expect("the tuple node");
-        let CheckedTerm::Aggregate { members } = &mut tuple.body else {
+        let CheckedTerm::Aggregate { members, .. } = &mut tuple.body else {
             panic!("an aggregate body");
         };
         change(members);
@@ -659,6 +659,7 @@ fn a_collection_row_that_disagrees_with_its_nodes_is_a_writer_fault() {
                 members: vec![CheckedTerm::Reference {
                     target: bounded.structural_node.clone(),
                 }],
+                temporal_profile: None,
             };
         }
     }

@@ -236,6 +236,13 @@ request carrying an `export` member, or with `ExportSelection::Evidence` an
   The text `the selected export invocation requires` SHALL NOT appear in any
   refusal.
 
+### A request that is not an object
+
+- If the export entry reads an envelope whose `request` member is not a JSON
+  object, then the entry SHALL refuse `invalid-request` at stage `request`,
+  exit 20, with message `invalid clause request member /request: expected an
+  object` and `details` `null`.
+
 ### The request example entry
 
 - `fsl_command::command::request_example` SHALL have the signature
@@ -266,8 +273,34 @@ request carrying an `export` member, or with `ExportSelection::Evidence` an
   exactly `profile` `filament.output.tla2/v1` and `obligations` holding one
   nonblank name; the `export_evidence` member holds exactly `package` `{}`,
   a nonblank `obligation`, `tool` `tlc` and a nonblank `artifact`; and the
-  `native-replay/1` example's `byte_provision` is `[]`, so it names no
-  provisioned file. Files it names are relative paths that need not exist.
+  `native-replay/1` example's `package`, `replay_target` and
+  `byte_provision` are the members of the replay example below. Files it
+  names are relative paths that need not exist.
+- The `native-replay/1` example's `package`, `replay_target` and
+  `byte_provision` members SHALL be exactly those of this JSON object:
+
+  ```json
+  {"package": {"lock": {"sources": [{"authority": "example", "identity": "entry"}]}, "name": "example", "semantic_graph": {"nodes": [{"check_mode": "linked", "declaration": {"qualified_name": ["entry"]}, "node_id": {"ordinal": 0, "package": "example", "path": ["entry"]}, "node_tag": "function"}]}}, "replay_target": {"arguments": false, "members": {"function": "entry"}, "occurrence_key": {"node_id": {"ordinal": 0, "package": "example", "path": ["entry"]}, "ordinal": "0", "role": "declaration"}, "over": null}, "byte_provision": [{"authority": "example", "bytes_path": "entry.fsl", "identity": "entry"}]}
+  ```
+
+  Its other eleven `request` members are `profile_selections` `[]`,
+  `dependencies` `[]`, `source` `{"assignments":[],"kind":"input"}`,
+  `obligation_identity` `{"model":null,"node_id":{"ordinal":0,"package":"example","path":["entry"]},"ordinal":0}`,
+  `backend` `"fsl"`, `state_environment` `[]`, `accounting_limits` `{}`,
+  `stage_limits` `{}`, `supplied_limits` `null`, `object_environment`
+  `null` and `declared_domains` `[]`.
+
+  The lock holds exactly one source, and `byte_provision` holds exactly the
+  one row whose `authority` and `identity` equal that source's. The entry
+  reads `bytes_path` while decoding the request, so over an empty directory
+  the example is refused at stage `request`, exit 20, with the missing
+  file's read refusal naming `entry.fsl` (FR-862), as the other examples
+  are refused only for a file they name. With an empty `entry.fsl` beside
+  it, the example is not refused `invalid-request` and not with a read refusal naming `entry.fsl` (FR-862 decodes it in
+  full and FR-071 constructs it); it is refused by FR-098's recompile or
+  package admission, never as `invalid_package` for
+  `/package/lock/sources` and never as `missing_import`. The example does
+  not replay: its package is no complete checked package.
 - The returned text SHALL be the document written with two-space
   indentation, members in member order, and no trailing newline, and SHALL
   be the same bytes on every call with the same arguments. It reads no file
@@ -292,8 +325,9 @@ request carrying an `export` member, or with `ExportSelection::Evidence` an
 | FR-1047-AC-4 | `run_with_providers` over a `native-run/1` request with `models` `[{"source":{"file":"m.json"}}]`, `call` `{"function":"main","arguments":[]}` and `program` `{"source":{"file":"p.fsl"}}`, in an empty directory, refuses `invalid-request`, stage `request`, exit 20, reading no file, with `details` exactly `{"missing":["/request/models/0/format","/request/models/0/source/authority","/request/models/0/source/identity","/request/models/0/source/document","/request/models/0/source/formal_revision","/request/program/source/authority","/request/program/source/identity","/request/program/source/document","/request/program/source/formal_revision"]}` and the message joining those pointers with `, ` after `invalid request: missing required members `. | Test (TC-3170) |
 | FR-1047-AC-5 | Each of these refuses `invalid-request`, stage `request`, exit 20, never `unknown_wire`, with `details.path` `/format` and the exact message: `run_with_providers` over a `native-analyze/1` document, `invalid request: format native-analyze/1 is not read by run; run reads native-run/1, native-monitor/1, native-replay/1`, with `details.accepted` `["native-run/1","native-monitor/1","native-replay/1"]`; `prepare_run` over a `native-monitor/1` document, `invalid request: format native-monitor/1 is not read by run-reader; run-reader reads native-run/1`; `analyze_with_providers` over a `native-run/1` document, `invalid request: format native-run/1 is not read by analyze; analyze reads native-analyze/1`; `compile_outcome_with_overrides` over a `native-run/1` document, `invalid request: format native-run/1 is not read by compile; compile reads native-compile/1`; `monitor` over a `native-run/1` document, `invalid request: format native-run/1 is not read by monitor; monitor reads native-monitor/1`; `export_with_limits_and_overrides` over `{"format":"native-export/1","request":{}}`, `invalid request: format native-export/1 is not read by export; export reads native-run/1`; and `run_with_providers` over `{"format":"bogus/1"}`, `invalid request: format bogus/1 is not read by run; run reads native-run/1, native-monitor/1, native-replay/1`. | Test (TC-3170) |
 | FR-1047-AC-6 | `export_with_limits_and_overrides` with `ExportSelection::Ordinary` over FR-1015's counter export request with its `export` member removed refuses `invalid-request`, stage `request`, exit 20, with message exactly `invalid request: missing required member /request/export: export reads a native-run/1 request whose request holds an export object with at least profile and obligations` and `details` `{"missing":["/request/export"]}`; with `ExportSelection::Evidence` over the same request, message exactly `invalid request: missing required member /request/export_evidence: export evidence reads a native-run/1 request whose request holds an export_evidence object with package, obligation, tool and artifact`. Neither message contains `requires export`. A request whose `export` lacks `profile` is still refused as FR-1015 states, not by this requirement. | Test (TC-3170) |
-| FR-1047-AC-7 | For each of `request_example(F, None)` with `F` each of the five request formats, and `request_example("native-run/1", Some(Ordinary))` and `Some(Evidence)`: the result is `Ok`, parses as an object whose members are exactly `format` (equal to `F`) and `request`, is two-space indented in member order with no trailing newline, and equals a second call's bytes. Written to a file in an empty directory and handed to its entry (`run_with_providers` for `native-run/1` and `native-replay/1`; `monitor`, with an empty record stream, for `native-monitor/1`; `compile_outcome_with_overrides`; `analyze_with_providers_and_limits`; `export_with_limits_and_overrides` with the same selection), it is never refused at stage `envelope`, never refused by this requirement, and never refused for an unknown, repeated or wrong-kind member; the run, compile, analyze, monitor and export examples are refused only at stage `file`, naming a file the example names; the evidence example settles FR-1022's `unimplemented-meaning`; the replay example reads no provisioned file. Removing any one member of its `request` makes the same entry refuse by this requirement with `details.missing` exactly that member's pointer, or the array of its group. | Test (TC-3170) |
+| FR-1047-AC-7 | For each of `request_example(F, None)` with `F` each of the five request formats, and `request_example("native-run/1", Some(Ordinary))` and `Some(Evidence)`: the result is `Ok`, parses as an object whose members are exactly `format` (equal to `F`) and `request`, is two-space indented in member order with no trailing newline, and equals a second call's bytes. Written to a file in an empty directory and handed to its entry (`run_with_providers` for `native-run/1` and `native-replay/1`; `monitor`, with an empty record stream, for `native-monitor/1`; `compile_outcome_with_overrides`; `analyze_with_providers_and_limits`; `export_with_limits_and_overrides` with the same selection), it is never refused at stage `envelope`, never refused by this requirement, and never refused for an unknown, repeated or wrong-kind member; the run, compile, analyze, monitor and export examples are refused only at stage `file`, naming a file the example names; the evidence example settles FR-1022's `unimplemented-meaning`; the replay example is refused at stage `request`, exit 20, with the missing file's read refusal naming `entry.fsl` (FR-862), and with an empty `entry.fsl` beside it is not refused `invalid-request` and not with a read refusal naming `entry.fsl` and is refused by FR-098's recompile or package admission, never as `invalid_package` for `/package/lock/sources` and never as `missing_import`. Removing any one member of its `request` makes the same entry refuse by this requirement with `details.missing` exactly that member's pointer, or the array of its group. | Test (TC-3170) |
 | FR-1047-AC-8 | `request_example("native-export/1", None)` returns `Err(RequestExampleError::UnknownFormat { .. })` whose `known` is `["native-run/1","native-compile/1","native-analyze/1","native-monitor/1","native-replay/1"]` and whose `Display` is exactly `unknown request format native-export/1; request formats are native-run/1, native-compile/1, native-analyze/1, native-monitor/1, native-replay/1`; `request_example("native-compile/1", Some(ExportSelection::Ordinary))` returns `SelectionNeedsRunFormat` with `Display` exactly `an export selection reads native-run/1, not native-compile/1`; both have `code()` `invalid-request`. | Test (TC-3170) |
+| FR-1047-AC-9 | `export_with_limits_and_overrides` with `ExportSelection::Ordinary` over `{"format":"native-run/1","request":3}` refuses `invalid-request`, stage `request`, exit 20, with message exactly `invalid clause request member /request: expected an object` and `details` `null`; no `missing` list is written, since a `request` that is not an object has no members to list. | Test (TC-3202) |
 
 ## Dependencies
 

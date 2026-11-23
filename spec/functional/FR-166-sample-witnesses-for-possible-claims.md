@@ -25,11 +25,15 @@ relationships:
 ## Description
 
 When a request holds a `possible` item, `fsl-analyze`'s `model_check` SHALL
-draw seeded random walks for it before exploring the subject (ADR-022 GE-2): `witness_samples`
-walks per initial state, with FR-101's sampler. Each walk takes at most
-`max_walk_steps` steps, a caller-set budget with a published default of
-4,096, and never more than the search horizon. A walk that reaches a state
-where the target holds is a witness for its initial state. Phase 0 is on by
+draw seeded random walks for it before exploring the subject (ADR-022 GE-2):
+`witness_samples` walks per initial state, with FR-101's sampler. Each walk
+takes at most `max_walk_steps` steps, a caller-set budget with a published
+default of 4,096, and never more than the search horizon. A walk that reaches
+a state where the target holds is a witness for its initial state. A walk
+that revisits a state SHALL stop early when it has taken every outgoing
+transition of every state it has visited; seeing a repeated state alone is
+not sufficient. This closure stop bounds a cyclic walk that has exhausted its
+observed subgraph without changing any sampled witness. Phase 0 is on by
 default, with a published default of 64 walks, and a request turns it off by
 setting `witness_samples` to 0. Every walk is named by its
 `SampleProvenance`, so a run is reproducible from its seed. Sampling only
@@ -47,6 +51,12 @@ from the sampled witnesses. The result names the walk that found each
 witness, by seed and trace index, so the operator can see which walk found
 it and can rerun it. When a state budget stops a larger run first, the
 result says that a witness was found and well-definedness is unchecked.
+
+For a cyclic model whose target is false throughout a closed reachable graph,
+a walk can otherwise revisit the same states until `max_walk_steps`. Once its
+visited states and all of their outgoing transitions are closed, that walk
+has no unseen successor from which it could find a target. It stops there and
+lets exhaustive exploration settle the claim.
 
 ## Inputs
 
@@ -93,13 +103,36 @@ pub struct ModelCheckRequest<'a> {
 - The engine SHALL run phase 0 for every `Possible` item instance of the
   subject before phase 1 (FR-167), and for no other state-graph form.
 - For initial state `i` (its index in the subject's initial list) and walk
-  `r` in `0..witness_samples`, the engine SHALL call FR-101 `sample_request`
-  on a view of the subject's `ModelSystem` whose only initial state is
-  initial state `i`, with the request's seed, trace index `i ×
-  witness_samples + r` and step ceiling the lesser of `max_walk_steps` and
-  the search horizon `max_depth`.
-- When a walk reaches its step ceiling without visiting a target state, the
-  engine SHALL continue the run with that walk deciding nothing.
+  `r` in `0..witness_samples`, the engine SHALL call FR-101
+  `sample_request_observed` on a view of the subject's `ModelSystem` whose
+  only initial state is initial state `i`, with the request's seed, trace
+  index `i × witness_samples + r` and step ceiling the lesser of
+  `max_walk_steps` and the search horizon `max_depth`. Its observer SHALL
+  evaluate the target at each visited state and closure only when the
+  expansion is complete. If the
+  call completes normally, its completed trace is used as the sampled walk.
+  If the observer stops at a target state, the returned prefix becomes the
+  witness path and the engine constructs its `SampleProvenance` with
+  `stopped: Reached`; if it stops for closure without a target, that prefix
+  decides nothing and is not a witness trace.
+- At each observer call, the observer SHALL evaluate the target first. If it
+  does not end the walk and the walk has revisited a state with a closed
+  observed subgraph, the engine SHALL return `ObserverDecision::Stop` before
+  applying either ceiling. The subgraph consists of every
+  state the walk has visited and every outgoing edge it has taken from those
+  states; an edge is identified by its source state key, transition identity
+  and destination state key, as FR-101 orders successors. It is closed only
+  when every outgoing edge of every visited state has been taken and every
+  such destination is in the visited set. The engine SHALL NOT stop on a
+  repeated state alone, or when only that repeated state's outgoing edges have
+  been taken. An expansion that did not return the complete successor set
+  cannot establish closure. A closed walk with no target decides nothing and
+  is not counted among the walks stopped by `max_walk_steps`; all of its
+  visited states have already been evaluated for the target, and every
+  successor of those states is in the visited set.
+- When a walk reaches its step ceiling without visiting a target state and its
+  observed subgraph is not closed, the engine SHALL continue the run with that
+  walk deciding nothing.
 - The terminal record SHALL name `max_walk_steps`, its value and the count
   of walks that `max_walk_steps` stopped. A
   walk the horizon stopped is not counted, since the horizon is a method
@@ -140,13 +173,14 @@ pub struct ModelCheckRequest<'a> {
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-166-AC-1 | Over ADR-022 §7.1's subject with default limits and no seed, each `ReachesTwo` instance gets a sampled witness from `(0, 0)` whose last state is the first visited state where the bound config's `versionNumber` is 2, whose source is `Sampled` with seed 0 and a trace index below 64, and phase 1 searches for no explored witness for the item. | Test (TC-591) |
-| FR-166-AC-2 | The same request with `witness_samples` 0 draws no walk and every witness comes from phase 1. `ReachesThree` with the default draws 64 walks per instance, finds no witness, and leaves the item to phase 1. | Test (TC-591) |
+| FR-166-AC-1 | Over ADR-022 §7.1's subject with default limits and no seed, each `ReachesTwo` instance gets a sampled witness from `(0, 0)` whose last state is the first visited state where the bound config's `versionNumber` is 2, whose source is `Sampled` with seed 0 and a trace index below 64, and phase 1 searches for no explored witness for the item. The witness bytes, including path and `SampleProvenance`, equal the pre-closure-stop result because each walk stops at its first target. | Test (TC-591) |
+| FR-166-AC-2 | The same request with `witness_samples` 0 draws no walk and every witness comes from phase 1. `ReachesThree` with the default draws 64 walks per instance, finds no witness, and leaves the item to phase 1; on ADR-022 §7.1's 9-state/18-edge graph, each walk stops after its visited subgraph closes within 512 steps, no walk is counted at `max_walk_steps`, and the test records and asserts the total sampled steps. | Test (TC-591) |
 | FR-166-AC-3 | Over the §7.1 unit with two initial snapshots, `(0, 0)` and `(1, 1)`, the witness for initial state 1 has a trace index in `64..128`. A request with seed 7 records seed 7; two requests with no seed give byte-equal witnesses and record the default seed. | Test (TC-591) |
 | FR-166-AC-4 | `witness_samples` `u64::MAX` over the two-snapshot subject returns `Stopped(ResourceExhausted, WitnessSamples)` before any walk, naming the limit and its value; a cancelled `Cancel` handle stops the run before the first walk. | Test (TC-591) |
 | FR-166-AC-5 | Over §7.1's subject with default limits, `possible 2 div (2 - c.versionNumber) = 2` for `c = a` under the subject's integer-division law (its package selects one, as FR-168-AC-11's fixture does; `div` needs that selection) gets a sampled witness ending at a node with `va = 1`, and the item does not settle from it: exploration runs to completion and the item settles `refuted` with cause `UndefinedEvaluation` at `(2, 0)` (FR-168-AC-7). `ReachesTwo` under the same limits settles `proved` with its sampled witnesses only after exploration completes with no open node. | Test (TC-613) |
 | FR-166-AC-6 | `ReachesTwo` with default `witness_samples` and `max_states` 2 gets a sampled witness for each instance, the exploration stops at `max_states`, and the item settles `inconclusive`, `WellDefinednessUnchecked`, never `proved` (FR-169-AC-8). | Test (TC-614) |
-| FR-166-AC-7 | `ReachesThree` with the default limits draws 64 walks per instance, each stopped by `max_walk_steps` at 4,096 steps, finds no witness and decides nothing; the terminal record names `max_walk_steps`, 4,096 and a count of 64 per instance. With `max_walk_steps` 1, `ReachesTwo` gets no sampled witness, since `versionNumber` 2 is two steps away, and every witness comes from phase 1. With horizon `max_depth` 1, every walk takes at most 1 step, the record states horizon 1, and no walk is counted as stopped by a limit. | Test (TC-618) |
+| FR-166-AC-7 | `ReachesThree` with the default limits draws 64 walks per instance, finds no witness, and leaves the item to phase 1; each walk on ADR-022 §7.1's closed 9-state/18-edge graph ends when its visited subgraph closes within 512 steps, the test records the walk and step counts, and the terminal record states zero walks stopped by `max_walk_steps`. With `max_walk_steps` 1, `ReachesTwo` gets no sampled witness, since `versionNumber` 2 is two steps away, and every witness comes from phase 1. With horizon `max_depth` 1, every walk takes at most 1 step, the record states horizon 1, and no walk is counted as stopped by a limit. | Test (TC-618) |
+| FR-166-AC-8 | In a cyclic graph with states `s0`–`s3`, edges `s0→s1`, `s0→s2`, `s1→s0`, `s1→s2`, `s1→s3`, `s2→s0`, `s2→s1`, `s2→s3`, `s3→s0`, and `s3→s2`, initial state `s0`, and a total, always-false target, the default seed and 64 samples draw 64 walks; every walk closes only after traversing all outgoing edges of every visited state, within 256 steps, and none is counted at `max_walk_steps`. The test asserts the total sampled steps is at most 64×256 and records the exact total. Phase 1 explores exactly 4 states and 10 edges and settles the item `refuted`. | Test (TC-618) |
 
 ## Dependencies
 

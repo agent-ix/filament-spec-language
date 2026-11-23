@@ -20,6 +20,6 @@ Verify the text form of an `export` outcome document. Scope: FR-865-AC-7.
 
 ## Expected Results
 
-- Step 1: exactly `export: success (exit 0) at S4`, `target: tla filament.output.tla2/v1`, `bytes written: <n>` (the text length) and `output: m.tla`.
+- Step 1: exactly `export: success (exit 0) at stage packaging`, `target: tla filament.output.tla2/v1`, `bytes written: <n>` (the text length) and `output: m.tla`.
 - Step 2: the last two lines are `bytes written: 0` and `output: none`.
-- Step 3: `export: incomplete (exit 22) at S4`, `bytes written: 0`, and a line naming `export.output_bytes`.
+- Step 3: `export: incomplete (exit 22) at stage packaging`, `bytes written: 0`, and a line naming `export.output_bytes`.

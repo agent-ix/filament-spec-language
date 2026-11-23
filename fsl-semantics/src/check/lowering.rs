@@ -356,7 +356,7 @@ impl SemanticNode {
         if self.content.node_tag != NodeTag::CompositeType {
             return None;
         }
-        let BodyTerm::Aggregate(AggregateTerm { members }) = &self.content.body else {
+        let BodyTerm::Aggregate(AggregateTerm { members, .. }) = &self.content.body else {
             return None;
         };
         members
@@ -386,7 +386,7 @@ impl SemanticNode {
         if self.node_tag() != NodeTag::Model || self.semantic_form() != "object_type" {
             return None;
         }
-        let BodyTerm::Aggregate(AggregateTerm { members }) = &self.content.body else {
+        let BodyTerm::Aggregate(AggregateTerm { members, .. }) = &self.content.body else {
             return None;
         };
         members
@@ -432,7 +432,7 @@ impl SemanticNode {
         if self.content.node_tag != NodeTag::CompositeType {
             return None;
         }
-        let BodyTerm::Aggregate(AggregateTerm { members }) = &self.content.body else {
+        let BodyTerm::Aggregate(AggregateTerm { members, .. }) = &self.content.body else {
             return None;
         };
         members
@@ -451,7 +451,7 @@ impl SemanticNode {
         if self.content.node_tag != NodeTag::Function {
             return None;
         }
-        let BodyTerm::Aggregate(AggregateTerm { members }) = &self.content.body else {
+        let BodyTerm::Aggregate(AggregateTerm { members, .. }) = &self.content.body else {
             return None;
         };
         // The body binding follows the parameters binding, which is first
@@ -488,7 +488,7 @@ impl SemanticNode {
         if self.content.node_tag != NodeTag::CompositeType {
             return None;
         }
-        let BodyTerm::Aggregate(AggregateTerm { members }) = &self.content.body else {
+        let BodyTerm::Aggregate(AggregateTerm { members, .. }) = &self.content.body else {
             return None;
         };
         members
@@ -526,7 +526,7 @@ impl SemanticNode {
         if self.content.node_tag != NodeTag::Function {
             return None;
         }
-        let BodyTerm::Aggregate(AggregateTerm { members }) = &self.content.body else {
+        let BodyTerm::Aggregate(AggregateTerm { members, .. }) = &self.content.body else {
             return None;
         };
         // FR-092 "Function nodes": the parameters binding is first among a

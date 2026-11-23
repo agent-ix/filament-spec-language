@@ -181,7 +181,7 @@ fn target(term: &CheckedTerm) -> &CheckedNodeId {
 
 /// A text literal member `name` of a parameter's aggregate body.
 fn parameter_name(node: &CheckedSemanticNodeV2) -> String {
-    let CheckedTerm::Aggregate { members } = &node.body else {
+    let CheckedTerm::Aggregate { members, .. } = &node.body else {
         panic!("a parameter body is an aggregate");
     };
     members
@@ -319,7 +319,7 @@ fn the_switch_transition_reads_back_typed_subject_input_post_claim_and_source() 
     );
 
     // Inputs: the ordered Boolean `flag`, in the model's declared order.
-    let CheckedTerm::Aggregate { members } = inputs else {
+    let CheckedTerm::Aggregate { members, .. } = inputs else {
         panic!("inputs are an ordered aggregate");
     };
     let flags: Vec<(String, &CheckedNodeId)> = members
@@ -345,7 +345,7 @@ fn the_switch_transition_reads_back_typed_subject_input_post_claim_and_source() 
     // Pre-state: the source states no `pre` clause, so none is bound.
     assert_eq!(
         pre,
-        &CheckedTerm::Aggregate { members: vec![] },
+        &CheckedTerm::aggregate(vec![]),
         "the source states no pre clause"
     );
 
@@ -506,7 +506,7 @@ fn the_typed_inputs_keep_the_declared_order_of_two_parameters() {
         panic!("the third binding");
     };
     assert_eq!(name.as_ref(), "inputs");
-    let CheckedTerm::Aggregate { members } = &**value else {
+    let CheckedTerm::Aggregate { members, .. } = &**value else {
         panic!("inputs are an ordered aggregate");
     };
     let names: Vec<String> = members

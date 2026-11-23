@@ -1319,7 +1319,7 @@ fn optional_binding<'a>(value: &'a CheckedTerm, name: &str) -> Option<&'a Checke
 
 fn aggregate(value: &CheckedTerm) -> Result<&[CheckedTerm], &'static str> {
     match value {
-        CheckedTerm::Aggregate { members } => Ok(members),
+        CheckedTerm::Aggregate { members, .. } => Ok(members),
         _ => Err("admitted timed-model term is not an aggregate"),
     }
 }
@@ -1396,7 +1396,7 @@ fn find_literal_type(
                 value_kind,
                 ..
             } if value_kind.as_wire() == kind => Some(type_id.clone()),
-            CheckedTerm::Aggregate { members } => {
+            CheckedTerm::Aggregate { members, .. } => {
                 members.iter().find_map(|child| visit(child, kind))
             }
             CheckedTerm::Binding { value, .. } => visit(value, kind),
@@ -1429,7 +1429,7 @@ mod intake_proofs {
     }
 
     fn replace_binding(body: &mut CheckedTerm, name: &str, replacement: CheckedTerm) {
-        let CheckedTerm::Aggregate { members } = body else {
+        let CheckedTerm::Aggregate { members, .. } = body else {
             panic!("fixture body is aggregate")
         };
         let value = members
@@ -1589,7 +1589,7 @@ mod intake_proofs {
             project_source(&unknown),
             Err("admitted timed-model term is not text")
         );
-        let CheckedTerm::Aggregate { members } = &mut unknown.body else {
+        let CheckedTerm::Aggregate { members, .. } = &mut unknown.body else {
             panic!("fixture body is aggregate")
         };
         members.retain(|member| !matches!(member, CheckedTerm::Binding { name, .. } if name.as_ref() == "unit"));

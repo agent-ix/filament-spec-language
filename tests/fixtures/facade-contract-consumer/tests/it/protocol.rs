@@ -213,7 +213,7 @@ fn binding_value<'a>(term: &'a CheckedTerm, name: &str) -> Option<&'a CheckedTer
         CheckedTerm::Application { arguments, .. } => arguments
             .iter()
             .find_map(|argument| binding_value(argument, name)),
-        CheckedTerm::Aggregate { members } => members
+        CheckedTerm::Aggregate { members, .. } => members
             .iter()
             .find_map(|member| binding_value(member, name)),
         _ => None,
@@ -229,7 +229,7 @@ fn collect_references<'a>(term: &'a CheckedTerm, references: &mut Vec<&'a Checke
                 collect_references(argument, references);
             }
         }
-        CheckedTerm::Aggregate { members } => {
+        CheckedTerm::Aggregate { members, .. } => {
             for member in members {
                 collect_references(member, references);
             }

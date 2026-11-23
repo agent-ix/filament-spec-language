@@ -205,13 +205,19 @@ and `FR-621`'s outcome document is unchanged.
 
 - `AnalysisView` SHALL expose the package's requirement records as Contract
   IR's typed read of FSpec FR-825's `requirement_items` rows and
-  `claim`/`value_validity` nodes: `requirement_items()` in package order, a
+  `claim`/`value_validity` and `claim`/`operation_contract` nodes:
+  `requirement_items()` in package order, a
   row's index being its record's request index, and
   `value_validity_records_of(owner)`, the indices of the rows a function
-  node owns. It SHALL also expose the admitted `path_condition_frames` table
-  and a borrowed outermost-first path-condition view for each record, backed
-  by its terminal frame id. The source route's `AdmittedPackageRead` and the
-  package route's `BarePackage` SHALL return equal rows, frames and views for
+  node owns. Value-validity records expose the owner, bound, conversion,
+  terminal frame, extent roots and object types; operation-contract records
+  expose the Boolean result bound, invariant marker, operation anchor, body
+  object references and population domains, with the exact extent on the row.
+  It SHALL also expose the admitted `path_condition_frames` table and a
+  borrowed outermost-first path-condition view for each value-validity record,
+  backed by its terminal frame id; an operation-contract record has no path
+  condition. The source route's `AdmittedPackageRead` and the package route's
+  `BarePackage` SHALL return equal rows, records, frames and views for
   a package and the bytes it was written to; neither route materializes one
   expanded guard vector per record.
 - On the package route, the settlement of a run call's items (FR-961 steps 4
@@ -229,6 +235,16 @@ and `FR-621`'s outcome document is unchanged.
   record's `extent_roots` name (FR-098). No item is rebuilt from the graph,
   none is dropped, and none settles `unsupported` for a fact these rows
   carry.
+- A package-route `operation-contract` item SHALL be built from its row and
+  `OperationContract` record plus the claim/form nodes in the package. Its
+  claim, request index, capability, extent, Boolean result bound, invariant
+  status, operation anchor, model references and populations SHALL equal the
+  source route's `RequirementRecord` and `ContractClaim`; the same request
+  selection, case bound and package subject reach the same contract checker.
+  It SHALL settle with the same item record and exit as source analysis. A
+  package missing this required form is a strict-reader refusal when
+  malformed, never the analysis refusal "requirement record has no package
+  form" and never `unsupported` for a valid record.
 
 ### Claim names
 
@@ -873,6 +889,7 @@ step.
 | FR-940-AC-25 | AC-24's package requests still produce the same proved, refuted, undefined and budget-stopped records after the source unit is overwritten with invalid bytes and the handoff's `sources/` is deleted. With no source present, FR-163's checker accepts the secure certificate, rejects a variant that omits a reachable state with a certificate rejection, refuses variants that omit an applicable edge or alter its typed result as certificate-request input mismatches without a certificate verdict or proof, and under tuple allowance 63 stops at count 64 identifying the first unpaid tuple. Checking twice under 64 accepts twice, with fresh checker counters. | Test |
 | FR-940-AC-26 | Variants of AC-23's package with a duplicate or missing execution parameter level, an argument parameter with the wrong type, or an invalid step-relation body reference refuse the whole request before an engine runs, retaining the strict reader's code, cause and pointer. A test-only projection with a body model read that cannot be assigned to exactly one declared execution returns `MalformedNode` naming the relation node; its item has no verdict and a sibling valid item is unaffected. Neither case loads source or becomes a proved relation. | Test |
 | FR-940-AC-27 | AC-23's two-alias package carries `subject_declaration_order` entries `[A, B]` joining the same alias/root pairs as its first-use `subjects` entries `[B, A]`. The strict reader admits that witness and preserves `[A, B]`. Repeated aliases, unknown aliases, omitted aliases and an alias joined to the other subject's root each refuse with the reader's code, cause and member pointer. Distinct aliases sharing one root remain admitted. Removing only the optional member leaves the legacy package admitted globally, but its HP-1 model item settles `unsupported` with `unknown_required_feature`/`unsupported-feature`, reason `missing-subject-declaration-order`, and the owning package and relation node before exploration, while a sibling state item runs normally and no source is read. | Test |
+| FR-940-AC-28 | A unit with an operation-contract item is analyzed once from source and once from its emitted package. Both routes expose the same requirement row and typed record: claim occurrence and request index, `operation-contract` kind, extent, Boolean bound, invariant marker, operation anchor, model-object references and populations. The package route selects the same `ContractClaim`, uses the same subject and case limit, and settles an item record equal to the source route's with the same process exit. A valid emitted item never refuses with `requirement record has no package form`, is never dropped, and is never `unsupported` due to the record form. A malformed record is refused by admission with FR-825's exact code and pointer before any engine runs. | Test (TC-2958) |
 
 ## Dependencies
 

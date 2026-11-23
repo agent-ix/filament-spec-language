@@ -393,7 +393,7 @@ fn aggregate_formula_graph_retains_members_and_capture_binding() {
         .iter()
         .find(|entry| entry.kind() == Some(crate::checked_views::FormulaOperation::Aggregate))
         .expect("one aggregate atom");
-    let filament_contract_model::CheckedTerm::Aggregate { members } = aggregate.aggregate.unwrap()
+    let filament_contract_model::CheckedTerm::Aggregate { members, .. } = aggregate.aggregate.unwrap()
     else {
         panic!("aggregate bindings");
     };
