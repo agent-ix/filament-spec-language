@@ -656,3 +656,120 @@ fn three_time_dimensions_have_distinct_structural_keys() {
         assert_ne!(left, right);
     }
 }
+
+/// FSpec FR-825: the timed-model writer re-encodes an admitted base package
+/// whose scalar function carries `claim`/`value_validity` records, with a
+/// changed tick period that renames the timed nodes. No record or row names a
+/// timed node, so the rows are carried unchanged: the strict reader admits
+/// the result, each record keeps its `generated` source-map entry, and
+/// removing `requirement_items` from it is refused at `/requirement_items`.
+/// Re-pointing renamed ids is covered by the monitor final-writer tests.
+#[trace("FR-230-AC-32", "FR-940")]
+#[test]
+fn the_timed_model_writer_carries_value_validity_rows_through_a_rename() {
+    let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
+    let packages = fsl_semantics::model::intake::package_input([document]).unwrap();
+    let unit = config_version_unit::unit_text().replace(
+        "profile v = \"filament.model.complete/v1\";\n",
+        "profile v = \"filament.model.complete/v1\";\n\
+         profile t = \"filament.temporal.complete/v1\";\n",
+    );
+    let unit = format!(
+        "{unit}dimension Time;\nunit ms : Time = rational(1, 1);\ntime Config tick ConfigVersion::attemptUpdate period 1 ms unit ms;\n\
+         function f using v(x: Int[0, 9], p: Boolean): Int[0, 10] pure {{ if p then x + 1 else x }}\n"
+    );
+    let graph = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the unit assembles")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("the tick source checks: {refusals:?}"));
+    let emission = emit_checked(&CheckedPackage::link(graph)).expect("the tick model emits");
+    let wire = wire(&emission);
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in wire["lock"]["required_features"].as_array().unwrap() {
+        evidence.support_feature(feature.as_str().unwrap());
+    }
+    evidence
+        .insert_domain_package_document(package_identity(document), document.to_vec())
+        .expect("a fresh evidence key");
+    let limits = V2ReadLimits::fixture().for_ir();
+    let read = |bytes: &[u8]| filament_contract_model::read_checked_package(bytes, limits, &evidence);
+    let base = match read(emission.package.bytes()) {
+        filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(base) => base,
+        other => panic!("the base reads: {other:?}"),
+    };
+    assert!(
+        base.requirement_items().iter().any(|row| row.record.is_some()),
+        "the scalar function carries value-validity records"
+    );
+    let mut typed = CheckedTimedModel::from_admitted(&base).expect("the tick model reads back");
+    let [timed] = typed.as_mut_slice() else {
+        panic!("one timed model reads back");
+    };
+    timed.source.period = Some("3/2".to_owned());
+    let re_emitted = crate::emit::emit_timed_models(&base, &typed, crate::EmitLimits::fixture())
+        .expect("the changed tick model re-emits");
+    let reread = match read(re_emitted.package().bytes()) {
+        filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(reread) => reread,
+        other => panic!("the re-emitted value-validity rows read: {other:?}"),
+    };
+    let source_id = |package: &filament_contract_model::CheckedPackageV2| {
+        package
+            .resolved_graph()
+            .nodes
+            .iter()
+            .find(|node| node.semantic_form.as_ref() == "time_source")
+            .map(|node| node.node_id.clone())
+            .expect("one time source")
+    };
+    assert_ne!(source_id(&*reread), source_id(&*base), "the timed nodes are renamed");
+    assert_eq!(reread.requirement_items(), base.requirement_items());
+    for record in reread
+        .requirement_items()
+        .iter()
+        .filter_map(|row| row.record.as_ref())
+    {
+        assert_eq!(
+            reread
+                .source_map()
+                .iter()
+                .filter(|entry| entry.node_id == record.node
+                    && entry.role == filament_contract_model::CheckedOccurrenceRole::Generated)
+                .count(),
+            1,
+            "each record keeps its generated source-map entry"
+        );
+    }
+
+    let mut stripped: Value = serde_json::from_slice(re_emitted.package().bytes()).unwrap();
+    stripped
+        .as_object_mut()
+        .unwrap()
+        .remove("requirement_items")
+        .expect("the re-emitted package carries requirement_items");
+    let stripped = serde_json::to_vec(&stripped).unwrap();
+    let refusal = match read(&stripped) {
+        filament_contract_model::CheckedPackageDispatchResult::Refused(refusal) => refusal,
+        other => panic!("record nodes without rows are refused: {other:?}"),
+    };
+    assert_eq!(
+        refusal.code,
+        filament_contract_model::CheckedPackageRefusalCode::InvalidPackage
+    );
+    assert_eq!(
+        refusal.cause,
+        Some(filament_contract_model::CheckedPackageRefusalCause::InvalidValue)
+    );
+    assert_eq!(
+        refusal
+            .loci
+            .first()
+            .and_then(|locus| locus.path.as_ref())
+            .map(|path| path.as_str()),
+        Some("/requirement_items"),
+        "{refusal:?}"
+    );
+}
