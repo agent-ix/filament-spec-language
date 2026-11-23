@@ -1083,6 +1083,7 @@ fn types_consume_value_bits(
             | ValueType::Timestamp
             | ValueType::Enum(_)
             | ValueType::Reference(_)
+            | ValueType::ClockReference
             | ValueType::Population(_) => {}
         }
     }

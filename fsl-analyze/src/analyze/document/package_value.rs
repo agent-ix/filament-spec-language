@@ -63,10 +63,10 @@ pub(super) fn extent(package: &BarePackage<'_>, row: &RequirementItemRow) -> Opt
 /// Read the admitted operation-contract record and its already-classified
 /// extent. The route must use these checked facts instead of classifying the
 /// source clause again.
-pub(crate) fn operation_contract_record(
+pub(crate) fn operation_contract_record<'row>(
     package: &BarePackage<'_>,
-    row: &RequirementItemRow,
-) -> Option<(&filament_contract_model::OperationContractRecord, ClaimExtent)> {
+    row: &'row RequirementItemRow,
+) -> Option<(&'row filament_contract_model::OperationContractRecord, ClaimExtent)> {
     if row.kind != CapabilityKind::OperationContract {
         return None;
     }
@@ -118,7 +118,9 @@ fn item(
     if row.kind != CapabilityKind::ValueValidity {
         return None;
     }
-    let record = row.record.as_ref()?;
+    let Some(WireRecord::ValueValidity(record)) = row.record.as_ref() else {
+        return None;
+    };
     let expression = |node, ordinal| {
         Some(OccurrenceKey::new(
             package.node_key(node)?,
@@ -129,12 +131,13 @@ fn item(
         Some((node, ordinal)) => Some(expression(node, *ordinal)?),
         None => None,
     };
-    let guards = record
-        .path_condition
+    let guards = package
+        .package()
+        .path_condition(record)
         .iter()
         .map(|guard| {
             Some(PathGuard::new(
-                expression(&guard.guard, guard.occurrence)?,
+                expression(guard.guard, guard.occurrence)?,
                 guard.holds,
             ))
         })
