@@ -1047,12 +1047,27 @@ impl StepMatch for Seams<'_> {
     }
 }
 
+/// The documents the unit of [`package_with_clause`] is checked against: the
+/// vault's, and with `second` the same vault under the second model's package.
+pub(crate) fn clause_documents(vault: Vault, second: bool) -> Vec<Vec<u8>> {
+    let first = document(vault.busy(), false);
+    let other = second.then(|| other_document(&first));
+    std::iter::once(first).chain(other).collect()
+}
+
 /// The vault unit with `declaration` linked into its checked package, so the
-/// package carries the clause's `hyperproperty` node.
-pub(crate) fn package_with_clause(vault: Vault, declaration: &str) -> CheckedPackage {
-    let document = document(vault.busy(), false);
-    let text = unit_text(None, vault, false, &format!("{declaration}\n"));
-    let graph = declarations(&[document.as_slice()], &text)
+/// package carries the clause's `hyperproperty` node. With `second` the unit
+/// also selects the second model, which the clause does not name.
+pub(crate) fn package_with_clause(vault: Vault, second: bool, declaration: &str) -> CheckedPackage {
+    let documents = clause_documents(vault, second);
+    let documents: Vec<&[u8]> = documents.iter().map(Vec::as_slice).collect();
+    let text = unit_text(
+        second.then_some(&[][..]),
+        vault,
+        false,
+        &format!("{declaration}\n"),
+    );
+    let graph = declarations(&documents, &text)
         .check(
             CheckMode::Linked,
             CheckingLimits::default(),

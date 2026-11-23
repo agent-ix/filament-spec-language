@@ -208,3 +208,21 @@ fn empty_qualified_calls_and_mode_switches_print_canonically() {
     assert_eq!(formatted(&out), out);
     assert_eq!(stripped(&out), stripped(&text));
 }
+
+/// FR-003, FR-631-AC-4: the empty object-parameter list of a `hyper` clause
+/// over `behaviours` prints as `behaviours ()`, and the printed unit parses.
+#[trace("TC-2784", "FR-003-AC-13")]
+#[test]
+fn an_empty_behaviours_parameter_list_prints_canonically() {
+    let text = format!(
+        "{}hyper Whole using inf over behaviours () forall trace a of V forall trace b of V {{ always holds(true) }}\n",
+        header("filament.temporal.infinite-trace/v1")
+    );
+    let out = formatted(&text);
+    let expected = format!(
+        "{}hyper Whole using inf over behaviours () forall trace a of V forall trace b of V {{ always holds(true) }}\n",
+        header("filament.temporal.infinite-trace/v1")
+    );
+    assert_eq!(out, expected);
+    assert!(parse(&out).is_admissible());
+}
