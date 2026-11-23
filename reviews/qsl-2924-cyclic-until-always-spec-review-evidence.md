@@ -54,3 +54,13 @@ Review set is the subset named by the dispatch (integrity, ears, evidence, failu
 - FR-201-AC-18 (spec/functional/FR-201-check-a-probability-certificate.md, context_only): AC-15 and AC-16 obey pre-cancellation and byte/state/edge/arithmetic limits throughout independent admission, original/stopped graph construction and checking, with typed stop/cancellation and no accepted truth value. Cycles in the original graph even after an early success, nonempty fairness, clocks, rewards, multiple initials/bindings, nested temporal forms, unresolved workload and non-exact documents remain explicitly unsupported. No state-predicate proof document is treated as a refutation witness.
 - FR-202 (spec/functional/FR-202-replay-a-probabilistic-witness.md, context_only): (PR #3546 head a4cd57d4) For `eventually holds(E)` with a `<= θ` bound, and for `always holds(P)` and `holds(A) until holds(B)` with either bound, the event-avoidance check SHALL use the same machinery over the complete reachable finite induced chain ... absorbing each decided state ... a component with no decided state rejects for eventually ... and for until ... and accepts for always ... For a `>= θ` bound the violated quantity is the probability of reaching the union of rejecting components, and the checked lower bound SHALL exceed `1 − θ`; for a `<= θ` bound ... accepting components .....
 - FR-1042 (spec/functional/FR-1042-certify-value-bounds-with-lower-and-upper-certificates.md, context_only): `base` SHALL be the complete objective, `profile` member included, of one of these exact profiles ... `reachability/v1` ..., `state-predicate/v1`, `cyclic-dtmc-eventual/v1`, `cyclic-mdp-eventual/v1` and `bounded-fair-eventual/v1`; FR-1041's `cyclic-mdp-fair-eventual/v1`; FR-1043's `finite-horizon-measure/v1` ...; and FR-201's expected-reward profiles ...
+
+## Dispositions
+
+Round 1, head 7bf6527c1536697dd5750f7bb0e519b2e4fcb689 (fix commit 7bf6527c over e50ab202, which is 2cee7da3 rebased onto origin/main 9a2555a0 with identical spec content). No new findings.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Verified by hand at 7bf6527c (fix commit over e50ab202, rebased 2cee7da3); after_excerpt in the Linear dispositions comment. |
+| FND-002 | fixed | Verified by hand at 7bf6527c (fix commit over e50ab202, rebased 2cee7da3); after_excerpt in the Linear dispositions comment. |
+| FND-003 | fixed | Verified by hand at 7bf6527c (fix commit over e50ab202, rebased 2cee7da3); after_excerpt in the Linear dispositions comment. |
