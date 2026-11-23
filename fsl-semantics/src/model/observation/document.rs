@@ -5389,7 +5389,6 @@ mod tests {
                     population_nodes: BTreeMap::new(),
                     population_keys: BTreeMap::new(),
                     population_members: BTreeMap::new(),
-                    population_members: BTreeMap::new(),
                     origins: ReferenceOriginBuilder::default(),
                     parameter_origins: BTreeMap::new(),
                     result_origins: ReferenceOrigins::default(),
