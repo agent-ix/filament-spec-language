@@ -103,6 +103,27 @@ fn wire(compiled: &ComposedUnit) -> Value {
     serde_json::from_slice(compiled.emitted.bytes()).expect("the wire is JSON")
 }
 
+/// FR-865-AC-18, FR-286-AC-40: an import with no library supplied writes the
+/// `library` kind and that row's hint.
+#[trace("TC-3199", "FR-865-AC-18", "FR-865-AC-24", "FR-286-AC-40")]
+#[test]
+fn missing_library_diagnostic_carries_its_selection() {
+    let declaration = import("test/geometry", "g");
+    let source = unit(&format!("{declaration}{H}"));
+    let missing = compile_as("u", &source, &DependencyInput::default())
+        .expect_err("nothing supplies test/geometry");
+    let diagnostic = crate::outcome::OutcomeDiagnostic::from_compile_refusal(&missing);
+    let wire = crate::outcome::assert_diagnostic_valid(&diagnostic);
+    assert_eq!(wire["code"], "missing_import", "{wire}");
+    assert_eq!(wire["cause"], "missing-selection", "{wire}");
+    assert_eq!(wire["selection"], "library", "{wire}");
+    assert_eq!(
+        wire["hint"],
+        "Supply the library in the request's libraries member, or with --library <identity>=<file> on fsl check.",
+        "{wire}"
+    );
+}
+
 /// FR-099-AC-3 (TC-446 step 3), selection and dependency input: each
 /// refusal is located as D-1 states, and none yields a package.
 #[trace("FR-099-AC-3", "TC-446")]
@@ -1016,4 +1037,80 @@ fn a_duplicate_import_qualifier_is_ambiguous_and_an_unaliased_import_binds_no_na
         .expect_err("an import without `as` binds no qualifier");
     assert_eq!(refusal.code(), Code::MissingDeclaration);
     assert_eq!(covered(&unaliased, &refusal), "g::f(y)");
+}
+
+/// FR-286-AC-40: a call-site refusal wrapping a `missing_import` compile
+/// refusal keeps its cause, `selection` and hint, whichever variant wraps it.
+#[trace("TC-3199", "TC-3203", "FR-865-AC-18", "FR-865-AC-24", "FR-286-AC-40")]
+#[test]
+fn wrapped_call_site_refusals_keep_their_cause_selection_and_hint() {
+    use crate::call_site::CallSiteRefusal;
+    use crate::outcome::OutcomeDiagnostic;
+    use fsl_foundation::selection::DefinitionRef;
+    use fsl_semantics::library::extension::ExtensionRefusal;
+
+    let library_hint = "Supply the library in the request's libraries member, or with --library <identity>=<file> on fsl check.";
+    let extension_hint = "Add the selected extension's definition to the request's extensions member, or remove the selection.";
+    let import_refusal = compile_as(
+        "u",
+        &unit(&format!("{}{H}", import("test/geometry", "g"))),
+        &DependencyInput::default(),
+    )
+    .expect_err("nothing supplies test/geometry");
+    let outer = library(
+        "test/outer",
+        "outer",
+        &format!("{}{F}", import("test/inner", "i")),
+    );
+    let dependency_refusal = compile_as(
+        "u",
+        &unit(&format!("{}{H}", import("test/outer", "o"))),
+        &input(vec![outer]),
+    )
+    .expect_err("test/outer imports a library nothing supplies");
+    let extension_refusal = CompileRefusal::Extension(ExtensionRefusal::MissingDependency {
+        dependent: DefinitionRef::new("agent-ix", "ext.a").unwrap(),
+        dependency: DefinitionRef::new("agent-ix", "ext.gone").unwrap(),
+    });
+    let intake = CallSiteRefusal::ModelIntake {
+        alias: "Config".to_owned(),
+        code: Code::MissingImport,
+        message: "no package".to_owned(),
+        cause: Some("missing-selection"),
+        selection: Some(crate::outcome::hint::MissingSelection::Model),
+    };
+    let wrapped = [
+        (CallSiteRefusal::from(*import_refusal), "library", library_hint),
+        (
+            CallSiteRefusal::from(*dependency_refusal),
+            "library",
+            library_hint,
+        ),
+        (
+            CallSiteRefusal::from(extension_refusal),
+            "extension-definition",
+            extension_hint,
+        ),
+        (
+            intake,
+            "model",
+            "Supply the model in the request's models member, or with --model <identity>=<file> on fsl check.",
+        ),
+    ];
+    let shapes = [
+        |refusal: &CallSiteRefusal| matches!(refusal, CallSiteRefusal::Import { .. }),
+        |refusal: &CallSiteRefusal| matches!(refusal, CallSiteRefusal::Dependency { .. }),
+        |refusal: &CallSiteRefusal| matches!(refusal, CallSiteRefusal::Compile { .. }),
+        |refusal: &CallSiteRefusal| matches!(refusal, CallSiteRefusal::ModelIntake { .. }),
+    ];
+    for ((refusal, kind, hint), shape) in wrapped.iter().zip(shapes) {
+        assert!(shape(refusal), "{refusal:?}");
+        assert_eq!(refusal.code(), Code::MissingImport);
+        assert_eq!(refusal.cause(), Some("missing-selection"), "{refusal:?}");
+        let diagnostic = OutcomeDiagnostic::from_call_site_refusal(refusal);
+        let wire = crate::outcome::assert_diagnostic_valid(&diagnostic);
+        assert_eq!(wire["cause"], "missing-selection", "{wire}");
+        assert_eq!(wire["selection"], *kind, "{wire}");
+        assert_eq!(wire["hint"], *hint, "{wire}");
+    }
 }

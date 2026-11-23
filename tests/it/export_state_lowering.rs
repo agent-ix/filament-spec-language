@@ -840,7 +840,7 @@ fn an_incomplete_export_renders_its_limit() {
     assert_eq!(
         render(&result),
         [
-            "export: incomplete (exit 22) at S4",
+            "export: incomplete (exit 22) at stage packaging",
             "bytes written: 0",
             "limit reached: export.output_bytes 1"
         ]
@@ -875,7 +875,10 @@ fn an_export_with_no_output_file_renders_none() {
     let path = counter_request(directory.path(), tla());
     let result = fsl_command::command::run(&path, &crate::negotiation::Fr290).expect("a result");
     let lines = render(&result);
-    assert_eq!(lines[0], "export: success (exit 0) at S4", "{lines:?}");
+    assert_eq!(
+        lines[0], "export: success (exit 0) at stage packaging",
+        "{lines:?}"
+    );
     assert_eq!(lines[lines.len() - 2], "bytes written: 0", "{lines:?}");
     assert_eq!(lines[lines.len() - 1], "output: none", "{lines:?}");
 }

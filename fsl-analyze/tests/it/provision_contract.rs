@@ -103,7 +103,14 @@ fn exact(world: &prob_world::World, limits: ExactProbLimits) -> NegotiatedItem {
     }
 }
 
-#[trace("TC-763", "FR-281-AC-20", "TC-761", "FR-280-AC-10")]
+#[trace(
+    "TC-763",
+    "FR-281-AC-20",
+    "TC-761",
+    "FR-280-AC-10",
+    "TC-3199",
+    "FR-286-AC-40"
+)]
 #[test]
 fn missing_source_refuses_analyze_and_declines_provider_items_before_any_engine() {
     let world = counter();
@@ -125,6 +132,23 @@ fn missing_source_refuses_analyze_and_declines_provider_items_before_any_engine(
     );
     assert_eq!(refusal.identity, world.package.graph().source().identity());
     assert_eq!(refusal.catalog_code().code(), "missing_import");
+    let document = AnalyzeRefusal::Provision(refusal.clone()).document();
+    let schema: serde_json::Value =
+        serde_json::from_str(fsl_replay::outcome::OUTCOME_SCHEMA_1).unwrap();
+    let schema = jsonschema::JSONSchema::options()
+        .with_draft(jsonschema::Draft::Draft202012)
+        .compile(&schema)
+        .unwrap();
+    let whole: serde_json::Value = serde_json::from_slice(&document.to_bytes().unwrap()).unwrap();
+    assert!(schema.is_valid(&whole), "{whole}");
+    let wire =
+        serde_json::to_value(document.diagnostics().first().expect("one diagnostic")).unwrap();
+    assert_eq!(wire["cause"], "missing-selection", "{wire}");
+    assert_eq!(wire["selection"], "source", "{wire}");
+    assert_eq!(
+        wire["hint"], "Add the named source to the source provision the analyze call supplies.",
+        "{wire}"
+    );
     let served = provider::run(
         &world.package,
         &request.binding,

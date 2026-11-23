@@ -312,7 +312,14 @@ fn a_same_named_unit_function_never_answers_the_owner() {
 /// FR-098-AC-33: an owner the unit does not import directly -- absent from
 /// the lock, or present in it only through another library -- refuses
 /// `UnknownOwner` before any call.
-#[trace("FR-098-AC-33", "TC-444")]
+#[trace(
+    "FR-098-AC-33",
+    "TC-444",
+    "TC-3199",
+    "FR-865-AC-20",
+    "FR-865-AC-24",
+    "FR-286-AC-40"
+)]
 #[trace("FSpec-TC-1484", "FSpec-FR-323-AC-37")]
 #[test]
 fn an_owner_the_unit_does_not_import_refuses_typed() {
@@ -337,6 +344,25 @@ fn an_owner_the_unit_does_not_import_refuses_typed() {
     assert_eq!(package.as_str(), "fixture");
     assert_eq!(refusal.code(), Code::MissingImport);
     assert_eq!(refusal.cause(), Some("missing-selection"));
+
+    let document = fsl_replay::OutcomeDocument::from_replay_refusal(&refusal);
+    let wire: serde_json::Value = serde_json::from_slice(&document.to_bytes().unwrap()).unwrap();
+    let schema: serde_json::Value =
+        serde_json::from_str(fsl_replay::outcome::OUTCOME_SCHEMA_1).unwrap();
+    let schema = jsonschema::JSONSchema::options()
+        .with_draft(jsonschema::Draft::Draft202012)
+        .compile(&schema)
+        .unwrap();
+    assert!(schema.is_valid(&wire), "{wire}");
+    let diagnostic = &wire["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "missing_import", "{wire}");
+    assert_eq!(diagnostic["cause"], "missing-selection", "{wire}");
+    assert_eq!(diagnostic["selection"], "function-owner", "{wire}");
+    assert_eq!(
+        diagnostic["hint"],
+        "Name a function_owner that the program imports directly, or add the import.",
+        "{wire}"
+    );
 
     // A unit importing only `test/wrap`, which imports `test/units`: the lock
     // carries `test/units`, but the unit does not import it.
