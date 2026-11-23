@@ -4874,7 +4874,7 @@ fn an_option_clock_map_value_is_refused_at_intake() {
 /// `not-yet-implemented` at the selector, and a data read there is refused as
 /// not a timed place. In a function body a clock selector refuses
 /// `unsupported-feature`, while a bounded ordinary data read remains valid.
-#[trace("TC-685", "FR-1040-AC-6")]
+#[trace("TC-685", "FR-1040-AC-6", "FR-230-AC-21")]
 #[test]
 fn a_selector_outside_a_ref_is_not_checked_yet() {
     use fsl_semantics::check::{CheckCause, TemporalCause};
