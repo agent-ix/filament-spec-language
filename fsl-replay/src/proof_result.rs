@@ -1585,6 +1585,8 @@ pub struct TerminalRecord {
     diagnostic: Option<CatalogCode>,
     exact_certificate: Option<Box<crate::ExactProbabilityCertificate>>,
     exact_certificate_document: Option<Box<[u8]>>,
+    /// The other side's document of a `ValueBounds` proof (FR-1042).
+    exact_counterpart_document: Option<Box<[u8]>>,
     /// The `detail` of `diagnostic`, keyed by FR-272 payload names, present
     /// exactly when a disposition settled the record (FR-281, FR-286).
     disposition_detail: Option<serde_json::Map<String, serde_json::Value>>,
@@ -1676,6 +1678,7 @@ impl TerminalRecord {
             diagnostic: None,
             exact_certificate: None,
             exact_certificate_document: None,
+            exact_counterpart_document: None,
             disposition_detail: None,
             diagnostic_detail: None,
             disposed: false,
@@ -1793,6 +1796,72 @@ impl TerminalRecord {
         );
         record.exact_certificate = Some(Box::new(accepted.certificate().clone()));
         record.exact_certificate_document = accepted.document().map(Into::into);
+        Some(record)
+    }
+
+    /// FR-203 and FR-1042: a `proved` record with basis `ValueBounds` for an
+    /// interval whose two ends the EN-5 certificate checker accepted. `claim`
+    /// is the accepted document on the claim's side and `counterpart` the
+    /// accepted document of the other kind; the interval is their two initial
+    /// values, so a record is built only from two accepted checks of opposite
+    /// kinds whose ends are ordered. `binding` is the claim's one `over`
+    /// instance, absent without `over`.
+    pub fn proved_by_value_bounds(
+        request_index: RequestIndex,
+        backend: BackendId,
+        claim: &crate::ExactProbabilityCertificateCheck,
+        counterpart: &crate::ExactProbabilityCertificateCheck,
+        method: BoundsMethod,
+        extremum: Option<Extremum>,
+        binding: Option<ExactBinding>,
+    ) -> Option<Self> {
+        use crate::{ExactProbabilityCertificateCheck::Accepted, SubsystemBoundKind};
+        let (Accepted(claim), Accepted(counterpart)) = (claim, counterpart) else {
+            return None;
+        };
+        if claim.initial_values().is_some() || counterpart.initial_values().is_some() {
+            return None;
+        }
+        let (lower, upper) = match (claim.bound()?, counterpart.bound()?) {
+            (SubsystemBoundKind::Lower, SubsystemBoundKind::Upper) => (claim, counterpart),
+            (SubsystemBoundKind::Upper, SubsystemBoundKind::Lower) => (counterpart, claim),
+            _ => return None,
+        };
+        let side_kind = match claim.side() {
+            crate::ProbabilityBoundSide::AtLeast => SubsystemBoundKind::Lower,
+            crate::ProbabilityBoundSide::AtMost => SubsystemBoundKind::Upper,
+        };
+        if claim.bound()? != side_kind || lower.value() > upper.value() {
+            return None;
+        }
+        let (lower_value, upper_value) = (
+            ExactRational::new(lower.value().clone()),
+            ExactRational::new(upper.value().clone()),
+        );
+        let mut record = Self::with_backend(
+            request_index,
+            backend,
+            TerminalValue::Proved {
+                basis: ProofBasis::ValueBounds {
+                    lower: lower_value.clone(),
+                    upper: upper_value.clone(),
+                    method,
+                    entries: vec![ExactEntry {
+                        initial: 0,
+                        binding,
+                        value: ExactOrBounds::Bounds {
+                            lower: lower_value,
+                            upper: upper_value,
+                        },
+                        extremum,
+                    }],
+                    reductions: Vec::new(),
+                },
+                certification: Certification::Certified,
+            },
+        );
+        record.exact_certificate_document = claim.document().map(Into::into);
+        record.exact_counterpart_document = counterpart.document().map(Into::into);
         Some(record)
     }
 
@@ -1950,6 +2019,7 @@ impl TerminalRecord {
             diagnostic: Some(diagnostic),
             exact_certificate: None,
             exact_certificate_document: None,
+            exact_counterpart_document: None,
             disposition_detail: None,
             diagnostic_detail: None,
             disposed: true,
@@ -1985,6 +2055,7 @@ impl TerminalRecord {
             diagnostic: Some(diagnostic),
             exact_certificate: None,
             exact_certificate_document: None,
+            exact_counterpart_document: None,
             disposition_detail: Some(detail),
             diagnostic_detail: None,
             disposed: true,
@@ -2013,6 +2084,7 @@ impl TerminalRecord {
             diagnostic: Some(diagnostic),
             exact_certificate: None,
             exact_certificate_document: None,
+            exact_counterpart_document: None,
             disposition_detail: Some(detail),
             diagnostic_detail: None,
             disposed: true,
@@ -2032,6 +2104,7 @@ impl TerminalRecord {
             diagnostic: Some(diagnostic),
             exact_certificate: None,
             exact_certificate_document: None,
+            exact_counterpart_document: None,
             disposition_detail: None,
             diagnostic_detail: None,
             disposed: true,
@@ -2208,6 +2281,7 @@ impl TerminalRecord {
             diagnostic: Some(NegotiationOutcome::UnsupportedRequestedCapability.code()),
             exact_certificate: None,
             exact_certificate_document: None,
+            exact_counterpart_document: None,
             disposition_detail: None,
             diagnostic_detail: Some(detail),
             disposed: false,
@@ -2236,6 +2310,7 @@ impl TerminalRecord {
             diagnostic: Some(CatalogCode::new("unsupported_construct", "expression-form")),
             exact_certificate: None,
             exact_certificate_document: None,
+            exact_counterpart_document: None,
             disposition_detail: None,
             diagnostic_detail: Some(detail),
             disposed: false,
@@ -2262,6 +2337,7 @@ impl TerminalRecord {
             )),
             exact_certificate: None,
             exact_certificate_document: None,
+            exact_counterpart_document: None,
             disposition_detail: Some(detail),
             diagnostic_detail: None,
             disposed: true,
@@ -2307,6 +2383,7 @@ impl TerminalRecord {
             disposed,
             exact_certificate: None,
             exact_certificate_document: None,
+            exact_counterpart_document: None,
         }
     }
 
@@ -2334,6 +2411,7 @@ impl TerminalRecord {
                 .then(|| CatalogCode::new("runtime_invariant", "established-invariant-broken")),
             exact_certificate: None,
             exact_certificate_document: None,
+            exact_counterpart_document: None,
             disposition_detail: None,
             diagnostic_detail: None,
             disposed: false,
@@ -2365,6 +2443,11 @@ impl TerminalRecord {
     /// retained unchanged through analyze/provider record projection.
     pub fn exact_certificate_document(&self) -> Option<&[u8]> {
         self.exact_certificate_document.as_deref()
+    }
+
+    /// The other side's accepted document of a `ValueBounds` proof (FR-1042).
+    pub fn exact_counterpart_document(&self) -> Option<&[u8]> {
+        self.exact_counterpart_document.as_deref()
     }
 
     /// The FR-331 result value this record carries.
