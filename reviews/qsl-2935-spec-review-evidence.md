@@ -55,8 +55,11 @@ Review set is the subset the dispatch named (integrity, ears, evidence, failure-
 
 Round 1, head 471324ac79b931fb509679341792e93987764f5e (rebased onto origin/main; compared with e25a201b by content).
 
+Round 2 rows below the round 1 rows: head c5565482dff090e27bc75a1f8123ae7b5e39f7bd.
+
 | FND | outcome | reason |
 | --- | --- | --- |
 | FND-001 | fixed | Verified by hand at 471324ac; after_excerpt in the Linear dispositions comment. |
 | FND-002 | fixed | Verified by hand at 471324ac; after_excerpt in the Linear dispositions comment. |
 | FND-003 | fixed | Verified by hand at 471324ac; after_excerpt in the Linear dispositions comment. |
+| FND-004 | fixed | Round 2: verified by hand at c5565482; after_excerpt in the Linear round-2 dispositions comment. |

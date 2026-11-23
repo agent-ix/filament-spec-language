@@ -55,9 +55,17 @@ Review set is the subset the dispatch named (integrity, ears, evidence, failure-
 | FND-007 | medium | FR-1047 cites FSL FR-562 as the owner of the `check` argv document (references edge ix://agent-ix/filament-spec-language/FR-562, the argv bullet and Dependencies). FSL FR-562 is 'Take a machine-width fast path only where checked bounds prove the exact result fits'. The command.rs:2223 comment means FSpec FR-562: the `check --extensions` argv test is tagged FSpec-TC-1242/FSpec-FR-562-AC-1 (tests/it/request_surface_s1.rs:1617). FSL's own owners are FR-660 (the extension catalog that check takes) and FR-662 (check through the command; argv tests at request_surface_s1.rs:1143 are tagged FR-662-AC-1). Fix: point to ix://agent-ix/filament-specification/FR-562 and FSL FR-662 (and FR-660), and write 'FSpec FR-562' in the text. | spec/functional/FR-1047-name-every-request-defect-and-return-a-request-example.md:36-37, 167-169, 337 |
 | FND-008 | medium | The export reading lists `models` as a required member, but the code does not require it. With `program`, the export entry rewrites the request as native-compile/1 (export.rs request_without_export) and reads it as wire::CompileRequest, whose `models` is Option (wire.rs:52-53). FR-1015 does not make it required either. So removing `models` from the export example is admitted, and AC-7's one-member removal check fails for that example. Otherwise FR-1047 silently adds a requirement FR-1015 does not state. Fix: drop `models` from the export row (the example then holds `program` and `export`), or state the new requirement and amend FR-1015. | spec/functional/FR-1047-name-every-request-defect-and-return-a-request-example.md:Member order table, export row |
 
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-009 | medium | FR-1047 now makes `records` a required member of the monitor-run reading and says the monitor entry 'refuses a `records` member as FR-644 states'. FR-644 states neither rule. Its only statement is '`records`: optional, the relative path of a JSON Lines record file. With it, `command::run` ... reads that file' (FR-644:77-83). That reads as records optional on the run path too, and FR-644 has no refusal of `records` on the monitor entry. The code agrees with FR-1047: monitor.rs:670-683 refuses run without records ('a native-monitor/1 request run through run needs a records file') and refuses monitor with records ('a records file is read by run; monitor reads the stream it is given'), both before any file is read. So FR-1047's citation is false and FR-644 contradicts the monitor-run reading. Fix: amend FR-644's `records` bullet to say it is required through `command::run` and refused by the `monitor` entry (or move both rules into FR-1047 and point FR-644 to it), with a references edge to FR-1047. | spec/functional/FR-644-stream-observations-through-the-monitor-command.md:77-83 |
+
 ## Dispositions
 
 Round 1, head 471324ac79b931fb509679341792e93987764f5e (rebased onto origin/main; compared with e25a201b by content).
+
+Round 2 rows below the round 1 rows: head c5565482dff090e27bc75a1f8123ae7b5e39f7bd.
 
 | FND | outcome | reason |
 | --- | --- | --- |
@@ -67,3 +75,5 @@ Round 1, head 471324ac79b931fb509679341792e93987764f5e (rebased onto origin/main
 | FND-004 | fixed | Verified by hand at 471324ac; after_excerpt in the Linear dispositions comment. |
 | FND-005 | fixed | Verified by hand at 471324ac; after_excerpt in the Linear dispositions comment. |
 | FND-006 | fixed | Verified by hand at 471324ac; after_excerpt in the Linear dispositions comment. |
+| FND-007 | fixed | Round 2: verified by hand at c5565482; after_excerpt in the Linear round-2 dispositions comment. |
+| FND-008 | fixed | Round 2: verified by hand at c5565482; after_excerpt in the Linear round-2 dispositions comment. |

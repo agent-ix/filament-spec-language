@@ -104,9 +104,9 @@ request carrying an `export` member, or with `ExportSelection::Evidence` an
   `ExportSelection::Evidence`, or a run entry over a request carrying
   `export_evidence`), and the other member readings named under One-of
   group. A `native-monitor/1` request has two readings: *monitor-run* (a
-  run entry, which runs the request's `records` file, FR-644) and
-  *monitor* (the monitor entry, which reads the stream its caller gives
-  and refuses a `records` member as FR-644 states). Each other format has
+  run entry, which runs the request's `records` file and requires it,
+  FR-644) and *monitor* (the monitor entry, which reads the stream its
+  caller gives and refuses a `records` member, FR-644). Each other format has
   one reading.
 - **Required member**: a member the reading refuses the request for lacking,
   that has no default and belongs to no one-of group.
