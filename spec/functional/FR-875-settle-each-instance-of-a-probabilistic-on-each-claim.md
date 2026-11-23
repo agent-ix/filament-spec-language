@@ -133,6 +133,11 @@ message never activates and does not count against the claim.
   with the FR-272 diagnostic `unsupported_construct`/`not-yet-implemented`
   (no `cause`) until QSL-3003, which builds FR-741's undefined-path refutation
   for it.
+- An in-profile on-each refutation that needs more than `max_witness_paths`
+  path sets likewise settles `incomplete`, `LimitReached` naming the limit
+  `max_witness_paths` (not `unsupported`), until QSL-3004 builds FSpec
+  FR-413's subsystem-certificate fallback (lower certificates for V and N).
+  This is an implementation gap, not a refusal.
 
 ## Acceptance Criteria
 
