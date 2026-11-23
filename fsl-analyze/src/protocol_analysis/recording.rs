@@ -337,6 +337,10 @@ struct RecordingDocument {
     local_order: BTreeMap<String, Vec<usize>>,
     correlations: Vec<Correlation>,
     closure: ClosureDocument,
+    /// The value table of each predicate join, by qualified `parallel`
+    /// name, filled once the protocol is resolved.
+    #[serde(skip)]
+    join_tables: BTreeMap<String, Vec<Option<bool>>>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -648,6 +652,8 @@ fn assess_with_input(
         )
     })?;
     let protocol = &protocol;
+    document.join_tables = predicate_join_tables(package, protocol);
+    let document = document;
     if !matches!(
         document.closure.state.as_str(),
         "open" | "closed" | "incomplete" | "contradicted"
@@ -3669,6 +3675,9 @@ fn observation_enabled(
             | ObservationKind::Effect
             | ObservationKind::Commit
     ) {
+        if after_cancel(protocol, document, position, &ancestry) {
+            return Some(false);
+        }
         match earlier_steps_precede(protocol, document, position, &ancestry) {
             Some(true) => {}
             decided => return decided,
@@ -3757,6 +3766,10 @@ fn earlier_steps_precede(
         let (name, last) = match pred {
             Predecessor::Node(name) => (name, None),
             Predecessor::Last(name, occurrence) => (name, Some(*occurrence)),
+            Predecessor::Unevaluable => {
+                answer = None;
+                continue;
+            }
             Predecessor::Undecided => {
                 // A choice whose taken case is not observed: undecided
                 // until the closure is closed.
@@ -3804,6 +3817,9 @@ enum Predecessor {
     Last(String, usize),
     /// A `choice` none of whose cases was observed.
     Undecided,
+    /// A `join predicate` that cannot be evaluated: undecided whatever the
+    /// closure, since no observation could decide it.
+    Unevaluable,
 }
 
 /// The qualified name of `control`.
@@ -4006,64 +4022,22 @@ fn collect_predecessors(
             }
         },
         "parallel" => {
-            use fsl_semantics::check::CheckedJoinPolicy;
-            let policy = protocol
-                .parallels
-                .iter()
-                .find(|parallel| parallel.node == node)
-                .map(|parallel| &parallel.policy);
-            // How many branches the join needs; `join all` needs every one.
-            let branches: Vec<_> = control
-                .children
-                .iter()
-                .filter_map(|child| protocol.controls.control(*child))
-                .map(|branch| {
-                    let mut steps = Vec::new();
-                    for child in &branch.children {
-                        collect_predecessors(
-                            protocol, document, position, *child, occurrence, &mut steps,
-                        );
-                    }
-                    steps
-                })
-                .collect();
-            let required = match policy {
-                None | Some(CheckedJoinPolicy::All) => branches.len(),
-                Some(CheckedJoinPolicy::Quorum(needed)) => {
-                    usize::try_from(*needed).unwrap_or(usize::MAX)
-                }
-                Some(CheckedJoinPolicy::Any | CheckedJoinPolicy::Predicate { .. }) => 1,
-            };
             // A branch counts only when all its steps were observed causally
             // before the step: under `outstanding continue` the others may
             // finish after the join.
-            let begun = |name: &str, needed: usize| {
-                (0..document.observations.len())
-                    .filter(|index| {
-                        let entry = &document.observations[*index];
-                        entry.node == name
-                            && entry.instance == *instance
-                            && begun_before(protocol, document, position, *index)
-                    })
-                    .count()
-                    >= needed
-            };
-            let completed: Vec<bool> = branches
-                .iter()
-                .map(|steps| {
-                    steps.iter().all(|step| match step {
-                        Predecessor::Node(name) => begun(name, 1),
-                        Predecessor::Last(name, occurrence) => begun(name, *occurrence),
-                        Predecessor::Undecided => false,
-                    })
-                })
-                .collect();
-            let satisfied = completed.iter().filter(|done| **done).count() >= required;
-            for (steps, done) in branches.into_iter().zip(completed) {
-                // A join not yet satisfied needs every branch's steps; a
-                // satisfied one needs those that completed before the step.
-                if !satisfied || done {
-                    out.extend(steps);
+            let branches = parallel_branches(protocol, document, position, control, occurrence);
+            match join_reached(protocol, document, control, &branches, None) {
+                // The predicate cannot be evaluated here: undecided.
+                None => out.push(Predecessor::Unevaluable),
+                Some(reached) => {
+                    for branch in branches {
+                        // A join not yet reached needs every branch's steps;
+                        // a reached one needs those that completed before
+                        // the step.
+                        if !reached || branch.done {
+                            out.extend(branch.steps);
+                        }
+                    }
                 }
             }
         }
@@ -4083,6 +4057,188 @@ fn collect_predecessors(
         }
         _ => {}
     }
+}
+
+/// One branch of a `parallel`, as the step at some position sees it.
+struct BranchSteps {
+    /// The branch label.
+    label: String,
+    /// The steps the branch supplies as predecessors.
+    steps: Vec<Predecessor>,
+    /// Whether every step was observed causally before the step.
+    done: bool,
+}
+
+/// The branches of the `parallel` `control`, each with its steps and whether
+/// it completed causally before the observation at `position`.
+fn parallel_branches(
+    protocol: &CheckedProtocol,
+    document: &RecordingDocument,
+    position: usize,
+    control: &fsl_semantics::check::CheckedControl,
+    occurrence: Option<usize>,
+) -> Vec<BranchSteps> {
+    let instance = &document.observations[position].instance;
+    let begun = |name: &str, needed: usize| {
+        (0..document.observations.len())
+            .filter(|index| {
+                let entry = &document.observations[*index];
+                entry.node == name
+                    && entry.instance == *instance
+                    && begun_before(protocol, document, position, *index)
+            })
+            .count()
+            >= needed
+    };
+    control
+        .children
+        .iter()
+        .filter_map(|child| protocol.controls.control(*child))
+        .map(|branch| {
+            let mut steps = Vec::new();
+            for child in &branch.children {
+                collect_predecessors(protocol, document, position, *child, occurrence, &mut steps);
+            }
+            let done = steps.iter().all(|step| match step {
+                Predecessor::Node(name) => begun(name, 1),
+                Predecessor::Last(name, occurrence) => begun(name, *occurrence),
+                Predecessor::Undecided | Predecessor::Unevaluable => false,
+            });
+            BranchSteps {
+                label: branch.name.clone(),
+                steps,
+                done,
+            }
+        })
+        .collect()
+}
+
+/// Whether the join of the `parallel` `control` is reached when the branches
+/// marked `done` have completed, with `running` (a branch the step itself
+/// runs in) counted as not completed: `all`, every branch; `any`, one;
+/// `quorum(n)`, `n`; `predicate(f)`, `f` true over the joined branches'
+/// completion (FR-218 "Predicate joins", ADR-027 ST-7). `None` when a
+/// predicate cannot be evaluated.
+fn join_reached(
+    protocol: &CheckedProtocol,
+    document: &RecordingDocument,
+    control: &fsl_semantics::check::CheckedControl,
+    branches: &[BranchSteps],
+    running: Option<&str>,
+) -> Option<bool> {
+    use fsl_semantics::check::CheckedJoinPolicy;
+    let done = |branch: &BranchSteps| branch.done && running != Some(branch.label.as_str());
+    let completed = branches.iter().filter(|branch| done(branch)).count();
+    let policy = protocol
+        .parallels
+        .iter()
+        .find(|parallel| parallel.node == control.node);
+    match policy.map(|parallel| &parallel.policy) {
+        None | Some(CheckedJoinPolicy::All) => Some(completed == branches.len()),
+        Some(CheckedJoinPolicy::Any) => Some(completed >= 1),
+        Some(CheckedJoinPolicy::Quorum(needed)) => {
+            Some(usize::try_from(*needed).is_ok_and(|needed| completed >= needed))
+        }
+        Some(CheckedJoinPolicy::Predicate { .. }) => {
+            let mut labels = policy?.joined.clone();
+            labels.sort();
+            let mask = labels
+                .iter()
+                .enumerate()
+                .fold(0usize, |mask, (bit, label)| {
+                    let finished = branches
+                        .iter()
+                        .any(|branch| branch.label == *label && done(branch));
+                    mask | (usize::from(finished) << bit)
+                });
+            document
+                .join_tables
+                .get(&qualified_name(protocol, control))?
+                .get(mask)
+                .copied()
+                .flatten()
+        }
+    }
+}
+
+/// Whether the step at `position` runs in a branch the join of its
+/// `parallel` has already cancelled: under `outstanding cancel` the join is
+/// reached by the other branches completing causally before the step, and a
+/// cancelled branch takes no further step (ADR-027 ST-7).
+fn after_cancel(
+    protocol: &CheckedProtocol,
+    document: &RecordingDocument,
+    position: usize,
+    ancestry: &[&fsl_semantics::check::CheckedControl],
+) -> bool {
+    ancestry.windows(2).any(|pair| {
+        let (parallel, branch) = (pair[0], pair[1]);
+        if parallel.kind.label() != "parallel" {
+            return false;
+        }
+        let cancels = protocol.parallels.iter().any(|entry| {
+            entry.node == parallel.node
+                && entry.outstanding == Some(fsl_semantics::check::CheckedOutstanding::Cancel)
+        });
+        if !cancels {
+            return false;
+        }
+        let branches = parallel_branches(protocol, document, position, parallel, None);
+        join_reached(
+            protocol,
+            document,
+            parallel,
+            &branches,
+            Some(branch.name.as_str()),
+        ) == Some(true)
+    })
+}
+
+/// The value table of each `join predicate(f)` of `protocol`: for each
+/// subset of the joined labels (sorted, bit `i` set when label `i` has
+/// finished) whether `f` holds over those completions. A predicate that
+/// cannot be evaluated, or a package input with no source to evaluate it in,
+/// leaves its entries `None`.
+fn predicate_join_tables(
+    package: &CheckedPackage<'_>,
+    protocol: &CheckedProtocol,
+) -> BTreeMap<String, Vec<Option<bool>>> {
+    let mut tables = BTreeMap::new();
+    for parallel in &protocol.parallels {
+        let fsl_semantics::check::CheckedJoinPolicy::Predicate { function } = &parallel.policy
+        else {
+            continue;
+        };
+        let Some(control) = protocol.controls.control(parallel.node) else {
+            continue;
+        };
+        let bits = parallel.joined.len().min(12);
+        let table = (0..1usize << bits)
+            .map(|mask| {
+                let CheckedPackage::Source(package) = package else {
+                    return None;
+                };
+                let arguments = (0..bits)
+                    .map(|bit| Value::Boolean(mask >> bit & 1 == 1))
+                    .collect();
+                let evaluation = fsl_eval::value::evaluate_join_predicate(
+                    package,
+                    function,
+                    arguments,
+                    &mut recording_meter(),
+                )
+                .ok()?;
+                match evaluation.outcome {
+                    FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(value))) => {
+                        Some(value)
+                    }
+                    _ => None,
+                }
+            })
+            .collect();
+        tables.insert(qualified_name(protocol, control), table);
+    }
+    tables
 }
 
 fn control_repeat_limit(
