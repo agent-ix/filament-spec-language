@@ -2358,14 +2358,16 @@ fn nested_cancel_item(
         ),
     );
     recording["closure"] = json!({"state": "open", "premises": []});
-    replay_with(
+    let run = replay_with(
         name,
         source,
         &recording,
         json!({"file": "recording.json", "identity": recording_identity()}),
         assessed_item("incremental"),
     )
-    .item(0)
+    ;
+    eprintln!("DBG {}", run.document());
+    run.item(0)
 }
 
 /// FR-895-AC-39 (TC-2531): a cancelling `parallel` in an inner `repeat` in an
