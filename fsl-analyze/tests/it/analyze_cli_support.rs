@@ -387,12 +387,22 @@ pub(crate) fn order_protocol(receive: bool) -> String {
 /// [`analyze`] under the run's `replay.input_bytes` (FR-255), the
 /// `RunLimits` value FR-940-AC-22 names.
 pub(crate) fn analyze_under_replay_bytes(request: &Path, replay_input_bytes: u64) -> Run {
+    analyze_under(
+        request,
+        &[(fsl_foundation::Setting::ReplayInputBytes, replay_input_bytes)],
+    )
+}
+
+/// [`analyze`] with each of `settings` set through the caller limits (FR-255
+/// "Lifecycle caller-limit coverage").
+pub(crate) fn analyze_under(request: &Path, settings: &[(fsl_foundation::Setting, u64)]) -> Run {
     let mut caller = fsl_command::command::CommandLimits::analyze();
-    assert!(fsl_foundation::SettingLimits::set_bound(
-        &mut caller,
-        fsl_foundation::Setting::ReplayInputBytes,
-        replay_input_bytes,
-    ));
+    for (setting, bound) in settings {
+        assert!(
+            fsl_foundation::SettingLimits::set_bound(&mut caller, *setting, *bound),
+            "{setting}"
+        );
+    }
     match fsl_command::command::analyze_with_limits(
         request,
         fsl_command::command::RunLimits::default(),

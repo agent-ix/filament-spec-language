@@ -2789,6 +2789,7 @@ impl TryFrom<Setting> for CheckingLimitKind {
             | Setting::S1Tokens
             | Setting::S1Nodes
             | Setting::S1WorkUnits
+            | Setting::S1Diagnostics
             | Setting::S3DecimalScale
             | Setting::DependencyLibraries
             | Setting::DependencyImportEdges
@@ -2863,6 +2864,45 @@ impl TryFrom<Setting> for CheckingLimitKind {
             | Setting::MonitorPreparationWorkUnits
             | Setting::MonitorPreparationStorage
             | Setting::InspectMaxViewEntries
+
+            | Setting::SimulationMaxSteps
+            | Setting::ExactProbMaxStates
+            | Setting::ExactProbMaxTransitions
+            | Setting::ExactProbMaxAutomatonStates
+            | Setting::ExactProbMaxIterations
+            | Setting::ExactProbPrecisionBits
+            | Setting::ExactProbMaxPrecisionBits
+            | Setting::ExactProbMaxRationalBits
+            | Setting::ExactProbMaxPolicyIterations
+            | Setting::ExactProbMaxWitnessPaths
+            | Setting::StatisticalMaxSamples
+            | Setting::StatisticalMaxDraws
+            | Setting::StatisticalMaxCycleSteps
+            | Setting::StatisticalMaxSampleSteps
+            | Setting::ZoneCheckMaxSymbolicStates
+            | Setting::ZoneCheckMaxSymbolicTransitions
+            | Setting::ZoneCheckMaxAutomatonStates
+            | Setting::ZoneCheckMaxZoneBytes
+            | Setting::CertificateCheckMaxCertificateEdges
+            | Setting::CertificateCheckMaxCertificateBytes
+            | Setting::CertificateCheckMaxWorkingBytes
+            | Setting::CertificateCheckMaxRank
+            | Setting::ScheduleMaxDemandPoints
+            | Setting::HybridMaxSolverSteps
+            | Setting::HybridMaxSolverTime
+            | Setting::SmtEncodingMaxConstants
+            | Setting::SmtEncodingMaxApplications
+            | Setting::SmtEncodingMaxMonitorAtoms
+            | Setting::SmtEncodingMaxMonitorStates
+            | Setting::SmtEncodingMaxCandidates
+            | Setting::SmtEncodingMaxScriptBytes
+            | Setting::SmtMaxSolverSteps
+            | Setting::SmtMaxSolverTime
+            | Setting::PlanSearchMaxStates
+            | Setting::PlanSearchMaxWork
+            | Setting::PlanSearchMaxCertificateEntries
+            | Setting::PlanSearchMaxCheckWork
+            | Setting::PlanSearchMaxStateKeyBytes
             | Setting::ProgressCoveredPositions => Err(setting),
         }
     }

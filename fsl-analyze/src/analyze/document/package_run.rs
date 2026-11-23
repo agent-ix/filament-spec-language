@@ -3622,7 +3622,13 @@ impl<'a> WorkInputs<'_, 'a> {
                 )
             }
             (_, Some(Route::Schedule(route))) if item.kind == Capability::Schedulability => {
-                route.item(item.request_index)
+                route.item(
+                    item.request_index,
+                    self.limits
+                        .engines
+                        .get(fsl_foundation::Setting::ScheduleMaxDemandPoints)
+                        .unwrap_or(crate::schedulability::DEFAULT_MAX_DEMAND_POINTS),
+                )
             }
             (_, Some(Route::Value(value))) if item.kind == Capability::ValueValidity => {
                 let PackageValue {

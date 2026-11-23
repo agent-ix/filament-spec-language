@@ -1104,6 +1104,8 @@ struct ExactLimitsSelection {
     max_rational_bits: Option<NonZeroU64>,
     #[serde(default)]
     max_policy_iterations: Option<NonZeroU64>,
+    #[serde(default)]
+    max_witness_paths: Option<u64>,
 }
 
 impl ExactLimitsSelection {
@@ -1133,6 +1135,9 @@ impl ExactLimitsSelection {
         }
         if let Some(value) = self.max_policy_iterations {
             limits.max_policy_iterations = value.get();
+        }
+        if let Some(value) = self.max_witness_paths {
+            limits.max_witness_paths = value;
         }
         if limits.precision_bits > limits.max_precision_bits {
             return Err(());

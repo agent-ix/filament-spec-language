@@ -1079,3 +1079,37 @@ fn simulation_bounds_take_their_published_defaults() {
         assert_eq!(run.exit, 20, "{}", run.document());
     }
 }
+
+/// FR-255-AC-24 (TC-721), FR-762: `s1.diagnostics` is accepted by `analyze`
+/// and moves the cut of a syntax-error report, which stays a refusal whichever
+/// bound it takes; the other operations refuse it only when they do not
+/// parse, and 0 or a malformed value is a usage refusal.
+#[trace("TC-721", "FR-255-AC-24")]
+#[test]
+fn caller_s1_diagnostics_moves_the_syntax_error_cut() {
+    use fsl_foundation::Setting;
+
+    let ws = Workspace::new("caller-s1-diagnostics");
+    let broken: String = (0..150)
+        .map(|n| format!("record R{n} {{ z: ; }}\n"))
+        .collect();
+    let path = crate::analyze_cli_support::counter_request(&ws, &broken, json!([{"claim": "Bounded"}]));
+    let default = crate::analyze_cli_support::analyze(&path);
+    let text = String::from_utf8_lossy(&default.stdout).into_owned();
+    assert!(text.contains("cut after 100 syntax errors"), "{text}");
+    let narrowed =
+        crate::analyze_cli_support::analyze_under(&path, &[(Setting::S1Diagnostics, 10)]);
+    let text = String::from_utf8_lossy(&narrowed.stdout).into_owned();
+    assert!(text.contains("cut after 10 syntax errors"), "{text}");
+    assert!(text.contains("s1.diagnostics"), "{text}");
+    assert_eq!(narrowed.exit, default.exit, "reaching it keeps the refusal");
+    let widened =
+        crate::analyze_cli_support::analyze_under(&path, &[(Setting::S1Diagnostics, 1000)]);
+    let text = String::from_utf8_lossy(&widened.stdout).into_owned();
+    assert!(!text.contains("diagnostic list was cut"), "{text}");
+    assert_eq!(widened.exit, default.exit);
+    for operand in ["s1.diagnostics=-1", "s1.diagnostics=many", "s1.diagnostics="] {
+        let refusal = fsl_foundation::setting::parse_operands([operand]).unwrap_err();
+        assert_eq!(refusal.cause, fsl_foundation::UsageCause::NotAnInteger, "{operand}");
+    }
+}

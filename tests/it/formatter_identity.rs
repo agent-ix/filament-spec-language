@@ -1459,6 +1459,7 @@ fn replay_large_source_generator_keeps_format_identity() {
             tokens: 1 << 28,
             nodes: 1 << 28,
             work_units: 1 << 20,
+            ..fsl_cst::Limits::default()
         },
         ..fsl_replay::spine::SpineLimits::default()
     };

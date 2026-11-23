@@ -4731,6 +4731,7 @@ fn type_report_resolves_a_deep_body_without_rewalking_each_ancestry() {
         tokens: 1 << 28,
         nodes: 1 << 28,
         work_units: 1 << 20,
+        ..SourceLimits::default()
     };
     let identity = identity();
     let parsed = parse(
