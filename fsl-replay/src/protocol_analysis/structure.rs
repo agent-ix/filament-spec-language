@@ -108,7 +108,23 @@ pub enum GlobalEventKind {
         window: Option<(u64, u64, String)>,
         /// The type of a step's bound result record, when present.
         record_type: Option<CheckedNodeId>,
+        /// A repeat's alternatives, for a `repeat` control.
+        repeat: Option<RepeatCases>,
     },
+}
+
+/// The branches of a `repeat` guard read (PA-27): `continue` runs the body,
+/// `exit` leaves the repeat, `exhausted` runs the bounded repeat's last
+/// branch.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RepeatCases {
+    /// The body node `continue` runs.
+    pub body: CheckedNodeId,
+    /// The `exhausted` node, when the repeat has a `max`.
+    pub exhausted: Option<CheckedNodeId>,
+    /// The `receive` controls whose payload binder the guard's `visible`
+    /// facts read: an outcome-carrying message.
+    pub carriers: Vec<CheckedNodeId>,
 }
 
 /// One event of the global structure.
@@ -521,6 +537,84 @@ impl GlobalStructure {
         }
     }
 
+    /// The decision point entered at `at`: a `choice`, or a `repeat` guard
+    /// read (PA-27). A repeat's alternatives are `continue` (its body),
+    /// `exhausted` when it has one, and `exit`, named by the repeat's own node.
+    #[must_use]
+    pub fn decision_point(&self, at: &PortRef) -> Option<DecisionPoint<'_>> {
+        let event = self.event(at)?;
+        match &event.kind {
+            GlobalEventKind::Choice {
+                owner,
+                cases,
+                carriers,
+            } => Some(DecisionPoint {
+                kind: DecisionKind::Choice,
+                owner: Some(owner),
+                cases: cases.iter().map(|(_, body)| body.clone()).collect(),
+                carriers,
+            }),
+            GlobalEventKind::Control {
+                owner,
+                repeat: Some(repeat),
+                ..
+            } => {
+                let mut cases = vec![repeat.body.clone()];
+                cases.extend(repeat.exhausted.clone());
+                cases.push(event.at.node.clone());
+                Some(DecisionPoint {
+                    kind: DecisionKind::Repeat,
+                    owner: owner.as_ref(),
+                    cases,
+                    carriers: &repeat.carriers,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    /// The events of the alternative `case` of the decision point `decision`
+    /// (event positions). A choice case holds the events inside its body. A
+    /// repeat's `continue` and `exhausted` hold the events inside their body
+    /// and everything after the repeat, because the next guard read can leave
+    /// it; its `exit` holds everything after the repeat (PA-32: a role with
+    /// no event in the body merges `continue` with `exit` trivially).
+    /// Whether `event` lies in the alternative `case` of `decision`.
+    #[must_use]
+    pub fn in_branch(&self, decision: &PortRef, case: &CheckedNodeId, event: &PortRef) -> bool {
+        self.index
+            .get(event)
+            .is_some_and(|position| self.branch_positions(decision, case).contains(position))
+    }
+
+    fn branch_positions(&self, decision: &PortRef, case: &CheckedNodeId) -> Vec<usize> {
+        let inside = |position: &usize| self.events[*position].within.contains(case);
+        let repeat = self.index.get(decision).copied().filter(|position| {
+            matches!(
+                self.events[*position].kind,
+                GlobalEventKind::Control {
+                    repeat: Some(_),
+                    ..
+                }
+            )
+        });
+        let Some(repeat) = repeat else {
+            return (0..self.events.len()).filter(inside).collect();
+        };
+        let node = &self.events[repeat].at.node;
+        let after = (0..self.events.len()).filter(|position| {
+            self.below[repeat].get(*position) && !self.events[*position].within.contains(node)
+        });
+        if case == node {
+            after.collect()
+        } else {
+            (0..self.events.len())
+                .filter(inside)
+                .chain(after)
+                .collect()
+        }
+    }
+
     /// The runs of the case `body` seen by `role`: the communications it
     /// performs inside the body, once for each way of selecting one
     /// alternative of every choice nested in the body, each with whether it
@@ -529,12 +623,11 @@ impl GlobalStructure {
     fn case_variants(
         &self,
         role: &CheckedNodeId,
+        decision: &PortRef,
         body: &CheckedNodeId,
         max_depth: u64,
     ) -> Option<Vec<Vec<(Action, bool)>>> {
-        let inside: Vec<usize> = (0..self.events.len())
-            .filter(|position| self.events[*position].within.contains(body))
-            .collect();
+        let inside = self.branch_positions(decision, body);
         let mut work = vec![inside];
         let mut done: Vec<Vec<usize>> = Vec::new();
         while let Some(set) = work.pop() {
@@ -588,15 +681,14 @@ impl GlobalStructure {
     fn case_actions(
         &self,
         role: &CheckedNodeId,
+        decision: &PortRef,
         body: &CheckedNodeId,
         max_depth: u64,
     ) -> Vec<(Action, bool)> {
-        self.events
-            .iter()
-            .enumerate()
-            .filter(|(_, event)| event.within.contains(body))
-            .filter_map(|(position, event)| {
-                self.action_of(&event.at, role)
+        self.branch_positions(decision, body)
+            .into_iter()
+            .filter_map(|position| {
+                self.action_of(&self.events[position].at, role)
                     .map(|action| (action, self.depth[position] > max_depth))
             })
             .collect()
@@ -642,6 +734,28 @@ impl Action {
     fn shape(&self) -> (Direction, &CheckedNodeId, &CheckedNodeId) {
         (self.direction, &self.peer, &self.message_type)
     }
+}
+
+/// The kind of a decision point (PA-27) that projection merges at.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum DecisionKind {
+    /// A `choice`, owned by its `by` role.
+    Choice,
+    /// A `repeat` guard read, owned by its `by` role.
+    Repeat,
+}
+
+/// A decision point of the structure and its alternatives.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DecisionPoint<'a> {
+    /// What kind of decision point this is.
+    pub kind: DecisionKind,
+    /// The owning role, when it has one.
+    pub owner: Option<&'a CheckedNodeId>,
+    /// The alternatives' nodes, in order.
+    pub cases: Vec<CheckedNodeId>,
+    /// The `receive` controls whose payload the decision facts read.
+    pub carriers: &'a [CheckedNodeId],
 }
 
 /// Why a role is not made to merge the branches of a choice (PA-10).
@@ -697,16 +811,9 @@ impl GlobalStructure {
     /// Never for a `choice` that names a choice event of this structure.
     #[must_use]
     pub fn classify(&self, role: &CheckedNodeId, choice: &PortRef) -> Option<ChoiceBasis> {
-        let event = self.event(choice)?;
-        let GlobalEventKind::Choice {
-            owner,
-            cases,
-            carriers,
-        } = &event.kind
-        else {
-            return None;
-        };
-        if owner == role {
+        let point = self.decision_point(choice)?;
+        let (owner, cases, carriers) = (point.owner, &point.cases, &point.carriers);
+        if owner == Some(role) {
             return Some(ChoiceBasis::Owner);
         }
         let knows = |carrier: &CheckedNodeId| {
@@ -732,15 +839,27 @@ impl GlobalStructure {
         // and the message types differ across branches.
         let firsts: Vec<Vec<Action>> = cases
             .iter()
-            .map(|(_, body)| {
+            .map(|body| {
                 let actions: Vec<Action> = self
-                    .case_actions(role, body, u64::MAX)
+                    .case_actions(role, choice, body, u64::MAX)
                     .into_iter()
                     .map(|(action, _)| action)
                     .collect();
                 self.minimal(&actions)
             })
             .collect();
+        // Two alternatives that start with the same events are one alternative
+        // (a repeat's empty `exhausted` branch leaves as `exit` does).
+        let mut distinct: Vec<Vec<Action>> = Vec::new();
+        for first in firsts {
+            let same = |held: &Vec<Action>| {
+                held.len() == first.len() && held.iter().zip(&first).all(|(a, b)| a.at == b.at)
+            };
+            if !distinct.iter().any(same) {
+                distinct.push(first);
+            }
+        }
+        let firsts = distinct;
         let peers: BTreeSet<&CheckedNodeId> = firsts
             .iter()
             .flatten()
@@ -780,14 +899,15 @@ impl GlobalStructure {
     pub fn merge(
         &self,
         role: &CheckedNodeId,
+        decision: &PortRef,
         first: &CheckedNodeId,
         second: &CheckedNodeId,
         max_depth: u64,
         calls: &mut u64,
     ) -> BranchMerge {
         let (Some(lefts), Some(rights)) = (
-            self.case_variants(role, first, max_depth),
-            self.case_variants(role, second, max_depth),
+            self.case_variants(role, decision, first, max_depth),
+            self.case_variants(role, decision, second, max_depth),
         ) else {
             return BranchMerge::Cut;
         };

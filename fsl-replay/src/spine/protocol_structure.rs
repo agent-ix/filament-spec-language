@@ -11,13 +11,14 @@ use filament_contract_model::{
 };
 use fsl_package::protocol_view::{
     causal_relation, channel_endpoints, channel_ordering, control_body, control_operation,
-    decision_reads, fifo_key_reads_message, protocol_view, role_replication_maximum,
+    decision_reads, fifo_key_reads_message, protocol_view, repeat_decision_reads,
+    role_replication_maximum,
     ChannelOrdering, ControlBody, EdgeKind, Port, PortRef, ViewRefusal,
 };
 
 use crate::protocol_analysis::{
-    Comm, GlobalEvent, GlobalEventKind, GlobalStructure, JoinPolicy, OutstandingPolicy, RunBudget,
-    RunLimit, StructureInput, UniformFifo,
+    Comm, GlobalEvent, GlobalEventKind, GlobalStructure, JoinPolicy, OutstandingPolicy,
+    RepeatCases, RunBudget, RunLimit, StructureInput, UniformFifo,
 };
 
 /// Why a structure was not built.
@@ -328,6 +329,7 @@ impl<'p> Reader<'p> {
                         maximum,
                         window,
                         record_type: self.record_type(node),
+                        repeat: None,
                     },
                     within: within.clone(),
                 });
@@ -347,6 +349,26 @@ impl<'p> Reader<'p> {
                 ) {
                     let (maximum, window) = Self::projection_attributes(node, operation);
                     let record_type = self.record_type(node);
+                    let repeat = if operation == fsl_package::protocol_view::ControlOperation::Repeat
+                    {
+                        let reads = repeat_decision_reads(self.package, node)?;
+                        Some(RepeatCases {
+                            body: Self::reference_member(node, "body")
+                                .ok_or_else(|| ViewRefusal::MissingMember {
+                                    node: id.clone(),
+                                    member: "body",
+                                })?,
+                            exhausted: Self::optional_reference_member(node, "exhausted"),
+                            carriers: self
+                                .receives
+                                .iter()
+                                .filter(|(_, binder)| reads.contains(binder))
+                                .map(|(receive, _)| receive.clone())
+                                .collect(),
+                        })
+                    } else {
+                        None
+                    };
                     let decision = matches!(
                         operation,
                         fsl_package::protocol_view::ControlOperation::Repeat
@@ -361,6 +383,7 @@ impl<'p> Reader<'p> {
                             maximum,
                             window,
                             record_type,
+                            repeat,
                         },
                         within: within.clone(),
                     });
@@ -463,6 +486,7 @@ impl GlobalStructure {
                         maximum,
                         window,
                         record_type,
+                        repeat: None,
                     },
                     within: vec![(*template).clone()],
                 });

@@ -8,7 +8,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::{
-    Action, DecisionOwner, Direction, Play, ProjectionCounterexample, ProjectionDecision,
+    Action, DecisionKind, DecisionOwner, Direction, Play, ProjectionCounterexample, ProjectionDecision,
     ProtocolAnalysisKey, RealizabilityCounterexample, StrategyAction,
 };
 use crate::result::{ProtocolWitnessWire, SeparatingWitnessRecord};
@@ -172,24 +172,31 @@ impl ProjectionCounterexample {
     pub fn to_wire(&self) -> Result<Value, CounterexampleWireError> {
         let decision = match &self.decision {
             ProjectionDecision::Choice {
+                point,
                 choice,
                 owner,
                 cases,
                 paths,
                 actions,
-            } => DecisionWire::Choice {
-                choice,
-                owner: owner_wire(owner),
-                cases,
-                paths: [
-                    paths[0].iter().map(port).collect(),
-                    paths[1].iter().map(port).collect(),
-                ],
-                actions: [
-                    actions[0].as_ref().map(action),
-                    actions[1].as_ref().map(action),
-                ],
-            },
+            } => {
+                let body = ChoiceWire {
+                    choice,
+                    owner: owner_wire(owner),
+                    cases,
+                    paths: [
+                        paths[0].iter().map(port).collect(),
+                        paths[1].iter().map(port).collect(),
+                    ],
+                    actions: [
+                        actions[0].as_ref().map(action),
+                        actions[1].as_ref().map(action),
+                    ],
+                };
+                match point {
+                    DecisionKind::Choice => DecisionWire::Choice(body),
+                    DecisionKind::Repeat => DecisionWire::Repeat(body),
+                }
+            }
             ProjectionDecision::ActingInstance {
                 event,
                 owner,
@@ -283,15 +290,19 @@ fn strategy_action(action: &StrategyAction) -> StrategyActionWire<'_> {
 }
 
 #[derive(Serialize)]
+struct ChoiceWire<'a> {
+    choice: &'a CheckedNodeId,
+    owner: OwnerWire<'a>,
+    cases: &'a [CheckedNodeId; 2],
+    paths: [Vec<PortWire<'a>>; 2],
+    actions: [Option<ActionWire<'a>>; 2],
+}
+
+#[derive(Serialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 enum DecisionWire<'a> {
-    Choice {
-        choice: &'a CheckedNodeId,
-        owner: OwnerWire<'a>,
-        cases: &'a [CheckedNodeId; 2],
-        paths: [Vec<PortWire<'a>>; 2],
-        actions: [Option<ActionWire<'a>>; 2],
-    },
+    Choice(ChoiceWire<'a>),
+    Repeat(ChoiceWire<'a>),
     ActingInstance {
         event: PortWire<'a>,
         owner: OwnerWire<'a>,
