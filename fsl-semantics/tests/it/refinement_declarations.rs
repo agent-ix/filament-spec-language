@@ -1042,10 +1042,11 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
     let single = (1, 1, false);
     let spec = document_with(
         NESTED_SPEC,
-        vec![
-            construct(NESTED_SPEC, "record_value_type", meaning::RECORD_VALUE_TYPE),
-            construct(NESTED_SPEC, "value_type", meaning::VALUE_TYPE),
-        ],
+        vec![construct(
+            NESTED_SPEC,
+            "record_value_type",
+            meaning::RECORD_VALUE_TYPE,
+        )],
         vec![
             boxed(NESTED_SPEC, "Queue"),
             maybe(NESTED_SPEC, "Queue"),
@@ -1072,7 +1073,7 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
     );
     let mut spec: Value = serde_json::from_slice(&spec).expect("a document");
     for declared in spec["types"].as_array_mut().expect("types") {
-        if let Some(fields) = declared["fields"].as_array_mut() {
+        if let Some(fields) = declared.get_mut("fields").and_then(Value::as_array_mut) {
             for member in fields {
                 let shape = match member["name"].as_str() {
                     Some("chain" | "maybes") => ((0, 2, true), "required"),
@@ -1087,10 +1088,11 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
     let ring = node(NESTED_IMPL, "Ring");
     let concrete = document_with(
         NESTED_IMPL,
-        vec![
-            construct(NESTED_IMPL, "record_value_type", meaning::RECORD_VALUE_TYPE),
-            construct(NESTED_IMPL, "value_type", meaning::VALUE_TYPE),
-        ],
+        vec![construct(
+            NESTED_IMPL,
+            "record_value_type",
+            meaning::RECORD_VALUE_TYPE,
+        )],
         vec![
             boxed(NESTED_IMPL, "Ring"),
             maybe(NESTED_IMPL, "Ring"),
@@ -1116,7 +1118,7 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
     );
     let mut concrete: Value = serde_json::from_slice(&concrete).expect("a document");
     for declared in concrete["types"].as_array_mut().expect("types") {
-        if let Some(fields) = declared["fields"].as_array_mut() {
+        if let Some(fields) = declared.get_mut("fields").and_then(Value::as_array_mut) {
             for member in fields {
                 match member["name"].as_str() {
                     Some("chain" | "cargo" | "maybes") => {
