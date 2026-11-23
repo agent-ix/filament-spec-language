@@ -101,6 +101,42 @@ pub(super) fn enumerate_graph<P: StatePredicate>(
     stop_at_target: bool,
     full_key: bool,
 ) -> Result<CheckerGraph, ProbabilityDocumentError> {
+    enumerate_graph_capturing(
+        system,
+        target,
+        binding,
+        workload,
+        limits,
+        cancel,
+        identity,
+        meter,
+        storage,
+        stop_at_target,
+        full_key,
+        None,
+    )
+}
+
+/// The model states a graph enumeration reached, by complete key.
+pub(super) type CapturedStates = std::cell::RefCell<BTreeMap<ProbabilityProductKey, ModelSimState>>;
+
+/// [`enumerate_graph`], retaining each reached model state in `capture` so a
+/// caller can read predicates at the states of the graph it rebuilt.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn enumerate_graph_capturing<P: StatePredicate>(
+    system: &ModelSystem<'_>,
+    target: Option<&P>,
+    binding: Option<&ObjectReference>,
+    workload: Option<&Workload>,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    identity: fsl_foundation::IdentityLimits,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
+    stop_at_target: bool,
+    full_key: bool,
+    capture: Option<&CapturedStates>,
+) -> Result<CheckerGraph, ProbabilityDocumentError> {
     let scope = std::cell::RefCell::new((meter, storage));
     let stopped = std::cell::RefCell::new(None);
     let mut issue = None;
@@ -169,7 +205,10 @@ pub(super) fn enumerate_graph<P: StatePredicate>(
             })
         },
         ModelVisitPhase::BeforeTarget,
-        &mut |_, _, _| {
+        &mut |key, state, _| {
+            if let Some(capture) = capture {
+                capture.borrow_mut().insert(key.clone(), state.clone());
+            }
             visit(cancel, scope.borrow_mut().0).map_err(|error| {
                 *stopped.borrow_mut() = Some(error);
                 ExactProbabilityGraphError::ExpansionRefused
@@ -446,7 +485,7 @@ fn analyze(
     Ok(ranks)
 }
 
-fn visit(
+pub(super) fn visit(
     cancel: &Cancel,
     meter: &mut filament_exact::Meter,
 ) -> Result<(), ProbabilityDocumentError> {
