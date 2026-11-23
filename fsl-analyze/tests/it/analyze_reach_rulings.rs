@@ -310,12 +310,13 @@ fn several_instances_report_the_first_refuted_and_state_graph_replay_names_the_c
     let first = analyze(&path);
     let refuted = first.item(0);
     assert_eq!(label(&refuted), "refuted", "{refuted}");
-    assert!(
-        refuted["counterexample"]["over_binding"]
-            .to_string()
-            .contains("\"b\""),
-        "{refuted}"
-    );
+    // The contract frames no other counter, so `a` (at 1) can drop to 0 while
+    // `b` increments: `a` is refuted too, after one step, and is first in key
+    // order. FR-125 and FSpec FR-361-AC-10 report it over `b`'s shorter
+    // counterexample (`b` is already refuted at position 0).
+    let found = &refuted["counterexample"];
+    assert_eq!(found["over_binding"]["identity"], "a", "{refuted}");
+    assert_eq!(found["prefix"].as_array().map(Vec::len), Some(1), "{refuted}");
     assert_eq!(first.item(0), analyze(&path).item(0));
 
     let ws = Workspace::new("rulings-replay-target");
