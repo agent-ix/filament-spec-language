@@ -181,9 +181,13 @@ explicitly unsupported rather than be encoded as this profile.
   checked state predicate P; its undecided monitor product SHALL terminate,
   even when the underlying model graph is cyclic. An origin-activated
   event-position claim whose event is a bare `holds(P)` with no temporal
-  operator (an unwindowed atom claim, decided at its activating position by
-  FSpec FR-407) SHALL be read as `eventually[0,0] holds(P)` and admitted to
-  this subset under that reading. Its admission, objective, targets,
+  operator (an unwindowed atom claim) SHALL be read as `eventually[0,0] holds(P)` and admitted to
+  this subset under that reading. The reading rests on FSpec FR-407's bounded
+  event, whose truth depends on positions from its activating position up to
+  its horizon, and on FSpec FR-091's position semantics, under which an atom
+  reads only the position it is evaluated at, so its horizon is 0. It agrees
+  with FSpec FR-411's bound that every product path is decided within
+  `h + 1` positions, here one. Its admission, objective, targets,
   optimization, values, ranks, rejection rules and verdict SHALL be those of
   the explicit `eventually[0,0] holds(P)` spelling of the same claim; only
   the claim identity and the checked formula context carried in its keys
@@ -293,13 +297,20 @@ No second formula AST, opaque monitor id or public horizon field is introduced.
   operations, so that the checker and FR-202's replay rebuild it rather
   than copy EN-5's monitor. It SHALL translate a root `holds(P)` with no
   temporal operator under the event-position false-extension profile as
-  `eventually[0,0] holds(P)`: `QualifiedBoundedMonitor::supports` and its
-  bounded-shape classification SHALL admit it as the eventually kind at
-  horizon 0, and initialization, step, canonical monitor-state key and
-  terminal false-extension SHALL behave as for that explicit spelling. The
-  checked formula SHALL NOT be rewritten, and no surrogate formula AST is
+  `eventually[0,0] holds(P)`. Both qualified admission points SHALL admit it
+  as the eventually kind at horizon 0: `QualifiedBoundedMonitor::supports`
+  and `QualifiedBoundedMonitor::supports_observations`, which EN-5's exact
+  admission checks first and FR-202's checked-subject undefined entry also
+  uses. Initialization, step, canonical monitor-state key and terminal
+  false-extension SHALL behave as for that explicit spelling. The checked
+  formula SHALL NOT be rewritten, and no surrogate formula AST is
   introduced. Under any other profile the translation SHALL continue not to
-  admit the atom.
+  admit the atom. The reading SHALL be confined to this qualified
+  probability path. The other consumers of the shared bounded-shape
+  classification SHALL admit and key exactly what they admit and key
+  without it: `bounded_shape` (SMT bounded item admission), `closure_shape`
+  and FR-338 closure keying (under `on each` and infinite-trace origin), and
+  `BoundedTranslation::in_profile`'s infinite-trace admission.
 
 ### Closed acyclic state-predicate document profile
 
@@ -1371,7 +1382,8 @@ initial states/bindings and refutations remain outside this profile.
 | FR-201-AC-53 | Over the variant where `g` is unreachable, a `Vacuous` certificate is accepted under both scheduler clauses, and over the model itself it is rejected `InequalityFails` at the initial state; a `Conditional` certificate without `conditional` is rejected `Malformed` naming `conditional`, one whose `mode` is `"workload"` `Malformed` naming `mode`, a `Ratio` certificate offered under every scheduler `Malformed` naming `mode`, and a `Ratio` certificate whose `numerator` is a `Lower` certificate `Malformed` naming `numerator`. | Test (TC-3061) |
 | FR-201-AC-54 | Over FSpec FR-407-AC-18's model with the further action `stay` at `s0` (FR-196-AC-16), for `probability >= rational(1, 2)` over every scheduler, the `Optimum` certificate whose `reset` has `x(s0) = 1/2`, `x` at the state after `a` from which `g` is unreachable `1/2`, policy `b` at `s0` and ranks 1 and 2 is accepted: under `stay` and `Reset`, `1/2 <= 1/2`, under `a`, `1/2 <= 1/4 + (3/4)(1/2) = 5/8`, under `b`, `1/2 <= 1/2`. A `reset` with `x(s0) = 0` and policy `stay` is rejected `RankBroken` at `s0` with `part` `reset`, since `stay` has no successor of smaller rank; with policy `b` it is rejected `InequalityFails` at `s0`, since `F_b(x) = 1/2`. So the improper value 0 is never certified. For `<= rational(9, 10)` the `reset` with `y(s0) = 1` and policy `a` (`1/4 + (3/4)(1) = 1`) is accepted and the claim is refuted. | Test (TC-3061) |
 | FR-201-AC-55 | On FR-201-AC-54's `stay` model, for `<= rational(9, 10)` over every scheduler, an `Optimum` certificate whose `reset` has `y(s0) = 1/2`, policy `b` and no row for the state `u` after `a` from which `g` is unreachable is rejected `Malformed` at `values` and proves nothing. Read with `u` as 0, it would pass `F_a(y) = 1/4 <= 1/2`, although the true maximum is 1. With `u` at `1/2` it is rejected `InequalityFails` at `s0` with `part` `reset` (`F_a(y) = 5/8`). Without a fairness set, a `Randomized` `reset` policy entry is rejected `Malformed` at `policy`. | Test (TC-3061) |
-| FR-201-AC-57 | Over the engines `Coin` model (initially tails; `flip` sets heads or tails with equal weight), with the `ev` profile under every scheduler on origin, `probability <= 0.5 [ holds(c.heads) ]` is admitted as `eventually[0,0] holds(c.heads)`: position 0 decides rejection, the maximum is `ExactValue{0}`, `targets` is empty, the initial key has value 0 and rank 0, `fsl-probability-check` accepts the `reachability/v1` `Exact` document with side `AtMost`, and the item settles `proved`. Over the variant whose initial state is heads, `probability >= 0.5 [ holds(c.heads) ]` decides acceptance at position 0, `targets` is the initial key, the minimum is `ExactValue{1}` with rank 0, the document is accepted with side `AtLeast`, and the item settles `proved`. For each claim, the verdict, optimization, target and decided structure, values, ranks and settlement equal those of the same claim spelled `eventually[0,0] holds(c.heads)`. The initial value replaced by `1/2` is rejected `InequalityFails` at the initial key under either spelling. No new profile string or document member appears. `QualifiedBoundedMonitor::supports` admits the atom under the event-position false-extension profile and does not admit it under any other profile. | Test |
+| FR-201-AC-57 | Over the engines `Coin` model (initially tails, as in its `data/coin-tails.json`; `flip` sets heads or tails with equal weight), with the `ev` profile under every scheduler on origin, `probability <= 0.5 [ holds(c.heads) ]` is admitted as `eventually[0,0] holds(c.heads)`: position 0 decides rejection, the maximum is `ExactValue{0}`, `targets` is empty, the initial key has value 0 and rank 0, `fsl-probability-check` accepts the `reachability/v1` `Exact` document with side `AtMost`, and the item settles `proved`. Over a fixture the test authors, the same `Coin` model with its one coin initially heads (the examples supply no such fixture), `probability >= 0.5 [ holds(c.heads) ]` decides acceptance at position 0, `targets` is the initial key, the minimum is `ExactValue{1}` with rank 0, the document is accepted with side `AtLeast`, and the item settles `proved`. For each claim, the verdict, optimization, target and decided structure, values, ranks and settlement equal those of the same claim spelled `eventually[0,0] holds(c.heads)`. The initial value replaced by `1/2` is rejected `InequalityFails` at the initial key under either spelling. No new profile string or document member appears. | Test (TC-3195) |
+| FR-201-AC-75 | For a checked root `holds(c.heads)` with no temporal operator, `QualifiedBoundedMonitor::supports` and `QualifiedBoundedMonitor::supports_observations` both return true under the event-position false-extension profile and both return false under the infinite-trace profile. Under the event-position profile the monitor's initial canonical monitor-state key and decided verdict for the tails and heads initial observations equal those of `eventually[0,0] holds(c.heads)` apart from the checked formula context. For a temporal clause whose formula is a root `holds(c.heads)`, `bounded_shape` and `closure_shape` return what they return without this reading (no bounded shape), and `BoundedTranslation::in_profile` under the infinite-trace profile still does not translate it. | Test (TC-3195) |
 
 ## Dependencies
 
