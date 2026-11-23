@@ -468,6 +468,10 @@ envelope reads, and the driver can show them.
 - An `unimplemented_capability` diagnostic with cause `unimplemented-meaning`
   SHALL carry `{"capability": C}`, where C is the capability name required
   by FSpec FR-272, matching the export refusal when one is present.
+- An `invalid-request` diagnostic at stage `request` that FR-1047 writes SHALL
+  carry that requirement's `details`: `{"missing": [...]}` for a request
+  lacking members, and `{"path": "/format", "accepted": [...]}` for a
+  `format` the entry does not read.
 - Every other diagnostic, a source, profile or compile-stage diagnostic
   included, SHALL carry `details` `null`: its `locus`, `cause` and payload
   members already locate it.
@@ -479,7 +483,9 @@ meaning and one JSON kind, and no other member is written:
 | --- | --- | --- |
 | `function` | string | the request's `function` string, exactly as supplied |
 | `position` | integer | the zero-based position of the declared parameter |
-| `path` | string | an RFC 6901 JSON pointer: inside the argument's `value` for a call-stage defect (the empty pointer for the value itself), or to the request's `value` member for a request-stage one |
+| `path` | string | an RFC 6901 JSON pointer: inside the argument's `value` for a call-stage defect (the empty pointer for the value itself), or to the request's `value` member for a request-stage one; for a request-format refusal (FR-1047) the pointer `/format` of the request envelope |
+| `missing` | array | the request members FR-1047 finds absent, in FR-1047's member order: each element is an RFC 6901 pointer string for a required member, or an array of pointer strings for a one-of group |
+| `accepted` | array of strings | the request formats the entry reads, in FR-1047's order |
 | `parameter` | string | the parameter name an argument names or lacks |
 | `model_identity` | string | the offered document's model identity |
 | `population` | object | the offered population's DeclarationKey `{"package", "node"}` |
@@ -492,7 +498,9 @@ meaning and one JSON kind, and no other member is written:
 | `invariant` | string | the fault's invariant identifier |
 | `capability` | string | the valid meaning the selected producer does not implement, for FSpec FR-272's `unimplemented-meaning` cause |
 
-Each FR-100 row fixes which members its object holds; the members are
+`missing` is written alone, and `accepted` only with `path` `/format`; both
+are additive to the vocabulary, so every document written before them
+stays valid. Each FR-100 row fixes which members its object holds; the members are
 written in RFC 8785 order with the document. A `details` object is never
 empty, and a refusal whose row has no `details` writes `null`.
 
@@ -879,6 +887,7 @@ member goes untested against a real writer's bytes.
 | FR-286-AC-35 | Genuine projection refutations assembled through both intake routes give the same body type with `kind` `projection` and preserve the typed key, role, decision and separating witness. A choice decision retains both indexed cases, paths and nullable actions with its choice and owner; an acting-instance decision retains event, owner, both instances and maximum. The result remains `refuted`, category violation, with a separate canonical body and no fabricated realizability strategy. | Test |
 | FR-286-AC-36 | Running the exact Source request `fsl-analyze/tests/fixtures/hidden-choice-source/requests/protocols/protocol-unrealizable.json` with its referenced `handover-hidden-choice.fsl`, `lock.semantic-ir.json` and `lock-free.json` gives one `Handover` item at request index 0, `record.result` `refuted`, category violation and a non-null `protocol-analysis-counterexample` body equal to the genuine realizability counterexample. The document is `filament-outcome/1`, operation `analyze`, category violation, with the non-null last stage FR-621 assigns to the completed analysis, and exits 10. Exit 30 with `runtime_invariant`, `items` `[]` and `last_stage` `null` does not satisfy this criterion. | Test |
 | FR-286-AC-37 | For each of AC-33 to AC-35, the full emitted document validates against the published outcome schema and its body satisfies FR-331's positive/adverse protocol-counterexample contract vectors. Removing a required body member, adding an unknown member, using an unknown kind, mixing members of different kinds, omitting a send step's `send_record`, adding it to a non-send step or setting it to `null` fails that body contract. Removing the body makes the shared producer return `MissingCounterexample`; attaching a valid body from a different request item fails association checks. A record alone, a graph substitution or a rewritten `declined`/`unsupported` result never passes as the original refutation. Existing non-protocol counterexample spellings and non-refuted item behavior remain as specified above. | Test |
+| FR-286-AC-38 | The outcome document of FR-1047-AC-1 serializes with one diagnostic whose `details` is exactly `{"missing":["/request/models",["/request/program","/request/package"],["/request/call","/request/clause","/request/items"]]}`; the document of FR-1047-AC-5's `native-analyze/1` run refusal serializes with `details` exactly `{"accepted":["native-run/1","native-monitor/1","native-replay/1"],"path":"/format"}`; every other member of both documents is as FR-286 states, and a document whose `details` carries neither member is byte-equal to the bytes written before this row. | Test (TC-3201) |
 
 ## Status
 
