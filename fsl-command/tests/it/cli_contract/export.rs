@@ -335,3 +335,33 @@ fn odd_input_refuses() {
         );
     }
 }
+
+/// FR-1015-AC-18: `call_site`, `output` and `handoff` are compile members; an
+/// export request that carries one at the top level refuses `invalid-request`
+/// naming it, exit 20, and writes no file.
+#[test]
+#[trace("TC-3213", "FR-1015-AC-18")]
+fn a_compile_only_member_beside_an_export_refuses_naming_it() {
+    let members = [
+        (
+            "call_site",
+            json!({"kind": "imported-function", "library": "test/units", "function": "big"}),
+        ),
+        ("output", json!({"package": "out.json"})),
+        (
+            "handoff",
+            json!({"directory": "handoff", "package_name": "parcel",
+                "native_join": {"work_units": 1_u64 << 40, "storage": 1_u64 << 24}}),
+        ),
+    ];
+    for (name, value) in members {
+        let case = Case::new();
+        let mut request = counter_request(&case, COUNTER.as_bytes(), member());
+        request["request"][name] = value;
+        let outcome = plain(&case.json("export.json", &request));
+        let refusal = outcome.refused("export", 20, "invalid-request");
+        assert!(refusal.to_string().contains(name), "{name}: {refusal}");
+        assert!(outcome.document["last_stage"].is_null(), "{}", outcome.document);
+        assert!(!case.path("out.json").exists() && !case.path("handoff").exists());
+    }
+}

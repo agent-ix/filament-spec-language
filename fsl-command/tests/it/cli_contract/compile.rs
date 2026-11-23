@@ -444,8 +444,7 @@ fn compile_without_the_selected_model_carries_the_model_selection() {
     assert_eq!(diagnostic["cause"], "missing-selection", "{diagnostic}");
     assert_eq!(diagnostic["selection"], "model", "{diagnostic}");
     assert_eq!(diagnostic["hint"], hint, "{diagnostic}");
-    let Err(error) =
-        fsl_command::command::compile_outcome_with_overrides(&path, &RequestOverrides::default())
+    let Err(error) = fsl_command::command::compile_outcome_with_overrides(&path, &RequestOverrides::default())
     else {
         panic!("the compile is refused");
     };
@@ -659,11 +658,10 @@ fn an_undeclared_imported_function_refuses_missing_declaration() {
     );
 }
 
-/// The `NotImportable` refusal of FR-027-AC-19, through a function named `pick`:
-/// `first`, which AC-19 names, is a reserved word, so a library declaring it
-/// refuses at S1 and AC-19 is not built.
+/// FR-027-AC-19: a function whose signature is package-dependent refuses
+/// `ill_typed`/`operator-ineligible`, with no `selection` member.
 #[test]
-#[trace("FR-027")]
+#[trace("TC-3210", "FR-027-AC-19")]
 fn a_package_dependent_imported_function_refuses_ill_typed() {
     let outcome = refused_call_site(
         &[("test/units", &format!("{BIG}{PICK}"))],
@@ -813,4 +811,43 @@ fn a_malformed_call_site_refuses_invalid_request_naming_it() {
             .contains("call_site"),
         "{diagnostic}"
     );
+}
+
+/// FR-027: an array of one unit is the single-object program, so a valid
+/// `call_site` over it is located and changes nothing.
+#[test]
+#[trace("FR-027")]
+fn a_one_unit_array_takes_a_call_site_like_the_single_program() {
+    let libraries = [("test/units", BIG)];
+    let single_case = Case::new();
+    let single = plain(&call_site_request(
+        &single_case,
+        UNIT_OF_UNITS,
+        &libraries,
+        Some(imported("test/units", "big")),
+        json!({}),
+    ));
+    single.expect("package", "success", 0);
+
+    let case = Case::new();
+    let path = call_site_request(
+        &case,
+        UNIT_OF_UNITS,
+        &libraries,
+        Some(imported("test/units", "big")),
+        json!({"program": [file_source("parcel.fsl")]}),
+    );
+    let array = plain(&path);
+    array.expect("package", "success", 0);
+    assert_eq!(array.package, single.package);
+
+    let case = Case::new();
+    let path = call_site_request(
+        &case,
+        UNIT_OF_UNITS,
+        &libraries,
+        Some(imported("test/absent", "big")),
+        json!({"program": [file_source("parcel.fsl")]}),
+    );
+    plain(&path).refused("package", 20, "missing_import");
 }

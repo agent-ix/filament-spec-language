@@ -209,12 +209,7 @@ fn the_byte_provision_producer_text_holds_its_hint() {
 }
 
 #[test]
-#[trace(
-    "TC-3199",
-    "FR-865-AC-23",
-    "FR-865-AC-24",
-    "FR-286-AC-40"
-)]
+#[trace("TC-3199", "FR-865-AC-23", "FR-865-AC-24", "FR-286-AC-40")]
 fn the_extension_definition_producer_text_holds_its_hint() {
     let refusal = CompileRefusal::Extension(ExtensionRefusal::MissingDependency {
         dependent: DefinitionRef::new("agent-ix", "ext.a").unwrap(),
@@ -229,12 +224,7 @@ fn the_extension_definition_producer_text_holds_its_hint() {
 }
 
 #[test]
-#[trace(
-    "TC-3199",
-    "FR-865-AC-23",
-    "FR-865-AC-24",
-    "FR-286-AC-40"
-)]
+#[trace("TC-3199", "FR-865-AC-23", "FR-865-AC-24", "FR-286-AC-40")]
 fn the_source_producer_text_holds_its_hint() {
     let refusal = AnalyzeRefusal::Provision(ProvisionRefusal {
         authority: "test".to_owned(),
@@ -246,12 +236,7 @@ fn the_source_producer_text_holds_its_hint() {
 /// The run's strict-reader package refusal: a missing import has the pair's
 /// `missing-selection` cause whether or not the reader named it.
 #[test]
-#[trace(
-    "TC-3199",
-    "FR-865-AC-23",
-    "FR-865-AC-24",
-    "FR-286-AC-40"
-)]
+#[trace("TC-3199", "FR-865-AC-23", "FR-865-AC-24", "FR-286-AC-40")]
 fn the_package_reference_producer_text_holds_its_hint() {
     for cause in [None, Some("missing-selection".to_owned())] {
         let error = RunError {
@@ -269,4 +254,29 @@ fn the_package_reference_producer_text_holds_its_hint() {
             &error.outcome_document(Operation::Analyze),
         );
     }
+}
+
+/// FR-027: a `CallSiteRefusal::Fault` (a program label that is no library
+/// name) settles internal-failure, exit 30, at stage I1.
+#[test]
+#[trace("TC-3210")]
+fn a_call_site_fault_is_an_internal_failure_at_stage_i1() {
+    let error = RunError {
+        cause: RunCause::CallSite(Box::new(fsl_replay::CallSiteRefusal::Fault(
+            filament_semantic_value::catalog::InternalFault::new(
+                "call-site",
+                "package-name-is-a-library-name",
+            ),
+        ))),
+        sources: fsl_command::Sources::default(),
+    };
+    assert_eq!(error.category(), Category::InternalFailure);
+    assert_eq!(error.category().exit_code(), 30);
+    let wire: Value =
+        serde_json::from_slice(&error.outcome_document(Operation::Package).to_bytes().unwrap())
+            .unwrap();
+    assert_outcome_schema(&wire);
+    assert_eq!(wire["category"], "internal-failure", "{wire}");
+    assert_eq!(wire["last_stage"], "I1", "{wire}");
+    assert_eq!(wire["diagnostics"].as_array().map(Vec::len), Some(1), "{wire}");
 }

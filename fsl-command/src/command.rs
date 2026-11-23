@@ -3536,7 +3536,9 @@ fn complete_sources(
             );
             let document = fsl_replay::OutcomeDocument::from_package(&result);
             let emitted = result.map_err(failure)?.into_value();
-            if let Some(selection) = request_call_site(request.call_site.as_ref(), sources.len())? {
+            if let Some(selection) =
+                request_call_site(request.call_site.as_ref(), sources.len())?
+            {
                 fsl_replay::locate_in_checked(
                     &checked,
                     &package_name(sources[0].source().identity()),
