@@ -2663,10 +2663,7 @@ fn an_items_deadline_expiring_mid_settlement_leaves_the_stream_unchanged() {
 
     let recorded = Recorded::new();
     let (entered, in_flight) = std::sync::mpsc::sync_channel(1);
-    let released = std::sync::Arc::new((
-        std::sync::Mutex::new(false),
-        std::sync::Condvar::new(),
-    ));
+    let released = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
     let provider = recorded.blocking_provider(
         fsl_analyze::provider::ProviderVerdict::Proved,
         entered,
@@ -2685,8 +2682,8 @@ fn an_items_deadline_expiring_mid_settlement_leaves_the_stream_unchanged() {
             )
         });
         let items_cancel = in_flight
-            .recv()
-            .expect("the provider request entered settlement");
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("the provider request entered settlement before the watchdog elapsed");
         items_cancel.cancel(filament_exact::CancelCause::Deadline);
         let (ready, changed) = &*released;
         *ready.lock().expect("the provider release lock") = true;
@@ -2698,10 +2695,9 @@ fn an_items_deadline_expiring_mid_settlement_leaves_the_stream_unchanged() {
     assert_eq!(recorded.calls(), 1, "the provider request was in flight");
     assert_eq!(seen, events_without);
     assert_eq!(clause_summary(value), *without.as_value());
-    assert!(
-        value["items"]
-            .as_array()
-            .is_some_and(|items| !items.is_empty()),
-        "{value}"
-    );
+    let items = value["items"].as_array().expect("settled items");
+    assert_eq!(items.len(), 1, "{value}");
+    assert_eq!(items[0]["category"], "incomplete", "{}", items[0]);
+    assert!(items[0].to_string().contains("deadline"), "{}", items[0]);
+    assert_eq!(summary.exit_code, 22, "{value}");
 }
