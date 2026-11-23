@@ -1696,7 +1696,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     .states()
                     .iter()
                     .any(|state| state.findings.contains(&Finding::HorizonCut));
-            match self.second_phase(run)? {
+            match self.second_phase(&run)? {
                 Second::Lasso(counterexample) => {
                     let stats = totals.stats();
                     return Ok(ModelCheckOutcome::Violated {
