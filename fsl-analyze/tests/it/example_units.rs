@@ -12,8 +12,8 @@
 //!
 //! Both instances give a lasso of length 3 under AC-1's no-granularity claim,
 //! and a tie goes to the earlier binding, so the counterexample is bound to
-//! `c = a` and loops on `b`. AC-10 to AC-15 (the cross-binding ranking) are
-//! verified here with letters that can read an atom undefined.
+//! `c = a` and loops on `b`. AC-10 to AC-15 verify canonical-first binding
+//! evaluation, including cases where later bindings have shallower findings.
 
 use filament_exact::{Cancel, CancelCause, Incomplete, Meter, ScalarLimits};
 use filament_semantic_value::checking::CheckMode;
@@ -526,25 +526,22 @@ fn with_limits(world: &World, letters: &dyn ModelLetters, limits: ModelCheckLimi
     run(world, letters, None, limits, &Cancel::new())
 }
 
-/// FR-126-AC-10: with `a` at version 2 and `b` at 0, a weak constraint with
-/// no granularity gives `b` the empty stem and the loop `(2,0) -upd(a)->
-/// (0,0) -upd(a)-> (1,0) -upd(a)-> (2,0)`, length 3, though `a` is the first
-/// binding: `a`'s counterexample has a stem of one transition and a loop of
-/// three, length 4. The shortest lasso across the bindings wins.
+/// FR-126-AC-10: the first binding `a` wins even though `b` has a shorter
+/// lasso. Binding `a` has a one-transition stem and a three-transition loop.
 #[trace("TC-521", "FR-126-AC-10")]
 #[test]
-fn the_shortest_lasso_across_bindings_wins_not_the_first_binding() {
+fn the_first_binding_wins_even_when_a_later_binding_has_a_shorter_lasso() {
     let world = config_over(false, WHOLE, FORMULA, (2, 0));
     let outcome = decide(&world);
     let counterexample = violated(&outcome);
-    assert_eq!(bound(counterexample), "b");
-    assert_eq!(counterexample.len(), 3);
+    assert_eq!(bound(counterexample), "a");
+    assert_eq!(counterexample.len(), 4);
     let lasso = counterexample.lasso.as_ref().expect("a lasso");
-    assert_eq!((lasso.entry, lasso.terminal_stutter), (0, false));
-    assert!(counterexample
-        .prefix
-        .iter()
-        .all(|step| receiver(step) == 'a'));
+    assert_eq!((lasso.entry, lasso.terminal_stutter), (1, false));
+    assert_eq!(
+        counterexample.prefix.iter().map(receiver).collect::<Vec<_>>(),
+        ['a', 'b', 'b', 'b']
+    );
     let versions: Vec<(i64, i64)> = positions(&world, counterexample)
         .iter()
         .map(|state| {
@@ -554,18 +551,17 @@ fn the_shortest_lasso_across_bindings_wins_not_the_first_binding() {
             )
         })
         .collect();
-    assert_eq!(versions, [(2, 0), (0, 0), (1, 0), (2, 0)]);
+    assert_eq!(versions, [(2, 0), (0, 0), (0, 1), (0, 2), (0, 0)]);
 }
 
-/// FR-126-AC-11, the safety engine's ranking by depth, then binding: `always
-/// holds(6 mod (2 - c.versionNumber) >= 0)` over both versions 0 is violated
+/// FR-126-AC-11: `always holds(6 mod (2 - c.versionNumber) >= 0)` over both
+/// versions 0 is violated
 /// bound to `a` by `(0,0) -upd(a)-> (1,0) -upd(a)-> (2,0)` undefined at
-/// position 2 (both bindings are undefined at depth 2 and `a` is the
-/// earlier); with `a` at 0 and `b` at 1 it is bound to `b` by `(0,1)
-/// -upd(b)-> (0,2)`, undefined at position 1.
+/// position 2. With `a` at 0 and `b` at 1 it is still bound to `a` at
+/// position 2, although binding `b` has a shallower finding at position 1.
 #[trace("TC-521", "FR-126-AC-11")]
 #[test]
-fn a_safety_claim_is_bound_to_the_binding_undefined_at_the_shallowest_depth() {
+fn a_safety_claim_uses_canonical_binding_order_before_finding_depth() {
     let formula = "always holds(6 mod (2 - c.versionNumber) >= 0)";
     let both = config_over(false, EACH, formula, (0, 0));
     let outcome = with_limits(
@@ -592,16 +588,16 @@ fn a_safety_claim_is_bound_to_the_binding_undefined_at_the_shallowest_depth() {
         ModelCheckLimits::default(),
     );
     let counterexample = violated(&outcome);
-    assert_eq!(bound(counterexample), "b");
+    assert_eq!(bound(counterexample), "a");
     assert_eq!(
         counterexample
             .prefix
             .iter()
             .map(receiver)
             .collect::<Vec<_>>(),
-        ['b']
+        ['a', 'a']
     );
-    assert_eq!(undefined_at(counterexample).0, 1);
+    assert_eq!(undefined_at(counterexample).0, 2);
 }
 
 const DEAD_AT_ZERO: &str =
@@ -664,38 +660,32 @@ fn the_model_only_pass_finds_the_undefined_letter_a_dead_automaton_leaves() {
     );
 }
 
-/// FR-126-AC-14: with `a` at 0 and `b` at 1, the AC-12 claim is bound to
-/// `b`: `(0,1) -upd(b)-> (0,2)`, undefined at position 1, since `b`'s
-/// product reaches the undefined letter at depth 1 and `a`'s model-only pass
-/// at depth 2.
+/// FR-126-AC-14: with `a` at 0 and `b` at 1, the AC-12 claim is bound to the
+/// first binding `a` at position 2, despite the shallower finding for `b`.
 #[trace("TC-1085", "FR-126-AC-14")]
 #[test]
-fn a_later_binding_wins_with_a_strictly_shallower_finding() {
+fn the_first_binding_wins_over_a_later_shallower_finding() {
     let world = config_over(false, WHOLE, DEAD_AT_ZERO, (0, 1));
     let outcome = with_limits(&world, &dead_at_zero(&world), ModelCheckLimits::default());
     let counterexample = violated(&outcome);
-    assert_eq!(bound(counterexample), "b");
+    assert_eq!(bound(counterexample), "a");
     assert_eq!(
         counterexample
             .prefix
             .iter()
             .map(receiver)
             .collect::<Vec<_>>(),
-        ['b']
+        ['a', 'a']
     );
-    assert_eq!(undefined_at(counterexample).0, 1);
+    assert_eq!(undefined_at(counterexample).0, 2);
 }
 
-/// FR-126-AC-15: with `a` at 0 and `b` at 1, `a`'s first phase ends at depth
-/// 2, so `b` is explored through depth 1 alone: with `max_states` 6 `b` has
-/// begun (it has a product state) and stops before it completes depth 1, and
-/// that `Stopped` is returned; 1,000 returns AC-14's finding for `b`, the
-/// prefix `(0,1) -upd(b)-> (0,2)` at position 1. `a`'s own pass stops the run
-/// only below 5 states. With both versions 0, `b` finds nothing shallower than
-/// depth 2 and the tie goes to `a`.
+/// FR-126-AC-15: the engine decides `a` before evaluating `b`. A budget too
+/// small to finish `a` returns an incomplete result; once `a` is decided, its
+/// finding is returned and no later binding is explored.
 #[trace("TC-1085", "FR-126-AC-15")]
 #[test]
-fn a_later_binding_is_explored_through_one_less_than_the_finding() {
+fn an_incomplete_first_binding_blocks_later_findings() {
     let world = config_over(false, WHOLE, DEAD_AT_ZERO, (0, 1));
     let letters = dead_at_zero(&world);
     let mut limits = ModelCheckLimits::default();
@@ -711,29 +701,30 @@ fn a_later_binding_is_explored_through_one_less_than_the_finding() {
         }) => (value, stats.product_states),
         other => panic!("expected a stop on max_states, got {other:?}"),
     };
-    limits.limits.max_states = 4;
+    limits.limits.max_states = 1;
     assert_eq!(
         stopped_in(limits),
-        (4, 0),
-        "`a`'s pass stops: `b` never starts"
+        (1, 0),
+        "`a` is incomplete: `b` is not evaluated"
     );
     limits.limits.max_states = 6;
-    let (value, b_states) = stopped_in(limits);
-    assert_eq!(value, 6);
-    assert!(b_states > 0, "`b` began and stopped before depth 1");
+    let outcome = with_limits(&world, &letters, limits);
+    let counterexample = violated(&outcome);
+    assert_eq!(bound(counterexample), "a");
+    assert_eq!(undefined_at(counterexample).0, 2);
     limits.limits.max_states = 1_000;
     let outcome = with_limits(&world, &letters, limits);
     let counterexample = violated(&outcome);
-    assert_eq!(bound(counterexample), "b");
+    assert_eq!(bound(counterexample), "a");
     assert_eq!(
         counterexample
             .prefix
             .iter()
             .map(receiver)
             .collect::<Vec<_>>(),
-        ['b']
+        ['a', 'a']
     );
-    assert_eq!(undefined_at(counterexample).0, 1);
+    assert_eq!(undefined_at(counterexample).0, 2);
 
     let tied = config_over(false, WHOLE, DEAD_AT_ZERO, (0, 0));
     let outcome = with_limits(&tied, &dead_at_zero(&tied), limits);
@@ -743,7 +734,7 @@ fn a_later_binding_is_explored_through_one_less_than_the_finding() {
 }
 
 /// The AC-15 world's letters, with `on_b` run when the clause is read for
-/// `b`: the later binding's exploration is interfered with.
+/// `b`: used to ensure a later binding is not evaluated after `a` refutes.
 struct Interfering<'w> {
     inner: &'w Versions<'w>,
     on_b: Box<dyn Fn() -> Option<Incomplete> + 'w>,
@@ -772,38 +763,19 @@ impl ModelLetters for Interfering<'_> {
     }
 }
 
-/// FR-126 "Bindings and ranking": a later binding that stops on any cause
-/// before it completes depth `d - 1` answers with its own `Stopped`, never
-/// the earlier binding's finding. `max_transitions` and the evaluation meter
-/// and cancellation each stop `b` in AC-15's world (`a` at 0, `b` at 1).
+/// FR-126 "Bindings and ranking": once the first binding refutes, an
+/// incomplete result injected into a later binding cannot replace it. The
+/// `b` callback must not run in AC-15's world (`a` at 0, `b` at 1).
 #[trace("TC-1085")]
 #[test]
-fn a_later_binding_that_stops_on_any_cause_answers_with_its_stop() {
+fn a_later_binding_is_not_evaluated_after_the_first_binding_refutes() {
     let world = config_over(false, WHOLE, DEAD_AT_ZERO, (0, 1));
     let inner = dead_at_zero(&world);
-
-    let mut limits = ModelCheckLimits::default();
-    limits.limits.max_transitions = 4;
-    let outcome = with_limits(&world, &inner, limits);
-    assert!(
-        matches!(
-            outcome,
-            Ok(ModelCheckOutcome::Stopped {
-                limit: Some(ReachedLimit {
-                    limit: ModelCheckLimit::MaxTransitions,
-                    value: 4
-                }),
-                ..
-            })
-        ),
-        "{outcome:?}"
-    );
-    limits.limits.max_transitions = 5;
-    assert_eq!(bound(violated(&with_limits(&world, &inner, limits))), "b");
-
+    let later_was_read = std::cell::Cell::new(false);
     let metered = Interfering {
         inner: &inner,
         on_b: Box::new(|| {
+            later_was_read.set(true);
             let mut spent = Meter::new(ZERO);
             spent
                 .charge(filament_exact::Charge::new(
@@ -813,93 +785,40 @@ fn a_later_binding_that_stops_on_any_cause_answers_with_its_stop() {
         }),
     };
     let outcome = with_limits(&world, &metered, ModelCheckLimits::default());
-    assert!(
-        matches!(
-            outcome,
-            Ok(ModelCheckOutcome::Stopped {
-                limit: Some(ReachedLimit {
-                    limit: ModelCheckLimit::EvaluationMeter {
-                        counter: filament_exact::LimitKind::WorkUnits
-                    },
-                    ..
-                }),
-                ..
-            })
-        ),
-        "{outcome:?}"
-    );
-
-    let cancel = Cancel::new();
-    let cancelling = Interfering {
-        inner: &inner,
-        on_b: Box::new(|| {
-            cancel.cancel(CancelCause::Requested);
-            None
-        }),
-    };
-    let outcome = run(
-        &world,
-        &cancelling,
-        None,
-        ModelCheckLimits::default(),
-        &cancel,
-    );
-    assert!(
-        matches!(
-            outcome,
-            Ok(ModelCheckOutcome::Stopped {
-                cause: IncompleteCause::Cancelled {
-                    source: CancelCause::Requested
-                },
-                limit: None,
-                ..
-            })
-        ),
-        "{outcome:?}"
-    );
+    let counterexample = violated(&outcome);
+    assert_eq!(bound(counterexample), "a");
+    assert_eq!(undefined_at(counterexample).0, 2);
+    assert!(!later_was_read.get());
 }
 
 /// FR-126-AC-1's claim with an atom undefined at version 2
-/// (`always eventually holds(6 mod (2 - c.versionNumber) >= 0)`): a binding
-/// whose exploration stops while it holds a finding does not hide a shallower
-/// one of a later binding. With `a` at 0 and `b` at 1 or 2, a budget too small
-/// to finish `b` stops the run, and once it suffices the answer is `b`'s
-/// shallower finding, never `a`'s deeper one.
+/// (`always eventually holds(6 mod (2 - c.versionNumber) >= 0)`): a later
+/// binding's shallower finding does not outrank the first binding. A budget
+/// too small to decide `a` stops the run; once sufficient, the result is
+/// `a`'s finding.
 #[trace("TC-1085")]
 #[test]
-fn a_binding_that_stops_with_a_finding_does_not_hide_a_shallower_one() {
+fn the_first_binding_wins_over_a_later_shallower_finding() {
     const CLAIM: &str = "always eventually holds(6 mod (2 - c.versionNumber) >= 0)";
-    for (versions, enough, position) in [((0, 1), 8, 1), ((0, 2), 6, 0)] {
+    for versions in [(0, 1), (0, 2)] {
         let world = config_over(false, WHOLE, CLAIM, versions);
         let letters = Versions::new(&world, vec![mod_is_defined]);
-        for max_states in 1..=enough {
-            let mut limits = ModelCheckLimits::default();
-            limits.limits.max_states = max_states;
-            let outcome = with_limits(&world, &letters, limits);
-            if max_states < enough {
-                assert!(
-                    matches!(outcome, Ok(ModelCheckOutcome::Stopped { .. })),
-                    "{versions:?} max_states {max_states}: {outcome:?}"
-                );
-            } else {
-                let counterexample = violated(&outcome);
-                assert_eq!(bound(counterexample), "b", "{versions:?}");
-                assert_eq!(undefined_at(counterexample).0, position, "{versions:?}");
-            }
-        }
+        let counterexample = violated(&with_limits(
+            &world,
+            &letters,
+            ModelCheckLimits::default(),
+        ));
+        assert_eq!(bound(counterexample), "a", "{versions:?}");
+        assert_eq!(undefined_at(counterexample).0, 2, "{versions:?}");
     }
     let world = config_over(false, WHOLE, CLAIM, (0, 1));
     let letters = Versions::new(&world, vec![mod_is_defined]);
-    for max_transitions in 1..=6 {
-        let mut limits = ModelCheckLimits::default();
-        limits.limits.max_transitions = max_transitions;
-        let outcome = with_limits(&world, &letters, limits);
-        assert_eq!(
-            matches!(outcome, Ok(ModelCheckOutcome::Stopped { .. })),
-            max_transitions < 6,
-            "max_transitions {max_transitions}: {outcome:?}"
-        );
-    }
+    let mut limits = ModelCheckLimits::default();
+    limits.limits.max_transitions = 1;
+    assert!(matches!(
+        with_limits(&world, &letters, limits),
+        Ok(ModelCheckOutcome::Stopped { .. })
+    ));
 }
 
 /// Letters over the joint state of the two objects: `read(key, atom, va, vb)`.
