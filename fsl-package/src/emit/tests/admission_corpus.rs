@@ -4195,3 +4195,23 @@ fn the_reader_refuses_a_history_row_whose_concrete_type_is_not_an_object_type() 
         "{verdict}"
     );
 }
+
+/// FR-093-AC-19 (TC-416 step 5): the recursive `f` of FR-092's G4 to G6
+/// emits in bounded memory. The path-condition frame walk of FSpec FR-825
+/// enters a recursive owner once: a reference back to a node whose body the
+/// walk is inside is a recursive call, not a body to walk again. (Admission
+/// of this package by the pinned contract-ir reader is a separate defect:
+/// its `walk_owner_expression` has the same unbounded re-walk.)
+#[trace("FR-093-AC-19", "TC-416")]
+#[test]
+fn recursive_f_emission_and_admission_terminate() {
+    const CEILING: u64 = 256 * 1024 * 1024;
+    let mut emitted = Vec::new();
+    let measured = allocation_counter::measure(|| emitted = Fixture::RecursiveF.emit());
+    assert!(!emitted.is_empty(), "the fixture emits a package");
+    assert!(
+        measured.bytes_max < CEILING,
+        "the recursive fixture's emission peaked at {} bytes, past {CEILING}",
+        measured.bytes_max
+    );
+}

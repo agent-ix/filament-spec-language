@@ -10,7 +10,7 @@
 //! checker's per-record guard chain is compared with the chain a frame walk
 //! yields; no record keeps an expanded guard vector.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use filament_contract_model::{
     CheckedBindingNameKind, CheckedNodeId, CheckedOccurrenceRole, CheckedSemanticNodeV2,
@@ -79,6 +79,8 @@ impl Table {
 }
 
 enum Task<'a> {
+    /// Leave the node at the position: its body is fully walked.
+    Leave(usize),
     Node(&'a CheckedNodeId, Option<usize>),
     Term(&'a CheckedTerm, Option<usize>),
 }
@@ -161,12 +163,22 @@ impl<'a> Walk<'a> {
         let mut derived = HashMap::new();
         let mut visits = HashMap::<usize, usize>::new();
         let mut pending = vec![Task::Node(root, None)];
+        // The nodes whose bodies the walk is inside. A reference back to one is
+        // a recursive call: the walk does not enter it again, so a recursive
+        // owner is walked once, not without end.
+        let mut active = HashSet::<usize>::new();
         while let Some(task) = pending.pop() {
             match task {
+                Task::Leave(position) => {
+                    active.remove(&position);
+                }
                 Task::Node(id, terminal) => {
                     let Some(&position) = self.index.get(id) else {
                         continue;
                     };
+                    if !active.insert(position) {
+                        continue;
+                    }
                     let visit = visits.entry(position).or_default();
                     let occurrence = self.expression_ordinal(position, *visit);
                     *visit += 1;
@@ -176,6 +188,7 @@ impl<'a> Walk<'a> {
                     {
                         derived.insert((position, ordinal), terminal);
                     }
+                    pending.push(Task::Leave(position));
                     pending.push(Task::Term(&node.body, terminal));
                 }
                 Task::Term(term, terminal) => match term {
