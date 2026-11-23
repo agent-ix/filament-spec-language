@@ -1042,11 +1042,10 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
     let single = (1, 1, false);
     let spec = document_with(
         NESTED_SPEC,
-        vec![construct(
-            NESTED_SPEC,
-            "record_value_type",
-            meaning::RECORD_VALUE_TYPE,
-        )],
+        vec![
+            construct(NESTED_SPEC, "record_value_type", meaning::RECORD_VALUE_TYPE),
+            construct(NESTED_SPEC, "value_type", meaning::VALUE_TYPE),
+        ],
         vec![
             boxed(NESTED_SPEC, "Queue"),
             maybe(NESTED_SPEC, "Queue"),
@@ -1088,11 +1087,10 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
     let ring = node(NESTED_IMPL, "Ring");
     let concrete = document_with(
         NESTED_IMPL,
-        vec![construct(
-            NESTED_IMPL,
-            "record_value_type",
-            meaning::RECORD_VALUE_TYPE,
-        )],
+        vec![
+            construct(NESTED_IMPL, "record_value_type", meaning::RECORD_VALUE_TYPE),
+            construct(NESTED_IMPL, "value_type", meaning::VALUE_TYPE),
+        ],
         vec![
             boxed(NESTED_IMPL, "Ring"),
             maybe(NESTED_IMPL, "Ring"),
