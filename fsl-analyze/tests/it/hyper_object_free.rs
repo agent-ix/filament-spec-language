@@ -9,7 +9,9 @@ use filament_contract_model::{
 use ix_trace_rs::trace;
 use serde_json::Value;
 
-use crate::hyper_world::{non_interference, package_with_clause, Vault};
+use fsl_semantics::model::intake::package_input;
+
+use crate::hyper_world::{document, non_interference, package_with_clause, Vault};
 
 /// The emitted wire of `world`'s package.
 fn emitted(package: &fsl_package::CheckedPackage) -> (Vec<u8>, Value) {
@@ -46,6 +48,12 @@ fn admitted(bytes: &[u8], wire: &Value) -> bool {
     let mut evidence = CheckedPackageEvidence::new();
     for feature in wire["lock"]["required_features"].as_array().unwrap() {
         evidence.support_feature(feature.as_str().unwrap());
+    }
+    let document = document(false, false);
+    for (identity, domain) in package_input([document.as_slice()]).expect("the vault document") {
+        evidence
+            .insert_domain_package_document(identity.as_str(), domain)
+            .expect("a fresh evidence key");
     }
     matches!(
         CheckedPackageV2::read(bytes, CheckedPackageReadLimits::bounded(), &evidence),
