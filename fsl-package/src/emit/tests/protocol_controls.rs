@@ -780,7 +780,7 @@ fn assert_correlation_reencodes(lowered: &Lowered, base: &CheckedPackageV2) {
         &[],
         base.resolved_graph().nodes.clone(),
         base.source_map().to_vec(),
-        retained.source_map.clone(),
+        (*retained.source_map).clone(),
         limits,
     )
     .expect("the monitor's final writer re-encodes the package");

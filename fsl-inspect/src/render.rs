@@ -2751,7 +2751,8 @@ mod tests {
             Some("  witness: self.charged = 4000, self.total = 4200")
         );
 
-        let literal_comparison = node(
+        let literal_comparison = filament_exact::NodeKey::new(
+            "paid-short",
             vec![
                 filament_exact::PathSegment::Text("expression".to_owned()),
                 filament_exact::PathSegment::Text("binary".to_owned()),
@@ -2761,7 +2762,7 @@ mod tests {
                 filament_exact::PathSegment::Text("filament.op.integer.eq".to_owned()),
             ],
             0,
-        );
+        ).expect("literal comparison key is valid");
         let literal_witness = serde_json::json!({
             "deciding_comparison": {
                 "node_id": fsl_foundation::node_wire::node_key_to_text(&literal_comparison)

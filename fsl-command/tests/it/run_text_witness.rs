@@ -122,7 +122,11 @@ fn fsl_command_run_text_includes_paid_short_witness_values() {
         "run: violation (exit {}) at S6a\n",
         Category::Violation.exit_code()
     );
-    assert!(rendered.value().as_str().starts_with(&expected_header));
+    assert!(
+        rendered.value().as_str().starts_with(&expected_header),
+        "{}",
+        rendered.value().as_str()
+    );
     assert!(
         rendered
             .value()
