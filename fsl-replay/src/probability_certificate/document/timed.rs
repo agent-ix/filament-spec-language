@@ -19,6 +19,7 @@ pub(super) fn check(
     claims: &[CheckedProbabilisticClaim],
     item: &ObligationIdentity,
     bytes: &[u8],
+    bound_side: Option<SubsystemBoundKind>,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
@@ -46,6 +47,10 @@ pub(super) fn check(
         || objective.scale != scale
     {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
+    }
+    let deadline = objective.form == TimedProbabilityForm::Deadline;
+    if bound_side.is_some() && !deadline {
+        return Err(ProbabilityDocumentError::Unsupported);
     }
     if objective.form == TimedProbabilityForm::ExpectedElapsed {
         return check_expected_elapsed(
@@ -173,12 +178,17 @@ pub(super) fn check(
     let certificate = ExactProbabilityCertificate {
         values: document.values,
     };
-    let mut checked = super::super::check_exact_reachability(
+    let mut checked = super::super::check_reachability_values(
         &graph,
         &certificate,
         scheduler_objective(optimization),
         &bound,
         super::super::GraphCycles::CollapseNonprogressive,
+        match bound_side {
+            None => super::super::ValueRelation::Exact,
+            Some(SubsystemBoundKind::Lower) => super::super::ValueRelation::Lower,
+            Some(SubsystemBoundKind::Upper) => super::super::ValueRelation::Upper,
+        },
         cancel,
     )
     .map_err(ProbabilityDocumentError::Graph)?;
@@ -569,6 +579,7 @@ fn check_mean_time_values(
     Ok(ExactProbabilityCertificateCheck::Accepted(
         ExactProbabilityAcceptance {
             initial_values: None,
+            bound: None,
             value: initial.clone(),
             side: match bound {
                 Bound::AtLeast(_) => ProbabilityBoundSide::AtLeast,
@@ -4144,7 +4155,8 @@ fn certificate_scale(
         .ok_or(ProbabilityDocumentError::Unsupported)
 }
 
-/// FR-923: replay a path-set refutation of a timed deadline claim.
+/// FR-923: replay a path-set refutation of a timed deadline claim, or of an
+/// elapsed-quantile claim (FR-877) through [`elapsed::replay`].
 ///
 /// The checker enumerates the digital or region product itself, exactly as it
 /// does to check a certificate, and reads the witness as paths of product-state
@@ -4179,6 +4191,9 @@ pub(in crate::probability_certificate) fn replay_timed_witness(
         ProbabilityDocumentError::Graph(error) => Error::Graph(error),
         _ => unsupported(),
     };
+    if let Some(query) = elapsed::query(claim) {
+        return elapsed::replay(system, claim, &query, witness, limits, cancel);
+    }
     let Some((bound, predicate)) = deadline_event(claim) else {
         return Err(unsupported());
     };
@@ -4302,6 +4317,83 @@ fn price_witness_paths(
     max_rational_bits: u64,
     cancel: &Cancel,
 ) -> Result<Option<(Vec<usize>, Rational)>, super::super::ProbabilityWitnessError> {
+    price_paths(
+        graph,
+        &Payoff::Deadline { failing, threshold },
+        sequences,
+        max_rational_bits,
+        cancel,
+    )
+}
+
+/// What a witness path set is priced against: FR-204's forbidden deadline
+/// outcome, or FR-877's elapsed-quantile transform.
+enum Payoff<'a> {
+    Deadline {
+        failing: bool,
+        threshold: &'a Rational,
+    },
+    /// The transform's terminals: `violating` ends the paths the refutation
+    /// counts (`M > c` for `<=`, `M < c` for `>=`) and `activated` holds every
+    /// decided measure. `strict` is the `>=` claim, whose refutation is the
+    /// non-strict `max >= 0` and needs a positive violating mass.
+    Elapsed {
+        violating: &'a BTreeSet<ProbabilityProductKey>,
+        activated: &'a BTreeSet<ProbabilityProductKey>,
+        q: &'a Rational,
+        strict: bool,
+    },
+}
+
+impl Payoff<'_> {
+    fn ends(&self, key: &ProbabilityProductKey, terminal: Option<bool>) -> bool {
+        match self {
+            Self::Deadline { failing, .. } => terminal == Some(!*failing),
+            Self::Elapsed { violating, .. } => violating.contains(key),
+        }
+    }
+
+    fn weight(&self, key: &ProbabilityProductKey, verdict: bool) -> Rational {
+        let counted = match self {
+            Self::Deadline { failing, .. } => verdict == !*failing,
+            Self::Elapsed { violating, .. } => violating.contains(key),
+        };
+        if counted {
+            one()
+        } else {
+            zero()
+        }
+    }
+
+    fn activation(&self, key: &ProbabilityProductKey) -> Rational {
+        match self {
+            Self::Elapsed { activated, .. } if activated.contains(key) => one(),
+            _ => zero(),
+        }
+    }
+
+    /// Whether `mass`, with `activation` the mass of decided measures, refutes.
+    fn refutes(&self, mass: &Rational, activation: &Rational) -> bool {
+        match self {
+            Self::Deadline { threshold, .. } => mass > *threshold,
+            Self::Elapsed { q, strict, .. } => {
+                if *strict {
+                    *mass > zero() && *mass >= q.mul(activation)
+                } else {
+                    *mass > one().sub(q).mul(activation)
+                }
+            }
+        }
+    }
+}
+
+fn price_paths(
+    graph: &CheckerGraph,
+    payoff: &Payoff<'_>,
+    sequences: &[Vec<ProbabilityProductKey>],
+    max_rational_bits: u64,
+    cancel: &Cancel,
+) -> Result<Option<(Vec<usize>, Rational)>, super::super::ProbabilityWitnessError> {
     use super::super::ProbabilityWitnessError as Error;
     let cancelled = |error: ProbabilityDocumentError| match error {
         ProbabilityDocumentError::Cancelled(cause) => {
@@ -4333,7 +4425,7 @@ fn price_witness_paths(
     fn mass_of<'a>(
         graph: &'a CheckerGraph,
         chosen: &BTreeMap<ProbabilityProductKey, usize>,
-        failing: bool,
+        weight: &dyn Fn(&ProbabilityProductKey, bool) -> Rational,
         key: &'a ProbabilityProductKey,
         memo: &mut BTreeMap<&'a ProbabilityProductKey, Rational>,
         on_path: &mut BTreeSet<&'a ProbabilityProductKey>,
@@ -4347,13 +4439,7 @@ fn price_witness_paths(
         poll(cancel).map_err(|_| Error::Graph(ExactProbabilityGraphError::LimitReached))?;
         let state = graph.states.get(key).ok_or(Error::Refused)?;
         let value = match state.terminal {
-            Some(verdict) => {
-                if verdict == !failing {
-                    one()
-                } else {
-                    zero()
-                }
-            }
+            Some(verdict) => weight(key, verdict),
             None => {
                 if !on_path.insert(key) {
                     return Err(Error::Refused);
@@ -4365,7 +4451,7 @@ fn price_witness_paths(
                         let child = mass_of(
                             graph,
                             chosen,
-                            failing,
+                            weight,
                             &edge.target,
                             memo,
                             on_path,
@@ -4386,7 +4472,7 @@ fn price_witness_paths(
     // The choices and the mass a set of paths selects. `None` when a path is
     // not a distinct walk to the forbidden decided state (a Parity case).
     let solve = |paths: &[usize]| -> Result<
-        Option<(BTreeMap<ProbabilityProductKey, usize>, Rational)>,
+        Option<(BTreeMap<ProbabilityProductKey, usize>, Rational, Rational)>,
         Error,
     > {
         let mut used: BTreeMap<ProbabilityProductKey, BTreeSet<ProbabilityProductKey>> =
@@ -4409,7 +4495,7 @@ fn price_witness_paths(
                 at = step.clone();
             }
             let end = graph.states.get(&at).ok_or(Error::Refused)?;
-            if sequence.is_empty() || end.terminal != Some(!failing) {
+            if sequence.is_empty() || !payoff.ends(&at, end.terminal) {
                 return Ok(None);
             }
             if !seen.insert(sequence) {
@@ -4434,17 +4520,21 @@ fn price_witness_paths(
             let (index, _) = best.ok_or(Error::Refused)?;
             chosen.insert(key.clone(), index);
         }
-        let mass = mass_of(
-            &graph,
-            &chosen,
-            failing,
-            &graph.initial,
-            &mut BTreeMap::new(),
-            &mut BTreeSet::new(),
-            cancel,
-            &limit_bits,
-        )?;
-        Ok(Some((chosen, mass)))
+        let priced = |weight: &dyn Fn(&ProbabilityProductKey, bool) -> Rational| {
+            mass_of(
+                graph,
+                &chosen,
+                weight,
+                &graph.initial,
+                &mut BTreeMap::new(),
+                &mut BTreeSet::new(),
+                cancel,
+                &limit_bits,
+            )
+        };
+        let mass = priced(&|key, verdict| payoff.weight(key, verdict))?;
+        let activation = priced(&|key, _| payoff.activation(key))?;
+        Ok(Some((chosen, mass, activation)))
     };
     // The reported evidence must reproduce itself: keep only the paths every
     // step of which is an outcome of the chosen choice, then re-derive the
@@ -4452,10 +4542,10 @@ fn price_witness_paths(
     // reported mass is the last one derived and still exceeds the threshold.
     let mut kept: Vec<usize> = (0..sequences.len()).collect();
     let mass = loop {
-        let Some((chosen, mass)) = solve(&kept)? else {
+        let Some((chosen, mass, activation)) = solve(&kept)? else {
             return Ok(None);
         };
-        if mass <= *threshold {
+        if !payoff.refutes(&mass, &activation) {
             return Ok(None);
         }
         let before = kept.len();
@@ -4482,11 +4572,15 @@ fn price_witness_paths(
     Ok(Some((kept, mass)))
 }
 
-/// Whether `claim` is the timed deadline form this module enumerates.
-pub(in crate::probability_certificate) fn is_timed_deadline_claim(
+/// Whether `claim` is a timed form this module replays a witness of: FR-204's
+/// deadline form, or FR-877's elapsed quantile over a timed subject.
+pub(in crate::probability_certificate) fn is_timed_witness_claim(
+    system: &ModelSystem<'_>,
     claim: &CheckedProbabilisticClaim,
 ) -> bool {
     deadline_event(claim).is_some()
+        || (elapsed::query(claim).is_some()
+            && TimedSystem::new(system, &claim.subject.alias).is_ok())
 }
 
 /// The clock valuation a digital timed product key names, in
@@ -4578,6 +4672,86 @@ mod witness_pricing_tests {
 
     fn path(steps: &[&str]) -> Vec<ProbabilityProductKey> {
         steps.iter().map(|step| key(step)).collect()
+    }
+
+    fn elapsed_price(
+        graph: &CheckerGraph,
+        violating: &[&str],
+        activated: &[&str],
+        q: Rational,
+        strict: bool,
+        sequences: &[Vec<ProbabilityProductKey>],
+    ) -> Option<(Vec<usize>, Rational)> {
+        let violating = violating.iter().map(|name| key(name)).collect();
+        let activated = activated.iter().map(|name| key(name)).collect();
+        let payoff = Payoff::Elapsed {
+            violating: &violating,
+            activated: &activated,
+            q: &q,
+            strict,
+        };
+        price_paths(graph, &payoff, sequences, 4096, &Cancel::new()).expect("the graph prices")
+    }
+
+    /// FR-877: a `>=` refutation is the non-strict `max >= 0`, so a counted
+    /// mass exactly `q` of the decided mass refutes, while a `<=` refutation is
+    /// the strict `min < 0`, so the same equality does not.
+    #[test]
+    fn an_elapsed_refutation_is_non_strict_for_at_least_and_strict_for_at_most() {
+        let graph = graph(vec![
+            ("I", None, vec![vec![edge("a", 1, 2), edge("b", 1, 2)]]),
+            ("a", Some(false), vec![]),
+            ("b", Some(false), vec![]),
+        ]);
+        let sequences = [path(&["a"])];
+        let both = ["a", "b"];
+        assert_eq!(
+            elapsed_price(&graph, &["a"], &both, part(1, 2), true, &sequences),
+            Some((vec![0], part(1, 2)))
+        );
+        assert_eq!(
+            elapsed_price(&graph, &["a"], &both, part(3, 5), true, &sequences),
+            None
+        );
+        assert_eq!(
+            elapsed_price(&graph, &["a"], &both, part(1, 2), false, &sequences),
+            None
+        );
+        assert_eq!(
+            elapsed_price(&graph, &["a"], &both, part(3, 5), false, &sequences),
+            Some((vec![0], part(1, 2)))
+        );
+    }
+
+    /// FR-877: only decided measures weigh against `q`; mass that ends in a
+    /// state no measure decided is neither counted nor part of the activated
+    /// mass, and a path to a decided measure the refutation does not count is
+    /// no evidence.
+    #[test]
+    fn an_elapsed_refutation_prices_against_the_decided_mass_only() {
+        let graph = graph(vec![
+            (
+                "I",
+                None,
+                vec![vec![edge("a", 1, 4), edge("b", 1, 4), edge("c", 1, 2)]],
+            ),
+            ("a", Some(false), vec![]),
+            ("b", Some(false), vec![]),
+            ("c", Some(false), vec![]),
+        ]);
+        let both = ["a", "b"];
+        assert_eq!(
+            elapsed_price(&graph, &["a"], &both, part(1, 2), true, &[path(&["a"])]),
+            Some((vec![0], part(1, 4)))
+        );
+        assert_eq!(
+            elapsed_price(&graph, &["a"], &both, part(1, 2), true, &[path(&["b"])]),
+            None
+        );
+        assert_eq!(
+            elapsed_price(&graph, &["a"], &both, part(1, 2), true, &[path(&["c"])]),
+            None
+        );
     }
 
     fn price(

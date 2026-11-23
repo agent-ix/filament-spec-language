@@ -91,6 +91,18 @@ pub fn write_probability_proof_document(
     Ok(bytes)
 }
 
+/// FR-1042: write an untimed proof document whose values are one end of an
+/// interval as the proof-role document of `side`.
+pub fn write_value_bounds_proof_document(
+    document: &ProbabilityProofDocument,
+    side: SubsystemBoundKind,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> Result<Vec<u8>, ProbabilityDocumentError> {
+    let exact = write_probability_proof_document(document, limits, cancel)?;
+    value_bounds::wrap(&exact, side, limits)
+}
+
 /// Prefer existing eligible profiles before constructing cyclic MDP evidence.
 /// All admission attempts share the same arithmetic and retained-storage scope.
 pub fn probability_proof_document(
@@ -1141,7 +1153,7 @@ fn check_with_context(
     {
         return Ok(rejected(rule, key));
     }
-    let mut result = check_threshold(&graph, &values, &bound, limits, cancel)?;
+    let mut result = check_threshold(&graph, &values, &bound, true, limits, cancel)?;
     if event.is_some() {
         let ProbForm::Reach { bound, .. } = &bind_claim(claims, item, cancel)?.form else {
             return Err(ProbabilityDocumentError::Unsupported);
