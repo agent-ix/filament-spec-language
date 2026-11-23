@@ -503,9 +503,16 @@ fn charge_source_map(
     source_map: &[CheckedSourceMapEntry],
     limits: EmitLimits,
 ) -> Result<(), EmitRefusal> {
-    quire_canonical::encode(&mut Discard, source_map, limits.canonical())
-        .map(drop)
-        .map_err(EmitRefusal::from)
+    use quire_canonical::Encode as _;
+    let mut sink = Discard;
+    let mut writer = quire_canonical::Writer::new(&mut sink, limits.canonical());
+    writer.begin_array()?;
+    for entry in source_map {
+        entry.encode_into(&mut writer)?;
+    }
+    writer.end_array()?;
+    writer.finish()?;
+    Ok(())
 }
 
 /// Give an emission-size refusal the first checked source occurrence. The
