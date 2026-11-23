@@ -723,12 +723,17 @@ fn real_workspace_decisions_keep_every_package_whose_compile_changes() {
         verdict("filament-spec-language"),
         &Verdict::Run(KeepReason::OwnFeatures)
     );
-    // Its own extraction feature agrees, but the all-features generator
-    // graph resolves a different getrandom compile unit below it.
+    // Its extraction feature agrees and, since the generator graph stopped
+    // resolving a different getrandom compile unit below it, no dependency
+    // differs either: the exclusion invariant above proves it compiles the
+    // same units in both lanes, so it is skipped.
+    assert_eq!(verdict("fsl-source"), &Verdict::Skip);
+    // A package whose own features agree but which depends on a package whose
+    // resolution differs is kept, naming that dependency.
     assert_eq!(
-        verdict("fsl-source"),
+        verdict("fsl-analyze"),
         &Verdict::Run(KeepReason::DependencyResolvesDifferently {
-            dependency: "getrandom".to_owned(),
+            dependency: "fsl-bench".to_owned(),
         })
     );
     // The benchmark's counters feature is enabled only by the all-features lane.
