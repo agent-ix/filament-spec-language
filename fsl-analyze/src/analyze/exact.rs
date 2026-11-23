@@ -96,6 +96,22 @@ pub(crate) enum ExactReport {
         /// The certificate the record carries.
         evidence: Option<Box<ExactProbabilityEvidence>>,
     },
+    /// The checker accepted both documents of a sound interval (FR-1042):
+    /// the claim side's and its counterpart's.
+    ProvedBounds {
+        /// The accepted document on the claim's side.
+        claim: ExactProbabilityCertificateCheck,
+        /// The accepted document of the other kind.
+        counterpart: ExactProbabilityCertificateCheck,
+        /// How the interval was produced.
+        method: fsl_replay::BoundsMethod,
+        /// The scheduler extremum the interval bounds, absent for a workload.
+        extremum: Option<Extremum>,
+        /// The claim's one `over` instance, absent without `over`.
+        binding: Option<ExactBinding>,
+        /// The claim side's certificate the record carries.
+        evidence: Box<ExactProbabilityEvidence>,
+    },
     /// A construction overflow or actual allocator refusal exhausted resources.
     ResourceExhausted,
     /// FR-203's map settled a stop of the build or the check.
@@ -173,6 +189,25 @@ impl ExactReport {
                 binding,
             ) {
                 Some(record) => (record, evidence),
+                None => (TerminalRecord::failed_with(index, backend, BROKEN), None),
+            },
+            Self::ProvedBounds {
+                claim,
+                counterpart,
+                method,
+                extremum,
+                binding,
+                evidence,
+            } => match TerminalRecord::proved_by_value_bounds(
+                index,
+                backend.clone(),
+                &claim,
+                &counterpart,
+                method,
+                extremum,
+                binding,
+            ) {
+                Some(record) => (record, Some(evidence)),
                 None => (TerminalRecord::failed_with(index, backend, BROKEN), None),
             },
             Self::ResourceExhausted => (
@@ -266,10 +301,8 @@ fn broken() -> EngineReport {
 }
 
 /// A finite-horizon solve that held its probabilities only as outward-rounded
-/// intervals: the certificate carries exact rationals, so the run stopped at
-/// the caller's `max_rational_bits`. An interval that decides the bound is
-/// reported `incomplete` too, because producing `ValueBounds` is not built
-/// (QSL-2880).
+/// intervals for a form whose interval is not certified: the certificate carries
+/// exact rationals, so the run stopped at the caller's `max_rational_bits`.
 fn rational_bits_limit(
     limits: &crate::exact_probabilistic::ExactProbLimits,
     subject: SubjectLimits<'_>,
@@ -351,9 +384,10 @@ fn bounded_monitor_failure(
     use fsl_eval::automaton::QualifiedBoundedError;
     match error {
         QualifiedBoundedError::Translation(_) => not_yet(),
-        QualifiedBoundedError::Automaton(error) => {
-            build_refusal(crate::exact_probabilistic::automaton_refusal(error), subject)
-        }
+        QualifiedBoundedError::Automaton(error) => build_refusal(
+            crate::exact_probabilistic::automaton_refusal(error),
+            subject,
+        ),
         QualifiedBoundedError::Key(_) => broken(),
     }
 }
@@ -361,7 +395,10 @@ fn bounded_monitor_failure(
 /// Dyadic refinement reached its maximum precision with the threshold still inside
 /// `[lower, upper]`.
 fn precision_budget(lower: Rational, upper: Rational, subject: SubjectLimits<'_>) -> EngineReport {
-    settled(&ExactProbBuildIssue::PrecisionBudget { lower, upper }, subject)
+    settled(
+        &ExactProbBuildIssue::PrecisionBudget { lower, upper },
+        subject,
+    )
 }
 
 fn settled(issue: &ExactProbBuildIssue, subject: SubjectLimits<'_>) -> EngineReport {
@@ -440,8 +477,23 @@ fn run_timed(
     let [(_, _, start)] = product.initial.as_slice() else {
         return not_yet();
     };
+    let mut interval: Option<Interval> = None;
     let (values, policy) = match decide_bounded_event(&product, bound, &limits) {
         Ok(FhResult::Exact { values, policy }) => (values, policy),
+        Ok(FhResult::Bounds {
+            lower,
+            upper,
+            precision_bits,
+            policy,
+        }) => {
+            let values = lower.iter().map(|end| end.rational()).collect();
+            interval = Some(Interval {
+                lower,
+                upper,
+                precision_bits,
+            });
+            (values, policy)
+        }
         Err(FhError::PolicyIterationLimit) => {
             return settled(
                 &ExactProbBuildIssue::Limit {
@@ -451,7 +503,6 @@ fn run_timed(
                 subject,
             );
         }
-        Ok(FhResult::Bounds { .. }) => return rational_bits_limit(&limits, subject),
         Ok(FhResult::PrecisionBudget { lower, upper, .. }) => {
             return precision_budget(lower.rational(), upper.rational(), subject);
         }
@@ -460,9 +511,15 @@ fn run_timed(
     let Some(value) = values.get(start.index()) else {
         return broken();
     };
-    let holds = match bound {
-        Bound::AtLeast(threshold) => value >= threshold,
-        Bound::AtMost(threshold) => value <= threshold,
+    // An interval that does not straddle the threshold decides the claim: its
+    // lower end meets a `>=` bound, its upper end a `<=` bound.
+    let holds = match (&interval, bound) {
+        (Some(interval), Bound::AtMost(threshold)) => interval
+            .upper
+            .get(start.index())
+            .is_some_and(|end| end.rational() <= *threshold),
+        (_, Bound::AtLeast(threshold)) => value >= threshold,
+        (None, Bound::AtMost(threshold)) => value <= threshold,
     };
     let values = values
         .into_iter()
@@ -477,6 +534,12 @@ fn run_timed(
         Err(error) => return graph_failure(error, &limits, subject),
     };
     if !holds {
+        // A refutation is settled by a replayed witness whose exact masses the
+        // caller's budget must carry, and an interval's policy names no witness
+        // scheduler: the exact budget is what stopped the run.
+        if interval.is_some() {
+            return rational_bits_limit(&limits, subject);
+        }
         return replay_timed_refutation(
             &system,
             claim,
@@ -490,22 +553,6 @@ fn run_timed(
             subject,
             tamper_witness,
         );
-    }
-    let mut certificate = match certificate_of(
-        &product,
-        None,
-        &values,
-        fsl_replay::ProbabilityDocumentIoLimits {
-            bytes: document_limits.bytes,
-            storage_bytes: document_limits.storage_bytes,
-        },
-        cancel,
-    ) {
-        Ok(certificate) => certificate,
-        Err(error) => return document_failure(error, subject),
-    };
-    if let Some(tamper) = tamper {
-        tamper(&mut certificate);
     }
     let mut targets = product
         .decided
@@ -536,43 +583,55 @@ fn run_timed(
         }
         ProbScheduler::Workload(_) => vec![residual, ProbabilityObjective::Workload],
     };
-    let mut optimization = candidates[0];
-    let mut checked = Err(ProbabilityDocumentError::OptimizationMismatch);
-    for candidate in candidates {
-        optimization = candidate;
-        let document = ProbabilityCertificateDocument {
-            cyclic_dtmc: false,
-            identity: identity.clone(),
-            targets: targets.clone(),
-            event: None,
-            failures: Vec::new(),
-            reward: None,
-            optimization,
-            timed: Some(TimedProbabilityObjective {
-                route,
-                unit: timed.source().unit_node.clone(),
-                scale: certificate_scale,
-                form: TimedProbabilityForm::Deadline,
-            }),
-            values: certificate.values.clone(),
-            ranking: Vec::new(),
-        };
-        checked = (|| {
-            let bytes = write_probability_certificate(&document, document_limits, cancel)?;
-            check_probability_certificate_document(
-                &system,
-                source_package.graph().probabilistic_model().claims(),
-                &identity,
-                &bytes,
-                document_limits,
-                cancel,
-            )
-        })();
-        if !matches!(checked, Err(ProbabilityDocumentError::OptimizationMismatch)) {
-            break;
+    // Write `certificate` as an exact document, or as `side`'s end of an
+    // interval, and have the checker accept or reject it.
+    let verify = |certificate: &ExactProbabilityCertificate,
+                  side: Option<fsl_replay::SubsystemBoundKind>,
+                  limits: ProbabilityDocumentLimits| {
+        let mut optimization = candidates[0];
+        let mut checked = Err(ProbabilityDocumentError::OptimizationMismatch);
+        for candidate in candidates.iter().copied() {
+            optimization = candidate;
+            let document = ProbabilityCertificateDocument {
+                cyclic_dtmc: false,
+                identity: identity.clone(),
+                targets: targets.clone(),
+                event: None,
+                failures: Vec::new(),
+                reward: None,
+                optimization,
+                timed: Some(TimedProbabilityObjective {
+                    route,
+                    unit: timed.source().unit_node.clone(),
+                    scale: certificate_scale,
+                    form: TimedProbabilityForm::Deadline,
+                }),
+                values: certificate.values.clone(),
+                ranking: Vec::new(),
+            };
+            checked = (|| {
+                let bytes = match side {
+                    Some(side) => {
+                        fsl_replay::write_value_bounds_certificate(&document, side, limits, cancel)?
+                    }
+                    None => write_probability_certificate(&document, limits, cancel)?,
+                };
+                check_probability_certificate_document(
+                    &system,
+                    source_package.graph().probabilistic_model().claims(),
+                    &identity,
+                    &bytes,
+                    limits,
+                    cancel,
+                )
+            })();
+            if !matches!(checked, Err(ProbabilityDocumentError::OptimizationMismatch)) {
+                break;
+            }
         }
-    }
-    let extremum = match optimization {
+        (checked, optimization)
+    };
+    let extremum_of = |optimization| match optimization {
         ProbabilityObjective::Minimum | ProbabilityObjective::WorkloadMinimum => {
             Some(Extremum::Min)
         }
@@ -581,7 +640,80 @@ fn run_timed(
         }
         ProbabilityObjective::Workload => None,
     };
-    checked_report(checked, certificate, binding, extremum, subject)
+    if let Some(interval) = interval {
+        let limits = interval_limits(document_limits, interval.precision_bits);
+        let mut extremum = None;
+        let mut documents = Vec::with_capacity(2);
+        for (side, ends) in [
+            (fsl_replay::SubsystemBoundKind::Lower, &interval.lower),
+            (fsl_replay::SubsystemBoundKind::Upper, &interval.upper),
+        ] {
+            let ends = ends
+                .iter()
+                .map(|end| ExtRational::Finite(end.rational()))
+                .collect::<Vec<_>>();
+            let certificate = match certificate_of(
+                &product,
+                None,
+                &ends,
+                fsl_replay::ProbabilityDocumentIoLimits {
+                    bytes: limits.bytes,
+                    storage_bytes: limits.storage_bytes,
+                },
+                cancel,
+            ) {
+                Ok(certificate) => certificate,
+                Err(error) => return document_failure(error, subject),
+            };
+            let (checked, optimization) = verify(&certificate, Some(side), limits);
+            let claim_side = matches!(
+                (side, bound),
+                (fsl_replay::SubsystemBoundKind::Lower, Bound::AtLeast(_))
+                    | (fsl_replay::SubsystemBoundKind::Upper, Bound::AtMost(_))
+            );
+            if claim_side {
+                extremum = extremum_of(optimization);
+            }
+            documents.push(checked.map(|check| (certificate, check)));
+        }
+        let mut documents = documents.into_iter();
+        let (Some(lower), Some(upper)) = (documents.next(), documents.next()) else {
+            return broken();
+        };
+        return finish_interval(
+            bound,
+            lower,
+            upper,
+            binding.as_ref(),
+            extremum,
+            interval.precision_bits,
+            subject,
+        );
+    }
+    let mut certificate = match certificate_of(
+        &product,
+        None,
+        &values,
+        fsl_replay::ProbabilityDocumentIoLimits {
+            bytes: document_limits.bytes,
+            storage_bytes: document_limits.storage_bytes,
+        },
+        cancel,
+    ) {
+        Ok(certificate) => certificate,
+        Err(error) => return document_failure(error, subject),
+    };
+    if let Some(tamper) = tamper {
+        tamper(&mut certificate);
+    }
+    let (checked, optimization) = verify(&certificate, None, document_limits);
+    checked_report(
+        checked,
+        certificate,
+        binding,
+        extremum_of(optimization),
+        subject,
+    )
 }
 
 fn mean_time_ranking(
@@ -1150,6 +1282,7 @@ fn run(
         .iter()
         .map(|labels| labels.first().copied().unwrap_or(false))
         .collect();
+    let mut interval: Option<Interval> = None;
     let (values, policy) = if bounded_formula.is_some() {
         let outcome = if bounded_fair {
             crate::exact_probabilistic::decide_fair_bounded_event(&product, bound, &limits)
@@ -1162,10 +1295,27 @@ fn run(
                 values.into_iter().map(ExtRational::Finite).collect(),
                 policy,
             ),
+            Ok(FhResult::Bounds {
+                lower,
+                upper,
+                precision_bits,
+                policy,
+            }) if !bounded_fair && candidate_budget.is_none() => {
+                let values = lower
+                    .iter()
+                    .map(|end| ExtRational::Finite(end.rational()))
+                    .collect();
+                interval = Some(Interval {
+                    lower,
+                    upper,
+                    precision_bits,
+                });
+                (values, policy)
+            }
             Ok(FhResult::Bounds { .. }) => return rational_bits_limit(&limits, subject),
             Ok(FhResult::PrecisionBudget { lower, upper, .. }) => {
-            return precision_budget(lower.rational(), upper.rational(), subject);
-        }
+                return precision_budget(lower.rational(), upper.rational(), subject);
+            }
             Err(FhError::PolicyIterationLimit) => {
                 return settled(
                     &ExactProbBuildIssue::Limit {
@@ -1208,6 +1358,21 @@ fn run(
     // A positive-infinite expectation fails a finite `<=` bound (FR-203-AC-15);
     // it is refuted only through a replayed finite lower certificate.
     let holds = match (values.get(start.index()), bound) {
+        _ if interval.is_some() => {
+            let ends = interval.as_ref().and_then(|interval| {
+                Some((
+                    interval.lower.get(start.index())?.rational(),
+                    interval.upper.get(start.index())?.rational(),
+                ))
+            });
+            let Some((lower, upper)) = ends else {
+                return broken();
+            };
+            match bound {
+                Bound::AtLeast(threshold) => lower >= *threshold,
+                Bound::AtMost(threshold) => upper <= *threshold,
+            }
+        }
         (Some(ExtRational::Finite(value)), Bound::AtLeast(threshold)) => value >= threshold,
         (Some(ExtRational::Finite(value)), Bound::AtMost(threshold)) => value <= threshold,
         (Some(ExtRational::PlusInfinity), Bound::AtMost(_)) if expected_reward => false,
@@ -1244,6 +1409,9 @@ fn run(
     };
     let reference = binding.as_ref().map(|bound| &bound.reference);
     if !holds {
+        if interval.is_some() {
+            return rational_bits_limit(&limits, subject);
+        }
         if bounded_fair {
             return not_yet();
         }
@@ -1316,6 +1484,41 @@ fn run(
             cancel,
             subject,
             tamper_witness,
+        );
+    }
+    if let Some(interval) = interval {
+        let (Some(formula), Some(monitor)) = (bounded_formula, monitor) else {
+            return broken();
+        };
+        let context = match fsl_replay::probabilistic_formula_monitor_context(claim, reference) {
+            Ok(context) => context,
+            Err(error) => return graph_failure(error, &limits, subject),
+        };
+        let monitor = match fsl_eval::automaton::QualifiedBoundedMonitor::from_monitor(
+            formula.formula(),
+            &context,
+            monitor,
+            limits.model.max_automaton_states,
+        ) {
+            Ok(monitor) => monitor,
+            Err(error) => return bounded_monitor_failure(error, subject),
+        };
+        return settle_interval(
+            IntervalSubject {
+                system: &system,
+                claims: probabilistic.claims(),
+                item: &item,
+                product: &product,
+                reference,
+                monitor: &monitor,
+                bound,
+                extremum,
+                binding: binding.as_ref(),
+            },
+            &interval,
+            document_limits,
+            cancel,
+            subject,
         );
     }
     let certificate = match (bounded_formula, monitor) {
@@ -1560,6 +1763,188 @@ fn document_failure(error: ProbabilityDocumentError, subject: SubjectLimits<'_>)
         | ProbabilityDocumentError::OptimizationMismatch
         | ProbabilityDocumentError::Graph(_) => broken(),
     }
+}
+
+/// A finite-horizon interval EN-5 certifies at both ends instead of writing
+/// it as an exact rational (FR-1042).
+struct Interval {
+    lower: Vec<crate::exact_probabilistic::Dyadic>,
+    upper: Vec<crate::exact_probabilistic::Dyadic>,
+    precision_bits: u32,
+}
+
+/// What a bounded interval's two documents are written and checked over.
+struct IntervalSubject<'a> {
+    system: &'a ModelSystem<'a>,
+    claims: &'a [fsl_semantics::check::CheckedProbabilisticClaim],
+    item: &'a fsl_package::ObligationIdentity,
+    product: &'a ProbProduct,
+    reference: Option<&'a ObjectReference>,
+    monitor: &'a fsl_eval::automaton::QualifiedBoundedMonitor,
+    bound: &'a Bound,
+    extremum: Option<Extremum>,
+    binding: Option<&'a fsl_replay::ClaimBinding>,
+}
+
+/// The numerator and denominator bits a document may carry per bit of interval
+/// precision. The interval's ends lie on a `2^-precision_bits` grid and the
+/// checker multiplies them into the product's own probabilities, so the
+/// caller's `max_rational_bits`, which bounds the exact pass that the
+/// interval replaces, cannot also bound the interval's documents.
+const INTERVAL_BITS_PER_PRECISION_BIT: u64 = 16;
+
+/// The document limits an interval's two documents are written and checked under.
+fn interval_limits(
+    limits: ProbabilityDocumentLimits,
+    precision_bits: u32,
+) -> ProbabilityDocumentLimits {
+    ProbabilityDocumentLimits {
+        scalar_bits: limits
+            .scalar_bits
+            .max(INTERVAL_BITS_PER_PRECISION_BIT.saturating_mul(u64::from(precision_bits))),
+        ..limits
+    }
+}
+
+/// FR-1042: certify a decided interval with its `lower` and `upper` documents
+/// and settle by the claim's side. Each document is checked before it is
+/// reported, and a rejection of either settles `inconclusive`.
+fn settle_interval(
+    subject_of: IntervalSubject<'_>,
+    interval: &Interval,
+    document_limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    subject: SubjectLimits<'_>,
+) -> EngineReport {
+    use fsl_replay::SubsystemBoundKind;
+    let limits = interval_limits(document_limits, interval.precision_bits);
+    let io = fsl_replay::ProbabilityDocumentIoLimits {
+        bytes: limits.bytes,
+        storage_bytes: limits.storage_bytes,
+    };
+    let mut sides = Vec::with_capacity(2);
+    for (side, ends) in [
+        (SubsystemBoundKind::Lower, &interval.lower),
+        (SubsystemBoundKind::Upper, &interval.upper),
+    ] {
+        let values = ends
+            .iter()
+            .map(|end| ExtRational::Finite(end.rational()))
+            .collect::<Vec<_>>();
+        let checked = (|| {
+            let mut certificate = bounded_certificate_of(
+                subject_of.product,
+                subject_of.reference,
+                &values,
+                subject_of.monitor,
+                io,
+                cancel,
+                None,
+            )?;
+            let document = probability_proof_document(
+                subject_of.system,
+                subject_of.claims,
+                subject_of.item,
+                &certificate,
+                limits,
+                cancel,
+            )?;
+            certificate.values = document.document().values.clone();
+            let bytes =
+                fsl_replay::write_value_bounds_proof_document(&document, side, limits, cancel)?;
+            let check = check_probability_certificate_document(
+                subject_of.system,
+                subject_of.claims,
+                subject_of.item,
+                &bytes,
+                limits,
+                cancel,
+            )?;
+            Ok::<_, ProbabilityDocumentError>((certificate, check))
+        })();
+        sides.push((side, checked));
+    }
+    let mut documents = sides.into_iter().map(|(_, checked)| checked);
+    let (Some(lower), Some(upper)) = (documents.next(), documents.next()) else {
+        return broken();
+    };
+    finish_interval(
+        subject_of.bound,
+        lower,
+        upper,
+        subject_of.binding,
+        subject_of.extremum,
+        interval.precision_bits,
+        subject,
+    )
+}
+
+/// An interval end's certificate and the checker's verdict on its document.
+type IntervalDocument = Result<
+    (
+        ExactProbabilityCertificate,
+        ExactProbabilityCertificateCheck,
+    ),
+    ProbabilityDocumentError,
+>;
+
+/// Settle a decided interval from its two checked documents: `proved` with
+/// `ValueBounds` only when the claim side's document and its counterpart are
+/// both accepted, and a rejection of either as that document's rejection.
+fn finish_interval(
+    bound: &Bound,
+    lower: IntervalDocument,
+    upper: IntervalDocument,
+    binding: Option<&fsl_replay::ClaimBinding>,
+    extremum: Option<Extremum>,
+    precision_bits: u32,
+    subject: SubjectLimits<'_>,
+) -> EngineReport {
+    let (claim, counterpart) = match bound {
+        Bound::AtLeast(_) => (lower, upper),
+        Bound::AtMost(_) => (upper, lower),
+    };
+    let (certificate, claim_check) = match claim {
+        Ok(accepted) => accepted,
+        Err(error) => return document_failure(error, subject),
+    };
+    let (_, counterpart_check) = match counterpart {
+        Ok(accepted) => accepted,
+        Err(error) => return document_failure(error, subject),
+    };
+    let accepted = |check: &ExactProbabilityCertificateCheck| {
+        matches!(check, ExactProbabilityCertificateCheck::Accepted(_))
+    };
+    let rejected = if !accepted(&claim_check) {
+        Some(claim_check.clone())
+    } else if !accepted(&counterpart_check) {
+        Some(counterpart_check.clone())
+    } else {
+        None
+    };
+    if let Some(check) = rejected {
+        return checked_report(Ok(check), certificate, binding.cloned(), extremum, subject);
+    }
+    let ExactProbabilityCertificateCheck::Accepted(accepted_claim) = &claim_check else {
+        return broken();
+    };
+    let evidence = Box::new(ExactProbabilityEvidence {
+        certificate,
+        value: accepted_claim.value().clone(),
+        side: accepted_claim.side(),
+    });
+    let binding = binding.map(|bound| ExactBinding {
+        population: bound.instance.population.node.clone(),
+        key: bound.instance.key.clone(),
+    });
+    EngineReport::Exact(Box::new(ExactReport::ProvedBounds {
+        claim: claim_check,
+        counterpart: counterpart_check,
+        method: fsl_replay::BoundsMethod::BackwardInduction { precision_bits },
+        extremum,
+        binding,
+        evidence,
+    }))
 }
 
 fn bounded_certificate_of(
@@ -2972,8 +3357,8 @@ fn timed_step_for(
     TimedStepFailure,
 > {
     use fsl_eval::simulation::model::{TimedState, TimedSystem};
-    let valuation = fsl_replay::digital_key_clocks(system, claim, previous)
-        .ok_or(TimedStepFailure::Unbuilt)?;
+    let valuation =
+        fsl_replay::digital_key_clocks(system, claim, previous).ok_or(TimedStepFailure::Unbuilt)?;
     let timed = TimedSystem::new(system, claim.subject.alias.as_str())
         .map_err(TimedStepFailure::Subject)?;
     // A tie among the zero-time operations of one instant: the product never

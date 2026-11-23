@@ -1420,13 +1420,14 @@ fn external_always_path_set_remains_unsupported() {
     assert_same_horizon_zero_witness(&system, token.evidence(), &witness);
 }
 
-/// FR-281 "Engine refusals": a bounded claim whose values outgrow
-/// `max_rational_bits` is `incomplete` naming that limit, not
-/// `unsupported`/`not-yet-implemented`.
-// QSL-2880 changes the expected outcome: a decided interval will then prove with ValueBounds.
-#[trace("TC-763", "FR-281-AC-6")]
+/// FR-203-AC-1 and FR-1042-AC-6: a bounded claim whose exact value outgrows
+/// `max_rational_bits` settles `proved` with `ValueBounds` and
+/// `BackwardInduction{64}` when the interval clears the threshold. The
+/// claim-side `lower` document and its `upper` counterpart are both accepted.
+#[trace("TC-638", "FR-203-AC-1")]
+#[trace("TC-2066", "FR-1042-AC-6")]
 #[test]
-fn a_bounded_claim_past_the_rational_budget_settles_incomplete_naming_the_limit() {
+fn a_bounded_claim_past_the_rational_budget_proves_with_value_bounds() {
     let claim = "probabilistic NoFault using ev on M over (n: M::Node) under Steady \
          on origin { probability >= 0.999 [ always[0,1000] holds(n.healthy) ] }";
     let world = World::new(&prob_world::no_fault(claim));
@@ -1435,15 +1436,122 @@ fn a_bounded_claim_past_the_rational_budget_settles_incomplete_naming_the_limit(
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let item = exact_probabilistic_item(RequestIndex::new(0), request);
     let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let terminal = record.terminal().expect("a terminal record");
+    let TerminalValue::Proved {
+        basis:
+            ProofBasis::ValueBounds {
+                lower,
+                upper,
+                method,
+                entries,
+                ..
+            },
+        certification: Certification::Certified,
+    } = terminal.value()
+    else {
+        panic!("a decided interval proves: {record:#?}");
+    };
     assert_eq!(
-        record.terminal().expect("a terminal record").value(),
-        &TerminalValue::Incomplete(IncompleteCause::LimitReached {
-            limit: ModelCheckLimit::ExactProbMaxRationalBits,
-            value: 1024,
-            required: None,
-        }),
-        "{record:#?}"
+        method,
+        &fsl_replay::BoundsMethod::BackwardInduction { precision_bits: 64 }
     );
+    let exact = ratio(9_999_999, 10_000_000)
+        .pow(&Integer::from(1000_i64))
+        .expect("positive integer exponent");
+    assert!(lower.value() <= &exact && &exact <= upper.value());
+    assert!(lower.value() > &ratio(999, 1000));
+    assert!(
+        upper.value().sub(lower.value()) <= ratio(2 * 1001, 1).divided_by_power_of_two(64),
+        "the interval is no wider than FR-197-AC-3's"
+    );
+    assert_eq!(entries.len(), 1);
+    assert!(matches!(
+        &entries[0].value,
+        ExactOrBounds::Bounds { lower: l, upper: u } if l == lower && u == upper
+    ));
+    let kind = |bytes: Option<&[u8]>| {
+        let document: serde_json::Value =
+            serde_json::from_slice(bytes.expect("the record carries the document"))
+                .expect("a JSON document");
+        assert_eq!(
+            document["objective"]["profile"],
+            "filament.probability-objective/value-bounds/v1"
+        );
+        assert_eq!(
+            document["objective"]["base"]["profile"],
+            "filament.probability-objective/reachability/v1"
+        );
+        document["kind"].as_str().expect("a kind").to_owned()
+    };
+    assert_eq!(kind(terminal.exact_certificate_document()), "lower");
+    assert_eq!(kind(terminal.exact_counterpart_document()), "upper");
+}
+
+/// FR-1042-AC-6: the checker accepts the claim-side `lower` document and the
+/// `upper` counterpart, and refuses either one relabelled as the other side,
+/// since the `lower` document's ranking and the `upper` document's absence of
+/// one are what each side's inequality rests on.
+#[trace("TC-2066", "FR-1042-AC-6")]
+#[test]
+fn a_value_bounds_document_is_accepted_only_for_the_side_it_certifies() {
+    let claim = "probabilistic NoFault using ev on M over (n: M::Node) under Steady \
+         on origin { probability >= 0.999 [ always[0,1000] holds(n.healthy) ] }";
+    let world = World::new(&prob_world::no_fault(claim));
+    let mut request = world.request("NoFault", ModelCheckLimits::default());
+    request.limits.max_rational_bits = 1024;
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let item = exact_probabilistic_item(RequestIndex::new(0), request);
+    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let terminal = record.terminal().expect("a terminal record");
+    let lower = terminal
+        .exact_certificate_document()
+        .expect("lower")
+        .to_vec();
+    let upper = terminal
+        .exact_counterpart_document()
+        .expect("upper")
+        .to_vec();
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let identity = fsl_replay::probabilistic_claim_identity(world.claim("NoFault")).unwrap();
+    let limits = fsl_replay::ProbabilityDocumentLimits {
+        bytes: 1 << 24,
+        storage_bytes: 1 << 26,
+        states: 4096,
+        edges: 8192,
+        scalar_bits: 1 << 14,
+        accounting: prob_world::UNLIMITED,
+    };
+    let check = |bytes: &[u8]| {
+        fsl_replay::check_probability_certificate_document(
+            &system,
+            world.package.graph().probabilistic_model().claims(),
+            &identity,
+            bytes,
+            limits,
+            &Cancel::new(),
+        )
+    };
+    for (bytes, bound) in [
+        (&lower, fsl_replay::SubsystemBoundKind::Lower),
+        (&upper, fsl_replay::SubsystemBoundKind::Upper),
+    ] {
+        let Ok(ExactProbabilityCertificateCheck::Accepted(accepted)) = check(bytes) else {
+            panic!("the {bound:?} document is accepted");
+        };
+        assert_eq!(accepted.bound(), Some(bound));
+    }
+    let text = |bytes: &[u8]| String::from_utf8(bytes.to_vec()).unwrap();
+    let relabelled_lower = text(&lower).replace("\"kind\":\"lower\"", "\"kind\":\"upper\"");
+    let relabelled_upper = text(&upper).replace("\"kind\":\"upper\"", "\"kind\":\"lower\"");
+    for bytes in [relabelled_lower, relabelled_upper] {
+        assert!(
+            !matches!(
+                check(bytes.as_bytes()),
+                Ok(ExactProbabilityCertificateCheck::Accepted(_))
+            ),
+            "a side's document does not certify the other side"
+        );
+    }
 }
 
 /// FR-281 "Engine refusals": a document-storage budget or a cancel that stops a
@@ -1507,6 +1615,9 @@ fn a_refutation_settles_refuted_or_incomplete_at_every_storage_budget_and_cancel
             }
         });
         slot.set(cancel.clone()).expect("initialized once");
-        settled_or_stopped(&run(None, &cancel), &format!("cancel at poll {at} of {total}"));
+        settled_or_stopped(
+            &run(None, &cancel),
+            &format!("cancel at poll {at} of {total}"),
+        );
     }
 }

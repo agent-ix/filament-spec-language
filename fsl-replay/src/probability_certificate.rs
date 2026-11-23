@@ -714,6 +714,8 @@ pub struct ExactProbabilityAcceptance {
     side: ProbabilityBoundSide,
     certificate: ExactProbabilityCertificate,
     document: Option<Box<[u8]>>,
+    // The FR-1042 side this acceptance certified; absent for an exact value.
+    bound: Option<SubsystemBoundKind>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -726,6 +728,11 @@ impl ExactProbabilityAcceptance {
     /// Canonical document bytes when this token was produced by the document checker.
     pub fn document(&self) -> Option<&[u8]> {
         self.document.as_deref()
+    }
+    /// The FR-1042 side (`lower` or `upper`) this acceptance certified, absent
+    /// for an exact value.
+    pub fn bound(&self) -> Option<SubsystemBoundKind> {
+        self.bound
     }
     /// The exact certificate this checker accepted, retained with its token.
     pub fn certificate(&self) -> &ExactProbabilityCertificate {
@@ -1524,15 +1531,17 @@ pub fn claim_binding(
     let filament_exact::ValueType::Reference(object) = &over.value_type else {
         return Err(ExactProbabilityGraphError::UnsupportedBinding);
     };
-    let mut instances = system.instances(&over.value_type).map_err(|error| match error {
-        fsl_eval::simulation::NotSimulated::RequiresBound(_) => {
-            ExactProbabilityGraphError::RequiresBound
-        }
-        fsl_eval::simulation::NotSimulated::Extent(fsl_semantics::family::ClassifyFailure::Limit(
-            _,
-        )) => ExactProbabilityGraphError::ExtentLimit,
-        _ => ExactProbabilityGraphError::ExpansionRefused,
-    })?;
+    let mut instances = system
+        .instances(&over.value_type)
+        .map_err(|error| match error {
+            fsl_eval::simulation::NotSimulated::RequiresBound(_) => {
+                ExactProbabilityGraphError::RequiresBound
+            }
+            fsl_eval::simulation::NotSimulated::Extent(
+                fsl_semantics::family::ClassifyFailure::Limit(_),
+            ) => ExactProbabilityGraphError::ExtentLimit,
+            _ => ExactProbabilityGraphError::ExpansionRefused,
+        })?;
     let (Some(instance), None) = (instances.pop(), instances.pop()) else {
         return Err(ExactProbabilityGraphError::UnsupportedBinding);
     };
@@ -1749,6 +1758,56 @@ fn check_exact_reachability(
     cycles: GraphCycles,
     cancel: &Cancel,
 ) -> Result<ExactProbabilityCertificateCheck, ExactProbabilityGraphError> {
+    check_reachability_values(
+        graph,
+        certificate,
+        objective,
+        bound,
+        cycles,
+        ValueRelation::Exact,
+        cancel,
+    )
+}
+
+/// How a certified value relates to the Bellman value the checker recomputes
+/// (FR-1042): equal, at most (`lower`) or at least (`upper`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ValueRelation {
+    Exact,
+    Lower,
+    Upper,
+}
+
+impl ValueRelation {
+    /// Whether `certified` stands in this relation to the recomputed `actual`.
+    fn holds(self, certified: &Rational, actual: &Rational) -> bool {
+        match self {
+            Self::Exact => certified == actual,
+            Self::Lower => certified <= actual,
+            Self::Upper => certified >= actual,
+        }
+    }
+
+    /// Whether the claim bound is tested at the initial value: always for an
+    /// exact value, and for a bound only on the claim's own side.
+    fn tests_threshold(self, bound: &Bound) -> bool {
+        matches!(
+            (self, bound),
+            (Self::Exact, _) | (Self::Lower, Bound::AtLeast(_)) | (Self::Upper, Bound::AtMost(_))
+        )
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_reachability_values(
+    graph: &CheckerGraph,
+    certificate: &ExactProbabilityCertificate,
+    objective: ProbabilityObjective,
+    bound: &Bound,
+    cycles: GraphCycles,
+    relation: ValueRelation,
+    cancel: &Cancel,
+) -> Result<ExactProbabilityCertificateCheck, ExactProbabilityGraphError> {
     poll_cancel(cancel)?;
     let values = match certificate_values(graph, certificate, cancel)? {
         CertificateValues::Complete(values) => values,
@@ -1836,7 +1895,10 @@ fn check_exact_reachability(
         }
         .unwrap_or_else(|| zero.clone());
         for key in members {
-            if values.get(key) != Some(&actual) {
+            if !values
+                .get(key)
+                .is_some_and(|certified| relation.holds(certified, &actual))
+            {
                 return Ok(rejected(
                     ProbabilityCertificateRule::InequalityFails,
                     key.clone(),
@@ -1909,7 +1971,13 @@ fn check_exact_reachability(
         let Some(certified) = values.get(key) else {
             return Ok(rejected(ProbabilityCertificateRule::Malformed, key.clone()));
         };
-        if actual != *certified {
+        // A decided state keeps its boundary value under every relation.
+        let state_relation = if state.terminal.is_some() {
+            ValueRelation::Exact
+        } else {
+            relation
+        };
+        if !state_relation.holds(certified, &actual) {
             return Ok(rejected(
                 ProbabilityCertificateRule::InequalityFails,
                 key.clone(),
@@ -1923,10 +1991,11 @@ fn check_exact_reachability(
             graph.initial.clone(),
         ));
     };
-    let meets_bound = match bound {
-        Bound::AtLeast(threshold) => initial >= threshold,
-        Bound::AtMost(threshold) => initial <= threshold,
-    };
+    let meets_bound = !relation.tests_threshold(bound)
+        || match bound {
+            Bound::AtLeast(threshold) => initial >= threshold,
+            Bound::AtMost(threshold) => initial <= threshold,
+        };
     if !meets_bound {
         return Ok(rejected(
             ProbabilityCertificateRule::ThresholdMissed,
@@ -1937,6 +2006,7 @@ fn check_exact_reachability(
     Ok(ExactProbabilityCertificateCheck::Accepted(
         ExactProbabilityAcceptance {
             initial_values: None,
+            bound: None,
             document: None,
             value: initial.clone(),
             certificate: certificate.clone(),
@@ -2032,6 +2102,7 @@ fn check_exact_terminal_rewards(
         Ok(ExactProbabilityCertificateCheck::Accepted(
             ExactProbabilityAcceptance {
                 initial_values: None,
+                bound: None,
                 document: None,
                 value: value.clone(),
                 certificate: certificate.clone(),
@@ -2550,6 +2621,7 @@ mod tests {
             side: ProbabilityBoundSide::AtMost,
             certificate: ExactProbabilityCertificate { values: Vec::new() },
             document: None,
+            bound: None,
             initial_values: Some(CheckedInitialValues {
                 values: vec![(0, None), (1, Some(value.clone()))],
                 binding: None,
@@ -2990,6 +3062,7 @@ mod tests {
             result,
             ExactProbabilityCertificateCheck::Accepted(ExactProbabilityAcceptance {
                 initial_values: None,
+                bound: None,
                 document: None,
                 value: Rational::new(Integer::from(4_i64), Integer::from(5_i64)).unwrap(),
                 side: ProbabilityBoundSide::AtLeast,
@@ -3264,7 +3337,13 @@ mod tests {
                 choices.push(vec![edge(3, 1, 1)]);
             }
             let mut states = BTreeMap::new();
-            states.insert(key(0), CheckerState { terminal: None, choices });
+            states.insert(
+                key(0),
+                CheckerState {
+                    terminal: None,
+                    choices,
+                },
+            );
             for target in 1..=3 {
                 states.insert(key(target), terminal());
             }
@@ -3316,7 +3395,10 @@ mod tests {
         match check(&graph(false), rational(0), &[0]) {
             ExactProbabilityCertificateCheck::Rejected(rejection) => {
                 assert_eq!(rejection.rule, ProbabilityCertificateRule::InequalityFails);
-                assert_eq!(rejection.at, ProbabilityCertificateLocus::ProductState(key(0)));
+                assert_eq!(
+                    rejection.at,
+                    ProbabilityCertificateLocus::ProductState(key(0))
+                );
             }
             other => panic!("expected a rejection, got {other:?}"),
         }

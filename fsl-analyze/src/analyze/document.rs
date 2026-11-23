@@ -4320,6 +4320,11 @@ fn write_run(
                 );
             }
         }
+        if let Some(bytes) = record.exact_counterpart_document() {
+            if let Ok(document) = serde_json::from_slice::<Value>(bytes) {
+                written["counterpart"] = exact_certificate_member(None, document);
+            }
+        }
         if let Some(output) = outcome.protocol_conformance.get(&index) {
             if let (Some(record), Ok(Value::Object(members))) =
                 (written.as_object_mut(), serde_json::to_value(output))
@@ -4653,7 +4658,8 @@ fn hybrid_certificate_member(identity: Value, recorded: &fsl_replay::Certificate
 }
 
 /// FR-621's `certificate` of an exact `proved` item (FR-741): `identity`,
-/// `checker` and `accepted`, `kind` (`long-run` for a long-run objective,
+/// `checker` and `accepted`, `kind` (`lower` or `upper` for a value-bounds
+/// document, `long-run` for a long-run objective,
 /// else `exact`) and the `document`.
 fn exact_certificate_member(identity: Option<Value>, document: Value) -> Value {
     let long_run = document
@@ -4671,9 +4677,23 @@ fn exact_certificate_member(identity: Option<Value>, document: Value) -> Value {
             .into(),
     );
     member.insert("accepted".to_owned(), true.into());
+    let bound = document
+        .get("kind")
+        .and_then(Value::as_str)
+        .filter(|kind| matches!(*kind, "lower" | "upper"))
+        // FR-877's quantile `upper` keeps the exact certificate's kind.
+        .filter(|_| {
+            document
+                .pointer("/objective/timed/form")
+                .and_then(Value::as_str)
+                != Some("elapsed-quantile")
+        })
+        .map(str::to_owned);
     member.insert(
         "kind".to_owned(),
-        (if long_run { "long-run" } else { "exact" }).into(),
+        bound
+            .unwrap_or_else(|| (if long_run { "long-run" } else { "exact" }).to_owned())
+            .into(),
     );
     member.insert("document".to_owned(), document);
     Value::Object(member)

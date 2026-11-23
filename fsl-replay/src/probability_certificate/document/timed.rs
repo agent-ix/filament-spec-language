@@ -19,6 +19,7 @@ pub(super) fn check(
     claims: &[CheckedProbabilisticClaim],
     item: &ObligationIdentity,
     bytes: &[u8],
+    bound_side: Option<SubsystemBoundKind>,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
@@ -46,6 +47,10 @@ pub(super) fn check(
         || objective.scale != scale
     {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
+    }
+    let deadline = objective.form == TimedProbabilityForm::Deadline;
+    if bound_side.is_some() && !deadline {
+        return Err(ProbabilityDocumentError::Unsupported);
     }
     if objective.form == TimedProbabilityForm::ExpectedElapsed {
         return check_expected_elapsed(
@@ -173,12 +178,17 @@ pub(super) fn check(
     let certificate = ExactProbabilityCertificate {
         values: document.values,
     };
-    let mut checked = super::super::check_exact_reachability(
+    let mut checked = super::super::check_reachability_values(
         &graph,
         &certificate,
         scheduler_objective(optimization),
         &bound,
         super::super::GraphCycles::CollapseNonprogressive,
+        match bound_side {
+            None => super::super::ValueRelation::Exact,
+            Some(SubsystemBoundKind::Lower) => super::super::ValueRelation::Lower,
+            Some(SubsystemBoundKind::Upper) => super::super::ValueRelation::Upper,
+        },
         cancel,
     )
     .map_err(ProbabilityDocumentError::Graph)?;
@@ -569,6 +579,7 @@ fn check_mean_time_values(
     Ok(ExactProbabilityCertificateCheck::Accepted(
         ExactProbabilityAcceptance {
             initial_values: None,
+            bound: None,
             value: initial.clone(),
             side: match bound {
                 Bound::AtLeast(_) => ProbabilityBoundSide::AtLeast,

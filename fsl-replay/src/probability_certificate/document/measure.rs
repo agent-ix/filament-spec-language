@@ -2102,6 +2102,7 @@ fn acceptance(
 ) -> ExactProbabilityCertificateCheck {
     ExactProbabilityCertificateCheck::Accepted(ExactProbabilityAcceptance {
         initial_values: None,
+        bound: None,
         value,
         side,
         certificate: ExactProbabilityCertificate {

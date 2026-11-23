@@ -1343,6 +1343,7 @@ fn check_graph(
     Ok(ExactProbabilityCertificateCheck::Accepted(
         ExactProbabilityAcceptance {
             initial_values: None,
+            bound: None,
             certificate: ExactProbabilityCertificate {
                 values: document.values.clone(),
             },
