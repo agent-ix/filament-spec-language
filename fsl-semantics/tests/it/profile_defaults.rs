@@ -12,7 +12,7 @@ use fsl_semantics::model::intake::SelectedModels;
 use ix_trace_rs::trace;
 
 /// Parse, build, assemble and check `body` under `1-draft` after `profiles`;
-/// `Ok` when it checks, else the refusal's debug text.
+/// `Ok` when it checks, else the refusals' catalog codes and debug text.
 fn outcome(profiles: &str, body: &str) -> Result<(), String> {
     let text = format!("language \"ix:native\" edition \"1-draft\";\n{profiles}{body}\n");
     let parsed = fsl_cst::parse(
@@ -38,7 +38,13 @@ fn outcome(profiles: &str, body: &str) -> Result<(), String> {
         &crate::reward_evaluator::ZeroRewardEvaluator,
     )
     .map(|_| ())
-    .map_err(|refusals| format!("{refusals:?}"))
+    .map_err(|refusals| {
+        let codes: Vec<_> = refusals
+            .iter()
+            .map(|refusal| refusal.cause.code())
+            .collect();
+        format!("{codes:?} {refusals:?}")
+    })
 }
 
 const V: &str = "profile v = \"filament.value.complete/v1\";\n";
@@ -54,7 +60,6 @@ fn a_unit_with_no_profile_checks() {
 /// in a profile-less unit exactly as in a unit selecting only the value layer.
 #[trace("FSpec-TC-1001", "FSpec-FR-500-AC-3")]
 #[test]
-#[ignore = "QSL-2902: the profile-less unit is refused with a Temporal TimedFacetRequired (Clock) cause, not the layer refusal the value layer gives"]
 fn a_profile_less_unit_refuses_another_layer_s_form_as_the_value_layer_does() {
     let body = "function f(c: Clock): Boolean pure { true }";
     let bare = outcome("", body).expect_err("refused");

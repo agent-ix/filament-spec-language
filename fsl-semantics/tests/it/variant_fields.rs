@@ -1019,10 +1019,14 @@ fn unknown_record_and_model_fields_name_their_owner_and_keep_type_mismatches() {
 }
 
 /// An undeclared case of a model variant retains the FR-360 mismatch code;
-/// an undeclared case of a source enum remains an unknown name.
+/// an undeclared case of a source enum is the same mismatch. FR-317-AC-6
+/// governs the source enum half: it states the refusal, and this test's earlier
+/// expectation of `missing-name` for `Status::Unknown` was a pre-FR-317-AC-6
+/// observation of the checker, not a requirement (FR-360-AC-5 states no source
+/// enum behavior), so it is superseded.
 #[trace("FR-360-AC-5")]
 #[test]
-fn undeclared_variant_cases_name_the_declared_owner_and_keep_source_enum_names_missing() {
+fn undeclared_variant_cases_name_the_declared_owner_for_model_variants_and_source_enums() {
     let refusals = check_refusals(
         "enum Status { Open, Closed }\n\
          function model_case using v(): Config::Tier pure { Config::Tier::Lost }\n\
@@ -1048,15 +1052,13 @@ fn undeclared_variant_cases_name_the_declared_owner_and_keep_source_enum_names_m
         .find(|refusal| {
             matches!(
                 &refusal.cause,
-                CheckCause::MissingQualifiedName(name) if name.name == "Status::Unknown"
+                CheckCause::UndeclaredVariantCase { owner, case }
+                    if owner == "Status" && case == "Unknown"
             )
         })
-        .expect("the undeclared source enum member remains a missing name");
-    assert_eq!(
-        source_case.cause.code(),
-        fsl_foundation::Code::MissingDeclaration
-    );
-    assert_eq!(source_case.cause.cause(), Some("missing-name"));
+        .expect("the undeclared source enum member is identified");
+    assert_eq!(source_case.cause.code(), fsl_foundation::Code::IllTyped);
+    assert_eq!(source_case.cause.cause(), Some("type-mismatch"));
 }
 
 /// TC-3051 (FR-317-AC-6): an unknown member of a source enum or ordered enum
@@ -1064,7 +1066,6 @@ fn undeclared_variant_cases_name_the_declared_owner_and_keep_source_enum_names_m
 /// model variant case; a qualifier that names no type stays `missing-name`.
 #[trace("TC-3051", "FR-317-AC-6")]
 #[test]
-#[ignore = "QSL-2902: an unknown qualified member `Status::Pending` is still refused MissingQualifiedName, not type-mismatch"]
 fn an_unknown_member_of_a_source_enum_refuses_type_mismatch_like_a_model_variant_case() {
     let refusals = check_refusals(
         "enum Status { Open, Closed }\n\

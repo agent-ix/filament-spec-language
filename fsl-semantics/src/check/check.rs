@@ -62,7 +62,7 @@ mod integer_division_range;
 mod modulo_interval;
 mod native_literal;
 mod typing;
-use typing::TypedOperand;
+use typing::{is_option_some_constructor, TypedOperand};
 
 use super::ir::{BodyBuilder, DispatchTable, EqualityProducerData, Node, NodeId, Slot};
 use super::model_spelling::{ModelSpellings, Spelled};
@@ -3056,7 +3056,17 @@ fn is_text_constructor(callee: &str) -> bool {
 }
 
 /// Whether an expression takes its type from its context.
-fn contextual(expression: ExprRef<'_>) -> bool {
+fn contextual(mut expression: ExprRef<'_>) -> bool {
+    // `Some(e)` takes its payload's type from context exactly when `e` does
+    // (FSpec FR-143-AC-21: `Some(3) = y` against an `Option<Int[0, 9]>`).
+    while let ExprNode::Call { name, arguments } = expression.node() {
+        match arguments.as_slice() {
+            [argument] if is_option_some_constructor(&name.name) => {
+                expression = expression.at(*argument);
+            }
+            _ => break,
+        }
+    }
     match expression.node() {
         ExprNode::Integer(_)
         | ExprNode::Float32(_)
@@ -4150,6 +4160,17 @@ impl<'a> Typer<'a> {
                     location,
                     CheckCause::UndeclaredVariantCase {
                         owner,
+                        case: case.to_owned(),
+                    },
+                ));
+            }
+            if self.scope.names_enum(type_name) {
+                // FR-317-AC-6: an unknown member of a source enum or ordered enum
+                // refuses like an undeclared model variant case.
+                return Err(refuse(
+                    location,
+                    CheckCause::UndeclaredVariantCase {
+                        owner: type_name.to_owned(),
                         case: case.to_owned(),
                     },
                 ));

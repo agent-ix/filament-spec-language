@@ -3162,7 +3162,7 @@ pub enum CheckCause {
     IllTyped(IllTypedCause),
     /// FR-986: `null` outside a record field value is never a value.
     NullExpression,
-    /// An undeclared case of a declared variant type, still classified as
+    /// An undeclared case of a declared variant type or source enum, classified as
     /// `ill_typed` / `type-mismatch` by FR-360-AC-5.
     UndeclaredVariantCase {
         /// The variant type whose cases were checked.

@@ -251,10 +251,29 @@ fn a_source_map_type_checks_with_its_guarded_read() {
 
 #[trace("TC-1823", "FR-680-AC-4", "FSpec-FR-143-AC-21", "FSpec-FR-375-AC-17")]
 #[test]
-#[ignore = "QSL-2902: `Some(3) = y` over Option<Int[0, 9]> is still refused IllTyped(TypeMismatch)"]
 fn some_takes_the_expected_bounded_element_type() {
     assert_checks("function f using v(): Option<Int[0, 9]> pure { Some(3) }");
     assert_checks("function g using v(y: Option<Int[0, 9]>): Boolean pure { Some(3) = y }");
+    // Either operand order, the inequality, and a nested option take the
+    // bounded element type of the other operand (FSpec FR-143-AC-21).
+    assert_checks("function g using v(y: Option<Int[0, 9]>): Boolean pure { y = Some(3) }");
+    assert_checks("function g using v(y: Option<Int[0, 9]>): Boolean pure { y != Some(3) }");
+    assert_checks(
+        "function g using v(z: Option<Option<Int[0, 9]>>): Boolean pure { Some(Some(3)) = z }",
+    );
+    assert_checks(
+        "function g using v(z: Option<Option<Int[0, 9]>>): Boolean pure { z = Some(Some(3)) }",
+    );
+    assert_refused(
+        "function g using v(y: Option<Int[0, 9]>): Boolean pure { y = Some(30) }",
+        Code::IllTyped,
+        "type-mismatch",
+    );
+    assert_refused(
+        "function g using v(z: Option<Option<Int[0, 9]>>): Boolean pure { Some(Some(30)) = z }",
+        Code::IllTyped,
+        "type-mismatch",
+    );
     assert_refused(
         "function f using v(): Option<Int[0, 9]> pure { Some(30) }",
         Code::IllTyped,

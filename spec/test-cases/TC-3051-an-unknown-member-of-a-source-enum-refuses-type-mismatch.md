@@ -40,7 +40,7 @@ Scope: FR-317-AC-6.
 ## Notes
 
 The live test
-`fsl-semantics/tests/it/variant_fields.rs::undeclared_variant_cases_name_the_declared_owner_and_keep_source_enum_names_missing`
+`fsl-semantics/tests/it/variant_fields.rs::undeclared_variant_cases_name_the_declared_owner_for_model_variants_and_source_enums`
 still asserts `missing_declaration`/`missing-name` for the source enum's
 `Status::Unknown`, which contradicts FR-317-AC-6. The coder implementing
 FR-317-AC-6 flips that half of it to `ill_typed`/`type-mismatch` in the same
