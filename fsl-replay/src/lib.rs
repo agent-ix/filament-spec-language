@@ -436,6 +436,7 @@ pub use axes::{ActivationAxis, ExecutionAxis, OutcomeAxes, TruthAxis};
 pub use filament_contract_model::{std001_code, Std001Code};
 pub use fsl_foundation::{BackendId, Code, RequestIndex};
 pub use outcome::undefined_reason;
+pub use outcome::verdict_bound_wire;
 pub use outcome::{
     assignments_wire, assignments_wire_with_enum_members, certificate_identity_wire,
     claim_locus_wire, graph_evidence_wire, hyper_counterexample_wire, omitted_witnesses,

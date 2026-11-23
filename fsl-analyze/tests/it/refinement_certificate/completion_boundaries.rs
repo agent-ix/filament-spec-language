@@ -18,6 +18,7 @@ fn each_listed_position_counts_at_the_exact_state_budget() {
             TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached {
                 limit: ModelCheckLimit::MaxStates,
                 value: u64::try_from(maximum).expect("small fixture count"),
+                required: None,
             })
         } else {
             TemporalCertificateCheck::Accepted
@@ -44,6 +45,7 @@ fn the_last_listed_edge_requires_its_own_transition_unit() {
             TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached {
                 limit: ModelCheckLimit::MaxTransitions,
                 value: u64::try_from(maximum).expect("small fixture count"),
+                required: None,
             })
         } else {
             TemporalCertificateCheck::Accepted
@@ -91,6 +93,7 @@ fn a_terminal_stutter_edge_is_not_free_at_the_transition_ceiling() {
         TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxTransitions,
             value: u64::try_from(edges - stutters).expect("fixture count"),
+            required: None,
         })
     );
     limits.limits.max_transitions = edges;

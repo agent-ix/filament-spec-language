@@ -208,7 +208,7 @@ pub enum ReplayRefusal {
     },
     /// The recompile refused at one spine stage, or reached one of the
     /// stage limits the request carries (`stage_limit_exceeded`).
-    #[error("the recompile refused at stage {stage}: {refusal}", stage = .refusal.stage().as_str(), refusal = .refusal)]
+    #[error("the recompile refused at stage {stage}: {refusal}", stage = .refusal.stage().as_str(), refusal = .refusal.render_for(fsl_foundation::diagnostic::RequestKind::Replay))]
     Recompile {
         /// The stage refusal.
         refusal: Box<CompileRefusal>,
@@ -218,7 +218,7 @@ pub enum ReplayRefusal {
     },
     /// A compile stage reached an attributable protocol outcome and retained
     /// the ordered declaration results with its primary refusal or limit.
-    #[error("the recompile refused at stage {refusal_stage}: {refusal}", refusal_stage = .refusal.stage().as_str(), refusal = .refusal)]
+    #[error("the recompile refused at stage {refusal_stage}: {refusal}", refusal_stage = .refusal.stage().as_str(), refusal = .refusal.render_for(fsl_foundation::diagnostic::RequestKind::Replay))]
     RecompileWithProtocolResults {
         /// The primary stage refusal or limit, which determines category.
         refusal: Box<CompileRefusal>,

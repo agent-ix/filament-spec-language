@@ -452,6 +452,7 @@ fn a_state_limit_leaves_both_loop_items_incomplete_naming_it() {
                 TerminalValue::Incomplete(IncompleteCause::LimitReached {
                     limit: ModelCheckLimit::MaxStates,
                     value: 1,
+                    required: None,
                 })
             ),
             "{kind:?}: {value:?}"

@@ -55,6 +55,9 @@ pub struct LimitFacts {
     pub value: u64,
     /// The request setting that raises it.
     pub setting: String,
+    /// A fixed-N statistical preflight stop's required sample count, a
+    /// positive count (FSpec FR-331, FR-408).
+    pub required: Option<String>,
 }
 
 /// One FR-331 result entry as the planner holds it.
@@ -665,7 +668,11 @@ type Table = &'static [(
 const BOUNDED_PROOF: Table = &[("bounded-proof", &["checks"], &[])];
 
 const INCOMPLETE: Table = &[
-    ("limit-reached", &["limit", "setting", "value"], &[]),
+    (
+        "limit-reached",
+        &["limit", "setting", "value"],
+        &["required"],
+    ),
     ("bounded-search-incomplete", &["reason"], &[]),
     ("precision-budget", &["lower", "upper"], &[]),
     ("cancelled", &["source"], &[]),
@@ -840,12 +847,17 @@ fn read_incomplete(value: &Value) -> Result<CauseValue, Defect> {
             let limit = read_text(member_of(members, "limit", "/cause")?, "/cause/limit")?;
             let setting = read_text(member_of(members, "setting", "/cause")?, "/cause/setting")?;
             let value = read_count(member_of(members, "value", "/cause")?, "/cause/value")?;
+            let required = match members.get("required") {
+                None => None,
+                Some(raw) => Some(read_positive_decimal(raw, "/cause/required")?),
+            };
             Ok(CauseValue::Incomplete(
                 IncompleteCause::ResourceExhausted,
                 Some(LimitFacts {
                     limit,
                     value,
                     setting,
+                    required,
                 }),
                 false,
             ))
@@ -1183,6 +1195,7 @@ fn read_task_search(value: &Value) -> Result<TaskSearchEvidence, Defect> {
                     member_of(limit_members, "setting", "/task_search/limit")?,
                     "/task_search/limit/setting",
                 )?,
+                required: None,
             })
         })
         .transpose()?;
@@ -1261,6 +1274,19 @@ fn read_text(value: &Value, pointer: &str) -> Result<String, Defect> {
         Some(text) if !text.is_empty() => Ok(text.to_owned()),
         Some(_) => Err(Defect::invalid(pointer.to_owned())),
         None => Err(Defect::wrong_kind(pointer.to_owned())),
+    }
+}
+
+/// An exact positive integer written as canonical decimal text: digits only,
+/// no sign, no leading zero, not zero.
+fn read_positive_decimal(value: &Value, pointer: &str) -> Result<String, Defect> {
+    let text = read_text(value, pointer)?;
+    let canonical = matches!(text.as_bytes().first(), Some(b'1'..=b'9'))
+        && text.bytes().all(|byte| byte.is_ascii_digit());
+    if canonical {
+        Ok(text)
+    } else {
+        Err(Defect::invalid(pointer.to_owned()))
     }
 }
 

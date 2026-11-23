@@ -856,6 +856,13 @@ fn a_quantile_claim_reports_its_empirical_quantile() {
     let three = Some(MeasureValue::Value(ratio(3, 1)));
     assert_eq!(verdict.tests[0].quantile, three);
     assert_eq!(verdict.quantile, three);
+    // FR-410: the verdict's bound is the claim as written, with its level.
+    assert_eq!(
+        fsl_replay::verdict_bound_wire(&verdict.bound),
+        json!({"type": "quantile", "comparison": "less-or-equal",
+            "threshold": {"numerator": "5", "denominator": "1"},
+            "level": {"numerator": "19", "denominator": "20"}})
+    );
 
     let mean = "probabilistic Mean using ev on M over (s: M::Server) under Steady on origin \
          with alpha 0.1, beta 0.1, indifference 0.1 \
@@ -934,8 +941,8 @@ fn a_quantile_counts_only_activated_samples() {
 
 /// FR-189-AC-12's stop (TC-624 step 9), with an activation predicate that
 /// never holds in place of an activation of probability 0, which a weight
-/// cannot state: with `max_draws` 1,000, stops `MaxDraws` with no
-/// sample counted.
+/// cannot state: with `max_draws` 30,000 (above the 23,026 samples Okamoto
+/// needs), stops `MaxDraws` with no sample counted.
 #[trace("TC-624")]
 #[test]
 fn a_quantile_with_no_activation_stops_on_max_draws() {
@@ -949,7 +956,7 @@ fn a_quantile_with_no_activation_stops_on_max_draws() {
         "Never",
         StatisticalMethod::Okamoto,
         StatisticalLimits {
-            max_draws: 1_000,
+            max_draws: 30_000,
             ..StatisticalLimits::default()
         },
         DEFAULT_MAX_WITNESSES,
@@ -961,11 +968,11 @@ fn a_quantile_with_no_activation_stops_on_max_draws() {
         stop,
         StatisticalStop::Limit {
             limit: StatisticalLimit::MaxDraws,
-            value: 1_000
+            value: 30_000
         }
     );
     assert_eq!(partial.samples, 0);
-    assert_eq!(partial.draws, 1_000);
+    assert_eq!(partial.draws, 30_000);
 }
 
 /// Checks FR-189-AC-5 (TC-624 step 5), the `NotMarkov` clause: a `Health`
@@ -1022,6 +1029,12 @@ fn a_dropped_coin_rejects_its_test_at_the_undefined_position() {
     let world = World::new(&prob_world::coin(claim));
     let verdict = decided(&world, "Kept", StatisticalMethod::Okamoto);
     assert_eq!(verdict.decision, Decision::Rejected);
+    // FR-410: a rejection by `undefined-evaluation` still carries its bound.
+    assert_eq!(
+        fsl_replay::verdict_bound_wire(&verdict.bound),
+        json!({"type": "probability", "comparison": "greater-or-equal",
+            "threshold": {"numerator": "1", "denominator": "2"}})
+    );
     let [test] = &verdict.tests[..] else {
         panic!("one test: {:?}", verdict.tests);
     };
@@ -1618,4 +1631,24 @@ fn two_initial_states_run_two_interleaved_tests() {
     for witness in &verdict.witnesses {
         assert_eq!(witness.trace % 2, u64::from(witness.test));
     }
+}
+
+/// FR-410, FR-413: a `quantile q of M >= c` claim written from source keeps
+/// its own `greater-or-equal`, its threshold `c` and its level `q`, not the
+/// strict probability bound it reduces to.
+#[trace("TC-627", "FR-192-AC-2")]
+#[test]
+fn an_at_least_quantile_claim_writes_its_own_bound_with_its_level() {
+    let claim = "probabilistic AtLeast using ev on M over (s: M::Server) under Steady on origin \
+         with alpha 0.01, beta 0.01, indifference 0.01 \
+         { quantile 0.5 of (accumulate duration from holds(s.phase = 1) \
+         until holds(s.phase = 2) within 10) >= 2 }";
+    let world = World::new(&prob_world::service(claim));
+    let verdict = decided(&world, "AtLeast", StatisticalMethod::Okamoto);
+    assert_eq!(
+        fsl_replay::verdict_bound_wire(&verdict.bound),
+        json!({"type": "quantile", "comparison": "greater-or-equal",
+            "threshold": {"numerator": "2", "denominator": "1"},
+            "level": {"numerator": "1", "denominator": "2"}})
+    );
 }

@@ -3020,6 +3020,7 @@ fn claim_terminal(
                     counter: incomplete.limit_kind,
                 },
                 value: incomplete.limit,
+                required: None,
             },
         ),
         Ok(Outcome::WindowLimitReached(reached)) => TerminalRecord::incomplete(
@@ -3028,6 +3029,7 @@ fn claim_terminal(
             IncompleteCause::LimitReached {
                 limit: ModelCheckLimit::MaxWindowValues,
                 value: reached.limit,
+                required: None,
             },
         ),
         Err(refusal) => TerminalRecord::declined_with(
@@ -3334,6 +3336,7 @@ fn settle(
                     } => Some(fsl_replay::IncompleteCause::LimitReached {
                         limit: fsl_replay::ModelCheckLimit::TaskProductWork,
                         value: *value,
+                        required: None,
                     }),
                     // FSpec FR-331: unresolved dynamics with its frontier
                     // evidence is `bounded-search-incomplete`.
@@ -4730,6 +4733,7 @@ mod proof_value_tests {
         IncompleteCause::LimitReached {
             limit: ModelCheckLimit::ZoneMaxCheckWork,
             value: 7,
+            required: None,
         }
     }
 

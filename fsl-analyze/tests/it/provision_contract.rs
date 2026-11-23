@@ -298,7 +298,8 @@ fn the_one_state_exact_budget_returns_no_counterexample_or_certificate() {
         outcome.records[0].value(),
         &TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::ExactProbMaxStates,
-            value: 1
+            value: 1,
+            required: None,
         })
     );
     assert!(outcome.records[0].exact_certificate().is_none());
@@ -495,9 +496,10 @@ fn a_value_claim_returns_its_native_replayed_assignment() {
         stopped.records[0].value(),
         &TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::EvaluationMeter {
-                counter: filament_exact::LimitKind::WorkUnits
+                counter: filament_exact::LimitKind::WorkUnits,
             },
             value: 0,
+            required: None,
         })
     );
     assert!(stopped.counterexamples.is_empty());

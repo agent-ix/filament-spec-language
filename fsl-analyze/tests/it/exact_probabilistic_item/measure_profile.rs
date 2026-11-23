@@ -2823,7 +2823,11 @@ fn measure_and_vacuity_limits_settle_incomplete_without_certification() {
             .unwrap_or_else(|| panic!("{name}: {:?}", record.settlement));
         assert_eq!(
             terminal.value(),
-            &TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value }),
+            &TerminalValue::Incomplete(IncompleteCause::LimitReached {
+                limit,
+                value,
+                required: None
+            }),
             "{name}: {:?}",
             record.settlement
         );

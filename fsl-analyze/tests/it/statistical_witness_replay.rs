@@ -650,6 +650,7 @@ fn the_provider_entry_keeps_each_items_index_and_settlement() {
         &TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: fsl_replay::ModelCheckLimit::Statistical(StatisticalLimit::MaxSamples),
             value: 10,
+            required: Some(filament_exact::Integer::from(23_026_u64)),
         })
     );
     assert!(matches!(

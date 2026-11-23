@@ -1196,7 +1196,8 @@ fn mapping_row(row: &crate::refinement::MappingRowRef) -> Result<String, Counter
     })
 }
 
-/// FSpec FR-379's `refinement_failure` member.
+/// FSpec FR-379's `refinement_failure` member; every `initial` and `position`
+/// is a canonical unsigned 64-bit decimal string (FR-379-AC-14).
 fn refinement(failure: &RefinementFailure) -> Result<Json, CounterexampleWireError> {
     Ok(match failure {
         RefinementFailure::InitialNotAbstract { initial } => {

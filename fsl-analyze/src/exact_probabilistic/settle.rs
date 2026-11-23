@@ -114,6 +114,7 @@ mod tests {
             &TerminalValue::Incomplete(IncompleteCause::LimitReached {
                 limit: ModelCheckLimit::ExactProbMaxStates,
                 value: 1_000,
+                required: None,
             })
         );
 
@@ -130,6 +131,7 @@ mod tests {
             &TerminalValue::Incomplete(IncompleteCause::LimitReached {
                 limit: ModelCheckLimit::MaxCandidates,
                 value: 2,
+                required: None,
             })
         );
     }

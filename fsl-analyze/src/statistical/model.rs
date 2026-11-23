@@ -579,6 +579,7 @@ fn reduce(
         confidence.indifference.clone(),
     )
     .map_err(|_| fault("checked-confidence-is-in-the-unit-interval"))?;
+    let mut written_quantile = None;
     let (form, bound, reading) = match &claim.form {
         ProbForm::Probability { bound, event } => {
             let reading = match event {
@@ -627,6 +628,7 @@ fn reduce(
                 CheckedBound::AtMost(c) => (QuantileComparison::AtMost, c),
             };
             let (event, bound) = reduce_quantile(q.clone(), comparison, c.clone());
+            written_quantile = Some((q.clone(), comparison, c.clone()));
             let measure = measure_of(measure).ok_or_else(|| fault("a-quantile-measure-ends"))?;
             (
                 ClaimForm::Quantile,
@@ -670,8 +672,13 @@ fn reduce(
         Reading::Fraction { fraction, .. } => fraction.timed_window.clone(),
         Reading::LongRun { .. } => None,
     };
-    let mut claim = StatisticalClaim::new(form, bound, confidence)
-        .map_err(|_| fault("a-checked-claim-has-an-indifference-region"))?;
+    let built = match written_quantile {
+        Some((level, comparison, threshold)) => {
+            StatisticalClaim::quantile(level, comparison, threshold, confidence)
+        }
+        None => StatisticalClaim::new(form, bound, confidence),
+    };
+    let mut claim = built.map_err(|_| fault("a-checked-claim-has-an-indifference-region"))?;
     claim.timed = is_timed;
     claim.set_timed_horizon(timed_horizon);
     Ok((claim, reading))

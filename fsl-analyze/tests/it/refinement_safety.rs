@@ -308,6 +308,22 @@ fn an_undefined_items_row_refutes_at_the_first_non_empty_queue() {
         .expect("the failure is spelled");
     assert_eq!(wire["refinement_failure"]["kind"], "Undefined");
     assert_eq!(wire["refinement_failure"]["position"], "1");
+    // The written failure validates against the pinned `RefinementFailure`,
+    // whose `position` is a canonical decimal string (FSpec FR-379).
+    let schema = crate::published_fspec::json("proposals/backend-provider-v1/schema.json");
+    let definition = serde_json::json!({
+        "$schema": schema["$schema"],
+        "$defs": schema["$defs"],
+        "$ref": "#/$defs/RefinementFailure",
+    });
+    let compiled = jsonschema::JSONSchema::options()
+        .with_draft(jsonschema::Draft::Draft202012)
+        .compile(&definition)
+        .expect("the schema compiles");
+    if let Err(errors) = compiled.validate(&wire["refinement_failure"]) {
+        let errors: Vec<_> = errors.map(|error| error.to_string()).collect();
+        panic!("the written refinement failure violates the schema: {errors:?}");
+    }
     let row_text = wire["refinement_failure"]["row"]
         .as_str()
         .expect("FR-379's row is one string");

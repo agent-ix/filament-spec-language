@@ -820,6 +820,7 @@ fn altered_rank_certificates_never_settle_proved() {
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxStates,
             value: 2,
+            required: None,
         })
     );
     assert_eq!(
@@ -1084,6 +1085,7 @@ fn a_stopped_run_with_witnesses_settles_well_definedness_unchecked() {
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxStates,
             value: 2,
+            required: None,
         })
     );
     assert_eq!(
@@ -1271,6 +1273,7 @@ fn horizon_limit_undecided_and_empty_runs_settle_their_rows() {
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxStates,
             value: 2,
+            required: None,
         })
     );
     assert_eq!(
@@ -1373,6 +1376,7 @@ fn a_disagreeing_or_stopped_replay_never_settles_decisively() {
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxStates,
             value: 4,
+            required: None,
         })
     );
     assert_eq!(
