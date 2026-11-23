@@ -68,8 +68,15 @@ place of `call`. `clause` is a closed object:
     selection, which also evaluates the operation's own `requires` and
     `ensures` (FR-702);
   - `{"function": {"name": N, "arguments": A, "snapshot": K}}`, FR-109's
-    `Function` selection, with `A` as FR-109 states and each argument
-    `value` in FR-650's run value form;
+    `Function` selection, with `A` an array of `{parameter, value}` entries
+    in any order. Each `value` uses FR-100's public command encoding:
+    FSpec FR-181's tagged canonical form for a value type, or FR-650's
+    `{"population": P}` selection for a population parameter. A
+    `Reference<T>` argument uses FSpec FR-181's tagged form
+    `{"type":"reference","universe":U,"object_type":T,"identity":O}`;
+    `U` and `T` are structural declaration node ids and `O` is the lowercase
+    hexadecimal object identity. The reader resolves it in selected snapshot
+    `K` under FR-106 and FR-650;
   - `{"context": {...}}`, FR-652's state-machine context selection
     (FR-106 `Context`);
   - `{"temporal": {"name": N, "trace": T, "over": R, ...}}`, FR-330's
@@ -113,8 +120,12 @@ package and dependency inputs.
 
 - The clause request reader SHALL retain the existing selection shapes and
   FR-109's Boolean `function` claim semantics. A `function` selection's
-  arguments are read in FR-650's run value form, so every argument kind a
-  value call admits is admitted here, resolved in the selection's snapshot.
+  request-file arguments SHALL use FR-100's public command encoding: FSpec
+  FR-181's tagged canonical values and FR-650's `{"population": P}`
+  selection for a population parameter. The reader SHALL admit every
+  argument kind admitted by a value call and resolve references and
+  population selections in the selection's snapshot, applying the same
+  typed admission and refusal behavior.
   A Reference-result function belongs to the value `run` boundary; this
   reader SHALL NOT select it as a Boolean claim or form a default model
   context to stand in for admission.
@@ -226,9 +237,11 @@ settings operation refuses as an unknown setting.
 | FR-312-AC-8 | Through `run`, a request whose `temporal.trace` is `{"timestamped": {}}` refuses `invalid-request` at stage `request`, exit 20, naming the missing `observations` member of `trace.timestamped`, and no result document is written; a complete `timestamped` trace is read as FR-641 states (FR-641-AC-1). | Test (TC-1160) |
 | FR-312-AC-9 | Through `run`, FR-108's healthy-parent clause-run request whose snapshot file is `n` bytes, with `clause.observation_limits.document_bytes` `n - 1` and a `dependent_bytes` above `n`, exits 22 with one clause item settled `incomplete` whose cause is `stage_limit_exceeded` with `kind` `input bytes`, `bound` `n - 1`, `actual` `n` and `setting` `observation.input_bytes`; the document carries no `resource_exhausted` diagnostic and no refusal envelope; the rendered hint contains `--limit observation.input_bytes=` and not `observation.document_bytes`; at `document_bytes` `n` the clause runs and exits 0. | Test (TC-2982) |
 | FR-312-AC-10 | The AC-9 request without `observation_limits`, run with `RequestOverrides::observation` carrying `document_bytes` `n - 1` (the `observation` member of `CallerLimits::from_operands(["observation.input_bytes=<n - 1>"])`), gives an outcome document byte-equal to AC-9's; the AC-9 request run with that override as well refuses `invalid-request` at stage `request` naming `observation_limits`, exit 20, before any observation file is read. | Test (TC-2982) |
+| FR-312-AC-11 | Through `run`, a `function` selection of `sameIdentity` over FR-650-AC-4's distinct-identities snapshot accepts each argument `value` as FSpec FR-181's tagged canonical `reference` form: `root` and `child` produce `violation`, `truth: false`, exit 10, and `child` for both arguments produces `success`, `truth: true`, exit 0. A `function nonempty using v(p: Population<Config::ConfigVersion>[4]): Boolean pure { size(allInstances<Config::ConfigVersion>(p)) > 0 }` with `p`'s `value` `{"population": P}` admits the population from that same snapshot and reports `success`, `truth: true`, exit 0; a `P` the snapshot does not hold refuses at stage `admit` with `invalid_runtime_input`/`wrong-role-mapping`, exit 20. The values use FR-100's public command encoding, and each request's result equals the report for the same admitted `ClauseRunRequest` built directly. | Test (TC-1706) |
 
 The existing AC-1 through AC-5 test-case association remains TC-891;
-method-only Verification cells do not replace the existing trace tags.
+FR-312-AC-11 is associated with TC-1706. Method-only Verification cells do
+not replace the existing trace tags.
 
 ## Dependencies
 
