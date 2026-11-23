@@ -461,12 +461,7 @@ fn a_nested_reference_row_checks_and_proves() {
     );
     add_counter_chain(&ws);
     let run = analyze(&path);
-    assert_eq!(
-        run.document()["last_stage"],
-        Value::Null,
-        "no compile refusal: {}",
-        run.document()
-    );
+    assert_eq!(run.document()["aggregate"]["status"], "complete");
     let item = run.item(0);
     assert_eq!(label(&item), "proved", "{item}");
     assert_eq!(item["record"]["certification"], "certified", "{item}");
