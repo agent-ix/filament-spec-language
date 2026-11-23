@@ -683,7 +683,7 @@ impl SubjectBinding<'_> {
 /// "Lifecycle caller-limit coverage"). A setting joins this list when its
 /// engine reads the caller's bound, so no accepted setting is ignored.
 /// `plan_search.*` is never listed: neither operation executes it.
-pub const ENGINE_SETTINGS: [Setting; 15] = [
+pub const ENGINE_SETTINGS: [Setting; 18] = [
     Setting::SimulationMaxSteps,
     Setting::ScheduleMaxDemandPoints,
     Setting::ExactProbMaxStates,
@@ -699,6 +699,9 @@ pub const ENGINE_SETTINGS: [Setting; 15] = [
     Setting::StatisticalMaxDraws,
     Setting::StatisticalMaxCycleSteps,
     Setting::StatisticalMaxSampleSteps,
+    Setting::SmtMaxSolverSteps,
+    Setting::SmtMaxSolverTime,
+    Setting::CertificateCheckMaxRank,
 ];
 
 /// The engine settings the caller set for one run: a bound is present only
@@ -770,6 +773,14 @@ impl EngineBounds {
             .is_some_and(|simulation| simulation.max_steps.is_some())
         {
             stated.push(S::SimulationMaxSteps);
+        }
+        if let Some(limits) = item.temporal.as_ref().and_then(|temporal| temporal.limits) {
+            if limits.max_solver_steps.is_some() {
+                stated.push(S::SmtMaxSolverSteps);
+            }
+            if limits.max_solver_time.is_some() {
+                stated.push(S::SmtMaxSolverTime);
+            }
         }
         if let Some(probabilistic) = &item.probabilistic {
             let limit = |member: &str| {

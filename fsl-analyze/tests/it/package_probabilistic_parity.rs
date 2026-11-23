@@ -343,3 +343,43 @@ fn probabilistic_package_preserves_whole_result_exit_and_predicate_charges() {
         source_meter.admitted_charges()
     );
 }
+
+/// The caller's `exact_prob.max_states` bounds an exact probabilistic item
+/// on the source route; an item that states the same bound in its own
+/// `limits` member is refused whichever is larger (FR-255 "Lifecycle
+/// caller-limit coverage").
+#[trace("TC-721", "FR-255-AC-24", "FR-255-AC-25")]
+#[test]
+fn caller_exact_prob_max_states_bounds_the_item_and_refuses_a_duplicate() {
+    use fsl_foundation::Setting;
+
+    let ws = Workspace::new("caller-exact-prob-max-states");
+    let path = request_over(
+        &ws,
+        &format!("{LINK_UNIT}\n{EVENTUALLY}\n"),
+        LINK_MODEL,
+        &[LINK_START.to_vec()],
+        json!({"items": [{"claim": "Eventually", "kind": "probabilistic-satisfaction",
+            "probabilistic": {"evidence": "exact"}}]}),
+    );
+    let run = crate::analyze_cli_support::analyze_under(&path, &[(Setting::ExactProbMaxStates, 1)]);
+    let text = run.document().to_string();
+    assert_ne!(run.exit, 0, "{text}");
+    assert!(text.contains("exact_prob.max_states"), "{text}");
+
+    let stated = Workspace::new("caller-exact-prob-max-states-stated");
+    let stated_path = request_over(
+        &stated,
+        &format!("{LINK_UNIT}\n{EVENTUALLY}\n"),
+        LINK_MODEL,
+        &[LINK_START.to_vec()],
+        json!({"items": [{"claim": "Eventually", "kind": "probabilistic-satisfaction",
+            "probabilistic": {"evidence": "exact", "limits": {"max_states": 100000}}}]}),
+    );
+    let refused = crate::analyze_cli_support::analyze_under(
+        &stated_path,
+        &[(Setting::ExactProbMaxStates, 1)],
+    );
+    assert_eq!(refused.exit, 20, "{}", refused.document());
+    assert!(refused.document().to_string().contains("exact_prob.max_states"));
+}

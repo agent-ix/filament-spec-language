@@ -41,6 +41,7 @@ fn fixture_with_raised_limits(body: &str) -> Fixture {
             tokens: 1 << 28,
             nodes: 1 << 28,
             work_units: 1 << 20,
+            ..fsl_cst::Limits::default()
         },
         checking: SpineLimits::default()
             .checking

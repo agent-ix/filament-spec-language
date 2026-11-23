@@ -275,7 +275,7 @@ pub(crate) fn simulate(
         .map_err(SimulationFault::Binding)?;
     // FR-255: the caller's `simulation.max_steps` stands in for the item's
     // own member; a request that states both is refused before this runs
-    // ([`engine_conflict`]).
+    // ([`EngineBounds::conflict`]).
     let mut effective = item.settings.clone();
     if let Some(bound) = limits.engines.get(Setting::SimulationMaxSteps) {
         effective.max_steps = NonZeroU64::new(bound);
