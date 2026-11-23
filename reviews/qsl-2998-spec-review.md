@@ -24,18 +24,20 @@ Ticket: QSL-2998. `quire validate` passes on FR-895 and TC-2531. Rule 5 now defe
 Rule 19's policy thresholds and FR-218 argument order are right. Rule 20 is unsound as written (FND-001) and rule 19's unevaluable
 outcome needs a decision (FND-002).
 
-## Dispositions (fix round 1)
+## New findings (disposition pass 1)
 
-| Finding | Disposition |
-| --- | --- |
-| FND-001 | Fixed. Rule 27 states the cancel condition as the reviewer proposed and adds `finish`, which the code also counts; rules 28 and 29 state the boundary and `outstanding continue`; code, rule and AC-29/AC-32 agree. |
-| FND-002 | Fixed. Rule 24 bounds a predicate join at 10 labels with a typed refusal, rule 25 refuses a function that does not evaluate, rule 26 refuses a predicate join over a package; the rule 19 text "pending" is gone. |
-| FND-003 | Fixed. Rules 19 to 29 each hold one requirement; rule 5 refers to rules 19 to 23. |
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-004 | medium | Rule 27 ("an observation of a step after the `parallel` ... causally precedes it") does not say "of the same iteration", so a `parallel` in a `repeat` is cancelled by an earlier iteration's post-join step (SR-3608001 FND-004). Rule 25 specifies a refusal no admitted function can reach (SR-3608001 FND-005) | spec/functional/FR-895-assess-a-recorded-protocol-execution-against-its-obligations.md:191-202 |
 
-### Arch review SR-72998 (Linear QSL-2998 comment, untrusted text read as data)
+## Dispositions
 
-| Finding | Disposition |
-| --- | --- |
-| FND-001 (rule 20 / AC-29 describe the old cancel condition) | Fixed: rule 27 and AC-29, AC-32 state what `after_cancel` does (a later step after the `parallel`, or `finish`, causally before the step). |
-| FND-002 (rule 19 says pending, code refuses) | Fixed: rules 24 to 26 specify each refusal (more than 10 labels, a function that does not evaluate, a predicate join over a package) with one code family; tests for the first and the last, none reachable for the middle one. |
-| FND-003 (no test of the cancel boundary) | Fixed: AC-32 pins `L`, `R` (policy holds, no later step) as `satisfied`. |
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | rules 27 to 29: cancel only after an observed post-join step or finish; join enabled is not cancelled (ADR-027 CI-3) |
+| FND-002 | fixed | rules 24 to 26 refuse unsupported naming the join and the bound; no pending outcome |
+| FND-003 | fixed | rules 19 to 29 one requirement each |
+
+## Dispositions (fix round 2)
+
+FND-004: rule 26 (was 27) adds "in the same iteration of every `repeat` the `parallel` runs in"; the old rule 25 is deleted and rules renumbered; rule 24 names the `stage_limit_exceeded` refusal; rule 25 states the package selection refusal; AC-37 and AC-38 test the iteration condition.

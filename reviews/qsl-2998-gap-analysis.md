@@ -22,6 +22,18 @@ have a traced test asserting batch verdicts, prefix sequences, monotonicity and 
 
 Coverage of the stated ACs is complete and exact; the missing cases are the ones where the implementation is wrong or silent.
 
-## Dispositions (fix round 1)
+## New findings (disposition pass 1)
 
-Closed by FR-895-AC-32 to AC-36 and the tests named in `qsl-2998-code-review.md` "Dispositions (fix round 1)". The failed-evaluation refusal has no reachable fixture.
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-002 | medium | No test puts a cancel `parallel` inside a `repeat` (SR-3608001 FND-004) | fsl-analyze/tests/it/protocol_replay_mode.rs:1617-2140 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | AC-32 (L, R under cancel; concurrent R), AC-33 (nested), AC-34 (label bound in library, batch and incremental), AC-35 (contradiction), AC-36 (package route) tests |
+
+## Dispositions (fix round 2)
+
+Closed by FR-895-AC-37, AC-38 and the updated AC-34, AC-36; see `qsl-2998-code-review.md` "Dispositions (fix round 2)".

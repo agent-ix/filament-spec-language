@@ -28,12 +28,32 @@ stable across prefixes, and the tests assert prefix sequences with `assert_every
 item. Nested parallels work through the ancestry windows. The cancel rule is wrong for steps taken after a branch finished but before
 the join step (FND-001), and the predicate table has no honest bound or package-route outcome (FND-002, FND-003).
 
-## Dispositions (fix round 1)
+## New findings (disposition pass 1)
+
+Head 8d9aeec6e325c6d7ae74064d426eb0d9f859ff3e (code equal to d09580b4 in the coder's titan worktree). Titan: `--test it` filter
+99 passed, 0 failed, 0 ignored; `--lib a_refused_prefix` 2 passed. Probes (scratch test, reverted): P1 `L`, `R`, `Placed` under
+cancel gives `R` satisfied; `L`, `Placed`, `R` gives `R` violated; probe R below.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-004 | high | The cancel rule is not occurrence-matched in a `repeat`: with a `join any ... outstanding cancel` parallel inside the loop body, the legitimate recording of two iterations (`L`, `R`, `Placed`, `Got`, `yes`, then `L`, `R`, `Placed`, `Got`, `yes`) gives the second iteration's `L` and `R` `violated`, `unexpected`, because the first iteration's `Placed` (a step after the `parallel`) causally precedes them (probe R). Only a post-join step of the same iteration proves the cancel | fsl-analyze/src/protocol_analysis/recording.rs:4249-4295 |
+| FND-005 | medium | Rule 25's refusal (a predicate that does not evaluate to a Boolean) is unreachable for an admitted function: FR-218 and FSpec FR-146 make it total and pure, and `recording_meter()` sets every limit to `u64::MAX`, so the only way in is an evaluator `InternalFault`, which this maps to `unsupported_construct`/`not-yet-implemented` instead of a runtime-invariant refusal. Delete rule 25 and route an internal fault to the existing internal-fault refusal | fsl-analyze/src/protocol_analysis/recording.rs:4340-4366 |
+| FND-006 | low | The label bound refusal uses `unsupported_construct`/`not-yet-implemented`, which reads as an unbuilt feature; a fixed engine bound has the `stage_limit_exceeded` family (`node-count-exceeded`, `edge-count-exceeded`) or at least a cause naming the bound. The `predicate-join-label-bound` fact disambiguates, so the wire is usable | fsl-analyze/src/protocol_analysis/recording.rs:4322-4330 |
+| FND-007 | low | The package-route arm of `predicate_join_tables` is unreachable today: the package route refuses any protocol with a `parallel` at selection, and AC-36's test exercises that selection refusal, not the arm. Keep it only with a comment saying it guards the day the package route admits `parallel`, or delete it | fsl-analyze/src/protocol_analysis/recording.rs:4332-4339 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | after_cancel needs a post-parallel step or finish causally before the branch step; probe P1 L, R, Placed gives R satisfied (AC-32); repeat case is FND-004 |
+| FND-002 | fixed | at most 10 labels, refused before any evaluation; mask takes at most 10 bits; tables built once per read and shared by every prefix |
+| FND-003 | fixed | package route refuses unsupported_construct/not-yet-implemented (AC-36), never leaves steps pending |
+
+## Dispositions (fix round 2)
 
 | Finding | Disposition |
 | --- | --- |
-| FND-001 (cancel refutes a legitimate interleaving) | Fixed. `after_cancel` now flags a branch step only when an observation of a step after the `parallel` (a later sibling in an enclosing sequence, which needs the join), or of `finish`, in the same instance causally precedes it. `L, R, Placed` leaves `R` satisfied; `L, Placed, R` violated; an `R` of another role unordered with `Placed` is satisfied; the same holds for `predicate(left_only)`; a nested `parallel` cancels at its own join. Tests `a_branch_step_is_after_the_cancel_only_once_a_step_after_the_parallel_precedes_it` and `a_nested_parallel_cancels_at_its_own_join` (FR-895-AC-32, AC-33); the cancel boundary (policy holds, no later step observed) is pinned in AC-32. |
-| FND-002 (predicate table bound) | Fixed. A predicate join names at most 10 labels (`MAX_PREDICATE_JOIN_LABELS`); more is refused before any evaluation, `unsupported_construct`/`not-yet-implemented`, naming the join and the bound. The mask is bounded, so no shift overflow. The tables are built once per recording read, shared by every prefix. Tests at 10 (assessed), 11 and 64 (refused) in a library call and on the wire, batch and incremental (AC-34). |
-| FND-003 (package route) | The package route admits only sequence, choice, send, receive and check (`CheckedProtocol::package`); a protocol with a `parallel` never reaches the assessment and is refused at selection `unsupported_construct`/`not-yet-implemented`. Test `a_predicate_join_over_a_package_settles_unsupported` (AC-36) pins it; the assessment's own package arm for a predicate join is a typed refusal and is unreachable today. |
-| Never-true predicate | Test with `left and not left` (a name `never` is a reserved word): `Placed` pending in open prefixes, violated closed (AC-35). |
-| Failed predicate evaluation | Refused `unsupported` (rule 25); no fixture can reach it, since a function over Boolean arguments always evaluates. |
+| Probe R (cancel in a repeat body) | Fixed. `after_cancel` matches the observations after the `parallel` that sit inside the `repeat` body by iteration (`iteration_index`: the node's causal occurrence rank carried through each `case` to the choice's takings, the pairing the repeat rules use); those outside the body match as before. Tests `a_cancel_in_a_repeat_body_cancels_per_iteration` (legitimate two iterations satisfied in batch and every prefix, monotone, last equals batch; second `R` after the second `Placed` violated) and `a_repeat_inside_a_cancelling_branch_keeps_the_cancel_after_the_parallel` (FR-895-AC-37, AC-38). |
+| Dead failed-evaluation path | Removed rule 25. An evaluator fault now refuses as the existing `runtime_invariant`/`established-invariant-broken` (`FailedWithDetail`) instead of being swallowed. |
+| Label bound family | `stage_limit_exceeded`/`work-budget-exceeded` (declined, `Code::StageLimitExceeded`), fact `predicate-join-label-bound`, charged before any evaluation; rule 24, AC-34 and the tests updated. |
+| Unreachable package arm | Deleted: `predicate_join_tables` skips a package, which carries no `parallel`; rule 25 and AC-36 state the selection refusal that does exist. |
