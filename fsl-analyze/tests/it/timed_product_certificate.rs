@@ -1738,7 +1738,6 @@ fn three_given(weights: [u32; 3], bound: &str) -> World {
 /// the only racer at 1 ms (3/8), or wins the weighted tie against `A` (1/8,
 /// 3 of 4), against `C` (3/8, 3 of 5) or against both (1/8, 3 of 6):
 /// `3/8 + 3/32 + 9/40 + 1/16 = 121/160`.
-#[trace("TC-3204", "FR-204-AC-18")]
 #[test]
 fn three_tied_given_racers_resolve_by_unequal_weights() {
     let world = three_given([1, 3, 2], ">= 0.75625");
@@ -1751,7 +1750,6 @@ fn three_tied_given_racers_resolve_by_unequal_weights() {
 /// The same race under the weights `A` 3, `B` 1, `C` 2 is `53/96`
 /// (`3/8 + 1/32 + 1/8 + 1/48`), so a checker that ignored the weights, or
 /// read them in another order, could not accept both documents.
-#[trace("TC-3204", "FR-204-AC-18")]
 #[test]
 fn the_tie_weights_change_the_checked_value() {
     let world = three_given([3, 1, 2], ">= 0.5");
@@ -1762,7 +1760,6 @@ fn the_tie_weights_change_the_checked_value() {
 
 /// A certificate whose rows were computed under other weights is refused:
 /// the checker rebuilds the race with the claim's own weights.
-#[trace("TC-3204", "FR-204-AC-18")]
 #[test]
 fn a_certificate_of_other_tie_weights_is_refused() {
     let world = three_given([1, 3, 2], ">= 0.5");
@@ -1781,7 +1778,10 @@ fn a_certificate_of_other_tie_weights_is_refused() {
     forged["values"] = other["values"].clone();
     assert_ne!(forged, own);
     assert!(accepted(&world, "Late", &own));
-    assert!(!accepted(&world, "Late", &forged));
+    assert_eq!(
+        rejected_rule(&world, "Late", &forged),
+        ProbabilityCertificateRule::InequalityFails
+    );
 
     let record = settle_tampered(&world, "Late", |certificate| {
         for entry in &mut certificate.values {
@@ -1790,7 +1790,10 @@ fn a_certificate_of_other_tie_weights_is_refused() {
             }
         }
     });
-    let _ = rejected_item_rule(&record);
+    assert_eq!(
+        rejected_item_rule(&record),
+        CertificateRule::InequalityFails
+    );
 }
 
 /// Two given racers and one free: the scheduler picks `C`'s delay after the
@@ -1822,7 +1825,10 @@ fn two_given_racers_and_a_free_one_decide_on_their_extrema() {
     assert!(accepted(&world, "AtLeastMin", &document(&least)));
     let mut forged = document(&most);
     forged["values"] = document(&least)["values"].clone();
-    assert!(!accepted(&world, "AtMostMax", &forged));
+    assert_eq!(
+        rejected_rule(&world, "AtMostMax", &forged),
+        ProbabilityCertificateRule::InequalityFails
+    );
 }
 
 /// A product of given draws above the edge limit is refused before any draw

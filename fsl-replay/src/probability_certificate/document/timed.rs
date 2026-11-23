@@ -3522,8 +3522,9 @@ fn digital_workload_choices(
     // its window after the given delay is drawn, so a row is one drawn vector
     // of the given delays with its options (one per assignment of the free
     // delays). The action that picks option `a(g)` at each row `g` is one
-    // scheduler choice, and its value factors by row (`Σ_g P(g) opt_a Q(g, a)`); the options of a row
-    // that are the same distribution are one option.
+    // scheduler choice, and its value factors by row
+    // (`Σ_g P(g) opt_a Q(g, a)`); the options of a row that are the same
+    // distribution are one option.
     let mut per_draw: Vec<Vec<Vec<ProbabilityEdge>>> = Vec::new();
     for (draws, share) in &joint {
         let draw = draws

@@ -40,3 +40,15 @@ FR-204.
 - Semantic review: skipped (not opted in). Intent was checked manually for the changed function only.
 - Tests were not executed. Host load limits allowed at most one focused cargo test, and it was not essential: it is deferred to the aggregate gate.
 - Plan completion: not assessed
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-002 | low | AC-19's `Pair` is realised with one `Call` object and `fire(which: Boolean)` (F1 = which true, F2 = which false), not the spec's two-object `Node` population with `n1.hit`. The divide-by-identity-count rule is keyed on the operation name, so the rule under test is preserved. But AC-19's literal model is not exercised, and the coder reports a two-object population fails the claim's `over` binding. If that is confirmed, it is a tool or spec gap and needs a ticket (or a citation of QSL-2979 if that covers it). | fsl-analyze/tests/it/digital_clocks.rs:1963-2045, spec/functional/FR-204-check-probabilistic-timed-automata-through-digital-clocks.md:254 |
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | Spec PR #3594 merged FR-204-AC-18/19/20 (TC-3204/3205/3206). Tagged tests `given_delays_race_under_unequal_weights`, `operation_weight_is_shared_among_tied_identities` and `tied_operations_are_ordered_without_replacement` assert the merged numbers and rejections. |

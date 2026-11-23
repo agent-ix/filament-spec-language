@@ -547,6 +547,7 @@ fn one_workload(declarations: &str) -> World {
 fn discrete_delays_under_a_workload_are_a_chain() {
     let world = one_workload("delay M::Call::send ~ discrete { 1 ms: 1, 2 ms: 1 };\n");
     let built = product(&world, "Under");
+    assert_eq!(built.kind, ProductKind::Dtmc);
     assert_eq!(
         initial_value(&built, Bound::AtLeast(ratio(99, 100))),
         ratio(159_129, 160_000)
@@ -2027,11 +2028,17 @@ fn operation_weight_is_shared_among_tied_identities() {
     let start = built.initial[0].2;
     let mut edges: Vec<(u64, Rational)> = Vec::new();
     for edge in built.edges.iter().filter(|edge| edge.from == start) {
-        assert!(
-            matches!(edge.choice, ProductAction::Identity(_)),
-            "a race edge is an identity: {:?}",
-            edge.choice
-        );
+        let ProductAction::Identity(identity) = &edge.choice else {
+            panic!("a race edge is Identity(G) only: {:?}", edge.choice);
+        };
+        let name = world
+            .system()
+            .operations()
+            .into_iter()
+            .find(|(_, _, text)| *text == identity.operation.as_str())
+            .map(|(_, name, _)| name.to_owned())
+            .expect("a model operation");
+        assert_eq!(name, "G");
         let (clocks, _) = digital_clocks_of(&built.states[edge.to.index()]);
         edges.push((clocks[0], edge.probability.clone()));
     }
