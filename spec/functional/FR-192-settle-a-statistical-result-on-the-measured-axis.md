@@ -57,6 +57,7 @@ counts none of the three as proved.
 //   Measured(StatisticalVerdict)
 pub struct StatisticalVerdict {
     pub decision: Decision,                 // FR-189
+    pub bound: StatisticalBound,            // FR-413 bound object judged for this item
     pub estimate: Option<Rational>,         // the least favourable test's (FR-189); None when it has none
     pub interval: Option<(Rational, Rational)>,
     pub quantile: Option<MeasureValue>,     // the least favourable test's (FR-189); a quantile claim's nearest-rank quantile; None for every other form
@@ -65,6 +66,7 @@ pub struct StatisticalVerdict {
     pub tests: Vec<TestResult>,             // FR-189
     pub witnesses: Vec<SampledWitness>,     // FR-193
 }
+pub struct StatisticalBound { pub r#type: String, pub comparison: Comparison, pub threshold: Rational }
 pub struct StatisticalBasis {
     pub method: StatisticalMethod,
     pub confidence: Confidence,             // the claim's α, β, ι
@@ -100,6 +102,7 @@ pub enum Coverage { FiniteSample, Asymptotic }
 | `Completed`, Rejected | `measured` | `completed` | `rejected` | `Measured{decision: Rejected, …}` | violation |
 | `Completed`, Rejected by a test whose `undefined` is set | `measured` | `completed` | `rejected`, cause `UndefinedEvaluation{where, cause}` | `Measured{decision: Rejected, …}` | violation |
 | `Completed`, Undecided | `measured` | `completed` | `undecided` | `Measured{decision: Undecided(cause), …}` | inconclusive |
+| `Stopped` by a fixed-N preflight limit | `incomplete` | `limit-reached{limit, value, setting, required}` where `required` is N | none | `Incomplete(LimitReached{limit, value, setting, required: Some(N)})` | incomplete |
 | `Stopped` by a limit | `incomplete` | `limit-reached{limit, value, setting}` | none | `Incomplete(LimitReached{limit, value, setting})` (ADR-018 V-7) | incomplete |
 | `Stopped` by `AutomatonStates{value}` | `incomplete` | `limit-reached{limit: max_automaton_states, value}` (FR-126 `ResourceExhausted`) | none | `Incomplete(LimitReached{limit, value})` (ADR-018 V-7) | incomplete |
 | `Stopped` by a sample expansion (`Expansion(ExpansionStop)`) that names a limit (`EvaluationMeter` or `MaxCandidates`, FR-126) | `incomplete` | `limit-reached{limit, value, setting}`, written as FR-203 writes the same stop for EN-5 (FR-255 Behavior 9, FSpec FR-461 Behavior 6): for an `EvaluationMeter` stop, `limit` the `filament.value.accounting/v1` name of the counter the stop names as exhausted (FR-120: an `EvaluationMeter` stop carries that counter), `value` that counter's configured bound in the request's evaluation meter budget, and `setting` that counter's FR-255 accounting setting name; for a `MaxCandidates` stop, `limit` `max_candidates`, `value` the request's `max_candidates` and `setting` `expansion.max_candidates`, its FR-255 engine-table setting. `EvaluationMeter` and `MaxCandidates` are the stop's labels and are not written as `limit`. The map receives the configured bounds with the outcome, because the stop carries its cause, its limit and, for the meter, the counter, but no bound. No setting is spelled `meter` or bare `max_candidates`: the setting is the name the settings operation and a replay request accept to raise the bound | none | `Incomplete(LimitReached{limit, value, setting})` (ADR-018 V-7) | incomplete |
@@ -127,6 +130,20 @@ pub enum Coverage { FiniteSample, Asymptotic }
   least favourable test's (FR-189). `interval` SHALL be present for Okamoto, Clopper–Pearson and
   the regenerative method and absent for SPRT. `coverage` SHALL be
   `Asymptotic` for the regenerative method and `FiniteSample` otherwise.
+- Every `Measured` verdict SHALL carry the FR-413 `bound` object, with
+  its exact claim-bound `type`, comparison `greater-or-equal` or
+  `less-or-equal`, and the exact rational claim threshold in the same type
+  and spelling as FSpec FR-413 `ProbabilisticCounterexample.bound`, regardless of whether
+  its decision is accepted, rejected or undecided. The result reader SHALL
+  verify it against the checked claim. An incomplete fixed-N preflight result
+  SHALL include `required: N` in the `limit-reached` diagnostic alongside the
+  limit, configured value and setting; ordinary stop-at-limit results SHALL
+  omit `required`. Its partial basis SHALL contain zero `samples`
+  and `draws` in aggregate across tests. For stop-at-limit methods, the
+  partial basis SHALL report aggregate counted samples/cycles and physical
+  draws/steps; a drawn
+  undefined sample increments `draws`, not `samples`, and its test result
+  records `UndefinedEvaluation` as FR-189 specifies.
 - `quantile` SHALL be the least favourable test's `quantile` (FR-189): the
   empirical nearest-rank quantile of a quantile claim's counted samples, or
   `Censored` when its rank lies among the censored samples, and absent for
@@ -144,13 +161,14 @@ pub enum Coverage { FiniteSample, Asymptotic }
 | ID | Criteria | Verification |
 |----|----------|--------------|
 | FR-192-AC-1 | Each outcome row maps exactly as the table states: an Accepted, a Rejected and an Undecided (`IndifferenceRegion`) `Completed` outcome; a `Stopped` naming `max_samples`, settling `Incomplete(LimitReached{limit, value, setting})` with setting `statistical.max_samples`; an `Unsupported` outcome with cause `NotMarkov`; a `NoTest` refusal settling `inconclusive`, `no-initial-state`; a `ConfidenceBeyondPrecision` refusal settling `unsupported`, `confidence-beyond-precision`; an `Internal` refusal settling `failed`; a `Stopped` by an expansion naming `EvaluationMeter` with exhausted counter `work_units`, under a meter budget whose `work_units` is 4096, settling `incomplete`, `limit-reached` with limit `work_units`, value 4096 and setting the `work_units` counter's FR-255 accounting setting name, and one naming `value_occurrences` under a budget whose `value_occurrences` is 7 settling with limit `value_occurrences`, value 7 and that counter's setting name, and one naming `MaxCandidates` under `max_candidates` 2 settling with limit `max_candidates`, value 2 and setting `expansion.max_candidates`, each equal to the record FR-203 writes for the same stop (each the name FR-255 registers for it, which the settings operation accepts to raise that bound; no setting `meter` and no bare `max_candidates`), one by an internal-failure expansion naming no limit settling `failed`, `runtime_invariant`/`established-invariant-broken`, and one by a non-internal expansion naming no limit settling `failed` with the stop's own `ExpansionStop.cause` (FSL FR-120) as its one diagnostic. None of the measured, stopped and unsupported records carries an FR-242 truth or an FR-243 basis. | Test (TC-627) |
-| FR-192-AC-2 | FR-189-AC-1's Okamoto result at `5 ms` settles `measured`, `accepted`, with `interval` present, `coverage: FiniteSample`, `samples = 23,026`, `tests = 1`, `alpha_per_test = 1/100`; the SPRT result at `2 ms` settles `measured`, `rejected` with no `interval`; FR-190-AC-1's result settles `accepted` with `coverage: Asymptotic`. | Test (TC-627) |
+| FR-192-AC-2 | FR-189-AC-1's Okamoto result at `5 ms` settles `measured`, `accepted`, with `bound` matching the claim, `interval` present, `coverage: FiniteSample`, `samples = 23,026`, `tests = 1`, `alpha_per_test = 1/100`; the SPRT result at `2 ms` settles `measured`, `rejected` with its matching `bound` and no `interval`; FR-190-AC-1's result settles `accepted` with its matching `bound` and `coverage: Asymptotic`. | Test (TC-627) |
 | FR-192-AC-3 | A request with `P95` accepted and the `2 ms` claim rejected fails the pipeline gate with the same status as a request holding one O-16 violation; the same request without the rejected item passes. Its proof summary counts 0 proved items. | Test (TC-627) |
 | FR-192-AC-4 | EN-4's manifest is the one FR-280-AC-4 fixes. EN-4's gate given a checked claim `under every scheduler` refuses `EveryScheduler`; given `NoFault` with no confidence parameters refuses `MissingConfidence`; given `expected accumulate duration until holds(c.phase = Replied)` refuses `ExactOnlyForm`; each draws no sample and settles `unsupported` with its cause. | Test (TC-627) |
 | FR-192-AC-5 | FR-189-AC-6's result settles `measured`, `rejected`, category violation, with the test's `UndefinedEvaluation` in the record, and fails the pipeline gate as a violation does. | Test (TC-640) |
 | FR-192-AC-6 | A quantile claim's verdict over two tests whose least favourable test (FR-189-AC-10) has `quantile` `Value(2)` carries `Value(2)`, and one whose least favourable test has `Censored` carries `Censored`. A quantile claim whose least favourable test has no estimate carries no `quantile`. The verdicts of `P95`, a mean of a fraction and `LongRun` carry no `quantile`. For `quantile 1/2 of (M) >= 3` over tests with estimates `2/5` and `9/20` the verdict's `estimate` is `9/20`, the value of `Pr(M < 3 \| activated)`. | Test (TC-627) |
 | FR-192-AC-7 | EN-4 settles `PredicateRefused` as EN-5 does (FR-203): a sampled predicate refused `integer_out_of_domain`/`outside-domain` settles `failed` with that diagnostic; a predicate read whose meter charge is the first one denied settles `incomplete`, `limit-reached` naming the exhausted counter and its bound by FR-255 Behavior 9's rule; a constructed `PredicateRefused(NotBoolean)` and `PredicateRefused(KernelRefused(CheckedInvariant))` settle `failed`, `runtime_invariant`/`established-invariant-broken`; an `Admission` failure and a `RequiresBound` refusal still return no terminal result. | Test (TC-1166) |
 | FR-192-AC-8 | FR-120-AC-35's cumulative EN-4 work stop settles `Incomplete(LimitReached{work_units, B, accounting.work_units})`, equal to FR-203's settlement of the same typed stop and configured bound. A local `MaxCandidates` stop retains `max_candidates`, its local bound and `expansion.max_candidates`; cancellation retains its existing cancelled cause. No stop carries truth, a measured decision, or a replacement bare `meter` setting. | Test |
+| FR-192-AC-9 | Fixed-N Okamoto or Clopper–Pearson preflight stops settle `incomplete` with `limit-reached{limit, value, setting, required}` where `required` is N; the partial basis reports zero samples and draws. SPRT and regenerative stop-at-limit outcomes retain their partial counts, with an undefined sample counted in `draws` and excluded from `samples`. Each measured accepted, rejected and undecided verdict carries the checked claim's `bound`; a missing, malformed or mismatched bound is refused by the result reader. | Test (TC-627) |
 
 ## Dependencies
 

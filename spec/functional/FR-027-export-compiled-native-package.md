@@ -17,6 +17,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-640
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-1047
+    type: references
 ---
 ## Description
 
@@ -140,7 +142,7 @@ toward FR-026's shared 64-selected-file ceiling under the file category
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
-| FR-027-AC-2 | Through `command` in process, a directory containing only the selected `1-draft` sources and their compile request compiles, exit code 0. A native-run/1 request given to `compile` refuses `unknown_wire` at the envelope stage; a native-compile/1 request carrying `snapshots`, `invocations`, `selection` or `package` refuses `invalid-request` at the request stage, exit code 20, with no package bytes, without reading a model or runtime file. | Test (TC-105) |
+| FR-027-AC-2 | Through `command` in process, a directory containing only the selected `1-draft` sources and their compile request compiles, exit code 0. A native-run/1 request given to `compile` refuses `invalid-request` at the request stage, exit code 20, as FR-1047 states; a native-compile/1 request carrying `snapshots`, `invocations`, `selection` or `package` refuses `invalid-request` at the request stage, exit code 20, with no package bytes, without reading a model or runtime file. | Test (TC-105) |
 | FR-027-AC-3 | Through `command` in process, for a `1-draft` request, a missing source file returns its original I/O code and malformed syntax returns its original code in an outcome with no package bytes; a program source without `identity`, and one without `authority`, refuses `invalid-request`, exit code 20; request and dependent files past the fixed `request_bytes` or `dependent_bytes` ceiling refuse naming the setting and its maximum, with no package bytes or option hint; no call writes a byte to stdout or stderr. | Test (TC-105) |
 | FR-027-AC-5 | A native-compile/1 request whose program source declares `edition "1-draft"` and holds a record, an Integer function and a function with parameters writes exactly the bytes the FR-278 composition returns for that source, and FSL's I2 reader reads those bytes back Verified with no node omitted. Two such requests that differ only in the program's `document` and `formal_revision` write identical bytes. | Test (TC-435) |
 | FR-027-AC-7 | A program source declaring `edition "0-draft"`, the same source in a request carrying a library and `refinement_internals`, and a source declaring `edition "7-draft"` each refuse with `unknown_edition` at stage `profile`, exit code 20, no package bytes, and a message naming the file and the edition. A source with no header refuses `invalid_syntax` and one declaring `language "ix:other"` refuses `unknown_language`, each at stage `source`, exit code 20, no package bytes. A `1-draft` request selecting native rule models or clause bindings refuses with `invalid-request`, exit code 20, whatever state the model files are in. | Test (TC-435) |
@@ -162,3 +164,4 @@ toward FR-026's shared 64-selected-file ceiling under the file category
 - [FR-278](FR-278-parse-select-check-and-package-as-library-operations.md): the library operations the command encodes.
 - [FR-285](FR-285-map-every-outcome-category-to-one-exit-code.md): the exit function.
 - [FR-287](FR-287-reach-fsl-through-the-driver-cli.md): the driver CLI.
+- [FR-1047](FR-1047-name-every-request-defect-and-return-a-request-example.md): the refusal of a format `compile` does not read and of missing request members.
