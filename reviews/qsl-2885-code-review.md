@@ -108,9 +108,21 @@ scratch test in that worktree, reverted (tree clean after).
 | FND-015 | fixed | channel premise pending while the closure is not closed unless violated; assert_every_verdict_only_advances checks every obligation; the two updated expectations follow FR-895 "Pending, never passed" and assert the open/closed premise explicitly |
 | FND-016 | fixed | a_refused_prefix_is_reported_with_its_index and a_refused_prefix_refuses_the_item_naming_the_prefix |
 
-## Dispositions (fix round 4)
+## New findings (disposition pass 4)
 
-| Finding | Disposition |
-| --- | --- |
-| Probe E (`outstanding continue`) | Fixed. A branch counts only when all its steps were observed causally before the step; the join is satisfied when those branches number at least what its policy requires (all, one for `any`/`predicate`, `n` for `quorum(n)`); until then every branch's steps are predecessors. Test `a_branch_finishing_after_an_any_join_does_not_violate_the_step` (FR-895-AC-28): `L, Placed, R` satisfied in batch and from prefix 2, `R, L, Placed` satisfied from prefix 3, the `join all` variant violated. The earlier parallel tests (AC-14, AC-15, AC-25) pass unchanged. |
-| Monotonicity helper pairing | Fixed. Obligations are compared per id as a multiset (violated count and decided count never fall); `the_monotonicity_check_covers_every_occurrence_of_a_repeated_step` shows the check fails when a second occurrence of a repeated step goes back to `pending`. |
+Head 85749210aba10853d84649ae5908e68c6b036b50. Titan: `--test it` filter 90 passed, 0 failed, 0 ignored; `--lib a_refused_prefix`
+2 passed. Probes (scratch, reverted): `join any` under `outstanding continue` and `outstanding cancel` with `L`, `Placed`, `R`;
+`Placed`, `L` open.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-019 | medium | Under `join any ... outstanding cancel`, `L`, `Placed`, `R` leaves every enabledness obligation `satisfied` (probe): `R` stepped after its branch was cancelled, which ADR-027 ST-7 forbids ("takes no further step"), but no obligation reports it. False negative only; FR-895 has no rule for cancelled branches, so this needs an arch ruling first | fsl-analyze/src/protocol_analysis/recording.rs:4008-4070 |
+| FND-020 | medium | A `predicate` join is treated as needing one completed branch. A predicate over the disposition map may need a specific branch, several, or none; with a predicate true at zero completions and `outstanding continue`, a legitimate step before any branch finishes would be `violated`. Not reproduced (no predicate fixture); rule 5 states the same approximation | fsl-analyze/src/protocol_analysis/recording.rs:4035 |
+| FND-021 | low | The per-id multiset check can be masked by a new occurrence: prefix k `[Placed#1 satisfied]`, prefix k+1 `[Placed#1 pending, Placed#2 satisfied]` keeps decided = 1 and passes. Pairing by the original observation index through the prefix renumbering would close it. Sound otherwise and not vacuous (the new unit test shows both failure modes) | fsl-analyze/tests/it/protocol_replay_mode.rs:1338-1365 |
+
+## Dispositions (round 4)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-017 | fixed | a branch counts only when all its steps were observed causally before the step, and until the join policy is reached every branch's steps are predecessors; L, Placed, R under continue gives Placed satisfied (probe and AC-28 test); pending then violated for a late-only branch, no reversal |
+| FND-018 | fixed | per-id multiset of violated and decided counts; the_monotonicity_check_covers_every_occurrence_of_a_repeated_step; residual masking is FND-021 |

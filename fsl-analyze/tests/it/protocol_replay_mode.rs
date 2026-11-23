@@ -1310,7 +1310,7 @@ fn incremental_prefixes_follow_causal_order_so_a_verdict_never_returns_to_pendin
         [None, None, None, None, None, None, Some("satisfied")],
         "{item}"
     );
-    assert_every_verdict_only_advances(prefixes);
+    assert_every_verdict_only_advances(prefixes, &[0, 1, 2, 4, 5, 6, 3]);
     for prefix in &prefixes[..6] {
         for channel in prefix["obligations"]
             .as_array()
@@ -1331,29 +1331,57 @@ fn incremental_prefixes_follow_causal_order_so_a_verdict_never_returns_to_pendin
 /// next prefix: `pending` becomes a decision, `satisfied` may become
 /// `violated`, nothing leaves `violated` and nothing returns to `pending`.
 ///
-/// Obligations of repeated steps share one id, and a prefix may add an
-/// observation anywhere in the array, so obligations are compared per id as
-/// a multiset: the number of `violated` verdicts and the number of decided
-/// verdicts under one id never fall from one prefix to the next.
-fn assert_every_verdict_only_advances(prefixes: &[Value]) {
-    let tally = |prefix: &Value| {
+/// `order` lists the recording's observation indices in causal order, so
+/// prefix `k` holds `order[..k]` renumbered by array position. An
+/// enabledness obligation is paired across prefixes by its observation's
+/// original index, so repeated steps (which share one id) are each checked
+/// and a regression cannot be masked by another occurrence becoming decided;
+/// every other obligation is compared per id as a multiset.
+fn assert_every_verdict_only_advances(prefixes: &[Value], order: &[usize]) {
+    let original = |prefix: usize, local: u64| -> usize {
+        let mut kept = order[..=prefix].to_vec();
+        kept.sort_unstable();
+        kept[usize::try_from(local).expect("a local index")]
+    };
+    // (id, original index of an enabledness observation) to its verdict.
+    let keyed = |prefix: usize| {
+        let mut verdicts = std::collections::BTreeMap::new();
         let mut tally: std::collections::BTreeMap<String, (usize, usize)> =
             std::collections::BTreeMap::new();
-        for entry in prefix["obligations"].as_array().expect("obligations") {
-            let counts = tally.entry(entry["obligation"].to_string()).or_default();
-            if entry["verdict"] == "violated" {
-                counts.0 += 1;
-            }
-            if entry["verdict"] != "pending" {
-                counts.1 += 1;
+        for entry in prefixes[prefix]["obligations"]
+            .as_array()
+            .expect("obligations")
+        {
+            let id = entry["obligation"].to_string();
+            let verdict = entry["verdict"].as_str().expect("a verdict").to_owned();
+            if entry["obligation"]["kind"] == "enabledness" {
+                let local = entry["witness"][0].as_u64().expect("the observation");
+                verdicts.insert((id, original(prefix, local)), verdict);
+            } else {
+                let counts = tally.entry(id).or_default();
+                counts.0 += usize::from(verdict == "violated");
+                counts.1 += usize::from(verdict != "pending");
             }
         }
-        tally
+        (verdicts, tally)
     };
-    for pair in prefixes.windows(2) {
-        let (before, after) = (tally(&pair[0]), tally(&pair[1]));
-        for (id, (violated, decided)) in &before {
-            let Some((next_violated, next_decided)) = after.get(id) else {
+    for step in 0..prefixes.len().saturating_sub(1) {
+        let ((before, before_tally), (after, after_tally)) = (keyed(step), keyed(step + 1));
+        for (key, was) in &before {
+            let Some(now) = after.get(key) else {
+                continue;
+            };
+            assert!(
+                was != "violated" || now == "violated",
+                "{key:?}: {was} became {now}"
+            );
+            assert!(
+                was != "satisfied" || now != "pending",
+                "{key:?}: {was} became {now}"
+            );
+        }
+        for (id, (violated, decided)) in &before_tally {
+            let Some((next_violated, next_decided)) = after_tally.get(id) else {
                 continue;
             };
             assert!(
@@ -1364,40 +1392,43 @@ fn assert_every_verdict_only_advances(prefixes: &[Value]) {
     }
 }
 
-/// The helper fails a repeated step whose second obligation, sharing the
-/// first's id, goes back to `pending` while the first stays decided.
+/// The helper pairs the occurrences of a repeated step by observation: a
+/// regressed occurrence is caught even when another occurrence of the same id
+/// becomes decided in the same prefix and keeps the counts equal.
 #[test]
-fn the_monotonicity_check_covers_every_occurrence_of_a_repeated_step() {
+fn the_monotonicity_check_pairs_occurrences_of_a_repeated_step_by_observation() {
     let id = json!({"kind": "enabledness", "node": "Flow::Main::Placed", "instance": "w-1"});
-    let prefix = |first: &str, second: &str| {
-        json!({"obligations": [
-            {"obligation": id, "verdict": first},
-            {"obligation": id, "verdict": second},
-        ]})
-    };
-    assert_every_verdict_only_advances(&[
-        prefix("satisfied", "pending"),
-        prefix("satisfied", "satisfied"),
-    ]);
-    let regressed = std::panic::catch_unwind(|| {
-        assert_every_verdict_only_advances(&[
-            prefix("satisfied", "satisfied"),
-            prefix("satisfied", "pending"),
-        ]);
+    let first = |verdict: &str| json!({"obligation": id, "verdict": verdict, "witness": [0]});
+    let second = |verdict: &str| json!({"obligation": id, "verdict": verdict, "witness": [1]});
+    let advancing = [
+        json!({"obligations": [first("satisfied")]}),
+        json!({"obligations": [first("satisfied"), second("pending")]}),
+        json!({"obligations": [first("satisfied"), second("violated")]}),
+    ];
+    assert_every_verdict_only_advances(&advancing, &[0, 1, 2]);
+    let masked = std::panic::catch_unwind(|| {
+        let masked = [
+            json!({"obligations": [first("violated")]}),
+            json!({"obligations": [first("violated"), second("pending")]}),
+            json!({"obligations": [first("satisfied"), second("violated")]}),
+        ];
+        assert_every_verdict_only_advances(&masked, &[0, 1, 2]);
     });
     assert!(
-        regressed.is_err(),
-        "a second occurrence going pending fails"
+        masked.is_err(),
+        "a violated first occurrence turning satisfied is not masked by the second"
     );
-    let reopened = std::panic::catch_unwind(|| {
-        assert_every_verdict_only_advances(&[
-            prefix("violated", "pending"),
-            prefix("satisfied", "pending"),
-        ]);
+    let went_back = std::panic::catch_unwind(|| {
+        let went_back = [
+            json!({"obligations": [first("satisfied")]}),
+            json!({"obligations": [first("satisfied"), second("satisfied")]}),
+            json!({"obligations": [first("satisfied"), second("pending")]}),
+        ];
+        assert_every_verdict_only_advances(&went_back, &[0, 1, 2]);
     });
     assert!(
-        reopened.is_err(),
-        "a violated occurrence leaving violated fails"
+        went_back.is_err(),
+        "a second occurrence going pending fails"
     );
 }
 
@@ -1464,7 +1495,7 @@ fn a_branch_finishing_after_an_any_join_does_not_violate_the_step() {
         [None, Some("satisfied"), Some("satisfied")],
         "{late}"
     );
-    assert_every_verdict_only_advances(prefixes);
+    assert_every_verdict_only_advances(prefixes, &[0, 1, 2]);
     assert_enabled(
         &source,
         &parallel_recording(json!([left(), placed(), right()])),
@@ -1483,7 +1514,7 @@ fn a_branch_finishing_after_an_any_join_does_not_violate_the_step() {
         [None, None, Some("satisfied")],
         "{early}"
     );
-    assert_every_verdict_only_advances(prefixes);
+    assert_every_verdict_only_advances(prefixes, &[0, 1, 2]);
 
     assert_unexpected(
         &parallel_protocol(),
@@ -1542,7 +1573,7 @@ fn an_iteration_begun_concurrently_with_the_step_does_not_reopen_it() {
         ],
         "{item}"
     );
-    assert_every_verdict_only_advances(prefixes);
+    assert_every_verdict_only_advances(prefixes, &[0, 1, 2, 4, 5, 6, 3, 7]);
     assert_eq!(prefixes[7]["obligations"], item["obligations"], "{item}");
 }
 

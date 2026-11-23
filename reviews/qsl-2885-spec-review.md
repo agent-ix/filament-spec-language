@@ -61,6 +61,14 @@ predecessors. An `exhausted` step has as predecessors the steps of the last iter
 | FND-005 | fixed | rules 10 and 12: last iteration begun causally before the step; a concurrently begun iteration is judged on its own steps; rule 17 at once |
 | FND-006 | fixed | 18 numbered rules, one SHALL each; FR-896-AC-6 now states the refused-prefix criterion |
 
-## Dispositions (fix round 4)
+## New findings (disposition pass 3)
 
-FND-007: fixed. Rule 5 states the branches counted are those observed causally before the step, the join policy's requirement, and that a branch finishing after the join is not a predecessor (ADR-027 ST-7); FR-895-AC-28.
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-008 | medium | Rule 5 gives `predicate` joins the threshold one, and no rule covers `outstanding cancel`: a step of a cancelled branch after the join is never an obligation failure (SR-3595001 FND-019, FND-020). Proposed: a `predicate` join is reached when its function is true over the dispositions of the branches completed causally before the step; under `outstanding cancel` an observation of a cancelled branch causally after the join step is `violated`, cause `unexpected` | spec/functional/FR-895-assess-a-recorded-protocol-execution-against-its-obligations.md:140-145 |
+
+## Dispositions (round 3)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-007 | fixed | rule 5 now counts branches observed causally before the step up to the policy threshold, excludes branches finishing after the join under outstanding continue, and needs every branch until reached; AC-28 |
