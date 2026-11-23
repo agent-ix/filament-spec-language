@@ -124,12 +124,18 @@ The `Emission` that carries the plan-root bytes SHALL carry, from the same
 acquisition the package was emitted from, every witness row the emitter
 retains for the package: the selected model declaration and field rows, the
 source-unit rows, the model enum and source enum declaration and member rows,
-the source union rows, the source record rows, the tuple declaration rows, the operation-member rows, the equality producer and fact
-rows, the temporal binding rows and the omitted nodes. The plan-root writer
-SHALL re-key every node id each of those rows holds through the renames it
-performs and SHALL NOT write a row anew, so a consumer authenticates the
-selected generated closure against the rows of the acquisition and never
-invents them or acquires the unit a second time.
+the source union rows, the source record rows, the tuple declaration rows, the
+operation-member rows, the equality producer and fact rows, the temporal
+binding rows, `requirement_items`, `path_condition_frames`, value-validity
+record nodes and the omitted nodes. The plan-root writer SHALL re-key every
+node id held by those rows, including each frame's guard occurrence, through
+the renames it performs and SHALL NOT write a row anew. It SHALL preserve the
+shared parent links, re-establish canonical frame order if an owner-key rename
+changes that order, and remap each record's terminal frame id and identity
+path through the same frame-id map. It SHALL NOT expand a shared chain into
+per-record guard vectors. A consumer therefore authenticates the selected
+generated closure against the rows of the acquisition and never invents them
+or acquires the unit a second time.
 
 The plan's subject names the clause it monitors by the clause's checked node
 identity and its claim occurrence. The selection route is the `Emission`'s
@@ -757,6 +763,7 @@ may repair such a disagreement by inventing another evaluation rule.
 | FR-251-AC-52 | Over the ConfigVersion model subject (`over (c: M::ConfigVersion)`) under the event-position profile with `clock "model-steps"`, the clause `on each (q: M::ConfigVersion) { holds(c.versionNumber = 2) implies eventually[0, 3] holds(c.versionNumber = 3) }` is planned with a `MonitorTarget` of unit `step`, uncertainty 0 and rate 1, never refused `NotTimedClause`: its one interval is `[0, 3]` with no unit conversion and its buffer capacity is 5 (`ceil(1 x (3 + 1)) + 1`). The same body written with an outer `always` and no `on each` activation is refused at S3 `unsupported_construct`/`expression-form` at `always`'s span (FR-326-AC-1), so no plan is asked for. | Test (TC-2385) |
 | FR-251-AC-53 | The clause of AC-52 under the fixed-sample profile with `clock "model-steps"` is planned with the same interval and capacity. Under the infinite-trace profile, `on each (q: M::ConfigVersion) { holds(c.versionNumber = 2) implies eventually holds(c.versionNumber = 3) }` is planned with one unbounded `eventually` instance per activation counted against the activation capacity, and `on origin { always (holds(c.versionNumber = 2) implies eventually holds(c.versionNumber = 3)) }` is planned as FR-251-AC-35 plans an unbounded operator, keeping no history buffer; each is never refused `NotTimedClause`. | Test (TC-2386) |
 | FR-251-AC-54 | A position-counted reading is exact: under the infinite-trace profile with `p` true at position 0, the generated monitor entries for `once[3,*] holds(p)` give `indeterminate` at position 2 and `true` at position 3, and `eventually[2,*] holds(p)` from an origin at position 0 is discharged `true` by `p` at position 2; under the event-position profile, AC-52's `eventually[0, 3]` with `c.versionNumber = 3` first at step 3 after an activation at step 0 settles `true` at step 3, not `indeterminate`; in each case the monitor verdict equals the batch evaluator's at the same position, and the plan's retention and capacity are those of AC-52 and FR-943-AC-3. | Test (TC-2968) |
+| FR-251-AC-55 | A monitor plan over a checked package whose owner has guarded value-validity records yields an `Emission` retaining the requirement rows and shared frame table. The plan-root writer renames the owner and a guard node, remaps the changed guard node id and any reordered frame ids/parents, and writes each record's body and identity path with the remapped terminal id. The admitted package's independently derived path views equal the original chains and contain no expanded per-record vectors. | Test (TC-1081) |
 
 ## Dependencies
 
