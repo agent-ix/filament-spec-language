@@ -333,7 +333,7 @@ fn a_step_argument_naming_an_unmapped_type_is_undetermined_at_the_argument() {
         undetermined.row,
         MappingRowRef::Argument {
             operation: key(RING, "Slot/put"),
-            argument: StepArgument::Parameter(2),
+            argument: StepArgument::Parameter(1),
         }
     );
 }
