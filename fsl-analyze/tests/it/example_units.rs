@@ -662,6 +662,9 @@ fn the_model_only_pass_finds_the_undefined_letter_a_dead_automaton_leaves() {
 
 /// FR-126-AC-14: with `a` at 0 and `b` at 1, the AC-12 claim is bound to the
 /// first binding `a` at position 2, despite the shallower finding for `b`.
+/// The same holds for a claim with an atom undefined at version 2
+/// (`always eventually holds(6 mod (2 - c.versionNumber) >= 0)`) over
+/// versions (0, 1) and (0, 2); a budget too small to decide `a` stops the run.
 #[trace("TC-1085", "FR-126-AC-14")]
 #[test]
 fn the_first_binding_wins_over_a_later_shallower_finding() {
@@ -678,6 +681,25 @@ fn the_first_binding_wins_over_a_later_shallower_finding() {
         ['a', 'a']
     );
     assert_eq!(undefined_at(counterexample).0, 2);
+    {
+        const CLAIM: &str = "always eventually holds(6 mod (2 - c.versionNumber) >= 0)";
+        for versions in [(0, 1), (0, 2)] {
+            let world = config_over(false, WHOLE, CLAIM, versions);
+            let letters = Versions::new(&world, vec![mod_is_defined]);
+            let outcome = with_limits(&world, &letters, ModelCheckLimits::default());
+            let counterexample = violated(&outcome);
+            assert_eq!(bound(counterexample), "a", "{versions:?}");
+            assert_eq!(undefined_at(counterexample).0, 2, "{versions:?}");
+        }
+        let world = config_over(false, WHOLE, CLAIM, (0, 1));
+        let letters = Versions::new(&world, vec![mod_is_defined]);
+        let mut limits = ModelCheckLimits::default();
+        limits.limits.max_transitions = 1;
+        assert!(matches!(
+            with_limits(&world, &letters, limits),
+            Ok(ModelCheckOutcome::Stopped { .. })
+        ));
+    }
 }
 
 /// FR-126-AC-15: the engine decides `a` before evaluating `b`. A budget too
@@ -793,34 +815,4 @@ fn a_later_binding_is_not_evaluated_or_cancelled_after_the_first_refutes() {
     assert_eq!(bound(counterexample), "a");
     assert_eq!(undefined_at(counterexample).0, 2);
     assert!(!later_was_read.get());
-}
-
-/// FR-126-AC-1's claim with an atom undefined at version 2
-/// (`always eventually holds(6 mod (2 - c.versionNumber) >= 0)`): a later
-/// binding's shallower finding does not outrank the first binding. A budget
-/// too small to decide `a` stops the run; once sufficient, the result is
-/// `a`'s finding.
-#[trace("TC-1085")]
-#[test]
-fn the_first_binding_wins_over_a_later_shallower_finding() {
-    const CLAIM: &str = "always eventually holds(6 mod (2 - c.versionNumber) >= 0)";
-    for versions in [(0, 1), (0, 2)] {
-        let world = config_over(false, WHOLE, CLAIM, versions);
-        let letters = Versions::new(&world, vec![mod_is_defined]);
-        let counterexample = violated(&with_limits(
-            &world,
-            &letters,
-            ModelCheckLimits::default(),
-        ));
-        assert_eq!(bound(counterexample), "a", "{versions:?}");
-        assert_eq!(undefined_at(counterexample).0, 2, "{versions:?}");
-    }
-    let world = config_over(false, WHOLE, CLAIM, (0, 1));
-    let letters = Versions::new(&world, vec![mod_is_defined]);
-    let mut limits = ModelCheckLimits::default();
-    limits.limits.max_transitions = 1;
-    assert!(matches!(
-        with_limits(&world, &letters, limits),
-        Ok(ModelCheckOutcome::Stopped { .. })
-    ));
 }
