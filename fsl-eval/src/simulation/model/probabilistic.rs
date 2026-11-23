@@ -684,6 +684,13 @@ impl ModelSystem<'_> {
                         position,
                     ) {
                         Some(support) => Some(Domain::Listed(support.values())),
+                        // A reward reads no state, so a Clock reference (a place of an
+                        // object) has no domain here and leaves its reward unchecked.
+                        None if !super::domain::clock_reference_paths(value_type, self.types)
+                            .is_empty() =>
+                        {
+                            None
+                        }
                         None => Domain::of(value_type, &[], self.types, &self.record_orders),
                     }
                 })

@@ -493,22 +493,45 @@ This contract applies FSpec FR-415's clock-place and cardinality rules and
 `scalar_type`/`clock_reference` and `filament.op.clock_reference.ref` from
 FSpec FR-829, using FR-230's canonical `place/v2` identity.
 
-> Implementation boundary (QSL-2178 STEP1): the admission requirement above
-> and AC-72/AC-73 remain unmet. Source and Bare raw snapshot, context,
-> parameter and record-sample admission refuse external Clock references as
+> Implementation state (QSL-2897 part 1): Source raw snapshot admission
+> decodes a transported `place/v2` identity and validates it against the
+> authenticated declaration table, the exact admitted owner population and the
+> original scope. A population or scope that disagrees refuses
+> `invalid_runtime_input`/`invalid-value`; an owner the complete population
+> does not list, or an undeclared place, refuses
+> `dangling_reference`/`absent-target-in-complete-population`; a selector the
+> declared template does not admit (missing, extra, at the wrong path position,
+> or at or above the declared maximum) refuses `invalid_runtime_input`/
+> `invalid-value` (AC-80). An incomplete population tolerates an unlisted
+> owner, with the scope, template and selector checks still applied. Running
+> Source tests prove these refusals and the field and nested `maybe` and
+> `refs` locus for removed-place and scope-disagreement identities; AC-72,
+> AC-73 and AC-76 stay unmet as two-route criteria until Bare passes. The
+> typed Rust `StateModel::observation` and `protocol_observation` interfaces
+> accept only states produced or already admitted within the same model run;
+> handcrafted Clock references are outside that trusted interface contract.
+> Map-keyed Clock-reference identities remain unsupported.
+>
+> The Clock-reference domain is built from the model system's declaration
+> table. A route that carries none (the package route, whose
+> `ModelCheckInput.clock_declarations` is `None`) refuses the domain as
+> `RequiresBound` with an empty slot rather than enumerating admitted seeds
+> alone; a candidate count above `max_candidates`, a declared maximum that is
+> not a machine integer, and an unbounded slot without a derived maximum each
+> refuse typed (`ClockDomainRefusal`). Every enumeration route reads this one
+> candidate set or refuses: field, parameter and result domains, the protocol
+> event, finish, channel, role and compensation record domains, and the
+> enumerability check of a compensation attempt type (a Clock leaf the set
+> cannot supply is reported unenumerable). A model-based value function whose
+> parameter holds a `Reference<Clock>` has no population to range it over and
+> is refused `invalid_model_binding`, never run over absence alone. No route
+> ranges a Clock reference over an empty or partial set.
+>
+> The Bare route is unmet: the Contract IR object-field projection reads no
+> `Reference<Clock>` data member, so Bare admission refuses
 > `unknown_required_feature`/`unsupported-feature`, naming
-> `missing-route-neutral-place-identity`, before interpreting a place ID.
-> The typed Rust `StateModel::observation` and `protocol_observation`
-> interfaces accept only states produced or already admitted within the same
-> model run; handcrafted Clock references are outside that trusted interface
-> contract. They do not authenticate hostile Rust caller values or references
-> transported from another model or run. Route-neutral identity is deferred
-> to STEP2, including map-keyed Clock-reference identities, which remain
-> unsupported. This note does not relax the required admission behavior.
-
-> STEP2 targets also include AC-76/AC-77, FR-1040-AC-9 and FR-230's
-> route-neutral identity criteria. They remain unmet until implementation
-> and acceptance proof; the STEP1 boundary above remains in force.
+> `missing-type-representation`, before any snapshot is read (QSL-2776). The
+> QSL-2776 handoff must supply the package route's declaration table.
 
 > Current STEP2 implementation boundary: the shared object closure cannot
 > retain two explicitly listed populations of the same declared type with
@@ -531,20 +554,15 @@ FSpec FR-829, using FR-230's canonical `place/v2` identity.
 > SourceOwner declaration-path comparison do not establish that missing
 > materialization capability. QSL-2178 retains this named remainder.
 
-> The current foundation does not admit transported Clock DATA on either
-> route. Source raw-value admission refuses
-> `unknown_required_feature`/`unsupported-feature`, naming
-> `missing-route-neutral-place-identity`, before decoding a place ID and
-> retaining the actual document and nested value locus. Bare may refuse
-> earlier with `missing-type-representation`; it does not claim the same
-> admission stage or field locus. This boundary covers raw scalar, present
-> optional and sequence Clock-reference values, not ordinary references or
-> native-Clock timed simulation. The five end-to-end acceptance tests retain
-> their original oracles as explicitly ignored QSL-2178 debt. Stored `self.r`
-> refinement evaluation, raw round-trip, removed-`x` rejection, scope checks
-> and alias-table snapshot admission remain unproved and unmet. Codec,
-> declaration-table, provenance, generated-reference and static readback
-> controls do not establish these end-to-end criteria. QSL-2178 stays open.
+> Source admits transported Clock DATA. Bare refuses it earlier, at
+> `missing-type-representation`, and does not claim the same admission stage
+> or field locus. This covers raw scalar, present optional and sequence
+> Clock-reference values, not ordinary references or native-Clock timed
+> simulation. The five end-to-end acceptance tests stay ignored until the Bare
+> route reads a `Reference<Clock>` data member (QSL-2776).
+> `raw_clock_data_admits_declared_and_refuses_undeclared_identities` exercises
+> Source admission and its dangling and invalid-value refusals at the value
+> locus.
 >
 > The Clock route and declaration-table criteria reviewed as AC-74/AC-75
 > are now AC-76/AC-77. The relationship criteria on the repaired main branch
