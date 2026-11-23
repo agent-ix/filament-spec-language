@@ -835,6 +835,7 @@ impl Row {
                     IncompleteCause::TimedOut
                     | IncompleteCause::Cancelled { .. }
                     | IncompleteCause::ResourceExhausted
+                    | IncompleteCause::PreflightLimit { .. }
                     | IncompleteCause::UnresolvedDynamics
                     | IncompleteCause::CertificateUnchecked
                     | IncompleteCause::PrecisionBudget { .. } => None,

@@ -486,6 +486,9 @@ pub struct ItemCause {
     defect: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     value: Option<u64>,
+    /// A fixed-N statistical preflight stop's required sample count.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    required: Option<u64>,
     /// An `insufficient-data` cause's window count.
     #[serde(skip_serializing_if = "Option::is_none")]
     count: Option<u64>,
@@ -845,6 +848,7 @@ impl ItemCause {
             limit: None,
             defect: None,
             value: None,
+            required: None,
             count: None,
             min_count: None,
             counter: None,
@@ -1431,6 +1435,16 @@ impl OutcomeItem {
                         item.value = Some(*value);
                         item.setting = Some(limit.setting());
                     }
+                    IncompleteCause::PreflightLimit {
+                        limit,
+                        value,
+                        required,
+                    } => {
+                        item.limit = Some(CauseLimit::Name(limit.as_str()));
+                        item.value = Some(*value);
+                        item.setting = Some(limit.setting());
+                        item.required = Some(*required);
+                    }
                     IncompleteCause::PrecisionBudget { lower, upper } => {
                         item.lower = Some((**lower).clone());
                         item.upper = Some((**upper).clone());
@@ -1994,6 +2008,7 @@ fn statistical_verdict_wire(
     let mut value = serde_json::json!({
         "decision": decision,
         "bound": {
+            "type": verdict.bound.form.bound_type(),
             "comparison": verdict.bound.comparison.as_str(),
             "threshold": rational_wire(&verdict.bound.threshold),
         },

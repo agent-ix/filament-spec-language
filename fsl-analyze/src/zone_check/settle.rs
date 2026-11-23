@@ -106,6 +106,7 @@ impl ZoneCheckRecord {
             }),
             IncompleteCause::TimedOut
             | IncompleteCause::Cancelled { .. }
+            | IncompleteCause::PreflightLimit { .. }
             | IncompleteCause::ResourceExhausted
             | IncompleteCause::UnresolvedDynamics
             | IncompleteCause::CertificateUnchecked

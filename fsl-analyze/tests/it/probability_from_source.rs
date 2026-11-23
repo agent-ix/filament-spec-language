@@ -331,15 +331,15 @@ fn statistical_method_from_source(method: &str, method_selection: Value) {
         "{first}"
     );
     assert_eq!(first["verdict"]["provenance"]["seed"], "7", "{first}");
-    // FSpec FR-410: the verdict states the bound it was judged against.
-    let (numerator, denominator) = if method == "regenerative" {
-        ("3", "10")
+    // FSpec FR-410-AC-12: the verdict states the bound it was judged against.
+    let (form, numerator, denominator) = if method == "regenerative" {
+        ("long-run-fraction", "3", "10")
     } else {
-        ("9", "10")
+        ("probability", "9", "10")
     };
     assert_eq!(
         first["verdict"]["bound"],
-        json!({"comparison": ">=", "threshold": {
+        json!({"type": form, "comparison": "greater-or-equal", "threshold": {
             "numerator": numerator, "denominator": denominator}}),
         "{first}"
     );
@@ -374,21 +374,21 @@ fn statistical_method_from_source(method: &str, method_selection: Value) {
     );
 }
 
-#[trace("TC-2066", "FR-741-AC-1")]
+#[trace("TC-2066", "FR-741-AC-1", "FR-192-AC-2", "FSpec-FR-410-AC-12")]
 #[trace("FSpec-TC-1564", "FSpec-FR-641-AC-1")]
 #[test]
 fn statistical_okamoto_from_source() {
     statistical_method_from_source("okamoto", json!({"type": "okamoto"}));
 }
 
-#[trace("TC-2066", "FR-741-AC-1")]
+#[trace("TC-2066", "FR-741-AC-1", "FR-192-AC-2", "FSpec-FR-410-AC-12")]
 #[trace("FSpec-TC-1564", "FSpec-FR-641-AC-1")]
 #[test]
 fn statistical_sprt_from_source() {
     statistical_method_from_source("sprt", json!({"type": "sprt"}));
 }
 
-#[trace("TC-2066", "FR-741-AC-1")]
+#[trace("TC-2066", "FR-741-AC-1", "FR-192-AC-2", "FSpec-FR-410-AC-12")]
 #[trace("FSpec-TC-1564", "FSpec-FR-641-AC-1")]
 #[test]
 fn statistical_regenerative_from_source() {
@@ -1000,7 +1000,7 @@ fn exact_fair_scheduler_from_source() {
     );
 }
 
-#[trace("TC-2066", "FR-741-AC-1")]
+#[trace("TC-2066", "FR-741-AC-1", "FR-192-AC-2", "FSpec-FR-410-AC-12")]
 #[trace("FSpec-TC-1564", "FSpec-FR-641-AC-1")]
 #[test]
 fn statistical_clopper_pearson_from_source() {
@@ -1048,9 +1048,36 @@ fn statistical_refusals_and_budgets_from_source() {
     );
     // The default Okamoto count exceeds the budget, so nothing is drawn.
     assert_eq!(item["record"]["cause"]["limit"], "max_samples", "{item}");
+    assert_eq!(item["record"]["cause"]["required"], 922, "{item}");
     assert_eq!(item["record"]["cause"]["value"], 10, "{item}");
     assert_eq!(
         item["request"]["probabilistic"]["limits"]["max_samples"], 10,
+        "{item}"
+    );
+}
+
+/// FR-741-AC-4, FR-191-AC-1: a claim whose indifference region (0.00005)
+/// makes the fixed sample count about 9.2e8, far above the default
+/// `max_samples`, settles `incomplete` before any sample, naming the limit,
+/// the configured value and the required count, with no draw.
+#[trace("TC-2066", "FR-741-AC-4", "FR-191-AC-1", "FR-192-AC-9")]
+#[test]
+fn a_tiny_indifference_region_settles_incomplete_before_sampling() {
+    let claim = "probabilistic Delivered using ev on M over (m: M::Msg) under Even on origin \
+         with alpha 0.01, beta 0.01, indifference 0.00005 \
+         { probability >= 0.9 [ eventually[0,2] holds(m.delivered) ] }";
+    let document = run(
+        "tiny-indifference",
+        claim,
+        json!([{"claim": "Delivered", "probabilistic": {"evidence": "statistical", "seed": "7"}}]),
+    );
+    let item = &document["items"][0];
+    assert_eq!(label(item), "incomplete", "{item}");
+    assert_eq!(
+        item["record"]["cause"],
+        json!({"kind": "limit-reached", "limit": "max_samples",
+            "value": 16_777_216, "setting": "statistical.max_samples",
+            "required": 921_034_038}),
         "{item}"
     );
 }

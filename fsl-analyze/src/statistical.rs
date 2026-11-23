@@ -619,10 +619,10 @@ impl Plan<'_> {
             for limit in [StatisticalLimit::MaxSamples, StatisticalLimit::MaxDraws] {
                 let value = limits.value(limit);
                 if required > Integer::from(value) {
-                    return Ok(TestEnd::Stopped(StatisticalStop::SampleCountAboveLimit {
+                    return Ok(TestEnd::Stopped(StatisticalStop::PreflightLimit {
                         limit,
                         value,
-                        required,
+                        required: required.to_u64().unwrap_or(u64::MAX),
                     }));
                 }
             }
@@ -1116,10 +1116,10 @@ fn check_sampled_with_meter<S: BehaviourSampler>(
         StatisticalVerdict {
             decision,
             bound: VerdictBound {
+                form: request.claim.form(),
                 comparison: match request.claim.bound().comparison {
-                    Cmp::AtLeast => BoundComparison::AtLeast,
-                    Cmp::AtMost => BoundComparison::AtMost,
-                    Cmp::Below => BoundComparison::Below,
+                    Cmp::AtLeast => BoundComparison::GreaterOrEqual,
+                    Cmp::AtMost | Cmp::Below => BoundComparison::LessOrEqual,
                 },
                 threshold: request.claim.bound().threshold.clone(),
             },

@@ -1109,15 +1109,32 @@ fn max_samples_stops_a_run_before_its_method_completes() {
     };
     assert_eq!(
         stop,
-        StatisticalStop::SampleCountAboveLimit {
+        StatisticalStop::PreflightLimit {
             limit: StatisticalLimit::MaxSamples,
             value: 1_000_000,
-            required: Integer::from(9_210_341_u64),
+            required: 9_210_341,
         }
     );
     assert_eq!(
         StatisticalLimit::MaxSamples.setting(),
         "statistical.max_samples"
+    );
+    assert_eq!((partial.samples, partial.draws, probe.calls), (0, 0, 0));
+
+    let mut drawn = request(&claim, &tests, StatisticalMethod::Okamoto, &sampler);
+    drawn.limits.max_draws = 1_000_000;
+    let mut probe = fixed(Ok(Sample::Event(true)));
+    let outcome = run(drawn, &mut probe);
+    let StatisticalOutcome::Stopped { stop, partial, .. } = outcome else {
+        panic!("expected Stopped, got {outcome:?}");
+    };
+    assert_eq!(
+        stop,
+        StatisticalStop::PreflightLimit {
+            limit: StatisticalLimit::MaxDraws,
+            value: 1_000_000,
+            required: 9_210_341,
+        }
     );
     assert_eq!((partial.samples, partial.draws, probe.calls), (0, 0, 0));
 
@@ -1128,35 +1145,33 @@ fn max_samples_stops_a_run_before_its_method_completes() {
     assert_eq!(StatisticalLimits::default().max_samples, 16_777_216);
 }
 
-/// FR-191-AC-2: the activation variant at `max_draws` 1,000 stops before
-/// drawing, naming `statistical.max_draws`, the configured 1,000 and the
-/// required 23,026; a cancelled handle stops `Cancelled`; neither carries a
-/// decision.
+/// FR-191-AC-2: the activation variant with SPRT and `max_draws` 1,000 stops
+/// naming `statistical.max_draws`, with the draws reached in `partial`; a
+/// cancelled handle stops `Cancelled`; neither carries a decision.
 #[trace("TC-626", "FR-191-AC-2")]
 #[test]
 fn max_draws_and_cancellation_stop_with_no_decision() {
     let claim = p95();
     let tests = one_test();
     let sampler = sampler_ref();
-    let mut limited = request(&claim, &tests, StatisticalMethod::Okamoto, &sampler);
+    let mut limited = request(&claim, &tests, StatisticalMethod::Sprt, &sampler);
     limited.limits.max_draws = 1_000;
-    let outcome = run(limited, &mut Service::activated(5));
+    let outcome = run(limited, &mut ByInitial(|_, _| Sample::NotActivated));
     let StatisticalOutcome::Stopped { stop, partial, .. } = outcome else {
         panic!("expected Stopped, got {outcome:?}");
     };
     assert_eq!(
         stop,
-        StatisticalStop::SampleCountAboveLimit {
+        StatisticalStop::Limit {
             limit: StatisticalLimit::MaxDraws,
-            value: 1_000,
-            required: Integer::from(23_026_u64),
+            value: 1_000
         }
     );
     assert_eq!(
         StatisticalLimit::MaxDraws.setting(),
         "statistical.max_draws"
     );
-    assert_eq!((partial.draws, partial.samples), (0, 0));
+    assert_eq!((partial.draws, partial.samples), (1_000, 0));
 
     let cancel = Cancel::new();
     cancel.cancel(CancelCause::Requested);
@@ -1666,7 +1681,7 @@ fn a_quantile_claim_never_activated_stops_at_max_draws() {
 }
 
 /// FR-191-AC-5: `NoFault` one sample short of `N` stops
-/// `SampleCountAboveLimit{MaxSamples, 9,210,340, required 9,210,341}`
+/// `PreflightLimit{MaxSamples, 9,210,340, required 9,210,341}`
 /// without drawing; a
 /// `Stopped` and an `Unsupported` (`Wide`) outcome each carry the run's
 /// provenance; a cancelled handle stops `Cancelled`.
@@ -1690,15 +1705,33 @@ fn max_samples_stops_before_the_next_draw_and_stops_carry_provenance() {
     };
     assert_eq!(
         stop,
-        StatisticalStop::SampleCountAboveLimit {
+        StatisticalStop::PreflightLimit {
             limit: StatisticalLimit::MaxSamples,
             value: 9_210_340,
-            required: Integer::from(9_210_341_u64),
+            required: 9_210_341,
         }
     );
     assert_eq!(partial.samples, 0);
     assert_eq!(probe.calls, 0);
     assert_eq!(provenance.tests[0].traces.count, 0);
+
+    let activation = p95();
+    let mut activated = request(&activation, &tests, StatisticalMethod::Okamoto, &sampler);
+    activated.limits.max_draws = 1_000;
+    let mut service = Service::activated(5);
+    let outcome = run(activated, &mut service);
+    let StatisticalOutcome::Stopped { stop, partial, .. } = outcome else {
+        panic!("expected Stopped, got {outcome:?}");
+    };
+    assert_eq!(
+        stop,
+        StatisticalStop::PreflightLimit {
+            limit: StatisticalLimit::MaxDraws,
+            value: 1_000,
+            required: 23_026,
+        }
+    );
+    assert_eq!((partial.samples, partial.draws), (0, 0));
 
     let wide_claim = half_claim();
     let outcome = run(
@@ -1746,10 +1779,10 @@ fn clopper_pearson_compares_its_sample_count_with_the_budgets_before_drawing() {
     };
     assert_eq!(
         stop,
-        StatisticalStop::SampleCountAboveLimit {
+        StatisticalStop::PreflightLimit {
             limit: StatisticalLimit::MaxDraws,
             value: 5_000_000,
-            required: Integer::from(9_210_341_u64),
+            required: 9_210_341,
         }
     );
     assert_eq!((partial.samples, partial.draws, probe.calls), (0, 0, 0));
@@ -1757,7 +1790,7 @@ fn clopper_pearson_compares_its_sample_count_with_the_budgets_before_drawing() {
 
 /// FR-192: a completed verdict carries the bound the claim was judged
 /// against, accepted or not.
-#[trace("TC-627", "FR-192-AC-2")]
+#[trace("TC-627", "FR-192-AC-2", "FR-192-AC-9")]
 #[test]
 fn a_verdict_carries_the_claims_bound() {
     let claim = p95();
@@ -1770,7 +1803,8 @@ fn a_verdict_carries_the_claims_bound() {
     assert_eq!(
         verdict.bound,
         VerdictBound {
-            comparison: BoundComparison::AtLeast,
+            form: ClaimForm::Quantile,
+            comparison: BoundComparison::GreaterOrEqual,
             threshold: claim.bound().threshold.clone(),
         }
     );
@@ -1915,7 +1949,7 @@ fn item(outcome: &StatisticalOutcome, index: usize) -> fsl_replay::OutcomeItem {
 /// test and `α' = 1/100`; the SPRT result at 2 ms settles `measured`,
 /// rejected, with no interval; FR-190-AC-1's result settles accepted with
 /// asymptotic coverage.
-#[trace("TC-627", "FR-192-AC-2")]
+#[trace("TC-627", "FR-192-AC-2", "FR-192-AC-9")]
 #[test]
 fn okamoto_sprt_and_regenerative_results_settle_measured() {
     let tests = one_test();

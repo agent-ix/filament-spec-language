@@ -88,6 +88,18 @@ pub enum ClaimForm {
 }
 
 impl ClaimForm {
+    /// The `type` of the FR-413 claim-bound object a verdict of this form
+    /// carries.
+    #[must_use]
+    pub const fn bound_type(self) -> &'static str {
+        match self {
+            Self::Probability => "probability",
+            Self::Quantile => "quantile",
+            Self::MeanOfFraction => "mean-of-fraction",
+            Self::LongRunFraction => "long-run-fraction",
+        }
+    }
+
     /// Whether `method` decides this form (FR-189 "Methods", FR-190):
     /// regeneration decides exactly a long-run fraction, SPRT and
     /// Clopper–Pearson decide a probability bound or quantile, and Okamoto
@@ -272,12 +284,11 @@ impl StatisticalLimit {
 /// How a verdict's bound compares the measured value with its threshold.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum BoundComparison {
-    /// `>= θ`, written `>=`.
-    AtLeast,
-    /// `<= θ`, written `<=`.
-    AtMost,
-    /// `< θ`, written `<`: the strict bound a quantile claim reduces to.
-    Below,
+    /// `>= θ`, written `greater-or-equal`.
+    GreaterOrEqual,
+    /// `<= θ`, written `less-or-equal`. The strict bound a quantile claim
+    /// reduces to is written the same way, as FR-413 has no other spelling.
+    LessOrEqual,
 }
 
 impl BoundComparison {
@@ -285,17 +296,18 @@ impl BoundComparison {
     #[must_use]
     pub const fn as_str(self) -> &'static str {
         match self {
-            Self::AtLeast => ">=",
-            Self::AtMost => "<=",
-            Self::Below => "<",
+            Self::GreaterOrEqual => "greater-or-equal",
+            Self::LessOrEqual => "less-or-equal",
         }
     }
 }
 
-/// The bound a sampled result was judged against, shaped like FR-413's
-/// `counterexample.bound`.
+/// The FR-413 claim-bound object `{type, comparison, threshold}` a verdict
+/// carries (FR-410 `bound`).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerdictBound {
+    /// The claim's form, which names the bound's `type`.
+    pub form: ClaimForm,
     /// The comparison.
     pub comparison: BoundComparison,
     /// The threshold.
@@ -579,15 +591,16 @@ pub enum StatisticalStop {
         value: u64,
     },
     /// A method with a fixed sample count `N` known before drawing needs
-    /// more than a budget allows: the run stops with no draw, naming the
-    /// budget, the value it was set to and the `N` the method requires.
-    SampleCountAboveLimit {
+    /// more than a budget allows (FR-191): the run stops with no draw,
+    /// naming the budget, the value it was set to and the `N` the method
+    /// requires, which saturates at `u64::MAX`.
+    PreflightLimit {
         /// The budget `N` exceeds.
         limit: StatisticalLimit,
         /// Its value in the run.
         value: u64,
         /// The sample count the method requires.
-        required: filament_exact::Integer,
+        required: u64,
     },
     /// A sample's expansion stopped (ADR-024 ST-10), for example on the
     /// clause meter.
