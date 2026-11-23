@@ -31,6 +31,7 @@ fn node_of_wire(tag: CheckedNodeTag, form: &str) -> CheckedSemanticNodeV2 {
         owner: None,
         body: CheckedTerm::Aggregate {
             members: Vec::new(),
+            temporal_profile: None,
         },
     }
 }

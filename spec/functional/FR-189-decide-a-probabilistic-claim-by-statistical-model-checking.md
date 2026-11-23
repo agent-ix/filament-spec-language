@@ -84,6 +84,7 @@ pub enum StatisticalOutcome {
 }                                                   // cause: NotMarkov, TotalAboveDrawRange
 pub enum StatisticalStop {                          // FR-191; ADR-024 SV-4
     Limit { limit: StatisticalLimit, value: u64 },  // setting `statistical.<member>`
+    PreflightLimit { limit: StatisticalLimit, value: u64, required: u64 }, // fixed N known before drawing
     Expansion(ExpansionStop),                       // FR-120; its own limit, value, setting
     Cancelled(CancelCause),                         // FR-276
 }

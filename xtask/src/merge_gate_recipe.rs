@@ -132,6 +132,40 @@ const INSPECT_CONSUMERS: &[ItFilter] = &[ItFilter {
     package: "fsl-command",
     rule: ItRule::Fixed("run_text_witness"),
 }];
+/// The engine filters every analyze source change runs, then the modules that
+/// hold the source-route and package-route parity tests (FSL FR-940) for the
+/// shared request settlement: `request.rs` and `analyze.rs` decide an item's
+/// disposition for both routes.
+const ROUTE_PARITY_CONSUMERS: &[ItFilter] = &[
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::Fixed("monitor_"),
+    },
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::Fixed("timed_"),
+    },
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::Fixed("hyper"),
+    },
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::Fixed("probabilistic"),
+    },
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::Fixed("analyze_package_selection"),
+    },
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::Fixed("analyze_request_wire"),
+    },
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::Fixed("analyze_package_provider"),
+    },
+];
 const EXACT_CONSUMERS: &[ItFilter] = &[
     ItFilter {
         package: "fsl-analyze",
@@ -200,10 +234,20 @@ const ABSTRACTION_CONSUMERS: &[ItFilter] = &[
         rule: ItRule::Fixed("abstraction_relation_inert"),
     },
 ];
-const TIMED_CONSUMER: &[ItFilter] = &[ItFilter {
-    package: "fsl-analyze",
-    rule: ItRule::Fixed("timed_"),
-}];
+const TIMED_CONSUMER: &[ItFilter] = &[
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::Fixed("timed_"),
+    },
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::Fixed("timed_within_200"),
+    },
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::Fixed("timed_within_201"),
+    },
+];
 const ROOT_IT_MODULES: &[ItFilter] = &[ItFilter {
     package: "filament-spec-language",
     rule: ItRule::AllModules("filament-spec-language"),
@@ -357,10 +401,7 @@ const RULES: &[Rule] = &[
         prefix: "fsl-analyze/src/zone_check/",
         package: Some("fsl-analyze"),
         lib: Some(LibRule::SourceModule),
-        it_filters: &[ItFilter {
-            package: "fsl-analyze",
-            rule: ItRule::Fixed("timed_"),
-        }],
+        it_filters: TIMED_CONSUMER,
         large_input: &[],
         note: None,
         skips: &[],
@@ -387,6 +428,26 @@ const RULES: &[Rule] = &[
             package: "fsl-analyze",
             rule: ItRule::Fixed("probabilistic"),
         }],
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-analyze/src/analyze/request.rs",
+        package: Some("fsl-analyze"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: ROUTE_PARITY_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-analyze/src/analyze.rs",
+        package: Some("fsl-analyze"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: ROUTE_PARITY_CONSUMERS,
         large_input: &[],
         note: None,
         skips: &[],
@@ -1897,6 +1958,35 @@ mod tests {
         for filter in ["monitor_", "timed_", "hyper", "probabilistic"] {
             assert!(recipe.selectors.contains(&selector("fsl-analyze", filter)));
         }
+        let zone = plan(workspace_root(), &["fsl-analyze/src/zone_check/divergence.rs"]);
+        for filter in ["timed_", "timed_within_200", "timed_within_201"] {
+            assert!(zone.selectors.contains(&selector("fsl-analyze", filter)));
+        }
+    }
+
+    #[test]
+    fn request_and_analyze_roots_run_the_source_and_package_parity_modules() {
+        for path in ["fsl-analyze/src/analyze/request.rs", "fsl-analyze/src/analyze.rs"] {
+            let recipe = plan(workspace_root(), &[path]);
+            for filter in [
+                "analyze_package_selection",
+                "analyze_request_wire",
+                "analyze_package_provider",
+                "monitor_",
+                "probabilistic",
+            ] {
+                assert!(
+                    recipe.selectors.contains(&selector("fsl-analyze", filter)),
+                    "{path} must run {filter}"
+                );
+            }
+        }
+        let other = plan(workspace_root(), &["fsl-analyze/src/provider.rs"]);
+        assert!(
+            !other
+                .selectors
+                .contains(&selector("fsl-analyze", "analyze_request_wire"))
+        );
     }
 
     #[test]

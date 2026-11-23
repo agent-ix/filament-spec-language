@@ -1317,7 +1317,7 @@ fn scheduler_indices(choice: &SchedulerChoice) -> Vec<usize> {
     }
 }
 
-fn bottom_components(adjacency: &[Vec<usize>]) -> Vec<Vec<usize>> {
+pub(crate) fn bottom_components(adjacency: &[Vec<usize>]) -> Vec<Vec<usize>> {
     let count = adjacency.len();
     let mut reverse = vec![Vec::new(); count];
     for (from, successors) in adjacency.iter().enumerate() {

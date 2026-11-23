@@ -106,7 +106,7 @@ pub fn read<E: From<RequestDefect>>(
 }
 
 /// Refuse a `clocks` member, any other member outside [`MEMBERS`], and then
-/// the first missing member in [`MEMBERS`] order.
+/// every missing member, in [`MEMBERS`] order.
 #[ix_trace_rs::string_edge]
 fn closed_members<'a>(names: impl Iterator<Item = &'a str> + Clone) -> Result<(), RequestDefect> {
     if names.clone().any(|name| name == "clocks") {
@@ -121,11 +121,16 @@ fn closed_members<'a>(names: impl Iterator<Item = &'a str> + Clone) -> Result<()
             "unknown replay request member",
         ));
     }
-    if let Some(missing) = MEMBERS
+    let missing: Vec<String> = MEMBERS
         .iter()
-        .find(|member| !names.clone().any(|name| name == **member))
-    {
-        return Err(RequestDefect::new(format!("/{missing}"), "missing member"));
+        .filter(|member| !names.clone().any(|name| name == **member))
+        .map(|member| format!("/{member}"))
+        .collect();
+    if let Some(first) = missing.first() {
+        return Err(RequestDefect::new(
+            first.clone(),
+            format!("missing members {}", missing.join(", ")),
+        ));
     }
     Ok(())
 }
@@ -904,8 +909,24 @@ fn witness_leaf(
         _ => return Err(RequestDefect::new(pointer, "unknown witness value")),
     })
 }
+
+#[cfg(test)]
 mod tests {
+    use super::{closed_members, MEMBERS};
     use ix_trace_rs::trace;
+
+    /// FR-862-AC-1: every missing member is named at once, the pointer
+    /// naming the first.
+    #[test]
+    fn every_missing_member_is_named_at_once() {
+        let present = MEMBERS[1..MEMBERS.len() - 1].iter().copied();
+        let defect = closed_members(present).unwrap_err();
+        assert_eq!(
+            defect.to_string(),
+            "missing members /profile_selections, /byte_provision at \"/profile_selections\""
+        );
+        assert!(closed_members(MEMBERS.iter().copied()).is_ok());
+    }
 
     #[trace("TC-1325", "FR-350-AC-11")]
     #[test]

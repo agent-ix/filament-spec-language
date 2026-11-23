@@ -478,6 +478,9 @@ pub struct ApplicationTerm {
 pub struct AggregateTerm {
     /// The members, in order.
     pub members: Vec<MemberTerm>,
+    /// The temporal profile a finite-domain hyperproperty body names (FSpec
+    /// FR-322 "Hyper clause rows"); absent on every other aggregate.
+    pub temporal_profile: Option<crate::check::TemporalProfile>,
 }
 
 /// A `state`/`frame` node's own body shape (FSpec FR-340), valid only as a
@@ -652,6 +655,7 @@ impl DebugWith for AggregateTerm {
     fn fmt_with(&self, f: &mut std::fmt::Formatter<'_>, table: &DebugTable) -> std::fmt::Result {
         f.debug_struct("AggregateTerm")
             .field("members", &With(&self.members, table))
+            .field("temporal_profile", &self.temporal_profile)
             .finish()
     }
 }
@@ -1111,6 +1115,7 @@ impl BindingValue {
                     .iter()
                     .map(|member| member.map_refs(map))
                     .collect(),
+                temporal_profile: aggregate.temporal_profile,
             }),
             Self::ExecutionPoint(point) => Self::ExecutionPoint(point.clone()),
         }
@@ -1182,7 +1187,10 @@ impl AggregateTerm {
     /// An aggregate whose members may bind leaves, groups, tuples or further
     /// aggregates, as required by closed nested body productions.
     pub(crate) fn new(members: Vec<MemberTerm>) -> Self {
-        Self { members }
+        Self {
+            members,
+            temporal_profile: None,
+        }
     }
 }
 
@@ -1199,7 +1207,18 @@ impl BodyTerm {
 
     /// `{term: "aggregate", members}` as a body.
     pub(crate) fn aggregate(members: Vec<MemberTerm>) -> Self {
-        Self::Aggregate(AggregateTerm { members })
+        Self::Aggregate(AggregateTerm::new(members))
+    }
+
+    /// A hyperproperty body aggregate that names its temporal `profile`.
+    pub(crate) fn aggregate_with_profile(
+        members: Vec<MemberTerm>,
+        profile: crate::check::TemporalProfile,
+    ) -> Self {
+        Self::Aggregate(AggregateTerm {
+            members,
+            temporal_profile: Some(profile),
+        })
     }
 
     /// `{term: "application", operator, operation, result_type,
@@ -1270,7 +1289,9 @@ impl BodyTerm {
         match self {
             Self::Leaf(leaf) => visit(leaf),
             Self::Application(ApplicationTerm { arguments, .. })
-            | Self::Aggregate(AggregateTerm { members: arguments }) => {
+            | Self::Aggregate(AggregateTerm {
+                members: arguments, ..
+            }) => {
                 for member in arguments {
                     member.for_each_leaf(visit);
                 }
@@ -1291,9 +1312,9 @@ impl BodyTerm {
         match self {
             Self::Leaf(leaf) => vec![leaf],
             Self::Application(ApplicationTerm { arguments, .. })
-            | Self::Aggregate(AggregateTerm { members: arguments }) => {
-                arguments.iter().flat_map(MemberTerm::leaves).collect()
-            }
+            | Self::Aggregate(AggregateTerm {
+                members: arguments, ..
+            }) => arguments.iter().flat_map(MemberTerm::leaves).collect(),
             Self::Frame(_)
             | Self::Abstraction(_)
             | Self::Extension(_)
@@ -1483,8 +1504,12 @@ impl BodyTerm {
                         .collect(),
                 })
             }
-            Self::Aggregate(AggregateTerm { members }) => Self::Aggregate(AggregateTerm {
+            Self::Aggregate(AggregateTerm {
+                members,
+                temporal_profile,
+            }) => Self::Aggregate(AggregateTerm {
                 members: members.iter().map(|member| member.map_refs(map)).collect(),
+                temporal_profile: *temporal_profile,
             }),
             Self::Frame(FrameTerm {
                 modifies,

@@ -2268,6 +2268,7 @@ fn checked_term(ids: &StructuralIds, term: &BodyTerm) -> Result<CheckedTerm, Emi
                 .iter()
                 .map(|value| member_term(ids, value))
                 .collect::<Result<_, _>>()?,
+            temporal_profile: aggregate.temporal_profile.map(profile_definition),
         }),
         BodyTerm::Application(application) => {
             let mut arguments = application
@@ -2524,6 +2525,7 @@ fn group_term(ids: &StructuralIds, group: &GroupTerm) -> Result<CheckedTerm, Emi
                 }),
             })
             .collect::<Result<_, _>>()?,
+        temporal_profile: None,
     })
 }
 
@@ -2537,6 +2539,7 @@ fn tuple_term(ids: &StructuralIds, tuple: &TupleTerm) -> Result<CheckedTerm, Emi
                 TupleMember::Group(group) => group_term(ids, group),
             })
             .collect::<Result<_, _>>()?,
+        temporal_profile: None,
     })
 }
 
@@ -2555,6 +2558,7 @@ fn member_term(ids: &StructuralIds, member: &MemberTerm) -> Result<CheckedTerm, 
                         .iter()
                         .map(|value| member_term(ids, value))
                         .collect::<Result<_, _>>()?,
+                    temporal_profile: None,
                 },
                 BindingValue::ExecutionPoint(_) => {
                     return Err(encoding(
@@ -4524,7 +4528,7 @@ fn rewrite_source_keys_in_clock_place(
                     }
                 }
             }
-            CheckedTerm::Aggregate { members } => {
+            CheckedTerm::Aggregate { members, .. } => {
                 let row_declaring = members.iter().find_map(|member| match member {
                     CheckedTerm::Binding { name, value, .. }
                         if name.as_ref() == "declaring_type" =>
@@ -5576,7 +5580,10 @@ fn claim_binding(name: &str, value: CheckedTerm) -> CheckedTerm {
 }
 
 fn claim_aggregate(members: Vec<CheckedTerm>) -> CheckedTerm {
-    CheckedTerm::Aggregate { members }
+    CheckedTerm::Aggregate {
+        members,
+        temporal_profile: None,
+    }
 }
 
 fn claim_literal(
@@ -6157,6 +6164,7 @@ fn push_scalar_type(
         owner: None,
         body: CheckedTerm::Aggregate {
             members: Vec::new(),
+            temporal_profile: None,
         },
     });
 }
@@ -6427,7 +6435,7 @@ fn timed_body_operands(
     operands: &mut Vec<PathSegment>,
 ) -> Result<(), EmitRefusal> {
     match term {
-        CheckedTerm::Aggregate { members } => {
+        CheckedTerm::Aggregate { members, .. } => {
             for member in members {
                 timed_body_operands(member, operands)?;
             }
@@ -6595,6 +6603,7 @@ fn model_root_node(
         }),
         body: CheckedTerm::Aggregate {
             members: Vec::new(),
+            temporal_profile: None,
         },
     }
 }
@@ -6620,7 +6629,7 @@ fn literal_type(nodes: &[CheckedSemanticNodeV2], kind: &str) -> Option<CheckedNo
                 value_kind,
                 ..
             } if value_kind.as_wire() == kind => Some(type_id.clone()),
-            CheckedTerm::Aggregate { members } => {
+            CheckedTerm::Aggregate { members, .. } => {
                 members.iter().find_map(|member| visit(member, kind))
             }
             CheckedTerm::Binding { value, .. } => visit(value, kind),
@@ -7767,16 +7776,12 @@ fn emit_package_inner(
             profile_selections.push(selection);
         }
     }
-    // A finite trace-set clause writes no profile law on its node, so the lock
-    // selects its profile here for the clause's clock binding to resolve.
+    // A finite trace-set clause names its profile in its body aggregate, so the
+    // lock selects that same profile here for the member to resolve against.
     for hyper in graph.finite_hyper_clauses() {
-        let profile = hyper.profile();
-        if !profile.is_bounded() {
-            continue;
-        }
         let selection = CheckedSelection {
             role: CheckedSelectionRole::TemporalProfile,
-            definition: profile_definition(profile),
+            definition: profile_definition(hyper.profile()),
         };
         if !profile_selections.contains(&selection) {
             profile_selections.push(selection);
@@ -9223,6 +9228,7 @@ fn write_time_nominal(
     } else {
         CheckedTerm::Aggregate {
             members: Vec::new(),
+            temporal_profile: None,
         }
     };
     let semantic_type = if nominal.form == TimeNominalForm::Unit {
@@ -10089,7 +10095,7 @@ fn reachable_ids(node: &mut CheckedSemanticNodeV2) -> Vec<&mut CheckedNodeId> {
                 ids.push(result_type);
                 pending.extend(arguments.iter_mut());
             }
-            CheckedTerm::Aggregate { members } => pending.extend(members.iter_mut()),
+            CheckedTerm::Aggregate { members, .. } => pending.extend(members.iter_mut()),
             CheckedTerm::Binding { value, .. } => pending.push(value),
             CheckedTerm::Frame {
                 creates, deletes, ..

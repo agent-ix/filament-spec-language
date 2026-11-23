@@ -15,6 +15,7 @@ use fsl_package::CheckedPackage;
 mod bounded;
 mod measure;
 mod step;
+mod subsystem;
 mod undefined;
 pub use undefined::{replay_probabilistic_undefined, ProbabilityUndefinedWitness};
 
@@ -63,7 +64,8 @@ pub struct ProbabilitySubsystemCertificate {
     bytes: Box<[u8]>,
 }
 impl ProbabilitySubsystemCertificate {
-    /// Admit canonical exact or bounded mean evidence without accepting its claim.
+    /// Admit canonical mean, long-run or counterexample-role value-bound
+    /// evidence without accepting its claim.
     ///
     /// # Errors
     /// Closed document syntax, caller limits or cancellation.
@@ -72,9 +74,61 @@ impl ProbabilitySubsystemCertificate {
         limits: ProbabilityDocumentLimits,
         cancel: &Cancel,
     ) -> Result<Self, ProbabilityDocumentError> {
-        super::document::measure::bounds::admit_subsystem(bytes, limits, cancel)?;
+        super::document::refutation::admit_subsystem(bytes, limits, cancel)?;
         Ok(Self {
             bytes: bytes.into(),
+        })
+    }
+    /// Encode an unweighted long-run certificate without accepting it.
+    ///
+    /// # Errors
+    /// Strict certificate admission, caller limits or cancellation.
+    pub fn from_long_run(
+        document: &LongRunProbabilityDocument,
+        limits: ProbabilityDocumentLimits,
+        cancel: &Cancel,
+    ) -> Result<Self, ProbabilityDocumentError> {
+        Ok(Self {
+            bytes: write_long_run_probability_certificate(document, limits, cancel)?
+                .into_boxed_slice(),
+        })
+    }
+    /// Encode a weighted long-run certificate without accepting it.
+    ///
+    /// # Errors
+    /// Strict certificate admission, caller limits or cancellation.
+    pub fn from_weighted_long_run(
+        document: &WeightedLongRunProbabilityDocument,
+        limits: ProbabilityDocumentLimits,
+        cancel: &Cancel,
+    ) -> Result<Self, ProbabilityDocumentError> {
+        Ok(Self {
+            bytes: write_weighted_long_run_probability_certificate(document, limits, cancel)?
+                .into_boxed_slice(),
+        })
+    }
+    /// Encode a `lower` or `upper` certificate for an unwindowed `eventually`
+    /// or expected-reward claim. The base objective is derived from the
+    /// checked subject; the values and ranks are unchecked evidence.
+    ///
+    /// # Errors
+    /// Subject admission, caller limits or cancellation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn value_bound(
+        system: &ModelSystem<'_>,
+        claims: &[CheckedProbabilisticClaim],
+        item: &ObligationIdentity,
+        kind: SubsystemBoundKind,
+        values: &[ExactProbabilityValue],
+        ranking: Option<&[(ProbabilityProductKey, u64)]>,
+        limits: ProbabilityDocumentLimits,
+        cancel: &Cancel,
+    ) -> Result<Self, ProbabilityDocumentError> {
+        Ok(Self {
+            bytes: super::document::refutation::write(
+                system, claims, item, kind, values, ranking, limits, cancel,
+            )?
+            .into_boxed_slice(),
         })
     }
     /// Encode a typed finite-horizon measure certificate without accepting it.
@@ -134,7 +188,8 @@ pub struct ProbabilisticCounterexample {
     pub scheduler: Vec<(ProbabilityProductKey, ProbabilisticSchedulerChoice)>,
     /// Prefix-free finite paths.
     pub paths: Vec<ProbabilityWitnessPath>,
-    /// A mean-refutation subsystem certificate; mutually exclusive with paths.
+    /// A mean, long-run, expected-reward or event-avoidance subsystem
+    /// certificate; mutually exclusive with paths.
     pub subsystem: Option<Box<ProbabilitySubsystemCertificate>>,
 }
 
@@ -523,7 +578,11 @@ fn replay_probabilistic_witness_impl(
         _ => ProbabilityWitnessError::Graph(error),
     })?;
     if witness.subsystem.is_some() {
-        return measure::replay_subsystem(system, claim, witness, limits, cancel);
+        return if matches!(claim.form, ProbForm::MeanOfFraction { .. }) {
+            measure::replay_subsystem(system, claim, witness, limits, cancel)
+        } else {
+            subsystem::replay(system, claim, witness, limits, cancel)
+        };
     }
     if super::document::is_timed_deadline_claim(claim) {
         return super::document::replay_timed_witness(system, claim, witness, limits, cancel);
