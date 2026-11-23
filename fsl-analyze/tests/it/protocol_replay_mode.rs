@@ -2307,3 +2307,198 @@ fn a_repeat_inside_a_cancelling_branch_keeps_the_cancel_after_the_parallel() {
     assert_enabled(&source, &open(json!([step(), step(), placed()])), node, 1);
     assert_unexpected(&source, &open(json!([step(), placed(), step()])), node, 2);
 }
+
+/// [`repeat_protocol`] whose body begins with `lead` (an event `P`, or
+/// nothing) and an inner `repeat` of the cancelling `parallel` of `L` and
+/// `R`; `Placed`, `Got` and the `Decide` choice follow the inner `repeat`.
+fn nested_repeat_cancel_protocol(lead: &str) -> String {
+    repeat_protocol().replace(
+        "sequence Body {",
+        &format!("sequence Body {{ {lead}repeat Inner by Buyer visible () max 2 while {{ true }} sequence IBody {{ parallel Both memory sc {{ branch left sequence Left {{ event L by Buyer as (l: Ack) {{ true }}; }} branch right sequence Right {{ event R by Buyer as (r: Ack) {{ true }}; }} }} join any [left, right] outstanding cancel; }} exhausted sequence IOut {{ }}"),
+    )
+}
+
+const NESTED_LEFT: &str = "Flow::Main::Loop::Body::Inner::IBody::Both::left::Left::L";
+const NESTED_RIGHT: &str = "Flow::Main::Loop::Body::Inner::IBody::Both::right::Right::R";
+
+/// A `Buyer` event at `Flow::Main::Loop::Body::<path>`.
+fn loop_event(path: &str) -> Value {
+    json!({"kind": "event", "node": format!("Flow::Main::Loop::Body::{path}"),
+           "role": "Buyer", "instance": "w-1", "keys": {}, "record": {"ok": true}})
+}
+
+/// The open incremental item of `observations` over `source`.
+fn nested_cancel_item(
+    name: &str,
+    source: &str,
+    observations: Value,
+    buyer: &[usize],
+    seller: &[usize],
+    correlations: &[(usize, usize)],
+) -> Value {
+    let mut recording = repeat_recording(
+        observations,
+        json!(seller),
+        json!(buyer),
+        Value::Array(
+            correlations
+                .iter()
+                .map(|(send, receive)| json!({"send": send, "receive": receive}))
+                .collect(),
+        ),
+    );
+    recording["closure"] = json!({"state": "open", "premises": []});
+    replay_with(
+        name,
+        source,
+        &recording,
+        json!({"file": "recording.json", "identity": recording_identity()}),
+        assessed_item("incremental"),
+    )
+    .item(0)
+}
+
+/// FR-895-AC-39 (TC-2531): a cancelling `parallel` in an inner `repeat` in an
+/// outer `repeat` cancels per iteration of each. With `Placed`, `Got` and a
+/// `choice` after the inner `repeat` in the outer body, `L`, `R`, `L`, `R`
+/// twice per outer iteration leaves every `L` and `R` `satisfied` in batch and
+/// every prefix, with or without a step `P` before the inner `repeat` (which
+/// fixes the outer iteration of an inner step); with `P`, the last `R` of the
+/// second outer iteration after that iteration's `Placed` is `violated`,
+/// cause `unexpected`, while the first iteration's `Placed` does not make
+/// the second iteration's steps so.
+#[trace("TC-2531", "FR-895-AC-39")]
+#[test]
+fn a_cancel_in_nested_repeats_cancels_per_iteration_of_each() {
+    let step = |path: &str| loop_event(path);
+    let left = || step("Inner::IBody::Both::left::Left::L");
+    let right = || step("Inner::IBody::Both::right::Right::R");
+    let placed = |message: &str| looped("send", "Placed", "Buyer", message);
+    let got = |message: &str| looped("receive", "Got", "Seller", message);
+    let assert_all_satisfied = |item: &Value, count: usize| {
+        let prefixes = item["prefixes"].as_array().expect("prefixes");
+        assert_eq!(prefixes.len(), count, "{item}");
+        for prefix in prefixes {
+            for node in [NESTED_LEFT, NESTED_RIGHT] {
+                assert!(
+                    node_verdicts_in(prefix, node)
+                        .iter()
+                        .all(|verdict| verdict == "satisfied"),
+                    "{node}: {prefix}"
+                );
+            }
+        }
+        let order: Vec<usize> = (0..count).collect();
+        assert_every_verdict_only_advances(prefixes, &order);
+        assert_eq!(
+            prefixes[count - 1]["obligations"],
+            item["obligations"],
+            "{item}"
+        );
+    };
+
+    // With `P`: the outer iteration of an inner step is the number of `P`
+    // observed before it.
+    let with_p = nested_repeat_cancel_protocol("event P by Buyer as (p: Ack) { true }; ");
+    let legit = json!([
+        step("P"),
+        left(),
+        right(),
+        left(),
+        right(),
+        placed("m-1"),
+        got("m-1"),
+        looped_case("yes"),
+        step("P"),
+        left(),
+        right(),
+        left(),
+        right(),
+        placed("m-2"),
+        got("m-2"),
+        looped_case("yes"),
+    ]);
+    let item = nested_cancel_item(
+        "replay-nested-cancel-legit",
+        &with_p,
+        legit,
+        &[0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13],
+        &[6, 7, 14, 15],
+        &[(5, 6), (13, 14)],
+    );
+    assert_all_satisfied(&item, 16);
+    let last = &item["prefixes"][15];
+    assert_eq!(
+        node_verdicts_in(last, NESTED_RIGHT),
+        ["satisfied"; 4],
+        "{item}"
+    );
+
+    // The last `R` of the second outer iteration after its own `Placed`.
+    let violated = json!([
+        step("P"),
+        left(),
+        right(),
+        left(),
+        right(),
+        placed("m-1"),
+        got("m-1"),
+        looped_case("yes"),
+        step("P"),
+        left(),
+        right(),
+        left(),
+        placed("m-2"),
+        right(),
+        got("m-2"),
+        looped_case("yes"),
+    ]);
+    let item = nested_cancel_item(
+        "replay-nested-cancel-violated",
+        &with_p,
+        violated,
+        &[0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13],
+        &[6, 7, 14, 15],
+        &[(5, 6), (12, 14)],
+    );
+    let last = &item["prefixes"][15];
+    assert_eq!(
+        node_verdicts_in(last, NESTED_LEFT),
+        ["satisfied"; 4],
+        "{item}"
+    );
+    assert_eq!(
+        node_verdicts_in(last, NESTED_RIGHT),
+        ["satisfied", "satisfied", "satisfied", "violated"],
+        "{item}"
+    );
+
+    // Without `P` the outer iteration of an inner step is not determined, so
+    // the first iteration's `Placed` does not cancel the second iteration.
+    let without_p = nested_repeat_cancel_protocol("");
+    let legit = json!([
+        left(),
+        right(),
+        left(),
+        right(),
+        placed("m-1"),
+        got("m-1"),
+        looped_case("yes"),
+        left(),
+        right(),
+        left(),
+        right(),
+        placed("m-2"),
+        got("m-2"),
+        looped_case("yes"),
+    ]);
+    let item = nested_cancel_item(
+        "replay-nested-cancel-probe-n",
+        &without_p,
+        legit,
+        &[0, 1, 2, 3, 4, 7, 8, 9, 10, 11],
+        &[5, 6, 12, 13],
+        &[(4, 5), (11, 12)],
+    );
+    assert_all_satisfied(&item, 14);
+}

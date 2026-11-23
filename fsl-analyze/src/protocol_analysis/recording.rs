@@ -4261,47 +4261,85 @@ fn subtree_nodes(protocol: &CheckedProtocol, node: ProtocolNodeId, out: &mut BTr
 }
 
 /// The iteration of the `repeat` at `repeat_level` of `ancestry` that the
-/// observation at `index` belongs to: its rank among the observations of its
-/// node, carried up through each `case` between the node and the `repeat` to
-/// the index of that case among the `choice`'s takings (the same occurrence
-/// pairing as the rules for steps in and after a `repeat`). `anchor` is the
-/// observation the iterations are counted before.
-fn iteration_index(
+/// observation at `index` runs in, when the recording determines it.
+///
+/// With no `repeat` between it and that `repeat` on its path, it is the
+/// observation's causal rank among the observations of its node, carried
+/// through each `case` to the index of that case among the `choice`'s
+/// takings. With a `repeat` between, the ranks of the node count the inner
+/// iterations too, so the iteration is the most times any step before the
+/// inner `repeat` in the `repeat`'s body, in program order, was observed
+/// causally before the observation; with no such step it is not determined.
+fn repeat_iteration(
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
     anchor: usize,
     index: usize,
     ancestry: &[&fsl_semantics::check::CheckedControl],
     repeat_level: usize,
-) -> usize {
+) -> Option<usize> {
     let entry = &document.observations[index];
-    let order = causal_topological_order(protocol, document);
-    let rank = |other: &usize| order.iter().position(|item| item == other);
-    let mut own: Vec<usize> = (0..document.observations.len())
-        .filter(|other| {
-            document.observations[*other].node == entry.node
-                && document.observations[*other].instance == entry.instance
-        })
-        .collect();
-    own.sort_by_key(rank);
-    let mut occurrence = own
-        .iter()
-        .position(|other| *other == index)
-        .map_or(1, |nth| nth + 1);
-    for level in (repeat_level + 1..ancestry.len().saturating_sub(1)).rev() {
-        let (parent, child) = (ancestry[level], ancestry[level + 1]);
-        if child.kind.label() == "case" {
-            let name = qualified_name(protocol, child);
-            let taken = choice_observations(protocol, document, anchor, parent);
-            occurrence = taken
-                .iter()
-                .enumerate()
-                .filter(|(_, other)| document.observations[**other].node == name)
-                .nth(occurrence - 1)
-                .map_or(occurrence, |(nth, _)| nth + 1);
+    let nested = (repeat_level + 1..ancestry.len()).find(|level| {
+        ancestry[*level].kind.label() == "repeat"
+            && ancestry[*level].children.first() == ancestry.get(level + 1).map(|next| &next.node)
+    });
+    let Some(nested) = nested else {
+        let order = causal_topological_order(protocol, document);
+        let rank = |other: &usize| order.iter().position(|item| item == other);
+        let mut own: Vec<usize> = (0..document.observations.len())
+            .filter(|other| {
+                document.observations[*other].node == entry.node
+                    && document.observations[*other].instance == entry.instance
+            })
+            .collect();
+        own.sort_by_key(rank);
+        let mut occurrence = own
+            .iter()
+            .position(|other| *other == index)
+            .map_or(1, |nth| nth + 1);
+        for level in (repeat_level + 1..ancestry.len().saturating_sub(1)).rev() {
+            let (parent, child) = (ancestry[level], ancestry[level + 1]);
+            if child.kind.label() == "case" {
+                let name = qualified_name(protocol, child);
+                let taken = choice_observations(protocol, document, anchor, parent);
+                occurrence = taken
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, other)| document.observations[**other].node == name)
+                    .nth(occurrence - 1)
+                    .map_or(occurrence, |(nth, _)| nth + 1);
+            }
+        }
+        return Some(occurrence);
+    };
+    // The steps before the inner `repeat` in the body, in program order.
+    let mut before = BTreeSet::new();
+    for sequence in repeat_level + 1..nested {
+        if ancestry[sequence].kind.label() != "sequence" {
+            continue;
+        }
+        for sibling in ancestry[sequence]
+            .children
+            .iter()
+            .take_while(|sibling| **sibling != ancestry[sequence + 1].node)
+        {
+            subtree_nodes(protocol, *sibling, &mut before);
         }
     }
-    occurrence
+    before
+        .iter()
+        .map(|name| {
+            (0..document.observations.len())
+                .filter(|other| {
+                    let seen = &document.observations[*other];
+                    seen.node == *name
+                        && seen.instance == entry.instance
+                        && causally_after(protocol, document, index, *other)
+                })
+                .count()
+        })
+        .max()
+        .filter(|count| *count > 0)
 }
 
 /// Whether the step at `position` runs in a branch of a `parallel` whose
@@ -4309,8 +4347,11 @@ fn iteration_index(
 /// branches and a cancelled thread takes no further step (ADR-027 ST-7). The
 /// join step may fire at any point after the policy holds, so the step is
 /// after the cancel only when an observation of a step after the `parallel`,
-/// which needs its join, or of `finish`, causally precedes it, in the same
-/// iteration of every `repeat` the `parallel` runs in.
+/// which needs its join, or of `finish`, causally precedes it. A step after
+/// the `parallel` that also lies in the body of a `repeat` the `parallel`
+/// runs in counts only when it runs in the same iteration of that `repeat`
+/// as the step does, and is not matched when either iteration is not
+/// determined ([`repeat_iteration`]): a missed violation, never a false one.
 fn after_cancel(
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
@@ -4331,36 +4372,34 @@ fn after_cancel(
         if !cancels {
             return false;
         }
-        // The innermost `repeat` whose body holds this `parallel`.
-        let repeat_level = (0..level).rev().find(|candidate| {
-            ancestry[*candidate].kind.label() == "repeat"
-                && ancestry[*candidate].children.first() == Some(&ancestry[candidate + 1].node)
-        });
-        // The steps after this `parallel` in every enclosing sequence: those
-        // inside the `repeat` body count in the same iteration only.
-        let mut after_any = BTreeSet::new();
-        let mut after_same_iteration = BTreeSet::new();
+        // The repeats whose body holds this `parallel`, outermost first.
+        let repeats: Vec<usize> = (0..level)
+            .filter(|candidate| {
+                ancestry[*candidate].kind.label() == "repeat"
+                    && ancestry[*candidate].children.first() == Some(&ancestry[candidate + 1].node)
+            })
+            .collect();
+        // The steps after this `parallel` in every enclosing sequence.
+        let mut after = BTreeSet::new();
         for outer in 0..level {
             if ancestry[outer].kind.label() != "sequence" {
                 continue;
             }
-            let target = if repeat_level.is_some_and(|repeat| outer > repeat) {
-                &mut after_same_iteration
-            } else {
-                &mut after_any
-            };
             for sibling in ancestry[outer]
                 .children
                 .iter()
                 .skip_while(|sibling| **sibling != ancestry[outer + 1].node)
                 .skip(1)
             {
-                subtree_nodes(protocol, *sibling, target);
+                subtree_nodes(protocol, *sibling, &mut after);
             }
         }
-        let own_iteration = repeat_level.map(|repeat| {
-            iteration_index(protocol, document, position, position, ancestry, repeat)
-        });
+        let own: Vec<Option<usize>> = repeats
+            .iter()
+            .map(|repeat| {
+                repeat_iteration(protocol, document, position, position, ancestry, *repeat)
+            })
+            .collect();
         document
             .observations
             .iter()
@@ -4371,13 +4410,10 @@ fn after_cancel(
                 {
                     return false;
                 }
-                if after_any.contains(&entry.node) || entry.kind == ObservationKind::Finish {
+                if entry.kind == ObservationKind::Finish {
                     return true;
                 }
-                let (Some(repeat), Some(own)) = (repeat_level, own_iteration) else {
-                    return false;
-                };
-                if !after_same_iteration.contains(&entry.node) {
+                if !after.contains(&entry.node) {
                     return false;
                 }
                 let Some(target) = protocol
@@ -4389,8 +4425,21 @@ fn after_cancel(
                     return false;
                 };
                 let mut path = Vec::new();
-                control_path(protocol, root.node, target.node, &mut path)
-                    && iteration_index(protocol, document, position, index, &path, repeat) == own
+                if !control_path(protocol, root.node, target.node, &mut path) {
+                    return false;
+                }
+                repeats.iter().zip(&own).all(|(repeat, own)| {
+                    // Only a repeat whose body also holds the step matters.
+                    let holds = path.get(*repeat).map(|control| control.node)
+                        == Some(ancestry[*repeat].node)
+                        && path.get(repeat + 1).map(|control| control.node)
+                            == Some(ancestry[repeat + 1].node);
+                    !holds
+                        || own.is_some_and(|own| {
+                            repeat_iteration(protocol, document, position, index, &path, *repeat)
+                                == Some(own)
+                        })
+                })
             })
     })
 }
@@ -4438,6 +4487,9 @@ fn predicate_join_tables(
                 ),
             ));
         }
+        // Invariant: only a source package holds a `parallel`; the package
+        // route refuses the selection of a protocol with one (FR-895 rule
+        // 25), so a package never reaches this loop with a predicate join.
         let CheckedPackage::Source(source) = package else {
             continue;
         };
