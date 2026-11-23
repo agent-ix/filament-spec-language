@@ -983,7 +983,7 @@ fn function_selection_refuses_mistyped_and_untagged_arguments() {
             "invalid_runtime_input", "wrong-value-kind"),
         ("sameIdentity", same(json!({"reference": child()})),
             "invalid_runtime_input", "wrong-value-kind"),
-        ("sameIdentity", same(unknown_type), "UNKNOWN_TYPE_CODE", "UNKNOWN_TYPE_CAUSE"),
+        ("sameIdentity", same(unknown_type), "invalid_runtime_input", "wrong-value-kind"),
         ("nonempty", nonempty(canonical_child()), "invalid_runtime_input", "wrong-value-kind"),
         ("nonempty", nonempty(json!({"type": "text", "value": "ab"})),
             "invalid_runtime_input", "wrong-value-kind"),
