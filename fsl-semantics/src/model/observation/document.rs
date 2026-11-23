@@ -859,7 +859,7 @@ fn read_populations(
         .and_then(|value| value.as_array())
         .ok_or_else(|| wrong_kind("populations"))?;
     let mut populations = Vec::with_capacity(items.len());
-    for item in items {
+    for (population_index, item) in items.enumerate() {
         let entry = item.as_object().ok_or_else(|| wrong_kind("populations"))?;
         let population = entry
             .member("population")
@@ -875,7 +875,7 @@ fn read_populations(
             .and_then(|value| value.as_array())
             .ok_or_else(|| wrong_kind("objects"))?;
         let mut objects = Vec::with_capacity(object_items.len());
-        for object_item in object_items {
+        for (object_index, object_item) in object_items.enumerate() {
             meter.object()?;
             let object_entry = object_item
                 .as_object()
@@ -898,8 +898,19 @@ fn read_populations(
                 .ok_or_else(|| wrong_kind("fields"))?;
             let mut fields = Vec::new();
             for (name, value) in field_items.iter() {
-                let raw = read_raw_value(value, &mut || meter.value())?
-                    .ok_or_else(|| wrong_kind(name))?;
+                let Some(raw) = read_raw_value(value, &mut || meter.value())? else {
+                    return Err(refuse(
+                        admission_record(Code::InvalidRuntimeInput, "wrong-value-kind")
+                            .with("field", name.to_owned())
+                            .with("object", key.clone())
+                            .with("population", population.clone())
+                            .with(
+                                "path",
+                                snapshot_field_path(population_index, object_index, name),
+                            )
+                            .at(snapshot_field_steps(population_index, object_index, name)),
+                    ));
+                };
                 fields.push((name.to_owned(), raw));
             }
             objects.push(RawObject {
@@ -3726,7 +3737,8 @@ pub(super) fn admit_population_values<'t>(
                             .with(
                                 "path",
                                 snapshot_field_path(population_index, object_index, name),
-                            ),
+                            )
+                            .at(snapshot_field_steps(population_index, object_index, name)),
                     ));
                 }
                 let mut found = Vec::new();
