@@ -2056,7 +2056,7 @@ impl fsl_analyze::provider::ExternalProvider for CountingProvider {
 const RECORDING: &str = "fsl.test-recording-provider";
 
 /// The counters one monitor run's recording provider reports.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Recorded {
     calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     items: std::sync::Arc<std::sync::atomic::AtomicUsize>,
@@ -2670,26 +2670,31 @@ fn an_items_deadline_expiring_mid_settlement_leaves_the_stream_unchanged() {
         std::sync::Arc::clone(&released),
     );
     let cancel = filament_exact::Cancel::new();
-    let (summary, seen) = std::thread::scope(|scope| {
-        let run = scope.spawn(|| {
-            monitor_with_members(
-                clauses,
-                json!({"items": [{"claim": "Even", "kind": "value-validity", "backend": RECORDING}],
-                    "deadline_ms": 600_000}),
-                vec![provider],
-                &recorded,
-                &cancel,
-            )
-        });
-        let items_cancel = in_flight
-            .recv_timeout(std::time::Duration::from_secs(10))
-            .expect("the provider request entered settlement before the watchdog elapsed");
-        items_cancel.cancel(filament_exact::CancelCause::Deadline);
-        let (ready, changed) = &*released;
-        *ready.lock().expect("the provider release lock") = true;
-        changed.notify_one();
-        run.join().expect("the monitor thread completes")
+    let run_recorded = recorded.clone();
+    let run_cancel = cancel.clone();
+    let run = std::thread::spawn(move || {
+        monitor_with_members(
+            clauses,
+            json!({"items": [{"claim": "Even", "kind": "value-validity", "backend": RECORDING}],
+                "deadline_ms": 600_000}),
+            vec![provider],
+            &run_recorded,
+            &run_cancel,
+        )
     });
+    let items_cancel = match in_flight.recv_timeout(std::time::Duration::from_secs(10)) {
+        Ok(cancel) => cancel,
+        Err(error) => {
+            cancel.cancel(filament_exact::CancelCause::Deadline);
+            release_blocked_provider(&released);
+            panic!(
+                "provider request did not enter settlement before the watchdog elapsed: {error}"
+            );
+        }
+    };
+    items_cancel.cancel(filament_exact::CancelCause::Deadline);
+    release_blocked_provider(&released);
+    let (summary, seen) = run.join().expect("the monitor thread completes");
     let summary = summary.expect("an items deadline expiring mid-settlement still streams");
     let value = summary.as_value();
     assert_eq!(recorded.calls(), 1, "the provider request was in flight");
@@ -2700,4 +2705,12 @@ fn an_items_deadline_expiring_mid_settlement_leaves_the_stream_unchanged() {
     assert_eq!(items[0]["category"], "incomplete", "{}", items[0]);
     assert!(items[0].to_string().contains("deadline"), "{}", items[0]);
     assert_eq!(summary.exit_code, 22, "{value}");
+}
+
+fn release_blocked_provider(
+    released: &std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+) {
+    let (ready, changed) = &**released;
+    *ready.lock().expect("the provider release lock") = true;
+    changed.notify_one();
 }
