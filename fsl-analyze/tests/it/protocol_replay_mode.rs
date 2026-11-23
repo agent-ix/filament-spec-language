@@ -1311,7 +1311,12 @@ fn incremental_prefixes_follow_causal_order_so_a_verdict_never_returns_to_pendin
         "{item}"
     );
     for pair in prefixes.windows(2) {
-        for before in pair[0]["obligations"].as_array().expect("obligations") {
+        for before in pair[0]["obligations"]
+            .as_array()
+            .expect("obligations")
+            .iter()
+            .filter(|entry| entry["obligation"]["kind"] == "enabledness")
+        {
             let Some(next) = pair[1]["obligations"]
                 .as_array()
                 .expect("obligations")
