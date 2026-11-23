@@ -441,7 +441,12 @@ fn an_entry_point_refuses_the_limits_of_another_operation() {
         error.cause.to_string(),
         "invalid clause request member limits: the `monitor` operation was given the limits of the `analyze` operation",
     );
-    drop(monitor);
+    let error = fsl_command::command::replay_with_limits(absent, RunLimits::default(), &monitor)
+        .expect_err("replay refuses monitor limits");
+    assert_eq!(
+        error.cause.to_string(),
+        "invalid clause request member limits: the `replay` operation was given the limits of the `monitor` operation",
+    );
 }
 
 /// `replay_with_limits` reads the request, replays it, and applies the caller's

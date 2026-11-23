@@ -46,3 +46,22 @@ FND-006: `with_named` was updated to refuse `monitor.*`; the `decode` doc that d
 ## Coverage
 
 Examined: FR-255-AC-24; FR-255 "Lifecycle caller-limit coverage" (analyze, monitor, replay lists); TC-721 step 11; driver FR-003-AC-12..AC-14 (filament-driver origin/main); every hunk of the diff; callers of `from_operands` (tools/fsl-probability-check, xtask, tests) and of the changed entry points; `CallerLimits::for_request`; `StageLimits::decode`/`with_named`. Driver origin/main `fsl-cli/src/cli.rs` still sets `RunLimits.replay_input_bytes` and calls the old `monitor` signature, so the driver must move with QSL-2912 (expected, no shim wanted).
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-007 | low | `an_entry_point_refuses_the_limits_of_another_operation` builds a monitor `CommandLimits` it never passes to an entry point, then drops it | tests/it/replay_request_file.rs:398-445 |
+
+FND-007: the `monitor` binding is dead setup (`drop(monitor)` only silences the unused variable); no case hands monitor limits to `analyze_with_limits` or `replay_with_limits`. Either use it for one of the cases or remove it.
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | 858b5963f renamed the test to `each_operation_exposes_the_settings_accepted_today` and retagged all six limit tests `#[trace("TC-721")]`; no test claims FR-255-AC-24. |
+| FND-002 | fixed | 7e35b77dc adds `CommandLimits::require`/`OperationMismatch`, checked first in `analyze_with_providers_and_limits` (so also `analyze_with_limits`), `monitor` and `replay_with_limits`, before any read; a test drives all three entries with an absent request path. |
+| FND-003 | fixed | `monitor()` and `CommandLimits::preparation()` now document that FSL carries the preparation bounds and enforces neither; the driver enforces them and reports with `MonitorPreparationLimits::refusal`. |
+| FND-004 | fixed | New `UsageCause::UnavailableSetting` for a table setting no limits field holds; the test uses an explicit `MONITOR_SETTINGS` list and asserts the cause and exact text for each. No other in-repo exhaustive match on `UsageCause` exists. |
+| FND-005 | fixed | `replay_with_limits_applies_the_callers_settings` covers the default replay, `replay.input_bytes` bounding the reader (exact text), `accounting.work_units=0` settling inconclusive naming its setting, and `s1.tokens=1` refused through the `stage_limits` override path. |
+| FND-006 | fixed | `StageLimits::decode` doc now names the five `monitor.*` settings. |

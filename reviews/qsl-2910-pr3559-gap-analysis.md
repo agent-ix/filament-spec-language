@@ -35,3 +35,9 @@ FND-001: settings FR-255 assigns that the PR refuses. Absent from the `Setting` 
 - Stubs: none found in the diff; no `todo!`/`unimplemented!`.
 - Semantic review: skipped (not requested).
 - Plan completion: not assessed.
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | deferred | The FR-255-AC-24 tags were withdrawn (858b5963f), so the matrix no longer reports the criterion backed; the unmet analyze and monitor settings are remaining work. That remaining work is not yet recorded on QSL-2910: the lead records it there, and this PR must not close QSL-2910. |
