@@ -184,6 +184,23 @@ mod generated {
             .boxed()
     }
 
+    /// Every distinct ordering of `values`.
+    fn arrangements(values: &[u64]) -> Vec<Vec<u64>> {
+        if values.len() <= 1 {
+            return vec![values.to_vec()];
+        }
+        let mut all = std::collections::BTreeSet::new();
+        for i in 0..values.len() {
+            let mut rest = values.to_vec();
+            let head = rest.remove(i);
+            for mut tail in arrangements(&rest) {
+                tail.insert(0, head);
+                all.insert(tail);
+            }
+        }
+        all.into_iter().collect()
+    }
+
     impl Subject {
         fn contract(&self) -> String {
             let max = self.max;
@@ -216,17 +233,18 @@ mod generated {
             }
         }
 
-        /// The one atom of the formula; `skew` reads it of object `a` alone,
+        /// The one atom of the formula; `skew` reads it of the last object alone,
         /// which is no symmetric property.
         fn atoms(&self, skew: bool) -> Vec<Atom> {
             let k = i64::try_from(self.k).expect("small");
+            let last = self.keys()[self.size - 1];
             let test: fn(i64, i64) -> bool = match self.formula {
                 Formula::AlwaysAtMost => |v, k| v <= k,
                 Formula::AlwaysNot => |v, k| v != k,
                 _ => |v, k| v == k,
             };
             vec![Box::new(move |state, object| {
-                Some((skew && object != "a") || test(value(state, object), k))
+                Some((skew && object != last) || test(value(state, object), k))
             })]
         }
 
@@ -236,11 +254,17 @@ mod generated {
 
         pub(crate) fn world(&self) -> World {
             let formula = self.formula();
-            let start: Vec<_> = self
-                .keys()
-                .iter()
-                .zip(&self.starts)
-                .map(|(key, v)| (*key, counter(i64::try_from(*v).expect("small"))))
+            // The initial set is closed under the population's symmetry: one
+            // initial state per distinct arrangement of the start values.
+            let starts: Vec<_> = arrangements(&self.starts[..self.size])
+                .into_iter()
+                .map(|values| {
+                    self.keys()
+                        .iter()
+                        .zip(values)
+                        .map(|(key, v)| (*key, counter(i64::try_from(v).expect("small"))))
+                        .collect::<Vec<_>>()
+                })
                 .collect();
             World::new(
                 Shape {
@@ -253,7 +277,7 @@ mod generated {
                     profile: INFINITE,
                     formula: &formula,
                 }],
-                &[start],
+                &starts,
                 self.keys(),
             )
         }
@@ -302,13 +326,13 @@ mod generated {
                 self.max,
                 self.contract(),
                 self.formula(),
-                if skew { " (atom read of `a` alone)" } else { "" }
+                if skew { " (atom read of the last object alone)" } else { "" }
             )
         }
     }
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-    enum Verdict {
+    pub(crate) enum Verdict {
         Holds,
         Violated,
     }
@@ -428,7 +452,7 @@ mod generated {
     }
 
     /// Negative (QSL-2061): a symmetry declared over a property that is not
-    /// symmetric (the atom reads object `a` alone) merges states that are not
+    /// symmetric (the atom reads the last object alone) merges states that are not
     /// equivalent, and P1 fails with a two-member population.
     #[test]
     fn bad_quotient_is_caught() {
