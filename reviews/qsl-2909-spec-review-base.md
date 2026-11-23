@@ -51,3 +51,4 @@ The test procedure asserts each unusability cause in isolation. It does not prov
 | --- | --- | --- |
 | FND-001 | fixed | FR-290-AC-20 and TC-774 now specify and exercise pairwise precedence plus assignment and parameter order cases. |
 | FND-002 | still-open | This same-class tie-break is not externally observable because the output contains only the reason category; reordering assignments cannot verify which assignment was selected. Remove the unobservable tie-break contract and its assertions, or expose a permitted distinguishing value. |
+| FND-002 | fixed | FR-290 removes same-class selection requirements; TC-774 now verifies the observable cross-class precedence with reordered inputs. |
