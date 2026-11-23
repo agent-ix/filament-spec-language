@@ -38,3 +38,16 @@ No applicable `AssuranceProfile` exists in this repository's specification scope
 | FND-001 | medium | Deterministic precedence for simultaneous mapping defects has no acceptance assertion | spec/functional/FR-290-settle-plugin-results-as-typed-terminal-records.md:519; spec/test-cases/TC-774-plugin-results-settle-as-typed-records-and-plugin-proofs-carry.md:38 |
 
 The test procedure asserts each unusability cause in isolation. It does not provide two simultaneous defects or assert that the higher-priority reason wins, nor does it assert first-assignment or first-parameter selection for same-class defects. The ordering contract can therefore regress without failing this criterion. Add competing-defect and stable-order cases to FR-290-AC-20 and TC-774.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-002 | medium | Same-class assignment and missing-parameter tie-breaks cannot be verified from the closed reason output | spec/functional/FR-290-settle-plugin-results-as-typed-terminal-records.md:522; spec/test-cases/TC-774-plugin-results-settle-as-typed-records-and-plugin-proofs-carry.md:38 |
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-290-AC-20 and TC-774 now specify and exercise pairwise precedence plus assignment and parameter order cases. |
+| FND-002 | still-open | This same-class tie-break is not externally observable because the output contains only the reason category; reordering assignments cannot verify which assignment was selected. Remove the unobservable tie-break contract and its assertions, or expose a permitted distinguishing value. |
