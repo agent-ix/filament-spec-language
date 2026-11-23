@@ -1873,3 +1873,219 @@ fn a_bad_recording_identity_refuses_the_request() {
         "/items/0/recording",
     );
 }
+
+// ---- FR-895 rules 19 to 21: the join step, bounded predicate joins ---------
+
+/// A `Seller` event at `Flow::Main::Both::right::Right::R`.
+fn seller_right() -> Value {
+    json!({"kind": "event", "node": RIGHT_STEP, "role": "Seller", "instance": "w-1",
+           "keys": {}, "record": {"ok": true}})
+}
+
+/// An open recording over `observations`, `Buyer`'s in order at `buyer` and
+/// `Seller`'s at `seller`.
+fn split_recording(observations: Value, buyer: &[usize], seller: &[usize]) -> Value {
+    json!({
+        "format": "filament.protocol-recording/1", "protocol": "Flow",
+        "observations": observations,
+        "local_order": {"Buyer": buyer, "Seller": seller},
+        "correlations": [],
+        "closure": {"state": "open", "premises": []}
+    })
+}
+
+/// FR-895-AC-32 (TC-2531): the join step cancels, and it may fire at any
+/// point after its policy holds (ADR-027 CI-3), so a branch step taken before
+/// a step after the `parallel` is legitimate. Under `join any … outstanding
+/// cancel`, `L`, `R`, `Placed` leaves `R` `satisfied`; `L`, `Placed`, `R`
+/// leaves it `violated`, cause `unexpected`; `R` of `Seller`, unordered with
+/// `Placed`, is not flagged; `join predicate(left_only)` behaves the same.
+#[trace("TC-2531", "FR-895-AC-32")]
+#[test]
+fn a_branch_step_is_after_the_cancel_only_once_a_step_after_the_parallel_precedes_it() {
+    let left = || branch_event("left", "Left", "L");
+    let right = || branch_event("right", "Right", "R");
+    let placed = || observation("send", "Placed", "Buyer", "m-1");
+    let predicate = predicate_join_protocol("left_only", "left", "cancel");
+    for (source, name) in [(cancel_join_protocol(), "any"), (predicate, "predicate")] {
+        let before = json!([left(), right(), placed()]);
+        assert_enabled(&source, &parallel_recording(before.clone()), RIGHT_STEP, 1);
+        assert_enabled(&source, &parallel_recording(before.clone()), PLACED, 2);
+        let item = parallel_incremental(&format!("replay-cancel-before-{name}"), &source, &before);
+        assert_prefix_verdicts(
+            &item,
+            RIGHT_STEP,
+            &[None, Some("satisfied"), Some("satisfied")],
+        );
+
+        let after = json!([left(), placed(), right()]);
+        assert_unexpected(&source, &parallel_recording(after.clone()), RIGHT_STEP, 2);
+        let item = parallel_incremental(&format!("replay-cancel-after-{name}"), &source, &after);
+        assert_prefix_verdicts(&item, RIGHT_STEP, &[None, None, Some("violated")]);
+
+        // `R` by `Seller` is unordered with `Placed`: no step after the
+        // `parallel` causally precedes it.
+        let split_source = source.replace("event R by Buyer", "event R by Seller");
+        let concurrent = json!([left(), placed(), seller_right()]);
+        let recording = split_recording(concurrent, &[0, 1], &[2]);
+        let package = package_of(&split_source);
+        let assessed = fsl_analyze::protocol_analysis::recording::assess_recording(
+            &package,
+            recording.to_string().as_bytes(),
+        )
+        .expect("readable");
+        let found = enabledness(&assessed, RIGHT_STEP, 2);
+        assert_eq!(
+            found.verdict,
+            fsl_analyze::protocol_analysis::recording::RecordingVerdict::Satisfied,
+            "{name}: {found:#?}"
+        );
+    }
+}
+
+/// The nested `parallel` fixture: `Inner` (`join any … outstanding cancel`
+/// over `L` and `R`) then `M` in branch `a` of `Outer`, and `N` in branch
+/// `b`.
+fn nested_cancel_protocol() -> String {
+    order_protocol(false).replace(
+        "run sequence Main {",
+        "run sequence Main { parallel Outer memory sc { branch a sequence A { parallel Inner memory sc { branch left sequence Left { event L by Buyer as (l: Ack) { true }; } branch right sequence Right { event R by Buyer as (r: Ack) { true }; } } join any [left, right] outstanding cancel; event M by Buyer as (m: Ack) { true }; } branch b sequence B { event N by Buyer as (n: Ack) { true }; } } join all [a, b];",
+    )
+}
+
+/// A `Buyer` event at the nested fixture's `path`.
+fn nested_event(path: &str) -> Value {
+    json!({"kind": "event", "node": format!("Flow::Main::Outer::{path}"), "role": "Buyer",
+           "instance": "w-1", "keys": {}, "record": {"ok": true}})
+}
+
+/// FR-895-AC-33 (TC-2531): in a nested `parallel` the cancel is the inner
+/// join's: `L`, `M`, `R` leaves `R`, after `M` of the sequence after `Inner`,
+/// `violated`, cause `unexpected`; `L`, `R`, `M` leaves it `satisfied`; a step
+/// of the other outer branch (`N`) is never after the inner cancel.
+#[trace("TC-2531", "FR-895-AC-33")]
+#[test]
+fn a_nested_parallel_cancels_at_its_own_join() {
+    let source = nested_cancel_protocol();
+    let inner_left = || nested_event("a::A::Inner::left::Left::L");
+    let inner_right = || nested_event("a::A::Inner::right::Right::R");
+    let after_inner = || nested_event("a::A::M");
+    let other = || nested_event("b::B::N");
+    let right_node = "Flow::Main::Outer::a::A::Inner::right::Right::R";
+    let open = |observations: Value| {
+        let count = observations.as_array().expect("observations").len();
+        json!({
+            "format": "filament.protocol-recording/1", "protocol": "Flow",
+            "observations": observations,
+            "local_order": {"Buyer": (0..count).collect::<Vec<_>>()},
+            "correlations": [],
+            "closure": {"state": "open", "premises": []}
+        })
+    };
+    assert_unexpected(
+        &source,
+        &open(json!([inner_left(), after_inner(), inner_right()])),
+        right_node,
+        2,
+    );
+    assert_enabled(
+        &source,
+        &open(json!([inner_left(), inner_right(), after_inner()])),
+        right_node,
+        1,
+    );
+    assert_enabled(
+        &source,
+        &open(json!([inner_left(), other(), inner_right()])),
+        right_node,
+        2,
+    );
+}
+
+/// A protocol whose `parallel` joins `labels` branches by a predicate
+/// reading the first only, each branch holding one `Buyer` event `E<i>`.
+fn many_label_protocol(labels: usize) -> String {
+    let branches: String = (0..labels)
+        .map(|i| {
+            format!(
+                "branch b{i} sequence S{i} {{ event E{i} by Buyer as (v{i}: Ack) {{ true }}; }} "
+            )
+        })
+        .collect();
+    let joined: Vec<String> = (0..labels).map(|i| format!("b{i}")).collect();
+    let parameters: Vec<String> = (0..labels).map(|i| format!("b{i}: Boolean")).collect();
+    let source = order_protocol(false).replace(
+        "run sequence Main {",
+        &format!(
+            "run sequence Main {{ parallel Many memory sc {{ {branches}}} join predicate(first) [{}] outstanding continue;",
+            joined.join(", ")
+        ),
+    );
+    format!(
+        "function first using v({}): Boolean pure {{ b0 }}\n{source}",
+        parameters.join(", ")
+    )
+}
+
+/// FR-895-AC-34 (TC-2531): a predicate join names at most 10 labels; at the
+/// bound the recording is assessed, and above it, at 11 and at 64 labels, the
+/// assessment is refused `unsupported_construct`/`not-yet-implemented`,
+/// naming the join and the bound, before any evaluation.
+#[trace("TC-2531", "FR-895-AC-34")]
+#[test]
+fn a_predicate_join_over_too_many_labels_is_refused_naming_the_bound() {
+    use fsl_analyze::protocol_analysis::recording::{assess_recording, MAX_PREDICATE_JOIN_LABELS};
+    assert_eq!(MAX_PREDICATE_JOIN_LABELS, 10);
+    let empty = json!({
+        "format": "filament.protocol-recording/1", "protocol": "Flow",
+        "observations": [], "local_order": {}, "correlations": [],
+        "closure": {"state": "open", "premises": []}
+    })
+    .to_string();
+    let at_bound = package_of(&many_label_protocol(10));
+    assert!(assess_recording(&at_bound, empty.as_bytes()).is_ok());
+    for labels in [11, 64] {
+        let package = package_of(&many_label_protocol(labels));
+        let refusal = assess_recording(&package, empty.as_bytes())
+            .expect_err("a predicate join over too many labels is refused");
+        assert!(refusal.is_unsupported(), "{labels}: {refusal}");
+        assert_eq!(
+            refusal.code().to_string(),
+            "unsupported_construct/not-yet-implemented"
+        );
+        let text = refusal.to_string();
+        assert!(
+            text.contains("Flow::Main::Many")
+                && text.contains(&format!("names {labels} labels"))
+                && text.contains("at most 10"),
+            "{text}"
+        );
+    }
+}
+
+/// FR-895-AC-35 (TC-2531): a predicate that is never true leaves the join
+/// unreached, so every branch's steps stay predecessors: with `left and not
+/// left`, `L`, `Placed` leaves `Placed` `pending` in every open prefix and
+/// `violated`, cause `unexpected`, once the recording is closed.
+#[trace("TC-2531", "FR-895-AC-35")]
+#[test]
+fn a_predicate_that_is_never_true_leaves_the_join_unreached() {
+    use fsl_analyze::protocol_analysis::recording::{assess_recording, RecordingVerdict};
+    let source = predicate_join_protocol("never", "left and not left", "continue");
+    let observations = json!([
+        branch_event("left", "Left", "L"),
+        observation("send", "Placed", "Buyer", "m-1")
+    ]);
+    let item = parallel_incremental("replay-predicate-never", &source, &observations);
+    assert_prefix_verdicts(&item, PLACED, &[None, Some("pending")]);
+    let closed = parallel_recording(observations);
+    assert_unexpected(&source, &closed, PLACED, 1);
+    let mut open = closed;
+    open["closure"] = json!({"state": "open", "premises": []});
+    let assessed =
+        assess_recording(&package_of(&source), open.to_string().as_bytes()).expect("readable");
+    assert_eq!(
+        enabledness(&assessed, PLACED, 1).verdict,
+        RecordingVerdict::Pending
+    );
+}
