@@ -10,7 +10,7 @@ use fsl_replay::{InvalidClock, RequestClocks};
 
 fn clock(unit: &str) -> ClockConfiguration {
     ClockConfiguration::TimestampedEvent {
-        timestamp_unit: unit.to_owned(),
+        timestamp_unit: unit.into(),
     }
 }
 
