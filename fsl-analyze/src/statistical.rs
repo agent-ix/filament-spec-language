@@ -41,11 +41,10 @@ use fsl_eval::simulation::model::{ClauseOutcome, NotMarkov};
 use fsl_eval::simulation::{ExpansionStop, SampledStep};
 use fsl_foundation::selection::DefinitionRef;
 use fsl_replay::statistical::{
-    ClaimForm, Decision, MeasureValue, SampledUndefined, SampledWitness,
-    StatisticalBasis, StatisticalLimit, StatisticalLimits, StatisticalMethod, StatisticalOutcome,
+    ClaimForm, Decision, MeasureValue, SampledUndefined, SampledWitness, StatisticalBasis,
+    StatisticalLimit, StatisticalLimits, StatisticalMethod, StatisticalOutcome,
     StatisticalProvenance, StatisticalRefusal, StatisticalStop, StatisticalUnsupported,
-    StatisticalVerdict, TestProvenance, TestResult, TraceRange, UndecidedCause,
-    WitnessValue,
+    StatisticalVerdict, TestProvenance, TestResult, TraceRange, UndecidedCause, WitnessValue,
 };
 use fsl_replay::UndefinedEvaluation;
 
@@ -601,10 +600,8 @@ impl Plan<'_> {
         let fixed = count.as_ref().and_then(Integer::to_u64);
         // A method with a fixed `N` compares it with the budgets before it
         // draws (FR-191): `N` counted samples need at least `N` draws.
-        if let (
-            StatisticalMethod::Okamoto | StatisticalMethod::ClopperPearson,
-            Some(required),
-        ) = (self.request.method, count)
+        if let (StatisticalMethod::Okamoto | StatisticalMethod::ClopperPearson, Some(required)) =
+            (self.request.method, count)
         {
             for limit in [StatisticalLimit::MaxSamples, StatisticalLimit::MaxDraws] {
                 let value = limits.value(limit);
@@ -1104,7 +1101,10 @@ fn check_sampled_with_meter<S: BehaviourSampler>(
     let bound = request
         .claim
         .verdict_bound()
-        .ok_or(fault(InternalFault::new("statistical", "claim-bound-as-written")))?;
+        .ok_or(fault(InternalFault::new(
+            "statistical",
+            "claim-bound-as-written",
+        )))?;
     let chosen = least_favourable(&results, request.claim.bound().comparison);
     Ok(StatisticalOutcome::Completed(Box::new(
         StatisticalVerdict {

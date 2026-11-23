@@ -95,7 +95,11 @@ pub fn settle_exact_prob_build_issue(
     subject: SubjectLimits<'_>,
 ) -> ExactProbBuildRecord {
     let incomplete = |limit, value| ExactProbBuildRecord {
-        value: TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value, required: None }),
+        value: TerminalValue::Incomplete(IncompleteCause::LimitReached {
+            limit,
+            value,
+            required: None,
+        }),
         diagnostic: None,
     };
     let failed = |diagnostic| ExactProbBuildRecord {

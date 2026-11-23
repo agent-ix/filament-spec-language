@@ -775,7 +775,11 @@ fn check(
 }
 
 fn stopped(limit: ModelCheckLimit, value: u64) -> TemporalCertificateCheck {
-    TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached { limit, value, required: None })
+    TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached {
+        limit,
+        value,
+        required: None,
+    })
 }
 
 fn canonical(
@@ -920,7 +924,11 @@ fn product_stop(
     use fsl_eval::hyper::Halt;
     let clause = request.hyper_clause()?;
     let stopped = |limit, value| {
-        ProductClosureRefusal::Stopped(IncompleteCause::LimitReached { limit, value, required: None })
+        ProductClosureRefusal::Stopped(IncompleteCause::LimitReached {
+            limit,
+            value,
+            required: None,
+        })
     };
     Ok(
         match product

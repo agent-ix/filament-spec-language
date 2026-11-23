@@ -668,7 +668,11 @@ type Table = &'static [(
 const BOUNDED_PROOF: Table = &[("bounded-proof", &["checks"], &[])];
 
 const INCOMPLETE: Table = &[
-    ("limit-reached", &["limit", "setting", "value"], &["required"]),
+    (
+        "limit-reached",
+        &["limit", "setting", "value"],
+        &["required"],
+    ),
     ("bounded-search-incomplete", &["reason"], &[]),
     ("precision-budget", &["lower", "upper"], &[]),
     ("cancelled", &["source"], &[]),
@@ -1277,8 +1281,7 @@ fn read_text(value: &Value, pointer: &str) -> Result<String, Defect> {
 /// no sign, no leading zero, not zero.
 fn read_positive_decimal(value: &Value, pointer: &str) -> Result<String, Defect> {
     let text = read_text(value, pointer)?;
-    let canonical = text.bytes().all(|byte| byte.is_ascii_digit())
-        && !text.starts_with('0');
+    let canonical = text.bytes().all(|byte| byte.is_ascii_digit()) && !text.starts_with('0');
     if canonical {
         Ok(text)
     } else {

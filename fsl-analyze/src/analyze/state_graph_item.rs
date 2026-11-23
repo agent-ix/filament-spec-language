@@ -1083,7 +1083,11 @@ fn run_timed(read: &Run<'_, '_>, cancel: &Cancel) -> EngineReport {
                 ZoneCheckLimit::MaxClocks(value) => (fsl_replay::ModelCheckLimit::MaxClocks, value),
             };
             return EngineReport::Refused(Refusal::Incomplete(
-                fsl_replay::IncompleteCause::LimitReached { limit, value, required: None },
+                fsl_replay::IncompleteCause::LimitReached {
+                    limit,
+                    value,
+                    required: None,
+                },
             ));
         }
         Err(ZoneCheckRefusal::Stopped(ZoneStop::Cancelled)) => match cancel.cause() {

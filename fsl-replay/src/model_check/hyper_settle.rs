@@ -358,10 +358,12 @@ fn settle_hyper_check_with(
                     crate::ProductClosureCheck::Stopped { cause, tuple } => {
                         count = tuple.map(|detail| detail.count);
                         let reached = match &cause {
-                            IncompleteCause::LimitReached { limit, value, .. } => Some(ReachedLimit {
-                                limit: *limit,
-                                value: *value,
-                            }),
+                            IncompleteCause::LimitReached { limit, value, .. } => {
+                                Some(ReachedLimit {
+                                    limit: *limit,
+                                    value: *value,
+                                })
+                            }
                             _ => None,
                         };
                         stopped = Some(Row::stopped_run(cause, reached));

@@ -288,7 +288,11 @@ fn identity_and_budgets_are_checked_first() {
         assert_eq!(
             check(&world, &certificate, limits),
             Ok(ZoneCertificateVerdict::Stopped(
-                IncompleteCause::LimitReached { limit, value: 1, required: None }
+                IncompleteCause::LimitReached {
+                    limit,
+                    value: 1,
+                    required: None
+                }
             ))
         );
     }

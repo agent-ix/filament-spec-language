@@ -867,7 +867,11 @@ fn a_meter_or_candidate_stop_settles_naming_its_setting() {
         );
         assert_eq!(
             record.value,
-            TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value, required: None })
+            TerminalValue::Incomplete(IncompleteCause::LimitReached {
+                limit,
+                value,
+                required: None
+            })
         );
         assert_eq!(
             (record.label, record.basis, record.execution, record.truth),

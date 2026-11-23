@@ -65,6 +65,7 @@ fn the_ten_step_fraction_mean_needs_exactly_the_measured_work_units() {
                 counter: filament_exact::LimitKind::WorkUnits
             },
             value: needed - 1,
+            required: None,
         })
     );
 }

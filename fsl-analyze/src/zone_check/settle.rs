@@ -319,7 +319,11 @@ pub(crate) fn stop_cause(cause: ZoneStop, cancel: &Cancel) -> Option<IncompleteC
                 ZoneCheckLimit::MaxZoneBytes(value) => (ModelCheckLimit::ZoneMaxZoneBytes, value),
                 ZoneCheckLimit::MaxClocks(value) => (ModelCheckLimit::MaxClocks, value),
             };
-            Some(IncompleteCause::LimitReached { limit, value, required: None })
+            Some(IncompleteCause::LimitReached {
+                limit,
+                value,
+                required: None,
+            })
         }
         ZoneStop::Cancelled => cancel
             .cause()

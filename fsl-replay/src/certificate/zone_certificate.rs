@@ -1627,7 +1627,11 @@ impl<O> Checker<'_, '_, O> {
     fn budgets(&self, limits: CertificateCheckLimits) -> Step<(), O> {
         let stop = |limit, value| {
             Err(Halt::Verdict(ZoneCertificateVerdict::Stopped(
-                IncompleteCause::LimitReached { limit, value, required: None },
+                IncompleteCause::LimitReached {
+                    limit,
+                    value,
+                    required: None,
+                },
             )))
         };
         let edges = u64::try_from(self.certificate.edges.len()).unwrap_or(u64::MAX);
@@ -2821,7 +2825,11 @@ impl<O> Checker<'_, '_, O> {
     fn unsound(&self, verdict: &StepVerdict) -> Step<(), O> {
         let stop = |limit, value| {
             Err(Halt::Verdict(ZoneCertificateVerdict::Stopped(
-                IncompleteCause::LimitReached { limit, value, required: None },
+                IncompleteCause::LimitReached {
+                    limit,
+                    value,
+                    required: None,
+                },
             )))
         };
         match verdict {

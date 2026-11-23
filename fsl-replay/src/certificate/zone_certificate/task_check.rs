@@ -826,7 +826,11 @@ fn within_range(
 fn budgets<O>(certificate: &ZoneCertificate<O>, limits: CertificateCheckLimits) -> Step<(), O> {
     let stop = |limit, value| {
         Err(Halt::Verdict(ZoneCertificateVerdict::Stopped(
-            IncompleteCause::LimitReached { limit, value, required: None },
+            IncompleteCause::LimitReached {
+                limit,
+                value,
+                required: None,
+            },
         )))
     };
     let edges = u64::try_from(certificate.edges.len()).unwrap_or(u64::MAX);

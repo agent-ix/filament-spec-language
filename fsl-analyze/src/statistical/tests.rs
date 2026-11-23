@@ -16,8 +16,8 @@ use fsl_eval::simulation::{weighted_choice, ChoicePoint, TotalAboveDrawRange, We
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::selection::DefinitionRef;
 use fsl_replay::statistical::{
-    BoundComparison, ClaimForm, Confidence, Coverage, Decision, MeasureValue, StatisticalLimit, StatisticalLimits,
-    StatisticalMethod, StatisticalOutcome, StatisticalRefusal, StatisticalStop,
+    BoundComparison, ClaimForm, Confidence, Coverage, Decision, MeasureValue, StatisticalLimit,
+    StatisticalLimits, StatisticalMethod, StatisticalOutcome, StatisticalRefusal, StatisticalStop,
     StatisticalUnsupported, StatisticalVerdict, TestResult, UndecidedCause, VerdictBound,
     WitnessValue,
 };
@@ -108,7 +108,8 @@ fn claim(
 /// reduced to `Pr(M <= c) >= 0.95` at `ι = 1/100`.
 fn p95() -> StatisticalClaim {
     let (_, bound) = reduce_quantile(ratio(95, 100), QuantileComparison::AtMost, int(5));
-    StatisticalClaim::new(ClaimForm::Quantile, bound, confidence(ratio(1, 100))).expect("P95")
+    StatisticalClaim::new(ClaimForm::Quantile, bound, confidence(ratio(1, 100)))
+        .expect("P95")
         .with_quantile(ratio(95, 100), QuantileComparison::AtMost, int(5))
 }
 
@@ -289,8 +290,13 @@ fn p95_settles_by_okamoto_and_by_sprt() {
             QuantileComparison::AtMost,
             int(milliseconds),
         );
-        StatisticalClaim::new(ClaimForm::Quantile, bound, confidence(ratio(1, 100))).expect("P95")
-        .with_quantile(ratio(95, 100), QuantileComparison::AtMost, int(milliseconds))
+        StatisticalClaim::new(ClaimForm::Quantile, bound, confidence(ratio(1, 100)))
+            .expect("P95")
+            .with_quantile(
+                ratio(95, 100),
+                QuantileComparison::AtMost,
+                int(milliseconds),
+            )
     };
     let five = at(5);
     let two = at(2);
@@ -1161,7 +1167,10 @@ fn a_max_draws_equal_to_the_sample_count_admits_the_run() {
     equal.limits.max_draws = 23_026;
     let verdict = completed(run(equal, &mut Service::new(5)));
     assert_eq!(verdict.decision, Decision::Accepted);
-    assert_eq!((verdict.basis.samples, verdict.basis.draws), (23_026, 23_026));
+    assert_eq!(
+        (verdict.basis.samples, verdict.basis.draws),
+        (23_026, 23_026)
+    );
 
     let mut below = request(&claim, &tests, StatisticalMethod::Okamoto, &sampler);
     below.limits.max_draws = 23_025;
@@ -2047,8 +2056,13 @@ fn okamoto_sprt_and_regenerative_results_settle_measured() {
             QuantileComparison::AtMost,
             int(milliseconds),
         );
-        StatisticalClaim::new(ClaimForm::Quantile, bound, confidence(ratio(1, 100))).expect("P95")
-        .with_quantile(ratio(95, 100), QuantileComparison::AtMost, int(milliseconds))
+        StatisticalClaim::new(ClaimForm::Quantile, bound, confidence(ratio(1, 100)))
+            .expect("P95")
+            .with_quantile(
+                ratio(95, 100),
+                QuantileComparison::AtMost,
+                int(milliseconds),
+            )
     };
     let five = at(5);
     let two = at(2);
@@ -2112,8 +2126,13 @@ fn a_rejected_measurement_fails_the_gate_as_a_violation() {
             QuantileComparison::AtMost,
             int(milliseconds),
         );
-        StatisticalClaim::new(ClaimForm::Quantile, bound, confidence(ratio(1, 100))).expect("P95")
-        .with_quantile(ratio(95, 100), QuantileComparison::AtMost, int(milliseconds))
+        StatisticalClaim::new(ClaimForm::Quantile, bound, confidence(ratio(1, 100)))
+            .expect("P95")
+            .with_quantile(
+                ratio(95, 100),
+                QuantileComparison::AtMost,
+                int(milliseconds),
+            )
     };
     let (five, two) = (at(5), at(2));
     let accepted = run(
@@ -2443,9 +2462,7 @@ fn four_sample_claim(
     };
     let claim = StatisticalClaim::new(form, bound, confidence).expect("claim");
     match form {
-        ClaimForm::Quantile => {
-            claim.with_quantile(theta, QuantileComparison::AtMost, int(at_most))
-        }
+        ClaimForm::Quantile => claim.with_quantile(theta, QuantileComparison::AtMost, int(at_most)),
         _ => claim,
     }
 }

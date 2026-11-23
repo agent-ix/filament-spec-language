@@ -472,7 +472,11 @@ mod tests {
     }
 
     fn incomplete(limit: ModelCheckLimit, value: u64) -> TerminalValue {
-        TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value, required: None })
+        TerminalValue::Incomplete(IncompleteCause::LimitReached {
+            limit,
+            value,
+            required: None,
+        })
     }
 
     /// EN-4 preserves terminal validation's diagnostic when its raw payload

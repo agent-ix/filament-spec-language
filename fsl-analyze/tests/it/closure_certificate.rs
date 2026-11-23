@@ -1243,7 +1243,11 @@ fn a_certificate_check_settles_accepted_rejected_or_stopped_with_the_named_setti
     for (record, limit, value, setting) in limit_stops {
         assert_eq!(
             record.value,
-            TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value, required: None })
+            TerminalValue::Incomplete(IncompleteCause::LimitReached {
+                limit,
+                value,
+                required: None
+            })
         );
         assert_eq!(record.limit_reached, Some(ReachedLimit { limit, value }));
         assert_eq!(limit.setting(), setting);
@@ -1369,7 +1373,11 @@ fn a_stopped_check_names_what_stopped_it() {
     let request = invariant.request(&world, UNLIMITED);
     let defaults = ModelCheckLimits::default();
     let stop = |limit, value| {
-        TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached { limit, value, required: None })
+        TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached {
+            limit,
+            value,
+            required: None,
+        })
     };
     let mut states = defaults;
     states.limits.max_states = 2;

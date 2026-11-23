@@ -1967,7 +1967,13 @@ fn a_preflight_limit_reached_cause_carries_its_required_count() {
         );
     }
 
-    for required in [json!("0"), json!("-5"), json!("007"), json!("1.5"), json!(9_210_341)] {
+    for required in [
+        json!("0"),
+        json!("-5"),
+        json!("007"),
+        json!("1.5"),
+        json!(9_210_341),
+    ] {
         let mut refused = request_for(&declaration);
         set_entry(
             &mut refused,

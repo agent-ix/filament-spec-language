@@ -289,7 +289,11 @@ fn a_true_certificate_under_a_small_meter_never_rejects() {
         .expect("the certificate is checked");
         match check {
             TemporalCertificateCheck::Accepted => {}
-            TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached { limit, value, .. }) => {
+            TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached {
+                limit,
+                value,
+                ..
+            }) => {
                 assert_eq!(
                     (limit, value),
                     (
