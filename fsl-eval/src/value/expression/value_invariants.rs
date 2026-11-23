@@ -397,6 +397,7 @@ fn walk(
             | Value::Timestamp(_)
             | Value::Enum(_)
             | Value::Union(_)
+            | Value::ClockReference(_)
             | Value::Population(_) => {}
         }
     }

@@ -1355,7 +1355,8 @@ pub(super) fn finish(
 ) -> Result<Emission, EmitRefusal> {
     let lock = base.lock().clone();
     super::order_dependencies(&mut nodes, invariant)?;
-    let requirement_rows = super::value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
+    let (requirement_rows, path_condition_frames) =
+        super::value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
     let operand_rows = super::write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {
         graph_version: base.graph().graph_version.clone(),
@@ -1420,7 +1421,7 @@ pub(super) fn finish(
         filament_contract_model::ProtocolCorrelationProvenance::Unavailable(_) => None,
     };
     let package = EmittedPackage::new(base.name(), |name| {
-        filament_contract_model::encode_checked_package_v2_with_protocol_correlation_occurrences(
+        filament_contract_model::encode_checked_package_v2_with_path_condition_frames(
             name,
             &lock,
             &semantic_graph,
@@ -1439,6 +1440,7 @@ pub(super) fn finish(
             },
             (!requirement_rows.is_empty()).then_some(requirement_rows.as_slice()),
             correlation_rows.as_deref(),
+            (!path_condition_frames.is_empty()).then_some(path_condition_frames.as_slice()),
             &capability_report,
             &diagnostics,
             limits.canonical(),
@@ -1776,7 +1778,10 @@ mod tests {
                 let [after] = matching.as_slice() else {
                     panic!("one final row per base row, got {}", matching.len());
                 };
-                let (Some(before), Some(after)) = (&before.record, &after.record) else {
+                let (Some(before), Some(after)) = (
+                    crate::emit::value_validity_requirements::value_record(before),
+                    crate::emit::value_validity_requirements::value_record(after),
+                ) else {
                     assert_eq!(before.record.is_none(), after.record.is_none());
                     continue;
                 };
@@ -1794,9 +1799,6 @@ mod tests {
                 }
                 if let Some((narrow, _)) = &mut expected.conversion {
                     *narrow = rename(narrow);
-                }
-                for guard in &mut expected.path_condition {
-                    guard.guard = rename(&guard.guard);
                 }
                 for id in expected
                     .extent_roots
@@ -1818,7 +1820,22 @@ mod tests {
                 assert_eq!(regions, 1, "each record keeps its generated source-map entry");
             }
             assert_eq!(renamed_owners, renamed, "records of rekeyed entries name the new owner");
-            after.iter().filter_map(|row| row.record.clone()).collect()
+            // The shared frames keep their parents, outcomes and occurrences,
+            // and each guard names its renamed node.
+            let frames_before = self.base.path_condition_frames();
+            let frames_after = self.final_package.path_condition_frames();
+            assert_eq!(frames_before.len(), frames_after.len());
+            for (before, after) in frames_before.iter().zip(frames_after) {
+                assert_eq!(after.parent, before.parent);
+                assert_eq!(after.guard, rename(&before.guard));
+                assert_eq!(after.occurrence, before.occurrence);
+                assert_eq!(after.holds, before.holds);
+            }
+            after
+                .iter()
+                .filter_map(crate::emit::value_validity_requirements::value_record)
+                .cloned()
+                .collect()
         }
     }
 
@@ -1885,14 +1902,17 @@ mod tests {
     #[ix_trace_rs::trace("FR-251-AC-9", "FR-940")]
     #[test]
     fn final_writer_carries_guards_conversions_and_unbounded_extents() {
+        // contract-ir reader defect A (QSL-2776 chain): `init`'s else branch
+        // holds a scalar operation (`x * 1`, not `x`) until the reader accepts
+        // a branch frame no record cites.
         let rekeyed = rekeyed_final(
-            "function init using v(x: Int[0, 9], p: Boolean): Int[0, 10] pure { if p then x + 1 else x }\n\
+            "function init using v(x: Int[0, 9], p: Boolean): Int[0, 10] pure { if p then x + 1 else x * 1 }\n\
              function on_event using v(n: Integer): Integer pure { n + 1 }\n\
              function on_watermark using v(x: Int[0, 9], p: Boolean): Integer pure { if p then x * 2 else x - 1 }\n\
              function on_gap using v(x: Int[0, 9]): Integer pure { x + 4 }\n",
         );
         let records = rekeyed.assert_rows_follow_the_rekey(records_of_entries(&rekeyed));
-        assert!(records.iter().any(|record| !record.path_condition.is_empty()));
+        assert!(records.iter().any(|record| record.path_condition_frame.is_some()));
         assert!(records.iter().any(|record| record.conversion.is_some()));
         assert!(records.iter().all(|record| !record.extent_roots.is_empty()));
         assert!(rekeyed.final_package.requirement_items().iter().any(|row| matches!(
@@ -1909,7 +1929,10 @@ mod tests {
         package
             .requirement_items()
             .iter()
-            .filter(|row| row.record.as_ref().is_some_and(|record| record.owner == *owner))
+            .filter(|row| {
+                crate::emit::value_validity_requirements::value_record(row)
+                    .is_some_and(|record| record.owner == *owner)
+            })
             .map(|row| row.claim.clone())
             .collect()
     }
@@ -1967,7 +1990,7 @@ mod tests {
             .base
             .requirement_items()
             .iter()
-            .filter_map(|row| row.record.as_ref())
+            .filter_map(crate::emit::value_validity_requirements::value_record)
             .filter(|record| rekeyed.changes.iter().any(|(old, _)| *old == record.owner))
             .count()
     }

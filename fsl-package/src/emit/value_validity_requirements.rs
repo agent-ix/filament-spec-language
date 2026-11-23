@@ -6,7 +6,8 @@ use std::collections::{BTreeMap, HashMap};
 use filament_contract_model::{
     CapabilityKind, CheckedNodeId, CheckedOccurrence, CheckedOccurrenceRole, CheckedSemanticNodeV2,
     CheckedSourceMapEntry, CheckedSourceRegion, CheckedTerm, DomainKey, DomainKind, LiteralKind,
-    RequirementExtent, RequirementGuard, RequirementItemRow, ValueValidityRecord,
+    OperationContractRecord, OperationPopulation, PathConditionFrame, PathConditionFrameId,
+    RequirementExtent, RequirementItemRow, RequirementRecord as WireRecord, ValueValidityRecord,
 };
 use filament_exact::{NodeKey, PathSegment};
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -15,12 +16,15 @@ use fsl_semantics::check::{Capability, CheckedGraph, NodeTag, RequirementRecord}
 use fsl_semantics::family::ClaimExtent;
 
 use super::{
-    admitted_key, body_reference_targets, checked_literal_json, checked_occurrence,
-    claim_aggregate, claim_binding, encoding, node_id, push_scalar_type, source_artifact,
-    EmitRefusal, OmissionCause, OmittedNode, GRAPH_V2,
+    EmitRefusal, GRAPH_V2, OmissionCause, OmittedNode, admitted_key, body_reference_targets,
+    checked_literal_json, checked_occurrence, claim_aggregate, claim_binding, claim_literal, claim_text, encoding,
+    node_id, push_scalar_type, source_artifact,
 };
 
+mod frames;
+
 type Records = HashMap<OccurrenceKey, ValueValidityRecord>;
+type OperationRecords = HashMap<OccurrenceKey, OperationContractRecord>;
 
 /// The omitted graph nodes, each with its omission cause.
 type Omitted = HashMap<NodeKey, OmissionCause>;
@@ -29,6 +33,12 @@ type Omitted = HashMap<NodeKey, OmissionCause>;
 /// omits because their owner function is omitted.
 pub(super) struct Appended {
     pub(super) records: Records,
+    /// Operation-contract record nodes and their exact typed references.
+    pub(super) operation_records: OperationRecords,
+    /// The shared path-condition frames the records cite (FSpec FR-825),
+    /// each guard in the id space of the emitted nodes; empty when no record
+    /// is guarded.
+    pub(super) frames: Vec<PathConditionFrame>,
     /// Each with cause `NamesOmittedNode` naming its omitted owner.
     pub(super) omitted: Vec<OmittedNode>,
 }
@@ -45,15 +55,43 @@ pub(super) struct RecordNames {
     pub(super) owner: Option<NodeKey>,
     /// Every other node the record names: its extent's domain nodes, and for
     /// a `value-validity` record the result bound's type node, the narrow,
-    /// every guard, every extent root and every object type.
+    /// every extent root and every object type. Its guards are named through
+    /// `guards`, one shared chain, never one vector per record.
     pub(super) names: Vec<NodeKey>,
+    /// The terminal row, in [`GuardRows`], of the record's guard chain.
+    pub(super) guards: Option<usize>,
 }
 
+/// The guard chains of every record, interned as parent-linked rows holding
+/// the guard node each names: one row per distinct guard edge.
+#[derive(Default)]
+pub(super) struct GuardRows {
+    /// Each row's enclosing row and guard node.
+    pub(super) rows: Vec<(Option<usize>, NodeKey)>,
+    lookup: HashMap<(Option<usize>, NodeKey), usize>,
+}
+
+impl GuardRows {
+    fn intern(&mut self, parent: Option<usize>, guard: &NodeKey) -> usize {
+        if let Some(&row) = self.lookup.get(&(parent, guard.clone())) {
+            return row;
+        }
+        self.rows.push((parent, guard.clone()));
+        self.lookup
+            .insert((parent, guard.clone()), self.rows.len() - 1);
+        self.rows.len() - 1
+    }
+}
+
+/// The names of one record, its guards as plain names when `guards` is `None`
+/// and as a row of the shared `guards` otherwise.
 fn record_names_of(
     graph: &CheckedGraph,
     claim: &OccurrenceKey,
     source: &RequirementRecord,
+    mut guards: Option<&mut GuardRows>,
 ) -> Result<RecordNames, EmitRefusal> {
+    let mut terminal = None;
     let mut names = Vec::new();
     if let ClaimExtent::Unbounded(domains) = source.requirements().extent() {
         names.extend(domains.iter().map(|(key, _)| match key {
@@ -71,12 +109,19 @@ fn record_names_of(
         );
         names.push(source.result_bound().node());
         names.extend(source.conversion_context().map(|key| key.node().clone()));
-        names.extend(
-            source
-                .path_condition()
-                .iter()
-                .map(|guard| guard.occurrence().node().clone()),
-        );
+        match guards.as_deref_mut() {
+            Some(rows) => {
+                for guard in source.path_condition() {
+                    terminal = Some(rows.intern(terminal, guard.occurrence().node()));
+                }
+            }
+            None => names.extend(
+                source
+                    .path_condition()
+                    .iter()
+                    .map(|guard| guard.occurrence().node().clone()),
+            ),
+        }
         names.extend(source.extent_roots().iter().cloned());
         names.extend(
             graph
@@ -84,21 +129,41 @@ fn record_names_of(
                 .ok_or(EmitRefusal::SourceMapInvariant)?
                 .map_err(|_| EmitRefusal::SourceMapInvariant)?,
         );
+    } else if source.requirements().kind() == Capability::OperationContract {
+        names.push(source.result_bound().node());
+        let references = graph
+            .item_operation_contract_references(claim)
+            .ok_or(EmitRefusal::SourceMapInvariant)?
+            .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+        names.extend(references.operation);
+        names.extend(references.model_objects);
+        names.extend(
+            references
+                .populations
+                .into_iter()
+                .map(|population| population.member_type),
+        );
     }
     Ok(RecordNames {
         claim: claim.node().clone(),
         owner,
         names,
+        guards: terminal,
     })
 }
 
-/// What each requirement record of `graph` names, in requirement-map order.
-pub(super) fn record_names(graph: &CheckedGraph) -> Result<Vec<RecordNames>, EmitRefusal> {
-    graph
+/// What each requirement record of `graph` names, in requirement-map order,
+/// with the guard chains the records share.
+pub(super) fn record_names(
+    graph: &CheckedGraph,
+) -> Result<(Vec<RecordNames>, GuardRows), EmitRefusal> {
+    let mut guards = GuardRows::default();
+    let records = graph
         .requirements()
         .iter()
-        .map(|(claim, source)| record_names_of(graph, claim, source))
-        .collect()
+        .map(|(claim, source)| record_names_of(graph, claim, source, Some(&mut guards)))
+        .collect::<Result<_, _>>()?;
+    Ok((records, guards))
 }
 
 /// Whether a record the emitter writes names an omitted node. The omission
@@ -114,7 +179,7 @@ fn names_an_omitted_node(
     if omitted.is_empty() {
         return Ok(false);
     }
-    let names = record_names_of(graph, claim, source)?;
+    let names = record_names_of(graph, claim, source, None)?;
     Ok(std::iter::once(&names.claim)
         .chain(&names.owner)
         .chain(&names.names)
@@ -135,6 +200,296 @@ fn count(integer: &CheckedNodeId, value: u64) -> Result<CheckedTerm, EmitRefusal
     })
 }
 
+fn occurrence_role_wire(role: &CheckedOccurrenceRole) -> &'static str {
+    match role {
+        CheckedOccurrenceRole::Declaration => "declaration",
+        CheckedOccurrenceRole::Type => "type",
+        CheckedOccurrenceRole::Expression => "expression",
+        CheckedOccurrenceRole::Anchor => "anchor",
+        CheckedOccurrenceRole::Claim => "claim",
+        CheckedOccurrenceRole::Generated => "generated",
+    }
+}
+
+fn operation_contract_key(
+    claim: &OccurrenceKey,
+    occurrence: &CheckedOccurrence,
+    result_bound: &NodeKey,
+    invariant: bool,
+    operation: Option<&NodeKey>,
+    model_objects: &[NodeKey],
+    populations: &[fsl_semantics::check::CheckedOperationPopulation],
+    extent: &ClaimExtent,
+) -> Result<NodeKey, EmitRefusal> {
+    // `derived_node_key` writes the `claim`/`operation_contract` prefix.
+    let mut operands = vec![
+        PathSegment::Node(claim.node().clone()),
+        PathSegment::Text(occurrence_role_wire(&occurrence.role).to_owned()),
+        PathSegment::Text(occurrence.ordinal.to_string()),
+        PathSegment::Text("bound".to_owned()),
+        PathSegment::Node(result_bound.clone()),
+        PathSegment::Text("invariant".to_owned()),
+        PathSegment::Text(if invariant { "true" } else { "false" }.to_owned()),
+        PathSegment::Text("operation".to_owned()),
+    ];
+    match operation {
+        Some(operation) => operands.push(PathSegment::Node(operation.clone())),
+        None => operands.push(PathSegment::Text("none".to_owned())),
+    }
+    operands.push(PathSegment::Text("objects".to_owned()));
+    operands.push(PathSegment::Text(model_objects.len().to_string()));
+    operands.extend(model_objects.iter().cloned().map(PathSegment::Node));
+    operands.push(PathSegment::Text("populations".to_owned()));
+    operands.push(PathSegment::Text(populations.len().to_string()));
+    for population in populations {
+        operands.push(PathSegment::Text("population".to_owned()));
+        operands.push(PathSegment::Node(population.member_type.clone()));
+        operands.push(PathSegment::Text(population.ordinal.to_string()));
+        operands.push(PathSegment::Text(
+            population
+                .maximum
+                .map_or_else(|| "none".to_owned(), |maximum| maximum.to_string()),
+        ));
+    }
+    operands.push(PathSegment::Text("extent".to_owned()));
+    match extent {
+        ClaimExtent::Bounded => operands.push(PathSegment::Text("bounded".to_owned())),
+        ClaimExtent::Unbounded(domains) => {
+            operands.push(PathSegment::Text("unbounded".to_owned()));
+            operands.push(PathSegment::Text(domains.len().to_string()));
+            for (domain, kind) in domains.iter() {
+                match domain {
+                    fsl_foundation::bound::DomainKey::Node { node, path } => {
+                        operands.push(PathSegment::Text("node".to_owned()));
+                        operands.push(PathSegment::Node(node.clone()));
+                        operands.push(PathSegment::Text(path.len().to_string()));
+                        operands.extend(
+                            path.iter()
+                                .map(|index| PathSegment::Text(index.to_string())),
+                        );
+                    }
+                    fsl_foundation::bound::DomainKey::Population {
+                        member_type,
+                        ordinal,
+                    } => {
+                        operands.push(PathSegment::Text("population".to_owned()));
+                        operands.push(PathSegment::Node(member_type.clone()));
+                        operands.push(PathSegment::Text(ordinal.to_string()));
+                    }
+                }
+                operands.push(PathSegment::Text(kind.to_wire().to_owned()));
+            }
+        }
+    }
+    fsl_semantics::check::derived_node_key(
+        claim.node().package(),
+        NodeTag::Claim,
+        "operation_contract",
+        operands,
+        0,
+    )
+    .map_err(encoding)
+}
+
+fn append_operation_contract(
+    ids: &StructuralIds,
+    graph: &CheckedGraph,
+    claim: &OccurrenceKey,
+    source: &RequirementRecord,
+    nodes: &mut Vec<CheckedSemanticNodeV2>,
+    source_map: &mut Vec<CheckedSourceMapEntry>,
+    region: &impl Fn(&OccurrenceKey) -> Option<fsl_foundation::source::provenance::SourceRegion>,
+    omitted: &Omitted,
+    omissions: &mut Vec<OmittedNode>,
+    records: &mut OperationRecords,
+    ordinal: &mut u64,
+    types_written: &mut bool,
+    text_type: &CheckedNodeId,
+    integer: &CheckedNodeId,
+    boolean: &CheckedNodeId,
+) -> Result<(), EmitRefusal> {
+    let checked_occurrence =
+        checked_occurrence(claim.origin()).ok_or(EmitRefusal::RequirementNotEmitted {
+            kind: source.requirements().kind().to_wire(),
+            shape: "claim-occurrence",
+        })?;
+    let references = graph
+        .item_operation_contract_references(claim)
+        .ok_or(EmitRefusal::SourceMapInvariant)?
+        .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+    let operation_key = references.operation;
+    let model_object_keys = references.model_objects;
+    let population_facts = references.populations;
+    let key = operation_contract_key(
+        claim,
+        &checked_occurrence,
+        &source.result_bound().node(),
+        source.requirements().invariant_clause(),
+        operation_key.as_ref(),
+        &model_object_keys,
+        &population_facts,
+        source.requirements().extent(),
+    )?;
+    let id = node_id(ids, key);
+    let claim_key = claim.node();
+    let claim_id = node_id(ids, claim_key);
+    if omitted.contains_key(claim_key) {
+        omissions.push(OmittedNode {
+            node: id,
+            cause: OmissionCause::NamesOmittedNode(claim_id),
+        });
+        return Ok(());
+    }
+    if names_an_omitted_node(graph, claim, source, omitted)? {
+        return Err(EmitRefusal::SourceMapInvariant);
+    }
+
+    let region = region(claim).ok_or(EmitRefusal::SourceMapInvariant)?;
+    let region = CheckedSourceRegion {
+        source: source_artifact(region.source()),
+        start: region.start(),
+        end: region.end(),
+    };
+    if !*types_written {
+        push_scalar_type(nodes, source_map, text_type, "string", &region);
+        push_scalar_type(nodes, source_map, integer, "integer", &region);
+        push_scalar_type(nodes, source_map, boolean, "boolean", &region);
+        *types_written = true;
+    }
+
+    let result_bound = node_id(ids, source.result_bound().node());
+    let operation = operation_key.as_ref().map(|key| node_id(ids, key));
+    let model_objects = model_object_keys
+        .iter()
+        .map(|key| node_id(ids, key))
+        .collect::<Vec<_>>();
+    let populations = population_facts
+        .iter()
+        .map(|population| {
+            Ok(OperationPopulation {
+                member_type: node_id(ids, &population.member_type),
+                ordinal: u64::try_from(population.ordinal)
+                    .map_err(|_| EmitRefusal::SourceMapInvariant)?,
+                maximum: population.maximum,
+            })
+        })
+        .collect::<Result<Vec<_>, EmitRefusal>>()?;
+
+    let operation_term = operation
+        .as_ref()
+        .map(reference)
+        .unwrap_or_else(|| claim_aggregate(Vec::new()));
+    let population_terms = populations
+        .iter()
+        .map(|population| {
+            Ok(claim_aggregate(vec![
+                claim_binding("member_type", reference(&population.member_type)),
+                claim_binding("ordinal", count(integer, population.ordinal)?),
+                claim_binding(
+                    "maximum",
+                    population.maximum.map_or_else(
+                        || Ok(claim_aggregate(Vec::new())),
+                        |maximum| count(integer, maximum),
+                    )?,
+                ),
+            ]))
+        })
+        .collect::<Result<Vec<_>, EmitRefusal>>()?;
+    let body = claim_aggregate(vec![
+        claim_binding("claim", reference(&claim_id)),
+        claim_binding(
+            "occurrence",
+            claim_aggregate(vec![
+                claim_binding(
+                    "role",
+                    claim_literal(
+                        text_type,
+                        LiteralKind::String,
+                        occurrence_role_wire(&checked_occurrence.role).to_owned(),
+                    )?,
+                ),
+                claim_binding("ordinal", count(integer, checked_occurrence.ordinal)?),
+            ]),
+        ),
+        claim_binding("result_bound", reference(&result_bound)),
+        claim_binding(
+            "invariant",
+            CheckedTerm::Literal {
+                type_id: boolean.clone(),
+                value_kind: LiteralKind::Boolean,
+                value: checked_literal_json(&source.requirements().invariant_clause())?,
+            },
+        ),
+        claim_binding("operation", operation_term),
+        claim_binding(
+            "model_objects",
+            claim_aggregate(model_objects.iter().map(reference).collect()),
+        ),
+        claim_binding("populations", claim_aggregate(population_terms)),
+    ]);
+    let occurrence = CheckedOccurrence {
+        role: CheckedOccurrenceRole::Generated,
+        ordinal: *ordinal,
+    };
+    let node = CheckedSemanticNodeV2 {
+        node_id: id.clone(),
+        schema_version: GRAPH_V2.into(),
+        node_tag: "claim".into(),
+        semantic_form: "operation_contract".into(),
+        semantic_type: boolean.clone(),
+        dependencies: body_reference_targets(&body),
+        occurrences: vec![occurrence.clone()],
+        recursion_group: None,
+        declaration: None,
+        owner: None,
+        owner_model: None,
+        check_mode: None,
+        body,
+    };
+    nodes.push(node);
+    source_map.push(CheckedSourceMapEntry {
+        node_id: id.clone(),
+        role: occurrence.role,
+        ordinal: occurrence.ordinal,
+        regions: vec![region],
+    });
+    if records
+        .insert(
+            claim.clone(),
+            OperationContractRecord {
+                node: id,
+                result_bound,
+                invariant: source.requirements().invariant_clause(),
+                operation,
+                model_objects,
+                populations,
+            },
+        )
+        .is_some()
+    {
+        return Err(EmitRefusal::SourceMapInvariant);
+    }
+    *ordinal = ordinal
+        .checked_add(1)
+        .ok_or(EmitRefusal::SourceMapInvariant)?;
+    Ok(())
+}
+
+/// Whether `claim` is owned by a model refinement or a step relation. Those
+/// carry their own capability rows (`refinement`, `temporal-satisfaction`); an
+/// `operation-contract` record is written only for a state clause or an
+/// operation frame (FSpec FR-825, FR-290).
+fn relation_owned(graph: &CheckedGraph, claim: &OccurrenceKey) -> bool {
+    graph.refinements().iter().any(|refinement| {
+        refinement
+            .requirement_occurrence()
+            .is_some_and(|key| key.node() == claim.node())
+    }) || graph
+        .step_relations()
+        .iter()
+        .any(|relation| relation.occurrence().is_some_and(|key| key.node() == claim.node()))
+}
+
 pub(super) fn append(
     ids: &StructuralIds,
     graph: &CheckedGraph,
@@ -144,17 +499,29 @@ pub(super) fn append(
     omitted: &Omitted,
 ) -> Result<Appended, EmitRefusal> {
     let mut records = HashMap::new();
+    let mut operation_records = HashMap::new();
     let mut omissions = Vec::new();
-    if !graph
+    let has_value_validity = graph
         .requirements()
         .values()
-        .any(|record| record.requirements().kind() == Capability::ValueValidity)
-    {
+        .any(|record| record.requirements().kind() == Capability::ValueValidity);
+    let has_operation_contract = graph
+        .requirements()
+        .values()
+        .any(|record| record.requirements().kind() == Capability::OperationContract);
+    if !has_value_validity && !has_operation_contract {
         return Ok(Appended {
             records,
+            operation_records,
+            frames: Vec::new(),
             omitted: omissions,
         });
     }
+    let frames = if has_value_validity {
+        frames::derive(ids, graph, nodes, omitted)?
+    } else {
+        frames::Frames::default()
+    };
     let integer = node_id(
         ids,
         fsl_semantics::check::builtin_integer_type_key(graph.package_name()).map_err(encoding)?,
@@ -164,9 +531,40 @@ pub(super) fn append(
         fsl_semantics::check::builtin_boolean_type_key(graph.package_name()).map_err(encoding)?,
     );
     let mut types_written = false;
+    let mut operation_types_written = false;
+    let mut operation_ordinal = 0_u64;
     let mut ordinals = BTreeMap::<String, u64>::new();
     let mut owners = HashMap::<String, (NodeKey, CheckedNodeId)>::new();
+    let text = node_id(
+        ids,
+        fsl_semantics::check::builtin_string_type_key(graph.package_name()).map_err(encoding)?,
+    );
     for (claim, source) in graph.requirements().iter() {
+        if source.requirements().kind() == Capability::OperationContract
+            && relation_owned(graph, claim)
+        {
+            continue;
+        }
+        if source.requirements().kind() == Capability::OperationContract {
+            append_operation_contract(
+                ids,
+                graph,
+                claim,
+                source,
+                nodes,
+                source_map,
+                regions,
+                omitted,
+                &mut omissions,
+                &mut operation_records,
+                &mut operation_ordinal,
+                &mut operation_types_written,
+                &text,
+                &integer,
+                &boolean,
+            )?;
+            continue;
+        }
         if source.requirements().kind() != Capability::ValueValidity {
             continue;
         }
@@ -196,15 +594,11 @@ pub(super) fn append(
         let conversion = source
             .conversion_context()
             .map(|key| (node_id(ids, key.node()), key.origin().ordinal()));
-        let guards = source
-            .path_condition()
-            .iter()
-            .map(|guard| RequirementGuard {
-                guard: node_id(ids, guard.occurrence().node()),
-                occurrence: guard.occurrence().origin().ordinal(),
-                holds: guard.holds(),
-            })
-            .collect::<Vec<_>>();
+        let terminal = if owner_omitted {
+            None
+        } else {
+            frames.terminal(claim)
+        };
         let roots = source
             .extent_roots()
             .iter()
@@ -230,13 +624,9 @@ pub(super) fn append(
             operands.push(PathSegment::Node(context.node().clone()));
             operands.push(PathSegment::Text(context.origin().ordinal().to_string()));
         }
-        operands.push(PathSegment::Text("guards".to_owned()));
-        for guard in source.path_condition() {
-            operands.extend([
-                PathSegment::Node(guard.occurrence().node().clone()),
-                PathSegment::Text(guard.occurrence().origin().ordinal().to_string()),
-                PathSegment::Text(guard.holds().to_string()),
-            ]);
+        if let Some(terminal) = terminal {
+            operands.push(PathSegment::Text("path_condition".to_owned()));
+            operands.push(PathSegment::Text(terminal.0.to_string()));
         }
         operands.push(PathSegment::Text("roots".to_owned()));
         operands.extend(source.extent_roots().iter().cloned().map(PathSegment::Node));
@@ -286,30 +676,17 @@ pub(super) fn append(
             ]),
             None => claim_aggregate(Vec::new()),
         };
-        let guard_terms = guards
-            .iter()
-            .map(|guard| {
-                Ok(claim_aggregate(vec![
-                    claim_binding("guard", reference(&guard.guard)),
-                    claim_binding("occurrence", count(&integer, guard.occurrence)?),
-                    claim_binding(
-                        "holds",
-                        CheckedTerm::Literal {
-                            type_id: boolean.clone(),
-                            value_kind: LiteralKind::Boolean,
-                            value: checked_literal_json(&guard.holds)?,
-                        },
-                    ),
-                ]))
-            })
-            .collect::<Result<Vec<_>, EmitRefusal>>()?;
+        let frame_terms = match terminal {
+            Some(terminal) => vec![count(&integer, terminal.0 as u64)?],
+            None => Vec::new(),
+        };
         let body = claim_aggregate(vec![
             claim_binding("owner", reference(&owner)),
             claim_binding("application", reference(&application)),
             claim_binding("occurrence", count(&integer, claim.origin().ordinal())?),
             claim_binding("result_bound", reference(&result_bound)),
             claim_binding("conversion", conversion_term),
-            claim_binding("path_condition", claim_aggregate(guard_terms)),
+            claim_binding("path_condition", claim_aggregate(frame_terms)),
             claim_binding(
                 "extent_roots",
                 claim_aggregate(roots.iter().map(reference).collect()),
@@ -352,7 +729,7 @@ pub(super) fn append(
                     occurrence: claim.origin().ordinal(),
                     result_bound,
                     conversion,
-                    path_condition: guards,
+                    path_condition_frame: terminal,
                     extent_roots: roots,
                     objects,
                 },
@@ -364,6 +741,8 @@ pub(super) fn append(
     }
     Ok(Appended {
         records,
+        operation_records,
+        frames: frames.rows,
         omitted: omissions,
     })
 }
@@ -373,6 +752,7 @@ pub(super) fn rows(
     graph: &CheckedGraph,
     emitted: &HashMap<NodeKey, CheckedNodeId>,
     records: &Records,
+    operation_records: &OperationRecords,
     existing: &[RequirementItemRow],
     omitted: &Omitted,
 ) -> Result<Vec<RequirementItemRow>, EmitRefusal> {
@@ -391,11 +771,16 @@ pub(super) fn rows(
         .collect();
     let mut rows = Vec::new();
     for (claim, source) in graph.requirements().iter() {
+        if source.requirements().kind() == Capability::OperationContract
+            && relation_owned(graph, claim)
+        {
+            continue;
+        }
         // A `value-validity` record has no row when its owner is omitted,
         // and any other record none when its claim node is; the omission
         // closure leaves no other written record naming an omitted node.
         if !omitted.is_empty() {
-            let names = record_names_of(graph, claim, source)?;
+            let names = record_names_of(graph, claim, source, None)?;
             let dropped = names
                 .owner
                 .as_ref()
@@ -488,7 +873,7 @@ pub(super) fn rows(
         };
         let record = if kind == CapabilityKind::ValueValidity {
             let record = records.get(claim).ok_or(EmitRefusal::SourceMapInvariant)?;
-            Some(ValueValidityRecord {
+            Some(WireRecord::ValueValidity(ValueValidityRecord {
                 node: remap(&record.node)?,
                 owner: remap(&record.owner)?,
                 application: remap(&record.application)?,
@@ -501,17 +886,7 @@ pub(super) fn rows(
                         Ok((remap(node)?, *ordinal))
                     })
                     .transpose()?,
-                path_condition: record
-                    .path_condition
-                    .iter()
-                    .map(|guard| {
-                        Ok(RequirementGuard {
-                            guard: remap(&guard.guard)?,
-                            occurrence: guard.occurrence,
-                            holds: guard.holds,
-                        })
-                    })
-                    .collect::<Result<_, EmitRefusal>>()?,
+                path_condition_frame: record.path_condition_frame,
                 extent_roots: record
                     .extent_roots
                     .iter()
@@ -522,19 +897,74 @@ pub(super) fn rows(
                     .iter()
                     .map(&mut remap)
                     .collect::<Result<_, _>>()?,
-            })
+            }))
+        } else if kind == CapabilityKind::OperationContract {
+            let record = operation_records
+                .get(claim)
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            Some(WireRecord::OperationContract(OperationContractRecord {
+                node: remap(&record.node)?,
+                result_bound: remap(&record.result_bound)?,
+                invariant: record.invariant,
+                operation: record.operation.as_ref().map(&mut remap).transpose()?,
+                model_objects: record
+                    .model_objects
+                    .iter()
+                    .map(&mut remap)
+                    .collect::<Result<_, _>>()?,
+                populations: record
+                    .populations
+                    .iter()
+                    .map(|population| {
+                        Ok(OperationPopulation {
+                            member_type: remap(&population.member_type)?,
+                            ..population.clone()
+                        })
+                    })
+                    .collect::<Result<_, EmitRefusal>>()?,
+            }))
         } else {
             None
         };
-        rows.push((claim.node().clone(), RequirementItemRow {
+        rows.push((
+            claim.node().clone(),
+            RequirementItemRow {
             claim: claim_id,
             occurrence,
             kind,
             extent,
             record,
-        }));
+            },
+        ));
     }
     Ok(package_order(rows))
+}
+
+/// The frame table of the emitted package, each guard in the final id space of
+/// the document-held rows (FSpec FR-825).
+pub(super) fn frame_rows(
+    ids: &StructuralIds,
+    emitted: &HashMap<NodeKey, CheckedNodeId>,
+    frames: &[PathConditionFrame],
+) -> Result<Vec<PathConditionFrame>, EmitRefusal> {
+    let mut keys = ids.key_reader();
+    frames
+        .iter()
+        .map(|frame| {
+            let guard = emitted
+                .get(
+                    &keys
+                        .key(&frame.guard)
+                        .map_err(|_| EmitRefusal::SourceMapInvariant)?,
+                )
+                .cloned()
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            Ok(PathConditionFrame {
+                guard,
+                ..frame.clone()
+            })
+        })
+        .collect()
 }
 
 /// The base package's requirement rows, for a writer that re-encodes an
@@ -552,10 +982,10 @@ pub(super) fn carry_rows(
     base: &filament_contract_model::CheckedPackageV2,
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut [CheckedSourceMapEntry],
-) -> Result<Vec<RequirementItemRow>, EmitRefusal> {
+) -> Result<(Vec<RequirementItemRow>, Vec<PathConditionFrame>), EmitRefusal> {
     let rows = base.requirement_items();
     if rows.is_empty() {
-        return Ok(Vec::new());
+        return Ok((Vec::new(), Vec::new()));
     }
     let base_nodes = &base.resolved_graph().nodes;
     let finals = nodes
@@ -563,9 +993,11 @@ pub(super) fn carry_rows(
         .ok_or(EmitRefusal::RequirementRowCarry(
             "the writer's graph holds fewer nodes than the base package",
         ))?;
-    if base_nodes.iter().zip(finals).any(|(old, new)| {
-        old.node_tag != new.node_tag || old.semantic_form != new.semantic_form
-    }) {
+    if base_nodes
+        .iter()
+        .zip(finals)
+        .any(|(old, new)| old.node_tag != new.node_tag || old.semantic_form != new.semantic_form)
+    {
         return Err(EmitRefusal::RequirementRowCarry(
             "a node of the writer's graph is not the base node at its position",
         ));
@@ -582,6 +1014,12 @@ pub(super) fn carry_rows(
         }
     };
     let mut rows = rows.to_vec();
+    // The shared frames keep their parent links; only each guard follows a
+    // rename. The frame table is no row: it is carried, never written anew.
+    let mut frames = base.path_condition_frames().to_vec();
+    for frame in &mut frames {
+        follow(&mut frame.guard);
+    }
     for row in &mut rows {
         follow(&mut row.claim);
         if let RequirementExtent::Unbounded(domains) = &mut row.extent {
@@ -592,19 +1030,28 @@ pub(super) fn carry_rows(
                 }
             }
         }
-        if let Some(record) = &mut row.record {
-            follow(&mut record.node);
-            follow(&mut record.owner);
-            follow(&mut record.application);
-            follow(&mut record.result_bound);
-            if let Some((narrow, _)) = &mut record.conversion {
-                follow(narrow);
+        match &mut row.record {
+            Some(WireRecord::ValueValidity(record)) => {
+                follow(&mut record.node);
+                follow(&mut record.owner);
+                follow(&mut record.application);
+                follow(&mut record.result_bound);
+                if let Some((narrow, _)) = &mut record.conversion {
+                    follow(narrow);
+                }
+                record.extent_roots.iter_mut().for_each(follow);
+                record.objects.iter_mut().for_each(follow);
             }
-            for guard in &mut record.path_condition {
-                follow(&mut guard.guard);
+            Some(WireRecord::OperationContract(record)) => {
+                follow(&mut record.node);
+                follow(&mut record.result_bound);
+                record.operation.iter_mut().for_each(follow);
+                record.model_objects.iter_mut().for_each(follow);
+                for population in &mut record.populations {
+                    follow(&mut population.member_type);
+                }
             }
-            record.extent_roots.iter_mut().for_each(follow);
-            record.objects.iter_mut().for_each(follow);
+            None => {}
         }
     }
     // A rename changes the structural key of every node holding the renamed
@@ -612,7 +1059,13 @@ pub(super) fn carry_rows(
     // package order again by their final claim keys.
     let graph =
         fsl_semantics::check::wire_id::WireGraph::new(nodes.iter().map(|node| &node.node_id))
-            .map_err(|_| EmitRefusal::RequirementRowCarry("the writer's graph ids do not resolve"))?;
+            .map_err(|_| {
+                EmitRefusal::RequirementRowCarry("the writer's graph ids do not resolve")
+            })?;
+    // Frames belong to the owner of the first record that cites them, in the
+    // base's own row order, and frames are in owner-key order (FSpec FR-825).
+    let frame_owners = frame_owners(&rows, &frames)?;
+    let permutation = frame_permutation(&graph, &frame_owners, &frames)?;
     let keyed = rows
         .into_iter()
         .map(|row| {
@@ -622,9 +1075,164 @@ pub(super) fn carry_rows(
             Ok((key, row))
         })
         .collect::<Result<Vec<_>, EmitRefusal>>()?;
-    let rows = package_order(keyed);
+    let mut rows = package_order(keyed);
+    if let Some(new_ids) = permutation {
+        reorder_frames(&new_ids, &mut frames, &mut rows, nodes, source_map)?;
+    }
     renumber_records(&rows, nodes, source_map)?;
-    Ok(rows)
+    Ok((rows, frames))
+}
+
+/// Each frame's owner: the owner of the first record, in row order, whose
+/// chain holds it.
+fn frame_owners(
+    rows: &[RequirementItemRow],
+    frames: &[PathConditionFrame],
+) -> Result<Vec<Option<CheckedNodeId>>, EmitRefusal> {
+    let mut owners = vec![None; frames.len()];
+    for record in rows.iter().filter_map(|row| match &row.record {
+        Some(WireRecord::ValueValidity(record)) => Some(record),
+        _ => None,
+    }) {
+        let mut at = record.path_condition_frame;
+        while let Some(frame) = at {
+            let slot = owners
+                .get_mut(frame.0)
+                .ok_or(EmitRefusal::RequirementRowCarry(
+                "a carried record cites a frame the table does not hold",
+            ))?;
+            if slot.is_some() {
+                break;
+            }
+            *slot = Some(record.owner.clone());
+            at = frames[frame.0].parent;
+        }
+    }
+    Ok(owners)
+}
+
+/// The new id of each frame when the owners' final key order differs from the
+/// table's order, `None` when the table is already canonical.
+fn frame_permutation(
+    graph: &fsl_semantics::check::wire_id::WireGraph,
+    owners: &[Option<CheckedNodeId>],
+    frames: &[PathConditionFrame],
+) -> Result<Option<Vec<usize>>, EmitRefusal> {
+    let keys = owners
+        .iter()
+        .map(|owner| {
+            owner
+                .as_ref()
+                .map(|owner| {
+                    graph.key(owner).map_err(|_| {
+                        EmitRefusal::RequirementRowCarry(
+                            "a frame's owner is not a node of the graph",
+                        )
+                    })
+                })
+                .transpose()
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut order: Vec<usize> = (0..frames.len()).collect();
+    order.sort_by(|&left, &right| keys[left].cmp(&keys[right]).then(left.cmp(&right)));
+    if order.iter().enumerate().all(|(new, &old)| new == old) {
+        return Ok(None);
+    }
+    let mut new_ids = vec![0; frames.len()];
+    for (new, &old) in order.iter().enumerate() {
+        new_ids[old] = new;
+    }
+    Ok(Some(new_ids))
+}
+
+/// Put the frames at their new ids and re-point every record's terminal frame,
+/// its body binding, its identity path and the rows and source-map entries that
+/// name the record node. A parent is never moved after its child: a frame
+/// shared across owners would break that, so it is refused.
+fn reorder_frames(
+    new_ids: &[usize],
+    frames: &mut Vec<PathConditionFrame>,
+    rows: &mut [RequirementItemRow],
+    nodes: &mut [CheckedSemanticNodeV2],
+    source_map: &mut [CheckedSourceMapEntry],
+) -> Result<(), EmitRefusal> {
+    let mut moved: Vec<Option<PathConditionFrame>> = vec![None; frames.len()];
+    for (old, frame) in std::mem::take(frames).into_iter().enumerate() {
+        let parent = match frame.parent {
+            Some(parent) => {
+                let parent = new_ids[parent.0];
+                if parent >= new_ids[old] {
+                    return Err(EmitRefusal::RequirementRowCarry(
+                        "a renamed owner order places a frame before its parent",
+                    ));
+                }
+                Some(PathConditionFrameId(parent))
+            }
+            None => None,
+        };
+        moved[new_ids[old]] = Some(PathConditionFrame { parent, ..frame });
+    }
+    *frames = moved.into_iter().flatten().collect();
+    let mut renamed = BTreeMap::<CheckedNodeId, (CheckedNodeId, u64)>::new();
+    for row in rows.iter_mut() {
+        let Some(WireRecord::ValueValidity(record)) = &mut row.record else {
+            continue;
+        };
+        let Some(old) = record.path_condition_frame else {
+            continue;
+        };
+        let new = new_ids[old.0];
+        record.path_condition_frame = Some(PathConditionFrameId(new));
+        let mut id = record.node.clone();
+        let mut segments = id.path.iter_mut();
+        let cited = segments
+            .by_ref()
+            .find(|segment| {
+                matches!(segment, filament_contract_model::CheckedNodePathSegment::Name(name) if name.as_ref() == "path_condition")
+            })
+            .and_then(|_| segments.next())
+            .ok_or(EmitRefusal::RequirementRowCarry(
+                "a guarded record's identity path does not cite its terminal frame",
+            ))?;
+        *cited = filament_contract_model::CheckedNodePathSegment::Name(new.to_string().into());
+        renamed.insert(
+            std::mem::replace(&mut record.node, id.clone()),
+            (id, new as u64),
+        );
+    }
+    for node in nodes.iter_mut() {
+        let Some((id, frame)) = renamed.get(&node.node_id) else {
+            continue;
+        };
+        node.node_id = id.clone();
+        let CheckedTerm::Aggregate { members, .. } = &mut node.body else {
+            return Err(EmitRefusal::RequirementRowCarry(
+                "a carried record body is no aggregate",
+            ));
+        };
+        let Some(CheckedTerm::Binding { value, .. }) = members.get_mut(5) else {
+            return Err(EmitRefusal::RequirementRowCarry(
+                "a carried record has no path condition",
+            ));
+        };
+        let CheckedTerm::Aggregate { members, .. } = value.as_mut() else {
+            return Err(EmitRefusal::RequirementRowCarry(
+                "a carried path condition is no aggregate",
+            ));
+        };
+        let Some(CheckedTerm::Literal { value, .. }) = members.first_mut() else {
+            return Err(EmitRefusal::RequirementRowCarry(
+                "a carried path condition holds no frame",
+            ));
+        };
+        *value = checked_literal_json(frame)?;
+    }
+    for entry in source_map.iter_mut() {
+        if let Some((id, _)) = renamed.get(&entry.node_id) {
+            entry.node_id = id.clone();
+        }
+    }
+    Ok(())
 }
 
 /// FSpec FR-825: a function's `claim`/`value_validity` nodes carry
@@ -639,7 +1247,10 @@ fn renumber_records(
 ) -> Result<(), EmitRefusal> {
     let mut next = BTreeMap::<&CheckedNodeId, u64>::new();
     let mut ordinals = BTreeMap::<&CheckedNodeId, u64>::new();
-    for record in rows.iter().filter_map(|row| row.record.as_ref()) {
+    for record in rows.iter().filter_map(|row| match &row.record {
+        Some(WireRecord::ValueValidity(record)) => Some(record),
+        _ => None,
+    }) {
         let ordinal = next.entry(&record.owner).or_default();
         ordinals.insert(&record.node, *ordinal);
         *ordinal += 1;
@@ -701,6 +1312,15 @@ fn capability_wire(kind: CapabilityKind) -> &'static str {
         CapabilityKind::Composition => "composition",
         CapabilityKind::ProbabilisticSatisfaction => "probabilistic-satisfaction",
         CapabilityKind::Schedulability => "schedulability",
+    }
+}
+
+/// The value-validity record a row carries, for a test reading a package.
+#[cfg(test)]
+pub(super) fn value_record(row: &RequirementItemRow) -> Option<&ValueValidityRecord> {
+    match &row.record {
+        Some(WireRecord::ValueValidity(record)) => Some(record),
+        _ => None,
     }
 }
 

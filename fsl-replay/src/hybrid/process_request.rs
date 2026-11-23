@@ -577,7 +577,8 @@ fn admit_package(
         CheckedPackageDispatchResult::AdmittedV2(package) => Ok(package),
         CheckedPackageDispatchResult::Refused(_)
         | CheckedPackageDispatchResult::Incomplete(_)
-        | CheckedPackageDispatchResult::CatalogUnavailable(_) => {
+        | CheckedPackageDispatchResult::CatalogUnavailable(_)
+        | CheckedPackageDispatchResult::HostAllocationFailed(_) => {
             Err(HybridProcessRequestRefusal::PackageRefused)
         }
     }

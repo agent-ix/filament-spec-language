@@ -3202,6 +3202,7 @@ fn witness_type(
         ValueType::Map(_)
         | ValueType::BoundedQuantity(_)
         | ValueType::CarriedQuantity(_)
+        | ValueType::ClockReference
         | ValueType::Population(_) => Err(ReplayRefusal::Input(InputRefusal::WrongValueKind {
             parameter,
         })),
@@ -3392,5 +3393,20 @@ mod external_package_bound_tests {
                     if found == expected()
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod clock_reference_tests {
+    use super::witness_type;
+    use filament_exact::ValueType;
+    use ix_trace_rs::trace;
+
+    /// FR-230-AC-71: a clock-place reference has no witness form; the call
+    /// refuses `WrongValueKind` before it runs.
+    #[trace("FR-230-AC-71", "TC-3084")]
+    #[test]
+    fn a_clock_reference_parameter_has_no_witness_form() {
+        assert!(witness_type(0, &ValueType::ClockReference).is_err());
     }
 }

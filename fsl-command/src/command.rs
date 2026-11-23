@@ -2655,7 +2655,9 @@ fn inspect_handoff_position(
                 .and_then(|locus| locus.path.as_ref())
                 .map(ToString::to_string),
         ),
-        Error::ReaderIncomplete(_) | Error::ReaderCatalogUnavailable(_) => {
+        Error::ReaderIncomplete(_)
+        | Error::ReaderCatalogUnavailable(_)
+        | Error::ReaderHostAllocationFailed(_) => {
             (Some("checked-package.json".to_owned()), None)
         }
         Error::Read { path, .. } => {

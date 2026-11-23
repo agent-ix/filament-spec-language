@@ -85,7 +85,8 @@ mod numeric_conversion;
 mod rust_syntax;
 pub use abstraction::{
     AbstractionKey, AbstractionRefusal, AuthoredBinding, CheckedAbstractionRelation,
-    CheckedBinding, CheckedFrameBinding, FrameBinding, FrameNodes, MalformedEntry, ObjectBinding,
+    CheckedBinding, CheckedFrameBinding, CheckedOperationContractReferences,
+    CheckedOperationPopulation, FrameBinding, FrameNodes, MalformedEntry, ObjectBinding,
     OperationKey, PopulationBinding, RustField, RustParameter, RustPath, RustReceiver,
 };
 pub use abstraction::{AbstractionNodeRefusal, AbstractionNodes};
@@ -440,6 +441,18 @@ pub fn builtin_boolean_type_key(
     declared_node_key(
         package_name.to_owned(),
         vec!["scalar_type".to_owned(), "boolean".to_owned()],
+        0,
+    )
+}
+
+/// The structural key of the built-in String scalar type. A requirement
+/// record's occurrence role is a `String` literal of this type.
+pub fn builtin_string_type_key(
+    package_name: &str,
+) -> Result<filament_exact::NodeKey, filament_exact::InvalidNodeKey> {
+    declared_node_key(
+        package_name.to_owned(),
+        vec!["scalar_type".to_owned(), "string".to_owned()],
         0,
     )
 }

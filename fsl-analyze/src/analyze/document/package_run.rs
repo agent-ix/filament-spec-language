@@ -3233,21 +3233,37 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             .state_clause(&key, &origin)
             .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
         let claim = OccurrenceKey::new(clause.identity.clone(), clause.claim.clone());
-        // FR-290: the operation-contract record's extent from its domain
-        // kinds, as S3 classifies the selected state clause.
-        let kinds = input
-            .invariant_domain_kinds(
-                clause,
-                filament_semantic_value::checking::CheckingLimits::default().nodes(),
-            )
-            .ok_or_else(|| pending(PendingFamily::Declaration))?;
-        let extent = if kinds.is_empty() {
-            ExtentClassification::Bounded
-        } else {
-            ExtentClassification::Unbounded {
-                finite_bound_available: kinds.iter().all(|kind| kind.finite_kind().is_some()),
-            }
-        };
+        // FR-376 / FSpec FR-825: the admitted row carries S3's classified
+        // extent and contract facts. Resolve that exact claim occurrence;
+        // do not classify the source clause again.
+        let row = input
+            .package()
+            .requirement_items()
+            .iter()
+            .find(|row| {
+                row.claim == *declaration
+                    && row.kind == filament_contract_model::CapabilityKind::OperationContract
+                    && row.occurrence.role == filament_contract_model::CheckedOccurrenceRole::Claim
+                    && row.occurrence.ordinal == ordinal
+            })
+            .ok_or_else(|| {
+                PackageRunError::Pending(PendingPackageFamily {
+                    request_index: Some(index),
+                    family: PendingFamily::OperationContractRequirementRecord,
+                    node: Some(declaration.clone()),
+                    note: Some(format!("`{name}` (claim occurrence {ordinal})")),
+                })
+            })?;
+        let (record, extent) =
+            super::package_value::operation_contract_record(input.package(), row).ok_or_else(|| {
+                PackageRunError::Pending(PendingPackageFamily {
+                    request_index: Some(index),
+                    family: PendingFamily::OperationContractRequirementRecord,
+                    node: Some(declaration.clone()),
+                    note: Some(format!("`{name}` (claim occurrence {ordinal})")),
+                })
+            })?;
+        let extent = ExtentClassification::of(&extent);
         let own_subject = self.own_subject(index, selection)?;
         let kind = match selection.kind.as_deref() {
             Some(label) => match Capability::from_wire(label) {
@@ -3284,23 +3300,8 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
             kind,
             named.as_ref(),
             model_subject,
-            clause.invariant,
+            record.invariant,
         );
-        if self.explicit_items && kind == Capability::OperationContract {
-            if let CandidateOutcome::Candidates(set) = &candidates {
-                let native_invariant = clause.invariant
-                    && model_subject
-                    && matches!(set.candidates(), [candidate] if candidate.id().as_str() == crate::model_check::manifest::BACKEND_ID);
-                if matches!(set.candidates(), [_]) && !native_invariant {
-                    return Err(PackageRunError::Pending(PendingPackageFamily {
-                        request_index: Some(index),
-                        family: PendingFamily::OperationContractRequirementRecord,
-                        node: Some(declaration.clone()),
-                        note: Some(format!("`{name}` (claim occurrence {ordinal})")),
-                    }));
-                }
-            }
-        }
         let temporal = selection.temporal.clone().unwrap_or_default();
         let item = ClaimItem {
             request_index: index,

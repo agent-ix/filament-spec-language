@@ -1158,6 +1158,10 @@ pub(super) fn project_value<'a, S: ValueSink>(
                     sink.scalar(Scalar::Scale(value.scale()))
                 })
             }
+            Value::ClockReference(value) => tagged(sink, "clock_reference", |sink| {
+                sink.name("value")?;
+                sink.scalar(Scalar::Text(value.text()))
+            }),
             Value::Uuid(value) => tagged(sink, "uuid", |sink| {
                 sink.name("value")?;
                 sink.scalar(Scalar::Uuid(value))
