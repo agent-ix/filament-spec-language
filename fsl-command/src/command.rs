@@ -386,13 +386,12 @@ fn check_outcome_inner(
             }
         };
 
-        let declared_models: std::collections::BTreeSet<_> = parsed
-            .unit()
-            .selections()
-            .models
-            .iter()
-            .map(|selection| selection.identity.as_str())
-            .collect();
+        let mut declared_models: Vec<&str> = Vec::new();
+        for selection in &parsed.unit().selections().models {
+            if !declared_models.contains(&selection.identity.as_str()) {
+                declared_models.push(selection.identity.as_str());
+            }
+        }
         let declared_libraries: std::collections::BTreeSet<_> = parsed
             .unit()
             .selections()
@@ -400,7 +399,7 @@ fn check_outcome_inner(
             .iter()
             .map(|selection| selection.identity.as_str())
             .collect();
-        reject_unselected_check_inputs(&inputs.models, "--model", &declared_models)?;
+        reject_unselected_check_models(&inputs.models, &declared_models)?;
         reject_unselected_check_inputs(&inputs.libraries, "--library", &declared_libraries)?;
 
         let models = inputs
@@ -514,7 +513,8 @@ fn check_missing_model_help(
         diagnostic.code(),
         diagnostic.locus().cloned(),
         message,
-    )])
+    )
+    .with_selection(Some(fsl_replay::outcome::hint::MissingSelection::Model))])
 }
 
 fn validate_check_selections(selections: &[(String, PathBuf)], option: &str) -> Result<()> {
@@ -532,6 +532,29 @@ fn validate_check_selections(selections: &[(String, PathBuf)], option: &str) -> 
                 reason: format!("identity {identity} was selected more than once"),
             });
         }
+    }
+    Ok(())
+}
+
+/// FR-866: a `--model` identity no `model` declaration selects refuses, naming
+/// the identities the source selects in source order.
+fn reject_unselected_check_models(
+    selections: &[(String, PathBuf)],
+    declared: &[&str],
+) -> Result<()> {
+    if let Some((identity, _)) = selections
+        .iter()
+        .find(|(identity, _)| !declared.contains(&identity.as_str()))
+    {
+        let selected = if declared.is_empty() {
+            "the source selects no models".to_owned()
+        } else {
+            format!("the source selects: {}", declared.join(", "))
+        };
+        return Err(RunCause::ClauseRequest {
+            member: "--model".to_owned(),
+            reason: format!("--model {identity} is not selected by the source; {selected}"),
+        });
     }
     Ok(())
 }
@@ -1434,6 +1457,9 @@ impl RunError {
                 refusal.code.as_str(),
                 None,
                 refusal.detail.clone(),
+            )
+            .with_selection(
+                fsl_replay::outcome::hint::MissingSelection::of_model_refusal(refusal),
             )]),
             RunCause::SynthesisSnapshot { file, record } => {
                 OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
@@ -1644,12 +1670,18 @@ impl RunError {
                 ])
             }
             RunCause::AnalyzePackage { cause, pointer, .. } => {
-                let diagnostic = OutcomeDiagnostic::new(
-                    cause.as_deref(),
-                    self.cause.code().as_str(),
-                    None,
-                    self.outcome_message(),
-                );
+                let code = self.cause.code();
+                let cause = cause
+                    .as_deref()
+                    .or((code == Code::MissingImport).then_some("missing-selection"));
+                let diagnostic =
+                    OutcomeDiagnostic::new(cause, code.as_str(), None, self.outcome_message())
+                        .with_selection(
+                            (code == Code::MissingImport && cause == Some("missing-selection"))
+                                .then_some(
+                                    fsl_replay::outcome::hint::MissingSelection::PackageReference,
+                                ),
+                        );
                 // Manifest and strict-reader refusals retain their original pointer.
                 let diagnostic = match pointer {
                     Some(pointer) => diagnostic.with_details(Some(serde_json::Map::from_iter([(
@@ -2904,9 +2936,16 @@ fn compile_outcome_inner(
                 sources: crate::Sources::default(),
             };
             outcome.sources = crate::Sources::from_sources(intake.sources.iter().cloned());
-            if let Some(output) = output {
-                output_file::write_new_file(&output, &outcome.package_bytes)?;
+            let written = output
+                .as_deref()
+                .map(|output| output.to_string_lossy().into_owned());
+            if let Some(output) = &output {
+                output_file::write_new_file(output, &outcome.package_bytes)?;
             }
+            outcome.document =
+                outcome
+                    .document
+                    .with_packaged(outcome.package_bytes.len(), written, None);
             return Ok(outcome);
         }
         if request.models.is_none() {
@@ -2941,9 +2980,22 @@ fn compile_outcome_inner(
                 std::mem::take(&mut outcome.handoff_temporal_selections),
             )?;
         }
-        if let Some(output) = output {
-            output_file::write_new_file(&output, &outcome.package_bytes)?;
+        let written = output
+            .as_deref()
+            .map(|output| output.to_string_lossy().into_owned());
+        if let Some(output) = &output {
+            output_file::write_new_file(output, &outcome.package_bytes)?;
         }
+        let handoff = request.handoff.as_ref().map(|handoff| {
+            directory
+                .join(&handoff.directory)
+                .to_string_lossy()
+                .into_owned()
+        });
+        outcome.document =
+            outcome
+                .document
+                .with_packaged(outcome.package_bytes.len(), written, handoff);
         Ok(outcome)
     });
     if request_limit_is_configured {

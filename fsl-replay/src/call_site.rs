@@ -524,6 +524,40 @@ impl CallSiteRefusal {
             Self::Fault(_) => Code::RuntimeInvariant,
         }
     }
+
+    /// The catalog cause under [`Self::code`], where the refusal names one.
+    pub fn cause(&self) -> Option<&'static str> {
+        match self {
+            Self::DependencyInput(refusal) => refusal.cause(),
+            Self::UnknownFunction { .. }
+            | Self::UnknownOperation { .. }
+            | Self::UnknownClause { .. }
+            | Self::UnknownField { .. }
+            | Self::UnknownPopulation { .. }
+            | Self::UnknownImportedFunction { .. } => Some("missing-name"),
+            Self::UnknownImport { .. } => Some("missing-selection"),
+            Self::NotImportable { .. } => Some("operator-ineligible"),
+            Self::NotAnOperationOwner { .. } => Some("malformed-declaration"),
+            Self::AmbiguousOperation { .. } => Some("ambiguous-name"),
+            Self::Compile { .. }
+            | Self::ModelIntake { .. }
+            | Self::Import { .. }
+            | Self::Dependency { .. }
+            | Self::Fault(_) => None,
+        }
+    }
+
+    /// FR-286 "Missing selections": the kind of thing a
+    /// `missing_import`/`missing-selection` refusal says is missing, `None`
+    /// for every other refusal.
+    pub fn selection(&self) -> Option<crate::outcome::hint::MissingSelection> {
+        match self {
+            Self::UnknownImport { .. } => {
+                Some(crate::outcome::hint::MissingSelection::UnimportedLibrary)
+            }
+            _ => None,
+        }
+    }
 }
 
 /// Compile `bytes` (labelled `source`, displayed as `path`) through S1 to S4

@@ -351,6 +351,57 @@ fn wire_label<T: Serialize>(value: &T) -> Result<String, Failure> {
     }
 }
 
+/// The word the text form of an outcome header names a stage by (FR-865
+/// "Stage words"). A label outside the table is returned unchanged, so a
+/// stage added to the document before it is added here still renders.
+pub fn stage_word(label: &str) -> String {
+    match label {
+        "S0" => "source",
+        "S1" => "syntax",
+        "S2" => "forms",
+        "I1" => "intake",
+        "I2" => "imports",
+        "S3" => "checking",
+        "S4" => "packaging",
+        "S5" => "contract",
+        "S6a" => "execution",
+        "S6b" => "proof",
+        "S6c" => "model-checking",
+        "S7" => "witness",
+        "S8" => "replay",
+        other => other,
+    }
+    .to_owned()
+}
+
+/// The lines of a `packaged` compile result (FR-865): what was produced and
+/// where it went, from the document's `package` member.
+fn packaged_result_lines(result: &serde_json::Value) -> Result<Vec<String>, Failure> {
+    let package = result
+        .get("package")
+        .ok_or_else(|| fault("packaged result has no package member"))?;
+    let bytes = package
+        .get("bytes")
+        .and_then(serde_json::Value::as_u64)
+        .ok_or_else(|| fault("packaged result has no byte count"))?;
+    let output = package.get("output").and_then(serde_json::Value::as_str);
+    let handoff = package.get("handoff").and_then(serde_json::Value::as_str);
+    let mut lines = vec![format!("produced: checked package ({bytes} bytes)\n")];
+    if let Some(output) = output {
+        lines.push(format!("written to: {output}\n"));
+    }
+    if let Some(handoff) = handoff {
+        lines.push(format!("handoff written to: {handoff}\n"));
+    }
+    if output.is_none() && handoff.is_none() {
+        lines.push(
+            "nothing written: no --output option, output member or handoff member was given\n"
+                .to_owned(),
+        );
+    }
+    Ok(lines)
+}
+
 fn outcome_text(
     writer: &mut Writer<'_>,
     document: &OutcomeDocument,
@@ -379,7 +430,10 @@ fn outcome_text(
             "{operation}: {} (exit {}){}\n",
             document.category().as_str(),
             document.category().exit_code(),
-            last_stage.map_or_else(String::new, |stage| format!(" at {stage}"))
+            last_stage.map_or_else(String::new, |stage| format!(
+                " at stage {}",
+                stage_word(stage)
+            ))
         )
     })?;
     for (index, diagnostic) in document.diagnostics().iter().enumerate() {
@@ -509,6 +563,12 @@ fn outcome_text(
             .ok_or_else(|| fault("outcome result has no kind"))?;
         if kind == "replayed" {
             for line in replay_result_lines(result)? {
+                writer.unit(|| line)?;
+            }
+            return Ok(());
+        }
+        if kind == "packaged" {
+            for line in packaged_result_lines(result)? {
                 writer.unit(|| line)?;
             }
             return Ok(());
@@ -2558,7 +2618,7 @@ mod tests {
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(
             lines.first(),
-            Some(&"check: refusal (exit 20) at S3"),
+            Some(&"check: refusal (exit 20) at stage checking"),
             "{text}"
         );
         let diagnostic = lines
@@ -2578,7 +2638,7 @@ mod tests {
         );
         assert_eq!(
             text_of(&packaged, &RenderSources::from_sources([])),
-            "package: success (exit 0) at S4\n"
+            "package: success (exit 0) at stage packaging\n"
         );
     }
 
@@ -2643,7 +2703,7 @@ mod tests {
         );
         let text = text_of(&document, &RenderSources::from_sources([]));
         assert!(
-            text.contains("monitor: violation (exit 10) at S6c"),
+            text.contains("monitor: violation (exit 10) at stage model-checking"),
             "{text}"
         );
         assert!(text.contains("item 0: refuted (violation)"), "{text}");
@@ -2762,7 +2822,8 @@ mod tests {
                 filament_exact::PathSegment::Text("filament.op.integer.eq".to_owned()),
             ],
             0,
-        ).expect("literal comparison key is valid");
+        )
+        .expect("literal comparison key is valid");
         let literal_witness = serde_json::json!({
             "deciding_comparison": {
                 "node_id": fsl_foundation::node_wire::node_key_to_text(&literal_comparison)
@@ -3090,7 +3151,7 @@ mod tests {
             render(&undefined).ends_with("result: undefined {\"reason\":\"sum-out-of-domain\"}\n")
         );
         let incomplete_text = render(&incomplete);
-        assert!(incomplete_text.starts_with("execute: incomplete (exit 22) at S6a\n"));
+        assert!(incomplete_text.starts_with("execute: incomplete (exit 22) at stage execution\n"));
         assert!(
             incomplete_text.contains("result: incomplete "),
             "{incomplete_text}"
@@ -3138,5 +3199,149 @@ mod tests {
             "results": [{"arm": "input"}]
         }))
         .is_err());
+    }
+
+    fn document_at(stage: Option<fsl_replay::OutcomeStage>) -> OutcomeDocument {
+        OutcomeDocument::new(fsl_replay::Operation::Check, stage, Category::Success)
+    }
+
+    /// FR-865-AC-9, AC-10, AC-11 (TC-3197): the header names each stage in
+    /// words, the function maps the labels and leaves an unknown one alone, and
+    /// the JSON keeps the label.
+    #[test]
+    #[trace("TC-3197", "FR-865-AC-9", "FR-865-AC-10", "FR-865-AC-11")]
+    fn header_names_the_stage_in_words_and_json_keeps_the_label() {
+        use fsl_replay::OutcomeStage as Stage;
+        let table = [
+            (Stage::S0, "S0", "source"),
+            (Stage::S1, "S1", "syntax"),
+            (Stage::S2, "S2", "forms"),
+            (Stage::I1, "I1", "intake"),
+            (Stage::S3, "S3", "checking"),
+            (Stage::S4, "S4", "packaging"),
+            (Stage::S5, "S5", "contract"),
+            (Stage::S6a, "S6a", "execution"),
+            (Stage::S6b, "S6b", "proof"),
+            (Stage::S6c, "S6c", "model-checking"),
+            (Stage::S7, "S7", "witness"),
+            (Stage::S8, "S8", "replay"),
+        ];
+        for (stage, label, word) in table {
+            let document = document_at(Some(stage));
+            let text = text_of(&document, &RenderSources::from_sources([]));
+            assert_eq!(
+                text,
+                format!("check: success (exit 0) at stage {word}\n"),
+                "{label}"
+            );
+            assert!(!text.contains(label), "{text}");
+            assert_eq!(stage_word(label), word);
+            let wire: serde_json::Value =
+                serde_json::from_slice(&document.to_bytes().unwrap()).unwrap();
+            assert_eq!(wire["last_stage"], label);
+        }
+        assert_eq!(
+            text_of(&document_at(None), &RenderSources::from_sources([])),
+            "check: success (exit 0)\n"
+        );
+        assert_eq!(stage_word("I2"), "imports");
+        assert_eq!(stage_word("X9"), "X9");
+        assert_eq!(stage_word(""), "");
+    }
+
+    /// FR-865-AC-12 to AC-15 (TC-3198): the text of a `packaged` result is
+    /// written from the document alone.
+    #[test]
+    #[trace(
+        "TC-3198",
+        "FR-865-AC-12",
+        "FR-865-AC-13",
+        "FR-865-AC-14",
+        "FR-865-AC-15"
+    )]
+    fn packaged_result_text_says_what_was_produced_and_where() {
+        use fsl_replay::OutcomeStage as Stage;
+        let package = |stage| {
+            OutcomeDocument::new(
+                fsl_replay::Operation::Package,
+                Some(stage),
+                Category::Success,
+            )
+        };
+        let sources = RenderSources::from_sources([]);
+        let header = "package: success (exit 0) at stage packaging\n";
+        assert_eq!(
+            text_of(
+                &package(Stage::S4).with_packaged(
+                    1234,
+                    Some("reqs/spine.package.json".to_owned()),
+                    None
+                ),
+                &sources
+            ),
+            format!("{header}produced: checked package (1234 bytes)\nwritten to: reqs/spine.package.json\n")
+        );
+        assert_eq!(
+            text_of(&package(Stage::S4).with_packaged(1234, None, None), &sources),
+            format!("{header}produced: checked package (1234 bytes)\nnothing written: no --output option, output member or handoff member was given\n")
+        );
+        assert_eq!(
+            text_of(
+                &package(Stage::S4).with_packaged(1234, None, Some("reqs/handoff".to_owned())),
+                &sources
+            ),
+            format!("{header}produced: checked package (1234 bytes)\nhandoff written to: reqs/handoff\n")
+        );
+        assert_eq!(
+            text_of(
+                &package(Stage::S4).with_packaged(
+                    0,
+                    Some("p.json".to_owned()),
+                    Some("h".to_owned())
+                ),
+                &sources
+            ),
+            format!("{header}produced: checked package (0 bytes)\nwritten to: p.json\nhandoff written to: h\n")
+        );
+        assert_eq!(
+            text_of(&package(Stage::I1).with_packaged(9, None, None), &sources),
+            "package: success (exit 0) at stage intake\nproduced: checked package (9 bytes)\nnothing written: no --output option, output member or handoff member was given\n"
+        );
+        assert_eq!(
+            text_of(&package(Stage::I1), &sources),
+            "package: success (exit 0) at stage intake\n"
+        );
+    }
+
+    /// FR-865-AC-23, AC-24 (TC-3199): the text renders the hint of each of the
+    /// nine kinds byte for byte as the JSON `hint` holds it, and never the
+    /// pair's old catalog text.
+    #[test]
+    #[trace("TC-3199", "FR-865-AC-23", "FR-865-AC-24")]
+    fn each_selection_hint_renders_as_the_json_hint() {
+        use fsl_replay::outcome::hint::MissingSelection;
+        for kind in MissingSelection::ALL {
+            let document = OutcomeDocument::new(
+                fsl_replay::Operation::Check,
+                Some(fsl_replay::OutcomeStage::I1),
+                Category::Refusal,
+            )
+            .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
+                Some("missing-selection"),
+                "missing_import",
+                None,
+                "missing",
+            )
+            .with_selection(Some(kind))]);
+            let wire: serde_json::Value =
+                serde_json::from_slice(&document.to_bytes().unwrap()).unwrap();
+            let hint = wire["diagnostics"][0]["hint"].as_str().expect("a hint");
+            let text = text_of(&document, &RenderSources::from_sources([]));
+            assert!(
+                text.lines().any(|line| line == format!("  hint: {hint}")),
+                "{kind:?}: {text}"
+            );
+            assert!(!text.contains("Import the package that supplies the selected name."));
+        }
     }
 }

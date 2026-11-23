@@ -13,6 +13,7 @@ mod export_selection;
 mod extraction_request_refusals;
 mod inspect_handoff_locus;
 mod integer_division_request;
+mod missing_selection_schema;
 mod model_unit_request;
 mod native_source_projection;
 mod native_workflow_family_cases;

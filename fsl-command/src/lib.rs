@@ -78,16 +78,20 @@ mod hint_catalog_tests {
     fn command_hint_catalog_covers_typed_pairs_and_rejects_bad_rows() {
         let known = super::diagnostic_pairs();
         check_hint_catalog(HINTS, &known).expect("the published hint catalog is valid");
-        assert_eq!(HINTS.len(), 23);
+        assert_eq!(HINTS.len(), 32);
         for row in HINTS {
-            assert_eq!(hint_for(row.code, row.cause), Some(row.text));
+            assert_eq!(hint_for(row.code, row.cause, row.selection), Some(row.text));
         }
-        assert_eq!(hint_for(Code::OutputFailure, Some("output-failure")), None);
-        assert_eq!(hint_for(Code::InvalidRequest, None), None);
+        assert_eq!(
+            hint_for(Code::OutputFailure, Some("output-failure"), None),
+            None
+        );
+        assert_eq!(hint_for(Code::InvalidRequest, None, None), None);
 
         let unknown = [HintRow {
             code: Code::IllTyped,
             cause: Some("type-mistmatch"),
+            selection: None,
             text: "Correct the type mismatch.",
         }];
         assert!(matches!(
@@ -98,11 +102,13 @@ mod hint_catalog_tests {
             HintRow {
                 code: Code::IllTyped,
                 cause: Some("type-mismatch"),
+                selection: None,
                 text: "Correct the type mismatch.",
             },
             HintRow {
                 code: Code::IllTyped,
                 cause: Some("type-mismatch"),
+                selection: None,
                 text: "Resolve the type mismatch.",
             },
         ];
@@ -113,6 +119,7 @@ mod hint_catalog_tests {
         let malformed = [HintRow {
             code: Code::IllTyped,
             cause: Some("type-mismatch"),
+            selection: None,
             text: "Fix this\nnow.",
         }];
         assert!(matches!(

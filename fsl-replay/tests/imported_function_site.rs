@@ -315,7 +315,7 @@ fn a_same_named_unit_function_is_never_the_imported_site() {
 /// FR-121-AC-35: a library the unit does not import directly -- supplied but
 /// unimported, absent, or reached only through another library -- refuses
 /// `UnknownImport` paired with the unit's package.
-#[trace("TC-516")]
+#[trace("TC-516", "TC-3199", "FR-865-AC-19", "FR-865-AC-24", "FR-286-AC-40")]
 #[test]
 fn a_library_without_a_direct_import_refuses_unknown_import() {
     let other = supplied("test/other", "other", BIG);
@@ -354,6 +354,21 @@ fn a_library_without_a_direct_import_refuses_unknown_import() {
         assert!(refusal
             .to_string()
             .starts_with("missing_import/missing-selection"));
+        let diagnostic = serde_json::to_value(
+            fsl_replay::OutcomeDiagnostic::from_call_site_refusal(&refusal),
+        )
+        .unwrap();
+        assert_eq!(diagnostic["code"], "missing_import", "{diagnostic}");
+        assert_eq!(diagnostic["cause"], "missing-selection", "{diagnostic}");
+        assert_eq!(
+            diagnostic["selection"], "unimported-library",
+            "{diagnostic}"
+        );
+        assert_eq!(
+            diagnostic["hint"],
+            "Call a function of a library that the unit imports directly, or add the import.",
+            "{diagnostic}"
+        );
         assert_eq!(
             TerminalValue::from_call_site_refusal(&refusal),
             TerminalValue::Declined {

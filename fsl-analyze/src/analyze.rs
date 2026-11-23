@@ -1197,10 +1197,18 @@ impl AnalyzeRefusal {
             }
             Self::Package(refusal) => {
                 let mut diagnostic = OutcomeDiagnostic::new(
-                    refusal.cause.as_deref(),
+                    if refusal.code == fsl_foundation::Code::MissingImport {
+                        Some(refusal.catalog_cause())
+                    } else {
+                        refusal.cause.as_deref()
+                    },
                     refusal.code.as_str(),
                     None,
                     self.to_string(),
+                )
+                .with_selection(
+                    (refusal.code == fsl_foundation::Code::MissingImport)
+                        .then_some(fsl_replay::outcome::hint::MissingSelection::PackageReference),
                 );
                 if let Some(pointer) = &refusal.pointer {
                     diagnostic = diagnostic.with_details(Some(serde_json::Map::from_iter([(
@@ -1235,6 +1243,10 @@ impl AnalyzeRefusal {
                         catalog.code(),
                         None,
                         refusal.to_string(),
+                    )
+                    .with_selection(
+                        (catalog == CatalogCode::new("missing_import", "missing-selection"))
+                            .then_some(fsl_replay::outcome::hint::MissingSelection::Source),
                     )])
             }
         }

@@ -103,6 +103,27 @@ fn wire(compiled: &ComposedUnit) -> Value {
     serde_json::from_slice(compiled.emitted.bytes()).expect("the wire is JSON")
 }
 
+/// FR-865-AC-18, FR-286-AC-40: an import with no library supplied writes the
+/// `library` kind and that row's hint.
+#[trace("TC-3199", "FR-865-AC-18", "FR-865-AC-24", "FR-286-AC-40")]
+#[test]
+fn missing_library_diagnostic_carries_its_selection() {
+    let declaration = import("test/geometry", "g");
+    let source = unit(&format!("{declaration}{H}"));
+    let missing = compile_as("u", &source, &DependencyInput::default())
+        .expect_err("nothing supplies test/geometry");
+    let diagnostic = crate::outcome::OutcomeDiagnostic::from_compile_refusal(&missing);
+    let wire = serde_json::to_value(&diagnostic).unwrap();
+    assert_eq!(wire["code"], "missing_import", "{wire}");
+    assert_eq!(wire["cause"], "missing-selection", "{wire}");
+    assert_eq!(wire["selection"], "library", "{wire}");
+    assert_eq!(
+        wire["hint"],
+        "Supply the library in the request's libraries member, or with --library <identity>=<file> on fsl check.",
+        "{wire}"
+    );
+}
+
 /// FR-099-AC-3 (TC-446 step 3), selection and dependency input: each
 /// refusal is located as D-1 states, and none yields a package.
 #[trace("FR-099-AC-3", "TC-446")]

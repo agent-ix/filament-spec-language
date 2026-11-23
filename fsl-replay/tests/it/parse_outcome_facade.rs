@@ -58,7 +58,7 @@ fn diagnostic(refusal: &CompileRefusal) -> Value {
         "details": null,
         "message": refusal.to_string()
     });
-    if let Some(hint) = fsl_replay::outcome::hint::hint_for(refusal.code(), refusal.cause()) {
+    if let Some(hint) = fsl_replay::outcome::hint::hint_for(refusal.code(), refusal.cause(), None) {
         expected["hint"] = json!(hint);
     }
     expected

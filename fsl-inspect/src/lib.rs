@@ -213,7 +213,9 @@ pub use result_views::{
 };
 
 mod render;
-pub use render::{render_outcome, render_view, RenderCause, RenderForm, RenderSources, Rendered};
+pub use render::{
+    render_outcome, render_view, stage_word, RenderCause, RenderForm, RenderSources, Rendered,
+};
 
 /// Inspect a checked package, using the package's typed emission metadata.
 pub fn inspect_package<'a>(

@@ -57,7 +57,7 @@ fn a_replay_outcome_renders_one_result_line_per_entry() {
     assert_eq!(
         lines,
         [
-            "replay: success (exit 0) at S8",
+            "replay: success (exit 0) at stage replay",
             "result 0: input reproduced-without-witness"
         ],
         "{text}"

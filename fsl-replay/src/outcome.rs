@@ -29,14 +29,13 @@ pub mod hint;
 pub use counterexample::{
     assignments_wire, assignments_wire_with_enum_members, graph_evidence_wire,
     hyper_counterexample_wire, probabilistic_undefined_wire, probabilistic_wire,
-    probabilistic_wire_with_enum_members,
-    protocol_temporal_wire, read_task_temporal_counterexample, read_task_temporal_document,
-    read_temporal_counterexample, replay_model_trace_document, replay_task_product_trace,
-    sampled_witness_wire, state_key_wire, task_product_transition_wire,
-    task_source_transition_wire, task_temporal_wire, task_temporal_wire_with_queue_growth,
-    task_transition_wire, temporal_wire, CounterexampleWireError, ProtocolWire, ReadCounterexample,
-    TaskProductCounterexampleDocument, TaskProductTraceReplayRefusal,
-    TemporalCounterexampleReadRefusal, TraceAlphabet,
+    probabilistic_wire_with_enum_members, protocol_temporal_wire,
+    read_task_temporal_counterexample, read_task_temporal_document, read_temporal_counterexample,
+    replay_model_trace_document, replay_task_product_trace, sampled_witness_wire, state_key_wire,
+    task_product_transition_wire, task_source_transition_wire, task_temporal_wire,
+    task_temporal_wire_with_queue_growth, task_transition_wire, temporal_wire,
+    CounterexampleWireError, ProtocolWire, ReadCounterexample, TaskProductCounterexampleDocument,
+    TaskProductTraceReplayRefusal, TemporalCounterexampleReadRefusal, TraceAlphabet,
 };
 
 use crate::hybrid::{BoundDimension, SolverHorizon};
@@ -2460,6 +2459,10 @@ pub struct OutcomeDiagnostic {
     message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     profile: Option<String>,
+    /// FR-286 "Missing selections": the kind of thing a
+    /// `missing_import`/`missing-selection` diagnostic says is missing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    selection: Option<hint::MissingSelection>,
     #[serde(skip_serializing_if = "Option::is_none")]
     text: Option<String>,
 }
@@ -2490,7 +2493,7 @@ impl OutcomeDiagnostic {
         message: impl Into<String>,
     ) -> Self {
         let code = code.into();
-        let hint = Code::from_code(&code).and_then(|code| hint::hint_for(code, cause));
+        let hint = Code::from_code(&code).and_then(|code| hint::hint_for(code, cause, None));
         Self {
             cause: cause.map(Into::into),
             code,
@@ -2501,9 +2504,23 @@ impl OutcomeDiagnostic {
             locus,
             message: message.into(),
             profile: None,
+            selection: None,
             text: None,
             details: None,
         }
+    }
+
+    /// This diagnostic with the kind of the missing thing (FR-286 "Missing
+    /// selections") and the hint of that kind's catalog row. A `None` kind
+    /// leaves the diagnostic as built.
+    #[must_use]
+    pub fn with_selection(mut self, selection: Option<hint::MissingSelection>) -> Self {
+        if let Some(kind) = selection {
+            self.hint = Code::from_code(&self.code)
+                .and_then(|code| hint::hint_for(code, self.cause.as_deref(), Some(kind.as_str())));
+            self.selection = Some(kind);
+        }
+        self
     }
 
     /// This diagnostic with `details` (FR-286 "Diagnostic details"): the closed
@@ -2585,7 +2602,7 @@ impl OutcomeDiagnostic {
                 _ => {}
             }
         }
-        diagnostic
+        diagnostic.with_selection(refusal.selection())
     }
 
     /// Project a compile refusal with the limit advice of the request the
@@ -2630,6 +2647,18 @@ impl OutcomeDiagnostic {
             CallRefusal::Record { locus: None, .. } | CallRefusal::Family { .. } => None,
         };
         Self::new(Some(code.cause()), code.code(), locus, code.to_string())
+    }
+
+    /// The diagnostic of a refused call site: its catalog code and cause, the
+    /// kind of a missing selection and the refusal's message.
+    pub fn from_call_site_refusal(refusal: &crate::CallSiteRefusal) -> Self {
+        Self::new(
+            refusal.cause(),
+            refusal.code().as_str(),
+            None,
+            refusal.to_string(),
+        )
+        .with_selection(refusal.selection())
     }
 
     /// The catalog code.
@@ -2705,9 +2734,25 @@ enum OutcomeResult {
     Parsed(ParsedOutcome),
     Formatted(FormattedOutcome),
     Exported(ExportedOutcome),
+    Packaged(PackagedOutcome),
     Replayed(ReplayedOutcome),
     #[cfg(feature = "test-support")]
     Raw(serde_json::Value),
+}
+
+/// FR-286 "Compile results": the `packaged` result of a compile success.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct PackagedOutcome {
+    kind: &'static str,
+    package: PackagedMembers,
+}
+
+/// What a compile produced and where it went.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+struct PackagedMembers {
+    bytes: usize,
+    output: Option<String>,
+    handoff: Option<String>,
 }
 
 /// FR-286 "Export outcomes": the `exported` result holding the FSpec FR-817
@@ -2973,6 +3018,28 @@ impl OutcomeDocument {
             self.native_fences = None;
         }
         self.items = items;
+        self
+    }
+
+    /// This `package` document carrying what the compile produced as its
+    /// `packaged` result (FR-286 "Compile results"): the package's length in
+    /// bytes, the path of the package file written and the path of the
+    /// handoff directory written, each `None` when nothing was written.
+    #[must_use]
+    pub fn with_packaged(
+        mut self,
+        bytes: usize,
+        output: Option<String>,
+        handoff: Option<String>,
+    ) -> Self {
+        self.result = Some(OutcomeResult::Packaged(PackagedOutcome {
+            kind: "packaged",
+            package: PackagedMembers {
+                bytes,
+                output,
+                handoff,
+            },
+        }));
         self
     }
 
@@ -3326,6 +3393,7 @@ impl OutcomeDocument {
             locus,
             refusal.to_string(),
         )
+        .with_selection(refusal.selection())
         .with_details(match refusal {
             ReplayRefusal::Admission(
                 AdmissionFailure::Refused(record) | AdmissionFailure::Incomplete(record),
@@ -3731,11 +3799,11 @@ mod tests {
         );
         assert_eq!(
             typed.hint,
-            hint::hint_for(Code::IllTyped, Some("type-mismatch"))
+            hint::hint_for(Code::IllTyped, Some("type-mismatch"), None)
         );
 
         let io = OutcomeDiagnostic::new(None, Code::IoError.as_str(), None, "cannot read file");
-        assert_eq!(io.hint, hint::hint_for(Code::IoError, None));
+        assert_eq!(io.hint, hint::hint_for(Code::IoError, None, None));
 
         let generic =
             OutcomeDiagnostic::new(None, Code::InvalidRequest.as_str(), None, "invalid request");
@@ -5663,5 +5731,127 @@ mod tests {
         let typed = pointer_of(vec![field("total")], None);
         assert_eq!(typed, "/populations/0/objects/0/fields/total");
         assert!(document.pointer(&typed).is_some());
+    }
+
+    /// FR-286-AC-40: each of the nine `selection` kinds has its table row
+    /// and no other, and the row of no `selection` stays for the one defensive
+    /// producer.
+    #[trace("TC-3203", "FR-286-AC-40", "FR-865-AC-23")]
+    #[test]
+    fn each_selection_kind_has_its_own_hint_row() {
+        let table = [
+            (
+                hint::MissingSelection::Model,
+                "model",
+                "Supply the model in the request's models member, or with --model <identity>=<file> on fsl check.",
+            ),
+            (
+                hint::MissingSelection::Library,
+                "library",
+                "Supply the library in the request's libraries member, or with --library <identity>=<file> on fsl check.",
+            ),
+            (
+                hint::MissingSelection::SiblingUnit,
+                "sibling-unit",
+                "Supply the imported unit as a library, not as a sibling unit.",
+            ),
+            (
+                hint::MissingSelection::UnimportedLibrary,
+                "unimported-library",
+                "Call a function of a library that the unit imports directly, or add the import.",
+            ),
+            (
+                hint::MissingSelection::FunctionOwner,
+                "function-owner",
+                "Name a function_owner that the program imports directly, or add the import.",
+            ),
+            (
+                hint::MissingSelection::ByteProvision,
+                "byte-provision",
+                "Add a byte_provision entry for the named source to the replay request.",
+            ),
+            (
+                hint::MissingSelection::ExtensionDefinition,
+                "extension-definition",
+                "Add the selected extension's definition to the request's extensions member, or remove the selection.",
+            ),
+            (
+                hint::MissingSelection::Source,
+                "source",
+                "Add the named source to the source provision the analyze call supplies.",
+            ),
+            (
+                hint::MissingSelection::PackageReference,
+                "package-reference",
+                "Supply the domain package or library that the package names, in the request's models or libraries member.",
+            ),
+        ];
+        assert_eq!(table.map(|(kind, _, _)| kind), hint::MissingSelection::ALL);
+        for (kind, name, text) in table {
+            assert_eq!(kind.as_str(), name);
+            assert_eq!(
+                hint::hint_for(Code::MissingImport, Some("missing-selection"), Some(name)),
+                Some(text)
+            );
+            let diagnostic = OutcomeDiagnostic::new(
+                Some("missing-selection"),
+                Code::MissingImport.as_str(),
+                None,
+                "missing",
+            )
+            .with_selection(Some(kind));
+            let wire = serde_json::to_value(&diagnostic).unwrap();
+            assert_eq!(wire["selection"], name, "{wire}");
+            assert_eq!(wire["hint"], text, "{wire}");
+        }
+        assert_eq!(
+            hint::hint_for(Code::MissingImport, Some("missing-selection"), None),
+            Some("Import the package that supplies the selected name.")
+        );
+        assert_eq!(
+            hint::hint_for(
+                Code::MissingImport,
+                Some("missing-selection"),
+                Some("other")
+            ),
+            None
+        );
+    }
+
+    /// FR-286-AC-40: the extension-definition producer writes its kind and
+    /// hint, and plugin replay's defensive `UnresolvedDependency` writes no
+    /// `selection` and the pair's catalog hint.
+    #[trace("TC-3199", "TC-3203", "FR-865-AC-23", "FR-286-AC-40")]
+    #[test]
+    fn extension_producer_carries_its_kind_and_the_defensive_producer_none() {
+        use fsl_foundation::selection::DefinitionRef;
+        use fsl_semantics::library::extension::ExtensionRefusal;
+
+        let refusal = CompileRefusal::Extension(ExtensionRefusal::MissingDependency {
+            dependent: DefinitionRef::new("agent-ix", "ext.a").unwrap(),
+            dependency: DefinitionRef::new("agent-ix", "ext.gone").unwrap(),
+        });
+        let wire = serde_json::to_value(OutcomeDiagnostic::from_compile_refusal(&refusal)).unwrap();
+        assert_eq!(wire["code"], "missing_import", "{wire}");
+        assert_eq!(wire["cause"], "missing-selection", "{wire}");
+        assert_eq!(wire["selection"], "extension-definition", "{wire}");
+        assert_eq!(
+            wire["hint"],
+            "Add the selected extension's definition to the request's extensions member, or remove the selection.",
+            "{wire}"
+        );
+
+        let defensive = crate::PluginReplayRefusal::UnresolvedDependency {
+            identity: "test/lib".to_owned(),
+        }
+        .diagnostic(0);
+        let wire = serde_json::to_value(defensive).unwrap();
+        assert_eq!(wire["code"], "missing_import", "{wire}");
+        assert_eq!(wire["cause"], "missing-selection", "{wire}");
+        assert_eq!(wire.get("selection"), None, "{wire}");
+        assert_eq!(
+            wire["hint"], "Import the package that supplies the selected name.",
+            "{wire}"
+        );
     }
 }

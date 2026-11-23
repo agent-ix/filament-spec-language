@@ -171,6 +171,37 @@ fn unit_list_preflight_refuses_empty_duplicate_and_library_owner_before_parsing(
     ));
 }
 
+/// FR-865-AC-22, FR-286-AC-40: an import naming a sibling unit writes the
+/// `sibling-unit` kind and that row's hint.
+#[trace("TC-3199", "FR-865-AC-22", "FR-865-AC-24", "FR-286-AC-40")]
+#[test]
+fn sibling_import_diagnostic_carries_its_selection() {
+    let first = SourceIdentity::new("test", "z-unit");
+    let second = SourceIdentity::new("test", "a-unit");
+    let unit_a = format!("{HEADER}function left(x: Int[0, 9]): Boolean pure {{ x < 5 }}\n");
+    let sibling_import = format!(
+        "{HEADER}import \"a-unit\";\nfunction local(x: Int[0, 9]): Boolean pure {{ x < 5 }}\n"
+    );
+    let refused = admit_parsed_unit_list(
+        vec![
+            parse_named(&first, sibling_import.as_bytes()),
+            parse_named(&second, unit_a.as_bytes()),
+        ],
+        &DependencyInput::default(),
+    )
+    .map(|_| ())
+    .unwrap_err();
+    let diagnostic = crate::outcome::OutcomeDiagnostic::from_compile_refusal(&refused);
+    let wire = serde_json::to_value(&diagnostic).unwrap();
+    assert_eq!(wire["code"], "missing_import", "{wire}");
+    assert_eq!(wire["cause"], "missing-selection", "{wire}");
+    assert_eq!(wire["selection"], "sibling-unit", "{wire}");
+    assert_eq!(
+        wire["hint"], "Supply the imported unit as a library, not as a sibling unit.",
+        "{wire}"
+    );
+}
+
 #[trace("FR-480-AC-2", "FR-480-AC-4")]
 #[test]
 fn parsed_unit_list_rejects_cross_unit_names_and_orders_distinct_units_canonically() {
@@ -4894,7 +4925,11 @@ fn library_packages_are_charged_as_each_is_emitted() {
     };
     assert_eq!(limit.setting(), Setting::ReplayInputBytes);
     assert_eq!(limit.configured_bound(), 0);
-    assert_eq!(limit.actual(), first as u128, "the second library never ran");
+    assert_eq!(
+        limit.actual(),
+        first as u128,
+        "the second library never ran"
+    );
     assert_eq!(
         super::UNIT_FINISHES.with(std::cell::Cell::get),
         1,
