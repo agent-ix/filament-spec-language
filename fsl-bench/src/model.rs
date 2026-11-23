@@ -408,8 +408,6 @@ pub fn resolve_root_field_redefinition(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fsl_semantics::model::accounting::LimitKind;
-    use fsl_semantics::model::normalize::normalize_with_meter;
 
     #[test]
     fn smallest_shape_admits_and_queries() {
@@ -486,6 +484,9 @@ mod tests {
         assert_eq!(population_origin.member_name, None);
     }
 
+    /// A shared-reader refusal ends intake before any declaration record is
+    /// charged (`read_domain_package`'s contract, FR-154), so the typed refusal
+    /// arrives from `intake` itself, once, at the deepest identified member.
     #[test]
     fn source_byte_intake_preserves_reader_refusals() {
         let mut value: Value = serde_json::from_slice(&document(ModelShape { types: 1, depth: 0 }))
@@ -493,21 +494,8 @@ mod tests {
         value["types"][0]["fields"][0]["presence"] = json!("sometimes");
         let offered = offer(serde_json::to_vec(&value).expect("the invalid fixture serializes"));
 
-        let package = intake(&offered)
-            .expect("intake retains typed reader refusals until normalization charges records");
-        let (outcome, meter) = normalize_with_meter(&package, ModelNormalizationLimits::default());
-        assert_eq!(
-            meter.admission_count(),
-            3,
-            "only the type, field, and population charges precede refusal",
-        );
-        assert_eq!(
-            meter.consumed(LimitKind::DeclarationRecords),
-            3,
-            "all three source records are charged before refusal",
-        );
-        let NormalizeOutcome::Refused(refusals) = outcome else {
-            panic!("normalization reports the retained reader refusal");
+        let Err(IntakeFailure::Read(refusals)) = intake(&offered) else {
+            panic!("intake ends with the typed reader refusal");
         };
         // FR-056: a reader diagnostic is retained at its deepest identified
         // member, and the model reader's own refusal of the same member

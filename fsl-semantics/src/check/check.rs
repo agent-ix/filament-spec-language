@@ -2790,29 +2790,61 @@ pub(crate) fn cancelled_refusal(location: &Location) -> CheckRefusal {
 /// `value_type` with every `Reference<Clock>` replaced by `Boolean`, a leaf
 /// the type environment admits wherever a reference is; `None` when a map
 /// built from the result would have a key that is no leaf.
+///
+/// The walk keeps its own stack, so a type nested to any depth the parser
+/// admits does not consume the thread's stack (FR-356-AC-7).
 fn clock_reference_as_leaf(value_type: &ValueType) -> Option<ValueType> {
-    Some(match value_type {
-        ValueType::Reference(target) if target == &super::clock_reference_target() => {
-            ValueType::Boolean
+    enum Step<'a> {
+        Visit(&'a ValueType),
+        Option,
+        Collection(&'a CollectionType),
+        Map(&'a filament_exact::MapType),
+    }
+    let mut steps = vec![Step::Visit(value_type)];
+    let mut built: Vec<ValueType> = Vec::new();
+    while let Some(step) = steps.pop() {
+        match step {
+            Step::Visit(visited) => match visited {
+                ValueType::Reference(target) if target == &super::clock_reference_target() => {
+                    built.push(ValueType::Boolean);
+                }
+                ValueType::Option(payload) => {
+                    steps.push(Step::Option);
+                    steps.push(Step::Visit(payload));
+                }
+                ValueType::Collection(collection) => {
+                    steps.push(Step::Collection(collection));
+                    steps.push(Step::Visit(collection.element()));
+                }
+                ValueType::Map(map) => {
+                    steps.push(Step::Map(map));
+                    steps.push(Step::Visit(map.values()));
+                    steps.push(Step::Visit(map.key()));
+                }
+                other => built.push(other.clone()),
+            },
+            Step::Option => {
+                let payload = built.pop()?;
+                built.push(ValueType::Option(Arc::new(payload)));
+            }
+            Step::Collection(collection) => {
+                let element = built.pop()?;
+                built.push(ValueType::collection(CollectionType::new(
+                    collection.kind(),
+                    element,
+                    collection.bound(),
+                )));
+            }
+            Step::Map(map) => {
+                let values = built.pop()?;
+                let key = built.pop()?;
+                built.push(ValueType::Map(Arc::new(
+                    filament_exact::MapType::new(key, values, map.bound()).ok()?,
+                )));
+            }
         }
-        ValueType::Option(payload) => {
-            ValueType::Option(Arc::new(clock_reference_as_leaf(payload)?))
-        }
-        ValueType::Collection(collection) => ValueType::collection(CollectionType::new(
-            collection.kind(),
-            clock_reference_as_leaf(collection.element())?,
-            collection.bound(),
-        )),
-        ValueType::Map(map) => ValueType::Map(Arc::new(
-            filament_exact::MapType::new(
-                clock_reference_as_leaf(map.key())?,
-                clock_reference_as_leaf(map.values())?,
-                map.bound(),
-            )
-            .ok()?,
-        )),
-        other => other.clone(),
-    })
+    }
+    built.pop()
 }
 
 fn mismatch(location: &Location) -> CheckRefusal {
