@@ -1593,7 +1593,11 @@ fn work<'a>(
         Some(ItemForm::Temporal(_)) => super::document::timed(package),
         _ => false,
     };
-    built = built.operation_contract_extent(item.kind, item.extent);
+    // Only the contract checker's refusal reads the request's extent bit; any
+    // other engine's `RequiresBound` keeps its own disposition.
+    if contract_checker_target {
+        built = built.operation_contract_extent(item.kind, item.extent);
+    }
     built.mode = match item.extent {
         _ if zone => fsl_route::Mode::Bounded,
         _ if item.kind == Capability::Schedulability
@@ -1841,38 +1845,60 @@ mod tests {
             .and_then(|claim| claim.occurrence())
             .expect("the Link package has an authored occurrence")
             .clone();
-        let candidate = fsl_route::Candidate::new(fsl_foundation::BackendId::new("test-a"));
+        let engines = super::super::Engines::fsl().expect("the linked engines register");
         let sources = SourceProvision::default();
-        for finite_bound_available in [false, true] {
-            let negotiated = super::NegotiatedItem {
-                item: super::ClaimItem {
-                    request_index: fsl_foundation::RequestIndex::new(0),
-                    claim: claim.clone(),
-                    kind: fsl_semantics::check::Capability::OperationContract,
-                    extent: fsl_route::request::ExtentClassification::Unbounded {
-                        finite_bound_available,
+        for backend in [
+            crate::contract_check::manifest::BACKEND_ID,
+            crate::model_check::manifest::BACKEND_ID,
+        ] {
+            let candidate = fsl_route::Candidate::new(fsl_foundation::BackendId::new(backend));
+            for finite_bound_available in [false, true] {
+                let negotiated = super::NegotiatedItem {
+                    item: super::ClaimItem {
+                        request_index: fsl_foundation::RequestIndex::new(0),
+                        claim: claim.clone(),
+                        kind: fsl_semantics::check::Capability::OperationContract,
+                        extent: fsl_route::request::ExtentClassification::Unbounded {
+                            finite_bound_available,
+                        },
+                        backend: Some(candidate.id().clone()),
+                        candidates: vec![candidate.clone()],
+                        options: super::ItemOptions::default(),
+                        form: None,
                     },
-                    backend: Some(candidate.id().clone()),
-                    candidates: vec![candidate.clone()],
-                    options: super::ItemOptions::default(),
-                    form: None,
-                },
-                disposition: fsl_route::routing::Disposition::Supported(candidate.clone()),
-                diagnostic: None,
-            };
-            let built = super::work(
-                &analysis,
-                &binding,
-                &sources,
-                &negotiated,
-                &super::super::Engines::default(),
-                &super::super::AnalyzeLimits::unbounded(),
-                None,
-            );
-            assert_eq!(
-                built.operation_contract_finite_bound_available,
-                Some(finite_bound_available),
-            );
+                    disposition: fsl_route::routing::Disposition::Supported(candidate.clone()),
+                    diagnostic: None,
+                };
+                let built = super::work(
+                    &analysis,
+                    &binding,
+                    &sources,
+                    &negotiated,
+                    &engines,
+                    &super::super::AnalyzeLimits::unbounded(),
+                    None,
+                );
+                if backend == crate::contract_check::manifest::BACKEND_ID {
+                    assert_eq!(
+                        built.operation_contract_finite_bound_available,
+                        Some(finite_bound_available),
+                    );
+                    assert_eq!(built.mode, fsl_route::Mode::Bounded);
+                    let Some(super::super::ItemWork::Engine(refuse)) = built.work else {
+                        panic!("the contract checker's unbounded item carries engine work");
+                    };
+                    let engine = engines
+                        .get(candidate.id())
+                        .expect("the contract checker is registered");
+                    assert!(matches!(
+                        refuse(&filament_exact::Cancel::new(), engine),
+                        super::super::EngineReport::Refused(super::super::Refusal::RequiresBound)
+                    ));
+                } else {
+                    // Another target's refusal keeps its own disposition.
+                    assert_eq!(built.operation_contract_finite_bound_available, None);
+                }
+            }
         }
     }
 
