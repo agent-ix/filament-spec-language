@@ -2672,21 +2672,30 @@ fn an_items_deadline_expiring_mid_settlement_leaves_the_stream_unchanged() {
     let cancel = filament_exact::Cancel::new();
     let run_recorded = recorded.clone();
     let run_cancel = cancel.clone();
+    let (finished, completed) = std::sync::mpsc::sync_channel(1);
     let run = std::thread::spawn(move || {
-        monitor_with_members(
+        let result = monitor_with_members(
             clauses,
             json!({"items": [{"claim": "Even", "kind": "value-validity", "backend": RECORDING}],
                 "deadline_ms": 600_000}),
             vec![provider],
             &run_recorded,
             &run_cancel,
-        )
+        );
+        let _ = finished.send(());
+        result
     });
     let items_cancel = match in_flight.recv_timeout(std::time::Duration::from_secs(10)) {
         Ok(cancel) => cancel,
         Err(error) => {
             cancel.cancel(filament_exact::CancelCause::Deadline);
             release_blocked_provider(&released);
+            match completed.recv_timeout(std::time::Duration::from_secs(10)) {
+                Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    let _ = run.join();
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            }
             panic!(
                 "provider request did not enter settlement before the watchdog elapsed: {error}"
             );
@@ -2694,6 +2703,13 @@ fn an_items_deadline_expiring_mid_settlement_leaves_the_stream_unchanged() {
     };
     items_cancel.cancel(filament_exact::CancelCause::Deadline);
     release_blocked_provider(&released);
+    match completed.recv_timeout(std::time::Duration::from_secs(10)) {
+        Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {}
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            cancel.cancel(filament_exact::CancelCause::Deadline);
+            panic!("monitor worker did not finish after the provider was released");
+        }
+    }
     let (summary, seen) = run.join().expect("the monitor thread completes");
     let summary = summary.expect("an items deadline expiring mid-settlement still streams");
     let value = summary.as_value();
