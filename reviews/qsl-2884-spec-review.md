@@ -103,3 +103,37 @@ kind stated (FND-001), and TC-3204 needs the second certificate (FND-004).
 FND-002 and FND-003 are real SD-3 coverage gaps. A single extra AC can close
 both. The lead may defer them to a follow-up ticket instead, with the reason
 recorded. FND-005 and FND-006 are wording.
+
+## New findings (disposition pass 1)
+
+Round 1 reviewed `git diff 505fbf2d..b84df6c5`, head b84df6c58ff0d9168560d21411f0d1456df6ec57. The new content is FR-204-AC-19 with TC-3205 (`Pair`), FR-204-AC-20 with TC-3206 (`Chain`), and the AC-18 and TC-3204 fixes. Every number was recomputed by hand, and every one is correct:
+
+- **`Pair`, weighted.** With G = 2 ms, `fire` takes 4/5 split uniformly, so F1 2/5, F2 2/5 and G 1/5, each times 1/2. With G = 3 ms, F1 and F2 get 1/2 each, times 1/2. That gives F1 = 1/5 + 1/4 = 9/20, F2 = 9/20 and G = 1/10. The masses sum to 1, and G at 3 ms never wins.
+- **`Pair`, undivided weight (4, 4, 1).** F1 = 2/9 + 1/4 = 17/36 and G = 1/18.
+- **`Pair`, even ties.** F1 = 1/6 + 1/4 = 5/12.
+- **`Pair` thresholds.** `>= 0.45` holds at 9/20 and 17/36 and fails at 5/12. `<= 0.45` holds at 9/20 and 5/12 and fails at 17/36. So the pair pins the value exactly.
+- **`Chain`, orders.** XYZ 1/15, XZY 1/10, YXZ 1/12, YZX 1/4, ZXY 1/6, ZYX 1/3, summing to 60/60. `last` = X is 7/12, Y is 4/15 and Z is 3/20.
+- **`Chain`, wrong checkers.** First pick weighted, rest canonical: last = X 0, Y 1/2, Z 1/2. Even: 1/3 each. Canonical: Z = 1.
+- **`Chain` thresholds.** `>= 0.58` (7/12 ≈ 0.583) and `<= 0.2` (0.15) are each refuted by all three wrong checkers.
+
+AC-19 and AC-20 are falsifiable. They are as bundled as AC-18, so SR-3594002's FND-001 applies to them too, and its accepted-no-change disposition covers them. TC-3205 and TC-3206 follow the TC convention. TC-3205 and TC-3206 are unique: no other remote branch carries them, and FR-204-AC-19 and AC-20 do not appear on origin/main. `quire validate` exits 0.
+
+On AC-19's first-pick pin: every reading of SD-3 gives F1, F2 and G 2/5, 2/5 and 1/5 at the first pick, so AC-19 is sound. It is an acceptable stopping point for this PR. The open question, the weight a remaining identity carries after a pick, is an ambiguity in ADR-026 itself (FND-008), not a missing criterion.
+
+| ID | Severity | Summary | Refs | Escape Cause |
+| --- | --- | --- | --- | --- |
+| FND-007 | medium | ADR-026 SD-3 takes every tied identity "in that order at the same instant, each only when it is still enabled at its turn". FR-204 and FR-196 state no product representation for such a multi-step tie. FR-204 line 139 says "each race outcome SHALL be one edge, delaying by the winning amount and taking the winning identity". FR-196 line 676 says "a given-delay race is one edge with its exact probability, delay and discrete endpoint". Read literally, `Chain` takes only the winner, and Y and Z redraw 2 ms at the new state, so `n = 3` is not reached by 3 ms and AC-20's values would be 0. AC-20 therefore states no edge list and leaves the `InequalityFails` locus out. AC-12 already relied on this ("`A`, still enabled, sets `b`"), so the gap predates this PR, and AC-20 agrees with the ADR. Recommendation: defer to a ticket, "FR-204/FR-196: product representation of a same-instant multi-identity tie (ADR-026 SD-3 ordered takes)". It should state: an outcome is a tie order; the edge delays once and applies the still-enabled identities in that order to one post-key; one trace position per fired identity at the same time stamp; the edge label; and the certificate locus. Then pin AC-20's edges and locus. | spec/functional/FR-204-check-probabilistic-timed-automata-through-digital-clocks.md:139,255; spec/functional/FR-196-build-the-probabilistic-product.md:676 | missing-requirement |
+| FND-008 | medium | ADR-026 SD-3 ("without replacement by ADR-024 PM-2's weights and then uniformly within an operation") is ambiguous for an operation with several identities beyond the first pick. After F1 of `fire` is taken, F2's weight against G could be the operation weight (4 vs 1), the divided weight the `Pair` worked example uses (2 vs 1), or nothing at all, because the operation's identities stay consecutive (operations ordered first, then identities uniformly inside each). All three readings agree on AC-19's first pick, so AC-19 is sound but cannot decide between them. The worked example's phrase "`F1` and `F2` carry 2 each" reads as a ruling on later picks too. Recommendation: defer to an ADR-026 SD-3 clarification ticket ("SD-3: order of the identities of one operation within a tie"), which needs an owner ruling. Then add an AC with a `Pair` variant whose identities stay enabled. | spec/decisions/ADR-026-dense-time.md:238; spec/functional/FR-204-check-probabilistic-timed-automata-through-digital-clocks.md:318-331 | wrong-requirement |
+| FND-009 | low | `Pair` declares `delay Pair::fire ~ discrete { 2 ms: 1 };` for the operation it calls `Node::fire`. FR-204 elsewhere names a class operation with its class, as in AC-17's `delay M::Call::send`. Fix: write `delay Pair::Node::fire ~ discrete { 2 ms: 1 };`. | spec/functional/FR-204-check-probabilistic-timed-automata-through-digital-clocks.md:324 | wrong-requirement |
+| FND-010 | low | FR-204-AC-20 says "`last = Y` has value `4/15`" but names no claim, threshold or item, so the value cannot be observed as a verdict. TC-3206 says only "decide … the `last = Y` value". Fix: state it as an item, for example `probability >= 0.26 [eventually[0 ms, 3 ms] holds(c.n = 3 and c.last = Y)]` settles `proved`, `ExactValue{4/15}`, or drop it. | spec/functional/FR-204-check-probabilistic-timed-automata-through-digital-clocks.md:255 | wrong-requirement |
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | b84df6c5: AC-18 names the `t.b` item's `Exact` certificates (even ties `11/96`, canonical order `0`), each rejected `InequalityFails`, "and the test submits both". The worked example explains why a `Lower` document would meet `ThresholdMissed` instead. |
+| FND-002 | fixed | b84df6c5: FR-204-AC-19 and TC-3205 (`Pair`, `fire` 4 shared by F1 and F2, G 1) pin the within-operation division at the first pick (9/20, 9/20, 1/10). The undivided and even checkers are rejected. Later picks are recorded as FND-008. |
+| FND-003 | fixed | b84df6c5: FR-204-AC-20 and TC-3206 (`Chain`, three still-enabled identities) make the order after the first pick observable: 7/12, 4/15 and 3/20, with all three wrong checkers refuted. |
+| FND-004 | fixed | b84df6c5: TC-3204's procedure submits both `Exact` certificates (`11/96` and `0`), and Expected Results rejects both. |
+| FND-005 | fixed | b84df6c5: the worked example gives `P(a) = 149/192` over `[0 ms, 3 ms]` and notes that `[0 ms, 2 ms]` gives the same. |
+| FND-006 | fixed | b84df6c5: the sentence now reads "`A`, `B` and `C` are three distinct operations of one identity each, so no operation's weight is shared among tied identities here". |

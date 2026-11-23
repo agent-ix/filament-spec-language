@@ -16,11 +16,11 @@ Scope: FR-204-AC-20.
 
 ## Test Procedure
 
-Build `Chain` (FR-204-AC-20) under `Order` (`X` 1, `Y` 2, `Z` 3); decide the `last = X` and `last = Z` claims and the `last = Y` value; submit the `c.last = Z` `Exact` certificates computed with the first pick weighted and the rest canonical (`1/2`), with even orders (`1/3`) and with canonical order (`1`). Test: `fsl-analyze/tests/it/digital_clocks.rs` `tied_operations_are_ordered_without_replacement`.
+Build `Chain` (FR-204-AC-20) under `Order` (`X` 1, `Y` 2, `Z` 3); decide the `last = X`, `last = Z` and `last = Y` (`<= 0.3`) claims; submit the `c.last = Z` `Exact` certificates computed with the first pick weighted and the rest canonical (`1/2`), with even orders (`1/3`) and with canonical order (`1`). Test: `fsl-analyze/tests/it/digital_clocks.rs` `tied_operations_are_ordered_without_replacement`.
 
 Tag the tests `#[trace("TC-3206", "FR-204-AC-20")]`.
 
 ## Expected Results
 
-- `last = X` `ExactValue{7/12}`, `last = Z` `ExactValue{3/20}`, `last = Y` `ExactValue{4/15}`; the claims `proved`.
+- `last = X` `ExactValue{7/12}`, `last = Z` `ExactValue{3/20}`, `last = Y` `ExactValue{4/15}`, each claim `proved`.
 - All three certificates rejected `InequalityFails`.

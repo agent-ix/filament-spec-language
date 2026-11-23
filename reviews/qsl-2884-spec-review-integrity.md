@@ -56,3 +56,16 @@ Examined, clean:
 The structure is sound and the conventions are followed. The two low findings
 tighten atomicity and the exclusivity of the action set. Neither blocks the
 merge on its own.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs | Escape Cause |
+| --- | --- | --- | --- | --- |
+| FND-003 | low | TC-3204's Expected Results was not updated with AC-18's fix. It still reads "Four race edges at the initial state … no `FreeDelays`, no `WorkloadResolve`". AC-18 now requires "exactly four race edges and no other action (no `UnitDelay`, …)", and TC-3205 already reads "Exactly three edges, no other action". Fix: change it to "Exactly four race edges and no other action (no `UnitDelay`, `FreeDelays` or `WorkloadResolve`)". | spec/test-cases/TC-3204-given-delays-race-under-unequal-weights.md:25 | correct-requirement-no-evidence |
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | accepted-no-change | AC-18 is not split. That is acceptable: FR-204's existing rows (AC-6, AC-10) are bundled the same way, every conjunct is pinned to an exact value, and the finding was marked optional. AC-19 and AC-20 follow the same pattern. |
+| FND-002 | fixed | b84df6c5: AC-18 reads "exactly four race edges and no other action (no `UnitDelay`, `FreeDelays` or `WorkloadResolve`)". TC-3204 lags behind this text, recorded as FND-003. |

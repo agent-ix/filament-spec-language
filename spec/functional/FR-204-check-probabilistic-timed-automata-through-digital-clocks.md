@@ -252,7 +252,7 @@ unsupported cause `DelayDistribution{operation}`.
 | FR-204-AC-17 | Under a workload, `Retx` with `delay M::Call::send ~ discrete { 5 ms: 1 };`, whose `send` window excludes its only delay, builds a product whose time-locked state is terminal, with no `NotStochastic` refusal. | Test (TC-2176) |
 | FR-204-AC-18 | Under the workload `Skew` (weights `A` 1, `B` 2, `C` 3), the model `Trio` of the worked example below, whose `A`, `B` and `C` race with the given delays `discrete { 1 ms: 1, 2 ms: 1 }`, `discrete { 2 ms: 1, 3 ms: 1 }` and `discrete { 2 ms: 1, 3 ms: 3 }`, has at its initial state exactly four race edges and no other action (no `UnitDelay`, `FreeDelays` or `WorkloadResolve`), each edge `Identity(A)`, with `A` at 1 ms `1/2`, `A` at 2 ms `53/192`, `B` at 2 ms `7/48` and `C` at 2 ms `5/64`; `probability >= 0.13 [eventually[0 ms, 3 ms] holds(t.b)]` settles `proved`, `ExactValue{7/48}`, `probability >= 0.07 [eventually[0 ms, 3 ms] holds(t.c)]` settles `proved`, `ExactValue{5/64}`, `probability <= 0.8 [eventually[0 ms, 3 ms] holds(t.a)]` settles `proved`, `ExactValue{149/192}`, and `probability >= 0.5 [eventually[0 ms, 1 ms] holds(t.a)]` settles `proved`, `ExactValue{1/2}`; the `t.b` item's `Exact` certificate with values computed with even ties (initial value `11/96`) and the one computed with ties taken in canonical order (initial value `0`) are each rejected `InequalityFails` at the initial state's `ProbabilisticProductState`, and the test submits both. | Test (TC-3204) |
 | FR-204-AC-19 | Under the workload `Share` (weights `fire` 4, `G` 1), the model `Pair` of the worked example below, whose operation `fire` has the two tied identities `F1` and `F2` with `discrete { 2 ms: 1 }` and whose `G` has `discrete { 2 ms: 1, 3 ms: 1 }`, divides `fire`'s weight between `F1` and `F2` (2 each against `G` 1): its initial state has exactly three race edges and no other action, `F1` at 2 ms `9/20`, `F2` at 2 ms `9/20` and `G` at 2 ms `1/10`; `probability >= 0.45 [eventually[0 ms, 3 ms] holds(n1.hit)]` and `probability <= 0.45 [eventually[0 ms, 3 ms] holds(n1.hit)]` each settle `proved`, `ExactValue{9/20}`; the `n1.hit` item's `Exact` certificates with the weight not divided (initial value `17/36`) and with even ties (initial value `5/12`) are each rejected `InequalityFails` at the initial state's `ProbabilisticProductState`, and the test submits both. | Test (TC-3205) |
-| FR-204-AC-20 | Under the workload `Order` (weights `X` 1, `Y` 2, `Z` 3), the model `Chain` of the worked example below, whose `X`, `Y` and `Z` tie at 2 ms and each fire when still enabled at its turn, orders the tie without replacement by the weights, so `probability >= 0.58 [eventually[0 ms, 3 ms] holds(c.n = 3 and c.last = X)]` settles `proved`, `ExactValue{7/12}`, `probability <= 0.2 [eventually[0 ms, 3 ms] holds(c.n = 3 and c.last = Z)]` settles `proved`, `ExactValue{3/20}`, and `last = Y` has value `4/15`; the `c.last = Z` item's `Exact` certificates with the first pick weighted and the rest in canonical order (initial value `1/2`), with even orders (initial value `1/3`) and with canonical order (initial value `1`) are each rejected `InequalityFails`, and the test submits all three. | Test (TC-3206) |
+| FR-204-AC-20 | Under the workload `Order` (weights `X` 1, `Y` 2, `Z` 3), the model `Chain` of the worked example below, whose `X`, `Y` and `Z` tie at 2 ms and each fire when still enabled at its turn, orders the tie without replacement by the weights, so `probability >= 0.58 [eventually[0 ms, 3 ms] holds(c.n = 3 and c.last = X)]` settles `proved`, `ExactValue{7/12}`, `probability <= 0.2 [eventually[0 ms, 3 ms] holds(c.n = 3 and c.last = Z)]` settles `proved`, `ExactValue{3/20}`, and `probability <= 0.3 [eventually[0 ms, 3 ms] holds(c.n = 3 and c.last = Y)]` settles `proved`, `ExactValue{4/15}`; the `c.last = Z` item's `Exact` certificates with the first pick weighted and the rest in canonical order (initial value `1/2`), with even orders (initial value `1/3`) and with canonical order (initial value `1`) are each rejected `InequalityFails`, and the test submits all three. | Test (TC-3206) |
 
 ## Worked example: given delays racing under weights
 
@@ -321,7 +321,7 @@ Model `Pair` (`time dense unit ms`) has `phase` (`Idle` or `Done`), a
 population of two `Node` objects `n1` and `n2` each with `hit`, and the flag
 `g`. The operation `Node::fire` has one identity per object (`F1` for `n1`,
 `F2` for `n2`), guarded by `phase = Idle`, setting `Done` and its object's
-`hit`, with `delay Pair::fire ~ discrete { 2 ms: 1 };` for each identity; the
+`hit`, with `delay Pair::Node::fire ~ discrete { 2 ms: 1 };` for each identity; the
 operation `G` is guarded by `phase = Idle`, sets `Done` and `g`, with
 `delay Pair::G ~ discrete { 2 ms: 1, 3 ms: 1 };`. The invariant is
 `x <= 3 ms` while `Idle`. The workload `Share` weights `fire` 4 and `G` 1.
@@ -346,6 +346,10 @@ operation's weight not divided) gets `F1` `4/9` for the `G` draw 2 row, so
 at 81 and 85 and fails at 75, and the claim `<= 0.45` holds at 81 and 75 and
 fails at 85, so the pair holds only at the exact value. The `G` edge mass is
 `1/10` (exact), `1/18` undivided and `1/6` even.
+
+Open question (QSL-2984): SD-3 does not state the weight of an identity that
+remains after an earlier pick of its operation; these examples read only the
+first pick.
 
 ## Worked example: picks after the first
 
@@ -381,6 +385,10 @@ holds(c.n = 3 and c.last = X)]` (`7/12 = 0.5833`) refutes under all three
 wrong rules (`0`, `1/3`, `0`), and `probability <= 0.2 [eventually[0 ms,
 3 ms] holds(c.n = 3 and c.last = Z)]` (`3/20 = 0.15`) refutes under all
 three (`1/2`, `1/3`, `1`).
+
+Open question (QSL-2983): FR-204 does not state how a tie taken in several
+steps at one instant appears in the product (intermediate states or one edge
+per outcome), so AC-20 states values and no edge list.
 
 ## Rulings
 
