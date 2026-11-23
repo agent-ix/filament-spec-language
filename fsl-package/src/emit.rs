@@ -488,6 +488,109 @@ fn output_limit(bound: u64, actual: u128) -> fsl_foundation::diagnostic::LimitEx
     )
 }
 
+/// A sink that keeps no bytes: the writer counts them.
+struct Discard;
+
+impl quire_canonical::Sink for Discard {
+    fn write_bytes(&mut self, _bytes: &[u8]) -> Result<(), quire_canonical::Error> {
+        Ok(())
+    }
+}
+
+/// A running floor on the emission's canonical bytes (FR-264 Behavior 5).
+///
+/// Each section that reaches the package verbatim is charged as soon as it is
+/// built, so a section over the ceiling is refused before the sections after
+/// it are built. The floor never exceeds the package's length, so a refusal
+/// here is one the final encode would also return, with the same first unpaid
+/// byte.
+///
+/// Charging encodes a section a second time, which costs about 3 percent of an
+/// emission.
+struct OutputMeter {
+    bound: u64,
+    charged: u64,
+}
+
+/// One section being charged: the writer that counts the rows pushed into it.
+struct Section<'w> {
+    writer: quire_canonical::Writer<'w, Discard>,
+}
+
+impl Section<'_> {
+    /// Count the canonical bytes of one row.
+    fn push<T: quire_canonical::Encode>(&mut self, row: &T) -> Result<(), EmitRefusal> {
+        row.encode_into(&mut self.writer)?;
+        Ok(())
+    }
+}
+
+impl OutputMeter {
+    fn new(limits: EmitLimits) -> Self {
+        Self {
+            bound: limits.output_bytes,
+            charged: 0,
+        }
+    }
+
+    fn over(&self) -> EmitRefusal {
+        EmitRefusal::OutputLimit(output_limit(self.bound, u128::from(self.bound) + 1))
+    }
+
+    /// Charge `bytes` that the package carries beyond the rows charged.
+    fn charge_bytes(&mut self, bytes: u64) -> Result<(), EmitRefusal> {
+        match self.charged.checked_add(bytes) {
+            Some(total) if total <= self.bound => {
+                self.charged = total;
+                Ok(())
+            }
+            _ => Err(self.over()),
+        }
+    }
+
+    /// Run `fill`, which pushes one section's rows, and charge the bytes it
+    /// wrote. The section is an array in the package, so its brackets are
+    /// left uncharged. The writer refuses at the first byte past the bound.
+    fn section<R>(
+        &mut self,
+        fill: impl FnOnce(&mut Section<'_>) -> Result<R, EmitRefusal>,
+    ) -> Result<R, EmitRefusal> {
+        let mut sink = Discard;
+        let writer = quire_canonical::Writer::new(
+            &mut sink,
+            quire_canonical::Limits::new(self.bound - self.charged),
+        );
+        let mut section = Section { writer };
+        let written = (|| {
+            section.writer.begin_array()?;
+            let filled = fill(&mut section)?;
+            section.writer.end_array()?;
+            Ok((filled, section.writer.finish()?))
+        })();
+        match written {
+            Ok((filled, bytes)) => {
+                self.charged += bytes.saturating_sub(2);
+                Ok(filled)
+            }
+            Err(EmitRefusal::OutputLimit(_)) => Err(self.over()),
+            Err(other) => Err(other),
+        }
+    }
+
+    /// Charge the canonical bytes of `rows`.
+    fn charge<T: quire_canonical::Encode>(&mut self, rows: &[T]) -> Result<(), EmitRefusal> {
+        if rows.is_empty() {
+            return Ok(());
+        }
+        self.section(|section| {
+            for row in rows {
+                section.push(row)?;
+            }
+            Ok(())
+        })
+    }
+}
+
 /// Give an emission-size refusal the first checked source occurrence. The
 /// byte ceiling is charged while the canonical artifact is written, so the
 /// encoder itself has no source offset to report; the package's first
@@ -1920,8 +2023,8 @@ impl Candidate<'_> {
             .binary_search_by_key(&ordinal, |(occurrence, _)| occurrence.ordinal)
             .ok()?;
         match &expression_occurrences[index].1 {
-                RecordedLocation::Expression(location) => regions(location),
-                RecordedLocation::Parameter(_) | RecordedLocation::Captured(_) => None,
+            RecordedLocation::Expression(location) => regions(location),
+            RecordedLocation::Parameter(_) | RecordedLocation::Captured(_) => None,
         }
     }
 }
@@ -4690,7 +4793,7 @@ fn checked_term_data(
     nodes: &[CheckedSemanticNodeV2],
     source_map: &[CheckedSourceMapEntry],
     source_keys: &SourceDeclarationKeys,
-    output_bytes: u64,
+    meter: &mut OutputMeter,
 ) -> Result<Option<filament_contract_model::CheckedTermDataV2>, EmitRefusal> {
     let mut term_data = checked_equality_term_data(
         graph,
@@ -4699,11 +4802,15 @@ fn checked_term_data(
         equality_rows,
     )?
     .unwrap_or_default();
+    meter.charge(&term_data.equality_decisions)?;
     term_data.dispatch_tables =
         checked_dispatch_tables(graph, emitted_node_ids, source_map, source_keys)?;
+    meter.charge(&term_data.dispatch_tables)?;
     term_data.protocol_locations =
         protocol_locations::checked_protocol_locations(graph, producer_node_ids)?;
+    meter.charge(&term_data.protocol_locations)?;
     term_data.probabilistic_claims = checked_probabilistic_claims(graph, emitted_node_ids)?;
+    meter.charge(&term_data.probabilistic_claims)?;
     // Location rows retain original S3 application keys, just as equality
     // does. Resolve them through the actual timed substitutions, without
     // adding aliases to the graph index used by reverse lookups.
@@ -4712,7 +4819,7 @@ fn checked_term_data(
         producer_node_ids,
         nodes,
         source_keys,
-        output_bytes,
+        meter,
     )?;
     Ok((!term_data.equality_decisions.is_empty()
         || !term_data.protocol_locations.is_empty()
@@ -6792,7 +6899,8 @@ pub fn emit_timed_models(
         &ForeignNodes::default(),
     )?;
     order_dependencies(&mut nodes, EmitRefusal::TimedModelWriterInvariant)?;
-    let requirement_rows = value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
+    let requirement_rows =
+        value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
     let operand_rows = write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {
         graph_version: base.graph().graph_version.clone(),
@@ -7857,6 +7965,12 @@ fn emit_package_inner(
         &mut schedulability_claim_rows,
         &foreign,
     )?;
+    // The source map is complete and is written verbatim into the package, so
+    // its canonical bytes are a floor on the package's. Charge them, and each
+    // typed row section below as it is built, rather than after the final
+    // encode.
+    let mut meter = OutputMeter::new(limits);
+    meter.charge(&source_map)?;
     let producer_node_ids =
         producer_node_ids_after_timed_rekey(&emitted_node_ids, &timed_substitutions)?;
     let WrittenTemporalRows {
@@ -7872,6 +7986,8 @@ fn emit_package_inner(
         &source_map,
         temporal_selections,
     )?;
+    meter.charge(&temporal_bindings)?;
+    meter.charge(&temporal_clause_names)?;
     let claim_names = claim_name_rows(
         graph,
         ids,
@@ -7880,6 +7996,7 @@ fn emit_package_inner(
         &nodes,
         &source_map,
     )?;
+    meter.charge(&claim_names)?;
     let equality_producer_identity_rows = equality_producer_emission_rows_excluding(
         graph,
         &producer_node_ids,
@@ -7901,7 +8018,7 @@ fn emit_package_inner(
         &nodes,
         &source_map,
         &source_keys,
-        limits.output_bytes,
+        &mut meter,
     )?;
     let selected_operation_member_rows = selected_operation_member_rows
         .into_iter()
@@ -7985,6 +8102,7 @@ fn emit_package_inner(
         &relation_rows,
         &omitted_causes,
     )?;
+    meter.charge(&requirement_rows)?;
     let selected_source_collection_rows = source_collection_rows(graph, &emitted_node_ids)?;
     let operation_effects = graph
         .operation_effects()
