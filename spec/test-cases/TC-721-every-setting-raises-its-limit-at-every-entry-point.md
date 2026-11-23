@@ -15,7 +15,7 @@ the settings operation refuses a malformed `--limit` operand before any
 stage runs, and that an
 unconfigured limit takes its default.
 
-Scope: FR-255-AC-4, FR-255-AC-5, FR-255-AC-6 and FR-255-AC-15 to FR-255-AC-20.
+Scope: FR-255-AC-4, FR-255-AC-5, FR-255-AC-6, FR-255-AC-15 to FR-255-AC-20, and FR-255-AC-24.
 
 ## Test Procedure
 
@@ -47,8 +47,17 @@ Scope: FR-255-AC-4, FR-255-AC-5, FR-255-AC-6 and FR-255-AC-15 to FR-255-AC-20.
 10. Set `emit.output_bytes` through the emit limits' builder, a replay
    request's `stage_limits` and the settings operation; read the outer
    configuration's default; set `0` and `u64::MAX` (FR-255-AC-20).
+11. For each of `analyze`, `monitor` and `replay`, construct the command's
+    caller-limit object from every exact setting in FR-255's “Lifecycle
+    caller-limit coverage”. Verify each accepted name changes only its
+    corresponding bound, and a recognized engine setting that the operation
+    does not execute is refused before work. For monitor, separately set
+    `monitor.preparation_work_units` and `monitor.preparation_storage` and
+    inspect the corresponding preparation bounds. Verify `replay.input_bytes`
+    reaches the replay-reader argument and is not accepted in request
+    `stage_limits`.
 
-Tag the tests `#[trace("TC-721", "FR-255-AC-20")]`, `#[trace("TC-721", "FR-255-AC-4")]`, `#[trace("TC-721", "FR-255-AC-5")]`, `#[trace("TC-721", "FR-255-AC-6")]`, `#[trace("TC-721", "FR-255-AC-15")]`, `#[trace("TC-721", "FR-255-AC-16")]`, `#[trace("TC-721", "FR-255-AC-17")]`, `#[trace("TC-721", "FR-255-AC-18")]`, `#[trace("TC-721", "FR-255-AC-19")]`.
+Tag the tests `#[trace("TC-721", "FR-255-AC-20")]`, `#[trace("TC-721", "FR-255-AC-4")]`, `#[trace("TC-721", "FR-255-AC-5")]`, `#[trace("TC-721", "FR-255-AC-6")]`, `#[trace("TC-721", "FR-255-AC-15")]`, `#[trace("TC-721", "FR-255-AC-16")]`, `#[trace("TC-721", "FR-255-AC-17")]`, `#[trace("TC-721", "FR-255-AC-18")]`, `#[trace("TC-721", "FR-255-AC-19")]`, `#[trace("TC-721", "FR-255-AC-24")]`.
 
 ## Expected Results
 
@@ -76,3 +85,7 @@ Tag the tests `#[trace("TC-721", "FR-255-AC-20")]`, `#[trace("TC-721", "FR-255-A
 - Step 10: each entry point changes only the output-byte bound; the outer
   configuration's default is 16777216; zero and `u64::MAX` are accepted;
   `EmitLimits` has no `Default`.
+- Step 11: each operation exposes exactly the names listed for it; accepted
+  values change their matching bounds, unavailable names refuse before work,
+  the two monitor preparation bounds remain independent, and
+  `replay.input_bytes` reaches the reader only.

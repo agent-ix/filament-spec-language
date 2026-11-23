@@ -297,6 +297,10 @@ its row (FR-315 "Size limits").
 | `certificate_check.max_rank` | `max_rank` | exact reachability document writer | closed-profile Count representability ceiling; a stop requires a different supported representation, not a larger Count | 9007199254740991 rank units | FR-201 |
 | `schedule.max_demand_points` | `max_demand_points` | schedulability analysis | `ScheduleLimits` max_demand_points | 1048576 points | FR-247 |
 | `monitor.max_window_values` | `max_window_values` | window aggregates | the monitor run's max_window_values | 1048576 values | FR-194 |
+| `monitor.retained_positions` | `retained_positions` | monitor evidence retention | the monitor run's retained_positions | 1048576 positions | FR-194, FR-643 |
+| `monitor.retained_identities` | `retained_identities` | monitor evidence retention | the monitor run's retained_identities | 1048576 identities | FR-194, FR-643 |
+| `monitor.preparation_work_units` | `work_units` | monitor plan preparation | `MonitorPreparationLimits.work` | 16777216 units | FR-194 |
+| `monitor.preparation_storage` | `storage` | monitor plan read storage | `MonitorPreparationLimits.storage` | 268435456 bytes in `fsl monitor` (driver FR-003); other library callers supply their own value | FR-194 |
 | `inspect.max_view_entries` | `max_view_entries` | typed view construction | `fsl_inspect::InspectLimits` max_view_entries | 10000000 entries | FR-297 |
 | `hybrid.max_solver_steps` | `max_solver_steps` | hybrid provider; `fsl-hybrid-reference` publishes this default in its descriptor `bounds` and counts one step per Picard attempt (FR-1019) | `hybrid.limits` max_solver_steps | 1000000 steps | FR-250, FR-1019 |
 | `hybrid.max_solver_time` | `max_solver_time` | hybrid provider; `fsl-hybrid-reference` publishes this default in its descriptor `bounds` (FR-1019) | `hybrid.limits` max_solver_time | 60 seconds | FR-250, FR-1019 |
@@ -313,6 +317,174 @@ its row (FR-315 "Size limits").
 | `plan_search.max_certificate_entries` | `max_certificate_entries` | plan search | `PlanSearchLimits` max_certificate_entries | 16777216 entries | FR-1011 |
 | `plan_search.max_check_work` | `max_check_work` | plan certificate checker | `PlanSearchLimits` max_check_work | 100000000 work units | FR-1011 |
 | `plan_search.max_state_key_bytes` | `max_state_key_bytes` | plan search | `PlanSearchLimits` max_state_key_bytes | 1048576 bytes | FR-1011 |
+
+## Lifecycle caller-limit coverage
+
+The `analyze`, `monitor` and `replay` command entry points SHALL accept the
+settings listed below through the caller-limit interface. Each spelling is
+the exact `--limit <setting>=<value>` operand and corresponding replay
+`stage_limits` key, except `replay.input_bytes`, which is supplied to the
+replay reader by the caller and is not a `stage_limits` entry. A setting is
+accepted only when that operation exposes the bound; an unavailable setting
+is refused before work starts. The lists name bounds each operation constructs
+or consumes, not every registered setting or default.
+
+`analyze` SHALL accept these source, package, normalization, admission,
+observation, identity, I2-read and accounting settings:
+`s1.input_bytes`, `s1.tokens`, `s1.nodes`, `s1.work_units`, `s1.diagnostics`, `s3.nodes`,
+`s3.input_bytes`, `s3.work_units`, `s3.rational_bits`, `s3.decimal_scale`,
+`s3.decimal_literal_scale`, `s3.decimal_literal_scale_total`,
+`environment.ancestor_steps`, `environment.work_units`,
+`model.declaration_records`, `model.sequence_maximum`,
+`model.derivation_facts`, `model.effective_declarations`,
+`model.dispatch_candidates`, `model.work_units`, `model.ancestor_steps`,
+`model.family_steps`, `admission.population_members`, `admission.work_units`,
+`admission.ancestor_steps`, `observation.input_bytes`, `observation.objects`,
+`observation.values`, `identity.input_bytes`, `i2.input_bytes`, `i2.nodes`,
+`i2.edges`, `i2.occurrences`, `i2.diagnostics`, `i2.work_units`,
+`i2.native_join_storage`, all ten `accounting.*` settings,
+`dependency.libraries`,
+`dependency.import_edges`, `dependency.source_bytes`, `library.definitions`,
+`library.dependency_edges`, `library.artifact_bytes`,
+`library.single_artifact_bytes`, `intake.input_bytes`, and
+`replay.input_bytes`. It SHALL also accept the limits consumed by analysis
+items: `emit.output_bytes`, `expansion.max_candidates`, `simulation.max_steps`,
+all ten `model_check.*` settings, all nine `exact_prob.*` settings, all four
+`statistical.*` settings, all four `zone_check.*` settings,
+`schedule.max_demand_points`, `hybrid.max_solver_steps`,
+`hybrid.max_solver_time`, `smt_encoding.max_constants`,
+`smt_encoding.max_applications`, `smt_encoding.max_monitor_atoms`,
+`smt_encoding.max_monitor_states`, `smt_encoding.max_candidates`,
+`smt_encoding.max_script_bytes`, `smt.max_solver_steps`, `smt.max_solver_time`,
+`certificate_check.max_certificate_edges`,
+`certificate_check.max_certificate_bytes`,
+`certificate_check.max_working_bytes`, `certificate_check.max_rank`, and
+`evaluation.live_occurrences` when the corresponding analysis items are
+selected. Analyze does not consume `render.*`, `prepare.*`, `explore.*`,
+`progress.covered_positions`, `monitor.*`, `temporal_evidence.*` or
+`plan_search.*`.
+
+`monitor` SHALL accept the source, package, admission and evidence settings
+it uses: `s1.input_bytes`, `s1.tokens`, `s1.nodes`, `s1.work_units`, `s1.diagnostics`,
+`s3.nodes`, `s3.input_bytes`, `s3.work_units`, `s3.rational_bits`,
+`s3.decimal_scale`, `s3.decimal_literal_scale`,
+`s3.decimal_literal_scale_total`, `environment.ancestor_steps`,
+`environment.work_units`, `model.declaration_records`,
+`model.sequence_maximum`, `model.derivation_facts`,
+`model.effective_declarations`, `model.dispatch_candidates`,
+`model.work_units`, `model.ancestor_steps`, `model.family_steps`,
+`admission.population_members`, `admission.work_units`,
+`admission.ancestor_steps`, `observation.input_bytes`, `observation.objects`,
+`observation.values`, `identity.input_bytes`, `i2.input_bytes`, `i2.nodes`,
+`i2.edges`, `i2.occurrences`, `i2.diagnostics`, `i2.work_units`,
+`i2.native_join_storage`, all ten `accounting.*` settings,
+`dependency.libraries`,
+`dependency.import_edges`, `dependency.source_bytes`, `library.definitions`,
+`library.dependency_edges`, `library.artifact_bytes`,
+`library.single_artifact_bytes`, `intake.input_bytes`,
+`progress.covered_positions`, `evaluation.live_occurrences`,
+`monitor.max_window_values`, `monitor.retained_positions`,
+`monitor.retained_identities`, `monitor.preparation_work_units`, and
+`monitor.preparation_storage`. If `items` requests provider-routed analysis,
+monitor also accepts all ten `model_check.*`, all nine `exact_prob.*`, all
+four `statistical.*`, all four `zone_check.*`, `schedule.max_demand_points`,
+`hybrid.max_solver_steps`, `hybrid.max_solver_time`, all six
+`smt_encoding.*`, `smt.max_solver_steps`, `smt.max_solver_time`,
+`expansion.max_candidates`, `simulation.max_steps`, and the four applicable
+certificate-check settings `certificate_check.max_certificate_edges`,
+`certificate_check.max_certificate_bytes`,
+`certificate_check.max_working_bytes` and `certificate_check.max_rank`.
+With routed analysis items, it also accepts `emit.output_bytes`, because
+that path emits the checked dependency package. Without routed items, these
+engine and emit settings are operation-unavailable. Monitor does not execute
+`plan_search.*`.
+
+`replay` SHALL accept the source, package, admission and evidence settings its
+request can execute: `s1.input_bytes`, `s1.tokens`, `s1.nodes`, `s1.work_units`, `s1.diagnostics`,
+`s3.nodes`, `s3.input_bytes`, `s3.work_units`, `s3.rational_bits`,
+`s3.decimal_scale`, `s3.decimal_literal_scale`,
+`s3.decimal_literal_scale_total`, `environment.ancestor_steps`,
+`environment.work_units`, `model.declaration_records`,
+`model.sequence_maximum`, `model.derivation_facts`,
+`model.effective_declarations`, `model.dispatch_candidates`,
+`model.work_units`, `model.ancestor_steps`, `model.family_steps`,
+`admission.population_members`, `admission.work_units`,
+`admission.ancestor_steps`, `observation.input_bytes`, `observation.objects`,
+`observation.values`, `identity.input_bytes`, `i2.input_bytes`, `i2.nodes`,
+`i2.edges`, `i2.occurrences`, `i2.diagnostics`, `i2.work_units`,
+`i2.native_join_storage`, all ten `accounting.*` settings,
+`dependency.libraries`,
+`dependency.import_edges`, `dependency.source_bytes`, `library.definitions`,
+`library.dependency_edges`, `library.artifact_bytes`,
+`library.single_artifact_bytes`, `intake.input_bytes`, `replay.input_bytes`,
+`prepare.compile_work_units`, `prepare.code_bytes`,
+`expansion.max_candidates`, `simulation.max_steps`, all ten
+`model_check.*` settings, `evaluation.live_occurrences`,
+all thirteen `temporal_evidence.*` settings, and the applicable
+`progress.covered_positions`,
+`monitor.max_window_values`, `monitor.retained_positions` and
+`monitor.retained_identities` evidence limits. Replay does not execute
+`exact_prob.*`, `statistical.*`, `zone_check.*`, `schedule.max_demand_points`
+or `plan_search.*`, and does not render output or explore a state graph, so it SHALL refuse those settings as
+operation-unavailable.
+
+“All ten `accounting.*` settings” expands to `accounting.integer_bits`,
+`accounting.decimal_digits`, `accounting.scale_expansion`,
+`accounting.text_input_bytes`, `accounting.text_scalars`,
+`accounting.normalized_scalars`, `accounting.unit_edges`,
+`accounting.value_occurrences`, `accounting.work_units`, and
+`accounting.result_units`. “All thirteen `temporal_evidence.*` settings”
+expands to `temporal_evidence.formula_nodes`,
+`temporal_evidence.instances`, `temporal_evidence.positions`,
+`temporal_evidence.valuations`, `temporal_evidence.captures`,
+`temporal_evidence.support`, `temporal_evidence.history_span`,
+`temporal_evidence.evaluation_steps`, `temporal_evidence.lineage`,
+`temporal_evidence.visited`, `temporal_evidence.request_bytes`,
+`temporal_evidence.result_bytes`, and `temporal_evidence.member_bytes`. The
+ten `model_check.*` settings are the ten rows in the engine table. For every
+accepted setting, the implementation SHALL map the name to exactly that
+bound and preserve all omitted bounds at their operation defaults.
+
+The operation lists' grouped names expand to these exact `--limit` spellings:
+
+- The ten `model_check.*` names are `model_check.max_states`,
+  `model_check.max_transitions`, `model_check.max_automaton_states`,
+  `model_check.witness_samples`, `model_check.max_walk_steps`,
+  `model_check.max_witness_set`, `model_check.max_relation_tuples`,
+  `model_check.max_live_instances`, `model_check.max_store_buffer`, and
+  `model_check.max_messages`.
+- The nine `exact_prob.*` names are `exact_prob.max_states`,
+  `exact_prob.max_transitions`, `exact_prob.max_automaton_states`,
+  `exact_prob.max_iterations`, `exact_prob.precision_bits`,
+  `exact_prob.max_precision_bits`, `exact_prob.max_rational_bits`,
+  `exact_prob.max_policy_iterations`, and `exact_prob.max_witness_paths`.
+- The four `statistical.*` names are `statistical.max_samples`,
+  `statistical.max_draws`, `statistical.max_cycle_steps`, and
+  `statistical.max_sample_steps`.
+- The four `zone_check.*` names are `zone_check.max_symbolic_states`,
+  `zone_check.max_symbolic_transitions`,
+  `zone_check.max_automaton_states`, and `zone_check.max_zone_bytes`.
+- The six `smt_encoding.*` names are `smt_encoding.max_constants`,
+  `smt_encoding.max_applications`, `smt_encoding.max_monitor_atoms`,
+  `smt_encoding.max_monitor_states`, `smt_encoding.max_candidates`, and
+  `smt_encoding.max_script_bytes`.
+- The four certificate names are `certificate_check.max_certificate_edges`,
+  `certificate_check.max_certificate_bytes`,
+  `certificate_check.max_working_bytes`, and `certificate_check.max_rank`.
+- The ten accounting names are `accounting.integer_bits`,
+  `accounting.decimal_digits`, `accounting.scale_expansion`,
+  `accounting.text_input_bytes`, `accounting.text_scalars`,
+  `accounting.normalized_scalars`, `accounting.unit_edges`,
+  `accounting.value_occurrences`, `accounting.work_units`, and
+  `accounting.result_units`.
+- The thirteen temporal-evidence names, when accepted by replay, are
+  `temporal_evidence.formula_nodes`, `temporal_evidence.instances`,
+  `temporal_evidence.positions`, `temporal_evidence.valuations`,
+  `temporal_evidence.captures`, `temporal_evidence.support`,
+  `temporal_evidence.history_span`, `temporal_evidence.evaluation_steps`,
+  `temporal_evidence.lineage`, `temporal_evidence.visited`,
+  `temporal_evidence.request_bytes`, `temporal_evidence.result_bytes`, and
+  `temporal_evidence.member_bytes`.
 
 The method bounds `max_live_instances` (FR-209), `max_store_buffer` and
 `max_messages` (FR-225) are members of FSpec's `TemporalLimits`, so they
@@ -413,7 +585,7 @@ these names through the same operand grammar as the stage settings
    | --- | --- | --- |
    | `ModelNormalizationLimitsV1`, `PopulationAdmissionLimitsV1` (caller budgets) | `resource_exhausted`/`insufficient-next-charge` for a denied charge, a walk ceiling (`model.ancestor_steps`, `model.family_steps`, `admission.ancestor_steps`) being a denied one-edge charge (FR-082-AC-3, FR-083, FSpec FR-150-AC-11), wherever the ceiling is read, observation admission's re-run walks included | `model.*`, `admission.*` |
    | the format, intake and library resolution budgets | `resource_exhausted`/`input-bytes-exceeded`, `resource_exhausted`/`intake-limit-exceeded`, `resource_exhausted`/`insufficient-next-charge` | `format.output_bytes`, `intake.input_bytes`, `library.*` |
-   | a stage's or reader's own limits type | `stage_limit_exceeded` | `s1.*`, `s3.*`, `environment.*`, `i2.*`, `replay.input_bytes`, `observation.*`, `dependency.*`, `identity.input_bytes`, `inspect.max_view_entries`, `render.output_bytes`, `emit.output_bytes` |
+   | a stage's or reader's own limits type | `stage_limit_exceeded` | `s1.*`, `s3.*`, `environment.*`, `i2.*`, `replay.input_bytes`, `observation.*`, `dependency.*`, `identity.input_bytes`, `inspect.max_view_entries`, `render.output_bytes`, `emit.output_bytes`, `monitor.preparation_work_units`, `monitor.preparation_storage` |
    | the supplied-value limits type (pre-call phase budgets) | no catalog code: the phase-marked pre-call limit record of FR-277 (replay: `inconclusive`/`NoValue`), never a kernel charge point | FR-277's `supplied.admission_work_units` and `supplied.conversion_work_units`, which are not setting-table rows |
    | exploration limits | no catalog code: exploration returns `Outcome::Bounded` (FR-101) | `explore.*` |
    | `TemporalEvidenceLimits` and the progress ledger capacity (FR-523, FR-502) | no catalog code: the call returns `Incomplete(LimitReached{limit, value, setting})` with `limit` one of `node count`, `work budget`, `input bytes` or `tick count` (the kind of `temporal_evidence.history_span`) and the call's stop scope as FR-523 states | `temporal_evidence.*`, `progress.covered_positions` |
@@ -542,6 +714,7 @@ these names through the same operand grammar as the stage settings
 | FR-255-AC-21 | The settings operation given `explore.workers=4` returns caller limits whose `workers.explore` is 4, `workers.model_check` and `workers.statistical` are 1 and every limit is at its default; likewise `model_check.workers=2` and `statistical.workers=8`. Given `explore.workers=0` it returns a usage refusal naming the operand with cause `invalid_runtime_input`/`invalid-value`; given `explore.threads=4` it refuses an unknown setting. None of the three worker names appears in the engine limit table, and `explore.workers=2` leaves `explore.states` at 10000000. | Test (TC-720) |
 | FR-255-AC-22 | The settings operation lists `export.output_bytes`, `export.nodes` and `export.work_units` with defaults 16777216, 100000 and 16777216, equal to the defaults of `emit.output_bytes`, `s3.nodes` and `s3.work_units`; given `export.nodes=7` it changes only that export limit; and an export of FR-756-AC-1's counter under `export.work_units` 1 stops `incomplete` naming `export.work_units`, bound 1, exit 22. | Test (TC-2993) |
 | FR-255-AC-23 | Native analyze probability items with omitted candidate and accounting settings use local `expansion.max_candidates` 1000000 and cumulative `accounting.work_units` 1000000 for either engine. Supplying a different accounting bound B preserves B. The local ceiling stops as `max_candidates` with `expansion.max_candidates`; the cumulative bound stops as `work_units` with `accounting.work_units`. Neither default is `u64::MAX`, and starting an expansion or clause does not renew cumulative work. | Test |
+| FR-255-AC-24 | The `analyze`, `monitor` and `replay` command entry points accept exactly the operation-relevant caller-limit settings enumerated in “Lifecycle caller-limit coverage”; each accepted setting changes only its corresponding bound, while recognized but operation-unavailable settings are refused before work. In particular, monitor accepts `monitor.preparation_work_units` and `monitor.preparation_storage`, and replay accepts the stage settings it executes plus `replay.input_bytes` through its replay-reader argument, but not as a `stage_limits` member. | Test (TC-721) |
 
 ## Status
 
