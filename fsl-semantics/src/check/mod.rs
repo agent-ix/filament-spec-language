@@ -615,8 +615,9 @@ pub use temporal_clause::check_clauses;
 
 pub use fsl_forms::AggregateComparison;
 pub use lowering::{
-    collection_kind, CollectionShape, PlaceRow, PlaceStep, SelectedModelUnion,
-    SelectedModelUnionCase, SelectedModelUnionPayload, SourceClockEntry, SourceClockMembers,
+    clock_field_member_type, collection_kind, CollectionShape, PlaceRow, PlaceStep,
+    SelectedModelUnion, SelectedModelUnionCase, SelectedModelUnionPayload, SourceClockEntry,
+    SourceClockMembers,
 };
 pub use temporal_clause::{
     Activation, AggregateKind, AggregateWindow, BinaryTemporal, CaptureSite, CheckedAggregate,
@@ -7138,11 +7139,13 @@ impl PackageDeclarations {
         }
         // FR-375: each refinement's rows, keyed once its catalog is, each
         // row expression located at its own site. A refinement whose
-        // catalog names a node not written yet is not emitted, so its rows
-        // are not keyed.
+        // catalog names a node not written yet, or whose history initial has
+        // no literal form, is not emitted, so its rows are not keyed.
         let mut refinement_booleans = std::collections::BTreeMap::new();
         for checked in &mut refinements {
-            if checked.class_catalog.is_some() && checked.class_catalog_keys.is_none() {
+            if (checked.class_catalog.is_some() && checked.class_catalog_keys.is_none())
+                || !checked.history_initials_have_literals()
+            {
                 continue;
             }
             for row in checked.rows() {

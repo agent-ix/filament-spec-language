@@ -302,6 +302,42 @@ fn element_type(rendered: &str) -> &str {
         .unwrap_or(rendered)
 }
 
+/// The rendered type of the member `field` whose held type renders as
+/// `declared`: the collection or `Option` around it. An optional collection
+/// member holds optional elements: `q: Sequence<Option<Clock>>[0, 2]` (FSpec
+/// FR-322's timed-slot-selector vectors, the presence place `q`). The one
+/// renderer of a source member's type: the clock places and a source
+/// object's clock entry both use it.
+fn field_member_type(
+    field: &crate::model::domain_package::FieldMemberRecord,
+    declared: String,
+) -> String {
+    let optional = matches!(field.presence, filament_exact::Presence::Optional);
+    let element = if optional {
+        format!("Option<{declared}>")
+    } else {
+        declared
+    };
+    if single(field) {
+        return element;
+    }
+    collection_type(
+        CollectionShape {
+            ordered: field.multiplicity.ordered,
+            unique: field.multiplicity.unique,
+            min: field.multiplicity.lower,
+            max: field.multiplicity.upper,
+            map: false,
+        },
+        &element,
+    )
+}
+
+/// The rendered type of a source object field typed `Clock` (FR-569-AC-17).
+pub fn clock_field_member_type(field: &crate::model::domain_package::FieldMemberRecord) -> String {
+    field_member_type(field, "ix://filament/native/Clock".to_owned())
+}
+
 /// Whether `field` holds one value: multiplicity `[1, 1]`, not a collection.
 fn single(field: &crate::model::domain_package::FieldMemberRecord) -> bool {
     field.multiplicity.lower == 1 && field.multiplicity.upper == Some(1)
@@ -1993,30 +2029,7 @@ impl AdmittedModel {
             crate::model::domain_package::ValueTypeRef::Resolved(_)
         );
         let element_identity = declared.clone();
-        let member_type = if !single(field) {
-            // An optional collection member holds optional elements:
-            // `q: Sequence<Option<Clock>>[0, 2]` (FSpec FR-322's
-            // timed-slot-selector vectors, the presence place `q`).
-            let element = if matches!(field.presence, filament_exact::Presence::Optional) {
-                format!("Option<{declared}>")
-            } else {
-                declared
-            };
-            collection_type(
-                CollectionShape {
-                    ordered: field.multiplicity.ordered,
-                    unique: field.multiplicity.unique,
-                    min: field.multiplicity.lower,
-                    max: field.multiplicity.upper,
-                    map: false,
-                },
-                &element,
-            )
-        } else if matches!(field.presence, filament_exact::Presence::Optional) {
-            format!("Option<{declared}>")
-        } else {
-            declared
-        };
+        let member_type = field_member_type(field, declared);
         at.members
             .push((member_type.clone(), Some(field.key.node.clone())));
         let mut reached = member_type;

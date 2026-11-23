@@ -18,7 +18,7 @@ use super::state::AnchorInput;
 use super::{fault, Binder, Binders, Lowering};
 use crate::check::claims::BinderSite;
 use crate::check::family::OccurrenceRole;
-use crate::check::node_key::{BodyTerm, LeafTerm, LiteralValue, NodeTag};
+use crate::check::node_key::LeafTerm;
 use crate::check::refinement::{
     CheckedRefinement, CheckedRow, KeyedCatalogClass, KeyedFairnessRow, KeyedHistoryRow,
     KeyedObjectRow, KeyedPopulationRow, KeyedRefinementRows, KeyedStepRow, KeyedStepTarget,
@@ -185,25 +185,7 @@ impl Lowering<'_> {
         declared: &ValueType,
         location: &Location,
     ) -> Result<LeafTerm, CheckRefusal> {
-        let literal = match value {
-            Value::Boolean(value) => LiteralValue::Boolean(*value),
-            Value::Integer(value) => LiteralValue::Integer(value.clone()),
-            Value::Rational(value) => LiteralValue::Rational(value.clone()),
-            Value::Text(value) => LiteralValue::Text(value.retained().to_owned()),
-            Value::Option(option) if option.payload().is_none() => LiteralValue::None,
-            _ => return Err(fault(location, KeyFault::UnbuiltLiteral)),
-        };
-        let semantic_type = self.type_ref(declared, location)?;
-        let key = self.insert_ref(
-            location,
-            NodeTag::Value,
-            "literal",
-            Some(semantic_type.clone()),
-            None,
-            BodyTerm::literal_node(semantic_type, literal),
-        )?;
-        self.record(key.clone(), OccurrenceRole::Expression, location.clone());
-        Ok(LeafTerm::reference_node(key))
+        self.literal_at(location, value, declared, None)
     }
 
     /// The lowered term of one row expression, over one `parameter` node per

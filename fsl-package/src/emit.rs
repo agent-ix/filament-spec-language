@@ -8521,6 +8521,26 @@ fn source_object_rows(
     use filament_contract_model::{SelectedSourceObjectMember, SelectedSourcePopulation};
 
     let semantic = graph.semantic_graph();
+    // The package records, indexed once: each object type by key and each
+    // field by its owner, so a row's lookups do not rescan every record.
+    let mut object_records = std::collections::BTreeMap::new();
+    let mut fields_by_owner: std::collections::BTreeMap<_, Vec<_>> =
+        std::collections::BTreeMap::new();
+    for record in graph
+        .source_packages()
+        .iter()
+        .flat_map(|package| &package.records)
+    {
+        match record {
+            fsl_semantics::model::domain_package::DomainPackageRecord::ObjectType(object) => {
+                object_records.insert(&object.key, object);
+            }
+            fsl_semantics::model::domain_package::DomainPackageRecord::FieldMember(field) => {
+                fields_by_owner.entry(&field.owner).or_default().push(field);
+            }
+            _ => {}
+        }
+    }
     let mut rows = Vec::new();
     for node in semantic.nodes() {
         if node.node_tag() != NodeTag::Model || node.semantic_form() != "object_type" {
@@ -8541,18 +8561,9 @@ fn source_object_rows(
         let Some(identity_fields) = graph.source_object_identity_fields().get(declaration) else {
             return Err(EmitRefusal::SourceMapInvariant);
         };
-        let object =
-            graph
-                .source_packages()
-                .iter()
-                .flat_map(|package| &package.records)
-                .find_map(|record| match record {
-                    fsl_semantics::model::domain_package::DomainPackageRecord::ObjectType(
-                        object,
-                    ) if &object.key == declaration => Some(object),
-                    _ => None,
-                })
-                .ok_or(EmitRefusal::SourceMapInvariant)?;
+        let object = *object_records
+            .get(declaration)
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
         let object_type = graph
             .scope()
             .types()
@@ -8577,19 +8588,7 @@ fn source_object_rows(
         // owner's rank, then its declared position (FR-569 "Source-object
         // identity rows").
         let owner_chain = {
-            use fsl_semantics::model::domain_package::DomainPackageRecord;
-            let supertypes_of = |key: &_| {
-                graph
-                    .source_packages()
-                    .iter()
-                    .flat_map(|package| &package.records)
-                    .find_map(|record| match record {
-                        DomainPackageRecord::ObjectType(found) if &found.key == key => {
-                            Some(&found.supertypes)
-                        }
-                        _ => None,
-                    })
-            };
+            let supertypes_of = |key: &_| object_records.get(key).map(|found| &found.supertypes);
             let mut chain = Vec::new();
             let mut stack = vec![(&object.key, 0_usize)];
             while let Some((key, next)) = stack.pop() {
@@ -8597,7 +8596,8 @@ fn source_object_rows(
                 match supertypes.get(next) {
                     Some(parent) => {
                         stack.push((key, next + 1));
-                        if !chain.contains(&parent) && !stack.iter().any(|(held, _)| *held == parent)
+                        if !chain.contains(&parent)
+                            && !stack.iter().any(|(held, _)| *held == parent)
                         {
                             stack.push((parent, 0));
                         }
@@ -8611,20 +8611,11 @@ fn source_object_rows(
             }
             chain
         };
-        let mut placed: Vec<((usize, usize), SelectedSourceObjectMember, SourceObjectMemberFacts)> =
-            Vec::with_capacity(source_members.len());
-        let field_records = || {
-            graph
-                .source_packages()
-                .iter()
-                .flat_map(|package| &package.records)
-                .filter_map(|record| match record {
-                    fsl_semantics::model::domain_package::DomainPackageRecord::FieldMember(
-                        field,
-                    ) => Some(field),
-                    _ => None,
-                })
-        };
+        let mut placed: Vec<(
+            (usize, usize),
+            SelectedSourceObjectMember,
+            SourceObjectMemberFacts,
+        )> = Vec::with_capacity(source_members.len());
         for ((name, target, optional), attribute) in source_members.into_iter().zip(attributes) {
             let field = attribute.field();
             if name != field.name()
@@ -8635,9 +8626,12 @@ fn source_object_rows(
             let field_owner = graph
                 .object_type_key(attribute.owner())
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
-            let declared = field_records()
-                .find(|record| {
-                    &record.owner == field_owner && record.key.node.rsplit('/').next() == Some(name)
+            let declared = fields_by_owner
+                .get(field_owner)
+                .and_then(|fields| {
+                    fields
+                        .iter()
+                        .find(|record| record.key.node.rsplit('/').next() == Some(name))
                 })
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
             let rank = owner_chain
@@ -8664,19 +8658,19 @@ fn source_object_rows(
         }
         // FR-569-AC-17: a field typed `Clock`, alone or in a collection, has
         // no type node; its entry renders the type as FSpec FR-789 does.
-        for record in field_records() {
+        for (rank, record) in owner_chain.iter().enumerate().flat_map(|(rank, owner)| {
+            fields_by_owner
+                .get(*owner)
+                .into_iter()
+                .flatten()
+                .map(move |record| (rank, *record))
+        }) {
             if !matches!(
                 record.value_type,
                 fsl_semantics::model::domain_package::ValueTypeRef::Clock
             ) {
                 continue;
             }
-            let Some(rank) = owner_chain
-                .iter()
-                .position(|owner| **owner == record.owner)
-            else {
-                continue;
-            };
             let name = record
                 .key
                 .node
@@ -8685,21 +8679,7 @@ fn source_object_rows(
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
             let optional = record.presence == filament_exact::Presence::Optional;
             let collections = collection_layers(&record.multiplicity);
-            let element = "ix://filament/native/Clock";
-            let element = if collections.is_empty() || !optional {
-                element.to_owned()
-            } else {
-                format!("Option<{element}>")
-            };
-            let rendering = match collections.first() {
-                Some(layer) => {
-                    let wrapper = crate::source_model_read::collection_wrapper(&layer.kind)
-                        .ok_or(EmitRefusal::SourceMapInvariant)?;
-                    format!("{wrapper}<{element}>")
-                }
-                None if optional => format!("Option<{element}>"),
-                None => element,
-            };
+            let rendering = fsl_semantics::check::clock_field_member_type(record);
             let mut member = SelectedSourceObjectMember::clock(name, rendering);
             member.collections = collections;
             member.optional = optional;
@@ -9299,8 +9279,8 @@ fn record_member_rows(
     }
     let mut data = declared.iter().zip(bindings);
     let data_row = |field: &filament_semantic_value::declaration::FieldDeclaration,
-                        name: &str,
-                        type_key: NodeKey|
+                    name: &str,
+                    type_key: NodeKey|
      -> Result<SelectedSourceRecordMemberRow, EmitRefusal> {
         Ok(SelectedSourceRecordMemberRow {
             original_member_identity: field.name().into(),
@@ -9394,13 +9374,14 @@ fn union_member_rows(
                     .ok_or(EmitRefusal::SourceMapInvariant)?;
                 for (ordinal, entry) in (0_u64..).zip(&authored.1) {
                     if let Some(entry) = entry {
-                        row.clock_payload
-                            .push(filament_contract_model::SelectedUnionClockPayloadRow {
+                        row.clock_payload.push(
+                            filament_contract_model::SelectedUnionClockPayloadRow {
                                 ordinal,
                                 presence: clock_presence(entry),
                                 member_type: entry.member_type.as_str().into(),
                                 collections: clock_layers(entry),
-                            });
+                            },
+                        );
                     }
                 }
             }

@@ -218,6 +218,16 @@ pub(in crate::check::assemble) fn source_places(
     result
 }
 
+/// The type text of a member rendered `declared` whose authored field is
+/// `optional`: the one spelling a place row and a clock entry share.
+fn member_type_text(declared: String, optional: bool) -> String {
+    if optional {
+        format!("Option<{declared}>")
+    } else {
+        declared
+    }
+}
+
 /// The clock entry the member typed `form` is, or `None` when it is a data
 /// member: its type reaches `Clock` through `Option`s, collections of one
 /// element type and aliases (FSpec FR-367 "Member entries").
@@ -234,11 +244,7 @@ fn clock_entry(
             TypeFormHead::Builtin(BuiltinType::Clock) => {
                 let declared = render(form);
                 return Some(SourceClockEntry {
-                    member_type: if optional {
-                        format!("Option<{declared}>")
-                    } else {
-                        declared
-                    },
+                    member_type: member_type_text(declared, optional),
                     optional,
                     collections,
                 });
@@ -309,12 +315,8 @@ fn clock_members(
                         member
                             .payload
                             .iter()
-                            .map(|form| {
-                                entry(
-                                    form,
-                                    matches!(form.head, TypeFormHead::Builtin(BuiltinType::Option)),
-                                )
-                            })
+                            // The payload's own `Option` is part of its rendering.
+                            .map(|form| entry(form, false))
                             .collect(),
                     )
                 })
@@ -349,11 +351,7 @@ fn members<'a>(
                 place.optional |= field.optional;
                 let declared = render(&field.type_form);
                 place.members.push((
-                    if field.optional {
-                        format!("Option<{declared}>")
-                    } else {
-                        declared
-                    },
+                    member_type_text(declared, field.optional),
                     Some(format!("{}/{}", record.name.name, field.name)),
                 ));
                 pending.push(Pending {

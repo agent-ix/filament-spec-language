@@ -1997,7 +1997,7 @@ fn choices_and_repeats_nest_in_each_other_and_read_back() {
 
 /// A guard that refers to a protocol directly is written (FR-880-AC-3): the
 /// package checks, with the reference as a `protocol_reference` carrier.
-#[trace("FR-092-AC-18", "TC-1021")]
+#[trace("FR-880-AC-3", "TC-2501")]
 #[test]
 fn a_guard_that_refers_to_a_protocol_checks() {
     use super::protocol_graph::checked;

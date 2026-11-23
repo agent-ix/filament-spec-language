@@ -108,10 +108,10 @@ pub(crate) use model::{
     record_node_key, strictly_below, QuantityKind, SourceClockLayout, SourceClockPlace,
 };
 pub use model::{
-    collection_kind, model_root_key, AdmittedModel, CollectionShape, ForeignView, ModelClause,
-    PlaceRow, PlaceStep, SelectedModelEnumDeclaration, SelectedModelEnumMember, SelectedModelUnion,
-    SelectedModelUnionCase, SelectedModelUnionPayload, SelectedOperationMember, SourceClockEntry,
-    SourceClockMembers,
+    clock_field_member_type, collection_kind, model_root_key, AdmittedModel, CollectionShape,
+    ForeignView, ModelClause, PlaceRow, PlaceStep, SelectedModelEnumDeclaration,
+    SelectedModelEnumMember, SelectedModelUnion, SelectedModelUnionCase, SelectedModelUnionPayload,
+    SelectedOperationMember, SourceClockEntry, SourceClockMembers,
 };
 pub(crate) use model::{model_node_content, population_node_content};
 pub(crate) use protocol::{
@@ -4591,19 +4591,26 @@ impl<'a> Lowering<'a> {
         semantic_type: NodeRef,
         body: BodyTerm,
     ) -> Result<LeafTerm, CheckRefusal> {
+        self.value_node_at(node.location(), form, semantic_type, body)
+    }
+
+    /// Key a `value` node located at `location` and return a reference to it.
+    pub(super) fn value_node_at(
+        &mut self,
+        location: &Location,
+        form: &'static str,
+        semantic_type: NodeRef,
+        body: BodyTerm,
+    ) -> Result<LeafTerm, CheckRefusal> {
         let key = self.insert_ref(
-            node.location(),
+            location,
             NodeTag::Value,
             form,
             Some(semantic_type),
             None,
             body,
         )?;
-        self.record(
-            key.clone(),
-            OccurrenceRole::Expression,
-            node.location().clone(),
-        );
+        self.record(key.clone(), OccurrenceRole::Expression, location.clone());
         Ok(LeafTerm::reference_node(key))
     }
 
@@ -7276,6 +7283,19 @@ impl<'a> Lowering<'a> {
         declared: &ValueType,
         scalar: Option<&'static str>,
     ) -> Result<LeafTerm, CheckRefusal> {
+        self.literal_at(node.location(), value, declared, scalar)
+    }
+
+    /// The literal term of `value` typed at `declared`, located at
+    /// `location`: the one value-to-literal decision a checked literal node
+    /// and a refinement history row's initial value both use.
+    pub(super) fn literal_at(
+        &mut self,
+        location: &Location,
+        value: &Value,
+        declared: &ValueType,
+        scalar: Option<&'static str>,
+    ) -> Result<LeafTerm, CheckRefusal> {
         let literal = match value {
             Value::Boolean(value) => LiteralValue::Boolean(*value),
             Value::Integer(value) => LiteralValue::Integer(value.clone()),
@@ -7291,7 +7311,7 @@ impl<'a> Lowering<'a> {
                 // FR-093: the enum member's FSpec `enum_value` node, whose
                 // key is its `VariantId` (ADR-013 O-14). A model variant
                 // type's nodes are built where it is first named, here.
-                self.type_ref(declared, node.location())?;
+                self.type_ref(declared, location)?;
                 let variant = member.variant();
                 let key = crate::value::enumeration::enum_value_key_in(
                     &self.package_name,
@@ -7300,15 +7320,11 @@ impl<'a> Lowering<'a> {
                 )
                 .map_err(|_| {
                     fault(
-                        node.location(),
+                        location,
                         KeyFault::InvalidMemberKey(variant.owner().clone()),
                     )
                 })?;
-                self.record(
-                    key.clone(),
-                    OccurrenceRole::Expression,
-                    node.location().clone(),
-                );
+                self.record(key.clone(), OccurrenceRole::Expression, location.clone());
                 return Ok(LeafTerm::reference_node(key.into()));
             }
             // FR-093-AC-33: a quantity literal is a `quantity` literal typed
@@ -7325,8 +7341,8 @@ impl<'a> Lowering<'a> {
             | Value::Collection(_)
             | Value::Reference(_)
             | Value::Population(_)
-            | Value::Union(_) => return Err(fault(node.location(), KeyFault::UnbuiltLiteral)),
-            Value::Map(_) => return Err(Self::unbuilt_map_literal(node.location())),
+            | Value::Union(_) => return Err(fault(location, KeyFault::UnbuiltLiteral)),
+            Value::Map(_) => return Err(Self::unbuilt_map_literal(location)),
             Value::Uuid(value) => LiteralValue::Uuid(*value),
             Value::Timestamp(value) => LiteralValue::Timestamp(*value),
             Value::Bytes(value) => {
@@ -7339,11 +7355,11 @@ impl<'a> Lowering<'a> {
             Value::String(value) => LiteralValue::String(value.clone()),
         };
         let semantic_type = match scalar {
-            Some(form) => NodeRef::from(self.scalar(form, node.location())?),
-            None => self.type_ref(declared, node.location())?,
+            Some(form) => NodeRef::from(self.scalar(form, location)?),
+            None => self.type_ref(declared, location)?,
         };
-        self.value_node(
-            node,
+        self.value_node_at(
+            location,
             "literal",
             semantic_type.clone(),
             BodyTerm::literal_node(semantic_type, literal),
