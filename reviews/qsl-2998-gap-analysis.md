@@ -46,6 +46,15 @@ Coverage of the stated ACs is complete and exact; the missing cases are the ones
 | --- | --- | --- |
 | FND-002 | fixed | AC-37 (cancel parallel in a repeat body, batch and every prefix) and AC-38 (repeat inside a cancelling branch) tests |
 
-## Dispositions (fix round 3)
+## Dispositions (round 3)
 
-Closed by FR-895-AC-39; see `qsl-2998-code-review.md` "Dispositions (fix round 3)".
+Head 16961b0ca6dbaf413ef426d9f87b5416e1fe2659. No new gap-analysis finding: the missing coverage for SR-3608001 FND-010 to FND-012
+(a skipped cancelled branch in a `repeat`, a `case` or a second inner `repeat` before or after the inner `repeat`) goes with those fixes.
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-003 | fixed | AC-39 test a_cancel_in_nested_repeats_cancels_per_iteration_of_each: legit two outer iterations (batch, every prefix, monotone, last equals batch), the violated R, and the undetermined no-P case |
+
+## Dispositions (fix round 4)
+
+No new finding in this pass; the iteration derivation changed as stated in the code-review dispositions (FND-010, FND-011, FND-012).

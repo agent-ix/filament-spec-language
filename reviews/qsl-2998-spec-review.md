@@ -44,6 +44,25 @@ outcome needs a decision (FND-002).
 | --- | --- | --- |
 | FND-004 | fixed | rule 26 requires the same iteration of every repeat the parallel runs in; old rule 25 deleted and the package selection refusal stated as rule 25; one requirement per rule; AC-37, AC-38 in order. The code's nested-repeat gap against rule 26 is SR-3608001 FND-008 |
 
-## Dispositions (fix round 3)
+## New findings (disposition pass 3, final)
 
-Rule 26 states the cancel condition; rules 27 to 30 state the iteration matching (same iteration of each repeat holding both, how each iteration is read, and that an undetermined iteration is not counted); rules 31 and 32 are the former 27 and 28. AC-39 tests them.
+Head 16961b0ca6dbaf413ef426d9f87b5416e1fe2659. `quire validate` on FR-895 and TC-2531: exit 0. Rules 19 to 32 hold one requirement each;
+rule 5 cites rules 19 to 23 correctly; rules 27, 30 and 31 cite rule 26 correctly; AC-37 to AC-39 are in order. Undetermined-not-counted
+is monotone across prefixes (counts and ranks use only observations causally before the step, all present in its prefix), and the last
+prefix equals batch in every probe.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-005 | high | Rules 28 and 29 do not determine the iteration soundly, so rule 30's "a missed violation, never a false one" is false: rule 28's own-node rank miscounts when a cancelled branch skips an iteration, and rule 29's "most times any step before that other `repeat`" over-counts steps inside a `repeat` and under-counts steps split across `case`s (SR-3608001 FND-010 to FND-012). Proposed: take the iteration from a step that runs once in every iteration of that `repeat` (on its body's spine, not under a `case`, a branch or another `repeat`), and call every other case undetermined | spec/functional/FR-895-assess-a-recorded-protocol-execution-against-its-obligations.md:205-215 |
+| FND-006 | low | Rule 30 says an iteration is undetermined "when no step precedes the inner `repeat` in the body"; the code also leaves it undetermined when such steps exist but none was observed causally before the step (count 0) | spec/functional/FR-895-assess-a-recorded-protocol-execution-against-its-obligations.md:213-215 |
+
+## Dispositions (round 3)
+
+No round-2 spec finding was open; FND-004 stays fixed (rules 26 and 27 now split the same-iteration condition, one requirement each).
+
+## Dispositions (fix round 4)
+
+| Finding | Disposition |
+| --- | --- |
+| FND-005 (rules 28 to 30) | Fixed. Rules 28 to 31 now state one requirement each: the iteration comes only from a step that runs exactly once in every iteration (28), when it is not determined (29), what does not count (30), and that an undetermined iteration is not counted toward rule 26 (31). Rules 32 and 33 renumbered. |
+| FND-006 (low, undetermined case) | Fixed in rule 29: not determined when no such step lies at or before the step in program order, when such a step was not observed at or before it, or when the counts differ. |

@@ -68,10 +68,44 @@ Head c513f5ba2b32c6b8ad02a722b6c79589323b4a91 (code equal to 79f1ea77 in the cod
 | FND-006 | fixed | label bound refused stage_limit_exceeded/work-budget-exceeded with fact predicate-join-label-bound, checked before any evaluation |
 | FND-007 | fixed | package-route arm deleted; rule 25 states the selection refusal that makes it unreachable; residual is FND-009 |
 
-## Dispositions (fix round 3)
+## New findings (disposition pass 3, final)
+
+Head 16961b0ca6dbaf413ef426d9f87b5416e1fe2659; `git diff ba197d79 16961b0c` touches FR-895 only (rules 28/29 wording). Titan, coder's
+worktree at 16961b0c, clean: `--test it` 6-filter set 102 passed, 0 failed; `--lib a_refused_prefix` 2 passed. Probes ran as a scratch
+test and were reverted (tree clean after). An unrelated process briefly injected `false &&` into `repeat_iteration` in that worktree
+(07:13:56 to 07:14:43); the 102 run ended 07:10:29 and every probe below ran on clean source. Every probe: prefixes monotone for the
+cancel verdicts, last prefix equals batch. Each false verdict below is `satisfied` with the same recording under `outstanding continue`.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-010 | high | Rule 28's rank is unsound when a cancelled branch skips an iteration, which is exactly what `cancel` allows. Single `repeat { parallel any cancel {L}{R}; Placed; Got; Decide }`, recording `L`, `Placed`, `Got`, `yes`, `L`, `R`, `Placed`, `Got`, `yes` (R cancelled in iteration 1): the iteration-2 `R` has rank 1, matches the first `Placed`, and is `violated`, `unexpected` (probe S). Present since round 1's `iteration_index` | fsl-analyze/src/protocol_analysis/recording.rs:4284-4311 |
+| FND-011 | high | Rule 29's "most times any step before the inner `repeat`" over-counts when a preceding step is itself inside a `repeat` (or another inner `repeat`'s subtree), and that breaks the after-step's side. Outer body `P; repeat I1 { parallel any cancel {L}{R} }; repeat I2 { X }; Placed ...`, recording `P`, `L`, `R`, `L`, `R`, `X`, `Placed`, `Got`, `yes`, `P`, `L`, `R`, `X`, `Placed`, `Got`, `yes`: `X` of iteration 1 counts `L` twice, gets iteration 2, equals the iteration-2 `L` (`P` counted twice) and precedes it, so the iteration-2 `L` and `R` are `violated` (probe T) | fsl-analyze/src/protocol_analysis/recording.rs:4312-4342 |
+| FND-012 | high | Rule 29 under-counts when the steps before the inner `repeat` lie in different `case`s across iterations, counting each case's steps separately. Outer body `choice Pick { case a {A} case b {B} }; repeat Inner { parallel any cancel {L}{R} }; Placed ...`, recording `a`, `A`, `L`, `R`, `Placed`, `Got`, `yes`, `b`, `B`, `L`, `R`, `Placed`, `Got`, `yes`: the iteration-2 `L` and `R` get iteration 1, match the first `Placed`, and are `violated` (probe C3) | fsl-analyze/src/protocol_analysis/recording.rs:4312-4342 |
+
+Sound in the probes: three-deep nesting `repeat { P; repeat Mid { Q; repeat Inner { parallel }; M2 }; Placed ... }` legit (all satisfied,
+probe D), the `R` after its own `M2` violated and nothing else (D2), a skipped `R` in a Mid iteration with the step before determined (D3);
+AC-39's three recordings.
+
+Out of this diff, seen in the probes (not counted against the PR): (1) with `event P; choice Pick {...}` before an inner `repeat` and
+different cases per outer iteration, the iteration-1 `L` and `R` go `satisfied` then `violated`, `unexpected` when the iteration-2 case
+arrives, under `continue` too: an enabledness verdict reversal across prefixes (`assert_every_verdict_only_advances` fails; probes C2,
+C2cont, C3cont). (2) Nested `repeat`s with two outer iterations report the `repeat` nodes `violated`, `duplicated` (probes D, T).
+
+Direction for FND-010 to 012: take a `repeat`'s iteration of a step only from a step that runs exactly once in every iteration (a step on
+the body's spine: not under a `choice` case, a `parallel` branch or another `repeat`), counted causally at or before the step, and treat
+every other case as undetermined. That subsumes rules 28 and 29 and keeps rule 30's "missed, never false" claim true.
+
+## Dispositions (round 3)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-008 | fixed | every enclosing repeat whose body holds both the parallel and the step is matched (repeat_iteration); probe N shape all satisfied (AC-39); three-deep nesting probe D sound. Residual soundness gaps in repeat_iteration are FND-010 to FND-012 |
+| FND-009 | fixed | the invariant is stated at the continue (package route refuses selection of a protocol with a parallel, rule 25); acceptable for a low |
+
+## Dispositions (fix round 4)
 
 | Finding | Disposition |
 | --- | --- |
-| Probe N (nested repeats) | Fixed. `after_cancel` matches a step after the `parallel` per repeat: for every `repeat` whose body holds both the `parallel` and the step, both iterations must be determined and equal (`repeat_iteration`). With no repeat between, the iteration is the causal rank of the node taken through the cases; with an inner repeat between, it is the most times a step before the inner repeat in the body was observed before the step; where none exists the iteration is not determined and the step is not counted (a missed violation, never a false one), so Probe N stays satisfied. Test `a_cancel_in_nested_repeats_cancels_per_iteration_of_each` (FR-895-AC-39): with a step `P`, the two-iteration recording is satisfied in batch and every prefix and the last `R` after its own iteration's `Placed` is violated; without `P`, Probe N is satisfied; the outer body holds a `choice` (`Decide`) whose case is one of the matched steps. |
-| Package skip | The skip in `predicate_join_tables` states its invariant (the package route refuses the selection of a protocol with a `parallel`, rule 25). |
-| PR body | Refreshed to rules 19 to 32. |
+| FND-010 (skipped iteration shifts the rank) | Fixed. `repeat_iteration` no longer ranks a node's observations; a repeat's iteration comes only from a step that runs once in every iteration (a step on the body's main sequence, at or before the step in program order), counted causally at or before the step. Test `a_skipped_branch_step_does_not_shift_the_iteration` (FR-895-AC-40): `P`, `L`, `Placed`, `Got`, `yes`, `P`, `L`, `R`, `Placed`, `Got`, `yes` leaves the second `R` satisfied in batch and every prefix, under `outstanding cancel` and `outstanding continue`. |
+| FND-011 (steps in an inner repeat over-counted) | Fixed. A step in an inner `repeat` never counts. Test `a_step_inside_an_inner_repeat_does_not_count_toward_the_iteration` (FR-895-AC-41), both outstanding policies. |
+| FND-012 (cases counted separately) | Fixed in the code: a step under a `case` never counts toward an iteration (rule 30). No test is added: the recording `a`, `L`, `R`, `Placed`, `Got`, `yes`, `b`, `L`, `R`, `Placed`, `Got`, `yes` over a `choice` before an inner `repeat` makes the first `L` `violated` in the prefix that shows `b`, under `outstanding continue` as well as `cancel`. That is the out-of-diff defect in merged #3595 code (a prefix verdict reversing with a choice before an inner repeat), a child ticket of QSL-2885, outside this PR. |

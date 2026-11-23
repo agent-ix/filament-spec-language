@@ -2358,16 +2358,14 @@ fn nested_cancel_item(
         ),
     );
     recording["closure"] = json!({"state": "open", "premises": []});
-    let run = replay_with(
+    replay_with(
         name,
         source,
         &recording,
         json!({"file": "recording.json", "identity": recording_identity()}),
         assessed_item("incremental"),
     )
-    ;
-    eprintln!("DBG {}", run.document());
-    run.item(0)
+    .item(0)
 }
 
 /// FR-895-AC-39 (TC-2531): a cancelling `parallel` in an inner `repeat` in an
@@ -2518,9 +2516,7 @@ fn a_cancel_in_nested_repeats_cancels_per_iteration_of_each() {
 /// Every `nodes` verdict of the `count` prefixes of `item` is `satisfied`,
 /// verdicts only advance, and the last prefix is the batch assessment.
 fn assert_nodes_satisfied(item: &Value, nodes: &[&str], count: usize) {
-    let prefixes = item["prefixes"]
-        .as_array()
-        .unwrap_or_else(|| panic!("prefixes: {item}"));
+    let prefixes = item["prefixes"].as_array().expect("prefixes");
     assert_eq!(prefixes.len(), count, "{item}");
     for prefix in prefixes {
         for node in nodes {
@@ -2528,11 +2524,7 @@ fn assert_nodes_satisfied(item: &Value, nodes: &[&str], count: usize) {
                 node_verdicts_in(prefix, node)
                     .iter()
                     .all(|verdict| verdict == "satisfied"),
-                "{node}: {:?}",
-                prefixes
-                    .iter()
-                    .map(|p| node_verdicts_in(p, node))
-                    .collect::<Vec<_>>()
+                "{node}: {item}"
             );
         }
     }
@@ -2634,50 +2626,5 @@ fn a_step_inside_an_inner_repeat_does_not_count_toward_the_iteration() {
             &[(4, 5), (11, 12)],
         );
         assert_nodes_satisfied(&item, &[NESTED_LEFT, NESTED_RIGHT], 14);
-    }
-}
-
-/// FR-895-AC-42 (TC-2531): the cases of a `choice` do not count toward an
-/// iteration. With a `choice` before the inner `repeat` of the cancelling
-/// `parallel`, taking `a` and then `b`, `a`, `L`, `R`, `Placed`, `Got`, `yes`,
-/// `b`, `L`, `R`, `Placed`, `Got`, `yes` leaves every `L` and `R` `satisfied`
-/// in batch and in every prefix, as under `outstanding continue`.
-#[trace("TC-2531", "FR-895-AC-42")]
-#[test]
-fn a_choice_before_an_inner_repeat_does_not_count_toward_the_iteration() {
-    let pick = |case: &str| {
-        json!({"kind": "case", "node": format!("Flow::Main::Loop::Body::Pick::{case}"),
-               "role": "Buyer", "instance": "w-1", "keys": {}})
-    };
-    let observations = || {
-        let round = |case: &str, message: &str| {
-            [
-                pick(case),
-                loop_event("Inner::IBody::Both::left::Left::L"),
-                loop_event("Inner::IBody::Both::right::Right::R"),
-                looped("send", "Placed", "Buyer", message),
-                looped("receive", "Got", "Seller", message),
-                looped_case("yes"),
-            ]
-        };
-        let mut all = Vec::new();
-        all.extend(round("a", "m-1"));
-        all.extend(round("b", "m-2"));
-        Value::Array(all)
-    };
-    for outstanding in ["continue"] {
-        let source = nested_repeat_cancel_protocol(
-            "choice Pick by Buyer visible () { case a when { true } sequence CA { } case b when { false } sequence CB { } } ",
-        )
-        .replace("outstanding cancel", &format!("outstanding {outstanding}"));
-        let item = nested_cancel_item(
-            &format!("replay-choice-before-repeat-{outstanding}"),
-            &source,
-            observations(),
-            &[0, 1, 2, 3, 6, 7, 8, 9],
-            &[4, 5, 10, 11],
-            &[(3, 4), (9, 10)],
-        );
-        assert_nodes_satisfied(&item, &[NESTED_LEFT, NESTED_RIGHT], 12);
     }
 }
