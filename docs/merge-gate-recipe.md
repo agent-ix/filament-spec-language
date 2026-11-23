@@ -23,6 +23,7 @@ them. For spec-only changes it prints `NO CARGO: spec-only change.`
 | `fsl-analyze/src/analyze/document.rs`, `fsl-analyze/src/analyze/document/**` | Touched library module | As `request.rs`, plus the composition parity module `analyze_composition_cli` (FR-1044-AC-10) |
 | Other `fsl-analyze/src/**` | Touched library module | All four analyze IT engine filters: `monitor_`, `timed_`, `hyper`, `probabilistic` |
 | `fsl-replay/src/**` | Touched replay library module | `fsl-command` IT `dependency_handoff`, `run_requirement_items`, `run_text_witness`; analyze IT `probabilistic_replay`, `bounded_probabilistic_replay`, `package_probabilistic` |
+| `fsl-eval/src/simulation/**` | Touched library module | Analyze IT `protocol_bounded_lasso`, `race_freedom`, `native_correlation` (concrete protocol state keys, message ordinals, delivery identities) |
 | `fsl-inspect/src/**` | `fsl-inspect` render tests | `fsl-command` IT `run_text_witness` |
 | `fsl-command/src/**` | Touched library module plus IT modules selected by explicit command-area rules | Driver pin changes also require driver targets `frontend_cli`, `binary_process`, `cli_contract` |
 | Known `fsl-eval` and `fsl-semantics` paths | Touched library module | Explicit table of root/consumer IT filters; unknown paths add analyze `timed_` and a note |

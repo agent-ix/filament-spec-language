@@ -262,6 +262,22 @@ const BARE_CONSUMERS: &[ItFilter] = &[
         rule: ItRule::Fixed("bare_"),
     },
 ];
+/// Analyze integration modules that read concrete protocol state keys,
+/// message ordinals and delivery identities through `fsl-eval` simulation.
+const PROTOCOL_STATE_KEY_CONSUMERS: &[ItFilter] = &[
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::Fixed("protocol_bounded_lasso"),
+    },
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::Fixed("race_freedom"),
+    },
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::Fixed("native_correlation"),
+    },
+];
 const ABSTRACTION_CONSUMERS: &[ItFilter] = &[
     ItFilter {
         package: "fsl-analyze",
@@ -763,6 +779,16 @@ const RULES: &[Rule] = &[
         package: Some("fsl-semantics"),
         lib: Some(LibRule::SourceModule),
         it_filters: ABSTRACTION_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-eval/src/simulation/",
+        package: Some("fsl-eval"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: PROTOCOL_STATE_KEY_CONSUMERS,
         large_input: &[],
         note: None,
         skips: &[],
@@ -2302,6 +2328,21 @@ mod tests {
                 .iter()
                 .any(|item| item.package == "xtask" && item.filter.is_none())
         );
+    }
+
+    #[test]
+    fn simulation_changes_run_the_protocol_state_key_modules() {
+        let recipe = plan(workspace_root(), &["fsl-eval/src/simulation/protocol/reach.rs"]);
+        for filter in ["protocol_bounded_lasso", "race_freedom", "native_correlation"] {
+            assert!(
+                recipe
+                    .selectors
+                    .iter()
+                    .any(|item| item.package == "fsl-analyze"
+                        && item.filter.as_deref() == Some(filter)),
+                "{filter}"
+            );
+        }
     }
 
     #[test]
