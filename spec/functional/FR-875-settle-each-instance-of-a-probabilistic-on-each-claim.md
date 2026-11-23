@@ -100,13 +100,17 @@ message never activates and does not count against the claim.
   under statistical evidence, carrying the instances' evidence in FR-741's
   result members.
 - The item SHALL NOT be settled `unsupported` for its activation.
-- **Out-of-profile forms (current).** FR-201's `on-each-reachability/v1`
+- **Unbuilt on-each settlements (current).** FR-201's `on-each-reachability/v1`
   profile admits only the form its section states. An on-each claim outside it
   (an every-scheduler optimum, statistical evidence, a cyclic continuation
   graph, a timed subject, authored fairness or another form) settles
   `unsupported` with the FR-272 diagnostic
   `unsupported_construct`/`not-yet-implemented` (no `cause`) until QSL-2995. This is an
-  implementation gap and not a refusal of its activation.
+  implementation gap and not a refusal of its activation. An in-profile on-each
+  claim whose guard or target read is undefined at a reachable state of an
+  instance's phase graph likewise settles `unsupported` with the FR-272
+  diagnostic `unsupported_construct`/`not-yet-implemented` (no `cause`) until
+  QSL-3003, which builds FR-741's undefined-path refutation for it.
 
 ## Acceptance Criteria
 
