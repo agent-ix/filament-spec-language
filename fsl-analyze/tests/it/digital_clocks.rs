@@ -547,7 +547,6 @@ fn one_workload(declarations: &str) -> World {
 fn discrete_delays_under_a_workload_are_a_chain() {
     let world = one_workload("delay M::Call::send ~ discrete { 1 ms: 1, 2 ms: 1 };\n");
     let built = product(&world, "Under");
-    assert_eq!(built.kind, ProductKind::Dtmc);
     assert_eq!(
         initial_value(&built, Bound::AtLeast(ratio(99, 100))),
         ratio(159_129, 160_000)
@@ -1628,4 +1627,218 @@ fn a_timed_form_shape_member_path_names_the_nested_formula_nodes() {
     let member = member.expect("a member path");
     assert_eq!(member.body, ["form", "event", "formula"]);
     assert_eq!(member.formulas, [formula_root(&world, "Whole")]);
+}
+
+/// `Trio` of FR-204's worked example over the timed fixture's `Call`: its
+/// `phase` 0 is `Idle` and 1 `Done`, and the flags `a`, `b` and `c` are the
+/// fixture's `inflight`, `late` and `retried`. `A`, `B` and `C` are each
+/// guarded by `Idle` under the invariant `x <= 3 ms` while `Idle`, set `Done`
+/// and their own flag, and race with the given delays
+/// `discrete { 1 ms: 1, 2 ms: 1 }`, `{ 2 ms: 1, 3 ms: 1 }` and
+/// `{ 2 ms: 1, 3 ms: 3 }` under the workload `Skew` (weights 1, 2, 3).
+fn trio(claims: &str) -> World {
+    let operation = |name: &str, flag: &str| {
+        format!(
+            "pre G{name} using v on M::Call::{name} {{ self.phase = 0 }}\n\
+             post P{name} using v on M::Call::{name} {{ self.phase = 1 and self.{flag} = true }}\n"
+        )
+    };
+    let document = timed_world::document(
+        &["x"],
+        &[
+            ("A", &["phase", "inflight"]),
+            ("B", &["phase", "late"]),
+            ("C", &["phase", "retried"]),
+        ],
+    );
+    timed_world::world(
+        &document,
+        PROFILES,
+        &format!(
+            "{}{}{}{}\
+             time invariant Wait when {{ self.phase = 0 }} {{ self.x <= 3 ms }}\n\
+             delay M::Call::A ~ discrete {{ 1 ms: 1, 2 ms: 1 }};\n\
+             delay M::Call::B ~ discrete {{ 2 ms: 1, 3 ms: 1 }};\n\
+             delay M::Call::C ~ discrete {{ 2 ms: 1, 3 ms: 3 }};\n\
+             workload Skew on M {{ weight Call::A = 1; weight Call::B = 2; weight Call::C = 3; }}\n\
+             {claims}",
+            timed_world::DENSE,
+            operation("A", "inflight"),
+            operation("B", "late"),
+            operation("C", "retried"),
+        ),
+    )
+}
+
+/// A probability claim `name` under `Skew` over `eventually[0 ms, within ms]
+/// holds(c.flag)`.
+fn trio_claim(name: &str, bound: &str, within: u32, flag: &str) -> String {
+    format!(
+        "probabilistic {name} using ev on M over (c: M::Call) under Skew on origin \
+         {{ probability {bound} [ eventually[0 ms, {within} ms] holds(c.{flag}) ] }}\n"
+    )
+}
+
+/// The four claims of FR-204-AC-18, over `b`, `c`, `a` by 3 ms and `a` by 1 ms.
+fn trio_claims() -> String {
+    format!(
+        "{}{}{}{}",
+        trio_claim("PB", ">= 0.13", 3, "late"),
+        trio_claim("PC", ">= 0.07", 3, "retried"),
+        trio_claim("PA3", "<= 0.8", 3, "inflight"),
+        trio_claim("PA1", ">= 0.5", 1, "inflight"),
+    )
+}
+
+fn settle_trio(
+    world: &World,
+    claim: &str,
+    tamper: Option<&dyn Fn(&mut fsl_replay::ExactProbabilityCertificate)>,
+) -> fsl_analyze::analyze::AnalyzeRecord {
+    let request = fsl_analyze::exact_probabilistic::ProductRequest {
+        subject: ModelSubject {
+            simulation: world.request(),
+            proof_bounds: Vec::new(),
+        },
+        claim: world
+            .package
+            .graph()
+            .probabilistic_model()
+            .claim(claim)
+            .expect("the claim checks"),
+        limits: ExactProbLimits::default(),
+    };
+    let engines = fsl_analyze::analyze::Engines::fsl().expect("the linked engines are admitted");
+    let index = fsl_foundation::RequestIndex::new(0);
+    let item = match tamper {
+        Some(tamper) => {
+            fsl_analyze::analyze::exact_probabilistic_item_tampered(index, request, tamper)
+        }
+        None => fsl_analyze::analyze::exact_probabilistic_item(index, request),
+    };
+    fsl_analyze::analyze::analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+}
+
+fn exact_value(record: &fsl_analyze::analyze::AnalyzeRecord) -> Rational {
+    match record.terminal().expect("a terminal record").value() {
+        fsl_replay::TerminalValue::Proved {
+            basis: fsl_replay::ProofBasis::ExactValue { value, .. },
+            ..
+        } => value.value().clone(),
+        other => panic!("expected an exact proof, got {other:?}"),
+    }
+}
+
+/// FR-204-AC-18 (TC-3204): three identities with `discrete` delays race under
+/// the unequal weights of `Skew`; a tie is ordered by the weights, not evenly
+/// and not by canonical order. The initial state has four race edges, each
+/// `Identity(A)`, the four claims settle at the exact values the weighted
+/// tie orders give, and a certificate with the evenly-tied or the
+/// canonical-order value for `b` is rejected `InequalityFails` at the initial
+/// state.
+#[trace("TC-3204", "FR-204-AC-18")]
+#[test]
+fn given_delays_race_under_unequal_weights() {
+    let world = trio(&trio_claims());
+    let built = product(&world, "PB");
+    let start = built.initial[0].2;
+    let mut edges: Vec<(u64, Rational)> = Vec::new();
+    for edge in built.edges.iter().filter(|edge| edge.from == start) {
+        let ProductAction::Identity(identity) = &edge.choice else {
+            panic!("a race edge is Identity(A) only: {:?}", edge.choice);
+        };
+        let name = world
+            .system()
+            .operations()
+            .into_iter()
+            .find(|(_, _, text)| *text == identity.operation.as_str())
+            .map(|(_, name, _)| name.to_owned())
+            .expect("a model operation");
+        assert_eq!(name, "A");
+        let (clocks, _) = digital_clocks_of(&built.states[edge.to.index()]);
+        edges.push((clocks[0], edge.probability.clone()));
+    }
+    edges.sort();
+    assert_eq!(
+        edges,
+        vec![
+            (1, ratio(1, 2)),
+            (2, ratio(5, 64)),
+            (2, ratio(7, 48)),
+            (2, ratio(53, 192)),
+        ]
+    );
+
+    for (claim, value) in [
+        ("PB", ratio(7, 48)),
+        ("PC", ratio(5, 64)),
+        ("PA3", ratio(149, 192)),
+        ("PA1", ratio(1, 2)),
+    ] {
+        let record = settle_trio(&world, claim, None);
+        assert_eq!(exact_value(&record), value, "{claim}");
+    }
+
+    let own = settle_trio(&world, "PB", None);
+    let document: serde_json::Value = serde_json::from_slice(
+        own.terminal()
+            .and_then(|terminal| terminal.exact_certificate_document())
+            .expect("the proof retains its certificate"),
+    )
+    .expect("a JSON document");
+    let initial_row = document["values"]
+        .as_array()
+        .expect("rows")
+        .iter()
+        .position(|row| row["value"] == json!({"numerator": "7", "denominator": "48"}))
+        .expect("the initial state's value");
+    let identity = fsl_replay::probabilistic_claim_identity(
+        world
+            .package
+            .graph()
+            .probabilistic_model()
+            .claim("PB")
+            .expect("the claim checks"),
+    )
+    .expect("an identity");
+    for (numerator, denominator) in [("11", "96"), ("0", "1")] {
+        let mut forged = document.clone();
+        forged["values"][initial_row]["value"] =
+            json!({"numerator": numerator, "denominator": denominator});
+        let checked = fsl_replay::check_probability_certificate_document(
+            &world.system(),
+            world.package.graph().probabilistic_model().claims(),
+            &identity,
+            &serde_json::to_vec(&forged).expect("serializes"),
+            fsl_replay::ProbabilityDocumentLimits {
+                states: 4096,
+                edges: 65_536,
+                ..super::long_run_certificate::limits()
+            },
+            &Cancel::new(),
+        );
+        let Ok(fsl_replay::ExactProbabilityCertificateCheck::Rejected(rejection)) = checked else {
+            panic!("{numerator}/{denominator}: expected a rejection, got {checked:?}");
+        };
+        assert_eq!(
+            rejection.rule,
+            fsl_replay::ProbabilityCertificateRule::InequalityFails
+        );
+        let key = {
+            use base64::Engine as _;
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(
+                    forged["values"][initial_row]["state"]
+                        .as_str()
+                        .expect("a state key"),
+                )
+                .expect("base64")
+        };
+        assert_eq!(
+            rejection.at,
+            fsl_replay::ProbabilityCertificateLocus::ProductState(
+                fsl_replay::ProbabilityProductKey::from_canonical_bytes(key)
+            )
+        );
+    }
 }

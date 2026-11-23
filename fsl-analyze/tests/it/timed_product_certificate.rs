@@ -1656,3 +1656,208 @@ fn a_timed_refutation_settles_refuted_or_incomplete_at_every_storage_budget() {
     }
     assert!(stopped > 0, "some storage budget must stop the replay");
 }
+
+// --- FR-204: several given delays racing under a workload ------------------
+
+/// `Call` with the clock `x` and the operations `A` (phase 1), `B` (phase 2,
+/// `late`) and `C` (phase 3), each enabled only at phase 0, so the identity
+/// that fires first decides the run. `A` and `B` take the given delays
+/// `a_delay` and `b_delay`; `C` takes `c_delay`, or, with no delay, is free
+/// from `x >= 1 ms`. The workload `Mix` weights the three by `weights`; the
+/// claims are `claims`.
+fn given_races(
+    a_delay: &str,
+    b_delay: &str,
+    c_delay: Option<&str>,
+    weights: [u32; 3],
+    claims: &str,
+) -> World {
+    let operation = |name: &str, guard: &str, post: &str| {
+        format!(
+            "pre G{name} using v on M::Call::{name} {{ {guard} }}\n\
+             post P{name} using v on M::Call::{name} {{ {post} }}\n"
+        )
+    };
+    let c_guard = if c_delay.is_some() {
+        "self.phase = 0"
+    } else {
+        "self.phase = 0 and self.x >= 1 ms"
+    };
+    let c_declaration = c_delay.map_or_else(String::new, |delay| {
+        format!("delay M::Call::C ~ discrete {{ {delay} }};\n")
+    });
+    let document = timed_world::document(
+        &["x"],
+        &[
+            ("A", &["phase"]),
+            ("B", &["phase", "late"]),
+            ("C", &["phase"]),
+        ],
+    );
+    let [a, b, c] = weights;
+    timed_world::world(
+        &document,
+        PROFILES,
+        &format!(
+            "{}{}{}{}\
+             time invariant Wait when {{ self.phase = 0 }} {{ self.x <= 3 ms }}\n\
+             delay M::Call::A ~ discrete {{ {a_delay} }};\n\
+             delay M::Call::B ~ discrete {{ {b_delay} }};\n\
+             {c_declaration}\
+             workload Mix on M {{ weight Call::A = {a}; weight Call::B = {b}; weight Call::C = {c}; }}\n\
+             {claims}",
+            timed_world::DENSE,
+            operation("A", "self.phase = 0", "self.phase = 1"),
+            operation("B", "self.phase = 0", "self.phase = 2 and self.late = true"),
+            operation("C", c_guard, "self.phase = 3"),
+        ),
+    )
+}
+
+/// One claim `name` under `Mix` that `late` (`B` fired) holds by 2 ms.
+fn late_by_two(name: &str, bound: &str) -> String {
+    format!(
+        "probabilistic {name} using ev on M over (c: M::Call) under Mix on origin \
+         {{ probability {bound} [ eventually[0 ms, 2 ms] holds(c.late) ] }}\n"
+    )
+}
+
+/// `A` is drawn 1 ms with 1/4 and 2 ms with 3/4, `B` always 1 ms, `C` 1 ms or
+/// 2 ms with 1/2 each, under the weights `A` 1, `B` 3, `C` 2.
+fn three_given(weights: [u32; 3], bound: &str) -> World {
+    given_races(
+        "1 ms: 1, 2 ms: 3",
+        "1 ms: 1",
+        Some("1 ms: 1, 2 ms: 1"),
+        weights,
+        &late_by_two("Late", bound),
+    )
+}
+
+/// The least draw is always 1 ms (`B`'s), so `B` fires first when it is
+/// the only racer at 1 ms (3/8), or wins the weighted tie against `A` (1/8,
+/// 3 of 4), against `C` (3/8, 3 of 5) or against both (1/8, 3 of 6):
+/// `3/8 + 3/32 + 9/40 + 1/16 = 121/160`.
+#[trace("TC-3204", "FR-204-AC-18")]
+#[test]
+fn three_tied_given_racers_resolve_by_unequal_weights() {
+    let world = three_given([1, 3, 2], ">= 0.75625");
+    let record = settle(&world, "Late");
+    assert_eq!(proved_value(&record), ratio(121, 160));
+    assert_eq!(spelling(&record), "workload-minimum");
+    assert!(accepted(&world, "Late", &document(&record)));
+}
+
+/// The same race under the weights `A` 3, `B` 1, `C` 2 is `53/96`
+/// (`3/8 + 1/32 + 1/8 + 1/48`), so a checker that ignored the weights, or
+/// read them in another order, could not accept both documents.
+#[trace("TC-3204", "FR-204-AC-18")]
+#[test]
+fn the_tie_weights_change_the_checked_value() {
+    let world = three_given([3, 1, 2], ">= 0.5");
+    let record = settle(&world, "Late");
+    assert_eq!(proved_value(&record), ratio(53, 96));
+    assert!(accepted(&world, "Late", &document(&record)));
+}
+
+/// A certificate whose rows were computed under other weights is refused:
+/// the checker rebuilds the race with the claim's own weights.
+#[trace("TC-3204", "FR-204-AC-18")]
+#[test]
+fn a_certificate_of_other_tie_weights_is_refused() {
+    let world = three_given([1, 3, 2], ">= 0.5");
+    let own = document(&settle(&world, "Late"));
+    let other = document(&settle(&three_given([3, 1, 2], ">= 0.5"), "Late"));
+    let states = |doc: &Value| -> Vec<Value> {
+        doc["values"]
+            .as_array()
+            .expect("rows")
+            .iter()
+            .map(|row| row["state"].clone())
+            .collect()
+    };
+    assert_eq!(states(&own), states(&other), "the same product states");
+    let mut forged = own.clone();
+    forged["values"] = other["values"].clone();
+    assert_ne!(forged, own);
+    assert!(accepted(&world, "Late", &own));
+    assert!(!accepted(&world, "Late", &forged));
+
+    let record = settle_tampered(&world, "Late", |certificate| {
+        for entry in &mut certificate.values {
+            if entry.value == ratio(121, 160) {
+                entry.value = ratio(53, 96);
+            }
+        }
+    });
+    let _ = rejected_item_rule(&record);
+}
+
+/// Two given racers and one free: the scheduler picks `C`'s delay after the
+/// draw. With `A` and `B` each 1 ms or 2 ms (1/4 per row) and the weights 1,
+/// 3, 2, a row's best and worst value of `B` firing first are `(1,1)` 3/4 and
+/// 1/2, `(1,2)` 0 and 0, `(2,1)` 1 and 3/5, `(2,2)` 3/4 and 0, so the maximum
+/// is `5/8` and the minimum `11/40`.
+#[test]
+fn two_given_racers_and_a_free_one_decide_on_their_extrema() {
+    let claims = format!(
+        "{}{}",
+        late_by_two("AtMostMax", "<= 0.625"),
+        late_by_two("AtLeastMin", ">= 0.275"),
+    );
+    let world = given_races(
+        "1 ms: 1, 2 ms: 1",
+        "1 ms: 1, 2 ms: 1",
+        None,
+        [1, 3, 2],
+        &claims,
+    );
+    let most = settle(&world, "AtMostMax");
+    assert_eq!(proved_value(&most), ratio(5, 8));
+    assert_eq!(spelling(&most), "workload-maximum");
+    assert!(accepted(&world, "AtMostMax", &document(&most)));
+    let least = settle(&world, "AtLeastMin");
+    assert_eq!(proved_value(&least), ratio(11, 40));
+    assert_eq!(spelling(&least), "workload-minimum");
+    assert!(accepted(&world, "AtLeastMin", &document(&least)));
+    let mut forged = document(&most);
+    forged["values"] = document(&least)["values"].clone();
+    assert!(!accepted(&world, "AtMostMax", &forged));
+}
+
+/// A product of given draws above the edge limit is refused before any draw
+/// vector is built, with the limit error the `FreeDelays` listing gives: the
+/// first state's four draw vectors against a limit of three.
+#[test]
+fn a_given_draw_product_over_the_edge_limit_is_refused() {
+    let world = three_given([1, 3, 2], ">= 0.75625");
+    let doc = document(&settle(&world, "Late"));
+    let identity = fsl_replay::probabilistic_claim_identity(
+        world
+            .package
+            .graph()
+            .probabilistic_model()
+            .claim("Late")
+            .expect("the claim checks"),
+    )
+    .expect("an identity");
+    let refused = check_probability_certificate_document(
+        &world.system(),
+        world.package.graph().probabilistic_model().claims(),
+        &identity,
+        &serde_json::to_vec(&doc).expect("serializes"),
+        fsl_replay::ProbabilityDocumentLimits {
+            edges: 3,
+            ..limits()
+        },
+        &Cancel::new(),
+    );
+    match refused {
+        Err(ProbabilityDocumentError::Limit {
+            limit: fsl_replay::ProbabilityDocumentLimit::Edges,
+            bound: 3,
+            actual: 4,
+        }) => {}
+        other => panic!("expected the edge limit at 4 against 3, got {other:?}"),
+    }
+}

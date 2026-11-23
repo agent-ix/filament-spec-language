@@ -3322,8 +3322,8 @@ fn same_choice(left: &[ProbabilityEdge], right: &[ProbabilityEdge]) -> bool {
 }
 
 /// FR-204's choices of a running state under a workload, each a distribution
-/// the workload's weights fix: the race of the one identity whose delay a
-/// `discrete` distribution gives (with the scheduler's free delays after the
+/// the workload's weights fix: the race of the identities whose delays
+/// `discrete` distributions give (with the scheduler's free delays after the
 /// draw when free identities race too, `FreeDelays`), or, when no given
 /// delay races, the time-passing choices and one resolution of the free
 /// identity enabled now (`WorkloadResolve`).
@@ -3465,7 +3465,20 @@ fn digital_workload_choices(
         .map(|(index, _)| &windows[*index].identity)
         .collect();
     // The given vectors: the product of every racer's conditioned support,
-    // each with the product of the conditioned probabilities (FR-204).
+    // each with the product of the conditioned probabilities (FR-204). Each
+    // vector is at least one edge, so a product above the edge limit is
+    // refused before any vector is built.
+    let edge_limit = u64::try_from(run.limits.edges).unwrap_or(u64::MAX);
+    let rows = racers.iter().fold(1_u64, |rows, (_, support)| {
+        rows.saturating_mul(u64::try_from(support.len()).unwrap_or(u64::MAX))
+    });
+    if rows > edge_limit {
+        return Err(ProbabilityDocumentError::Limit {
+            limit: ProbabilityDocumentLimit::Edges,
+            bound: edge_limit,
+            actual: rows,
+        });
+    }
     let mut joint: Vec<(Vec<u64>, Rational)> = vec![(Vec::new(), one())];
     for (_, support) in &racers {
         let mut next = Vec::new();
@@ -3506,10 +3519,10 @@ fn digital_workload_choices(
         return Ok(choices);
     }
     // FR-204 `FreeDelays`: the scheduler picks every free identity's delay in
-    // its window after the given delay is drawn, so a row is one drawn delay
-    // with its options (one per assignment of the free delays). The action
-    // that picks option `a(g)` at each row `g` is one scheduler choice, and its
-    // value factors by row (`Σ_g P(g) opt_a Q(g, a)`); the options of a row
+    // its window after the given delay is drawn, so a row is one drawn vector
+    // of the given delays with its options (one per assignment of the free
+    // delays). The action that picks option `a(g)` at each row `g` is one
+    // scheduler choice, and its value factors by row (`Σ_g P(g) opt_a Q(g, a)`); the options of a row
     // that are the same distribution are one option.
     let mut per_draw: Vec<Vec<Vec<ProbabilityEdge>>> = Vec::new();
     for (draws, share) in &joint {
@@ -3566,7 +3579,6 @@ fn digital_workload_choices(
     // choices are listed here: every function from a drawn delay to one of its
     // options. The edge limit is checked against the edges of the listing
     // before any choice is built, never against a count of choices.
-    let edge_limit = u64::try_from(run.limits.edges).unwrap_or(u64::MAX);
     let mut functions = 1_u64;
     let mut edges_per_function = 0_u64;
     for options in &per_draw {
