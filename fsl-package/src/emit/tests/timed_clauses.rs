@@ -1957,7 +1957,7 @@ fn a_malformed_slot_domain_is_refused_at_its_locus() {
             let body = at(wire, &quantified[1]["value"]);
             let slot = &nodes(wire)[body]["body"]["arguments"][2];
             let parameter = at(wire, slot);
-                .expect("the binder parameter the quantifier names");
+            assert_eq!(nodes(wire)[parameter]["semantic_form"], "parameter");
             wire["semantic_graph"]["nodes"][parameter]["semantic_type"] = boolean.clone();
         },
         "type-mismatch",
