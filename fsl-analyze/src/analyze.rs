@@ -2154,12 +2154,12 @@ impl<'a> AnalyzeItem<'a> {
     pub(crate) fn operation_contract_extent(
         mut self,
         kind: Capability,
-        extent: fsl_route::ExtentClassification,
+        extent: fsl_route::request::ExtentClassification,
     ) -> Self {
         self.operation_contract_finite_bound_available = match (kind, extent) {
             (
                 Capability::OperationContract,
-                fsl_route::ExtentClassification::Unbounded {
+                fsl_route::request::ExtentClassification::Unbounded {
                     finite_bound_available,
                 },
             ) => Some(finite_bound_available),
@@ -4312,7 +4312,7 @@ mod tests {
             let item = refusing(|| Refusal::RequiresBound)
                 .operation_contract_extent(
                     Capability::OperationContract,
-                    fsl_route::ExtentClassification::Unbounded {
+                    fsl_route::request::ExtentClassification::Unbounded {
                         finite_bound_available: available,
                     },
                 );

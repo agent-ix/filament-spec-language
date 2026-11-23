@@ -1834,7 +1834,7 @@ mod tests {
                     request_index: fsl_route::RequestIndex::new(0),
                     claim: claim.clone(),
                     kind: fsl_route::Capability::OperationContract,
-                    extent: fsl_route::ExtentClassification::Unbounded {
+                    extent: fsl_route::request::ExtentClassification::Unbounded {
                         finite_bound_available,
                     },
                     backend: Some(candidate.id().clone()),
