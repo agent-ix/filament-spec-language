@@ -42,3 +42,19 @@ CONDITIONAL. No untagged criterion in scope and no high finding. Two medium spec
 - FR-866-AC-2, FR-866-AC-5 (context_only): untagged in the computed matrix. AC-5 is a driver-repo test, and neither is touched by this PR.
 - Reverse gap: `OutcomeDocument::from_native_fence_failure` is owned by FR-662 Outputs ("A StageFailure covers the document as a whole") but has no test (see the code-review SR FND-003).
 - Semantic review: skipped (not opted in). Plan completion: not assessed.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-004 | medium | Spec contradiction, introduced by #3585 (QSL-2899) and not by this PR: FR-663-AC-3 states that the missing-`parent` refusal carries "the pointer to `child`", and FR-267-AC-25 defers to FR-663 for that pointer. FR-106-AC-82 states the pointer of the absent member (`.../fields/NAME`). The fix round's update of `snapshot_and_model_header_refusals_round_trip_document_loci` to `/populations/0/objects/1/fields/parent` follows FR-106-AC-82 and the code. It is correct, but the test still carries the FR-267-AC-25 trace, whose referenced FR-663-AC-3 text says the opposite. FR-663-AC-3 needs amending to the member pointer. | spec/functional/FR-663-*.md (FR-663-AC-3); tests/it/request_surface_s1.rs:1605-1615 |
+| FND-005 | low | FR-662 (and FSpec FR-563) define the body identity only for a fence a heading owns (`<identity>#<clause id>`). The identity given to a fence no heading owns is unspecified: the implementation gives `doc#unowned-N`. The new headless test rightly asserts `clause` null and no body identity, but the unit name of such an item is unpinned by any requirement. | spec/functional/FR-662-check-every-native-fence-of-a-markdown-specification.md |
+| FND-006 | low | FR-662 Outputs say only that "A StageFailure covers the document as a whole". They do not state the `check` document a whole-document failure projects to: category, `last_stage` (null for extraction refusal, cancel and fault; the limit's stage for a limit), empty `items`, one diagnostic. The new native_fence_failure tests pin the implementation's choices with no requirement behind them. | spec/functional/FR-662-check-every-native-fence-of-a-markdown-specification.md; fsl-replay/tests/it/native_fence_failure.rs |
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | deferred | QSL-2981 (Backlog) owns `--format text` on the argv path; `--format text` stays refused and is pinned by a refusal case. |
+| FND-002 | fixed | e761dccd: `check_markdown_items_carry_exact_units_spans_and_markdown_coordinates` asserts category refusal and exit 20; Healthy success with diagnostics `[]` and the full unit; Broken `ill_typed` with the full unit, body-span start and end, and an original region `spec.md` line 16 columns 41-49 with byte offsets. |
+| FND-003 | fixed | e761dccd: `check_markdown_headless_fence_refuses_missing_name_at_its_first_line` asserts `missing_declaration`/`missing-name`, the original region on line 4 (the fence's first line), clause null, and the owned fence's result unchanged (success, `[]`, `doc#Good`). |
