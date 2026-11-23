@@ -793,6 +793,7 @@ fn rows() -> Vec<Row> {
         ),
         row(K::Relation(RelationForm::Refinement), F::RefinementV2Empty),
         row(K::State(StateForm::StateClause), F::ConfigVersion),
+        row(K::Claim(ClaimForm::OperationContract), F::ConfigVersion),
         row(K::State(StateForm::Frame), F::ConfigVersion),
         row(K::State(StateForm::OperationAnchor), F::ConfigVersion),
         row(
