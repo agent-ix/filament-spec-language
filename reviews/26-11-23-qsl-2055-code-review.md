@@ -53,3 +53,24 @@ sound.
 | FND-005 | low | The header says a `!= 0` guard on a zero-free divisor is refused unproved-range. The refusal is actually at the literal `0` in `c != 0`: it is typed into c's interval (proved [0,0], required [-9,-4]), and the same happens for `Int[4, 9]` and with `div`. It is about the comparison, not the division. | fsl-eval/tests/it/value_properties.rs:29-31 |
 | FND-006 | low | The AC asks for Decimal "with each rounding mode", but the test only counts cases per family. Nothing requires each of the six modes to hit an inexact `*` or `/` that actually rounds. | fsl-eval/tests/it/value_properties.rs:1873-1885 |
 | FND-007 | low | Two doc comments are stale. `agree` documents `Ok(true)`/`Ok(false)` but returns `Ref<()>`. The doc on `try_compile` ("or the evaluator's answer") describes something it does not do. | fsl-eval/tests/it/value_properties.rs:382; fsl-eval/tests/it/value_properties.rs:452-453 |
+
+## New findings (disposition pass 1)
+
+Round 1 reviewed head `0492fd71d`, with main merged in.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-008 | low | The rounding-mode counter counts a case once the reference's `place` saw a nonzero remainder, even when the case then ends in a domain refusal. It sits in P4, not in P3, which the AC names. Count only cases whose expected outcome is a rounded value, or a `DecimalInexact` refusal for `exact`. | fsl-eval/tests/it/value_properties.rs:1974-1989 |
+| FND-009 | low | The manifest of `fsl-proptest-policy` still describes the crate as "the one property-test policy", and its comment says `fsl-bench` re-exports it "for its generators". The crate now holds the `value` and `near_miss` generators itself. | fsl-proptest-policy/Cargo.toml:8-12 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
+| FND-002 | fixed | - |
+| FND-003 | fixed | - |
+| FND-004 | fixed | - |
+| FND-005 | fixed | - |
+| FND-006 | fixed | - |
+| FND-007 | fixed | - |

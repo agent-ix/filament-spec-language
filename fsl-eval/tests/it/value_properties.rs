@@ -44,7 +44,8 @@
 //!   domain: `a + (a + c)` is refused `unproved-rational-range` under
 //!   `Linked`, and under `Kernel` the right operand `-1/12` is refused
 //!   `rational_out_of_domain` against `a: Rational[-20, 20; 1, 9]`. So a
-//!   rational expression is a left-nested chain (`((a + b) * c) - 1/2`), a
+//!   rational expression is a left-nested chain (the reason is QSL-2973: the
+//!   checker types a non-literal Rational operand at its sibling's domain), as in `((a + b) * c) - 1/2`; a
 //!   literal is only a right operand, and only the root is typed at the
 //!   declared domain (an intermediate typed at the wide domain, for example by
 //!   a `let`, is refused correctly, FR-495-AC-14), so a `let` binds only a
@@ -1807,6 +1808,7 @@ fn refusing_cases() -> BoxedStrategy<Case> {
         3 => int_cases(true, Mutation::None),
         2 => rat_cases(true),
         8 => dec_cases(true),
+        6 => dec_cases(false),
         2 => well_typed_cases(),
     ]
     .boxed()
@@ -1895,7 +1897,6 @@ fn p1_format_round_trip_keeps_the_tree() {
 
 // ---------------------------------------------------------------- P2
 
-#[trace("FR-091-AC-13")]
 #[test]
 fn p2_generated_well_typed_expressions_check() {
     let sources = prop_oneof![
@@ -1918,7 +1919,6 @@ fn p2_generated_well_typed_expressions_check() {
 
 // ---------------------------------------------------------------- P3
 
-#[trace("FR-091-AC-13")]
 #[test]
 fn p3_evaluator_matches_the_exact_reference() {
     let families = RefCell::new(BTreeMap::<&'static str, usize>::new());
@@ -1957,7 +1957,7 @@ fn p3_evaluator_matches_the_exact_reference() {
 
 // ---------------------------------------------------------------- P4
 
-#[trace("FR-495-AC-3", "FR-495-AC-17")]
+#[trace("FR-495-AC-3")]
 #[test]
 fn p4_refusals_agree_with_the_reference() {
     let seen = RefCell::new(BTreeMap::<Refuse, usize>::new());
@@ -1971,8 +1971,17 @@ fn p4_refusals_agree_with_the_reference() {
             if let Err(refusal) = outcome {
                 *seen.borrow_mut().entry(refusal).or_default() += 1;
             }
+            // Count a case only when its expected outcome is the rounded
+            // value (or the `exact` refusal), not a domain refusal that
+            // follows a rounding step.
             if let Some(mode) = case.rounded {
-                *rounding.borrow_mut().entry(mode).or_default() += 1;
+                let rounded_outcome = match &case.expected {
+                    Ok(_) => true,
+                    Err(refusal) => mode == "exact" && *refusal == Refuse::DecimalInexact,
+                };
+                if rounded_outcome {
+                    *rounding.borrow_mut().entry(mode).or_default() += 1;
+                }
             }
             Ok(())
         },
@@ -2004,7 +2013,6 @@ fn p4_refusals_agree_with_the_reference() {
 
 // ---------------------------------------------------------------- P5
 
-#[trace("FR-701-AC-1")]
 #[test]
 fn p5_aggregates_equal_the_reference_fold_in_any_order() {
     prop::run(

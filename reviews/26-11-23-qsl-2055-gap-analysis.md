@@ -54,3 +54,15 @@ finding.
 - Repo-wide matrix: not recomputed. The PR adds no criterion and no tag.
 - Semantic review: not run (opt-in; not requested).
 - Plan completion: not assessed
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-002 | low | Three of the new trace tags name criteria their tests do not exercise, which inflates the matrix. P2 and P3 cite FR-091-AC-13 (calling `two` returns 2). P4 cites FR-495-AC-17 (Linked `mod` refusals and types, but P4 runs under Kernel). P5 cites FR-701-AC-1, a `fold` catalog step that P5 never writes. FR-003-AC-1 on P1 and FR-495-AC-3 on P4 and the near-miss test are correct. | fsl-eval/tests/it/value_properties.rs:1868; fsl-eval/tests/it/value_properties.rs:1898; fsl-eval/tests/it/value_properties.rs:1921; fsl-eval/tests/it/value_properties.rs:1960; fsl-eval/tests/it/value_properties.rs:2007 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | - |
