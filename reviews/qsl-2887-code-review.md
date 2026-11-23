@@ -44,3 +44,4 @@ Not mergeable yet. Run one fix round for FND-001 to FND-003: assert the exact re
 | FND-005 | fixed | clause_documents(vault, second) feeds both package_with_clause and read |
 | FND-006 | fixed | Added fsl-cst hyper_clause::a_clause_over_behaviours_with_no_object_parameter_parses and formatter_style::an_empty_behaviours_parameter_list_prints_canonically |
 | FND-007 | fixed | assert_eq!(label(&run.item(0)), "proved") |
+| FND-008 | fixed | Superseded at 8e1abb6d. The FR-379 writer change (967029648b) writes `initial` and `position` as decimal strings, matching FSpec FR-379 as amended by filament-specification #820 (U64String, FR-379-AC-14), and the ignore is removed. The test passes un-ignored, and its assertions are unchanged |
