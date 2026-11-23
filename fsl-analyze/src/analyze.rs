@@ -106,7 +106,7 @@ pub use items::{
     protocol_item, statistical_item, timed_refinement_item, zone_item, DerivedItemMismatch,
     ModelItem, ProtocolItem, ProtocolReplayFn, RefinementReplayFn, TimedItem, TimedRefinementItem,
 };
-pub use simulation_item::{engine_conflict, SimulationItem, SimulationMode, SimulationSelection};
+pub use simulation_item::{SimulationItem, SimulationMode, SimulationSelection};
 pub use state_graph_item::PackageStateGraphSubject;
 
 use crate::provider::{
@@ -683,9 +683,22 @@ impl SubjectBinding<'_> {
 /// "Lifecycle caller-limit coverage"). A setting joins this list when its
 /// engine reads the caller's bound, so no accepted setting is ignored.
 /// `plan_search.*` is never listed: neither operation executes it.
-pub const ENGINE_SETTINGS: [Setting; 2] = [
+pub const ENGINE_SETTINGS: [Setting; 15] = [
     Setting::SimulationMaxSteps,
     Setting::ScheduleMaxDemandPoints,
+    Setting::ExactProbMaxStates,
+    Setting::ExactProbMaxTransitions,
+    Setting::ExactProbMaxAutomatonStates,
+    Setting::ExactProbMaxIterations,
+    Setting::ExactProbPrecisionBits,
+    Setting::ExactProbMaxPrecisionBits,
+    Setting::ExactProbMaxRationalBits,
+    Setting::ExactProbMaxPolicyIterations,
+    Setting::ExactProbMaxWitnessPaths,
+    Setting::StatisticalMaxSamples,
+    Setting::StatisticalMaxDraws,
+    Setting::StatisticalMaxCycleSteps,
+    Setting::StatisticalMaxSampleSteps,
 ];
 
 /// The engine settings the caller set for one run: a bound is present only
@@ -732,6 +745,64 @@ impl EngineBounds {
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.values.iter().all(Option::is_none)
+    }
+
+    /// The first item that states, in its own members, a limit the caller also
+    /// set (FR-255 "Caller limits and item limits"): its request position and
+    /// the setting. No run depends on which of the two bounds wins.
+    #[must_use]
+    pub fn conflict(&self, items: &[document::ItemSelection]) -> Option<(usize, Setting)> {
+        items.iter().enumerate().find_map(|(position, item)| {
+            self.stated(item)
+                .into_iter()
+                .find(|setting| self.get(*setting).is_some())
+                .map(|setting| (position, setting))
+        })
+    }
+
+    /// The settings `item` states in its own members.
+    fn stated(&self, item: &document::ItemSelection) -> Vec<Setting> {
+        use Setting as S;
+        let mut stated = Vec::new();
+        if item
+            .simulation
+            .as_ref()
+            .is_some_and(|simulation| simulation.max_steps.is_some())
+        {
+            stated.push(S::SimulationMaxSteps);
+        }
+        if let Some(probabilistic) = &item.probabilistic {
+            let limit = |member: &str| {
+                probabilistic
+                    .get("limits")
+                    .is_some_and(|limits| limits.get(member).is_some())
+            };
+            for (member, setting) in [
+                ("max_states", S::ExactProbMaxStates),
+                ("max_transitions", S::ExactProbMaxTransitions),
+                ("max_automaton_states", S::ExactProbMaxAutomatonStates),
+                ("max_iterations", S::ExactProbMaxIterations),
+                ("precision_bits", S::ExactProbPrecisionBits),
+                ("max_precision_bits", S::ExactProbMaxPrecisionBits),
+                ("max_rational_bits", S::ExactProbMaxRationalBits),
+                ("max_policy_iterations", S::ExactProbMaxPolicyIterations),
+                ("max_witness_paths", S::ExactProbMaxWitnessPaths),
+                ("max_samples", S::StatisticalMaxSamples),
+                ("max_draws", S::StatisticalMaxDraws),
+                ("max_cycle_steps", S::StatisticalMaxCycleSteps),
+            ] {
+                if limit(member) {
+                    stated.push(setting);
+                }
+            }
+            if probabilistic
+                .get("timed_sampling")
+                .is_some_and(|sampling| sampling.get("max_sample_steps").is_some())
+            {
+                stated.push(S::StatisticalMaxSampleSteps);
+            }
+        }
+        stated
     }
 }
 

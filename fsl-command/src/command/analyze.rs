@@ -1505,7 +1505,7 @@ pub(super) fn refuse_engine_conflict(
     items: Option<&[ItemSelection]>,
     limits: &AnalyzeLimits,
 ) -> Result<()> {
-    match fsl_analyze::analyze::engine_conflict(items.unwrap_or_default(), &limits.engines) {
+    match limits.engines.conflict(items.unwrap_or_default()) {
         Some((position, setting)) => Err(invalid(
             &format!("items[{position}]"),
             format!(

@@ -694,20 +694,3 @@ mod tests {
     }
 }
 
-/// FR-255 "Caller limits and item limits": the first item that states
-/// `simulation.max_steps` in its own `simulation` member while the caller
-/// also set that setting, as its request position and the setting. No run
-/// depends on which of the two bounds wins.
-#[must_use]
-pub fn engine_conflict(
-    items: &[super::document::ItemSelection],
-    engines: &super::EngineBounds,
-) -> Option<(usize, Setting)> {
-    engines.get(Setting::SimulationMaxSteps)?;
-    items.iter().position(|item| {
-        item.simulation
-            .as_ref()
-            .is_some_and(|simulation| simulation.max_steps.is_some())
-    })
-    .map(|position| (position, Setting::SimulationMaxSteps))
-}

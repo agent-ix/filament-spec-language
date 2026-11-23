@@ -430,6 +430,64 @@ pub enum ProbabilisticLimits {
     Exact(crate::exact_probabilistic::ExactProbLimits),
 }
 
+impl ProbabilisticLimits {
+    /// These limits with each bound the caller set replacing the item's own
+    /// or the published value (FR-255 "Lifecycle caller-limit coverage"):
+    /// `exact_prob.*` for an exact run,
+    /// `statistical.*` for a statistical one. A bound the item also states is
+    /// refused before this runs, so no bound is overridden here.
+    #[must_use]
+    pub fn under(self, engines: &super::EngineBounds) -> Self {
+        use fsl_foundation::Setting as S;
+        let narrow = |bound: u64| usize::try_from(bound).unwrap_or(usize::MAX);
+        let narrow32 = |bound: u64| u32::try_from(bound).unwrap_or(u32::MAX);
+        match self {
+            Self::Statistical(mut limits) => {
+                if let Some(bound) = engines.get(S::StatisticalMaxSamples) {
+                    limits.max_samples = bound;
+                }
+                if let Some(bound) = engines.get(S::StatisticalMaxDraws) {
+                    limits.max_draws = bound;
+                }
+                if let Some(bound) = engines.get(S::StatisticalMaxCycleSteps) {
+                    limits.max_cycle_steps = bound;
+                }
+                Self::Statistical(limits)
+            }
+            Self::Exact(mut limits) => {
+                if let Some(bound) = engines.get(S::ExactProbMaxStates) {
+                    limits.model.limits.max_states = narrow(bound);
+                }
+                if let Some(bound) = engines.get(S::ExactProbMaxTransitions) {
+                    limits.model.limits.max_transitions = narrow(bound);
+                }
+                if let Some(bound) = engines.get(S::ExactProbMaxAutomatonStates) {
+                    limits.model.max_automaton_states = bound;
+                }
+                if let Some(bound) = engines.get(S::ExactProbMaxIterations) {
+                    limits.max_iterations = bound;
+                }
+                if let Some(bound) = engines.get(S::ExactProbPrecisionBits) {
+                    limits.precision_bits = narrow32(bound);
+                }
+                if let Some(bound) = engines.get(S::ExactProbMaxPrecisionBits) {
+                    limits.max_precision_bits = narrow32(bound);
+                }
+                if let Some(bound) = engines.get(S::ExactProbMaxRationalBits) {
+                    limits.max_rational_bits = bound;
+                }
+                if let Some(bound) = engines.get(S::ExactProbMaxPolicyIterations) {
+                    limits.max_policy_iterations = bound;
+                }
+                if let Some(bound) = engines.get(S::ExactProbMaxWitnessPaths) {
+                    limits.max_witness_paths = bound;
+                }
+                Self::Exact(limits)
+            }
+        }
+    }
+}
+
 /// A claim with the disposition and diagnostic supplied by negotiation.
 #[derive(Clone)]
 pub struct NegotiatedItem {
@@ -744,7 +802,7 @@ fn probability_work<'a>(
         .claims()
         .iter()
         .find(|claim| claim.occurrence() == Some(occurrence));
-    match (claim, form.evidence, form.limits) {
+    match (claim, form.evidence, form.limits.under(&limits.engines)) {
         (Some(claim), EvidenceKind::Exact, ProbabilisticLimits::Exact(exact)) => Some(
             ProbabilityWork::Exact(crate::exact_probabilistic::ProductRequest {
                 subject: fsl_eval::model_subject::ModelSubject {
@@ -772,7 +830,16 @@ fn probability_work<'a>(
                             .max_witnesses
                             .unwrap_or(crate::statistical::DEFAULT_MAX_WITNESSES),
                         symmetry: form.symmetry.clone(),
-                        timed_sampling: form.timed_sampling.unwrap_or_default(),
+                        timed_sampling: {
+                            let mut sampling = form.timed_sampling.unwrap_or_default();
+                            if let Some(bound) = limits
+                                .engines
+                                .get(fsl_foundation::Setting::StatisticalMaxSampleSteps)
+                            {
+                                sampling.max_sample_steps = bound;
+                            }
+                            sampling
+                        },
                     },
                 )),
                 _ => None,
