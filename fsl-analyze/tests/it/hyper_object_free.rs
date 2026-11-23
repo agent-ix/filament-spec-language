@@ -56,6 +56,16 @@ fn wrapper_id(wire: &Value) -> Value {
     body["value"]["target"].clone()
 }
 
+/// The index, in the nodes of `wire`, of the body wrapper of the one hyperproperty
+/// node; the raw and resolved wires list their nodes in one order.
+fn wrapper_index(wire: &Value) -> usize {
+    let id = wrapper_id(wire);
+    nodes(wire)
+        .iter()
+        .position(|node| node["node_id"] == id)
+        .expect("the wrapper")
+}
+
 /// The `over` target of the body wrapper of the one hyperproperty node, and
 /// the wrapper's dependencies.
 fn wrapper_over(wire: &Value) -> (Value, Value) {
@@ -82,16 +92,11 @@ fn read(bytes: &[u8], documents: &[Vec<u8>]) -> CheckedPackageV2ReadResult {
     CheckedPackageV2::read(bytes, CheckedPackageReadLimits::bounded(), &evidence)
 }
 
-/// Edit the wrapper `wrapper` (a node id of the raw wire in `bytes`) so its
+/// Edit the wrapper at index `at` of the nodes of the raw wire in `bytes` so its
 /// `over` is the `model_root` of `root_package`, and assert the strict read
 /// refuses it `invalid_model_binding`/`malformed-declaration` at the wrapper's
 /// first argument.
-fn assert_root_over_refused(
-    bytes: &[u8],
-    documents: &[Vec<u8>],
-    wrapper: &Value,
-    root_package: &str,
-) {
+fn assert_root_over_refused(bytes: &[u8], documents: &[Vec<u8>], at: usize, root_package: &str) {
     let mut raw: Value = serde_json::from_slice(bytes).expect("wire JSON");
     let nodes = raw["semantic_graph"]["nodes"]
         .as_array_mut()
@@ -103,10 +108,6 @@ fn assert_root_over_refused(
         })
         .unwrap_or_else(|| panic!("a model root of {root_package}"))["node_id"]
         .clone();
-    let at = nodes
-        .iter()
-        .position(|node| &node["node_id"] == wrapper)
-        .expect("the wrapper");
     nodes[at]["body"]["arguments"][0]["target"] = root.clone();
     nodes[at]["dependencies"]
         .as_array_mut()
@@ -165,11 +166,10 @@ fn a_model_root_over_on_a_wrapper_that_reads_a_slot_is_refused() {
         node(&wire, &over)["body"]["members"][0]["value"]["value"],
         "slot_sv_sa"
     );
-    let raw: Value = serde_json::from_slice(&bytes).expect("wire JSON");
     assert_root_over_refused(
         &bytes,
         &clause_documents(Vault::Secure, false),
-        &wrapper_id(&raw),
+        wrapper_index(&wire),
         "test/vault",
     );
 }
@@ -179,12 +179,11 @@ fn a_model_root_over_on_a_wrapper_that_reads_a_slot_is_refused() {
 #[test]
 fn a_wrapper_over_the_root_of_a_package_no_subject_names_is_refused() {
     let package = package_with_clause(Vault::Secure, true, WHOLE);
-    let (bytes, _) = emitted(&package);
-    let raw: Value = serde_json::from_slice(&bytes).expect("wire JSON");
+    let (bytes, wire) = emitted(&package);
     assert_root_over_refused(
         &bytes,
         &clause_documents(Vault::Secure, true),
-        &wrapper_id(&raw),
+        wrapper_index(&wire),
         "test/vault-other",
     );
 }
@@ -199,19 +198,20 @@ fn a_single_trace_clause_that_is_no_body_wrapper_cannot_range_over_a_model_root(
         "temporal Plain using inf over (v: V::Vault) clock \"model-steps\" on origin \
          { always holds(v.l >= 0) }",
     );
-    let (bytes, _) = emitted(&package);
-    let raw: Value = serde_json::from_slice(&bytes).expect("wire JSON");
-    let [clause] = &nodes(&raw)
+    let (bytes, wire) = emitted(&package);
+    let clauses: Vec<usize> = nodes(&wire)
         .iter()
-        .filter(|node| node["semantic_form"] == "temporal_clause")
-        .collect::<Vec<_>>()[..]
-    else {
+        .enumerate()
+        .filter(|(_, node)| node["semantic_form"] == "temporal_clause")
+        .map(|(at, _)| at)
+        .collect();
+    let [clause] = clauses[..] else {
         panic!("one temporal clause");
     };
     assert_root_over_refused(
         &bytes,
         &clause_documents(Vault::Secure, false),
-        &clause["node_id"],
+        clause,
         "test/vault",
     );
 }
