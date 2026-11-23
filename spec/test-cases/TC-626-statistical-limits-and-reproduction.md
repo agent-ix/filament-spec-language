@@ -19,7 +19,7 @@ Scope: FR-191-AC-1 to FR-191-AC-5.
 Fixtures: `NoFault`, `P95`, FR-189-AC-4's activation variant, FR-190-AC-2's transient variant, a two-test variant of `Service`, FR-189-AC-7's `Wide` model for the `Unsupported` outcome.
 
 1. `NoFault` with Okamoto at `max_samples` 1,000,000 and 9,210,341; with `max_draws` 1,000,000 and 9,210,341; a request omitting `max_samples`.
-2. The activation variant at `max_draws` 1,000; the transient variant; a cancelled `Cancel` handle; a regenerative run at a `max_draws` below one cycle's steps.
+2. The activation variant with SPRT at `max_draws` 1,000; the transient variant; a cancelled `Cancel` handle; a regenerative run at a `max_draws` below one cycle's steps.
 3. `P95` with SPRT and seed 7 twice; with `max_samples` 100 and then the default; with seed 8.
 4. The two-test variant; `P95` with Okamoto and with SPRT.
 5. `NoFault` with Okamoto at `max_samples` 9,210,340 and 9,210,341; read the provenance of the stopped outcome and of the `Wide` model's `Unsupported` outcome (FR-189-AC-7), and the stop of a run cancelled by its handle.
