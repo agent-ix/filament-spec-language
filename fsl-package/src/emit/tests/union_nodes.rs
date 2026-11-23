@@ -739,6 +739,15 @@ fn edited(wire: &Value, dropped: &[usize], replacement: Option<(usize, usize)>) 
             }
             reidentified(member, &graph, &renamed, &order);
         }
+        // FSpec FR-825: `requirement_items` is absent exactly when the
+        // package has no requirement record.
+        if members
+            .get("requirement_items")
+            .and_then(Value::as_array)
+            .is_some_and(Vec::is_empty)
+        {
+            members.remove("requirement_items");
+        }
     }
     let mut graph_nodes = Vec::new();
     for (_, mut node) in kept {

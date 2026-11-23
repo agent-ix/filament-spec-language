@@ -207,7 +207,9 @@ fn renumbered(
         if let (Some(&first), Some(&last)) = (clause_rows.first(), clause_rows.last()) {
             let order = |row: &Value| {
                 (
-                    row["claim"]["occurrence"]["role"].as_str().map(str::to_owned),
+                    row["claim"]["occurrence"]["role"]
+                        .as_str()
+                        .map(str::to_owned),
                     row["claim"]["occurrence"]["ordinal"].as_u64(),
                     row["kind"].as_str().map(str::to_owned),
                 )

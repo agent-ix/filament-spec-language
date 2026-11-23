@@ -42,9 +42,7 @@ fn omitted_name(
     if let ClaimExtent::Unbounded(domains) = source.requirements().extent() {
         names.extend(domains.iter().map(|(key, _)| match key {
             fsl_foundation::bound::DomainKey::Node { node, .. } => node.clone(),
-            fsl_foundation::bound::DomainKey::Population { member_type, .. } => {
-                member_type.clone()
-            }
+            fsl_foundation::bound::DomainKey::Population { member_type, .. } => member_type.clone(),
         }));
     }
     if source.requirements().kind() == Capability::ValueValidity {
@@ -70,7 +68,10 @@ fn omitted_name(
                 .map_err(|_| EmitRefusal::SourceMapInvariant)?,
         );
     }
-    Ok(names.into_iter().filter(|name| omitted.contains(name)).min())
+    Ok(names
+        .into_iter()
+        .filter(|name| omitted.contains(name))
+        .min())
 }
 
 fn reference(target: &CheckedNodeId) -> CheckedTerm {
