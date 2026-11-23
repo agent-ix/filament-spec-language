@@ -116,6 +116,30 @@ mod hint_catalog_tests {
             check_hint_catalog(&duplicate, &known),
             Err(HintCatalogError::DuplicatePair { .. })
         ));
+        let selection_row = |selection, text| HintRow {
+            code: Code::MissingImport,
+            cause: Some("missing-selection"),
+            selection: Some(selection),
+            text,
+        };
+        // One pair with two rows of the same `selection` is a duplicate; with
+        // two different `selection`s it is not (FR-286-AC-29).
+        let duplicate_selection = [
+            selection_row("model", "Supply the model."),
+            selection_row("model", "Provide the model."),
+        ];
+        assert!(matches!(
+            check_hint_catalog(&duplicate_selection, &known),
+            Err(HintCatalogError::DuplicatePair {
+                code: Code::MissingImport,
+                cause: Some("missing-selection"),
+            })
+        ));
+        let distinct_selections = [
+            selection_row("model", "Supply the model."),
+            selection_row("library", "Supply the library."),
+        ];
+        assert!(check_hint_catalog(&distinct_selections, &known).is_ok());
         let malformed = [HintRow {
             code: Code::IllTyped,
             cause: Some("type-mismatch"),

@@ -31,6 +31,7 @@ mod request_overrides;
 mod revision_validation;
 mod run_requirement_items;
 mod run_text_witness;
+mod selection_text;
 mod short_circuit_integer_division;
 mod temporal_owner_cohort;
 mod wire_schema;

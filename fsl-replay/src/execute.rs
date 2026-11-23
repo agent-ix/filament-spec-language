@@ -751,8 +751,13 @@ impl ReplayRefusal {
     pub fn cause(&self) -> Option<&str> {
         match self {
             Self::Request(refusal) => refusal.cause(),
-            Self::Package(refusal) => refusal.cause(),
-            Self::PackageWithIdentity { refusal, .. } => refusal.cause(),
+            Self::Package(refusal) | Self::PackageWithIdentity { refusal, .. } => {
+                if refusal.code() == Code::MissingImport {
+                    Some("missing-selection")
+                } else {
+                    refusal.cause()
+                }
+            }
             Self::PackageEvidence(_) => None,
             Self::Recompile { refusal, .. } => refusal.cause(),
             Self::RecompileWithProtocolResults { refusal, .. }

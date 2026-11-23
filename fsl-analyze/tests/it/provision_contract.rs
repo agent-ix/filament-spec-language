@@ -109,7 +109,6 @@ fn exact(world: &prob_world::World, limits: ExactProbLimits) -> NegotiatedItem {
     "TC-761",
     "FR-280-AC-10",
     "TC-3199",
-    "FR-865-AC-23",
     "FR-286-AC-40"
 )]
 #[test]

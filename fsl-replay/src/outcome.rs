@@ -2512,12 +2512,19 @@ impl OutcomeDiagnostic {
 
     /// This diagnostic with the kind of the missing thing (FR-286 "Missing
     /// selections") and the hint of that kind's catalog row. A `None` kind
-    /// leaves the diagnostic as built.
+    /// leaves the diagnostic as built, and so does a diagnostic that is not
+    /// the `missing_import`/`missing-selection` pair, which alone carries a
+    /// `selection`.
     #[must_use]
     pub fn with_selection(mut self, selection: Option<hint::MissingSelection>) -> Self {
-        if let Some(kind) = selection {
-            self.hint = Code::from_code(&self.code)
-                .and_then(|code| hint::hint_for(code, self.cause.as_deref(), Some(kind.as_str())));
+        let pair = self.code == Code::MissingImport.as_str()
+            && self.cause.as_deref() == Some("missing-selection");
+        if let Some(kind) = selection.filter(|_| pair) {
+            self.hint = hint::hint_for(
+                Code::MissingImport,
+                self.cause.as_deref(),
+                Some(kind.as_str()),
+            );
             self.selection = Some(kind);
         }
         self
@@ -5755,7 +5762,7 @@ mod tests {
     /// FR-286-AC-40: each of the nine `selection` kinds has its table row
     /// and no other, and the row of no `selection` stays for the one defensive
     /// producer.
-    #[trace("TC-3203", "FR-286-AC-40", "FR-865-AC-23")]
+    #[trace("TC-3203", "FR-286-AC-40")]
     #[test]
     fn each_selection_kind_has_its_own_hint_row() {
         let table = [
@@ -5840,7 +5847,7 @@ mod tests {
     /// FR-286-AC-40: the extension-definition producer writes its kind and
     /// hint, and plugin replay's defensive `UnresolvedDependency` writes no
     /// `selection` and the pair's catalog hint.
-    #[trace("TC-3199", "TC-3203", "FR-865-AC-23", "FR-286-AC-40")]
+    #[trace("TC-3199", "TC-3203", "FR-286-AC-40")]
     #[test]
     fn extension_producer_carries_its_kind_and_the_defensive_producer_none() {
         use fsl_foundation::selection::DefinitionRef;
@@ -5872,5 +5879,26 @@ mod tests {
             wire["hint"], "Import the package that supplies the selected name.",
             "{wire}"
         );
+    }
+
+    /// FR-286-AC-40: only the `missing_import`/`missing-selection` pair carries
+    /// a `selection`; any other diagnostic is left as built.
+    #[trace("TC-3203", "FR-286-AC-40")]
+    #[test]
+    fn a_selection_is_written_only_on_the_missing_selection_pair() {
+        for (cause, code) in [
+            (Some("invalid-value"), "missing_import"),
+            (None, "missing_import"),
+            (Some("missing-selection"), "ill_typed"),
+        ] {
+            let built = OutcomeDiagnostic::new(cause, code, None, "m");
+            let marked = built
+                .clone()
+                .with_selection(Some(hint::MissingSelection::Model));
+            assert_eq!(marked, built, "{code}/{cause:?}");
+            assert_eq!(marked.selection, None);
+        }
+        let pair = OutcomeDiagnostic::new(Some("missing-selection"), "missing_import", None, "m");
+        assert_eq!(pair.clone().with_selection(None), pair);
     }
 }
