@@ -1580,6 +1580,7 @@ fn work<'a>(
         Some(ItemForm::Temporal(_)) => super::document::timed(package),
         _ => false,
     };
+    built = built.operation_contract_extent(item.kind, item.extent);
     built.mode = match item.extent {
         _ if zone => fsl_route::Mode::Bounded,
         _ if item.kind == Capability::Schedulability

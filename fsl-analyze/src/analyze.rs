@@ -1875,6 +1875,8 @@ pub(crate) enum Refusal {
     ),
     /// An unbounded extent: `unsupported` with `unbounded-extent`.
     RequiresBound,
+    /// An operation-contract extent whose bound availability is request data.
+    OperationContractRequiresBound { finite_bound_available: bool },
     /// A finite trace population exceeds the bound declared by its hyper clause.
     RequiresFiniteHyperBound { bound: u64, found: usize },
     /// EN-4 `NotStatistical`: `invalid-request` with `not-statistical`.
@@ -1946,6 +1948,9 @@ pub struct AnalyzeItem<'a> {
     /// `HybridProviderAbsent` or `tool-unavailable` where other items settle
     /// by their disposition.
     hybrid: bool,
+    /// The operation-contract request's extent bit, when its extent is
+    /// unbounded.
+    operation_contract_finite_bound_available: Option<bool>,
 }
 
 impl<'a> AnalyzeItem<'a> {
@@ -1999,6 +2004,7 @@ impl<'a> AnalyzeItem<'a> {
             required: false,
             claim: None,
             hybrid: false,
+            operation_contract_finite_bound_available: None,
         }
     }
 
@@ -2023,6 +2029,7 @@ impl<'a> AnalyzeItem<'a> {
             required: false,
             claim: None,
             hybrid: false,
+            operation_contract_finite_bound_available: None,
         }
     }
 
@@ -2047,6 +2054,7 @@ impl<'a> AnalyzeItem<'a> {
             required: false,
             claim: None,
             hybrid: false,
+            operation_contract_finite_bound_available: None,
         }
     }
 
@@ -2069,6 +2077,7 @@ impl<'a> AnalyzeItem<'a> {
             required: false,
             claim: None,
             hybrid: false,
+            operation_contract_finite_bound_available: None,
         }
     }
 
@@ -2137,6 +2146,25 @@ impl<'a> AnalyzeItem<'a> {
     #[must_use]
     pub(crate) fn hybrid(mut self) -> Self {
         self.hybrid = true;
+        self
+    }
+
+    /// Carry the operation-contract extent bit to the refusal settlement.
+    #[must_use]
+    pub(crate) fn operation_contract_extent(
+        mut self,
+        kind: Capability,
+        extent: fsl_route::ExtentClassification,
+    ) -> Self {
+        self.operation_contract_finite_bound_available = match (kind, extent) {
+            (
+                Capability::OperationContract,
+                fsl_route::ExtentClassification::Unbounded {
+                    finite_bound_available,
+                },
+            ) => Some(finite_bound_available),
+            _ => None,
+        };
         self
     }
 
@@ -2827,6 +2855,7 @@ fn run(
         required: _,
         claim,
         hybrid,
+        operation_contract_finite_bound_available,
     } = item;
     let record = |settlement| AnalyzeRecord::of(index, settlement);
     let disposed = |kind, diagnostic| {
@@ -2911,6 +2940,16 @@ fn run(
         ItemWork::Provider(work) => {
             crate::provider::finish(*work, settled.remove(&index), cancel, engine)
         }
+    };
+    let report = match (report, kind, operation_contract_finite_bound_available) {
+        (
+            EngineReport::Refused(Refusal::RequiresBound),
+            Capability::OperationContract,
+            Some(finite_bound_available),
+        ) => EngineReport::Refused(Refusal::OperationContractRequiresBound {
+            finite_bound_available,
+        }),
+        (report, _, _) => report,
     };
     // An item whose charge saw the cancel was still open when the handle was
     // cancelled and settles `incomplete` with its cause (FR-276); a handle
@@ -3434,7 +3473,10 @@ fn settle(
             Diagnostic::new(CatalogCode::new("invalid_capability", "not-statistical")),
             backend,
         ),
-        EngineReport::Refused(Refusal::RequiresBound) => {
+        EngineReport::Refused(Refusal::RequiresBound)
+        | EngineReport::Refused(Refusal::OperationContractRequiresBound {
+            finite_bound_available: false,
+        }) => {
             let diagnostic = Diagnostic {
                 code: CatalogCode::new("unsupported_projection", "unbounded-extent"),
                 payload: Payload::Unbounded {
@@ -3445,6 +3487,13 @@ fn settle(
             };
             disposed(DispositionKind::Unsupported, diagnostic, backend)
         }
+        EngineReport::Refused(Refusal::OperationContractRequiresBound {
+            finite_bound_available: true,
+        }) => disposed(
+            DispositionKind::RequiresBound,
+            Diagnostic::new(CatalogCode::new("requires_bound", "requires-bound")),
+            backend,
+        ),
         EngineReport::Refused(Refusal::RequiresFiniteHyperBound { bound, found }) => disposed(
             DispositionKind::RequiresBound,
             Diagnostic {
@@ -4245,6 +4294,117 @@ mod tests {
             json!({ "backend": "test-c" })
         );
         assert!(!ran.get());
+    }
+
+    /// FSpec FR-290-AC-14: an operation-contract refusal preserves the
+    /// request's finite-bound availability, while a prior capability
+    /// disposition remains unsupported-requested-capability.
+    #[trace("FSpec-TC-950", "FSpec-FR-290-AC-14")]
+    #[test]
+    fn operation_contract_requires_bound_uses_finite_bound_availability() {
+        use serde_json::json;
+
+        let mut engines = Engines::default();
+        engines
+            .with(engine("test-a", Capability::OperationContract))
+            .expect("first");
+        let write = |available| {
+            let item = refusing(|| Refusal::RequiresBound)
+                .operation_contract_extent(
+                    Capability::OperationContract,
+                    fsl_route::ExtentClassification::Unbounded {
+                        finite_bound_available: available,
+                    },
+                );
+            let mut records = terminal_records(analyze_items(
+                &engines,
+                vec![item],
+                &Cancel::new(),
+            ));
+            let record = records.remove(0);
+            let written = serde_json::to_value(
+                analyze_document(std::slice::from_ref(&record), &[])
+                    .expect("the disposed analyzer record serializes"),
+            )
+            .expect("serializes");
+            (record, written["items"][0]["record"].clone())
+        };
+
+        let (record, written) = write(true);
+        assert!(record.settled_by_disposition());
+        assert!(record.backend().is_none());
+        assert_eq!(written["settled_by"], "disposition");
+        assert!(written.get("result").is_none(), "a disposition has no result: {written}");
+        assert_eq!(written["category"], "unsupported");
+        assert_eq!(
+            written["diagnostic"],
+            json!({"code": "requires_bound", "cause": "requires-bound", "detail": {}})
+        );
+        assert!(written.get("value").is_none(), "a disposition has no result value: {written}");
+        assert!(written.get("evidence").is_none(), "a disposition has no result evidence: {written}");
+
+        let (record, written) = write(false);
+        assert!(record.settled_by_disposition());
+        assert!(record.backend().is_none());
+        assert_eq!(written["settled_by"], "disposition");
+        assert!(written.get("result").is_none(), "a disposition has no result: {written}");
+        assert_eq!(written["category"], "unsupported");
+        assert_eq!(
+            written["diagnostic"],
+            json!({
+                "code": "unsupported_projection",
+                "cause": "unbounded-extent",
+                "detail": {
+                    "kind": "operation-contract",
+                    "candidate": "test-a",
+                    "modes": ["bounded"],
+                },
+            })
+        );
+        assert!(written.get("value").is_none(), "a disposition has no result value: {written}");
+        assert!(written.get("evidence").is_none(), "a disposition has no result evidence: {written}");
+    }
+
+    /// FSpec FR-290-AC-14: preserve the pre-negotiated missing-population
+    /// disposition through the analyzer request and output path. Candidate
+    /// domain negotiation itself belongs to the driver.
+    #[trace("FSpec-TC-950", "FSpec-FR-290-AC-14")]
+    #[test]
+    fn operation_contract_preserves_missing_population_disposition() {
+        use serde_json::json;
+
+        let mut engines = Engines::default();
+        engines
+            .with(engine("test-a", Capability::OperationContract))
+            .expect("first");
+        let diagnostic = unsupported_kind(Capability::OperationContract);
+        let item = refusing(|| Refusal::Failed(CatalogCode::new(
+            "runtime_invariant",
+            "established-invariant-broken",
+        )))
+        .disposed(Disposition::Unsupported, Some(diagnostic));
+        let mut records = terminal_records(analyze_items(&engines, vec![item], &Cancel::new()));
+        let record = records.remove(0);
+        let document = analyze_document(std::slice::from_ref(&record), &[])
+            .expect("the negotiated disposition serializes");
+        let written = serde_json::to_value(document).expect("serializes")["items"][0]["record"]
+            .clone();
+
+        assert!(record.settled_by_disposition());
+        assert!(record.backend().is_none());
+        assert_eq!(written["settled_by"], "disposition");
+        assert!(written.get("result").is_none(), "a disposition has no result: {written}");
+        assert_eq!(written["category"], "unsupported");
+        assert_eq!(
+            written["diagnostic"],
+            json!({
+                "code": "unsupported_projection",
+                "cause": "unsupported-requested-capability",
+                "detail": {"kind": "operation-contract"},
+            })
+        );
+        assert!(written.get("value").is_none(), "a disposition has no result value: {written}");
+        assert!(written.get("evidence").is_none(), "a disposition has no result evidence: {written}");
     }
 
     fn refusing<'a>(refusal: impl Fn() -> Refusal + 'a) -> AnalyzeItem<'a> {
