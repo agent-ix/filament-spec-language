@@ -1806,6 +1806,14 @@ fn a_presence_quantifier_is_emitted_over_its_slot_domain() {
         panic!("one slot-domain node shared by the three clauses: {domains:?}");
     };
     assert_eq!(domain["semantic_form"], "presence_read", "{domain}");
+    // The wire as written: the node's own id holds operand slots, which
+    // `wire` resolves to index segments.
+    let at = nodes(&wire)
+        .iter()
+        .position(|node| node == domain)
+        .expect("the domain is a node");
+    let written = crate::emit::tests::raw_wire(&emission);
+    let domain = &written["semantic_graph"]["nodes"][at];
     let path = domain["node_id"]["path"].as_array().expect("a path");
     assert_eq!(
         path.len(),
@@ -1869,6 +1877,7 @@ fn a_malformed_slot_domain_is_refused_at_its_locus() {
     );
     let boolean = base["semantic_graph"]["nodes"][quantifier]["body"]["result_type"].clone();
     let refused = |mutate: &dyn Fn(&mut Value), cause: &str, locus: &str| {
+        eprintln!("DBGCASE {cause} {locus}");
         let mut wire = base.clone();
         mutate(&mut wire);
         let bytes = crate::emit::tests::wire_bytes(&wire).expect("JSON");
