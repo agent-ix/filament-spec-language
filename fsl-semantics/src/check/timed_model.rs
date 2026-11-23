@@ -2056,6 +2056,9 @@ impl Clocks<'_> {
                 Some(ExprNode::Name(name)) if name.segments.len() == 1 && name.name == *binder)
         };
         let mut presence = false;
+        // The binder as the operand of a comparison, a clock constraint of
+        // the element; any other read of it is not read yet.
+        let mut constrained = false;
         let mut other_read = false;
         let mut pending = vec![*body];
         while let Some(at) = pending.pop() {
@@ -2064,6 +2067,25 @@ impl Clocks<'_> {
             };
             match node {
                 ExprNode::Present(operand) if is_binder(*operand) => presence = true,
+                ExprNode::Binary {
+                    operator:
+                        BinaryOperator::Less
+                        | BinaryOperator::LessOrEqual
+                        | BinaryOperator::Greater
+                        | BinaryOperator::GreaterOrEqual
+                        | BinaryOperator::Equal
+                        | BinaryOperator::NotEqual,
+                    left,
+                    right,
+                } => {
+                    for side in [*left, *right] {
+                        if is_binder(side) {
+                            constrained = true;
+                        } else {
+                            pending.push(side);
+                        }
+                    }
+                }
                 _ if is_binder(at) => other_read = true,
                 _ => pending.extend(node.children()),
             }
@@ -2080,7 +2102,7 @@ impl Clocks<'_> {
                     [PlaceStep::Field(name), PlaceStep::Slot(shape)]
                         if name == field && shape.max.is_some()))
         );
-        presence && !(other_read && bounded)
+        presence && !(constrained && !other_read && bounded)
     }
 
     /// Whether `id` of `form` is `r.f`, `f` an `Option<Clock>` field, or

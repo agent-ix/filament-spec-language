@@ -4914,7 +4914,21 @@ fn a_selector_outside_a_ref_is_not_checked_yet() {
     let body = format!(
         "{UNITS}{DENSE}post Reset using v on Config::Call::send {{ self.ts[1].x = 0 ms }}\n"
     );
-    let refusals = check(&document, &body).expect_err("the slot is unproved");
+    // The operation's frame names the collection it writes (FR-103).
+    let mut framed: Value = serde_json::from_slice(&document).expect("JSON");
+    for operation in framed["types"][1]["operations"]
+        .as_array_mut()
+        .expect("operations")
+    {
+        if operation["name"] == "send" {
+            operation["frame"]["modifies"]
+                .as_array_mut()
+                .expect("frame")
+                .push(json!(call("ts")));
+        }
+    }
+    let framed = serde_json::to_vec(&framed).expect("JSON");
+    let refusals = check(&framed, &body).expect_err("the slot is unproved");
     let [refusal] = refusals.as_slice() else {
         panic!("one refusal expected: {refusals:?}");
     };
@@ -4925,7 +4939,7 @@ fn a_selector_outside_a_ref_is_not_checked_yet() {
         panic!("{cause:?}");
     };
     let (text, _) = crate::model_operations::config_unit_with_profiles(
-        &document,
+        &framed,
         crate::timed_model::TEMPORAL,
         &body,
     );
