@@ -156,8 +156,7 @@ impl BoundedTranslation {
         shape: Option<(BoundedKind, u64, FormulaNodeId)>,
         context: &StateContext,
     ) -> Result<Self, TranslationRefusal> {
-        let (kind, upper, atom) = shape
-            .ok_or(TranslationRefusal::NotTranslated(NotTranslated))?;
+        let (kind, upper, atom) = shape.ok_or(TranslationRefusal::NotTranslated(NotTranslated))?;
         // A bounded clause is keyed under "origin" or "each", an
         // infinite-trace one under "infinite" (FR-338); an `on each` clause
         // with a `when` guard is keyed "each-when" under every profile.

@@ -371,7 +371,12 @@ fn over_instance_keys_and_ordinary_reference_arguments_have_distinct_context_for
 #[test]
 fn qualified_bounded_monitor_reads_a_root_atom_as_eventually_at_horizon_zero() {
     let atom = fixture(EVENT, "c: Counter", "on origin", "holds(true)");
-    let explicit = fixture(EVENT, "c: Counter", "on origin", "eventually[0,0] holds(true)");
+    let explicit = fixture(
+        EVENT,
+        "c: Counter",
+        "on origin",
+        "eventually[0,0] holds(true)",
+    );
     let infinite = fixture(
         crate::temporal_trace::INFINITE,
         "c: Counter",
@@ -440,8 +445,14 @@ fn qualified_bounded_monitor_reads_a_root_atom_as_eventually_at_horizon_zero() {
     .unwrap();
     let spelled_rejected = spelled.start(false).unwrap();
     let spelled_accepted = spelled.start(true).unwrap();
-    assert_eq!(spelled.state(spelled_rejected).unwrap(), BoundedState::Reject);
-    assert_eq!(spelled.state(spelled_accepted).unwrap(), BoundedState::Accept);
+    assert_eq!(
+        spelled.state(spelled_rejected).unwrap(),
+        BoundedState::Reject
+    );
+    assert_eq!(
+        spelled.state(spelled_accepted).unwrap(),
+        BoundedState::Accept
+    );
 
     // The other consumers of the shared classification read no bounded shape.
     assert!(fsl_eval::automaton::bounded_shape(&atom.clause).is_none());

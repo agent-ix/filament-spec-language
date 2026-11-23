@@ -69,3 +69,20 @@ Re-reviewed at head 8f976fddaa9da8f11c9fb09d2535c0e32e1a71ab (rebased on main 2b
 | FND-004 | fixed | certificate_graph derives the profile from the original graph (`choosy` = some state with more than one choice) after classification, so an undefined predicate still reports first. A DTMC document on a subject with a choice and an MDP document on a one-distribution subject both refuse ObjectiveMismatch; a workload under the MDP profile refuses ObjectiveMismatch; the mutation test asserts error:ObjectiveMismatch in both directions. Producer: probability_proof_document retries the MDP profile on ObjectiveMismatch for until/always claims only. No DTMC-eligible subject can be issued the MDP profile, because the MDP certificate_graph refuses a choice-free subject with ObjectiveMismatch. That satisfies FR-201 Admission ("An eligible DTMC producer SHALL retain the DTMC profile"). |
 | FND-005 | fixed | The peak is charged once, up front, and the per-item charge is gone. The 64-split unit test would fail at the exact amount if any per-item charge remained. |
 | FND-006 | fixed | The pin test asserts Err(ProbabilityWitnessError::Graph(ExactProbabilityGraphError::ExpansionRefused)). |
+
+## New findings (disposition pass 3)
+
+Re-reviewed at head 1c5aa755680ace647188f84b49148cc35522818f (rebased on main 27044cf5e9). `git range-diff` shows the seven earlier commits unchanged, so this pass reviews the round commit 1c5aa75568. The committed reviews/ files match my d2 files byte for byte. No cargo command was run. The pinned 1.98 rustfmt (1.9.0-stable 48a229ceae) was run with --check on every .rs file in the PR diff, and on the main versions of the same files for comparison.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-010 | low | end_component_work_is_linear_in_the_states_and_bounded_by_the_work_ceiling cannot fail on the code before this round. The removed count-sized vectors were never metered: the old code also called visit() once per set member, adjacency action and Tarjan step. Its least work ceiling was the same linear number, so `least < 16 * count` held before the fix too, and the comment "Count-sized vectors per item would cost count * count / 2 visits" is wrong. The fix is right by reading; the test does not show it. | fsl-replay/src/probability_certificate/cyclic_state.rs:659-691 |
+| FND-011 | low | Lines added by the PR's first commits are not rustfmt-formatted under the pinned 1.98 toolchain, so `cargo fmt --all -- --check` (ci.yml:28, Makefile:60) reports them. The main versions of both files are clean. The spots: the `shape.ok_or(...)` chain at fsl-eval/src/automaton/bounded.rs:156 (should be joined onto one line), and the `fixture(...)` call and two `assert_eq!` lines at fsl-eval/tests/it/qualified_bounded_monitor.rs:371 and :440 (should be wrapped). | fsl-eval/src/automaton/bounded.rs:156; fsl-eval/tests/it/qualified_bounded_monitor.rs:371,440 |
+
+## Dispositions (round 3)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-007 | fixed | Every per-item vector (member, adjacency, the Tarjan arrays via strongly_connected(&roots, &adjacent, set.len(), ...), roots, and mapping parts back) is now sized to the item's set, with membership by binary search on the sorted set. Per-item cost is proportional to |set| times (degree * log |set|), and visit() runs at least once per member in the prune pass, so the work meter bounds the stage up to the per-edge factor the earlier code also had. No O(count) allocation per item remains. The new test does not show this: FND-010. |
+| FND-008 | fixed | document/mdp.rs is clean under the pinned 1.98 rustfmt, with the guard wrapped. The PR's own hunks in tools/fsl-probability-check/tests/it/bounded.rs (1370-1414) are clean. The remaining diffs at lines 84 and 95 are identical on origin/main and are not this PR's. Other files (fsl-eval): FND-011. |
+| FND-009 | fixed | end_components' doc comment now sits on end_components, and end_component_peak keeps its own. |

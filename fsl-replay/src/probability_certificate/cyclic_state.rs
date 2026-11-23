@@ -300,6 +300,21 @@ fn end_component_peak(count: usize, edges: usize) -> usize {
 /// indexes. A decided state has no action, so it is its own absorbing
 /// component and appears in none of them. Under one distribution per state
 /// these are the bottom strongly connected components.
+/// Test-only count of the elements the per-item vectors allocate, so a test
+/// can tell a set-sized refinement from a count-sized one.
+#[cfg(test)]
+thread_local! {
+    static ALLOCATED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn note_allocated(elements: usize) {
+    ALLOCATED.with(|total| total.set(total.get() + elements));
+}
+
+#[cfg(not(test))]
+fn note_allocated(_elements: usize) {}
+
 fn end_components(
     states: &BTreeMap<ProbabilityProductKey, CheckerState>,
     limits: ProbabilityDocumentLimits,
@@ -351,6 +366,7 @@ fn end_components(
     // Every vector below is sized to the work item's set, so a split into many
     // components costs time proportional to the sets, which `visit` meters.
     while let Some(mut set) = work.pop() {
+        note_allocated(set.len());
         let mut member = vec![true; set.len()];
         let local = |set: &[usize], state: usize| set.binary_search(&state).ok();
         loop {
@@ -376,11 +392,13 @@ fn end_components(
                 break;
             }
             set = kept;
+            note_allocated(set.len());
             member = vec![true; set.len()];
         }
         if set.is_empty() {
             continue;
         }
+        note_allocated(set.len());
         let mut adjacent = vec![Vec::new(); set.len()];
         for (at, state) in set.iter().enumerate() {
             for action in &actions[*state] {
@@ -419,6 +437,7 @@ fn strongly_connected(
     cancel: &Cancel,
     meter: &mut filament_exact::Meter,
 ) -> Result<Vec<Vec<usize>>, ProbabilityDocumentError> {
+    note_allocated(3 * count);
     let mut number = vec![usize::MAX; count];
     let mut low = vec![0_usize; count];
     let mut on_stack = vec![false; count];
@@ -656,10 +675,9 @@ mod tests {
         ));
     }
 
-    /// FR-201-AC-63: the work budget bounds end-component decomposition. A
-    /// line of self-looping states splits into one work item per state; the
-    /// per-item cost follows the item's set, so the total stays linear in the
-    /// state count instead of quadratic.
+    /// FR-201-AC-63: the metered work of decomposing a line of self-looping
+    /// states is linear in the state count, and the work ceiling stops it
+    /// with the typed accounting cause one unit below the least amount.
     #[test]
     fn end_component_work_is_linear_in_the_states_and_bounded_by_the_work_ceiling() {
         let count = 512;
@@ -683,11 +701,28 @@ mod tests {
             run_with_work(&states, storage, Some(least - 1)),
             Err(ProbabilityDocumentError::Accounting(_))
         ));
-        // Count-sized vectors per item would cost count * count / 2 visits.
         assert!(
             least < 16 * count as u64,
             "least work ceiling {least} is not linear in {count} states"
         );
+    }
+
+    /// The line splits into one work item per state. Per-item vectors sized
+    /// to the item's set allocate O(count) elements in total; count-sized
+    /// vectors per item would allocate on the order of count * count.
+    #[test]
+    fn end_component_vectors_are_sized_to_each_work_item_not_to_the_graph() {
+        let count = 512;
+        let states = line(count);
+        ALLOCATED.with(|total| total.set(0));
+        let storage = end_component_peak(count, 2 * count - 1) as u64;
+        run(&states, storage).unwrap();
+        let allocated = ALLOCATED.with(|total| total.get());
+        assert!(
+            allocated <= 16 * count,
+            "{allocated} elements allocated for {count} states"
+        );
+        assert!(allocated >= count, "the counter observes the allocations");
     }
 
     #[test]
