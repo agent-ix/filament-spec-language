@@ -224,7 +224,7 @@ impl Fixture {
     fn graph(&self) -> Vec<Reached> {
         let mut result = None;
         self.with_routes(true, |source, native| {
-            let source = fill::sc_system(source);
+            let source = fill::concrete_sc_system(source);
             let native = ProtocolSystem::new_package(
                 ModelSystem::new(native.model.simulation.clone()).expect("native model"),
                 native,
@@ -355,7 +355,7 @@ fn sc_attempt_correlation_preserves_candidate_results_poststates_and_both_end_re
         assert_eq!(fill::v(graph[*next].state.model(), "c"), expected);
     }
     fixture.with_routes(true, |source, native| {
-        let source = fill::sc_system(source);
+        let source = fill::concrete_sc_system(source);
         let native = ProtocolSystem::new_package(
             ModelSystem::new(native.model.simulation.clone()).expect("model"),
             native,
@@ -403,7 +403,7 @@ fn sc_attempt_undefined_end_filters_only_its_candidate_and_retains_findings() {
         filament_semantic_value::checking::CheckMode::Kernel,
     );
     fixture.with_routes(true, |source, native| {
-        let source = fill::sc_system(source);
+        let source = fill::concrete_sc_system(source);
         let native = ProtocolSystem::new_package(
             ModelSystem::new(native.model.simulation.clone()).expect("model"),
             native,
@@ -502,7 +502,7 @@ fn false_send_and_receive_premises_disable_only_their_candidate() {
         filament_semantic_value::checking::CheckMode::Kernel,
     );
     undefined.with_routes(true, |source, native| {
-        let source = fill::sc_system(source);
+        let source = fill::concrete_sc_system(source);
         let native = ProtocolSystem::new_package(
             ModelSystem::new(native.model.simulation.clone()).expect("model"),
             native,
@@ -554,7 +554,7 @@ fn correlation_only_capture_and_prior_binder_reads_remain_live_after_an_earlier_
     ));
     assert!(has_step(&graph, StepKind::Receive));
     fixture.with_routes(true, |source, native| {
-        let source = fill::sc_system(source);
+        let source = fill::concrete_sc_system(source);
         let native = ProtocolSystem::new_package(ModelSystem::new(native.model.simulation.clone()).expect("model"), native, Sc).expect("native");
         for system in [&source, &native] {
             let reached = fill::reachable(system);

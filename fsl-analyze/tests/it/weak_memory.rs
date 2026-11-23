@@ -205,6 +205,16 @@ impl Case {
         written.obligation(index).cloned().expect("an obligation")
     }
 
+    /// The concrete protocol system of `SB` under `memory`: state keys keep
+    /// every message ordinal and delivery identity (FR-205).
+    pub(crate) fn concrete_system<M: MemoryModel>(
+        &self,
+        selection: &[MemorySelection],
+        memory: M,
+    ) -> Result<ProtocolSystem<'_, M>, ProtocolRefusal> {
+        Self::concrete_build(&self.subject(selection), memory)
+    }
+
     /// The protocol system of `SB` under `memory`, using the checker's cycle keys.
     pub(crate) fn system<M: MemoryModel>(
         &self,
@@ -293,13 +303,19 @@ impl Case {
         (outcome, record)
     }
 
-    fn build<'s, M: MemoryModel>(
+    fn concrete_build<'s, M: MemoryModel>(
         subject: &ProtocolSubject<'s>,
         memory: M,
     ) -> Result<ProtocolSystem<'s, M>, ProtocolRefusal> {
         let model = ModelSystem::new(subject.model.simulation.clone()).expect("admits");
         ProtocolSystem::new(model, subject, memory)
-            .map(|system| system.with_cycle_keys(BTreeSet::new()))
+    }
+
+    fn build<'s, M: MemoryModel>(
+        subject: &ProtocolSubject<'s>,
+        memory: M,
+    ) -> Result<ProtocolSystem<'s, M>, ProtocolRefusal> {
+        Self::concrete_build(subject, memory).map(|system| system.with_cycle_keys(BTreeSet::new()))
     }
 
     /// EN-1 over `SB` with `item`, the selection and the store buffer bound.

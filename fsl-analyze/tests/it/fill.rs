@@ -770,12 +770,10 @@ pub(crate) fn concrete_sc_system<'a>(subject: &ProtocolSubject<'a>) -> ProtocolS
     ProtocolSystem::new(model, subject, Sc).expect("the protocol system builds")
 }
 
-/// The system of `subject` under `Sc`, using the checker's cycle keys.
+/// The system of `subject` under `Sc`, using the checker's cycle keys, so an
+/// exhaustive search closes over duplicate and lose loops.
 pub(crate) fn sc_system<'a>(subject: &ProtocolSubject<'a>) -> ProtocolSystem<'a, Sc> {
-    let model = ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
-    ProtocolSystem::new(model, subject, Sc)
-        .expect("the protocol system builds")
-        .with_cycle_keys(BTreeSet::new())
+    concrete_sc_system(subject).with_cycle_keys(BTreeSet::new())
 }
 
 /// The `v` of the cell `object` at `state`.
