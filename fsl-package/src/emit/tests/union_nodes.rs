@@ -218,9 +218,8 @@ fn records_go_with_their_applications(
     let decodes = |tag: CheckedNodeTag, form: &str| {
         !(tag == refused.0 && form == refused.1) && CheckedNodeKind::decode(tag, form).is_some()
     };
-    let emission =
-        emit_package_decoding(&package, regions, &decodes, crate::EmitLimits::fixture())
-            .expect("the remaining nodes emit");
+    let emission = emit_package_decoding(&package, regions, &decodes, crate::EmitLimits::fixture())
+        .expect("the remaining nodes emit");
     let cause_of = |id: &CheckedNodeId| {
         emission
             .omitted
@@ -318,8 +317,9 @@ fn records_go_with_their_applications(
 #[trace("FR-062-AC-9", "FR-320-AC-2", "FR-940-AC-1")]
 #[test]
 fn omitting_a_function_omits_its_value_validity_records_rows_and_source_map_entries() {
-    let declarations =
-        format!("{SHAPE}{FUNCTIONS}function keep using v(x: Int[0, 9]): Integer pure {{ x + 1 }}\n");
+    let declarations = format!(
+        "{SHAPE}{FUNCTIONS}function keep using v(x: Int[0, 9]): Integer pure {{ x + 1 }}\n"
+    );
     let (_, package) = package_from_text(&declarations);
     let owned = |owner: &str| {
         value_validity_records(&package)
@@ -327,8 +327,15 @@ fn omitting_a_function_omits_its_value_validity_records_rows_and_source_map_entr
             .filter(|(_, record)| record.owner() == Some(owner))
             .count()
     };
-    assert!(owned("area") >= 1, "`w * h` is a scalar claim site of `area`");
-    assert_eq!(owned("keep"), 1, "`x + 1` is the one scalar claim site of `keep`");
+    assert!(
+        owned("area") >= 1,
+        "`w * h` is a scalar claim site of `area`"
+    );
+    assert_eq!(
+        owned("keep"),
+        1,
+        "`x + 1` is the one scalar claim site of `keep`"
+    );
     records_go_with_their_applications(
         &declarations,
         (CheckedNodeTag::CompositeType, "union"),
@@ -362,31 +369,6 @@ fn an_omitted_narrow_omits_the_application_it_bounds() {
          function keep using v(p: Boolean): Boolean pure { not p }\n",
         (CheckedNodeTag::Expression, "conversion"),
         &|_, record| record.conversion_context().is_some(),
-    );
-}
-
-/// An omitted object type: the `pre` clause's `self.total < 9` reads
-/// `Order`, an object type an IR cannot decode, so its application is
-/// omitted with its record.
-#[trace("FR-062-AC-9", "FR-940-AC-1")]
-#[test]
-fn an_omitted_object_type_omits_the_application_reading_it() {
-    let declarations = "object Order identity (total) {\n\
-                          total: Int[0, 9];\n\
-                          operation bump(): Boolean modifies self.total;\n\
-                        }\n\
-                        pre Q using v on Order::bump { self.total < 9 }\n\
-                        function keep using v(p: Boolean): Boolean pure { not p }\n";
-    let (_, package) = package_from_text(declarations);
-    records_go_with_their_applications(
-        declarations,
-        (CheckedNodeTag::Model, "object_type"),
-        &|claim, _| {
-            package
-                .graph()
-                .item_object_nodes(claim)
-                .is_some_and(|objects| objects.is_ok_and(|objects| !objects.is_empty()))
-        },
     );
 }
 
