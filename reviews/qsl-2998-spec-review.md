@@ -38,6 +38,12 @@ outcome needs a decision (FND-002).
 | FND-002 | fixed | rules 24 to 26 refuse unsupported naming the join and the bound; no pending outcome |
 | FND-003 | fixed | rules 19 to 29 one requirement each |
 
-## Dispositions (fix round 2)
+## Dispositions (round 2)
 
-FND-004: rule 26 (was 27) adds "in the same iteration of every `repeat` the `parallel` runs in"; the old rule 25 is deleted and rules renumbered; rule 24 names the `stage_limit_exceeded` refusal; rule 25 states the package selection refusal; AC-37 and AC-38 test the iteration condition.
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-004 | fixed | rule 26 requires the same iteration of every repeat the parallel runs in; old rule 25 deleted and the package selection refusal stated as rule 25; one requirement per rule; AC-37, AC-38 in order. The code's nested-repeat gap against rule 26 is SR-3608001 FND-008 |
+
+## Dispositions (fix round 3)
+
+Rule 26 states the cancel condition; rules 27 to 30 state the iteration matching (same iteration of each repeat holding both, how each iteration is read, and that an undetermined iteration is not counted); rules 31 and 32 are the former 27 and 28. AC-39 tests them.

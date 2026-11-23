@@ -34,6 +34,18 @@ Coverage of the stated ACs is complete and exact; the missing cases are the ones
 | --- | --- | --- |
 | FND-001 | fixed | AC-32 (L, R under cancel; concurrent R), AC-33 (nested), AC-34 (label bound in library, batch and incremental), AC-35 (contradiction), AC-36 (package route) tests |
 
-## Dispositions (fix round 2)
+## New findings (disposition pass 2)
 
-Closed by FR-895-AC-37, AC-38 and the updated AC-34, AC-36; see `qsl-2998-code-review.md` "Dispositions (fix round 2)".
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | medium | No test puts a cancel `parallel` in a `repeat` nested in another `repeat`, the case rule 26 names ("every `repeat`") and SR-3608001 FND-008 breaks | fsl-analyze/tests/it/protocol_replay_mode.rs:2140-2340 |
+
+## Dispositions (round 2)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-002 | fixed | AC-37 (cancel parallel in a repeat body, batch and every prefix) and AC-38 (repeat inside a cancelling branch) tests |
+
+## Dispositions (fix round 3)
+
+Closed by FR-895-AC-39; see `qsl-2998-code-review.md` "Dispositions (fix round 3)".

@@ -49,11 +49,29 @@ cancel gives `R` satisfied; `L`, `Placed`, `R` gives `R` violated; probe R below
 | FND-002 | fixed | at most 10 labels, refused before any evaluation; mask takes at most 10 bits; tables built once per read and shared by every prefix |
 | FND-003 | fixed | package route refuses unsupported_construct/not-yet-implemented (AC-36), never leaves steps pending |
 
-## Dispositions (fix round 2)
+## New findings (disposition pass 2)
+
+Head c513f5ba2b32c6b8ad02a722b6c79589323b4a91 (code equal to 79f1ea77 in the coder's titan worktree). Titan: `--test it` filter
+101 passed, 0 failed, 0 ignored; `--lib a_refused_prefix` 2 passed. Probe N (scratch test, reverted, tree clean after).
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-008 | high | Nested repeats violate rule 26 ("the same iteration of every `repeat` the `parallel` runs in"): only the innermost `repeat` is matched by iteration, and steps after the inner `repeat` in the outer body go to the any-iteration set. With `repeat Outer { repeat Inner { parallel ... join any outstanding cancel } exhausted {}; event Q }`, the legitimate recording `L`, `R`, `L`, `R`, `Q`, `L`, `R`, `L`, `R`, `Q` gives every `L` and `R` of the second outer iteration `violated`, `unexpected`, because the first outer iteration's `Q` precedes them (probe N; prefixes monotone, last equals batch) | fsl-analyze/src/protocol_analysis/recording.rs:4335-4360 |
+| FND-009 | low | `predicate_join_tables` now `continue`s on the package route, relying on the package route having no `parallel`; if it ever admits one, `join_reached` finds no table and answers `false` for every subset, so the join is silently never reached. A `debug_assert!` or the selection refusal's invariant stated at the call keeps that loud | fsl-analyze/src/protocol_analysis/recording.rs:4441-4443 |
+
+## Dispositions (round 2)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-004 | fixed | a step after the parallel inside the repeat body counts only in the same iteration (iteration_index, carried through each case); AC-37 and AC-38 tests; probe R shape gives every L and R satisfied. Nested repeats are FND-008 |
+| FND-005 | fixed | rule 25 deleted; an evaluator fault refuses runtime_invariant/established-invariant-broken (FailedWithDetail naming the join), the existing internal-fault family |
+| FND-006 | fixed | label bound refused stage_limit_exceeded/work-budget-exceeded with fact predicate-join-label-bound, checked before any evaluation |
+| FND-007 | fixed | package-route arm deleted; rule 25 states the selection refusal that makes it unreachable; residual is FND-009 |
+
+## Dispositions (fix round 3)
 
 | Finding | Disposition |
 | --- | --- |
-| Probe R (cancel in a repeat body) | Fixed. `after_cancel` matches the observations after the `parallel` that sit inside the `repeat` body by iteration (`iteration_index`: the node's causal occurrence rank carried through each `case` to the choice's takings, the pairing the repeat rules use); those outside the body match as before. Tests `a_cancel_in_a_repeat_body_cancels_per_iteration` (legitimate two iterations satisfied in batch and every prefix, monotone, last equals batch; second `R` after the second `Placed` violated) and `a_repeat_inside_a_cancelling_branch_keeps_the_cancel_after_the_parallel` (FR-895-AC-37, AC-38). |
-| Dead failed-evaluation path | Removed rule 25. An evaluator fault now refuses as the existing `runtime_invariant`/`established-invariant-broken` (`FailedWithDetail`) instead of being swallowed. |
-| Label bound family | `stage_limit_exceeded`/`work-budget-exceeded` (declined, `Code::StageLimitExceeded`), fact `predicate-join-label-bound`, charged before any evaluation; rule 24, AC-34 and the tests updated. |
-| Unreachable package arm | Deleted: `predicate_join_tables` skips a package, which carries no `parallel`; rule 25 and AC-36 state the selection refusal that does exist. |
+| Probe N (nested repeats) | Fixed. `after_cancel` matches a step after the `parallel` per repeat: for every `repeat` whose body holds both the `parallel` and the step, both iterations must be determined and equal (`repeat_iteration`). With no repeat between, the iteration is the causal rank of the node taken through the cases; with an inner repeat between, it is the most times a step before the inner repeat in the body was observed before the step; where none exists the iteration is not determined and the step is not counted (a missed violation, never a false one), so Probe N stays satisfied. Test `a_cancel_in_nested_repeats_cancels_per_iteration_of_each` (FR-895-AC-39): with a step `P`, the two-iteration recording is satisfied in batch and every prefix and the last `R` after its own iteration's `Placed` is violated; without `P`, Probe N is satisfied; the outer body holds a `choice` (`Decide`) whose case is one of the matched steps. |
+| Package skip | The skip in `predicate_join_tables` states its invariant (the package route refuses the selection of a protocol with a `parallel`, rule 25). |
+| PR body | Refreshed to rules 19 to 32. |

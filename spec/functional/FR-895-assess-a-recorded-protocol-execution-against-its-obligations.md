@@ -195,14 +195,27 @@ and FR-894's duplicate kinds. Every causal-order verdict, `satisfied` or
 26. A step of a branch of a `parallel` under `outstanding cancel` SHALL make
     the verdict `violated`, cause `unexpected`, when an observation of a step
     after the `parallel`, which needs its join, or of `finish`, in the same
-    protocol instance and in the same iteration of every `repeat` the
-    `parallel` runs in, causally precedes it: the join step cancels the
+    protocol instance, causally precedes it: the join step cancels the
     running branches and a cancelled thread takes no further step (ADR-027
     ST-7).
-27. A step of a branch of a `parallel` SHALL NOT be made `violated` for the
+27. A step after the `parallel` that lies in the body of a `repeat` the
+    `parallel` runs in SHALL count toward rule 26 only when it runs in the
+    same iteration of that `repeat` as the cancelled step, for each such
+    `repeat`.
+28. The iteration of a step of a `repeat` with no other `repeat` between
+    them SHALL be the step's rank among the observations of its node in
+    causal order, taken through each `case` to that case's rank among the
+    `choice`'s takings.
+29. The iteration of a step of a `repeat` with another `repeat` between them
+    SHALL be the most times any step before that other `repeat` in the body,
+    in program order, was observed causally before the step.
+30. The assessment SHALL NOT count a step toward rule 26 when either
+    iteration is not determined, which is when no step precedes the inner
+    `repeat` in the body: a missed violation, never a false one.
+31. A step of a branch of a `parallel` SHALL NOT be made `violated` for the
     cancel when no such observation precedes it, though the join's policy
     holds, because the join step may fire at any later point (ADR-027 CI-3).
-28. A step of a branch of a `parallel` under `outstanding continue` SHALL NOT
+32. A step of a branch of a `parallel` under `outstanding continue` SHALL NOT
     be made `violated` for the cancel.
 
 
@@ -279,6 +292,7 @@ looking like success, which FSpec FR-059-AC-3 requires.
 | FR-895-AC-36 | A protocol with a predicate join analysed from a package read from its bytes settles `unsupported`, `unsupported_construct`/`not-yet-implemented`, while the source route assesses the recording. | Test (TC-2531) |
 | FR-895-AC-37 | Over a `repeat` whose body begins with a `parallel` `join any [left, right] outstanding cancel` of `L` and `R`, followed by `Placed`, `Got` and the `Decide` choice, the closed-order recording `L`, `R`, `Placed`, `Got`, `yes`, `L`, `R`, `Placed`, `Got`, `yes` gives every `L` and `R` enabledness obligation `satisfied` in batch and in every incremental prefix, with no obligation changing from `violated` or from `satisfied` to `pending` and the last prefix equal to batch; the same recording with the second `R` after the second `Placed` gives that `R` `violated`, cause `unexpected`, and the other `L` and `R` `satisfied`. | Test (TC-2531) |
 | FR-895-AC-38 | Over a `parallel` `join any [left, right] outstanding cancel` whose branch `left` holds a `repeat` of `L`, followed by `Placed`, the recording `L`, `L`, `Placed` gives both `L` `satisfied` and `L`, `Placed`, `L` gives the second `L` `violated`, cause `unexpected`. | Test (TC-2531) |
+| FR-895-AC-39 | Over an outer `repeat` whose body holds a step `P`, an inner `repeat` of a `parallel` `join any [left, right] outstanding cancel` of `L` and `R`, then `Placed`, `Got` and the `Decide` choice, the recording `P`, `L`, `R`, `L`, `R`, `Placed`, `Got`, `yes`, twice, gives every `L` and `R` enabledness obligation `satisfied` in batch and in every incremental prefix (no obligation leaving `violated` or going from `satisfied` to `pending`, the last prefix equal to batch); with the second outer iteration `P`, `L`, `R`, `L`, `Placed`, `R` the last `R` is `violated`, cause `unexpected`, and the other seven `L` and `R` `satisfied`; with no `P` before the inner `repeat` the same two-iteration recording leaves every `L` and `R` `satisfied`, the outer iteration of an inner step being not determined. | Test (TC-2531) |
 
 ## Dependencies
 
