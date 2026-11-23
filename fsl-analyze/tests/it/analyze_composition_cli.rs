@@ -1517,22 +1517,32 @@ fn assert_package_pending(run: &crate::analyze_cli_support::Run, detail: &str) {
     );
 }
 
-/// FR-1044 "Current system behavior" (QSL-2739): a `package` handoff of a
-/// unit with composition declarations, requested with no `items`, is settled
-/// whole at the missing native before-work permission boundary and settles
-/// no item, `Local` included.
+/// FR-1044-AC-10, FR-940: a `package` handoff of a unit with composition
+/// declarations, requested with no `items`, writes the source request's
+/// items, records and exit: every composition not under `assume-guarantee`
+/// (the cyclic ones settled by their cycle), each derived premise item once
+/// and the subject's derived item.
+#[trace("FR-1044-AC-10")]
 #[test]
-fn the_package_default_items_refuse_a_composition() {
+fn the_package_default_items_settle_every_composition_as_the_source_does() {
     let ws = Workspace::new("compose-package-default");
     let path = request_for(&ws, &system(), BOUNDED, None);
-    assert_package_pending(
-        &analyze(&package_handoff(&ws, &path)),
-        ": composition owning execution is pending missing native before-work permission at",
+    let by_source = analyze(&path);
+    let by_package = analyze(&package_handoff(&ws, &path));
+    let items = by_source.document()["items"].clone();
+    assert!(
+        items.as_array().is_some_and(|items| items
+            .iter()
+            .any(|item| item["request"]["kind"] == "composition")),
+        "the source request selects compositions: {items}"
     );
+    assert_eq!(by_package.document()["items"], items);
+    assert_eq!(by_package.exit, by_source.exit);
 }
 
-/// FR-1044 "Current system behavior" (QSL-2739): an authenticated named
-/// composition names the missing owning-work permission; an unresolved name
+/// FR-940: the package route has no path yet for an explicit item naming a
+/// composition (QSL-2917): an authenticated named composition names the
+/// missing owning-work permission; an unresolved name
 /// remains an unnamed claim. Neither selection settles `unknown-claim`.
 #[test]
 fn a_package_item_naming_a_composition_is_refused() {
@@ -1551,8 +1561,7 @@ fn a_package_item_naming_a_composition_is_refused() {
     }
 }
 
-/// FR-1044 "Current system behavior" (QSL-2739): a name the package carries a
-/// row for still resolves beside a composition; only the unresolved names are
+/// FR-940: a name the package carries a row for still resolves beside a composition; only the unresolved names are
 /// refused.
 #[test]
 fn a_package_item_naming_a_local_clause_beside_a_composition_settles() {
@@ -1567,10 +1576,10 @@ fn a_package_item_naming_a_local_clause_beside_a_composition_settles() {
     assert_eq!(run.exit, 0, "{document}");
 }
 
-/// FR-1044-AC-10, second half, once the package route reads a composition:
-/// the same items, records and exit code as the source request.
+/// FR-1044-AC-10, second half: over the unit's `package` handoff the same
+/// items, records and exit code as the source request.
+#[trace("FR-1044-AC-10")]
 #[test]
-#[ignore = "QSL-2917: the package route answers a composition unit unsupported_construct/not-yet-implemented (exit 21, no items) where the source route settles items; needs the package-consumer composition API (FR-1044-AC-10), own ticket pending"]
 fn the_package_route_settles_the_same_items() {
     let ws = Workspace::new("compose-ac10-package-equal");
     let body = format!(
@@ -1587,6 +1596,104 @@ fn the_package_route_settles_the_same_items() {
         by_package.document()["items"],
         by_source.document()["items"]
     );
+}
+
+/// The default request over `test/system-default` with `Capped`'s formula
+/// `capped`, run from source and over its `package` handoff.
+fn default_runs(
+    name: &str,
+    capped: &str,
+) -> (
+    crate::analyze_cli_support::Run,
+    crate::analyze_cli_support::Run,
+) {
+    let ws = Workspace::new(name);
+    let body = format!(
+        "{}{}",
+        clause_text("Local", "", BOUNDED),
+        compose("Sys", "interface", "")
+    );
+    let path = request_for(&ws, &body, capped, None);
+    let handoff = package_handoff(&ws, &path);
+    (analyze(&path), analyze(&handoff))
+}
+
+/// Asserts the item at `index` is written the same on both routes, request,
+/// record and every other member, and that both runs exit the same.
+fn assert_same_item(
+    (by_source, by_package): &(
+        crate::analyze_cli_support::Run,
+        crate::analyze_cli_support::Run,
+    ),
+    index: usize,
+) -> Value {
+    let source = by_source.document()["items"][index].clone();
+    assert!(source.is_object(), "{}", by_source.document());
+    assert_eq!(by_package.document()["items"][index], source);
+    assert_eq!(by_package.exit, by_source.exit);
+    source
+}
+
+/// FR-1044-AC-10, FR-940: the authored clause `Local` (index 0) is written
+/// the same over the `package` handoff.
+#[trace("FR-1044-AC-10")]
+#[test]
+fn the_package_default_clause_item_matches_the_source() {
+    let item = assert_same_item(&default_runs("compose-ac10-clause", BOUNDED), 0);
+    assert_eq!(item["claim_name"], "Local", "{item}");
+    assert_eq!(label(&item), "proved", "{item}");
+}
+
+/// FR-1044-AC-10: the composition `Sys` (index 1), with its derived
+/// `premises` and `assumptions`, is written the same over the `package`
+/// handoff: `unsupported` at negotiation, naming `composition`.
+#[trace("FR-1044-AC-10")]
+#[test]
+fn the_package_default_composition_item_matches_the_source() {
+    let item = assert_same_item(&default_runs("compose-ac10-composition", BOUNDED), 1);
+    assert_eq!(item["claim_name"], "Sys", "{item}");
+    assert_unsupported_composition(&item);
+    assert_eq!(item["request"]["assumptions"], json!([[], []]), "{item}");
+}
+
+/// FR-1044-AC-10, FR-620-AC-5: the subject's derived deadlock-freedom item
+/// (index 2) is written the same over the `package` handoff.
+#[trace("FR-1044-AC-10")]
+#[test]
+fn the_package_default_derived_item_matches_the_source() {
+    let item = assert_same_item(&default_runs("compose-ac10-derived", BOUNDED), 2);
+    assert_eq!(
+        item["request"]["temporal"]["item_kind"], "deadlock-freedom",
+        "{item}"
+    );
+}
+
+/// FR-1044-AC-10: the premise items `Bounded` and `Capped` (indices 3 and 4),
+/// each run over its own component package, are written the same over the
+/// `package` handoff, naming that package.
+#[trace("FR-1044-AC-10")]
+#[test]
+fn the_package_default_premise_items_match_the_source() {
+    let runs = default_runs("compose-ac10-premises", BOUNDED);
+    for (index, name, package) in [(3, "Bounded", "test/part-a"), (4, "Capped", "test/part-b")] {
+        let item = assert_same_item(&runs, index);
+        assert_eq!(item["claim_name"], name, "{item}");
+        assert_eq!(item["package"], package, "{item}");
+        assert_eq!(label(&item), "proved", "{item}");
+    }
+}
+
+/// FR-1044-AC-10 with AC-9's refuted `Capped`: the premise's counterexample,
+/// replayed over its component package, and every other item are written
+/// the same over the `package` handoff.
+#[trace("FR-1044-AC-10")]
+#[test]
+fn the_package_default_refuted_premise_matches_the_source() {
+    let runs = default_runs("compose-ac10-refuted", "always holds(c.value <= 2)");
+    let capped = assert_same_item(&runs, 4);
+    assert_eq!(label(&capped), "refuted", "{capped}");
+    assert!(capped["counterexample"].is_object(), "{capped}");
+    assert_eq!(runs.1.document()["items"], runs.0.document()["items"]);
 }
 
 /// FSpec FR-322-AC-520 (NI-25, NI-27, NI-28) through `analyze`: the held

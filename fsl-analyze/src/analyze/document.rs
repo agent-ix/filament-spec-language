@@ -1653,7 +1653,7 @@ pub fn resolve_items(
 ) -> Vec<ResolvedItem> {
     match selections {
         Some(selections) => {
-            let compositions = composition_item::Context {
+            let mut compositions = composition_item::Context {
                 package,
                 subject,
                 registry,
@@ -1676,8 +1676,15 @@ pub fn resolve_items(
             }
             // FR-1044: the premise items follow the caller's items.
             let first = resolved.len();
-            let derived =
-                composition_item::premise_items(&compositions, premises, &mut resolved, first);
+            let derived = match composition_item::premise_items(
+                &mut compositions,
+                premises,
+                &mut resolved,
+                first,
+            ) {
+                Ok(derived) => derived,
+                Err(never) => match never {},
+            };
             resolved.extend(derived);
             resolved
         }
@@ -1690,7 +1697,7 @@ mod held_identity;
 mod package_run;
 pub(crate) mod package_value;
 
-pub use composition_item::CompositionClaim;
+pub use composition_item::{ComponentOwner, CompositionClaim};
 pub use held_identity::HeldIdentityError;
 
 pub use package_run::{
@@ -3101,7 +3108,7 @@ fn default_items(
     // place after those with one.
     nodes.sort_by_cached_key(|node| position(node));
     let mut resolved = Vec::new();
-    let compositions = composition_item::Context {
+    let mut compositions = composition_item::Context {
         package,
         subject,
         registry,
@@ -3191,7 +3198,11 @@ fn default_items(
     };
     resolved.extend(derived);
     let first = resolved.len();
-    let written = composition_item::premise_items(&compositions, premises, &mut resolved, first);
+    let written =
+        match composition_item::premise_items(&mut compositions, premises, &mut resolved, first) {
+            Ok(written) => written,
+            Err(never) => match never {},
+        };
     resolved.extend(written);
     resolved
 }
@@ -3818,6 +3829,18 @@ pub fn settle_run(
             family: &|kind, claim| crate::claim_family::claim_family(package, kind, claim),
         },
     )?;
+    // FR-1044: each component item runs over the checked package of its
+    // component, a dependency of the request's package.
+    let components = components
+        .into_iter()
+        .map(|(index, identity)| {
+            fsl_semantics::library::LibraryName::new(&identity)
+                .ok()
+                .and_then(|library| package.dependencies().get(&library).cloned())
+                .map(|component| (index, component))
+                .ok_or(AnalyzeDocumentError::Fault)
+        })
+        .collect::<Result<BTreeMap<_, _>, _>>()?;
     let mut outcome = super::request::analyze_bound(
         &super::RunInput::source(package),
         &binding,
@@ -4036,8 +4059,9 @@ struct ItemReads<'r> {
 /// items negotiation ran for that no route reads, the items settled
 /// without running, each claim item's echo and the simulation items.
 struct Negotiation {
-    /// The checked package each component item is analyzed over (FR-1044).
-    components: BTreeMap<RequestIndex, std::sync::Arc<CheckedPackage>>,
+    /// The identity of the component package each component item is
+    /// analyzed over (FR-1044).
+    components: BTreeMap<RequestIndex, String>,
     /// Each routed composition's component-guarantee entries and their items
     /// (FR-1044): its provider's `proved` stands only when every one of them
     /// settled `proved`.
@@ -4079,12 +4103,12 @@ fn negotiate_items(
             ResolvedItem::Composition(derived) => {
                 let CompositionClaim {
                     claim,
-                    package,
+                    owner,
                     settled,
                     required,
                     components: named,
                 } = *derived;
-                (claim, package, settled, required, named)
+                (claim, owner, settled, required, named)
             }
         };
         let ResolvedClaim {
@@ -4099,7 +4123,7 @@ fn negotiate_items(
             .request_item_wire(&subject)
             .map_err(|_| AnalyzeDocumentError::Fault)?;
         let owning = match &owner {
-            Some(package) => owning_model(package, &item.claim).map(str::to_owned),
+            Some(owner) => owner.owning_model.clone(),
             None => (reads.owner)(&item.claim),
         };
         let identity = owning
@@ -4115,9 +4139,7 @@ fn negotiate_items(
                 identity,
                 required: item.options.required,
                 scoped: has_activation_scope(item.kind),
-                dependency: owner
-                    .as_ref()
-                    .map(|package| package.graph().package_name().to_owned()),
+                dependency: owner.as_ref().map(|owner| owner.identity.clone()),
                 components: named,
             },
         );
@@ -4158,7 +4180,7 @@ fn negotiate_items(
             _ => ItemKind::Formula,
         };
         let family = match &owner {
-            Some(package) => crate::claim_family::claim_family(package, temporal_kind, &item.claim),
+            Some(owner) => owner.family,
             None => (reads.family)(temporal_kind, &item.claim),
         };
         let inapplicable = family.is_none_or(|family| !item.kind.applies_to_declaration(family));
@@ -4182,8 +4204,8 @@ fn negotiate_items(
             );
             continue;
         }
-        if let Some(package) = owner {
-            components.insert(item.request_index, package);
+        if let Some(owner) = owner {
+            components.insert(item.request_index, owner.identity);
         }
         if item.kind == Capability::Composition {
             gates.insert(item.request_index, required);

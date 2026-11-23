@@ -20,6 +20,7 @@ them. For spec-only changes it prints `NO CARGO: spec-only change.`
 | `fsl-analyze/src/analyze/exact.rs`, `exact/**` | Touched library module | Analyze IT `probabilistic` and `timed_` |
 | `fsl-analyze/src/zone_check/**` | Touched library module | Analyze IT `timed_`, plus the focused `timed_within_200` and `timed_within_201` regressions |
 | `fsl-analyze/src/analyze/request.rs`, `fsl-analyze/src/analyze.rs` | Touched library module | The four analyze IT engine filters plus the source/package parity modules `analyze_package_selection`, `analyze_request_wire`, `analyze_package_provider` |
+| `fsl-analyze/src/analyze/document.rs`, `fsl-analyze/src/analyze/document/**` | Touched library module | As `request.rs`, plus the composition parity module `analyze_composition_cli` (FR-1044-AC-10) |
 | Other `fsl-analyze/src/**` | Touched library module | All four analyze IT engine filters: `monitor_`, `timed_`, `hyper`, `probabilistic` |
 | `fsl-replay/src/**` | Touched replay library module | `fsl-command` IT `dependency_handoff`, `run_requirement_items`, `run_text_witness`; analyze IT `probabilistic_replay`, `bounded_probabilistic_replay`, `package_probabilistic` |
 | `fsl-inspect/src/**` | `fsl-inspect` render tests | `fsl-command` IT `run_text_witness` |

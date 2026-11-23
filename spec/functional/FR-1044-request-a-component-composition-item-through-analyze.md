@@ -361,25 +361,6 @@ two indices, over one shared set of premise items.
 
 ### Current system behavior
 
-The architecture ruling on QSL-2739 (PR #3287) lands this requirement with
-the following typed results where the system cannot yet deliver an AC. Each
-AC below stays as written and open on QSL-2739.
-
-- **AC-10, `package` handoff.** Today a `package` handoff of a unit that
-  declares compositions is admitted, and the package route reads no
-  composition term's slots or component packages. A request with no `items`
-  is settled whole as unsupported at the request stage, category
-  `unsupported`, `unsupported_construct`/`not-yet-implemented` naming the
-  `composition` rule, exit 21, with no item. The package carries a composition's
-  declaration name row, so an item naming it is settled the same way naming
-  the `declaration` family. An item whose name stays unresolved after ordinary
-  claim, declaration and model-alias resolution is settled as the
-  `unnamed-claim` family, never as `unknown-claim`. A name an ordinary row
-  carries resolves as usual, a non-claim declaration name is refused as
-  `declaration`, and a derived item
-  whose model name does not match settles `model-alias`. These typed results
-  are public; the source/package parity of AC-10 stays open and is deferred to the
-  package-consumer API lane, which owns the package form.
 - **Text mode.** Text rendering of the outcome belongs to the external driver.
   No test in this repository exercises it, and this requirement does not
   weaken the text half of the fixture.
@@ -449,6 +430,3 @@ verdict the criterion names.
   family) and FSpec FR-331 (the `composition` item with `premises` and
   `assumptions`, the `interface-mismatch` counterexample and the
   `provider-answer-unconfirmed` core-guard cause).
-- Remaining work: QSL-2739 (the registered provider path these criteria
-  describe). Source/package parity (AC-10) stays with the package-consumer API
-  lane.
