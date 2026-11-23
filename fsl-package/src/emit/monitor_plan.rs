@@ -1336,12 +1336,12 @@ pub(super) fn finish(
     retained: &Emission,
     changes: &[(CheckedNodeId, CheckedNodeId)],
     mut nodes: Vec<CheckedSemanticNodeV2>,
-    source_map: Vec<CheckedSourceMapEntry>,
+    mut source_map: Vec<CheckedSourceMapEntry>,
     inspection_source_map: fsl_foundation::source::provenance::PackageSourceMap,
     limits: crate::checked::EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
     let lock = base.lock().clone();
-    let requirement_rows = super::value_validity_requirements::carry_rows(base, &nodes)?;
+    let requirement_rows = super::value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
     let operand_rows = super::write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {
         graph_version: base.graph().graph_version.clone(),
@@ -1882,6 +1882,66 @@ mod tests {
             row.extent,
             filament_contract_model::RequirementExtent::Unbounded(_)
         )));
+    }
+
+    /// The claims of `owner`'s records, in the package's row order.
+    fn owner_claims(
+        package: &filament_contract_model::CheckedPackageV2,
+        owner: &CheckedNodeId,
+    ) -> Vec<CheckedNodeId> {
+        package
+            .requirement_items()
+            .iter()
+            .filter(|row| row.record.as_ref().is_some_and(|record| record.owner == *owner))
+            .map(|row| row.claim.clone())
+            .collect()
+    }
+
+    /// FSpec FR-825: one rekeyed entry holds records of applications that
+    /// call two different rekeyed entries. Renaming the callees changes those
+    /// applications' structural keys, which reorders the owner's rows; the
+    /// owner's `generated` record ordinals follow the new row order and the
+    /// strict reader admits the package. The two body assignments of the
+    /// callees are tried, and at least one must reorder the rows, so the test
+    /// cannot pass on an unchanged order.
+    #[ix_trace_rs::trace("FR-251-AC-9", "FR-940")]
+    #[test]
+    fn final_writer_renumbers_records_when_callee_renames_reorder_an_owner() {
+        let mut reordered = 0;
+        for (init_body, gap_body) in [("x + 1", "x * 1"), ("x * 1", "x + 1")] {
+            let rekeyed = rekeyed_final(&format!(
+                "function init using v(x: Int[0, 9]): Int[0, 10] pure {{ {init_body} }}\n\
+                 function on_gap using v(x: Int[0, 9]): Int[0, 10] pure {{ {gap_body} }}\n\
+                 function on_event using v(x: Int[0, 9]): Integer pure {{ (init(x) + 1) * (on_gap(x) + 2) }}\n\
+                 function on_watermark using v(x: Int[0, 9]): Integer pure {{ x - 1 }}\n",
+            ));
+            rekeyed.assert_rows_follow_the_rekey(records_of_entries(&rekeyed));
+            let at = declared(
+                &rekeyed.base.resolved_graph().nodes,
+                "on_event",
+                "the owner is declared",
+            )
+            .unwrap();
+            let old_owner = rekeyed.base.resolved_graph().nodes[at].node_id.clone();
+            let new_owner = rekeyed
+                .changes
+                .iter()
+                .find(|(old, _)| *old == old_owner)
+                .map(|(_, new)| new.clone())
+                .expect("the owner is a rekeyed entry");
+            let before = owner_claims(&rekeyed.base, &old_owner);
+            let after = owner_claims(&rekeyed.final_package, &new_owner);
+            assert_eq!(before.len(), 3, "three scalar operations in the owner");
+            let mut sorted_before = before.clone();
+            sorted_before.sort();
+            let mut sorted_after = after.clone();
+            sorted_after.sort();
+            assert_eq!(sorted_before, sorted_after, "the same claims, maybe reordered");
+            if before != after {
+                reordered += 1;
+            }
+        }
+        assert!(reordered > 0, "a callee rename reorders the owner's rows");
     }
 
     /// The number of base records whose owner is a rekeyed entry.

@@ -300,7 +300,7 @@ pub(super) fn rows(
             .get(&(claim_id.clone(), occurrence.clone()))
             .filter(|row| row.kind == kind)
         {
-            rows.push((**row).clone());
+            rows.push((claim.node().clone(), (**row).clone()));
             continue;
         }
         let extent = match source.requirements().extent() {
@@ -386,15 +386,15 @@ pub(super) fn rows(
         } else {
             None
         };
-        rows.push(RequirementItemRow {
+        rows.push((claim.node().clone(), RequirementItemRow {
             claim: claim_id,
             occurrence,
             kind,
             extent,
             record,
-        });
+        }));
     }
-    Ok(rows)
+    Ok(package_order(rows))
 }
 
 /// The base package's requirement rows, for a writer that re-encodes an
@@ -410,7 +410,8 @@ pub(super) fn rows(
 /// hold a node of the base's tag and form at each base position is refused.
 pub(super) fn carry_rows(
     base: &filament_contract_model::CheckedPackageV2,
-    nodes: &[CheckedSemanticNodeV2],
+    nodes: &mut [CheckedSemanticNodeV2],
+    source_map: &mut [CheckedSourceMapEntry],
 ) -> Result<Vec<RequirementItemRow>, EmitRefusal> {
     let rows = base.requirement_items();
     if rows.is_empty() {
@@ -466,15 +467,13 @@ pub(super) fn carry_rows(
             record.objects.iter_mut().for_each(follow);
         }
     }
-    // FSpec FR-825 package order: rows ascend by the claim node's structural
-    // key, then occurrence role, ordinal and kind. A rename changes the
-    // structural key of every node holding the renamed node as an operand
-    // (a call of a rekeyed entry), so rows are re-sorted by the final key;
-    // the sort is stable, so rows of one claim keep their base order.
+    // A rename changes the structural key of every node holding the renamed
+    // node as an operand (a call of a rekeyed entry), so the rows are put in
+    // package order again by their final claim keys.
     let graph =
         fsl_semantics::check::wire_id::WireGraph::new(nodes.iter().map(|node| &node.node_id))
             .map_err(|_| EmitRefusal::RequirementRowCarry("the writer's graph ids do not resolve"))?;
-    let mut keyed = rows
+    let keyed = rows
         .into_iter()
         .map(|row| {
             let key = graph.key(&row.claim).map_err(|_| {
@@ -483,8 +482,86 @@ pub(super) fn carry_rows(
             Ok((key, row))
         })
         .collect::<Result<Vec<_>, EmitRefusal>>()?;
-    keyed.sort_by(|(left, _), (right, _)| left.cmp(right));
-    Ok(keyed.into_iter().map(|(_, row)| row).collect())
+    let rows = package_order(keyed);
+    renumber_records(&rows, nodes, source_map)?;
+    Ok(rows)
+}
+
+/// FSpec FR-825: a function's `claim`/`value_validity` nodes carry
+/// `generated` ordinals 0, 1, 2, ... in the package order of the rows that
+/// name them. Re-sorted rows can reorder one owner's records, so each record
+/// node's occurrence and its `generated` source-map entry take the ordinal of
+/// its row's place among its owner's rows.
+fn renumber_records(
+    rows: &[RequirementItemRow],
+    nodes: &mut [CheckedSemanticNodeV2],
+    source_map: &mut [CheckedSourceMapEntry],
+) -> Result<(), EmitRefusal> {
+    let mut next = BTreeMap::<&CheckedNodeId, u64>::new();
+    let mut ordinals = BTreeMap::<&CheckedNodeId, u64>::new();
+    for record in rows.iter().filter_map(|row| row.record.as_ref()) {
+        let ordinal = next.entry(&record.owner).or_default();
+        ordinals.insert(&record.node, *ordinal);
+        *ordinal += 1;
+    }
+    for node in nodes.iter_mut() {
+        if let Some(&ordinal) = ordinals.get(&node.node_id) {
+            let [occurrence] = node.occurrences.as_mut_slice() else {
+                return Err(EmitRefusal::RequirementRowCarry(
+                    "a carried record node does not have exactly one occurrence",
+                ));
+            };
+            occurrence.ordinal = ordinal;
+        }
+    }
+    for entry in source_map.iter_mut() {
+        if entry.role == filament_contract_model::CheckedOccurrenceRole::Generated {
+            if let Some(&ordinal) = ordinals.get(&entry.node_id) {
+                entry.ordinal = ordinal;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// FSpec FR-825 package order, the one order every writer puts
+/// `requirement_items` in: ascending by the claim node's structural key, then
+/// the occurrence role's wire spelling, the occurrence ordinal and the
+/// capability's wire spelling, as the reader compares them. `NodeKey` orders
+/// as the reader's structural ids do: package, then path segment by segment
+/// (text before nested nodes, a nested node compared in full), then ordinal.
+pub(super) fn package_order(
+    mut rows: Vec<(NodeKey, RequirementItemRow)>,
+) -> Vec<RequirementItemRow> {
+    rows.sort_by(|(left_key, left), (right_key, right)| {
+        left_key
+            .cmp(right_key)
+            .then_with(|| {
+                crate::checked_v2::role_spelling(&left.occurrence.role)
+                    .cmp(crate::checked_v2::role_spelling(&right.occurrence.role))
+            })
+            .then_with(|| left.occurrence.ordinal.cmp(&right.occurrence.ordinal))
+            .then_with(|| capability_wire(left.kind).cmp(capability_wire(right.kind)))
+    });
+    rows.into_iter().map(|(_, row)| row).collect()
+}
+
+/// The FSpec FR-825 wire spelling of a requested capability.
+fn capability_wire(kind: CapabilityKind) -> &'static str {
+    match kind {
+        CapabilityKind::ValueValidity => "value-validity",
+        CapabilityKind::OperationContract => "operation-contract",
+        CapabilityKind::FiniteReplay => "finite-replay",
+        CapabilityKind::TemporalSatisfaction => "temporal-satisfaction",
+        CapabilityKind::GlobalConformance => "global-conformance",
+        CapabilityKind::Monitorability => "monitorability",
+        CapabilityKind::LocalProjection => "local-projection",
+        CapabilityKind::Refinement => "refinement",
+        CapabilityKind::Realizability => "realizability",
+        CapabilityKind::Composition => "composition",
+        CapabilityKind::ProbabilisticSatisfaction => "probabilistic-satisfaction",
+        CapabilityKind::Schedulability => "schedulability",
+    }
 }
 
 #[cfg(test)]

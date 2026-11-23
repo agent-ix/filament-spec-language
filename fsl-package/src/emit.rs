@@ -6668,7 +6668,7 @@ pub fn emit_timed_models(
         &mut [],
         &ForeignNodes::default(),
     )?;
-    let requirement_rows = value_validity_requirements::carry_rows(base, &nodes)?;
+    let requirement_rows = value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
     let operand_rows = write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {
         graph_version: base.graph().graph_version.clone(),

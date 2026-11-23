@@ -658,11 +658,12 @@ fn three_time_dimensions_have_distinct_structural_keys() {
 }
 
 /// FSpec FR-825: the timed-model writer re-encodes an admitted base package
-/// whose scalar function carries `claim`/`value_validity` records. A changed
-/// tick period renames the timed nodes; the carried requirement rows and
-/// each record's `generated` source-map entry survive, and the strict reader
-/// admits the result. Removing `requirement_items` from it is refused at
-/// `/requirement_items`.
+/// whose scalar function carries `claim`/`value_validity` records, with a
+/// changed tick period that renames the timed nodes. No record or row names a
+/// timed node, so the rows are carried unchanged: the strict reader admits
+/// the result, each record keeps its `generated` source-map entry, and
+/// removing `requirement_items` from it is refused at `/requirement_items`.
+/// Re-pointing renamed ids is covered by the monitor final-writer tests.
 #[trace("FR-230-AC-32", "FR-940")]
 #[test]
 fn the_timed_model_writer_carries_value_validity_rows_through_a_rename() {
