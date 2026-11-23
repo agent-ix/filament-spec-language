@@ -10,6 +10,7 @@
 
 mod candidate;
 mod elapsed;
+mod instances;
 mod long_run;
 mod measure;
 mod subsystem;
@@ -75,6 +76,8 @@ pub(crate) type SpelledWitness = (Box<ReproducedProbabilityWitness>, Probability
 pub(crate) enum ExactReport {
     /// Only independently reproduced path evidence can settle refuted.
     Refuted(Box<ReproducedProbabilityWitness>, Box<ProbabilityWire>),
+    /// The `on each` claim has no instance to read (FR-875).
+    NoInstance,
     /// A semantic replay disagreed with the produced path evidence.
     ReplayParity,
     /// Replay refused the witness's semantic content.
@@ -143,6 +146,10 @@ impl ExactReport {
                     Some((reproduced, *wire)),
                 );
             }
+            Self::NoInstance => (
+                TerminalRecord::inconclusive(index, backend, InconclusiveCause::NoInstance),
+                None,
+            ),
             Self::ReplayParity => (
                 TerminalRecord::inconclusive(
                     index,
@@ -1077,6 +1084,12 @@ fn run(
         }
     ) {
         return elapsed::run(request, cancel, tamper, tamper_witness);
+    }
+    if matches!(
+        request.claim.activation,
+        fsl_semantics::check::ClaimActivation::Each { .. }
+    ) {
+        return instances::run(request, cancel, tamper_witness);
     }
     if request.claim.bounded_measure() {
         return measure::run(request, cancel, tamper, tamper_witness);
@@ -2909,6 +2922,7 @@ fn replay_produced_witness(
     let mut witness = ProbabilisticCounterexample {
         item: item.clone(),
         binding: binding.cloned(),
+        instance: None,
         initial: first.clone(),
         initial_key,
         scheduler: scheduler
@@ -3385,6 +3399,7 @@ fn replay_timed_paths(
     let mut witness = ProbabilisticCounterexample {
         item: item.clone(),
         binding: binding.cloned(),
+        instance: None,
         initial: first.clone(),
         initial_key,
         scheduler: Vec::new(),

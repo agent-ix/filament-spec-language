@@ -1395,6 +1395,7 @@ fn external_always_path_set_remains_unsupported() {
     let witness = fsl_replay::ProbabilisticCounterexample {
         item: identity.clone(),
         binding: binding.map(|binding| binding.reference),
+        instance: None,
         initial: system.initial().remove(0),
         initial_key: key,
         scheduler: Vec::new(),

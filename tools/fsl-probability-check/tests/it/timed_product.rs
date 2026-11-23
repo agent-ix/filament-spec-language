@@ -41,6 +41,9 @@ fn domain() -> Vec<u8> {
     message["operations"][0]["frame"]["modifies"] =
         json!(["ix://test/link/Msg/delivered", "ix://test/link/Msg/x"]);
     message["operations"][1]["frame"]["modifies"] = json!(["ix://test/link/Msg/spun"]);
+    for operation in 0..2 {
+        message["operations"][operation]["frame"]["modifies_receiver"] = json!([]);
+    }
     serde_json::to_vec(&domain).unwrap()
 }
 

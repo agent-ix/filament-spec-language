@@ -212,6 +212,11 @@ pub struct ExactEntry {
     pub initial: u32,
     /// The bound instance, absent when the claim has no `over` parameter.
     pub binding: Option<ExactBinding>,
+    /// The `on each` object the entry is read for when an `over` binding is
+    /// also present (FR-741 "Binding"); without an `over` binding the object
+    /// is `binding`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub instance: Option<ExactBinding>,
     /// The exact value or its certified interval.
     pub value: ExactOrBounds,
     /// The scheduler extremum, absent for a workload.
@@ -1745,19 +1750,29 @@ impl TerminalRecord {
         let entries = match accepted.initial_values() {
             Some(coverage) => {
                 if coverage.is_empty()
+                    || coverage.first().map(|(initial, _)| *initial) != Some(0)
                     || coverage
-                        .iter()
-                        .enumerate()
-                        .any(|(index, (initial, _))| usize::try_from(*initial).ok() != Some(index))
+                        .windows(2)
+                        .any(|pair| pair[1].0 != pair[0].0 && pair[1].0 != pair[0].0 + 1)
                 {
                     return None;
                 }
                 let entries = coverage
                     .iter()
-                    .filter_map(|(initial, value)| {
+                    .enumerate()
+                    .filter_map(|(position, (initial, value))| {
                         value.as_ref().map(|value| ExactEntry {
                             initial: *initial,
-                            binding: binding.clone(),
+                            binding: accepted
+                                .initial_bindings()
+                                .and_then(|bindings| bindings.get(position))
+                                .cloned()
+                                .flatten(),
+                            instance: accepted
+                                .initial_instances()
+                                .and_then(|instances| instances.get(position))
+                                .cloned()
+                                .flatten(),
                             value: ExactOrBounds::Exact {
                                 value: ExactRational::new(value.clone()),
                             },
@@ -1773,6 +1788,7 @@ impl TerminalRecord {
             None => vec![ExactEntry {
                 initial: 0,
                 binding,
+                instance: None,
                 value: ExactOrBounds::Exact {
                     value: value.clone(),
                 },

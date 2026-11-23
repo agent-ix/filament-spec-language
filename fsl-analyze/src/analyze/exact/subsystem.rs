@@ -306,6 +306,7 @@ pub(super) fn refute(
     let mut witness = ProbabilisticCounterexample {
         item: item.clone(),
         binding: binding.cloned(),
+        instance: None,
         initial: first.clone(),
         initial_key,
         scheduler,

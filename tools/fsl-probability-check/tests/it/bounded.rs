@@ -192,10 +192,12 @@ fn requests_with_mode(
         .as_str()
         .unwrap()
         .to_owned();
-    let universe_key = shape["populations"][0]["objects"][0]["key"]
-        .as_str()
+    let universe_keys: Vec<String> = shape["populations"][0]["objects"]
+        .as_array()
         .unwrap()
-        .to_owned();
+        .iter()
+        .map(|object| object["key"].as_str().unwrap().to_owned())
+        .collect();
     let document = DocumentRef {
         authority: "test".to_owned(),
         identity: "s0".to_owned(),
@@ -214,7 +216,7 @@ fn requests_with_mode(
                 package: universe_package.clone(),
                 node: universe_node.clone(),
             },
-            keys: vec![universe_key.clone()],
+            keys: universe_keys.clone(),
         }],
         observation: ObservationLimits::default(),
         expansion: ExpansionLimits {
@@ -224,11 +226,14 @@ fn requests_with_mode(
         emit: limits.package.emit(),
     };
     let system = fsl_eval::simulation::model::ModelSystem::new(simulation.clone()).unwrap();
-    let binding = fsl_replay::claim_binding(&system, claim).unwrap().unwrap();
+    let binding = fsl_replay::claim_binding(&system, claim).unwrap();
     if matches!(
         claim.form,
         fsl_semantics::check::ProbForm::Probability { .. }
     ) {
+        let binding = binding
+            .as_ref()
+            .expect("a probability claim names its over instance");
         let context =
             fsl_replay::probabilistic_formula_monitor_context(claim, Some(&binding.reference))
                 .unwrap();
@@ -303,7 +308,7 @@ fn requests_with_mode(
         "byte_provision":[["test","bounded-certificate-source",source.as_bytes()]],
         "documents":[domain,snapshot],
         "initial":[{"authority":"test","identity":"s0"}],
-        "universes":[{"population":{"package":universe_package,"node":universe_node},"keys":[universe_key]}],
+        "universes":[{"population":{"package":universe_package,"node":universe_node},"keys":universe_keys}],
         "certificate":String::from_utf8(bytes.to_vec()).unwrap(),
         "limits":{"bytes":1_000_000,"storage_bytes":8_000_000,"states":100,"edges":1000,"scalar_bits":128,"expansion":100_000,"stages":{}},
     });
@@ -1202,6 +1207,25 @@ fn replace_source_and_rebind_with_mode(
         .claim("Likely")
         .unwrap();
     let item = fsl_replay::probabilistic_claim_identity(claim).unwrap();
+    let identity = json!({"node_id": fsl_foundation::node_wire::node_key_to_json(item.node()).unwrap(), "model": item.model().map(|model| model.as_str()), "ordinal": item.ordinal()});
+    let mut certified: Value =
+        serde_json::from_str(request["certificate"].as_str().unwrap()).unwrap();
+    if certified["objective"]["profile"] == "filament.probability-objective/on-each-reachability/v1"
+    {
+        // An `on each` document carries no formula or key to rebind: only
+        // its identity names the claim.
+        certified["identity"] = identity.clone();
+        for part in ["numerator", "denominator"] {
+            if !certified["conditional"][part].is_null() {
+                certified["conditional"][part]["identity"] = identity.clone();
+            }
+        }
+        request["source"]["content"] = json!(source);
+        request["byte_provision"][0][2] = json!(source.as_bytes());
+        request["item"] = identity;
+        request["certificate"] = json!(serde_json::to_string(&certified).unwrap());
+        return;
+    }
     let limits = fsl_replay::ProbabilityDocumentLimits {
         bytes: request["limits"]["bytes"].as_u64().unwrap(),
         storage_bytes: request["limits"]["storage_bytes"].as_u64().unwrap(),
