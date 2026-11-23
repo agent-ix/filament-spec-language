@@ -166,6 +166,7 @@ mod code_generation {
             UNIT.as_bytes(),
             [],
             &fsl_replay::DependencyInput::default(),
+            &fsl_replay::RequestClocks::default(),
             &selected,
         )
         .expect("public facade locates function");
@@ -197,6 +198,7 @@ mod code_generation {
             unit.as_bytes(),
             [],
             &dependencies,
+            &fsl_replay::RequestClocks::default(),
             &selected,
         )
         .expect("public facade locates imported function");
@@ -219,6 +221,7 @@ mod code_generation {
             UNIT.as_bytes(),
             [],
             &fsl_replay::DependencyInput::default(),
+            &fsl_replay::RequestClocks::default(),
             &function_selection,
         )
         .expect("public facade locates function");
@@ -238,6 +241,7 @@ mod code_generation {
             unit.as_bytes(),
             [&model[..]],
             &fsl_replay::DependencyInput::default(),
+            &fsl_replay::RequestClocks::default(),
             &selected,
         )
         .expect("public facade locates operation");
@@ -268,6 +272,7 @@ function f using v(x: Integer): Integer pure { x }\n";
             unit.as_bytes(),
             [],
             &fsl_replay::DependencyInput::default(),
+            &fsl_replay::RequestClocks::default(),
             &function,
         )
         .expect("compile checked schedulability input and function");

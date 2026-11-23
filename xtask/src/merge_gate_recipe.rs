@@ -185,7 +185,9 @@ const INSPECT_CONSUMERS: &[ItFilter] = &[ItFilter {
 /// The engine filters every analyze source change runs, then the modules that
 /// hold the source-route and package-route parity tests (FSL FR-940) for the
 /// shared request settlement: `request.rs` and `analyze.rs` decide an item's
-/// disposition for both routes.
+/// disposition for both routes. `document.rs` and `document/**` settle
+/// both routes' documents and compositions; `analyze_composition_cli` holds
+/// the composition parity tests (FR-1044-AC-10).
 const ROUTE_PARITY_CONSUMERS: &[ItFilter] = &[
     ItFilter {
         package: "fsl-analyze",
@@ -214,6 +216,10 @@ const ROUTE_PARITY_CONSUMERS: &[ItFilter] = &[
     ItFilter {
         package: "fsl-analyze",
         rule: ItRule::Fixed("analyze_package_provider"),
+    },
+    ItFilter {
+        package: "fsl-analyze",
+        rule: ItRule::Fixed("analyze_composition_cli"),
     },
 ];
 const EXACT_CONSUMERS: &[ItFilter] = &[
@@ -512,6 +518,16 @@ const RULES: &[Rule] = &[
     },
     Rule {
         prefix: "fsl-analyze/src/analyze.rs",
+        package: Some("fsl-analyze"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: ROUTE_PARITY_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-analyze/src/analyze/document",
         package: Some("fsl-analyze"),
         lib: Some(LibRule::SourceModule),
         it_filters: ROUTE_PARITY_CONSUMERS,
@@ -1362,11 +1378,13 @@ fn plan_test_path(workspace_root: &Path, path: &str, recipe: &mut Recipe) -> Res
         if path.starts_with("xtask/tests/") {
             return Ok(());
         }
-        if let Some(it_path) = integration_path(path) {
+        // The module filter reads the path from its `tests/it/` segment, so
+        // the rule is applied to the whole changed path.
+        if integration_path(path).is_some() {
             if let Some(rule) = matching_rule(path) {
-                apply_rule(workspace_root, it_path, rule, recipe)?;
+                apply_rule(workspace_root, path, rule, recipe)?;
             } else {
-                add_integration(recipe, package, integration_module_filter(it_path)?);
+                add_integration(recipe, package, integration_module_filter(path)?);
             }
             return Ok(());
         }
@@ -1379,14 +1397,14 @@ fn plan_test_path(workspace_root: &Path, path: &str, recipe: &mut Recipe) -> Res
             return Ok(());
         }
     }
-    if let Some(it_path) = integration_path(path) {
+    if integration_path(path).is_some() {
         if let Some(rule) = matching_rule(path) {
-            apply_rule(workspace_root, it_path, rule, recipe)?;
+            apply_rule(workspace_root, path, rule, recipe)?;
         } else {
             add_integration(
                 recipe,
                 "filament-spec-language",
-                integration_module_filter(it_path)?,
+                integration_module_filter(path)?,
             );
         }
         return Ok(());
@@ -2363,6 +2381,49 @@ mod tests {
                 .selectors
                 .contains(&selector("fsl-analyze", "analyze_request_wire"))
         );
+    }
+
+    #[test]
+    fn document_settlement_and_package_route_run_the_composition_parity_module() {
+        for path in [
+            "fsl-analyze/src/analyze/document.rs",
+            "fsl-analyze/src/analyze/document/package_run.rs",
+            "fsl-analyze/src/analyze/document/composition_item.rs",
+        ] {
+            let recipe = plan(workspace_root(), &[path]);
+            for filter in [
+                "analyze_composition_cli",
+                "analyze_package_selection",
+                "analyze_request_wire",
+                "analyze_package_provider",
+                "monitor_",
+                "timed_",
+                "hyper",
+                "probabilistic",
+            ] {
+                assert!(
+                    recipe.selectors.contains(&selector("fsl-analyze", filter)),
+                    "{path} must run {filter}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_changed_integration_module_runs_that_module() {
+        let recipe = plan(
+            workspace_root(),
+            &[
+                "fsl-analyze/tests/it/analyze_composition_cli.rs",
+                "tests/it/bare_package.rs",
+            ],
+        );
+        assert!(recipe
+            .selectors
+            .contains(&selector("fsl-analyze", "analyze_composition_cli")));
+        assert!(recipe
+            .selectors
+            .contains(&selector("filament-spec-language", "bare_package")));
     }
 
     #[test]

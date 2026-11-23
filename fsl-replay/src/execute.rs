@@ -52,6 +52,7 @@ use crate::hybrid_replay::{
 };
 use crate::identity::{DefinitionSourceRef, ProfileSelection, QualifiedName};
 use crate::limits::CallerLimits;
+use crate::outcome::hint::MissingSelection;
 use crate::request::StageLimits;
 use crate::request::{ReplayPackage, ReplayRequest, ReplayRequestRefusal, ReplayRequestWire};
 use crate::result::{
@@ -723,13 +724,40 @@ impl ReplayRefusal {
         }
     }
 
+    /// FR-286 "Missing selections": the kind of thing a
+    /// `missing_import`/`missing-selection` refusal says is missing, `None`
+    /// for every other refusal.
+    pub fn selection(&self) -> Option<MissingSelection> {
+        match self {
+            Self::Request(ReplayRequestRefusal::IncompleteByteProvision { .. }) => {
+                Some(MissingSelection::ByteProvision)
+            }
+            Self::Package(refusal) | Self::PackageWithIdentity { refusal, .. }
+                if refusal.code() == Code::MissingImport =>
+            {
+                Some(MissingSelection::PackageReference)
+            }
+            Self::Recompile { refusal, .. }
+            | Self::RecompileWithProtocolResults { refusal, .. }
+            | Self::RefinementInternals { refusal, .. } => refusal.selection(),
+            Self::DomainPackages(refusal) => MissingSelection::of_model_refusal(refusal),
+            Self::UnknownOwner { .. } => Some(MissingSelection::FunctionOwner),
+            _ => None,
+        }
+    }
+
     /// The catalog cause tag under [`Self::code`], where the refusing stage
     /// or request check names one.
     pub fn cause(&self) -> Option<&str> {
         match self {
             Self::Request(refusal) => refusal.cause(),
-            Self::Package(refusal) => refusal.cause(),
-            Self::PackageWithIdentity { refusal, .. } => refusal.cause(),
+            Self::Package(refusal) | Self::PackageWithIdentity { refusal, .. } => {
+                if refusal.code() == Code::MissingImport {
+                    Some("missing-selection")
+                } else {
+                    refusal.cause()
+                }
+            }
             Self::PackageEvidence(_) => None,
             Self::Recompile { refusal, .. } => refusal.cause(),
             Self::RecompileWithProtocolResults { refusal, .. }
@@ -946,6 +974,7 @@ pub enum DependencySelectionsCause {
 /// #     unit.as_bytes(),
 /// #     [],
 /// #     &DependencyInput::default(),
+/// #     &fsl_replay::RequestClocks::default(),
 /// #     &small,
 /// # )
 /// # .unwrap();
@@ -1003,6 +1032,7 @@ pub enum DependencySelectionsCause {
 /// #     unit.as_bytes(),
 /// #     [],
 /// #     &DependencyInput::default(),
+/// #     &fsl_replay::RequestClocks::default(),
 /// #     &small,
 /// # )
 /// # .unwrap();
@@ -2514,7 +2544,9 @@ fn external_package_bound(refusal: ReplayRefusal) -> ReplayRefusal {
 
 /// The `replay.input_bytes` limit `refusal` reports, seen through a library
 /// path that wraps it.
-fn replay_input_limit(refusal: &CompileRefusal) -> Option<&fsl_foundation::diagnostic::LimitExceeded> {
+fn replay_input_limit(
+    refusal: &CompileRefusal,
+) -> Option<&fsl_foundation::diagnostic::LimitExceeded> {
     match refusal {
         CompileRefusal::Limit(limit) if limit.setting() == Setting::ReplayInputBytes => Some(limit),
         CompileRefusal::Dependency { refusal, .. } => replay_input_limit(refusal),

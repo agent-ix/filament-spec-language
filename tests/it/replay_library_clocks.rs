@@ -107,6 +107,7 @@ fn request(package: &Value, program: &str) -> ReplayRequestWire {
         PROGRAM.as_bytes(),
         std::iter::empty::<&[u8]>(),
         &dependencies,
+        &fsl_replay::RequestClocks::default(),
         &selected,
     )
     .expect("the program's call site resolves");

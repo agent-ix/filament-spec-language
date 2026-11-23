@@ -3820,6 +3820,8 @@ mod tests {
         let compile = CallSiteRefusal::Compile {
             code: Code::StaleDependency,
             message: "refused".to_owned(),
+            cause: None,
+            selection: None,
             region: None,
         };
         assert_eq!(

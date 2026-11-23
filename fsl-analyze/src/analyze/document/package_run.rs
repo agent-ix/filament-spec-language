@@ -246,6 +246,16 @@ pub enum PackageRunError {
         /// The builder's original refusal, including any reached limit.
         refusal: fsl_semantics::check::PackageClauseRefusal,
     },
+    /// A composition the default items select (FR-1044) could not be read
+    /// from its admitted facts: the original projection refusal, a denied
+    /// native charge included.
+    #[error("package composition at {node:?} could not be read: {refusal}")]
+    Composition {
+        /// The composition declaration node.
+        node: CheckedNodeId,
+        /// The original refusal.
+        refusal: fsl_replay::planner::PackageCompositionRefusal,
+    },
     /// The run was refused or faulted as the source route's is.
     #[error(transparent)]
     Document(#[from] AnalyzeDocumentError),
@@ -270,6 +280,9 @@ pub struct PackageRun<'a> {
     pub engines: &'a Engines,
     /// The shared limits.
     pub limits: AnalyzeLimits,
+    /// The invocation's cumulative native budget, which reading a
+    /// composition and its component packages continues (FR-531, FR-1044).
+    pub budget: filament_contract_model::NativeJoinBudget,
 }
 
 /// One item as the package's name tables resolve it.
@@ -300,6 +313,12 @@ enum Named<'s> {
         name: &'s str,
         declaration: CheckedNodeId,
         ordinal: u64,
+        selection: &'s ItemSelection,
+    },
+    /// A component composition the default items select (FR-1044).
+    Composition {
+        index: RequestIndex,
+        declaration: CheckedNodeId,
         selection: &'s ItemSelection,
     },
     Settled(ResolvedItem),
@@ -442,20 +461,8 @@ fn settle_package_run_inner(
         items,
         engines,
         limits,
+        mut budget,
     } = run;
-    // FSL FR-1044: admitted planner facts are available, but owning execution
-    // still requires native permission before type-environment work. Preserve
-    // the whole-request guard until that execution boundary is available.
-    if items.is_none() {
-        if let Some(node) = admitted_composition(package) {
-            return Err(PackageRunError::Pending(PendingPackageFamily {
-                request_index: None,
-                note: None,
-                family: PendingFamily::CompositionOwningWorkPermission,
-                node: Some(node),
-            }));
-        }
-    }
     let explicit_items = items.is_some();
     let defaults = items.is_none().then(|| default_selections(package));
     let items: &[ItemSelection] = items.or(defaults.as_deref()).unwrap_or_default();
@@ -479,7 +486,7 @@ fn settle_package_run_inner(
             })
             .collect()
     } else {
-        resolve_names(package, items)?
+        resolve_names(package, items, defaults.is_some())?
     };
     let runnable = named
         .iter()
@@ -489,25 +496,7 @@ fn settle_package_run_inner(
     let input = runnable
         .then(|| PackageModelInput::of(package, binding.packages, limits.normalization))
         .transpose()
-        .map_err(|refusal| match refusal {
-            PendingPackageForm::Form { form, node } => {
-                PackageRunError::Pending(PendingPackageFamily {
-                    request_index: None,
-                    note: None,
-                    family: PendingFamily::ModelForm(form),
-                    node: Some(node),
-                })
-            }
-            refusal @ (PendingPackageForm::World(_)
-            | PendingPackageForm::Model(_)
-            | PendingPackageForm::Operations(_)
-            | PendingPackageForm::ProbabilisticNodes(_)
-            | PendingPackageForm::Probabilistic(_)
-            | PendingPackageForm::Reward(_)
-            // Only `source_object_probabilistic_model` reads the source-object
-            // rows, so `of` never gives this one.
-            | PendingPackageForm::SourceModel(_)) => PackageRunError::Input(refusal),
-        })?;
+        .map_err(input_refusal)?;
     if input
         .as_ref()
         .is_some_and(|input| !input.input().time_sources.is_empty())
@@ -526,12 +515,91 @@ fn settle_package_run_inner(
             }));
         }
     }
+    // FR-1044: each composition the default items select, read from its
+    // admitted facts, and each component package its premise items run over:
+    // the package view the request's own join already authenticated (no
+    // component is joined again).
+    let mut facts: BTreeMap<RequestIndex, super::composition_item::CompositionFacts> =
+        BTreeMap::new();
+    for item in &named {
+        if let Named::Composition {
+            index, declaration, ..
+        } = item
+        {
+            facts.insert(
+                *index,
+                composition_facts(package, declaration, &mut budget)?,
+            );
+        }
+    }
+    let needed: Vec<&str> = facts
+        .values()
+        .flat_map(super::composition_item::CompositionFacts::guarantee_packages)
+        .collect();
+    let mut component_packages = Vec::new();
+    for (at, artifact) in supply.dependencies.iter().enumerate() {
+        if !needed.contains(&artifact.identity.as_str()) {
+            continue;
+        }
+        let admitted_before = &supply.dependencies[..at];
+        let component = package
+            .dependency_views()
+            .iter()
+            .find(|view| view.package().name() == artifact.identity)
+            .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
+        component_packages.push(ComponentPackage {
+            artifact,
+            admitted_before,
+            package: component,
+        });
+    }
+    let component_inputs = component_packages
+        .iter()
+        .map(|component| {
+            PackageModelInput::of(component.package, binding.packages, limits.normalization)
+                .map_err(input_refusal)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let mut registry = Registry::new();
     for descriptor in engines.registrations() {
         registry
             .register(descriptor.clone())
             .map_err(|_| AnalyzeDocumentError::Fault)?;
     }
+    let mut compositions = PackageCompositions {
+        registry: &registry,
+        subject: &subject,
+        dependencies: supply.dependencies,
+        components: component_packages
+            .iter()
+            .zip(&component_inputs)
+            .map(|(component, input)| {
+                (
+                    component.artifact.identity.as_str(),
+                    ClaimReads {
+                        package: component.package,
+                        input: Some(input),
+                        package_bytes: &component.artifact.bytes,
+                        supply: fsl_replay::HandoffSupply {
+                            dependencies: component.admitted_before,
+                            identities: &component.artifact.identity_bytes,
+                            equality: Some(&component.artifact.equality_bytes),
+                        },
+                        binding: &binding,
+                        limits,
+                        subject: &subject,
+                        registry: &registry,
+                        explicit_items,
+                    },
+                )
+            })
+            .collect(),
+        routes: BTreeMap::new(),
+        inputs: BTreeMap::new(),
+        claims: Vec::new(),
+    };
+    let mut groups = Vec::new();
+    let mut composition_claims: Vec<OccurrenceKey> = Vec::new();
     let reads = ClaimReads {
         package,
         input: input.as_ref(),
@@ -614,6 +682,20 @@ fn settle_package_run_inner(
                 }
             },
             Named::Settled(settled) => resolved.push(settled),
+            Named::Composition {
+                index, selection, ..
+            } => {
+                let facts = facts
+                    .get(&index)
+                    .ok_or(PackageRunError::Document(AnalyzeDocumentError::Fault))?;
+                let selected =
+                    super::composition_item::select(&compositions, facts, index, selection);
+                if let ResolvedItem::Composition(claim) = &selected.item {
+                    composition_claims.push(claim.claim.item.claim.clone());
+                }
+                resolved.push(selected.item);
+                groups.push((index, selected.premises));
+            }
             Named::Clause {
                 index,
                 name,
@@ -750,6 +832,20 @@ fn settle_package_run_inner(
             }
         }
     }
+    // FR-1044: the premise items follow every other item, each resolved
+    // over its component package and run on its own route.
+    let first = resolved.len();
+    let premises =
+        super::composition_item::premise_items(&mut compositions, groups, &mut resolved, first)?;
+    resolved.extend(premises);
+    let PackageCompositions {
+        routes: premise_routes,
+        inputs: premise_inputs,
+        claims: premise_claims,
+        ..
+    } = compositions;
+    routes.extend(premise_routes);
+    clause_claims.extend(premise_claims);
     let model_input = input.as_ref().map(PackageModelInput::input);
     let admit = |item: &mut ClaimItem| match &model_input {
         Some(model) => super::admit_reductions(model, &binding, &limits, item),
@@ -764,6 +860,9 @@ fn settle_package_run_inner(
             .unwrap_or_else(|| sole_model(package))
     };
     let family = |kind: ItemKind, claim: &OccurrenceKey| match kind {
+        ItemKind::Formula if composition_claims.contains(claim) => {
+            Some(DeclarationFamily::Protocol)
+        }
         ItemKind::Formula if probability_claims.contains(claim) => {
             Some(DeclarationFamily::Probabilistic)
         }
@@ -784,7 +883,7 @@ fn settle_package_run_inner(
     };
     let Negotiation {
         components: _,
-        gates: _,
+        gates,
         negotiated,
         unrouted_items,
         settled,
@@ -860,6 +959,7 @@ fn settle_package_run_inner(
             binding: &binding,
             limits,
             family: &family,
+            inputs: &premise_inputs,
         };
         for item in &negotiated {
             let route = routes.remove(&item.item.request_index);
@@ -877,7 +977,8 @@ fn settle_package_run_inner(
                 .map(|output| (record.request_index, output))
         })
         .collect();
-    let (records, counterexamples) = super::super::split_records_over(records, None);
+    let (mut records, counterexamples) = super::super::split_records_over(records, None);
+    super::gate_compositions(&mut records, &gates);
     let (targets, item_routes) = negotiated_routes(&negotiated, &unrouted_items, engines);
     let mut simulated = Vec::new();
     if let Some(model) = model_input.as_ref() {
@@ -904,7 +1005,24 @@ fn settle_package_run_inner(
             protocol_conformance,
             graphs: super::super::DocumentGraphs {
                 own: super::super::DocumentGraphs::of_bytes(package_bytes),
-                dependencies: BTreeMap::new(),
+                // FSpec FR-322: an item over a component package, and a
+                // composition's component slots, index the graph of the
+                // component's retained admitted bytes. Only a run that selects
+                // a composition writes such an id, so only it reads them.
+                dependencies: if facts.is_empty() {
+                    BTreeMap::new()
+                } else {
+                    supply
+                        .dependencies
+                        .iter()
+                        .map(|artifact| {
+                            (
+                                artifact.identity.clone(),
+                                super::super::DocumentGraphs::of_bytes(&artifact.bytes),
+                            )
+                        })
+                        .collect()
+                },
             },
         },
         &settled,
@@ -1070,11 +1188,13 @@ fn unresolved_reason(refusal: &PendingPackageForm) -> Option<String> {
 /// `unknown-claim` as the source route settles it, but only when the
 /// package holds no claim whose name it does not carry (an `invariant`
 /// state clause, a refinement, a state-graph claim) and no component
-/// composition, which the package form does not read yet: the name could be
-/// that claim's or composition's.
+/// composition, which only the default items select over a package yet: the
+/// name could be that claim's or composition's. A default item selecting a
+/// composition (`defaults`) resolves to it (FR-1044-AC-10).
 fn resolve_names<'s>(
     view: &dyn AnalysisView,
     selections: &'s [ItemSelection],
+    defaults: bool,
 ) -> Result<Vec<Named<'s>>, PackageRunError> {
     let pending = |request_index, family| {
         PackageRunError::Pending(PendingPackageFamily {
@@ -1235,6 +1355,20 @@ fn resolve_names<'s>(
             // row. An `invariant` state clause runs over the package route's
             // input; a claim of another family has no package form yet.
             if let Some(found) = view.claim_name(name) {
+                // FR-1044-AC-10: a default item selecting a component
+                // composition runs the source route's composition analysis
+                // over the package's admitted composition facts.
+                if defaults
+                    && !derived
+                    && selection.kind.as_deref() == Some(Capability::Composition.to_wire())
+                    && is_component_composition(view, &found.declaration)
+                {
+                    return Ok(Named::Composition {
+                        index,
+                        declaration: found.declaration,
+                        selection,
+                    });
+                }
                 if matches!(
                     view.package().term(&found.declaration),
                     Some(filament_contract_model::CheckedTerm::Refinement { .. })
@@ -3320,6 +3454,9 @@ struct WorkInputs<'w, 'a> {
     binding: &'w SubjectBinding<'a>,
     limits: AnalyzeLimits,
     family: &'w dyn Fn(ItemKind, &OccurrenceKey) -> Option<DeclarationFamily>,
+    /// The model-check input of each premise item, which runs over its
+    /// component package rather than the request's (FR-1044).
+    inputs: &'w BTreeMap<RequestIndex, &'a PackageModelInput<'a>>,
 }
 
 impl<'a> WorkInputs<'_, 'a> {
@@ -3554,7 +3691,16 @@ impl<'a> WorkInputs<'_, 'a> {
             }
             // A timed model's graph item is EN-6's, as the source route's
             // `state_graph_item` selects it; an untimed one is EN-1's.
-            Some(ItemForm::Temporal(_)) if !self.input.input().time_sources.is_empty() => {
+            Some(ItemForm::Temporal(_))
+                if !self
+                    .inputs
+                    .get(&item.request_index)
+                    .copied()
+                    .unwrap_or(self.input)
+                    .input()
+                    .time_sources
+                    .is_empty() =>
+            {
                 Some(crate::zone_check::manifest::BACKEND_ID)
             }
             Some(ItemForm::Temporal(_)) => Some(crate::model_check::manifest::BACKEND_ID),
@@ -3600,8 +3746,169 @@ impl<'a> WorkInputs<'_, 'a> {
     }
 }
 
+/// The typed refusal of a package whose model-check input meets a form the
+/// package route does not read.
+fn input_refusal(refusal: PendingPackageForm) -> PackageRunError {
+    match refusal {
+        PendingPackageForm::Form { form, node } => PackageRunError::Pending(PendingPackageFamily {
+            request_index: None,
+            note: None,
+            family: PendingFamily::ModelForm(form),
+            node: Some(node),
+        }),
+        refusal @ (PendingPackageForm::World(_)
+        | PendingPackageForm::Model(_)
+        | PendingPackageForm::Operations(_)
+        | PendingPackageForm::ProbabilisticNodes(_)
+        | PendingPackageForm::Probabilistic(_)
+        | PendingPackageForm::Reward(_)
+        // Only `source_object_probabilistic_model` reads the source-object
+        // rows, so `of` never gives this one.
+        | PendingPackageForm::SourceModel(_)) => PackageRunError::Input(refusal),
+    }
+}
+
+/// One component package a selected composition's premise items run over:
+/// its retained dependency artifact and the package view the request's join
+/// authenticated for it.
+struct ComponentPackage<'a> {
+    artifact: &'a fsl_package::DependencyArtifact,
+    /// The artifacts admitted before this one, which its replay admits first.
+    admitted_before: &'a [fsl_package::DependencyArtifact],
+    package: &'a BarePackage<'a>,
+}
+
+/// The package route's composition front end (FR-940, FR-1044): it resolves
+/// a component guarantee over the component's admitted package as the
+/// package route resolves any temporal clause, and keeps the route it runs
+/// on.
+struct PackageCompositions<'r> {
+    registry: &'r Registry,
+    subject: &'r SubjectSelection,
+    dependencies: &'r [fsl_package::DependencyArtifact],
+    /// Each component package's identity and the claim reads over it.
+    components: Vec<(&'r str, ClaimReads<'r, 'r>)>,
+    /// The route of each premise item that runs.
+    routes: BTreeMap<RequestIndex, Route<'r>>,
+    /// The model-check input each premise item runs over.
+    inputs: BTreeMap<RequestIndex, &'r PackageModelInput<'r>>,
+    /// The claims of the premise items that run: temporal clauses.
+    claims: Vec<OccurrenceKey>,
+}
+
+impl<'r> super::composition_item::CompositionFront for PackageCompositions<'r> {
+    type Error = PackageRunError;
+
+    fn registry(&self) -> &Registry {
+        self.registry
+    }
+
+    fn subject(&self) -> &SubjectSelection {
+        self.subject
+    }
+
+    fn component_graph(
+        &self,
+        identity: &str,
+    ) -> Result<fsl_semantics::check::wire_id::WireGraph, super::composition_item::Unavailable>
+    {
+        let artifact = self
+            .dependencies
+            .iter()
+            .find(|artifact| artifact.identity == identity)
+            .ok_or(super::composition_item::Unavailable::NotDependency)?;
+        super::super::DocumentGraphs::of_bytes(&artifact.bytes)
+            .map_err(super::composition_item::Unavailable::Emission)
+    }
+
+    fn guarantee_item(
+        &mut self,
+        index: RequestIndex,
+        clause: &super::composition_item::GuaranteeClause,
+        identity: &str,
+    ) -> Result<super::composition_item::GuaranteeResolution, PackageRunError> {
+        let fault = || PackageRunError::Document(AnalyzeDocumentError::Fault);
+        let Some((_, reads)) = self
+            .components
+            .iter()
+            .find(|(component, _)| *component == identity)
+        else {
+            return Ok(super::composition_item::GuaranteeResolution::Settled(
+                super::composition_item::failed(index, &clause.name),
+            ));
+        };
+        let view = reads.package;
+        // `from_view` authenticated the clause's owner and node: its name row
+        // in that owner must name the same declaration, else the facts
+        // disagree and the run faults rather than analyze another clause.
+        let row = view
+            .clause_names()
+            .iter()
+            .find(|row| row.name.as_ref() == clause.name)
+            .ok_or_else(fault)?;
+        let key = fsl_package::checked_views::temporal_subject(view.package(), &row.declaration)
+            .ok()
+            .and_then(|subject| subject.declaration_key())
+            .ok_or_else(fault)?;
+        if key != clause.node {
+            return Err(fault());
+        }
+        let claim = OccurrenceKey::new(
+            key,
+            filament_exact::Origin::new(filament_exact::Role::new("claim"), row.occurrence),
+        );
+        let selection = super::composition_item::guarantee_selection(clause);
+        match reads.clause(index, &clause.name, &claim, &selection)? {
+            Resolution::Settled(settled) => Ok(
+                super::composition_item::GuaranteeResolution::Settled(settled),
+            ),
+            Resolution::Claim(claim, ClauseRoute { subject, protocol }) => {
+                let owning_model = owner_of_clause(view, subject.clause());
+                self.claims.push(subject.occurrence().clone());
+                if let Some(input) = reads.input {
+                    self.inputs.insert(index, input);
+                }
+                self.routes
+                    .insert(index, Route::Clause { subject, protocol });
+                Ok(super::composition_item::GuaranteeResolution::Claim {
+                    claim,
+                    owning_model,
+                })
+            }
+        }
+    }
+}
+
+/// The facts of the composition declared at `node`, read from the admitted
+/// package under the invocation's native `budget`.
+fn composition_facts(
+    package: &BarePackage<'_>,
+    node: &CheckedNodeId,
+    budget: &mut filament_contract_model::NativeJoinBudget,
+) -> Result<super::composition_item::CompositionFacts, PackageRunError> {
+    let refused = |refusal| PackageRunError::Composition {
+        node: node.clone(),
+        refusal,
+    };
+    let view = package
+        .composition_with_budget(node, budget)
+        .map_err(|refusal| refused(refusal.into()))?;
+    super::composition_item::CompositionFacts::of_admitted(package, &view, budget).map_err(refused)
+}
+
+/// Whether the package node `node` is a component-composition declaration.
+fn is_component_composition(view: &dyn AnalysisView, node: &CheckedNodeId) -> bool {
+    view.package()
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|candidate| candidate.node_id == *node)
+        .is_some_and(|candidate| {
+            crate::claim_family::is_component_composition(&candidate.semantic_form)
+        })
+}
+
 /// The first component-composition declaration in package graph order.
-/// The default runtime guard cannot omit it while owning execution is pending.
 fn admitted_composition(view: &dyn AnalysisView) -> Option<CheckedNodeId> {
     view.package()
         .resolved_graph()
@@ -3613,8 +3920,9 @@ fn admitted_composition(view: &dyn AnalysisView) -> Option<CheckedNodeId> {
 
 /// FR-620 "Subject, compilation and default items" over a package, as the
 /// source route's `default_items` writes them: one item per kind each claim
-/// admits, in source order (a unit's position in the package's source list,
-/// then the start byte of the claim's declaration span), then each task-set
+/// admits and each component composition not under `assume-guarantee`
+/// (FR-1044), in source order (a unit's position in the package's source
+/// list, then the start byte of the declaration span), then each task-set
 /// schedulability claim, then the derived deadlock-freedom item of each model
 /// selection. Each item carries the published default of every setting.
 fn default_selections(view: &dyn AnalysisView) -> Vec<ItemSelection> {
@@ -3657,7 +3965,18 @@ fn default_selections(view: &dyn AnalysisView) -> Vec<ItemSelection> {
             schedulability.push((at, name));
             continue;
         }
-        let kinds = if is_state_graph(view, &row.declaration) {
+        let kinds = if is_component_composition(view, &row.declaration) {
+            // FR-1044: a component composition is a default item; FSpec
+            // FR-491 selects an `assume-guarantee` declaration by name only.
+            let assume_guarantee = view.composition(&row.declaration).is_ok_and(|composition| {
+                fsl_semantics::check::CompositionRule::from_spelling(composition.rule())
+                    == Some(fsl_semantics::check::CompositionRule::AssumeGuarantee)
+            });
+            if assume_guarantee {
+                continue;
+            }
+            vec![Capability::Composition]
+        } else if is_state_graph(view, &row.declaration) {
             vec![Capability::TemporalSatisfaction]
         } else if is_state_clause(view, &row.declaration) {
             vec![Capability::OperationContract]

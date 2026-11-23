@@ -64,7 +64,7 @@ fn diagnostic_json(diagnostic: &CompleteDiagnostic) -> Value {
         "message": diagnostic.message
     });
     if let Some(hint) =
-        fsl_replay::outcome::hint::hint_for(diagnostic.code, Some(diagnostic.cause.as_str()))
+        fsl_replay::outcome::hint::hint_for(diagnostic.code, Some(diagnostic.cause.as_str()), None)
     {
         expected["hint"] = json!(hint);
     }

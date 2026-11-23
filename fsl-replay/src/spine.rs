@@ -24,6 +24,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
+use crate::outcome::hint::MissingSelection;
 use filament_checked::key::DeclarationKey;
 use filament_semantic_value::catalog::CatalogCoded;
 pub use filament_semantic_value::checking::CheckingLimits;
@@ -314,11 +315,11 @@ pub use protocol_proof::{
 pub mod query_proof;
 mod request;
 pub use request::{
-    read_canonical_clause_run_request, read_clause_run_request, read_clause_selection, read_cover, read_lower_boundary,
-    read_progress_assertion, read_sample_text, read_trace_binding, AnchorWire, BindingWire,
-    ClauseArgumentWire, ClauseRequestParts, ClauseRequestReadError, ClauseRunSelectionWire,
-    ClauseSelectionParts, ClauseSelectionPartsKind, ClauseSelectionWire, CoverWire,
-    FrameSelectionWire, FunctionSelectionWire, LowerBoundaryWire, ObjectReferenceWire,
+    read_canonical_clause_run_request, read_clause_run_request, read_clause_selection, read_cover,
+    read_lower_boundary, read_progress_assertion, read_sample_text, read_trace_binding, AnchorWire,
+    BindingWire, ClauseArgumentWire, ClauseRequestParts, ClauseRequestReadError,
+    ClauseRunSelectionWire, ClauseSelectionParts, ClauseSelectionPartsKind, ClauseSelectionWire,
+    CoverWire, FrameSelectionWire, FunctionSelectionWire, LowerBoundaryWire, ObjectReferenceWire,
     ObservationLimitsWire, OrderKeyWire, ProgressWire, RelationWire, SuppliedObservation,
     TemporalTraceParts, TimestampedParts,
 };
@@ -568,6 +569,36 @@ impl CompileRefusal {
         }
     }
 
+    /// FR-286 "Missing selections": the kind of thing a
+    /// `missing_import`/`missing-selection` refusal says is missing, `None`
+    /// for every other refusal.
+    pub fn selection(&self) -> Option<MissingSelection> {
+        match self {
+            Self::UnitList(UnitListRefusal::SiblingImport { .. }) => {
+                Some(MissingSelection::SiblingUnit)
+            }
+            Self::Intake { refusal, .. } => match &refusal.cause {
+                UnitIntakeCause::Refused(refusals) => {
+                    MissingSelection::of_model_refusal(&refusals[0])
+                }
+                UnitIntakeCause::Limit(_) | UnitIntakeCause::Invariant => None,
+            },
+            Self::Extension(refusal) if refusal.code() == Code::MissingImport => {
+                Some(MissingSelection::ExtensionDefinition)
+            }
+            Self::Assembly { refusal, .. } => refusal
+                .errors
+                .first()
+                .and_then(|error| MissingSelection::of_assembly_cause(&error.cause)),
+            Self::Import {
+                refusal: ImportRefusal::MissingSelection { .. },
+                ..
+            } => Some(MissingSelection::Library),
+            Self::Dependency { refusal, .. } => refusal.selection(),
+            _ => None,
+        }
+    }
+
     /// The typed fields of a reached limit this refusal reports: a stage
     /// limit's `kind`, `bound`, `actual` and `setting`, or a caller-budget
     /// ceiling's record: the intake size record, or a denied charge's `setting`,
@@ -804,6 +835,7 @@ impl CompileRefusal {
                                 .map(|region| OutcomeLocus::from(&Locus::Region(region.clone()))),
                             intake_entry_message(&refusal.alias, entry),
                         )
+                        .with_selection(MissingSelection::of_model_refusal(entry))
                     })
                     .collect(),
                 _ => vec![OutcomeDiagnostic::from_compile_refusal(self)],
@@ -824,6 +856,7 @@ impl CompileRefusal {
                             .map(|region| OutcomeLocus::from(&Locus::Region(region.clone()))),
                         assembly_error_message(&error.cause),
                     )
+                    .with_selection(MissingSelection::of_assembly_cause(&error.cause))
                 })
                 .collect(),
             Self::CheckDiagnostics { refusals, regions } => refusals

@@ -3636,7 +3636,7 @@ pub(super) fn admit_population_values<'t>(
                             .with("field", name.to_owned())
                             .with(
                                 "path",
-                                format!("/populations/{population_index}/objects/{object_index}"),
+                                snapshot_field_path(population_index, object_index, name),
                             )
                             .at(vec![
                                 filament_semantic_value::admission::PathStep::Field(
@@ -3649,6 +3649,8 @@ pub(super) fn admit_population_values<'t>(
                                     "objects".to_owned(),
                                 ),
                                 filament_semantic_value::admission::PathStep::Index(object_index),
+                                filament_semantic_value::admission::PathStep::Field("fields".to_owned()),
+                                filament_semantic_value::admission::PathStep::Field(name.to_owned()),
                             ]),
                     ));
                 }

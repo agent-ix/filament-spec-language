@@ -320,6 +320,11 @@ pub enum CallSiteRefusal {
         code: Code,
         /// The compile refusal's rendered message.
         message: String,
+        /// The refusal's catalog cause, `None` when it names none.
+        cause: Option<&'static str>,
+        /// FR-286 "Missing selections": the kind of thing a `missing_import`
+        /// refusal says is missing.
+        selection: Option<crate::outcome::hint::MissingSelection>,
         /// The region the spine's `CompileRefusal` names for its first
         /// refusal (FR-121), or `None` when it names none. A check refusal
         /// located at an expression spans exactly that expression's bytes.
@@ -335,6 +340,11 @@ pub enum CallSiteRefusal {
         code: Code,
         /// The intake refusal's rendered message.
         message: String,
+        /// The refusal's catalog cause, `None` when it names none.
+        cause: Option<&'static str>,
+        /// FR-286 "Missing selections": the kind of thing a `missing_import`
+        /// refusal says is missing.
+        selection: Option<crate::outcome::hint::MissingSelection>,
     },
     /// The supplied `dependencies` refused against the unit: a library
     /// shares the unit's source owner (ADR-013 O-04).
@@ -351,6 +361,11 @@ pub enum CallSiteRefusal {
         code: Code,
         /// The import resolution refusal's rendered message.
         message: String,
+        /// The refusal's catalog cause, `None` when it names none.
+        cause: Option<&'static str>,
+        /// FR-286 "Missing selections": the kind of thing a `missing_import`
+        /// refusal says is missing.
+        selection: Option<crate::outcome::hint::MissingSelection>,
     },
     /// A supplied library, resolved through the unit's imports, did not
     /// compile.
@@ -363,6 +378,11 @@ pub enum CallSiteRefusal {
         code: Code,
         /// The library's own refusal's rendered message.
         message: String,
+        /// The refusal's catalog cause, `None` when it names none.
+        cause: Option<&'static str>,
+        /// FR-286 "Missing selections": the kind of thing a `missing_import`
+        /// refusal says is missing.
+        selection: Option<crate::outcome::hint::MissingSelection>,
     },
     /// `selection` names no function of the compiled `package`. Never a
     /// bare `QualifiedName` (FR-088-AC-6, TC-258): paired with the package
@@ -524,6 +544,44 @@ impl CallSiteRefusal {
             Self::Fault(_) => Code::RuntimeInvariant,
         }
     }
+
+    /// The catalog cause under [`Self::code`], where the refusal names one.
+    pub fn cause(&self) -> Option<&'static str> {
+        match self {
+            Self::DependencyInput(refusal) => refusal.cause(),
+            Self::UnknownFunction { .. }
+            | Self::UnknownOperation { .. }
+            | Self::UnknownClause { .. }
+            | Self::UnknownField { .. }
+            | Self::UnknownPopulation { .. }
+            | Self::UnknownImportedFunction { .. } => Some("missing-name"),
+            Self::UnknownImport { .. } => Some("missing-selection"),
+            Self::NotImportable { .. } => Some("operator-ineligible"),
+            Self::NotAnOperationOwner { .. } => Some("malformed-declaration"),
+            Self::AmbiguousOperation { .. } => Some("ambiguous-name"),
+            Self::Compile { cause, .. }
+            | Self::ModelIntake { cause, .. }
+            | Self::Import { cause, .. }
+            | Self::Dependency { cause, .. } => *cause,
+            Self::Fault(_) => None,
+        }
+    }
+
+    /// FR-286 "Missing selections": the kind of thing a
+    /// `missing_import`/`missing-selection` refusal says is missing, `None`
+    /// for every other refusal.
+    pub fn selection(&self) -> Option<crate::outcome::hint::MissingSelection> {
+        match self {
+            Self::UnknownImport { .. } => {
+                Some(crate::outcome::hint::MissingSelection::UnimportedLibrary)
+            }
+            Self::Compile { selection, .. }
+            | Self::ModelIntake { selection, .. }
+            | Self::Import { selection, .. }
+            | Self::Dependency { selection, .. } => *selection,
+            _ => None,
+        }
+    }
 }
 
 /// Compile `bytes` (labelled `source`, displayed as `path`) through S1 to S4
@@ -532,6 +590,14 @@ impl CallSiteRefusal {
 /// documents of its byte provision -- as I1's package input and
 /// `dependencies` as the dependency input, and locate `selection` in the
 /// result.
+///
+/// # Clocks (FR-121, FR-640)
+///
+/// `clocks` selects the clock configuration of every `temporal` clause on a
+/// named clock, in the unit and in its libraries, so the located package
+/// carries the `temporal_bindings` rows a replay recompiles under. An empty
+/// `clocks` selects nothing: a clause that needs a configuration refuses with
+/// the emitter's missing-selection error.
 ///
 /// # Function selection (TC-166)
 ///
@@ -553,6 +619,7 @@ impl CallSiteRefusal {
 ///     unit.as_bytes(),
 ///     [],
 ///     &DependencyInput::default(),
+///     &fsl_replay::RequestClocks::default(),
 ///     "f",
 /// )
 /// .unwrap();
@@ -575,6 +642,7 @@ impl CallSiteRefusal {
 ///     unit.as_bytes(),
 ///     [],
 ///     &DependencyInput::default(),
+///     &fsl_replay::RequestClocks::default(),
 ///     &f,
 /// )
 /// .unwrap();
@@ -587,6 +655,7 @@ pub fn call_site<'a, S: CallSiteSelection>(
     bytes: &[u8],
     packages: impl IntoIterator<Item = &'a [u8]>,
     dependencies: &DependencyInput,
+    clocks: &spine::RequestClocks,
     selection: &S,
 ) -> Result<CallSite<S::Site>, Box<CallSiteRefusal>> {
     let library_name = LibraryName::new(&package_name).map_err(|_| {
@@ -621,9 +690,19 @@ pub fn call_site<'a, S: CallSiteSelection>(
     let models = spine::select(&parsed, &packages, limits.model, &cancel)
         .map_err(refusal)?
         .into_value();
-    let checked = spine::check(
+    // FR-640: a library clause on a clock compiles under the `clocks` the
+    // caller selects; with none, the unit and its libraries need no
+    // selection, and a clause that does need one refuses as emission does.
+    let check_selections = clocks.check_selections(&parsed);
+    let checked = spine::check_with_execution_points_and_source_inputs(
         &parsed,
         package_name,
+        &Default::default(),
+        spine::SourceInputs {
+            temporal_selections: &check_selections,
+            clocks: (!clocks.is_empty()).then_some(clocks),
+            ..Default::default()
+        },
         &models,
         dependencies,
         limits,
@@ -631,9 +710,16 @@ pub fn call_site<'a, S: CallSiteSelection>(
     )
     .map_err(refusal)?
     .into_value();
-    let emitted = spine::package(&checked, limits.package, &cancel)
-        .map_err(refusal)?
-        .into_value();
+    let emitted = if clocks.is_empty() {
+        spine::package(&checked, limits.package, &cancel)
+    } else {
+        let selections = clocks
+            .package_selections(&checked, &[&parsed])
+            .map_err(|failure| Box::new(CallSiteRefusal::from(*failure)))?;
+        spine::package_with_temporal_selections(&checked, &selections, limits.package, &cancel)
+    }
+    .map_err(refusal)?
+    .into_value();
     let site = selection.locate(&sealed::Compiled {
         package: checked.package(),
         package_name: &library_name,
@@ -651,25 +737,35 @@ impl From<CompileRefusal> for CallSiteRefusal {
     /// a supplied library.
     fn from(refusal: CompileRefusal) -> Self {
         let code = refusal.code();
+        let cause = refusal.cause();
+        let selection = refusal.selection();
         match refusal {
             CompileRefusal::Intake { refusal, .. } => Self::ModelIntake {
                 message: spine::intake_message(&refusal.cause),
                 alias: refusal.alias,
                 code,
+                cause,
+                selection,
             },
             CompileRefusal::DependencyInput(input) => Self::DependencyInput(input),
             CompileRefusal::UnitList(refusal) => Self::Compile {
                 code,
+                cause,
+                selection,
                 region: refusal.region().cloned(),
                 message: refusal.to_string(),
             },
             CompileRefusal::Import { refusal, .. } => Self::Import {
                 code,
+                cause,
+                selection,
                 message: refusal.to_string(),
             },
             CompileRefusal::Dependency { path, refusal } => Self::Dependency {
                 path,
                 code,
+                cause,
+                selection,
                 message: refusal.to_string(),
             },
             refusal @ (CompileRefusal::Source(_)
@@ -687,6 +783,8 @@ impl From<CompileRefusal> for CallSiteRefusal {
             | CompileRefusal::Limit(_)
             | CompileRefusal::Omitted(_)) => Self::Compile {
                 code,
+                cause,
+                selection,
                 region: refusal.region().cloned(),
                 message: refusal.to_string(),
             },
@@ -1027,6 +1125,7 @@ mod tests {
             bytes,
             [],
             &DependencyInput::default(),
+            &crate::RequestClocks::default(),
             &name(function),
         )
     }
@@ -1147,6 +1246,7 @@ mod tests {
                 UNIT.as_bytes(),
                 [],
                 &DependencyInput::default(),
+                &crate::RequestClocks::default(),
                 &selection,
             )
             .expect_err("the selection names no function of the compiled package");

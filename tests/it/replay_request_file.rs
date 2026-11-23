@@ -183,6 +183,7 @@ impl Fixture {
             self.program.as_bytes(),
             std::iter::empty::<&[u8]>(),
             &dependencies,
+            &fsl_replay::RequestClocks::default(),
             &entry(),
         )
         .expect("the program's call site resolves")

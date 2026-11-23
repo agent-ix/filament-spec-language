@@ -792,6 +792,7 @@ impl ReplayRequestRefusal {
             | Self::UnexpectedCertificate
             | Self::UnexpectedModelGraphTarget { .. } => Some("unknown-member"),
             Self::InvalidCertificateType => Some("invalid-value"),
+            Self::IncompleteByteProvision { .. } => Some("missing-selection"),
             _ => None,
         }
     }
@@ -1364,6 +1365,31 @@ mod tests {
         assert_eq!(refused.code(), Code::InvalidIdentifier);
     }
 
+    /// FR-865-AC-21, FR-286-AC-40: the refusal of a package reference with no
+    /// byte-provision entry is `missing_import`/`missing-selection` and its
+    /// diagnostic carries the `byte-provision` kind and that row's hint.
+    #[trace("TC-3199", "FR-865-AC-21", "FR-865-AC-24", "FR-286-AC-40")]
+    #[test]
+    fn incomplete_byte_provision_diagnostic_carries_its_selection() {
+        let mut incomplete = wire(1);
+        incomplete.byte_provision.clear();
+        let refused =
+            ReplayRequest::decode(incomplete, crate::ReplayLimits::default()).unwrap_err();
+        let document =
+            crate::OutcomeDocument::from_replay_refusal(&crate::ReplayRefusal::Request(refused));
+        let diagnostic = document.diagnostics().first().expect("one diagnostic");
+        let wire = crate::outcome::assert_diagnostic_valid(diagnostic);
+        let diagnostic = &wire;
+        assert_eq!(diagnostic["code"], "missing_import", "{wire}");
+        assert_eq!(diagnostic["cause"], "missing-selection", "{wire}");
+        assert_eq!(diagnostic["selection"], "byte-provision", "{wire}");
+        assert_eq!(
+            diagnostic["hint"],
+            "Add a byte_provision entry for the named source to the replay request.",
+            "{wire}"
+        );
+    }
+
     /// FR-071-AC-2, FR-071-AC-5, FR-071-AC-7 (TC-186): no path-typed member
     /// exists (structural: `ReplayRequest`'s only byte accessor is the
     /// source-keyed `ByteProvision::get`); an incomplete byte provision
@@ -1438,6 +1464,7 @@ mod tests {
             source,
             [],
             &crate::DependencyInput::default(),
+            &crate::RequestClocks::default(),
             &QualifiedName::new(vec![Identifier::new("f").unwrap()]).unwrap(),
         )
         .expect("the complete package comes from genuine source compilation");

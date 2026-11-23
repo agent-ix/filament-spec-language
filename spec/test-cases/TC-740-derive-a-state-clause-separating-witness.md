@@ -57,11 +57,10 @@ Tag the tests `#[trace("TC-740", "FR-265-AC-n")]`.
   `closed-scope` and no record for `low`.
 - Step 2: `decisive-witness` with 600 at index 1 naming the `exists`, then
   `closed-scope` with no record; `decisive-witness` naming `NotAllBelow`'s
-  `forall`; `closed-scope` with no record for `EqualsAll`.
+  `forall`; `decisive-counterexample` with the root `=`'s comparison record, operands `false` and `true`, no quantifier, for `EqualsAll`.
 - Step 3: a record for `GuardedAll`'s `forall` naming the reference to
   `mid` at index 1, then
-  `closed-scope`; a record for `LetAll`'s `forall`; `closed-scope` and no
-  record for `OrAll`.
+  `closed-scope`; a record for `LetAll`'s `forall`; `decisive-counterexample` with the comparison record of `OrAll`'s right `=`, operands 600 and 0.
 - Step 4: one record naming the outer `forall`, element 0, index 0; no
   inner occurrence appears.
 - Step 5: element 600, index 2 (`FilteredAll`); element 601, index 1
