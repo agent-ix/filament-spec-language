@@ -430,6 +430,7 @@ fn a_predicate_join_over_a_package_settles_unsupported_naming_the_join() {
     std::fs::remove_dir_all(&sources).expect("the handoff sources are removed");
     let document = json!({"format": "native-analyze/1", "request": members});
     let package = analyze(&ws.write("analyze-package.json", document.to_string().as_bytes()));
+    assert!(!package.item(0).is_null(), "{}", package.document());
     let item = package.item(0);
     assert_eq!(label(&item), "unsupported", "{}", package.document());
     let text = item.to_string();
