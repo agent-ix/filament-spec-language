@@ -1235,6 +1235,233 @@ fn check_without_markdown_reads_native_source() {
     assert_eq!(markdown.status.code(), Some(0), "{markdown:?}");
 }
 
+const FENCE_UNIT: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction good using v(): Boolean pure { true }\n";
+
+/// FR-662-AC-1, FSpec FR-563-AC-1 (TC-1743, FSpec-TC-1243): the healthy item
+/// is a success with no diagnostic, and the refused item names its unit,
+/// keeps its body span and gives the Markdown line and column of the
+/// offending token.
+#[test]
+#[trace("TC-1743", "FR-662-AC-1", "FSpec-TC-1243", "FSpec-FR-563-AC-1")]
+fn check_markdown_items_carry_exact_units_spans_and_markdown_coordinates() {
+    let directory = tempfile::tempdir().unwrap();
+    let broken = FENCE_UNIT.replace("true", "1 + true");
+    let document = format!(
+        "## Spec\n\n{}{}",
+        fence(Some("Healthy"), FENCE_UNIT),
+        fence(Some("Broken"), &broken)
+    );
+    std::fs::write(directory.path().join("spec.md"), &document).unwrap();
+    let output = driver(
+        directory.path(),
+        &[
+            "check",
+            "--markdown",
+            "agent-ix",
+            "doc",
+            "spec.md",
+            "--format",
+            "json",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(20), "{output:?}");
+    let outcome = stdout_json(&output);
+    assert_eq!(outcome["category"], "refusal", "{outcome}");
+    let items = outcome["items"].as_array().expect("items");
+    assert_eq!(items.len(), 2, "{outcome}");
+
+    let healthy = &items[0];
+    assert_eq!(healthy["category"], "success", "{outcome}");
+    assert_eq!(healthy["diagnostics"], json!([]), "{outcome}");
+    assert_eq!(healthy["first_line"], 6, "{outcome}");
+    assert_eq!(
+        healthy["unit"],
+        json!({"document": {"authority": "agent-ix", "identity": "doc"},
+            "path": "spec.md", "clause": "Healthy",
+            "body": {"authority": "agent-ix", "identity": "doc#Healthy"}}),
+        "{outcome}"
+    );
+
+    let refused = &items[1];
+    assert_eq!(refused["category"], "refusal", "{outcome}");
+    assert_eq!(refused["first_line"], 14, "{outcome}");
+    let diagnostic = &refused["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "ill_typed", "{outcome}");
+    assert_eq!(
+        diagnostic["unit"],
+        json!({"document": {"authority": "agent-ix", "identity": "doc"},
+            "path": "spec.md", "clause": "Broken",
+            "body": {"authority": "agent-ix", "identity": "doc#Broken"}}),
+        "{outcome}"
+    );
+    let body_start = document.find(&broken).unwrap();
+    let token = broken.find("1 + true").unwrap();
+    assert_eq!(diagnostic["locus"]["kind"], "region", "{outcome}");
+    assert_eq!(diagnostic["locus"]["start"], token, "{outcome}");
+    assert_eq!(
+        diagnostic["locus"]["end"],
+        token + "1 + true".len(),
+        "{outcome}"
+    );
+    let regions = diagnostic["original_regions"].as_array().expect("regions");
+    assert_eq!(regions.len(), 1, "{outcome}");
+    assert_eq!(regions[0]["kind"], "located", "{outcome}");
+    assert_eq!(regions[0]["file"], "spec.md", "{outcome}");
+    assert_eq!(
+        regions[0]["span"]["start"],
+        json!({"byte": body_start + token, "line": 16, "column": 41}),
+        "{outcome}"
+    );
+    assert_eq!(
+        regions[0]["span"]["end"],
+        json!({"byte": body_start + token + "1 + true".len(), "line": 16, "column": 49}),
+        "{outcome}"
+    );
+}
+
+/// FR-662-AC-2 (TC-1743): a fence no heading owns refuses
+/// `missing_declaration`/`missing-name` located at its first line, and the
+/// result of the fence under a heading is unchanged.
+#[test]
+#[trace("TC-1743", "FR-662-AC-2")]
+fn check_markdown_headless_fence_refuses_missing_name_at_its_first_line() {
+    let directory = tempfile::tempdir().unwrap();
+    let document = format!(
+        "# Spec\n\n{}{}",
+        fence(None, FENCE_UNIT),
+        fence(Some("Good"), FENCE_UNIT)
+    );
+    std::fs::write(directory.path().join("spec.md"), document).unwrap();
+    let output = driver(
+        directory.path(),
+        &["check", "--markdown", "agent-ix", "doc", "spec.md"],
+    );
+    assert_eq!(output.status.code(), Some(20), "{output:?}");
+    let outcome = stdout_json(&output);
+    let items = outcome["items"].as_array().expect("items");
+    assert_eq!(items.len(), 2, "{outcome}");
+    assert_eq!(items[0]["first_line"], 4, "{outcome}");
+    assert_eq!(items[0]["unit"]["clause"], Value::Null, "{outcome}");
+    let diagnostic = &items[0]["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "missing_declaration", "{outcome}");
+    assert_eq!(diagnostic["cause"], "missing-name", "{outcome}");
+    assert_eq!(
+        diagnostic["original_regions"][0]["span"]["start"]["line"],
+        4
+    );
+    assert_eq!(items[1]["category"], "success", "{outcome}");
+    assert_eq!(items[1]["diagnostics"], json!([]), "{outcome}");
+    assert_eq!(
+        items[1]["unit"]["body"]["identity"], "doc#Good",
+        "{outcome}"
+    );
+}
+
+/// The refusal envelope of one argv `check` request: exit status and the
+/// machine value on stderr.
+fn check_refusal(directory: &Path, arguments: &[&str]) -> (Option<i32>, Value) {
+    let output = driver(directory, arguments);
+    let value = serde_json::from_slice(&output.stderr).unwrap_or(Value::Null);
+    (output.status.code(), value)
+}
+
+/// FSpec FR-563 (FSpec-TC-1243): every argv `check` grammar refusal is
+/// `invalid-request` at stage `request`, exit 20, naming the option. `--format
+/// text` is refused until QSL-2981 serves the text form.
+#[test]
+#[trace("FSpec-TC-1243", "FSpec-FR-563-AC-2")]
+fn check_argv_refuses_each_malformed_grammar() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("spec.md"), "# Spec\n").unwrap();
+    let cases: [(&[&str], &str); 13] = [
+        (
+            &["check", "--markdown", "spec.md"],
+            "check expects [--markdown] [--extensions <file>] [--format json] a source, or <authority> <name> <source> (--markdown requires the labels)",
+        ),
+        (
+            &["check", "--bogus", "spec.md"],
+            "check option --bogus is not recognized",
+        ),
+        (
+            &["check", "--markdown", "--markdown", "agent-ix", "doc", "spec.md"],
+            "check option --markdown is given more than once",
+        ),
+        (
+            &["check", "--format", "json", "--format", "json", "spec.md"],
+            "check option --format is given more than once",
+        ),
+        (
+            &["check", "--extensions", "s.json", "--extensions", "s.json", "spec.md"],
+            "check option --extensions is given more than once",
+        ),
+        (
+            &["check", "spec.md", "--format"],
+            "check option --format expects a value",
+        ),
+        (
+            &["check", "spec.md", "--extensions"],
+            "check option --extensions expects a value",
+        ),
+        (
+            &["check", "--extensions", "--markdown", "agent-ix", "doc", "spec.md"],
+            "check option --extensions expects a value",
+        ),
+        (
+            &["check", "--format", "text", "spec.md"],
+            "check supports only json",
+        ),
+        (
+            &["check"],
+            "check expects [--markdown] [--extensions <file>] [--format json] a source, or <authority> <name> <source> (--markdown requires the labels)",
+        ),
+        (
+            &["check", "agent-ix", "doc"],
+            "check expects [--markdown] [--extensions <file>] [--format json] a source, or <authority> <name> <source> (--markdown requires the labels)",
+        ),
+        (
+            &["check", "--", "spec.md"],
+            "check option -- is not recognized",
+        ),
+        (
+            &["check", "-spec.md"],
+            "check option -spec.md is not recognized",
+        ),
+    ];
+    for (arguments, message) in cases {
+        let (exit, value) = check_refusal(directory.path(), arguments);
+        assert_eq!(exit, Some(20), "{arguments:?}: {value}");
+        assert_eq!(value["code"], "invalid-request", "{arguments:?}: {value}");
+        assert_eq!(value["stage"], "request", "{arguments:?}: {value}");
+        assert!(
+            value.to_string().contains(message),
+            "{arguments:?}: {value}"
+        );
+    }
+}
+
+/// FSpec FR-562-AC-1 (FSpec-TC-1242): the one-operand form with
+/// `--extensions` is accepted and supplies the definition.
+#[test]
+#[trace("FSpec-TC-1242", "FSpec-FR-562-AC-1")]
+fn check_extensions_accepts_the_one_operand_form() {
+    let directory = tempfile::tempdir().unwrap();
+    retention_definition(directory.path(), "retention.json", "retention");
+    extension_set(
+        directory.path(),
+        json!([{"authority": "agent-ix", "identity": "ext.retention", "file": "retention.json"}]),
+    );
+    std::fs::write(
+        directory.path().join("unit.native"),
+        format!("{HEADER}profile r = \"ext.retention\";\n{FORM}\n"),
+    )
+    .unwrap();
+    let output = driver(
+        directory.path(),
+        &["check", "--extensions", "set.json", "unit.native"],
+    );
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+}
+
 /// FR-663-AC-2 (TC-1745): the `parsed` report is stable, and a token bound
 /// equal to the count reached reports `used` equal to `bound`.
 #[test]
@@ -1375,6 +1602,7 @@ fn snapshot_refusals_carry_a_document_locus() {
 /// through `command::run` retain their document locus through strict read-back.
 #[test]
 #[trace("TC-3081", "FR-267-AC-25", "FR-267-AC-27")]
+#[trace("TC-465", "FR-106-AC-82")]
 fn snapshot_and_model_header_refusals_round_trip_document_loci() {
     let cases = [
         (
@@ -1382,7 +1610,7 @@ fn snapshot_and_model_header_refusals_round_trip_document_loci() {
             "missing-member",
             Some("parent"),
             "parent",
-            "/populations/0/objects/1",
+            "/populations/0/objects/1/fields/parent",
             Some(("ix://example/config-version/config_history", "child")),
             Some("parent"),
         ),

@@ -1229,7 +1229,7 @@ pub fn admit(
             },
             detail: format!(
                 "no domain package supplied for identity {identity:?}; supply it with \
-                 --model <identity>=<file> on fsl check or in a compile request's `models` member"
+                 --model {identity}=<file> on fsl check or in the request's `models` member"
             ),
         });
     };
@@ -8620,7 +8620,7 @@ mod tests {
                     identity: "acme/orders".to_owned(),
                 },
                 detail: "no domain package supplied for identity \"acme/orders\"; supply it with \
-                         --model <identity>=<file> on fsl check or in a compile request's `models` member"
+                         --model acme/orders=<file> on fsl check or in the request's `models` member"
                     .to_owned(),
             }
         );
