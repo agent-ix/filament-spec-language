@@ -957,11 +957,10 @@ pub struct Emission {
     pub(crate) equality_producer_identity_rows: Vec<EqualityProducerEmissionRow>,
     /// Per-fact equality witnesses joined to final structural node ids.
     pub(crate) equality_fact_witness_rows: Vec<EqualityFactWitnessRow>,
-    /// The typed graph nodes exactly as encoded into [`Self::package`], with
-    /// package-level index segments. IR's typed bodies (an operation anchor's
-    /// bare execution point) are not decodable through serde outside its
-    /// admitting reader, so protocol results read these rather than the bytes.
-    pub(crate) wire_nodes: std::sync::Arc<Vec<CheckedSemanticNodeV2>>,
+    /// The node count and function check modes read from the typed graph
+    /// nodes [`Self::package`] was encoded from. The typed nodes themselves
+    /// are not retained beside the bytes.
+    pub(crate) retained_nodes: RetainedNodes,
     /// The `temporal_bindings` rows of the checked graph's temporal and
     /// hyper clauses, keyed by the graph's own clause identity.
     pub(crate) temporal_binding_rows: TemporalBindingRows,
@@ -1223,7 +1222,7 @@ impl DebugWith for Emission {
             identity_row_selection: _,
             equality_producer_identity_rows,
             equality_fact_witness_rows,
-            wire_nodes,
+            retained_nodes,
             temporal_binding_rows,
             temporal_rows,
         } = self;
@@ -1285,7 +1284,7 @@ impl DebugWith for Emission {
                 equality_producer_identity_rows,
             )
             .field("equality_fact_witness_rows", equality_fact_witness_rows)
-            .field("wire_node_count", &wire_nodes.len())
+            .field("wire_node_count", &retained_nodes.node_count)
             .field("temporal_binding_row_count", &temporal_binding_rows.len())
             .field("temporal_rows", temporal_rows)
             .finish()
@@ -1676,30 +1675,11 @@ impl Emission {
     /// The `function` nodes of the emitted graph in node order, each with its
     /// node id as the emitted bytes spell it (operand-slot segments) and its
     /// recorded `check_mode` spelling, taken from the typed nodes these bytes
-    /// were encoded from so no reader parses the bytes again. The typed nodes
-    /// hold document indices; each function node is rewritten to operand
-    /// slots one at a time, by the same pass that wrote the bytes, so the id
+    /// were encoded from so no reader parses the bytes again. Each id is read
+    /// from the node after the operand-slot pass that wrote the bytes, so it
     /// is the one `function_records` reads back from the bytes.
-    ///
-    /// # Errors
-    ///
-    /// The canonical output-limit failure or an identity invariant refusal of
-    /// the operand-slot pass.
-    pub fn function_check_modes(
-        &self,
-        limits: EmitLimits,
-    ) -> Result<Vec<(CheckedNodeId, Option<&'static str>)>, EmitRefusal> {
-        let mut modes = Vec::new();
-        for node in self.wire_nodes.iter() {
-            if CheckedNodeTag::from_wire(&node.node_tag) != Some(CheckedNodeTag::Function) {
-                continue;
-            }
-            let mut slotted = [node.clone()];
-            write_operand_slots(&mut slotted, limits)?;
-            let [slotted] = slotted;
-            modes.push((slotted.node_id, node.check_mode.map(|mode| mode.as_str())));
-        }
-        Ok(modes)
+    pub fn function_check_modes(&self) -> &[(CheckedNodeId, Option<&'static str>)] {
+        &self.retained_nodes.function_modes
     }
 
     /// FSL-owned identity rows keyed by equality application and occurrence.
@@ -5477,7 +5457,7 @@ pub fn emit_checked_with_protocol_results_and_temporal_selections_and_cancel(
     limits: EmitLimits,
 ) -> Result<ProtocolEmission, EmitRefusal> {
     let graph = package.graph();
-    let emission = match emit_package_inner(
+    let (emission, structural_nodes) = match emit_package_nodes(
         package,
         |location| graph.region(location),
         |_| None,
@@ -5485,16 +5465,16 @@ pub fn emit_checked_with_protocol_results_and_temporal_selections_and_cancel(
         &ir_decodes,
         selections,
         limits,
+        true,
     )
     .map_err(|refusal| locate_output_limit(refusal, graph))
     {
-        Ok(emission) => Some(emission),
-        Err(EmitRefusal::NothingToEmit { .. }) if !graph.protocol_refusals().is_empty() => None,
+        Ok((emission, nodes)) => (Some(emission), Some(nodes)),
+        Err(EmitRefusal::NothingToEmit { .. }) if !graph.protocol_refusals().is_empty() => {
+            (None, None)
+        }
         Err(refusal) => return Err(refusal),
     };
-    let structural_nodes = emission
-        .as_ref()
-        .map(|emission| Vec::clone(&emission.wire_nodes));
     let ids = StructuralIds::default();
     let mut structural_nodes = structural_nodes;
     if let Some(nodes) = structural_nodes.as_mut() {
@@ -6972,11 +6952,11 @@ pub fn emit_timed_models(
         identity_row_selection: identity_rows::IdentityRowSelection::default(),
         equality_producer_identity_rows: Vec::new(),
         equality_fact_witness_rows: Vec::new(),
-        wire_nodes: std::sync::Arc::new(document_nodes(semantic_graph)?),
+        retained_nodes: RetainedNodes::of(&semantic_graph),
         temporal_binding_rows: TemporalBindingRows::default(),
         temporal_rows: TemporalRows::default(),
     }
-    .with_identity_row_selection())
+    .with_identity_row_selection(&[]))
 }
 
 /// [`emit_checked`] under the caller's [`Cancel`] handle, polled once at
@@ -7341,9 +7321,6 @@ fn is_compensation_node(node: &CheckedSemanticNodeV2) -> bool {
 /// node would be written; every production call site is `emit_package`,
 /// which passes `|_| None`, so this behaves exactly as `emit_package`
 /// always has for every non-test caller.
-/// `#[string_edge]`: the admitted timed nominal form selects the unit-node
-/// emission branch.
-#[string_edge]
 fn emit_package_inner(
     package: &CheckedPackage,
     regions: impl Fn(&Location) -> Option<SourceRegion>,
@@ -7353,7 +7330,61 @@ fn emit_package_inner(
     temporal_selections: &[TemporalClockSelection],
     limits: EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
-    let ids = &StructuralIds::default();
+    emit_package_nodes(
+        package,
+        regions,
+        fault,
+        cancel,
+        decodes,
+        temporal_selections,
+        limits,
+        false,
+    )
+    .map(|(emission, _)| emission)
+}
+
+/// The emitted graph's typed nodes, with document-held operand indices, as
+/// [`emit_checked`] encodes them. Only tests read typed nodes beside the
+/// bytes; an [`Emission`] does not retain them.
+#[cfg(test)]
+pub(crate) fn emitted_document_nodes(
+    package: &CheckedPackage,
+    regions: impl Fn(&Location) -> Option<SourceRegion>,
+    limits: EmitLimits,
+) -> Result<Vec<CheckedSemanticNodeV2>, EmitRefusal> {
+    emit_package_nodes(
+        package,
+        regions,
+        |_| None,
+        &Cancel::new(),
+        &ir_decodes,
+        &[],
+        limits,
+        true,
+    )
+    .map(|(_, nodes)| nodes)
+}
+
+/// [`emit_package_inner`], also returning the typed graph nodes with
+/// document-held operand indices when `keep_nodes` is set (empty otherwise).
+/// The emission itself never holds them: a caller that reads typed nodes
+/// (the per-protocol results) takes them here and drops them when done.
+/// `#[string_edge]`: the admitted timed nominal form selects the unit-node
+/// emission branch.
+#[string_edge]
+#[allow(clippy::too_many_arguments)]
+fn emit_package_nodes(
+    package: &CheckedPackage,
+    regions: impl Fn(&Location) -> Option<SourceRegion>,
+    fault: impl Fn(&CheckedNodeId) -> Option<EmitRefusal>,
+    cancel: &Cancel,
+    decodes: &dyn Fn(CheckedNodeTag, &str) -> bool,
+    temporal_selections: &[TemporalClockSelection],
+    limits: EmitLimits,
+    keep_nodes: bool,
+) -> Result<(Emission, Vec<CheckedSemanticNodeV2>), EmitRefusal> {
+    let ids_table = StructuralIds::default();
+    let ids = &ids_table;
     let denied = || {
         cancel
             .poll()
@@ -8112,6 +8143,28 @@ fn emit_package_inner(
         catalog: diagnostics_catalog(),
         entries: Vec::new(),
     };
+    let mut evidence = own_evidence(&lock);
+    supply_extension_definitions(&mut evidence, graph, &order)?;
+    // The checked-graph candidates, the structural-id tables and the
+    // producer joins are emission-only: release them before the encoder's
+    // working set is allocated, so the two never coexist.
+    drop((
+        order,
+        kept,
+        emitted_keys,
+        dropped,
+        omitted_keys,
+        omitted_causes,
+    ));
+    drop((
+        emitted_node_ids,
+        producer_node_ids,
+        value_validity.records,
+        relation_rows,
+    ));
+    drop((candidates, external, foreign));
+    drop((declared_forms, source_keys));
+    drop(ids_table);
     let package = EmittedPackage::new(graph.package_name(), |name| {
         encode_checked_package_v2_with_protocol_correlation_occurrences(
             name,
@@ -8141,9 +8194,23 @@ fn emit_package_inner(
         )
         .map_err(EmitRefusal::from)
     })?;
-    let mut evidence = own_evidence(&lock);
-    supply_extension_definitions(&mut evidence, graph, &order)?;
-    Ok(Emission {
+    let retained_nodes = RetainedNodes::of(&semantic_graph);
+    // The typed nodes outlive the bytes only for a caller that reads them,
+    // or for the identity-row selection when the acquisition selected
+    // exact rows; otherwise they are dropped here, before the package is
+    // returned and remembered.
+    let selected_exact_declaration_rows = graph.selected_exact_declaration_rows().to_vec();
+    let selected_exact_field_rows = graph.selected_exact_field_rows().to_vec();
+    let document = if keep_nodes
+        || !selected_exact_declaration_rows.is_empty()
+        || !selected_exact_field_rows.is_empty()
+    {
+        document_nodes(semantic_graph)?
+    } else {
+        drop(semantic_graph);
+        Vec::new()
+    };
+    let emission = Emission {
         package,
         artifact_identity: graph.source().clone(),
         omitted,
@@ -8167,12 +8234,12 @@ fn emit_package_inner(
         selected_model_enum_shape_rows,
         selected_model_union_rows,
         selected_source_collection_rows,
-        selected_exact_declaration_rows: graph.selected_exact_declaration_rows().to_vec(),
-        selected_exact_field_rows: graph.selected_exact_field_rows().to_vec(),
+        selected_exact_declaration_rows,
+        selected_exact_field_rows,
         identity_row_selection: identity_rows::IdentityRowSelection::default(),
         equality_producer_identity_rows,
         equality_fact_witness_rows,
-        wire_nodes: std::sync::Arc::new(document_nodes(semantic_graph)?),
+        retained_nodes,
         temporal_binding_rows,
         temporal_rows: TemporalRows {
             clauses: temporal_clause_refs,
@@ -8180,7 +8247,8 @@ fn emit_package_inner(
             bindings: temporal_bindings,
         },
     }
-    .with_identity_row_selection())
+    .with_identity_row_selection(&document);
+    Ok((emission, if keep_nodes { document } else { Vec::new() }))
 }
 
 /// FR-092 "Source enum identity rows": one declaration row per emitted
@@ -10398,6 +10466,43 @@ pub(crate) fn document_nodes(
     Ok(graph.nodes)
 }
 
+/// What an [`Emission`] keeps of its typed nodes once their bytes are
+/// written. The typed nodes themselves are not kept: each is several times
+/// its encoded size, and they would stay resident for as long as the
+/// package remembers its emission (QSL-2894).
+#[derive(Clone, Debug)]
+pub(crate) struct RetainedNodes {
+    /// The number of nodes the bytes write.
+    node_count: usize,
+    /// Each `function` node's id exactly as the bytes spell it (operand-slot
+    /// segments) and its recorded `check_mode` spelling, in node order.
+    function_modes: Arc<[(CheckedNodeId, Option<&'static str>)]>,
+}
+
+impl RetainedNodes {
+    /// What is retained of `graph`, whose nodes hold operand-slot segments:
+    /// the form [`write_operand_slots`] leaves and the bytes are encoded from.
+    fn of(graph: &CheckedSemanticGraphV2) -> Self {
+        let function_modes: Vec<_> = graph
+            .nodes
+            .iter()
+            .filter(|node| {
+                CheckedNodeTag::from_wire(&node.node_tag) == Some(CheckedNodeTag::Function)
+            })
+            .map(|node| {
+                (
+                    node.node_id.clone(),
+                    node.check_mode.map(|mode| mode.as_str()),
+                )
+            })
+            .collect();
+        Self {
+            node_count: graph.nodes.len(),
+            function_modes: function_modes.into(),
+        }
+    }
+}
+
 /// Whether `id` holds a segment `holds` matches.
 fn holds_segment(
     id: &CheckedNodeId,
@@ -10426,8 +10531,13 @@ impl ForeignNodes {
         }
         for (identity, dependency) in package.dependencies() {
             let emission = emit_checked(dependency, limits)?;
-            let graph = fsl_semantics::check::wire_id::WireGraph::new(
-                emission.wire_nodes.iter().map(|node| &node.node_id),
+            // The positions are read from the dependency's own bytes, which
+            // `emit_checked` has just held to `limits.output_bytes`; that
+            // ceiling bounds this parse. The parse itself is not charged to
+            // any budget, and its JSON tree is dropped when the positions
+            // are read.
+            let graph = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(
+                emission.package().bytes(),
             )
             .map_err(|_| EmitRefusal::SourceMapInvariant)?;
             for (at, key) in (0_u64..).zip(graph.keys()) {
