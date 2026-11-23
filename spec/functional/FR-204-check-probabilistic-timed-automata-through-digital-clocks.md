@@ -250,6 +250,57 @@ unsupported cause `DelayDistribution{operation}`.
 | FR-204-AC-15 | Over `Retx` with `delay M::Call::send ~ discrete { 1 ms: 1, 2 ms: 1 };`, `Deadline` over every scheduler builds an MDP product with no `DelayDistribution` refusal. | Test (TC-2174) |
 | FR-204-AC-16 | Over the `Retx` variant whose `send` has no guard and no reset, `Deadline` over every scheduler builds a product with no `ZeroDelayCycle` refusal, and its exact minimum and maximum are both `1`. | Test (TC-2175) |
 | FR-204-AC-17 | Under a workload, `Retx` with `delay M::Call::send ~ discrete { 5 ms: 1 };`, whose `send` window excludes its only delay, builds a product whose time-locked state is terminal, with no `NotStochastic` refusal. | Test (TC-2176) |
+| FR-204-AC-18 | Under the workload `Skew` (weights `A` 1, `B` 2, `C` 3), the model `Trio` of the worked example below, whose `A`, `B` and `C` race with the given delays `discrete { 1 ms: 1, 2 ms: 1 }`, `discrete { 2 ms: 1, 3 ms: 1 }` and `discrete { 2 ms: 1, 3 ms: 3 }`, has at its initial state four race edges, each `Identity(A)`, with `A` at 1 ms `1/2`, `A` at 2 ms `53/192`, `B` at 2 ms `7/48` and `C` at 2 ms `5/64`, and no `FreeDelays` or `WorkloadResolve` action; `probability >= 0.13 [eventually[0 ms, 3 ms] holds(t.b)]` settles `proved`, `ExactValue{7/48}`, `probability >= 0.07 [eventually[0 ms, 3 ms] holds(t.c)]` settles `proved`, `ExactValue{5/64}`, `probability <= 0.8 [eventually[0 ms, 3 ms] holds(t.a)]` settles `proved`, `ExactValue{149/192}`, and `probability >= 0.5 [eventually[0 ms, 1 ms] holds(t.a)]` settles `proved`, `ExactValue{1/2}`; a certificate whose values order ties evenly (`b`: `11/96`) or by canonical order (`b`: `0`) is rejected `InequalityFails` at the initial state's `ProbabilisticProductState`. | Test (TC-3204) |
+
+## Worked example: given delays racing under weights
+
+`Trio` (`time dense unit ms`) has `phase` (`Idle` or `Done`) and the flags
+`a`, `b` and `c`; the operations `A`, `B` and `C` are each guarded by
+`phase = Idle` under the time invariant `x <= 3 ms` while `Idle`, set `Done`
+and respectively `a`, `b` and `c`, and declare
+`delay Trio::A ~ discrete { 1 ms: 1, 2 ms: 1 };`,
+`delay Trio::B ~ discrete { 2 ms: 1, 3 ms: 1 };` and
+`delay Trio::C ~ discrete { 2 ms: 1, 3 ms: 3 };`. The workload `Skew`
+weights `A` 1, `B` 2 and `C` 3. Of the eight draws, four have `A` drawing 1
+and win with no tie, `(2, 3, 3)` has `A` alone at 2 ms, `(2, 2, 3)` and
+`(2, 3, 2)` are two-way ties and `(2, 2, 2)` the three-way tie. Each edge is
+labelled `Identity(A)`, the first racing identity in canonical order
+(FR-196). A checker that breaks each tie evenly gets `11/96`, `5/96` and
+`5/6` for the `b`, `c` and `a` claims, and refutes all three; one that takes
+the first tied identity in canonical order gets `0`, `0` and `1`.
+
+The derivation. A tied
+racer wins first with its weight over the tied weights; each draw's
+probability is the product of the three conditioned probabilities
+(`A` 1/2 at 1 or 2; `B` 1/2 at 2 or 3; `C` 1/4 at 2, 3/4 at 3). Masses are in
+units of `1/192`.
+
+| Draw `(a, b, c)` | Probability | Race | `A` wins | `B` wins | `C` wins |
+|---|---|---|---|---|---|
+| `(1, 2, 2)`, `(1, 2, 3)`, `(1, 3, 2)`, `(1, 3, 3)` | `1/16 + 3/16 + 1/16 + 3/16 = 1/2` (96) | `A` alone at 1 ms | 96 | 0 | 0 |
+| `(2, 3, 3)` | `3/16` (36) | `A` alone at 2 ms | 36 | 0 | 0 |
+| `(2, 2, 3)` | `3/16` (36) | two-way tie `A`, `B` at 2 ms, weights 1 and 2 | 12 | 24 | 0 |
+| `(2, 3, 2)` | `1/16` (12) | two-way tie `A`, `C` at 2 ms, weights 1 and 3 | 3 | 0 | 9 |
+| `(2, 2, 2)` | `1/16` (12) | three-way tie at 2 ms, weights 1, 2, 3 over 6 | 2 | 4 | 6 |
+| Total | `1` (192) | | 149 | 28 | 15 |
+
+Totals: `A` `149/192`, `B` `28/192 = 7/48`, `C` `15/192 = 5/64`, and
+`149 + 28 + 15 = 192`. `A` wins at 1 ms with `96/192 = 1/2` and at 2 ms with
+`53/192`. The exact values of the claims are `P(b) = 7/48`, `P(c) = 5/64`,
+`P(a within 2 ms) = 149/192` and `P(a within 1 ms) = 1/2`. Breaking ties
+evenly changes the three tie rows to `A`/`B` 18/18, `A`/`C` 6/6 and
+`A`/`B`/`C` 4/4/4, giving `A` 160, `B` 22, `C` 10 (of 192), so `P(b) = 11/96`,
+`P(c) = 5/96`: with `0.13` and `0.07` the even checker refutes what the
+weights prove. Ties by canonical order give `A` 192, `B` 0, `C` 0.
+
+The without-replacement orders give the winner marginals above: for the
+three-way tie `A` first is `1/6`, `B` first `1/3` and `C` first `1/2`, and the
+second pick is weighted over the remaining two (`ABC` `1/6 · 2/5 = 1/15`,
+`ACB` `1/6 · 3/5 = 1/10`, `BAC` `1/3 · 1/4 = 1/12`, `BCA` `1/3 · 3/4 = 1/4`,
+`CAB` `1/2 · 1/3 = 1/6`, `CBA` `1/2 · 2/3 = 1/3`; total 1). Each operation
+sets `Done`, so only the first is enabled at its turn; the identities' weights
+are distinct operations here, so no operation's weight is shared among tied
+identities.
 
 ## Rulings
 
