@@ -10382,6 +10382,11 @@ impl ForeignNodes {
         }
         for (identity, dependency) in package.dependencies() {
             let emission = emit_checked(dependency, limits)?;
+            // The positions are read from the dependency's own bytes, which
+            // `emit_checked` has just held to `limits.output_bytes`; that
+            // ceiling bounds this parse. The parse itself is not charged to
+            // any budget, and its JSON tree is dropped when the positions
+            // are read.
             let graph = fsl_semantics::check::wire_id::WireGraph::of_package_bytes(
                 emission.package().bytes(),
             )

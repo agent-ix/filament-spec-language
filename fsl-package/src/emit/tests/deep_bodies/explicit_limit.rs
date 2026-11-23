@@ -448,6 +448,11 @@ fn deep_chain_emission_heap_and_allocation_per_step_are_bounded() {
         let single = emit_heap(family, 2_500);
         let double = emit_heap(family, 5_000);
         for measured in [&single, &double] {
+            // A counter that saw nothing would pass every ceiling below.
+            assert!(
+                measured.peak > 0 && measured.total > 0 && measured.wire > 0,
+                "{family:?}: the allocation counter observed the emission {measured:?}"
+            );
             assert!(measured.peak <= peak, "{family:?}: live peak {measured:?}");
             assert!(
                 measured.retained <= retained,

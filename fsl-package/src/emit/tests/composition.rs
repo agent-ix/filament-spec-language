@@ -1269,3 +1269,43 @@ fn an_importers_own_key_is_not_taken_for_a_dependency_node() {
     }
     assert_eq!(names(&shadowing), own, "the importer's own nodes win");
 }
+
+/// QSL-2894: a composing package names a dependency's nodes by the position
+/// [`ForeignNodes`] reads from the dependency's bytes. For every node of real
+/// dependencies (temporal clauses, models, functions; ids holding index
+/// segments to operands), that position names the same structural key as the
+/// emitter's own typed nodes in graph order.
+#[test]
+fn dependency_positions_read_from_the_bytes_match_the_emitters_own_nodes() {
+    use filament_contract_model::CheckedNodePathSegment as Segment;
+    let world = World::new();
+    let (_, records) = package_from_text(
+        "record Point { x: Integer; y: Integer; }\n\
+         enum Status { READY, DONE }\n\
+         function add using v(p: Point): Integer pure { (p.x + 1) + p.y }\n",
+    );
+    for package in [&*world.producer.package, &*world.consumer.package, &records] {
+        let graph = package.graph();
+        let typed = emitted_document_nodes(package, |location| graph.region(location), ceiling())
+            .expect("the dependency emits");
+        let tags: BTreeSet<&str> = typed.iter().map(|node| &*node.node_tag).collect();
+        assert!(tags.len() >= 3, "several node kinds: {tags:?}");
+        assert!(
+            typed.iter().any(|node| node
+                .node_id
+                .path
+                .iter()
+                .any(|segment| matches!(segment, Segment::Index(_)))),
+            "some node id holds an operand index"
+        );
+        let emitted = WireGraph::new(typed.iter().map(|node| &node.node_id))
+            .expect("the emitter's document graph");
+        let emission = emit_checked(package).expect("the dependency emits");
+        let read = WireGraph::of_package_bytes(emission.package().bytes())
+            .expect("the dependency's bytes hold a graph");
+        assert_eq!(read.keys().len(), typed.len());
+        for (position, (read, emitted)) in read.keys().iter().zip(emitted.keys()).enumerate() {
+            assert_eq!(read, emitted, "position {position}");
+        }
+    }
+}
