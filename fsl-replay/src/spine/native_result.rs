@@ -4007,6 +4007,16 @@ pub(crate) fn item_record(report: &ClauseRunReport) -> Result<ItemRecord, Native
     let ClauseDisposition::Temporal(verdict) = &report.disposition else {
         return Ok(base);
     };
+    // FR-266: only a violated temporal run settles a separating witness; a
+    // held, pending or undefined verdict has no record to write.
+    let base = if matches!(verdict, TemporalVerdict::Violated { .. }) {
+        base
+    } else {
+        ItemRecord {
+            witness: None,
+            ..base
+        }
+    };
     let counterexample = temporal::item_counterexample(verdict, report.counterexample.as_ref())?;
     Ok(match verdict {
         TemporalVerdict::Violated { at } => ItemRecord {

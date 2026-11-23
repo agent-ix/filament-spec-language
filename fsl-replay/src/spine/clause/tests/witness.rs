@@ -1466,7 +1466,6 @@ fn tc_740_a_refuted_forall_derives_its_record_and_visits_nothing_after_the_stop(
 /// `closed-scope`.
 #[trace("TC-740", "FR-265-AC-2")]
 #[test]
-#[ignore = "QSL-2900: the float-ordering ConfigVersion clause derives a DecisiveCounterexample record where the test expects a ClosedScope derivation with no record"]
 fn tc_740_a_satisfied_exists_or_negated_forall_derives_a_decisive_witness() {
     let unit = witness_unit();
     assert_eq!(
@@ -1519,7 +1518,21 @@ fn tc_740_a_satisfied_exists_or_negated_forall_derives_a_decisive_witness() {
             .is_some(),
         "its forall stopped"
     );
-    assert_eq!(derive(&unit, "EqualsAll", Snapshot::High, "mid"), closed());
+    let Some(Derived {
+        basis: SettlementBasis::DecisiveCounterexample,
+        record: Some(equals),
+    }) = derive(&unit, "EqualsAll", Snapshot::High, "mid")
+    else {
+        panic!("EqualsAll over high ends at its root `=`: FR-265-AC-2");
+    };
+    assert_eq!(
+        equals.deciding_comparison,
+        Some(occurrence(&unit, "EqualsAll", &[], Operator::Binary))
+    );
+    let operands = equals.operands.as_ref().expect("comparison operands");
+    assert!(crate::result::same_element(&operands[0], &Value::Boolean(false)));
+    assert!(crate::result::same_element(&operands[1], &Value::Boolean(true)));
+    assert!(equals.quantifier.is_none() && equals.index.is_none());
 }
 
 /// FR-265: a float ordering lowers to connectives the checker synthesized,
@@ -1582,7 +1595,6 @@ fn tc_740_a_float_ordering_as_an_implies_consequent_ends_the_path_at_closed_scop
 /// and `or`.
 #[trace("TC-740", "FR-265-AC-3")]
 #[test]
-#[ignore = "QSL-2900: the ConfigVersion clause derives a DecisiveCounterexample record where the test expects a ClosedScope derivation with no record"]
 fn tc_740_the_decision_path_reaches_the_decisive_quantifier() {
     let unit = witness_unit();
     let Some(Derived {
@@ -1624,7 +1636,26 @@ fn tc_740_the_decision_path_reaches_the_decisive_quantifier() {
             )
         )
     );
-    assert_eq!(derive(&unit, "OrAll", Snapshot::High, "mid"), closed());
+    let Some(Derived {
+        basis: SettlementBasis::DecisiveCounterexample,
+        record: Some(or_all),
+    }) = derive(&unit, "OrAll", Snapshot::High, "mid")
+    else {
+        panic!("OrAll over high ends at its right operand `=`: FR-265-AC-3");
+    };
+    let comparison = occurrence(&unit, "OrAll", &[1], Operator::Binary);
+    assert_eq!(or_all.deciding_comparison, Some(comparison.clone()));
+    assert_eq!(
+        or_all.decision_path,
+        Some(vec![
+            occurrence(&unit, "OrAll", &[], Operator::Binary),
+            comparison
+        ])
+    );
+    let operands = or_all.operands.as_ref().expect("comparison operands");
+    assert!(crate::result::same_element(&operands[0], &integer(600)));
+    assert!(crate::result::same_element(&operands[1], &integer(0)));
+    assert!(or_all.quantifier.is_none());
 }
 
 /// TC-740 step 4 (FR-265-AC-4): the record names the outer `forall`, its
@@ -3587,6 +3618,18 @@ fn metre_package() -> (fsl_package::CheckedPackage, filament_exact::UnitId) {
     );
     declarations.types =
         filament_semantic_value::declaration::TypeEnvironment::default().with_units(units);
+    // FSpec FR-746 admits no empty checked graph: one function populates it.
+    {
+        use fsl_forms::{BuiltinType, Expression, FunctionDeclaration, TypeForm};
+        let span = fsl_foundation::Span { start: 0, end: 0 };
+        declarations.functions = vec![FunctionDeclaration::new(
+            "Anchor",
+            vec![],
+            TypeForm::builtin(BuiltinType::Boolean, span),
+            None,
+            Expression::boolean(true),
+        )];
+    }
     let graph = declarations
         .check(
             CheckMode::Linked,
@@ -3604,7 +3647,6 @@ fn metre_package() -> (fsl_package::CheckedPackage, filament_exact::UnitId) {
 /// unit table holds round-trips; the declared unit resolves by lookup.
 #[trace("TC-744", "FR-269-AC-3")]
 #[test]
-#[ignore = "QSL-2900: the unit-table fixture package checks as an EmptyPackage refusal, so no unit quantity is built"]
 fn tc_744_a_declared_unit_quantity_round_trips() {
     let unit = witness_unit();
     let (package, metre) = metre_package();
