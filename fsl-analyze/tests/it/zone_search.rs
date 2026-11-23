@@ -1465,17 +1465,17 @@ fn a_punctual_window_is_decided_by_a_horizon_clock() {
 #[trace("TC-697", "FR-242-AC-2", "FR-240-AC-1")]
 #[test]
 fn timed_within_200_preserves_divergence_certificate_and_zone_count() {
-    timed_horizon_proof("200")
+    timed_horizon_proof("200", 206)
 }
 
 /// The adjacent 201 ms horizon takes the same number of model zones.
 #[trace("TC-697", "FR-242-AC-2", "FR-240-AC-1")]
 #[test]
 fn timed_within_201_preserves_divergence_certificate_and_zone_count() {
-    timed_horizon_proof("201")
+    timed_horizon_proof("201", 207)
 }
 
-fn timed_horizon_proof(horizon: &str) {
+fn timed_horizon_proof(horizon: &str, expected_divergence_states: u64) {
     let world = retried_at_with(
         &format!("{horizon} ms"),
         &format!("eventually[{horizon} ms, {horizon} ms] holds(c.retried)"),
@@ -1483,6 +1483,10 @@ fn timed_horizon_proof(horizon: &str) {
     match claim(&world, ZoneCheckLimits::default(), &Cancel::new()) {
         ZoneCheckOutcome::Holds { stats, certificate } => {
             assert_eq!(stats.symbolic_states, 2, "model zone count at {horizon} ms");
+            assert_eq!(
+                stats.divergence_states, expected_divergence_states,
+                "divergence zone count at {horizon} ms"
+            );
             assert_edges_cover(&world, &certificate);
         }
         other => panic!("expected a proof for {horizon} ms, got {other:?}"),
