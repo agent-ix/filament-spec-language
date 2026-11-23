@@ -475,6 +475,21 @@ fn append_operation_contract(
     Ok(())
 }
 
+/// Whether `claim` is owned by a model refinement or a step relation. Those
+/// carry their own capability rows (`refinement`, `temporal-satisfaction`); an
+/// `operation-contract` record is written only for a state clause or an
+/// operation frame (FSpec FR-825, FR-290).
+fn relation_owned(graph: &CheckedGraph, claim: &OccurrenceKey) -> bool {
+    graph.refinements().iter().any(|refinement| {
+        refinement
+            .requirement_occurrence()
+            .is_some_and(|key| key.node() == claim.node())
+    }) || graph
+        .step_relations()
+        .iter()
+        .any(|relation| relation.occurrence().is_some_and(|key| key.node() == claim.node()))
+}
+
 pub(super) fn append(
     ids: &StructuralIds,
     graph: &CheckedGraph,
@@ -525,6 +540,11 @@ pub(super) fn append(
         fsl_semantics::check::builtin_string_type_key(graph.package_name()).map_err(encoding)?,
     );
     for (claim, source) in graph.requirements().iter() {
+        if source.requirements().kind() == Capability::OperationContract
+            && relation_owned(graph, claim)
+        {
+            continue;
+        }
         if source.requirements().kind() == Capability::OperationContract {
             append_operation_contract(
                 ids,
@@ -751,6 +771,11 @@ pub(super) fn rows(
         .collect();
     let mut rows = Vec::new();
     for (claim, source) in graph.requirements().iter() {
+        if source.requirements().kind() == Capability::OperationContract
+            && relation_owned(graph, claim)
+        {
+            continue;
+        }
         // A `value-validity` record has no row when its owner is omitted,
         // and any other record none when its claim node is; the omission
         // closure leaves no other written record naming an omitted node.
