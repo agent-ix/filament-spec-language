@@ -512,6 +512,8 @@ struct Context<'a> {
     meter: filament_exact::Meter,
     storage: u64,
     identity: fsl_foundation::IdentityLimits,
+    /// Compare the initial value strictly against the failing side of the bound.
+    refutation: bool,
     #[cfg(feature = "test-support")]
     observe: Option<&'a mut dyn FnMut(LongRunProbabilityPhase)>,
 }
@@ -523,6 +525,7 @@ impl<'a> Context<'a> {
             meter: filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone()),
             storage: 0,
             identity: fsl_foundation::IdentityLimits::default(),
+            refutation: false,
             #[cfg(feature = "test-support")]
             observe: None,
         }
@@ -969,6 +972,32 @@ pub(super) fn check(
     check_with_context(system, claims, item, bytes, &mut cx)
 }
 
+/// FR-202's counterexample role: every proof-side condition over the rebuilt
+/// workload chain, then the strict refutation comparison instead of the
+/// inclusive claim-side threshold. Acceptance means the claim is refuted.
+pub(in crate::probability_certificate) fn check_refutation(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    bytes: &[u8],
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
+    let mut cx = Context::new(limits, cancel);
+    cx.refutation = true;
+    check_with_context(system, claims, item, bytes, &mut cx)
+}
+
+/// Admit canonical long-run or weighted long-run bytes without checking them.
+pub(in crate::probability_certificate) fn admit(
+    bytes: &[u8],
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> Result<(), ProbabilityDocumentError> {
+    let mut cx = Context::new(limits, cancel);
+    read(bytes, &mut cx).map(|_| ())
+}
+
 /// Check with a phase observer while retaining the original caller controls.
 #[cfg(feature = "test-support")]
 pub fn check_long_run_probability_certificate_observing(
@@ -1107,63 +1136,15 @@ fn check_graph(
             return Err(ProbabilityDocumentError::Malformed);
         }
     }
-    // Iterative Kosaraju: neither recursion depth nor producer SCC labels enter.
-    let mut seen = vec![false; keys.len()];
-    let mut order = Vec::new();
-    for start in 0..keys.len() {
-        if seen[start] {
-            continue;
-        }
-        seen[start] = true;
-        let mut stack = vec![(start, 0)];
-        while let Some((state, offset)) = stack.last_mut() {
-            #[cfg(feature = "test-support")]
+    let (_, components, bottom) = super::super::bottom_components(&edges, &reverse, &mut |pass| {
+        #[cfg(feature = "test-support")]
+        if pass == super::super::ComponentPass::Order {
             cx.phase(LongRunProbabilityPhase::Components)?;
-            cx.work(1)?;
-            if let Some(&next) = edges[*state].get(*offset) {
-                *offset += 1;
-                if !seen[next] {
-                    seen[next] = true;
-                    stack.push((next, 0));
-                }
-            } else {
-                let (state, _) = stack.pop().ok_or(ProbabilityDocumentError::Malformed)?;
-                order.push(state);
-            }
         }
-    }
-    let mut component_of = vec![usize::MAX; keys.len()];
-    let mut components = Vec::new();
-    for start in order.into_iter().rev() {
-        if component_of[start] != usize::MAX {
-            continue;
-        }
-        let index = components.len();
-        let mut component = Vec::new();
-        let mut stack = vec![start];
-        component_of[start] = index;
-        while let Some(state) = stack.pop() {
-            cx.work(1)?;
-            component.push(state);
-            for &next in &reverse[state] {
-                cx.work(1)?;
-                if component_of[next] == usize::MAX {
-                    component_of[next] = index;
-                    stack.push(next);
-                }
-            }
-        }
-        components.push(component);
-    }
-    let mut bottom = vec![true; components.len()];
-    for (state, successors) in edges.iter().enumerate() {
-        for &next in successors {
-            cx.work(1)?;
-            if component_of[state] != component_of[next] {
-                bottom[component_of[state]] = false;
-            }
-        }
-    }
+        #[cfg(not(feature = "test-support"))]
+        let _ = pass;
+        cx.work(1)
+    })?;
     let mut expected = vec![None; keys.len()];
     let mut unweighted_zero_component = vec![false; keys.len()];
     for (index, component) in components.iter().enumerate() {
@@ -1341,10 +1322,18 @@ fn check_graph(
         Bound::AtLeast(v) | Bound::AtMost(v) => v,
     };
     check_scalar(threshold, cx.limits)?;
-    if !match bound {
-        Bound::AtLeast(v) => *initial >= v,
-        Bound::AtMost(v) => *initial <= v,
-    } {
+    let on_side = if cx.refutation {
+        match bound {
+            Bound::AtLeast(v) => *initial < v,
+            Bound::AtMost(v) => *initial > v,
+        }
+    } else {
+        match bound {
+            Bound::AtLeast(v) => *initial >= v,
+            Bound::AtMost(v) => *initial <= v,
+        }
+    };
+    if !on_side {
         return Ok(rejected(
             ProbabilityCertificateRule::ThresholdMissed,
             graph.initial.clone(),

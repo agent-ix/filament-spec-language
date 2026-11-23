@@ -1580,6 +1580,87 @@ struct CheckerGraph {
     states: BTreeMap<ProbabilityProductKey, CheckerState>,
 }
 
+/// Which pass of [`bottom_components`] a charged step belongs to.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ComponentPass {
+    /// The first, finishing-order depth-first search.
+    Order,
+    /// Component assignment over predecessors and the closedness check.
+    Assign,
+}
+
+/// The strongly connected components of a checker-built graph, by iterative
+/// Kosaraju: each node's component, the components in assignment order, and
+/// whether each is closed (a bottom component). Neither recursion depth nor a
+/// producer's component labels enter. `tick` is charged once per stack step,
+/// assigned node, predecessor edge and successor edge.
+#[allow(clippy::type_complexity)]
+fn bottom_components(
+    edges: &[Vec<usize>],
+    reverse: &[Vec<usize>],
+    tick: &mut impl FnMut(ComponentPass) -> Result<(), ProbabilityDocumentError>,
+) -> Result<(Vec<usize>, Vec<Vec<usize>>, Vec<bool>), ProbabilityDocumentError> {
+    let count = edges.len();
+    let mut seen = vec![false; count];
+    let mut order = Vec::new();
+    for start in 0..count {
+        if seen[start] {
+            continue;
+        }
+        seen[start] = true;
+        let mut stack = vec![(start, 0)];
+        while let Some((state, offset)) = stack.last_mut() {
+            tick(ComponentPass::Order)?;
+            if let Some(&next) = edges[*state].get(*offset) {
+                *offset += 1;
+                if !seen[next] {
+                    seen[next] = true;
+                    stack.push((next, 0));
+                }
+            } else {
+                let (state, _) = stack.pop().ok_or(ProbabilityDocumentError::Malformed)?;
+                order.push(state);
+            }
+        }
+    }
+    let mut component_of = vec![usize::MAX; count];
+    let mut components = Vec::new();
+    for start in order.into_iter().rev() {
+        if component_of[start] != usize::MAX {
+            continue;
+        }
+        let index = components.len();
+        let mut component = Vec::new();
+        let mut stack = vec![start];
+        component_of[start] = index;
+        while let Some(state) = stack.pop() {
+            tick(ComponentPass::Assign)?;
+            component.push(state);
+            for &next in reverse
+                .get(state)
+                .ok_or(ProbabilityDocumentError::Malformed)?
+            {
+                tick(ComponentPass::Assign)?;
+                if component_of[next] == usize::MAX {
+                    component_of[next] = index;
+                    stack.push(next);
+                }
+            }
+        }
+        components.push(component);
+    }
+    let mut bottom = vec![true; components.len()];
+    for (state, successors) in edges.iter().enumerate() {
+        for &next in successors {
+            tick(ComponentPass::Assign)?;
+            if component_of[state] != component_of[next] {
+                bottom[component_of[state]] = false;
+            }
+        }
+    }
+    Ok((component_of, components, bottom))
+}
+
 fn topological_order(
     graph: &CheckerGraph,
     cancel: &Cancel,
