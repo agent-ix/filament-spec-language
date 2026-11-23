@@ -2516,7 +2516,9 @@ fn a_cancel_in_nested_repeats_cancels_per_iteration_of_each() {
 /// Every `nodes` verdict of the `count` prefixes of `item` is `satisfied`,
 /// verdicts only advance, and the last prefix is the batch assessment.
 fn assert_nodes_satisfied(item: &Value, nodes: &[&str], count: usize) {
-    let prefixes = item["prefixes"].as_array().expect("prefixes");
+    let prefixes = item["prefixes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("prefixes: {item}"));
     assert_eq!(prefixes.len(), count, "{item}");
     for prefix in prefixes {
         for node in nodes {
