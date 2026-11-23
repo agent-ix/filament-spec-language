@@ -1069,6 +1069,7 @@ pub fn monitor(
         cancel,
     };
     super::with_request_limits(path, limits.request_bytes, |directory, bytes| {
+        super::request_shape::admit(super::request_shape::Family::Monitor, bytes)?;
         drive(
             directory,
             bytes,
