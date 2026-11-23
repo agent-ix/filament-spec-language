@@ -373,7 +373,7 @@ fn no_crate_below_layer_three_depends_on_the_check_core() {
                 "filament-exact",
                 "filament-semantic-value",
             ][..],
-            &["fsl-cst", "fsl-forms"][..],
+            &["fsl-bench", "fsl-cst", "fsl-forms"][..],
         ),
     ] {
         let package = packages

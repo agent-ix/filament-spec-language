@@ -59,6 +59,9 @@ fsl-forms = { path = "../fsl-forms" }
 syn = { version = "2", features = ["full", "visit"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
 filament-specification = { workspace = true }
+# The shared fixed-seed property policy and generators (`fsl_bench::prop`).
+fsl-bench = { path = "../fsl-bench", features = ["property-generators"] }
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 # The evaluator's tests build `PackageDeclarations` from layer-2 parsed forms
 # (`Expression`, `FunctionDeclaration`, `TypeForm`): `check` takes forms as its
 # input and fsl-semantics exposes no builder of them. Layer 2 is below this
