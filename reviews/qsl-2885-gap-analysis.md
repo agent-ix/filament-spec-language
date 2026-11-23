@@ -28,3 +28,16 @@ binding checks were done by reading the trace attributes.
 Coverage of the repaired tests matches their criteria and assertions stay exact. Open gaps: the
 enabledness definition and witness order need spec rulings (FND-001, FND-002), the new rule lacks
 accepted-side and precedence tests (FND-003), and incremental assessment exists only in the spec (FND-004).
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-895 Enabledness row now defines predecessors and causal precedence per the arch ruling; repeat wording defects are SR-3595003 findings |
+| FND-002 | fixed | FR-895 states witness [receiving, sending] for every causal-order verdict; AC-2 names [0, 3]; engine emits it for satisfied verdicts too |
+| FND-003 | fixed | a_send_after_its_earlier_own_receive_is_enabled (satisfied side) and two precedence tests added |
+| FND-004 | fixed | FR-896 `assessment` member and FR-895 "Incremental assessment" specified and implemented; monotonicity defect is SR-3595001 FND-008 |
+
+## Dispositions (fix round 1)
+
+Every gap is closed by the fix-round tests listed in `qsl-2885-code-review.md` "Dispositions (fix round 1)": FR-895-AC-9, AC-10, AC-11 traced correctly, AC-22 to AC-26 and FR-896-AC-6 added with exact-value tests. The one gap left untested is the refused-prefix refusal, which no admitted recording reaches.

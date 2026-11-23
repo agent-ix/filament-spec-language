@@ -152,8 +152,8 @@ and FR-894's duplicate kinds. Every causal-order verdict, `satisfied` or
 7. An `exhausted` step SHALL have as predecessors the steps of the last
    iteration; the `exhausted` path is an alternative exit that runs once
    after the last iteration, not part of an iteration (ADR-027 FO-1).
-8. `await` siblings SHALL be unordered and SHALL NOT be predecessors of each
-   other.
+8. The assessment SHALL treat `await` siblings as unordered, so none is a
+   predecessor of another.
 9. A predecessor never observed, or observed but not yet ordered before the
    step, SHALL leave the verdict `pending` while the closure record is not
    `closed` and make it `violated`, cause `unexpected`, once it is `closed`.
