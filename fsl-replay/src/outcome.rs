@@ -45,7 +45,7 @@ use filament_exact::{CancelCause, Integer, NodeKey};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::location::ExpressionLocation;
 use fsl_cst::format::FormatRefusal;
-use fsl_foundation::diagnostic::{Code, Locus, StageFailure, Staged, Stopped};
+use fsl_foundation::diagnostic::{Code, Locus, RequestKind, StageFailure, Staged, Stopped};
 use fsl_foundation::source::provenance::{OccurrenceKey, RawSourceRef};
 use fsl_foundation::source::{SourceLabel, SourceReadCause};
 use fsl_foundation::{LocatedSpan, RequestIndex};
@@ -2564,15 +2564,16 @@ impl OutcomeDiagnostic {
         diagnostic
     }
 
-    /// Project a compile refusal with only the limit-setting mechanism the
-    /// named operation accepts. Replay also accepts request `stage_limits`.
+    /// Project a compile refusal with the limit advice of the request the
+    /// named operation takes: replay also names its `stage_limits` entry,
+    /// every other operation only the CLI `--limit` option.
     fn from_compile_refusal_for_operation(operation: Operation, refusal: &CompileRefusal) -> Self {
         let diagnostic = Self::from_compile_refusal(refusal);
-        Self::for_operation(operation, diagnostic)
+        Self::for_operation(operation, refusal, diagnostic)
     }
 
-    /// Project every retained compile diagnostic with only the limit-setting
-    /// mechanism the named operation accepts.
+    /// Project every retained compile diagnostic with the limit advice of
+    /// the request the named operation takes.
     fn from_compile_refusal_diagnostics_for_operation(
         operation: Operation,
         refusal: &CompileRefusal,
@@ -2580,18 +2581,13 @@ impl OutcomeDiagnostic {
         refusal
             .outcome_diagnostics()
             .into_iter()
-            .map(|diagnostic| Self::for_operation(operation, diagnostic))
+            .map(|diagnostic| Self::for_operation(operation, refusal, diagnostic))
             .collect()
     }
 
-    fn for_operation(operation: Operation, mut diagnostic: Self) -> Self {
-        if operation != Operation::Replay {
-            if let Some((message, _)) = diagnostic
-                .message
-                .split_once(" or the request's `stage_limits` entry ")
-            {
-                diagnostic.message = message.to_owned();
-            }
+    fn for_operation(operation: Operation, refusal: &CompileRefusal, mut diagnostic: Self) -> Self {
+        if let (Operation::Replay, CompileRefusal::Limit(limit)) = (operation, refusal) {
+            diagnostic.message = limit.render(RequestKind::Replay).to_string();
         }
         diagnostic
     }
@@ -3757,7 +3753,7 @@ mod tests {
     }
 
     /// Trace: FR-255-AC-3, the operation hint follows the entry point's accepted inputs.
-    #[trace("TC-931", "FR-255-AC-3")]
+    #[trace("TC-931", "FR-255-AC-3", "TC-720", "FR-255-AC-2")]
     #[test]
     fn run_limit_message_omits_stage_limits_while_replay_keeps_it() {
         let run_refusal = RunRefusal::Compile(Box::new(CompileRefusal::Limit(LimitExceeded::new(
@@ -3767,7 +3763,10 @@ mod tests {
         ))));
         let run = OutcomeDocument::from_run_refusal(Operation::Execute, &run_refusal);
         let run_message = run.diagnostics()[0].message();
-        assert!(run_message.contains("--limit s1.tokens"), "{run_message}");
+        assert_eq!(
+            run_message,
+            "S1 token limit 3 reached (4); raise it with `--limit s1.tokens=<n>`"
+        );
         assert!(!run_message.contains("stage_limits"), "{run_message}");
 
         let replay_refusal = ReplayRefusal::Recompile {
@@ -3780,7 +3779,11 @@ mod tests {
         };
         let replay = OutcomeDocument::from_replay(&Err(replay_refusal));
         let replay_message = replay.diagnostics()[0].message();
-        assert!(replay_message.contains("stage_limits"), "{replay_message}");
+        assert_eq!(
+            replay_message,
+            "S1 token limit 3 reached (4); raise it with `--limit s1.tokens=<n>` or the replay \
+             request's `stage_limits` entry `s1.tokens`"
+        );
     }
 
     #[trace("FR-1045-AC-6", "FR-100-AC-6")]
