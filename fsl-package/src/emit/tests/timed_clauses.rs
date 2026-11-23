@@ -1781,6 +1781,7 @@ fn an_element_presence_quantifier_is_scoped_in_its_predicate() {
             json!({"name": "binders", "term": "binding", "value": {"term": "aggregate",
             "members": [{"term": "reference", "target": parameter}]}}),
         );
+    eprintln!("DBGG {}", wire["semantic_graph"]["nodes"].as_array().expect("n").iter().find(|n| n["node_id"] == guard_id).expect("g"));
     let bytes = crate::emit::tests::wire_bytes(&wire).expect("JSON");
     let failure = read_presence_package(&document, &bytes, &wire)
         .expect_err("a binder no constraint reads is refused");
