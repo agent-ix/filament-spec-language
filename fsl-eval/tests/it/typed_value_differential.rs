@@ -577,8 +577,8 @@ fn assert_sampled(seen: &BTreeMap<&'static str, usize>) {
     }
 }
 
-/// QSL-2056 P1 (FR-096; no AC states it): a completed value lies inside the checked node type.
-#[trace("FR-096")]
+/// QSL-2056 P1 (FR-096-AC-23): a completed value lies inside the checked node type.
+#[trace("TC-3207", "FR-096-AC-23")]
 #[test]
 fn p1_completed_values_lie_inside_the_checked_type() {
     let seen = sampled();
@@ -607,9 +607,9 @@ fn p1_completed_values_lie_inside_the_checked_type() {
     assert_sampled(&seen.borrow());
 }
 
-/// QSL-2056 P2 (FR-096; no AC states it): no call returns an internal fault or panics, and only a
+/// QSL-2056 P2 (FR-096-AC-23): no call returns an internal fault or panics, and only a
 /// run-time-only operation may end in anything but a value.
-#[trace("FR-096")]
+#[trace("TC-3207", "FR-096-AC-23")]
 #[test]
 fn p2_no_completed_call_returns_runtime_invariant() {
     let seen = sampled();
