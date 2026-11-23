@@ -2805,7 +2805,7 @@ fn clock_reference_as_leaf(value_type: &ValueType) -> Option<ValueType> {
     while let Some(step) = steps.pop() {
         match step {
             Step::Visit(visited) => match visited {
-                ValueType::Reference(target) if target == &super::clock_reference_target() => {
+                ValueType::ClockReference => {
                     built.push(ValueType::Boolean);
                 }
                 ValueType::Option(payload) => {
@@ -3841,10 +3841,10 @@ impl<'a> Typer<'a> {
                         return Err(mismatch(location));
                     }
                 }
-                ValueType::Reference(target) if target == &super::clock_reference_target() => {
-                    // `Reference<Clock>` is the checker's synthetic handle
-                    // type for a clock place. The native Clock declaration
-                    // is not an object type in the admitted TypeEnvironment.
+                ValueType::ClockReference => {
+                    // `Reference<Clock>` is the kernel's clock-place
+                    // reference, a native value type with no declaration to
+                    // admit (FR-230-AC-71).
                 }
                 ValueType::Option(payload) => pending.push(payload),
                 ValueType::Collection(collection) => pending.push(collection.element()),
@@ -4344,6 +4344,7 @@ impl<'a> Typer<'a> {
                 | ValueType::Collection(_)
                 | ValueType::Map(_)
                 | ValueType::Reference(_)
+                | ValueType::ClockReference
                 | ValueType::Population(_) => None,
             };
             if let Some(unit_id) = unit_id {
@@ -4961,6 +4962,7 @@ impl<'a> Typer<'a> {
             | ValueType::Collection(_)
             | ValueType::Map(_)
             | ValueType::Reference(_)
+            | ValueType::ClockReference
             | ValueType::Population(_)
             | ValueType::Uuid
             | ValueType::String
@@ -5537,6 +5539,9 @@ impl<'a> Typer<'a> {
             | ValueType::Quantity(_)
             | ValueType::BoundedQuantity(_)
             | ValueType::CarriedQuantity(_) => false,
+            // A clock-place reference names a place, not an object: it is
+            // never a model receiver (FR-230-AC-71).
+            ValueType::ClockReference => false,
             ValueType::Bytes | ValueType::JsonObject => false,
         }
     }
@@ -5568,6 +5573,7 @@ impl<'a> Typer<'a> {
                 | ValueType::BoundedQuantity(_)
                 | ValueType::CarriedQuantity(_)
                 | ValueType::Population(_)
+                | ValueType::ClockReference
                 | ValueType::Bytes
                 | ValueType::JsonObject => return false,
             };

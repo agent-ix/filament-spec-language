@@ -2203,7 +2203,7 @@ fn conforms(types: &TypeEnvironment, actual: &ValueType, required: &ValueType) -
 /// caught with the record and the union.
 fn nests_reference(types: &TypeEnvironment, value_type: &ValueType) -> Result<bool, &'static str> {
     match value_type {
-        ValueType::Reference(_) => Ok(false),
+        ValueType::Reference(_) | ValueType::ClockReference => Ok(false),
         other => holds_reference(types, other, &mut Vec::new()),
     }
 }
@@ -2227,7 +2227,7 @@ fn holds_reference(
         Ok(false)
     };
     match value_type {
-        ValueType::Reference(_) => Ok(true),
+        ValueType::Reference(_) | ValueType::ClockReference => Ok(true),
         ValueType::Option(payload) => holds_reference(types, payload, seen),
         ValueType::Collection(collection) => holds_reference(types, collection.element(), seen),
         ValueType::Map(map) => holds_reference(types, map.values(), seen),
@@ -2311,6 +2311,7 @@ fn lift(lifting: &BTreeMap<EffectiveId, EffectiveId>, value_type: &ValueType) ->
         | ValueType::JsonObject
         | ValueType::Enum(_)
         | ValueType::Composite(_)
+        | ValueType::ClockReference
         | ValueType::Population(_)) => other.clone(),
     }
 }

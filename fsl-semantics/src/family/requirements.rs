@@ -626,6 +626,7 @@ pub fn classify_domains(
             | ValueType::String
             | ValueType::Enum(_)
             | ValueType::Reference(_)
+            | ValueType::ClockReference
             | ValueType::Population(Some(_))
             | ValueType::Uuid
             | ValueType::Timestamp

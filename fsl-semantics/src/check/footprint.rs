@@ -386,6 +386,8 @@ fn referenced_types(value_type: &ValueType, found: &mut Vec<EffectiveId>) {
         | ValueType::JsonObject
         | ValueType::Enum(_)
         | ValueType::Composite(_)
+        // A clock place is not an object: nothing to delete-block.
+        | ValueType::ClockReference
         | ValueType::Population(_) => {}
     }
 }

@@ -274,6 +274,8 @@ pub(super) fn map_references<T>(
             | Value::Bytes(_)
             | Value::JsonObject(_)
             | Value::Enum(_)
+            // A clock-place reference names no object to walk (FR-230-AC-71).
+            | Value::ClockReference(_)
             | Value::Population(_) => {}
         }
     }

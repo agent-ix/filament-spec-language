@@ -205,6 +205,10 @@ pub(crate) fn references_in<'a>(
             | Value::Uuid(_)
             | Value::Timestamp(_)
             | Value::Enum(_)
+            // The kernel's clock-place reference is not an `ObjectReference`;
+            // this collector gathers only the object-reference identities that
+            // the pre-FR-230-AC-71 admission builds (QSL-3002).
+            | Value::ClockReference(_)
             | Value::Population(_) => {}
         }
     }

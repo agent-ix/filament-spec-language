@@ -1658,6 +1658,14 @@ fn admit_leaf(
                 .resolve(reference, type_identity.clone())
                 .map(Value::Reference)
         }
+        // FR-230-AC-71: the value is the kernel's clock-place reference, built
+        // from the snapshot's universe and place id. That admission is
+        // QSL-3002; until then the reference is refused, typed, never read as
+        // an object reference.
+        (RawForm::Reference(_), filament_exact::ValueType::ClockReference) => Err(
+            admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
+                .with("reason", "clock-reference-admission-pending-qsl-3002"),
+        ),
         (RawForm::Variant(variant), filament_exact::ValueType::Enum(slot)) => {
             admit_variant(references, variant, slot)
         }
@@ -2044,6 +2052,7 @@ fn admit_native(
             | filament_exact::ValueType::Collection(_)
             | filament_exact::ValueType::Map(_)
             | filament_exact::ValueType::Reference(_)
+            | filament_exact::ValueType::ClockReference
             | filament_exact::ValueType::Population(_),
         ) => Err(admission_record(
             Code::InvalidRuntimeInput,
@@ -2826,7 +2835,8 @@ fn missing_wire_form(value_type: &filament_exact::ValueType) -> Option<&'static 
             | filament_exact::ValueType::JsonObject
             | filament_exact::ValueType::Enum(_)
             | filament_exact::ValueType::Composite(_)
-            | filament_exact::ValueType::Reference(_) => {}
+            | filament_exact::ValueType::Reference(_)
+            | filament_exact::ValueType::ClockReference => {}
         }
     }
     None
@@ -2868,6 +2878,7 @@ fn unsupported_collection_element(value_type: &filament_exact::ValueType) -> Opt
             | filament_exact::ValueType::Enum(_)
             | filament_exact::ValueType::Composite(_)
             | filament_exact::ValueType::Reference(_)
+            | filament_exact::ValueType::ClockReference
             | filament_exact::ValueType::Population(_) => {}
         }
     }
@@ -4208,6 +4219,8 @@ fn holds_references(value_type: &filament_exact::ValueType) -> bool {
             | filament_exact::ValueType::String
             | filament_exact::ValueType::Enum(_)
             | filament_exact::ValueType::Composite(_)
+            // A clock-place reference names no object (FR-230-AC-71).
+            | filament_exact::ValueType::ClockReference
             | filament_exact::ValueType::Population(_)
             | filament_exact::ValueType::Uuid
             | filament_exact::ValueType::Timestamp

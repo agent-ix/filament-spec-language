@@ -366,11 +366,10 @@ pub(crate) fn clock_place_node_key(
     )
 }
 
-/// Kernel identity used by `Reference<Clock>` (FR-1040). The checked IR
-/// represents references by effective identity, so the native clock type
-/// uses its canonical native identity here.
+/// The kernel type of `Reference<Clock>` (FR-230-AC-71): filament-exact's
+/// clock-place reference, never an object reference.
 pub(crate) fn clock_reference_type() -> filament_exact::ValueType {
-    filament_exact::ValueType::Reference(clock_reference_target())
+    filament_exact::ValueType::ClockReference
 }
 
 pub(crate) fn clock_reference_target() -> filament_exact::EffectiveId {

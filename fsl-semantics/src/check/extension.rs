@@ -762,7 +762,7 @@ fn spelling(value_type: &ValueType) -> String {
         ValueType::Option(payload) => format!("Option<{}>", spelling(payload)),
         ValueType::Composite(_) => "Composite".to_owned(),
         ValueType::Collection(_) => "Collection".to_owned(),
-        ValueType::Reference(_) => "Reference".to_owned(),
+        ValueType::Reference(_) | ValueType::ClockReference => "Reference".to_owned(),
         ValueType::Population(_) => "Population".to_owned(),
     }
 }
