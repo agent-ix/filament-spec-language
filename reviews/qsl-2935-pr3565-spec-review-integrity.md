@@ -22,3 +22,9 @@ Checked the new text against FR-862 and against the code. Also checked collision
 ## Verdict
 
 Not mergeable: one high finding. The stage claim contradicts FR-862 and the code, and AC-7 as written fails. The fix is text only and needs no new id. Rebasing over PR 3561 or PR 3563 is conflict-free.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The Behavior bullet, FR-1047-AC-7 and TC-3170 Expected Results now say the empty-directory replay example 'is refused at stage request, exit 20, with the missing file's read refusal naming entry.fsl (FR-862)'. That matches FR-862 Behavior and output.rs (RunCause::ReplayBytes to Stage::Request), and io-error exits 20 (FR-1039-AC-9). |

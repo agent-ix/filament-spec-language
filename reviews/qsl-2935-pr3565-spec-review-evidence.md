@@ -22,3 +22,9 @@ FR-1047-AC-7 keeps method Test (TC-3170), which suits an in-process call through
 ## Verdict
 
 One medium finding: the TC procedure must perform and pin the entry.fsl-present call that the amended AC-7 asserts. Text only, no new TC.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | TC-3170 Procedure step 4 now calls the replay example's entry 'again with an empty entry.fsl written beside request.json', and Expected Results state both outcomes. The stage wording of the entry.fsl-present outcome is the subject of failure-domain FND-003. The 86-character line and the short reflowed line are not findings, because no line-length rule applies to spec Markdown here. |

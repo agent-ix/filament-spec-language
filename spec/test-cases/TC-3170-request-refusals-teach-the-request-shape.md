@@ -59,7 +59,7 @@ tagged `#[trace("TC-3170", "FR-1047-AC-n")]` with the criterion it backs.
   names, the evidence example settles `unimplemented-meaning`, and the
   replay example refuses at stage `request`, exit 20, with the read
   refusal naming `entry.fsl`; with an empty `entry.fsl` beside it the entry
-  does not refuse at stage `request` and refuses by FR-098's recompile or
+  is not refused `invalid-request` and not with a read refusal naming `entry.fsl`, and refuses by FR-098's recompile or
   package admission, never as `invalid_package` for `/package/lock/sources`
   and never as `missing_import`.
   Each one-member removal refuses

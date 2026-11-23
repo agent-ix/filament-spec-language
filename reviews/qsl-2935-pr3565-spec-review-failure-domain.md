@@ -25,3 +25,16 @@ With entry.fsl present, the example passes FR-862 decode and FR-071 construction
 ## Verdict
 
 Two medium findings. With entry.fsl absent the example is refused at the provision read, before the members decoded after it. With an empty entry.fsl present it gets past both refusals the PR names, then FR-098 refuses it in the recompile or package admission. Mergeable once the AC states the file contents and the true stronger claim. Both fixes are text only.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | high | The entry.fsl-present clause now says the example 'is not refused at stage request' and 'is refused by FR-098's recompile or package admission' (Behavior bullet, FR-1047-AC-7, TC-3170 Expected Results). That wording came from this review's own suggested fix, and it is wrong. output.rs maps a RunCause::Replay refusal to its spine stage only for ReplayRefusal::Recompile / RecompileWithProtocolResults; every other FR-098 refusal, including package admission (PackageWithIdentity) and check_recorded_modes, is reported at Stage::Request. So whenever the empty-file recompile succeeds, the refusal is at stage request and AC-7 fails. Whether an empty unit recompiles is not settled by reading. Fix (text only): in all three places replace 'is not refused at stage request' with 'is not refused invalid-request and not with a read refusal naming entry.fsl'. In the Behavior bullet keep '(FR-862 decodes it in full and FR-071 constructs it)'. In TC-3170 replace 'does not refuse at stage request' the same way. | spec/functional/FR-1047-name-every-request-defect-and-return-a-request-example.md:291-297; spec/functional/FR-1047-name-every-request-defect-and-return-a-request-example.md:321; spec/test-cases/TC-3170-request-refusals-teach-the-request-shape.md:60-64; fsl-command/src/command/output.rs:435-442 (PR 3561) |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | 'having decoded in full' is gone from AC-7 and TC-3170's empty-directory clause. The Behavior bullet now puts 'FR-862 decodes it in full and FR-071 constructs it' only on the case with an empty entry.fsl present, which the code bears out (decode reaches every member once provide succeeds, and ReplayRequest::decode_with admits the one-source provision). |
+| FND-002 | fixed | The file contents are now stated as an empty entry.fsl, which has no imports, so the missing_import claim is deterministic. The clause names FR-098's recompile or package admission and says 'The example does not replay: its package is no complete checked package'. The stage wording added with this fix is the new FND-003. |

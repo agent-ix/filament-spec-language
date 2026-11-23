@@ -23,3 +23,10 @@ Base checklist: no new FR, AC or TC id is added; FR-1047-AC-7 stays backed by TC
 ## Verdict
 
 Base checklist passes apart from two low wording defects. Mergeability rests on the integrity, failure-domain and evidence findings: the high finding in the integrity review (stage file versus FR-862's stage request) blocks the PR.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | At 2d22284bbb the bullet lists the other eleven members: profile_selections [], dependencies [], source {"assignments":[],"kind":"input"}, obligation_identity {"model":null,"node_id":{"ordinal":0,"package":"example","path":["entry"]},"ordinal":0}, backend "fsl", state_environment [], accounting_limits {}, stage_limits {}, supplied_limits null, object_environment null, declared_domains []. In MEMBERS order, each value is equal to PR 3561's REPLAY entries (request_shape.rs:319-343, NODE_OBLIGATION). The dangling 'first bullet' reference is gone. |
+| FND-002 | fixed | The fenced block is now one object {"package": ..., "replay_target": ..., "byte_provision": ...}. It parses as JSON with exactly those three keys, and the bullet says 'exactly those of this JSON object'. |
