@@ -1208,7 +1208,10 @@ mod tests {
         let conforms = |sub: &EffectiveId, sup: &EffectiveId| {
             sub == sup || (*sup == parent && (*sub == queue || *sub == cell))
         };
-        let rows = [("queue row", Some(queue)), ("cell row", Some(cell))];
+        let rows = [
+            ("queue row", Some(queue.clone())),
+            ("cell row", Some(cell.clone())),
+        ];
 
         assert_eq!(
             choose_row(&rows, Some(&parent), &conforms),
