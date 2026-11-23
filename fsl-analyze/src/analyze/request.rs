@@ -1760,6 +1760,107 @@ mod tests {
         }
     }
 
+    /// The analyzer request adapter forwards both extent bit values from
+    /// `ClaimItem` to the item whose engine refusal is later settled.
+    #[trace("FSpec-TC-950", "FSpec-FR-290-AC-14")]
+    #[test]
+    fn request_work_forwards_operation_contract_finite_bound_availability() {
+        use fsl_replay::spine::{check, parse, select, DependencyInput, ParseRequest, SpineLimits};
+
+        let model = include_bytes!(
+            "../../../tools/fsl-probability-check/tests/fixtures/link.semantic-ir.json"
+        );
+        let packages = fsl_semantics::model::intake::package_input([model.as_slice()])
+            .expect("the Link model admits");
+        let text = format!(
+            "{}\nprobabilistic Delivered using ev on M over (m: M::Msg) under Even on origin \
+             with alpha 0.01, beta 0.01, indifference 0.05 \
+             {{ probability >= 0.9 [ eventually[0,2] holds(m.delivered) ] }}",
+            include_str!("../../../tools/fsl-probability-check/tests/fixtures/link.native")
+                .replace(
+                    "profile inf = \"filament.temporal.infinite-trace/v1\";",
+                    "profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+                 profile ev = \"filament.temporal.event-position.false-extension/v1\";"
+                )
+        );
+        let source = fsl_foundation::SourceIdentity::new("test", "operation-contract-extent");
+        let cancel = filament_exact::Cancel::new();
+        let spine = SpineLimits::default();
+        let parsed = parse(
+            &ParseRequest {
+                source: &source,
+                path: "operation-contract-extent.native",
+                bytes: text.as_bytes(),
+            },
+            spine.source,
+            &cancel,
+        )
+        .expect("the Link source parses")
+        .into_value();
+        let models = select(&parsed, &packages, spine.model, &cancel)
+            .expect("the Link model is selected")
+            .into_value();
+        let checked = check(
+            &parsed,
+            "operation-contract-extent".to_owned(),
+            &models,
+            &DependencyInput::default(),
+            spine,
+            &cancel,
+        )
+        .expect("the Link package checks")
+        .into_value();
+        let analysis = super::super::RunInput::source(checked.package());
+        let snapshots = fsl_semantics::model::observation::DocumentProvision::default();
+        let binding = super::super::SubjectBinding {
+            packages: &packages,
+            snapshots: &snapshots,
+            initial: Vec::new(),
+            universes: Vec::new(),
+        };
+        let claim = analysis
+            .package
+            .graph()
+            .probabilistic_model()
+            .claims()
+            .first()
+            .and_then(|claim| claim.occurrence())
+            .expect("the Link package has an authored occurrence")
+            .clone();
+        let candidate = fsl_route::Candidate::new(fsl_route::BackendId::new("test-a"));
+        for finite_bound_available in [false, true] {
+            let negotiated = super::NegotiatedItem {
+                item: super::ClaimItem {
+                    request_index: fsl_route::RequestIndex::new(0),
+                    claim: claim.clone(),
+                    kind: fsl_route::Capability::OperationContract,
+                    extent: fsl_route::ExtentClassification::Unbounded {
+                        finite_bound_available,
+                    },
+                    backend: Some(candidate.id().clone()),
+                    candidates: vec![candidate.clone()],
+                    options: super::ItemOptions::default(),
+                    form: None,
+                },
+                disposition: fsl_route::routing::Disposition::Supported(candidate.clone()),
+                diagnostic: None,
+            };
+            let built = super::work(
+                &analysis,
+                &binding,
+                &SourceProvision::default(),
+                &negotiated,
+                &super::super::Engines::default(),
+                &super::super::AnalyzeLimits::unbounded(),
+                None,
+            );
+            assert_eq!(
+                built.operation_contract_finite_bound_available,
+                Some(finite_bound_available),
+            );
+        }
+    }
+
     #[trace("TC-2804", "FR-992-AC-1")]
     #[test]
     fn source_provision_entries_are_in_label_order() {
