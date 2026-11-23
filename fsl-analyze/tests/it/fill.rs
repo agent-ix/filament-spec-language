@@ -763,6 +763,13 @@ pub(crate) fn source_memory(package: &CheckedPackage, protocol: &str) -> Resolve
         .unwrap_or_default()
 }
 
+/// The concrete system of `subject` under `Sc`: its steps and post-state keys
+/// are the concrete ones a counterexample carries (FR-205-AC-13).
+pub(crate) fn concrete_sc_system<'a>(subject: &ProtocolSubject<'a>) -> ProtocolSystem<'a, Sc> {
+    let model = ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
+    ProtocolSystem::new(model, subject, Sc).expect("the protocol system builds")
+}
+
 /// The system of `subject` under `Sc`, using the checker's cycle keys.
 pub(crate) fn sc_system<'a>(subject: &ProtocolSubject<'a>) -> ProtocolSystem<'a, Sc> {
     let model = ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
