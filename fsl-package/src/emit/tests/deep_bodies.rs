@@ -568,12 +568,7 @@ fn every_nested_form_emits_in_the_stratified_grammar_at_2_and_1000_levels() {
                     .unwrap_or_else(|refusal| panic!("{form:?} x{levels} emits: {refusal:?}"));
                     assert_emitted_bodies(&emission, &format!("{form:?} x{levels}"));
                     if matches!(form, Form::DistinctGuards) {
-                        let (frames, guarded, records) = frame_shape(&emission);
-                        let bytes = emission.package.bytes().len();
-                        eprintln!(
-                            "DISTINCT_GUARDS levels={levels} frames={frames} \
-                             guarded_records={guarded} records={records} bytes={bytes}"
-                        );
+                        let (frames, guarded, _) = frame_shape(&emission);
                         assert!(frames <= levels, "at most one shared frame per guard level");
                         assert!(guarded >= frames, "each frame is cited by a record");
                     }
