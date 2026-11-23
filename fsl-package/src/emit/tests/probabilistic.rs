@@ -67,7 +67,7 @@ pub(super) fn workload_package(weights: &str) -> CheckedPackage {
 
 /// The ConfigVersion unit under the event-position profile `ev`, with
 /// `declarations` appended in order.
-fn claims_package(declarations: &[&str]) -> CheckedPackage {
+pub(super) fn claims_package(declarations: &[&str]) -> CheckedPackage {
     let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
     let packages = fsl_semantics::model::intake::package_input([document]).unwrap();
     let unit = config_version_unit::unit_text().replace(
@@ -147,7 +147,7 @@ fn repeated_operand_claims_package(declarations: &[&str]) -> (CheckedPackage, Ve
 }
 
 /// `probabilistic name ... { probability >= threshold [ holds(true) ] }`.
-fn claim(name: &str, threshold: &str) -> String {
+pub(super) fn claim(name: &str, threshold: &str) -> String {
     format!(
         "probabilistic {name} using ev on Config under every scheduler on origin \
          {{ probability >= {threshold} [ holds(true) ] }}"

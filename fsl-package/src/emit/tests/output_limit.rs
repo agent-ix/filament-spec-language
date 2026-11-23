@@ -327,6 +327,61 @@ fn a_bound_below_the_source_map_refuses_before_the_typed_rows_are_built() {
     );
 }
 
+/// QSL-2849: typed rows are charged as each section is built. A package whose
+/// source map fits but whose claim-name rows overflow refuses before the
+/// sections after them are built (allocations are counted, not time), with the
+/// first unpaid byte exactly `bound + 1`.
+#[trace("TC-738", "FR-264-AC-6")]
+#[test]
+fn a_bound_below_the_typed_rows_refuses_before_the_later_rows_are_built() {
+    let claims: Vec<String> = (0..150)
+        .map(|index| super::probabilistic::claim(&format!("C{index}_{}", "x".repeat(2_000)), "0.5"))
+        .collect();
+    let refs: Vec<&str> = claims.iter().map(String::as_str).collect();
+    let package = super::probabilistic::claims_package(&refs);
+    let emit = |bound: u64| {
+        crate::emit::emit_checked_uncached(&package, &Cancel::new(), EmitLimits::new(bound))
+    };
+    let bytes = u64::try_from(
+        emit(u64::MAX)
+            .expect("a raised output limit emits")
+            .package()
+            .bytes()
+            .len(),
+    )
+    .expect("a fixture length");
+
+    let allocations = |bound: u64| {
+        let mut outcome = None;
+        let info = allocation_counter::measure(|| {
+            outcome = Some(emit(bound));
+        });
+        let limit = limit_of(
+            outcome
+                .expect("emission ran")
+                .expect_err("a bound below N refuses"),
+        );
+        assert_eq!(limit.configured_bound(), bound);
+        assert_eq!(limit.actual(), u128::from(bound) + 1);
+        info.count_total
+    };
+    let _ = allocation_counter::measure(|| {});
+    let wire: serde_json::Value =
+        serde_json::from_slice(emit(u64::MAX).expect("emits").package().bytes())
+            .expect("the package is JSON");
+    let section = |name: &str| serde_json::to_vec(&wire[name]).expect("a section").len() as u64;
+    let (map, names) = (section("source_map"), section("claim_names"));
+    assert!(map < names, "the claim-name rows are the larger section");
+    // A bound the source map fits under and the claim-name rows overflow.
+    let bound = map + names / 2;
+    let early = allocations(bound);
+    let late = allocations(bytes - 1);
+    assert!(
+        early.saturating_mul(4) < late.saturating_mul(3),
+        "refusing at the claim-name rows skips the rows after them: {early} against {late}"
+    );
+}
+
 fn emitted_byte_count_of(package: &CheckedPackage) -> usize {
     emitted_at(package, u64::MAX)
         .expect("a raised output limit emits")
