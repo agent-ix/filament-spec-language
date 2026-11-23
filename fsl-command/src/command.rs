@@ -2903,7 +2903,19 @@ fn compile_outcome_inner(
         let request: wire::CompileRequest = request_with_overrides(bytes, overrides)?;
         // FR-767: a malformed or unknown law refuses before any file is read.
         let integer_division = request_integer_division(request.integer_division.clone())?;
-        request_call_site(request.call_site.as_ref(), request.program.sources.len())?;
+        if !request.program.sources.is_empty()
+            && request_call_site(request.call_site.as_ref(), request.program.sources.len())?
+                .is_some()
+            && fsl_semantics::library::LibraryName::new(
+                request.program.sources[0].identity.identity.as_str(),
+            )
+            .is_err()
+        {
+            return Err(RunCause::ClauseRequest {
+                member: "call_site".to_owned(),
+                reason: "program identity must be a library identity".to_owned(),
+            });
+        }
         validate_extension_entries(&request.extensions)?;
         if let Some(handoff) = &request.handoff {
             validate_handoff_request(handoff, request.program.sources.len())?;
@@ -3537,9 +3549,10 @@ fn complete_sources(
             let document = fsl_replay::OutcomeDocument::from_package(&result);
             let emitted = result.map_err(failure)?.into_value();
             if let Some(selection) = request_call_site(request.call_site.as_ref(), sources.len())? {
+                let program_identity = package_name(sources[0].source().identity());
                 fsl_replay::locate_in_checked(
                     &checked,
-                    &package_name(sources[0].source().identity()),
+                    &program_identity,
                     &selection,
                 )
                 .map_err(RunCause::CallSite)?;
