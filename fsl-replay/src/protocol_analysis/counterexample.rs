@@ -8,8 +8,8 @@ use serde::Serialize;
 use serde_json::Value;
 
 use super::{
-    Action, DecisionKind, DecisionOwner, Direction, Play, ProjectionCounterexample, ProjectionDecision,
-    ProtocolAnalysisKey, RealizabilityCounterexample, StrategyAction,
+    Action, DecisionKind, DecisionOwner, Direction, Play, ProjectionCounterexample,
+    ProjectionDecision, ProtocolAnalysisKey, RealizabilityCounterexample, StrategyAction,
 };
 use crate::result::{ProtocolWitnessWire, SeparatingWitnessRecord};
 use crate::CounterexampleWireError;

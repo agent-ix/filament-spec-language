@@ -9,11 +9,11 @@ use fsl_package::protocol_view::{
 };
 use fsl_replay::protocol_analysis::{
     node_text, replay_projection_counterexample, Action, AnalysisOutcome, AssessedRoot,
-    AssessedRootDraft, BranchMerge, ChoiceBasis, Correspondence, DecisionKind, DecisionOwner, GlobalEventKind,
-    GlobalStructure, InconclusiveCause, LocalEvent, LocalEventId, LocalEventKind, LocalGraph,
-    MergeEvidence, MissingMember, PremiseRefusal, ProjectionBoundsDraft, ProjectionCounterexample,
-    ProjectionDecision, ProjectionKeyDraft, ProjectionWitness, ProtocolAnalysisKey,
-    ProtocolAnalysisResult, ProtocolPremises, RunBudget, RunLimit,
+    AssessedRootDraft, BranchMerge, ChoiceBasis, Correspondence, DecisionKind, DecisionOwner,
+    GlobalEventKind, GlobalStructure, InconclusiveCause, LocalEvent, LocalEventId, LocalEventKind,
+    LocalGraph, MergeEvidence, MissingMember, PremiseRefusal, ProjectionBoundsDraft,
+    ProjectionCounterexample, ProjectionDecision, ProjectionKeyDraft, ProjectionWitness,
+    ProtocolAnalysisKey, ProtocolAnalysisResult, ProtocolPremises, RunBudget, RunLimit,
 };
 use fsl_replay::spine::StructureError;
 use fsl_replay::ModelCheckLimit;

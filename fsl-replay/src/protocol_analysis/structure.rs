@@ -608,10 +608,7 @@ impl GlobalStructure {
         if case == node {
             after.collect()
         } else {
-            (0..self.events.len())
-                .filter(inside)
-                .chain(after)
-                .collect()
+            (0..self.events.len()).filter(inside).chain(after).collect()
         }
     }
 

@@ -1552,7 +1552,7 @@ fn work<'a>(
                         .get(fsl_foundation::Setting::ScheduleMaxDemandPoints)
                         .unwrap_or(crate::schedulability::DEFAULT_MAX_DEMAND_POINTS),
                 )
-                    .unwrap_or_else(absent)
+                .unwrap_or_else(absent)
             }
         }
         Some(ItemForm::Composition(form)) if item.kind == Capability::Composition => {
@@ -2041,7 +2041,9 @@ mod caller_limit_tests {
         use crate::exact_probabilistic::ExactProbLimits;
         let base = ExactProbLimits::default();
         let rows: [(Setting, fn(&ExactProbLimits) -> u64); 9] = [
-            (Setting::ExactProbMaxStates, |l| l.model.limits.max_states as u64),
+            (Setting::ExactProbMaxStates, |l| {
+                l.model.limits.max_states as u64
+            }),
             (Setting::ExactProbMaxTransitions, |l| {
                 l.model.limits.max_transitions as u64
             }),
@@ -2049,12 +2051,16 @@ mod caller_limit_tests {
                 l.model.max_automaton_states
             }),
             (Setting::ExactProbMaxIterations, |l| l.max_iterations),
-            (Setting::ExactProbPrecisionBits, |l| u64::from(l.precision_bits)),
+            (Setting::ExactProbPrecisionBits, |l| {
+                u64::from(l.precision_bits)
+            }),
             (Setting::ExactProbMaxPrecisionBits, |l| {
                 u64::from(l.max_precision_bits)
             }),
             (Setting::ExactProbMaxRationalBits, |l| l.max_rational_bits),
-            (Setting::ExactProbMaxPolicyIterations, |l| l.max_policy_iterations),
+            (Setting::ExactProbMaxPolicyIterations, |l| {
+                l.max_policy_iterations
+            }),
             (Setting::ExactProbMaxWitnessPaths, |l| l.max_witness_paths),
         ];
         for (setting, read) in rows {
@@ -2067,7 +2073,11 @@ mod caller_limit_tests {
             assert_eq!(read(&changed), bound, "{setting}");
             for (other, other_read) in rows {
                 if other != setting {
-                    assert_eq!(other_read(&changed), other_read(&base), "{setting} moved {other}");
+                    assert_eq!(
+                        other_read(&changed),
+                        other_read(&base),
+                        "{setting} moved {other}"
+                    );
                 }
             }
         }
@@ -2093,7 +2103,11 @@ mod caller_limit_tests {
             assert_eq!(read(&changed), 7, "{setting}");
             for (other, other_read) in rows {
                 if other != setting {
-                    assert_eq!(other_read(&changed), other_read(&base), "{setting} moved {other}");
+                    assert_eq!(
+                        other_read(&changed),
+                        other_read(&base),
+                        "{setting} moved {other}"
+                    );
                 }
             }
         }

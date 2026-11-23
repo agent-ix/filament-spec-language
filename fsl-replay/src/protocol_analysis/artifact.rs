@@ -498,7 +498,14 @@ pub fn replay_projection_counterexample(
                 }
             }
             let mut unlimited = u64::MAX;
-            match structure.merge(&ce.role, &choice_port, &cases[0], &cases[1], max_depth, &mut unlimited) {
+            match structure.merge(
+                &ce.role,
+                &choice_port,
+                &cases[0],
+                &cases[1],
+                max_depth,
+                &mut unlimited,
+            ) {
                 BranchMerge::Cut | BranchMerge::Exhausted => Err(WalkDisagreement::Cut),
                 BranchMerge::Merged(_) => Err(WalkDisagreement::NotTheStatedDivergence),
                 BranchMerge::Diverged(found) => {
