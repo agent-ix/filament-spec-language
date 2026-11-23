@@ -126,6 +126,8 @@ race gives that post-key and elapsed amount.
   under a `>= θ` bound or `Pr(E)` under `<= θ`, with value past the bound,
   or an `Upper` certificate on `Pr(E)` below `θ`. Long-run and
   expected-reward refutations SHALL use certificate evidence.
+  (Current: the subsystem-certificate fallback is not built for an on-each
+  claim; see FR-875 and QSL-3004.)
 - For an unwindowed `eventually holds(E)`, `always holds(P)` or
   `holds(A) until holds(B)` claim under `INFINITE-TRACE`, EN-5 SHALL run
   the path-set entry's original-graph acyclicity admission (Acyclic
