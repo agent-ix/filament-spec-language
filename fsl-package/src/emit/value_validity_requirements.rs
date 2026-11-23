@@ -443,6 +443,11 @@ fn append_operation_contract(
         check_mode: None,
         body,
     };
+    #[cfg(test)]
+    eprintln!(
+        "QSL-2934 operation-contract node: {}",
+        serde_json::to_string(&node).expect("operation-contract node serializes")
+    );
     nodes.push(node);
     source_map.push(CheckedSourceMapEntry {
         node_id: id.clone(),
