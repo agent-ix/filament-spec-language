@@ -682,29 +682,15 @@ dependencies = [
 [[package]]
 name = "filament-mltl"
 version = "0.1.0"
-source = "git+https://github.com/agent-ix/filament-mltl?rev=b3881775908e0f17ac32e8a4d13f07e49b82edf9#b3881775908e0f17ac32e8a4d13f07e49b82edf9"
+source = "git+https://github.com/agent-ix/filament-mltl?rev=c04de7a6f084717cae2b642b6e58d8a4362b2973#c04de7a6f084717cae2b642b6e58d8a4362b2973"
 dependencies = [
- "filament-observation 0.1.1 (git+https://github.com/agent-ix/filament-observation?rev=004c7c4f934d15022d2a80b98c451d436109b44b)",
+ "filament-observation 0.1.1 (git+https://github.com/agent-ix/filament-observation?rev=6e0524170e83c6fae0c35a404592cd3cae24252f)",
  "serde",
  "serde_json",
  "sha2",
  "thiserror",
  "tl-mltl",
  "tl-syntax",
-]
-
-[[package]]
-name = "filament-observation"
-version = "0.1.1"
-source = "git+https://github.com/agent-ix/filament-observation?rev=004c7c4f934d15022d2a80b98c451d436109b44b#004c7c4f934d15022d2a80b98c451d436109b44b"
-dependencies = [
- "filament-exact 0.3.0 (git+https://github.com/agent-ix/filament-exact?rev=a58474cc105a86f3307a11def3fc001e2459679f)",
- "filament-semantic-value 0.1.5 (git+https://github.com/agent-ix/filament-semantic-value?rev=31d807ccb8ffd5a88beb0b1a570b80acb099f5e9)",
- "quire-canonical 0.3.1",
- "serde",
- "serde_json",
- "sha2",
- "thiserror",
 ]
 
 [[package]]
