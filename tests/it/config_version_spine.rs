@@ -958,14 +958,13 @@ fn clause_run_reader_diagnoses_deep_function_argument() {
 #[test]
 fn clause_run_command_routes_function_and_frame() {
     let directory = tempfile::tempdir().unwrap();
-    let population = format!("ix://{}/config_history", spine::PACKAGE_IDENTITY);
     let path = directory.path().join(Case::Distinct.id());
     let in_process = run_clause(build(&path, Case::Distinct)).unwrap();
     let mut request = current_clause_request();
     request["request"]["clause"]["selection"] = json!({"function": {
         "name": "sameIdentity", "snapshot": "current", "arguments": [
-            {"parameter":"a", "value":{"reference":{"population":population,"key":"child"}}},
-            {"parameter":"b", "value":{"reference":{"population":population,"key":"root"}}}
+            {"parameter":"a", "value":crate::support::canonical_reference::config_version("child")},
+            {"parameter":"b", "value":crate::support::canonical_reference::config_version("root")}
         ]
     }});
     let output = run_clause_file(&path, &request);
@@ -1046,10 +1045,7 @@ fn function_claim_maps_population_and_reference_arguments_by_role() {
         "snapshot": "current",
         "arguments": [
             {"parameter": "p", "value": {"population": history_population}},
-            {"parameter": "r", "value": {"reference": {
-                "population": history_population,
-                "key": "child"
-            }}}
+            {"parameter": "r", "value": crate::support::canonical_reference::config_version("child")}
         ]
     }});
     let output = run_clause_file(&path, &request);

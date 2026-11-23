@@ -3567,6 +3567,9 @@ impl Disposition {
                         super::run_value::reference_error_cause(error)
                     }
                     super::RunRefusal::Compile(compile) => compile.cause(),
+                    super::RunRefusal::DanglingReference { .. } => {
+                        Some("absent-target-in-complete-population")
+                    }
                     super::RunRefusal::Fault(_) => None,
                     super::RunRefusal::SourceNotSupplied { .. } => Some("missing-member"),
                     super::RunRefusal::Argument { defect, .. } => Some(defect.cause),
@@ -3578,7 +3581,6 @@ impl Disposition {
                     | super::RunRefusal::UnboundParameter { .. }
                     | super::RunRefusal::WrongValueKind { .. }
                     | super::RunRefusal::Admission { .. }
-                    | super::RunRefusal::DanglingReference { .. }
                     | super::RunRefusal::UnsupportedHelper(_)
                     | super::RunRefusal::PrepareLimit(_)
                     | super::RunRefusal::RelationshipRequest { .. }

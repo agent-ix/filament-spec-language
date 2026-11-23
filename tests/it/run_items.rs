@@ -206,13 +206,7 @@ fn child() -> Value {
 }
 
 fn canonical_child() -> Value {
-    let declaration = json!({
-        "package": spine::PACKAGE_IDENTITY,
-        "path": ["model", "object_type", format!("ix://{}/ConfigVersion", spine::PACKAGE_IDENTITY)],
-        "ordinal": 0
-    });
-    json!({"type": "reference", "universe": declaration.clone(),
-        "object_type": declaration, "identity": "6368696c64"})
+    crate::support::canonical_reference::config_version("child")
 }
 
 /// A native-run/1 request over the spine files carrying `body` as its
@@ -857,6 +851,262 @@ fn function_selection_admits_an_identity_reference() {
     assert_eq!(output.status.code(), Some(0), "{output:?}");
     let document: Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(document["disposition"]["truth"], true, "{document}");
+}
+
+const POPULATION_CLAIMS: &str = "function nonempty using v(p: Population<Config::ConfigVersion>[4]): \
+    Boolean pure { size(allInstances<Config::ConfigVersion>(p)) > 0 }\n";
+
+fn function_claim(directory: &Path, name: &str, arguments: Value) -> Output {
+    canonical_function_claim(directory, name, arguments, None)
+}
+
+fn claim_document(output: &Output, exit: i32) -> Value {
+    assert_eq!(output.status.code(), Some(exit), "{output:?}");
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
+/// The report of the request the CLI just ran, rebuilt as the admitted
+/// `ClauseRunRequest` and run in process: its exit and truth.
+fn direct_report(directory: &Path) -> (i32, Option<bool>) {
+    let prepared = fsl_command::command::prepare_run(
+        &directory.join("request.json"),
+        fsl_command::command::RunLimits::default(),
+    )
+    .unwrap();
+    let fsl_command::command::PreparedRun::Clause(prepared) = prepared else {
+        panic!("a clause request");
+    };
+    let report = fsl_replay::spine::run_clause(*prepared.into_request()).unwrap();
+    (report.disposition.category().exit_code() as i32, report.disposition.truth())
+}
+
+/// FR-312-AC-11: a `function` selection accepts FR-181's tagged canonical
+/// `reference` form for each Reference argument.
+#[test]
+#[trace("TC-1706", "FR-312-AC-11")]
+fn function_selection_admits_canonical_reference_arguments() {
+    let directory = tempfile::tempdir().unwrap();
+    write_cases(directory.path());
+    extend_unit(directory.path(), SAME);
+    let same = json!([
+        {"parameter": "a", "value": crate::support::canonical_reference::config_version("child")},
+        {"parameter": "b", "value": crate::support::canonical_reference::config_version("child")}]);
+    let document = claim_document(&function_claim(directory.path(), "sameIdentity", same), 0);
+    assert_eq!(document["disposition"]["category"], "success", "{document}");
+    assert_eq!(document["disposition"]["truth"], true, "{document}");
+    assert_eq!(direct_report(directory.path()), (0, Some(true)));
+
+    let distinct = json!([
+        {"parameter": "a", "value": crate::support::canonical_reference::config_version("root")},
+        {"parameter": "b", "value": crate::support::canonical_reference::config_version("child")}]);
+    let document = claim_document(&function_claim(directory.path(), "sameIdentity", distinct), 10);
+    assert_eq!(document["disposition"]["category"], "violation", "{document}");
+    assert_eq!(document["disposition"]["truth"], false, "{document}");
+    assert_eq!(direct_report(directory.path()), (10, Some(false)));
+}
+
+/// FR-312-AC-11: a Population parameter takes `{"population": P}`
+/// resolved in the selected snapshot.
+#[test]
+#[trace("TC-1706", "FR-312-AC-11")]
+fn function_selection_admits_a_population_argument() {
+    let directory = tempfile::tempdir().unwrap();
+    write_cases(directory.path());
+    extend_unit(directory.path(), POPULATION_CLAIMS);
+    let held = json!([{"parameter": "p", "value": {"population": population()}}]);
+    let document = claim_document(&function_claim(directory.path(), "nonempty", held), 0);
+    assert_eq!(document["disposition"]["category"], "success", "{document}");
+    assert_eq!(document["disposition"]["truth"], true, "{document}");
+    assert_eq!(direct_report(directory.path()), (0, Some(true)));
+}
+
+/// FR-312-AC-11: a Population the snapshot does not hold refuses at stage
+/// `admit` as `invalid_runtime_input`/`wrong-role-mapping`.
+#[test]
+#[trace("TC-1706", "FR-312-AC-11")]
+fn function_selection_refuses_a_population_the_snapshot_does_not_hold() {
+    let directory = tempfile::tempdir().unwrap();
+    write_cases(directory.path());
+    extend_unit(directory.path(), POPULATION_CLAIMS);
+    let absent = json!([{"parameter": "p", "value": {
+        "population": format!("ix://{}/no_such_history", spine::PACKAGE_IDENTITY)}}]);
+    let document = claim_document(&function_claim(directory.path(), "nonempty", absent), 20);
+    assert_eq!(document["disposition"]["stage"], "admit", "{document}");
+    assert_eq!(document["disposition"]["refusal"]["code"], "invalid_runtime_input", "{document}");
+    assert_eq!(document["disposition"]["refusal"]["cause"], "wrong-role-mapping", "{document}");
+    assert!(document["disposition"]["truth"].is_null(), "{document}");
+    assert_eq!(direct_report(directory.path()), (20, None));
+}
+
+/// FR-312-AC-11: a canonical reference whose identity names no object of
+/// the selected snapshot refuses as FR-100's dangling reference.
+#[test]
+#[trace("TC-1706", "FR-312-AC-11")]
+fn function_selection_refuses_a_reference_the_snapshot_does_not_hold() {
+    let directory = tempfile::tempdir().unwrap();
+    write_cases(directory.path());
+    extend_unit(directory.path(), SAME);
+    let ghost = json!([
+        {"parameter": "a", "value": crate::support::canonical_reference::config_version("child")},
+        {"parameter": "b", "value": crate::support::canonical_reference::config_version("ghost")}]);
+    let document = claim_document(&function_claim(directory.path(), "sameIdentity", ghost), 20);
+    assert_eq!(document["disposition"]["stage"], "admit", "{document}");
+    assert_eq!(document["disposition"]["refusal"]["code"], "dangling_reference", "{document}");
+    assert_eq!(
+        document["disposition"]["refusal"]["cause"], "absent-target-in-complete-population",
+        "{document}"
+    );
+    assert!(document["disposition"]["truth"].is_null(), "{document}");
+    assert_eq!(direct_report(directory.path()), (20, None));
+}
+
+/// FR-312-AC-11, FR-650 (run request defects): an argument of the wrong kind
+/// for its parameter, a reference naming an undeclared type, and a malformed
+/// Population selection each refuse with the cause FR-650's defect table
+/// names, never a fault.
+#[test]
+#[trace("TC-1706", "FR-312-AC-11")]
+fn function_selection_refuses_mistyped_and_untagged_arguments() {
+    let directory = tempfile::tempdir().unwrap();
+    write_cases(directory.path());
+    extend_unit(directory.path(), SAME);
+    extend_unit(directory.path(), POPULATION_CLAIMS);
+    let mut unknown_type = canonical_child();
+    unknown_type["object_type"]["path"] = json!(["model", "object_type", "ix://elsewhere/Nothing"]);
+    let held = json!({"population": population()});
+    let same = |a: Value| json!([
+        {"parameter": "a", "value": a}, {"parameter": "b", "value": canonical_child()}]);
+    let nonempty = |p: Value| json!([{"parameter": "p", "value": p}]);
+    for (name, arguments, code, cause) in [
+        ("sameIdentity", same(held.clone()), "invalid_runtime_input", "wrong-value-kind"),
+        ("sameIdentity", same(json!({"type": "text", "value": "ab"})),
+            "invalid_runtime_input", "wrong-value-kind"),
+        ("sameIdentity", same(json!({"reference": child()})),
+            "invalid_runtime_input", "wrong-value-kind"),
+        ("sameIdentity", same(unknown_type), "invalid_runtime_input", "wrong-value-kind"),
+        ("nonempty", nonempty(canonical_child()), "invalid_runtime_input", "wrong-value-kind"),
+        ("nonempty", nonempty(json!({"type": "text", "value": "ab"})),
+            "invalid_runtime_input", "wrong-value-kind"),
+        ("nonempty", nonempty(json!({"type": "population", "population": population()})),
+            "invalid_runtime_input", "wrong-value-kind"),
+        ("nonempty", nonempty(json!({"populaton": population()})),
+            "invalid_runtime_input", "unknown-member"),
+        ("nonempty", nonempty(json!({})), "invalid_runtime_input", "missing-member"),
+    ] {
+        let document = claim_document(&function_claim(directory.path(), name, arguments.clone()), 20);
+        let refusal = &document["disposition"]["refusal"];
+        assert_eq!(document["disposition"]["stage"], "admit", "{arguments}: {document}");
+        assert!(document["disposition"]["truth"].is_null(), "{arguments}: {document}");
+        assert_eq!(refusal["code"], code, "{arguments}: {document}");
+        assert_eq!(refusal["cause"], cause, "{arguments}: {document}");
+    }
+}
+
+/// FSpec FR-181's tagged canonical reference to the shop `Order` `key`.
+fn shop_reference(key: &str) -> Value {
+    let order = json!({
+        "package": "example/shop-outcomes",
+        "path": ["model", "object_type", "ix://example/shop-outcomes/Order"],
+        "ordinal": 0
+    });
+    let identity: String = key.bytes().map(|byte| format!("{byte:02x}")).collect();
+    json!({"type": "reference", "universe": order.clone(), "object_type": order,
+        "identity": identity})
+}
+
+/// Write the shop-outcomes model, rules and snapshot of filament-examples'
+/// shop/claim-function-undefined and shop/outcomes-undefined-call into
+/// `directory`.
+fn write_shop_outcomes(directory: &Path) {
+    let order = "ix://example/shop-outcomes/Order";
+    let population = |name: &str| json!({
+        "identity": format!("ix://example/shop-outcomes/{name}"), "displayName": name,
+        "kind": {"module": "example/shop-outcomes", "name": "population"},
+        "members": [order], "extent": "closed",
+        "origin": {"generated": {"generatorVersion": "1.0.0",
+            "generatorIdentity": format!("ix://example/shop-outcomes/{name}"),
+            "inputIdentities": [format!("ix://example/shop-outcomes/{name}")]}}});
+    let construct = |name: &str, meaning: &str| json!({
+        "kind": {"module": "example/shop-outcomes", "name": name},
+        "moduleVersion": "1.0.0",
+        "construct": {"identity": "none", "shape": "record", "members": {}, "meaning": meaning}});
+    let model = json!({
+        "contractVersion": "2.0.0", "canonicalization": {"algorithm": "rfc8785-v1"},
+        "source": {"identity": "ix://example/shop-outcomes/spec", "version": "1.0.0",
+            "dialect": "spec-bundle"},
+        "package": {"identity": "example/shop-outcomes", "version": "1.0.0",
+            "mappingVersions": [], "profileVersions": []},
+        "occurrences": [], "extensions": [],
+        "constructs": [
+            construct("object_type", "filament.meaning.model.object-type/v1"),
+            construct("population", "filament.meaning.model.population/v1")],
+        "types": [{"identity": order, "displayName": "Order",
+            "kind": {"module": "example/shop-outcomes", "name": "object_type"},
+            "roles": [], "constraints": [], "extensions": [], "unknownPolicy": "reject",
+            "supertypes": [], "fields": [], "operations": [],
+            "origin": {"generated": {"generatorIdentity": order, "generatorVersion": "1.0.0",
+                "inputIdentities": [order]}}}],
+        "populations": [population("orders"), population("lookupTargets")]});
+    let snapshot = json!({
+        "format": "filament.state.snapshot/v1",
+        "identity": {"authority": "example",
+            "identity": "ix://example/shop-outcomes/data/outcomes-undefined-call"},
+        "model": {"identity": "example/shop-outcomes"},
+        "observation": "current", "anchor": {"kind": "handler", "name": "query"},
+        "populations": [
+            {"population": "ix://example/shop-outcomes/orders", "complete": true, "objects": []},
+            {"population": "ix://example/shop-outcomes/lookupTargets", "complete": true,
+                "objects": [{"key": "target", "type": order, "fields": {}}]}]});
+    let rules = "language \"ix:native\" edition \"1-draft\";\n\
+        profile v = \"filament.model.complete/v1\";\n\
+        model Shop = \"example/shop-outcomes\";\n\
+        function undefinedClaim using v(p: Population<Shop::Order>[0], r: Shop::Order): \
+        Boolean pure { lookup<Shop::Order>(p, r) absent undefined = r }\n\
+        function missingOrder using v(p: Population<Shop::Order>[0], r: Shop::Order): \
+        Shop::Order pure { lookup<Shop::Order>(p, r) absent undefined }\n";
+    std::fs::write(directory.join("model.json"), serde_json::to_vec(&model).unwrap()).unwrap();
+    std::fs::write(directory.join("data.json"), serde_json::to_vec(&snapshot).unwrap()).unwrap();
+    std::fs::write(directory.join("rules.fsl"), rules).unwrap();
+}
+
+fn shop_request(directory: &Path, member: &str, body: Value) -> Output {
+    let source = |file: &str, identity: &str| json!({"file": file, "authority": "example",
+        "identity": identity, "document": "shop", "formal_revision": 1});
+    let mut inner = json!({
+        "models": [{"format": "semantic-ir/2.0.0",
+            "source": source("model.json", "example/shop-outcomes/model")}],
+        "program": {"source": source("rules.fsl", "example:shop/claim-functions")}});
+    inner[member] = body;
+    std::fs::write(directory.join("request.json"),
+        serde_json::to_vec(&json!({"format": "native-run/1", "request": inner})).unwrap()).unwrap();
+    run_file(&directory.join("request.json"))
+}
+
+/// QSL-2882: filament-examples' shop/claim-function-undefined and
+/// shop/outcomes-undefined-call with their Population and Reference
+/// arguments in the typed forms. `lookup` finds `target` in no member of the
+/// selected empty population, so the claim is refuted (exit 10) and the call
+/// refuses nothing.
+#[test]
+#[trace("TC-1706", "FR-312-AC-11")]
+fn shop_undefined_lookup_requests_run_with_typed_arguments() {
+    let directory = tempfile::tempdir().unwrap();
+    write_shop_outcomes(directory.path());
+    let arguments = json!([
+        {"parameter": "p", "value": {"population": "ix://example/shop-outcomes/orders"}},
+        {"parameter": "r", "value": shop_reference("target")}]);
+    let output = shop_request(directory.path(), "clause", json!({
+        "selection": {"function": {"name": "undefinedClaim", "arguments": arguments,
+            "snapshot": "current"}},
+        "observations": {"current": "data.json"}}));
+    let document = claim_document(&output, 10);
+    assert_eq!(document["disposition"]["category"], "violation", "{document}");
+    assert_eq!(document["disposition"]["truth"], false, "{document}");
+    assert_eq!(direct_report(directory.path()), (10, Some(false)));
+
+    let output = shop_request(directory.path(), "call", json!({
+        "function": "missingOrder", "snapshot": "data.json", "arguments": arguments}));
+    assert_eq!(output.status.code(), Some(10), "{output:?}");
 }
 
 /// Function selections still require a current snapshot; FR-652's item
