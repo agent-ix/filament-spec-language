@@ -1565,6 +1565,19 @@ fn work<'a>(
             })));
         }
     }
+    // The contract checker advertises only `bounded` (FSpec FR-483): an item
+    // whose extent is still unbounded asks for a bound it was not given, so the
+    // engine refuses `RequiresBound` and the settlement reads the request's
+    // `finite_bound_available` (FSpec FR-290-AC-14).
+    let contract_checker_target = item.kind == Capability::OperationContract
+        && negotiated.disposition.target().is_some_and(|backend| {
+            backend.id().as_str() == crate::contract_check::manifest::BACKEND_ID
+        });
+    if contract_checker_target && matches!(item.extent, ExtentClassification::Unbounded { .. }) {
+        built.work = Some(super::ItemWork::Engine(Box::new(move |_, _| {
+            super::EngineReport::Refused(super::Refusal::RequiresBound)
+        })));
+    }
     built.kind = item.kind;
     built.family = family;
     built.claim = Some(item.claim.clone());
@@ -1591,6 +1604,7 @@ fn work<'a>(
             fsl_route::Mode::Bounded
         }
         _ if item.kind == Capability::Schedulability => fsl_route::Mode::Unbounded,
+        _ if contract_checker_target => fsl_route::Mode::Bounded,
         ExtentClassification::Bounded => fsl_route::Mode::Bounded,
         ExtentClassification::Unbounded { .. } => fsl_route::Mode::Unbounded,
     };
@@ -1762,7 +1776,7 @@ mod tests {
 
     /// The analyzer request adapter forwards both extent bit values from
     /// `ClaimItem` to the item whose engine refusal is later settled.
-    #[trace("FSpec-TC-950", "FSpec-FR-290-AC-14")]
+    #[trace("FSpec-TC-950", "FSpec-FR-290-AC-14", "TC-845", "FR-335-AC-2")]
     #[test]
     fn request_work_forwards_operation_contract_finite_bound_availability() {
         use fsl_replay::spine::{check, parse, select, DependencyInput, ParseRequest, SpineLimits};

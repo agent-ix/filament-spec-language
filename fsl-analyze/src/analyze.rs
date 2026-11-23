@@ -4299,7 +4299,7 @@ mod tests {
     /// FSpec FR-290-AC-14: an operation-contract refusal preserves the
     /// request's finite-bound availability, while a prior capability
     /// disposition remains unsupported-requested-capability.
-    #[trace("FSpec-TC-950", "FSpec-FR-290-AC-14")]
+    #[trace("FSpec-TC-950", "FSpec-FR-290-AC-14", "TC-845", "FR-335-AC-2")]
     #[test]
     fn operation_contract_requires_bound_uses_finite_bound_availability() {
         use serde_json::json;

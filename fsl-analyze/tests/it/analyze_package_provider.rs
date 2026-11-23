@@ -404,3 +404,47 @@ fn contract_package_keeps_unknown_names_and_candidate_refusals() {
         assert!(seen.lock().expect("the provider log").is_empty());
     }
 }
+
+/// FSpec FR-290-AC-14 (TC-950), FR-335-AC-2: a per-step contract item whose
+/// extent is unbounded, on the contract checker that advertises only `bounded`,
+/// is written `unsupported` with `requires_bound`/`requires-bound`, settled by
+/// its disposition, with no engine result members, when the request's extent
+/// says a finite bound is available.
+#[trace("FSpec-TC-950", "FSpec-FR-290-AC-14", "TC-845", "FR-335-AC-2")]
+#[test]
+fn unbounded_operation_contract_item_is_written_requires_bound() {
+    let ws = Workspace::new("contract-requires-bound-wire");
+    let path = crate::analyze_cli_support::staying_counter_request(
+        &ws,
+        "",
+        json!([{"claim": "Keeps", "kind": "operation-contract"}]),
+    );
+    let run = analyze_with_providers(&path, vec![]);
+    let item = run.item(0);
+    assert_eq!(
+        item["request"]["extent"],
+        json!({"classification": "unbounded", "finite_bound_available": true}),
+        "{item}"
+    );
+    assert_eq!(item["category"], "unsupported", "{item}");
+    let record = &item["record"];
+    assert_eq!(record["settled_by"], "disposition", "{item}");
+    assert_eq!(record["result"], "unsupported", "{item}");
+    assert_eq!(
+        record["diagnostic"],
+        json!({"code": "requires_bound", "cause": "requires-bound", "detail": {}}),
+        "{item}"
+    );
+    let mut members: Vec<&str> = record
+        .as_object()
+        .expect("a record object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    members.sort_unstable();
+    assert_eq!(
+        members,
+        ["diagnostic", "result", "settled_by"],
+        "a disposition has no backend, basis or certification: {item}"
+    );
+}
