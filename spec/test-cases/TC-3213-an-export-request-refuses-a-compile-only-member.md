@@ -1,12 +1,12 @@
 ---
-id: TC-3211
+id: TC-3213
 title: "An export request refuses a compile-only member"
 type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-1015
     type: verifies
 ---
-# TC-3211: An export request refuses a compile-only member
+# TC-3213: An export request refuses a compile-only member
 
 ## Description
 
@@ -18,7 +18,7 @@ Scope: FR-1015-AC-18.
 
 Add each of `call_site` (`{"kind": "imported-function", "library": "test/units", "function": "big"}`), `output` and `handoff` in turn to a valid export request and run it through `fsl-command`. Test: `fsl-command/tests/it/cli_contract/export.rs`.
 
-Tag the tests `#[trace("TC-3211", "FR-1015-AC-18")]`.
+Tag the tests `#[trace("TC-3213", "FR-1015-AC-18")]`.
 
 ## Expected Results
 
