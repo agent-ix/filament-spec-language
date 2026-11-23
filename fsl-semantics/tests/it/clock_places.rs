@@ -4881,7 +4881,6 @@ fn a_selector_outside_a_ref_is_not_checked_yet() {
     let document = timer_sequence_and_map();
     for clause in [
         "pre Read using v on Config::Call::reply { self.ts[0].x >= 1 ms }",
-        "post Reset using v on Config::Call::send { self.ts[1].x = 0 ms }",
         "post Keyed using v on Config::Call::send { self.m[\"k\"].x = 0 ms }",
         "pre Data using v on Config::Call::reply { \
          size(self.ts) >= 1 and self.ts[0].n = 1 }",
@@ -4908,6 +4907,29 @@ fn a_selector_outside_a_ref_is_not_checked_yet() {
             &text[span.start..span.end]
         );
     }
+
+    // FR-230-AC-21: a reset of the element a literal selector names is
+    // checked, and refuses `unproved-presence` at the selector unless a
+    // precondition establishes `1 < size(self.ts)`.
+    let body = format!(
+        "{UNITS}{DENSE}post Reset using v on Config::Call::send {{ self.ts[1].x = 0 ms }}\n"
+    );
+    let refusals = check(&document, &body).expect_err("the slot is unproved");
+    let [refusal] = refusals.as_slice() else {
+        panic!("one refusal expected: {refusals:?}");
+    };
+    let CheckCause::Temporal(cause) = &refusal.cause else {
+        panic!("{refusal:?}");
+    };
+    let TemporalCause::UnprovedPresence { span } = **cause else {
+        panic!("{cause:?}");
+    };
+    let (text, _) = crate::model_operations::config_unit_with_profiles(
+        &document,
+        crate::timed_model::TEMPORAL,
+        &body,
+    );
+    assert_eq!(&text[span.start..span.end], "1");
 
     // A function body reading a clock place through a collection selector is
     // refused at the selector until place selection is implemented there.
