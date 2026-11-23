@@ -1908,6 +1908,10 @@ fn a_branch_step_is_after_the_cancel_only_once_a_step_after_the_parallel_precede
     let placed = || observation("send", "Placed", "Buyer", "m-1");
     let predicate = predicate_join_protocol("left_only", "left", "cancel");
     for (source, name) in [(cancel_join_protocol(), "any"), (predicate, "predicate")] {
+        // The policy holds after `L` and no later step is observed: `R` is
+        // not after the cancel, since the join step may fire later.
+        let policy_only = json!([left(), right()]);
+        assert_enabled(&source, &parallel_recording(policy_only), RIGHT_STEP, 1);
         let before = json!([left(), right(), placed()]);
         assert_enabled(&source, &parallel_recording(before.clone()), RIGHT_STEP, 1);
         assert_enabled(&source, &parallel_recording(before.clone()), PLACED, 2);

@@ -139,7 +139,7 @@ and FR-894's duplicate kinds. Every causal-order verdict, `satisfied` or
    branch.
 5. An earlier `parallel` under any other join SHALL supply the steps of the
    branches whose steps were all observed causally before the step, when
-   the join is reached by those branches (rule 19); a branch that finishes
+   the join is reached by those branches (rules 19 to 23); a branch that finishes
    after the join, as `outstanding continue` allows (ADR-027 ST-7), is not a
    predecessor. Until the join is reached, the steps of every branch are
    predecessors.
@@ -173,17 +173,38 @@ and FR-894's duplicate kinds. Every causal-order verdict, `satisfied` or
     order no later observation can order the two.
 18. A predecessor the step itself causally precedes SHALL make the verdict
     `violated`, cause `unexpected`, at once.
-19. A join SHALL be reached by the branches finished causally before the step
-    when: under `all`, every branch has finished; under `any`, one has;
-    under `quorum(n)`, `n` have; under `predicate(f)`, `f`, applied to the
-    joined branches' completion in their sorted label order, is true (FR-218
-    "Predicate joins"); a branch the step runs in has not finished. A
-    predicate that cannot be evaluated SHALL leave the verdict `pending`.
-20. A step of a branch of a `parallel` under `outstanding cancel` SHALL make
-    the verdict `violated`, cause `unexpected`, when the join is reached by
-    the other branches finished causally before the step: the step is after
-    the cancel and a cancelled thread takes no further step (ADR-027 ST-7).
-    Under `outstanding continue` it SHALL NOT.
+19. Under `join all`, the join SHALL be reached when every branch has
+    finished causally before the step.
+20. Under `join any`, the join SHALL be reached when one branch has finished
+    causally before the step.
+21. Under `join quorum(n)`, the join SHALL be reached when `n` branches have
+    finished causally before the step.
+22. Under `join predicate(f)`, the join SHALL be reached when `f`, applied to
+    the completion of the joined branches finished causally before the step,
+    in their sorted label order, is true (FR-218 "Predicate joins").
+23. A branch the step runs in SHALL NOT count as finished.
+24. A `join predicate` SHALL name at most 10 labels; the assessment SHALL
+    refuse a protocol whose predicate join names more, as `unsupported`,
+    `unsupported_construct`/`not-yet-implemented`, naming the join and the
+    bound, before it evaluates any predicate.
+25. The assessment SHALL refuse a predicate join whose function does not
+    evaluate to a Boolean over every subset of its labels, as `unsupported`,
+    `unsupported_construct`/`not-yet-implemented`, naming the join.
+26. An assessment over a package read from its bytes SHALL refuse a protocol
+    holding a predicate join, as `unsupported`,
+    `unsupported_construct`/`not-yet-implemented`, never leaving its steps
+    `pending`.
+27. A step of a branch of a `parallel` under `outstanding cancel` SHALL make
+    the verdict `violated`, cause `unexpected`, when an observation of a step
+    after the `parallel`, which needs its join, or of `finish`, in the same
+    protocol instance, causally precedes it: the join step cancels the running
+    branches and a cancelled thread takes no further step (ADR-027 ST-7).
+28. A step of a branch of a `parallel` SHALL NOT be made `violated` for the
+    cancel when no such observation precedes it, though the join's policy
+    holds, because the join step may fire at any later point (ADR-027 CI-3).
+29. A step of a branch of a `parallel` under `outstanding continue` SHALL NOT
+    be made `violated` for the cancel.
+
 
 **Incremental assessment.** An assessment session takes the recording's
 observations one at a time and, after each, gives the assessment of the
@@ -251,6 +272,11 @@ looking like success, which FSpec FR-059-AC-3 requires.
 | FR-895-AC-29 | Over the AC-25 protocol with `outstanding cancel`, the recording `L`, `Placed`, `R` gives `R`'s enabledness obligation `violated`, cause `unexpected`, in batch and in the third incremental prefix (absent in the first two), and `L` and `Placed` `satisfied`; with `outstanding continue` the same recording gives `R` `satisfied`. | Test (TC-2531) |
 | FR-895-AC-30 | Over a `parallel` of `L` and `R` followed by `Placed` under `join predicate(both) [left, right] outstanding continue`, with `both` the function `left and right`, the recording `L`, `R`, `Placed` gives `Placed` `satisfied` (prefixes: absent, absent, `satisfied`); `L`, `Placed`, `R` gives `Placed` `violated`, cause `unexpected` (prefixes: absent, `pending`, `violated`). | Test (TC-2531) |
 | FR-895-AC-31 | With the predicate of AC-30 replaced by `left_only`, the function `left`, and `outstanding cancel`, the recording `L`, `Placed`, `R` gives `Placed` `satisfied` and `R` `violated`, cause `unexpected` (prefixes of `R`: absent, absent, `violated`); with `outstanding continue` it gives `R` `satisfied`; the recording `R`, `Placed` gives `Placed` `pending` while open and `violated`, cause `unexpected`, once closed. | Test (TC-2531) |
+| FR-895-AC-32 | Under `join any [left, right] outstanding cancel` and under `join predicate(left_only) outstanding cancel`, the recording `L`, `R` (the policy holds, no step after the `parallel` observed) gives `R` `satisfied`; `L`, `R`, `Placed` gives `R` and `Placed` `satisfied`; `L`, `Placed`, `R` gives `R` `violated`, cause `unexpected`; an `R` by another role than `Placed`'s, unordered with `Placed`, is `satisfied`. | Test (TC-2531) |
+| FR-895-AC-33 | With an inner `parallel` `join any [left, right] outstanding cancel` followed by `M` in branch `a` of an outer `parallel`, and `N` in branch `b`, the recording `L`, `M`, `R` gives `R` `violated`, cause `unexpected`; `L`, `R`, `M` gives it `satisfied`; `L`, `N`, `R` gives it `satisfied`. | Test (TC-2531) |
+| FR-895-AC-34 | A predicate join over 10 labels is assessed; over 11 labels and over 64 labels, in a library assessment, in a batch item and in an incremental item, the assessment is refused `unsupported`, `unsupported_construct`/`not-yet-implemented`, with `predicate-join-label-bound` and the text naming the join `Flow::Main::Many`, the label count and "at most 10". | Test (TC-2531) |
+| FR-895-AC-35 | Under `join predicate(contradiction)` with the function `left and not left`, the recording `L`, `Placed` gives `Placed` `pending` in every open prefix and `violated`, cause `unexpected`, once closed. | Test (TC-2531) |
+| FR-895-AC-36 | A protocol with a predicate join analysed from a package read from its bytes settles `unsupported`, `unsupported_construct`/`not-yet-implemented`, while the source route assesses the recording. | Test (TC-2531) |
 
 ## Dependencies
 

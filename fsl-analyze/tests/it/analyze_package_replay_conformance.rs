@@ -385,13 +385,14 @@ fn a_package_recording_rejects_a_foreign_protocol_as_the_source_route() {
     );
 }
 
-/// FR-895-AC-36 (TC-2531): a predicate join over a package read from its
-/// bytes is not evaluated yet, so the item settles `unsupported`, naming the
-/// join, where the source route assesses the recording; the package route
-/// never reports the recording as open.
+/// FR-895-AC-36 (TC-2531): a protocol with a `parallel` has no package form
+/// yet, so over a package read from its bytes a predicate join settles
+/// `unsupported`, `unsupported_construct`/`not-yet-implemented`, where the
+/// source route assesses the recording; the package route never reports the
+/// recording as open.
 #[trace("TC-2531", "FR-895-AC-36")]
 #[test]
-fn a_predicate_join_over_a_package_settles_unsupported_naming_the_join() {
+fn a_predicate_join_over_a_package_settles_unsupported() {
     let protocol = format!(
         "function both using v(left: Boolean, right: Boolean): Boolean pure {{ left and right }}\n{}",
         order_protocol(false).replace(
@@ -430,15 +431,9 @@ fn a_predicate_join_over_a_package_settles_unsupported_naming_the_join() {
     std::fs::remove_dir_all(&sources).expect("the handoff sources are removed");
     let document = json!({"format": "native-analyze/1", "request": members});
     let package = analyze(&ws.write("analyze-package.json", document.to_string().as_bytes()));
-    assert!(!package.item(0).is_null(), "{}", package.document());
-    let item = package.item(0);
-    assert_eq!(label(&item), "unsupported", "{}", package.document());
-    let text = item.to_string();
-    assert!(
-        text.contains("unsupported_construct")
-            && text.contains("predicate-join-package-route")
-            && text.contains("Flow::Main::Both"),
-        "{}",
-        package.document()
-    );
+    let settled = package.document();
+    assert_eq!(settled["category"], "unsupported", "{settled}");
+    let diagnostic = &settled["diagnostics"][0];
+    assert_eq!(diagnostic["code"], "unsupported_construct", "{settled}");
+    assert_eq!(diagnostic["cause"], "not-yet-implemented", "{settled}");
 }
