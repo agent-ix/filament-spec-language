@@ -1112,6 +1112,25 @@ fn a_row_naming_no_class_of_the_clause_refuses_at_its_name() {
     assert_eq!(only(&found).at, "Fill");
 }
 
+/// A row whose step source is `cfail`, `ctimeout` or `cexpire` of a template the
+/// clause declares parses, and S3 builds no class for it yet, so it refuses
+/// `missing-name` at the template segment of the name.
+#[trace("TC-541", "FR-136-AC-2")]
+#[test]
+fn a_compensation_outcome_row_refuses_missing_name_at_its_template() {
+    for keyword in ["cfail", "ctimeout", "cexpire"] {
+        let rows = format!("{REFUND_ROWS}\nstep {keyword} M::Refunds::Refund -> stutter;");
+        let found = refused(&unit(REFUNDS, &rows));
+        let unresolved = only(&found);
+        assert_eq!(
+            unresolved.pair(),
+            (Code::MissingDeclaration, Some("missing-name")),
+            "{keyword}"
+        );
+        assert_eq!(unresolved.at, "Refund", "{keyword}");
+    }
+}
+
 /// A channel whose delivery
 /// is `unknown` has a `duplicate` and a `lose` class, `at-least-once` only
 /// the first, `at-most-once` only the second and the exactly-once premise

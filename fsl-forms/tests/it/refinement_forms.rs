@@ -275,6 +275,9 @@ fn step_sources_and_node_targets_build_as_written() {
          step memory flush -> stutter;\n\
          step Impl::Counter::commitA -> node Spec::Twice::a1(self, _);\n\
          step activate Impl::P::t -> any;\n\
+         step cfail Impl::P::T -> stutter;\n\
+         step ctimeout Impl::P::T -> stutter;\n\
+         step cexpire Impl::P::T -> any;\n\
          }",
     );
     let form = refinement(&unit);
@@ -319,6 +322,13 @@ fn step_sources_and_node_targets_build_as_written() {
         source_name(&step(4).source),
         (Some(StepClassKeyword::Activate), "Impl::P::t")
     );
+    for (index, keyword, template) in [
+        (5, StepClassKeyword::Cfail, "Impl::P::T"),
+        (6, StepClassKeyword::Ctimeout, "Impl::P::T"),
+        (7, StepClassKeyword::Cexpire, "Impl::P::T"),
+    ] {
+        assert_eq!(source_name(&step(index).source), (Some(keyword), template));
+    }
 }
 
 /// FR-310-AC-4 (TC-889 step 3): a history row's initial value builds as the
