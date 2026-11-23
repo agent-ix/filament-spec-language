@@ -889,16 +889,16 @@ fn function_selection_admits_canonical_reference_arguments() {
     write_cases(directory.path());
     extend_unit(directory.path(), SAME);
     let same = json!([
-        {"parameter": "a", "value": canonical_reference("child")},
-        {"parameter": "b", "value": canonical_reference("child")}]);
+        {"parameter": "a", "value": crate::support::canonical_reference::config_version("child")},
+        {"parameter": "b", "value": crate::support::canonical_reference::config_version("child")}]);
     let document = claim_document(&function_claim(directory.path(), "sameIdentity", same), 0);
     assert_eq!(document["disposition"]["category"], "success", "{document}");
     assert_eq!(document["disposition"]["truth"], true, "{document}");
     assert_eq!(direct_report(directory.path()), (0, Some(true)));
 
     let distinct = json!([
-        {"parameter": "a", "value": canonical_reference("root")},
-        {"parameter": "b", "value": canonical_reference("child")}]);
+        {"parameter": "a", "value": crate::support::canonical_reference::config_version("root")},
+        {"parameter": "b", "value": crate::support::canonical_reference::config_version("child")}]);
     let document = claim_document(&function_claim(directory.path(), "sameIdentity", distinct), 10);
     assert_eq!(document["disposition"]["category"], "violation", "{document}");
     assert_eq!(document["disposition"]["truth"], false, "{document}");
@@ -947,8 +947,8 @@ fn function_selection_refuses_a_reference_the_snapshot_does_not_hold() {
     write_cases(directory.path());
     extend_unit(directory.path(), SAME);
     let ghost = json!([
-        {"parameter": "a", "value": canonical_reference("child")},
-        {"parameter": "b", "value": canonical_reference("ghost")}]);
+        {"parameter": "a", "value": crate::support::canonical_reference::config_version("child")},
+        {"parameter": "b", "value": crate::support::canonical_reference::config_version("ghost")}]);
     let document = claim_document(&function_claim(directory.path(), "sameIdentity", ghost), 20);
     assert_eq!(document["disposition"]["stage"], "admit", "{document}");
     assert_eq!(document["disposition"]["refusal"]["code"], "dangling_reference", "{document}");

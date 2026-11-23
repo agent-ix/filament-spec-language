@@ -30,12 +30,12 @@ distinguish the false result. In the same healthy current snapshot, run
 `nonempty` with its Population argument's value `{"population":P}` and run it
 again with a population identity the snapshot does not hold. In each request,
 resolve the reference or population through the named snapshot; do not use a
-default or synthesized context. Keep the `clause` request values distinct
+default or synthesized context. Also run `sameIdentity` with a canonical reference to `ghost`, which the snapshot does not hold, and with a Population, text or untagged `reference` value for a Reference argument; run `nonempty` with a reference, text or non-object value, a `type`-tagged value, a misspelt `populaton` key and an empty object. Keep the `clause` request values distinct
 from FR-650's internal run-value spellings used by the existing `call`
 coverage.
 
 Tag the tests `#[trace("TC-1706", "FR-650-AC-7", "FR-312-AC-11")]`; they
-live in `tests/it/run_values.rs`.
+live in `tests/it/run_items.rs`.
 
 ## Expected Results
 
@@ -45,6 +45,6 @@ exit 0. For FR-312-AC-11, two canonical `child` references report `success`,
 `violation`, `truth: false`, exit 10. `nonempty` with the selected snapshot's
 `{"population":P}` reports `success`, `truth: true`, exit 0; a Population
 selection not present in that snapshot refuses at stage `admit` with
-`invalid_runtime_input`/`wrong-role-mapping`, exit 20. The report for each
+`invalid_runtime_input`/`wrong-role-mapping`, exit 20. The `ghost` reference refuses `dangling_reference`/`absent-target-in-complete-population`, exit 20. Each wrong-kind or `type`-tagged value refuses `invalid_runtime_input`/`wrong-value-kind`, the misspelt key `unknown-member` and the empty object `missing-member` (FR-650 defect table), all at stage `admit`, exit 20. The report for each
 request equals the result from the same admitted `ClauseRunRequest` built
 directly.
