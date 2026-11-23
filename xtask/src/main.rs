@@ -15,10 +15,10 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use xtask::{
-    Outcome, backend_agreement, canonical_types, checked_input, conformance, consumer_facades,
+    backend_agreement, canonical_types, checked_input, conformance, consumer_facades,
     error::{Error, Result},
     examples_check, facade_tests, merge_gate_recipe, pin_check, qualification, refinement,
-    route_lint, seam_probe, string_edge, test_suites,
+    route_lint, seam_probe, string_edge, test_suites, Outcome,
 };
 
 const USAGE: &str = "usage: cargo xtask seam-probe\n       cargo xtask string-edge\n       \

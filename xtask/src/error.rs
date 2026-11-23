@@ -124,9 +124,7 @@ pub enum Error {
         status: std::process::ExitStatus,
     },
     /// FR-765: the variable naming a checkout examples-check needs is unset.
-    #[error(
-        "examples-check: {var} is not set; name a {repository} checkout (clone agent-ix/{repository} next to this repository)"
-    )]
+    #[error("examples-check: {var} is not set; name a {repository} checkout (clone agent-ix/{repository} next to this repository)")]
     ExamplesCheckUnset {
         /// The variable.
         var: &'static str,
@@ -134,9 +132,7 @@ pub enum Error {
         repository: &'static str,
     },
     /// FR-765: the folder a variable names is not a checkout of its repository.
-    #[error(
-        "examples-check: no {repository} checkout at {path} ({var}): {missing} is missing; clone agent-ix/{repository} there or set {var}"
-    )]
+    #[error("examples-check: no {repository} checkout at {path} ({var}): {missing} is missing; clone agent-ix/{repository} there or set {var}")]
     ExamplesCheckMissing {
         /// The variable.
         var: &'static str,
@@ -202,9 +198,7 @@ pub enum Error {
     },
     /// The normal (non-probe) build failed to compile, so nothing else the
     /// probe checks is meaningful until that build succeeds on its own.
-    #[error(
-        "seam-probe: the normal (non-probe) build failed to compile; nothing else about the probe is meaningful until it succeeds. stderr:\n{stderr}"
-    )]
+    #[error("seam-probe: the normal (non-probe) build failed to compile; nothing else about the probe is meaningful until it succeeds. stderr:\n{stderr}")]
     SeamProbeNormalBuildFailed {
         /// The failed build's captured stderr.
         stderr: String,
@@ -212,9 +206,7 @@ pub enum Error {
     /// The normal (non-probe) build failed under `--offline` because its
     /// registry cache was cold -- not a genuine compile error. A warm
     /// (non-`--offline`) build must run first.
-    #[error(
-        "seam-probe: the normal (non-probe) build did not compile -- it failed dependency resolution under --offline (a cold registry cache, not a genuine compile error). Run a warm (non---offline) build first, then retry. stderr:\n{stderr}"
-    )]
+    #[error("seam-probe: the normal (non-probe) build did not compile -- it failed dependency resolution under --offline (a cold registry cache, not a genuine compile error). Run a warm (non---offline) build first, then retry. stderr:\n{stderr}")]
     SeamProbeOfflineRegistryUnavailable {
         /// The failed build's captured stderr.
         stderr: String,
@@ -223,9 +215,7 @@ pub enum Error {
     /// locations. FR-063-AC-3 requires every probe-marked seam to be
     /// unreachable outside the probe build, so any E0004 in the normal
     /// build is itself a defect.
-    #[error(
-        "seam-probe: the normal (non-probe) build reported E0004 at: {locations}; the probe variant must be unreachable outside the probe build (FR-063-AC-3)"
-    )]
+    #[error("seam-probe: the normal (non-probe) build reported E0004 at: {locations}; the probe variant must be unreachable outside the probe build (FR-063-AC-3)")]
     SeamProbeNormalBuildHasE0004 {
         /// The E0004 locations the normal build reported.
         locations: String,
