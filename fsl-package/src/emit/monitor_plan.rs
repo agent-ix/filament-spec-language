@@ -1718,8 +1718,8 @@ mod tests {
             other => panic!("the final writer's value-validity rows must read: {other:?}"),
         };
         Rekeyed {
-            base,
-            final_package,
+            base: *base,
+            final_package: *final_package,
             final_bytes: final_emission.package().bytes().to_vec(),
             evidence: final_emission.evidence().clone(),
             changes,
