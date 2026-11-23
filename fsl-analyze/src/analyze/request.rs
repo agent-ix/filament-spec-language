@@ -431,6 +431,19 @@ pub enum ProbabilisticLimits {
 }
 
 impl ProbabilisticLimits {
+    /// `sampling` with the caller's `statistical.max_sample_steps` in place of
+    /// the item's own or the published value.
+    #[must_use]
+    pub fn timed_under(
+        mut sampling: fsl_replay::statistical::TimedSampling,
+        engines: &super::EngineBounds,
+    ) -> fsl_replay::statistical::TimedSampling {
+        if let Some(bound) = engines.get(fsl_foundation::Setting::StatisticalMaxSampleSteps) {
+            sampling.max_sample_steps = bound;
+        }
+        sampling
+    }
+
     /// These limits with each bound the caller set replacing the item's own
     /// or the published value (FR-255 "Lifecycle caller-limit coverage"):
     /// `exact_prob.*` for an exact run,
@@ -830,16 +843,10 @@ fn probability_work<'a>(
                             .max_witnesses
                             .unwrap_or(crate::statistical::DEFAULT_MAX_WITNESSES),
                         symmetry: form.symmetry.clone(),
-                        timed_sampling: {
-                            let mut sampling = form.timed_sampling.unwrap_or_default();
-                            if let Some(bound) = limits
-                                .engines
-                                .get(fsl_foundation::Setting::StatisticalMaxSampleSteps)
-                            {
-                                sampling.max_sample_steps = bound;
-                            }
-                            sampling
-                        },
+                        timed_sampling: ProbabilisticLimits::timed_under(
+                            form.timed_sampling.unwrap_or_default(),
+                            &limits.engines,
+                        ),
                     },
                 )),
                 _ => None,
@@ -1999,5 +2006,111 @@ mod tests {
 
         let entries: Vec<_> = provision.entries().collect();
         assert_eq!(entries, vec![("a", "a", &b"a"[..]), ("b", "z", &b"z"[..])]);
+    }
+}
+
+#[cfg(test)]
+mod caller_limit_tests {
+    use fsl_foundation::Setting;
+    use ix_trace_rs::trace;
+
+    use super::ProbabilisticLimits;
+    use crate::analyze::EngineBounds;
+
+    fn under(setting: Setting, bound: u64, limits: ProbabilisticLimits) -> ProbabilisticLimits {
+        let mut engines = EngineBounds::default();
+        assert!(engines.set(setting, bound), "{setting}");
+        limits.under(&engines)
+    }
+
+    /// Each `exact_prob.*` caller setting replaces exactly its own bound of
+    /// the exact limits and no other (FR-255 "Lifecycle caller-limit
+    /// coverage"); the source and package routes share this decision.
+    #[trace("FR-255-AC-24")]
+    #[test]
+    fn each_exact_prob_setting_changes_only_its_bound() {
+        use crate::exact_probabilistic::ExactProbLimits;
+        let base = ExactProbLimits::default();
+        let rows: [(Setting, fn(&ExactProbLimits) -> u64); 9] = [
+            (Setting::ExactProbMaxStates, |l| l.model.limits.max_states as u64),
+            (Setting::ExactProbMaxTransitions, |l| {
+                l.model.limits.max_transitions as u64
+            }),
+            (Setting::ExactProbMaxAutomatonStates, |l| {
+                l.model.max_automaton_states
+            }),
+            (Setting::ExactProbMaxIterations, |l| l.max_iterations),
+            (Setting::ExactProbPrecisionBits, |l| u64::from(l.precision_bits)),
+            (Setting::ExactProbMaxPrecisionBits, |l| {
+                u64::from(l.max_precision_bits)
+            }),
+            (Setting::ExactProbMaxRationalBits, |l| l.max_rational_bits),
+            (Setting::ExactProbMaxPolicyIterations, |l| l.max_policy_iterations),
+            (Setting::ExactProbMaxWitnessPaths, |l| l.max_witness_paths),
+        ];
+        for (setting, read) in rows {
+            let bound = 7;
+            let ProbabilisticLimits::Exact(changed) =
+                under(setting, bound, ProbabilisticLimits::Exact(base))
+            else {
+                panic!("{setting}: evidence kind changed");
+            };
+            assert_eq!(read(&changed), bound, "{setting}");
+            for (other, other_read) in rows {
+                if other != setting {
+                    assert_eq!(other_read(&changed), other_read(&base), "{setting} moved {other}");
+                }
+            }
+        }
+    }
+
+    /// Each `statistical.*` caller setting replaces exactly its own bound.
+    #[trace("FR-255-AC-24")]
+    #[test]
+    fn each_statistical_setting_changes_only_its_bound() {
+        use fsl_replay::statistical::{StatisticalLimits, TimedSampling};
+        let base = StatisticalLimits::default();
+        let rows: [(Setting, fn(&StatisticalLimits) -> u64); 3] = [
+            (Setting::StatisticalMaxSamples, |l| l.max_samples),
+            (Setting::StatisticalMaxDraws, |l| l.max_draws),
+            (Setting::StatisticalMaxCycleSteps, |l| l.max_cycle_steps),
+        ];
+        for (setting, read) in rows {
+            let ProbabilisticLimits::Statistical(changed) =
+                under(setting, 7, ProbabilisticLimits::Statistical(base))
+            else {
+                panic!("{setting}: evidence kind changed");
+            };
+            assert_eq!(read(&changed), 7, "{setting}");
+            for (other, other_read) in rows {
+                if other != setting {
+                    assert_eq!(other_read(&changed), other_read(&base), "{setting} moved {other}");
+                }
+            }
+        }
+        let mut engines = EngineBounds::default();
+        let sampling = TimedSampling::default();
+        assert_eq!(
+            ProbabilisticLimits::timed_under(sampling, &engines),
+            sampling
+        );
+        assert!(engines.set(Setting::StatisticalMaxSampleSteps, 7));
+        let changed = ProbabilisticLimits::timed_under(sampling, &engines);
+        assert_eq!(changed.max_sample_steps, 7);
+        assert_eq!(changed.q, sampling.q);
+    }
+
+    /// `certificate_check.max_rank` is accepted and carried with the caller's
+    /// engine bounds (FR-255 "Lifecycle caller-limit coverage").
+    #[trace("FR-255-AC-24")]
+    #[test]
+    fn certificate_max_rank_is_accepted_and_carried() {
+        let mut engines = EngineBounds::default();
+        assert_eq!(engines.get(Setting::CertificateCheckMaxRank), None);
+        assert!(engines.set(Setting::CertificateCheckMaxRank, 5));
+        assert_eq!(engines.get(Setting::CertificateCheckMaxRank), Some(5));
+        assert!(!engines.is_empty());
+        assert!(!EngineBounds::default().set(Setting::SmtMaxSolverSteps, 1));
+        assert!(!EngineBounds::default().set(Setting::SmtMaxSolverTime, 1));
     }
 }

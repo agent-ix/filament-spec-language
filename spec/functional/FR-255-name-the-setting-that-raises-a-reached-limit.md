@@ -332,7 +332,7 @@ accepted only when that operation exposes the bound; an unavailable setting
 is refused before work starts. The lists name bounds each operation constructs
 or consumes, not every registered setting or default.
 
-When an item states an engine limit in its own member (a `simulation` item's `max_steps`, a probabilistic item's `limits` or `timed_sampling.max_sample_steps`, a temporal item's `limits.max_solver_steps` or `max_solver_time`) and the caller passes the setting that names the same bound, the request SHALL be refused `invalid-request` naming the item and the setting before any item runs, as FR-312 and FR-1015 refuse a bound stated twice; no run depends on which of the two bounds is larger. `certificate_check.max_rank` is accepted by `analyze` and `monitor` and carried with the caller's engine bounds; no item member states it.
+When an item states an engine limit in its own member (a `simulation` item's `max_steps`, a probabilistic item's `limits` or `timed_sampling.max_sample_steps`) and the caller passes the setting that names the same bound, the request SHALL be refused `invalid-request` naming the item and the setting before any item runs, as FR-312 and FR-1015 refuse a bound stated twice; no run depends on which of the two bounds is larger. `certificate_check.max_rank` is accepted by `analyze` and `monitor` and carried with the caller's engine bounds; no item member states it.
 
 `analyze` SHALL accept these source, package, normalization, admission,
 observation, identity, I2-read and accounting settings:
