@@ -272,7 +272,7 @@ impl<'w> Walk<'_, 'w> {
                             .map(|argument| (Reading::Term(argument), Rc::clone(&shadow))),
                     ),
                 },
-                Reading::Term(CheckedTerm::Aggregate { members }) => reading.extend(
+                Reading::Term(CheckedTerm::Aggregate { members, .. }) => reading.extend(
                     members
                         .iter()
                         .rev()
@@ -287,11 +287,11 @@ impl<'w> Walk<'_, 'w> {
                         reading.push((Reading::Term(arm), shadow));
                         continue;
                     };
-                    let CheckedTerm::Aggregate { members } = value.as_ref() else {
+                    let CheckedTerm::Aggregate { members, .. } = value.as_ref() else {
                         reading.push((Reading::Term(value), shadow));
                         continue;
                     };
-                    let [CheckedTerm::Aggregate { members: binders }, body] = members.as_slice()
+                    let [CheckedTerm::Aggregate { members: binders, .. }, body] = members.as_slice()
                     else {
                         reading.push((Reading::Term(value), shadow));
                         continue;

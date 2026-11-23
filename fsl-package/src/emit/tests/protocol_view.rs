@@ -533,7 +533,7 @@ fn an_await_after_a_compensation_is_anchored_at_the_forward_effect() {
             _ => None,
         })
         .expect("an after argument");
-    let CheckedTerm::Aggregate { members } = after else {
+    let CheckedTerm::Aggregate { members, .. } = after else {
         panic!("after is a group");
     };
     let (mut kind, mut target) = (None, None);
@@ -621,7 +621,7 @@ fn awaits_after_one_template_and_a_template_without_a_commit_check() {
             CheckedTerm::Binding { name, value, .. } if &**name == "after" => Some(&**value),
             _ => None,
         });
-        let Some(CheckedTerm::Aggregate { members }) = after else {
+        let Some(CheckedTerm::Aggregate { members, .. }) = after else {
             panic!("after is a group");
         };
         members
@@ -680,7 +680,7 @@ fn a_control_held_twice_is_refused_not_listed_twice() {
     for argument in arguments {
         if let CheckedTerm::Binding { name, value, .. } = argument {
             if &**name == "children" {
-                let CheckedTerm::Aggregate { members } = &mut **value else {
+                let CheckedTerm::Aggregate { members, .. } = &mut **value else {
                     panic!("children is a list");
                 };
                 members.push(CheckedTerm::reference(requested.clone()));
@@ -1622,7 +1622,7 @@ fn nodes_with_maximum(
             _ => None,
         })
         .expect("the attempts argument");
-    let CheckedTerm::Aggregate { members } = group else {
+    let CheckedTerm::Aggregate { members, .. } = group else {
         panic!("attempts is a group");
     };
     let at = members
@@ -1846,7 +1846,7 @@ fn the_await_anchor_is_the_kind_and_target_the_node_carries() {
     for member in ["kind", "target"] {
         assert_eq!(
             malformed(&|after| {
-                let CheckedTerm::Aggregate { members } = after else {
+                let CheckedTerm::Aggregate { members, .. } = after else {
                     panic!("after is a group");
                 };
                 members.retain(
@@ -1859,7 +1859,7 @@ fn the_await_anchor_is_the_kind_and_target_the_node_carries() {
     }
     assert_eq!(
         malformed(&|after| {
-            let CheckedTerm::Aggregate { members } = after else {
+            let CheckedTerm::Aggregate { members, .. } = after else {
                 panic!("after is a group");
             };
             for m in members {
@@ -1960,7 +1960,7 @@ fn a_choices_owner_and_visible_set_are_the_nodes_it_references() {
     let outcome = by_name(package, "Outcome");
     let argument = |node: &CheckedSemanticNodeV2, member: &str| match channel_argument(node, member)
     {
-        CheckedTerm::Aggregate { members } => members
+        CheckedTerm::Aggregate { members, .. } => members
             .iter()
             .map(|entry| match entry {
                 CheckedTerm::Reference { target } => target.clone(),
@@ -2013,6 +2013,7 @@ fn a_choices_owner_and_visible_set_are_the_nodes_it_references() {
             if &**name == "owner" {
                 **value = CheckedTerm::Aggregate {
                     members: Vec::new(),
+                    temporal_profile: None,
                 };
             }
         }
@@ -2138,6 +2139,7 @@ fn a_channels_ordering_and_fifo_key_are_the_nodes_it_references() {
                 binder: None,
                 value: Box::new(text_term(channel_argument(charges, "delivery"), "sorted")),
             }],
+            temporal_profile: None,
         },
     );
     let malformed = ViewRefusal::MalformedMember {
@@ -2220,6 +2222,7 @@ fn a_queues_overflow_policy_is_what_the_checked_clause_holds() {
     let overflow = channel_argument(queue, "overflow");
     let selector = |word: &str| CheckedTerm::Aggregate {
         members: vec![text_term(overflow, word)],
+        temporal_profile: None,
     };
     let node_id = &queue.node_id;
     for member in ["overflow", "loss"] {

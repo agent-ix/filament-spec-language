@@ -141,7 +141,7 @@ impl<'a> Protocol<'a> {
         if protocol_view::clause_activation(clause).ok()? != protocol_view::ClauseActivation::Origin {
             return None;
         }
-        if !matches!(member(&clause.body, "captures"), Some(fsl_package::CheckedTerm::Aggregate { members }) if members.is_empty()) {
+        if !matches!(member(&clause.body, "captures"), Some(fsl_package::CheckedTerm::Aggregate { members, .. }) if members.is_empty()) {
             return None;
         }
         let memory = ResolvedMemory::resolve_package(&form, &[]).ok()?;
@@ -291,7 +291,7 @@ fn channel_name(channel: &filament_contract_model::CheckedSemanticNodeV2) -> Opt
 
 fn member<'a>(term: &'a fsl_package::CheckedTerm, name: &str) -> Option<&'a fsl_package::CheckedTerm> {
     use fsl_package::CheckedTerm;
-    let members = match term { CheckedTerm::Application { arguments, .. } => arguments, CheckedTerm::Aggregate { members } => members, _ => return None };
+    let members = match term { CheckedTerm::Application { arguments, .. } => arguments, CheckedTerm::Aggregate { members, .. } => members, _ => return None };
     members.iter().find_map(|term| match term { CheckedTerm::Binding { name: found, value, .. } if found.as_ref() == name => Some(value.as_ref()), _ => None })
 }
 

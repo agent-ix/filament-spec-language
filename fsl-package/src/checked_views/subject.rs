@@ -740,7 +740,7 @@ fn parameter_reference<'p>(
 /// The members of the aggregate `term`.
 fn members(term: &CheckedTerm) -> Result<&[CheckedTerm], ViewRefusal> {
     match term {
-        CheckedTerm::Aggregate { members } => Ok(members),
+        CheckedTerm::Aggregate { members, .. } => Ok(members),
         _ => Err(ViewRefusal::UnresolvedClause),
     }
 }
@@ -834,7 +834,7 @@ fn read_capture_names_with<W: FormulaWork>(
 
 /// The declared name of the `value`/`parameter` node `term` is the body of.
 pub(super) fn parameter_name(term: &CheckedTerm) -> Option<&str> {
-    let CheckedTerm::Aggregate { members } = term else {
+    let CheckedTerm::Aggregate { members, .. } = term else {
         return None;
     };
     match binding(members, "name")?.literal_read()?.value {

@@ -169,24 +169,30 @@ impl Lowering<'_> {
             "hyperproperty",
             Some(boolean),
             None,
-            BodyTerm::aggregate(vec![
-                MemberTerm::bound("domain", LeafTerm::reference(domain)),
-                MemberTerm::binding("subjects", BindingValue::Group(GroupTerm::new(Vec::new()))),
-                MemberTerm::binding(
-                    "parameters",
-                    BindingValue::Group(GroupTerm::new(Vec::new())),
-                ),
-                MemberTerm::binding(
-                    "quantifiers",
-                    BindingValue::Tuple(TupleTerm::new(quantifiers)),
-                ),
-                MemberTerm::binding("match", BindingValue::Group(GroupTerm::new(Vec::new()))),
-                MemberTerm::binding(
-                    "align_skip",
-                    BindingValue::Group(GroupTerm::new(Vec::new())),
-                ),
-                MemberTerm::bound("body", body),
-            ]),
+            BodyTerm::aggregate_with_profile(
+                vec![
+                    MemberTerm::bound("domain", LeafTerm::reference(domain)),
+                    MemberTerm::binding(
+                        "subjects",
+                        BindingValue::Group(GroupTerm::new(Vec::new())),
+                    ),
+                    MemberTerm::binding(
+                        "parameters",
+                        BindingValue::Group(GroupTerm::new(Vec::new())),
+                    ),
+                    MemberTerm::binding(
+                        "quantifiers",
+                        BindingValue::Tuple(TupleTerm::new(quantifiers)),
+                    ),
+                    MemberTerm::binding("match", BindingValue::Group(GroupTerm::new(Vec::new()))),
+                    MemberTerm::binding(
+                        "align_skip",
+                        BindingValue::Group(GroupTerm::new(Vec::new())),
+                    ),
+                    MemberTerm::bound("body", body),
+                ],
+                clause.profile(),
+            ),
         )?;
         self.record(key.clone(), OccurrenceRole::Claim, claim);
         Ok(LoweredFiniteHyperClause { key })

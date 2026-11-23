@@ -1404,7 +1404,7 @@ fn protocol_literal_repeat_name(view: &dyn AnalysisView, name: &str) -> Option<S
         use fsl_package::CheckedTerm;
         let terms = match term {
             CheckedTerm::Application { arguments, .. } => arguments,
-            CheckedTerm::Aggregate { members } => members,
+            CheckedTerm::Aggregate { members, .. } => members,
             _ => return None,
         };
         terms.iter().find_map(|term| match term {

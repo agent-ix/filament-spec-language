@@ -97,8 +97,55 @@ fn a_finite_trace_set_hyperproperty_emits_its_finite_domain() {
          record Obs {{ inp: Int[0, 3]; res: Int[0, 3]; }}\n\
         {FINITE_DET}"
     );
-    let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
-        .expect("no selected model packages");
+    let emission = emit_finite(&source, std::iter::empty::<&[u8]>());
+    let wire = wire(&emission);
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in wire["lock"]["required_features"].as_array().unwrap() {
+        evidence.support_feature(feature.as_str().unwrap());
+    }
+    crate::checked_v2::read_checked_package_v2(
+        emission.package.bytes(),
+        library(),
+        V2ReadLimits::fixture(),
+        &evidence,
+    )
+    .unwrap_or_else(|failure| panic!("the I2 reader admits the finite clause: {failure:?}"));
+    let clause = hyper_node(&wire);
+    let body = &clause["body"];
+    assert_eq!(
+        body["temporal_profile"],
+        json!({"authority": "agent-ix", "identity": EVENT})
+    );
+    let domain = node_via(&wire, binding(body, "domain"));
+    assert_eq!(domain["node_tag"], "bounded_domain");
+    assert_eq!(domain["semantic_form"], "finite_trace_population");
+    assert_eq!(target(binding(body, "domain")), &domain["node_id"]);
+    assert_eq!(domain["body"]["members"][0]["name"], "bound");
+    assert_eq!(domain["body"]["members"][0]["value"]["value"], "3");
+    assert_eq!(
+        node_with(&wire, &domain["semantic_type"])["semantic_form"],
+        "record"
+    );
+    for member in ["subjects", "parameters", "match", "align_skip"] {
+        assert_eq!(binding(body, member)["members"], json!([]));
+    }
+    let quantifiers = binding(body, "quantifiers")["members"].as_array().unwrap();
+    assert_eq!(quantifiers.len(), 2);
+    for (group, variable) in quantifiers.iter().zip(["a", "b"]) {
+        assert_eq!(group["members"][0]["name"], "variable");
+        assert_eq!(text(&group["members"][0]["value"]), variable);
+        assert_eq!(group["members"][1]["name"], "quantifier");
+        assert_eq!(text(&group["members"][1]["value"]), "forall");
+    }
+    let expression = node_via(&wire, binding(body, "body"));
+    assert_eq!(expression["node_tag"], "expression");
+}
+
+/// Check `source` (one finite hyper clause, with the selected model
+/// `documents`) and emit it with an event-position clock for the clause.
+fn emit_finite<'a>(source: &str, documents: impl IntoIterator<Item = &'a [u8]>) -> Emission {
+    let packages =
+        fsl_semantics::model::intake::package_input(documents).expect("selected model packages");
     let graph = assemble_with_models(source.as_bytes(), &packages)
         .expect("the finite unit assembles")
         .check(
@@ -129,43 +176,39 @@ fn a_finite_trace_set_hyperproperty_emits_its_finite_domain() {
     )
     .expect("the finite clause emits");
     assert!(emission.omitted.is_empty());
-    let wire = wire(&emission);
-    let mut evidence = CheckedPackageEvidence::new();
-    for feature in wire["lock"]["required_features"].as_array().unwrap() {
-        evidence.support_feature(feature.as_str().unwrap());
-    }
-    crate::checked_v2::read_checked_package_v2(
-        emission.package.bytes(),
-        library(),
-        V2ReadLimits::fixture(),
-        &evidence,
-    )
-    .unwrap_or_else(|failure| panic!("the I2 reader admits the finite clause: {failure:?}"));
-    let clause = hyper_node(&wire);
-    let body = &clause["body"];
-    let domain = node_via(&wire, binding(body, "domain"));
-    assert_eq!(domain["node_tag"], "bounded_domain");
-    assert_eq!(domain["semantic_form"], "finite_trace_population");
-    assert_eq!(target(binding(body, "domain")), &domain["node_id"]);
-    assert_eq!(domain["body"]["members"][0]["name"], "bound");
-    assert_eq!(domain["body"]["members"][0]["value"]["value"], "3");
-    assert_eq!(
-        node_with(&wire, &domain["semantic_type"])["semantic_form"],
-        "record"
+    emission
+}
+
+/// IR-1586: the finite hyper body names the profile of its own `using`
+/// clause, the second of two lock selections, never the first.
+#[trace("TC-2028", "FR-322-AC-464")]
+#[test]
+fn a_finite_hyperproperty_names_its_own_profile_not_the_first_lock_selection() {
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         profile u = \"{INFINITE}\";\n\
+         profile t = \"{EVENT}\";\n\
+         model Config = \"example/config-version\";\n\
+         record Obs {{ inp: Int[0, 3]; res: Int[0, 3]; }}\n\
+         temporal Free using u over (c: Config::ConfigVersion) on origin \
+         {{ always eventually holds(c.versionNumber = 2) }}\n\
+         {FINITE_DET}"
     );
-    for member in ["subjects", "parameters", "match", "align_skip"] {
-        assert_eq!(binding(body, member)["members"], json!([]));
-    }
-    let quantifiers = binding(body, "quantifiers")["members"].as_array().unwrap();
-    assert_eq!(quantifiers.len(), 2);
-    for (group, variable) in quantifiers.iter().zip(["a", "b"]) {
-        assert_eq!(group["members"][0]["name"], "variable");
-        assert_eq!(text(&group["members"][0]["value"]), variable);
-        assert_eq!(group["members"][1]["name"], "quantifier");
-        assert_eq!(text(&group["members"][1]["value"]), "forall");
-    }
-    let expression = node_via(&wire, binding(body, "body"));
-    assert_eq!(expression["node_tag"], "expression");
+    let emission = emit_finite(&source, [document()]);
+    let wire = wire(&emission);
+    let selected = |identity: &str| {
+        json!({"role": "temporal_profile", "definition": {
+            "authority": "agent-ix", "identity": identity}})
+    };
+    assert_eq!(
+        wire["lock"]["profile_selections"],
+        json!([selected(INFINITE), selected(EVENT)])
+    );
+    assert_eq!(
+        hyper_node(&wire)["body"]["temporal_profile"],
+        json!({"authority": "agent-ix", "identity": EVENT})
+    );
 }
 
 /// The refusals of `unit`'s check.
@@ -1840,6 +1883,7 @@ fn the_wrapper_carries_the_profile_law_activation_and_formula() {
     let built = build(INFINITE, &["V"], &declarations);
     let wire = &built.wire;
     let node = hyper_node(wire);
+    assert!(node["body"].get("temporal_profile").is_none());
     let wrapper = node_via(wire, binding(&node["body"], "body"));
     assert_eq!(
         wrapper["body"]["operation"]["laws"],
