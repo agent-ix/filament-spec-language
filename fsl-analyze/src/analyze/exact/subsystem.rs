@@ -151,7 +151,9 @@ pub(super) fn refute(
     let chain = induced_chain(product, &selected);
     let reached = reached(&chain, start, &stop);
     let evidence = match &role {
-        Role::Avoidance(boundary) => avoidance(&chain, start, boundary, &reached, threshold, limits),
+        Role::Avoidance(boundary) => {
+            avoidance(&chain, start, boundary, &reached, threshold, limits)
+        }
         Role::RewardLower | Role::RewardUpper => {
             let ProbForm::ExpectedReward { reward, .. } = &claim.form else {
                 return broken();

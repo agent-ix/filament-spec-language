@@ -22,7 +22,9 @@ pub(super) fn replay(
         || matches!(
             claim.form,
             ProbForm::Reach {
-                target: ReachTarget::Eventually(_) | ReachTarget::Until(..) | ReachTarget::Always(_),
+                target: ReachTarget::Eventually(_)
+                    | ReachTarget::Until(..)
+                    | ReachTarget::Always(_),
                 ..
             }
         ))

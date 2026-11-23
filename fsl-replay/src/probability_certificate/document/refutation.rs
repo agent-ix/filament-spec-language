@@ -549,7 +549,10 @@ pub(in crate::probability_certificate) fn check(
             .ok_or(ProbabilityDocumentError::Malformed)?;
         let choice = induced.get(key).copied().flatten();
         if union.as_ref().is_some_and(|union| union.contains(key)) {
-            // A union state is an auxiliary target of value 1.
+            // A union state is an auxiliary target whose value is 1.
+            if *value != rational(1) {
+                return reject(ProbabilityCertificateRule::InequalityFails, key);
+            }
             continue;
         }
         if state.terminal == Some(true) || union.is_some() && state.terminal.is_some() {

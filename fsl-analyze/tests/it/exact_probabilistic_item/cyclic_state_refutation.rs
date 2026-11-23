@@ -4,7 +4,9 @@
 //! bound side, and never by a path-set search.
 use super::*;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use fsl_analyze::exact_probabilistic::{product_construction_counts, reset_product_construction_counts};
+use fsl_analyze::exact_probabilistic::{
+    product_construction_counts, reset_product_construction_counts,
+};
 use fsl_replay::{
     ProbabilisticCounterexample, ProbabilisticSchedulerChoice, ProbabilityWitnessError,
     ProbabilityWitnessReplay, ProductAction,
@@ -69,7 +71,10 @@ fn settle_counted(world: &World, name: &str) -> (fsl_analyze::analyze::AnalyzeRe
 
 fn refuted(world: &World, name: &str) -> ProbabilisticCounterexample {
     let (record, searches) = settle_counted(world, name);
-    assert_eq!(searches, 0, "{name}: no path-set search on a cyclic subject");
+    assert_eq!(
+        searches, 0,
+        "{name}: no path-set search on a cyclic subject"
+    );
     assert_eq!(
         record
             .terminal()
@@ -99,7 +104,10 @@ fn holds_unrefuted(world: &World, name: &str) {
     let fsl_analyze::analyze::Settlement::Disposed(disposed) = &record.settlement else {
         panic!("{name}: {:?}", record.settlement);
     };
-    assert_eq!(disposed.kind, fsl_analyze::analyze::DispositionKind::Unsupported);
+    assert_eq!(
+        disposed.kind,
+        fsl_analyze::analyze::DispositionKind::Unsupported
+    );
     assert_eq!(
         disposed.diagnostic.as_ref().unwrap().code.cause(),
         "not-yet-implemented"
@@ -152,7 +160,10 @@ fn other(found: &ProbabilisticCounterexample) -> ProbabilityProductKey {
     others[0].0.clone()
 }
 
-fn expect_rows(found: &ProbabilisticCounterexample, mut expected: Vec<(ProbabilityProductKey, Value, u64)>) {
+fn expect_rows(
+    found: &ProbabilisticCounterexample,
+    mut expected: Vec<(ProbabilityProductKey, Value, u64)>,
+) {
     expected.sort_by(|a, b| a.0.cmp(&b.0));
     let doc = document(found);
     assert_eq!(doc["kind"], "lower");
@@ -285,7 +296,11 @@ fn health(predicate: &str, claims: &str) -> World {
              post Repaired using v on M::Item::repair {{ self.phase = 0 }}\n\
              random Item::tick(r) ~ {{ 0: 1, 1: 1 }};\n\
              workload W on M {{ weight Item::tick = 1; weight Item::repair = 1; }}\n{}{claims}",
-            claim("Always", "W", &format!("probability >= 0.9 [ always holds({predicate}) ]")),
+            claim(
+                "Always",
+                "W",
+                &format!("probability >= 0.9 [ always holds({predicate}) ]")
+            ),
         ),
     ))
 }
@@ -298,7 +313,10 @@ fn a_cyclic_workload_always_is_refuted_by_its_rejecting_union_without_a_path_sea
     assert!(found.scheduler.is_empty());
     let ok = found.initial_key.clone();
     let down = other(&found);
-    expect_rows(&found, vec![(ok.clone(), q(1, 1), 1), (down.clone(), q(1, 1), 0)]);
+    expect_rows(
+        &found,
+        vec![(ok.clone(), q(1, 1), 1), (down.clone(), q(1, 1), 0)],
+    );
     let doc = document(&found);
     assert_eq!(
         doc["objective"]["base"]["profile"],
@@ -360,7 +378,11 @@ fn branch(claims: &str) -> World {
 #[test]
 fn cyclic_always_is_refuted_on_either_side_and_never_at_equality() {
     let always = |name: &str, bound: &str| {
-        claim(name, "W", &format!("probability {bound} [ always holds(x.phase != 1) ]"))
+        claim(
+            name,
+            "W",
+            &format!("probability {bound} [ always holds(x.phase != 1) ]"),
+        )
     };
     let world = branch(
         &[
@@ -377,10 +399,16 @@ fn cyclic_always_is_refuted_on_either_side_and_never_at_equality() {
     let rejecting = refuted(&world, "AtLeast");
     let s = rejecting.initial_key.clone();
     let t = other(&rejecting);
-    expect_rows(&rejecting, vec![(s.clone(), q(1, 2), 1), (t.clone(), q(1, 1), 0)]);
+    expect_rows(
+        &rejecting,
+        vec![(s.clone(), q(1, 2), 1), (t.clone(), q(1, 1), 0)],
+    );
     let accepting = refuted(&world, "AtMost");
     let u = other(&accepting);
-    expect_rows(&accepting, vec![(s.clone(), q(1, 2), 1), (u.clone(), q(1, 1), 0)]);
+    expect_rows(
+        &accepting,
+        vec![(s.clone(), q(1, 2), 1), (u.clone(), q(1, 1), 0)],
+    );
 
     for (name, found) in [("AtLeastHalf", &rejecting), ("AtMostHalf", &accepting)] {
         rejected(
@@ -390,7 +418,7 @@ fn cyclic_always_is_refuted_on_either_side_and_never_at_equality() {
         );
     }
     let accepted_u = offered_for(&world, "AtLeast", &rejecting, |rows| {
-        rows.push((u.clone(), ratio(1, 1), 0));
+        rows.push((u.clone(), ratio(1, 1), 1));
     });
     rejected(
         replay(&world, &accepted_u),
@@ -447,10 +475,16 @@ fn cyclic_always_over_every_scheduler_carries_its_witness_scheduler() {
     let ok = found.initial_key.clone();
     assert_eq!(
         found.scheduler,
-        vec![(ok.clone(), ProbabilisticSchedulerChoice::Deterministic(leave.clone()))]
+        vec![(
+            ok.clone(),
+            ProbabilisticSchedulerChoice::Deterministic(leave.clone())
+        )]
     );
     let down = other(&found);
-    expect_rows(&found, vec![(ok.clone(), q(1, 1), 1), (down.clone(), q(1, 1), 0)]);
+    expect_rows(
+        &found,
+        vec![(ok.clone(), q(1, 1), 1), (down.clone(), q(1, 1), 0)],
+    );
 
     let mut missing = found.clone();
     missing.scheduler.clear();
@@ -474,10 +508,12 @@ fn cyclic_always_over_every_scheduler_carries_its_witness_scheduler() {
     assert!(
         matches!(
             replay(&world, &staying),
-            Err(ProbabilityWitnessError::CertificateRejected(ProbabilityCertificateRejection {
-                rule: ProbabilityCertificateRule::Malformed,
-                at: ProbabilityCertificateLocus::Member("values"),
-            }))
+            Err(ProbabilityWitnessError::CertificateRejected(
+                ProbabilityCertificateRejection {
+                    rule: ProbabilityCertificateRule::Malformed,
+                    at: ProbabilityCertificateLocus::Member("values"),
+                }
+            ))
         ),
         "{:?}",
         replay(&world, &staying)
@@ -486,7 +522,10 @@ fn cyclic_always_over_every_scheduler_carries_its_witness_scheduler() {
     let kept = refuted(&world, "AtMost");
     assert_eq!(
         kept.scheduler,
-        vec![(ok.clone(), ProbabilisticSchedulerChoice::Deterministic(stay))]
+        vec![(
+            ok.clone(),
+            ProbabilisticSchedulerChoice::Deterministic(stay)
+        )]
     );
     expect_rows(&kept, vec![(ok, q(1, 1), 0)]);
 }
@@ -552,6 +591,106 @@ fn cyclic_until_is_refuted_through_its_classified_components() {
             replay(&world, &offered_for(&world, name, found, |_| {})),
             ProbabilityCertificateRule::ThresholdMissed,
             &s,
+        );
+    }
+}
+
+#[trace("TC-3171", "FR-202-AC-41")]
+#[test]
+fn a_cyclic_eventually_at_most_is_refuted_through_its_accepting_union() {
+    // `s` (0) misses E and moves to `s` or `e` (1) with 1/2 each; `e`
+    // satisfies E and returns to `s`.
+    let world = World::new(&item(
+        1,
+        vec![operation("go", true), operation("back", false)],
+        format!(
+            "pre Go using v on M::Item::go {{ self.phase = 0 }}\n\
+             post Went using v on M::Item::go {{ self.phase = r }}\n\
+             pre Back using v on M::Item::back {{ self.phase = 1 }}\n\
+             post Backed using v on M::Item::back {{ self.phase = 0 }}\n\
+             random Item::go(r) ~ {{ 0: 1, 1: 1 }};\n\
+             workload W on M {{ weight Item::go = 1; weight Item::back = 1; }}\n{}",
+            claim(
+                "Eventually",
+                "W",
+                "probability <= rational(1,2) [ eventually holds(x.phase = 1) ]"
+            ),
+        ),
+    ));
+    let found = refuted(&world, "Eventually");
+    assert!(found.scheduler.is_empty());
+    let s = found.initial_key.clone();
+    let e = other(&found);
+    expect_rows(&found, vec![(s.clone(), q(1, 1), 1), (e, q(1, 1), 0)]);
+    let half = offered_for(&world, "Eventually", &found, |rows| {
+        rows.iter_mut().find(|row| row.0 == s).unwrap().1 = ratio(1, 2);
+    });
+    rejected(
+        replay(&world, &half),
+        ProbabilityCertificateRule::ThresholdMissed,
+        &s,
+    );
+    let bytes = half.subsystem.clone();
+    let settled = settle_tampered(&world, "Eventually", move |witness| {
+        witness.subsystem = bytes.clone();
+    });
+    assert_eq!(
+        settled.terminal().unwrap().value(),
+        &TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+            rule: CertificateRule::ThresholdMissed,
+            at: CertificateLocus::ProbabilityProductState(s),
+        })
+    );
+    assert!(settled.probabilistic_counterexample.is_none());
+}
+
+/// Phase 0 and phase 1 alternate deterministically under a workload.
+fn alternating(claims: &str) -> World {
+    World::new(&item(
+        1,
+        vec![operation("step", false), operation("ret", false)],
+        format!(
+            "pre Step using v on M::Item::step {{ self.phase = 0 }}\n\
+             post Stepped using v on M::Item::step {{ self.phase = 1 }}\n\
+             pre Ret using v on M::Item::ret {{ self.phase = 1 }}\n\
+             post Returned using v on M::Item::ret {{ self.phase = 0 }}\n\
+             workload W on M {{ weight Item::step = 1; weight Item::ret = 1; }}\n{claims}"
+        ),
+    ))
+}
+
+#[trace("TC-3172", "FR-202-AC-42", "FR-202-AC-21")]
+#[test]
+fn initial_decided_cyclic_subjects_are_refuted_not_unsupported() {
+    // Until: the initial `b` (phase 0) satisfies B and not A; `s` (phase 1)
+    // satisfies A and not B. Always: the initial `f` (phase 0) breaks P.
+    let world = alternating(
+        &(claim(
+            "Until",
+            "W",
+            "probability <= rational(1,2) [ holds(x.phase = 1) until holds(x.phase = 0) ]",
+        ) + &claim(
+            "Always",
+            "W",
+            "probability >= rational(1,2) [ always holds(x.phase = 1) ]",
+        )),
+    );
+    for name in ["Until", "Always"] {
+        let found = refuted(&world, name);
+        assert!(found.scheduler.is_empty());
+        expect_rows(&found, vec![(found.initial_key.clone(), q(1, 1), 0)]);
+        // The path-set entry itself admits no cycle and reproduces nothing.
+        let mut paths = found.clone();
+        paths.subsystem = None;
+        let replayed = replay(&world, &paths);
+        assert!(
+            matches!(
+                replayed,
+                Err(ProbabilityWitnessError::Graph(
+                    ExactProbabilityGraphError::Cycle
+                ))
+            ),
+            "{name}: {replayed:?}"
         );
     }
 }

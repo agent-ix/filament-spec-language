@@ -687,7 +687,10 @@ pub fn avoiding_policy(
             refined[index] = choices.iter().position(|choice| held(choice, &safe));
         }
     }
-    while positive {
+    if !positive {
+        return Ok(refined);
+    }
+    loop {
         let previous = reached.clone();
         for (index, choices) in graph.choices.iter().enumerate() {
             if previous[index] || target[index] {
@@ -702,10 +705,9 @@ pub fn avoiding_policy(
             }
         }
         if reached == previous {
-            break;
+            return Ok(refined);
         }
     }
-    Ok(refined)
 }
 
 /// Decide a workload's unweighted or reward-weighted long-run fraction

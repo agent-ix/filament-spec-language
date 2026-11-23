@@ -27,9 +27,9 @@ use std::sync::{Arc, OnceLock};
 use crate::prob_world::{self, World};
 
 mod certificate_boundary_cases;
+mod cyclic_state_refutation;
 mod fraction_window;
 mod measure_profile;
-mod cyclic_state_refutation;
 mod subsystem_refutation;
 
 /// `Link` delivers within two attempts: the least delivery probability over

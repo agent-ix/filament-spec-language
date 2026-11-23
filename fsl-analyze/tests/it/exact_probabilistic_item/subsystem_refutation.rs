@@ -581,11 +581,12 @@ fn an_every_scheduler_eventually_without_random_is_refuted_by_event_avoidance() 
     );
     assert_eq!(wire(&record)["evidence"]["type"], "subsystem");
 
+    // `down` is the event-free bottom component itself: its value is 1.
     let mut equal = doc.clone();
     set_value(&mut equal, &down, q(1, 2));
     rejected(
         replay(&world, &offering(&found, &equal)),
-        ProbabilityCertificateRule::ThresholdMissed,
+        ProbabilityCertificateRule::InequalityFails,
         &down,
     );
     let omitted = settle_tampered(&world, "ComesUp", |witness| witness.scheduler.clear());
@@ -647,7 +648,9 @@ fn event_avoidance_derives_the_event_free_bottom_component_itself() {
     let doc = document(&found);
     let s = found.initial_key.clone();
     let system = ModelSystem::new(world.subject().simulation).unwrap();
-    let binding = claim_binding(&system, world.claim("Event")).unwrap().unwrap();
+    let binding = claim_binding(&system, world.claim("Event"))
+        .unwrap()
+        .unwrap();
     let successors = system
         .actions(&system.initial()[0])
         .unwrap()
