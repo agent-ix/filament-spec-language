@@ -244,7 +244,11 @@ pub struct RecordingRefusal {
 }
 
 impl RecordingRefusal {
-    fn new(cause: &'static str, detail: impl Into<String>, position: Option<usize>) -> Self {
+    pub(super) fn new(
+        cause: &'static str,
+        detail: impl Into<String>,
+        position: Option<usize>,
+    ) -> Self {
         Self {
             cause,
             detail: detail.into(),
