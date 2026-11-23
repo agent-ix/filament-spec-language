@@ -182,6 +182,73 @@ fn unguarded_record_keeps_an_empty_path_condition() {
     assert!(admitted.path_condition_frames().is_empty());
 }
 
+/// The emitted `path_condition_frames` rows as `(parent, holds)`, and each
+/// record's cited terminal frame (`None` when it cites none), read from the
+/// wire without the reader.
+fn wire_frames(emission: &Emission) -> (Vec<(Option<u64>, bool)>, Vec<Option<u64>>) {
+    let wire: serde_json::Value = serde_json::from_slice(emission.package().bytes()).unwrap();
+    let frames = wire["path_condition_frames"]
+        .as_array()
+        .map(|rows| {
+            rows.iter()
+                .map(|row| (row["parent"].as_u64(), row["holds"].as_bool().unwrap()))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut terminals = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|node| node["semantic_form"] == "value_validity")
+        .map(|node| {
+            let cited = node["body"]["members"][5]["value"]["members"].as_array().unwrap();
+            assert!(cited.len() <= 1, "a record cites at most one terminal frame");
+            cited.first().map(|id| {
+                let value = &id["value"];
+                value.as_u64().unwrap_or_else(|| value.as_str().unwrap().parse().unwrap())
+            })
+        })
+        .collect::<Vec<_>>();
+    terminals.sort();
+    (frames, terminals)
+}
+
+/// FSpec FR-825-AC-6's source with one branch holding no scalar operation:
+/// that branch's frame is held by no record, so the table holds only the frame
+/// of the branch with the `+`.
+#[trace("FR-825-AC-6", "FR-062-AC-17")]
+#[test]
+fn a_branch_without_a_scalar_operation_holds_no_frame() {
+    let (_, package) = crate::emit::tests::package_from_text(
+        "function f using v(x: Int[0, 9], p: Boolean): Integer pure { if p then x + 1 else x }",
+    );
+    let emission = emit_checked(&package, crate::EmitLimits::fixture()).expect("emits");
+    assert_eq!(
+        wire_frames(&emission),
+        (vec![(None, true)], vec![Some(0)]),
+        "one then-frame, cited by the one record"
+    );
+}
+
+/// FSpec FR-825-AC-2: nested guards share every prefix once. `>=` is
+/// unguarded, `<` holds the `n >= 0` frame, `+` holds the whole `if` condition.
+#[trace("FR-825-AC-2", "FR-062-AC-17")]
+#[test]
+fn nested_guards_share_every_prefix_in_one_table() {
+    let (_, package) = crate::emit::tests::package_from_text(
+        "function g using v(p: Int[0, 10]): Boolean pure { true }\n\
+         function f using v(n: Integer): Boolean pure { if n >= 0 and n < 10 then g(n + 1) else true }",
+    );
+    let emission = emit_checked(&package, crate::EmitLimits::fixture()).expect("emits");
+    let (frames, terminals) = wire_frames(&emission);
+    assert_eq!(
+        frames,
+        [(None, true), (None, true)],
+        "the `if` condition and the `n >= 0` read of `and`, both outermost"
+    );
+    assert_eq!(terminals, [None, Some(0), Some(1)], "`>=`, then `+` and `<` each one frame");
+}
+
 /// FSpec FR-825 package order over hand-built rows: claim key first, then
 /// role spelling, ordinal and capability spelling on ties. The `NodeKey`
 /// order used for the claim equals the order of the structural ids the reader
@@ -249,4 +316,162 @@ fn package_order_sorts_by_claim_key_then_role_ordinal_and_kind() {
             (CheckedOccurrenceRole::Expression, 1, CapabilityKind::ValueValidity),
         ]
     );
+}
+
+/// FSpec FR-251 (monitor-plan writer, FR-251-AC-55): when an owner-key rename
+/// puts one owner's frames before another's, the writer moves the frames,
+/// keeps each parent before its child, and re-points every record's terminal id
+/// in its row, its body, its identity path and its source-map entry.
+#[trace("FR-251-AC-55", "FR-062-AC-17")]
+#[test]
+fn reordering_frames_remaps_every_record_citation() {
+    use filament_contract_model::{
+        CheckedNodeId, CheckedNodePathSegment as Segment, CheckedOccurrence, CheckedOccurrenceRole,
+        CheckedSemanticNodeV2, CheckedSourceMapEntry, CheckedTerm, LiteralKind,
+        PathConditionFrame, PathConditionFrameId, RequirementExtent, RequirementItemRow,
+        RequirementRecord as WireRecord,
+    };
+
+    let id = |name: &str, frame: Option<usize>| CheckedNodeId {
+        package: "p".into(),
+        path: [Segment::Name("claim".into()), Segment::Name(name.into())]
+            .into_iter()
+            .chain(frame.map(|frame| Segment::Name("path_condition".into())))
+            .chain(frame.map(|frame| Segment::Name(frame.to_string().into())))
+            .chain([Segment::Name("roots".into())])
+            .collect(),
+        ordinal: 0,
+    };
+    let guard = |name: &str| CheckedNodeId {
+        package: "p".into(),
+        path: vec![Segment::Name(name.into())],
+        ordinal: 0,
+    };
+    let frame = |parent: Option<usize>, guard_name: &str, holds| PathConditionFrame {
+        parent: parent.map(PathConditionFrameId),
+        guard: guard(guard_name),
+        occurrence: 0,
+        holds,
+    };
+    let mut frames = vec![
+        frame(None, "a", true),
+        frame(Some(0), "b", true),
+        frame(None, "c", false),
+    ];
+    let record_node = |name: &str, cited: usize| CheckedSemanticNodeV2 {
+        node_id: id(name, Some(cited)),
+        schema_version: "v2".into(),
+        node_tag: "claim".into(),
+        semantic_form: "value_validity".into(),
+        semantic_type: guard("boolean"),
+        dependencies: Vec::new(),
+        occurrences: vec![CheckedOccurrence {
+            role: CheckedOccurrenceRole::Generated,
+            ordinal: 0,
+        }],
+        recursion_group: None,
+        declaration: None,
+        owner: None,
+        owner_model: None,
+        check_mode: None,
+        body: CheckedTerm::Aggregate {
+            members: (0..6)
+                .map(|member| CheckedTerm::Binding {
+                    name: format!("m{member}").as_str().into(),
+                    binder: None,
+                    value: Box::new(CheckedTerm::Aggregate {
+                        members: if member == 5 {
+                            vec![CheckedTerm::Literal {
+                                type_id: guard("integer"),
+                                value_kind: LiteralKind::Integer,
+                                value: crate::emit::checked_literal_json(&(cited as u64)).unwrap(),
+                            }]
+                        } else {
+                            Vec::new()
+                        },
+                        temporal_profile: None,
+                    }),
+                })
+                .collect(),
+            temporal_profile: None,
+        },
+    };
+    let mut nodes = vec![record_node("one", 1), record_node("two", 2)];
+    let mut source_map = nodes
+        .iter()
+        .map(|node| CheckedSourceMapEntry {
+            node_id: node.node_id.clone(),
+            role: CheckedOccurrenceRole::Generated,
+            ordinal: 0,
+            regions: Vec::new(),
+        })
+        .collect::<Vec<_>>();
+    let row = |node: &CheckedSemanticNodeV2, cited: usize| RequirementItemRow {
+        claim: guard("claim"),
+        occurrence: CheckedOccurrence {
+            role: CheckedOccurrenceRole::Expression,
+            ordinal: 0,
+        },
+        kind: CapabilityKind::ValueValidity,
+        extent: RequirementExtent::Bounded,
+        record: Some(WireRecord::ValueValidity(ValueValidityRecord {
+            node: node.node_id.clone(),
+            owner: guard("owner"),
+            application: guard("claim"),
+            occurrence: 0,
+            result_bound: guard("integer"),
+            conversion: None,
+            path_condition_frame: Some(PathConditionFrameId(cited)),
+            extent_roots: Vec::new(),
+            objects: Vec::new(),
+        })),
+    };
+    let mut rows = vec![row(&nodes[0], 1), row(&nodes[1], 2)];
+
+    // The owner of `c` now sorts first: `c`, then `a`, then `a`'s child `b`.
+    super::reorder_frames(&[1, 2, 0], &mut frames, &mut rows, &mut nodes, &mut source_map)
+        .expect("a parent stays before its child");
+
+    assert_eq!(
+        frames
+            .iter()
+            .map(|frame| (frame.parent, frame.guard.clone(), frame.holds))
+            .collect::<Vec<_>>(),
+        [
+            (None, guard("c"), false),
+            (None, guard("a"), true),
+            (Some(PathConditionFrameId(1)), guard("b"), true),
+        ],
+        "the moved frames keep their guards and outcomes, and `b` follows `a`'s new id"
+    );
+    let cited = rows
+        .iter()
+        .map(|row| super::value_record(row).unwrap().path_condition_frame)
+        .collect::<Vec<_>>();
+    assert_eq!(cited, [Some(PathConditionFrameId(2)), Some(PathConditionFrameId(0))]);
+    assert_eq!(nodes[0].node_id, id("one", Some(2)), "the identity path cites the new id");
+    assert_eq!(nodes[1].node_id, id("two", Some(0)));
+    assert_eq!(source_map[0].node_id, nodes[0].node_id);
+    assert_eq!(source_map[1].node_id, nodes[1].node_id);
+    assert_eq!(super::value_record(&rows[0]).unwrap().node, nodes[0].node_id);
+    for (node, expected) in nodes.iter().zip([2_u64, 0]) {
+        let CheckedTerm::Aggregate { members, .. } = &node.body else {
+            panic!("a record body is an aggregate");
+        };
+        let CheckedTerm::Binding { value, .. } = &members[5] else {
+            panic!("the path condition is a binding");
+        };
+        let CheckedTerm::Aggregate { members, .. } = &**value else {
+            panic!("the path condition is an aggregate");
+        };
+        let [CheckedTerm::Literal { value, .. }] = members.as_slice() else {
+            panic!("one terminal frame id");
+        };
+        assert_eq!(value.as_u64(), Some(expected), "the body cites the new id");
+    }
+
+    // A frame moved before its parent is refused.
+    let mut broken = vec![frame(None, "a", true), frame(Some(0), "b", true)];
+    assert!(super::reorder_frames(&[1, 0], &mut broken, &mut rows, &mut nodes, &mut source_map)
+        .is_err());
 }

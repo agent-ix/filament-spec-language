@@ -1903,7 +1903,7 @@ mod tests {
     #[test]
     fn final_writer_carries_guards_conversions_and_unbounded_extents() {
         let rekeyed = rekeyed_final(
-            "function init using v(x: Int[0, 9], p: Boolean): Int[0, 10] pure { if p then x + 1 else x }\n\
+            "function init using v(x: Int[0, 9], p: Boolean): Int[0, 10] pure { if p then x + 1 else x * 1 }\n\
              function on_event using v(n: Integer): Integer pure { n + 1 }\n\
              function on_watermark using v(x: Int[0, 9], p: Boolean): Integer pure { if p then x * 2 else x - 1 }\n\
              function on_gap using v(x: Int[0, 9]): Integer pure { x + 4 }\n",

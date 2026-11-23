@@ -787,7 +787,7 @@ fn tc_440_operation_application_records_agree_with_ir_per_node() {
     assert_eq!(multiply, [ClaimExtent::Bounded]);
 
     let (package, _, _) = emit_text(
-        "function k using v(x: Int[0, 9], n: Integer): Integer pure { if n = 0 then x + 1 else 0 }",
+        "function k using v(x: Int[0, 9], n: Integer): Integer pure { if n = 0 then x + 1 else x * 2 }",
     );
     let add: Vec<ClaimExtent> = requirement_records(&package, "filament.op.integer.add")
         .into_iter()
