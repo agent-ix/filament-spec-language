@@ -108,10 +108,12 @@ Tag the tests `#[trace("TC-521", "FR-126-AC-n")]`.
   value 2, `kind: UndefinedEvaluation`, cause `DivisionByZero`, at position 0;
   `RequiresBound` with no state explored.
 - Step 7: equal outcomes and byte-equal counterexamples.
-- Step 8: `Violated` bound to `b` with an empty stem and the loop through
-  `(2,0)`, length 3; `Violated` bound to `a` with the prefix to position 2,
-  `kind: UndefinedEvaluation`, cause division-by-zero; `Violated` bound to
-  `b` with the prefix `(0,1) -upd(b)-> (0,2)` at position 1.
+- Step 8: `Violated` bound to `a` with the one-transition stem
+  `(2,0) -upd(a)-> (0,0)` and the three-transition loop
+  `(0,0) -upd(b)-> (0,1) -upd(b)-> (0,2) -upd(b)-> (0,0)`, length 4;
+  `Violated` bound to `a` with the prefix to position 2, `kind:
+  UndefinedEvaluation`, cause division-by-zero; `Violated` bound to `a` with
+  the prefix `(0,1) -upd(a)-> (1,1) -upd(a)-> (2,1)` at position 2.
 - Step 9: `Violated` with the prefix `0 -inc-> 1 -inc-> 2`; `Holds{Exhaustive}`;
   `Violated` with the prefix `0 -inc-> 1 -inc-> 2 -inc-> 3`; `Holds` with the
   closure certificate of its explored product states, keyed `"each-when"`; `Violated`, `kind: UndefinedEvaluation` naming
