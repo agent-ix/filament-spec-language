@@ -209,13 +209,13 @@ and FR-894's duplicate kinds. Every causal-order verdict, `satisfied` or
     order. The iteration is the number of observations of such a step
     causally at or before the step.
 29. The iteration of a step SHALL be not determined when no such step lies at
-    or before it in program order, or when such a step was not observed at or
-    before it, or when such steps give different counts. Observations of
-    steps in a `case`, a `parallel` branch or an inner `repeat` SHALL NOT
-    count toward an iteration.
-30. The assessment SHALL NOT count a step toward rule 26 when either
+    or before it in program order, when such a step was not observed at or
+    before it, or when such steps give different counts.
+30. Observations of steps in a `case`, a `parallel` branch or an inner
+    `repeat` SHALL NOT count toward an iteration.
+31. The assessment SHALL NOT count a step toward rule 26 when either
     iteration is not determined: a missed violation, never a false one.
-31. A step of a branch of a `parallel` SHALL NOT be made `violated` for the
+32. A step of a branch of a `parallel` SHALL NOT be made `violated` for the
     cancel when no such observation precedes it, though the join's policy
     holds, because the join step may fire at any later point (ADR-027 CI-3).
 33. A step of a branch of a `parallel` under `outstanding continue` SHALL NOT
