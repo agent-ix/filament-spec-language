@@ -202,21 +202,23 @@ and FR-894's duplicate kinds. Every causal-order verdict, `satisfied` or
     `parallel` runs in SHALL count toward rule 26 only when it runs in the
     same iteration of that `repeat` as the cancelled step, for each such
     `repeat`.
-28. The assessment SHALL take the iteration of a step of a `repeat`, with no
-    other `repeat` between them, as the step's rank among the observations
-    of its node in causal order, taken through each `case` to that case's
-    rank among the `choice`'s takings.
-29. The assessment SHALL take the iteration of a step of a `repeat`, with
-    another `repeat` between them, as the most times any step before that
-    other `repeat` in the body, in program order, was observed causally
-    before the step.
-30. The assessment SHALL NOT count a step toward rule 26 when either
-    iteration is not determined, which is when no step precedes the inner
-    `repeat` in the body: a missed violation, never a false one.
-31. A step of a branch of a `parallel` SHALL NOT be made `violated` for the
+28. The assessment SHALL take the iteration of a step in the body of a
+    `repeat` only from a step that runs exactly once in every iteration: a
+    step on the body's main sequence, not under a `case`, a `parallel`
+    branch or another `repeat`, that lies at or before the step in program
+    order. The iteration is the number of observations of such a step
+    causally at or before the step.
+29. The iteration of a step SHALL be not determined when no such step lies at
+    or before it in program order, when such a step was not observed at or
+    before it, or when such steps give different counts.
+30. Observations of steps in a `case`, a `parallel` branch or an inner
+    `repeat` SHALL NOT count toward an iteration.
+31. The assessment SHALL NOT count a step toward rule 26 when either
+    iteration is not determined: a missed violation, never a false one.
+32. A step of a branch of a `parallel` SHALL NOT be made `violated` for the
     cancel when no such observation precedes it, though the join's policy
     holds, because the join step may fire at any later point (ADR-027 CI-3).
-32. A step of a branch of a `parallel` under `outstanding continue` SHALL NOT
+33. A step of a branch of a `parallel` under `outstanding continue` SHALL NOT
     be made `violated` for the cancel.
 
 
@@ -291,9 +293,12 @@ looking like success, which FSpec FR-059-AC-3 requires.
 | FR-895-AC-34 | A predicate join over 10 labels is assessed; over 11 labels and over 64 labels, in a library assessment, in a batch item and in an incremental item, the assessment is refused `stage_limit_exceeded`/`work-budget-exceeded` (a batch or incremental item settles `declined`), with the fact `predicate-join-label-bound` and the text naming the join `Flow::Main::Many`, the label count and "at most 10". | Test (TC-2531) |
 | FR-895-AC-35 | Under `join predicate(contradiction)` with the function `left and not left`, the recording `L`, `Placed` gives `Placed` `pending` in every open prefix and `violated`, cause `unexpected`, once closed. | Test (TC-2531) |
 | FR-895-AC-36 | A protocol with a predicate join analysed from a package read from its bytes settles `unsupported`, `unsupported_construct`/`not-yet-implemented`, while the source route assesses the recording. | Test (TC-2531) |
-| FR-895-AC-37 | Over a `repeat` whose body begins with a `parallel` `join any [left, right] outstanding cancel` of `L` and `R`, followed by `Placed`, `Got` and the `Decide` choice, the closed-order recording `L`, `R`, `Placed`, `Got`, `yes`, `L`, `R`, `Placed`, `Got`, `yes` gives every `L` and `R` enabledness obligation `satisfied` in batch and in every incremental prefix, with no obligation changing from `violated` or from `satisfied` to `pending` and the last prefix equal to batch; the same recording with the second `R` after the second `Placed` gives that `R` `violated`, cause `unexpected`, and the other `L` and `R` `satisfied`. | Test (TC-2531) |
+| FR-895-AC-37 | Over a `repeat` whose body begins with a step `P` and a `parallel` `join any [left, right] outstanding cancel` of `L` and `R`, followed by `Placed`, `Got` and the `Decide` choice, the closed-order recording `P`, `L`, `R`, `Placed`, `Got`, `yes`, `P`, `L`, `R`, `Placed`, `Got`, `yes` gives every `L` and `R` enabledness obligation `satisfied` in batch and in every incremental prefix, with no obligation changing from `violated` or from `satisfied` to `pending` and the last prefix equal to batch; the same recording with the second `R` after the second `Placed` gives that `R` `violated`, cause `unexpected`, and the other `L` and `R` `satisfied`. | Test (TC-2531) |
 | FR-895-AC-38 | Over a `parallel` `join any [left, right] outstanding cancel` whose branch `left` holds a `repeat` of `L`, followed by `Placed`, the recording `L`, `L`, `Placed` gives both `L` `satisfied` and `L`, `Placed`, `L` gives the second `L` `violated`, cause `unexpected`. | Test (TC-2531) |
 | FR-895-AC-39 | Over an outer `repeat` whose body holds a step `P`, an inner `repeat` of a `parallel` `join any [left, right] outstanding cancel` of `L` and `R`, then `Placed`, `Got` and the `Decide` choice, the recording `P`, `L`, `R`, `L`, `R`, `Placed`, `Got`, `yes`, twice, gives every `L` and `R` enabledness obligation `satisfied` in batch and in every incremental prefix (no obligation leaving `violated` or going from `satisfied` to `pending`, the last prefix equal to batch); with the second outer iteration `P`, `L`, `R`, `L`, `Placed`, `R` the last `R` is `violated`, cause `unexpected`, and the other seven `L` and `R` `satisfied`; with no `P` before the inner `repeat` the same two-iteration recording leaves every `L` and `R` `satisfied`, the outer iteration of an inner step being not determined. | Test (TC-2531) |
+| FR-895-AC-40 | Over the AC-37 protocol, the recording `P`, `L`, `Placed`, `Got`, `yes`, `P`, `L`, `R`, `Placed`, `Got`, `yes` (the first `R` skipped) gives the second iteration's `R` `satisfied` in batch and in every incremental prefix, as under `outstanding continue`. | Test (TC-2531) |
+| FR-895-AC-41 | Over a `repeat` whose body holds `P`, an inner `repeat` of the cancelling `parallel`, another inner `repeat` of a step `X`, then `Placed`, `Got` and the `Decide` choice, the recording `P`, `L`, `R`, `X`, `Placed`, `Got`, `yes` twice gives every `L` and `R` `satisfied` in batch and in every incremental prefix, as under `outstanding continue`. | Test (TC-2531) |
+| FR-895-AC-42 | Over a `repeat` whose body holds a `choice` of cases `a` and `b`, each with a step, then an inner `repeat` of the cancelling `parallel` of `L` and `R`, then `Placed`, `Got` and the `Decide` choice, and no step `P`, the recording `a`, `A`, `L`, `R`, `Placed`, `Got`, `yes`, `b`, `B`, `L`, `R`, `Placed`, `Got`, `yes` gives the second iteration's `L` and `R` `satisfied` in batch, as under `outstanding continue`. | Test (TC-2531) |
 
 ## Dependencies
 
