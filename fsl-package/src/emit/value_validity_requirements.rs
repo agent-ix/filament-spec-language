@@ -17,7 +17,7 @@ use fsl_semantics::family::ClaimExtent;
 
 use super::{
     EmitRefusal, GRAPH_V2, OmissionCause, OmittedNode, admitted_key, body_reference_targets,
-    checked_literal_json, checked_occurrence, claim_aggregate, claim_binding, claim_text, encoding,
+    checked_literal_json, checked_occurrence, claim_aggregate, claim_binding, claim_literal, claim_text, encoding,
     node_id, push_scalar_type, source_artifact,
 };
 
@@ -351,7 +351,7 @@ fn append_operation_contract(
         end: region.end(),
     };
     if !*types_written {
-        push_scalar_type(nodes, source_map, text_type, "text", &region);
+        push_scalar_type(nodes, source_map, text_type, "string", &region);
         push_scalar_type(nodes, source_map, integer, "integer", &region);
         push_scalar_type(nodes, source_map, boolean, "boolean", &region);
         *types_written = true;
@@ -402,7 +402,11 @@ fn append_operation_contract(
             claim_aggregate(vec![
                 claim_binding(
                     "role",
-                    claim_text(text_type, occurrence_role_wire(&checked_occurrence.role))?,
+                    claim_literal(
+                        text_type,
+                        LiteralKind::String,
+                        occurrence_role_wire(&checked_occurrence.role).to_owned(),
+                    )?,
                 ),
                 claim_binding("ordinal", count(integer, checked_occurrence.ordinal)?),
             ]),
@@ -518,7 +522,7 @@ pub(super) fn append(
     let mut owners = HashMap::<String, (NodeKey, CheckedNodeId)>::new();
     let text = node_id(
         ids,
-        fsl_semantics::check::builtin_text_type_key(graph.package_name()).map_err(encoding)?,
+        fsl_semantics::check::builtin_string_type_key(graph.package_name()).map_err(encoding)?,
     );
     for (claim, source) in graph.requirements().iter() {
         if source.requirements().kind() == Capability::OperationContract {
