@@ -313,7 +313,7 @@ const RULES: &[Rule] = &[
     Rule {
         prefix: "fsl-forms/src/spans.rs",
         package: Some("fsl-forms"),
-        lib: Some(LibRule::SourceModule),
+        lib: Some(LibRule::Whole),
         it_filters: &[],
         large_input: PROJECTION_LARGE_INPUTS,
         note: None,
@@ -465,7 +465,7 @@ const RULES: &[Rule] = &[
     Rule {
         prefix: "fsl-command/src/command/package_run.rs",
         package: Some("fsl-command"),
-        lib: None,
+        lib: Some(LibRule::SourceModule),
         it_filters: COMMAND_PACKAGE_CONSUMERS,
         large_input: &[],
         note: Some(
@@ -477,7 +477,7 @@ const RULES: &[Rule] = &[
     Rule {
         prefix: "fsl-command/src/command/requirements.rs",
         package: Some("fsl-command"),
-        lib: None,
+        lib: Some(LibRule::SourceModule),
         it_filters: COMMAND_REQUIREMENT_CONSUMERS,
         large_input: &[],
         note: None,
@@ -487,7 +487,7 @@ const RULES: &[Rule] = &[
     Rule {
         prefix: "fsl-command/src/command/items.rs",
         package: Some("fsl-command"),
-        lib: None,
+        lib: Some(LibRule::SourceModule),
         it_filters: COMMAND_REQUIREMENT_CONSUMERS,
         large_input: &[],
         note: None,
@@ -497,7 +497,7 @@ const RULES: &[Rule] = &[
     Rule {
         prefix: "fsl-command/src/command/dependency_manifest.rs",
         package: Some("fsl-command"),
-        lib: None,
+        lib: Some(LibRule::SourceModule),
         it_filters: COMMAND_DEPENDENCY_CONSUMERS,
         large_input: &[],
         note: None,
@@ -507,7 +507,7 @@ const RULES: &[Rule] = &[
     Rule {
         prefix: "fsl-command/src/command/replay.rs",
         package: Some("fsl-command"),
-        lib: None,
+        lib: Some(LibRule::SourceModule),
         it_filters: &[
             ItFilter {
                 package: "fsl-command",
@@ -526,7 +526,7 @@ const RULES: &[Rule] = &[
     Rule {
         prefix: "fsl-command/src/command/monitor.rs",
         package: Some("fsl-command"),
-        lib: None,
+        lib: Some(LibRule::SourceModule),
         it_filters: COMMAND_CLI_CONSUMERS,
         large_input: &[],
         note: None,
@@ -536,7 +536,7 @@ const RULES: &[Rule] = &[
     Rule {
         prefix: "fsl-command/src/command/analyze.rs",
         package: Some("fsl-command"),
-        lib: None,
+        lib: Some(LibRule::SourceModule),
         it_filters: COMMAND_CLI_CONSUMERS,
         large_input: &[],
         note: None,
@@ -546,7 +546,7 @@ const RULES: &[Rule] = &[
     Rule {
         prefix: "fsl-command/src/command/clause.rs",
         package: Some("fsl-command"),
-        lib: None,
+        lib: Some(LibRule::SourceModule),
         it_filters: COMMAND_CLI_CONSUMERS,
         large_input: &[],
         note: None,
@@ -556,7 +556,7 @@ const RULES: &[Rule] = &[
     Rule {
         prefix: "fsl-command/src/command/export.rs",
         package: Some("fsl-command"),
-        lib: None,
+        lib: Some(LibRule::SourceModule),
         it_filters: COMMAND_CLI_CONSUMERS,
         large_input: &[],
         note: None,
@@ -566,7 +566,7 @@ const RULES: &[Rule] = &[
     Rule {
         prefix: "fsl-command/src/command/output",
         package: Some("fsl-command"),
-        lib: None,
+        lib: Some(LibRule::SourceModule),
         it_filters: COMMAND_TEXT_CONSUMERS,
         large_input: &[],
         note: None,
@@ -576,7 +576,7 @@ const RULES: &[Rule] = &[
     Rule {
         prefix: "fsl-command/src/command/settle.rs",
         package: Some("fsl-command"),
-        lib: None,
+        lib: Some(LibRule::SourceModule),
         it_filters: COMMAND_TEXT_CONSUMERS,
         large_input: &[],
         note: None,
@@ -586,7 +586,7 @@ const RULES: &[Rule] = &[
     Rule {
         prefix: "fsl-command/src/",
         package: Some("fsl-command"),
-        lib: None,
+        lib: Some(LibRule::SourceModule),
         it_filters: COMMAND_ALL_CONSUMERS,
         large_input: &[],
         note: None,
@@ -1932,6 +1932,32 @@ mod tests {
                 .iter()
                 .filter(|item| item.timed)
                 .all(|item| item.threads == Some(1))
+        );
+    }
+
+    #[test]
+    fn command_paths_include_local_module_and_forms_spans_runs_whole_library() {
+        let command = plan(workspace_root(), &["fsl-command/src/command/items.rs"]);
+        assert!(command.selectors.iter().any(|item| {
+            item.package == "fsl-command"
+                && item.target == TestTarget::Library
+                && item.filter.as_deref() == Some("command::items::")
+                && item.no_match_is_note
+        }));
+        assert!(command.selectors.iter().any(|item| {
+            item.package == "fsl-command" && item.filter.as_deref() == Some("run_requirement_items")
+        }));
+        let spans = plan(workspace_root(), &["fsl-forms/src/spans.rs"]);
+        assert!(spans.selectors.iter().any(|item| {
+            item.package == "fsl-forms"
+                && item.target == TestTarget::Library
+                && item.filter.is_none()
+        }));
+        assert!(
+            spans
+                .selectors
+                .iter()
+                .any(|item| item.filter.as_deref() == Some(LARGE_EMIT_FILTER))
         );
     }
 
