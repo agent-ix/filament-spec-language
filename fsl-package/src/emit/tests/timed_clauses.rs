@@ -1749,11 +1749,7 @@ fn an_element_presence_quantifier_is_scoped_in_its_predicate() {
     // FR-930-AC-4, FSpec FR-760-AC-2: lifting the presence binder into the
     // part's binders is refused at the binder target.
     let (_, _, mut wire) = emit(&guard("forall"));
-    let parameter = nodes(&wire)
-        .iter()
-        .find(|node| node["semantic_form"] == "parameter" && node.to_string().contains("\"e\""))
-        .map(|node| node["node_id"].clone())
-        .expect("the quantifier's parameter");
+    let parameter = quantifier_parameter(&wire);
     let guard_id = timed(&wire, "clock_guard")[0]["node_id"].clone();
     let node = wire["semantic_graph"]["nodes"]
         .as_array_mut()
@@ -1779,6 +1775,25 @@ fn an_element_presence_quantifier_is_scoped_in_its_predicate() {
     let failure = read_presence_package(&document, &bytes, &wire)
         .expect_err("a binder no constraint reads is refused");
     assert!(failure.contains("timed-node-reference"), "{failure}");
+}
+
+/// The id of the binder `parameter` the one `forall` application of `wire`
+/// quantifies with: the slot term of the `presence_read` its body names.
+fn quantifier_parameter(wire: &Value) -> Value {
+    let named = |reference: &Value| {
+        nodes(wire)
+            .iter()
+            .find(|node| node["node_id"] == reference["target"])
+            .unwrap_or_else(|| panic!("{reference} names a node"))
+    };
+    let quantifier = nodes(wire)
+        .iter()
+        .find(|node| node["body"]["operation"]["identity"] == "filament.op.collection.forall")
+        .expect("a forall application");
+    let body = named(&quantifier["body"]["arguments"][1]["value"]);
+    let parameter = named(&body["body"]["arguments"][2]);
+    assert_eq!(parameter["semantic_form"], "parameter");
+    parameter["node_id"].clone()
 }
 
 /// FR-953-AC-1, FSpec FR-772-AC-1: a presence-only quantifier ranges over
