@@ -772,7 +772,9 @@ pub struct Emission {
     pub(crate) package: EmittedPackage,
     /// The FR-001 identity of the source whose checked graph produced these bytes.
     pub(crate) artifact_identity: RawSourceRef,
-    /// Every node of the checked graph the wire omits, ascending by node id.
+    /// Every node of the checked graph the wire omits, and every
+    /// `claim`/`value_validity` record node omitted with its application,
+    /// ascending by node id.
     pub(crate) omitted: Vec<OmittedNode>,
     /// The lock's required features: the evidence IR's reader needs when
     /// these bytes are read back as a dependency's import view (ADR-015 D-1
@@ -1404,7 +1406,9 @@ impl Emission {
         &self.temporal_rows
     }
 
-    /// Every node of the checked graph the wire omits, ascending by node id.
+    /// Every node of the checked graph the wire omits, and every
+    /// `claim`/`value_validity` record node omitted with its application,
+    /// ascending by node id.
     pub fn omitted(&self) -> &[OmittedNode] {
         &self.omitted
     }
@@ -3039,7 +3043,12 @@ fn owner_is_locked(node: &SemanticNode, source: &RawSourceRef, models: &BTreeSet
 /// Which candidates the wire omits, and why: an unsupported form, a
 /// declaration without its occurrence, a nominal owner the lock does not
 /// select, a name outside the graph, and then, transitively, a name of an
-/// omitted node.
+/// omitted node. A requirement record's claim node also names every node
+/// the record names (`record_names`, read only when some node is omitted):
+/// an application whose `claim`/`value_validity` record cannot be written is
+/// omitted with it, so no written scalar operation lacks its record (FR-062
+/// "Packaging is all-or-nothing", FSpec FR-825). The result is in candidate
+/// order.
 fn omissions(
     ids: &StructuralIds,
     candidates: &Candidates<'_>,
@@ -3047,7 +3056,8 @@ fn omissions(
     decodes: &dyn Fn(CheckedNodeTag, &str) -> bool,
     external: &HashSet<NodeKey>,
     models: &BTreeSet<&str>,
-) -> Vec<(usize, OmittedNode)> {
+    record_names: &dyn Fn() -> Result<Vec<(NodeKey, Vec<NodeKey>)>, EmitRefusal>,
+) -> Result<Vec<(usize, OmittedNode)>, EmitRefusal> {
     let mut omitted: Vec<Option<OmissionCause>> = vec![None; candidates.order.len()];
     for (position, candidate) in candidates.values().enumerate() {
         omitted[position] = if !candidate.form_is_supported(decodes) {
@@ -3079,9 +3089,25 @@ fn omissions(
     let mut pending: VecDeque<usize> = (0..omitted.len())
         .filter(|&position| omitted[position].is_some())
         .collect();
+    let mut record_named_by: HashMap<NodeKey, Vec<usize>> = HashMap::new();
+    if !pending.is_empty() {
+        for (claim, names) in record_names()? {
+            let Some(&position) = candidates.index.get(&claim) else {
+                continue;
+            };
+            for name in names {
+                record_named_by.entry(name).or_default().push(position);
+            }
+        }
+    }
     while let Some(gone) = pending.pop_front() {
         let gone_key = &candidates.order[gone].key;
-        for &dependent in named_by.get(gone_key).into_iter().flatten() {
+        for &dependent in named_by
+            .get(gone_key)
+            .into_iter()
+            .chain(record_named_by.get(gone_key))
+            .flatten()
+        {
             if omitted[dependent].is_none() {
                 omitted[dependent] = Some(OmissionCause::NamesOmittedNode(
                     candidates.order[gone].id.clone(),
@@ -3090,7 +3116,7 @@ fn omissions(
             }
         }
     }
-    omitted
+    Ok(omitted
         .into_iter()
         .enumerate()
         .filter_map(|(position, cause)| {
@@ -3099,7 +3125,7 @@ fn omissions(
                 (position, OmittedNode { node, cause })
             })
         })
-        .collect()
+        .collect())
 }
 
 /// The role a clause-profile law is selected under in the lock's
@@ -7183,11 +7209,18 @@ fn emit_package_inner(
         decodes,
         &external,
         &selected_models,
-    );
-    let omitted_keys = omitted
+        &|| value_validity_requirements::record_names(graph),
+    )?;
+    let omitted_causes: HashMap<NodeKey, OmissionCause> = omitted
         .iter()
-        .map(|(position, _)| candidates.order[*position].key.clone())
-        .collect::<HashSet<_>>();
+        .map(|(position, omission)| {
+            (
+                candidates.order[*position].key.clone(),
+                omission.cause.clone(),
+            )
+        })
+        .collect();
+    let omitted_keys = omitted_causes.keys().cloned().collect::<HashSet<_>>();
     let dropped: HashSet<usize> = omitted.iter().map(|(position, _)| *position).collect();
     let mut omitted: Vec<OmittedNode> = omitted.into_iter().map(|(_, omission)| omission).collect();
     stale_protocol_reference(ids, &candidates, &dropped)?;
@@ -7643,15 +7676,16 @@ fn emit_package_inner(
             .get(claim.node())?
             .expression_region(claim.origin().ordinal(), &regions)
     };
-    let (value_validity_records, value_validity_omissions) = value_validity_requirements::append(
+    let value_validity = value_validity_requirements::append(
         ids,
         graph,
         &mut nodes,
         &mut source_map,
         &value_validity_region,
-        &omitted_keys,
+        &omitted_causes,
     )?;
-    omitted.extend(value_validity_omissions);
+    omitted.extend(value_validity.omitted);
+    omitted.sort_by(|left, right| left.node.cmp(&right.node));
     let (mut profile_selections, mut laws) = split_laws(&order);
     for refinement in emitted_refinements {
         let selection = CheckedSelection {
@@ -7846,9 +7880,9 @@ fn emit_package_inner(
         ids,
         graph,
         &producer_node_ids,
-        &value_validity_records,
+        &value_validity.records,
         &relation_rows,
-        &omitted_keys,
+        &omitted_causes,
     )?;
     let selected_source_collection_rows = source_collection_rows(graph, &emitted_node_ids)?;
     let operation_effects = graph

@@ -1635,7 +1635,9 @@ fn a_declaration_without_its_occurrence_is_omitted() {
         &ir_decodes,
         &HashSet::new(),
         &BTreeSet::new(),
+        &|| Ok(Vec::new()),
     )
+    .expect("the omissions compute")
     .into_iter()
     .map(|(_, omission)| omission)
     .collect();
