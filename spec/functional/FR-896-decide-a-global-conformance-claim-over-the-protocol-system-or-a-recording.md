@@ -32,6 +32,13 @@ modes, selected by the item.
 
 - **Over a recording.** With a `recording` member, the item is assessed in
   replay mode (FR-895): one recorded history, one verdict per obligation.
+  An item with a `recording` also takes `assessment`, `batch` (the default)
+  or `incremental`; any other word, or `assessment` on an item with no
+  `recording`, is refused `invalid-request` naming `/items/<n>/assessment`.
+  Under `incremental` the item additionally carries `prefixes`, one entry per
+  observation in order, each `{observations, label, obligations}` for the
+  assessment of that prefix (FR-895 "Incremental assessment"); the item's own
+  verdict is the last prefix's, which equals the `batch` verdict.
 - **Over every behaviour.** With no `recording`, the item decides
   conformance for every behaviour of the protocol composed with its role
   implementations. A role's *implementation* is what its binding names:
@@ -98,6 +105,7 @@ recording, where replay mode reports it as `unexpected`.
 | FR-896-AC-2 | The fixture with the `receive` removed settles `refuted` with the deadlock counterexample of FR-636-AC-1, which replays. A protocol whose obligations hold on every behaviour but whose projection onto `Seller` is refuted (FR-890-AC-2's unmerged `repeat`) settles `proved`, and the record reports the refuted projection with its counterexample beside the verdict. | Test (TC-2532) |
 | FR-896-AC-3 | The same item with FR-895-AC-5's recording, in which `Seller` sends on `Tell` where the protocol enables no send, settles `refuted` with the `unexpected` verdict, and its counterexample replays as a recording prefix. | Test (TC-2532) |
 | FR-896-AC-4 | A protocol whose role `Courier on N::Truck` names a model `N` that the linked package does not select is refused `missing_declaration`/`missing-name` naming `Courier`, and no verdict is settled. No `global-conformance` item settles `unsupported` with a pending obligation in the corpus. | Test (TC-2532) |
+| FR-896-AC-5 | The AC-10 recording of FR-895 named by an item with `assessment` `incremental` settles `refuted` and carries six `prefixes` whose `label`s are `inconclusive`, `inconclusive`, then `refuted` four times, each with `observations` 1 to 6; its `Note` enabledness is `violated`, cause `unexpected`, from `prefixes[2]` on, and the last prefix's `obligations` equal the item's. The same item with `assessment` `batch`, or none, carries no `prefixes`. The word `streaming`, or `assessment` on an item with no `recording`, is refused `invalid-request` naming `/items/0/assessment`. | Test (TC-2531) |
 
 ## Dependencies
 

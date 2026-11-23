@@ -448,7 +448,7 @@ pub use outcome::{
     task_source_transition_wire, task_temporal_wire, task_temporal_wire_with_queue_growth,
     task_transition_wire, temporal_wire, ClauseRunNotAnItem, ConformanceClosureOutput,
     ConformanceGlobalOutput, ConformanceMessageBoundOutput, ConformanceObligationOutput,
-    ConformanceProjectionOutput, ConformanceRecordingIdentity, ConformanceReplayOutput,
+    ConformancePrefixOutput, ConformanceProjectionOutput, ConformanceRecordingIdentity, ConformanceReplayOutput,
     CounterexampleWireError, ExecuteResult, ItemCause, ItemLabel, OmittedWitness, Operation,
     OutcomeDiagnostic, OutcomeDiagnosticRead, OutcomeDocument, OutcomeItem, OutcomeItemError,
     OutcomeLocus, OutcomeStage, OutcomeWriteError, ParityReason, ProtocolConformanceOutput,

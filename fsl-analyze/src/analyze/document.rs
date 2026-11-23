@@ -818,6 +818,8 @@ pub struct ItemSelection {
     /// The activated population used to close a recording's fan-out scope.
     #[serde(default, deserialize_with = "present_json_value")]
     pub population: Option<Value>,
+    /// FR-896: `batch` or `incremental` assessment of a recording.
+    pub assessment: Option<String>,
     /// A `simulation` item's settings (FR-634).
     #[serde(default)]
     pub simulation: Option<super::SimulationSelection>,
@@ -862,6 +864,8 @@ struct ItemSelectionWire {
     effect_decisions: Option<Value>,
     #[serde(default, deserialize_with = "present_json_value")]
     population: Option<Value>,
+    #[serde(default)]
+    assessment: Option<String>,
     #[serde(default)]
     simulation: Option<super::SimulationSelection>,
 }
@@ -918,6 +922,7 @@ impl TryFrom<ItemSelectionWire> for ItemSelection {
             recording: wire.recording,
             effect_decisions: wire.effect_decisions,
             population: wire.population,
+            assessment: wire.assessment,
             simulation: wire.simulation,
         })
     }
@@ -1793,6 +1798,7 @@ fn resolve_call_item(
             traces: None,
             recording: None,
             population: None,
+                assessment: None,
             backend_options: call_item.options.clone(),
             protocol_analysis: None,
         },
@@ -2250,6 +2256,7 @@ fn resolve_one(
                 .as_ref()
                 .map(DocumentSelection::reference),
             population: selection.population.clone(),
+                assessment: selection.assessment.clone(),
             backend_options,
             protocol_analysis: protocol_analysis.map(|mut selection| {
                 selection.protocol = protocol.clone();
@@ -2419,6 +2426,7 @@ fn resolve_derived(
         traces: None,
         recording: None,
         population: None,
+                assessment: None,
         backend_options,
         protocol_analysis: None,
     };
@@ -2524,6 +2532,7 @@ fn resolve_schedule_claim(
                 traces: None,
                 recording: None,
                 population: selection.population.clone(),
+                assessment: selection.assessment.clone(),
                 backend_options,
                 protocol_analysis: None,
             },
@@ -2781,6 +2790,7 @@ fn resolve_protocol_freedom(
                 traces: selection.traces.as_ref().map(DocumentSelection::reference),
                 recording: None,
                 population: selection.population.clone(),
+                assessment: selection.assessment.clone(),
                 backend_options,
                 protocol_analysis: None,
             },
@@ -3332,6 +3342,7 @@ fn derived_claim(
                 traces: None,
                 recording: None,
                 population: None,
+                assessment: None,
                 backend_options: BTreeMap::new(),
                 protocol_analysis: None,
             },
@@ -3500,6 +3511,9 @@ impl ClaimItem {
         }
         if let Some(population) = &self.options.population {
             item.insert("population".to_owned(), population.clone());
+        }
+        if let Some(assessment) = &self.options.assessment {
+            item.insert("assessment".to_owned(), json!(assessment));
         }
         if let Some(max_cases) = self.options.max_cases {
             item.insert(

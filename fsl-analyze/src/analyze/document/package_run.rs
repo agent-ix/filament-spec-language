@@ -3178,6 +3178,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                     .map(super::DocumentSelection::reference),
                 recording: None,
                 population: None,
+                assessment: None,
                 backend_options,
                 protocol_analysis: None,
             },
@@ -3398,6 +3399,7 @@ fn options(selection: &ItemSelection, backend_options: BTreeMap<String, String>)
             .as_ref()
             .map(super::DocumentSelection::reference),
         population: selection.population.clone(),
+        assessment: selection.assessment.clone(),
         backend_options,
         protocol_analysis: None,
     }
@@ -3519,6 +3521,7 @@ impl<'a> WorkInputs<'_, 'a> {
                     item.options.recording.clone(),
                     recording,
                     item.options.population.clone(),
+                    item.options.assessment.as_deref() == Some("incremental"),
                     self.limits.replay,
                 )
             }

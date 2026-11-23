@@ -407,6 +407,28 @@ pub fn assess_recording_incrementally(
     package: &fsl_package::CheckedPackage,
     bytes: &[u8],
 ) -> Result<Vec<RecordingAssessment>, RecordingRefusal> {
+    assess_prefixes(bytes, |prefix| assess_recording(package, prefix))
+}
+
+/// [`assess_recording_incrementally`] over any admitted protocol input,
+/// assessing the selected protocol.
+pub(super) fn assess_selected_prefixes(
+    input: &CheckedPackage<'_>,
+    selected_protocol: &str,
+    bytes: &[u8],
+    population: Option<&[ActivatedRolePopulation]>,
+) -> Result<Vec<RecordingAssessment>, RecordingRefusal> {
+    assess_prefixes(bytes, |prefix| {
+        assess_selected_recording(input, selected_protocol, prefix, population)
+    })
+}
+
+/// The assessment of each observation prefix of the recording `bytes`, by
+/// `assess` over the prefix's own document.
+fn assess_prefixes(
+    bytes: &[u8],
+    assess: impl Fn(&[u8]) -> Result<RecordingAssessment, RecordingRefusal>,
+) -> Result<Vec<RecordingAssessment>, RecordingRefusal> {
     let whole: serde_json::Value = serde_json::from_slice(bytes).map_err(|error| {
         RecordingRefusal::new(
             "invalid-value",
@@ -449,7 +471,7 @@ pub fn assess_recording_incrementally(
             }
             document["closure"] = serde_json::json!({"state": "open", "premises": []});
         }
-        assessments.push(assess_recording(package, document.to_string().as_bytes())?);
+        assessments.push(assess(document.to_string().as_bytes())?);
     }
     Ok(assessments)
 }
@@ -1578,11 +1600,7 @@ fn assess_obligations(
             } else {
                 None
             },
-            witness: if !correctly_correlated || misordered {
-                vec![correlation.receive, correlation.send]
-            } else {
-                vec![correlation.send, correlation.receive]
-            },
+            witness: vec![correlation.receive, correlation.send],
         });
     }
 
@@ -1704,11 +1722,7 @@ fn assess_obligations(
                     } else {
                         None
                     },
-                    witness: if misordered || send_receive_mismatch {
-                        vec![target_pos, source_pos]
-                    } else {
-                        vec![source_pos, target_pos]
-                    },
+                    witness: vec![target_pos, source_pos],
                 });
             }
         }

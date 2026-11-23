@@ -122,6 +122,8 @@ pub struct ItemOptions {
     pub recording: Option<fsl_semantics::model::observation::DocumentRef>,
     /// The caller's activated role population for a recording assessment.
     pub population: Option<serde_json::Value>,
+    /// `incremental` when the recording is assessed one observation at a time.
+    pub assessment: Option<String>,
     /// The named backend's options (FSpec FR-196, FR-331 `options`),
     /// each one the backend publishes (FR-967); empty when none are given.
     pub backend_options: std::collections::BTreeMap<String, String>,
@@ -1070,6 +1072,7 @@ fn work<'a>(
                                         recording_identity,
                                         Some(recording),
                                         item.options.population.clone(),
+                                        item.options.assessment.as_deref() == Some("incremental"),
                                         limits.replay,
                                     )
                                 }

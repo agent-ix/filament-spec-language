@@ -138,7 +138,6 @@ fn verdicts(item: &Value) -> &Vec<Value> {
 /// `violated`, `misordered`, naming both, and the item is refuted at `Got`.
 #[trace("TC-2530", "FR-895-AC-2", "FSpec-FR-737-AC-1")]
 #[test]
-#[ignore = "QSL-2885: spec gap, FR-895-AC-2 does not order the two witness indices of a misordered causal-order obligation; protocol_recording::receive_before_send_is_a_causal_order_violation asserts [target, source] = [0, 3]"]
 fn a_pair_on_a_causal_cycle_is_misordered() {
     let run = replay(
         "replay-cycle",
@@ -168,7 +167,7 @@ fn a_pair_on_a_causal_cycle_is_misordered() {
     let [verdict] = misordered[..] else {
         panic!("one misordered obligation: {item}");
     };
-    assert_eq!(verdict["witness"], json!([3, 0]), "{item}");
+    assert_eq!(verdict["witness"], json!([0, 3]), "{item}");
     assert_eq!(item["counterexample"]["trace_position"], 0, "{item}");
 }
 
@@ -486,6 +485,105 @@ fn incremental_assessment_reports_a_violation_from_the_prefix_that_shows_it() {
     assert_eq!(note.cause, Some(RecordingCause::Unexpected));
     let batch = assess_recording(&package, bytes.as_bytes()).expect("batch");
     assert_eq!(incremental.last(), Some(&batch));
+}
+
+/// One `Flow` replay item with `assessment` set to `assessment`.
+fn assessed_item(assessment: &str) -> Value {
+    json!([{"claim": "Flow", "kind": "global-conformance",
+            "recording": recording_identity(), "assessment": assessment}])
+}
+
+/// FR-896-AC-5 (TC-2531): `assessment` `incremental` carries one prefix
+/// assessment per observation, the violation shows from the prefix that adds
+/// `Note`, and the last prefix equals the item's own obligations; `batch`
+/// carries no prefixes; another word, or no recording, refuses the request.
+#[trace("TC-2531", "FR-896-AC-5", "FR-895-AC-6")]
+#[test]
+fn the_incremental_assessment_member_reports_each_prefix() {
+    let probe = told_recording([0, 1, 2, 3, 4, 5], json!([2, 1, 4, 5]));
+    let entry = json!({"file": "recording.json", "identity": recording_identity()});
+    let run = |name: &str, assessment: &str| {
+        replay_with(
+            name,
+            &told_protocol(),
+            &probe,
+            entry.clone(),
+            assessed_item(assessment),
+        )
+    };
+
+    let item = run("replay-incremental", "incremental").item(0);
+    assert_eq!(label(&item), "refuted", "{item}");
+    let prefixes = item["prefixes"].as_array().expect("one prefix each");
+    let labels: Vec<&str> = prefixes
+        .iter()
+        .map(|prefix| prefix["label"].as_str().expect("a label"))
+        .collect();
+    assert_eq!(
+        labels,
+        [
+            "inconclusive",
+            "inconclusive",
+            "refuted",
+            "refuted",
+            "refuted",
+            "refuted"
+        ],
+        "{item}"
+    );
+    let counts: Vec<u64> = prefixes
+        .iter()
+        .map(|prefix| prefix["observations"].as_u64().expect("a count"))
+        .collect();
+    assert_eq!(counts, [1, 2, 3, 4, 5, 6], "{item}");
+    let note = |prefix: &Value| {
+        prefix["obligations"]
+            .as_array()
+            .expect("obligations")
+            .iter()
+            .find(|verdict| {
+                verdict["obligation"]["kind"] == "enabledness"
+                    && verdict["obligation"]["node"] == "Flow::Main::Note"
+            })
+            .cloned()
+            .expect("a Note enabledness verdict")
+    };
+    for prefix in &prefixes[2..] {
+        let note = note(prefix);
+        assert_eq!(note["verdict"], "violated", "{item}");
+        assert_eq!(note["cause"], "unexpected", "{item}");
+    }
+    assert_eq!(
+        prefixes[5]["obligations"], item["obligations"],
+        "the last prefix is the batch assessment"
+    );
+
+    for assessment in ["batch"] {
+        let item = run("replay-batch", assessment).item(0);
+        assert!(item.get("prefixes").is_none(), "{item}");
+        assert_eq!(item["obligations"], prefixes[5]["obligations"], "{item}");
+    }
+
+    let refused = |name: &str, assessment: &str, items: Value| {
+        let run = replay_with(name, &told_protocol(), &probe, entry.clone(), items);
+        assert_eq!(run.exit, 20, "{name} {assessment}");
+        assert!(
+            run.document().to_string().contains("/items/0/assessment"),
+            "{name}: {}",
+            run.document()
+        );
+    };
+    refused(
+        "replay-assessment-word",
+        "streaming",
+        assessed_item("streaming"),
+    );
+    refused(
+        "replay-assessment-no-recording",
+        "incremental",
+        json!([{"claim": "Flow", "kind": "global-conformance",
+                "assessment": "incremental"}]),
+    );
 }
 
 // ---- FR-1032: the recording's document identity ---------------------------
