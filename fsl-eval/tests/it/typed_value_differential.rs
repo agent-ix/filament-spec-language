@@ -73,7 +73,8 @@ const OPERATIONS: &[(&str, bool)] = &[
     ("bag", true),
 ];
 
-const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
+const HEADER: &str =
+    "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
 
 const UNLIMITED: ScalarLimits = ScalarLimits {
     integer_bits: u64::MAX,
@@ -131,7 +132,10 @@ enum IntExpr {
 }
 
 fn int_exprs() -> BoxedStrategy<IntExpr> {
-    let leaf = prop_oneof![(0usize..3).prop_map(IntExpr::Param), (-4i64..=4).prop_map(IntExpr::Lit)];
+    let leaf = prop_oneof![
+        (0usize..3).prop_map(IntExpr::Param),
+        (-4i64..=4).prop_map(IntExpr::Lit)
+    ];
     leaf.prop_recursive(3, 12, 2, |inner| {
         prop_oneof![
             3 => (arith(), inner.clone(), inner.clone())
@@ -256,8 +260,14 @@ fn rational_domain() -> ValueType {
 
 fn decimal_type() -> ValueType {
     ValueType::Decimal(
-        DecimalType::new(Integer::from(-20_000_i64), Integer::from(20_000_i64), 0, 3, RoundingMode::Exact)
-            .expect("decimal type"),
+        DecimalType::new(
+            Integer::from(-20_000_i64),
+            Integer::from(20_000_i64),
+            0,
+            3,
+            RoundingMode::Exact,
+        )
+        .expect("decimal type"),
     )
 }
 
@@ -277,7 +287,10 @@ fn int_cases() -> BoxedStrategy<Case> {
                     .iter()
                     .enumerate()
                     .map(|(i, (lo, hi, _))| {
-                        (["a", "b", "c"][i].to_owned(), ValueType::Int(interval(-lo, *hi)))
+                        (
+                            ["a", "b", "c"][i].to_owned(),
+                            ValueType::Int(interval(-lo, *hi)),
+                        )
                     })
                     .collect(),
                 arguments: params
@@ -294,7 +307,10 @@ fn int_cases() -> BoxedStrategy<Case> {
 }
 
 fn rational_cases() -> BoxedStrategy<Case> {
-    (chains(), proptest::collection::vec((-3i64..=3, 1i64..=4), 3))
+    (
+        chains(),
+        proptest::collection::vec((-3i64..=3, 1i64..=4), 3),
+    )
         .prop_map(|(chain, values)| {
             let mut operations = Vec::new();
             chain.operations("rational", &mut operations);
@@ -321,7 +337,10 @@ fn rational_cases() -> BoxedStrategy<Case> {
 }
 
 fn decimal_cases() -> BoxedStrategy<Case> {
-    (chains(), proptest::collection::vec((-20i64..=20, 0u32..=3), 3))
+    (
+        chains(),
+        proptest::collection::vec((-20i64..=20, 0u32..=3), 3),
+    )
         .prop_map(|(chain, values)| {
             let mut operations = Vec::new();
             chain.operations("decimal", &mut operations);
@@ -370,14 +389,21 @@ fn collection_cases() -> BoxedStrategy<Case> {
                 body: format!(
                     "let xs: {}<Int[-{element}, {element}]>[0, {size}] = {constructor}[{}] in xs",
                     constructor[..1].to_uppercase() + &constructor[1..],
-                    members.iter().map(IntExpr::source).collect::<Vec<_>>().join(", ")
+                    members
+                        .iter()
+                        .map(IntExpr::source)
+                        .collect::<Vec<_>>()
+                        .join(", ")
                 ),
                 operations,
                 parameters: params
                     .iter()
                     .enumerate()
                     .map(|(i, (lo, hi, _))| {
-                        (["a", "b", "c"][i].to_owned(), ValueType::Int(interval(-lo, *hi)))
+                        (
+                            ["a", "b", "c"][i].to_owned(),
+                            ValueType::Int(interval(-lo, *hi)),
+                        )
                     })
                     .collect(),
                 arguments: params
@@ -504,13 +530,19 @@ fn inside(value: &Value, ty: &ValueType) -> Result<(), String> {
             if decimal.contains(d) && decimal.min_scale() <= scale && scale <= decimal.max_scale() {
                 Ok(())
             } else {
-                Err(format!("decimal {d:?} (scale {scale}) is outside {decimal:?}"))
+                Err(format!(
+                    "decimal {d:?} (scale {scale}) is outside {decimal:?}"
+                ))
             }
         }
         (ValueType::Collection(collection), Value::Collection(c)) => {
             let count = u64::try_from(c.elements().len()).expect("small");
             if c.collection_type().kind() != collection.kind() {
-                return Err(format!("kind {:?} against {:?}", c.collection_type().kind(), collection.kind()));
+                return Err(format!(
+                    "kind {:?} against {:?}",
+                    c.collection_type().kind(),
+                    collection.kind()
+                ));
             }
             if let Some(bound) = collection.bound() {
                 if bound.violation(count).is_some() {
@@ -545,8 +577,8 @@ fn assert_sampled(seen: &BTreeMap<&'static str, usize>) {
     }
 }
 
-/// QSL-2056 P1 (FR-091-AC-13): a completed value lies inside the checked node type.
-#[trace("FR-091-AC-13")]
+/// QSL-2056 P1 (FR-096; no AC states it): a completed value lies inside the checked node type.
+#[trace("FR-096")]
 #[test]
 fn p1_completed_values_lie_inside_the_checked_type() {
     let seen = sampled();
@@ -575,9 +607,9 @@ fn p1_completed_values_lie_inside_the_checked_type() {
     assert_sampled(&seen.borrow());
 }
 
-/// QSL-2056 P2 (FR-091-AC-13): no call returns an internal fault or panics, and only a
+/// QSL-2056 P2 (FR-096; no AC states it): no call returns an internal fault or panics, and only a
 /// run-time-only operation may end in anything but a value.
-#[trace("FR-091-AC-13")]
+#[trace("FR-096")]
 #[test]
 fn p2_no_completed_call_returns_runtime_invariant() {
     let seen = sampled();
@@ -637,16 +669,18 @@ fn the_run_time_only_operations_are_exactly_the_listed_ones() {
     assert_eq!(flagged, listed);
     // Every operation a generated case reports has a row in the table.
     let _ = CollectionKind::Sequence;
-    let _ = CollectionType::new(CollectionKind::Set, ValueType::Boolean, CardinalityBound::new(0, 1).ok());
+    let _ = CollectionType::new(
+        CollectionKind::Set,
+        ValueType::Boolean,
+        CardinalityBound::new(0, 1).ok(),
+    );
     let names: Vec<&str> = OPERATIONS.iter().map(|(name, _)| *name).collect();
     let mut runner = proptest::test_runner::TestRunner::new(prop::config(256));
     for _ in 0..256 {
-        let case = proptest::strategy::ValueTree::current(
-            &cases().new_tree(&mut runner).expect("tree"),
-        );
+        let case =
+            proptest::strategy::ValueTree::current(&cases().new_tree(&mut runner).expect("tree"));
         for op in &case.operations {
             assert!(names.contains(&op.as_str()), "{op} has no OPERATIONS row");
         }
     }
 }
-

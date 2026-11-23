@@ -126,9 +126,7 @@ mod generated {
     use proptest::prelude::*;
     use proptest::test_runner::{TestCaseError, TestError};
 
-    use crate::reduction_world::{
-        counter, counters, value, Atom, Clause, Shape, World, INFINITE,
-    };
+    use crate::reduction_world::{counter, counters, value, Atom, Clause, Shape, World, INFINITE};
 
     const KEYS: [&str; 4] = ["a", "b", "c", "d"];
 
@@ -326,7 +324,11 @@ mod generated {
                 self.max,
                 self.contract(),
                 self.formula(),
-                if skew { " (atom read of the last object alone)" } else { "" }
+                if skew {
+                    " (atom read of the last object alone)"
+                } else {
+                    ""
+                }
             )
         }
     }
@@ -393,7 +395,10 @@ mod generated {
             if let Ok(ModelCheckOutcome::Violated { counterexample, .. }) =
                 run(subject, &world, skew, selection)
             {
-                if matches!(counterexample.kind, CounterexampleKind::UndefinedEvaluation(_)) {
+                if matches!(
+                    counterexample.kind,
+                    CounterexampleKind::UndefinedEvaluation(_)
+                ) {
                     continue;
                 }
                 replayed = true;
@@ -569,12 +574,8 @@ mod generated {
         let states = reachable(&system);
         let state = &states[pick % states.len()];
         let key = |state: &ModelSimState| system.state_key(state).expect("encodes").0;
-        let canon = |state: &ModelSimState| {
-            system
-                .canonicalise(state, &group)
-                .expect("canonicalises")
-                .0
-        };
+        let canon =
+            |state: &ModelSimState| system.canonicalise(state, &group).expect("canonicalises").0;
         let n = subject.keys().len();
         let permuted = system
             .permute(state, &permutation(subject, &images(shuffle, n)))
@@ -653,7 +654,10 @@ mod generated {
                 let group = group(&subject);
                 let key = |s: &ModelSimState| system.state_key(s).expect("encodes").0;
                 for state in reachable(&system) {
-                    let once = system.canonicalise(&state, &group).expect("canonicalises").0;
+                    let once = system
+                        .canonicalise(&state, &group)
+                        .expect("canonicalises")
+                        .0;
                     let twice = system.canonicalise(&once, &group).expect("canonicalises").0;
                     prop_assert_eq!(key(&once), key(&twice), "{}", subject.describe(false));
                 }

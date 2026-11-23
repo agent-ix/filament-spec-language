@@ -28,7 +28,8 @@ use proptest::test_runner::{TestCaseError, TestError};
 /// are Done, so there are none.
 const EXCLUSIONS: &[&str] = &[];
 
-const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
+const HEADER: &str =
+    "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
 
 /// What the checker said about one source.
 #[derive(Debug, Eq, PartialEq)]
@@ -110,10 +111,7 @@ fn trees() -> BoxedStrategy<Tree> {
         leaves(),
         (ops(), leaves(), leaves()).prop_map(|(op, l, r)| Tree::Bin(op, Box::new(l), Box::new(r))),
     ];
-    (
-        leaves(),
-        proptest::collection::vec((ops(), operand), 1..=3),
-    )
+    (leaves(), proptest::collection::vec((ops(), operand), 1..=3))
         .prop_map(|(base, steps)| {
             steps.into_iter().fold(base, |tree, (op, operand)| {
                 Tree::Bin(op, Box::new(tree), Box::new(operand))
@@ -315,7 +313,11 @@ fn p3_accepted_functions_stay_inside_the_declared_interval() {
         },
     )
     .unwrap();
-    assert!(accepted.get() >= 40, "only {} accepted cases", accepted.get());
+    assert!(
+        accepted.get() >= 40,
+        "only {} accepted cases",
+        accepted.get()
+    );
 }
 
 /// QSL-2056 P3 (FR-495-AC-19): a refusal `unproved-range` is real (the exact interval escapes the
@@ -381,7 +383,11 @@ fn weakened_rule_is_caught() {
     let Err(TestError::Fail(reason, minimal)) = outcome else {
         panic!("a `+` rule one too low must fail P3");
     };
-    assert!(minimal.tree.operators() <= 3, "{reason}\n{}", minimal.source());
+    assert!(
+        minimal.tree.operators() <= 3,
+        "{reason}\n{}",
+        minimal.source()
+    );
     assert!(minimal.source().contains(" + "), "{}", minimal.source());
 }
 
@@ -394,8 +400,10 @@ fn known_exclusions_are_none() {
 // ------------------------------------------------------------ P4: mod
 
 fn zero_free() -> BoxedStrategy<(i64, i64)> {
-    prop_oneof![(1i64..=6, 0i64..=5).prop_map(|(l, w)| (l, l + w)),
-        (1i64..=6, 0i64..=5).prop_map(|(l, w)| (-(l + w), -l))]
+    prop_oneof![
+        (1i64..=6, 0i64..=5).prop_map(|(l, w)| (l, l + w)),
+        (1i64..=6, 0i64..=5).prop_map(|(l, w)| (-(l + w), -l))
+    ]
     .boxed()
 }
 
@@ -454,7 +462,10 @@ fn p4_mod_with_a_zero_free_divisor_stays_in_range() {
 #[trace("FR-495-AC-19")]
 #[test]
 fn p4_mod_below_every_divisor_is_not_widened() {
-    assert_eq!(check(&mod_source((0, 2), (5, 6), (0, 2))), Verdict::Accepted);
+    assert_eq!(
+        check(&mod_source((0, 2), (5, 6), (0, 2))),
+        Verdict::Accepted
+    );
     assert_eq!(
         check(&mod_source((0, 2), (5, 6), (0, 1))),
         Verdict::Refused("unproved-range".into())
