@@ -39,3 +39,7 @@ accepted-side and precedence tests (FND-003), and incremental assessment exists 
 | FND-004 | fixed | FR-896 `assessment` member and FR-895 "Incremental assessment" specified and implemented; monotonicity defect is SR-3595001 FND-008 |
 
 Disposition pass 2 (head 69344ffc97b7a3ed1fb556e85fa2eab765d48ee7): no findings of this artifact remain open; all four were fixed in round 1.
+
+## Dispositions (fix round 3)
+
+Closed by FR-895-AC-27, the strengthened AC-26 test (every obligation) and the two refused-prefix unit tests; see `qsl-2885-code-review.md` "Dispositions (fix round 3)".

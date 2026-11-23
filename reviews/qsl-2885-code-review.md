@@ -87,3 +87,13 @@ titan worktree (reverted, clean after): making prefixes follow array position tu
 | FND-011 | fixed | AC-22 to AC-25 tests: mixed cases, case step in a repeat, exhausted path, any-join |
 | FND-012 | still-open | rustfmt --check still reports request.rs:1096 (`item.options.assessment == Some(AssessmentMode::Incremental)` exceeds the width) |
 | FND-013 | fixed | AssessmentMode serde enum, kebab-case, default Batch |
+
+## Dispositions (fix round 3)
+
+| Finding | Disposition |
+| --- | --- |
+| Probe D (iteration begun concurrently reopens `After`) | Fixed. The last iteration is the one begun causally before the step (iteration and choice counts only count observations at or before the step); an observed predecessor not ordered before the step is `violated`, cause `unexpected`, at once. Test `an_iteration_begun_concurrently_with_the_step_does_not_reopen_it` (FR-895-AC-27): `After` absent in prefixes 1 to 6, `satisfied` in 7 and 8. |
+| Channel-premise hole | Fixed. A channel premise is `pending` while the closure is not `closed` unless a violation has shown. The monotonicity helper now checks every obligation of every prefix, and AC-26's test asserts the premise is pending in each open prefix. Existing expectations that held the old behaviour were updated: `only_a_closed_recording_closure_gives_complete_success` (premise pending open, satisfied closed) and `duplicate_delivery_is_classified_against_the_channel_premise` (pending in the open recording). |
+| Refused prefix untested | Fixed. Unit tests `a_refused_prefix_is_reported_with_its_index` (injected refusal at prefix 1, 2 and 3; later prefixes not assessed) and `a_refused_prefix_refuses_the_item_naming_the_prefix` (the `prefix_refusal` mapping: `invalid_runtime_input`, cause code, detail, `prefix`). FR-896-AC-6 no longer states an absence of a test. |
+| FND-012 rustfmt | Fixed; `request.rs` diff stays in the one hunk. |
+| Consequences of the at-once rule | AC-11 and FR-896-AC-5 now state the AC-10 recording is `refuted` from the second prefix (`Placed` is observed and not ordered before `Note`); AC-21's fixture drops the unordered second `Placed` so that `Got` stays the unobserved predecessor (pending open, violated closed). |
