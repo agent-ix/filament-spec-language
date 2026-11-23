@@ -1182,13 +1182,13 @@ mod tests {
         // Of two conforming candidates the most specific wins.
         let nested = [
             ("cell row", Some(cell.clone())),
-            ("special row", Some(special)),
+            ("special row", Some(special.clone())),
         ];
         assert_eq!(
             choose_row(&nested, Some(&parent), &conforms),
             Ok("special row")
         );
-        let lone = [("queue row", Some(queue))];
+        let lone = [("queue row", Some(queue.clone()))];
         assert_eq!(choose_row(&lone, Some(&other), &conforms), Ok("queue row"));
         let none: [(&str, Option<EffectiveId>); 0] = [];
         assert_eq!(
