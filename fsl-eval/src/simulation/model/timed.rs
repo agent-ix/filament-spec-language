@@ -1324,6 +1324,26 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         })
     }
 
+    /// Whether each element place of `presences` is live at its binding's
+    /// held slot exactly when it must be present (FR-930 "Shared binder").
+    fn element_presences_hold(
+        &self,
+        state: &ModelSimState,
+        object: &ObjectReference,
+        presences: &[(ClockId, ElementBinding, bool)],
+    ) -> bool {
+        presences.iter().all(|(clock, binding, present)| {
+            let SlotRef::Held(slot) = binding.slot() else {
+                return false;
+            };
+            let live = self
+                .place_at(object, *clock, &[slot])
+                .and_then(|place| self.places.get(place))
+                .is_some_and(|place| self.live(place, state));
+            live == *present
+        })
+    }
+
     /// The place of `clock` on `object`, `None` for a clock in a collection,
     /// which has one place for each slot.
     pub fn place(&self, object: &ObjectReference, clock: ClockId) -> Option<usize> {
@@ -1853,6 +1873,10 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
                                 state,
                                 &vector.receiver,
                                 part.presences().iter().copied(),
+                            ) || !self.element_presences_hold(
+                                state,
+                                &vector.receiver,
+                                part.element_presences(),
                             ) {
                                 continue;
                             }
