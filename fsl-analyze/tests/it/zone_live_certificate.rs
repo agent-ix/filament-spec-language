@@ -415,6 +415,7 @@ fn padding_edges_are_charged_against_the_edge_limit() {
             fsl_replay::IncompleteCause::LimitReached {
                 limit: fsl_replay::ModelCheckLimit::CertificateMaxEdges,
                 value: own,
+                required: None,
             }
         ))
     );

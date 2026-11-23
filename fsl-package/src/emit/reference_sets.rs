@@ -32,7 +32,7 @@ pub(super) fn order_protocol_sets(
         if !names.contains(&name.as_ref()) {
             continue;
         }
-        let CheckedTerm::Aggregate { members } = value.as_mut() else {
+        let CheckedTerm::Aggregate { members, .. } = value.as_mut() else {
             return Err(encoding("protocol reference set is not an aggregate"));
         };
         let mut targets = members
@@ -77,6 +77,7 @@ mod tests {
                     .cloned()
                     .map(CheckedTerm::reference)
                     .collect(),
+                temporal_profile: None,
             }),
         }
     }
@@ -85,7 +86,7 @@ mod tests {
         let CheckedTerm::Binding { value, .. } = argument else {
             panic!("a binding");
         };
-        let CheckedTerm::Aggregate { members } = value.as_ref() else {
+        let CheckedTerm::Aggregate { members, .. } = value.as_ref() else {
             panic!("an aggregate");
         };
         members

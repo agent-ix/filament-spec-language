@@ -7,8 +7,9 @@ rust-version = "1.98"
 license = "AGPL-3.0-or-later"
 description = "The committed performance benchmarks (parser, checker, CST identity hashing, model layer, evaluator and evaluator kernels) and the probe that records per-run counts."
 
-# A benchmark-only crate: no workspace crate depends on it. It reaches the
-# layer crates through their public API only, so an internal rewrite behind
+# A benchmark-only crate: no workspace crate depends on it in `[dependencies]`; only
+# `fsl-replay`'s tests name it, as a dev-dependency, for the `unit` and `near_miss`
+# generators. It reaches the layer crates through their public API only, so an internal rewrite behind
 # that API needs no bench change; a change to the API itself does (for
 # example a change to `intake::admit`'s return type). Every model-intake call goes
 # through `src/model.rs` so such a change is one edit there.
@@ -38,6 +39,7 @@ serde_json = "1.0.151"
 # `#[string_edge]`, since `xtask string-edge` scans this crate.
 ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }
 proptest = { version = "1.12.0", optional = true, default-features = false, features = ["std"] }
+fsl-proptest-policy = { path = "../fsl-proptest-policy", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 nix = { version = "0.31.3", default-features = false, features = ["resource"] }
@@ -45,7 +47,7 @@ nix = { version = "0.31.3", default-features = false, features = ["resource"] }
 # Off by default: the workload counters of `src/counters.rs`.
 [features]
 counters = []
-property-generators = ["dep:proptest"]
+property-generators = ["dep:proptest", "dep:fsl-proptest-policy"]
 
 [dev-dependencies]
 # Grammar derivations are consumed only by the property-generator acceptance

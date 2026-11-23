@@ -270,7 +270,7 @@ fn slot_term<'n>(
     }
     let at = |term: &'n CheckedTerm| -> Result<&'n [CheckedTerm], SlotSelectionFailure> {
         match term {
-            CheckedTerm::Aggregate { members } => Ok(members),
+            CheckedTerm::Aggregate { members, .. } => Ok(members),
             _ => Err(fault("selected-protocol-member-is-a-list")),
         }
     };

@@ -5,13 +5,14 @@
 //!
 //! Each closed document profile owns its graph, binding and workload admission.
 //! Unsupported forms remain explicit unsupported dispositions. Missed bounds
-//! settle `refuted` only when the profile has native witness production and
-//! independent FR-202 replay; long-run document evidence authorizes proofs.
+//! settle `refuted` only when FR-202 replay independently reproduces the
+//! native path set or subsystem certificate; a solved value alone never does.
 
 mod candidate;
 mod elapsed;
 mod long_run;
 mod measure;
+mod subsystem;
 mod undefined;
 
 use filament_exact::{Cancel, ObjectReference, Rational};
@@ -963,7 +964,7 @@ fn run(
         return run_timed(request, cancel, tamper, tamper_witness);
     }
     if matches!(request.claim.form, ProbForm::LongRunFraction { .. }) {
-        return long_run::run(request, cancel, tamper);
+        return long_run::run(request, cancel, tamper, tamper_witness);
     }
     let claim = request.claim;
     let simulation = request.subject.simulation.clone();
@@ -1204,20 +1205,25 @@ fn run(
         };
         (solved.values, solved.policy)
     };
-    if expected_reward
+    // A positive-infinite expectation fails a finite `<=` bound (FR-203-AC-15);
+    // it is refuted only through a replayed finite lower certificate.
+    let holds = match (values.get(start.index()), bound) {
+        (Some(ExtRational::Finite(value)), Bound::AtLeast(threshold)) => value >= threshold,
+        (Some(ExtRational::Finite(value)), Bound::AtMost(threshold)) => value <= threshold,
+        (Some(ExtRational::PlusInfinity), Bound::AtMost(_)) if expected_reward => false,
+        (Some(ExtRational::PlusInfinity), _) if expected_reward => {
+            return document_failure(ProbabilityDocumentError::MixedInfiniteCoverage, subject);
+        }
+        _ => return broken(),
+    };
+    if holds
+        && expected_reward
         && values
             .iter()
             .any(|value| matches!(value, ExtRational::PlusInfinity))
     {
         return document_failure(ProbabilityDocumentError::MixedInfiniteCoverage, subject);
     }
-    let Some(ExtRational::Finite(value)) = values.get(start.index()) else {
-        return if expected_reward { not_yet() } else { broken() };
-    };
-    let holds = match bound {
-        Bound::AtLeast(threshold) => value >= threshold,
-        Bound::AtMost(threshold) => value <= threshold,
-    };
     let item = match fsl_replay::probabilistic_claim_identity(claim) {
         Ok(item) => item,
         Err(error) => return graph_failure(error, &limits, subject),
@@ -1238,21 +1244,42 @@ fn run(
     };
     let reference = binding.as_ref().map(|bound| &bound.reference);
     if !holds {
-        if expected_reward || bounded_fair {
+        if bounded_fair {
             return not_yet();
         }
-        if matches!(
-            claim.form,
-            ProbForm::Reach {
-                target: ReachTarget::Eventually(_),
-                ..
-            }
-        ) {
+        let mut own_budget = candidate::CandidateBudget::new(document_limits, cancel);
+        let mut subsystem_refutation = || {
+            let budget = match candidate_budget.as_mut() {
+                Some(budget) => budget,
+                None => &mut own_budget,
+            };
+            subsystem::refute(
+                &system,
+                claim,
+                &product,
+                &policy,
+                *start,
+                &values,
+                reference,
+                &limits,
+                cancel,
+                subject,
+                budget,
+                tamper_witness,
+            )
+        };
+        if expected_reward {
+            return subsystem_refutation();
+        }
+        // The path-set search never starts on a cyclic subject (FR-202): an
+        // unwindowed `eventually`, `always` or `until` there is refuted by
+        // the event-avoidance lower certificate for its violation.
+        if let ProbForm::Reach { .. } = &claim.form {
             match fsl_replay::admit_acyclic_probabilistic_refutation_subject(
                 &system, &limits, cancel,
             ) {
                 Ok(true) => {}
-                Ok(false) => return not_yet(),
+                Ok(false) => return subsystem_refutation(),
                 Err(error) => return document_failure(error, subject),
             }
         }
@@ -2499,7 +2526,9 @@ fn finish_replay(
             let bound = match &claim.form {
                 ProbForm::Reach { bound, .. }
                 | ProbForm::Probability { bound, .. }
-                | ProbForm::MeanOfFraction { bound, .. } => bound,
+                | ProbForm::MeanOfFraction { bound, .. }
+                | ProbForm::LongRunFraction { bound, .. }
+                | ProbForm::ExpectedReward { bound, .. } => bound,
                 ProbForm::Quantile { q, threshold, .. } => {
                     quantile_bound = match threshold {
                         Bound::AtMost(_) => Bound::AtLeast(q.clone()),

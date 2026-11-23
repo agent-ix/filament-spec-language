@@ -5,9 +5,7 @@ use super::long_run_certificate::{limits, produce};
 use crate::prob_world::{self, Model, Operation, World};
 use filament_exact::{Cancel, CancelCause, Integer, Rational};
 use filament_semantic_value::checking::CheckMode;
-use fsl_analyze::analyze::{
-    analyze_items, exact_probabilistic_item, DispositionKind, Engines, Settlement,
-};
+use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
 use fsl_eval::simulation::{model::ModelSystem, TransitionSystem};
 use fsl_foundation::RequestIndex;
 use fsl_replay::{
@@ -123,6 +121,7 @@ fn geometric_rewards_include_entry_once_and_ignore_post_target_cycles() {
     }
 }
 #[trace("TC-1403", "FR-201-AC-36", "FR-201-AC-38")]
+#[trace("TC-3160", "FR-202-AC-35")]
 #[test]
 fn zero_reward_still_requires_properness_and_initial_target_is_zero() {
     let world = World::new(&model("0", 0, "x.phase = 1", "<= 0", true));
@@ -166,7 +165,7 @@ fn zero_reward_still_requires_properness_and_initial_target_is_zero() {
         check(&closed, &bytes, &Cancel::new(), limits()).unwrap(),
         ExactProbabilityCertificateCheck::Rejected(ProbabilityCertificateRejection {
             rule: ProbabilityCertificateRule::RankBroken,
-            at: ProbabilityCertificateLocus::ProductState(key)
+            at: ProbabilityCertificateLocus::ProductState(key.clone())
         })
     );
     let records = analyze_items(
@@ -177,10 +176,32 @@ fn zero_reward_still_requires_properness_and_initial_target_is_zero() {
         )],
         &Cancel::new(),
     );
-    assert!(
-        matches!(&records[0].settlement,Settlement::Disposed(d) if d.kind==DispositionKind::Unsupported)
+    // The closed zero-cost class never reaches the target, so the expected
+    // total is infinite and `<= 0` fails. It is refuted by a replayed finite
+    // lower certificate, `(0/1 + 1) * Pr(never target) = 1 > 0`, not settled
+    // unsupported (FR-201 cyclic DTMC reward profile; FR-202-AC-35).
+    assert_eq!(
+        records[0].terminal().expect("a refutation").value(),
+        &fsl_replay::TerminalValue::Refuted
     );
-    assert!(records[0].terminal().is_none());
+    let found = records[0]
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("the replayed counterexample")
+        .evidence();
+    let certificate: serde_json::Value =
+        serde_json::from_slice(found.subsystem.as_ref().unwrap().as_bytes()).unwrap();
+    assert_eq!(certificate["kind"], "lower");
+    assert_eq!(
+        certificate["values"],
+        serde_json::json!([{
+            "state": base64::Engine::encode(
+                &base64::engine::general_purpose::URL_SAFE_NO_PAD,
+                key.as_bytes()
+            ),
+            "value": {"numerator": "1", "denominator": "1"},
+        }])
+    );
 }
 #[trace("TC-1403", "FR-201-AC-36")]
 #[test]

@@ -1446,6 +1446,12 @@ fn command_monitor_streams_events_to_its_sink() {
             options: &fsl_analyze::provider::ProviderOptions::default(),
         },
         RunLimits::default(),
+        &fsl_command::command::CommandLimits::monitor(
+            fsl_command::command::MonitorPreparationLimits {
+                work: 16_777_216,
+                storage: 268_435_456,
+            },
+        ),
         &filament_exact::Cancel::new(),
     )
     .expect("the stream runs");
@@ -1480,6 +1486,12 @@ fn command_monitor_streams_events_to_its_sink() {
             options: &fsl_analyze::provider::ProviderOptions::default(),
         },
         RunLimits::default(),
+        &fsl_command::command::CommandLimits::monitor(
+            fsl_command::command::MonitorPreparationLimits {
+                work: 16_777_216,
+                storage: 268_435_456,
+            },
+        ),
         &filament_exact::Cancel::new(),
     );
     let error = refused.expect_err("an unknown clause is refused");
@@ -1568,6 +1580,12 @@ fn command_monitor_takes_the_started_providers() {
                 options: &fsl_analyze::provider::ProviderOptions::default(),
             },
             RunLimits::default(),
+            &fsl_command::command::CommandLimits::monitor(
+                fsl_command::command::MonitorPreparationLimits {
+                    work: 16_777_216,
+                    storage: 268_435_456,
+                },
+            ),
             &filament_exact::Cancel::new(),
         );
         (summary, seen, read.get())
@@ -1653,6 +1671,12 @@ fn monitor_records(
             options: &fsl_analyze::provider::ProviderOptions::default(),
         },
         RunLimits::default(),
+        &fsl_command::command::CommandLimits::monitor(
+            fsl_command::command::MonitorPreparationLimits {
+                work: 16_777_216,
+                storage: 268_435_456,
+            },
+        ),
         cancel,
     );
     (seen, summary, pulled.get())
@@ -2180,6 +2204,12 @@ fn monitor_with_members(
             options: &fsl_analyze::provider::ProviderOptions::default(),
         },
         RunLimits::default(),
+        &fsl_command::command::CommandLimits::monitor(
+            fsl_command::command::MonitorPreparationLimits {
+                work: 16_777_216,
+                storage: 268_435_456,
+            },
+        ),
         cancel,
     );
     (summary, seen)
@@ -2482,7 +2512,10 @@ fn a_cancelled_monitor_settles_its_items_incomplete() {
     assert_eq!(recorded.items(), 0, "no item reaches a provider");
     let summary = summary.expect("a cancelled stream returns its summary");
     let value = summary.as_value();
-    assert!(!value["items"].as_array().expect("items").is_empty(), "{value}");
+    assert!(
+        !value["items"].as_array().expect("items").is_empty(),
+        "{value}"
+    );
     assert_eq!(summary.exit_code, 22, "{value}");
     for item in value["items"].as_array().expect("items") {
         assert_eq!(item["category"], "incomplete", "{item}");

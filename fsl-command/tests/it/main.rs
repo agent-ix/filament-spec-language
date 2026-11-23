@@ -25,6 +25,7 @@ mod protocol_refusal_names;
 mod protocol_refusal_text;
 mod quantity_scaling;
 mod reaches_optional_reference;
+mod request_diagnostics;
 mod request_overrides;
 mod revision_validation;
 mod run_requirement_items;

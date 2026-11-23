@@ -12,6 +12,7 @@ pub(super) fn enumerate(
     workload: Option<&Workload>,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
+    acyclic: bool,
     failure: &mut impl FnMut(crate::ExactProbBuildIssue),
 ) -> Result<
     (
@@ -80,8 +81,11 @@ pub(super) fn enumerate(
             other => other.into(),
         }
     })?;
-    // Admission is about the original graph, even beyond an initial boundary.
-    topological_order(&graph, cancel)?;
+    // Proof admission is about the original graph, even beyond an initial
+    // boundary; FR-202's counterexample role also admits a cyclic subject.
+    if acyclic {
+        topological_order(&graph, cancel)?;
+    }
     let mut pending = VecDeque::from([graph.initial.clone()]);
     let mut stopped = BTreeMap::new();
     let mut failures = Vec::new();

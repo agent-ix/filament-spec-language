@@ -88,6 +88,18 @@ pub enum ClaimForm {
 }
 
 impl ClaimForm {
+    /// The `type` of the FR-413 claim-bound object a verdict of this form
+    /// carries.
+    #[must_use]
+    pub const fn bound_type(self) -> &'static str {
+        match self {
+            Self::Probability => "probability",
+            Self::Quantile => "quantile",
+            Self::MeanOfFraction => "mean-of-fraction",
+            Self::LongRunFraction => "long-run-fraction",
+        }
+    }
+
     /// Whether `method` decides this form (FR-189 "Methods", FR-190):
     /// regeneration decides exactly a long-run fraction, SPRT and
     /// Clopper–Pearson decide a probability bound or quantile, and Okamoto
@@ -267,6 +279,43 @@ impl StatisticalLimit {
             Self::MaxSampleSteps { .. } => "statistical.max_sample_steps",
         }
     }
+}
+
+/// How a verdict's bound compares the measured value with its threshold.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum BoundComparison {
+    /// `>= θ`, written `greater-or-equal`.
+    GreaterOrEqual,
+    /// `<= θ`, written `less-or-equal`: the claim's own operator. A quantile
+    /// claim's reduced strict bound is never written; FR-413 forbids it.
+    LessOrEqual,
+}
+
+impl BoundComparison {
+    /// The FR-413 `comparison` spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::GreaterOrEqual => "greater-or-equal",
+            Self::LessOrEqual => "less-or-equal",
+        }
+    }
+}
+
+/// The claim's own bound, `{type, comparison, threshold}` and, for a
+/// quantile claim, its `level`, which a verdict carries (FR-410 `bound`).
+/// The comparison and threshold are the claim's as written, never a
+/// reduction of them.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerdictBound {
+    /// The claim's form, which names the bound's `type`.
+    pub form: ClaimForm,
+    /// The claim's comparison.
+    pub comparison: BoundComparison,
+    /// The claim's threshold: a quantile claim's `c`.
+    pub threshold: Rational,
+    /// A quantile claim's level `q`; absent for every other form.
+    pub level: Option<Rational>,
 }
 
 /// A test's or a claim's decision (FR-189).
@@ -477,6 +526,8 @@ pub struct StatisticalVerdict {
     /// Accepted when every test accepts, Rejected when any rejects,
     /// Undecided otherwise.
     pub decision: Decision,
+    /// The bound the claim was judged against.
+    pub bound: VerdictBound,
     /// The least favourable test's estimate.
     pub estimate: Option<Rational>,
     /// The least favourable test's interval.
@@ -533,7 +584,7 @@ impl StatisticalVerdict {
 
 /// Why a run stopped before its method completed (FR-191; ADR-024 SV-4).
 /// A stopped run carries no decision.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum StatisticalStop {
     /// A test would exceed a budget: the budget and the value it was set
     /// to; [`StatisticalLimit::setting`] names the member that raises it.
@@ -542,6 +593,18 @@ pub enum StatisticalStop {
         limit: StatisticalLimit,
         /// Its value in the run.
         value: u64,
+    },
+    /// A method with a fixed sample count `N` known before drawing needs
+    /// more than a budget allows (FR-191): the run stops with no draw,
+    /// naming the budget, the value it was set to and the `N` the method
+    /// requires, exactly.
+    PreflightLimit {
+        /// The budget `N` exceeds.
+        limit: StatisticalLimit,
+        /// Its value in the run.
+        value: u64,
+        /// The sample count the method requires.
+        required: filament_exact::Integer,
     },
     /// A sample's expansion stopped (ADR-024 ST-10), for example on the
     /// clause meter.

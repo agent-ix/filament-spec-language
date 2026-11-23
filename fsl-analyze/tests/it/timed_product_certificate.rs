@@ -1555,6 +1555,7 @@ fn a_timed_deadline_past_the_rational_budget_settles_incomplete_naming_the_limit
         &TerminalValue::Incomplete(fsl_replay::IncompleteCause::LimitReached {
             limit: fsl_replay::ModelCheckLimit::ExactProbMaxRationalBits,
             value: 4,
+            required: None,
         }),
         "{record:#?}"
     );

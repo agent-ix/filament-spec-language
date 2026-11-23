@@ -139,27 +139,36 @@ pub(super) fn run_selected_bytes(
     overrides: &RequestOverrides<'_>,
 ) -> Result<RunResult> {
     let document = admitted_document(bytes)?;
-    if document.get("format").and_then(Value::as_str)
-        != Some(fsl_foundation::wire_format::WireFormat::RunRequest.as_str())
+    // FR-1015: a defect inside a present `export` member keeps its own refusal.
+    if selection == ExportSelection::Ordinary
+        && document.get("format").and_then(Value::as_str)
+            == Some(fsl_foundation::wire_format::WireFormat::RunRequest.as_str())
     {
-        return Err(RunCause::Format);
-    }
-    let required = selection.member();
-    if document
-        .get("request")
-        .and_then(|body| body.get(required))
-        .is_none()
-    {
-        return Err(RunCause::ClauseRequest {
-            member: required.to_owned(),
-            reason: format!("the selected export invocation requires {required}"),
-        });
-    }
-    run_document(directory, bytes, document, limits, overrides)?.ok_or_else(|| {
-        RunCause::ClauseRequest {
-            member: required.to_owned(),
-            reason: format!("the selected export invocation requires {required}"),
+        if let Some(member) = document
+            .get("request")
+            .and_then(Value::as_object)
+            .and_then(|body| body.get("export"))
+        {
+            let given = overrides
+                .limits
+                .map(|limits| limits.export)
+                .unwrap_or_default();
+            request::read(member, &given)?;
         }
+    }
+    super::request_shape::admit(super::request_shape::Family::Export(selection), bytes)?;
+    if let Some(result) = run_document(directory, bytes, document, limits, overrides)? {
+        return Ok(result);
+    }
+    // No `export` member to run: the request's own reader names its defect.
+    let compile = request_without_export(
+        bytes,
+        fsl_foundation::wire_format::WireFormat::CompileRequest,
+    )?;
+    let _: wire::CompileRequest = super::request(&compile)?;
+    Err(RunCause::ClauseRequest {
+        member: "/request".to_owned(),
+        reason: "expected an object".to_owned(),
     })
 }
 

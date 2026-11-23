@@ -76,6 +76,7 @@ pub fn analyze(
             Stop::DemandPoints => IncompleteCause::LimitReached {
                 limit: ModelCheckLimit::ScheduleMaxDemandPoints,
                 value: limits.max_demand_points,
+                required: None,
             },
         })
     })

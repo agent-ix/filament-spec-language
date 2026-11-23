@@ -1924,3 +1924,68 @@ fn a_certificate_unchecked_cause_reads_without_task_search_evidence() {
     ));
     assert!(read.task_search.is_none());
 }
+
+// FR-192-AC-9 reader clause is tracked by QSL-2944 and left untagged: the
+// only reader refuses every `verdict` at entry (planner/entry.rs).
+/// FSpec FR-331-AC-67 (the amended `required` as an exact decimal string): a
+/// fixed-N statistical preflight `limit-reached` cause carries `required`,
+/// a positive integer as canonical decimal text, which the entry reader
+/// admits at any size and the settled wire keeps; a zero, signed,
+/// zero-padded or non-text `required` is refused.
+#[trace("FSpec-FR-331-AC-67")]
+#[test]
+fn a_preflight_limit_reached_cause_carries_its_required_count() {
+    let declaration = declaration();
+    let cause = |required: Value| {
+        json!({"result": "incomplete", "cause": {
+            "type": "limit-reached",
+            "limit": "max_samples",
+            "value": 1_000_000,
+            "setting": "statistical.max_samples",
+            "required": required,
+        }})
+    };
+
+    for required in ["9210341", "123456789012345678901234567890"] {
+        let mut request = request_for(&declaration);
+        set_entry(
+            &mut request,
+            FRAME,
+            frame_entry(&declaration, cause(json!(required))),
+        );
+        let result = settled(&declaration, &request);
+        assert_eq!(result.value, PlannerValue::Incomplete);
+        assert_eq!(
+            result.to_wire().expect("wire")["cause"],
+            json!({
+                "type": "limit-reached",
+                "limit": "max_samples",
+                "value": 1_000_000,
+                "setting": "statistical.max_samples",
+                "required": required,
+            })
+        );
+    }
+
+    for required in [
+        json!(""),
+        json!("0"),
+        json!("-5"),
+        json!("007"),
+        json!("1.5"),
+        json!(9_210_341),
+    ] {
+        let mut refused = request_for(&declaration);
+        set_entry(
+            &mut refused,
+            FRAME,
+            frame_entry(&declaration, cause(required.clone())),
+        );
+        let (code, _, pointer) = refusal(&declaration, &refused);
+        assert_eq!(
+            (code, pointer.ends_with("/cause/required")),
+            ("invalid_result", true),
+            "{required}"
+        );
+    }
+}

@@ -30,7 +30,7 @@ pub struct ProbabilisticReadFault(pub &'static str);
 
 fn bound(term: &CheckedTerm, position: usize) -> Option<&CheckedTerm> {
     match term {
-        CheckedTerm::Aggregate { members } => match members.get(position)? {
+        CheckedTerm::Aggregate { members, .. } => match members.get(position)? {
             CheckedTerm::Binding { value, .. } => Some(value),
             _ => None,
         },
@@ -40,7 +40,7 @@ fn bound(term: &CheckedTerm, position: usize) -> Option<&CheckedTerm> {
 
 fn members(term: &CheckedTerm) -> Option<&[CheckedTerm]> {
     match term {
-        CheckedTerm::Aggregate { members } => Some(members),
+        CheckedTerm::Aggregate { members, .. } => Some(members),
         _ => None,
     }
 }

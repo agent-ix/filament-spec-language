@@ -608,7 +608,7 @@ dependencies = [
 [[package]]
 name = "filament-contract-model"
 version = "0.1.2"
-source = "git+https://github.com/agent-ix/filament-contract-ir?rev=14c06b047b6a3b23a4da53723574ad7ce49ba246#14c06b047b6a3b23a4da53723574ad7ce49ba246"
+source = "git+https://github.com/agent-ix/filament-contract-ir?rev=30d96b9c6cac6e1d9053dba665a40b3d92c53da5#30d96b9c6cac6e1d9053dba665a40b3d92c53da5"
 dependencies = [
  "filament-exact",
  "filament-semantic-value",
@@ -742,7 +742,7 @@ dependencies = [
 [[package]]
 name = "filament-specification-qualification"
 version = "0.1.1"
-source = "git+https://github.com/agent-ix/filament-specification?rev=01f8dd31b8cc540418a4858543aed7231a1ed1ee#01f8dd31b8cc540418a4858543aed7231a1ed1ee"
+source = "git+https://github.com/agent-ix/filament-specification?rev=3200a4ed7f18fbbf5d934c22d3c3fa467914ddca#3200a4ed7f18fbbf5d934c22d3c3fa467914ddca"
 
 [[package]]
 name = "filament-verification-contracts"
@@ -873,6 +873,7 @@ dependencies = [
  "fsl-forms",
  "fsl-foundation",
  "fsl-package",
+ "fsl-proptest-policy",
  "fsl-replay",
  "fsl-route",
  "fsl-semantics",
@@ -949,9 +950,12 @@ name = "fsl-cst"
 version = "0.1.0"
 dependencies = [
  "filament-exact",
+ "fsl-cst",
  "fsl-foundation",
+ "fsl-proptest-policy",
  "ix-trace-rs",
  "logos",
+ "proptest",
  "serde_json",
 ]
 
@@ -965,11 +969,11 @@ dependencies = [
  "filament-observation",
  "filament-semantic-value",
  "filament-specification-qualification",
- "fsl-bench",
  "fsl-cst",
  "fsl-forms",
  "fsl-foundation",
  "fsl-package",
+ "fsl-proptest-policy",
  "fsl-semantics",
  "ix-trace-rs",
  "proc-macro2",
@@ -1003,8 +1007,10 @@ version = "0.1.0"
 dependencies = [
  "filament-exact",
  "filament-semantic-value",
+ "fsl-proptest-policy",
  "hashbrown 0.17.1",
  "ix-trace-rs",
+ "proptest",
  "quire-canonical",
  "serde",
  "serde_json",
@@ -1105,6 +1111,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "fsl-proptest-policy"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+]
+
+[[package]]
 name = "fsl-replay"
 version = "0.3.0"
 dependencies = [
@@ -1116,6 +1129,7 @@ dependencies = [
  "filament-observation",
  "filament-semantic-value",
  "filament-specification-qualification",
+ "fsl-bench",
  "fsl-cst",
  "fsl-eval",
  "fsl-forms",
@@ -1128,6 +1142,7 @@ dependencies = [
  "num-bigint",
  "num-integer",
  "num-traits",
+ "proptest",
  "quire-canonical",
  "serde",
  "serde_json",

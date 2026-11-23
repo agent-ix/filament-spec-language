@@ -5,12 +5,13 @@
 //! arithmetic; it calls no `fsl-eval` code).
 //!
 //! Every property runs 1,000 cases under the fixed seed of
-//! `fsl_bench::prop::config`.
+//! `fsl_proptest_policy::config` (the near-miss negative runs 256).
 //!
 //! Families generated: `Integer`, `Int[..]` (parameters and refused results),
 //! `div`/`rem` under each division law (euclidean, floor, truncating) and
-//! `mod`, `Rational`, `Decimal` under each of the six rounding modes (`+`,
-//! `-`, `*`, guarded `/`, negation, comparison), `Boolean`, `Text` length and
+//! `mod`, `Rational` (nested `+`, `-`, `*`, `/` by a zero-free parameter,
+//! negation, comparison), `Decimal` under each of the six rounding modes (`+`,
+//! `-`, `*`, `/`, negation, comparison), `Boolean`, `Text` length and
 //! comparison, `Option`, records, tuples, and the aggregates `sum`, `count`,
 //! `min` and `max` (as `reduce`), `exists`, `forall` over `Sequence`, `Set`
 //! and `Bag`.
@@ -26,18 +27,20 @@
 //!   must be refused at check under `Linked` (`unproved-nonzero`) and is
 //!   evaluated under `Kernel`. The well-typed divisors are a nonzero literal,
 //!   a parameter whose declared range excludes zero, or a parameter under an
-//!   exact `!= 0` guard whose declared range spans zero. (A guard on a
-//!   parameter whose range already excludes zero is refused `unproved-range`,
-//!   so it is not generated.)
+//!   exact `!= 0` guard whose declared range spans zero. A guard on a
+//!   parameter whose range already excludes zero is not generated: the
+//!   literal `0` in `c != 0` is typed into `c`'s interval and the checker
+//!   refuses it `unproved-range` (proved [0, 0], required `c`'s interval).
 //! - `Decimal` division in the well-typed generator is by a nonzero
 //!   `decimal(c, T)` literal only: `Linked` answers `unproved-nonzero` for a
 //!   parameter divisor, and a `!= decimal(0, T)` guard does not discharge it.
 //!   A parameter divisor is generated for the refusal properties.
-//! - `Rational` arithmetic is one operation on typed leaves (a nested
-//!   operation has no declared domain, so it is `unproved-rational-range`).
-//!   A `rational(0, 1)` literal is not generated: `rational(0, 1) / d` with
+//! - A `rational(0, 1)` literal is not generated: `rational(0, 1) / d` with
 //!   `d: Rational[1, 20; 1, 9]` is refused `unproved-rational-range` although
-//!   `rational(1, 1) / d` is proved.
+//!   `rational(1, 1) / d` is proved. Only the root of a rational expression is
+//!   typed at the declared domain; an intermediate typed at the wide domain
+//!   (for example by a `let`) is refused correctly (FR-495-AC-14), so a `let`
+//!   binds only a root.
 //! - `min` and `max` are `reduce` over a `Sequence` only: `reduce` over a
 //!   `Set` or `Bag` is refused `operator-ineligible`.
 //! - Equality of two integers or text lengths is written over
@@ -51,15 +54,17 @@ use filament_exact::{
     ScalarLimits, TextPayload, TextProfile, TextType, Undefined, Value, ValueType,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
-use fsl_bench::prop::{self, value::VALUE_HEADER};
+use fsl_proptest_policy as prop;
+use ix_trace_rs::trace;
+use fsl_proptest_policy::value::VALUE_HEADER;
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::PackageDeclarations;
+use fsl_semantics::check::{CheckRefusal, PackageDeclarations};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use proptest::prelude::{any, BoxedStrategy, Just, Strategy};
 use proptest::prop_oneof;
 use proptest::test_runner::{TestCaseError, TestError};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 
 const UNLIMITED: ScalarLimits = ScalarLimits {
@@ -369,29 +374,65 @@ struct Case {
     args: Vec<Arg>,
     expected: Ref<String>,
     operators: usize,
+    /// The rounding mode of a decimal operation that discarded a nonzero digit.
+    rounded: Option<&'static str>,
 }
 
-fn unit(law: Law, declarations: &str, parameters: &str, result: &str, body: &str) -> String {
+/// A unit; `law` selects the integer-division profile, which only `div` and
+/// `rem` need.
+fn unit(
+    law: Option<Law>,
+    declarations: &str,
+    parameters: &str,
+    result: &str,
+    body: &str,
+) -> String {
+    let profile = law.map_or_else(String::new, |law| {
+        format!(
+            "profile d = \"filament.value.integer-division.{}/v1\";\n",
+            law.name()
+        )
+    });
     format!(
-        "{VALUE_HEADER}profile d = \"filament.value.integer-division.{}/v1\";\n\
-         {declarations}function f using v({parameters}): {result} pure {{ {body} }}\n",
-        law.name()
+        "{VALUE_HEADER}{profile}{declarations}function f using v({parameters}): {result} pure {{ {body} }}\n"
     )
 }
 
-/// A source that failed before evaluation, or the evaluator's answer.
-fn try_compile(source: &str, mode: CheckMode) -> Result<CheckedPackage, String> {
+/// Why a source did not compile: before the checker, or by its refusals.
+enum Failure {
+    Front(String),
+    Refused(Vec<CheckRefusal>),
+}
+
+impl Failure {
+    fn text(&self) -> String {
+        match self {
+            Failure::Front(text) => text.clone(),
+            Failure::Refused(refusals) => format!(
+                "check: {:?}",
+                refusals
+                    .iter()
+                    .map(|r| format!("{:?}", r.cause))
+                    .collect::<Vec<_>>()
+            ),
+        }
+    }
+}
+
+/// The source compiled to a checked, linked package, or why it did not.
+fn compile(source: &str, mode: CheckMode) -> Result<CheckedPackage, Failure> {
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("agent-ix", "value-properties"),
         "value.native",
         source.as_bytes(),
         fsl_cst::Limits::default(),
     )
-    .map_err(|d| format!("parse: {d:?}"))?;
+    .map_err(|d| Failure::Front(format!("parse: {d:?}")))?;
     if !parsed.is_admissible() {
-        return Err(format!("parse: {:?}", parsed.diagnostics()));
+        return Err(Failure::Front(format!("parse: {:?}", parsed.diagnostics())));
     }
-    let unit = fsl_forms::build_unit(&parsed).map_err(|e| format!("forms: {e:?}"))?;
+    let unit =
+        fsl_forms::build_unit(&parsed).map_err(|e| Failure::Front(format!("forms: {e:?}")))?;
     PackageDeclarations::assemble(
         parsed.source().reference().clone(),
         "value-properties".to_owned(),
@@ -399,22 +440,19 @@ fn try_compile(source: &str, mode: CheckMode) -> Result<CheckedPackage, String> 
         Vec::new(),
         Vec::new(),
     )
-    .map_err(|e| format!("assemble: {e:?}"))?
+    .map_err(|e| Failure::Front(format!("assemble: {e:?}")))?
     .check(
         mode,
         CheckingLimits::default(),
         &fsl_eval::value::S6aRewardEvaluator,
     )
     .map(CheckedPackage::link)
-    .map_err(|refusals| {
-        format!(
-            "check: {:?}",
-            refusals
-                .iter()
-                .map(|r| format!("{:?}", r.cause))
-                .collect::<Vec<_>>()
-        )
-    })
+    .map_err(Failure::Refused)
+}
+
+/// [`compile`] with the failure as text.
+fn try_compile(source: &str, mode: CheckMode) -> Result<CheckedPackage, String> {
+    compile(source, mode).map_err(|failure| failure.text())
 }
 
 /// The evaluator's answer for `args`, in the reference's terms.
@@ -449,8 +487,8 @@ fn mode_of(case: &Case) -> CheckMode {
     }
 }
 
-/// `Ok(true)` when the reference returned a value and the evaluator agreed,
-/// `Ok(false)` when both refused alike, and the full report otherwise.
+/// `Ok(Ok(()))` when the reference returned a value and the evaluator agreed,
+/// `Ok(Err(refusal))` when both refused alike, and the full report otherwise.
 fn agree(case: &Case) -> Result<Ref<()>, String> {
     let package = try_compile(&case.source, mode_of(case)).map_err(|e| {
         format!(
@@ -875,7 +913,7 @@ fn int_cases(refusing: bool, mutation: Mutation) -> BoxedStrategy<Case> {
             };
             Case {
                 family: "integer",
-                source: unit(law, "", &parameter_list, &result, &body),
+                source: unit(Some(law), "", &parameter_list, &result, &body),
                 kernel: refusing,
                 args: [params.0, params.1, params.2, params.3]
                     .iter()
@@ -883,6 +921,7 @@ fn int_cases(refusing: bool, mutation: Mutation) -> BoxedStrategy<Case> {
                     .collect(),
                 expected,
                 operators,
+                rounded: None,
             }
         })
         .boxed()
@@ -986,32 +1025,29 @@ fn binary(op: Op, left: Qe, right: Qe) -> Qe {
     Qe::Bin(op, Box::new(left), Box::new(right))
 }
 
-/// One operation on typed leaves. Rational arithmetic is only provable against
-/// a declared result domain, so a node never nests another operation.
+/// Nested rational operations. Only the root is typed at the declared domain;
+/// the checker infers each intermediate interval exactly.
 fn qe_strategy(unguarded: bool) -> BoxedStrategy<Qe> {
     let literal = (1i64..=6, 1i64..=5).prop_map(|(n, d)| {
         let (n, d) = reduce(i128::from(n), i128::from(d));
         Qe::Lit(i64::try_from(n).unwrap(), i64::try_from(d).unwrap())
     });
     let leaf = prop_oneof![literal, (0usize..3).prop_map(Qe::Param)];
-    let op = proptest::sample::select(vec![Op::Add, Op::Subtract, Op::Multiply]);
-    let nodes = prop_oneof![
-        leaf.clone(),
-        leaf.clone().prop_map(negate),
-        (op, leaf.clone(), leaf.clone()).prop_map(|(op, l, r)| binary(op, l, r)),
-    ]
-    .boxed();
-    if unguarded {
+    leaf.prop_recursive(2, 8, 2, move |inner| {
+        let op = proptest::sample::select(vec![Op::Add, Op::Subtract, Op::Multiply]);
         // A parameter divisor can be zero, so it is a `Kernel` case.
+        let safe = if unguarded {
+            any::<bool>().boxed()
+        } else {
+            Just(true).boxed()
+        };
         prop_oneof![
-            3 => nodes,
-            1 => (leaf, 0usize..3, any::<bool>())
-                .prop_map(|(l, p, safe)| Qe::Div(Box::new(l), p, safe)),
+            inner.clone().prop_map(negate),
+            (op, inner.clone(), inner.clone()).prop_map(|(op, l, r)| binary(op, l, r)),
+            (inner, 0usize..3, safe).prop_map(|(l, p, safe)| Qe::Div(Box::new(l), p, safe)),
         ]
-        .boxed()
-    } else {
-        nodes
-    }
+    })
+    .boxed()
 }
 
 /// The node as a value of domain `target`: an operation is typed by its
@@ -1098,11 +1134,12 @@ fn rat_cases(refusing: bool) -> BoxedStrategy<Case> {
                 };
                 Case {
                     family: "rational",
-                    source: unit(Law::Euclidean, declarations, parameter_list, &result, &body),
+                    source: unit(None, declarations, parameter_list, &result, &body),
                     kernel: refusing,
                     args: env.iter().map(|(n, d)| Arg::Rat(*n, *d)).collect(),
                     expected,
                     operators,
+                    rounded: None,
                 }
             },
         )
@@ -1160,6 +1197,8 @@ struct DecType {
     min_scale: u32,
     scale: u32,
     mode: &'static str,
+    /// Set when an operation had to round (a `*` or `/` left a nonzero digit).
+    rounded: Cell<bool>,
 }
 
 impl DecType {
@@ -1186,6 +1225,7 @@ impl DecType {
     /// Place the exact quotient `n/d` (`d` positive) at the declared scale.
     fn place(&self, n: i128, d: i128) -> Ref<i128> {
         let scaled = n * 10i128.pow(self.scale);
+        self.rounded.set(self.rounded.get() || scaled.rem_euclid(d) != 0);
         let units = round_units(scaled, d, self.mode).ok_or(Refuse::DecimalInexact)?;
         if self.admits(units) {
             Ok(units)
@@ -1280,6 +1320,7 @@ fn dec_cases(refusing: bool) -> BoxedStrategy<Case> {
                     min_scale: if lift { scale } else { 0 },
                     scale,
                     mode,
+                    rounded: Cell::new(false),
                 };
                 // Members of the declared type, retained at its maximum scale.
                 let env = [coefficients[0], coefficients[1], coefficients[2]].map(|c| {
@@ -1322,11 +1363,12 @@ fn dec_cases(refusing: bool) -> BoxedStrategy<Case> {
                 };
                 Case {
                     family: "decimal",
-                    source: unit(Law::Euclidean, &declarations, parameter_list, result, &body),
+                    source: unit(None, &declarations, parameter_list, result, &body),
                     kernel: refusing,
                     args: env.iter().map(|c| Arg::Dec(*c, ty.scale)).collect(),
                     expected,
                     operators,
+                    rounded: ty.rounded.get().then_some(ty.mode),
                 }
             },
         )
@@ -1456,7 +1498,7 @@ fn text_cases() -> BoxedStrategy<Case> {
             Case {
                 family: "text",
                 source: unit(
-                    Law::Euclidean,
+                    None,
                     "",
                     "t: Text[0, 16; unicode-scalars], u: Text[0, 16; unicode-scalars]",
                     "Boolean",
@@ -1466,6 +1508,7 @@ fn text_cases() -> BoxedStrategy<Case> {
                 args: vec![Arg::Text(t), Arg::Text(u)],
                 expected: Ok(show(&Rv::Bool(tb_eval(&expression, &texts)))),
                 operators: tb_operators(&expression),
+                rounded: None,
             }
         })
         .boxed()
@@ -1572,7 +1615,7 @@ fn compound_cases() -> BoxedStrategy<Case> {
             Case {
                 family: "compound",
                 source: unit(
-                    Law::Euclidean,
+                    None,
                     declarations,
                     "a: Int[-9, 9], b: Int[-9, 9], o: Option<Int[-9, 9]>",
                     &result,
@@ -1590,6 +1633,7 @@ fn compound_cases() -> BoxedStrategy<Case> {
                 ],
                 expected: Ok(expected),
                 operators: ie_operators(&first),
+                rounded: None,
             }
         })
         .boxed()
@@ -1648,7 +1692,7 @@ fn aggregate_source(kind: CollKind, aggregate: Aggregate) -> String {
     } else {
         "type A = Integer;\n"
     };
-    unit(Law::Euclidean, alias, &parameters, result, &body)
+    unit(None, alias, &parameters, result, &body)
 }
 
 /// The fold of `items` (the reference), independent of the order given.
@@ -1732,6 +1776,7 @@ fn aggregate_as_case(case: &AggregateCase) -> Case {
         }],
         expected: Ok(aggregate_reference(case.aggregate, &case.items)),
         operators: 1,
+        rounded: None,
     }
 }
 
@@ -1798,6 +1843,7 @@ fn parse(source: &str) -> Result<fsl_cst::ParsedSource, String> {
     }
 }
 
+#[trace("FR-003-AC-1")]
 #[test]
 fn p1_format_round_trip_keeps_the_tree() {
     prop::run(
@@ -1827,6 +1873,7 @@ fn p1_format_round_trip_keeps_the_tree() {
 
 // ---------------------------------------------------------------- P2
 
+#[trace("FR-091-AC-13")]
 #[test]
 fn p2_generated_well_typed_expressions_check() {
     let sources = prop_oneof![
@@ -1849,6 +1896,7 @@ fn p2_generated_well_typed_expressions_check() {
 
 // ---------------------------------------------------------------- P3
 
+#[trace("FR-091-AC-13")]
 #[test]
 fn p3_evaluator_matches_the_exact_reference() {
     let families = RefCell::new(BTreeMap::<&'static str, usize>::new());
@@ -1887,9 +1935,11 @@ fn p3_evaluator_matches_the_exact_reference() {
 
 // ---------------------------------------------------------------- P4
 
+#[trace("FR-495-AC-3", "FR-495-AC-17")]
 #[test]
 fn p4_refusals_agree_with_the_reference() {
     let seen = RefCell::new(BTreeMap::<Refuse, usize>::new());
+    let rounding = RefCell::new(BTreeMap::<&'static str, usize>::new());
     prop::run(
         "p4_refusals_agree_with_the_reference",
         prop::config(1000),
@@ -1899,10 +1949,22 @@ fn p4_refusals_agree_with_the_reference() {
             if let Err(refusal) = outcome {
                 *seen.borrow_mut().entry(refusal).or_default() += 1;
             }
+            if let Some(mode) = case.rounded {
+                *rounding.borrow_mut().entry(mode).or_default() += 1;
+            }
             Ok(())
         },
     )
     .unwrap();
+    // Each rounding mode meets a `*` or `/` that discards a nonzero digit (for
+    // `exact` that is the refusal), so no mode is checked only on exact results.
+    let rounding = rounding.into_inner();
+    for mode in MODES {
+        assert!(
+            rounding.get(mode).copied().unwrap_or(0) >= 5,
+            "mode {mode} met a rounding operation too rarely: {rounding:?}"
+        );
+    }
     let seen = seen.into_inner();
     for refusal in [
         Refuse::DivisionByZero,
@@ -1920,6 +1982,7 @@ fn p4_refusals_agree_with_the_reference() {
 
 // ---------------------------------------------------------------- P5
 
+#[trace("FR-701-AC-1")]
 #[test]
 fn p5_aggregates_equal_the_reference_fold_in_any_order() {
     prop::run(
@@ -1981,20 +2044,40 @@ fn reference_mutation_is_caught() {
     assert!(reason.message().contains("reference"), "{reason}");
 }
 
+#[trace("FR-495-AC-3")]
 #[test]
 fn near_miss_is_never_evaluated_to_a_value() {
-    // The shared near misses: refused at check, and no value under `Kernel`.
+    // The shared near misses: refused at check with the authored code and
+    // cause, and no value under `Kernel`.
+    let kernel_runs = Cell::new(0u32);
     prop::run(
         "near_miss_is_never_evaluated_to_a_value",
         prop::config(256),
         &prop::near_miss::near_misses(),
         |miss| {
-            proptest::prop_assert!(
-                try_compile(&miss.source, CheckMode::Linked).is_err(),
-                "{}",
-                miss.source
-            );
-            if let Ok(package) = try_compile(&miss.source, CheckMode::Kernel) {
+            let refusals = match compile(&miss.source, CheckMode::Linked) {
+                Err(Failure::Refused(refusals)) => refusals,
+                Err(other) => {
+                    return Err(TestCaseError::fail(format!(
+                        "refused before the checker: {}\n{}",
+                        other.text(),
+                        miss.source
+                    )))
+                }
+                Ok(_) => {
+                    return Err(TestCaseError::fail(format!("accepted:\n{}", miss.source)))
+                }
+            };
+            for refusal in &refusals {
+                proptest::prop_assert_eq!(
+                    (refusal.cause.code().as_str(), refusal.cause.cause()),
+                    (miss.code, Some(miss.cause)),
+                    "{}",
+                    miss.source
+                );
+            }
+            if let Ok(package) = compile(&miss.source, CheckMode::Kernel) {
+                kernel_runs.set(kernel_runs.get() + 1);
                 proptest::prop_assert!(
                     evaluate(&package, &[]).is_err(),
                     "a value for {}",
@@ -2005,8 +2088,16 @@ fn near_miss_is_never_evaluated_to_a_value() {
         },
     )
     .unwrap();
+    // `OutOfRange` and `DivisionByZero` (two of the three families) compile
+    // under `Kernel`; the evaluation half must have run for them.
+    assert!(
+        kernel_runs.get() >= 100,
+        "only {} near misses reached the evaluator",
+        kernel_runs.get()
+    );
     // A divisor range that spans zero (`mod`, `rem` and `div`): `Linked`
     // refuses `unproved-nonzero`, and under `Kernel` the zero divisor has no value.
+    let kernel_runs = Cell::new(0u32);
     prop::run(
         "near_miss_zero_spanning_divisor",
         prop::config(256),
@@ -2019,21 +2110,30 @@ fn near_miss_is_never_evaluated_to_a_value() {
         ),
         |(law, op, dividend, lower, upper)| {
             let source = unit(
-                law,
+                Some(law),
                 "",
                 &format!("a: Int[-20, 20], b: Int[{lower}, {upper}]"),
                 "Integer",
                 &format!("a {op} b"),
             );
-            match try_compile(&source, CheckMode::Linked) {
-                Err(message) => proptest::prop_assert!(
-                    message.contains("Nonzero"),
-                    "wrong refusal: {message}\n{source}"
-                ),
+            match compile(&source, CheckMode::Linked) {
+                Err(Failure::Refused(refusals)) => {
+                    proptest::prop_assert!(!refusals.is_empty(), "{source}");
+                    for refusal in &refusals {
+                        proptest::prop_assert_eq!(
+                            (refusal.cause.code().as_str(), refusal.cause.cause()),
+                            ("undefined_expression", Some("unproved-nonzero")),
+                            "{}",
+                            source
+                        );
+                    }
+                }
+                Err(other) => proptest::prop_assert!(false, "{}\n{source}", other.text()),
                 Ok(_) => proptest::prop_assert!(false, "accepted:\n{source}"),
             }
             let package = try_compile(&source, CheckMode::Kernel)
                 .map_err(|e| TestCaseError::fail(format!("{e}\n{source}")))?;
+            kernel_runs.set(kernel_runs.get() + 1);
             proptest::prop_assert_eq!(
                 evaluate(&package, &[Arg::Int(dividend), Arg::Int(0)]),
                 Err(Refuse::DivisionByZero),
@@ -2044,4 +2144,33 @@ fn near_miss_is_never_evaluated_to_a_value() {
         },
     )
     .unwrap();
+    assert_eq!(kernel_runs.get(), 256, "every zero-spanning case is evaluated");
+}
+
+#[test]
+fn probe_timing() {
+    use proptest::strategy::ValueTree;
+    let mut runner = proptest::test_runner::TestRunner::new(prop::config(1));
+    let strategy = well_typed_cases();
+    let mut sources = Vec::new();
+    let t = std::time::Instant::now();
+    for _ in 0..200 {
+        sources.push(strategy.new_tree(&mut runner).unwrap().current());
+    }
+    eprintln!("gen 200: {:?}", t.elapsed());
+    let t = std::time::Instant::now();
+    let parsed: Vec<_> = sources.iter().map(|c| parse(&c.source).unwrap()).collect();
+    eprintln!("parse 200: {:?}", t.elapsed());
+    let t = std::time::Instant::now();
+    for p in &parsed { fsl_cst::format::format(p).unwrap(); }
+    eprintln!("format 200: {:?}", t.elapsed());
+    let t = std::time::Instant::now();
+    for p in &parsed { production_tree(p); }
+    eprintln!("tree 200: {:?}", t.elapsed());
+    let t = std::time::Instant::now();
+    let pk: Vec<_> = sources.iter().filter_map(|c| try_compile(&c.source, mode_of(c)).ok()).collect();
+    eprintln!("compile(parse+check) 200: {:?} ({})", t.elapsed(), pk.len());
+    let t = std::time::Instant::now();
+    for (c, p) in sources.iter().zip(&pk) { let _ = evaluate(p, &c.args); }
+    eprintln!("eval 200: {:?}", t.elapsed());
 }

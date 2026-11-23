@@ -235,6 +235,7 @@ pub(crate) fn analyze_under(
     match command::analyze_with_providers_and_limits(
         path,
         limits,
+        &command::CommandLimits::analyze(),
         &crate::negotiation::Fr290,
         Vec::new(),
         options,
@@ -346,6 +347,10 @@ pub(crate) fn monitor_under(path: &Path, records: &[u8], cancel: &Cancel) -> Str
             options: &ProviderOptions::default(),
         },
         RunLimits::default(),
+        &command::CommandLimits::monitor(command::MonitorPreparationLimits {
+            work: 16_777_216,
+            storage: 268_435_456,
+        }),
         cancel,
     );
     match summary {

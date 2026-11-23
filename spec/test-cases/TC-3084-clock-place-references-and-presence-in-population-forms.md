@@ -19,6 +19,7 @@ reference, and that the remaining wrong forms refuse with typed causes.
 Scope: FR-1040-AC-1 to FR-1040-AC-9.
 Step 7 also verifies FR-230-AC-43's exact encoding vector and
 FR-230-AC-49's tagged nested-collection indices.
+Step 8 verifies FR-230-AC-71's kernel value form on both routes.
 
 ## Test Procedure
 
@@ -89,6 +90,17 @@ refinement rows.
    control to `FR-230-AC-43` and the nested-collection controls to
    `FR-230-AC-49`, additionally to the `FR-1040-AC-9` cases above.
 
+8. Through both the source and bare checked routes, admit TC-464 steps 7
+   and 8's `Call` snapshot and evaluate `ref(self.x)`; read the kernel
+   value of `r`, `maybe`, `refs` and the `ref` result, compare each text
+   with the snapshot `key` it was admitted from, and re-emit each value as a
+   snapshot reference. Then admit, one at a time, `r` with a `key` that has
+   one uppercase hex letter, one with prefix `place/v1`, one whose `J` is
+   `[["slot","0","0"]]` over a path with no collection step, one whose
+   `S` names another authenticated declaration scope, one whose `P` names
+   another population declaration, and the stored `x` identity after `x` is
+   removed. Bind these cases to `FR-230-AC-71`.
+
 ## Expected Results
 
 - Steps 1, 2 and 5: each form checks and lowers to the nodes stated, with no
@@ -127,6 +139,14 @@ refinement rows.
   The concrete text equals FR-230-AC-43's literal on both routes. Nested
   slot selection changes only the corresponding `J` index; every outer
   entry, declared type scope and typed path is unchanged (FR-230-AC-49).
+- Step 8: each value is a filament-exact clock-place reference typed
+  `ValueType::ClockReference` with the population universe and the exact
+  `place/v2` text, never an `ObjectReference`; its text equals the snapshot
+  `key` byte for byte and re-emission gives the same `key`. The three malformed identities and the two foreign-scope
+  identities refuse `invalid_runtime_input`/`invalid-value` at `r`; the
+  removed-`x` identity refuses
+  `dangling_reference`/`absent-target-in-complete-population`. Both routes
+  agree.
 
 Tests: `fsl-semantics/src/check/lowering/tests.rs`
 `ref_of_a_clock_place_with_an_id_lowers`, `clock_place_presence_read_lowers`,

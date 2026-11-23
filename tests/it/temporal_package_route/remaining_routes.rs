@@ -301,6 +301,10 @@ fn public_monitor_streams_settle_the_three_clock_families() {
                 options: &fsl_analyze::provider::ProviderOptions::default(),
             },
             RunLimits::default(),
+            &command::CommandLimits::monitor(command::MonitorPreparationLimits {
+                work: 16_777_216,
+                storage: 268_435_456,
+            }),
             &Cancel::new(),
         )
         .unwrap_or_else(|error| panic!("{records_name}: {error}"));
@@ -345,6 +349,10 @@ fn public_monitor_refuses_a_missing_clause_before_consuming_the_stream() {
             options: &fsl_analyze::provider::ProviderOptions::default(),
         },
         RunLimits::default(),
+        &command::CommandLimits::monitor(command::MonitorPreparationLimits {
+            work: 16_777_216,
+            storage: 268_435_456,
+        }),
         &Cancel::new(),
     )
     .expect_err("the missing clause is refused before input is read");

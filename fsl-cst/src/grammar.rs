@@ -3070,8 +3070,10 @@ fn analysis(g: &mut Grammar) {
             literal("behaviours"),
             opt(s(vec![
                 x("("),
-                r(P::Parameter),
-                star(s(vec![x(","), r(P::Parameter)])),
+                opt(s(vec![
+                    r(P::Parameter),
+                    star(s(vec![x(","), r(P::Parameter)])),
+                ])),
                 x(")"),
             ])),
         ]),

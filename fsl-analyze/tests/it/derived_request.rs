@@ -607,6 +607,7 @@ fn an_untimed_subjects_deadlock_item_settles_on_en1() {
             TerminalValue::Incomplete(IncompleteCause::LimitReached {
                 limit: ModelCheckLimit::MaxStates,
                 value: 1,
+                required: None,
             })
         )
     );

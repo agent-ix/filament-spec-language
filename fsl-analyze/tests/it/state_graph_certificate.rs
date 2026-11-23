@@ -350,6 +350,7 @@ fn the_checker_rejects_altered_rank_certificates() {
     let stopped = TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached {
         limit: ModelCheckLimit::MaxStates,
         value: 2,
+        required: None,
     });
     assert_eq!(checked(&certificate, &limits), stopped);
 }
@@ -508,6 +509,7 @@ fn the_checker_stops_at_its_budgets_and_on_cancellation() {
         TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxStates,
             value: 8,
+            required: None,
         })
     );
     limits.limits.max_states = 9;
@@ -537,6 +539,7 @@ fn the_checker_stops_at_its_budgets_and_on_cancellation() {
         TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxTransitions,
             value: 1,
+            required: None,
         })
     );
 

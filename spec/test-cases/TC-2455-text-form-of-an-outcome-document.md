@@ -20,7 +20,7 @@ Verify `render_outcome`'s text form of FR-286 outcome documents. Scope: FR-865-A
 
 ## Expected Results
 
-- Step 1: the header `check: refusal (exit 20) at S3`, FR-298's diagnostic line, then `  cause: type-mismatch`; the package document is the one line `package: success (exit 0) at S4`.
+- Step 1: the header `check: refusal (exit 20) at stage checking`, FR-298's diagnostic line, then `  cause: type-mismatch`; the package document, whose `result` is `null`, is the one line `package: success (exit 0) at stage packaging`.
 - Step 2: the `result:` lines FR-865-AC-2 states, the item line with its clause and the `undefined-evaluation (division-by-zero)` cause line, and `(exit 11)` in the indeterminate header.
 - Step 3: the diagnostic line begins `src/rule.fsl:`; the compile refusal names the program source's path.
 

@@ -61,6 +61,9 @@ serde_json = { version = "1.0.151", features = ["raw_value", "unbounded_depth"] 
 serde_path_to_error = "0.1.20"
 
 [dev-dependencies]
+# QSL-2063: the shared property-test policy.
+fsl-bench = { path = "../fsl-bench", features = ["property-generators"] }
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
 filament-specification = { workspace = true }
 # FR-400-AC-9: `filament-checked`'s `test-support` (`DeclarationKey::fixture`, ...). Only this
 # dev-dependency enables it; the root crate's `no_shipped_dependency_enables_test_support`

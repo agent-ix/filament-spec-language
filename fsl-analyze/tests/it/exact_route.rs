@@ -151,6 +151,7 @@ fn exact_state_budget_settles_incomplete_through_both_entries() {
         &TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::ExactProbMaxStates,
             value: 1,
+            required: None,
         })
     );
 }

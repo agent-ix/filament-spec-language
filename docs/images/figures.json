@@ -1,0 +1,173 @@
+{
+  "data": {
+    "unit_source": {"from":"regex","path":"examples/config-version/spine_unit.rs","pattern":"(?s)format!\\(\\n(.*?)\",\\n    \\)"},
+    "package_identity": {"from":"regex","path":"examples/config-version/spine_unit.rs","pattern":"PACKAGE_IDENTITY: &str = \"([^\"]+)\";"},
+    "unit_body": {"from":"expr","value":"replace(replace(replace(replace(replace(unit_source, '\\\\\\n', ''), '\\\\\"', '\"'), '{{', '{'), '}}', '}'), '{PACKAGE_IDENTITY:?}', '\"' + package_identity + '\"')"},
+    "unit_statements": {"from":"expr","value":"drop(rsub(squash(split(unit_body, '\\\\n')), '^\"+', ''), '^$|^//|^function')"},
+    "unit_lines": {"from":"expr","value":"split(join(rsub(unit_statements, '^\\s*([^{]*?)\\s*\\{\\s*(.*?)\\s*\\}$', '$1 {\\n  $2\\n}'), '\\n'), '\\n')"},
+    "capability_table": {"from":"regex","path":"fsl-semantics/src/library/bundle.rs","pattern":"(?s)const COMPLETE_CAPABILITY_FAMILIES(.*?)\\];"},
+    "capability_codes": {"from":"expr","value":"findall(capability_table, '\\(\"([A-Z]+)\",\\s*\\d+\\)')"},
+    "capability_counts": {"from":"expr","value":"findall(capability_table, '\\(\"[A-Z]+\",\\s*(\\d+)\\)')"},
+    "capability_total": {"from":"expr","value":"sum(capability_counts)"}
+  },
+  "figures": [
+    {
+      "id": "hero",
+      "width": 980, "height": 336,
+      "let": {
+        "cases": [
+          {"d":"parent 1, child 2","o":"holds","c":"exit 0","r":"logic"},
+          {"d":"parent 3, child 2","o":"violated","c":"exit 10","r":"evidence"},
+          {"d":"parent not in data","o":"refused","c":"exit 20","r":"evidence"},
+          {"d":"population incomplete","o":"incomplete","c":"exit 22","r":"evidence"}
+        ]
+      },
+      "label": "A rule written in FSL, either in a .native file or in a fenced block inside a Markdown spec, is compiled against a domain model into a checked package, then evaluated against data. The result is one of: holds, violated, refused, unsupported or incomplete.",
+      "items": [
+        {"k":"box","at":[0,40,170,56],"role":"code","title":"rule in .native","subs":["ParentOrder"]},
+        {"k":"box","at":[0,116,170,56],"role":"code","title":"rule in Markdown","subs":["```ix:native fence"]},
+        {"k":"box","at":[0,210,170,56],"role":"ink","title":"domain model","subs":["config-version"]},
+        {"k":"box","at":[214,116,140,56],"role":"logic","title":"FSL library","subs":["parse · check"]},
+        {"k":"box","at":[398,116,150,56],"role":"model","title":"checked package","subs":["exact identity"]},
+        {"k":"line","points":[[170,68],[190,68],[190,144],[211,144]],"role":"code"},
+        {"k":"line","points":[[170,144],[211,144]],"role":"code"},
+        {"k":"line","points":[[170,238],[190,238],[190,160],[211,160]],"role":"ink"},
+        {"k":"line","points":[[354,144],[395,144]],"role":"logic"},
+        {"k":"line","points":[[548,144],[572,144]],"role":"model","arrow":false},
+        {"k":"line","points":[[572,32],[572,272]],"role":"model","arrow":false},
+        {"k":"repeat","over":"cases","let":{"y":"=4 + i * 80"},"items":[
+          {"k":"line","points":[[572,"=y + 28"],[597,"=y + 28"]],"role":"model"},
+          {"k":"box","at":[600,"=y",170,56],"role":"ink","title":"evaluate on","subs":["=row.d"]},
+          {"k":"line","points":[[770,"=y + 28"],[807,"=y + 28"]],"role":"=row.r","weight":2.4},
+          {"k":"box","at":[810,"=y",170,56],"role":"=row.r","title":"=row.o","subs":["=row.c"]}
+        ]},
+        {"k":"legend","at":[0,330],"entries":[["code","authored source","box"],["logic","compiler stage","box"],["model","checked package / IR","box"],["evidence","no truth value","box"],["ink","input","box"]]}
+      ]
+    },
+    {
+      "id": "first-rule",
+      "width": 980, "height": 309,
+      "label": "An annotated FSL unit: (1) the header names the language and edition, (2) the profile says which part of the language the rules use, (3) the model line imports a domain package by its identity, (4) invariants must hold for every object, (5) a post rule compares a value after an operation with its value before.",
+      "items": [
+        {"k":"code","at":[0,4,780],"title":"config-version.native","lines":"=unit_lines","wrap":true,
+         "highlight":{"keywords":["language","edition","profile","model","version","invariant","using","on","at","post","pre","implies","not","present","deref","value","reaches"],"keyword":"logic","string":"code","other":"ink"},
+         "callouts":[
+           {"line":"=position(unit_lines, '^language')","n":1,"role":"logic","note":"edition"},
+           {"line":"=position(unit_lines, '^profile')","n":2,"role":"logic","note":"allowed features"},
+           {"line":"=position(unit_lines, '^model')","n":3,"role":"logic","note":"model by identity"},
+           {"line":"=position(unit_lines, '^invariant')","n":4,"role":"logic","note":"every object"},
+           {"line":"=position(unit_lines, '^post')","n":5,"role":"logic","note":"after vs. before"}
+         ]}
+      ]
+    },
+    {
+      "id": "outcomes",
+      "width": 980, "height": 440,
+      "let": {
+        "rows": [
+          {"n":"success","c":"exit 0","w":"the rule holds","y":24,"r":"logic"},
+          {"n":"violation · undefined","c":"exit 10","w":"the rule is broken","y":72,"r":"logic"},
+          {"n":"refused","c":"exit 20","w":"input rejected","y":150,"r":"evidence"},
+          {"n":"unsupported","c":"exit 21","w":"profile can't check it","y":198,"r":"evidence"},
+          {"n":"incomplete · inconclusive","c":"exit 22","w":"data or budget ran out","y":246,"r":"evidence"},
+          {"n":"indeterminate","c":"exit 11","w":"closed evidence is unresolved","y":294,"r":"evidence"},
+          {"n":"pending","c":"exit 0","w":"no violation seen yet","y":342,"r":"evidence"},
+          {"n":"internal failure","c":"exit 30","w":"a bug in FSL","y":390,"r":"evidence"}
+        ]
+      },
+      "label": "Every FSL check ends in exactly one outcome with its own exit code: success 0; violation or undefined 10; indeterminate 11; refused 20; unsupported 21; incomplete or inconclusive 22; internal failure 30; a clause still pending when its trace ends exits 0. Only success and violation are answers about the rule; the others say why no answer was given.",
+      "items": [
+        {"k":"box","at":[0,150,150,56],"role":"logic","title":"a check","subs":["runs"]},
+        {"k":"text","at":[240,14],"text":"AN ANSWER ABOUT THE RULE · TRUTH VALUE IN THE OUTPUT","role":"muted","size":12},
+        {"k":"text","at":[240,140],"text":"NO ANSWER, AND WHY · NO TRUTH VALUE TO MISREAD","role":"muted","size":12},
+        {"k":"repeat","over":"rows","items":[
+          {"k":"box","at":[240,"=row.y",230,40],"role":"=row.r","title":"=row.n"},
+          {"k":"box","at":[500,"=row.y",90,40],"role":"=row.r","title":"=row.c"},
+          {"k":"text","at":[620,"=row.y + 25"],"text":"=row.w","role":"muted","size":13},
+          {"k":"line","points":[[470,"=row.y + 20"],[497,"=row.y + 20"]],"role":"=row.r","arrow":false}
+        ]},
+        {"k":"line","points":[[150,178],[190,178]],"role":"logic","arrow":false},
+        {"k":"line","points":[[190,44],[190,410]],"role":"logic","arrow":false},
+        {"k":"repeat","over":"rows","items":[
+          {"k":"line","points":[[190,"=row.y + 20"],[237,"=row.y + 20"]],"role":"logic"}
+        ]}
+      ]
+    },
+    {
+      "id": "pipeline",
+      "width": 980, "height": 426,
+      "label": "FSL compiles source through a lossless syntax tree and parsed forms into a checked graph, resolving names against domain models and dependency packages, then links a checked package. The package goes three ways: to the reference evaluator, to native model checking, or as checked-package/v2 bytes to Contract IR and proof backends. A counterexample from any engine is replayed through the same compiler and evaluator to confirm it.",
+      "items": [
+        {"k":"box","at":[0,10,140,50],"role":"code","title":"Markdown fence","subs":["extracted bytes"]},
+        {"k":"box","at":[0,116,140,56],"role":"code","title":"source","subs":["bytes + identity"]},
+        {"k":"box","at":[180,116,140,56],"role":"logic","title":"syntax tree","subs":["lossless"]},
+        {"k":"box","at":[360,116,140,56],"role":"logic","title":"parsed forms","subs":["unchecked"]},
+        {"k":"box","at":[540,116,160,56],"role":"logic","title":"checked graph","subs":["typed · defined"]},
+        {"k":"box","at":[500,10,120,50],"role":"ink","title":"domain model","subs":["by identity"]},
+        {"k":"box","at":[640,10,140,50],"role":"ink","title":"dependencies","subs":["checked packages"]},
+        {"k":"box","at":[780,116,200,56],"role":"model","title":"checked package","subs":["identity + source map"]},
+        {"k":"line","points":[[70,60],[70,113]],"role":"code"},
+        {"k":"line","points":[[140,144],[177,144]],"role":"logic"},
+        {"k":"line","points":[[320,144],[357,144]],"role":"logic"},
+        {"k":"line","points":[[500,144],[537,144]],"role":"logic"},
+        {"k":"line","points":[[700,144],[777,144]],"role":"logic"},
+        {"k":"line","points":[[560,60],[560,113]],"role":"ink"},
+        {"k":"line","points":[[690,60],[690,113]],"role":"ink"},
+        {"k":"line","points":[[880,172],[880,214]],"role":"model","arrow":false},
+        {"k":"line","points":[[140,214],[880,214]],"role":"model","arrow":false},
+        {"k":"box","at":[40,256,200,56],"role":"logic","title":"reference evaluation","subs":["five outcomes"]},
+        {"k":"box","at":[300,256,200,56],"role":"logic","title":"model checking","subs":["temporal · protocol"]},
+        {"k":"box","at":[560,256,200,56],"role":"model","title":"Contract IR","subs":["checked-package/v2"]},
+        {"k":"box","at":[800,256,180,56],"role":"model","title":"proof backends","subs":["code · tests · proofs"]},
+        {"k":"line","points":[[140,214],[140,253]],"role":"model"},
+        {"k":"line","points":[[400,214],[400,253]],"role":"model"},
+        {"k":"line","points":[[660,214],[660,253]],"role":"model"},
+        {"k":"note","at":[668,236],"text":"bytes","role":"model"},
+        {"k":"line","points":[[760,284],[797,284]],"role":"model"},
+        {"k":"box","at":[300,366,200,56],"role":"evidence","title":"replay","subs":["recompiled from source"]},
+        {"k":"line","points":[[400,312],[400,363]],"role":"evidence"},
+        {"k":"line","points":[[890,312],[890,394],[503,394]],"role":"evidence"},
+        {"k":"note","at":[700,386],"text":"counterexample","role":"evidence"},
+        {"k":"line","points":[[300,394],[140,394],[140,315]],"role":"evidence"},
+        {"k":"note","at":[150,386],"text":"re-run here","role":"evidence"}
+      ]
+    },
+    {
+      "id": "capabilities",
+      "width": 980, "height": 250,
+      "let": {
+        "names": {"SRC":"source","TYPE":"types","EXPR":"expressions","TEMP":"temporal","PROT":"protocol","RUN":"runtime","BACK":"backend","EVID":"evidence","TOOL":"tooling"}
+      },
+      "label": "The complete 1-draft language is a closed list of capabilities in nine families: source, types, expressions, temporal, protocol, runtime, backend, evidence and tooling.",
+      "items": [
+        {"k":"text","at":[0,16],"text":"{capability_total} CAPABILITIES IN {len(capability_codes)} FAMILIES","role":"muted","size":12},
+        {"k":"columns","at":[0,30,980,216],"values":"=capability_counts","labels":"=pick(names, capability_codes)","role":"logic"}
+      ]
+    },
+    {"id":"ecosystem","construct":{"name":"ecosystem","here":"filament-spec-language"}},
+    {
+      "id": "layers",
+      "width": 980, "height": 420,
+      "let": {
+        "bands": [
+          {"b":"COMMAND LINE","r":"logic","c":[["fsl-replay","replay counterexamples"],["fsl-analyze","model checking"],["filament-driver","the command line"]]},
+          {"b":"EXECUTE","r":"logic","c":[["fsl-eval","reference evaluator"],["fsl-route","backend routing"]]},
+          {"b":"PACKAGE","r":"model","c":[["fsl-package","checked-package/v2"]]},
+          {"b":"CHECK","r":"logic","c":[["fsl-semantics","names · types · definedness"]]},
+          {"b":"PARSE","r":"logic","c":[["fsl-forms","parsed forms"],["fsl-cst","syntax tree · formatter"],["fsl-source","Markdown intake (optional)"]]},
+          {"b":"FOUNDATION","r":"logic","c":[["fsl-foundation","identity · diagnostics"]]},
+          {"b":"SHARED","r":"ink","c":[["filament-exact","exact values"],["filament-semantic-value","semantic values"],["filament-walk","heap-stack walker"],["quire-canonical","canonical JSON"]]}
+        ]
+      },
+      "label": "The FSL workspace in layers, bottom to top: the shared no_std libraries filament-exact, filament-semantic-value, filament-walk and quire-canonical; fsl-foundation; fsl-cst; fsl-forms; fsl-semantics; fsl-package; then fsl-eval and fsl-route; and at the top fsl-replay, fsl-analyze and the filament-driver command line.",
+      "items": [
+        {"k":"repeat","over":"bands","let":{"y":"=i * 60","n":"=len(row.c)","w":"=(980 - 130 - 12 * (len(row.c) - 1)) / len(row.c)"},"items":[
+          {"k":"text","at":[0,"=y + 30"],"text":"=row.b","role":"muted","size":12},
+          {"k":"repeat","over":"=row.c","as":"crate","index":"j","items":[
+            {"k":"box","at":["=round(130 + j * (w + 12))","=y","=round(w)",50],"role":"=row.r","title":"=crate[0]","subs":["=crate[1]"],"dashed":"=crate[0] == 'fsl-source'"}
+          ]}
+        ]}
+      ]
+    }
+  ]
+}

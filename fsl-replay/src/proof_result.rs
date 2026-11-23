@@ -486,6 +486,9 @@ pub enum IncompleteCause {
         limit: ModelCheckLimit,
         /// The value the run used for it.
         value: u64,
+        /// FR-191, FSpec FR-331: the sample count `N` a fixed-N statistical
+        /// method requires, set only by its preflight stop.
+        required: Option<Integer>,
     },
     /// FSpec FR-331: a bounded task-automaton search stopped at a choice it
     /// cannot resolve (continuous demand or jitter, or a full job queue).
@@ -3050,6 +3053,12 @@ mod tests {
             let half = Rational::new(Integer::one(), Integer::from(2_u64)).unwrap();
             TerminalValue::Measured(Box::new(StatisticalVerdict {
                 decision,
+                bound: crate::statistical::VerdictBound {
+                    form: crate::statistical::ClaimForm::Probability,
+                    comparison: crate::statistical::BoundComparison::GreaterOrEqual,
+                    threshold: half.clone(),
+                    level: None,
+                },
                 estimate: None,
                 interval: None,
                 quantile: None,
