@@ -46,3 +46,10 @@ is reachable, and the shape in code-review FND-001 is reachable.
 - Stubs and coverage inflation: none. Both tests assert exact values. Their oracles are weak (code-review FND-004).
 - Semantic review: skipped. The reviewer brief scoped this review; the code-review lane covers intent for the diff.
 - Plan completion: not assessed
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | cc31594f: both new tests are tagged `#[trace("TC-2175", "FR-204-AC-16")]` |
+| FND-002 | fixed | cc31594f: the shape now settles as decided, the outcome FR-204-AC-4/AC-16 already require of zero-delay cycles, so no new user-input outcome is needed; the Retx+spin fixture binds it to FR-204-AC-16 |

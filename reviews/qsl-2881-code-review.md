@@ -92,3 +92,12 @@ away from a leaky one.
 
 Cargo was not run. The titan budget allowed a cargo run only if essential, and the trace is
 direct.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | cc31594f: when `ZeroTimeSolver` returns `Err(FhError::Cycle)`, `solve_collapsed` runs policy iteration over the graph with each end component collapsed to one state. The digital fixture `zero_delay_loop_beside_an_end_component_is_decided` builds the reported shape and settles 1 for both bounds |
+| FND-002 | fixed | cc31594f: the comment now says the branch is the production path for the guardless `Retx` and states the no-closed-class invariant |
+| FND-003 | fixed | cc31594f: the unproducible Deadline test is removed; a real digital Retx+spin product replaces it |
+| FND-004 | fixed | cc31594f: the unit fixture has two actions with distinct Min and Max values (Max 2/3, Min 0) and a reachable reject terminal; it also asserts the policies |
