@@ -165,8 +165,8 @@ FR-121-AC-32 to FR-121-AC-36.
     `{ test/units, big }`. Map each refusal through
     `TerminalValue::from_call_site_refusal`.
 31. Over step 27's unit, select `{ test/units, nope }`; add a record `R` and
-    `function first using v(r: R): Boolean pure { true }` to `test/units` and select
-    `{ test/units, first }`.
+    `function pick using v(r: R): Boolean pure { true }` to `test/units` and select
+    `{ test/units, pick }`.
 
 Tag the tests `#[trace("TC-516", "FR-121-AC-n")]`.
 
@@ -266,6 +266,6 @@ Tag the tests `#[trace("TC-516", "FR-121-AC-n")]`.
   `missing_import/missing-selection`, and maps to `Declined` with
   `InvalidInput` (FR-121-AC-35).
 - Step 31: `nope` refuses `CallSiteRefusal::UnknownImportedFunction`
-  (`missing_declaration/missing-name`) and `first` refuses
+  (`missing_declaration/missing-name`) and `pick` refuses
   `CallSiteRefusal::NotImportable` (`ill_typed/operator-ineligible`), each
   paired with `test/units`'s `package_id` (FR-121-AC-36).

@@ -24,7 +24,7 @@ Through `fsl_command::command::compile_outcome` (`fsl-command/tests/it/cli_contr
 
 1. `call_site` `{test/other, big}` with `test/other` supplied.
 2. The same with `test/absent`, and `test/units` for a unit importing only `test/wrap`.
-3. `{test/units, nope}` and `{test/units, first}` (FR-121-AC-36's fixtures).
+3. `{test/units, nope}` and `{test/units, pick}` (FR-121-AC-36's fixtures).
 4. `{test/units, big}` over the unit that imports it directly.
 5. `null`, a non-object, a missing member, a non-string value, an extra member, `kind` `function`, a model-unit program and an FR-480 array.
 
