@@ -489,9 +489,9 @@ pub(super) enum Lifting {
 /// A field declared `T?` takes `v` from `Some(v)` and stays unset for `none`;
 /// a field declared `Option<T>` takes the option value unchanged, so `none`
 /// stays an explicit `none`. A reference maps to the abstract reference with
-/// the same key, and a whole-population reference row (`Set<Reference<T>>`)
-/// maps element by element. A reference nested in any other value is not
-/// lifted: FR-135 refuses a row whose type nests one.
+/// the same key, and a reference nested in an option, collection or map, a
+/// whole-population reference row (`Set<Reference<T>>`) among them, maps
+/// element by element at every depth.
 fn lift_field(
     refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
@@ -502,38 +502,63 @@ fn lift_field(
     let Some(value) = unwrap_optional(field, value) else {
         return Ok(None);
     };
-    match value {
-        Value::Reference(reference) => {
+    lift_nested(
+        refinement,
+        concrete_system,
+        abstract_system,
+        &field.value_type,
+        value,
+    )
+    .map(Some)
+}
+
+/// `value` as the abstract type `declared` reads it: a reference maps to the
+/// abstract reference with the same key, and an option, a collection or a
+/// map maps its elements the same way at every depth (FR-140, FR-630). Any
+/// other value is unchanged.
+fn lift_nested(
+    refinement: &dyn RefinementRead,
+    concrete_system: &ModelSystem<'_>,
+    abstract_system: &ModelSystem<'_>,
+    declared: &ValueType,
+    value: Value,
+) -> Result<Value, Lifting> {
+    let lift = |declared: &ValueType, value: Value| {
+        lift_nested(refinement, concrete_system, abstract_system, declared, value)
+    };
+    match (value, declared) {
+        (Value::Reference(reference), _) => {
             lift_reference(refinement, concrete_system, abstract_system, &reference)
-                .map(|lifted| Some(Value::Reference(lifted)))
+                .map(Value::Reference)
         }
-        Value::Collection(collection)
-            if collection.collection_type().kind() == CollectionKind::Set
-                && collection
-                    .elements()
-                    .iter()
-                    .all(|element| matches!(element, Value::Reference(_))) =>
-        {
-            let ValueType::Collection(declared) = &field.value_type else {
-                return Err(Lifting::Fault);
-            };
+        (Value::Option(option), ValueType::Option(payload_type)) => {
+            let payload = option
+                .payload()
+                .map(|payload| lift(payload_type, payload.clone()))
+                .transpose()?;
+            Ok(filament_exact::OptionValue::from_admitted(
+                (**payload_type).clone(),
+                payload,
+            ))
+        }
+        (Value::Collection(collection), ValueType::Collection(declared)) => {
             let elements = collection
                 .elements()
                 .iter()
-                .map(|element| match element {
-                    Value::Reference(reference) => {
-                        lift_reference(refinement, concrete_system, abstract_system, reference)
-                            .map(Value::Reference)
-                    }
-                    _ => Err(Lifting::Fault),
-                })
+                .map(|element| lift(declared.element(), element.clone()))
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(Some(filament_exact::from_admitted(
-                (**declared).clone(),
-                elements,
-            )))
+            Ok(filament_exact::from_admitted((**declared).clone(), elements))
         }
-        plain => Ok(Some(plain)),
+        (Value::Map(map), ValueType::Map(declared)) => {
+            let entries = map
+                .entries()
+                .iter()
+                .map(|(key, value)| Ok((key.clone(), lift(declared.values(), value.clone())?)))
+                .collect::<Result<Vec<_>, Lifting>>()?;
+            filament_exact::from_admitted_map((**declared).clone(), entries)
+                .map_err(|_| Lifting::Fault)
+        }
+        (plain, _) => Ok(plain),
     }
 }
 

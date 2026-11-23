@@ -36,8 +36,10 @@ Fixtures: ADR-020 §8's `CasRefinesCounter` unit, with `Spec` local and with
    (FR-135-AC-9); check `RegisterHistory`, whose `history` feature the build
    holds for an `Int[0, 1]` row. The step does not choose a support set; it runs
    only while a feature is unbuilt, and is rewritten when the feature lands.
-6. Check `RingIsQueue` with a nested `Sequence<Reference<Ring>>` row, and
-   with the same field as a plain reference.
+6. Check `RingIsQueue` with a nested `Sequence<Reference<Ring>>[0, 2]` row,
+   an `Option<Reference<Ring>>` row and the same field as a plain reference;
+   then the `Sequence<Reference<Queue>>[0, 2]` field mapped by a
+   `Sequence<Reference<Slot>>[0, 2]` row.
 7. Check `RingIsQueue` with a relationship declared on the abstract `Queue`.
 8. Check `RingIsQueue` in a unit that selects no layer of its own, then with
    a Boolean row naming a protocol of the unit.
@@ -64,8 +66,10 @@ Tag the tests `#[trace("TC-540", "FR-135-AC-n")]`.
 - Step 4: `hidden = [value]`; different node identity and different
   `package_id`.
 - Step 5: `CasTwice` refuses `unsupported_construct`/`not-yet-implemented` at `Twice` naming `protocol-abstract-side`, `CasTwice` and the profile, with no `subject` member; the internal-list refinement refuses the same pair naming `refinement-internal-list`; each classifies `unsupported`; no `CheckedRefinement` for either; `CasRefinesCounter` and `RegisterHistory` check.
-- Step 6: `unsupported_construct`/`not-yet-implemented` at the row's
-  expression; then it checks.
+- Step 6: the sequence, option and plain-reference rows check, each nested
+  reference lifted through the `Queue` from `Ring` row; the `Slot` row refuses
+  `ill_typed`/`type-mismatch` at the row's expression with no
+  `CheckedRefinement`.
 - Step 7: `unsupported_construct`/`declaration-form` at the alias `Q`; no
   `CheckedRefinement`.
 - Step 8: the rows check; then `unsupported_construct`/`expression-form` at

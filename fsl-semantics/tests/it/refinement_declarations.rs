@@ -1090,6 +1090,7 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
                     ("size", INTEGER),
                     ("chain", &ring),
                     ("link", &ring),
+                    ("cargo", &node(NESTED_IMPL, "Slot")),
                     ("box", &node(NESTED_IMPL, "Box")),
                 ],
                 Vec::new(),
@@ -1106,7 +1107,9 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
         if let Some(fields) = declared["fields"].as_array_mut() {
             for member in fields {
                 match member["name"].as_str() {
-                    Some("chain") => *member = shaped(member.clone(), (0, 2, true), "required"),
+                    Some("chain" | "cargo") => {
+                        *member = shaped(member.clone(), (0, 2, true), "required");
+                    }
                     Some("link") => *member = shaped(member.clone(), single, "optional"),
                     _ => {}
                 }
@@ -1132,70 +1135,43 @@ fn nested_refinement(rows: &str) -> String {
 }
 
 /// FR-135-AC-6 (TC-540 step 6): a `Sequence<Reference<Queue>>[0, 2]` field
-/// mapped by a row of type `Sequence<Reference<Ring>>[0, 2]` refuses
-/// `unsupported_construct`/`not-yet-implemented` naming `nested-reference-row`
-/// at the row's expression, and so do an option, a record, a tuple and a
-/// union holding a reference, before any check of the row's type; a
-/// population-reference row `cells = R::slots` checks, as does the same field
-/// as a plain `Reference<Queue>` mapped by `self`.
+/// mapped by a row of type `Sequence<Reference<Ring>>[0, 2]` checks, as do an
+/// `Option<Reference<Ring>>` row for an option field, a population-reference
+/// row `cells = R::slots` and a plain reference mapped by `self`; a
+/// `Sequence<Reference<Slot>>[0, 2]` row, whose element type no object row
+/// maps to `Queue`, refuses `ill_typed`/`type-mismatch` at the row's
+/// expression, as a top-level reference of that type does.
 #[trace("TC-540", "FR-135-AC-6")]
 #[test]
-fn a_row_nesting_a_reference_other_than_a_whole_population_is_unsupported() {
+fn a_row_nesting_a_reference_is_lifted_element_by_element() {
     let (spec, concrete) = nested_models();
     let models = [
         ("Q", NESTED_SPEC, &spec[..]),
         ("R", NESTED_IMPL, &concrete[..]),
     ];
 
-    let graph = check_with(
-        "",
-        &models,
-        &nested_refinement("head = self; cells = R::slots;"),
-    )
-    .unwrap_or_else(|refusals| {
-        panic!(
-            "{:?}",
-            refusals.iter().map(|r| &r.refusal).collect::<Vec<_>>()
-        )
-    });
-    assert_eq!(only_refinement(&graph).objects().len(), 2);
-
-    for (declarations, row, at) in [
-        ("", "chain = self.chain;", "self.chain"),
-        ("", "link = self.link;", "self.link"),
-        ("", "box = self.box;", "self.box"),
-        (
-            "tuple Pair(Reference<R::Ring>, Boolean);",
-            "box = Pair(self, true);",
-            "Pair(self, true)",
-        ),
-        (
-            "union Holder { Empty, Has(Reference<R::Ring>) }",
-            "box = Holder::Has(self);",
-            "Holder::Has(self)",
-        ),
+    for rows in [
+        "head = self; cells = R::slots;",
+        "chain = self.chain;",
+        "link = self.link;",
+        "chain = self.chain; link = self.link; head = self; cells = R::slots;",
     ] {
-        let found = refused(
-            &models,
-            &format!("{declarations}\n{}", nested_refinement(row)),
-        );
-        let nested = only(&found);
-        assert_eq!(
-            nested.code_and_cause(),
-            (Code::UnsupportedConstruct, Some("not-yet-implemented")),
-            "{row}"
-        );
-        assert_eq!(nested.at, at);
-        let RefinementCause::Unsupported {
-            feature,
-            profile, ..
-        } = nested.refinement()
-        else {
-            panic!("an unsupported feature: {:?}", nested.refinement());
-        };
-        assert_eq!(feature.name(), "nested-reference-row");
-        assert_eq!(profile, "filament.temporal.infinite-trace/v1");
+        let graph = check_with("", &models, &nested_refinement(rows)).unwrap_or_else(|refusals| {
+            panic!(
+                "{rows}: {:?}",
+                refusals.iter().map(|r| &r.refusal).collect::<Vec<_>>()
+            )
+        });
+        assert_eq!(only_refinement(&graph).objects().len(), 2, "{rows}");
     }
+
+    let found = refused(&models, &nested_refinement("chain = self.cargo;"));
+    let wrong = only(&found);
+    assert_eq!(
+        wrong.code_and_cause(),
+        (Code::IllTyped, Some("type-mismatch"))
+    );
+    assert_eq!(wrong.at, "self.cargo");
 }
 
 /// FR-135-AC-4 (TC-540 step 4): with the `value` row removed, the refinement

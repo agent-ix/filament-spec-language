@@ -18,7 +18,7 @@ the two `ModelSystem` arguments and the `over_model` refusal, the order in
 which failures are returned, the `only-not-one` reason, and a mapped state
 with no relationship extent.
 
-Scope: FR-140-AC-6 to FR-140-AC-14, FR-120-AC-14.
+Scope: FR-140-AC-6 to FR-140-AC-14, FR-140-AC-16, FR-120-AC-14.
 
 ## Test Procedure
 
@@ -43,6 +43,8 @@ FR-140-AC-7.
    map a state whose synthesized observation hits a broken evaluator invariant,
    with an earlier mapping row whose expression would be undefined for the
    corresponding state with a valid observation.
+10. Map the FR-140-AC-16 variant, then with one ring's `chain` holding a
+    reference to a `SubRing`.
 
 Tag the tests `#[trace("TC-1086", "<AC id>")]`.
 
@@ -68,3 +70,6 @@ Tag the tests `#[trace("TC-1086", "<AC id>")]`.
 - Step 9: the same reported row and object under the row-order permutation;
   for the broken-observation state, `Fault` with the catalog code before any
   row is read, rather than `Undefined` or `Undetermined`.
+- Step 10: `chain` maps to the `Queue` references `[b, a]` in order and `link`
+  to `some(b)`; with the `SubRing` reference, `Undetermined` naming the
+  `chain` row and the holding ring with `UnmappedType(SubRing)`.
