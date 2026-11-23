@@ -128,6 +128,7 @@ pub(crate) fn enumerable(value_type: &ValueType) -> bool {
         | ValueType::Timestamp
         | ValueType::Enum(_)
         | ValueType::Composite(_)
+        | ValueType::ClockReference
         | ValueType::Population(_) => false,
     }
 }

@@ -106,7 +106,10 @@ pub fn type_form(value_type: &ValueType) -> TypeForm {
                     .expect("type_form: an unbounded population has no source spelling yet")
                     .to_string(),
             ]),
-        ValueType::Composite(_) | ValueType::Enum(_) | ValueType::Reference(_) => {
+        ValueType::Composite(_)
+        | ValueType::Enum(_)
+        | ValueType::Reference(_)
+        | ValueType::ClockReference => {
             panic!(
                 "type_form: {value_type:?} carries a NodeKey with no recoverable name -- build \
                  a TypeForm::name(...) directly, with the same name string used to derive the \

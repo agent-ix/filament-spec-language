@@ -100,6 +100,7 @@ fn sort_of(value_type: &ValueType) -> Result<FieldSort, &'static str> {
         ValueType::Composite(_) => Err("a record, tuple or union"),
         ValueType::Collection(_) => Err("a collection"),
         ValueType::Reference(_) => Err("a Reference"),
+        ValueType::ClockReference => Err("a ClockReference"),
         ValueType::Population(_) => Err("a Population"),
     }
 }

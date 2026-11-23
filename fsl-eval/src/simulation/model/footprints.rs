@@ -395,6 +395,7 @@ fn holds_reference(
         | ValueType::JsonObject
         | ValueType::Uuid
         | ValueType::Timestamp
+        | ValueType::ClockReference
         | ValueType::Enum(_) => false,
     }
 }

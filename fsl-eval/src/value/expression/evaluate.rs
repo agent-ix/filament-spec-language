@@ -325,6 +325,7 @@ fn size_of(operand: Value) -> Result<Integer, Halt> {
         | Value::Option(_)
         | Value::Composite(_)
         | Value::Union(_)
+        | Value::ClockReference(_)
         | Value::Collection(_)
         | Value::Reference(_) => Err(invariant("collection-value-expected")),
     }
@@ -3344,6 +3345,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 | ValueType::Collection(_)
                 | ValueType::Map(_)
                 | ValueType::BoundedQuantity(_)
+                | ValueType::ClockReference
                 | ValueType::Reference(_)
                 | ValueType::Population(_) => return Err(invariant("numeric-value-expected")),
             },
@@ -3539,6 +3541,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     | Value::Composite(_)
                     | Value::Union(_)
                     | Value::Collection(_)
+                    | Value::ClockReference(_)
                     | Value::Map(_)
                     | Value::Reference(_) => {
                         return Err(invariant("quantity-scale-factor-expected"));
@@ -4259,6 +4262,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     | Value::Population(_)
                     | Value::Option(_)
                     | Value::Composite(_)
+                    | Value::ClockReference(_)
                     | Value::Union(_)
                     | Value::Reference(_) => return Err(invariant("collection-value-expected")),
                 }

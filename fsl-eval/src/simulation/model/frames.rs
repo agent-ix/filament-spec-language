@@ -2391,6 +2391,7 @@ pub(super) fn collect_references<'v>(
         | Value::Uuid(_)
         | Value::Timestamp(_)
         | Value::Enum(_)
+        | Value::ClockReference(_)
         | Value::Population(_)
         | Value::Composite(_)
         | Value::Union(_) => {}
