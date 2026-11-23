@@ -138,7 +138,7 @@ pub(super) fn item<'a>(
     form: &super::super::super::ProbabilisticItem,
 ) -> super::AnalyzeItem<'a> {
     let (EvidenceKind::Exact, super::super::super::ProbabilisticLimits::Exact(exact)) =
-        (form.evidence, form.limits)
+        (form.evidence, form.limits.under(&limits.engines))
     else {
         return super::AnalyzeItem::unadapted(
             item.request_index,

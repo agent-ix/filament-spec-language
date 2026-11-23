@@ -27,8 +27,8 @@ versions 0, the subject's `max_candidates` 1,000,000.
 2. The same claim with `max_states` 1.
 3. AC-1's weak `each` claim, with and without a built FR-339 certificate.
 4. Step 1's claim with initial versions `a` 0 and `b` 1.
-5. Step 4's request with `max_states` 6 and with `max_states` 1,000; step 1's
-   request with `max_states` 1,000.
+5. Step 4's request with `max_states` 6, with `max_states` 1,000, and with
+   `max_states` 1; step 1's request with `max_states` 1,000.
 
 ## Expected Results
 
@@ -38,7 +38,9 @@ versions 0, the subject's `max_candidates` 1,000,000.
 - Step 2: `Stopped{ResourceExhausted, {MaxStates, 1}}`.
 - Step 3: `Holds{Exhaustive}` with a component certificate that FR-339's
   checker accepts.
-- Step 4: `Violated` bound to `b` with the prefix `(0,1) -upd(b)-> (0,2)` at
-  position 1.
-- Step 5: `Stopped{ResourceExhausted, {MaxStates, 6}}`; the step 4 finding for
-  `b`; the step 1 finding for `a`.
+- Step 4: `Violated` bound to `a` with the prefix
+  `(0,1) -upd(a)-> (1,1) -upd(a)-> (2,1)` at position 2, even though binding
+  `b` has a shallower finding.
+- Step 5: the AC-14 finding for `a` at both `max_states` 6 and 1,000;
+  `Stopped{ResourceExhausted, {MaxStates, 1}}` with no counterexample when
+  the first binding is incomplete; the step 1 finding for `a`.

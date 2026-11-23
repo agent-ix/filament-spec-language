@@ -533,7 +533,7 @@ fn relation_pre_eligible(expression: ExprRef<'_>, hyper: &super::HyperTyping) ->
 /// value constructor. This is a source-spelling intake point, like the native
 /// literal classifier.
 #[ix_trace_rs::string_edge]
-fn is_option_some_constructor(name: &str) -> bool {
+pub(super) fn is_option_some_constructor(name: &str) -> bool {
     name == "Some"
 }
 
@@ -4471,7 +4471,7 @@ impl<'a> Typer<'a> {
                     Some(_) if self.shadows_source_population(population, Some(binder)) => {
                         return Err(ambiguous_source_population(population, &location));
                     }
-                    Some(named) => self.population_domain(&named, &location.child(0))?,
+                    Some(named) => self.population_domain(&named, &location)?,
                     None if named.is_under_alias(population) => {
                         return Err(missing_segment_at(
                             population,

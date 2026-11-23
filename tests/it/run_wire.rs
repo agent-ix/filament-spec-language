@@ -2740,3 +2740,45 @@ fn release_blocked_provider(
     *ready.lock().expect("the provider release lock") = true;
     changed.notify_one();
 }
+
+/// FR-255-AC-25: a monitor request whose routed item states `limits.max_states`
+/// while the caller also passes `exact_prob.max_states` is refused
+/// `invalid-request` before any record is read.
+#[test]
+#[trace("FR-255-AC-25")]
+fn a_monitor_routed_item_and_the_caller_may_not_both_state_a_limit() {
+    use fsl_command::command::{monitor, CommandLimits, MonitorPreparationLimits, MonitorProviders, RunLimits};
+    use fsl_foundation::{Setting, SettingName};
+
+    let directory = tempfile::tempdir().unwrap();
+    let mut request = monitor_request(json!([{"name": "Reaches"}]), json!({"kind": "finite"}));
+    request["request"]["items"] = json!([{"claim": "Even", "kind": "probabilistic-satisfaction",
+        "probabilistic": {"evidence": "exact", "limits": {"max_states": 5}}}]);
+    let path = write_trace(directory.path(), "items.json", &request);
+    std::fs::write(directory.path().join("unit.native"), even_unit()).unwrap();
+    let mut caller = CommandLimits::monitor(MonitorPreparationLimits {
+        work: 16_777_216,
+        storage: 268_435_456,
+    });
+    caller
+        .set(SettingName::Stage(Setting::ExactProbMaxStates), 2)
+        .expect("monitor accepts it beside routed items");
+    let mut events = 0;
+    let refused = monitor(
+        &path,
+        ac1_lines().iter().map(|line| Ok(line.clone().into_bytes())),
+        &mut |_| events += 1,
+        MonitorProviders {
+            negotiate: &crate::negotiation::Fr290,
+            providers: Vec::new(),
+            options: &fsl_analyze::provider::ProviderOptions::default(),
+        },
+        RunLimits::default(),
+        &caller,
+        &filament_exact::Cancel::new(),
+    );
+    let error = refused.expect_err("the duplicate bound is refused");
+    assert_eq!(error.category().exit_code(), 20);
+    assert!(error.to_string().contains("exact_prob.max_states"), "{error}");
+    assert_eq!(events, 0);
+}

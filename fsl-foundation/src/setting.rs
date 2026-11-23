@@ -64,6 +64,7 @@ settings! {
     S1Tokens => "s1.tokens", "S1", TokenCount;
     S1Nodes => "s1.nodes", "S1", NodeCount;
     S1WorkUnits => "s1.work_units", "S1", WorkBudget;
+    S1Diagnostics => "s1.diagnostics", "S1", DiagnosticCount;
     S3Nodes => "s3.nodes", "S3", NodeCount;
     S3InputBytes => "s3.input_bytes", "S3", InputBytes;
     S3WorkUnits => "s3.work_units", "S3", WorkBudget;
@@ -145,6 +146,44 @@ settings! {
     MonitorPreparationStorage => "monitor.preparation_storage", "monitor plan read storage", LogicalStorage;
     InspectMaxViewEntries => "inspect.max_view_entries", "typed view construction", NodeCount;
     ProgressCoveredPositions => "progress.covered_positions", "progress ledger", NodeCount;
+    SimulationMaxSteps => "simulation.max_steps", "simulation and model-based test traces", NodeCount;
+    ExactProbMaxStates => "exact_prob.max_states", "EN-5 product", NodeCount;
+    ExactProbMaxTransitions => "exact_prob.max_transitions", "EN-5 product", EdgeCount;
+    ExactProbMaxAutomatonStates => "exact_prob.max_automaton_states", "EN-5 product", NodeCount;
+    ExactProbMaxIterations => "exact_prob.max_iterations", "EN-5", WorkBudget;
+    ExactProbPrecisionBits => "exact_prob.precision_bits", "EN-5", RationalBits;
+    ExactProbMaxPrecisionBits => "exact_prob.max_precision_bits", "EN-5", RationalBits;
+    ExactProbMaxRationalBits => "exact_prob.max_rational_bits", "EN-5", RationalBits;
+    ExactProbMaxPolicyIterations => "exact_prob.max_policy_iterations", "EN-5", WorkBudget;
+    ExactProbMaxWitnessPaths => "exact_prob.max_witness_paths", "EN-5", NodeCount;
+    StatisticalMaxSamples => "statistical.max_samples", "EN-4", NodeCount;
+    StatisticalMaxDraws => "statistical.max_draws", "EN-4", NodeCount;
+    StatisticalMaxCycleSteps => "statistical.max_cycle_steps", "EN-4", EdgeCount;
+    StatisticalMaxSampleSteps => "statistical.max_sample_steps", "EN-4 timed sampling", EdgeCount;
+    ZoneCheckMaxSymbolicStates => "zone_check.max_symbolic_states", "EN-6 zone search", NodeCount;
+    ZoneCheckMaxSymbolicTransitions => "zone_check.max_symbolic_transitions", "EN-6 zone search", EdgeCount;
+    ZoneCheckMaxAutomatonStates => "zone_check.max_automaton_states", "EN-6 zone search", NodeCount;
+    ZoneCheckMaxZoneBytes => "zone_check.max_zone_bytes", "EN-6 zone search", InputBytes;
+    CertificateCheckMaxCertificateEdges => "certificate_check.max_certificate_edges", "certificate checkers", EdgeCount;
+    CertificateCheckMaxCertificateBytes => "certificate_check.max_certificate_bytes", "certificate checkers", InputBytes;
+    CertificateCheckMaxWorkingBytes => "certificate_check.max_working_bytes", "probability document writer/reader", InputBytes;
+    CertificateCheckMaxRank => "certificate_check.max_rank", "exact reachability document writer", NodeCount;
+    ScheduleMaxDemandPoints => "schedule.max_demand_points", "schedulability analysis", NodeCount;
+    HybridMaxSolverSteps => "hybrid.max_solver_steps", "hybrid provider", WorkBudget;
+    HybridMaxSolverTime => "hybrid.max_solver_time", "hybrid provider", WorkBudget;
+    SmtEncodingMaxConstants => "smt_encoding.max_constants", "SMT proof-query encoding", NodeCount;
+    SmtEncodingMaxApplications => "smt_encoding.max_applications", "SMT proof-query encoding", NodeCount;
+    SmtEncodingMaxMonitorAtoms => "smt_encoding.max_monitor_atoms", "SMT proof-query encoding", NodeCount;
+    SmtEncodingMaxMonitorStates => "smt_encoding.max_monitor_states", "SMT proof-query encoding", NodeCount;
+    SmtEncodingMaxCandidates => "smt_encoding.max_candidates", "SMT proof-query encoding", NodeCount;
+    SmtEncodingMaxScriptBytes => "smt_encoding.max_script_bytes", "SMT proof-query encoding", InputBytes;
+    SmtMaxSolverSteps => "smt.max_solver_steps", "SMT backend", WorkBudget;
+    SmtMaxSolverTime => "smt.max_solver_time", "SMT backend", WorkBudget;
+    PlanSearchMaxStates => "plan_search.max_states", "plan search", NodeCount;
+    PlanSearchMaxWork => "plan_search.max_work", "plan search", WorkBudget;
+    PlanSearchMaxCertificateEntries => "plan_search.max_certificate_entries", "plan search", NodeCount;
+    PlanSearchMaxCheckWork => "plan_search.max_check_work", "plan certificate checker", WorkBudget;
+    PlanSearchMaxStateKeyBytes => "plan_search.max_state_key_bytes", "plan search", InputBytes;
 }
 
 impl Setting {
@@ -158,6 +197,76 @@ impl Setting {
             Self::ModelSequenceMaximum => u32::MAX as u64,
             _ => u64::MAX,
         }
+    }
+
+    /// Whether the setting is an engine-table row whose value is a positive
+    /// count (FR-255 "Engine limit setting names"): every engine row except
+    /// `model_check.witness_samples` and `exact_prob.max_witness_paths`, whose
+    /// owners give 0 a meaning. The settings operation refuses 0 for it.
+    #[must_use]
+    pub const fn is_positive_count(self) -> bool {
+        match self {
+            Self::ModelCheckWitnessSamples | Self::ExactProbMaxWitnessPaths => false,
+            Self::ModelCheckMaxStates
+            | Self::ModelCheckMaxTransitions
+            | Self::ModelCheckMaxAutomatonStates
+            | Self::ModelCheckMaxWalkSteps
+            | Self::ModelCheckMaxWitnessSet
+            | Self::ModelCheckMaxRelationTuples
+            | Self::ModelCheckMaxLiveInstances
+            | Self::ModelCheckMaxStoreBuffer
+            | Self::ModelCheckMaxMessages
+            | Self::ExpansionMaxCandidates
+            | Self::SimulationMaxSteps => true,
+            _ => self.is_item_engine_setting(),
+        }
+    }
+
+    /// Whether the setting bounds an analysis item engine that FSL's replay
+    /// never executes: the engine rows beyond `model_check.*` and
+    /// `expansion.max_candidates`. A replay request refuses it (FR-255 "Lifecycle
+    /// caller-limit coverage").
+    #[must_use]
+    pub const fn is_item_engine_setting(self) -> bool {
+        matches!(
+            self,
+            Self::ExactProbMaxStates
+                | Self::ExactProbMaxTransitions
+                | Self::ExactProbMaxAutomatonStates
+                | Self::ExactProbMaxIterations
+                | Self::ExactProbPrecisionBits
+                | Self::ExactProbMaxPrecisionBits
+                | Self::ExactProbMaxRationalBits
+                | Self::ExactProbMaxPolicyIterations
+                | Self::StatisticalMaxSamples
+                | Self::StatisticalMaxDraws
+                | Self::StatisticalMaxCycleSteps
+                | Self::StatisticalMaxSampleSteps
+                | Self::ZoneCheckMaxSymbolicStates
+                | Self::ZoneCheckMaxSymbolicTransitions
+                | Self::ZoneCheckMaxAutomatonStates
+                | Self::ZoneCheckMaxZoneBytes
+                | Self::CertificateCheckMaxCertificateEdges
+                | Self::CertificateCheckMaxCertificateBytes
+                | Self::CertificateCheckMaxWorkingBytes
+                | Self::CertificateCheckMaxRank
+                | Self::ScheduleMaxDemandPoints
+                | Self::HybridMaxSolverSteps
+                | Self::HybridMaxSolverTime
+                | Self::SmtEncodingMaxConstants
+                | Self::SmtEncodingMaxApplications
+                | Self::SmtEncodingMaxMonitorAtoms
+                | Self::SmtEncodingMaxMonitorStates
+                | Self::SmtEncodingMaxCandidates
+                | Self::SmtEncodingMaxScriptBytes
+                | Self::SmtMaxSolverSteps
+                | Self::SmtMaxSolverTime
+                | Self::PlanSearchMaxStates
+                | Self::PlanSearchMaxWork
+                | Self::PlanSearchMaxCertificateEntries
+                | Self::PlanSearchMaxCheckWork
+                | Self::PlanSearchMaxStateKeyBytes
+        )
     }
 
     /// The setting named `name`, or `None` when no setting has that name.
@@ -393,7 +502,9 @@ pub fn parse_operands<'a>(
                 .parse::<u64>()
                 .ok()
                 .filter(|bound| match setting {
-                    SettingName::Stage(stage) => *bound <= stage.greatest_bound(),
+                    SettingName::Stage(stage) => {
+                        *bound <= stage.greatest_bound() && (*bound != 0 || !stage.is_positive_count())
+                    }
                     SettingName::Accounting(_) => true,
                 })
                 .ok_or_else(|| refuse(UsageCause::NotAnInteger))?

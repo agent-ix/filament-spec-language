@@ -246,3 +246,87 @@ fn assert_exploration_charge_parity(
         );
     }
 }
+
+/// FR-255-AC-24 (TC-721): `simulation.max_steps` is accepted by `analyze` and
+/// bounds a simulation item on the source route and on the package route
+/// alike, naming the setting; a request that also states the bound in the item
+/// is refused `invalid-request` naming the setting; the other operations
+/// refuse it as unavailable and a zero or malformed value is a usage refusal.
+#[trace("TC-721", "FR-255-AC-24", "FR-255-AC-25")]
+#[test]
+fn caller_simulation_max_steps_bounds_the_item_on_both_routes() {
+    use fsl_foundation::{Setting, SettingName};
+
+    let ws = Workspace::new("caller-simulation-max-steps");
+    let items = json!([{"kind": "simulation", "simulation": {"mode": "enumerate"}}]);
+    let path = counter_request_with(&ws, &bounded(), request_members(Some(items)));
+    assert_eq!(analyze(&path).item(0)["category"], "success");
+    let input =
+        fsl_command::command::prepare_analyze(&path, fsl_command::command::RunLimits::default())
+            .expect("source request admits")
+            .into_input();
+    let request: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("request")).expect("request JSON");
+    let (members, _bytes) = package_selection_named(
+        &ws,
+        &request["request"],
+        input
+            .source
+            .source()
+            .identity()
+            .label(SourceLabel::Identity),
+    );
+    drop(input);
+    let package_path = ws.write(
+        "package-analyze.json",
+        json!({"format": "native-analyze/1", "request": members})
+            .to_string()
+            .as_bytes(),
+    );
+    for (route, request) in [("source", &path), ("package", &package_path)] {
+        let run =
+            crate::analyze_cli_support::analyze_under(request, &[(Setting::SimulationMaxSteps, 2)]);
+        let item = run.item(0);
+        assert_eq!(item["category"], "incomplete", "{route}: {item}");
+        assert_eq!(item["cause"]["limit"], "max_steps", "{route}: {item}");
+        assert_eq!(item["cause"]["value"], 2, "{route}: {item}");
+        assert_eq!(
+            item["cause"]["setting"], "simulation.max_steps",
+            "{route}: {item}"
+        );
+        assert_eq!(run.exit, 22, "{route}");
+    }
+
+    // The item states the bound too: refused, whichever bound is larger.
+    let stated = json!([{"kind": "simulation", "simulation": {"mode": "enumerate", "max_steps": 5}}]);
+    let stated_path = counter_request_with(
+        &Workspace::new("caller-simulation-max-steps-stated"),
+        &bounded(),
+        request_members(Some(stated)),
+    );
+    let refused =
+        crate::analyze_cli_support::analyze_under(&stated_path, &[(Setting::SimulationMaxSteps, 2)]);
+    assert_eq!(refused.exit, 20, "{}", refused.document());
+    let text = refused.document().to_string();
+    assert!(text.contains("simulation.max_steps"), "{text}");
+
+    // Unavailable elsewhere, malformed at the operand.
+    let mut replay = fsl_command::command::CommandLimits::replay();
+    assert!(replay
+        .set(SettingName::Stage(Setting::SimulationMaxSteps), 2)
+        .is_err());
+    let mut monitor =
+        fsl_command::command::CommandLimits::monitor(fsl_command::command::MonitorPreparationLimits {
+            work: 1,
+            storage: 1,
+        });
+    monitor
+        .set(SettingName::Stage(Setting::SimulationMaxSteps), 2)
+        .expect("monitor accepts it beside routed items");
+    assert!(monitor.require_no_routed_only().is_err());
+    for operand in ["simulation.max_steps=0", "simulation.max_steps=-1", "simulation.max_steps=x"] {
+        let refusal = fsl_foundation::setting::parse_operands([operand]).unwrap_err();
+        assert_eq!(refusal.cause, fsl_foundation::UsageCause::NotAnInteger, "{operand}");
+        assert_eq!(refusal.operand, operand);
+    }
+}

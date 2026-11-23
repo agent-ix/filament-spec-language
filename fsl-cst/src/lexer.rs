@@ -37,6 +37,9 @@ pub struct Limits {
     /// stops once it has taken this many steps per token, plus this many
     /// for the end of input. Defaults to 288.
     pub work_units: usize,
+    /// Syntax diagnostics one parse reports before the list is cut (FR-762):
+    /// reaching it keeps the refusal. Defaults to 100.
+    pub diagnostics: usize,
 }
 
 impl Default for Limits {
@@ -46,6 +49,7 @@ impl Default for Limits {
             tokens: 100_000,
             nodes: 50_000,
             work_units: crate::parser::DEFAULT_WORK_UNITS,
+            diagnostics: crate::parser::DEFAULT_SYNTAX_DIAGNOSTICS,
         }
     }
 }
@@ -72,6 +76,13 @@ impl Limits {
         self
     }
 
+    /// These limits with the syntax diagnostic bound set to `diagnostics`.
+    #[must_use]
+    pub fn with_diagnostics(mut self, diagnostics: usize) -> Self {
+        self.diagnostics = diagnostics;
+        self
+    }
+
     /// These limits with the parser's work units per token set to
     /// `work_units`.
     #[must_use]
@@ -81,7 +92,7 @@ impl Limits {
     }
 }
 
-/// FR-255: S1's four limits and the settings that raise them.
+/// FR-255: S1's five limits and the settings that raise them.
 impl fsl_foundation::SettingLimits for Limits {
     fn bounds(&self) -> Vec<(fsl_foundation::Setting, u64)> {
         use fsl_foundation::Setting;
@@ -91,6 +102,7 @@ impl fsl_foundation::SettingLimits for Limits {
             (Setting::S1Tokens, widen(self.tokens)),
             (Setting::S1Nodes, widen(self.nodes)),
             (Setting::S1WorkUnits, widen(self.work_units)),
+            (Setting::S1Diagnostics, widen(self.diagnostics)),
         ]
     }
 
@@ -102,6 +114,7 @@ impl fsl_foundation::SettingLimits for Limits {
             Setting::S1Tokens => self.tokens = bound,
             Setting::S1Nodes => self.nodes = bound,
             Setting::S1WorkUnits => self.work_units = bound,
+            Setting::S1Diagnostics => self.diagnostics = bound,
             _ => return false,
         }
         true

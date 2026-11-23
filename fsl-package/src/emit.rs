@@ -784,10 +784,17 @@ pub struct SelectedSourceRecordMemberRow {
     pub admitted_name: Box<str>,
     /// The declared presence, never inferred from an `Option` type.
     pub presence: filament_exact::Presence,
-    /// The emitted type node the binding references.
-    pub type_node: CheckedNodeId,
-    /// The checked field type after presence handling.
-    pub value_type: filament_exact::ValueType,
+    /// The emitted type node the binding references; `None` for a clock
+    /// entry, which has no node (FR-367 "Member entries").
+    pub type_node: Option<CheckedNodeId>,
+    /// The checked field type after presence handling; `None` exactly for a
+    /// clock entry.
+    pub value_type: Option<filament_exact::ValueType>,
+    /// The FSpec FR-789 rendering of a clock entry's type; `None` for a data
+    /// entry.
+    pub member_type: Option<Box<str>>,
+    /// The collection layers of a clock entry, outermost first.
+    pub collections: Vec<filament_contract_model::SelectedClockCollectionLayer>,
 }
 
 /// The FR-531 member facts retained for each source-object member while its
@@ -802,8 +809,9 @@ pub struct SourceObjectMemberFacts {
     pub admitted_name: Box<str>,
     /// The field's checked required/optional presence.
     pub presence: filament_exact::Presence,
-    /// The field's checked original value type.
-    pub value_type: filament_exact::ValueType,
+    /// The field's checked original value type; `None` for a clock entry,
+    /// which has no Exact value type.
+    pub value_type: Option<filament_exact::ValueType>,
 }
 
 /// One operation a source object type itself declares, as its FR-569
@@ -2845,6 +2853,9 @@ fn member_value(ids: &StructuralIds, member: &Member) -> Result<serde_json::Valu
         }
         Member::Operation { declaration, name } => {
             json!({"kind":"operation","declaration":node_id(ids, declaration),"name":name.as_str()})
+        }
+        Member::History { declaration, name } => {
+            json!({"kind":"history","declaration":node_id(ids, declaration),"name":name.as_str()})
         }
         Member::TypeArgument { declaration, alias } => {
             let mut member =
@@ -8367,7 +8378,13 @@ fn source_union_rows(
         let payloads = node
             .union_member_payload_nodes()
             .ok_or(EmitRefusal::SourceMapInvariant)?;
-        let members = union_member_rows(declared, &sealed, payloads, emitted)?;
+        let members = union_member_rows(
+            declared,
+            &sealed,
+            payloads,
+            emitted,
+            graph.source_clock_members(&declaration.key()),
+        )?;
         rows.push(filament_contract_model::SelectedSourceUnionRow::new(
             structural_node.clone(),
             owner.authority(),
@@ -8516,7 +8533,12 @@ fn source_record_rows_over<'d>(
         let bindings = node
             .record_member_nodes()
             .ok_or(EmitRefusal::SourceMapInvariant)?;
-        let members = record_member_rows(declared, bindings, emitted)?;
+        let members = record_member_rows(
+            declared,
+            bindings,
+            emitted,
+            graph.source_clock_members(&declaration.key()),
+        )?;
         rows.push((
             node_key.clone(),
             SelectedSourceRecordRow {
@@ -8567,6 +8589,26 @@ fn source_object_rows(
     use filament_contract_model::{SelectedSourceObjectMember, SelectedSourcePopulation};
 
     let semantic = graph.semantic_graph();
+    // The package records, indexed once: each object type by key and each
+    // field by its owner, so a row's lookups do not rescan every record.
+    let mut object_records = std::collections::BTreeMap::new();
+    let mut fields_by_owner: std::collections::BTreeMap<_, Vec<_>> =
+        std::collections::BTreeMap::new();
+    for record in graph
+        .source_packages()
+        .iter()
+        .flat_map(|package| &package.records)
+    {
+        match record {
+            fsl_semantics::model::domain_package::DomainPackageRecord::ObjectType(object) => {
+                object_records.insert(&object.key, object);
+            }
+            fsl_semantics::model::domain_package::DomainPackageRecord::FieldMember(field) => {
+                fields_by_owner.entry(&field.owner).or_default().push(field);
+            }
+            _ => {}
+        }
+    }
     let mut rows = Vec::new();
     for node in semantic.nodes() {
         if node.node_tag() != NodeTag::Model || node.semantic_form() != "object_type" {
@@ -8587,18 +8629,9 @@ fn source_object_rows(
         let Some(identity_fields) = graph.source_object_identity_fields().get(declaration) else {
             return Err(EmitRefusal::SourceMapInvariant);
         };
-        let object =
-            graph
-                .source_packages()
-                .iter()
-                .flat_map(|package| &package.records)
-                .find_map(|record| match record {
-                    fsl_semantics::model::domain_package::DomainPackageRecord::ObjectType(
-                        object,
-                    ) if &object.key == declaration => Some(object),
-                    _ => None,
-                })
-                .ok_or(EmitRefusal::SourceMapInvariant)?;
+        let object = *object_records
+            .get(declaration)
+            .ok_or(EmitRefusal::SourceMapInvariant)?;
         let object_type = graph
             .scope()
             .types()
@@ -8618,8 +8651,39 @@ fn source_object_rows(
         if source_members.len() != attributes.len() {
             return Err(EmitRefusal::SourceMapInvariant);
         }
-        let mut members = Vec::with_capacity(source_members.len());
-        let mut member_facts = Vec::with_capacity(source_members.len());
+        // The effective view's owners, inherited types first in `extends`
+        // order and the type itself last: a field's place in the view is its
+        // owner's rank, then its declared position (FR-569 "Source-object
+        // identity rows").
+        let owner_chain = {
+            let supertypes_of = |key: &_| object_records.get(key).map(|found| &found.supertypes);
+            let mut chain = Vec::new();
+            let mut stack = vec![(&object.key, 0_usize)];
+            while let Some((key, next)) = stack.pop() {
+                let supertypes = supertypes_of(key).map_or(&[][..], |found| found.as_slice());
+                match supertypes.get(next) {
+                    Some(parent) => {
+                        stack.push((key, next + 1));
+                        if !chain.contains(&parent)
+                            && !stack.iter().any(|(held, _)| *held == parent)
+                        {
+                            stack.push((parent, 0));
+                        }
+                    }
+                    None => {
+                        if !chain.contains(&key) {
+                            chain.push(key);
+                        }
+                    }
+                }
+            }
+            chain
+        };
+        let mut placed: Vec<(
+            (usize, usize),
+            SelectedSourceObjectMember,
+            SourceObjectMemberFacts,
+        )> = Vec::with_capacity(source_members.len());
         for ((name, target, optional), attribute) in source_members.into_iter().zip(attributes) {
             let field = attribute.field();
             if name != field.name()
@@ -8630,36 +8694,95 @@ fn source_object_rows(
             let field_owner = graph
                 .object_type_key(attribute.owner())
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
-            let original_member_identity = graph
-                .source_packages()
-                .iter()
-                .flat_map(|package| &package.records)
-                .find_map(|record| match record {
-                    fsl_semantics::model::domain_package::DomainPackageRecord::FieldMember(
-                        field,
-                    ) if &field.owner == field_owner
-                        && field.key.node.rsplit('/').next() == Some(name) =>
-                    {
-                        Some(field.key.node.as_str())
-                    }
-                    _ => None,
+            let declared = fields_by_owner
+                .get(field_owner)
+                .and_then(|fields| {
+                    fields
+                        .iter()
+                        .find(|record| record.key.node.rsplit('/').next() == Some(name))
                 })
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
-            members.push(SelectedSourceObjectMember::data(
-                name,
-                emitted
-                    .get(&target)
-                    .cloned()
-                    .ok_or(EmitRefusal::SourceMapInvariant)?,
-                optional,
+            let rank = owner_chain
+                .iter()
+                .position(|owner| **owner == declared.owner)
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            placed.push((
+                (rank, declared.position),
+                SelectedSourceObjectMember::data(
+                    name,
+                    emitted
+                        .get(&target)
+                        .cloned()
+                        .ok_or(EmitRefusal::SourceMapInvariant)?,
+                    optional,
+                ),
+                SourceObjectMemberFacts {
+                    original_member_identity: declared.key.node.as_str().into(),
+                    admitted_name: name.into(),
+                    presence: field.presence(),
+                    value_type: Some(field.value_type().clone()),
+                },
             ));
-            member_facts.push(SourceObjectMemberFacts {
-                original_member_identity: original_member_identity.into(),
-                admitted_name: name.into(),
-                presence: field.presence(),
-                value_type: field.value_type().clone(),
-            });
         }
+        // FR-569-AC-17: a field typed `Clock`, alone or in a collection, has
+        // no type node; its entry renders the type as FSpec FR-789 does.
+        for (rank, record) in owner_chain.iter().enumerate().flat_map(|(rank, owner)| {
+            fields_by_owner
+                .get(*owner)
+                .into_iter()
+                .flatten()
+                .map(move |record| (rank, *record))
+        }) {
+            if !matches!(
+                record.value_type,
+                fsl_semantics::model::domain_package::ValueTypeRef::Clock
+            ) {
+                continue;
+            }
+            let name = record
+                .key
+                .node
+                .rsplit('/')
+                .next()
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            let optional = record.presence == filament_exact::Presence::Optional;
+            let collections = collection_layers(&record.multiplicity);
+            let rendering = fsl_semantics::check::clock_field_member_type(record);
+            let mut member = SelectedSourceObjectMember::clock(name, rendering);
+            member.collections = collections;
+            member.optional = optional;
+            placed.push((
+                (rank, record.position),
+                member,
+                SourceObjectMemberFacts {
+                    original_member_identity: record.key.node.as_str().into(),
+                    admitted_name: name.into(),
+                    presence: record.presence,
+                    value_type: None,
+                },
+            ));
+        }
+        // The data entries keep their order within the view.
+        let data_order = |placed: &[(
+            (usize, usize),
+            SelectedSourceObjectMember,
+            SourceObjectMemberFacts,
+        )]| {
+            placed
+                .iter()
+                .filter(|(_, member, _)| member.type_node.is_some())
+                .map(|(_, member, _)| member.name.clone())
+                .collect::<Vec<_>>()
+        };
+        let before = data_order(&placed);
+        placed.sort_by_key(|(place, ..)| *place);
+        if data_order(&placed) != before {
+            return Err(EmitRefusal::SourceMapInvariant);
+        }
+        let (members, member_facts): (Vec<_>, Vec<_>) = placed
+            .into_iter()
+            .map(|(_, member, facts)| (member, facts))
+            .unzip();
         let supertypes = object
             .supertypes
             .iter()
@@ -8712,6 +8835,7 @@ fn source_object_rows(
                 .strip_prefix(&format!("{}/", operation.owner.node))
                 .filter(|name| !name.is_empty() && !name.contains('/'))
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
+            let operation_name = name;
             let identity: Box<str> = format!("{}::{name}", source_identity.as_str()).into();
             let query = operation.result.is_some() && operation.effect.is_empty();
             let parameter_prefix = format!("{}/", operation.key.node);
@@ -8745,11 +8869,18 @@ fn source_object_rows(
                         .strip_prefix(&parameter_prefix)
                         .filter(|name| !name.is_empty() && !name.contains('/'))
                         .ok_or(EmitRefusal::SourceMapInvariant)?;
-                    let node = parameter
-                        .value_type
-                        .as_package()
-                        .and_then(|key| fsl_semantics::model::key::object_type_node_key(key).ok())
-                        .and_then(|key| emitted.get(&key));
+                    let node = graph
+                        .source_parameter_node(&node.key(), operation_name, name)
+                        .and_then(|key| emitted.get(key))
+                        .or_else(|| {
+                            parameter
+                                .value_type
+                                .as_package()
+                                .and_then(|key| {
+                                    fsl_semantics::model::key::object_type_node_key(key).ok()
+                                })
+                                .and_then(|key| emitted.get(&key))
+                        });
                     Ok(match node {
                         Some(node) => SelectedSourceObjectMember::data(
                             name,
@@ -8945,7 +9076,12 @@ fn source_tuple_rows_over<'d>(
         let nodes = node
             .tuple_position_nodes()
             .ok_or(EmitRefusal::SourceMapInvariant)?;
-        let positions = tuple_position_rows(declared, nodes, emitted)?;
+        let positions = tuple_position_rows(
+            declared,
+            nodes,
+            emitted,
+            graph.source_clock_members(&declaration.key()),
+        )?;
         rows.push((
             node_key.clone(),
             filament_contract_model::SelectedSourceTupleRow {
@@ -8986,27 +9122,52 @@ fn tuple_position_rows(
     declared: &[filament_exact::ValueType],
     nodes: Vec<NodeKey>,
     emitted: &HashMap<NodeKey, CheckedNodeId>,
+    clock: Option<&fsl_semantics::check::SourceClockMembers>,
 ) -> Result<Vec<filament_contract_model::SelectedTuplePositionRow>, EmitRefusal> {
     if nodes.len() != declared.len() {
         return Err(EmitRefusal::SourceMapInvariant);
     }
-    (0_u64..)
-        .zip(declared.iter().zip(nodes))
-        .map(|(ordinal, (value_type, key))| {
-            Ok(filament_contract_model::SelectedTuplePositionRow {
-                ordinal,
-                type_node: Some(
-                    emitted
-                        .get(&key)
-                        .cloned()
-                        .ok_or(EmitRefusal::SourceMapInvariant)?,
-                ),
-                value_type: Some(value_type.clone()),
-                member_type: None,
-                collections: Vec::new(),
-            })
+    let mut data = declared.iter().zip(nodes);
+    let mut data_position = |ordinal: u64| {
+        let (value_type, key) = data.next().ok_or(EmitRefusal::SourceMapInvariant)?;
+        Ok::<_, EmitRefusal>(filament_contract_model::SelectedTuplePositionRow {
+            ordinal,
+            type_node: Some(
+                emitted
+                    .get(&key)
+                    .cloned()
+                    .ok_or(EmitRefusal::SourceMapInvariant)?,
+            ),
+            value_type: Some(value_type.clone()),
+            member_type: None,
+            collections: Vec::new(),
         })
-        .collect()
+    };
+    // FSpec FR-367 "Member entries": a clock position has no node, and the
+    // ordinals count the authored positions, clocks included.
+    let authored: Vec<Option<&fsl_semantics::check::SourceClockEntry>> = match clock {
+        Some(fsl_semantics::check::SourceClockMembers::Tuple(positions)) => {
+            positions.iter().map(Option::as_ref).collect()
+        }
+        _ => vec![None; declared.len()],
+    };
+    let mut rows = Vec::with_capacity(authored.len());
+    for (ordinal, entry) in (0_u64..).zip(authored) {
+        rows.push(match entry {
+            Some(entry) => filament_contract_model::SelectedTuplePositionRow {
+                ordinal,
+                type_node: None,
+                value_type: None,
+                member_type: Some(entry.member_type.as_str().into()),
+                collections: clock_layers(entry),
+            },
+            None => data_position(ordinal)?,
+        });
+    }
+    if data.next().is_some() {
+        return Err(EmitRefusal::SourceMapInvariant);
+    }
+    Ok(rows)
 }
 
 /// FR-092 "Model enum shape rows": one row per emitted model-owned enum
@@ -9132,6 +9293,33 @@ fn collection_row(
     })
 }
 
+/// The collection layers of a clock entry the checker retained, in the
+/// contract model's row type.
+fn clock_layers(
+    entry: &fsl_semantics::check::SourceClockEntry,
+) -> Vec<filament_contract_model::SelectedClockCollectionLayer> {
+    entry
+        .collections
+        .iter()
+        .map(
+            |(kind, minimum, maximum)| filament_contract_model::SelectedClockCollectionLayer {
+                kind: kind.as_str().into(),
+                minimum: minimum.as_str().into(),
+                maximum: maximum.as_str().into(),
+            },
+        )
+        .collect()
+}
+
+/// The presence a clock entry declares.
+fn clock_presence(entry: &fsl_semantics::check::SourceClockEntry) -> filament_exact::Presence {
+    if entry.optional {
+        filament_exact::Presence::Optional
+    } else {
+        filament_exact::Presence::Required
+    }
+}
+
 /// The member entries of one record row, joining the declared fields to the
 /// record node's bindings position by position and keeping both the declared
 /// name and the node's binding name. A binding list that disagrees with the
@@ -9141,6 +9329,7 @@ fn record_member_rows(
     declared: &[filament_semantic_value::declaration::FieldDeclaration],
     bindings: Vec<(&str, NodeKey)>,
     emitted: &HashMap<NodeKey, CheckedNodeId>,
+    clock: Option<&fsl_semantics::check::SourceClockMembers>,
 ) -> Result<Vec<SelectedSourceRecordMemberRow>, EmitRefusal> {
     if bindings.len() != declared.len() {
         return Err(EmitRefusal::SourceMapInvariant);
@@ -9156,22 +9345,56 @@ fn record_member_rows(
     if declared_names == binding_names && !in_declared_order {
         return Err(EmitRefusal::SourceMapInvariant);
     }
-    declared
-        .iter()
-        .zip(bindings)
-        .map(|(field, (name, type_key))| {
-            Ok(SelectedSourceRecordMemberRow {
-                original_member_identity: field.name().into(),
-                admitted_name: name.into(),
-                presence: field.presence(),
-                type_node: emitted
+    let mut data = declared.iter().zip(bindings);
+    let data_row = |field: &filament_semantic_value::declaration::FieldDeclaration,
+                    name: &str,
+                    type_key: NodeKey|
+     -> Result<SelectedSourceRecordMemberRow, EmitRefusal> {
+        Ok(SelectedSourceRecordMemberRow {
+            original_member_identity: field.name().into(),
+            admitted_name: name.into(),
+            presence: field.presence(),
+            type_node: Some(
+                emitted
                     .get(&type_key)
                     .cloned()
                     .ok_or(EmitRefusal::SourceMapInvariant)?,
-                value_type: field.value_type().clone(),
-            })
+            ),
+            value_type: Some(field.value_type().clone()),
+            member_type: None,
+            collections: Vec::new(),
         })
-        .collect()
+    };
+    let Some(fsl_semantics::check::SourceClockMembers::Record(authored)) = clock else {
+        return data
+            .map(|(field, (name, type_key))| data_row(field, name, type_key))
+            .collect();
+    };
+    // The authored order interleaves the clock entries, which have no node,
+    // with the data members, which are the node's bindings in order.
+    let mut rows = Vec::with_capacity(authored.len());
+    for (name, entry) in authored {
+        match entry {
+            Some(entry) => rows.push(SelectedSourceRecordMemberRow {
+                original_member_identity: name.as_str().into(),
+                admitted_name: name.as_str().into(),
+                presence: clock_presence(entry),
+                type_node: None,
+                value_type: None,
+                member_type: Some(entry.member_type.as_str().into()),
+                collections: clock_layers(entry),
+            }),
+            None => {
+                let (field, (binding, type_key)) =
+                    data.next().ok_or(EmitRefusal::SourceMapInvariant)?;
+                rows.push(data_row(field, binding, type_key)?);
+            }
+        }
+    }
+    if data.next().is_some() {
+        return Err(EmitRefusal::SourceMapInvariant);
+    }
+    Ok(rows)
 }
 
 /// The member entries of one union row: the sealed members, the payload node
@@ -9183,6 +9406,7 @@ fn union_member_rows(
     sealed: &[&filament_exact::UnionMember],
     payloads: Vec<(&str, Vec<NodeKey>)>,
     emitted: &HashMap<NodeKey, CheckedNodeId>,
+    clock: Option<&fsl_semantics::check::SourceClockMembers>,
 ) -> Result<Vec<filament_contract_model::SelectedUnionMemberRow>, EmitRefusal> {
     if payloads.len() != declared.len() {
         return Err(EmitRefusal::SourceMapInvariant);
@@ -9204,11 +9428,32 @@ fn union_member_rows(
                         .ok_or(EmitRefusal::SourceMapInvariant)
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(filament_contract_model::SelectedUnionMemberRow::new(
+            let mut row = filament_contract_model::SelectedUnionMemberRow::new(
                 (*sealed).clone(),
                 payload_nodes,
                 declared.positions().to_vec(),
-            ))
+            );
+            // FSpec FR-367 "Member entries": a clock payload position has no
+            // node; its entry is keyed by its ordinal in the declared payload.
+            if let Some(fsl_semantics::check::SourceClockMembers::Union(cases)) = clock {
+                let authored = cases
+                    .iter()
+                    .find(|(case, _)| case.as_str() == name)
+                    .ok_or(EmitRefusal::SourceMapInvariant)?;
+                for (ordinal, entry) in (0_u64..).zip(&authored.1) {
+                    if let Some(entry) = entry {
+                        row.clock_payload.push(
+                            filament_contract_model::SelectedUnionClockPayloadRow {
+                                ordinal,
+                                presence: clock_presence(entry),
+                                member_type: entry.member_type.as_str().into(),
+                                collections: clock_layers(entry),
+                            },
+                        );
+                    }
+                }
+            }
+            Ok(row)
         })
         .collect()
 }

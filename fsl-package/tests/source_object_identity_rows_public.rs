@@ -140,10 +140,9 @@ fn public_source_object_rows_constructor_serializes_nonempty_member_facts() {
 }
 
 /// FR-569-AC-16 through the public constructor: own operations only, each
-/// `{identity, query}`. Runs once the reader admits source `operation_bodies`.
+/// `{identity, query, clock_parameters, parameters}`.
 #[trace("FR-531-AC-8", "FR-569-AC-16", "TC-1408")]
 #[test]
-#[ignore = "QSL-2890: the reader admits source operation_bodies rows; not implemented yet"]
 fn public_source_object_rows_constructor_serializes_own_operations() {
     let identities = serialized_identities(
         &format!(
@@ -161,12 +160,12 @@ fn public_source_object_rows_constructor_serializes_own_operations() {
     assert_eq!(
         row("Order")["operations"],
         json!([
-            {"identity": "Order::size", "query": true},
-            {"identity": "Order::bump", "query": false},
+            {"identity": "Order::size", "query": true, "clock_parameters": [], "parameters": []},
+            {"identity": "Order::bump", "query": false, "clock_parameters": [], "parameters": []},
         ])
     );
     assert_eq!(
         row("Sub")["operations"],
-        json!([{"identity": "Sub::size", "query": true}])
+        json!([{"identity": "Sub::size", "query": true, "clock_parameters": [], "parameters": []}])
     );
 }

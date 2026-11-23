@@ -14,6 +14,12 @@ use ix_trace_rs::trace;
 /// Parse, build, assemble and check `body` under `1-draft` after `profiles`;
 /// `Ok` when it checks, else the refusal's debug text.
 fn outcome(profiles: &str, body: &str) -> Result<(), String> {
+    detail(profiles, body).map_err(|(_, text)| text)
+}
+
+/// [`outcome`] keeping the catalog codes of the check refusals (none for a
+/// refusal of an earlier stage) beside the debug text.
+fn detail(profiles: &str, body: &str) -> Result<(), (Vec<fsl_foundation::Code>, String)> {
     let text = format!("language \"ix:native\" edition \"1-draft\";\n{profiles}{body}\n");
     let parsed = fsl_cst::parse(
         SourceIdentity::new("test", "profile-defaults"),
@@ -23,7 +29,7 @@ fn outcome(profiles: &str, body: &str) -> Result<(), String> {
     )
     .expect("S1 reads the unit");
     assert!(parsed.is_admissible(), "{text}: {:?}", parsed.diagnostics());
-    let unit = build_unit(&parsed).map_err(|refusal| format!("{refusal:?}"))?;
+    let unit = build_unit(&parsed).map_err(|refusal| (Vec::new(), format!("{refusal:?}")))?;
     PackageDeclarations::assemble(
         parsed.source().reference().clone(),
         crate::TEST_PACKAGE_NAME.to_owned(),
@@ -31,14 +37,20 @@ fn outcome(profiles: &str, body: &str) -> Result<(), String> {
         SelectedModels::default(),
         Vec::new(),
     )
-    .map_err(|refusal| format!("{refusal:?}"))?
+    .map_err(|refusal| (Vec::new(), format!("{refusal:?}")))?
     .check(
         CheckMode::Linked,
         CheckingLimits::default(),
         &crate::reward_evaluator::ZeroRewardEvaluator,
     )
     .map(|_| ())
-    .map_err(|refusals| format!("{refusals:?}"))
+    .map_err(|refusals| {
+        let codes = refusals
+            .iter()
+            .map(|refusal| refusal.cause.code())
+            .collect();
+        (codes, format!("{refusals:?}"))
+    })
 }
 
 const V: &str = "profile v = \"filament.value.complete/v1\";\n";
@@ -54,14 +66,16 @@ fn a_unit_with_no_profile_checks() {
 /// in a profile-less unit exactly as in a unit selecting only the value layer.
 #[trace("FSpec-TC-1001", "FSpec-FR-500-AC-3")]
 #[test]
-#[ignore = "QSL-2902: the profile-less unit is refused with a Temporal TimedFacetRequired (Clock) cause, not the layer refusal the value layer gives"]
 fn a_profile_less_unit_refuses_another_layer_s_form_as_the_value_layer_does() {
     let body = "function f(c: Clock): Boolean pure { true }";
-    let bare = outcome("", body).expect_err("refused");
+    let bare = detail("", body).expect_err("refused");
     let value =
-        outcome(V, &body.replace("function f(", "function f using v(")).expect_err("refused");
-    for refusal in [&bare, &value] {
-        assert!(refusal.contains("UnsupportedConstruct"), "{refusal}");
+        detail(V, &body.replace("function f(", "function f using v(")).expect_err("refused");
+    for (codes, text) in [&bare, &value] {
+        assert!(
+            codes.contains(&fsl_foundation::Code::UnsupportedConstruct),
+            "{text}"
+        );
     }
 }
 

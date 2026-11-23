@@ -343,3 +343,139 @@ fn probabilistic_package_preserves_whole_result_exit_and_predicate_charges() {
         source_meter.admitted_charges()
     );
 }
+
+/// The caller's `exact_prob.max_states` bounds an exact probabilistic item
+/// on the source route; an item that states the same bound in its own
+/// `limits` member is refused whichever is larger (FR-255 "Lifecycle
+/// caller-limit coverage").
+#[trace("TC-721", "FR-255-AC-24", "FR-255-AC-25")]
+#[test]
+fn caller_exact_prob_max_states_bounds_the_item_and_refuses_a_duplicate() {
+    use fsl_foundation::Setting;
+
+    let ws = Workspace::new("caller-exact-prob-max-states");
+    let path = request_over(
+        &ws,
+        &format!("{LINK_UNIT}\n{EVENTUALLY}\n"),
+        LINK_MODEL,
+        &[LINK_START.to_vec()],
+        json!({"items": [{"claim": "Eventually", "kind": "probabilistic-satisfaction",
+            "probabilistic": {"evidence": "exact"}}]}),
+    );
+    let run = crate::analyze_cli_support::analyze_under(&path, &[(Setting::ExactProbMaxStates, 1)]);
+    let text = run.document().to_string();
+    assert_ne!(run.exit, 0, "{text}");
+    assert!(text.contains("exact_prob.max_states"), "{text}");
+
+    let stated = Workspace::new("caller-exact-prob-max-states-stated");
+    let stated_path = request_over(
+        &stated,
+        &format!("{LINK_UNIT}\n{EVENTUALLY}\n"),
+        LINK_MODEL,
+        &[LINK_START.to_vec()],
+        json!({"items": [{"claim": "Eventually", "kind": "probabilistic-satisfaction",
+            "probabilistic": {"evidence": "exact", "limits": {"max_states": 100000}}}]}),
+    );
+    let refused = crate::analyze_cli_support::analyze_under(
+        &stated_path,
+        &[(Setting::ExactProbMaxStates, 1)],
+    );
+    assert_eq!(refused.exit, 20, "{}", refused.document());
+    assert!(refused.document().to_string().contains("exact_prob.max_states"));
+}
+
+/// FR-255-AC-25 on the package route: the caller's `exact_prob.max_states`
+/// bounds the item over the compiled handoff alone, and a stated duplicate
+/// is refused there too.
+#[trace("TC-721", "FR-255-AC-25")]
+#[test]
+fn caller_exact_prob_max_states_bounds_the_package_route_too() {
+    use fsl_foundation::Setting;
+
+    for (name, members, refused) in [
+        (
+            "silent",
+            json!({"items": [{"claim": "Eventually", "kind": "probabilistic-satisfaction",
+                "probabilistic": {"evidence": "exact"}}]}),
+            false,
+        ),
+        (
+            "stated",
+            json!({"items": [{"claim": "Eventually", "kind": "probabilistic-satisfaction",
+                "probabilistic": {"evidence": "exact", "limits": {"max_states": 100000}}}]}),
+            true,
+        ),
+    ] {
+        let ws = Workspace::new(&format!("caller-exact-prob-package-{name}"));
+        let path = request_over(
+            &ws,
+            &format!("{LINK_UNIT}\n{EVENTUALLY}\n"),
+            LINK_MODEL,
+            &[LINK_START.to_vec()],
+            members,
+        );
+        let request: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("source request"))
+                .expect("request JSON");
+        let (selection, _) = package_selection(&ws, &request["request"]);
+        std::fs::remove_file(ws.path("program.fsl")).expect("delete source program");
+        std::fs::remove_dir_all(ws.path(&format!("{HANDOFF}/sources")))
+            .expect("delete retained sources");
+        let package_path = ws.write(
+            "package.json",
+            json!({"format": "native-analyze/1", "request": selection})
+                .to_string()
+                .as_bytes(),
+        );
+        let run = crate::analyze_cli_support::analyze_under(
+            &package_path,
+            &[(Setting::ExactProbMaxStates, 1)],
+        );
+        let text = run.document().to_string();
+        if refused {
+            assert_eq!(run.exit, 20, "{name}: {text}");
+        } else {
+            assert_ne!(run.exit, 0, "{name}: {text}");
+            assert_ne!(run.exit, 20, "{name}: {text}");
+        }
+        assert!(text.contains("exact_prob.max_states"), "{name}: {text}");
+    }
+}
+
+/// FR-255-AC-25: a statistical item that states a limit in its own member
+/// while the caller passes the same setting is refused `invalid-request`
+/// naming the setting; this covers `limits.max_samples`, `max_draws`,
+/// `max_cycle_steps` and `timed_sampling.max_sample_steps`.
+#[trace("TC-721", "FR-255-AC-25")]
+#[test]
+fn a_statistical_item_and_the_caller_may_not_both_state_a_limit() {
+    use fsl_foundation::Setting;
+
+    for (member, value, setting) in [
+        ("limits", json!({"max_samples": 100}), Setting::StatisticalMaxSamples),
+        ("limits", json!({"max_draws": 100}), Setting::StatisticalMaxDraws),
+        ("limits", json!({"max_cycle_steps": 100}), Setting::StatisticalMaxCycleSteps),
+        (
+            "timed_sampling",
+            json!({"q": 8, "max_sample_steps": 100}),
+            Setting::StatisticalMaxSampleSteps,
+        ),
+    ] {
+        let ws = Workspace::new(&format!("caller-statistical-stated-{setting}"));
+        let mut probabilistic = json!({"evidence": "statistical",
+            "method": {"type": "okamoto"}, "seed": "0", "max_witnesses": 0});
+        probabilistic[member] = value;
+        let path = request_over(
+            &ws,
+            &format!("{LINK_UNIT}\n{EVENTUALLY}\n"),
+            LINK_MODEL,
+            &[LINK_START.to_vec()],
+            json!({"items": [{"claim": "Eventually", "kind": "probabilistic-satisfaction",
+                "probabilistic": probabilistic}]}),
+        );
+        let refused = crate::analyze_cli_support::analyze_under(&path, &[(setting, 3)]);
+        let text = refused.document().to_string();
+        assert_eq!(refused.exit, 20, "{setting}: {text}");
+        assert!(text.contains(&setting.to_string()), "{setting}: {text}");
+    }
+}

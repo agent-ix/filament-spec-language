@@ -279,18 +279,18 @@ fn guard_inputs(
 fn positions_that_disagree_with_the_declaration_are_a_writer_fault() {
     let (package, _, _) = emitted(TUPLES);
     let (declared, nodes, emitted) = guard_inputs(&package);
-    let rows =
-        crate::emit::tuple_position_rows(&declared, nodes.clone(), &emitted).expect("they agree");
+    let rows = crate::emit::tuple_position_rows(&declared, nodes.clone(), &emitted, None)
+        .expect("they agree");
     assert_eq!(rows.len(), 3);
 
     let mut fewer = nodes.clone();
     fewer.pop();
     assert_eq!(
-        crate::emit::tuple_position_rows(&declared, fewer, &emitted),
+        crate::emit::tuple_position_rows(&declared, fewer, &emitted, None),
         Err(EmitRefusal::SourceMapInvariant)
     );
     assert_eq!(
-        crate::emit::tuple_position_rows(&declared, nodes, &HashMap::new()),
+        crate::emit::tuple_position_rows(&declared, nodes, &HashMap::new(), None),
         Err(EmitRefusal::SourceMapInvariant),
         "a type node that was not emitted"
     );
@@ -508,7 +508,10 @@ fn nested_enum_tuple_and_collection_elements_are_paired_with_their_final_nodes()
         Some(ValueType::Enum(enum_row.declaration.shape.clone()))
     );
     let rec = super::source_record_rows::row_of(&package, &emission, "Rec");
-    assert_eq!(rec.members[1].type_node, inner.structural_node);
+    assert_eq!(
+        rec.members[1].type_node,
+        Some(inner.structural_node.clone())
+    );
 
     let rows = emission.selected_source_collection_rows();
     assert_eq!(rows.len(), 3);
@@ -532,8 +535,11 @@ fn nested_enum_tuple_and_collection_elements_are_paired_with_their_final_nodes()
     );
     assert_eq!(inner_grid.element_node, color, "an enum element");
     assert_eq!(outer_grid.element_node, inner_grid.structural_node);
-    assert_eq!(rec.members[0].type_node, kids.structural_node);
-    assert_eq!(rec.members[2].type_node, outer_grid.structural_node);
+    assert_eq!(rec.members[0].type_node, Some(kids.structural_node.clone()));
+    assert_eq!(
+        rec.members[2].type_node,
+        Some(outer_grid.structural_node.clone())
+    );
     for row in rows {
         let base = node_with_id(&wire, &row.base_node);
         assert_eq!(
@@ -565,7 +571,8 @@ fn a_collection_type_node_is_paired_with_the_checkers_collection_type() {
             .find(|row| row.value_type == *fields[index].value_type())
             .expect("a row for the field's checked type");
         assert_eq!(
-            row.structural_node, record.members[index].type_node,
+            Some(row.structural_node.clone()),
+            record.members[index].type_node,
             "the record binds the collection row's node"
         );
         assert_eq!(row.structural_node != row.base_node, bounded);
@@ -904,7 +911,7 @@ fn a_record_with_map_fields_emits_map_rows_and_carries_their_key_nodes() {
     for (index, value_form, bounded) in [(0, "boolean", true), (1, "integer_range", false)] {
         let row = rows
             .iter()
-            .find(|row| row.structural_node == record.members[index].type_node)
+            .find(|row| Some(&row.structural_node) == record.members[index].type_node.as_ref())
             .expect("the record binds the map row's node");
         assert!(matches!(row.value_type, ValueType::Map(_)));
         assert_eq!(row.structural_node != row.base_node, bounded);
