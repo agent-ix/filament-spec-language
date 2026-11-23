@@ -1768,7 +1768,7 @@ fn an_element_presence_quantifier_is_scoped_in_its_predicate() {
         .expect("part members")
         .insert(
             1,
-            json!({"name": "binders", "value": {"term": "aggregate",
+            json!({"name": "binders", "term": "binding", "value": {"term": "aggregate",
             "members": [{"term": "reference", "target": parameter}]}}),
         );
     let bytes = crate::emit::tests::wire_bytes(&wire).expect("JSON");
