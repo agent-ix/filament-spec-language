@@ -720,6 +720,7 @@ mod package_intake_tests {
 /// the libraries and domain packages compilation reads.
 fn read<'d>(directory: &'d Path, bytes: &[u8], limits: RunLimits) -> Result<Readout<'d>> {
     let dependent_bytes = limits.dependent_bytes;
+    super::request_shape::admit(super::request_shape::Family::Analyze, bytes)?;
     let replay = fsl_replay::ReplayLimits::default().with_input_bytes(limits.replay_input_bytes);
     let mut request: wire::AnalyzeRequest = request(bytes).map_err(|cause| match cause {
         RunCause::Json(error) => invalid("request", error.to_string()),

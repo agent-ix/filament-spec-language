@@ -106,7 +106,7 @@ pub fn read<E: From<RequestDefect>>(
 }
 
 /// Refuse a `clocks` member, any other member outside [`MEMBERS`], and then
-/// the first missing member in [`MEMBERS`] order.
+/// every missing member, in [`MEMBERS`] order.
 #[ix_trace_rs::string_edge]
 fn closed_members<'a>(names: impl Iterator<Item = &'a str> + Clone) -> Result<(), RequestDefect> {
     if names.clone().any(|name| name == "clocks") {
@@ -121,11 +121,16 @@ fn closed_members<'a>(names: impl Iterator<Item = &'a str> + Clone) -> Result<()
             "unknown replay request member",
         ));
     }
-    if let Some(missing) = MEMBERS
+    let missing: Vec<String> = MEMBERS
         .iter()
-        .find(|member| !names.clone().any(|name| name == **member))
-    {
-        return Err(RequestDefect::new(format!("/{missing}"), "missing member"));
+        .filter(|member| !names.clone().any(|name| name == **member))
+        .map(|member| format!("/{member}"))
+        .collect();
+    if let Some(first) = missing.first() {
+        return Err(RequestDefect::new(
+            first.clone(),
+            format!("missing members {}", missing.join(", ")),
+        ));
     }
     Ok(())
 }

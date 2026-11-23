@@ -136,7 +136,10 @@ fn deeply_nested_export_inputs_refuse_without_aborting() {
         format!(r#"{{"profile":"filament.output.tla2/v1","obligations":["Low"],"z":{deep}}}"#);
     let cases = [
         (format!(r#""export":{selected}"#), "/request/export/z"),
-        (format!(r#""z":{selected}"#), "requires export"),
+        (
+            format!(r#""z":{selected}"#),
+            "invalid request: missing required members /request/program | /request/package, /request/export: export reads a native-run/1 request whose request holds an export object with at least profile and obligations",
+        ),
         (
             format!(r#""export":{export},"package":{{"z":{deep}}}"#),
             "/request/package/source_package",

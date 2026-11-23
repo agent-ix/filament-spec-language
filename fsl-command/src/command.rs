@@ -15,6 +15,7 @@ mod output_file;
 mod package_run;
 pub mod plan;
 mod relationships;
+mod request_shape;
 mod runtime_sources;
 pub use package_run::PreparedPackageRun;
 pub mod plan_request;
@@ -34,6 +35,7 @@ pub use analyze::{
 pub use flow::{analyze_flow_report, FlowAnalyzeError};
 pub use monitor::{monitor, MonitorEvent, MonitorProviders, MonitorSummary};
 pub use output::NativeResult;
+pub use request_shape::{request_example, RequestExampleError};
 pub use tl::{record as tl_record, AtomMapping, TlRecord};
 
 use crate::formal_source::FormalSource;
@@ -885,9 +887,22 @@ pub enum RunCause {
     /// A typed clause report failed canonical wire production.
     #[error("cannot serialize clause-run result: {0}")]
     ClauseOutput(#[source] fsl_replay::spine::NativeRunResultError),
-    /// Request format was not selected.
-    #[error("unsupported native command format")]
-    Format,
+    /// FR-1047: required request members the document lacks, all at once.
+    #[error("{message}")]
+    MissingMembers {
+        /// The refusal's message.
+        message: String,
+        /// `details.missing`: a pointer, or the pointers of a one-of group.
+        missing: Vec<serde_json::Value>,
+    },
+    /// FR-1047: a request format the entry does not read.
+    #[error("{message}")]
+    FormatNotRead {
+        /// The refusal's message.
+        message: String,
+        /// The formats the entry reads, in FR-1047's order.
+        accepted: Vec<&'static str>,
+    },
     /// A command intake ceiling stopped the request.
     #[error("{0} limit exceeded")]
     Limit(LimitKind),
@@ -1193,6 +1208,24 @@ impl From<ir::Diagnostic> for RunCause {
 }
 
 impl RunCause {
+    /// FR-1047: the `details` of a missing-members or format refusal.
+    fn request_details(&self) -> Option<serde_json::Map<String, serde_json::Value>> {
+        match self {
+            Self::MissingMembers { missing, .. } => Some(serde_json::Map::from_iter([(
+                "missing".to_owned(),
+                serde_json::Value::Array(missing.clone()),
+            )])),
+            Self::FormatNotRead { accepted, .. } => Some(serde_json::Map::from_iter([
+                (
+                    "path".to_owned(),
+                    serde_json::Value::String("/format".to_owned()),
+                ),
+                ("accepted".to_owned(), serde_json::json!(accepted)),
+            ])),
+            _ => None,
+        }
+    }
+
     /// Stable catalogued code for this cause, independent of its display message.
     pub fn code(&self) -> Code {
         match self {
@@ -1213,7 +1246,7 @@ impl RunCause {
                 Code::OutputFailure
             }
             Self::TransferSelection { code, .. } => *code,
-            Self::Format => Code::UnknownWire,
+            Self::MissingMembers { .. } | Self::FormatNotRead { .. } => Code::InvalidRequest,
             Self::Limit(_) => Code::ResourceExhausted,
             Self::Identifier { .. } => Code::InvalidIdentifier,
             Self::Native(error) => error.code,
@@ -1484,6 +1517,17 @@ impl RunError {
                     )]))),
                 ])
             }
+            RunCause::MissingMembers { .. } | RunCause::FormatNotRead { .. } => {
+                OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
+                    OutcomeDiagnostic::new(
+                        None,
+                        self.cause.code().as_str(),
+                        None,
+                        self.outcome_message(),
+                    )
+                    .with_details(self.cause.request_details()),
+                ])
+            }
             RunCause::ExportProtocolRequest { path, .. } => {
                 OutcomeDocument::new(operation, None, self.category()).with_diagnostics(vec![
                     OutcomeDiagnostic::new(
@@ -1532,7 +1576,6 @@ impl RunError {
             | RunCause::OutputExists { .. }
             | RunCause::Output(_)
             | RunCause::ClauseOutput(_)
-            | RunCause::Format
             | RunCause::Limit(_)
             | RunCause::Identifier { .. }
             | RunCause::CompleteSelection(_)
@@ -1916,15 +1959,6 @@ pub enum ExportSelection {
     Evidence,
 }
 
-impl ExportSelection {
-    fn member(self) -> &'static str {
-        match self {
-            Self::Ordinary => "export",
-            Self::Evidence => "export_evidence",
-        }
-    }
-}
-
 /// Read an authored export request exactly once under the caller's byte
 /// ceilings, require its explicit selection, and execute those admitted
 /// bytes. Relative dependent paths use the request operand's parent.
@@ -2037,6 +2071,7 @@ fn run_configured(
     // FR-644: a `native-monitor/1` request runs its record file as the batch
     // stream.
     let special = with_request_limits(path, limits.request_bytes, |directory, bytes| {
+        request_shape::admit(request_shape::Family::Run, bytes)?;
         if monitor::is_monitor_request(bytes) {
             monitor::run_bytes(directory, bytes, limits.dependent_bytes, &settle).map(Some)
         } else if replay::is_replay_request(bytes) {
@@ -2403,6 +2438,7 @@ pub fn prepare_run_with_overrides(
 ) -> std::result::Result<PreparedRun, Box<RunError>> {
     let mut sources = crate::Sources::default();
     with_request_limits(path, limits.request_bytes, |directory, bytes| {
+        request_shape::admit(request_shape::Family::RunReader, bytes)?;
         prepare_run_bytes_with_sources(
             directory,
             bytes,
@@ -2426,6 +2462,7 @@ pub fn read_clause_run_request(
     path: &Path,
 ) -> std::result::Result<fsl_replay::spine::ClauseRunRequest, ClauseRunRequestRefusal> {
     with_request(path, |directory, bytes| {
+        request_shape::admit(request_shape::Family::RunReader, bytes)?;
         read_clause_run_request_bytes(directory, bytes, None, &RequestOverrides::default())
     })
 }
@@ -2752,6 +2789,7 @@ fn compile_outcome_inner(
     request_limit_is_configured: bool,
 ) -> std::result::Result<CompileOutcome, Box<RunError>> {
     let result = with_request_limits(path, run_limits.request_bytes, |directory, bytes| {
+        request_shape::admit(request_shape::Family::Compile, bytes)?;
         let request: wire::CompileRequest = request_with_overrides(bytes, overrides)?;
         // FR-767: a malformed or unknown law refuses before any file is read.
         let integer_division = request_integer_division(request.integer_division.clone())?;
@@ -3970,17 +4008,8 @@ fn request_with_overrides<T: wire::ClocksRequest>(
 
 fn request<T: wire::RequestKind>(bytes: &[u8]) -> Result<T> {
     let Object(envelope): Object<wire::Envelope<'_>> = serde_json::from_slice(bytes)?;
-    let analyze = fsl_foundation::wire_format::WireFormat::AnalyzeRequest.as_str();
-    if (envelope.format == analyze) != (T::FORMAT.as_str() == analyze) {
-        // FR-620: an analyze document handed to another reader, or another
-        // document handed to the analyze reader, is an invalid request.
-        return Err(RunCause::AnalyzeRequest {
-            member: "format".to_owned(),
-            reason: format!("{} is not read here", envelope.format),
-        });
-    }
     if envelope.format != T::FORMAT.as_str() {
-        return Err(RunCause::Format);
+        return Err(request_shape::not_read(T::FORMAT, &envelope.format));
     }
     let Object(request): Object<T> = serde_json::from_str(envelope.request.get())?;
     request.validate()?;

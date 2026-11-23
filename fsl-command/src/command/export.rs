@@ -139,26 +139,25 @@ pub(super) fn run_selected_bytes(
     overrides: &RequestOverrides<'_>,
 ) -> Result<RunResult> {
     let document = admitted_document(bytes)?;
-    if document.get("format").and_then(Value::as_str)
-        != Some(fsl_foundation::wire_format::WireFormat::RunRequest.as_str())
-    {
-        return Err(RunCause::Format);
+    // FR-1015: a defect inside a present `export` member keeps its own refusal.
+    if selection == ExportSelection::Ordinary {
+        if let Some(member) = document
+            .get("request")
+            .and_then(Value::as_object)
+            .and_then(|body| body.get("export"))
+        {
+            let given = overrides
+                .limits
+                .map(|limits| limits.export)
+                .unwrap_or_default();
+            request::read(member, &given)?;
+        }
     }
-    let required = selection.member();
-    if document
-        .get("request")
-        .and_then(|body| body.get(required))
-        .is_none()
-    {
-        return Err(RunCause::ClauseRequest {
-            member: required.to_owned(),
-            reason: format!("the selected export invocation requires {required}"),
-        });
-    }
+    super::request_shape::admit(super::request_shape::Family::Export(selection), bytes)?;
     run_document(directory, bytes, document, limits, overrides)?.ok_or_else(|| {
         RunCause::ClauseRequest {
-            member: required.to_owned(),
-            reason: format!("the selected export invocation requires {required}"),
+            member: "/request".to_owned(),
+            reason: "expected an object".to_owned(),
         }
     })
 }
