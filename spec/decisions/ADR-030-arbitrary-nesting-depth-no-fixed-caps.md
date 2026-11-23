@@ -189,19 +189,31 @@ under a larger limit.
      (`quire`, ADR-029 CB-1), and the driver CLI exposes the caller limits.
      FSL provides the library operation that applies a `<name>=<value>`
      setting to the stages' limits, which the driver CLI calls.
-3. **Every named limit can be raised at every entry point.** Replay carries
-   every stage limit in its request and passes each one through. Today it
-   applies the proving run's S1 byte limit and S3 work budget, and runs every
-   other stage at its defaults. FSL's settings operation accepts every setting
-   name, so the driver CLI accepts every setting name.
+3. **Every named limit can be raised at every entry point that accepts it.**
+   Replay carries every stage limit in its request and passes each one
+   through. Today it applies the proving run's S1 byte limit and S3 work
+   budget, and runs every other stage at its defaults. FSL's settings
+   operation accepts every setting name, so the driver CLI accepts every
+   setting name. A diagnostic names a request member only when the active
+   request schema defines that member: replay diagnostics may name the
+   request's `stage_limits` entry, but native-run/1 has no `stage_limits`
+   member and its diagnostic SHALL NOT recommend one. This does not add a
+   limit member to native-run/1.
 4. **The diagnostic type carries the setting.** `fsl_foundation`'s
    `LimitExceeded` carries the setting with the kind, configured bound,
    actual count and locus. Each stage's limits type maps each of its fields
    to its setting in one place.
 5. **Rendering.** The rendered diagnostic states the limit, the configured
-   value, the count reached, the locus and the setting. For example:
+   value, the count reached, the locus and the setting. Its recovery advice
+   names the driver's `--limit <name>=<n>` option and may name a request entry
+   only if that entry exists in the active request schema. A native-run/1
+   diagnostic therefore ends after the CLI advice; replay may additionally
+   name its `stage_limits` entry. For example, native-run/1 renders
    "S3 node limit 100000 reached (100001) at `f`; raise it with
-   `--limit s3.nodes=<n>` or the request's `stage_limits` entry `s3.nodes`".
+   `--limit s3.nodes=<n>`", while replay may render
+   "S3 node limit 100000 reached (100001) at `f`; raise it with
+   `--limit s3.nodes=<n>` or the replay request's `stage_limits` entry
+   `s3.nodes`".
 6. **Catalogs.** The `stage_limit_exceeded` row of the native diagnostics
    catalog carries the setting name with the limit kind and bound (overlap
    item O-5). An `incomplete` outcome names its accounting counter, which is

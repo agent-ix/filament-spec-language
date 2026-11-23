@@ -23,7 +23,8 @@ Scope: FR-255-AC-1, FR-255-AC-2, FR-255-AC-3, FR-255-AC-21.
    reaches that limit at a configured bound `B` (for the I2 rows, a v2
    artifact; for the observation rows, a snapshot; for the library rows, a
    catalog), and run the row's stage.
-2. Check `f`, whose body is `1 + 1 + 1`, with `s3.nodes` at 4, and render the
+2. Check `f`, whose body is `1 + 1 + 1`, with `s3.nodes` at 4, once through a
+   native-run/1 request and once through a replay request, and render each
    diagnostic.
 3. For each stage's limits type, read the setting name of each field. Set
    each field through its builder method to a value distinct from its
@@ -38,9 +39,12 @@ Tag the tests `#[trace("TC-720", "FR-255-AC-1")]`, `#[trace("TC-720", "FR-255-AC
   bound `B`, the count the refused charge would have reached and the row's
   setting name; its catalog record carries `kind`, `bound`, `actual` and
   `setting`.
-- Step 2: "S3 node limit 4 reached (5) at <locus>; raise it with
-  `--limit s3.nodes=<n>` or the request's `stage_limits` entry `s3.nodes`",
-  with FR-096's locus of the node whose entry failed.
+- Step 2: the native-run/1 diagnostic is "S3 node limit 4 reached (5) at
+  <locus>; raise it with `--limit s3.nodes=<n>`" and does not mention a
+  request entry. The replay diagnostic is "S3 node limit 4 reached (5) at
+  <locus>; raise it with `--limit s3.nodes=<n>` or the replay request's
+  `stage_limits` entry `s3.nodes`". Both use FR-096's locus of the node whose
+  entry failed.
 - Step 3: each field maps to one name; the names are distinct; their union
   equals the table and the accounting table, and neither the supplied-value
   ceilings of FR-277 nor the monitor target's `monitor.max_event_rate` is in
