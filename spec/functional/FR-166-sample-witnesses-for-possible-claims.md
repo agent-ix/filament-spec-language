@@ -103,14 +103,21 @@ pub struct ModelCheckRequest<'a> {
 - The engine SHALL run phase 0 for every `Possible` item instance of the
   subject before phase 1 (FR-167), and for no other state-graph form.
 - For initial state `i` (its index in the subject's initial list) and walk
-  `r` in `0..witness_samples`, the engine SHALL call FR-101 `sample_request`
-  on a view of the subject's `ModelSystem` whose only initial state is
-  initial state `i`, with the request's seed, trace index `i ×
-  witness_samples + r` and step ceiling the lesser of `max_walk_steps` and
-  the search horizon `max_depth`.
-- When target evaluation at the current state has not ended the walk and the
-  walk has revisited a state with a closed observed subgraph, the engine SHALL
-  stop the walk before applying either ceiling. The subgraph consists of every
+  `r` in `0..witness_samples`, the engine SHALL call FR-101
+  `sample_request_observed` on a view of the subject's `ModelSystem` whose
+  only initial state is initial state `i`, with the request's seed, trace
+  index `i × witness_samples + r` and step ceiling the lesser of
+  `max_walk_steps` and the search horizon `max_depth`. Its observer SHALL
+  evaluate the target and closure condition at each expanded state. If the
+  call completes normally, its completed trace is used as the sampled walk.
+  If the observer stops at a target state, the returned prefix becomes the
+  witness path and the engine constructs its `SampleProvenance` with
+  `stopped: Reached`; if it stops for closure without a target, that prefix
+  decides nothing and is not a witness trace.
+- At each observer call, the observer SHALL evaluate the target first. If it
+  does not end the walk and the walk has revisited a state with a closed
+  observed subgraph, the engine SHALL return `ObserverDecision::Stop` before
+  applying either ceiling. The subgraph consists of every
   state the walk has visited and every outgoing edge it has taken from those
   states; an edge is identified by its source state key, transition identity
   and destination state key, as FR-101 orders successors. It is closed only

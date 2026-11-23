@@ -196,6 +196,45 @@ pub fn sample_request<S: TransitionSystem>(
     max_steps: usize,
 ) -> Result<Trace<S::TransitionId, S::Finding>, NotSimulated>;
 
+/// Incremental form of the same seeded walk. The observer sees each sampled
+/// state after its expansion and before the next successor is selected.
+pub fn sample_request_observed<S: TransitionSystem>(
+    system: &S,
+    domains: &[(WireNodeId, &ValueType)],
+    types: &TypeEnvironment,
+    position_limit: u64,
+    sampler: &DefinitionRef,
+    seed: u64,
+    trace: u64,
+    max_steps: usize,
+    observer: impl FnMut(&SampleObservation<S::State, S::TransitionId, S::Finding>) -> ObserverDecision,
+) -> Result<ObservedSample<S::TransitionId, S::Finding>, NotSimulated>;
+
+pub struct SampleObservation<'a, S, T, F> {
+    pub step: usize,
+    pub state: &'a S,
+    pub key: &'a StateKey,
+    /// The complete, canonically ordered expansion of `state`.
+    pub successors: &'a [(T, S)],
+    pub findings: &'a [F],
+    /// The edge selected to enter this state, absent at step zero.
+    pub incoming: Option<&'a Step<T>>,
+}
+
+pub enum ObserverDecision { Continue, Stop }
+
+pub enum ObservedSample<T, F> {
+    Completed(Trace<T, F>),
+    /// A captured prefix only: it is not a `Trace` and carries no provenance.
+    ObserverStopped(SamplePrefix<T, F>),
+}
+
+pub struct SamplePrefix<T, F> {
+    pub initial: StateKey,
+    pub steps: Vec<Step<T>>,
+    pub findings: Vec<StateFindings<F>>,
+}
+
 pub enum NotSimulated {
     /// The request's extent is unbounded (ADR-014 §4).
     RequiresBound(RequiresBound),
@@ -226,7 +265,8 @@ pub struct RequiresBound {
 pub struct EncodingRefusal(String);
 ```
 
-`explore_request`, `explore_request_parallel` and `sample_request` are the
+`explore_request`, `explore_request_parallel`, `sample_request` and
+`sample_request_observed` are the
 only public entries that explore or sample: `explore`, `sample` and the `Sampler` trait are
 `pub(crate)`, so no caller skips the requires-bound check or the
 `GeneratorMismatch` check. `replay` stays public; it explores nothing new.
@@ -396,6 +436,21 @@ FSL starts trace `t` from the initial state at index `t mod m` in canonical
 order, with no draw. This is FSL's choice.
 Provenance records the seed, the trace index and the sampler identity
 (ADR-014 TR-1). `CounterSampler` is removed.
+
+`sample_request_observed` performs the same request checks, initial-state
+choice, successor ordering, draw sequence and step accounting as
+`sample_request`. At each visited state it expands that state once, then calls
+the observer with the state, its key, the complete canonical successor list,
+findings, incoming selected edge and step index, before selecting another
+successor. `Continue` proceeds with the ordinary walk. `Stop` returns
+`ObservedSample::ObserverStopped` with exactly the sampled prefix through that
+state, including its findings, but no `Trace` and no `SampleProvenance`.
+Reaching a normal terminal state or `max_steps` returns
+`ObservedSample::Completed` with the same trace that `sample_request` would
+return. An observer that always continues therefore cannot change the sampled
+trace or consume additional draws. This entry uses FR-181's same generator
+identity and preimage contract; observer stopping is an FSL caller decision,
+not a new FSpec `StopReason`.
 
 **Horizon.** With `max_depth = Some(k)`, a run whose frontier holds only states
 at depth `k` once every state below depth `k` is expanded returns
