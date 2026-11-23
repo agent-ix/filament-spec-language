@@ -5,10 +5,9 @@
 //! names, so the functions and protocols are keyed in dependency order.
 //! Every emitted package is read back through IR's v2 reader.
 
-use super::protocol_graph::{checked, clause, model, PROFILES};
+use super::protocol_graph::{clause, model, PROFILES};
 use super::reachability::{lower_with, Lowered};
 use super::*;
-use fsl_semantics::check::{CheckCause, ProtocolConstruct, ProtocolReferenceCause};
 
 /// A protocol `Flow` over `M::Order` whose `finish` constraint is `finish`,
 /// with `activation`, `captures` and a `terminal` member.
@@ -195,30 +194,21 @@ fn slots(body: &str) -> [String; 5] {
     ]
 }
 
-/// QSL-1121g, FSpec FR-464 "Binder scope": a protocol reference written
-/// directly in a capture, a guard, a `terminal when`, a `finish` or a control
-/// body is refused typed, whatever the other protocol's `finish` binder is
-/// called: IR's reader follows the dependency closure through the referenced
-/// clause to its binder and refuses the body (`BinderScope`, `ModelStateRead`),
-/// so FSL writes no such package. Opening the gate writes only `Other`.
+/// QSL-1121g, FR-880, FSpec FR-464 "Binder scope" and FR-728: a protocol
+/// reference written directly in a capture, a guard, a `terminal when`, a
+/// `finish` or a control body is written as a `protocol_reference` carrier,
+/// whatever the other protocol's `finish` binder is called: the reader's
+/// binder closure stops at the carrier, so IR's reader admits the package.
 #[test]
-fn a_protocol_reference_written_in_a_protocol_body_refuses_typed() {
-    let construct = ProtocolConstruct::ProtocolReferenceInBody;
-    assert_eq!(construct.tracking(), "QSL-1121g");
-    let refused =
-        CheckCause::ProtocolReference(Box::new(ProtocolReferenceCause::NotEmitted { construct }));
+fn a_protocol_reference_written_in_a_protocol_body_is_admitted() {
     for site in slots("protocol Other") {
         let text = format!("{OTHER}{site}");
-        let refusals = checked(&text, false).expect_err(&text);
-        assert_eq!(refusals.len(), 1, "{text}: {refusals:?}");
-        assert_eq!(refusals[0].cause, refused, "{text}");
-        let open = checked(&text, true).unwrap_or_else(|refusals| panic!("{text}: {refusals:?}"));
-        let written = open
-            .semantic_graph()
-            .nodes()
-            .filter(|node| node.semantic_form() == "protocol_clause")
+        let lowered = admitted(&text);
+        let clauses = nodes(&lowered.wire)
+            .iter()
+            .filter(|node| node["semantic_form"] == "protocol_clause")
             .count();
-        assert_eq!(written, 1, "only Other is written: {text}");
+        assert_eq!(clauses, 2, "{text}");
     }
 }
 
@@ -236,5 +226,15 @@ fn a_protocol_read_through_a_function_in_a_protocol_body_is_admitted() {
             .filter(|node| node["semantic_form"] == "protocol_clause")
             .count();
         assert_eq!(clauses, 2, "{text}");
+    }
+}
+
+/// FR-880-AC-5: a protocol that refers to itself from a capture, an `each`
+/// guard, a `terminal when`, a `finish` constraint or a control body is one
+/// recursion group, and IR's reader admits it.
+#[test]
+fn a_protocol_that_refers_to_itself_in_a_protocol_body_is_admitted() {
+    for site in slots("protocol Flow") {
+        admitted(&site);
     }
 }

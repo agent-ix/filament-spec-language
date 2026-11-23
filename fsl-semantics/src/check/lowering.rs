@@ -4149,6 +4149,9 @@ impl<'a> Lowering<'a> {
         }
         for members in self.protocol_members.values_mut() {
             members.clause = resolve(&members.clause).map_err(|()| unresolved(&root))?;
+            if let Some(terminal) = &members.terminal {
+                members.terminal = Some(resolve(terminal).map_err(|()| unresolved(&root))?);
+            }
             for node in members.nodes.values_mut() {
                 *node = resolve(node).map_err(|()| unresolved(&root))?;
             }

@@ -1995,38 +1995,22 @@ fn choices_and_repeats_nest_in_each_other_and_read_back() {
     );
 }
 
-/// A guard that refers to a protocol directly is not written yet.
+/// A guard that refers to a protocol directly is written (FR-880-AC-3): the
+/// package checks, with the reference as a `protocol_reference` carrier.
 #[trace("FR-092-AC-18", "TC-1021")]
 #[test]
-fn decisions_without_a_node_form_are_not_written() {
+fn a_guard_that_refers_to_a_protocol_checks() {
     use super::protocol_graph::checked;
-    use super::protocol_reference::not_emitted;
-    use fsl_semantics::check::ProtocolConstruct;
-    let cases = [(
-        ProtocolConstruct::ProtocolReferenceInBody,
-        "QSL-1121g",
-        format!(
-            "{}protocol Other using p over (input: M::Order) on origin {{\n\
-                 role Buyer on M::Order;\nrun sequence Main {{ }}\n\
-                 finish End as (outcome: Boolean) {{ true }};\n}}\n",
-            flow(
-                "sequence Main { repeat Loop by Buyer visible () while { protocol Other } \
-                     sequence Body { event Tick by Buyer as (tick: Boolean) { true }; } }",
-            )
-        ),
-    )];
-    for (construct, ticket, text) in cases {
-        assert_eq!(construct.tracking(), ticket);
-        let refusals = checked(&text, false).expect_err(&text);
-        assert_eq!(
-            refusals
-                .iter()
-                .map(|refusal| &refusal.cause)
-                .collect::<Vec<_>>(),
-            [&not_emitted(construct)],
-            "{text}"
-        );
-    }
+    let text = format!(
+        "{}protocol Other using p over (input: M::Order) on origin {{\n\
+             role Buyer on M::Order;\nrun sequence Main {{ }}\n\
+             finish End as (outcome: Boolean) {{ true }};\n}}\n",
+        flow(
+            "sequence Main { repeat Loop by Buyer visible () while { protocol Other } \
+                 sequence Body { event Tick by Buyer as (tick: Boolean) { true }; } }",
+        )
+    );
+    checked(&text, false).unwrap_or_else(|refusals| panic!("{text}: {refusals:?}"));
 }
 
 /// A decision that calls a function is written once the function's node is
@@ -2321,7 +2305,6 @@ fn a_nested_repeat_with_a_stepping_body_is_written() {
 /// guard is written as one carrier and the package is admitted.
 #[test]
 #[trace("TC-2501", "FR-880-AC-3", "FSpec-FR-728-AC-1")]
-#[ignore = "QSL-2892: the check still refuses a protocol reference in a protocol body with ProtocolReference(NotEmitted { construct: ProtocolReferenceInBody }) instead of writing it"]
 fn a_protocol_reference_in_a_body_is_written() {
     emitted(&format!(
         "protocol Other using p over (input: M::Order) on origin {{\n\
@@ -2338,7 +2321,6 @@ fn a_protocol_reference_in_a_body_is_written() {
 /// written as one recursion group.
 #[test]
 #[trace("TC-2501", "FR-880-AC-5")]
-#[ignore = "QSL-2892: the check still refuses a self-referring protocol with ProtocolReference(NotEmitted { construct: ProtocolReferenceInBody }) instead of writing a recursion group"]
 fn a_self_referring_protocol_is_written_as_one_recursion_group() {
     let lowered = emitted(&flow(
         "sequence Main { repeat Loop by Buyer visible () while { protocol Flow } \

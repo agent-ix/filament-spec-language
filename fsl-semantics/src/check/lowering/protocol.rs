@@ -252,13 +252,6 @@ impl ProtocolInput<'_> {
                 unemitted.push(ProtocolConstruct::Control(control.kind.label()));
             }
         }
-        if self
-            .body_roots()
-            .iter()
-            .any(|root| !root.protocol_references().is_empty())
-        {
-            unemitted.push(ProtocolConstruct::ProtocolReferenceInBody);
-        }
         unemitted
     }
 
@@ -894,7 +887,7 @@ impl Lowering<'_> {
         let terminal_key = terminal.clone();
         let finish_node = protocol.checked.finish.as_ref().ok_or_else(unchecked)?.0;
         let mut nodes = run.nodes;
-        nodes.insert(finish_node, NodeRef::Admitted(finish.clone()));
+        nodes.insert(finish_node, finish.clone());
         let run = run.root;
 
         let activation = match &trigger {
@@ -959,12 +952,12 @@ impl Lowering<'_> {
                     MemberTerm::binding(
                         "terminal",
                         terminal.map_or_else(empty_group, |terminal| {
-                            BindingValue::Group(GroupTerm::references([terminal]))
+                            BindingValue::Group(GroupTerm::references_nodes([terminal]))
                         }),
                     ),
                     MemberTerm::binding("scheduling", scheduling),
                     MemberTerm::bound("run", LeafTerm::reference_node(run)),
-                    MemberTerm::bound("finish", LeafTerm::reference(finish)),
+                    MemberTerm::bound("finish", LeafTerm::reference_node(finish)),
                 ],
             ),
         )?;
@@ -1928,7 +1921,7 @@ impl Lowering<'_> {
         operation: &Operation,
         readable: &[Binder],
         boolean: NodeKey,
-    ) -> Result<NodeKey, CheckRefusal> {
+    ) -> Result<NodeRef, CheckRefusal> {
         let name = protocol.form.name.name.as_str();
         let checked = protocol.checked;
         let (finish, finish_name) = checked
@@ -1962,7 +1955,7 @@ impl Lowering<'_> {
             identifier("finish", &location)?,
             identifier(finish_name, &location)?,
         ];
-        self.protocol_member(
+        self.protocol_member_ref(
             &location,
             "obligation",
             boolean.clone(),
@@ -1993,7 +1986,7 @@ impl Lowering<'_> {
         readable: &[Binder],
         trigger: Option<Binder>,
         boolean: NodeKey,
-    ) -> Result<Option<NodeKey>, CheckRefusal> {
+    ) -> Result<Option<NodeRef>, CheckRefusal> {
         let name = protocol.form.name.name.as_str();
         let location = protocol_location(name, ProtocolSite::Terminal);
         let (mode, condition) = match &protocol.checked.slots.terminal {
@@ -2032,7 +2025,7 @@ impl Lowering<'_> {
             identifier("terminal", &location)?,
         ];
         let mode = MemberTerm::bound("mode", self.text_literal(mode, &location)?);
-        self.protocol_member(
+        self.protocol_member_ref(
             &location,
             "obligation",
             boolean.clone(),
@@ -2290,7 +2283,7 @@ pub(crate) struct ProtocolMembers {
     pub(crate) channels: BTreeMap<String, NodeKey>,
     pub(crate) roles: BTreeMap<String, NodeKey>,
     pub(crate) compensations: BTreeMap<usize, NodeKey>,
-    pub(crate) terminal: Option<NodeKey>,
+    pub(crate) terminal: Option<NodeRef>,
     pub(crate) binders: Vec<super::super::protocol_clause::CheckedProtocolBinderKey>,
     pub(crate) expressions: Vec<super::super::protocol_clause::CheckedProtocolExpressionBindings>,
 }
@@ -2311,7 +2304,10 @@ impl ProtocolMembers {
             channels: self.channels,
             roles: self.roles,
             compensations: self.compensations,
-            terminal: self.terminal,
+            terminal: self
+                .terminal
+                .map(|reference| require_admitted(reference, location))
+                .transpose()?,
             binders: self.binders,
             expressions: self.expressions,
         })
