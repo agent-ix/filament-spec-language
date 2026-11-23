@@ -173,20 +173,21 @@ and FR-894's duplicate kinds. Every causal-order verdict, `satisfied` or
     order no later observation can order the two.
 18. A predecessor the step itself causally precedes SHALL make the verdict
     `violated`, cause `unexpected`, at once.
-19. Under `join all`, the join SHALL be reached when every branch has
-    finished causally before the step.
-20. Under `join any`, the join SHALL be reached when one branch has finished
-    causally before the step.
-21. Under `join quorum(n)`, the join SHALL be reached when `n` branches have
-    finished causally before the step.
-22. Under `join predicate(f)`, the join SHALL be reached when `f`, applied to
-    the completion of the joined branches finished causally before the step,
-    in their sorted label order, is true (FR-218 "Predicate joins").
-23. A branch the step runs in SHALL NOT count as finished.
-24. A `join predicate` SHALL name at most 10 labels; the assessment SHALL
-    refuse a protocol whose predicate join names more, as `unsupported`,
-    `unsupported_construct`/`not-yet-implemented`, naming the join and the
-    bound, before it evaluates any predicate.
+19. Under `join all`, the assessment SHALL take the join as reached when every
+    branch has finished causally before the step.
+20. Under `join any`, the assessment SHALL take the join as reached when one
+    branch has finished causally before the step.
+21. Under `join quorum(n)`, the assessment SHALL take the join as reached when
+    `n` branches have finished causally before the step.
+22. Under `join predicate(f)`, the assessment SHALL take the join as reached
+    when `f`, applied to the completion of the joined branches finished
+    causally before the step, in their sorted label order, is true (FR-218
+    "Predicate joins").
+23. The assessment SHALL NOT count a branch the step runs in as finished.
+24. The assessment SHALL refuse a protocol whose predicate join names more
+    than 10 labels, as `unsupported`, `unsupported_construct`/
+    `not-yet-implemented`, naming the join and the bound, before it evaluates
+    any predicate.
 25. The assessment SHALL refuse a predicate join whose function does not
     evaluate to a Boolean over every subset of its labels, as `unsupported`,
     `unsupported_construct`/`not-yet-implemented`, naming the join.
