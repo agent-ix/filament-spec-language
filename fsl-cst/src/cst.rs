@@ -294,7 +294,7 @@ productions! {
     Related,
     EventNode, Check, Commit, Finish,
     RelationClause, ExecutionBinding, HyperClause, TraceDomain,
-    #[doc = "`behaviours [( <parameter> {, <parameter>} )]`: a `hyper` clause whose trace variables range over behaviours of model subjects."]
+    #[doc = "`behaviours [( [<parameter> {, <parameter>}] )]`: a `hyper` clause whose trace variables range over behaviours of model subjects."]
     BehavioursDomain,
     #[doc = "`(forall | exists) trace <identifier> [of <identifier> <fairness>*]`: one trace quantifier of a `hyper` clause."]
     Quantifier,

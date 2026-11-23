@@ -335,7 +335,7 @@ fn decimal_and_enum_history_rows_check_and_prove() {
 #[trace("TC-1590", "FR-630-AC-4")]
 #[trace("TC-1590", "FR-135-AC-6")]
 #[test]
-#[ignore = "QSL-2887: nested-reference rows are refused not-yet-implemented"]
+#[ignore = "QSL-2945: nested-reference rows are refused not-yet-implemented until the lifting feature lands; the test body also needs rewriting to the FR-630-AC-4 row (a Sequence<Reference<Ring>>[0, 2] field mapped to Sequence<Reference<Queue>>[0, 2]), its history row does not parse at S1"]
 fn a_nested_reference_row_checks_and_proves() {
     let body = "record Slots { held: Option<Reference<M::Counter>>; }\n".to_owned()
         + &refinement(
@@ -359,7 +359,7 @@ fn a_nested_reference_row_checks_and_proves() {
 #[test]
 fn non_interference_proves_and_refutes() {
     use crate::hyper_world::{
-        EQUAL_INPUTS, STARTS, Vault, non_interference, request_files_over_starts,
+        non_interference, request_files_over_starts, Vault, EQUAL_INPUTS, STARTS,
     };
     for (vault, expected) in [(Vault::Secure, "proved"), (Vault::Leaky, "refuted")] {
         let (unit, model, snapshots) =
@@ -387,7 +387,6 @@ fn non_interference_proves_and_refutes() {
 /// FR-631-AC-4: a hyper clause with no object parameter is analyzable.
 #[trace("TC-1591", "FR-631-AC-4")]
 #[test]
-#[ignore = "QSL-2887: hyperproperty items are not reachable through fsl analyze yet"]
 fn an_object_free_hyper_clause_is_analyzed() {
     use crate::hyper_world::{request_files, Vault};
     let declaration = "hyper Whole using inf over behaviours () \
@@ -401,7 +400,7 @@ fn an_object_free_hyper_clause_is_analyzed() {
         &[snapshot],
         json!({"items": [{"claim": "Whole"}]}),
     ));
-    assert!(matches!(label(&run.item(0)), "proved" | "refuted"));
+    assert_eq!(label(&run.item(0)), "proved");
 }
 
 /// The timed `Rpc` subject of FR-239 with timeout bound `t` and `claim`.
@@ -1346,35 +1345,6 @@ fn default_abstract_initial_states_are_every_admissible_completion() {
     assert_eq!(run.item(0)["record"]["cause"]["limit"], "max_candidates");
 }
 
-/// FR-630-AC-5 (empty completion set): an image outside the abstract unit
-/// bound is `InitialNotAbstract` at position 0, never a refusal.
-///
-/// The refinement row `value = self.value + 3` is refused `ill_typed` by the
-/// row rule that an expression conforms to the type it defines and is never
-/// range-checked into it (ADR-016 SC-2), so the item cannot be built; the spec
-/// gives no mapping that type-checks and has an image outside `Int[0, 3]`.
-#[trace("TC-2964", "FR-630-AC-5")]
-#[test]
-#[ignore = "QSL-2887: spec gap - FR-630-AC-5 Shifted row is ill_typed under ADR-016 SC-2"]
-fn an_image_outside_the_unit_bound_is_initial_not_abstract() {
-    let body = refinement_stepping("Shifted", "self.value + 3", "stutter", "");
-    let ws = Workspace::new("family-refinement-default-initial-empty");
-    let run = analyze(&refinement_request_without_abstract(
-        &ws,
-        &body,
-        json!([default_initial_item("Shifted", None)]),
-        &[1],
-    ));
-    let refuted = run.item(0);
-    assert_eq!(label(&refuted), "refuted", "{refuted}");
-    assert_eq!(
-        refuted["counterexample"]["refinement_failure"],
-        json!({"kind": "InitialNotAbstract", "initial": "0"}),
-        "{refuted}"
-    );
-    assert_eq!(refuted["replay"]["reproduced"], true, "{refuted}");
-}
-
 /// FR-630-AC-5 (TC-2964): the refinement row `value = self.value + 3` types
 /// `Int[3, 6]`, which does not conform to the abstract field type `Int[0, 3]`
 /// (ADR-016 SC-2), so S3 refuses it `ill_typed`/`type-mismatch` and no item
@@ -1394,6 +1364,13 @@ fn a_mapping_that_does_not_conform_to_the_abstract_field_is_refused() {
     let diagnostic = &document["diagnostics"][0];
     assert_eq!(diagnostic["code"], "ill_typed", "{document}");
     assert_eq!(diagnostic["cause"], "type-mismatch", "{document}");
+    let unit = std::fs::read(ws.path("program.fsl")).expect("the unit");
+    let (start, end) = (
+        usize::try_from(diagnostic["locus"]["start"].as_u64().expect("a start"))
+            .expect("an offset"),
+        usize::try_from(diagnostic["locus"]["end"].as_u64().expect("an end")).expect("an offset"),
+    );
+    assert_eq!(&unit[start..end], b"self.value + 3", "{document}");
     assert_eq!(document["items"], json!([]), "{document}");
 }
 
@@ -1439,8 +1416,9 @@ fn set_elapsed(ws: &Workspace, path: &str, ms: i64) {
         serde_json::from_slice(&std::fs::read(&file).expect("the snapshot")).expect("JSON");
     for population in snapshot["populations"].as_array_mut().expect("populations") {
         for object in population["objects"].as_array_mut().expect("objects") {
-            object["fields"]["elapsed"] = json!({"rational": {"numerator": ms.to_string(),
-                "denominator": "1"}, "unit": "ms"});
+            object["fields"]["elapsed"] = json!({"kind": "quantity", "unit": "ms",
+                "magnitude": {"kind": "rational", "numerator": ms.to_string(),
+                    "denominator": "1"}});
         }
     }
     std::fs::write(&file, snapshot.to_string()).expect("write");
@@ -1453,13 +1431,12 @@ fn set_elapsed(ws: &Workspace, path: &str, ms: i64) {
 /// the bound itself) it is proved.
 #[trace("TC-2971", "FR-630-AC-6")]
 #[test]
-#[ignore = "QSL-2887: the analyze item for an image outside an abstract unit bound carries no terminal record (null) instead of settling InitialNotAbstract"]
 fn an_image_outside_an_abstract_unit_bound_is_initial_not_abstract() {
     let body = "dimension Time;\nunit s : Time = rational(1, 1);\nunit ms : Time = rational(1, 1000) * s;\n\
          refinement Late using t0 abstract Spec concrete M {\n\
          population Spec::counters from M::counters;\n\
          object Spec::Counter from M::Counter { value = self.value; elapsed = self.elapsed + 2 ms; }\n\
-         step M::Counter::inc -> stutter;\n}\n";
+         step M::Counter::inc -> Spec::Counter::inc(self);\n}\n";
     for (elapsed, expected) in [(2, "refuted"), (1, "proved")] {
         let ws = Workspace::new(&format!("family-refinement-unit-bound-{elapsed}"));
         let request = refinement_request_without_abstract(
