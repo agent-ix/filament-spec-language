@@ -47,9 +47,20 @@ predecessors. An `exhausted` step has as predecessors the steps of the last iter
 | FND-003 | fixed | Incremental assessment paragraph: prefixes hold the population of begun instances; a refused prefix refuses the item invalid_runtime_input with the prefix index |
 | FND-004 | fixed | Enabledness cell replaced by ten numbered SHALL rules; AC-11 moved into order; FR-896-AC-5 says "counts 1 to 6" |
 
-## Dispositions (fix round 3)
+## New findings (disposition pass 2)
 
-| Finding | Disposition |
-| --- | --- |
-| FND-005 | Fixed. Rule 10 uses "the last iteration begun causally before the step", rule 12 states a concurrent or later iteration is not a predecessor, rule 17 makes an observed predecessor not ordered before the step `violated`, cause `unexpected`, at once; FR-895-AC-27. |
-| FND-006 | Fixed. The rules are split to 18 rules of one requirement each; FR-896-AC-6's sentence about a missing test is replaced by the refusal behaviour. |
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-007 | medium | Rule 5 ("an earlier `parallel` under any other join SHALL supply the steps of the branches whose steps were all observed") is not relative to the step: under `outstanding continue` (ADR-027 ST-7) a branch may complete after the join, and rule 5 with rule 18 then marks a legitimate recording `violated` (SR-3595001 FND-017). Proposed: "the branches whose steps were all observed causally before the step; the step's predecessors are satisfied when those branches number at least what the join policy requires" | spec/functional/FR-895-assess-a-recorded-protocol-execution-against-its-obligations.md:140-141 |
+
+## Dispositions (round 2)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-002 | fixed | channel premise pending while not closed (Pending, never passed); rules 16-18 make observed-but-unordered predecessors violated at once; AC-26 and AC-27 check every obligation across prefixes |
+| FND-005 | fixed | rules 10 and 12: last iteration begun causally before the step; a concurrently begun iteration is judged on its own steps; rule 17 at once |
+| FND-006 | fixed | 18 numbered rules, one SHALL each; FR-896-AC-6 now states the refused-prefix criterion |
+
+## Dispositions (fix round 4)
+
+FND-007: fixed. Rule 5 states the branches counted are those observed causally before the step, the join policy's requirement, and that a branch finishing after the join is not a predecessor (ADR-027 ST-7); FR-895-AC-28.

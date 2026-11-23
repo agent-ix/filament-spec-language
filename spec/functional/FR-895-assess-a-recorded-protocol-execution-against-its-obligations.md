@@ -138,7 +138,11 @@ and FR-894's duplicate kinds. Every causal-order verdict, `satisfied` or
 4. An earlier `parallel` under `join all` SHALL supply the steps of every
    branch.
 5. An earlier `parallel` under any other join SHALL supply the steps of the
-   branches whose steps were all observed.
+   branches whose steps were all observed causally before the step, when
+   those branches number at least what the join policy requires (one for
+   `any` and `predicate`, `n` for `quorum(n)`); a branch that finishes after
+   the join, as `outstanding continue` allows (ADR-027 ST-7), is not a
+   predecessor. Until they do, the steps of every branch are predecessors.
 6. The assessment SHALL treat the steps of one `parallel` branch as unordered
    against those of a sibling branch.
 7. Within a `repeat`, a step of one iteration SHALL have as predecessors the
@@ -232,6 +236,7 @@ looking like success, which FSpec FR-059-AC-3 requires.
 | FR-895-AC-25 | Over a `parallel` of events `L` and `R` under `join any`, followed by `Placed`, the closed recording `L`, `Placed` gives `Placed`'s enabledness obligation `satisfied`; the recording `Placed`, `L` gives it `violated`, cause `unexpected`, as a predecessor the step precedes. | Test (TC-2531) |
 | FR-895-AC-26 | The closed AC-20 protocol recording listed in the array order `Placed`, `Got`, `yes`, `After`, `Placed`, `Got`, `yes`, whose `After` is causally last (its role's local order puts it after the second iteration), assessed incrementally has no `After` enabledness obligation in the first six prefixes, which are in causal order, and `satisfied` in the seventh; no obligation of any kind changes from `violated`, and none from `satisfied` to `pending`, between consecutive prefixes; a channel premise stays `pending` in every prefix whose closure is `open` unless a violation has shown. | Test (TC-2531) |
 | FR-895-AC-27 | The AC-26 recording with a third `Placed` by `Buyer` after the second, unordered with `After`, closure `open`, assessed incrementally has no `After` enabledness obligation in the first six prefixes and `satisfied` in the seventh and the eighth: the iteration begun concurrently with `After` does not reopen it, and no obligation changes from `violated` or from `satisfied` to `pending` between consecutive prefixes. | Test (TC-2531) |
+| FR-895-AC-28 | Over the AC-25 `join any … outstanding continue` protocol, the recording `L`, `Placed`, `R` gives `Placed`'s enabledness obligation `satisfied` in batch and in every incremental prefix from the second, with no obligation changing from `violated` or from `satisfied` to `pending`; `R`, `L`, `Placed` gives `satisfied` from the third prefix; under `join all` the recording `L`, `Placed`, `R` gives `Placed` `violated`, cause `unexpected`. | Test (TC-2531) |
 
 ## Dependencies
 

@@ -40,6 +40,6 @@ accepted-side and precedence tests (FND-003), and incremental assessment exists 
 
 Disposition pass 2 (head 69344ffc97b7a3ed1fb556e85fa2eab765d48ee7): no findings of this artifact remain open; all four were fixed in round 1.
 
-## Dispositions (fix round 3)
+## Dispositions (fix round 4)
 
-Closed by FR-895-AC-27, the strengthened AC-26 test (every obligation) and the two refused-prefix unit tests; see `qsl-2885-code-review.md` "Dispositions (fix round 3)".
+Closed by FR-895-AC-28 and the occurrence-aware monotonicity check; see `qsl-2885-code-review.md` "Dispositions (fix round 4)".

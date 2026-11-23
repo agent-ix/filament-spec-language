@@ -88,12 +88,29 @@ titan worktree (reverted, clean after): making prefixes follow array position tu
 | FND-012 | still-open | rustfmt --check still reports request.rs:1096 (`item.options.assessment == Some(AssessmentMode::Incremental)` exceeds the width) |
 | FND-013 | fixed | AssessmentMode serde enum, kebab-case, default Batch |
 
-## Dispositions (fix round 3)
+## New findings (disposition pass 3)
+
+Head 4dd31a3e50ef92c3d736256d9ac3941a2432f063 (code equal to e3e36334, the coder's titan worktree). Focused runs on titan:
+`--test it` filter 88 passed, 0 failed, 0 ignored; `--lib a_refused_prefix` 2 passed. Probe E and a probe D rerun ran as a
+scratch test in that worktree, reverted (tree clean after).
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-017 | high | A step after a `parallel` under `join any ... outstanding continue` is wrongly `violated`: the closed recording `L`, `Placed`, `R` (Buyer order, `R` still running after the join, which ADR-027 ST-7 allows) gives `Placed` `violated`, `unexpected` in batch, and incrementally `satisfied` at prefix 2 then `violated` at prefix 3 (probe E). The `parallel` arm counts a branch as required when all its steps are observed anywhere, not causally before the step, so a branch that completes after the join becomes a predecessor the step precedes | fsl-analyze/src/protocol_analysis/recording.rs:4008-4040 |
+| FND-018 | low | `assert_every_verdict_only_advances` pairs obligations by `find` on the obligation id; enabledness ids are (kind, node, instance), so the second occurrence of a repeated step is compared with the first occurrence's verdict and its own transition is never checked. The helper is otherwise not vacuous (a synthetic satisfied-to-pending pair panics, pending-to-satisfied passes) | fsl-analyze/tests/it/protocol_replay_mode.rs:1333-1355 |
+
+## Dispositions (round 3)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-012 | fixed | rustfmt --check clean on request.rs, conformance.rs and recording.rs |
+| FND-014 | fixed | iteration and case counts take only observations at or before the step (begun_before); probe D rerun gives After None x6 then satisfied, satisfied; AC-27 test |
+| FND-015 | fixed | channel premise pending while the closure is not closed unless violated; assert_every_verdict_only_advances checks every obligation; the two updated expectations follow FR-895 "Pending, never passed" and assert the open/closed premise explicitly |
+| FND-016 | fixed | a_refused_prefix_is_reported_with_its_index and a_refused_prefix_refuses_the_item_naming_the_prefix |
+
+## Dispositions (fix round 4)
 
 | Finding | Disposition |
 | --- | --- |
-| Probe D (iteration begun concurrently reopens `After`) | Fixed. The last iteration is the one begun causally before the step (iteration and choice counts only count observations at or before the step); an observed predecessor not ordered before the step is `violated`, cause `unexpected`, at once. Test `an_iteration_begun_concurrently_with_the_step_does_not_reopen_it` (FR-895-AC-27): `After` absent in prefixes 1 to 6, `satisfied` in 7 and 8. |
-| Channel-premise hole | Fixed. A channel premise is `pending` while the closure is not `closed` unless a violation has shown. The monotonicity helper now checks every obligation of every prefix, and AC-26's test asserts the premise is pending in each open prefix. Existing expectations that held the old behaviour were updated: `only_a_closed_recording_closure_gives_complete_success` (premise pending open, satisfied closed) and `duplicate_delivery_is_classified_against_the_channel_premise` (pending in the open recording). |
-| Refused prefix untested | Fixed. Unit tests `a_refused_prefix_is_reported_with_its_index` (injected refusal at prefix 1, 2 and 3; later prefixes not assessed) and `a_refused_prefix_refuses_the_item_naming_the_prefix` (the `prefix_refusal` mapping: `invalid_runtime_input`, cause code, detail, `prefix`). FR-896-AC-6 no longer states an absence of a test. |
-| FND-012 rustfmt | Fixed; `request.rs` diff stays in the one hunk. |
-| Consequences of the at-once rule | AC-11 and FR-896-AC-5 now state the AC-10 recording is `refuted` from the second prefix (`Placed` is observed and not ordered before `Note`); AC-21's fixture drops the unordered second `Placed` so that `Got` stays the unobserved predecessor (pending open, violated closed). |
+| Probe E (`outstanding continue`) | Fixed. A branch counts only when all its steps were observed causally before the step; the join is satisfied when those branches number at least what its policy requires (all, one for `any`/`predicate`, `n` for `quorum(n)`); until then every branch's steps are predecessors. Test `a_branch_finishing_after_an_any_join_does_not_violate_the_step` (FR-895-AC-28): `L, Placed, R` satisfied in batch and from prefix 2, `R, L, Placed` satisfied from prefix 3, the `join all` variant violated. The earlier parallel tests (AC-14, AC-15, AC-25) pass unchanged. |
+| Monotonicity helper pairing | Fixed. Obligations are compared per id as a multiset (violated count and decided count never fall); `the_monotonicity_check_covers_every_occurrence_of_a_repeated_step` shows the check fails when a second occurrence of a repeated step goes back to `pending`. |

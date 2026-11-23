@@ -1330,33 +1330,86 @@ fn incremental_prefixes_follow_causal_order_so_a_verdict_never_returns_to_pendin
 /// Every obligation of every prefix keeps its verdict's direction in the
 /// next prefix: `pending` becomes a decision, `satisfied` may become
 /// `violated`, nothing leaves `violated` and nothing returns to `pending`.
+///
+/// Obligations of repeated steps share one id, and a prefix may add an
+/// observation anywhere in the array, so obligations are compared per id as
+/// a multiset: the number of `violated` verdicts and the number of decided
+/// verdicts under one id never fall from one prefix to the next.
 fn assert_every_verdict_only_advances(prefixes: &[Value]) {
+    let tally = |prefix: &Value| {
+        let mut tally: std::collections::BTreeMap<String, (usize, usize)> =
+            std::collections::BTreeMap::new();
+        for entry in prefix["obligations"].as_array().expect("obligations") {
+            let counts = tally.entry(entry["obligation"].to_string()).or_default();
+            if entry["verdict"] == "violated" {
+                counts.0 += 1;
+            }
+            if entry["verdict"] != "pending" {
+                counts.1 += 1;
+            }
+        }
+        tally
+    };
     for pair in prefixes.windows(2) {
-        for before in pair[0]["obligations"].as_array().expect("obligations") {
-            let Some(next) = pair[1]["obligations"]
-                .as_array()
-                .expect("obligations")
-                .iter()
-                .find(|entry| entry["obligation"] == before["obligation"])
-            else {
+        let (before, after) = (tally(&pair[0]), tally(&pair[1]));
+        for (id, (violated, decided)) in &before {
+            let Some((next_violated, next_decided)) = after.get(id) else {
                 continue;
             };
-            let (was, now) = (before["verdict"].as_str(), next["verdict"].as_str());
             assert!(
-                was != Some("violated") || now == Some("violated"),
-                "{before} became {next}"
-            );
-            assert!(
-                was != Some("satisfied") || now != Some("pending"),
-                "{before} became {next}"
+                next_violated >= violated && next_decided >= decided,
+                "{id}: violated {violated} -> {next_violated}, decided {decided} -> {next_decided}"
             );
         }
     }
 }
 
+/// The helper fails a repeated step whose second obligation, sharing the
+/// first's id, goes back to `pending` while the first stays decided.
+#[test]
+fn the_monotonicity_check_covers_every_occurrence_of_a_repeated_step() {
+    let id = json!({"kind": "enabledness", "node": "Flow::Main::Placed", "instance": "w-1"});
+    let prefix = |first: &str, second: &str| {
+        json!({"obligations": [
+            {"obligation": id, "verdict": first},
+            {"obligation": id, "verdict": second},
+        ]})
+    };
+    assert_every_verdict_only_advances(&[
+        prefix("satisfied", "pending"),
+        prefix("satisfied", "satisfied"),
+    ]);
+    let regressed = std::panic::catch_unwind(|| {
+        assert_every_verdict_only_advances(&[
+            prefix("satisfied", "satisfied"),
+            prefix("satisfied", "pending"),
+        ]);
+    });
+    assert!(
+        regressed.is_err(),
+        "a second occurrence going pending fails"
+    );
+    let reopened = std::panic::catch_unwind(|| {
+        assert_every_verdict_only_advances(&[
+            prefix("violated", "pending"),
+            prefix("satisfied", "pending"),
+        ]);
+    });
+    assert!(
+        reopened.is_err(),
+        "a violated occurrence leaving violated fails"
+    );
+}
+
 /// `After`'s enabledness verdict in each prefix, `None` where the prefix has
 /// no such obligation yet.
 fn after_verdicts(prefixes: &[Value]) -> Vec<Option<&str>> {
+    node_verdicts(prefixes, "Flow::Main::After")
+}
+
+/// The enabledness verdict of `node` in each prefix, `None` where the prefix
+/// has no such obligation yet.
+fn node_verdicts<'a>(prefixes: &'a [Value], node: &str) -> Vec<Option<&'a str>> {
     prefixes
         .iter()
         .map(|prefix| {
@@ -1366,11 +1419,78 @@ fn after_verdicts(prefixes: &[Value]) -> Vec<Option<&str>> {
                 .iter()
                 .find(|verdict| {
                     verdict["obligation"]["kind"] == "enabledness"
-                        && verdict["obligation"]["node"] == "Flow::Main::After"
+                        && verdict["obligation"]["node"] == node
                 })
                 .map(|verdict| verdict["verdict"].as_str().expect("a verdict"))
         })
         .collect()
+}
+
+/// FR-895-AC-28 (TC-2531): under `join any … outstanding continue` the other
+/// branch keeps running after the join (ADR-027 ST-7), so a branch counts as
+/// a predecessor only when its steps were observed causally before the step.
+/// `L`, `Placed`, `R` is `satisfied` for `Placed` in batch and from the
+/// second prefix on; `R`, `L`, `Placed` (both branches before) stays
+/// `satisfied`; under `join all`, `L`, `Placed`, `R` is `violated`, cause
+/// `unexpected`.
+#[trace("TC-2531", "FR-895-AC-28")]
+#[test]
+fn a_branch_finishing_after_an_any_join_does_not_violate_the_step() {
+    let left = || branch_event("left", "Left", "L");
+    let right = || branch_event("right", "Right", "R");
+    let placed = || observation("send", "Placed", "Buyer", "m-1");
+    let incremental = |name: &str, source: &str, observations: Value| {
+        let mut recording = parallel_recording(observations);
+        recording["closure"] = json!({"state": "open", "premises": []});
+        replay_with(
+            name,
+            source,
+            &recording,
+            json!({"file": "recording.json", "identity": recording_identity()}),
+            assessed_item("incremental"),
+        )
+        .item(0)
+    };
+    let source = any_join_protocol();
+
+    let late = incremental(
+        "replay-any-join-late-branch",
+        &source,
+        json!([left(), placed(), right()]),
+    );
+    let prefixes = late["prefixes"].as_array().expect("prefixes");
+    assert_eq!(
+        node_verdicts(prefixes, "Flow::Main::Placed"),
+        [None, Some("satisfied"), Some("satisfied")],
+        "{late}"
+    );
+    assert_every_verdict_only_advances(prefixes);
+    assert_enabled(
+        &source,
+        &parallel_recording(json!([left(), placed(), right()])),
+        "Flow::Main::Placed",
+        1,
+    );
+
+    let early = incremental(
+        "replay-any-join-both-before",
+        &source,
+        json!([right(), left(), placed()]),
+    );
+    let prefixes = early["prefixes"].as_array().expect("prefixes");
+    assert_eq!(
+        node_verdicts(prefixes, "Flow::Main::Placed"),
+        [None, None, Some("satisfied")],
+        "{early}"
+    );
+    assert_every_verdict_only_advances(prefixes);
+
+    assert_unexpected(
+        &parallel_protocol(),
+        &parallel_recording(json!([left(), placed(), right()])),
+        "Flow::Main::Placed",
+        1,
+    );
 }
 
 /// FR-895-AC-27 (TC-2531): an iteration begun concurrently with `After` does

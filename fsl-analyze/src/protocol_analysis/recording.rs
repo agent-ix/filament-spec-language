@@ -4006,33 +4006,63 @@ fn collect_predecessors(
             }
         },
         "parallel" => {
-            let policy_all = protocol
+            use fsl_semantics::check::CheckedJoinPolicy;
+            let policy = protocol
                 .parallels
                 .iter()
                 .find(|parallel| parallel.node == node)
-                .is_none_or(|parallel| {
-                    matches!(
-                        parallel.policy,
-                        fsl_semantics::check::CheckedJoinPolicy::All
-                    )
-                });
-            for branch in control
+                .map(|parallel| &parallel.policy);
+            // How many branches the join needs; `join all` needs every one.
+            let branches: Vec<_> = control
                 .children
                 .iter()
                 .filter_map(|child| protocol.controls.control(*child))
-            {
-                let mut steps = Vec::new();
-                for child in &branch.children {
-                    collect_predecessors(
-                        protocol, document, position, *child, occurrence, &mut steps,
-                    );
+                .map(|branch| {
+                    let mut steps = Vec::new();
+                    for child in &branch.children {
+                        collect_predecessors(
+                            protocol, document, position, *child, occurrence, &mut steps,
+                        );
+                    }
+                    steps
+                })
+                .collect();
+            let required = match policy {
+                None | Some(CheckedJoinPolicy::All) => branches.len(),
+                Some(CheckedJoinPolicy::Quorum(needed)) => {
+                    usize::try_from(*needed).unwrap_or(usize::MAX)
                 }
-                let completed = steps.iter().all(|step| match step {
-                    Predecessor::Node(name) => count(name) > 0,
-                    Predecessor::Last(name, occurrence) => count(name) >= *occurrence,
-                    Predecessor::Undecided => false,
-                });
-                if policy_all || completed {
+                Some(CheckedJoinPolicy::Any | CheckedJoinPolicy::Predicate { .. }) => 1,
+            };
+            // A branch counts only when all its steps were observed causally
+            // before the step: under `outstanding continue` the others may
+            // finish after the join.
+            let begun = |name: &str, needed: usize| {
+                (0..document.observations.len())
+                    .filter(|index| {
+                        let entry = &document.observations[*index];
+                        entry.node == name
+                            && entry.instance == *instance
+                            && begun_before(protocol, document, position, *index)
+                    })
+                    .count()
+                    >= needed
+            };
+            let completed: Vec<bool> = branches
+                .iter()
+                .map(|steps| {
+                    steps.iter().all(|step| match step {
+                        Predecessor::Node(name) => begun(name, 1),
+                        Predecessor::Last(name, occurrence) => begun(name, *occurrence),
+                        Predecessor::Undecided => false,
+                    })
+                })
+                .collect();
+            let satisfied = completed.iter().filter(|done| **done).count() >= required;
+            for (steps, done) in branches.into_iter().zip(completed) {
+                // A join not yet satisfied needs every branch's steps; a
+                // satisfied one needs those that completed before the step.
+                if !satisfied || done {
                     out.extend(steps);
                 }
             }
