@@ -105,6 +105,7 @@ writes no target bytes of its own, so the two give byte-identical files.
   `package.source_package` exactly as given, which an export over a package
   must carry (FR-1039 "The source package reference of a package export").
   FSL never derives the reference from a package's bytes.
+- An export request that carries a compile-only top-level member, `output`, `handoff` or `call_site` (FR-027, FR-665, FR-810), SHALL be refused `invalid-request` naming that member, exit `20`, and writes no file: the export names its file in `export.output`.
 - FSL SHALL write the target file only for an `assembled` status, after the
   text is complete, with no partial file. A file or directory already at the
   path refuses `invalid-request` naming the path, exit `20`, with
@@ -225,6 +226,7 @@ writes no target bytes of its own, so the two give byte-identical files.
 | FR-1015-AC-15 | In a build whose mapper does not lower a clause over a protocol subject, exporting a temporal clause that a protocol requires on an `origin` row writes `status` `refused` and `export.refusal` with exactly `code` `unimplemented_capability`, `cause` `unimplemented-meaning`, `capability` `export:tla:` followed by the protocol clause node's `node_tag`/`semantic_form`, `target` `tla`, `construct` that `node_tag`/`semantic_form`, `node` its canonical node-id string and `locus` its region or `null`, exit `21`, with no `target_text`, no `package` and no file; the same under `minimum_fidelity` `any`; never exit `30`. | Test (TC-3020) |
 | FR-1015-AC-16 | An export whose checked package admission refuses `invalid_package`, and one whose program has a missing import, each exit with the exit their compile gives and carry a diagnostic whose `code` is `invalid_package` or `missing_import` with that refusal's own cause and locus; neither exits `30` and neither message is the export mapper's text in place of the cause. | Test (TC-3020) |
 | FR-1015-AC-17 | An export request whose `protocols` member holds the protocol binding `{"protocol": P, "over": O, "roles": {}}` that an analyze request's `subject.protocol` accepts is admitted with that binding; the same binding with an unknown member refuses at `/request/export/protocols/0` with the code and cause the analyze reader gives the same binding, exit `20`; `universes` is read by the analyze reader of `subject.universes`. | Test (TC-3020) |
+| FR-1015-AC-18 | An export request that also carries top-level `call_site` `{"kind": "imported-function", "library": "test/units", "function": "big"}` refuses `invalid-request` naming `call_site`, exit `20`, writes no file and runs no export; the same request with top-level `output` or `handoff` refuses naming that member. | Test (TC-3211) |
 
 
 ## Dependencies
