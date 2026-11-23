@@ -39,3 +39,10 @@ FND-002: FR-255-AC-3 is about every limits type mapping its fields to one settin
 - Stubs and coverage inflation over the diff: none.
 - Semantic review: not run (not requested).
 - Plan completion: not assessed
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `tests/it/lifecycle_boundaries.rs::the_fifth_node_message_is_request_aware_with_its_locus` checks the real five-node `f` at `s3.nodes` 4 and asserts both full messages, locus included, with `assert_eq!`; the replay outcome-document path is covered for root and library limits in `fsl-replay/src/outcome.rs` |
+| FND-002 | fixed | `run_limit_message_omits_stage_limits_while_replay_keeps_it` now carries only `#[trace("TC-720", "FR-255-AC-2")]`; FR-255-AC-3 keeps its other binders |

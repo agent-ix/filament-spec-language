@@ -48,3 +48,24 @@ FND-003: the line reads "Trace: FR-255-AC-3, the operation hint follows the entr
 - `fsl-replay/src/outcome.rs`: `for_operation`, its callers (`from_failure`, `from_stopped`, `run_refusal_document`, `from_replay_refusal_with_context`), the extended test — examined; FND-001 (related), FND-003.
 - Call sites outside the diff read for context: `CompileRefusal` variants and `wrap` in `fsl-replay/src/spine*.rs`, model-check replay (`fsl-replay/src/model_check/replay.rs:909`, top-level `Limit`, gets Replay advice), `fsl-command` refusal documents, `fsl-package/src/checked_v2.rs` limit messages.
 - FR-255-AC-2, TC-720 step 2, ADR-030 D-3 wording — examined against the rendered strings; clean.
+
+## New findings (disposition pass 1)
+
+Fix head e7b3ab09a, diff `6a5b910c8..e7b3ab09a`.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-004 | medium | The new test was inserted between `#[trace("FR-1045-AC-6", "FR-100-AC-6")]` and the test it belonged to: the library-limit test now carries those two tags and `post_snapshot_relationship_request_refusal_has_request_path_and_no_result` lost them | fsl-replay/src/outcome.rs:3789-3821 |
+| FND-005 | low | `CompileRefusal::render_for` hand-copies the `Dependency` prefix "the library {} refused: " from the variant's `#[error]` attribute; two sources of one message, held equal only by the new test | fsl-replay/src/spine.rs:444,484-493 |
+
+FND-004: the matrix now binds FR-1045-AC-6 and FR-100-AC-6 to `a_library_limit_names_stage_limits_in_replay_output_only`, which tests neither, and drops the real binding. Both criteria keep other binders, so nothing turns untagged, but the trace is wrong. Move the attribute back onto `post_snapshot_relationship_request_refusal_has_request_path_and_no_result`.
+
+FND-005: optional; acceptable as is because `a_library_limit_names_stage_limits_in_replay_output_only` asserts both renderings exactly.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `CompileRefusal::render_for` recurses through `Dependency` keeping the library prefix; `ReplayRefusal::Recompile`/`RecompileWithProtocolResults` and `for_operation` use it; `a_library_limit_names_stage_limits_in_replay_output_only` asserts the replay and plain texts exactly |
+| FND-002 | fixed | `Display for LimitExceeded` now delegates to `self.render(RequestKind::NativeRun)` |
+| FND-003 | fixed | The `/// Trace:` line is removed and the tag list is `#[trace("TC-720", "FR-255-AC-2")]` |

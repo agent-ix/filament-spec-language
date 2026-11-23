@@ -3786,7 +3786,6 @@ mod tests {
         );
     }
 
-    #[trace("FR-1045-AC-6", "FR-100-AC-6")]
     /// A limit reached while compiling a library keeps the library prefix and
     /// names the replay request's `stage_limits` entry in replay output only.
     #[trace("TC-720", "FR-255-AC-2")]
@@ -3817,6 +3816,7 @@ mod tests {
         );
     }
 
+    #[trace("FR-1045-AC-6", "FR-100-AC-6")]
     #[test]
     fn post_snapshot_relationship_request_refusal_has_request_path_and_no_result() {
         let refusal = RunRefusal::RelationshipRequest {
