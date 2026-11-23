@@ -212,10 +212,8 @@ pub struct ExactEntry {
     pub initial: u32,
     /// The bound instance, absent when the claim has no `over` parameter.
     pub binding: Option<ExactBinding>,
-    /// The `on each` object the entry is read for when an `over` binding is
-    /// also present (FR-741 "Binding"); without an `over` binding the object
-    /// is `binding`.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The `on each` object the entry is read for (FR-741 "Binding"), null
+    /// for an `on origin` claim.
     pub instance: Option<ExactBinding>,
     /// The exact value or its certified interval.
     pub value: ExactOrBounds,
@@ -1865,6 +1863,7 @@ impl TerminalRecord {
                     entries: vec![ExactEntry {
                         initial: 0,
                         binding,
+                        instance: None,
                         value: ExactOrBounds::Bounds {
                             lower: lower_value,
                             upper: upper_value,

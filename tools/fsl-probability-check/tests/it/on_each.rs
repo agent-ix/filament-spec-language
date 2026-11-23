@@ -64,16 +64,32 @@ fn ratio(num: i64, den: i64) -> Value {
     json!({"numerator": num.to_string(), "denominator": den.to_string()})
 }
 
-/// The text of `m`'s initial complete key: the activated numerator row that
-/// reads `391/400`.
-fn m_initial(doc: &Value) -> String {
+/// Whether the row's model state holds exactly the objects of `start`, each at
+/// its start values (a delivered message has made one attempt).
+fn at_start(row: &Value, start: &[(&str, bool)]) -> bool {
+    let state = key(&row["state"]);
+    let objects = state[4][1]["semantic"]["entries"][0]["value"]["entries"]
+        .as_array()
+        .expect("objects");
+    objects.len() == start.len()
+        && start.iter().all(|(name, delivered)| {
+            objects.iter().any(|object| {
+                let fields = &object["value"]["fields"];
+                object["key"]["identity"] == *name
+                    && fields[0]["value"]["value"] == *delivered
+                    && fields[1]["value"]["value"] == if *delivered { "1" } else { "0" }
+            })
+        })
+}
+
+/// The text of instance `name`'s initial complete key: its numerator row at
+/// the start state of `start`.
+fn initial(doc: &Value, name: &str, start: &[(&str, bool)]) -> String {
     rows(doc, "numerator")
         .iter()
-        .find(|row| {
-            instance(row) == "m" && value(row) == json!({"numerator": "391", "denominator": "400"})
-        })
+        .find(|row| instance(row) == name && at_start(row, start))
         .and_then(|row| row["state"].as_str())
-        .expect("m's initial key")
+        .expect("the instance's initial key")
         .to_string()
 }
 
@@ -129,16 +145,20 @@ fn an_on_each_ratio_document_is_accepted_and_misses_a_stricter_threshold_at_the_
             );
         }
     }
-    let initial = m_initial(&doc);
-    let at = position(&doc, "denominator", &initial);
-    assert_eq!(value(&rows(&doc, "denominator")[at]), ratio(1, 1), "{doc}");
-    let n_rows: Vec<_> = rows(&doc, "numerator")
-        .iter()
-        .filter(|row| instance(row) == "n")
-        .collect();
-    assert!(!n_rows.is_empty(), "{doc}");
-    for row in n_rows {
-        assert_eq!(value(row), ratio(0, 1), "n never activates: {doc}");
+    let start = [("m", false), ("n", true)];
+    let initial = initial(&doc, "m", &start);
+    let value_at = |part: &str, state: &str| value(&rows(&doc, part)[position(&doc, part, state)]);
+    // FR-201-AC-76: `m` activates at position 0 with `391/400` over `1`.
+    assert_eq!(value_at("numerator", &initial), ratio(391, 400), "{doc}");
+    assert_eq!(value_at("denominator", &initial), ratio(1, 1), "{doc}");
+    // `n` never activates: `0` and `0` at its initial key.
+    let at_n = self::initial(&doc, "n", &start);
+    assert_eq!(value_at("numerator", &at_n), ratio(0, 1), "{doc}");
+    assert_eq!(value_at("denominator", &at_n), ratio(0, 1), "{doc}");
+    for row in rows(&doc, "denominator") {
+        if instance(row) == "n" {
+            assert_eq!(value(row), ratio(0, 1), "n never activates: {doc}");
+        }
     }
     let mut stricter = request.clone();
     replace_source_and_rebind(&mut stricter, &claim("99, 100"));
@@ -203,12 +223,15 @@ fn only_a_vacuous_document_certifies_a_reading_no_initial_key_activates() {
 
     let active = certified(&[("m", false), ("n", true)]);
     let rows_of_n = only(&document(&active)["conditional"], "n");
-    let numeric = mutate(&vacuous, |doc| doc["conditional"] = rows_of_n.clone());
+    let numeric = mutate(&vacuous, |doc| {
+        doc["conditional"] = rows_of_n.clone();
+        doc.as_object_mut().unwrap().remove("values");
+    });
     let output = assert_rejected(&numeric, "inequality-fails");
     assert!(output["at"].get("part").is_none(), "{output}");
 
     let only_m = certified(&[("m", false)]);
-    let initial = m_initial(&document(&only_m));
+    let initial = initial(&document(&only_m), "m", &[("m", false)]);
     let offered = mutate(&only_m, |doc| {
         doc["conditional"] = json!({"mode": "vacuous"});
         doc["values"] = json!([]);
@@ -226,7 +249,7 @@ fn only_a_vacuous_document_certifies_a_reading_no_initial_key_activates() {
 fn an_altered_part_row_or_rank_is_rejected_at_its_key_and_part() {
     let request = certified(&[("m", false)]);
     let doc = document(&request);
-    let initial = m_initial(&doc);
+    let initial = initial(&doc, "m", &[("m", false)]);
     for part in ["numerator", "denominator"] {
         let at = position(&doc, part, &initial);
         let altered = mutate(&request, |doc| {
@@ -318,5 +341,116 @@ fn a_ratio_document_under_a_scheduler_choice_is_malformed_at_mode() {
         });
         let output = assert_rejected(&altered, "malformed");
         assert_eq!(output["at"], json!({"member": "mode"}), "{output}");
+    }
+}
+
+/// The on-each claim `Likely` under `scheduler`, over `source`.
+fn claim_under(source: &str, scheduler: &str) -> String {
+    format!(
+        "{source}\nprobabilistic Likely using inf on M under {scheduler} \
+         on each (k: M::Msg) when (not k.delivered) \
+         {{ probability >= rational(9, 10) [ eventually holds(k.delivered) ] }}\n"
+    )
+}
+
+/// FR-201-AC-80: a `Ratio` document offered for FR-875's claim under every
+/// scheduler is rejected `Malformed` at `mode`.
+#[trace("TC-3209", "FR-201-AC-80")]
+#[test]
+fn a_ratio_document_offered_for_an_every_scheduler_claim_is_malformed_at_mode() {
+    let request = certified(&[("m", false)]);
+    let mut every = request.clone();
+    replace_source_and_rebind(&mut every, &claim_under(SOURCE, "every scheduler"));
+    let output = assert_rejected(&every, "malformed");
+    assert_eq!(output["at"], json!({"member": "mode"}), "{output}");
+}
+
+/// FR-201-AC-80: a claim of the on-each form over a cyclic continuation graph,
+/// with authored fairness or over a timed subject is not admitted: no
+/// `on-each-reachability/v1` document is written for it, and the document of
+/// an in-profile claim offered for the cyclic or fair claim is not accepted.
+#[trace("TC-3209", "FR-201-AC-80")]
+#[test]
+fn an_on_each_claim_outside_the_closed_profile_has_no_document_written_or_accepted() {
+    // A cyclic continuation graph: `send_a` leaves `attempts` alone, so an
+    // undelivered message loops on itself.
+    let cyclic = SOURCE.replace(
+        "post Sent_send_a using v on M::Msg::send_a { self.attempts - pre(self.attempts) = 1 and",
+        "post Sent_send_a using v on M::Msg::send_a { self.attempts = pre(self.attempts) and",
+    );
+    assert_ne!(cyclic, SOURCE, "the cyclic variant edits send_a");
+    let fair = claim_under(SOURCE, "every scheduler fair weak Msg::send_a");
+    let cyclic_claim = claim_under(&cyclic, "Even");
+    for (name, source) in [("cyclic", &cyclic_claim), ("fair", &fair)] {
+        let (written, settlement) = request_with(
+            source,
+            &snapshot(&[("m", false)]),
+            ExactProbLimits::default(),
+            DOMAIN,
+        );
+        assert!(written.is_none(), "{name}: {settlement:?}");
+        let mut offered = certified(&[("m", false)]);
+        replace_source_and_rebind(&mut offered, source);
+        let (code, output) = run(&offered);
+        assert_ne!(code, 0, "{name}: {output}");
+        assert_ne!(output["status"], "accepted", "{name}: {output}");
+    }
+    // A timed subject.
+    let timed = super::timed_product::on_each_timed_source();
+    let (written, settlement) = request_with(
+        &timed,
+        &super::timed_product::snapshot(),
+        ExactProbLimits::default(),
+        &super::timed_product::domain(),
+    );
+    assert!(written.is_none(), "timed: {settlement:?}");
+}
+
+/// FR-201 "Closed on-each reachability conditional profile": a `Ratio`
+/// document has exactly `identity`, `objective`, `kind` and `conditional`, a
+/// `Vacuous` one exactly `identity`, `objective`, `kind`, an empty `values`
+/// and `conditional`. A document written exactly so is accepted and an extra
+/// top-level member is refused.
+#[trace("TC-3208", "FR-201-AC-76")]
+#[trace("TC-3208", "FR-201-AC-77")]
+#[test]
+fn a_document_written_exactly_to_the_profile_is_accepted_and_an_extra_member_is_refused() {
+    for (messages, members) in [
+        (
+            &[("m", false)][..],
+            vec!["conditional", "identity", "kind", "objective"],
+        ),
+        (
+            &[("n", true)][..],
+            vec!["conditional", "identity", "kind", "objective", "values"],
+        ),
+    ] {
+        let request = certified(messages);
+        let produced = document(&request);
+        let mut names: Vec<_> = produced.as_object().unwrap().keys().cloned().collect();
+        names.sort();
+        assert_eq!(names, members, "{produced}");
+        // Written by hand from the profile's members.
+        let mut by_hand = json!({
+            "identity": produced["identity"].clone(),
+            "objective": produced["objective"].clone(),
+            "kind": "conditional",
+            "conditional": produced["conditional"].clone(),
+        });
+        if messages.len() == 1 && messages[0].1 {
+            by_hand["values"] = json!([]);
+        }
+        let handwritten = mutate(&request, |doc| *doc = by_hand.clone());
+        let (code, output) = run(&handwritten);
+        assert_eq!(code, 0, "{output}");
+        for extra in ["values", "ranking"] {
+            if produced.get(extra).is_some() {
+                continue;
+            }
+            let extended = mutate(&request, |doc| doc[extra] = json!([]));
+            let (code, output) = run(&extended);
+            assert_ne!(code, 0, "{extra}: {output}");
+            assert_ne!(output["status"], "accepted", "{extra}: {output}");
+        }
     }
 }

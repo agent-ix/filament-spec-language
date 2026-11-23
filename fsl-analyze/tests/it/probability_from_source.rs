@@ -637,11 +637,17 @@ fn probabilistic_on_each_settles_per_instance() {
     assert_eq!(label(item), "proved", "{item}");
     // The start snapshot holds one `Msg`, `m`, undelivered at position 0, so
     // the one instance activates at position 0 and its exact value is the
-    // `on origin` claim's, `391/400`.
-    assert_eq!(
-        item["record"]["basis"], document["items"][1]["record"]["basis"],
-        "{document}"
-    );
+    // `on origin` claim's, `391/400`. FR-741 "Binding": the on-each entry
+    // names `m` as its `instance` with a null `binding`, where the
+    // `on origin` entry names `m` as its `binding` with a null `instance`.
+    let entry = |item: &Value| item["record"]["basis"]["entries"][0].clone();
+    let (each, origin) = (entry(item), entry(&document["items"][1]));
+    assert_eq!(each["value"], origin["value"], "{document}");
+    assert_eq!(each["binding"], Value::Null, "{each}");
+    assert_eq!(each["instance"]["key"], "m", "{each}");
+    assert_eq!(origin["binding"]["key"], "m", "{origin}");
+    assert_eq!(origin["instance"], Value::Null, "{origin}");
+    assert!(each["value"].to_string().contains("391"), "{each}");
 }
 
 /// `E`: every undelivered message is delivered eventually with probability
@@ -723,7 +729,10 @@ fn probabilistic_on_each_never_activating_instance_is_vacuous() {
     );
     let item = &refuted["items"][0];
     assert_eq!(label(item), "refuted", "{item}");
-    assert_eq!(item["counterexample"]["instance"]["identity"], "m", "{item}");
+    assert_eq!(
+        item["counterexample"]["instance"]["identity"], "m",
+        "{item}"
+    );
 }
 
 /// FR-875-AC-3 (TC-2487): a refuted `on each` item names its first failing
@@ -742,7 +751,10 @@ fn probabilistic_on_each_names_first_failing_instance() {
     let first = once();
     let item = &first["items"][0];
     assert_eq!(label(item), "refuted", "{item}");
-    assert_eq!(item["counterexample"]["instance"]["identity"], "a", "{item}");
+    assert_eq!(
+        item["counterexample"]["instance"]["identity"], "a",
+        "{item}"
+    );
     assert_eq!(item, &once()["items"][0], "a rerun names the same instance");
 }
 
@@ -764,6 +776,15 @@ fn probabilistic_on_each_reports_conditional_certificate_and_instance() {
     assert_eq!(item["certificate"]["kind"], "conditional", "{item}");
     let conditional = &item["certificate"]["document"]["conditional"];
     assert_eq!(conditional["mode"], "ratio", "{item}");
+    // `m` is the one compared instance, with a null `binding`; `n` never
+    // activates, is confirmed vacuous and has no entry (FR-741 "Binding").
+    let entries = item["record"]["basis"]["entries"]
+        .as_array()
+        .expect("entries");
+    assert_eq!(entries.len(), 1, "{item}");
+    assert_eq!(entries[0]["instance"]["key"], "m", "{item}");
+    assert_eq!(entries[0]["binding"], Value::Null, "{item}");
+    assert!(entries[0]["value"].to_string().contains("391"), "{item}");
     // `m` activates at position 0, so at its initial key the numerator is the
     // `on origin` value and the denominator 1.
     let holds_value = |part: &str, value: Value| {
@@ -1838,7 +1859,7 @@ fn exact_limits_from_source_reach_the_engine() {
 /// FR-741 Budgets over FR-875: a state limit reached while an `on each` item
 /// builds its phase graph settles `incomplete` naming `exact_prob.max_states`
 /// like every other exact item, never `failed`.
-#[trace("TC-3208", "FR-741-AC-5")]
+#[trace("TC-2066", "FR-741-AC-2")]
 #[test]
 fn probabilistic_on_each_state_limit_settles_incomplete_naming_the_limit() {
     let document = run_from(
@@ -1853,26 +1874,36 @@ fn probabilistic_on_each_state_limit_settles_incomplete_naming_the_limit() {
     assert!(item.to_string().contains("exact_prob.max_states"), "{item}");
 }
 
-/// FR-875 out-of-profile forms (current): an `on each` claim whose form the
-/// closed profile does not admit settles `unsupported` with the
-/// not-yet-implemented diagnostic and no cause, and writes no certificate.
+/// FR-201-AC-80, FR-875 "Unbuilt on-each settlements (current)": an `on each`
+/// claim with authored fairness, and one under every scheduler, are outside
+/// the closed profile. Each settles `unsupported` with the
+/// `not-yet-implemented` diagnostic and no `cause`, and writes no certificate.
 #[trace("TC-3209", "FR-201-AC-80")]
 #[test]
 fn probabilistic_on_each_out_of_profile_form_is_unsupported_with_no_cause() {
-    let claim = "probabilistic E using ev on M under Even \
-         on each (k: M::Msg) when (not k.delivered) \
-         { probability >= rational(1, 2) [ eventually[0,2] holds(k.delivered) ] }";
-    let claim = format!("{EVENTUALLY}\n{claim}");
-    let document = run_from(
-        "on-each-until",
-        &claim,
-        link_start(&[("m", false)]),
-        json!([{"claim": "E"}]),
-    );
-    let item = &document["items"][0];
-    assert!(item.is_object(), "{document}");
-    assert_eq!(label(item), "unsupported", "{item}");
-    assert!(item.to_string().contains("not-yet-implemented"), "{item}");
-    assert!(item["record"].get("cause").is_none(), "{item}");
-    assert!(item.get("certificate").is_none(), "{item}");
+    for (name, scheduler) in [
+        ("fairness", "every scheduler fair weak Msg::send_a"),
+        ("every-scheduler", "every scheduler"),
+    ] {
+        let claim = format!(
+            "probabilistic E using inf on M under {scheduler} \
+             on each (k: M::Msg) when (not k.delivered) \
+             {{ probability >= rational(1, 2) [ eventually holds(k.delivered) ] }}"
+        );
+        let document = run_from(
+            &format!("on-each-{name}"),
+            &claim,
+            link_start(&[("m", false)]),
+            json!([{"claim": "E"}]),
+        );
+        let item = &document["items"][0];
+        assert!(item.is_object(), "{name}: {document}");
+        assert_eq!(label(item), "unsupported", "{name}: {item}");
+        assert!(
+            item.to_string().contains("not-yet-implemented"),
+            "{name}: {item}"
+        );
+        assert!(item["record"].get("cause").is_none(), "{name}: {item}");
+        assert!(item.get("certificate").is_none(), "{name}: {item}");
+    }
 }

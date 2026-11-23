@@ -227,10 +227,12 @@ fn requests_with_mode(
     };
     let system = fsl_eval::simulation::model::ModelSystem::new(simulation.clone()).unwrap();
     let binding = fsl_replay::claim_binding(&system, claim).unwrap();
-    if matches!(
-        claim.form,
-        fsl_semantics::check::ProbForm::Probability { .. }
-    ) {
+    if claim.over.is_some()
+        && matches!(
+            claim.form,
+            fsl_semantics::check::ProbForm::Probability { .. }
+        )
+    {
         let binding = binding
             .as_ref()
             .expect("a probability claim names its over instance");

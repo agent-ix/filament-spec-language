@@ -77,17 +77,17 @@ fn exact_binding(instance: &ModelInstance) -> crate::ExactBinding {
     }
 }
 
-/// The entry's `binding` and `instance` members (FR-741 "Binding"): with an
-/// `over` binding they are the `over` object and the `on each` object;
-/// without one the `on each` object is the one binding the entry names.
+/// The entry's `binding` and `instance` members (FR-741 "Binding"): the
+/// `over` object, null when the claim has no `over` parameter, and the
+/// `on each` object.
 fn entry_binding(
     over: Option<&(ModelInstance, ObjectReference)>,
     instance: &ModelInstance,
-) -> (crate::ExactBinding, Option<crate::ExactBinding>) {
-    match over {
-        Some((over, _)) => (exact_binding(over), Some(exact_binding(instance))),
-        None => (exact_binding(instance), None),
-    }
+) -> (Option<crate::ExactBinding>, crate::ExactBinding) {
+    (
+        over.map(|(over, _)| exact_binding(over)),
+        exact_binding(instance),
+    )
 }
 
 /// The limits one item spends across every instance's graph.
@@ -749,13 +749,8 @@ enum Leaf {
     Other,
 }
 
-fn leaf_of(
-    bound: &Bound,
-    key: &Key,
-    state: &WalkState,
-    activatable: &BTreeSet<&Key>,
-) -> Option<Leaf> {
-    if !activatable.contains(key) {
+fn leaf_of(bound: &Bound, state: &WalkState, activates: bool) -> Option<Leaf> {
+    if !activates {
         return Some(Leaf::NotActivated);
     }
     if state.active && state.terminal.is_some() {
@@ -856,7 +851,7 @@ fn evidence(
             .states
             .get(&node.at)
             .ok_or(ProbabilityDocumentError::Malformed)?;
-        match leaf_of(bound, &node.at, state, &reachable) {
+        match leaf_of(bound, state, reachable.contains(&node.at)) {
             Some(Leaf::Other) => continue,
             Some(leaf) => {
                 if u64::try_from(paths.len()).unwrap_or(u64::MAX) >= max_paths {
@@ -991,7 +986,7 @@ pub fn replay_on_each_witness(
         cancel,
         limits,
     };
-    let reachable = activatable(&root.walk, cancel)?;
+    let rebuilt = rebuilt::build(system, &subject, limits, cancel)?;
     let mut violating = rational(0);
     let mut not_activated = rational(0);
     let mut trails: BTreeSet<Vec<(Key, usize)>> = BTreeSet::new();
@@ -1034,11 +1029,14 @@ pub fn replay_on_each_witness(
             trail.push((edge.to.clone(), index));
             at = &edge.to;
         }
+        // A not-activated path ends where the checker's own search, over the
+        // graph it rebuilds, finds no activating state reachable.
+        let activates = rebuilt::reaches_activation(&rebuilt, at, cancel)?;
         let leaf = root
             .walk
             .states
             .get(at)
-            .and_then(|state| leaf_of(subject.bound, at, state, &reachable));
+            .and_then(|state| leaf_of(subject.bound, state, activates));
         let mass = match leaf {
             Some(Leaf::Violating) => &mut violating,
             Some(Leaf::NotActivated) => &mut not_activated,
@@ -1094,8 +1092,9 @@ struct WireOnEach {
     identity: WireIdentity,
     objective: WireProfile,
     kind: String,
-    values: Vec<WireValue>,
-    ranking: Vec<WireRank>,
+    /// Present, and empty, only in a `vacuous` document.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    values: Option<Vec<WireValue>>,
     conditional: Option<WireConditional>,
 }
 
@@ -1187,12 +1186,11 @@ impl quire_canonical::Encode for Events<'_> {
     ) -> Result<(), quire_canonical::Error> {
         writer.begin_object()?;
         self.head("conditional", writer)?;
-        writer.name("values")?;
-        writer.begin_array()?;
-        writer.end_array()?;
-        writer.name("ranking")?;
-        writer.begin_array()?;
-        writer.end_array()?;
+        if self.parts.is_none() {
+            writer.name("values")?;
+            writer.begin_array()?;
+            writer.end_array()?;
+        }
         writer.name("conditional")?;
         writer.begin_object()?;
         writer.name("mode")?;
@@ -1285,13 +1283,20 @@ fn decode(
     if wire.kind != "conditional" {
         return Err(ProbabilityDocumentError::MalformedMember("kind"));
     }
-    if !wire.values.is_empty() || !wire.ranking.is_empty() {
-        return Err(ProbabilityDocumentError::MalformedMember("values"));
-    }
     let Some(conditional) = wire.conditional else {
         return Err(ProbabilityDocumentError::MalformedMember("conditional"));
     };
     let workload = wire.objective.optimization == "workload";
+    // A `ratio` document has no top-level `values`; a `vacuous` one has them
+    // empty (FR-201).
+    let values_fit = match conditional.mode.as_str() {
+        "ratio" => wire.values.is_none(),
+        "vacuous" => wire.values.as_ref().is_some_and(Vec::is_empty),
+        _ => true,
+    };
+    if !values_fit {
+        return Err(ProbabilityDocumentError::MalformedMember("values"));
+    }
     let identity = identity_of(wire.identity)?;
     let mode = match conditional.mode.as_str() {
         "ratio" if workload => {
@@ -1352,9 +1357,15 @@ pub(super) fn identity(
     Ok(decode(bytes, limits, cancel, &mut meter)?.identity)
 }
 
-/// The checker's own phase graph, rebuilt from the checked subject. It shares
-/// no traversal, ordering or row code with the producer above: only the
-/// model's step relation, the predicate reader and the key encoder.
+/// The checker's own phase graph, rebuilt from the checked subject. Its
+/// construction, cycle test and activation search share no traversal or
+/// ordering code with the producer above. What is shared is the model's step
+/// relation, the predicate reader, the key encoder and the row semantics
+/// (`Arith::expected`, `conditioned` and `meets`), which state the
+/// part equations, the ratio and the threshold test once. The witness replay
+/// classifies a not-activated path with this graph's search and reads each
+/// step's action, transition and draw from the producer's walk, which is
+/// where the step relation is evaluated.
 mod rebuilt {
     use super::*;
 
@@ -1367,7 +1378,7 @@ mod rebuilt {
     pub(super) struct RootRef {
         pub(super) initial: u32,
         pub(super) key: Key,
-        pub(super) binding: crate::ExactBinding,
+        pub(super) binding: Option<crate::ExactBinding>,
         pub(super) instance: Option<crate::ExactBinding>,
     }
 
@@ -1418,7 +1429,7 @@ mod rebuilt {
                         initial,
                         key,
                         binding,
-                        instance: bound_instance,
+                        instance: Some(bound_instance),
                     });
                 }
             }
@@ -1601,6 +1612,15 @@ pub(super) fn check(
     if &document.identity != item {
         return Err(ProbabilityDocumentError::IdentityMismatch);
     }
+    // A `ratio` document offered for a claim under every scheduler or a free
+    // delay is malformed at `mode`: the profile is a workload's (FR-201).
+    if matches!(document.mode, Mode::Ratio { .. }) && free_scheduler(system, claims, item, cancel)?
+    {
+        return Ok(reject(
+            ProbabilityCertificateRule::Malformed,
+            ProbabilityCertificateLocus::Member("mode"),
+        ));
+    }
     let subject = subject(system, claims, item, cancel)?;
     let graph = rebuilt::build(system, &subject, limits, cancel)?;
     if graph.roots.is_empty() {
@@ -1771,7 +1791,7 @@ pub(super) fn check(
             }
         }
         coverage.push((root.initial, value));
-        bindings.push(Some(root.binding.clone()));
+        bindings.push(root.binding.clone());
         instances.push(root.instance.clone());
     }
     if let Some(key) = missed {
@@ -1791,6 +1811,7 @@ pub(super) fn check(
                 bindings,
                 instances,
             }),
+            bound: None,
             value: least,
             side,
             certificate: ExactProbabilityCertificate {
@@ -1799,4 +1820,16 @@ pub(super) fn check(
             document: Some(bytes.into()),
         },
     ))
+}
+
+/// Whether the claim `item` names is read under a scheduler choice rather
+/// than a workload that leaves none.
+fn free_scheduler(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    cancel: &Cancel,
+) -> Result<bool, ProbabilityDocumentError> {
+    let claim = bind_claim(claims, item, cancel)?;
+    Ok(claim_workload(system, claim)?.is_none())
 }

@@ -44,3 +44,19 @@ FND-002 and FND-003 should be fixed in this PR's new test, not in the frozen fiv
 - FR-201-AC-52, FR-201-AC-53: untagged and unbuilt (FND-001).
 - Semantic review: done in SR-3599001.
 - Plan completion: not assessed
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-005 | low | `probabilistic_on_each_state_limit_settles_incomplete_naming_the_limit` is tagged `TC-3208`/`FR-741-AC-5`. TC-3208's scope is FR-201-AC-76/77, and FR-741-AC-5 says nothing about limits. The test checks FR-741 Budgets, which has no on-each AC | fsl-analyze/tests/it/probability_from_source.rs:1797 |
+| FND-006 | low | `probabilistic_on_each_out_of_profile_form_is_unsupported_with_no_cause` is tagged `TC-3209`/`FR-201-AC-80`, but it uses a bounded `eventually[0,2]` form. AC-80 names "a cyclic continuation graph, with authored fairness or over a timed subject", and none of those clauses is tested. The test fits FR-875's "Out-of-profile forms (current)" bullet, which has no AC | fsl-analyze/tests/it/probability_from_source.rs:1814 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | deferred | QSL-2995 (the reset-construction Optimum, statistical evidence, cyclic graphs and other forms); FR-875's "(current)" bullet names the gap |
+| FND-002 | still-open | FR-741-AC-5 and FR-201-AC-76's numerator `391/400` at `m`'s initial key is still asserted nowhere at that key (see SR-3599001 FND-010) |
+| FND-003 | fixed | on_each.rs no longer carries the FR-201-AC-51 tag. Its tests are tagged FR-201-AC-76..80 (TC-3208/3209) and FR-741-AC-5 |
+| FND-004 | fixed | `restrict_spelled_states` and its prose criterion id are removed, and the profile is owned by FR-201 "Closed on-each reachability conditional profile" (#3603) |
