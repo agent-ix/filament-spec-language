@@ -102,3 +102,19 @@ or move it to a ticket.
 | FND-008 | fixed | Replay now lifts step-row parameters against the abstract parameter's declared type (`operation_parameter_types`, `lift_value(.., declared, ..)` and `choose_row`); the receiver and node-row fallback is new FND-012 and FND-015 |
 | FND-010 | fixed | The S3 refusal, FR-135-AC-13 and its test are removed; refinement.rs is byte-identical to its state before round 2; `fsl-semantics --test it clock_places` passes |
 | FND-011 | fixed | `a_step_argument_naming_an_unmapped_type_is_undetermined_at_the_argument` asserts `Undetermined(Mapping)` with `UnmappedType(SubRing)` at `Argument { Slot/put, Parameter(1) }`; the node-row site moves to FND-015 |
+
+## New findings (disposition pass 4)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-016 | low | The receiver's declared type is `operation_declaring_type`, the type that declares the operation. S3 types the receiver against `target_type`, the abstract type the step row names (`lift(&self.lifting, &Reference(target_type.id))`, refinement.rs:3934), which can be a subtype of the declaring type when the operation is inherited. If two rows from one concrete type both have abstract types conforming to an inherited operation's declaring parent, replay finds no most-specific row and faults (`RowChoice::Ambiguous`), although S3 admitted the row. Carry the step row's target type in `StepTarget::Abstract` and lift against it. | fsl-replay/src/refinement/step.rs:1909-1911 |
+| FND-017 | low | The new `admits` filter in `map_state` takes the first row in declaration order whose abstract type the abstract population admits. When two rows from one concrete type both conform to the population's member type (`Queue` and `SubQueue <: Queue` into `queues`), the object's abstract type again depends on source order, a rule RM-3 does not contain. S3 could refuse the case, or the most-specific rule could apply as it does in `choose_row`. | fsl-replay/src/refinement/map.rs:249-263 |
+
+## Dispositions (round 4)
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-012 | fixed | The receiver lifts against `operation_declaring_type(operation)`; `the_receiver_lifts_against_the_type_that_declares_the_operation` (Cell row first) asserts the taken `enq` receiver is the `Queue` `r` |
+| FND-013 | fixed | `a_reference_field_lifts_to_the_declared_type_among_two_rows` runs `map_state` over the real `twin` world in both row orders and asserts `twin` equals `abstracted.object_reference(Cell, "r")`, and that `cells` holds `r` |
+| FND-014 | fixed | `choose_row` picks by conformance (`identity_conforms`, the abstract type hierarchy), most specific wins; no match or ambiguity is `Lifting::Fault`; the unit test covers the supertype, nested and lone cases with exact values |
+| FND-015 | deferred | Node-row arguments still carry no declared type. FR-141 now states the interim rule (one row names the type uniquely; several rows give `StepVerdict::Fault`). No fixture has an argument-bearing node row, so the Fault branch has no test; this needs a follow-up ticket to pass the node record's field types, which S3 already uses |

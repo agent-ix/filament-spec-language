@@ -85,3 +85,16 @@ to avoid.
 | --- | --- | --- |
 | FND-007 | fixed | The FR-135 one-row SHALL and FR-135-AC-13 are removed (TC-540 scope too); FR-140 now states RM-2 multi-row sourcing with declared-type choice |
 | FND-008 | fixed | FR-141-AC-13 now names the `size(rs) = size(self.chain)` postcondition; the ring_world doc comment and TC step number are corrected |
+
+## New findings (disposition pass 4)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-011 | low | FR-140's "the most specific such (it conforms to every other conforming one)" choice between two candidate rows whose abstract types are related by subtyping is this PR's rule. ADR-020 RM-3's "most-specific type" is the object's type within one abstract population, not a choice between populations. The rule is reasonable, but it is new semantics, which ADR-020 should record (or S3 should refuse the case). | spec/functional/FR-140-evaluate-the-refinement-mapping-at-a-state.md:148-156 |
+
+## Dispositions (round 4)
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-009 | fixed | FR-141 now takes the receiver's type from the type that declares the abstract operation (RM-5), by FR-140's conformance rule; FR-141-AC-14 and TC-546 step 9 are added |
+| FND-010 | fixed | FR-140 replaces the first-row fallback with conformance and most-specific choice, and `MappingFailure::Fault` when none or no most-specific row conforms, stating that S3 admits no such row |
