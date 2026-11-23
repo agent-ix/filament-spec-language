@@ -74,6 +74,7 @@ fn a_unit_whose_lock_selects_profiles_replays_with_an_empty_selection_list() {
         source.as_bytes(),
         [document],
         &DependencyInput::default(),
+        &fsl_replay::RequestClocks::default(),
         &inc(),
     )
     .expect("UC compiles and inc is located");

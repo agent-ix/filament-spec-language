@@ -1464,6 +1464,7 @@ mod tests {
             source,
             [],
             &crate::DependencyInput::default(),
+            &crate::RequestClocks::default(),
             &QualifiedName::new(vec![Identifier::new("f").unwrap()]).unwrap(),
         )
         .expect("the complete package comes from genuine source compilation");

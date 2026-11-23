@@ -1301,6 +1301,7 @@ fn call_site_with_a_dependency_input_keys_a_request_replay_accepts() {
             importing.unit.as_bytes(),
             [],
             dependencies,
+            &crate::RequestClocks::default(),
             &name(&["q"]),
         )
     };
@@ -1359,6 +1360,7 @@ fn locate_q_with_units(
         importing.unit.as_bytes(),
         [],
         &dependencies,
+        &crate::RequestClocks::default(),
         &name(&["q"]),
     )
 }
@@ -1431,6 +1433,7 @@ fn call_site_refusal_codes_are_the_replay_refusal_codes() {
         proved_source.as_bytes(),
         [],
         &crate::DependencyInput::default(),
+        &crate::RequestClocks::default(),
         &name(&["large"]),
     )
     .expect_err("large is not declared");
@@ -1454,6 +1457,7 @@ fn call_site_refusal_codes_are_the_replay_refusal_codes() {
         broken.as_bytes(),
         [],
         &crate::DependencyInput::default(),
+        &crate::RequestClocks::default(),
         &name(&["small"]),
     )
     .expect_err("the unit does not parse");
@@ -1491,6 +1495,7 @@ fn call_site_refusal_codes_are_the_replay_refusal_codes() {
         importing.unit.as_bytes(),
         [],
         &crate::DependencyInput::default(),
+        &crate::RequestClocks::default(),
         &name(&["q"]),
     )
     .expect_err("no library is supplied as test/units");
@@ -2204,6 +2209,7 @@ fn minted_identity(source: &str, function: &str) -> crate::ObligationIdentity {
         source.as_bytes(),
         [],
         &crate::DependencyInput::default(),
+        &crate::RequestClocks::default(),
         &name(&[function]),
     )
     .expect("the function is located")

@@ -27,6 +27,7 @@ fn request(function: &str, supplied: &[(&str, WitnessValue)]) -> ReplayRequestWi
         text.as_bytes(),
         std::iter::empty::<&[u8]>(),
         &DependencyInput::default(),
+        &fsl_replay::RequestClocks::default(),
         &selected,
     )
     .unwrap();
@@ -177,6 +178,7 @@ fn another_declared_functions_parameter_cannot_bind_the_selected_predicate() {
         text.as_bytes(),
         std::iter::empty::<&[u8]>(),
         &DependencyInput::default(),
+        &fsl_replay::RequestClocks::default(),
         &qualified("foreign"),
     )
     .unwrap();

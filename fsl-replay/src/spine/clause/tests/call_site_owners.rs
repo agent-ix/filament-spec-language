@@ -332,6 +332,7 @@ fn locate(
         unit.as_bytes(),
         [document],
         &DependencyInput::default(),
+        &crate::RequestClocks::default(),
         selection,
     )
 }
@@ -627,6 +628,7 @@ fn a_field_of_a_process_or_state_machine_is_not_selectable() {
             unit.as_bytes(),
             [document.as_slice()],
             &DependencyInput::default(),
+            &crate::RequestClocks::default(),
             &wanted,
         )
         .expect_err("fields are selected on object types only");

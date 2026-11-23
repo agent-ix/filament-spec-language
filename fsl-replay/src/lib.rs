@@ -541,6 +541,8 @@ pub use proof_result::{
 pub use spine::{
     DependencyInput, DependencyInputRefusal, OperationName, SourceHolder, SuppliedLibrary,
 };
+// FR-121, FR-640: the clock selections `call_site` compiles under.
+pub use spine::{InvalidClock, RequestClocks};
 // The O-07 occurrence key and O-12 source region these envelopes carry
 // (#213 S-4), re-exported so CG, which reaches FSL only through this crate
 // (ADR-011 FB-05), can name them. CG builds an occurrence key from a node id

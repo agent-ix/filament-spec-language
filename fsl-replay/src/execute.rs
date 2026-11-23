@@ -974,6 +974,7 @@ pub enum DependencySelectionsCause {
 /// #     unit.as_bytes(),
 /// #     [],
 /// #     &DependencyInput::default(),
+/// #     &fsl_replay::RequestClocks::default(),
 /// #     &small,
 /// # )
 /// # .unwrap();
@@ -1031,6 +1032,7 @@ pub enum DependencySelectionsCause {
 /// #     unit.as_bytes(),
 /// #     [],
 /// #     &DependencyInput::default(),
+/// #     &fsl_replay::RequestClocks::default(),
 /// #     &small,
 /// # )
 /// # .unwrap();

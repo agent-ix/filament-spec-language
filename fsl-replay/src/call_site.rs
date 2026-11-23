@@ -591,6 +591,14 @@ impl CallSiteRefusal {
 /// `dependencies` as the dependency input, and locate `selection` in the
 /// result.
 ///
+/// # Clocks (FR-121, FR-640)
+///
+/// `clocks` selects the clock configuration of every `temporal` clause on a
+/// named clock, in the unit and in its libraries, so the located package
+/// carries the `temporal_bindings` rows a replay recompiles under. An empty
+/// `clocks` selects nothing: a clause that needs a configuration refuses with
+/// the emitter's missing-selection error.
+///
 /// # Function selection (TC-166)
 ///
 /// A function is selected by a typed [`QualifiedName`]; a name that
@@ -611,6 +619,7 @@ impl CallSiteRefusal {
 ///     unit.as_bytes(),
 ///     [],
 ///     &DependencyInput::default(),
+///     &fsl_replay::RequestClocks::default(),
 ///     "f",
 /// )
 /// .unwrap();
@@ -633,6 +642,7 @@ impl CallSiteRefusal {
 ///     unit.as_bytes(),
 ///     [],
 ///     &DependencyInput::default(),
+///     &fsl_replay::RequestClocks::default(),
 ///     &f,
 /// )
 /// .unwrap();
@@ -645,6 +655,7 @@ pub fn call_site<'a, S: CallSiteSelection>(
     bytes: &[u8],
     packages: impl IntoIterator<Item = &'a [u8]>,
     dependencies: &DependencyInput,
+    clocks: &spine::RequestClocks,
     selection: &S,
 ) -> Result<CallSite<S::Site>, Box<CallSiteRefusal>> {
     let library_name = LibraryName::new(&package_name).map_err(|_| {
@@ -679,9 +690,19 @@ pub fn call_site<'a, S: CallSiteSelection>(
     let models = spine::select(&parsed, &packages, limits.model, &cancel)
         .map_err(refusal)?
         .into_value();
-    let checked = spine::check(
+    // FR-640: a library clause on a clock compiles under the `clocks` the
+    // caller selects; with none, the unit and its libraries need no
+    // selection, and a clause that does need one refuses as emission does.
+    let check_selections = clocks.check_selections(&parsed);
+    let checked = spine::check_with_execution_points_and_source_inputs(
         &parsed,
         package_name,
+        &Default::default(),
+        spine::SourceInputs {
+            temporal_selections: &check_selections,
+            clocks: (!clocks.is_empty()).then_some(clocks),
+            ..Default::default()
+        },
         &models,
         dependencies,
         limits,
@@ -689,9 +710,16 @@ pub fn call_site<'a, S: CallSiteSelection>(
     )
     .map_err(refusal)?
     .into_value();
-    let emitted = spine::package(&checked, limits.package, &cancel)
-        .map_err(refusal)?
-        .into_value();
+    let emitted = if clocks.is_empty() {
+        spine::package(&checked, limits.package, &cancel)
+    } else {
+        let selections = clocks
+            .package_selections(&checked, &[&parsed])
+            .map_err(|failure| Box::new(CallSiteRefusal::from(*failure)))?;
+        spine::package_with_temporal_selections(&checked, &selections, limits.package, &cancel)
+    }
+    .map_err(refusal)?
+    .into_value();
     let site = selection.locate(&sealed::Compiled {
         package: checked.package(),
         package_name: &library_name,
@@ -1097,6 +1125,7 @@ mod tests {
             bytes,
             [],
             &DependencyInput::default(),
+            &crate::RequestClocks::default(),
             &name(function),
         )
     }
@@ -1217,6 +1246,7 @@ mod tests {
                 UNIT.as_bytes(),
                 [],
                 &DependencyInput::default(),
+                &crate::RequestClocks::default(),
                 &selection,
             )
             .expect_err("the selection names no function of the compiled package");

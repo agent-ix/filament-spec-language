@@ -88,6 +88,7 @@ fn selected<S: fsl_replay::CallSiteSelection>(
         unit.as_bytes(),
         [],
         &DependencyInput::new(libraries).expect("a dependency input"),
+        &fsl_replay::RequestClocks::default(),
         selection,
     )
 }
@@ -102,6 +103,7 @@ fn standalone(body: &str, name: &str) -> CallSite<FunctionSite> {
         units_source(body).as_bytes(),
         [],
         &DependencyInput::default(),
+        &fsl_replay::RequestClocks::default(),
         &function(name),
     )
     .expect("the library compiles alone")

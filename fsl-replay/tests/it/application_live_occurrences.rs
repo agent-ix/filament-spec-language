@@ -103,6 +103,7 @@ fn key(source: &str, name: &str) -> fsl_replay::NodeKey {
         source.as_bytes(),
         [],
         &DependencyInput::default(),
+        &fsl_replay::RequestClocks::default(),
         &selection,
     )
     .expect("function selection locates in source")
