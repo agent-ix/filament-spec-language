@@ -584,8 +584,165 @@ pub(crate) fn check_model_with_stutter_closure(
         }
     }
     if !request.reductions.is_empty() {
-        return check_reduced(request, cancel);
+        return first_refuted_instance(request.limits, |cap, limits, listed| {
+            check_reduced(&request, cancel, cap, limits, listed)
+        });
     }
+    first_refuted_instance(request.limits, |cap, limits, listed| {
+        check_safety(&request, cancel, cap, limits, listed)
+    })
+}
+
+/// FR-125: the reported instance of a refuted item is the first refuted
+/// instance in canonical order. A search reports the earliest refutation it
+/// reaches, which may belong to a later instance; then the item is searched
+/// again over the instances before it (`search` takes the number of instances
+/// to keep, the limits left, and lists the instances it ran over), until none
+/// of them is refuted. The re-searches are charged to the same budget as the
+/// first search, and their work is counted in the outcome's stats. A
+/// re-search that ends undecided (a limit, a horizon, a memory bound) settles
+/// the item with that typed outcome: the later instance is never reported as
+/// the first refuted one.
+fn first_refuted_instance(
+    mut limits: ModelCheckLimits,
+    mut search: impl FnMut(
+        Option<usize>,
+        ModelCheckLimits,
+        &mut Vec<ModelInstance>,
+    ) -> Result<ModelCheckOutcome, ModelCheckRefusal>,
+) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
+    let mut cap = None;
+    let mut kept: Option<ModelCheckOutcome> = None;
+    loop {
+        let mut listed = Vec::new();
+        let outcome = search(cap, limits, &mut listed)?;
+        let position = match &outcome {
+            ModelCheckOutcome::Violated { counterexample, .. } => counterexample
+                .over_binding
+                .as_ref()
+                .and_then(|found| listed.iter().position(|binding| binding == found)),
+            ModelCheckOutcome::Holds { .. }
+            | ModelCheckOutcome::HoldsReduced { .. }
+            | ModelCheckOutcome::Reduction { .. }
+            | ModelCheckOutcome::Memory { .. }
+            | ModelCheckOutcome::RecoveryView { .. }
+            | ModelCheckOutcome::RefutedIgnoringConstraints { .. }
+            | ModelCheckOutcome::BoundReached { .. }
+            | ModelCheckOutcome::Undecided { .. }
+            | ModelCheckOutcome::Stopped { .. } => None,
+        };
+        if let (Some(position), ModelCheckOutcome::Violated { stats, .. }) = (position, &outcome) {
+            if position > 0 {
+                limits.limits.max_states = limits
+                    .limits
+                    .max_states
+                    .saturating_sub(usize::try_from(stats.product_states).unwrap_or(usize::MAX));
+                limits.limits.max_transitions = limits
+                    .limits
+                    .max_transitions
+                    .saturating_sub(usize::try_from(stats.product_edges).unwrap_or(usize::MAX));
+                cap = Some(position);
+                kept = Some(outcome);
+                continue;
+            }
+        }
+        let Some(earlier) = kept else {
+            return Ok(outcome);
+        };
+        let work = outcome.stats();
+        return Ok(match outcome {
+            // The instances before the kept one were searched to the end and
+            // none is refuted: the kept refutation is the first.
+            ModelCheckOutcome::Holds { .. } | ModelCheckOutcome::HoldsReduced { .. } => {
+                restat(earlier, |stats| sum(stats, work))
+            }
+            // A refutation of an earlier instance replaces the kept one.
+            ModelCheckOutcome::Violated { .. } => {
+                let kept_work = earlier.stats();
+                restat(outcome, |stats| sum(stats, kept_work))
+            }
+            // Any other end leaves the earlier instances undecided.
+            ModelCheckOutcome::Reduction { .. }
+            | ModelCheckOutcome::Memory { .. }
+            | ModelCheckOutcome::RecoveryView { .. }
+            | ModelCheckOutcome::RefutedIgnoringConstraints { .. }
+            | ModelCheckOutcome::BoundReached { .. }
+            | ModelCheckOutcome::Undecided { .. }
+            | ModelCheckOutcome::Stopped { .. } => {
+                let kept_work = earlier.stats();
+                restat(outcome, |stats| sum(stats, kept_work))
+            }
+        });
+    }
+}
+
+/// `outcome` with its stats replaced by `change` of them.
+fn restat(
+    outcome: ModelCheckOutcome,
+    change: impl FnOnce(RunStats) -> RunStats,
+) -> ModelCheckOutcome {
+    match outcome {
+        ModelCheckOutcome::Holds { certificate, stats } => ModelCheckOutcome::Holds {
+            certificate,
+            stats: change(stats),
+        },
+        ModelCheckOutcome::HoldsReduced { reductions, stats } => ModelCheckOutcome::HoldsReduced {
+            reductions,
+            stats: change(stats),
+        },
+        ModelCheckOutcome::Reduction { cause, stats } => ModelCheckOutcome::Reduction {
+            cause,
+            stats: change(stats),
+        },
+        ModelCheckOutcome::Memory { cause, stats } => ModelCheckOutcome::Memory {
+            cause,
+            stats: change(stats),
+        },
+        ModelCheckOutcome::RecoveryView { predicate, stats } => ModelCheckOutcome::RecoveryView {
+            predicate,
+            stats: change(stats),
+        },
+        ModelCheckOutcome::Violated {
+            counterexample,
+            stats,
+        } => ModelCheckOutcome::Violated {
+            counterexample,
+            stats: change(stats),
+        },
+        ModelCheckOutcome::RefutedIgnoringConstraints { stats } => {
+            ModelCheckOutcome::RefutedIgnoringConstraints {
+                stats: change(stats),
+            }
+        }
+        ModelCheckOutcome::BoundReached { depth, stats } => ModelCheckOutcome::BoundReached {
+            depth,
+            stats: change(stats),
+        },
+        ModelCheckOutcome::Undecided { cause, stats } => ModelCheckOutcome::Undecided {
+            cause,
+            stats: change(stats),
+        },
+        ModelCheckOutcome::Stopped {
+            cause,
+            limit,
+            stats,
+        } => ModelCheckOutcome::Stopped {
+            cause,
+            limit,
+            stats: change(stats),
+        },
+    }
+}
+
+/// One search of a safety item over the first `cap` instances (all when
+/// `None`), within `limits`; `listed` receives the instances it ran over.
+fn check_safety(
+    request: &ModelCheckRequest<'_>,
+    cancel: &Cancel,
+    cap: Option<usize>,
+    limits: ModelCheckLimits,
+    listed: &mut Vec<ModelInstance>,
+) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
     let max_automaton_states = request.limits.max_automaton_states;
     // The form is refused before admission reads any snapshot.
     let (mut item, automaton, certified) =
@@ -604,7 +761,7 @@ pub(crate) fn check_model_with_stutter_closure(
     ) {
         return Err(ModelCheckRefusal::Item(ItemRefusal::LoopProofOverModel));
     }
-    let (instances, root_cancelled) = if certified {
+    let (mut instances, root_cancelled) = if certified {
         match request.item.instances_for(
             &request.subject,
             &system,
@@ -645,14 +802,22 @@ pub(crate) fn check_model_with_stutter_closure(
         } else {
             system.instances(&clause.over().1).map_err(not_simulated)?
         };
+        listed.clone_from(bindings);
+        if let Some(cap) = cap {
+            bindings.truncate(cap);
+            canonical.truncate(cap);
+        }
     }
     refuse_capture_read(request.item)?;
+    if let Some(cap) = cap {
+        instances.truncate(cap);
+    }
     let mut run = Run {
         system: &system,
         fairness: item.fairness(),
         reducer: Some(&system),
         item: &item,
-        limits: request.limits,
+        limits,
         max_depth: request.max_depth,
         meter,
         max_candidates,
@@ -1379,8 +1544,11 @@ fn sum(left: RunStats, right: RunStats) -> RunStats {
 /// (before `BoundReached`), a horizon cut `BoundReached`, and a completed
 /// search `HoldsReduced` (ADR-021 RV-1, RV-4, RV-5).
 fn check_reduced(
-    request: ModelCheckRequest<'_>,
+    request: &ModelCheckRequest<'_>,
     cancel: &Cancel,
+    cap: Option<usize>,
+    limits: ModelCheckLimits,
+    listed: &mut Vec<ModelInstance>,
 ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
     let reductions = &request.reductions;
     let max_automaton_states = request.limits.max_automaton_states;
@@ -1405,7 +1573,11 @@ fn check_reduced(
     let symmetric = !reductions.symmetry.is_empty();
     let plans = match request.item {
         ModelCheckItem::Clause { clause, .. } => {
-            let bindings = system.instances(&clause.over().1).map_err(not_simulated)?;
+            let mut bindings = system.instances(&clause.over().1).map_err(not_simulated)?;
+            listed.clone_from(&bindings);
+            if let Some(cap) = cap {
+                bindings.truncate(cap);
+            }
             if bindings.is_empty() {
                 return Ok(ModelCheckOutcome::Undecided {
                     cause: UndecidedCause::NoInstance,
@@ -1460,7 +1632,7 @@ fn check_reduced(
             fairness: item.fairness(),
             reducer: Some(&system),
             item: &item,
-            limits: request.limits,
+            limits,
             max_depth: request.max_depth,
             meter,
             max_candidates,

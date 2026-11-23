@@ -263,19 +263,24 @@ fn a_state_graph_replay_allocation_stops_before_the_next_real_instance() {
 /// independently selected typed clock row.
 #[trace("FR-050-AC-6")]
 #[test]
-#[ignore = "QSL-2889: with the explicit clock selection, whole-package read-back now refuses the temporal clock selection as having no configured declaration instead of reaching the temporal formula reader"]
 fn state_graph_identity_readback_uses_the_explicit_temporal_selection() {
     let world = crate::graph_world::temporal_config_world();
     let claim = world.claim("ReachesTwo");
     let mut selections = crate::fill::tcb_01_event_position_selection(&world.package);
     let hyper = &world.package.graph().hyper_clauses()[0];
-    selections.push(fsl_package::TemporalClockSelection::new(
-        world.package.graph().source().clone(),
-        hyper.span(),
-        fsl_package::ClockConfiguration::EventPosition {
-            sequence_authority: "test-hyper-events".into(),
-        },
-    ));
+    // FR-640: a hyper clause is configured per quantified trace, so its
+    // selection names the trace it serves.
+    for quantifier in hyper.quantifiers() {
+        let mut selection = fsl_package::TemporalClockSelection::new(
+            world.package.graph().source().clone(),
+            hyper.span(),
+            fsl_package::ClockConfiguration::EventPosition {
+                sequence_authority: "test-hyper-events".into(),
+            },
+        );
+        selection.trace = Some(quantifier.variable.as_str().into());
+        selections.push(selection);
+    }
 
     let without_selection = StateGraphIdentity::resolve(
         &world.package,
@@ -291,10 +296,12 @@ fn state_graph_identity_readback_uses_the_explicit_temporal_selection() {
         "unexpected refusal: {without_selection:?}"
     );
 
-    // This mixed fixture currently reaches the existing temporal formula
-    // reader's OperationMemberMismatch after the selected sidecar has been
-    // emitted. Pin that downstream boundary so the regression distinguishes
-    // table propagation from the earlier missing-selection refusal.
+    // FR-050-AC-6: with the selection naming every configured declaration
+    // (and, per FR-640, each hyper trace) the whole-package read-back
+    // resolves. This test used to pin the temporal formula reader's
+    // OperationMemberMismatch here; that limit no longer occurs on main
+    // (the package-emission changes of #3553 and #3573 are the candidates;
+    // not bisected), and nothing in the requirements asks for the refusal.
     let selected_readback = StateGraphIdentity::resolve(
         &world.package,
         world.packages(),
@@ -304,8 +311,8 @@ fn state_graph_identity_readback_uses_the_explicit_temporal_selection() {
         EmitLimits::fixture(),
     );
     assert!(
-        format!("{selected_readback:?}").contains("OperationMemberMismatch"),
-        "explicit selection should advance to the known temporal formula reader limit: {selected_readback:?}"
+        selected_readback.is_ok(),
+        "an explicit selection resolves the whole-package read-back: {selected_readback:?}"
     );
 
     let without_selection = HyperIdentity::resolve(
@@ -330,8 +337,8 @@ fn state_graph_identity_readback_uses_the_explicit_temporal_selection() {
         EmitLimits::fixture(),
     );
     assert!(
-        format!("{hyper_readback:?}").contains("OperationMemberMismatch"),
-        "explicit selection should advance to the known temporal formula reader limit: {hyper_readback:?}"
+        hyper_readback.is_ok(),
+        "an explicit selection resolves the hyper whole-package read-back: {hyper_readback:?}"
     );
 }
 

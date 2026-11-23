@@ -137,7 +137,7 @@ pub use hyper_letters::CheckedHyperLetters;
 pub use letters::{ClauseLetters, DecisiveObservation, LettersPreparationError, LettersRefusal};
 pub use probabilistic::{
     Action, Draw, NotMarkov, ScheduledIdentity, TransitionId, UndecidedSuccessor, Unsteppable,
-    WeightedStep, same_rewards, same_values,
+    WeightedStep, draw_weights, same_rewards, same_values,
 };
 pub use refine::{RowReading, StateObservation};
 pub use state_predicate::PredicateReading;
