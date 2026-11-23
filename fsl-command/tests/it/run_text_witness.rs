@@ -119,7 +119,7 @@ fn fsl_command_run_text_includes_paid_short_witness_values() {
     )
     .expect("text outcome renders with the command's retained sources");
     let expected_header = format!(
-        "run: violation (exit {}) at S6a\n",
+        "monitor: violation (exit {}) at S6a\n",
         Category::Violation.exit_code()
     );
     assert!(
