@@ -109,10 +109,14 @@ fn assert_root_over_refused(wire: &Value, documents: &[Vec<u8>], at: usize, root
         .unwrap_or_else(|| panic!("a model root of {root_package}"))["node_id"]
         .clone();
     let order: Vec<Value> = nodes.iter().map(|node| node["node_id"].clone()).collect();
-    nodes[at]["body"]["arguments"][0]["target"] = root.clone();
+    let previous = std::mem::replace(
+        &mut nodes[at]["body"]["arguments"][0]["target"],
+        root.clone(),
+    );
     let dependencies = nodes[at]["dependencies"]
         .as_array_mut()
         .expect("dependencies");
+    dependencies.retain(|id| id != &previous);
     dependencies.push(root);
     dependencies.sort_by_key(|id| order.iter().position(|node| node == id));
     dependencies.dedup();
