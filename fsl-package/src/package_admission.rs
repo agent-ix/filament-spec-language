@@ -88,6 +88,19 @@ pub fn admit_checked_package_with_dependencies(
             pointer: None,
             identity: None,
         }),
+        CheckedPackageDispatchResult::HostAllocationFailed(_) => Err(host_allocation_failed()),
+    }
+}
+
+/// The host refused an allocation the strict read had admitted: no judgement
+/// of the package.
+fn host_allocation_failed() -> PackageAdmissionRefusal {
+    PackageAdmissionRefusal {
+        limit: None,
+        code: Code::ResourceExhausted,
+        cause: Some("allocation-failed".to_owned()),
+        pointer: None,
+        identity: None,
     }
 }
 
@@ -170,6 +183,7 @@ pub fn admit_checked_package_with_evidence(
             pointer: None,
             identity: None,
         }),
+        Read::HostAllocationFailed(_) => Err(host_allocation_failed()),
     }
 }
 

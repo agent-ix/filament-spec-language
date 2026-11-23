@@ -696,6 +696,8 @@ fn value_type(joins: &impl TypeKeys, value: &ValueType) -> Result<Json, Bad> {
         ValueType::Timestamp => simple("timestamp"),
         ValueType::Bytes => simple("bytes"),
         ValueType::JsonObject => simple("json_object"),
+        // The equality file has no clock-place reference form yet (QSL-3001).
+        ValueType::ClockReference => malformed("a clock-place reference type (QSL-3001)"),
         ValueType::Int(range) => {
             let Json::Object(mut members) = interval(range) else {
                 return malformed("an interval");
