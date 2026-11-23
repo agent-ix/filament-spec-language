@@ -104,7 +104,8 @@ message never activates and does not count against the claim.
   profile admits only the form its section states. An on-each claim outside it
   (an every-scheduler optimum, statistical evidence, a cyclic continuation
   graph, a timed subject, authored fairness or another form) settles
-  `unsupported` `not-yet-implemented` until QSL-2995. This is an
+  `unsupported` with the FR-272 diagnostic
+  `unsupported_construct`/`not-yet-implemented` (no `cause`) until QSL-2995. This is an
   implementation gap and not a refusal of its activation.
 
 ## Acceptance Criteria

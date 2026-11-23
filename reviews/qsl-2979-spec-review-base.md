@@ -112,6 +112,14 @@ Head 1afe025a0e745374f4015b3614bef662a192dba5 (diff 32ca5b98..1afe025a).
 | FND-008 | medium | A `Vacuous` document offered where activation is reachable has no stated locus with several initial keys, and no AC tests it (author open question 3). The table and FSpec FR-412 say `InequalityFails` "at the initial state". Over AC-76's snapshot both `m` and `n` are initial keys, and "first in canonical order" alone could name `n`, from which nothing activates. Candidate: "A `Vacuous` document SHALL be rejected `InequalityFails` at the first initial complete product key, in canonical order, from which a first activating state is reachable, with no `part`". Add to AC-77: "the `Vacuous` document over AC-76's snapshot is rejected `InequalityFails` at `m`'s initial key with no `part`". | spec/functional/FR-201-check-a-probability-certificate.md:931-936 |
 | FND-009 | medium | The rank rule is ambiguous. "ranks SHALL be the checker-verified acyclic height ranks the profile above allows" can mean the ranks must equal the heights (terminal 0, live 1 + max successor), or only that height ranks are a valid choice. Under the first reading, a rank that satisfies CE-3 progress but is not the height (for example 5 at `m`'s initial key) has no stated rule, and AC-78's rank-0 `RankBroken` could instead be a height-mismatch rejection. reachability/v1 says "MAY emit". Candidate: "ranks SHALL satisfy CE-3 progress; the checker-verified acyclic height ranks are one valid ranking; a rank that breaks progress SHALL be rejected `RankBroken` (`RankMissing` when absent)". | spec/functional/FR-201-check-a-probability-certificate.md:910-920 |
 
+## New findings (disposition pass 2)
+
+Head c24a9c6ab30b3506ed76475e5ecee9f7f2811fc8 (diff 1afe025a..c24a9c6a).
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-010 | low | The new FR-875 "Out-of-profile forms (current)" bullet says such a claim "settles `unsupported` `not-yet-implemented`". FSpec FR-331's `unsupported` cause list (rev 3200a4e) has no `not-yet-implemented`. That is FSpec FR-272's diagnostic cause, which the FSL spec elsewhere writes as `unsupported_construct`/`not-yet-implemented` (FR-135, FR-1040), and FR-331 lets an `unsupported` record carry a `diagnostic` instead of a `cause`. As written, an implementer could emit a non-FR-331 `cause`. Candidate: "settles `unsupported` with the FR-272 diagnostic `unsupported_construct`/`not-yet-implemented` (no `cause`)". | spec/functional/FR-875-settle-each-instance-of-a-probabilistic-on-each-claim.md:103-108 |
+
 ## Dispositions
 
 | FND | outcome | reason |
@@ -122,3 +130,6 @@ Head 1afe025a0e745374f4015b3614bef662a192dba5 (diff 32ca5b98..1afe025a).
 | FND-004 | fixed | Lines 921-928: ThresholdMissed is at the first failing initial complete key in canonical octet order, with no part, and the text notes FR-875's key order. |
 | FND-005 | fixed | AC-77 uses the document built over the only-n snapshot. The check order is stated at lines 935-936. |
 | FND-006 | fixed | FR-875:70 now cites FR-291-AC-1 for `kind` and names FSpec FR-331's bare `type` as the provider-entry spelling. |
+| FND-007 | fixed | Round 2. The profile says other forms are "not admitted by this profile: no `on-each-reachability/v1` document SHALL be written or accepted", and AC-80 matches. FR-875 adds "Out-of-profile forms (current)": `unsupported` `not-yet-implemented` until QSL-2995, "an implementation gap and not a refusal of its activation". |
+| FND-008 | fixed | Round 2. FR-201 now says a `Vacuous` document offered where activation is reachable is rejected `InequalityFails` at the first initial complete key, in canonical order, from which activation is reachable, with no `part`. AC-77 and TC-3208 test it at `m`'s initial key. |
+| FND-009 | fixed | Round 2. "The ranks SHALL satisfy CE-3 progress; the checker-verified acyclic height ranks ... are one valid ranking and are not required." AC-78's rank 0 is RankBroken under either reading (no smaller rank exists). |

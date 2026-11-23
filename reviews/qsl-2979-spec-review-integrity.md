@@ -54,3 +54,4 @@ Head 1afe025a0e745374f4015b3614bef662a192dba5. TC-3208 and TC-3209 are both abse
 | FND | outcome | reason |
 | --- | --- | --- |
 | FND-001 | fixed | The table's Malformed row now lists the on-each part coverage fault (line 108), and the locus names the part, `numerator` or `denominator` (lines 906-909). |
+| FND-002 | fixed | Round 2. Out-of-order rows are added: "a missing, extra, duplicate or out-of-order row SHALL be rejected `Malformed` at `CertificateMember` naming that part ... no other rule applies to such a row". AC-79 and TC-3209 test reordering. |
