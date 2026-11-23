@@ -1751,11 +1751,6 @@ fn an_element_presence_quantifier_is_scoped_in_its_predicate() {
     let (_, _, mut wire) = emit(&guard("forall"));
     let parameter = quantifier_parameter(&wire);
     let guard_id = timed(&wire, "clock_guard")[0]["node_id"].clone();
-    // The guard depends on each node it references, in graph order.
-    let order: Vec<Value> = nodes(&wire)
-        .iter()
-        .map(|node| node["node_id"].clone())
-        .collect();
     let node = wire["semantic_graph"]["nodes"]
         .as_array_mut()
         .expect("nodes")
@@ -1763,9 +1758,9 @@ fn an_element_presence_quantifier_is_scoped_in_its_predicate() {
         .find(|node| node["node_id"] == guard_id)
         .expect("the guard");
     let dependencies = node["dependencies"].as_array_mut().expect("dependencies");
-    eprintln!("DBGD before {dependencies:?} param {parameter}");
     dependencies.push(parameter.clone());
-    dependencies.sort_by_key(|id| order.iter().position(|held| held == id));
+    // A node's dependencies are in id order, whose first segment is its tag.
+    dependencies.sort_by_key(|id| id["path"][0].as_str().map(str::to_owned));
     dependencies.dedup();
     let part = &mut node["body"]["members"]
         .as_array_mut()
@@ -1781,7 +1776,6 @@ fn an_element_presence_quantifier_is_scoped_in_its_predicate() {
             json!({"name": "binders", "term": "binding", "value": {"term": "aggregate",
             "members": [{"term": "reference", "target": parameter}]}}),
         );
-    eprintln!("DBGG {}", wire["semantic_graph"]["nodes"].as_array().expect("n").iter().find(|n| n["node_id"] == guard_id).expect("g"));
     let bytes = crate::emit::tests::wire_bytes(&wire).expect("JSON");
     let failure = read_presence_package(&document, &bytes, &wire)
         .expect_err("a binder no constraint reads is refused");
