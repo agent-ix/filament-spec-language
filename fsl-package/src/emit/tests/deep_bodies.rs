@@ -610,7 +610,8 @@ fn distinct_guards_shape(levels: usize) -> (usize, usize, usize, usize) {
 /// condition frames and every guarded record cites one terminal frame id, and
 /// the package grows linearly with depth: doubling the depth less than
 /// two-and-a-half-folds the bytes (the per-record guard prefix it replaces
-/// would roughly quadruple them).
+/// would roughly quadruple them) and 1,000 levels stay within 20,000,000
+/// bytes (measured 15,875,705, 26% headroom).
 #[trace("TC-3161", "FR-062-AC-17")]
 #[test]
 fn nested_guards_emit_shared_frames_and_linear_bytes() {
@@ -620,9 +621,42 @@ fn nested_guards_emit_shared_frames_and_linear_bytes() {
     assert_eq!((half_guarded, guarded), (998, 1_998), "two guarded records per level but the last");
     assert_eq!(records, 2_000, "two scalar records per level");
     assert!(
+        bytes <= 20_000_000,
+        "{bytes} bytes at 1000 levels exceed the measured 15,875,705 plus 25% headroom"
+    );
+    assert!(
         bytes * 2 < half_bytes * 5,
         "{half_bytes} bytes at 500 levels and {bytes} at 1000 are not linear"
     );
+}
+
+/// FR-062-AC-17: the omission closure's view of the nested-guards form holds
+/// one guard row per guard edge and no per-record guard names, so it grows
+/// linearly with depth.
+#[trace("TC-3161", "FR-062-AC-17")]
+#[test]
+fn omission_names_share_one_guard_row_per_edge_at_1000_levels() {
+    use fsl_semantics::check::depth_forms::{declarations, Form};
+    std::thread::Builder::new()
+        .stack_size(STACK)
+        .spawn(|| {
+            let graph = declarations(Form::DistinctGuards, 1_000)
+                .check(
+                    CheckMode::Linked,
+                    CheckingLimits::default(),
+                    &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+                )
+                .expect("the nested guards check");
+            let (records, guards) = crate::emit::value_validity_requirements::record_names(&graph)
+                .expect("the record names read");
+            let names: usize = records.iter().map(|record| record.names.len()).sum();
+            assert_eq!(records.len(), 2_000);
+            assert_eq!(guards.rows.len(), 999, "one row per nested guard edge");
+            assert!(names <= 16 * records.len(), "{names} names are not linear in the records");
+        })
+        .expect("the thread spawns")
+        .join()
+        .expect("completes on a 512 KiB stack");
 }
 
 /// `function f using v(a: Boolean): Boolean pure { a and (a and (… a)) }`

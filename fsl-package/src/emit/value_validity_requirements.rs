@@ -52,15 +52,42 @@ pub(super) struct RecordNames {
     pub(super) owner: Option<NodeKey>,
     /// Every other node the record names: its extent's domain nodes, and for
     /// a `value-validity` record the result bound's type node, the narrow,
-    /// every guard, every extent root and every object type.
+    /// every extent root and every object type. Its guards are named through
+    /// `guards`, one shared chain, never one vector per record.
     pub(super) names: Vec<NodeKey>,
+    /// The terminal row, in [`GuardRows`], of the record's guard chain.
+    pub(super) guards: Option<usize>,
 }
 
+/// The guard chains of every record, interned as parent-linked rows holding
+/// the guard node each names: one row per distinct guard edge.
+#[derive(Default)]
+pub(super) struct GuardRows {
+    /// Each row's enclosing row and guard node.
+    pub(super) rows: Vec<(Option<usize>, NodeKey)>,
+    lookup: HashMap<(Option<usize>, NodeKey), usize>,
+}
+
+impl GuardRows {
+    fn intern(&mut self, parent: Option<usize>, guard: &NodeKey) -> usize {
+        if let Some(&row) = self.lookup.get(&(parent, guard.clone())) {
+            return row;
+        }
+        self.rows.push((parent, guard.clone()));
+        self.lookup.insert((parent, guard.clone()), self.rows.len() - 1);
+        self.rows.len() - 1
+    }
+}
+
+/// The names of one record, its guards as plain names when `guards` is `None`
+/// and as a row of the shared `guards` otherwise.
 fn record_names_of(
     graph: &CheckedGraph,
     claim: &OccurrenceKey,
     source: &RequirementRecord,
+    mut guards: Option<&mut GuardRows>,
 ) -> Result<RecordNames, EmitRefusal> {
+    let mut terminal = None;
     let mut names = Vec::new();
     if let ClaimExtent::Unbounded(domains) = source.requirements().extent() {
         names.extend(domains.iter().map(|(key, _)| match key {
@@ -78,12 +105,19 @@ fn record_names_of(
         );
         names.push(source.result_bound().node());
         names.extend(source.conversion_context().map(|key| key.node().clone()));
-        names.extend(
-            source
-                .path_condition()
-                .iter()
-                .map(|guard| guard.occurrence().node().clone()),
-        );
+        match guards.as_deref_mut() {
+            Some(rows) => {
+                for guard in source.path_condition() {
+                    terminal = Some(rows.intern(terminal, guard.occurrence().node()));
+                }
+            }
+            None => names.extend(
+                source
+                    .path_condition()
+                    .iter()
+                    .map(|guard| guard.occurrence().node().clone()),
+            ),
+        }
         names.extend(source.extent_roots().iter().cloned());
         names.extend(
             graph
@@ -96,16 +130,22 @@ fn record_names_of(
         claim: claim.node().clone(),
         owner,
         names,
+        guards: terminal,
     })
 }
 
-/// What each requirement record of `graph` names, in requirement-map order.
-pub(super) fn record_names(graph: &CheckedGraph) -> Result<Vec<RecordNames>, EmitRefusal> {
-    graph
+/// What each requirement record of `graph` names, in requirement-map order,
+/// with the guard chains the records share.
+pub(super) fn record_names(
+    graph: &CheckedGraph,
+) -> Result<(Vec<RecordNames>, GuardRows), EmitRefusal> {
+    let mut guards = GuardRows::default();
+    let records = graph
         .requirements()
         .iter()
-        .map(|(claim, source)| record_names_of(graph, claim, source))
-        .collect()
+        .map(|(claim, source)| record_names_of(graph, claim, source, Some(&mut guards)))
+        .collect::<Result<_, _>>()?;
+    Ok((records, guards))
 }
 
 /// Whether a record the emitter writes names an omitted node. The omission
@@ -121,7 +161,7 @@ fn names_an_omitted_node(
     if omitted.is_empty() {
         return Ok(false);
     }
-    let names = record_names_of(graph, claim, source)?;
+    let names = record_names_of(graph, claim, source, None)?;
     Ok(std::iter::once(&names.claim)
         .chain(&names.owner)
         .chain(&names.names)
@@ -384,7 +424,7 @@ pub(super) fn rows(
         // and any other record none when its claim node is; the omission
         // closure leaves no other written record naming an omitted node.
         if !omitted.is_empty() {
-            let names = record_names_of(graph, claim, source)?;
+            let names = record_names_of(graph, claim, source, None)?;
             let dropped = names
                 .owner
                 .as_ref()
