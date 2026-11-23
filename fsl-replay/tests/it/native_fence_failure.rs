@@ -7,7 +7,7 @@
 
 use filament_exact::{Cancel, CancelCause};
 use filament_semantic_value::catalog::{Category, InternalFault};
-use fsl_foundation::diagnostic::{LimitExceeded, StageFailure};
+use fsl_foundation::diagnostic::{error, Code, LimitExceeded, Phase, StageFailure};
 use fsl_foundation::{Setting, Source, SourceIdentity};
 use fsl_replay::spine::{self, CheckLimits, FenceCheckCause};
 use fsl_replay::OutcomeDocument;
@@ -49,35 +49,45 @@ fn only_diagnostic(document: &Value) -> &Value {
     &diagnostics[0]
 }
 
-/// An extraction refusal (the original exceeds the extraction byte limit)
-/// and the same cause carried with an empty payload give the same document:
-/// `check`, category incomplete, no stage, no items, one `resource_exhausted`.
+/// A whole-document extraction refusal and the same cause carried with an
+/// empty payload give the FR-662-AC-4 refusal document.
 #[test]
-#[trace("TC-1743", "FR-662-AC-2")]
+#[trace("TC-1743", "FR-662-AC-4")]
 fn an_extraction_refusal_projects_a_check_document_without_items() {
-    let mut limits = CheckLimits::default();
-    limits.extraction.source_bytes = 1;
-    let failure = check(limits, &Cancel::new()).unwrap_err();
+    let source = Source::read(
+        SourceIdentity::new("agent-ix", "doc"),
+        "spec.md",
+        DOCUMENT.as_bytes(),
+        DOCUMENT.len(),
+    )
+    .unwrap();
+    let cause = FenceCheckCause::Extraction(error(
+        &source,
+        Code::InvalidSourceMap,
+        Phase::SourceMap,
+        0,
+        0,
+        "constructed extraction refusal",
+    ));
+    let failure = StageFailure::Refused(cause);
     let document = OutcomeDocument::from_native_fence_failure(&failure);
-    assert_eq!(document.category(), Category::Incomplete);
+    assert_eq!(document.category(), Category::Refusal);
+    assert_eq!(document.category().exit_code(), 20);
     let value = document_json(&document);
     assert_eq!(value["operation"], "check", "{value}");
-    assert_eq!(value["category"], "incomplete", "{value}");
+    assert_eq!(value["category"], "refusal", "{value}");
     assert_eq!(value["last_stage"], Value::Null, "{value}");
     assert_eq!(value["items"], json!([]), "{value}");
     let diagnostic = only_diagnostic(&value);
-    assert_eq!(diagnostic["code"], "resource_exhausted", "{value}");
-    assert!(
-        diagnostic["message"]
-            .as_str()
-            .unwrap()
-            .contains("original document exceeds the extraction source-byte limit"),
-        "{value}"
-    );
-
-    let StageFailure::Refused(cause) = failure else {
-        panic!("the extraction refusal is a plain refusal");
-    };
+    assert_eq!(diagnostic["code"], "invalid_source_map", "{value}");
+    let cause = FenceCheckCause::Extraction(error(
+        &source,
+        Code::InvalidSourceMap,
+        Phase::SourceMap,
+        0,
+        0,
+        "constructed extraction refusal",
+    ));
     let with_payload = StageFailure::RefusedWithPayload(Box::new(cause), ());
     assert_eq!(
         document_json(&OutcomeDocument::from_native_fence_failure(&with_payload)),
@@ -88,7 +98,7 @@ fn an_extraction_refusal_projects_a_check_document_without_items() {
 /// A reached limit, with or without a retained payload, is incomplete at the
 /// limit's stage with the `stage_limit_exceeded` code.
 #[test]
-#[trace("TC-1743", "FR-662-AC-2")]
+#[trace("TC-1743", "FR-662-AC-4")]
 fn a_reached_limit_projects_an_incomplete_document_at_its_stage() {
     let limit = LimitExceeded::new(Setting::S1InputBytes, 4, 9);
     let plain = OutcomeDocument::from_native_fence_failure(&StageFailure::Limit(limit.clone()));
@@ -97,7 +107,17 @@ fn a_reached_limit_projects_an_incomplete_document_at_its_stage() {
     assert_eq!(value["operation"], "check", "{value}");
     assert_eq!(value["last_stage"], "S1", "{value}");
     assert_eq!(value["items"], json!([]), "{value}");
-    assert_eq!(only_diagnostic(&value)["code"], "stage_limit_exceeded");
+    let diagnostic = only_diagnostic(&value);
+    assert_eq!(diagnostic["code"], "stage_limit_exceeded", "{value}");
+    assert_eq!(diagnostic["cause"], "input-bytes-exceeded", "{value}");
+    assert!(
+        diagnostic["message"]
+            .as_str()
+            .unwrap()
+            .contains("s1.input_bytes"),
+        "{value}"
+    );
+    assert_eq!(plain.category().exit_code(), 22);
     let with_payload =
         OutcomeDocument::from_native_fence_failure(&StageFailure::LimitWithPayload(limit, ()));
     assert_eq!(document_json(&with_payload), value);
@@ -106,7 +126,7 @@ fn a_reached_limit_projects_an_incomplete_document_at_its_stage() {
 /// A cancelled check returns no report and projects an incomplete document
 /// carrying the `cancelled` code and the cause.
 #[test]
-#[trace("TC-1743", "FR-662-AC-2")]
+#[trace("TC-1743", "FR-662-AC-2", "FR-662-AC-4")]
 fn a_cancelled_check_projects_an_incomplete_cancelled_document() {
     let cancel = Cancel::new();
     cancel.cancel(CancelCause::Requested);
@@ -119,12 +139,13 @@ fn a_cancelled_check_projects_an_incomplete_cancelled_document() {
     let diagnostic = only_diagnostic(&value);
     assert_eq!(diagnostic["code"], "cancelled", "{value}");
     assert_eq!(diagnostic["cause"], "requested", "{value}");
+    assert_eq!(document.category().exit_code(), 22);
 }
 
 /// This constructed fault exercises the fault arm; it does not claim that a
 /// document triggers an internal invariant failure.
 #[test]
-#[trace("TC-1743", "FR-662-AC-2")]
+#[trace("TC-1743", "FR-662-AC-4")]
 fn a_constructed_fault_projects_an_internal_failure_at_no_stage() {
     let fault = InternalFault::new("S4", "constructed-test-invariant");
     let document = OutcomeDocument::from_native_fence_failure(&StageFailure::Fault(fault));
@@ -133,6 +154,12 @@ fn a_constructed_fault_projects_an_internal_failure_at_no_stage() {
     assert_eq!(value["operation"], "check", "{value}");
     assert_eq!(value["last_stage"], Value::Null, "{value}");
     assert_eq!(value["items"], json!([]), "{value}");
+    assert_eq!(
+        only_diagnostic(&value)["code"],
+        "runtime_invariant",
+        "{value}"
+    );
+    assert_eq!(document.category().exit_code(), 30);
     assert_eq!(
         only_diagnostic(&value)["message"],
         "internal invariant constructed-test-invariant broken in S4"

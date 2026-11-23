@@ -2357,7 +2357,18 @@ fn check_argv(directory: &Path, bytes: &[u8]) -> Result<Option<RunResult>> {
     let mut extensions_file = None;
     let mut positionals = Vec::new();
     let mut index = 1;
+    let mut options_enabled = true;
     while index < arguments.len() {
+        if options_enabled && arguments[index] == "--" {
+            options_enabled = false;
+            index += 1;
+            continue;
+        }
+        if !options_enabled {
+            positionals.push(arguments[index]);
+            index += 1;
+            continue;
+        }
         match arguments[index] {
             "--markdown" => {
                 if markdown {
@@ -2379,12 +2390,12 @@ fn check_argv(directory: &Path, bytes: &[u8]) -> Result<Option<RunResult>> {
                     return Err(check_option_refusal(option, "is given more than once"));
                 }
                 match arguments.get(index + 1) {
-                    Some(value) if !value.starts_with('-') => *slot = Some(*value),
+                    Some(value) if !value.starts_with("--") => *slot = Some(*value),
                     _ => return Err(check_option_refusal(option, "expects a value")),
                 }
                 index += 2;
             }
-            argument if argument.starts_with('-') => {
+            argument if argument.starts_with("--") => {
                 return Err(check_option_refusal(argument, "is not recognized"));
             }
             argument => {

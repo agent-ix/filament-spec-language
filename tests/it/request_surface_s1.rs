@@ -1214,6 +1214,7 @@ fn check_markdown_refuses_doubled_and_headless_fences() {
 fn check_without_markdown_reads_native_source() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join("spec.md"), "# Spec\n\ntext\n").unwrap();
+    std::fs::write(directory.path().join("-spec.md"), "# Spec\n\ntext\n").unwrap();
     let output = driver(
         directory.path(),
         &["check", "agent-ix", "doc", "spec.md", "--format", "json"],
@@ -1233,6 +1234,14 @@ fn check_without_markdown_reads_native_source() {
         ],
     );
     assert_eq!(markdown.status.code(), Some(0), "{markdown:?}");
+    for arguments in [vec!["check", "-spec.md"], vec!["check", "--", "-spec.md"]] {
+        let dash_path = driver(directory.path(), &arguments);
+        assert_eq!(dash_path.status.code(), Some(20), "{dash_path:?}");
+        assert!(
+            String::from_utf8_lossy(&dash_path.stdout).contains("invalid_syntax"),
+            "{dash_path:?}"
+        );
+    }
 }
 
 const FENCE_UNIT: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction good using v(): Boolean pure { true }\n";
@@ -1342,6 +1351,10 @@ fn check_markdown_headless_fence_refuses_missing_name_at_its_first_line() {
     assert_eq!(items.len(), 2, "{outcome}");
     assert_eq!(items[0]["first_line"], 4, "{outcome}");
     assert_eq!(items[0]["unit"]["clause"], Value::Null, "{outcome}");
+    assert_eq!(
+        items[0]["unit"]["body"]["identity"], "doc#unowned-3",
+        "{outcome}"
+    );
     let diagnostic = &items[0]["diagnostics"][0];
     assert_eq!(diagnostic["code"], "missing_declaration", "{outcome}");
     assert_eq!(diagnostic["cause"], "missing-name", "{outcome}");
@@ -1373,7 +1386,7 @@ fn check_refusal(directory: &Path, arguments: &[&str]) -> (Option<i32>, Value) {
 fn check_argv_refuses_each_malformed_grammar() {
     let directory = tempfile::tempdir().unwrap();
     std::fs::write(directory.path().join("spec.md"), "# Spec\n").unwrap();
-    let cases: [(&[&str], &str); 13] = [
+    let cases: [(&[&str], &str); 11] = [
         (
             &["check", "--markdown", "spec.md"],
             "check expects [--markdown] [--extensions <file>] [--format json] a source, or <authority> <name> <source> (--markdown requires the labels)",
@@ -1418,14 +1431,6 @@ fn check_argv_refuses_each_malformed_grammar() {
             &["check", "agent-ix", "doc"],
             "check expects [--markdown] [--extensions <file>] [--format json] a source, or <authority> <name> <source> (--markdown requires the labels)",
         ),
-        (
-            &["check", "--", "spec.md"],
-            "check option -- is not recognized",
-        ),
-        (
-            &["check", "-spec.md"],
-            "check option -spec.md is not recognized",
-        ),
     ];
     for (arguments, message) in cases {
         let (exit, value) = check_refusal(directory.path(), arguments);
@@ -1450,6 +1455,11 @@ fn check_extensions_accepts_the_one_operand_form() {
         directory.path(),
         json!([{"authority": "agent-ix", "identity": "ext.retention", "file": "retention.json"}]),
     );
+    std::fs::rename(
+        directory.path().join("set.json"),
+        directory.path().join("-set.json"),
+    )
+    .unwrap();
     std::fs::write(
         directory.path().join("unit.native"),
         format!("{HEADER}profile r = \"ext.retention\";\n{FORM}\n"),
@@ -1457,7 +1467,7 @@ fn check_extensions_accepts_the_one_operand_form() {
     .unwrap();
     let output = driver(
         directory.path(),
-        &["check", "--extensions", "set.json", "unit.native"],
+        &["check", "--extensions", "-set.json", "unit.native"],
     );
     assert_eq!(output.status.code(), Some(0), "{output:?}");
 }
