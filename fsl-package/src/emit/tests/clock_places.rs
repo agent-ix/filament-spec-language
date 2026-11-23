@@ -1832,3 +1832,70 @@ fn equal_timed_nodes_merge_by_region_and_unequal_ones_are_refused() {
         Err(EmitRefusal::TimedModelWriterInvariant(_))
     ));
 }
+
+/// FSpec FR-322 "Dependencies": a node's `dependencies` ascend by the
+/// structural keys of the nodes they name. The timed-model writer renames the
+/// timed nodes it re-encodes, so a node holding two renamed timed nodes has
+/// its list sorted again by the final keys, by the one function the monitor
+/// writer also uses. Of the two timed roots of one package, the one whose key
+/// is first is renamed to a key after the other's: a holder naming both reads
+/// `[renamed, other]` after the rename and `[other, renamed]` once sorted.
+#[trace("TC-685")]
+#[test]
+fn renamed_timed_nodes_are_sorted_again_in_the_dependencies_of_a_holder() {
+    use filament_contract_model::CheckedNodePathSegment as Segment;
+    let (document, _unit, package) = two_time_package("");
+    let emission = emit_checked(&package).expect("the package emits");
+    let wire = wire(&emission);
+    let mut evidence = CheckedPackageEvidence::new();
+    for feature in wire["lock"]["required_features"].as_array().unwrap() {
+        evidence.support_feature(feature.as_str().unwrap());
+    }
+    evidence
+        .insert_domain_package_document(package_identity(&document), document.clone())
+        .expect("a fresh evidence key");
+    let admitted = read_checked_package_v2(
+        emission.package.bytes(),
+        library(),
+        V2ReadLimits::fixture(),
+        &evidence,
+    )
+    .unwrap_or_else(|failure| panic!("the strict read admits the package: {failure:?}"))
+    .into_value()
+    .admitted;
+    let mut graph = admitted.resolved_graph().nodes.to_vec();
+    let key = |graph: &[CheckedSemanticNodeV2], id: &CheckedNodeId| {
+        WireGraph::new(graph.iter().map(|node| &node.node_id))
+            .expect("the graph ids resolve")
+            .key(id)
+            .expect("the id is a node of the graph")
+    };
+    let mut roots: Vec<CheckedNodeId> = graph
+        .iter()
+        .filter(|node| node.semantic_form.as_ref() == "timed_model")
+        .map(|node| node.node_id.clone())
+        .collect();
+    assert_eq!(roots.len(), 2, "two timed roots");
+    roots.sort_by_key(|id| key(&graph, id));
+    let [first, second] = [roots[0].clone(), roots[1].clone()];
+    let holder = graph
+        .iter()
+        .position(|node| node.semantic_form.as_ref() == "object_type")
+        .expect("a node that is not timed");
+    graph[holder].dependencies = vec![first.clone(), second.clone()];
+
+    let renamed = CheckedNodeId {
+        package: first.package.clone(),
+        path: vec![Segment::Name("zz-renamed".into())],
+        ordinal: 0,
+    };
+    for node in &mut graph {
+        node.replace_node_id(&first, &renamed);
+    }
+    assert_eq!(graph[holder].dependencies, [renamed.clone(), second.clone()]);
+    assert!(key(&graph, &second) < key(&graph, &renamed), "the order flips");
+
+    crate::emit::order_dependencies(&mut graph, EmitRefusal::TimedModelWriterInvariant)
+        .expect("the dependencies order");
+    assert_eq!(graph[holder].dependencies, [second, renamed]);
+}
