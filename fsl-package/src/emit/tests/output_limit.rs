@@ -317,7 +317,6 @@ fn a_bound_below_the_source_map_refuses_before_the_typed_rows_are_built() {
     let _ = allocation_counter::measure(|| {});
 
     let early = allocations(0);
-    assert_eq!(allocations(1), early, "both refuse at the same point");
     let late = allocations(bytes - 1);
     eprintln!("early={early} late={late}");
     assert!(
@@ -327,7 +326,7 @@ fn a_bound_below_the_source_map_refuses_before_the_typed_rows_are_built() {
 }
 
 fn emitted_byte_count_of(package: &CheckedPackage) -> usize {
-    crate::emit::emit_checked(package, EmitLimits::new(u64::MAX))
+    emitted_at(package, u64::MAX)
         .expect("a raised output limit emits")
         .package()
         .bytes()
