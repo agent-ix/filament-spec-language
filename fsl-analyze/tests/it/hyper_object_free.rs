@@ -92,12 +92,12 @@ fn read(bytes: &[u8], documents: &[Vec<u8>]) -> CheckedPackageV2ReadResult {
     CheckedPackageV2::read(bytes, CheckedPackageReadLimits::bounded(), &evidence)
 }
 
-/// Edit the wrapper at index `at` of the nodes of the raw wire in `bytes` so its
+/// Edit the wrapper at index `at` of the nodes of the resolved `wire` so its
 /// `over` is the `model_root` of `root_package`, and assert the strict read
 /// refuses it `invalid_model_binding`/`malformed-declaration` at the wrapper's
 /// first argument.
-fn assert_root_over_refused(bytes: &[u8], documents: &[Vec<u8>], at: usize, root_package: &str) {
-    let mut raw: Value = serde_json::from_slice(bytes).expect("wire JSON");
+fn assert_root_over_refused(wire: &Value, documents: &[Vec<u8>], at: usize, root_package: &str) {
+    let mut raw = wire.clone();
     let nodes = raw["semantic_graph"]["nodes"]
         .as_array_mut()
         .expect("nodes");
@@ -113,6 +113,7 @@ fn assert_root_over_refused(bytes: &[u8], documents: &[Vec<u8>], at: usize, root
         .as_array_mut()
         .expect("dependencies")
         .push(root);
+    fsl_semantics::check::wire_id::write_operand_rows(&mut raw);
     let edited = serde_json::to_vec(&raw).expect("bytes");
     let CheckedPackageV2ReadResult::Refused(refusal) = read(&edited, documents) else {
         panic!("a model-root over on this wrapper is refused");
@@ -160,14 +161,14 @@ fn an_object_free_hyper_wrapper_ranges_over_the_model_root() {
 #[test]
 fn a_model_root_over_on_a_wrapper_that_reads_a_slot_is_refused() {
     let package = package_with_clause(Vault::Secure, false, &non_interference(""));
-    let (bytes, wire) = emitted(&package);
+    let (_, wire) = emitted(&package);
     let (over, _) = wrapper_over(&wire);
     assert_eq!(
         node(&wire, &over)["body"]["members"][0]["value"]["value"],
         "slot_sv_sa"
     );
     assert_root_over_refused(
-        &bytes,
+        &wire,
         &clause_documents(Vault::Secure, false),
         wrapper_index(&wire),
         "test/vault",
@@ -179,9 +180,9 @@ fn a_model_root_over_on_a_wrapper_that_reads_a_slot_is_refused() {
 #[test]
 fn a_wrapper_over_the_root_of_a_package_no_subject_names_is_refused() {
     let package = package_with_clause(Vault::Secure, true, WHOLE);
-    let (bytes, wire) = emitted(&package);
+    let (_, wire) = emitted(&package);
     assert_root_over_refused(
-        &bytes,
+        &wire,
         &clause_documents(Vault::Secure, true),
         wrapper_index(&wire),
         "test/vault-other",
@@ -198,7 +199,7 @@ fn a_single_trace_clause_that_is_no_body_wrapper_cannot_range_over_a_model_root(
         "temporal Plain using inf over (v: V::Vault) clock \"model-steps\" on origin \
          { always holds(v.l >= 0) }",
     );
-    let (bytes, wire) = emitted(&package);
+    let (_, wire) = emitted(&package);
     let clauses: Vec<usize> = nodes(&wire)
         .iter()
         .enumerate()
@@ -209,7 +210,7 @@ fn a_single_trace_clause_that_is_no_body_wrapper_cannot_range_over_a_model_root(
         panic!("one temporal clause");
     };
     assert_root_over_refused(
-        &bytes,
+        &wire,
         &clause_documents(Vault::Secure, false),
         clause,
         "test/vault",
