@@ -2126,12 +2126,13 @@ fn a_refused_predicate_join_settles_the_item_declined() {
     }
 }
 
-/// [`repeat_protocol`] with a `parallel` `join any [left, right] outstanding
-/// cancel` of `L` and `R` first in the loop body.
+/// [`repeat_protocol`] with a step `P` and then a `parallel` `join any [left,
+/// right] outstanding cancel` of `L` and `R` first in the loop body; `P` runs
+/// once in every iteration, so it fixes the iteration of the steps after it.
 fn cancel_in_repeat_protocol() -> String {
     repeat_protocol().replace(
         "sequence Body {",
-        "sequence Body { parallel Both memory sc { branch left sequence Left { event L by Buyer as (l: Ack) { true }; } branch right sequence Right { event R by Buyer as (r: Ack) { true }; } } join any [left, right] outstanding cancel;",
+        "sequence Body { event P by Buyer as (p: Ack) { true }; parallel Both memory sc { branch left sequence Left { event L by Buyer as (l: Ack) { true }; } branch right sequence Right { event R by Buyer as (r: Ack) { true }; } } join any [left, right] outstanding cancel;",
     )
 }
 
@@ -2192,20 +2193,24 @@ const BODY_RIGHT: &str = "Flow::Main::Loop::Body::Both::right::Right::R";
 /// FR-895-AC-37 (TC-2531): a `parallel` with an `outstanding cancel` join in
 /// a `repeat` body cancels per iteration: the first iteration's `Placed`
 /// does not put the second iteration's `L` and `R` after a cancel. The
-/// recording `L`, `R`, `Placed`, `Got`, `yes` twice leaves every `L` and `R`
-/// `satisfied` in batch and in every prefix; with the second `R` after the
-/// second `Placed` it is `violated`, cause `unexpected`.
+/// recording `P`, `L`, `R`, `Placed`, `Got`, `yes` twice (`P` runs once per
+/// iteration, so it fixes the iteration) leaves every `L` and `R` `satisfied`
+/// in batch and in every prefix; with the second `R` after the second
+/// `Placed` it is `violated`, cause `unexpected`.
 #[trace("TC-2531", "FR-895-AC-37")]
 #[test]
 fn a_cancel_in_a_repeat_body_cancels_per_iteration() {
     let left = || body_event("left::Left::L");
     let right = || body_event("right::Right::R");
+    let lead = || loop_event("P");
     let observations = json!([
+        lead(),
         left(),
         right(),
         looped("send", "Placed", "Buyer", "m-1"),
         looped("receive", "Got", "Seller", "m-1"),
         looped_case("yes"),
+        lead(),
         left(),
         right(),
         looped("send", "Placed", "Buyer", "m-2"),
@@ -2215,12 +2220,12 @@ fn a_cancel_in_a_repeat_body_cancels_per_iteration() {
     let item = cancel_in_repeat_item(
         "replay-cancel-repeat-legit",
         observations,
-        &[0, 1, 2, 5, 6, 7],
-        &[3, 4, 8, 9],
-        &[(2, 3), (7, 8)],
+        &[0, 1, 2, 3, 6, 7, 8, 9],
+        &[4, 5, 10, 11],
+        &[(3, 4), (9, 10)],
     );
     let prefixes = item["prefixes"].as_array().expect("prefixes");
-    assert_eq!(prefixes.len(), 10, "{item}");
+    assert_eq!(prefixes.len(), 12, "{item}");
     for prefix in prefixes {
         for node in [BODY_LEFT, BODY_RIGHT] {
             assert!(
@@ -2231,19 +2236,24 @@ fn a_cancel_in_a_repeat_body_cancels_per_iteration() {
             );
         }
     }
-    assert_eq!(node_verdicts_in(&prefixes[9], BODY_RIGHT), ["satisfied"; 2]);
-    let order: Vec<usize> = (0..10).collect();
+    assert_eq!(
+        node_verdicts_in(&prefixes[11], BODY_RIGHT),
+        ["satisfied"; 2]
+    );
+    let order: Vec<usize> = (0..12).collect();
     assert_every_verdict_only_advances(prefixes, &order);
-    assert_eq!(prefixes[9]["obligations"], item["obligations"], "{item}");
+    assert_eq!(prefixes[11]["obligations"], item["obligations"], "{item}");
 
     // The second `R` after the second `Placed`: the second iteration's join
     // has fired, and the first `R`, `L` stay satisfied.
     let after_own_placed = json!([
+        lead(),
         left(),
         right(),
         looped("send", "Placed", "Buyer", "m-1"),
         looped("receive", "Got", "Seller", "m-1"),
         looped_case("yes"),
+        lead(),
         left(),
         looped("send", "Placed", "Buyer", "m-2"),
         right(),
@@ -2253,11 +2263,11 @@ fn a_cancel_in_a_repeat_body_cancels_per_iteration() {
     let item = cancel_in_repeat_item(
         "replay-cancel-repeat-violated",
         after_own_placed,
-        &[0, 1, 2, 5, 6, 7],
-        &[3, 4, 8, 9],
-        &[(6, 8)],
+        &[0, 1, 2, 3, 6, 7, 8, 9],
+        &[4, 5, 10, 11],
+        &[(3, 4), (8, 10)],
     );
-    let last = &item["prefixes"][9];
+    let last = &item["prefixes"][11];
     assert_eq!(
         node_verdicts_in(last, BODY_LEFT),
         ["satisfied"; 2],
@@ -2501,4 +2511,165 @@ fn a_cancel_in_nested_repeats_cancels_per_iteration_of_each() {
         &[(4, 5), (11, 12)],
     );
     assert_all_satisfied(&item, 14);
+}
+
+/// Every `nodes` verdict of the `count` prefixes of `item` is `satisfied`,
+/// verdicts only advance, and the last prefix is the batch assessment.
+fn assert_nodes_satisfied(item: &Value, nodes: &[&str], count: usize) {
+    let prefixes = item["prefixes"].as_array().expect("prefixes");
+    assert_eq!(prefixes.len(), count, "{item}");
+    for prefix in prefixes {
+        for node in nodes {
+            assert!(
+                node_verdicts_in(prefix, node)
+                    .iter()
+                    .all(|verdict| verdict == "satisfied"),
+                "{node}: {item}"
+            );
+        }
+    }
+    let order: Vec<usize> = (0..count).collect();
+    assert_every_verdict_only_advances(prefixes, &order);
+    assert_eq!(
+        prefixes[count - 1]["obligations"],
+        item["obligations"],
+        "{item}"
+    );
+}
+
+/// FR-895-AC-40 (TC-2531): an iteration is taken only from a step that runs
+/// once in every iteration. When a cancelled branch skips an iteration's
+/// `R`, `P`, `L`, `Placed`, `Got`, `yes`, `P`, `L`, `R`, `Placed`, `Got`,
+/// `yes` leaves the second iteration's `R` `satisfied` in batch and in every
+/// prefix, as it does under `outstanding continue`.
+#[trace("TC-2531", "FR-895-AC-40")]
+#[test]
+fn a_skipped_branch_step_does_not_shift_the_iteration() {
+    let observations = || {
+        json!([
+            loop_event("P"),
+            body_event("left::Left::L"),
+            looped("send", "Placed", "Buyer", "m-1"),
+            looped("receive", "Got", "Seller", "m-1"),
+            looped_case("yes"),
+            loop_event("P"),
+            body_event("left::Left::L"),
+            body_event("right::Right::R"),
+            looped("send", "Placed", "Buyer", "m-2"),
+            looped("receive", "Got", "Seller", "m-2"),
+            looped_case("yes"),
+        ])
+    };
+    for outstanding in ["cancel", "continue"] {
+        let source = cancel_in_repeat_protocol()
+            .replace("outstanding cancel", &format!("outstanding {outstanding}"));
+        let item = nested_cancel_item(
+            &format!("replay-skipped-branch-{outstanding}"),
+            &source,
+            observations(),
+            &[0, 1, 2, 5, 6, 7, 8],
+            &[3, 4, 9, 10],
+            &[(2, 3), (8, 9)],
+        );
+        assert_nodes_satisfied(&item, &[BODY_LEFT, BODY_RIGHT], 11);
+        assert_eq!(
+            node_verdicts_in(&item["prefixes"][10], BODY_RIGHT),
+            ["satisfied"],
+            "{outstanding}: {item}"
+        );
+    }
+}
+
+/// [`nested_repeat_cancel_protocol`] with `P` and a second `repeat` of a step
+/// `X` after the inner `repeat` that holds the cancelling `parallel`.
+fn second_repeat_cancel_protocol() -> String {
+    nested_repeat_cancel_protocol("event P by Buyer as (p: Ack) { true }; ").replace(
+        "exhausted sequence IOut { }",
+        "exhausted sequence IOut { } repeat Second by Buyer visible () max 2 while { true } sequence SBody { event X by Buyer as (x: Ack) { true }; } exhausted sequence SOut { }",
+    )
+}
+
+/// FR-895-AC-41 (TC-2531): steps inside a `repeat` do not count toward an
+/// iteration. With `P`, an inner `repeat` of the cancelling `parallel` and
+/// another inner `repeat` of `X` in the body, `P`, `L`, `R`, `X`, `Placed`,
+/// `Got`, `yes` twice leaves every `L` and `R` `satisfied` in batch and in
+/// every prefix, as under `outstanding continue`.
+#[trace("TC-2531", "FR-895-AC-41")]
+#[test]
+fn a_step_inside_an_inner_repeat_does_not_count_toward_the_iteration() {
+    let observations = || {
+        let round = |message: &str| {
+            [
+                loop_event("P"),
+                loop_event("Inner::IBody::Both::left::Left::L"),
+                loop_event("Inner::IBody::Both::right::Right::R"),
+                loop_event("Second::SBody::X"),
+                looped("send", "Placed", "Buyer", message),
+                looped("receive", "Got", "Seller", message),
+                looped_case("yes"),
+            ]
+        };
+        let mut all = Vec::new();
+        all.extend(round("m-1"));
+        all.extend(round("m-2"));
+        Value::Array(all)
+    };
+    for outstanding in ["cancel", "continue"] {
+        let source = second_repeat_cancel_protocol()
+            .replace("outstanding cancel", &format!("outstanding {outstanding}"));
+        let item = nested_cancel_item(
+            &format!("replay-inner-repeat-step-{outstanding}"),
+            &source,
+            observations(),
+            &[0, 1, 2, 3, 4, 7, 8, 9, 10, 11],
+            &[5, 6, 12, 13],
+            &[(4, 5), (11, 12)],
+        );
+        assert_nodes_satisfied(&item, &[NESTED_LEFT, NESTED_RIGHT], 14);
+    }
+}
+
+/// FR-895-AC-42 (TC-2531): the cases of a `choice` do not count toward an
+/// iteration. With a `choice` before the inner `repeat` of the cancelling
+/// `parallel`, taking `a` and then `b`, `a`, `L`, `R`, `Placed`, `Got`, `yes`,
+/// `b`, `L`, `R`, `Placed`, `Got`, `yes` leaves every `L` and `R` `satisfied`
+/// in batch and in every prefix, as under `outstanding continue`.
+#[trace("TC-2531", "FR-895-AC-42")]
+#[test]
+fn a_choice_before_an_inner_repeat_does_not_count_toward_the_iteration() {
+    let pick = |case: &str| {
+        json!({"kind": "case", "node": format!("Flow::Main::Loop::Body::Pick::{case}"),
+               "role": "Buyer", "instance": "w-1", "keys": {}})
+    };
+    let observations = || {
+        let round = |case: &str, message: &str| {
+            [
+                pick(case),
+                loop_event("Inner::IBody::Both::left::Left::L"),
+                loop_event("Inner::IBody::Both::right::Right::R"),
+                looped("send", "Placed", "Buyer", message),
+                looped("receive", "Got", "Seller", message),
+                looped_case("yes"),
+            ]
+        };
+        let mut all = Vec::new();
+        all.extend(round("a", "m-1"));
+        all.extend(round("b", "m-2"));
+        Value::Array(all)
+    };
+    for outstanding in ["cancel", "continue"] {
+        let source = nested_repeat_cancel_protocol(
+            "choice Pick by Buyer visible () { case a when { true } sequence CA { } case b when { true } sequence CB { } } ",
+        )
+        .replace("outstanding cancel", &format!("outstanding {outstanding}"));
+        let item = nested_cancel_item(
+            &format!("replay-choice-before-repeat-{outstanding}"),
+            &source,
+            observations(),
+            &[0, 1, 2, 3, 6, 7, 8, 9],
+            &[4, 5, 10, 11],
+            &[(3, 4), (9, 10)],
+        );
+        assert_nodes_satisfied(&item, &[NESTED_LEFT, NESTED_RIGHT], 12);
+    }
 }

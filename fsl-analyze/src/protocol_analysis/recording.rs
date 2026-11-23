@@ -4263,83 +4263,58 @@ fn subtree_nodes(protocol: &CheckedProtocol, node: ProtocolNodeId, out: &mut BTr
 /// The iteration of the `repeat` at `repeat_level` of `ancestry` that the
 /// observation at `index` runs in, when the recording determines it.
 ///
-/// With no `repeat` between it and that `repeat` on its path, it is the
-/// observation's causal rank among the observations of its node, carried
-/// through each `case` to the index of that case among the `choice`'s
-/// takings. With a `repeat` between, the ranks of the node count the inner
-/// iterations too, so the iteration is the most times any step before the
-/// inner `repeat` in the `repeat`'s body, in program order, was observed
-/// causally before the observation; with no such step it is not determined.
+/// Only a step that runs exactly once in every iteration fixes an iteration:
+/// a step on the `repeat` body's main sequence, not under a `case`, a
+/// `parallel` branch or another `repeat`. The iteration is the number of
+/// observations of each such step that lies at or before the observation's
+/// path in program order, counted causally at or before the observation. It
+/// is not determined (`None`) when no such step lies at or before the path,
+/// when any of them was not observed at or before the observation, or when
+/// they disagree.
 fn repeat_iteration(
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
-    anchor: usize,
     index: usize,
     ancestry: &[&fsl_semantics::check::CheckedControl],
     repeat_level: usize,
 ) -> Option<usize> {
-    let entry = &document.observations[index];
-    let nested = (repeat_level + 1..ancestry.len()).find(|level| {
-        ancestry[*level].kind.label() == "repeat"
-            && ancestry[*level].children.first() == ancestry.get(level + 1).map(|next| &next.node)
-    });
-    let Some(nested) = nested else {
-        let order = causal_topological_order(protocol, document);
-        let rank = |other: &usize| order.iter().position(|item| item == other);
-        let mut own: Vec<usize> = (0..document.observations.len())
-            .filter(|other| {
-                document.observations[*other].node == entry.node
-                    && document.observations[*other].instance == entry.instance
-            })
-            .collect();
-        own.sort_by_key(rank);
-        let mut occurrence = own
-            .iter()
-            .position(|other| *other == index)
-            .map_or(1, |nth| nth + 1);
-        for level in (repeat_level + 1..ancestry.len().saturating_sub(1)).rev() {
-            let (parent, child) = (ancestry[level], ancestry[level + 1]);
-            if child.kind.label() == "case" {
-                let name = qualified_name(protocol, child);
-                let taken = choice_observations(protocol, document, anchor, parent);
-                occurrence = taken
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, other)| document.observations[**other].node == name)
-                    .nth(occurrence - 1)
-                    .map_or(occurrence, |(nth, _)| nth + 1);
-            }
-        }
-        return Some(occurrence);
-    };
-    // The steps before the inner `repeat` in the body, in program order.
-    let mut before = BTreeSet::new();
-    for sequence in repeat_level + 1..nested {
-        if ancestry[sequence].kind.label() != "sequence" {
-            continue;
-        }
-        for sibling in ancestry[sequence]
-            .children
-            .iter()
-            .take_while(|sibling| **sibling != ancestry[sequence + 1].node)
-        {
-            subtree_nodes(protocol, *sibling, &mut before);
-        }
+    let instance = &document.observations[index].instance;
+    let body = ancestry.get(repeat_level + 1)?;
+    let on_path = ancestry.get(repeat_level + 2)?;
+    if body.kind.label() != "sequence" {
+        return None;
     }
-    before
+    let counters: Vec<String> = body
+        .children
         .iter()
-        .map(|name| {
-            (0..document.observations.len())
-                .filter(|other| {
-                    let seen = &document.observations[*other];
-                    seen.node == *name
-                        && seen.instance == entry.instance
-                        && causally_after(protocol, document, index, *other)
-                })
-                .count()
+        .scan(false, |passed, child| {
+            if *passed {
+                return None;
+            }
+            *passed = *child == on_path.node;
+            Some(*child)
         })
-        .max()
-        .filter(|count| *count > 0)
+        .filter_map(|child| protocol.controls.control(child))
+        .filter(|control| {
+            matches!(
+                control.kind.label(),
+                "send" | "receive" | "event" | "attempt" | "effect" | "commit"
+            )
+        })
+        .map(|control| qualified_name(protocol, control))
+        .collect();
+    let mut counts = counters.iter().map(|name| {
+        (0..document.observations.len())
+            .filter(|other| {
+                let seen = &document.observations[*other];
+                seen.node == *name
+                    && seen.instance == *instance
+                    && causally_after(protocol, document, index, *other)
+            })
+            .count()
+    });
+    let first = counts.next().filter(|count| *count > 0)?;
+    counts.all(|count| count == first).then_some(first)
 }
 
 /// Whether the step at `position` runs in a branch of a `parallel` whose
@@ -4396,9 +4371,7 @@ fn after_cancel(
         }
         let own: Vec<Option<usize>> = repeats
             .iter()
-            .map(|repeat| {
-                repeat_iteration(protocol, document, position, position, ancestry, *repeat)
-            })
+            .map(|repeat| repeat_iteration(protocol, document, position, ancestry, *repeat))
             .collect();
         document
             .observations
@@ -4436,8 +4409,7 @@ fn after_cancel(
                             == Some(ancestry[repeat + 1].node);
                     !holds
                         || own.is_some_and(|own| {
-                            repeat_iteration(protocol, document, position, index, &path, *repeat)
-                                == Some(own)
+                            repeat_iteration(protocol, document, index, &path, *repeat) == Some(own)
                         })
                 })
             })
