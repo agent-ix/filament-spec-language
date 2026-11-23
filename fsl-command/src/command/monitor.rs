@@ -533,8 +533,14 @@ fn read_record(
 fn read_routed(
     intake: &mut super::Intake<'_>,
     request: &mut wire::MonitorRequest,
+    caller: &CommandLimits,
 ) -> Result<Option<super::analyze::RoutedItems>> {
     let Some(items) = request.items.take() else {
+        // FR-255: a monitor run without routed items takes no engine or emit
+        // setting; the request is read, so the refusal is made here, before work.
+        caller
+            .require_no_routed_only()
+            .map_err(|unavailable| invalid("limits", unavailable.to_string()))?;
         let beside = [
             ("subject", request.subject.is_some()),
             ("documents", !request.documents.is_empty()),
@@ -548,6 +554,10 @@ fn read_routed(
     if items.is_empty() {
         return Err(invalid("items", "is a non-empty array of analysis items"));
     }
+    let mut limits =
+        super::analyze::analyze_limits(&wire::AnalyzeLimits::default(), request.deadline_ms);
+    caller.apply_to_analyze(&mut limits);
+    super::analyze::refuse_engine_conflict(Some(&items), &limits)?;
     super::analyze::validate_items(Some(&items))?;
     let documents = super::analyze::read_documents(intake, &request.documents, Some(&items))?;
     let subject = super::analyze::read_subject(request.subject.take(), &documents)?;
@@ -556,10 +566,7 @@ fn read_routed(
         subject,
         memory: Vec::new(),
         items: Some(items),
-        limits: super::analyze::analyze_limits(
-            &wire::AnalyzeLimits::default(),
-            request.deadline_ms,
-        ),
+        limits,
         deadline_ms: request.deadline_ms,
     }))
 }
@@ -582,8 +589,9 @@ struct Inputs {
 fn read_inputs(
     intake: &mut super::Intake<'_>,
     mut request: wire::MonitorRequest,
+    caller: &CommandLimits,
 ) -> Result<Inputs> {
-    let routed = read_routed(intake, &mut request)?;
+    let routed = read_routed(intake, &mut request, caller)?;
     let kind = match request.trace.kind {
         wire::MonitorKindWire::Finite => MonitorTraceKind::Finite,
         wire::MonitorKindWire::Progressed => MonitorTraceKind::Progressed,
@@ -730,7 +738,7 @@ fn drive(
                 }
                 Records::Stream(records) => records,
             };
-            let inputs = read_inputs(intake, request)?;
+            let inputs = read_inputs(intake, request, caller)?;
             // FR-644 "Provider-routed items": the items settle after the
             // program compiles and before the first record is read.
             let items = inputs

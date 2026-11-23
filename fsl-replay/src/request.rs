@@ -56,7 +56,7 @@ impl StateEnvironment {
 /// name (FR-255) to the bound the proving run configured, so a request never
 /// silently substitutes FSL's own compiled-in defaults for the proving run's
 /// actual limits (TC-185). A setting with no entry runs at its published
-/// default. Decode admits every setting of FR-255's tables other than
+/// default. Decode admits every setting of FR-255's tables other than the analysis item engine rows (`Setting::is_item_engine_setting`),
 /// `replay.input_bytes` and `format.output_bytes`. An entry named for an
 /// accounting counter replaces the request's accounting limit for that
 /// counter (FR-255 Behavior 10).
@@ -113,7 +113,7 @@ impl StageLimits {
                         | Setting::MonitorRetainedIdentities
                         | Setting::MonitorPreparationWorkUnits
                         | Setting::MonitorPreparationStorage
-                ) =>
+                ) && !setting.is_item_engine_setting() =>
             {
                 self.stages.insert(setting, bound);
             }

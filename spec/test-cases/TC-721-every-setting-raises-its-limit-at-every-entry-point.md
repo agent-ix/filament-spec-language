@@ -15,7 +15,7 @@ the settings operation refuses a malformed `--limit` operand before any
 stage runs, and that an
 unconfigured limit takes its default.
 
-Scope: FR-255-AC-4, FR-255-AC-5, FR-255-AC-6, FR-255-AC-15 to FR-255-AC-20, and FR-255-AC-24.
+Scope: FR-255-AC-4, FR-255-AC-5, FR-255-AC-6, FR-255-AC-15 to FR-255-AC-20, FR-255-AC-24 and FR-255-AC-25.
 
 ## Test Procedure
 
@@ -57,7 +57,7 @@ Scope: FR-255-AC-4, FR-255-AC-5, FR-255-AC-6, FR-255-AC-15 to FR-255-AC-20, and 
     reaches the replay-reader argument and is not accepted in request
     `stage_limits`.
 
-Tag the tests `#[trace("TC-721", "FR-255-AC-20")]`, `#[trace("TC-721", "FR-255-AC-4")]`, `#[trace("TC-721", "FR-255-AC-5")]`, `#[trace("TC-721", "FR-255-AC-6")]`, `#[trace("TC-721", "FR-255-AC-15")]`, `#[trace("TC-721", "FR-255-AC-16")]`, `#[trace("TC-721", "FR-255-AC-17")]`, `#[trace("TC-721", "FR-255-AC-18")]`, `#[trace("TC-721", "FR-255-AC-19")]`, `#[trace("TC-721", "FR-255-AC-24")]`.
+Tag the tests `#[trace("TC-721", "FR-255-AC-20")]`, `#[trace("TC-721", "FR-255-AC-4")]`, `#[trace("TC-721", "FR-255-AC-5")]`, `#[trace("TC-721", "FR-255-AC-6")]`, `#[trace("TC-721", "FR-255-AC-15")]`, `#[trace("TC-721", "FR-255-AC-16")]`, `#[trace("TC-721", "FR-255-AC-17")]`, `#[trace("TC-721", "FR-255-AC-18")]`, `#[trace("TC-721", "FR-255-AC-19")]`, `#[trace("TC-721", "FR-255-AC-24")]`, `#[trace("TC-721", "FR-255-AC-25")]`.
 
 ## Expected Results
 

@@ -198,3 +198,79 @@ fn a_package_task_set_declared_out_of_name_order_equals_the_source() {
     assert_eq!(package.document(), sourced.document(), "{}", package.document());
     assert_eq!(package.exit, sourced.exit);
 }
+
+/// FR-255-AC-24 (TC-721), FR-247: `schedule.max_demand_points` passed by the
+/// caller bounds the QPA walk of a schedulability item on the source route
+/// and the package route alike, and the item settles `incomplete` naming the
+/// limit, the caller's value and the setting.
+#[trace("TC-721", "FR-255-AC-24")]
+#[test]
+fn caller_schedule_max_demand_points_bounds_both_routes() {
+    use fsl_foundation::Setting;
+
+    let period = 1_048_580_u64;
+    let long_period = period * period + 1;
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile t = \"filament.temporal.complete/v1\";\n\
+         dimension Time;\nunit ms : Time = rational(1, 1);\n\
+         taskset Many {{\n\
+         task a periodic {period} ms deadline {period} ms wcet {} ms priority 1 lo;\n\
+         task b periodic {long_period} ms deadline {long_period} ms wcet {period} ms priority 2 lo;\n\
+         }}\n\
+         schedulable ManyEdf on Many under edf;\n",
+        period - 1
+    );
+    let ws = Workspace::new("caller-schedule-demand-points");
+    let path = request_over(
+        &ws,
+        &unit,
+        &crate::counter::document(false),
+        &[],
+        json!({"models": [], "items": [{"claim": "ManyEdf"}]}),
+    );
+    let request: Value =
+        serde_json::from_slice(&std::fs::read(&path).expect("the request")).expect("request JSON");
+    let (selected, _) = package_selection(&ws, &request["request"]);
+    let package = ws.write(
+        "analyze-package.json",
+        json!({"format": "native-analyze/1", "request": selected})
+            .to_string()
+            .as_bytes(),
+    );
+    let mut runs = vec![(
+        "source",
+        crate::analyze_cli_support::analyze_under(
+            &path,
+            &[(Setting::ScheduleMaxDemandPoints, 3)],
+        ),
+    )];
+    std::fs::remove_file(ws.path("program.fsl")).expect("remove the source");
+    runs.push((
+        "package",
+        crate::analyze_cli_support::analyze_under(
+            &package,
+            &[(Setting::ScheduleMaxDemandPoints, 3)],
+        ),
+    ));
+    for (route, run) in runs {
+        let item = run.item(0);
+        assert_eq!(run.exit, 22, "{route}: {}", run.document());
+        assert_eq!(label(&item), "incomplete", "{route}: {item}");
+        let cause = &item["record"]["cause"];
+        assert_eq!(cause["limit"], "max_demand_points", "{route}: {item}");
+        assert_eq!(cause["value"], 3, "{route}: {item}");
+        assert_eq!(cause["setting"], "schedule.max_demand_points", "{route}: {item}");
+    }
+    for operand in ["schedule.max_demand_points=0", "schedule.max_demand_points=1.5"] {
+        let refusal = fsl_foundation::setting::parse_operands([operand]).unwrap_err();
+        assert_eq!(refusal.cause, fsl_foundation::UsageCause::NotAnInteger, "{operand}");
+    }
+    let mut replay = fsl_command::command::CommandLimits::replay();
+    assert!(replay
+        .set(
+            fsl_foundation::SettingName::Stage(Setting::ScheduleMaxDemandPoints),
+            3
+        )
+        .is_err());
+}

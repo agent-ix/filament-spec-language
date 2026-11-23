@@ -203,6 +203,7 @@ fn ten_thousand_nested_brackets_parse_at_the_default_limits() {
             tokens: 8,
             nodes: 9,
             work_units: 10,
+            ..Limits::default()
         }
     );
     let text = nested_options(3);

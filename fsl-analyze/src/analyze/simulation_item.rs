@@ -17,7 +17,7 @@ use fsl_eval::simulation::{
     Coverage, EnumerationBounds, EnumerationEnd, NotSimulated, StateKey, BOUND_POSITIONS,
 };
 use fsl_foundation::selection::DefinitionRef;
-use fsl_foundation::RequestIndex;
+use fsl_foundation::{RequestIndex, Setting};
 use fsl_semantics::model::observation::AdmissionFailure;
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
@@ -273,7 +273,14 @@ pub(crate) fn simulate(
     let binding = own.as_ref().unwrap_or(binding);
     let system = ModelSystem::new(super::request::simulation(input, binding, limits))
         .map_err(SimulationFault::Binding)?;
-    let settings = &item.settings;
+    // FR-255: the caller's `simulation.max_steps` stands in for the item's
+    // own member; a request that states both is refused before this runs
+    // ([`EngineBounds::conflict`]).
+    let mut effective = item.settings.clone();
+    if let Some(bound) = limits.engines.get(Setting::SimulationMaxSteps) {
+        effective.max_steps = NonZeroU64::new(bound);
+    }
+    let settings = &effective;
     let mut document = Map::new();
     document.insert("request_index".to_owned(), json!(item.index.get()));
     document.insert("kind".to_owned(), json!("simulation"));
@@ -686,3 +693,4 @@ mod tests {
         assert_eq!(cause["value"], 40);
     }
 }
+

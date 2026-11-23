@@ -683,7 +683,8 @@ impl CompileRefusal {
                 Setting::S1InputBytes
                 | Setting::S1Tokens
                 | Setting::S1Nodes
-                | Setting::S1WorkUnits => SpineStage::Source,
+                | Setting::S1WorkUnits
+                | Setting::S1Diagnostics => SpineStage::Source,
                 Setting::S3Nodes
                 | Setting::S3InputBytes
                 | Setting::S3WorkUnits
@@ -762,6 +763,45 @@ impl CompileRefusal {
                 | Setting::TemporalEvidenceResultBytes
                 | Setting::TemporalEvidenceMemberBytes
                 | Setting::InspectMaxViewEntries
+
+                | Setting::SimulationMaxSteps
+                | Setting::ExactProbMaxStates
+                | Setting::ExactProbMaxTransitions
+                | Setting::ExactProbMaxAutomatonStates
+                | Setting::ExactProbMaxIterations
+                | Setting::ExactProbPrecisionBits
+                | Setting::ExactProbMaxPrecisionBits
+                | Setting::ExactProbMaxRationalBits
+                | Setting::ExactProbMaxPolicyIterations
+                | Setting::ExactProbMaxWitnessPaths
+                | Setting::StatisticalMaxSamples
+                | Setting::StatisticalMaxDraws
+                | Setting::StatisticalMaxCycleSteps
+                | Setting::StatisticalMaxSampleSteps
+                | Setting::ZoneCheckMaxSymbolicStates
+                | Setting::ZoneCheckMaxSymbolicTransitions
+                | Setting::ZoneCheckMaxAutomatonStates
+                | Setting::ZoneCheckMaxZoneBytes
+                | Setting::CertificateCheckMaxCertificateEdges
+                | Setting::CertificateCheckMaxCertificateBytes
+                | Setting::CertificateCheckMaxWorkingBytes
+                | Setting::CertificateCheckMaxRank
+                | Setting::ScheduleMaxDemandPoints
+                | Setting::HybridMaxSolverSteps
+                | Setting::HybridMaxSolverTime
+                | Setting::SmtEncodingMaxConstants
+                | Setting::SmtEncodingMaxApplications
+                | Setting::SmtEncodingMaxMonitorAtoms
+                | Setting::SmtEncodingMaxMonitorStates
+                | Setting::SmtEncodingMaxCandidates
+                | Setting::SmtEncodingMaxScriptBytes
+                | Setting::SmtMaxSolverSteps
+                | Setting::SmtMaxSolverTime
+                | Setting::PlanSearchMaxStates
+                | Setting::PlanSearchMaxWork
+                | Setting::PlanSearchMaxCertificateEntries
+                | Setting::PlanSearchMaxCheckWork
+                | Setting::PlanSearchMaxStateKeyBytes
                 | Setting::ProgressCoveredPositions => SpineStage::Emit,
             },
         }
