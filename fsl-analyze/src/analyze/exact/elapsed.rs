@@ -169,10 +169,124 @@ fn tight_actions_activate(product: &ProbProduct, values: &[Rational], start: usi
     false
 }
 
+/// The policy that takes, at every state, the first choice attaining the
+/// state's transform value (the maximum for `>=`, the minimum for `<=`).
+fn tight_policy(product: &ProbProduct, values: &[Rational]) -> Option<Vec<Option<usize>>> {
+    let ids: Vec<_> = product.ids().collect();
+    let mut policy = vec![None; product.states.len()];
+    for (state, entry) in policy.iter_mut().enumerate() {
+        let mut choices: Vec<(&crate::exact_probabilistic::ProductAction, Rational)> = Vec::new();
+        for edge in product.outgoing(ids[state]) {
+            if edge.probability == Rational::from_integer(0_i64.into()) {
+                continue;
+            }
+            let weighted = edge.probability.mul(&values[edge.to.index()]);
+            match choices
+                .iter_mut()
+                .find(|(action, _)| same_mean_time_choice(action, &edge.choice))
+            {
+                Some((_, total)) => *total = total.add(&weighted),
+                None => choices.push((&edge.choice, weighted)),
+            }
+        }
+        if let Some((action, _)) = choices.iter().find(|(_, total)| *total == values[state]) {
+            *entry = Some(crate::exact_probabilistic::choice_index(
+                product, ids[state], action,
+            )?);
+        }
+    }
+    Some(policy)
+}
+
+/// FR-877: refute an elapsed-quantile claim with a path set, under a scheduler
+/// attaining the transform's extremum, over the decided measures the refutation
+/// counts (`M > c` or censored for `<= c`, `M < c` for `>= c`). The checker's
+/// own replay of the same product must reproduce it.
+#[allow(clippy::too_many_arguments)]
+fn refute(
+    system: &ModelSystem<'_>,
+    claim: &fsl_semantics::check::CheckedProbabilisticClaim,
+    product: &ProbProduct,
+    values: &[Rational],
+    start: crate::exact_probabilistic::ProbStateId,
+    q: &Rational,
+    at_least: bool,
+    binding: Option<&filament_exact::ObjectReference>,
+    limits: &crate::exact_probabilistic::ExactProbLimits,
+    cancel: &Cancel,
+    subject: SubjectLimits<'_>,
+    tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
+) -> EngineReport {
+    use crate::exact_probabilistic::{produce_quantile_witness, WitnessError, WitnessScope};
+    let Some(policy) = tight_policy(product, values) else {
+        return not_yet();
+    };
+    let decided: BTreeMap<usize, MonitorVerdict> = product
+        .decided
+        .iter()
+        .map(|(state, verdict)| (state.index(), *verdict))
+        .collect();
+    // The counted measures: `M < c` accepts a `>=` claim's refutation, and
+    // `M > c` (a rejected or censored measure) a `<=` claim's.
+    let counted = if at_least {
+        MonitorVerdict::Accept
+    } else {
+        MonitorVerdict::Reject
+    };
+    let accepting = product
+        .states
+        .iter()
+        .enumerate()
+        .map(|(index, state)| {
+            matches!(
+                state.monitor,
+                Some(MonitorState::Measure {
+                    phase: MeasurePhase::Complete | MeasurePhase::Censored,
+                    ..
+                })
+            ) && decided.get(&index) == Some(&counted)
+        })
+        .collect::<Vec<_>>();
+    // Every decided measure is activated, so no run is a nonactivation.
+    let never = vec![false; product.states.len()];
+    let produced = match produce_quantile_witness(
+        product,
+        &policy,
+        WitnessScope::EveryScheduler,
+        start,
+        &accepting,
+        &never,
+        q,
+        at_least,
+        limits,
+        &mut |_| Ok(()),
+    ) {
+        Ok(Some(produced)) => produced,
+        Ok(None) => return not_yet(),
+        Err(WitnessError::Limit { limit, value }) => {
+            return settled(&ExactProbBuildIssue::Limit { limit, value }, subject);
+        }
+        Err(_) => return broken(),
+    };
+    replay_timed_paths(
+        system,
+        claim,
+        product,
+        produced,
+        start,
+        binding,
+        limits,
+        cancel,
+        subject,
+        tamper_witness,
+    )
+}
+
 pub(super) fn run(
     request: ProductRequest<'_>,
     cancel: &Cancel,
     tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
+    tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
     let claim = request.claim;
     let ProbForm::Quantile { q, threshold, .. } = &claim.form else {
@@ -257,8 +371,8 @@ pub(super) fn run(
         return broken();
     };
     // `quantile q of M <= c` holds exactly when the minimum is not negative and
-    // `>= c` when the maximum is negative; the converse is a refutation, which
-    // needs a timed witness replay that does not exist yet.
+    // `>= c` when the maximum is negative; the converse is a refutation, read
+    // as a witness path set under a scheduler attaining the extremum.
     let zero = Rational::from_integer(0_i64.into());
     // A maximum of exactly 0 proves the claim only when no tight action leads
     // to an activated state (FR-201, ADR-028 CE-4).
@@ -266,7 +380,24 @@ pub(super) fn run(
         || (at_least && *value == zero && tight_actions_activate(&product, &values, start.index()))
         || (!at_least && *value < zero)
     {
-        return not_yet();
+        let binding = match claim_binding(&system, claim) {
+            Ok(binding) => binding,
+            Err(_) => return not_yet(),
+        };
+        return refute(
+            &system,
+            claim,
+            &product,
+            &values,
+            *start,
+            q,
+            at_least,
+            binding.as_ref().map(|binding| &binding.reference),
+            &limits,
+            cancel,
+            subject,
+            tamper_witness,
+        );
     }
     let values = values
         .into_iter()

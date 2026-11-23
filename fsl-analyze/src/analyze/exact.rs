@@ -943,7 +943,7 @@ fn run(
             ..
         }
     ) {
-        return elapsed::run(request, cancel, tamper);
+        return elapsed::run(request, cancel, tamper, tamper_witness);
     }
     if request.claim.bounded_measure() {
         return measure::run(request, cancel, tamper, tamper_witness);
@@ -2746,7 +2746,7 @@ fn replay_timed_refutation(
     subject: SubjectLimits<'_>,
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
-    use crate::exact_probabilistic::{produce_witness, ProductAction, WitnessScope};
+    use crate::exact_probabilistic::{produce_witness, WitnessScope};
     use fsl_eval::probabilistic::{DeadlinePhase, MonitorState};
     let forbidden = match bound {
         Bound::AtMost(_) => DeadlinePhase::Accept,
@@ -2779,6 +2779,28 @@ fn replay_timed_refutation(
         }
         Err(_) => return broken(),
     };
+    replay_timed_paths(
+        system, claim, product, produced, initial, binding, limits, cancel, subject, tamper,
+    )
+}
+
+/// Read a produced path set over a timed product as a witness (each step with
+/// the product key it reaches and, for an operation, its model step) and
+/// settle it through the checker's own replay.
+#[allow(clippy::too_many_arguments)]
+fn replay_timed_paths(
+    system: &ModelSystem<'_>,
+    claim: &fsl_semantics::check::CheckedProbabilisticClaim,
+    product: &ProbProduct,
+    produced: crate::exact_probabilistic::ProducedWitness,
+    initial: crate::exact_probabilistic::ProbStateId,
+    binding: Option<&ObjectReference>,
+    limits: &crate::exact_probabilistic::ExactProbLimits,
+    cancel: &Cancel,
+    subject: SubjectLimits<'_>,
+    tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
+) -> EngineReport {
+    use crate::exact_probabilistic::ProductAction;
     let item = match fsl_replay::probabilistic_claim_identity(claim) {
         Ok(item) => item,
         Err(error) => return graph_failure(error, &limits, subject),

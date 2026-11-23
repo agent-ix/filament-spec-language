@@ -186,6 +186,18 @@ pub fn induced_chain(product: &ProbProduct, policy: &[Option<usize>]) -> ProbPro
     chain
 }
 
+/// The position of `action` among the distinct choices of `state` in edge
+/// order: the index a policy selects it by.
+pub(crate) fn choice_index(
+    product: &ProbProduct,
+    state: ProbStateId,
+    action: &ProductAction,
+) -> Option<usize> {
+    choices_at(product, state)
+        .iter()
+        .position(|choice| same_action(choice, action))
+}
+
 /// The distinct choices of `state` in edge order.
 fn choices_at(product: &ProbProduct, state: ProbStateId) -> Vec<&ProductAction> {
     let mut choices: Vec<&ProductAction> = Vec::new();
