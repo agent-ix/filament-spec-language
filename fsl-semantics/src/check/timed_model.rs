@@ -1564,7 +1564,11 @@ impl TimedModel {
                 if !part.elements.is_empty() || !part.families.is_empty() {
                     return Some((Unwritten(Member::QuantifiedClause), guard.span));
                 }
-                if part.clocks.is_empty() && !guard.covered() && !part.empty_collection_branch {
+                if part.clocks.is_empty()
+                    && !guard.covered()
+                    && !part.empty_collection_branch
+                    && part.element_presences.is_empty()
+                {
                     // Located at the disjunct: its data predicate's site.
                     let site = guard_part_site(&self.model, at, index);
                     let span = self
