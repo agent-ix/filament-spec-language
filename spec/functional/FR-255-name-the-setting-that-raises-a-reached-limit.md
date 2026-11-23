@@ -419,7 +419,7 @@ request can execute: `s1.input_bytes`, `s1.tokens`, `s1.nodes`, `s1.work_units`,
 `dependency.import_edges`, `dependency.source_bytes`, `library.definitions`,
 `library.dependency_edges`, `library.artifact_bytes`,
 `library.single_artifact_bytes`, `intake.input_bytes`, `replay.input_bytes`,
-`expansion.max_candidates`, `model_check.max_states`,
+`model_check.max_states`,
 `model_check.max_transitions`, and `model_check.max_automaton_states`. Replay does not execute
 `exact_prob.*`, `statistical.*`, `zone_check.*`, `schedule.max_demand_points`
 or `plan_search.*`; it also does not consume
@@ -427,6 +427,7 @@ or `plan_search.*`; it also does not consume
 `model_check.max_witness_set`, `model_check.max_relation_tuples`,
 `model_check.max_live_instances`, `model_check.max_store_buffer`,
 `model_check.max_messages`, `prepare.*`, `simulation.max_steps`,
+`expansion.max_candidates`,
 `evaluation.live_occurrences`, `temporal_evidence.*`, `progress.covered_positions`,
 or `monitor.*`. It does not render output or explore a state graph. These
 settings SHALL be refused as operation-unavailable.
