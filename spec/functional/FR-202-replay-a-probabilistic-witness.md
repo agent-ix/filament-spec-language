@@ -78,6 +78,16 @@ resolved edge choice, not `action: None`, a local action number, a synthetic
 operation NodeId, or a placeholder standing in for tail control. The actual
 model post-state content stays as CX-2 specifies.
 
+When a FR-196 product edge represents a same-instant tie, its ordered
+identity-sequence label is checked as one edge from the source product key to
+the final post-key. The replayed trace contains one position per identity in
+that sequence, with the intermediate model state and complete replay product
+key after that firing, and the same elapsed timestamp for every position.
+Intermediate replay keys are trace evidence, not product graph vertices; only
+the final key is the edge destination. A certificate rejection for a changed
+sequence, probability or destination is located at the source product key and
+the complete edge label.
+
 A WitnessScheduler SHALL have at most one entry per full ProductKey, in
 canonical key order; equality/order cannot use local product IDs. A Choice
 names exactly one enabled semantic choice. A Randomized entry names distinct

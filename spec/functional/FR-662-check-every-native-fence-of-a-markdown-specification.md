@@ -58,11 +58,25 @@ Every extracted body is a unit with its own identity, distinct from the
 original document's (FR-031). For `check_native_fences` the caller names
 only the document, so the body identity is derived by one rule: authority
 the original's authority, identity `<original identity>#<clause id>`, with
-the clause id the Quire heading id that owns the fence. For `run`, the
-body identity is the caller's `program.extraction.body` (FR-031). Every
+the clause id the Quire heading id that owns the fence. When no heading owns
+the fence, its body identity is `<original identity>#unowned-<line>`, where
+`line` is the one-based line of the opening fence in the original Markdown
+document. The owned heading-id namespace `unowned-[1-9][0-9]*` is reserved
+for these line-derived identities. An owned fence whose heading id matches
+that namespace SHALL use `<original identity>#owned~<lowercase-hex-utf8>` as
+its body identity, where `lowercase-hex-utf8` is the lowercase hexadecimal
+encoding of every UTF-8 byte of the heading id, with no separators. An owned
+heading id beginning `owned~` SHALL use the same encoding, so no raw owned
+identity can collide with an escaped one. All other owned heading ids retain
+the identity `<original identity>#<clause id>`. For example, an unowned fence
+opened on line 3 has identity `doc#unowned-3`, while an owned fence under a
+heading id `unowned-3` has identity
+`doc#owned~756e6f776e65642d33`. For `run`, the body identity is the caller's
+`program.extraction.body` (FR-031). Every
 result and diagnostic of an extracted body names its unit as
 `{document: {authority, identity}, path, clause, body: {authority,
-identity}}`, keeps its body span unchanged, and carries the original
+identity}}`; `clause` is the owning heading id when one exists and is absent
+for an unowned fence. It keeps its body span unchanged and carries the original
 document regions the verified source map gives for that span (FR-031
 "Original-region correspondence"), so a reader finds the error in the
 Markdown file by line and column.
@@ -100,21 +114,33 @@ byte or line limit, and cancellation.
   of its fences a result refused `extraction-clause-count` with `details`
   `{"actual": n}`. An `ix:native` fence that no clause heading owns SHALL
   give a result refused `missing_declaration`/`missing-name` located at the
-  fence's first line.
+  fence's first line, with `clause` absent and the body identity derived from
+  the opening-fence line as above.
 - A body that checks SHALL give category success with no diagnostic; a body
   that refuses SHALL carry the refusals `check` gives for the same bytes,
   each with its body span and original regions.
 - Two calls over the same input SHALL give equal reports; a cancelled
   `Cancel` SHALL return `StageFailure::Cancelled` with no report.
 - The `run` command's extraction mode SHALL follow FR-031 unchanged.
+- A failure of the whole-document extraction or checking operation SHALL
+  produce a `check` outcome document with no items and one operation-level
+  diagnostic: an extraction refusal has category `refusal` and `last_stage`
+  `null`; a limit has category `incomplete`, the limit's code and cause, and
+  `last_stage` equal to the stage that reached it; cancellation has category
+  `incomplete`, its cancellation code and cause, and `last_stage` `null`; an
+  internal fault has category `internal_failure`, its catalog code, and
+  `last_stage` `null`. No whole-document failure is represented as a fence
+  item.
 
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-662-AC-1 | A Markdown document `spec.md` with authority `agent-ix` and identity `doc` holding two `### <id>` headings `Healthy` and `Broken`, each owning one `ix:native` fence (the first a unit that checks, the second the same unit with an ill-typed clause), and one `text` fence, gives two results in document order: `Healthy` success with no diagnostic and body identity `doc#Healthy`; `Broken` refusal `ill_typed` whose diagnostic names `{document: {agent-ix, doc}, path: spec.md, clause: Broken, body: {agent-ix, doc#Broken}}`, keeps its body span and carries the original line and column of the offending token. The outcome document has operation `check`, two items and category refusal, exit 20. | Test (TC-1743) |
-| FR-662-AC-2 | A heading owning two `ix:native` fences gives each `extraction-clause-count` with `details` `{"actual": 2}`; an `ix:native` fence before the first heading gives `missing_declaration`/`missing-name` at its first line; the other fences' results are unchanged; checking twice gives equal reports and checking with a cancelled `Cancel` returns `StageFailure::Cancelled`. | Test (TC-1743) |
+| FR-662-AC-2 | A heading owning two `ix:native` fences gives each `extraction-clause-count` with `details` `{"actual": 2}`; an `ix:native` fence before the first heading gives `missing_declaration`/`missing-name` at its first line, with no `clause` and body identity `doc#unowned-3` when its opening fence is on line 3; the other fences' results are unchanged; checking twice gives equal reports and checking with a cancelled `Cancel` returns `StageFailure::Cancelled`. | Test (TC-1743) |
 | FR-662-AC-3 | Through `fsl_command::command::run` in the command owner's default build, a `1-draft` clause-run request carrying `program.extraction` and two `clauses` bindings refuses `extraction-clause-count` with `details` `{"actual": 2}` at stage `request`, exit 20, not `invalid-request`; a request with one binding naming a clause the document does not hold ends with FR-030's error at stage `extraction-selection`, retaining the original identity and the binding. | Test (TC-1744) |
+| FR-662-AC-4 | A whole-document extraction refusal writes `category` `refusal`, `last_stage` `null`, `items` `[]` and one operation-level diagnostic carrying the extraction catalog code; a whole-document limit writes `category` `incomplete`, the reached stage, and one diagnostic carrying the limit's catalog code, cause and setting; a cancellation writes `incomplete`, `last_stage` `null` and its cancellation code and cause; an injected fault writes `internal_failure`, `last_stage` `null` and its fault catalog code. Each document has no fence items and exits `20`, `22`, `22` and `30`, respectively. | Test (TC-1743) |
+| FR-662-AC-5 | In one Markdown document, an unowned fence opened on line 3 has body identity `doc#unowned-3`; an owned fence under heading id `unowned-3` has body identity `doc#owned~756e6f776e65642d33`; an owned fence under `owned~unowned-3` has body identity `doc#owned~6f776e65647e756e6f776e65642d33`. These identities are distinct and deterministic across repeated checks; ordinary heading id `Healthy` retains `doc#Healthy`. | Test (TC-1743) |
 
 ## Dependencies
 
