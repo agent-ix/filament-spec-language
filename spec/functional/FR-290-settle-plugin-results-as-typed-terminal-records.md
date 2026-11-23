@@ -501,6 +501,33 @@ One FSL terminal record per routed item.
   item or an application item, FSL shall replay it through layer-6 `replay`
   (FR-098) at the item's occurrence and settle the item `refuted` only if
   the replay reproduces it.
+- For a refuted external-provider verdict, `ProviderVerdict` SHALL carry
+  either mapped assignments for its counterexample or one typed
+  unusable-counterexample reason, never both and never provider-supplied
+  reason text. This contract does not add a reason to `proved` or `unknown`
+  verdicts. The closed reason set is:
+
+  | Reason | Meaning |
+  | --- | --- |
+  | `assignment-not-claim-parameter` | An assignment names a node that is not a parameter of the claim. |
+  | `claim-parameter-unassigned` | A parameter of the claim has no assignment. |
+  | `node-id-unresolved` | An assigned node id does not resolve in the package graph. |
+  | `package-graph-unreadable` | The package graph cannot be read to map assignment ids. |
+  | `parameter-value-kind-mismatch` | An assignment value has the wrong kind for its claim parameter. |
+
+  The driver SHALL produce these reasons only from its typed assignment
+  mapping checks. If multiple defects apply, the selected reason SHALL be
+  the first in this order: unreadable package graph, unresolved node id,
+  assignment to a non-parameter, missing claim-parameter assignment, then
+  parameter value-kind mismatch.
+- When FSL receives an unusable-counterexample reason, it SHALL settle the
+  item `inconclusive` with cause `replay-parity`, skip replay, and write no
+  counterexample or replay member. It SHALL attach one item diagnostic
+  `{"code":"invalid_result","cause":"invalid-value","reason":R}`,
+  where `R` is the reason spelling above. The existing FR-272 catalog pair
+  `invalid_result`/`invalid-value` is used; this item diagnostic is distinct
+  from a terminal record's disposition `diagnostic` and from the
+  document-level `diagnostics` array.
 - If the replay does not reproduce the counterexample, then FSL shall settle
   the item `inconclusive` with cause `replay_parity`, or with cause
   `replay_refused` and the refusal's catalog code when the replay refuses.
@@ -575,6 +602,7 @@ One FSL terminal record per routed item.
 | FR-290-AC-17 | The SMT row (FR-127, FSpec FR-354-AC-2 to AC-4): FR-314-AC-1's accepted bounded certificate settles `proved`, `certified`; the same proof with no certificate, and with one step's rule replaced by `hole` (`Unverifiable`), settles `proved`, `uncertified`; FR-314-AC-2's certificate with its query encoded at depth 2 settles `inconclusive`, `CertificateRejected { rule: QueryMismatch, at: Unrolling }`, never `proved`; each `proved` record carries exactly one certification and names the SMT backend's `BackendId`. | Test (TC-774) |
 | FR-290-AC-18 | `read_plugin_basis` reads `{"type":"bounded-solver","exhaustive":[],"horizon":{"denominator":"1","numerator":"10"},"jumps":0,"method":"unclassified"}` as `BoundedSolver{Unclassified, 10, 0, {}}` and `{"type":"inductive-solver","method":"inductive-enclosure"}` as `InductiveSolver{InductiveEnclosure}`, each settling `proved`, `trusted` on a hybrid claim it covers; it refuses a `bounded-solver` with `method` `"inductive-enclosure"` and an `inductive-solver` with `method` `"delta-complete"`, each `Malformed` at `/basis/method`; a `bounded-solver` without `exhaustive` is `MissingMember` at `/basis/exhaustive`, and one with `exhaustive` `["time","time"]` or `["positions"]` is `Malformed` at `/basis/exhaustive`. `read_plugin_inconclusive_cause` reads `{"type":"insufficient-horizon","exhaustive":["time"],"horizon":{"denominator":"1","numerator":"1"},"jumps":1}` on FR-447's `SlowEnough` as `InsufficientHorizon{1, 1, {Time}}`, and the same cause on an FR-468 refinement item is `Malformed` at `/cause/type`. | Test (TC-774) |
 | FR-290-AC-19 | For a routed hybrid claim, `read_plugin_hybrid_counterexample` reads a process-provider `refuted` entry's FSpec FR-193 `hybrid-counterexample` into the same typed `HybridCounterexample` represented by its named wire trace; exact replay that reproduces it settles `refuted` with that counterexample, while `NotReproduced` and `NotExact` settle through FR-450's distinct `ReplayParity(DisagreementCause::HybridTrace(...))` arms, each preserving it. The shared `DisagreementCause` codec round-trips those arms when given the checked model bound to the routed claim; a missing model context is refused for a hybrid-trace cause. A malformed hybrid trace is refused before a terminal record is built; the hybrid-counterexample arm on a non-hybrid claim is malformed. | Test (TC-1221) |
+| FR-290-AC-20 | A refuted external-provider verdict whose counterexample is unusable for one of the five reasons above yields exactly that closed reason in `ProviderVerdict`, never provider text or a partial assignment; FSL settles the item `inconclusive`/`replay-parity` without replay or a counterexample and writes exactly one item diagnostic with code `invalid_result`, cause `invalid-value` and the reason spelling. When defects coexist, the selected reason follows the declared priority: package-graph-unreadable over node-id-unresolved; node-id-unresolved over assignment-not-claim-parameter; assignment-not-claim-parameter over claim-parameter-unassigned; and claim-parameter-unassigned over parameter-value-kind-mismatch. Mapped assignments continue through replay, and a reproduced violation still settles `refuted`. | Test (TC-774) |
 
 ## Dependencies
 
