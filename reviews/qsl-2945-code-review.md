@@ -51,3 +51,22 @@ The removal and the recursion are correct. The tests that exist assert exact
 codes, causes, rows, objects and order. Before merge, FND-001 and FND-002 need
 tests, FND-005 needs `cargo fmt`, and FND-006 needs the import removed. FND-004 is pre-existing. Fix it in this PR
 or move it to a ticket.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-007 | medium | The step-argument lifting fix (`lift_value` to `lift_own`) is tested only through `lift_own` with fake lifters. No test drives a real abstract-operation step row (or protocol node row) whose argument nests a reference through `check_step`, so the wiring at step.rs:1918 and :2035 and the `type_identity` row lookup are unexercised. | fsl-replay/src/refinement/map.rs:603-625 |
+| FND-008 | low | `lift_own` rebuilds the argument's abstract type from the value's own type, taking the first object row with that concrete type, and does not read the abstract operation's declared parameter type. It matches S3's `lift()` typing (refinement.rs:3949) only because collection types are invariant and each concrete type has one object row, which `lift_reference` also assumes. When the own type has no row, the `Err(fault) => lift_nested(..).and(Err(fault))` fallback returns a fault unless a nested reference is unmapped. | fsl-replay/src/refinement/map.rs:628-643 |
+| FND-009 | low | When two concrete map keys lift to the same abstract reference (two concrete populations mapped into one abstract population with a shared object key), `from_admitted_map` refuses the duplicate and the row becomes `Lifting::Fault` (BROKEN_INVARIANT), not a user-facing outcome. No spec text says what happens. No validated package can declare a map type today, so this cannot happen yet. | fsl-replay/src/refinement/map.rs:549-561 |
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | an_option_payload_is_lifted_and_none_stays_none and a_map_lifts_its_values_and_reference_keys_and_keeps_its_order (map.rs tests) cover some, none, map keys, values and order, and unmapped elements |
+| FND-002 | fixed | The S3 row `maybes = self.maybes` (Sequence<Option<Reference<Ring>>>) checks; the replay test a_reference_two_carriers_deep_is_lifted_in_order passes |
+| FND-003 | fixed | `(Value::Option(_) \| Value::Collection(_) \| Value::Map(_), _) => Err(Lifting::Fault)`; tested by a_value_of_another_shape_than_its_declared_type_is_a_fault |
+| FND-004 | fixed | lift_value now lifts nested references through lift_own; see FND-007 and FND-008 for the test gap and the approach |
+| FND-005 | fixed | The touched hunks are rustfmt-clean; the one remaining fsl-analyze diff (analyze_family_cli.rs:414, the hyper_world import) is also on main |
+| FND-006 | fixed | The import is now `use filament_exact::{EffectiveId, ObjectReference, Value, ValueType};` and the build no longer warns |

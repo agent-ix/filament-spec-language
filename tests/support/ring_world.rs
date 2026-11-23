@@ -81,7 +81,9 @@ pub struct Variant {
     pub next: bool,
     /// The concrete `Ring` also has `chain: Sequence<Reference<Ring>>[0, 2]`,
     /// the abstract `Queue` has `chain: Sequence<Reference<Queue>>[0, 2]`,
-    /// and `rings` admits the subtype `SubRing` (FR-140-AC-16).
+    /// and `rings` admits the subtype `SubRing` (FR-140-AC-16). The abstract
+    /// `enq` also takes `rs: Sequence<Reference<Queue>>[0, 2]`, whose
+    /// postcondition requires `self.chain = rs` (FR-141-AC-13).
     pub chain: bool,
     /// The abstract `Queue` has an optional `head: Digit?` field
     /// (FR-140-AC-11).
@@ -133,12 +135,26 @@ fn queue_document(variant: Variant) -> Vec<u8> {
     } else {
         vec![("x", &digit)]
     };
-    let enq = framed(
+    let queue = node(QUEUE, "Queue");
+    let parameters: Vec<(&str, &str)> = if variant.chain {
+        parameters
+            .into_iter()
+            .chain([("rs", queue.as_str())])
+            .collect()
+    } else {
+        parameters
+    };
+    let mut enq = framed(
         ring_queue::operation(QUEUE, "Queue", "enq", &parameters, None, &[]),
         QUEUE,
         &["Queue/items"],
         &[],
     );
+    if variant.chain {
+        // `rs` is a `Sequence<Reference<Queue>>[0, 2]`.
+        enq["params"][parameters.len() - 1]["multiplicity"] =
+            json!({"lower": 0, "upper": 2, "ordered": true, "unique": false});
+    }
     let deq = framed(
         ring_queue::operation(QUEUE, "Queue", "deq", &[], Some(&digit), &[]),
         QUEUE,
@@ -308,6 +324,11 @@ fn contracts(variant: Variant) -> String {
     let enq = "(size(pre(self.items)) = 0 and self.items = sequence[x]) or (pre(self.items) = sequence[0] and self.items = sequence[0, x]) or (pre(self.items) = sequence[1] and self.items = sequence[1, x])";
     let enq =
         vec![format!("({enq})"); 1 + usize::try_from(variant.heavy).unwrap_or(0)].join(" and ");
+    let enq = if variant.chain {
+        format!("{enq} and self.chain = rs")
+    } else {
+        enq
+    };
     format!(
         "pre CanEnq using v on Q::Queue::enq {{ size(self.items) < 2 }}\n\
          post Enq using v on Q::Queue::enq {{ {enq} }}\n\

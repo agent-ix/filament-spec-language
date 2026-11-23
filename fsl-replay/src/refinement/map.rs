@@ -990,11 +990,11 @@ mod tests {
         same(&lifted, &sequence("Queue"));
     }
 
-    /// FR-141 (TC-1086 step 10): the argument of an abstract-operation row
+    /// FR-141-AC-13 (TC-546 step 8): the argument of an abstract-operation row
     /// carries no declared type, so a `Sequence<Option<Reference<Ring>>>` is
     /// read as the `Sequence<Option<Reference<Queue>>>` its own type lifts to,
     /// each element lifted and the type replaced; a leaf value is unchanged.
-    #[trace("TC-1086", "FR-140-AC-16")]
+    #[trace("TC-546", "FR-141-AC-13")]
     #[test]
     fn an_argument_without_a_declared_type_is_lifted_by_its_own_type() {
         let sequence = |type_name: &str| {
@@ -1019,6 +1019,44 @@ mod tests {
         assert!(matches!(kept, Ok(Value::Boolean(true))));
         let unmapped = lift_own(&mut ring_to_queue, &mut types, sequence("Sub"));
         assert!(matches!(unmapped, Err(Lifting::Unmapped(_))));
+    }
+
+    /// FR-140-AC-16: two concrete map keys that lift to one abstract key are
+    /// a fault, not a mapped map.
+    #[trace("TC-1086", "FR-140-AC-16")]
+    #[test]
+    fn two_keys_lifting_to_one_abstract_key_are_a_fault() {
+        let map_type = |type_name: &str| {
+            filament_exact::MapType::new(
+                ValueType::Reference(effective(type_name)),
+                ValueType::Boolean,
+                bound(),
+            )
+            .expect("a leaf key")
+        };
+        let concrete = filament_exact::from_admitted_map(
+            map_type("Ring"),
+            vec![
+                (
+                    Value::Reference(reference_to("Ring", "a")),
+                    Value::Boolean(true),
+                ),
+                (
+                    Value::Reference(reference_to("Ring", "b")),
+                    Value::Boolean(false),
+                ),
+            ],
+        )
+        .expect("a map");
+        let mut to_one_key = |_: &ObjectReference| -> Result<ObjectReference, Lifting> {
+            Ok(reference_to("Queue", "k"))
+        };
+        let lifted = lift_nested(
+            &mut to_one_key,
+            &ValueType::Map(std::sync::Arc::new(map_type("Queue"))),
+            concrete,
+        );
+        assert!(matches!(lifted, Err(Lifting::Fault)));
     }
 
     /// FR-140: a value whose shape is not the declared type's is a fault, as

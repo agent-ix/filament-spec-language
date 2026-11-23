@@ -51,3 +51,19 @@ The new ACs FR-140-AC-16 and the rewritten FR-135-AC-6 and FR-630-AC-4 each
 have a tagged test that asserts exact codes and values. The gaps are FND-001
 (composite tests deleted with no pending test and no follow-up), FND-002
 (depth) and FND-003 (the Option and Map arms).
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-005 | low | `an_argument_without_a_declared_type_is_lifted_by_its_own_type` is tagged FR-140-AC-16, which is about field rows. It actually tests step-row argument lifting (FR-136 and FR-141), which no AC states. | fsl-replay/src/refinement/map.rs:999 |
+| FND-006 | low | The pending composite test is tagged TC-540, but TC-540 step 6 and its expected result do not mention the record, tuple and union rows or the QSL-2959 pending note. | spec/test-cases/TC-540-s3-checks-a-refinement-declaration-s-subjects-and-state-mapping.md:39 |
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | a_row_nesting_a_reference_in_a_composite_is_lifted is `#[ignore = "QSL-2959: composite nested-reference lifting"]`; with --include-ignored it fails on `box = self.box` with IllTyped(TypeMismatch), so the ignore is honest; QSL-2959 exists (Backlog) |
+| FND-002 | fixed | The depth-2 `maybes` row checks at S3; the replay two-carriers test passes |
+| FND-003 | fixed | The Option and Map arms now have unit tests (see SR-20261123010001 FND-001) |
+| FND-004 | fixed | FR-630-AC-4 and TC-1590 step 4 now name the Counter fixture and still state the shape; Ring to Queue stays tested at S3 by a_row_nesting_a_reference_is_lifted_element_by_element (FR-135-AC-6) and in replay by FR-140-AC-16 |

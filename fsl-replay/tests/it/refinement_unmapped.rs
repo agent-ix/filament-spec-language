@@ -6,9 +6,13 @@
 use filament_exact::Value;
 use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::catalog::UndefinedReason;
+use fsl_eval::simulation::model::operation_identity_text;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_replay::ObjectKey;
-use fsl_replay::{map_state, EvalFailure, HistoryValues, MappingFailure, MappingRowRef};
+use fsl_replay::{
+    check_step, map_state, ConcreteStep, EvalFailure, HistoryValues, MappingFailure, MappingRowRef,
+    RefinementPosition, StepVerdict, Taken,
+};
 use fsl_semantics::model::state::ModelState;
 use ix_trace_rs::trace;
 
@@ -109,6 +113,114 @@ fn a_reference_to_an_unmapped_type_is_undetermined_at_the_referencing_row() {
     );
 }
 
+/// `RingIsQueue` over the `chain` variant: the abstract `enq` also takes the
+/// chain `rs`, which the `put` row supplies as `self.ring.chain`.
+fn chain_world() -> RingWorld {
+    let refinement = ring_is_queue(&format!("{ITEMS_ROW} chain = self.chain;"))
+        .replace("enq(self.ring, x)", "enq(self.ring, x, self.ring.chain)");
+    RingWorld::with(
+        Variant {
+            chain: true,
+            ..Variant::default()
+        },
+        &refinement,
+    )
+}
+
+/// FR-141-AC-13 (TC-546 step 13): `put` on ring `a`, whose `chain` is `[b,
+/// a]`, passes as the one abstract `enq(a, 1, rs)` whose argument `rs` is
+/// the `Queue` references `[b, a]` the post state's `chain` holds, so the
+/// postcondition `self.chain = rs` holds: the argument row's nested concrete
+/// references are lifted before the abstract operation reads them.
+#[trace("TC-546", "FR-141-AC-13")]
+#[test]
+fn a_step_argument_nesting_references_reaches_the_abstract_operation_lifted() {
+    let world = chain_world();
+    let concrete = world.concrete_system(UNLIMITED);
+    let abstracted = world.abstract_system(UNLIMITED);
+    let chain: &[(&str, &str)] = &[("b", "Ring"), ("a", "Ring")];
+    let state = |size: i64, value: i64| {
+        custom_state(
+            &concrete,
+            &[
+                RingSpec {
+                    size,
+                    chain,
+                    ..ring("a", "Ring", None)
+                },
+                ring("b", "Ring", None),
+            ],
+            &[("a0", "a", 0, value), ("a1", "a", 1, 0)],
+        )
+    };
+    let (pre, post) = (state(0, 0), state(1, 1));
+    let put = operation_identity_text(&key(RING, "Slot/put")).expect("an identity text");
+    let wanted = concrete.state_key_of(&post).expect("a key").0;
+    let (transition, reached) = concrete
+        .expand_state(&pre)
+        .expect("the state expands")
+        .successors
+        .into_iter()
+        .find(|(transition, reached)| {
+            transition.operation() == put
+                && concrete.state_key_of(reached.state()).expect("a key").0 == wanted
+        })
+        .expect("put takes the ring from empty to one item");
+
+    let mapped = |state| {
+        map_state(
+            world.refinement(),
+            &concrete,
+            &abstracted,
+            state,
+            &HistoryValues::default(),
+        )
+        .expect("the state maps")
+        .visible
+    };
+    let (abstract_pre, abstract_post) = (mapped(&pre), mapped(&post));
+    let enq = operation_identity_text(&key(QUEUE, "Queue/enq")).expect("an identity text");
+    let post_key = abstracted.state_key_of(&abstract_post).expect("a key").0;
+    let expected: Vec<_> = abstracted
+        .expand_state(&abstract_pre)
+        .expect("the abstract state expands")
+        .successors
+        .into_iter()
+        .filter(|(transition, reached)| {
+            transition.operation() == enq
+                && abstracted.state_key_of(reached.state()).expect("a key").0 == post_key
+        })
+        .map(|(transition, _)| transition)
+        .collect();
+    assert_eq!(
+        expected.len(),
+        1,
+        "only rs = [b, a] satisfies self.chain = rs"
+    );
+
+    let verdict = check_step(
+        world.refinement(),
+        &concrete,
+        &abstracted,
+        &RefinementPosition {
+            concrete: pre.clone(),
+            history: HistoryValues::default(),
+            abstract_states: vec![abstract_pre],
+            abstract_protocol_states: Vec::new(),
+        },
+        &ConcreteStep {
+            position: 1,
+            transition: Some(&transition),
+            post: &reached,
+        },
+    )
+    .verdict;
+    let StepVerdict::Passes { taken, .. } = verdict else {
+        panic!("the put passes: {verdict:?}");
+    };
+    assert_eq!(*taken, Taken::Abstract(expected));
+}
+
 /// FR-140-AC-16 (TC-1086 step 10): a `Sequence<Reference<Ring>>[0, 2]` row
 /// maps to the `Queue` references with the same keys in the same order; a
 /// reference to a `SubRing`, which no object row names, is `Undetermined` at
@@ -116,13 +228,7 @@ fn a_reference_to_an_unmapped_type_is_undetermined_at_the_referencing_row() {
 #[trace("TC-1086", "FR-140-AC-16")]
 #[test]
 fn a_sequence_of_references_maps_element_by_element_in_order() {
-    let world = RingWorld::with(
-        Variant {
-            chain: true,
-            ..Variant::default()
-        },
-        &ring_is_queue(&format!("{ITEMS_ROW} chain = self.chain;")),
-    );
+    let world = chain_world();
     let concrete = world.concrete_system(UNLIMITED);
     let abstracted = world.abstract_system(UNLIMITED);
     let state = custom_state(

@@ -41,3 +41,19 @@ FR-140-AC-16 and TC-1086 step 10 are atomic and testable. FR-135-AC-6 and TC-540
 step 6 match the test. FND-001 must be fixed before merge: the requirement
 contradicts itself. FND-002 is the composite contradiction the arch ruling asks
 to avoid.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-005 | medium | This PR now lifts references nested in step-row and node-row arguments (`lift_value`), but no requirement says so. FR-136 and FR-141 state lifting only for top-level receiver and argument conformance, and FR-140 speaks of field rows. The behaviour has no requirement and no AC. | spec/functional/FR-141-decide-one-concrete-step-against-the-abstract-model.md:163 |
+| FND-006 | low | FR-140-AC-16 says "Over RingIsQueue ... the same field typed ... Map<Reference<_>, Reference<_>>", and FR-135-AC-6 says "an option, collection or map at any depth". No validated package can declare a map type, so the map clause cannot be realized over that fixture; TC-1086 step 10 says it is checked by unit tests of `lift_nested`. The ACs should say the map clause is verified at that level. | spec/functional/FR-140-evaluate-the-refinement-mapping-at-a-state.md:226 |
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | Line 174 is replaced: "The checker SHALL lift a Reference<T_C> nested inside an option, collection or map type, at every depth ..." |
+| FND-002 | fixed | FR-135 (two places), FR-140 and FR-630 now agree: option, collection and map are lifted; record, tuple and union are pending QSL-2959 and refuse ill_typed/type-mismatch until then |
+| FND-003 | fixed | FR-135 and FR-140 name map and state that reference-typed keys are lifted and entries keep their order |
+| FND-004 | fixed | FR-140 now reads "`map_state` SHALL lift a reference nested inside an option, collection or map value ..." |

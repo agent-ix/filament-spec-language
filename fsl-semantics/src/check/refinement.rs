@@ -3083,6 +3083,9 @@ impl<'c, 'a> Checker<'c, 'a> {
         // The abstract types each object row maps, so every field expression
         // is lifted against the whole map.
         let mut first_rows: BTreeMap<EffectiveId, Span> = BTreeMap::new();
+        // The concrete object types each object row maps from, so a reference
+        // lifts to one abstract type (FR-135).
+        let mut source_rows: BTreeMap<EffectiveId, Span> = BTreeMap::new();
         let mut resolved: Vec<(&fsl_forms::ObjectRowForm, &ObjectType, &ObjectType)> = Vec::new();
         for row in &form.rows {
             let RefinementRowForm::Object(row) = row else {
@@ -3144,6 +3147,19 @@ impl<'c, 'a> Checker<'c, 'a> {
                     },
                 );
                 continue;
+            }
+            if target.kind == RefinementTypeKind::ObjectType {
+                if let Some(first) = source_rows.get(&source.id) {
+                    self.findings.refuse(
+                        row.span,
+                        RefinementCause::Conflicting {
+                            name: source.name.clone(),
+                            first: *first,
+                        },
+                    );
+                    continue;
+                }
+                source_rows.insert(source.id.clone(), row.span);
             }
             first_rows.insert(target.id.clone(), row.span);
             self.lifting.insert(target.id.clone(), source.id.clone());

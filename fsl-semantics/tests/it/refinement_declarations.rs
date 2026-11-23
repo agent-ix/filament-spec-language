@@ -1229,6 +1229,36 @@ fn a_row_nesting_a_reference_in_a_composite_is_lifted() {
     }
 }
 
+/// FR-135-AC-13 (TC-540 step 6): two object rows that map from the same
+/// concrete object type refuse `invalid_model_binding`/`conflicting-binding`
+/// at the second row, because a reference to that type would lift to two
+/// abstract types.
+#[trace("TC-540", "FR-135-AC-13")]
+#[test]
+fn two_object_rows_from_one_concrete_type_conflict() {
+    let (spec, concrete) = nested_models();
+    let models = [
+        ("Q", NESTED_SPEC, &spec[..]),
+        ("R", NESTED_IMPL, &concrete[..]),
+    ];
+    let body = "refinement TwoRows using inf abstract Q concrete R {\n\
+         population Q::queues from R::rings;\n\
+         population Q::cells from R::rings;\n\
+         object Q::Queue from R::Ring { size = self.size; }\n\
+         object Q::Cell from R::Ring { value = self.size; }\n\
+         }";
+    let found = refused(&models, body);
+    let conflict = only(&found);
+    assert_eq!(
+        conflict.code_and_cause(),
+        (Code::InvalidModelBinding, Some("conflicting-binding"))
+    );
+    assert_eq!(
+        conflict.at,
+        "object Q::Cell from R::Ring { value = self.size; }"
+    );
+}
+
 /// FR-135-AC-4 (TC-540 step 4): with the `value` row removed, the refinement
 /// checks with `value` hidden. The node-identity half needs S4 emission and
 /// is not tested.
