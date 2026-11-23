@@ -25,3 +25,17 @@ Ticket: QSL-2924 (item 3). PR: filament-spec-language#3550 at 900ddd1477c116b0c5
 ## Verdict
 
 The MDP profile handles undefined P, cancellation and exhaustion, zero instances, terminal stutter, producer-partition distrust (AC-73's omitted-MEC false proof) and bogus cycle fixed points (AC-72) explicitly. The only scope leak is the implicit widening of the weighted profile and of refutations to event-position claims. Open questions 2 and 3 are outside scope and drop no behaviour: weighted every-scheduler and fair every-scheduler long-run claims are 'outside this profile', not unsupported, and FR-201 Emission (lines 135-142) together with FR-199 and FR-200 still require them through the general certificate form or QSL-2830.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-002 | low | The weighted DTMC long-run profile's temporal-profile admission is still not stated anywhere, and 'not changed by this rule' points at an implicit inheritance whose source changed | spec/functional/FR-201-check-a-probability-certificate.md:1137-1156 |
+
+**FND-002** (low, ambiguous, confidence medium): The admission section now says 'The closed weighted DTMC long-run profile's admission is not changed by this rule', which correctly removes the silent widening. But the weighted profile never stated its temporal profile itself. It 'SHALL retain the unweighted profile's untimed ... DTMC admission', and the unweighted intro now admits both event-position and infinite-trace through the admission section. So a reader can still infer that weighted `using ev` is admitted, which contradicts 'not changed' and the code gate at fsl-analyze/src/analyze/exact/long_run.rs:32-33. This was implicit on main too, so it is low. Fix with one clause in the weighted intro: 'in the untimed infinite-trace profile'.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | verified at 11c18bc0 (round 1) |

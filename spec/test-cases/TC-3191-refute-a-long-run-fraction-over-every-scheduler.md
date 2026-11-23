@@ -21,9 +21,15 @@ and `<= rational(999, 1000)` over every scheduler. Replay each emitted
 counterexample, then replay it with the scheduler swapped, removed or
 randomized, at the equality threshold, and with a proof document in place
 of the subsystem certificate.
+Run the AtLeast claim again written `using` the event-position
+false-extension profile, and replay its counterexample and the
+infinite-trace claim's certificate against it.
 
 ## Expected Results
 
 The `repair_slow` witness refutes the AtLeast claim and the `repair_fast`
 witness refutes the AtMost claim, each with matching reproduced evidence.
-Every altered variant produces no reproduced token.
+The event-position claim is refuted by the `repair_slow` witness with a
+certificate bound to that claim whose component conditions match the
+infinite-trace one; the infinite-trace certificate bytes refuse
+`IdentityMismatch` against it. Every altered variant produces no reproduced token.

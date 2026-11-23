@@ -25,3 +25,9 @@ Ticket: QSL-2924 (item 3). PR: filament-spec-language#3550 at 900ddd1477c116b0c5
 ## Verdict
 
 The MDP profile's SHALL statements are well formed (codec SHALL admit, checker SHALL derive/require/check/reject). Only the admission section's actor and its open profile set need tightening.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | verified at 11c18bc0 (round 1) |

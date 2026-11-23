@@ -1164,7 +1164,7 @@ not from that set, values, component rows or a producer's graph.
 ### Closed weighted DTMC long-run document profile
 
 For a checked `long-run fraction holds(P) weighted by R` claim under an
-authored workload, the codec SHALL admit the separate objective profile
+authored workload in the untimed infinite-trace profile, the codec SHALL admit the separate objective profile
 `"filament.probability-objective/dtmc-weighted-long-run/v1"`. Its objective
 SHALL have exactly `profile`, `predicate_states`, `weight`, `unit`,
 `optimization` and `fairness`. `optimization` SHALL be `"workload"` and
