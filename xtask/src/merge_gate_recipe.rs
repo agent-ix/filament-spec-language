@@ -15,7 +15,7 @@ const EMIT_SKIP: [&str; 2] = [
     "100000",
     "every_nested_form_emits_in_the_stratified_grammar_at_2_and_1000_levels",
 ];
-const USAGE: &str = "usage: cargo xtask merge-gate-recipe <changed-path>...";
+const USAGE: &str = "usage: cargo xtask merge-gate-recipe [--preflight] <changed-path>...";
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum TestTarget {
@@ -1132,8 +1132,9 @@ impl CommandRunner for SystemCommandRunner {
 
 /// Print compile-first and name-filtered test commands for changed paths.
 ///
-/// Each filter is preflighted with a filtered `--list` invocation. A filter
-/// that selects no tests fails the command instead of printing a false gate.
+/// By default this only prints the recipe. With `--preflight`, each filter is
+/// checked with normal and ignored filtered `--list` invocations, and a filter
+/// that selects no non-ignored tests fails closed.
 pub fn run(workspace_root: &Path, operands: &[OsString]) -> Result<String> {
     run_with_runner(workspace_root, operands, &SystemCommandRunner)
 }
@@ -1143,6 +1144,10 @@ fn run_with_runner(
     operands: &[OsString],
     runner: &dyn CommandRunner,
 ) -> Result<String> {
+    let (preflight_requested, operands) = match operands.split_first() {
+        Some((flag, paths)) if flag.to_str() == Some("--preflight") => (true, paths),
+        _ => (false, operands),
+    };
     if operands.is_empty() {
         return Err(Error::Usage(USAGE));
     }
@@ -1168,21 +1173,23 @@ fn run_with_runner(
         }
     }
 
-    let selectors = recipe.selectors.iter().cloned().collect::<Vec<_>>();
-    for selector in selectors {
-        let matched = preflight(workspace_root, &selector, runner)?;
-        if matched == 0 {
-            if selector.no_match_is_note {
-                recipe.selectors.remove(&selector);
-                recipe.notes.insert(format!(
-                    "no named tests match the local module filter {:?} in {}",
-                    selector.filter, selector.package
-                ));
-            } else {
-                return Err(Error::MergeGateRecipe(format!(
-                    "test filter {:?} matched no non-ignored tests; refusing to print a green recipe",
-                    selector.display()
-                )));
+    if preflight_requested {
+        let selectors = recipe.selectors.iter().cloned().collect::<Vec<_>>();
+        for selector in selectors {
+            let matched = preflight(workspace_root, &selector, runner)?;
+            if matched == 0 {
+                if selector.no_match_is_note {
+                    recipe.selectors.remove(&selector);
+                    recipe.notes.insert(format!(
+                        "no named tests match the local module filter {:?} in {}",
+                        selector.filter, selector.package
+                    ));
+                } else {
+                    return Err(Error::MergeGateRecipe(format!(
+                        "test filter {:?} matched no non-ignored tests; refusing to print a green recipe",
+                        selector.display()
+                    )));
+                }
             }
         }
     }
@@ -2536,6 +2543,47 @@ mod tests {
             .find("\ncargo test --locked -p fsl-analyze --test it -- probabilistic")
             .expect("filtered test after compile");
         assert!(compile < tests);
+    }
+
+    #[test]
+    fn default_run_prints_recipe_without_invoking_cargo() {
+        let runner = FakeRunner::new();
+        let result = run_with_runner(
+            workspace_root(),
+            &[OsString::from("fsl-analyze/src/analyze/exact.rs")],
+            &runner,
+        )
+        .expect("print recipe");
+        assert!(result.contains(
+            "cargo test --locked -p fsl-analyze --test it -- probabilistic"
+        ));
+        assert!(runner
+            .calls
+            .borrow()
+            .iter()
+            .all(|(program, _)| program == "git"));
+    }
+
+    #[test]
+    fn preflight_flag_runs_ignored_aware_preflight_and_fails_closed() {
+        let runner = FakeRunner {
+            no_tests: true,
+            ..FakeRunner::new()
+        };
+        assert!(run_with_runner(
+            workspace_root(),
+            &[
+                OsString::from("--preflight"),
+                OsString::from("fsl-analyze/src/analyze/exact.rs"),
+            ],
+            &runner,
+        )
+        .is_err());
+        assert!(runner
+            .calls
+            .borrow()
+            .iter()
+            .any(|(program, args)| { program != "git" && args.contains(&"--ignored".to_owned()) }));
     }
 
     #[test]

@@ -1,12 +1,13 @@
 # Merge gate recipe
 
-Run `cargo xtask merge-gate-recipe <changed-path>...` from the workspace for a
-PR head that already contains current `origin/main`. Pass changed paths relative
-to the workspace root. The command fetches `origin/main`, verifies ancestry, and
-prints both commit IDs in its header. It checks each name filter with normal and
-ignored `cargo test -- --list` output; an explicit filter with no non-ignored
-matches fails closed. A local library-module filter with no matches is reported
-as a note.
+Run `cargo xtask merge-gate-recipe [--preflight] <changed-path>...` from the
+workspace for a PR head that already contains current `origin/main`. Pass
+changed paths relative to the workspace root. The command fetches `origin/main`,
+verifies ancestry, and prints both commit IDs in its header. By default it only
+prints the recipe and does not invoke Cargo. Add `--preflight` before the paths
+to check each name filter with normal and ignored `cargo test -- --list` output;
+an explicit filter with no non-ignored matches then fails closed. A local
+library-module filter with no matches is reported as a note.
 
 The output is one command per line, with target `--no-run` compilation commands
 first, name-filtered test commands next, any external driver note after those,
