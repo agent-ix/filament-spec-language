@@ -19,14 +19,14 @@ FR-286-AC-30.
 1. Run `check_hint_catalog(HINTS, fsl_command::diagnostic_pairs())`, and
    check that `diagnostic_pairs()` holds every pair of FR-286's "Fix hints"
    table.
-2. Run it over `HINTS` plus a row `(Code::IllTyped, Some("type-mistmatch"))`.
-3. Run it over `HINTS` plus a second `(Code::IllTyped, Some("type-mismatch"))` row.
+2. Run it over `HINTS` plus a row `(Code::IllTyped, Some("type-mistmatch"), None)`.
+3. Run it over `HINTS` plus a second `(Code::IllTyped, Some("type-mismatch"), None)` row, then a second row of one `selection` of the missing-selection pair.
 4. Run it over `HINTS` plus, in turn, a row whose text holds a line feed,
    one holding U+0085, one not ending in `.`, and one of 101 `é` and a
    final `.`.
-5. Call `hint_for` for every pair of the table, for
-   `(Code::OutputFailure, Some("output-failure"))` and for
-   `(Code::InvalidRequest, None)`.
+5. Call `hint_for(code, cause, None)` for every pair of the table, for
+   `(Code::OutputFailure, Some("output-failure"), None)` and for
+   `(Code::InvalidRequest, None, None)`.
 
 ## Expected Results
 
