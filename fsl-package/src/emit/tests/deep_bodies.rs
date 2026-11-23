@@ -14,6 +14,211 @@ use std::fmt::{self, Write};
 
 mod explicit_limit;
 
+use serde::de::{DeserializeSeed, IgnoredAny, MapAccess, SeqAccess, Visitor};
+use serde::Deserializer;
+
+struct PackageBodies<'a> {
+    label: &'a str,
+}
+
+impl<'de> DeserializeSeed<'de> for PackageBodies<'_> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_map(PackageBodyVisitor { label: self.label })
+    }
+}
+
+struct PackageBodyVisitor<'a> {
+    label: &'a str,
+}
+
+impl<'de> Visitor<'de> for PackageBodyVisitor<'_> {
+    type Value = ();
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("an emitted package with a semantic graph")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut saw_graph = false;
+        while let Some(name) = map.next_key::<String>()? {
+            if name == "semantic_graph" {
+                map.next_value_seed(SemanticGraphBodies { label: self.label })?;
+                saw_graph = true;
+            } else {
+                map.next_value::<IgnoredAny>()?;
+            }
+        }
+        if saw_graph {
+            Ok(())
+        } else {
+            Err(serde::de::Error::missing_field("semantic_graph"))
+        }
+    }
+}
+
+struct SemanticGraphBodies<'a> {
+    label: &'a str,
+}
+
+impl<'de> DeserializeSeed<'de> for SemanticGraphBodies<'_> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_map(SemanticGraphBodyVisitor { label: self.label })
+    }
+}
+
+struct SemanticGraphBodyVisitor<'a> {
+    label: &'a str,
+}
+
+impl<'de> Visitor<'de> for SemanticGraphBodyVisitor<'_> {
+    type Value = ();
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a semantic graph with node bodies")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut saw_nodes = false;
+        while let Some(name) = map.next_key::<String>()? {
+            if name == "nodes" {
+                map.next_value_seed(NodeBodies { label: self.label })?;
+                saw_nodes = true;
+            } else {
+                map.next_value::<IgnoredAny>()?;
+            }
+        }
+        if saw_nodes {
+            Ok(())
+        } else {
+            Err(serde::de::Error::missing_field("nodes"))
+        }
+    }
+}
+
+struct NodeBodies<'a> {
+    label: &'a str,
+}
+
+impl<'de> DeserializeSeed<'de> for NodeBodies<'_> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_seq(NodeBodiesVisitor { label: self.label })
+    }
+}
+
+struct NodeBodiesVisitor<'a> {
+    label: &'a str,
+}
+
+impl<'de> Visitor<'de> for NodeBodiesVisitor<'_> {
+    type Value = ();
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a sequence of nodes")
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> Result<Self::Value, A::Error>
+    where
+        A: SeqAccess<'de>,
+    {
+        let mut saw_node = false;
+        while sequence
+            .next_element_seed(NodeBody { label: self.label })?
+            .is_some()
+        {
+            saw_node = true;
+        }
+        if saw_node {
+            Ok(())
+        } else {
+            Err(serde::de::Error::custom("the semantic graph has no nodes"))
+        }
+    }
+}
+
+struct NodeBody<'a> {
+    label: &'a str,
+}
+
+impl<'de> DeserializeSeed<'de> for NodeBody<'_> {
+    type Value = ();
+
+    fn deserialize<D>(self, deserializer: D) -> Result<Self::Value, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        deserializer.deserialize_map(NodeBodyVisitor { label: self.label })
+    }
+}
+
+struct NodeBodyVisitor<'a> {
+    label: &'a str,
+}
+
+impl<'de> Visitor<'de> for NodeBodyVisitor<'_> {
+    type Value = ();
+
+    fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a semantic graph node with a body")
+    }
+
+    fn visit_map<A>(self, mut map: A) -> Result<Self::Value, A::Error>
+    where
+        A: MapAccess<'de>,
+    {
+        let mut saw_body = false;
+        while let Some(name) = map.next_key::<String>()? {
+            if name == "body" {
+                let body = map.next_value::<serde_json::Value>()?;
+                assert!(
+                    fsl_semantics::check::stratum::is_stratified_body(&body),
+                    "{}: a written body is outside the grammar: {}",
+                    self.label,
+                    body
+                );
+                saw_body = true;
+            } else {
+                map.next_value::<IgnoredAny>()?;
+            }
+        }
+        if saw_body {
+            Ok(())
+        } else {
+            Err(serde::de::Error::missing_field("body"))
+        }
+    }
+}
+
+fn assert_emitted_bodies(emission: &crate::emit::Emission, label: &str) {
+    let mut deserializer = serde_json::Deserializer::from_slice(emission.package.bytes());
+    PackageBodies { label }
+        .deserialize(&mut deserializer)
+        .expect("the emitted package has semantic graph node bodies");
+    deserializer
+        .end()
+        .expect("the emitted package has no trailing bytes");
+}
+
 /// Counts complete debug output without retaining its bytes.
 #[derive(Default)]
 struct DebugByteCount {
@@ -307,14 +512,7 @@ fn every_nested_form_emits_in_the_stratified_grammar_at_2_and_1000_levels() {
                         crate::EmitLimits::fixture(),
                     )
                     .unwrap_or_else(|refusal| panic!("{form:?} x{levels} emits: {refusal:?}"));
-                    let written = wire(&emission);
-                    for node in nodes(&written) {
-                        assert!(
-                            fsl_semantics::check::stratum::is_stratified_body(&node["body"]),
-                            "{form:?} x{levels}: a written body is outside the grammar: {}",
-                            node["body"]
-                        );
-                    }
+                    assert_emitted_bodies(&emission, &format!("{form:?} x{levels}"));
                 })
                 .expect("the thread spawns")
                 .join()
