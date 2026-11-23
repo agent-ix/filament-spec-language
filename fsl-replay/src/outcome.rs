@@ -1788,6 +1788,20 @@ impl OutcomeItem {
     }
 }
 
+/// The FR-413 claim-bound object a verdict carries (FR-410 `bound`): the
+/// claim's own comparison and threshold, and a quantile's separate `level`.
+pub fn verdict_bound_wire(bound: &statistical::VerdictBound) -> serde_json::Value {
+    let mut value = serde_json::json!({
+        "type": bound.form.bound_type(),
+        "comparison": bound.comparison.as_str(),
+        "threshold": rational_wire(&bound.threshold),
+    });
+    if let Some(level) = &bound.level {
+        value["level"] = rational_wire(level);
+    }
+    value
+}
+
 fn rational_wire(value: &filament_exact::Rational) -> serde_json::Value {
     serde_json::json!({
         "numerator": value.numerator().to_string(),
@@ -2002,11 +2016,7 @@ fn statistical_verdict_wire(
     // none is today (`omitted_witnesses` says why).
     let mut value = serde_json::json!({
         "decision": decision,
-        "bound": {
-            "type": verdict.bound.form.bound_type(),
-            "comparison": verdict.bound.comparison.as_str(),
-            "threshold": rational_wire(&verdict.bound.threshold),
-        },
+        "bound": verdict_bound_wire(&verdict.bound),
         "basis": basis,
         "provenance": provenance,
         "tests": tests,
@@ -2021,9 +2031,6 @@ fn statistical_verdict_wire(
     }
     if let Some(interval) = statistical_interval_wire(verdict.interval.as_ref()) {
         value["interval"] = interval;
-    }
-    if let Some(level) = &verdict.bound.level {
-        value["bound"]["level"] = rational_wire(level);
     }
     Ok(value)
 }

@@ -1082,6 +1082,95 @@ fn a_tiny_indifference_region_settles_incomplete_before_sampling() {
     );
 }
 
+/// FSpec FR-331-AC-67: the fixed-N preflight `limit-reached` cause the engine
+/// writes validates against the pinned `LimitReached` definition, `required`
+/// the exact decimal string; the item spells the cause's tag `kind` where the
+/// provider envelope spells it `type`, so only that member is renamed.
+#[trace("FSpec-FR-331-AC-67")]
+#[test]
+fn a_written_preflight_limit_reached_cause_validates_against_the_pinned_schema() {
+    let claim = "probabilistic Delivered using ev on M over (m: M::Msg) under Even on origin \
+         with alpha 0.01, beta 0.01, indifference 0.00005 \
+         { probability >= 0.9 [ eventually[0,2] holds(m.delivered) ] }";
+    let document = run(
+        "preflight-schema",
+        claim,
+        json!([{"claim": "Delivered", "probabilistic": {"evidence": "statistical", "seed": "7"}}]),
+    );
+    let cause = &document["items"][0]["record"]["cause"];
+    assert_eq!(cause["required"], "921034038", "{cause}");
+    let mut wire = cause.clone();
+    let tag = wire
+        .as_object_mut()
+        .and_then(|members| members.remove("kind"))
+        .expect("the cause's tag");
+    wire["type"] = tag;
+    assert_valid(
+        &provider_definition("LimitReached"),
+        &wire,
+        "the written preflight cause",
+    );
+}
+
+/// FSpec FR-410-AC-12, FR-413: the bound the engine writes for each claim
+/// form validates against the pinned `ProbabilisticBound`, a quantile
+/// carrying its separate `level` beside the claim's own comparison and
+/// threshold, every other form having none.
+#[trace("FSpec-FR-410-AC-12")]
+#[test]
+fn a_written_verdict_bound_validates_against_the_pinned_schema() {
+    use fsl_replay::statistical::{BoundComparison, ClaimForm, VerdictBound};
+    let ratio = |numerator: i64, denominator: i64| {
+        filament_exact::Rational::new(
+            filament_exact::Integer::from(numerator),
+            filament_exact::Integer::from(denominator),
+        )
+        .expect("a ratio")
+    };
+    let bound = |form, comparison, threshold, level| VerdictBound {
+        form,
+        comparison,
+        threshold,
+        level,
+    };
+    let schema = provider_definition("ProbabilisticBound");
+    let quantile = fsl_replay::verdict_bound_wire(&bound(
+        ClaimForm::Quantile,
+        BoundComparison::GreaterOrEqual,
+        ratio(3, 1),
+        Some(ratio(1, 2)),
+    ));
+    assert_eq!(quantile["type"], "quantile", "{quantile}");
+    assert_eq!(quantile["comparison"], "greater-or-equal", "{quantile}");
+    assert_eq!(
+        quantile["level"],
+        json!({"numerator": "1", "denominator": "2"}),
+        "{quantile}"
+    );
+    assert_eq!(
+        quantile["threshold"],
+        json!({"numerator": "3", "denominator": "1"}),
+        "{quantile}"
+    );
+    assert_valid(&schema, &quantile, "the quantile bound");
+    for (form, name) in [
+        (ClaimForm::Probability, "probability"),
+        (ClaimForm::MeanOfFraction, "mean-of-fraction"),
+        (ClaimForm::LongRunFraction, "long-run-fraction"),
+    ] {
+        let wire = fsl_replay::verdict_bound_wire(&bound(
+            form,
+            BoundComparison::LessOrEqual,
+            ratio(9, 10),
+            None,
+        ));
+        assert_eq!(wire["type"], name, "{wire}");
+        assert_eq!(wire["comparison"], "less-or-equal", "{wire}");
+        assert!(wire.get("level").is_none(), "{wire}");
+        assert_valid(&schema, &wire, name);
+    }
+}
+
 /// A probability item's finite expansion default preserves the caller's
 /// accounting bound for both evidence kinds, including its reported value.
 #[trace("TC-2066", "FR-741-AC-6", "FR-255-AC-23", "FR-192-AC-1", "FR-203-AC-7")]
