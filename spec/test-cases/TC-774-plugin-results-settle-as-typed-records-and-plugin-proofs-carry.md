@@ -5,6 +5,8 @@ type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-290
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-281
+    type: verifies
   - target: ix://agent-ix/filament-spec-language/FR-289
     type: verifies
 ---
@@ -14,7 +16,7 @@ relationships:
 
 Verify how a process provider's FR-331 result becomes an FSL terminal record.
 
-Scope: FR-290-AC-1 to FR-290-AC-18.
+Scope: FR-290-AC-1 to FR-290-AC-20 and FR-281-AC-24.
 
 ## Test Procedure
 
@@ -33,6 +35,7 @@ Scope: FR-290-AC-1 to FR-290-AC-18.
 13. Settle FR-314-AC-1's accepted certificate, the same proof with no certificate, with one step's rule replaced by `hole`, and FR-314-AC-2's depth-2 query certificate.
 
 14. Read the `bounded-solver`, `inductive-solver` and `insufficient-horizon` vectors of FR-290-AC-18; settle a bounded-solver basis with sufficient coverage and one with insufficient coverage through `TerminalRecord::from_hybrid_plugin_proof`, and confirm the generic `from_plugin_proof` entry refuses a bounded-solver basis.
+15. For a `value-validity` claim with a process provider, exercise each FR-290-AC-20 unusable-counterexample reason: an assignment id outside the claim parameters, an omitted claim parameter, an id absent from the package graph, an unreadable package graph, and a value whose kind differs from the claim parameter. Assert the driver emits exactly the corresponding typed reason with no partial assignments or provider text; settle each at FSL, serialize its item and assert the item-level diagnostic, inconclusive record and omitted counterexample/replay. Also settle mapped assignments that replay to a violation and confirm the existing `refuted` path.
 
 Tag the tests `#[trace("TC-774", "<AC id>")]`.
 
@@ -52,3 +55,4 @@ Tag the tests `#[trace("TC-774", "<AC id>")]`.
 - Step 12: certified: `proved`, `certified` with `cross_check` verdict `Proved`, then `Refuted`, then `Inconclusive`; uncertified: `proved`, `uncertified` with verdict `Proved`, then `inconclusive` `CrossCheckDisagreement { primary: Proved, cross_check: Refuted }`; with the warning, cvc5's settlement with no `cross_check` and the warning kept; the counterexample: `inconclusive` `CrossCheckDisagreement { primary: Refuted, cross_check: Proved }`, then `refuted` with no `cross_check`; the cvc5 `inconclusive`: `CrossCheckDisagreement { primary: Inconclusive, cross_check }` twice, then `SolverInconclusive` with no `cross_check`; each record reads back equal.
 - Step 13: `proved`, `certified`; `proved`, `uncertified` twice; `inconclusive`, `CertificateRejected { QueryMismatch, Unrolling }`; each `proved` record has one certification and the SMT `BackendId`.
 - Step 14: sufficient bounded-solver coverage settles `proved`, `trusted`; insufficient coverage settles `inconclusive`, `InsufficientHorizon`; `inductive-solver` settles `proved`, `trusted`; the generic `from_plugin_proof` entry refuses bounded-solver.
+- Step 15: each unusable mapping produces its matching closed reason and exactly one item-level `invalid_result`/`invalid-value` diagnostic with that reason; the record is `inconclusive`/`replay-parity`, and neither `counterexample` nor `replay` appears. No root-level diagnostic, terminal-record diagnostic, partial assignment or provider text is added. Mapped assignments that replay to a violation remain `refuted`.

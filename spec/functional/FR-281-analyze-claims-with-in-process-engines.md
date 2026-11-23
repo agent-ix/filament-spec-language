@@ -257,6 +257,13 @@ depends on no CG crate for it (FR-280).
   a caller defect, handled as a panic in any other engine is: `analyze` does
   not catch it.
 
+If a provider verdict carries FR-290's typed unusable-counterexample reason,
+`analyze` SHALL settle the item `inconclusive` with cause `replay-parity`
+without attempting replay, and SHALL attach that reason as one item
+diagnostic. It SHALL write no counterexample or replay result for the item.
+This diagnostic explains why no assignment could be formed; it does not
+change the terminal record's verdict or cause.
+
 ### Engine refusals
 
 An engine's settlement map (FR-127 for EN-1, FR-192 for EN-4, FR-203 for
@@ -549,6 +556,10 @@ holding the `ProvisionRefusal` that names the label, and no record.
 - If the replay does not reproduce the counterexample, then `analyze` shall
   settle the item `inconclusive` with cause `replay_parity`; if the replay
   refuses, with cause `replay_refused` and the refusal's catalog code.
+- When a provider verdict carries FR-290's typed unusable-counterexample
+  reason, `analyze` shall settle the item `inconclusive` with cause
+  `replay-parity`, attach its item diagnostic and write neither a
+  counterexample nor a replay member.
 - If an engine's evaluation of an item's claim is undefined at a state or
   step, then `analyze` shall replay the path to that point through layer-6
   `replay` and, when the replay reproduces the undefined value, settle the
@@ -603,6 +614,7 @@ registry reaches EN-7 (FR-620, FR-633).
 | FR-281-AC-21 | A `ClaimItem` constructor given a `claim` key whose node is a clause of the package but whose occurrence is not that clause's `claim` occurrence, and one given a node the package does not hold as a checked clause, refuses `ClaimRefusal::UnknownClaim`; the constructor for AC-2's clause key returns an item with that key as its `claim`. | Test (TC-762) |
 | FR-281-AC-22 | Over AC-11's model (an operation `modifies` a field of type `Integer`), an EN-1 item whose `temporal.proof_bounds` hold an `integer-range` `ProofBound` for that field, with `extent` `unbounded` unchanged, is admitted, explores the bounded subject and settles a verdict; the same item with empty `proof_bounds` settles `unsupported` with `unsupported_projection`/`unbounded-extent` and explores no state. | Test (TC-763) |
 | FR-281-AC-23 | `Engines::fsl()` registers `en-7` advertising `schedulability`, and a schedulability item settled `Supported(en-7)` runs on EN-7. | Test (TC-1580) |
+| FR-281-AC-24 | When an external provider reports a refuted verdict with each FR-290 unusable-counterexample reason in turn, the item settles `inconclusive` with cause `replay-parity`, carries one item diagnostic with code `invalid_result`, cause `invalid-value` and that typed reason, and carries neither `counterexample` nor `replay`; a refuted verdict with mapped assignments still follows the existing replay rule. | Test (TC-774) |
 
 ## Dependencies
 
