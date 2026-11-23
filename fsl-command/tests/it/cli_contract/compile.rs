@@ -263,8 +263,8 @@ fn malformed_requests_refuse_invalid_request() {
     for (path, code) in [
         (malformed, "invalid-request"),
         (case.json("member.json", &unknown_member), "invalid-request"),
-        // FR-096: an unsupported command format is `unknown_wire`.
-        (case.json("format.json", &wrong_format), "unknown_wire"),
+        // FR-1047: a format the entry does not read is `invalid-request`.
+        (case.json("format.json", &wrong_format), "invalid-request"),
     ] {
         let outcome = plain(&path);
         outcome.refused("package", 20, code);

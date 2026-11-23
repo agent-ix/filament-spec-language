@@ -528,3 +528,19 @@ bench-probe:
 	for e in 400 120 48; do $(BENCH_PROBE) mc sample $$e || exit 1; done
 	$(BENCH_PROBE) mc-marginal state_graph 3 3 -- 5 4
 	$(BENCH_PROBE) mc-marginal safety 3 3 -- 4 4
+
+# =============================================================================
+# Documentation figures
+# =============================================================================
+# docs/images/figures.json defines the figures; `ixd build` (agent-ix/ix-diagrams) renders them.
+# Install it with: cargo install --git https://github.com/agent-ix/ix-diagrams ix-diagrams
+
+IXD ?= ixd
+
+.PHONY: figures
+figures:
+	$(IXD) build docs/images/figures.json --out docs/images
+
+.PHONY: figures-check
+figures-check:
+	$(IXD) build docs/images/figures.json --out docs/images --check

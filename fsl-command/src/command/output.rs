@@ -192,7 +192,13 @@ pub(super) fn error(error: &RunError, artifact: bool) -> Result<Value, serde_jso
             },
         ),
         RunCause::Output(_) => (types::Stage::Output, types::Details::None),
-        RunCause::Format => (types::Stage::Envelope, types::Details::None),
+        RunCause::MissingMembers { .. } | RunCause::FormatNotRead { .. } => (
+            types::Stage::Request,
+            error
+                .cause
+                .request_details()
+                .map_or(types::Details::None, types::Details::Object),
+        ),
         RunCause::Limit(kind) => (
             types::Stage::Intake,
             match kind {
