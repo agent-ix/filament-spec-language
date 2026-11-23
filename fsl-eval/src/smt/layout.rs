@@ -389,4 +389,14 @@ mod carried_quantity_tests {
     fn a_carried_quantity_has_no_sort() {
         assert_eq!(sort_of(&carried()).err(), Some("a CarriedQuantity"));
     }
+
+    /// FR-230-AC-71: a clock-place reference has no SMT sort; the layout names it.
+    #[trace("FR-230-AC-71", "TC-3084")]
+    #[test]
+    fn a_clock_reference_has_no_sort() {
+        assert_eq!(
+            sort_of(&filament_exact::ValueType::ClockReference).err(),
+            Some("a ClockReference")
+        );
+    }
 }

@@ -2518,3 +2518,19 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod clock_reference_tests {
+    use super::enumerable;
+    use filament_exact::ValueType;
+    use ix_trace_rs::trace;
+
+    /// FR-230-AC-71: a clock-place reference carrier is not enumerated by the
+    /// ordinary domain; its identities come from the clock-reference domain.
+    #[trace("FR-230-AC-71", "TC-3084")]
+    #[test]
+    fn a_clock_reference_is_not_ordinarily_enumerable() {
+        assert!(!enumerable(&ValueType::ClockReference));
+        assert!(!enumerable(&ValueType::option(ValueType::ClockReference)));
+    }
+}

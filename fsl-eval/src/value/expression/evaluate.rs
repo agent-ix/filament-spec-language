@@ -7334,3 +7334,18 @@ mod tests {
         assert_eq!(targets(&set, &sequence(&["a"])), None);
     }
 }
+
+#[cfg(test)]
+mod clock_reference_tests {
+    use super::size_of;
+    use crate::test_clock_reference::clock_reference;
+    use ix_trace_rs::trace;
+
+    /// FR-230-AC-71: a clock-place reference has no size; `size` of one is an
+    /// invariant fault, never a number.
+    #[trace("FR-230-AC-71", "TC-3084")]
+    #[test]
+    fn a_clock_reference_has_no_size() {
+        assert!(size_of(clock_reference()).is_err());
+    }
+}

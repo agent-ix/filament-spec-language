@@ -2426,3 +2426,20 @@ fn slot_provenance(
         })
         .collect()
 }
+
+#[cfg(test)]
+mod clock_reference_tests {
+    use super::collect_references;
+    use crate::test_clock_reference::clock_reference;
+    use ix_trace_rs::trace;
+
+    /// FR-230-AC-71: a clock-place reference is not an `ObjectReference`, so
+    /// the collector gathers nothing from it.
+    #[trace("FR-230-AC-71", "TC-3084")]
+    #[test]
+    fn a_clock_reference_collects_no_object_reference() {
+        let mut out = Vec::new();
+        collect_references(&clock_reference(), &mut out).expect("a leaf value");
+        assert!(out.is_empty());
+    }
+}

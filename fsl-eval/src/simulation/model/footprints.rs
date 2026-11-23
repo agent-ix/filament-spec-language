@@ -1033,3 +1033,25 @@ impl<'a> ModelSystem<'a> {
         }
     }
 }
+
+#[cfg(test)]
+mod clock_reference_tests {
+    use super::{binds_object, holds_reference};
+    use filament_exact::ValueType;
+    use filament_semantic_value::declaration::TypeEnvironment;
+    use ix_trace_rs::trace;
+
+    /// FR-230-AC-71: a clock-place reference names no object, so it holds no
+    /// object reference a footprint can bind.
+    #[trace("FR-230-AC-71", "TC-3084")]
+    #[test]
+    fn a_clock_reference_holds_no_object_reference() {
+        let types = TypeEnvironment::new([], []).expect("an empty environment admits");
+        assert!(!holds_reference(
+            &ValueType::ClockReference,
+            &types,
+            &mut Vec::new()
+        ));
+        assert!(!binds_object(&ValueType::ClockReference));
+    }
+}
