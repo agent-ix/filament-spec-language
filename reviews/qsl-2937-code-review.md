@@ -85,3 +85,11 @@ FND-003: Delegate `cause()` to the wrapped refusal's cause where `code()` delega
   - `bytes: usize` is serialized as a JSON integer.
   - Gates were not run (host load; per brief).
 - Plan completion: not assessed
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | deferred | Deferred to QSL-2962, which exists in Backlog and cites QSL-2937 code-review FND-001: imported-call refusals never reach an `OutcomeDiagnostic` in production. That needs a spec-steward decision; the code meets the spec as written |
+| FND-002 | fixed | At head 86c05adc80, `with_selection` writes `selection` and the keyed hint only when `code == missing_import` and `cause == missing-selection` (fsl-replay/src/outcome.rs:2519-2531). `ReplayRefusal::cause` returns `missing-selection` for a `missing_import` `Package`/`PackageWithIdentity` (execute.rs:754-760). `a_missing_import_package_refusal_writes_the_package_reference_selection` covers reader causes None, `invalid-value` and `missing-selection` on both variants. `a_selection_is_written_only_on_the_missing_selection_pair` covers the guard. `the_package_reference_producer_text_holds_its_hint` covers `RunCause::AnalyzePackage` |
+| FND-003 | fixed | `Compile`, `ModelIntake`, `Import` and `Dependency` carry the `cause` and `selection` that `From<CompileRefusal>` reads once before its match (call_site.rs:710-760), and `cause()`/`selection()` return them. `wrapped_call_site_refusals_keep_their_cause_selection_and_hint` uses real Import, Dependency and Extension refusals. The ModelIntake case is built by hand. That is acceptable because the From arm passes the same two shared bindings as the tested arms, so no intake-specific mapping is left untested. The xtask pattern change to `..` is correct, and no other code in the workspace or in filament-driver matches these variants by shape |

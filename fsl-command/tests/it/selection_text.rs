@@ -79,7 +79,6 @@ const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n";
 #[trace(
     "TC-3199",
     "FR-865-AC-17",
-    "FR-865-AC-23",
     "FR-865-AC-24",
     "FR-286-AC-40"
 )]
@@ -96,7 +95,6 @@ fn the_model_producer_text_holds_its_hint() {
 #[trace(
     "TC-3199",
     "FR-865-AC-18",
-    "FR-865-AC-23",
     "FR-865-AC-24",
     "FR-286-AC-40"
 )]
@@ -113,7 +111,6 @@ fn the_library_producer_text_holds_its_hint() {
 #[trace(
     "TC-3199",
     "FR-865-AC-22",
-    "FR-865-AC-23",
     "FR-865-AC-24",
     "FR-286-AC-40"
 )]
@@ -134,7 +131,6 @@ fn the_sibling_unit_producer_text_holds_its_hint() {
 #[trace(
     "TC-3199",
     "FR-865-AC-19",
-    "FR-865-AC-23",
     "FR-865-AC-24",
     "FR-286-AC-40"
 )]
@@ -157,7 +153,6 @@ fn the_unimported_library_producer_text_holds_its_hint() {
 #[trace(
     "TC-3199",
     "FR-865-AC-20",
-    "FR-865-AC-23",
     "FR-865-AC-24",
     "FR-286-AC-40"
 )]
@@ -177,7 +172,6 @@ fn the_function_owner_producer_text_holds_its_hint() {
 #[trace(
     "TC-3199",
     "FR-865-AC-21",
-    "FR-865-AC-23",
     "FR-865-AC-24",
     "FR-286-AC-40"
 )]

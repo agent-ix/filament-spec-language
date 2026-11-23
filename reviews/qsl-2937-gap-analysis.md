@@ -74,3 +74,18 @@ FND-002: render `outcome.document()` in `compile_without_the_selected_model_carr
 - TC-2455, TC-2963, TC-2996 updates: examined; header strings updated to stage words; no old `at S<n>` header remains anywhere in the repo.
 - Semantic review: not run (not requested).
 - Plan completion: not assessed
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | low | Six new tests in selection_text.rs tag FR-865-AC-23, although AC-23 covers only the `source`, `extension-definition` and `package-reference` kinds. The six are the model, library, sibling-unit, unimported-library, function-owner and byte-provision tests | fsl-command/tests/it/selection_text.rs:78-195 |
+
+FND-003: keep FR-865-AC-23 on the three tests of its kinds and drop it from the other six. Each of the six already carries its own AC (17, 18, 22, 19, 20, 21).
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | fsl-command/src/lib.rs (TC-3113): two `selection: Some("model")` rows give `Err(DuplicatePair { code: MissingImport, cause: Some("missing-selection") })`, and `model` plus `library` give `Ok` |
+| FND-002 | still-open | AC-18 to AC-23 are now rendered through real or public-constructor producer documents in selection_text.rs, and the FR-865-AC-23 tag is gone from the tests that do no rendering. The compile half of FR-865-AC-17 is still JSON-only: `compile_without_the_selected_model_carries_the_model_selection` (cli_contract/compile.rs:434-447) does not render the compile document or assert its `  hint:` line. One render assertion closes it |

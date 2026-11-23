@@ -429,7 +429,7 @@ fn compile_text_says_what_was_produced_and_where() {
 
 /// FR-865-AC-17: the compile request with `models` `[]` over a unit selecting
 /// a model refuses `missing_import`/`missing-selection` with `selection`
-/// `model`, that row's hint, and the hint in its text.
+/// `model`, that row's hint, and the hint line in its text.
 #[test]
 #[trace("TC-3199", "FR-865-AC-17", "FR-865-AC-24", "FR-286-AC-40")]
 fn compile_without_the_selected_model_carries_the_model_selection() {
@@ -444,5 +444,26 @@ fn compile_without_the_selected_model_carries_the_model_selection() {
     assert_eq!(diagnostic["cause"], "missing-selection", "{diagnostic}");
     assert_eq!(diagnostic["selection"], "model", "{diagnostic}");
     assert_eq!(diagnostic["hint"], hint, "{diagnostic}");
+    let Err(error) = fsl_command::command::compile_outcome_with_overrides(&path, &RequestOverrides::default())
+    else {
+        panic!("the compile is refused");
+    };
+    let document = error.outcome_document(fsl_replay::Operation::Package);
+    let text = fsl_inspect::render_outcome(
+        &document,
+        fsl_inspect::RenderForm::Text,
+        &fsl_command::render_sources(&error.sources),
+        fsl_replay::RenderLimits::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("the document renders")
+    .value()
+    .as_str()
+    .to_owned();
+    assert!(
+        text.lines().any(|line| line == format!("  hint: {hint}")),
+        "{text}"
+    );
     drop(case);
+}
 }
