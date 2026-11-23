@@ -949,9 +949,11 @@ name = "fsl-cst"
 version = "0.1.0"
 dependencies = [
  "filament-exact",
+ "fsl-bench",
  "fsl-foundation",
  "ix-trace-rs",
  "logos",
+ "proptest",
  "serde_json",
 ]
 
@@ -1001,8 +1003,10 @@ version = "0.1.0"
 dependencies = [
  "filament-exact",
  "filament-semantic-value",
+ "fsl-bench",
  "hashbrown 0.17.1",
  "ix-trace-rs",
+ "proptest",
  "quire-canonical",
  "serde",
  "serde_json",

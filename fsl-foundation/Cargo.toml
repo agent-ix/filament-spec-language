@@ -33,3 +33,8 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 
 [lints.clippy]
 all = "deny"
+
+[dev-dependencies]
+# QSL-2059: the shared property policy and a UTF-8 aware generator.
+fsl-bench = { path = "../fsl-bench", features = ["property-generators"] }
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }

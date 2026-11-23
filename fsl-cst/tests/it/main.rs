@@ -37,6 +37,7 @@ mod relation_clause;
 mod reserved_declaration_names;
 mod selection;
 mod source_refusal;
+mod source_bytes;
 mod standard_forms;
 mod state_graph_claim;
 mod syntax_messages;

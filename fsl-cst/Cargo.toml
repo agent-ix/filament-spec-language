@@ -31,3 +31,8 @@ missing_docs = "warn"
 
 [lints.clippy]
 all = "deny"
+
+[dev-dependencies]
+# QSL-2058/2059: the shared property policy and generators.
+fsl-bench = { path = "../fsl-bench", features = ["property-generators"] }
+proptest = { version = "1.12.0", default-features = false, features = ["std"] }
