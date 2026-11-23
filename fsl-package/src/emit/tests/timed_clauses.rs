@@ -1877,7 +1877,6 @@ fn a_malformed_slot_domain_is_refused_at_its_locus() {
     );
     let boolean = base["semantic_graph"]["nodes"][quantifier]["body"]["result_type"].clone();
     let refused = |mutate: &dyn Fn(&mut Value), cause: &str, locus: &str| {
-        eprintln!("DBGCASE {cause} {locus}");
         let mut wire = base.clone();
         mutate(&mut wire);
         let bytes = crate::emit::tests::wire_bytes(&wire).expect("JSON");
@@ -1892,7 +1891,24 @@ fn a_malformed_slot_domain_is_refused_at_its_locus() {
             .expect("arguments")
             .clone()
     };
+    // The arguments and the `dependencies` that name them, in graph order:
+    // the one defect of each case is the one the reader refuses.
     let set_arguments = |wire: &mut Value, node: usize, values: Vec<Value>| {
+        let mut named: Vec<usize> = values
+            .iter()
+            .filter_map(|value| {
+                nodes(wire)
+                    .iter()
+                    .position(|candidate| candidate["node_id"] == value["target"])
+            })
+            .collect();
+        named.sort_unstable();
+        named.dedup();
+        let dependencies: Vec<Value> = named
+            .into_iter()
+            .map(|at| wire["semantic_graph"]["nodes"][at]["node_id"].clone())
+            .collect();
+        wire["semantic_graph"]["nodes"][node]["dependencies"] = Value::Array(dependencies);
         wire["semantic_graph"]["nodes"][node]["body"]["arguments"] = Value::Array(values);
     };
 
@@ -1919,8 +1935,9 @@ fn a_malformed_slot_domain_is_refused_at_its_locus() {
     // A first argument that is a scalar_type node, not a clock_place node.
     refused(
         &|wire| {
-            wire["semantic_graph"]["nodes"][domain]["body"]["arguments"][0]["target"] =
-                boolean.clone();
+            let mut values = arguments(wire, domain);
+            values[0]["target"] = boolean.clone();
+            set_arguments(wire, domain, values);
         },
         "operator-ineligible",
         &format!("/semantic_graph/nodes/{domain}/body/arguments/0"),
