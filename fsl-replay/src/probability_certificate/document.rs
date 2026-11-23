@@ -233,6 +233,13 @@ pub struct ProbabilityDocumentLimits {
     pub accounting: filament_exact::ScalarLimits,
 }
 
+/// The scalar bits a document may carry per bit of interval precision. A
+/// value-bounds interval's ends lie on a `2^-precision_bits` grid and the
+/// checker multiplies them into the product's probabilities, so the exact
+/// pass's `max_rational_bits` alone cannot bound documents written at the
+/// caller's `max_precision_bits`.
+const INTERVAL_BITS_PER_PRECISION_BIT: u64 = 16;
+
 impl ProbabilityDocumentLimits {
     /// Project the existing exact-probability ceilings into the document checker
     /// while retaining the caller's actual scalar accounting scope.
@@ -242,7 +249,10 @@ impl ProbabilityDocumentLimits {
             storage_bytes: limits.document.storage_bytes,
             states: limits.model.limits.max_states,
             edges: limits.model.limits.max_transitions,
-            scalar_bits: limits.max_rational_bits,
+            scalar_bits: limits.max_rational_bits.max(
+                INTERVAL_BITS_PER_PRECISION_BIT
+                    .saturating_mul(u64::from(limits.max_precision_bits)),
+            ),
             accounting,
         }
     }
@@ -2346,6 +2356,11 @@ pub(super) fn certificate_identity(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<ObligationIdentity, ProbabilityDocumentError> {
+    // A proof-role bound document names its claim by its base document's identity.
+    let unwrapped = value_bounds::unwrap(bytes, limits, cancel)?;
+    let bytes = unwrapped
+        .as_ref()
+        .map_or(bytes, |(_, exact)| exact.as_slice());
     if profile_dispatch(bytes, limits, cancel)? == ProfileDispatch::Measure {
         return measure::identity(bytes, limits, cancel);
     }

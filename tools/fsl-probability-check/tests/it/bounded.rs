@@ -157,6 +157,20 @@ fn request_with_mode(
     domain: &[u8],
     kernel: bool,
 ) -> (Option<Value>, Settlement) {
+    let (mut requests, settlement) = requests_with_mode(source, snapshot, exact, domain, kernel);
+    let first = (!requests.is_empty()).then(|| requests.remove(0));
+    (first, settlement)
+}
+
+/// One checker request for the settled record's certificate document and, for a
+/// value-bounds proof, a second for its counterpart document.
+fn requests_with_mode(
+    source: &str,
+    snapshot: &[u8],
+    exact: ExactProbLimits,
+    domain: &[u8],
+    kernel: bool,
+) -> (Vec<Value>, Settlement) {
     let identity = SourceIdentity::new("test", "bounded-certificate-source");
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
@@ -244,7 +258,7 @@ fn request_with_mode(
     );
     let record = records.remove(0);
     let Some(terminal) = record.terminal() else {
-        return (None, record.settlement);
+        return (Vec::new(), record.settlement);
     };
     if terminal.value() == &fsl_replay::TerminalValue::Refuted {
         let token = record
@@ -271,11 +285,18 @@ fn request_with_mode(
         };
         assert_eq!(replayed.mass(), token.mass());
     }
-    let Some(bytes) = terminal.exact_certificate_document() else {
-        return (None, record.settlement);
-    };
+    let documents: Vec<&[u8]> = [
+        terminal.exact_certificate_document(),
+        terminal.exact_counterpart_document(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
+    if documents.is_empty() {
+        return (Vec::new(), record.settlement);
+    }
     let item = fsl_replay::probabilistic_claim_identity(claim).unwrap();
-    let request = json!({
+    let wire = |bytes: &[u8]| json!({
         "source": {"authority":identity.authority, "identity":identity.identity, "content":source},
         "package_name":"bounded-fixture",
         "item":{"node_id":fsl_foundation::node_wire::node_key_to_json(item.node()).unwrap(), "model":item.model().map(|model|model.as_str()), "ordinal":item.ordinal()},
@@ -286,7 +307,8 @@ fn request_with_mode(
         "certificate":String::from_utf8(bytes.to_vec()).unwrap(),
         "limits":{"bytes":1_000_000,"storage_bytes":8_000_000,"states":100,"edges":1000,"scalar_bits":128,"expansion":100_000,"stages":{}},
     });
-    (Some(request), record.settlement)
+    let requests = documents.into_iter().map(wire).collect();
+    (requests, record.settlement)
 }
 
 pub(super) fn proof(source: &str, snapshot: &[u8]) -> Value {
@@ -1129,21 +1151,25 @@ fn bounded_wrong_source_and_nonexact_rows_never_produce_an_accepted_document() {
             ..ExactProbLimits::default()
         };
         let (document, terminal) = request(&cyclic_source(2, threshold), SNAPSHOT, limits);
+        if !incomplete {
+            // A decided interval proves with FR-1042's value-bounds documents, which
+            // are never an `exact` one.
+            let evidence = document.expect("a decided interval carries its documents");
+            assert_eq!(self::document(&evidence)["kind"], "lower");
+            assert!(
+                matches!(&terminal, Settlement::Terminal(record) if matches!(record.value(), fsl_replay::TerminalValue::Proved { basis: fsl_replay::ProofBasis::ValueBounds { .. }, .. })),
+                "{terminal:?}"
+            );
+            continue;
+        }
         assert!(
             document.is_none(),
-            "interval rows must never become exact evidence"
+            "a precision-budget row never becomes evidence"
         );
-        if incomplete {
-            assert!(
-                matches!(&terminal, Settlement::Terminal(record) if matches!(record.value(), fsl_replay::TerminalValue::Incomplete(fsl_replay::IncompleteCause::PrecisionBudget { .. }))),
-                "{terminal:?}"
-            );
-        } else {
-            assert!(
-                matches!(&terminal, Settlement::Terminal(record) if record.value() == &fsl_replay::TerminalValue::Incomplete(fsl_replay::IncompleteCause::LimitReached { limit: fsl_replay::ModelCheckLimit::ExactProbMaxRationalBits, value: 1, required: None })),
-                "{terminal:?}"
-            );
-        }
+        assert!(
+            matches!(&terminal, Settlement::Terminal(record) if matches!(record.value(), fsl_replay::TerminalValue::Incomplete(fsl_replay::IncompleteCause::PrecisionBudget { .. }))),
+            "{terminal:?}"
+        );
     }
 }
 
@@ -1415,5 +1441,42 @@ fn an_unwindowed_atom_claim_is_checked_exactly_as_eventually_at_horizon_zero() {
             documents[0], documents[1],
             "the two spellings certify identically"
         );
+    }
+}
+
+/// FR-1042-AC-6 and FR-203-AC-1: past `max_rational_bits` the claim-side `lower`
+/// document and its `upper` counterpart are each accepted by the separate
+/// checker process, under the scalar bound the request's own limits give them
+/// and no wider.
+#[trace("TC-636", "FR-1042-AC-6")]
+#[trace("TC-636", "FR-203-AC-1")]
+#[test]
+fn value_bounds_documents_are_accepted_by_the_separate_checker_under_the_request_limits() {
+    let exact = ExactProbLimits {
+        max_rational_bits: 4,
+        ..ExactProbLimits::default()
+    };
+    let scalar_bits = fsl_replay::ProbabilityDocumentLimits::for_exact(
+        &exact,
+        fsl_replay::AccountingLimits::default().0,
+    )
+    .scalar_bits;
+    let (mut requests, settlement) = requests_with_mode(
+        &always_source("Even", ">=", "0.75", 2),
+        SNAPSHOT,
+        exact,
+        DOMAIN,
+        false,
+    );
+    assert_eq!(requests.len(), 2, "{settlement:?}");
+    let kinds: Vec<String> = requests
+        .iter()
+        .map(|request| document(request)["kind"].as_str().unwrap().to_owned())
+        .collect();
+    assert_eq!(kinds, ["lower", "upper"]);
+    for request in &mut requests {
+        request["limits"]["scalar_bits"] = json!(scalar_bits);
+        let (code, result) = run(request);
+        assert_eq!(code, 0, "{result}");
     }
 }

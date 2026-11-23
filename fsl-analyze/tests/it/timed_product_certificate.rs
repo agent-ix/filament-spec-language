@@ -1590,12 +1590,44 @@ fn a_timed_deadline_past_the_rational_budget_proves_with_value_bounds() {
     };
     assert_eq!(kind(terminal.exact_certificate_document()), "lower");
     assert_eq!(kind(terminal.exact_counterpart_document()), "upper");
+    // The documents replay under the request's own limits (4 rational bits),
+    // with no scalar bound widened by hand.
+    let request_limits = ExactProbLimits {
+        max_rational_bits: 4,
+        ..ExactProbLimits::default()
+    };
+    let identity = fsl_replay::probabilistic_claim_identity(
+        world
+            .package
+            .graph()
+            .probabilistic_model()
+            .claim("Lax")
+            .expect("the claim checks"),
+    )
+    .expect("an identity");
+    let system = world.system();
+    for bytes in [
+        terminal.exact_certificate_document(),
+        terminal.exact_counterpart_document(),
+    ] {
+        let checked = check_probability_certificate_document(
+            &system,
+            world.package.graph().probabilistic_model().claims(),
+            &identity,
+            bytes.expect("the record carries the document"),
+            fsl_replay::ProbabilityDocumentLimits::for_exact(&request_limits, limits().accounting),
+            &Cancel::new(),
+        );
+        assert!(
+            matches!(checked, Ok(ExactProbabilityCertificateCheck::Accepted(_))),
+            "{checked:?}"
+        );
+    }
 }
 
-/// FR-281 "Engine refusals" and FR-203: a timed bounded claim whose interval
-/// refutes it is settled `refuted` only by a replayed witness, and the
-/// witness's exact masses outgrow `max_rational_bits`, so it is `incomplete`
-/// naming that limit, not `unsupported`/`not-yet-implemented`.
+/// FR-281 "Engine refusals" and FR-202: `Bounds` intervals "SHALL NOT become a
+/// bounded refutation", so a timed claim whose interval refutes it settles
+/// `incomplete` naming `max_rational_bits`, not `unsupported`/`not-yet-implemented`.
 #[trace("TC-2489", "FR-281-AC-6")]
 #[test]
 fn a_timed_deadline_past_the_rational_budget_settles_incomplete_naming_the_limit() {

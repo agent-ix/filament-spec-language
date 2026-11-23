@@ -1499,6 +1499,7 @@ fn a_value_bounds_document_is_accepted_only_for_the_side_it_certifies() {
     let world = World::new(&prob_world::no_fault(claim));
     let mut request = world.request("NoFault", ModelCheckLimits::default());
     request.limits.max_rational_bits = 1024;
+    let request_limits = request.limits.clone();
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let item = exact_probabilistic_item(RequestIndex::new(0), request);
     let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
@@ -1513,14 +1514,9 @@ fn a_value_bounds_document_is_accepted_only_for_the_side_it_certifies() {
         .to_vec();
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     let identity = fsl_replay::probabilistic_claim_identity(world.claim("NoFault")).unwrap();
-    let limits = fsl_replay::ProbabilityDocumentLimits {
-        bytes: 1 << 24,
-        storage_bytes: 1 << 26,
-        states: 4096,
-        edges: 8192,
-        scalar_bits: 1 << 14,
-        accounting: prob_world::UNLIMITED,
-    };
+    // Replay under the request's own limits, with no scalar bound widened by hand.
+    let limits =
+        fsl_replay::ProbabilityDocumentLimits::for_exact(&request_limits, prob_world::UNLIMITED);
     let check = |bytes: &[u8]| {
         fsl_replay::check_probability_certificate_document(
             &system,
@@ -1552,6 +1548,163 @@ fn a_value_bounds_document_is_accepted_only_for_the_side_it_certifies() {
             "a side's document does not certify the other side"
         );
     }
+}
+
+const INTERVAL_CLAIM: &str = "probabilistic NoFault using ev on M over (n: M::Node) under Steady \
+     on origin { probability >= 0.999 [ always[0,1000] holds(n.healthy) ] }";
+
+/// Settle `INTERVAL_CLAIM` past a 1,024-bit exact budget, with `tamper` applied
+/// to each self-checked interval document in the order `lower`, `upper`, then
+/// the same pair again for each precision raise.
+fn settle_interval_claim<'a>(
+    tamper: impl Fn(&mut fsl_replay::ExactProbabilityCertificate) + 'a,
+) -> fsl_analyze::analyze::AnalyzeRecord {
+    let world = World::new(&prob_world::no_fault(INTERVAL_CLAIM));
+    let mut request = world.request("NoFault", ModelCheckLimits::default());
+    request.limits.max_rational_bits = 1024;
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let item = exact_probabilistic_item_tampered(RequestIndex::new(0), request, tamper);
+    analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
+}
+
+/// The first value strictly between the terminals, which no equation pins to
+/// 0 or 1.
+fn interior_value(
+    certificate: &mut fsl_replay::ExactProbabilityCertificate,
+) -> &mut fsl_replay::ExactProbabilityValue {
+    certificate
+        .values
+        .iter_mut()
+        .find(|entry| ratio(0, 1) < entry.value && entry.value < ratio(1, 1))
+        .expect("an undecided state")
+}
+
+/// FR-1042-AC-5 and FR-203-AC-9: a `lower` end raised above what its one-step
+/// equation allows is rejected `InequalityFails` at that state, and an `upper`
+/// end lowered below it is the counterpart's rejection, settling `inconclusive`
+/// with the counterpart's rule and locus although the claim side is accepted.
+/// The corruption repeats at every precision, so the rejection is final.
+#[trace("TC-3151", "FR-1042-AC-5")]
+#[trace("TC-3151", "FR-203-AC-9")]
+#[test]
+fn a_raised_lower_end_or_a_lowered_upper_end_is_rejected_by_its_inequality() {
+    for corrupted_side in [0_usize, 1] {
+        let calls = std::cell::Cell::new(0_usize);
+        let touched = std::cell::RefCell::new(None);
+        let record = settle_interval_claim(|certificate| {
+            let call = calls.get();
+            calls.set(call + 1);
+            if call % 2 != corrupted_side {
+                return;
+            }
+            let entry = interior_value(certificate);
+            entry.value = if corrupted_side == 0 {
+                entry.value.add(&ratio(1, 1)).divided_by_power_of_two(1)
+            } else {
+                entry.value.divided_by_power_of_two(1)
+            };
+            *touched.borrow_mut() = Some(entry.state.clone());
+        });
+        let key = touched.borrow().clone().expect("a tampered state");
+        assert_eq!(
+            record.terminal().expect("a terminal record").value(),
+            &TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+                rule: CertificateRule::InequalityFails,
+                at: CertificateLocus::ProbabilityProductState(key),
+            }),
+            "side {corrupted_side}: {record:#?}"
+        );
+        assert!(calls.get() > 2, "the precision was raised before settling");
+    }
+}
+
+/// FR-1042's Conditions: a rejected self-checked document raises the precision
+/// (doubling, up to `max_precision_bits`) before it settles. The first pair of
+/// documents here is corrupted and the second, at 128 bits, proves.
+#[trace("TC-3151", "FR-1042-AC-6")]
+#[test]
+fn a_rejected_interval_document_raises_the_precision_and_then_proves() {
+    let calls = std::cell::Cell::new(0_usize);
+    let record = settle_interval_claim(|certificate| {
+        let call = calls.get();
+        calls.set(call + 1);
+        if call == 0 {
+            let entry = interior_value(certificate);
+            entry.value = entry.value.add(&ratio(1, 1)).divided_by_power_of_two(1);
+        }
+    });
+    let TerminalValue::Proved {
+        basis: ProofBasis::ValueBounds { method, .. },
+        certification: Certification::Certified,
+    } = record.terminal().expect("a terminal record").value()
+    else {
+        panic!("the raised precision proves: {record:#?}");
+    };
+    assert_eq!(
+        method,
+        &fsl_replay::BoundsMethod::BackwardInduction {
+            precision_bits: 128
+        }
+    );
+    assert_eq!(calls.get(), 4, "one corrupted pair, one accepted pair");
+}
+
+/// FR-1042-AC-6: the `lower` document ranks every undecided key by its remaining
+/// horizon (1 through 1,000 here), and its `upper` counterpart carries no
+/// ranking; a rank changed by one is rejected `RankBroken` at that key.
+#[trace("TC-3151", "FR-1042-AC-6")]
+#[test]
+fn the_lower_document_ranks_by_remaining_horizon_and_a_changed_rank_is_broken() {
+    let world = World::new(&prob_world::no_fault(INTERVAL_CLAIM));
+    let mut request = world.request("NoFault", ModelCheckLimits::default());
+    request.limits.max_rational_bits = 1024;
+    let request_limits = request.limits.clone();
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let item = exact_probabilistic_item(RequestIndex::new(0), request);
+    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let terminal = record.terminal().expect("a terminal record");
+    let mut lower: serde_json::Value =
+        serde_json::from_slice(terminal.exact_certificate_document().expect("lower")).unwrap();
+    let upper: serde_json::Value =
+        serde_json::from_slice(terminal.exact_counterpart_document().expect("upper")).unwrap();
+    assert!(upper.get("ranking").is_none(), "{upper}");
+    let mut ranks: Vec<u64> = lower["ranking"]
+        .as_array()
+        .expect("the lower document's ranking")
+        .iter()
+        .map(|row| row["rank"].as_u64().expect("a rank"))
+        .collect();
+    ranks.sort_unstable();
+    // The two decided keys rank 0; every undecided key ranks its remaining horizon.
+    assert_eq!(ranks[..2], [0, 0]);
+    assert_eq!(ranks[2..], (1..=1000).collect::<Vec<u64>>());
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let identity = fsl_replay::probabilistic_claim_identity(world.claim("NoFault")).unwrap();
+    let limits =
+        fsl_replay::ProbabilityDocumentLimits::for_exact(&request_limits, prob_world::UNLIMITED);
+    let first = lower["ranking"]
+        .as_array_mut()
+        .and_then(|rows| rows.iter_mut().find(|row| row["rank"].as_u64() > Some(0)))
+        .expect("an undecided key");
+    first["rank"] = serde_json::json!(first["rank"].as_u64().unwrap() + 1);
+    let checked = fsl_replay::check_probability_certificate_document(
+        &system,
+        world.package.graph().probabilistic_model().claims(),
+        &identity,
+        &serde_json::to_vec(&lower).unwrap(),
+        limits,
+        &Cancel::new(),
+    )
+    .expect("a well-formed document");
+    let ExactProbabilityCertificateCheck::Rejected(rejection) = checked else {
+        panic!("a changed rank is rejected");
+    };
+    assert_eq!(rejection.rule, ProbabilityCertificateRule::RankBroken);
+    assert!(
+        matches!(rejection.at, ProbabilityCertificateLocus::ProductState(_)),
+        "{:?}",
+        rejection.at
+    );
 }
 
 /// FR-281 "Engine refusals": a document-storage budget or a cancel that stops a
@@ -1615,9 +1768,6 @@ fn a_refutation_settles_refuted_or_incomplete_at_every_storage_budget_and_cancel
             }
         });
         slot.set(cancel.clone()).expect("initialized once");
-        settled_or_stopped(
-            &run(None, &cancel),
-            &format!("cancel at poll {at} of {total}"),
-        );
+        settled_or_stopped(&run(None, &cancel), &format!("cancel at poll {at} of {total}"));
     }
 }

@@ -52,24 +52,39 @@ pub(super) fn unwrap(
             size,
         ));
     }
-    #[derive(serde::Deserialize)]
-    struct Dispatch<'a> {
-        #[serde(borrow)]
-        kind: &'a str,
-    }
-    // An exact document is read by its own profile; only a bound is parsed here.
-    let Some(side) = serde_json::from_slice::<Dispatch<'_>>(bytes)
-        .ok()
-        .and_then(|dispatch| side_of(dispatch.kind))
+    // One metered read admits the bytes (size, storage and cancel); the
+    // `Value` below is built only from bytes that read admitted, and only for
+    // a bound document.
+    let parsed = quire_canonical::read_bounded(bytes, limits.bytes, limits.storage_bytes).map_err(
+        |error| match error {
+            quire_canonical::ReadError::Limit(limit) => exceeded(
+                ProbabilityDocumentLimit::StorageBytes,
+                limit.bound,
+                limit.required,
+            ),
+            _ => ProbabilityDocumentError::Malformed,
+        },
+    )?;
+    // An exact document is read by its own profile; only a bound is rewritten.
+    let Some(side) = parsed
+        .root()
+        .get("kind")
+        .and_then(|node| match node.node() {
+            quire_canonical::Node::String(kind) => side_of(kind),
+            _ => None,
+        })
     else {
         return Ok(None);
     };
-    let mut document: Value =
-        serde_json::from_slice(bytes).map_err(|_| ProbabilityDocumentError::Malformed)?;
+    poll(cancel)?;
     // The bytes offered must be the one canonical spelling of what was read.
-    if canonical(&document, limits.bytes)? != bytes {
+    let respelled = quire_canonical::to_vec(&parsed, quire_canonical::Limits::new(limits.bytes))
+        .map_err(|_| ProbabilityDocumentError::Malformed)?;
+    if respelled != bytes {
         return Err(ProbabilityDocumentError::Noncanonical);
     }
+    let mut document: Value =
+        serde_json::from_slice(bytes).map_err(|_| ProbabilityDocumentError::Malformed)?;
     let profile = document
         .pointer("/objective/profile")
         .and_then(Value::as_str)
