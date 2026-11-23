@@ -35,12 +35,42 @@ fn recording_payload(bytes: &[u8]) -> Result<Vec<u8>, String> {
     serde_json::to_vec(&document).map_err(|error| format!("recording document: {error}"))
 }
 
-/// Build the recording-mode `global-conformance` result from the checked
-/// protocol and its provisioned FR-737 bytes.
+/// The refusal of a recording whose assessment the engine could not carry
+/// out: a bound it keeps (`stage_limit_exceeded`, the bound named in `fact`)
+/// or an evaluator fault (`runtime_invariant`), never a defect of the
+/// recording. `detail` names the join.
+fn engine_refusal(refusal: &super::recording::RecordingRefusal) -> crate::analyze::Refusal {
+    if refusal.is_fault() {
+        return crate::analyze::Refusal::FailedWithDetail(
+            refusal.code(),
+            [
+                ("fact".to_owned(), serde_json::json!(refusal.cause())),
+                ("detail".to_owned(), serde_json::json!(refusal.to_string())),
+            ]
+            .into_iter()
+            .collect(),
+        );
+    }
+    crate::analyze::Refusal::DeclinedWithDetail(
+        fsl_replay::ProofRefusalCause::Refused,
+        fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::StageLimitExceeded),
+        refusal.code(),
+        [
+            ("fact".to_owned(), serde_json::json!(refusal.cause())),
+            ("detail".to_owned(), serde_json::json!(refusal.to_string())),
+        ]
+        .into_iter()
+        .collect(),
+    )
+}
+
 /// The refusal of a whole incremental item when one of its prefixes is
 /// refused (FR-895 "Incremental assessment"): `invalid_runtime_input`, the
 /// recording refusal's own cause, and its detail and `prefix` index.
 fn prefix_refusal(refused: super::recording::PrefixRefusal) -> crate::analyze::Refusal {
+    if refused.refusal.is_limit() || refused.refusal.is_fault() {
+        return engine_refusal(&refused.refusal);
+    }
     crate::analyze::Refusal::DeclinedWithDetail(
         fsl_replay::ProofRefusalCause::InvalidInput,
         fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
@@ -57,6 +87,8 @@ fn prefix_refusal(refused: super::recording::PrefixRefusal) -> crate::analyze::R
     )
 }
 
+/// Build the recording-mode `global-conformance` result from the checked
+/// protocol and its provisioned FR-737 bytes.
 #[allow(
     clippy::too_many_arguments,
     reason = "the recording assessment binds the subject, package, recording, cancellation, and replay limits"
@@ -127,6 +159,9 @@ fn recording_result(
     ) {
         Ok(assessment) => assessment,
         Err(refusal) => {
+            if refusal.is_limit() || refusal.is_fault() {
+                return crate::analyze::EngineReport::Refused(engine_refusal(&refusal));
+            }
             let detail = [("detail".to_owned(), serde_json::json!(refusal.to_string()))]
                 .into_iter()
                 .chain(

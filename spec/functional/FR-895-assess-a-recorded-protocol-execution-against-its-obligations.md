@@ -139,10 +139,10 @@ and FR-894's duplicate kinds. Every causal-order verdict, `satisfied` or
    branch.
 5. An earlier `parallel` under any other join SHALL supply the steps of the
    branches whose steps were all observed causally before the step, when
-   those branches number at least what the join policy requires (one for
-   `any` and `predicate`, `n` for `quorum(n)`); a branch that finishes after
-   the join, as `outstanding continue` allows (ADR-027 ST-7), is not a
-   predecessor. Until they do, the steps of every branch are predecessors.
+   the join is reached by those branches (rules 19 to 23); a branch that finishes
+   after the join, as `outstanding continue` allows (ADR-027 ST-7), is not a
+   predecessor. Until the join is reached, the steps of every branch are
+   predecessors.
 6. The assessment SHALL treat the steps of one `parallel` branch as unordered
    against those of a sibling branch.
 7. Within a `repeat`, a step of one iteration SHALL have as predecessors the
@@ -173,6 +173,52 @@ and FR-894's duplicate kinds. Every causal-order verdict, `satisfied` or
     order no later observation can order the two.
 18. A predecessor the step itself causally precedes SHALL make the verdict
     `violated`, cause `unexpected`, at once.
+19. Under `join all`, the assessment SHALL take the join as reached when every
+    branch has finished causally before the step.
+20. Under `join any`, the assessment SHALL take the join as reached when one
+    branch has finished causally before the step.
+21. Under `join quorum(n)`, the assessment SHALL take the join as reached when
+    `n` branches have finished causally before the step.
+22. Under `join predicate(f)`, the assessment SHALL take the join as reached
+    when `f`, applied to the completion of the joined branches finished
+    causally before the step, in their sorted label order, is true (FR-218
+    "Predicate joins").
+23. The assessment SHALL NOT count a branch the step runs in as finished.
+24. The assessment SHALL refuse a protocol whose predicate join names more
+    than 10 labels, as `stage_limit_exceeded`/`work-budget-exceeded` with the
+    fact `predicate-join-label-bound`, naming the join and the bound, before
+    it evaluates any predicate.
+25. The package route SHALL refuse the selection of a protocol that holds a
+    `parallel`, and so a predicate join, as `unsupported`,
+    `unsupported_construct`/`not-yet-implemented`, never leaving its steps
+    `pending`.
+26. A step of a branch of a `parallel` under `outstanding cancel` SHALL make
+    the verdict `violated`, cause `unexpected`, when an observation of a step
+    after the `parallel`, which needs its join, or of `finish`, in the same
+    protocol instance, causally precedes it: the join step cancels the
+    running branches and a cancelled thread takes no further step (ADR-027
+    ST-7).
+27. A step after the `parallel` that lies in the body of a `repeat` the
+    `parallel` runs in SHALL count toward rule 26 only when it runs in the
+    same iteration of that `repeat` as the cancelled step, for each such
+    `repeat`.
+28. The assessment SHALL take the iteration of a step of a `repeat`, with no
+    other `repeat` between them, as the step's rank among the observations
+    of its node in causal order, taken through each `case` to that case's
+    rank among the `choice`'s takings.
+29. The assessment SHALL take the iteration of a step of a `repeat`, with
+    another `repeat` between them, as the most times any step before that
+    other `repeat` in the body, in program order, was observed causally
+    before the step.
+30. The assessment SHALL NOT count a step toward rule 26 when either
+    iteration is not determined, which is when no step precedes the inner
+    `repeat` in the body: a missed violation, never a false one.
+31. A step of a branch of a `parallel` SHALL NOT be made `violated` for the
+    cancel when no such observation precedes it, though the join's policy
+    holds, because the join step may fire at any later point (ADR-027 CI-3).
+32. A step of a branch of a `parallel` under `outstanding continue` SHALL NOT
+    be made `violated` for the cancel.
+
 
 **Incremental assessment.** An assessment session takes the recording's
 observations one at a time and, after each, gives the assessment of the
@@ -237,6 +283,17 @@ looking like success, which FSpec FR-059-AC-3 requires.
 | FR-895-AC-26 | The closed AC-20 protocol recording listed in the array order `Placed`, `Got`, `yes`, `After`, `Placed`, `Got`, `yes`, whose `After` is causally last (its role's local order puts it after the second iteration), assessed incrementally has no `After` enabledness obligation in the first six prefixes, which are in causal order, and `satisfied` in the seventh; no obligation of any kind changes from `violated`, and none from `satisfied` to `pending`, between consecutive prefixes; a channel premise stays `pending` in every prefix whose closure is `open` unless a violation has shown. | Test (TC-2531) |
 | FR-895-AC-27 | The AC-26 recording with a third `Placed` by `Buyer` after the second, unordered with `After`, closure `open`, assessed incrementally has no `After` enabledness obligation in the first six prefixes and `satisfied` in the seventh and the eighth: the iteration begun concurrently with `After` does not reopen it, and no obligation changes from `violated` or from `satisfied` to `pending` between consecutive prefixes. | Test (TC-2531) |
 | FR-895-AC-28 | Over the AC-25 `join any … outstanding continue` protocol, the recording `L`, `Placed`, `R` gives `Placed`'s enabledness obligation `satisfied` in batch and in every incremental prefix from the second, with no obligation changing from `violated` or from `satisfied` to `pending`; `R`, `L`, `Placed` gives `satisfied` from the third prefix; under `join all` the recording `L`, `Placed`, `R` gives `Placed` `violated`, cause `unexpected`. | Test (TC-2531) |
+| FR-895-AC-29 | Over the AC-25 protocol with `outstanding cancel`, the recording `L`, `Placed`, `R` gives `R`'s enabledness obligation `violated`, cause `unexpected`, in batch and in the third incremental prefix (absent in the first two), and `L` and `Placed` `satisfied`; with `outstanding continue` the same recording gives `R` `satisfied`. | Test (TC-2531) |
+| FR-895-AC-30 | Over a `parallel` of `L` and `R` followed by `Placed` under `join predicate(both) [left, right] outstanding continue`, with `both` the function `left and right`, the recording `L`, `R`, `Placed` gives `Placed` `satisfied` (prefixes: absent, absent, `satisfied`); `L`, `Placed`, `R` gives `Placed` `violated`, cause `unexpected` (prefixes: absent, `pending`, `violated`). | Test (TC-2531) |
+| FR-895-AC-31 | With the predicate of AC-30 replaced by `left_only`, the function `left`, and `outstanding cancel`, the recording `L`, `Placed`, `R` gives `Placed` `satisfied` and `R` `violated`, cause `unexpected` (prefixes of `R`: absent, absent, `violated`); with `outstanding continue` it gives `R` `satisfied`; the recording `R`, `Placed` gives `Placed` `pending` while open and `violated`, cause `unexpected`, once closed. | Test (TC-2531) |
+| FR-895-AC-32 | Under `join any [left, right] outstanding cancel` and under `join predicate(left_only) outstanding cancel`, the recording `L`, `R` (the policy holds, no step after the `parallel` observed) gives `R` `satisfied`; `L`, `R`, `Placed` gives `R` and `Placed` `satisfied`; `L`, `Placed`, `R` gives `R` `violated`, cause `unexpected`; an `R` by another role than `Placed`'s, unordered with `Placed`, is `satisfied`. | Test (TC-2531) |
+| FR-895-AC-33 | With an inner `parallel` `join any [left, right] outstanding cancel` followed by `M` in branch `a` of an outer `parallel`, and `N` in branch `b`, the recording `L`, `M`, `R` gives `R` `violated`, cause `unexpected`; `L`, `R`, `M` gives it `satisfied`; `L`, `N`, `R` gives it `satisfied`. | Test (TC-2531) |
+| FR-895-AC-34 | A predicate join over 10 labels is assessed; over 11 labels and over 64 labels, in a library assessment, in a batch item and in an incremental item, the assessment is refused `stage_limit_exceeded`/`work-budget-exceeded` (a batch or incremental item settles `declined`), with the fact `predicate-join-label-bound` and the text naming the join `Flow::Main::Many`, the label count and "at most 10". | Test (TC-2531) |
+| FR-895-AC-35 | Under `join predicate(contradiction)` with the function `left and not left`, the recording `L`, `Placed` gives `Placed` `pending` in every open prefix and `violated`, cause `unexpected`, once closed. | Test (TC-2531) |
+| FR-895-AC-36 | A protocol with a predicate join analysed from a package read from its bytes settles `unsupported`, `unsupported_construct`/`not-yet-implemented`, while the source route assesses the recording. | Test (TC-2531) |
+| FR-895-AC-37 | Over a `repeat` whose body begins with a `parallel` `join any [left, right] outstanding cancel` of `L` and `R`, followed by `Placed`, `Got` and the `Decide` choice, the closed-order recording `L`, `R`, `Placed`, `Got`, `yes`, `L`, `R`, `Placed`, `Got`, `yes` gives every `L` and `R` enabledness obligation `satisfied` in batch and in every incremental prefix, with no obligation changing from `violated` or from `satisfied` to `pending` and the last prefix equal to batch; the same recording with the second `R` after the second `Placed` gives that `R` `violated`, cause `unexpected`, and the other `L` and `R` `satisfied`. | Test (TC-2531) |
+| FR-895-AC-38 | Over a `parallel` `join any [left, right] outstanding cancel` whose branch `left` holds a `repeat` of `L`, followed by `Placed`, the recording `L`, `L`, `Placed` gives both `L` `satisfied` and `L`, `Placed`, `L` gives the second `L` `violated`, cause `unexpected`. | Test (TC-2531) |
+| FR-895-AC-39 | Over an outer `repeat` whose body holds a step `P`, an inner `repeat` of a `parallel` `join any [left, right] outstanding cancel` of `L` and `R`, then `Placed`, `Got` and the `Decide` choice, the recording `P`, `L`, `R`, `L`, `R`, `Placed`, `Got`, `yes`, twice, gives every `L` and `R` enabledness obligation `satisfied` in batch and in every incremental prefix (no obligation leaving `violated` or going from `satisfied` to `pending`, the last prefix equal to batch); with the second outer iteration `P`, `L`, `R`, `L`, `Placed`, `R` the last `R` is `violated`, cause `unexpected`, and the other seven `L` and `R` `satisfied`; with no `P` before the inner `repeat` the same two-iteration recording leaves every `L` and `R` `satisfied`, the outer iteration of an inner step being not determined. | Test (TC-2531) |
 
 ## Dependencies
 
