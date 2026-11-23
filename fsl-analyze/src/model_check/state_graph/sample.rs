@@ -548,7 +548,7 @@ mod tests {
         type State = usize;
         type TransitionId = usize;
         type Key = usize;
-        type Finding = ();
+        type Finding = &'static str;
 
         fn initial(&self) -> Vec<Self::State> {
             vec![0]
@@ -570,9 +570,20 @@ mod tests {
                 });
             }
             Ok(Expansion {
-                successors: vec![(1, 1)],
-                findings: Vec::new(),
+                successors: vec![(17, 1)],
+                findings: vec!["expanded-zero"],
             })
+        }
+
+        fn state_findings(
+            &self,
+            state: &Self::State,
+        ) -> Option<Result<Vec<Self::Finding>, ExpansionStop>> {
+            Some(Ok(if *state == 1 {
+                vec!["stopped-one"]
+            } else {
+                vec!["state-zero"]
+            }))
         }
     }
 
@@ -664,6 +675,7 @@ mod tests {
         let domains: &[(NodeKey, &ValueType)] = &[];
         let types = TypeEnvironment::default();
         let mut saw_stop = false;
+        let mut observations = 0;
         let observed = sample_request_observed(
             &StopsAtOne,
             SampleRequest {
@@ -676,16 +688,25 @@ mod tests {
                 max_steps: 4,
                 identity: fsl_foundation::IdentityLimits::default(),
             },
-            |observation| match &observation.expansion {
-                SampleExpansion::Stopped(stop) => {
-                    saw_stop = true;
-                    assert_eq!(
-                        stop.cause,
-                        CatalogCode::new("resource_exhausted", "insufficient-next-charge")
-                    );
-                    ObserverDecision::Stop
+            |observation| {
+                observations += 1;
+                match &observation.expansion {
+                    SampleExpansion::Stopped(stop) => {
+                        saw_stop = true;
+                        assert_eq!(observation.step, 1);
+                        assert_eq!(*observation.state, 1);
+                        let incoming = observation.incoming.expect("one edge reaches state one");
+                        assert_eq!(incoming.transition, 17);
+                        assert_eq!(incoming.ordinal, 0);
+                        assert_eq!(incoming.key.as_bytes(), b"1");
+                        assert_eq!(
+                            stop.cause,
+                            CatalogCode::new("resource_exhausted", "insufficient-next-charge")
+                        );
+                        ObserverDecision::Stop
+                    }
+                    SampleExpansion::Complete { .. } => ObserverDecision::Continue,
                 }
-                SampleExpansion::Complete { .. } => ObserverDecision::Continue,
             },
         )
         .expect("sample request is bounded");
@@ -693,7 +714,33 @@ mod tests {
             panic!("observer stop must return a prefix");
         };
         assert!(saw_stop);
-        assert_eq!(prefix.steps.len(), 1);
+        let initial = StateKey::from_canonical_bytes(b"0".to_vec());
+        let stopped = StateKey::from_canonical_bytes(b"1".to_vec());
+        assert_eq!(observations, 2, "the observer stopped before another draw");
+        assert_eq!(prefix.initial, initial);
+        assert_eq!(
+            prefix.steps,
+            vec![fsl_eval::simulation::Step {
+                transition: 17,
+                ordinal: 0,
+                key: stopped.clone(),
+            }]
+        );
+        assert_eq!(
+            prefix.findings,
+            vec![
+                fsl_eval::simulation::StateFindings {
+                    state: initial,
+                    depth: 0,
+                    findings: vec!["expanded-zero"],
+                },
+                fsl_eval::simulation::StateFindings {
+                    state: stopped,
+                    depth: 1,
+                    findings: vec!["stopped-one"],
+                },
+            ]
+        );
     }
 
     /// FR-166-AC-2: each seeded walk closes the complete 9-state/18-edge
