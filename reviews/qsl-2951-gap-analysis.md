@@ -31,3 +31,9 @@ Coverage comparison with the pre-a3588a41ad test: the checker-level assertion (`
 - In-scope criteria with a tagged test: 3 of 3 (FR-201-AC-39, FR-201-AC-41, FR-186-AC-2).
 - Reverse gaps: none. Stubs: none.
 - Plan completion: not assessed
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | accepted-no-change | Placeholder row for a clean review; there is no defect to disposition. Round 1 changed only xtask/docs/reviews; the test and its trace tags are unchanged (a rebase onto 2665967f only). |

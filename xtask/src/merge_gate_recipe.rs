@@ -621,6 +621,86 @@ const RULES: &[Rule] = &[
         threads: None,
     },
     Rule {
+        prefix: "fsl-replay/src/product_action.rs",
+        package: Some("fsl-replay"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: REPLAY_PROBABILITY_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-replay/src/identity.rs",
+        package: Some("fsl-replay"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: REPLAY_PROBABILITY_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-replay/src/limits.rs",
+        package: Some("fsl-replay"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: REPLAY_PROBABILITY_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-replay/src/proof_result",
+        package: Some("fsl-replay"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: REPLAY_PROBABILITY_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-replay/src/outcome",
+        package: Some("fsl-replay"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: REPLAY_PROBABILITY_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-replay/src/request",
+        package: Some("fsl-replay"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: REPLAY_PROBABILITY_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-replay/src/statistical",
+        package: Some("fsl-replay"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: REPLAY_PROBABILITY_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
+        prefix: "fsl-replay/src/model_check/limits",
+        package: Some("fsl-replay"),
+        lib: Some(LibRule::SourceModule),
+        it_filters: REPLAY_PROBABILITY_CONSUMERS,
+        large_input: &[],
+        note: None,
+        skips: &[],
+        threads: None,
+    },
+    Rule {
         prefix: "fsl-analyze/src/exact_probabilistic",
         package: Some("fsl-analyze"),
         lib: Some(LibRule::SourceModule),
@@ -1606,6 +1686,7 @@ fn apply_crate_fallback(path: &str, workspace_root: &Path, recipe: &mut Recipe) 
                 if let Some(rule) = matching_rule("fsl-replay/src/fallback.rs") {
                     apply_rule(workspace_root, "fsl-replay/src/fallback.rs", rule, recipe)?;
                 }
+                apply_it_filters(workspace_root, &[PROBABILITY_CHECK_MODULES], None, recipe)?;
                 add_library(recipe, package, "execute::".to_owned(), true);
             }
             "fsl-semantics" => {
@@ -2137,6 +2218,29 @@ mod tests {
             "fsl-semantics/src/check/probabilistic.rs",
             "fsl-semantics/src/check/probabilistic/model.rs",
             "fsl-semantics/src/check/mod.rs",
+        ] {
+            let recipe = plan(workspace_root(), &[path]);
+            assert!(
+                runs_modules(&recipe, &modules),
+                "{path} must run every fsl-probability-check module"
+            );
+        }
+    }
+
+    #[test]
+    fn replay_surface_and_certificate_dependencies_run_every_probability_check_module() {
+        let modules = probability_check_modules();
+        for path in [
+            "fsl-replay/src/lib.rs",
+            "fsl-replay/Cargo.toml",
+            "fsl-replay/src/product_action.rs",
+            "fsl-replay/src/identity.rs",
+            "fsl-replay/src/limits.rs",
+            "fsl-replay/src/proof_result.rs",
+            "fsl-replay/src/outcome.rs",
+            "fsl-replay/src/request.rs",
+            "fsl-replay/src/statistical.rs",
+            "fsl-replay/src/model_check/limits.rs",
         ] {
             let recipe = plan(workspace_root(), &[path]);
             assert!(
