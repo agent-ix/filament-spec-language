@@ -420,9 +420,8 @@ fn add_counter_chain(ws: &Workspace) {
             chain["typeRef"] = json!(format!("ix://{package}/Counter"));
             chain["multiplicity"] =
                 json!({"lower": 0, "upper": 2, "ordered": true, "unique": false});
-            chain["origin"]["generated"]["inputIdentities"] = json!([format!(
-                "ix://{package}/Counter/chain"
-            )]);
+            chain["origin"]["generated"]["inputIdentities"] =
+                json!([format!("ix://{package}/Counter/chain")]);
             fields.push(chain);
         });
     }

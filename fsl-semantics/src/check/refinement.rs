@@ -2205,7 +2205,7 @@ fn lift(lifting: &BTreeMap<EffectiveId, EffectiveId>, value_type: &ValueType) ->
         }
         ValueType::Map(map) => ValueType::Map(std::sync::Arc::new(
             filament_exact::MapType::new(
-                map.key().clone(),
+                lift(lifting, map.key()),
                 lift(lifting, map.values()),
                 map.bound(),
             )
@@ -3477,7 +3477,9 @@ impl<'c, 'a> Checker<'c, 'a> {
                 })
             }
             Err(refusal) => {
-                match expression.spans.span_at(&refusal.location)
+                match expression
+                    .spans
+                    .span_at(&refusal.location)
                     .or_else(|| expression.spans.at(&[]))
                 {
                     Some(span) => self
@@ -3873,7 +3875,7 @@ impl<'c, 'a> Checker<'c, 'a> {
                         operation: Some(concrete.name().to_owned()),
                         label: format!("step {}", concrete.name()),
                         range_agnostic: false,
-                                };
+                    };
                     let Some(row) = self.check_row_as(expression, None, context, cx) else {
                         complete = false;
                         continue;
@@ -4409,7 +4411,8 @@ mod tests {
     }
 
     /// ADR-020 RM-3: the object map lifts a reference at any depth in a map's
-    /// values, and the map keeps its bound; a bounded quantity is unchanged.
+    /// keys and values, and the map keeps its bound; a bounded quantity is
+    /// unchanged.
     #[test]
     fn lifting_reaches_a_reference_inside_a_map_value() {
         let abstract_type = effective(1);
@@ -4427,6 +4430,15 @@ mod tests {
         assert_eq!(
             lift(&lifting, &map_of(ValueType::Boolean, None)),
             map_of(ValueType::Boolean, None)
+        );
+        let keyed = |key, values| {
+            ValueType::Map(std::sync::Arc::new(
+                filament_exact::MapType::new(key, values, None).expect("a leaf key"),
+            ))
+        };
+        assert_eq!(
+            lift(&lifting, &keyed(reference(1), reference(1))),
+            keyed(reference(2), reference(2))
         );
     }
 }

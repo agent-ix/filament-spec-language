@@ -1028,6 +1028,16 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
         )
     }
 
+    /// The value type `Maybe`, an `Option<Reference<object>>`.
+    fn maybe(package: &str, object: &str) -> Value {
+        json!({
+            "identity": node(package, "Maybe"), "displayName": node(package, "Maybe"),
+            "kind": "option", "roles": [], "origin": origin(package, "Maybe"),
+            "constraints": [], "extensions": [], "unknownPolicy": "reject",
+            "inner": node(package, object),
+        })
+    }
+
     let (queue, cell) = (node(NESTED_SPEC, "Queue"), node(NESTED_SPEC, "Cell"));
     let single = (1, 1, false);
     let spec = document_with(
@@ -1039,6 +1049,7 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
         )],
         vec![
             boxed(NESTED_SPEC, "Queue"),
+            maybe(NESTED_SPEC, "Queue"),
             object_type(
                 NESTED_SPEC,
                 "Queue",
@@ -1047,6 +1058,7 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
                     ("head", &queue),
                     ("chain", &queue),
                     ("link", &queue),
+                    ("maybes", &node(NESTED_SPEC, "Maybe")),
                     ("cells", &cell),
                     ("box", &node(NESTED_SPEC, "Box")),
                 ],
@@ -1064,7 +1076,7 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
         if let Some(fields) = declared["fields"].as_array_mut() {
             for member in fields {
                 let shape = match member["name"].as_str() {
-                    Some("chain") => ((0, 2, true), "required"),
+                    Some("chain" | "maybes") => ((0, 2, true), "required"),
                     Some("link") => (single, "optional"),
                     Some("cells") => ((0, 2, false), "required"),
                     _ => continue,
@@ -1083,6 +1095,7 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
         )],
         vec![
             boxed(NESTED_IMPL, "Ring"),
+            maybe(NESTED_IMPL, "Ring"),
             object_type(
                 NESTED_IMPL,
                 "Ring",
@@ -1090,6 +1103,7 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
                     ("size", INTEGER),
                     ("chain", &ring),
                     ("link", &ring),
+                    ("maybes", &node(NESTED_IMPL, "Maybe")),
                     ("cargo", &node(NESTED_IMPL, "Slot")),
                     ("box", &node(NESTED_IMPL, "Box")),
                 ],
@@ -1107,7 +1121,7 @@ fn nested_models() -> (Vec<u8>, Vec<u8>) {
         if let Some(fields) = declared["fields"].as_array_mut() {
             for member in fields {
                 match member["name"].as_str() {
-                    Some("chain" | "cargo") => {
+                    Some("chain" | "cargo" | "maybes") => {
                         *member = shaped(member.clone(), (0, 2, true), "required");
                     }
                     Some("link") => *member = shaped(member.clone(), single, "optional"),
@@ -1155,6 +1169,8 @@ fn a_row_nesting_a_reference_is_lifted_element_by_element() {
         "chain = self.chain;",
         "link = self.link;",
         "chain = self.chain; link = self.link; head = self; cells = R::slots;",
+        // Two carriers deep: a `Sequence<Option<Reference<Ring>>>` row.
+        "maybes = self.maybes;",
     ] {
         let graph = check_with("", &models, &nested_refinement(rows)).unwrap_or_else(|refusals| {
             panic!(
@@ -1172,6 +1188,45 @@ fn a_row_nesting_a_reference_is_lifted_element_by_element() {
         (Code::IllTyped, Some("type-mismatch"))
     );
     assert_eq!(wrong.at, "self.cargo");
+}
+
+/// FR-135-AC-6 (TC-540 step 6), composite carriers: a reference nested in a
+/// record, tuple or union row is lifted too. Pending the pairing rule that
+/// says which abstract composite the lifted value takes; today such a row
+/// refuses `ill_typed`/`type-mismatch`.
+#[trace("TC-540", "FR-135-AC-6")]
+#[test]
+#[ignore = "QSL-2959: composite nested-reference lifting"]
+fn a_row_nesting_a_reference_in_a_composite_is_lifted() {
+    let (spec, concrete) = nested_models();
+    let models = [
+        ("Q", NESTED_SPEC, &spec[..]),
+        ("R", NESTED_IMPL, &concrete[..]),
+    ];
+    for (declarations, row) in [
+        ("", "box = self.box;"),
+        (
+            "tuple Pair(Reference<R::Ring>, Boolean);",
+            "box = Pair(self, true);",
+        ),
+        (
+            "union Holder { Empty, Has(Reference<R::Ring>) }",
+            "box = Holder::Has(self);",
+        ),
+    ] {
+        let graph = check_with(
+            "",
+            &models,
+            &format!("{declarations}\n{}", nested_refinement(row)),
+        )
+        .unwrap_or_else(|refusals| {
+            panic!(
+                "{row}: {:?}",
+                refusals.iter().map(|r| &r.refusal).collect::<Vec<_>>()
+            )
+        });
+        assert_eq!(only_refinement(&graph).objects().len(), 2, "{row}");
+    }
 }
 
 /// FR-135-AC-4 (TC-540 step 4): with the `value` row removed, the refinement

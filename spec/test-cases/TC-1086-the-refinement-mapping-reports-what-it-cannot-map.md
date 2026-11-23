@@ -45,6 +45,10 @@ FR-140-AC-7.
    corresponding state with a valid observation.
 10. Map the FR-140-AC-16 variant, then with one ring's `chain` holding a
     reference to a `SubRing`.
+    Lift an `Option<Reference<_>>`, a `Sequence<Option<Reference<_>>>` and a
+    `Map<Reference<_>, Reference<_>>` value, with an unmapped reference in
+    each (unit tests of `lift_nested`; no validated package declares a map
+    type yet).
 
 Tag the tests `#[trace("TC-1086", "<AC id>")]`.
 
@@ -72,3 +76,6 @@ Tag the tests `#[trace("TC-1086", "<AC id>")]`.
   row is read, rather than `Undefined` or `Undetermined`.
 - Step 10: `chain` maps to the `Queue` references `[b, a]` in order; with the `SubRing` reference, `Undetermined` naming the
   `chain` row and the holding ring with `UnmappedType(SubRing)`.
+  `some` payloads lift and `none` stays `none`; the sequence of options lifts
+  in order; the map's keys and values lift with the entries in order; an
+  unmapped reference in any of them is `Unmapped`.
