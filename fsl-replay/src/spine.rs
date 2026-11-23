@@ -441,7 +441,7 @@ pub enum CompileRefusal {
     /// ADR-015 D-1: a library's own refusal, raised while resolving or
     /// compiling it. It reports the library's own stage and region, located
     /// in the library's source.
-    #[error("the library {} refused: {refusal}", display_path(.path))]
+    #[error("{}", library_refused(.path, .refusal))]
     Dependency {
         /// The library identities from the unit's import down to the
         /// library that refused, that library last.
@@ -468,6 +468,29 @@ pub enum CompileRefusal {
 }
 
 impl CompileRefusal {
+    /// The limit this refusal reports, directly or through the library
+    /// dependency chain whose innermost refusal it is.
+    pub fn limit(&self) -> Option<&LimitExceeded> {
+        match self {
+            Self::Limit(limit) => Some(limit),
+            Self::Dependency { refusal, .. } => refusal.limit(),
+            _ => None,
+        }
+    }
+
+    /// This refusal's message with a reached limit's advice rendered for
+    /// `request` (FR-255-AC-2), keeping the library prefix of a dependency
+    /// chain. Every other refusal renders as its `Display`.
+    pub fn render_for(&self, request: fsl_foundation::diagnostic::RequestKind) -> String {
+        match self {
+            Self::Limit(limit) => limit.render(request).to_string(),
+            Self::Dependency { path, refusal } => {
+                library_refused(path, refusal.render_for(request))
+            }
+            other => other.to_string(),
+        }
+    }
+
     /// The catalog code of this refusal: the stage cause's own.
     pub fn code(&self) -> Code {
         match self {
@@ -2607,6 +2630,12 @@ fn region(source: &RawSourceRef, span: Span) -> Option<SourceRegion> {
     let start = u64::try_from(span.start).ok()?;
     let end = u64::try_from(span.end).ok()?;
     SourceRegion::new(source.clone(), start, end).ok()
+}
+
+/// A library's refusal `inner` as the dependency message, shared by the
+/// `Dependency` display and [`CompileRefusal::render_for`].
+fn library_refused(path: &[LibraryName], inner: impl core::fmt::Display) -> String {
+    format!("the library {} refused: {inner}", display_path(path))
 }
 
 /// A dependency path written `a -> b -> c`.

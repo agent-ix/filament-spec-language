@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 
 use filament_exact::{Cancel, CancelCause};
-use fsl_foundation::diagnostic::{LimitExceeded, LimitKind, Locus, StageFailure};
+use fsl_foundation::diagnostic::{LimitExceeded, LimitKind, Locus, RequestKind, StageFailure};
 use fsl_foundation::{Setting, SettingLimits, SourceIdentity};
 use fsl_replay::spine::{
     self, CheckedUnit, DependencyInput, FrontEndFailure, PackageLimits, ParseRequest,
@@ -384,4 +384,28 @@ fn assert_deadline_stops_at_the_next_charge(text: &str) {
         "deadline reached at charge1000, observed {charges}"
     );
     assert_eq!(cancel.tripped(), Some(CancelCause::Deadline));
+}
+
+/// FR-255-AC-2 / TC-720 step 2: the five-node function `f` checked with
+/// `s3.nodes` at 4 renders its full message, locus included, per request
+/// kind: native-run/1 names only `--limit`, replay also names `stage_limits`.
+#[test]
+#[trace("TC-720", "FR-255-AC-2")]
+fn the_fifth_node_message_is_request_aware_with_its_locus() {
+    let parsed = parse(UNIT, SpineLimits::default(), &Cancel::new()).expect("source parses");
+    let mut four = SpineLimits::default();
+    assert!(four.set_bound(Setting::S3Nodes, 4));
+    let denied = limit(check(&parsed, four, &Cancel::new()).expect_err("five nodes exceed four"));
+    let locus = denied.locus().expect("the denied node has a locus");
+    assert_eq!(
+        denied.render(RequestKind::NativeRun).to_string(),
+        format!("S3 node limit 4 reached (5) at {locus}; raise it with `--limit s3.nodes=<n>`")
+    );
+    assert_eq!(
+        denied.render(RequestKind::Replay).to_string(),
+        format!(
+            "S3 node limit 4 reached (5) at {locus}; raise it with `--limit s3.nodes=<n>` or \
+             the replay request's `stage_limits` entry `s3.nodes`"
+        )
+    );
 }
