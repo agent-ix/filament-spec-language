@@ -282,6 +282,7 @@ fn an_over_budget_or_unmapped_row_with_nothing_undefined_is_undetermined() {
         head: 0,
         size,
         next: Some(("q", "SubRing")),
+        chain: &[],
     };
     let sub = RingSpec {
         key: "q",
@@ -289,6 +290,7 @@ fn an_over_budget_or_unmapped_row_with_nothing_undefined_is_undetermined() {
         head: 0,
         size: 0,
         next: Some(("q", "SubRing")),
+        chain: &[],
     };
     let slots = |value: i64| [("a0", "a", 0, value), ("a1", "a", 1, 0)];
     let found = verdict(
@@ -315,6 +317,7 @@ fn sub_of<'a>(sub: &RingSpec<'a>) -> RingSpec<'a> {
         head: sub.head,
         size: sub.size,
         next: sub.next,
+        chain: sub.chain,
     }
 }
 

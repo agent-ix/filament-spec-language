@@ -28,6 +28,7 @@ fn ring<'a>(key: &'a str, type_name: &'a str, next: Option<(&'a str, &'a str)>) 
         head: 0,
         size: 0,
         next,
+        chain: &[],
     }
 }
 
@@ -106,6 +107,95 @@ fn a_reference_to_an_unmapped_type_is_undetermined_at_the_referencing_row() {
             .object_reference(&key(QUEUE, "Queue"), "q")
             .expect("a reference")
     );
+}
+
+/// FR-140-AC-16 (TC-1086 step 10): a `Sequence<Reference<Ring>>[0, 2]` row
+/// maps to the `Queue` references with the same keys in the same order; a
+/// reference to a `SubRing`, which no object row names, is `Undetermined` at
+/// the `chain` row and the holding ring with `UnmappedType(SubRing)`.
+#[trace("TC-1086", "FR-140-AC-16")]
+#[test]
+fn a_sequence_of_references_maps_element_by_element_in_order() {
+    let world = RingWorld::with(
+        Variant {
+            chain: true,
+            ..Variant::default()
+        },
+        &ring_is_queue(&format!("{ITEMS_ROW} chain = self.chain;")),
+    );
+    let concrete = world.concrete_system(UNLIMITED);
+    let abstracted = world.abstract_system(UNLIMITED);
+    let state = custom_state(
+        &concrete,
+        &[
+            RingSpec {
+                chain: &[("b", "Ring"), ("a", "Ring")],
+                ..ring("a", "Ring", None)
+            },
+            ring("b", "Ring", None),
+        ],
+        &[],
+    );
+    let mapped = map_state(
+        world.refinement(),
+        &concrete,
+        &abstracted,
+        &state,
+        &HistoryValues::default(),
+    )
+    .expect("the state maps");
+    let queue = &mapped.visible.populations[&key(QUEUE, "queues")]["a"];
+    let Some(Value::Collection(chain)) = queue.fields.get(&key(QUEUE, "Queue/chain")) else {
+        panic!("chain is a collection");
+    };
+    let expected: Vec<String> = ["b", "a"]
+        .iter()
+        .map(|ring| {
+            format!(
+                "{:?}",
+                Value::Reference(
+                    abstracted
+                        .object_reference(&key(QUEUE, "Queue"), ring)
+                        .expect("a reference")
+                )
+            )
+        })
+        .collect();
+    let found: Vec<String> = chain.elements().iter().map(|e| format!("{e:?}")).collect();
+    assert_eq!(found, expected);
+
+    let state = custom_state(
+        &concrete,
+        &[
+            RingSpec {
+                chain: &[("c", "SubRing")],
+                ..ring("a", "Ring", None)
+            },
+            ring("c", "SubRing", None),
+        ],
+        &[],
+    );
+    let Err(MappingFailure::Undetermined(undetermined)) = map_state(
+        world.refinement(),
+        &concrete,
+        &abstracted,
+        &state,
+        &HistoryValues::default(),
+    ) else {
+        panic!("the unmapped reference is undetermined");
+    };
+    assert_eq!(
+        undetermined.cause,
+        EvalFailure::UnmappedType(key(RING, "SubRing"))
+    );
+    assert_eq!(
+        undetermined.row,
+        MappingRowRef::Field {
+            object_type: key(QUEUE, "Queue"),
+            field: key(QUEUE, "Queue/chain"),
+        }
+    );
+    assert_eq!(undetermined.object.expect("an object").key, "a");
 }
 
 /// FR-140-AC-9 (TC-1086 step 4): an undefined row outranks an unmapped type

@@ -79,6 +79,10 @@ pub struct Variant {
     /// `Queue` has `next: Reference<Queue>`, and `rings` admits a subtype
     /// `SubRing` of `Ring` that no object row names (FR-140-AC-6).
     pub next: bool,
+    /// The concrete `Ring` also has `chain: Sequence<Reference<Ring>>[0, 2]`,
+    /// the abstract `Queue` has `chain: Sequence<Reference<Queue>>[0, 2]`,
+    /// and `rings` admits the subtype `SubRing` (FR-140-AC-16).
+    pub chain: bool,
     /// The abstract `Queue` has an optional `head: Digit?` field
     /// (FR-140-AC-11).
     pub optional_head: bool,
@@ -180,6 +184,15 @@ fn queue_fields(variant: Variant) -> Vec<Json> {
             &node(QUEUE, "Queue"),
         ));
     }
+    if variant.chain {
+        fields.push(ring_queue::field(
+            QUEUE,
+            "Queue",
+            "chain",
+            &node(QUEUE, "Queue"),
+            (0, 2, true),
+        ));
+    }
     if variant.optional_head {
         let mut head = ring_queue::single(QUEUE, "Queue", "head", &digit);
         head["presence"] = json!("optional");
@@ -234,7 +247,7 @@ fn ring_document(variant: Variant) -> Vec<u8> {
             ),
         ]
         .into_iter()
-        .chain((variant.next || variant.sub_ring).then(sub_ring))
+        .chain((variant.next || variant.sub_ring || variant.chain).then(sub_ring))
         .collect(),
         vec![
             rings_population(variant),
@@ -257,13 +270,22 @@ fn ring_fields(variant: Variant) -> Vec<Json> {
             &node(RING, "Ring"),
         ));
     }
+    if variant.chain {
+        fields.push(ring_queue::field(
+            RING,
+            "Ring",
+            "chain",
+            &node(RING, "Ring"),
+            (0, 2, true),
+        ));
+    }
     fields
 }
 
 /// The population `rings`, admitting `SubRing` when `variant` declares it.
 fn rings_population(variant: Variant) -> Json {
     let mut rings = ring_queue::population(RING, "rings", "Ring");
-    if variant.next || variant.sub_ring {
+    if variant.next || variant.sub_ring || variant.chain {
         rings["members"] = json!([node(RING, "Ring"), node(RING, "SubRing")]);
     }
     rings
@@ -464,6 +486,9 @@ impl RingWorld {
             queue_fields["next"] =
                 json!({"reference": {"population": node(QUEUE, "queues"), "key": "r"}});
         }
+        if variant.chain {
+            queue_fields["chain"] = json!({"sequence": []});
+        }
         if variant.xy {
             queue_fields["x"] = json!({"integer": "0"});
             queue_fields["y"] = json!({"integer": "0"});
@@ -481,6 +506,9 @@ impl RingWorld {
         if variant.next {
             ring_fields["next"] =
                 json!({"reference": {"population": node(RING, "rings"), "key": "r"}});
+        }
+        if variant.chain {
+            ring_fields["chain"] = json!({"sequence": []});
         }
         let slot = |key: &str, index: u8| {
             json!({"key": key, "type": node(RING, "Slot"), "fields": {
@@ -667,6 +695,9 @@ pub struct RingSpec<'a> {
     pub size: i64,
     /// Its `next`, as the key and type name of the ring it references.
     pub next: Option<(&'a str, &'a str)>,
+    /// Its `chain`, as the key and type name of each ring it references; empty
+    /// leaves a variant without a `chain` field alone.
+    pub chain: &'a [(&'a str, &'a str)],
 }
 
 /// The concrete state with `rings` and the slots `slots`, each as (key, the
@@ -692,6 +723,25 @@ pub fn custom_state(
             ]);
             if let Some((target, type_name)) = ring.next {
                 fields.insert(key(RING, "Ring/next"), reference(type_name, target));
+            }
+            if !ring.chain.is_empty() {
+                let chain_key = key(RING, "Ring/chain");
+                let declared = system
+                    .fields_of(&key(RING, "Ring"))
+                    .and_then(|declared| declared.iter().find(|field| field.key == chain_key))
+                    .and_then(|field| match &field.value_type {
+                        filament_exact::ValueType::Collection(collection) => {
+                            Some((**collection).clone())
+                        }
+                        _ => None,
+                    })
+                    .expect("the ring declares a chain sequence");
+                let elements = ring
+                    .chain
+                    .iter()
+                    .map(|(target, type_name)| reference(type_name, target))
+                    .collect();
+                fields.insert(chain_key, filament_exact::from_admitted(declared, elements));
             }
             (
                 ring.key.to_owned(),

@@ -70,6 +70,5 @@ Tag the tests `#[trace("TC-1086", "<AC id>")]`.
 - Step 9: the same reported row and object under the row-order permutation;
   for the broken-observation state, `Fault` with the catalog code before any
   row is read, rather than `Undefined` or `Undetermined`.
-- Step 10: `chain` maps to the `Queue` references `[b, a]` in order and `link`
-  to `some(b)`; with the `SubRing` reference, `Undetermined` naming the
+- Step 10: `chain` maps to the `Queue` references `[b, a]` in order; with the `SubRing` reference, `Undetermined` naming the
   `chain` row and the holding ring with `UnmappedType(SubRing)`.
