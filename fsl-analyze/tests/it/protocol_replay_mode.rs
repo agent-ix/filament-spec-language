@@ -607,10 +607,20 @@ fn enabledness<'a>(
         .unwrap_or_else(|| panic!("enabledness of {node} at {position}: {assessment:#?}"))
 }
 
+/// The checked package of `source`: a `P` unit of the `fill` fixture, else a
+/// `Flow` unit of the litmus fixture.
+fn package_of(source: &str) -> fsl_package::CheckedPackage {
+    if source.contains("protocol P using") {
+        crate::fill::package(source)
+    } else {
+        crate::litmus::package_called("analysis-unit", source)
+    }
+}
+
 /// Assert `node` at `position` is `satisfied`.
 fn assert_enabled(source: &str, recording: &Value, node: &str, position: usize) {
     use fsl_analyze::protocol_analysis::recording::{assess_recording, RecordingVerdict};
-    let package = crate::litmus::package_called("analysis-unit", source);
+    let package = package_of(source);
     let assessed = assess_recording(&package, recording.to_string().as_bytes()).expect("readable");
     let found = enabledness(&assessed, node, position);
     assert_eq!(found.verdict, RecordingVerdict::Satisfied, "{found:#?}");
@@ -622,7 +632,7 @@ fn assert_unexpected(source: &str, recording: &Value, node: &str, position: usiz
     use fsl_analyze::protocol_analysis::recording::{
         assess_recording, RecordingCause, RecordingVerdict,
     };
-    let package = crate::litmus::package_called("analysis-unit", source);
+    let package = package_of(source);
     let assessed = assess_recording(&package, recording.to_string().as_bytes()).expect("readable");
     let found = enabledness(&assessed, node, position);
     assert_eq!(found.verdict, RecordingVerdict::Violated, "{found:#?}");
