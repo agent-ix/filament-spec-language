@@ -1,0 +1,19 @@
+{
+  "files": [
+    "hero-light.svg",
+    "hero-dark.svg",
+    "first-rule-light.svg",
+    "first-rule-dark.svg",
+    "outcomes-light.svg",
+    "outcomes-dark.svg",
+    "pipeline-light.svg",
+    "pipeline-dark.svg",
+    "capabilities-light.svg",
+    "capabilities-dark.svg",
+    "ecosystem-light.svg",
+    "ecosystem-dark.svg",
+    "layers-light.svg",
+    "layers-dark.svg"
+  ],
+  "generated_by": "ixd build"
+}
