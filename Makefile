@@ -361,7 +361,11 @@ ci: export CARGO_PROFILE_DEV_DEBUG := 0
 ci: export CARGO_PROFILE_TEST_DEBUG := 0
 ci: export CARGO_PROFILE_DEV_DEBUG_ASSERTIONS := true
 ci: export CARGO_PROFILE_TEST_DEBUG_ASSERTIONS := true
-ci: check-spec-validation pin-check
+# FR-760-AC-3: pin-check runs in the recipe, after validation, so no Cargo
+# process starts while a selected document is invalid (NFR-002-AC-2); as a
+# sibling prerequisite it would race validation under -j and -k.
+ci: check-spec-validation
+	@cargo run --locked --package xtask -- pin-check
 	@$(CONFORMANCE_XTASK) ci
 
 # FR-760-AC-3: Cargo manifests are the pin check's source of truth.

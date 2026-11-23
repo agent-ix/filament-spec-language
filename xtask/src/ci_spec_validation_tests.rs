@@ -531,8 +531,9 @@ fn invalid_native_spec_prevents_actual_cargo_calls_even_in_parallel() {
         );
         let recorded = std::fs::read_to_string(&calls).unwrap();
         assert_eq!(
-            recorded, "run\t--locked\t--package\txtask\t--\tci\n",
-            "public aggregate enters the canonical wrapper"
+            recorded,
+            "run\t--locked\t--package\txtask\t--\tpin-check\nrun\t--locked\t--package\txtask\t--\tci\n",
+            "public aggregate runs pin-check (FR-760-AC-3) then enters the canonical wrapper"
         );
         assert!(
             !prechecks.exists(),
@@ -564,7 +565,7 @@ fn invalid_native_spec_prevents_actual_cargo_calls_even_in_parallel() {
     );
     assert_eq!(
         std::fs::read_to_string(&calls).unwrap(),
-        "run\t--locked\t--package\txtask\t--\tci\n",
+        "run\t--locked\t--package\txtask\t--\tpin-check\nrun\t--locked\t--package\txtask\t--\tci\n",
         "removing the public validation prerequisite must invoke the wrapper"
     );
     assert!(
