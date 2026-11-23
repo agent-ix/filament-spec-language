@@ -37,10 +37,29 @@ fn recording_payload(bytes: &[u8]) -> Result<Vec<u8>, String> {
 
 /// Build the recording-mode `global-conformance` result from the checked
 /// protocol and its provisioned FR-737 bytes.
+/// The `unsupported` refusal of a recording the engine cannot assess (a
+/// predicate join it cannot evaluate, or one over the label bound): the
+/// engine's gap, not a defect of the recording. It names the join in
+/// `detail` and the gap in `fact`.
+fn engine_gap(refusal: &super::recording::RecordingRefusal) -> crate::analyze::Refusal {
+    crate::analyze::Refusal::UnsupportedWithDetail(
+        refusal.code(),
+        [
+            ("fact".to_owned(), serde_json::json!(refusal.cause())),
+            ("detail".to_owned(), serde_json::json!(refusal.to_string())),
+        ]
+        .into_iter()
+        .collect(),
+    )
+}
+
 /// The refusal of a whole incremental item when one of its prefixes is
 /// refused (FR-895 "Incremental assessment"): `invalid_runtime_input`, the
 /// recording refusal's own cause, and its detail and `prefix` index.
 fn prefix_refusal(refused: super::recording::PrefixRefusal) -> crate::analyze::Refusal {
+    if refused.refusal.is_unsupported() {
+        return engine_gap(&refused.refusal);
+    }
     crate::analyze::Refusal::DeclinedWithDetail(
         fsl_replay::ProofRefusalCause::InvalidInput,
         fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
@@ -127,6 +146,9 @@ fn recording_result(
     ) {
         Ok(assessment) => assessment,
         Err(refusal) => {
+            if refusal.is_unsupported() {
+                return crate::analyze::EngineReport::Refused(engine_gap(&refusal));
+            }
             let detail = [("detail".to_owned(), serde_json::json!(refusal.to_string()))]
                 .into_iter()
                 .chain(
