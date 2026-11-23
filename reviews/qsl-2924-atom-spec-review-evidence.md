@@ -40,3 +40,20 @@ No applicable enforced AssuranceProfile; direct subset review (integrity, ears, 
 ## Verdict
 
 Mergeable; low findings optional.
+
+## New findings (disposition pass 1)
+
+Re-checked at head 0ac6d707d3bb705df8cae0e6510008a4b922174e (rebased onto origin/main 9a2555a093).
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | low | AC-75/TC-3195 call private BoundedTranslation::in_profile; name public BoundedTranslation::clause | FR-201:1386 |
+
+- FND-003 (FR-201-AC-75): FR-201-AC-75 and TC-3195 step 5 tell the test to call `BoundedTranslation::in_profile` under the infinite-trace profile, but `in_profile` is a private fn (fsl-eval/src/automaton/bounded.rs:154, `fn in_profile`); a test cannot call it. Its infinite-trace admission is reached through the public `BoundedTranslation::clause` with an infinite-trace origin clause; name that entry.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | verified at 0ac6d707d3: Over the engines `Coin` model (initially tails, as in its `data/coin-tails.json`; `flip` sets heads or tails with equal weight), with the `ev` profile under eve |
+| FND-002 | fixed | verified at 0ac6d707d3: For a checked root `holds(c.heads)` with no temporal operator, `QualifiedBoundedMonitor::supports` and `QualifiedBoundedMonitor::supports_observations` both ret |

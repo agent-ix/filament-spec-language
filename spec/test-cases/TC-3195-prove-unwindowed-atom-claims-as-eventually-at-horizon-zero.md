@@ -36,8 +36,8 @@ origin.
    monitor on the tails and heads initial observations and compare its key
    and verdict with the `eventually[0,0] holds(c.heads)` monitor.
 5. For a temporal clause whose formula is a root `holds(c.heads)`, call
-   `bounded_shape`, `closure_shape` and `BoundedTranslation::in_profile`
-   under the infinite-trace profile.
+   `bounded_shape` and `closure_shape`, and call `BoundedTranslation::clause`
+   with that clause as an origin clause under the infinite-trace profile.
 
 Tag the tests `#[trace("TC-3195", "FR-201-AC-n")]`.
 
@@ -56,4 +56,5 @@ Tag the tests `#[trace("TC-3195", "FR-201-AC-n")]`.
   under the infinite-trace profile; the initial key and decided verdict equal
   the explicit spelling's apart from the checked formula context.
 - Step 5: `bounded_shape` and `closure_shape` return no bounded shape, and
-  `in_profile` does not translate the formula, as before the reading.
+  `BoundedTranslation::clause` refuses it `NotTranslated`, as before the
+  reading.

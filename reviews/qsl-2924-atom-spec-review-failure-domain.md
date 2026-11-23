@@ -40,3 +40,10 @@ No applicable enforced AssuranceProfile; direct subset review (integrity, ears, 
 ## Verdict
 
 Mergeable once the medium findings are fixed.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | verified at 0ac6d707d3: Both qualified admission points SHALL admit it as the eventually kind at horizon 0: `QualifiedBoundedMonitor::supports` and `QualifiedBoundedMonitor::supports_o |
+| FND-002 | fixed | verified at 0ac6d707d3: The reading SHALL be confined to this qualified probability path. The other consumers of the shared bounded-shape classification SHALL admit and key exactly wha |

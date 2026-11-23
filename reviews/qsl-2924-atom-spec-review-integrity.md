@@ -42,3 +42,21 @@ No applicable enforced AssuranceProfile; direct subset review (integrity, ears, 
 ## Verdict
 
 Mergeable once the medium findings are fixed.
+
+## New findings (disposition pass 1)
+
+Re-checked at head 0ac6d707d3bb705df8cae0e6510008a4b922174e (rebased onto origin/main 9a2555a093).
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-004 | medium | AC-40 'same counterexample offered for <=' yields parity is false: keys/item carry the >= claim, so replay refuses | FR-202:676 |
+
+- FND-004 (FR-202-AC-40): FR-202-AC-40 (and TC-3196 step 2) now says 'the same counterexample offered for `probability <= 0.5 [ holds(c.heads) ]` ... yields replay parity'. A `ProbabilisticCounterexample` carries the `>=` claim's item identity and complete keys, whose formula-monitor context includes the claim occurrence (FR-201: only the claim identity and checked formula context differ; FR-202-AC-13: rebinding to another claim occurrence prevents reuse). Offered unchanged, replay refuses it (`root_key != witness.initial_key`, fsl-replay witness/bounded.rs), so the stated parity outcome cannot occur. FR-202-AC-14's own test rebuilds item and keys for the opposite claim (`rekey`, fsl-analyze/tests/it/bounded_probabilistic_replay.rs:298-300) before getting parity. Say 'the same empty rejecting path, in a counterexample whose item and keys are rebuilt for the `<=` claim'.
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | verified at 0ac6d707d3: A counterexample over the tails subject whose `initial` is the heads state and whose `initial_key` is its accepting decided key is refused, with no token. |
+| FND-002 | fixed | verified at 0ac6d707d3: Over a fixture the test authors, the same `Coin` model with its one coin initially heads (the examples supply no such fixture) |
+| FND-003 | fixed | verified at 0ac6d707d3: The reading rests on FSpec FR-407's bounded event, whose truth depends on positions from its activating position up to its horizon, and on FSpec FR-091's positi |
