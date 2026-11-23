@@ -47,3 +47,23 @@ Review set is the subset the dispatch named (integrity, ears, evidence, failure-
 - TC-3170 (spec/test-cases/TC-3170-request-refusals-teach-the-request-shape.md, examined): - Steps 1 to 3 give exactly the codes, stages, exits, messages and details their criteria state; no message or details value holds `line` or `column`, and no refusal is `unknown_wire`. - In step 4 every result is `Ok`, the two calls give equal bytes, the text is two-space indented with no trailing newline, its only members are `format` and `request`, and no call over the unmodified example refuses at stage `envelope` or `request`. Each one-member removal refuses `invalid-request` at stage `request` with `details.missing` holding that member's pointer, or its group's pointer array for `progr...
 - TC-105 (spec/test-cases/TC-105-standalone-package-export.md, context_only): - Step 2: the native-run/1 request refuses `unknown_wire`; each runtime-only request member refuses `invalid-request` at the request stage, exit code 20, with no package bytes, and no model or runtime file is read.
 - FR-862 (spec/functional/FR-862-read-a-replay-request-file-and-replay-it.md, context_only): - The reader SHALL refuse at stage `request`, `invalid-request`, naming the member, before any replay: a `clocks` member of `R` (FR-640: replay reads its clocks from the proving package), any other member outside the list above, and a missing member the mapping requires (the first absent one in the order of the list above, `profile_selections` first). A `byte_provision` file that is missing or exceeds the ceilings is refused at stage `request` naming its `bytes_path`.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-007 | medium | FR-1047 cites FSL FR-562 as the owner of the `check` argv document (references edge ix://agent-ix/filament-spec-language/FR-562, the argv bullet and Dependencies). FSL FR-562 is 'Take a machine-width fast path only where checked bounds prove the exact result fits'. The command.rs:2223 comment means FSpec FR-562: the `check --extensions` argv test is tagged FSpec-TC-1242/FSpec-FR-562-AC-1 (tests/it/request_surface_s1.rs:1617). FSL's own owners are FR-660 (the extension catalog that check takes) and FR-662 (check through the command; argv tests at request_surface_s1.rs:1143 are tagged FR-662-AC-1). Fix: point to ix://agent-ix/filament-specification/FR-562 and FSL FR-662 (and FR-660), and write 'FSpec FR-562' in the text. | spec/functional/FR-1047-name-every-request-defect-and-return-a-request-example.md:36-37, 167-169, 337 |
+| FND-008 | medium | The export reading lists `models` as a required member, but the code does not require it. With `program`, the export entry rewrites the request as native-compile/1 (export.rs request_without_export) and reads it as wire::CompileRequest, whose `models` is Option (wire.rs:52-53). FR-1015 does not make it required either. So removing `models` from the export example is admitted, and AC-7's one-member removal check fails for that example. Otherwise FR-1047 silently adds a requirement FR-1015 does not state. Fix: drop `models` from the export row (the example then holds `program` and `export`), or state the new requirement and amend FR-1015. | spec/functional/FR-1047-name-every-request-defect-and-return-a-request-example.md:Member order table, export row |
+
+## Dispositions
+
+Round 1, head 471324ac79b931fb509679341792e93987764f5e (rebased onto origin/main; compared with e25a201b by content).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Verified by hand at 471324ac; after_excerpt in the Linear dispositions comment. |
+| FND-002 | fixed | Verified by hand at 471324ac; after_excerpt in the Linear dispositions comment. |
+| FND-003 | deferred | Resolved by ruling of the arch lead (relayed by the coordinator, disposition round 1): FSL stays library-pure; FR-1047's export refusal carries details.missing pointers and no CLI text; the driver derives its 'fsl export --example' hint from details.missing and appends it outside FSL's reason. The driver FR-028-AC-7/AC-8 amendment is owned by luna:QSL:5. |
+| FND-004 | fixed | Verified by hand at 471324ac; after_excerpt in the Linear dispositions comment. |
+| FND-005 | fixed | Verified by hand at 471324ac; after_excerpt in the Linear dispositions comment. |
+| FND-006 | fixed | Verified by hand at 471324ac; after_excerpt in the Linear dispositions comment. |

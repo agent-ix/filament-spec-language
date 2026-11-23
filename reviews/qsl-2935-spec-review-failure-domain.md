@@ -46,3 +46,21 @@ Review set is the subset the dispatch named (integrity, ears, evidence, failure-
 - TC-3170 (spec/test-cases/TC-3170-request-refusals-teach-the-request-shape.md, examined): - Steps 1 to 3 give exactly the codes, stages, exits, messages and details their criteria state; no message or details value holds `line` or `column`, and no refusal is `unknown_wire`. - In step 4 every result is `Ok`, the two calls give equal bytes, the text is two-space indented with no trailing newline, its only members are `format` and `request`, and no call over the unmodified example refuses at stage `envelope` or `request`. Each one-member removal refuses `invalid-request` at stage `request` with `details.missing` holding that member's pointer, or its group's pointer array for `progr...
 - TC-105 (spec/test-cases/TC-105-standalone-package-export.md, context_only): - Step 2: the native-run/1 request refuses `unknown_wire`; each runtime-only request member refuses `invalid-request` at the request stage, exit code 20, with no package bytes, and no model or runtime file is read.
 - FR-862 (spec/functional/FR-862-read-a-replay-request-file-and-replay-it.md, context_only): - The reader SHALL refuse at stage `request`, `invalid-request`, naming the member, before any replay: a `clocks` member of `R` (FR-640: replay reads its clocks from the proving package), any other member outside the list above, and a missing member the mapping requires (the first absent one in the order of the list above, `profile_selections` first). A `byte_provision` file that is missing or exceeds the ceilings is refused at stage `request` naming its `bytes_path`.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-006 | medium | The example rule gives out-of-scope members only 'a value of the JSON kind its owning requirement gives it'. The export reader refuses kind-correct values at stage `request`. `obligations` [] is refused invalid-value (export/request.rs:332-338; FR-1015-AC-6/AC-9). A string `profile` that names no output profile is refused invalid-value (export/request.rs:172-178). Either refusal happens before the program file is read. AC-7 requires the export example to be refused only at stage `file`, so an implementation that follows the stated rule with `[]` or a placeholder profile fails AC-7. Fix: state that `export` holds a known profile (for example `filament.output.tla2/v1`) and a one-name `obligations` list, and that in-scope values pass their readers' value checks (for example `formal_revision` 1). | spec/functional/FR-1047-name-every-request-defect-and-return-a-request-example.md:request example bullet |
+
+## Dispositions
+
+Round 1, head 471324ac79b931fb509679341792e93987764f5e (rebased onto origin/main; compared with e25a201b by content).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Verified by hand at 471324ac; after_excerpt in the Linear dispositions comment. |
+| FND-002 | fixed | Verified by hand at 471324ac; after_excerpt in the Linear dispositions comment. |
+| FND-003 | fixed | Verified by hand at 471324ac; after_excerpt in the Linear dispositions comment. |
+| FND-004 | fixed | Verified by hand at 471324ac; after_excerpt in the Linear dispositions comment. |
+| FND-005 | fixed | Verified by hand at 471324ac; after_excerpt in the Linear dispositions comment. |

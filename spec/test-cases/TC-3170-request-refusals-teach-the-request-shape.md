@@ -33,9 +33,13 @@ tagged `#[trace("TC-3170", "FR-1047-AC-n")]` with the criterion it backs.
    it with `Ordinary` over the request whose `export` lacks `profile`.
 4. Call `request_example` for the seven inputs of FR-1047-AC-7 twice each;
    write each result to `request.json` in a fresh empty directory and call
-   its entry; then, for each top-level member of its `request`, write the
+   its entry (the monitor example through `monitor` with an empty record
+   stream); then, for each top-level member of its `request`, write the
    example without that member and call the entry again.
-5. Call `request_example("native-export/1", None)` and
+5. Call `run_with_providers` over the monitor example with `records`
+   absent, as in step 1's empty monitor request, to confirm the
+   monitor-run reading lists `/request/records`.
+6. Call `request_example("native-export/1", None)` and
    `request_example("native-compile/1", Some(ExportSelection::Ordinary))`.
 
 ## Expected Results
@@ -55,5 +59,6 @@ tagged `#[trace("TC-3170", "FR-1047-AC-n")]` with the criterion it backs.
   replay example reads no provisioned file. Each one-member removal refuses
   `invalid-request` at stage `request` with `details.missing` holding that
   member's pointer, or its group's pointer array for `program` and `call`.
-- Step 5 gives `UnknownFormat` and `SelectionNeedsRunFormat` with the exact
+- Step 5 refuses with `/request/records` as the one missing entry.
+- Step 6 gives `UnknownFormat` and `SelectionNeedsRunFormat` with the exact
   `Display` texts, `known` list and `code()` of FR-1047-AC-8.

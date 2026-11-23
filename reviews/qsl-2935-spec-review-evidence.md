@@ -44,3 +44,19 @@ Review set is the subset the dispatch named (integrity, ears, evidence, failure-
 - TC-3170 (spec/test-cases/TC-3170-request-refusals-teach-the-request-shape.md, examined): - Steps 1 to 3 give exactly the codes, stages, exits, messages and details their criteria state; no message or details value holds `line` or `column`, and no refusal is `unknown_wire`. - In step 4 every result is `Ok`, the two calls give equal bytes, the text is two-space indented with no trailing newline, its only members are `format` and `request`, and no call over the unmodified example refuses at stage `envelope` or `request`. Each one-member removal refuses `invalid-request` at stage `request` with `details.missing` holding that member's pointer, or its group's pointer array for `progr...
 - TC-105 (spec/test-cases/TC-105-standalone-package-export.md, context_only): - Step 2: the native-run/1 request refuses `unknown_wire`; each runtime-only request member refuses `invalid-request` at the request stage, exit code 20, with no package bytes, and no model or runtime file is read.
 - FR-862 (spec/functional/FR-862-read-a-replay-request-file-and-replay-it.md, context_only): - The reader SHALL refuse at stage `request`, `invalid-request`, naming the member, before any replay: a `clocks` member of `R` (FR-640: replay reads its clocks from the proving package), any other member outside the list above, and a missing member the mapping requires (the first absent one in the order of the list above, `profile_selections` first). A `byte_provision` file that is missing or exceeds the ceilings is refused at stage `request` naming its `bytes_path`.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-004 | high | AC-7 hands the native-monitor/1 example to `run_with_providers` and requires it to be 'refused only at stage `file`'. Through `run`, monitor::drive refuses a request without `records` before any file is read: 'a native-monitor/1 request run through run needs a records file' (monitor.rs:670-676). That is RunCause::ClauseRequest, which is invalid-request at stage `request`. The example's member order row (`models`, `program`, `clauses`, `trace`) has no `records`, so AC-7 fails for the monitor example. AC-3 also contradicts the 'required member' definition for the run path: through run, `records` is a member the reading refuses the request for lacking, but AC-3's run message omits `/request/records`. Fix: give native-monitor/1 two readings (run: the four members plus `records`; monitor: the four members, `records` forbidden), and make the example and AC-3 follow them. Alternatively, hand the monitor example to `monitor` in AC-7 and state AC-3's run case with `/request/records`. | spec/functional/FR-1047-name-every-request-defect-and-return-a-request-example.md:AC-7, AC-3, Member order table |
+
+## Dispositions
+
+Round 1, head 471324ac79b931fb509679341792e93987764f5e (rebased onto origin/main; compared with e25a201b by content).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Verified by hand at 471324ac; after_excerpt in the Linear dispositions comment. |
+| FND-002 | fixed | Verified by hand at 471324ac; after_excerpt in the Linear dispositions comment. |
+| FND-003 | fixed | Verified by hand at 471324ac; after_excerpt in the Linear dispositions comment. |
