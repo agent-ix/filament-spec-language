@@ -2875,10 +2875,15 @@ fn check_formula<S: SubjectSystem>(
     Ok(match outcome {
         // A clause false from any activation, an `on each` activation after
         // the origin included, is the refutation (FR-128).
-        Ok(TemporalOutcome::Violated { .. }) => (
+        Ok(TemporalOutcome::Violated { at }) => (
             ModelTraceSettlement::Reproduced {
                 value: ModelTraceValue::Truth(false),
-                trace_position: payload.trace_position(),
+                // A lasso's recorded position is its origin; a clause first
+                // false at a later `on each` activation names that one.
+                trace_position: match payload.lasso {
+                    Some(_) if at.index() != 0 => Some(at.index()),
+                    _ => payload.trace_position(),
+                },
             },
             loop_states,
         ),

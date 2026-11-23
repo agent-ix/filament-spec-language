@@ -18,7 +18,7 @@ post-states of one transition identity; an engine disagreement settles
 `inconclusive`; a loop that does not close, an unfair lasso, a disabled step, a bad initial state and a misplaced
 `terminal-stutter` step refuse.
 
-Scope: FR-128-AC-1 to FR-128-AC-4, FR-128-AC-10 to FR-128-AC-15 and FR-330-AC-20.
+Scope: FR-128-AC-1 to FR-128-AC-4, FR-128-AC-10 to FR-128-AC-16 and FR-330-AC-20.
 
 ## Test Procedure
 
