@@ -89,6 +89,12 @@ fsl-analyze/tests/it/exact_probabilistic_item.rs (the replaced QSL-2850 pin it e
 | FND-008 | medium | `ProbabilityDocumentLimits::for_exact` now sets `scalar_bits = max(max_rational_bits, 16*max_precision_bits)` for every document check, but a scalar stop still settles `LimitReached{ExactProbMaxRationalBits, value}` (`model_limit()`), naming a setting that does not control the bound once `16*max_precision_bits` dominates (FR-255); it also widens exact-document checks (default 65,536 bits at any `max_rational_bits`), and limit pins such as `measure_and_vacuity_limits_settle_incomplete_without_certification` (`max_rational_bits` 3) were not shown to still hold | fsl-replay/src/probability_certificate/document.rs:246 |
 | FND-009 | low | `bounded_wrong_source_and_nonexact_rows_never_produce_an_accepted_document` keeps its name while its `("0.5", 64, 64)` row now expects accepted FR-1042 `lower`/`upper` documents and `ValueBounds`; the change is spec-driven (FR-201-AC-14, FR-203-AC-1) and stronger than the old `Disposed Unsupported` pin, but the name misdescribes the row | tools/fsl-probability-check/tests/it/bounded.rs:1137 |
 
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-010 | low | `fsl-probability-check` still names `exact_prob.max_rational_bits` for every `scalar_bits` stop, including one on a value-bounds document, whose producer-side bound the analyzer now names `exact_prob.max_precision_bits` when the 16x term binds, so the same document's stop is named differently by the analyzer and by the separate checker | tools/fsl-probability-check/tests/it/reward.rs:409 |
+
 ## Dispositions
 
 | FND | outcome | reason |
@@ -100,3 +106,5 @@ fsl-analyze/tests/it/exact_probabilistic_item.rs (the replaced QSL-2850 pin it e
 | FND-005 | fixed | Foreign reflow reverted; the net diff against origin/main has no format-only hunks in exact.rs, probability_certificate.rs, lib.rs or the item test |
 | FND-006 | fixed | `unwrap` admits the bytes through `quire_canonical::read_bounded` (bytes, storage) with the same mapping as `profile_dispatch`, and builds a serde `Value` only for canonical bound documents |
 | FND-007 | fixed | The doc now cites FR-202's ban on `Bounds`-derived refutations |
+| FND-008 | fixed | `for_exact` is back to `scalar_bits = max_rational_bits`; only the two interval sites use `for_interval`, and `interval_failure` names `ExactProbMaxPrecisionBits` with its configured value when `16*max_precision_bits` binds, else `ExactProbMaxRationalBits` |
+| FND-009 | fixed | Renamed `bounded_wrong_source_and_precision_budget_rows_never_accept_while_a_decided_interval_proves` |
