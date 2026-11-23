@@ -1326,7 +1326,7 @@ fn dec_cases(refusing: bool) -> BoxedStrategy<Case> {
     };
     (
         proptest::sample::select(MODES.to_vec()),
-        0u32..=3,
+        prop_oneof![1 => Just(0u32), 4 => 1u32..=3],
         any::<bool>(),
         limit,
         proptest::collection::vec(-1500i128..=1500, 3),
@@ -1806,7 +1806,7 @@ fn refusing_cases() -> BoxedStrategy<Case> {
     prop_oneof![
         3 => int_cases(true, Mutation::None),
         2 => rat_cases(true),
-        3 => dec_cases(true),
+        8 => dec_cases(true),
         2 => well_typed_cases(),
     ]
     .boxed()
