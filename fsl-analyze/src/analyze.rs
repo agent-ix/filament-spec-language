@@ -926,6 +926,9 @@ pub struct ItemDetail {
     /// The `task_product` part of the FSpec FR-418 certificate the checker
     /// accepted, for a proved task-product item.
     pub task_certificate: Option<serde_json::Value>,
+    /// FR-290: why an external provider's refutation had no usable
+    /// counterexample, for the item's one `diagnostics` entry (FR-621).
+    pub unusable_counterexample: Option<crate::provider::UnusableCounterexample>,
 }
 
 /// FR-941: what a `finite-replay` item reports of a protocol claim beyond its
@@ -988,6 +991,7 @@ impl ItemDetail {
                 .or_else(|| record.zone_check.as_deref().and_then(|zone| zone.non_zeno)),
             memory_bound: protocol.and_then(|protocol| protocol.memory_bound),
             finite_replay: record.finite_replay.clone(),
+            unusable_counterexample: record.unusable_counterexample,
             hybrid_certificate: record.hybrid_certificate.clone(),
             hybrid_disagreement: record.hybrid_disagreement.clone(),
             task_search: record
@@ -1875,6 +1879,8 @@ pub(crate) enum Refusal {
     ),
     /// An unbounded extent: `unsupported` with `unbounded-extent`.
     RequiresBound,
+    /// An operation-contract extent whose bound availability is request data.
+    OperationContractRequiresBound { finite_bound_available: bool },
     /// A finite trace population exceeds the bound declared by its hyper clause.
     RequiresFiniteHyperBound { bound: u64, found: usize },
     /// EN-4 `NotStatistical`: `invalid-request` with `not-statistical`.
@@ -1946,6 +1952,9 @@ pub struct AnalyzeItem<'a> {
     /// `HybridProviderAbsent` or `tool-unavailable` where other items settle
     /// by their disposition.
     hybrid: bool,
+    /// The operation-contract request's extent bit, when its extent is
+    /// unbounded.
+    operation_contract_finite_bound_available: Option<bool>,
 }
 
 impl<'a> AnalyzeItem<'a> {
@@ -1999,6 +2008,7 @@ impl<'a> AnalyzeItem<'a> {
             required: false,
             claim: None,
             hybrid: false,
+            operation_contract_finite_bound_available: None,
         }
     }
 
@@ -2023,6 +2033,7 @@ impl<'a> AnalyzeItem<'a> {
             required: false,
             claim: None,
             hybrid: false,
+            operation_contract_finite_bound_available: None,
         }
     }
 
@@ -2047,6 +2058,7 @@ impl<'a> AnalyzeItem<'a> {
             required: false,
             claim: None,
             hybrid: false,
+            operation_contract_finite_bound_available: None,
         }
     }
 
@@ -2069,6 +2081,7 @@ impl<'a> AnalyzeItem<'a> {
             required: false,
             claim: None,
             hybrid: false,
+            operation_contract_finite_bound_available: None,
         }
     }
 
@@ -2137,6 +2150,25 @@ impl<'a> AnalyzeItem<'a> {
     #[must_use]
     pub(crate) fn hybrid(mut self) -> Self {
         self.hybrid = true;
+        self
+    }
+
+    /// Carry the operation-contract extent bit to the refusal settlement.
+    #[must_use]
+    pub(crate) fn operation_contract_extent(
+        mut self,
+        kind: Capability,
+        extent: fsl_route::request::ExtentClassification,
+    ) -> Self {
+        self.operation_contract_finite_bound_available = match (kind, extent) {
+            (
+                Capability::OperationContract,
+                fsl_route::request::ExtentClassification::Unbounded {
+                    finite_bound_available,
+                },
+            ) => Some(finite_bound_available),
+            _ => None,
+        };
         self
     }
 
@@ -2239,6 +2271,10 @@ pub struct AnalyzeRecord {
     pub replayed_steps: Option<u64>,
     /// FR-941: what a `finite-replay` item reports of a protocol claim.
     pub finite_replay: Option<FiniteReplayDetail>,
+    /// Why an external provider's refutation had no usable counterexample
+    /// (FR-290): the item is `inconclusive`/`replay-parity` and writes one
+    /// item diagnostic with this reason (FR-621 `diagnostics`).
+    pub unusable_counterexample: Option<crate::provider::UnusableCounterexample>,
 }
 
 /// How an item settled.
@@ -2284,6 +2320,7 @@ impl AnalyzeRecord {
             task_product_counterexample: None,
             finite_hyper_counterexample: None,
             state_graph: None,
+            unusable_counterexample: None,
         }
     }
 
@@ -2827,6 +2864,7 @@ fn run(
         required: _,
         claim,
         hybrid,
+        operation_contract_finite_bound_available,
     } = item;
     let record = |settlement| AnalyzeRecord::of(index, settlement);
     let disposed = |kind, diagnostic| {
@@ -2912,6 +2950,16 @@ fn run(
             crate::provider::finish(*work, settled.remove(&index), cancel, engine)
         }
     };
+    let report = match (report, kind, operation_contract_finite_bound_available) {
+        (
+            EngineReport::Refused(Refusal::RequiresBound),
+            Capability::OperationContract,
+            Some(finite_bound_available),
+        ) => EngineReport::Refused(Refusal::OperationContractRequiresBound {
+            finite_bound_available,
+        }),
+        (report, _, _) => report,
+    };
     // An item whose charge saw the cancel was still open when the handle was
     // cancelled and settles `incomplete` with its cause (FR-276); a handle
     // cancelled after the item's last charge is not tripped and the verdict
@@ -2972,6 +3020,7 @@ fn claim_terminal(
                     counter: incomplete.limit_kind,
                 },
                 value: incomplete.limit,
+                required: None,
             },
         ),
         Ok(Outcome::WindowLimitReached(reached)) => TerminalRecord::incomplete(
@@ -2980,6 +3029,7 @@ fn claim_terminal(
             IncompleteCause::LimitReached {
                 limit: ModelCheckLimit::MaxWindowValues,
                 value: reached.limit,
+                required: None,
             },
         ),
         Err(refusal) => TerminalRecord::declined_with(
@@ -3069,6 +3119,9 @@ fn settle(
                 }
                 Some(crate::provider::ProviderCounterexample::Mismatch(found)) => {
                     settled.interface_mismatch = Some(found);
+                }
+                Some(crate::provider::ProviderCounterexample::Unusable(reason)) => {
+                    settled.unusable_counterexample = Some(reason);
                 }
                 None => {}
             }
@@ -3283,6 +3336,7 @@ fn settle(
                     } => Some(fsl_replay::IncompleteCause::LimitReached {
                         limit: fsl_replay::ModelCheckLimit::TaskProductWork,
                         value: *value,
+                        required: None,
                     }),
                     // FSpec FR-331: unresolved dynamics with its frontier
                     // evidence is `bounded-search-incomplete`.
@@ -3434,7 +3488,10 @@ fn settle(
             Diagnostic::new(CatalogCode::new("invalid_capability", "not-statistical")),
             backend,
         ),
-        EngineReport::Refused(Refusal::RequiresBound) => {
+        EngineReport::Refused(Refusal::RequiresBound)
+        | EngineReport::Refused(Refusal::OperationContractRequiresBound {
+            finite_bound_available: false,
+        }) => {
             let diagnostic = Diagnostic {
                 code: CatalogCode::new("unsupported_projection", "unbounded-extent"),
                 payload: Payload::Unbounded {
@@ -3445,6 +3502,13 @@ fn settle(
             };
             disposed(DispositionKind::Unsupported, diagnostic, backend)
         }
+        EngineReport::Refused(Refusal::OperationContractRequiresBound {
+            finite_bound_available: true,
+        }) => disposed(
+            DispositionKind::RequiresBound,
+            Diagnostic::new(CatalogCode::new("requires_bound", "requires-bound")),
+            backend,
+        ),
         EngineReport::Refused(Refusal::RequiresFiniteHyperBound { bound, found }) => disposed(
             DispositionKind::RequiresBound,
             Diagnostic {
@@ -4247,6 +4311,146 @@ mod tests {
         assert!(!ran.get());
     }
 
+    /// FSpec FR-290-AC-14: an operation-contract refusal preserves the
+    /// request's finite-bound availability, while a prior capability
+    /// disposition remains unsupported-requested-capability.
+    #[trace("FSpec-TC-950", "FSpec-FR-290-AC-14", "TC-845", "FR-335-AC-2")]
+    #[test]
+    fn operation_contract_requires_bound_uses_finite_bound_availability() {
+        use serde_json::json;
+
+        let mut engines = Engines::default();
+        engines
+            .with(engine("test-a", Capability::OperationContract))
+            .expect("first");
+        let write = |available| {
+            let item = refusing(|| Refusal::RequiresBound).operation_contract_extent(
+                Capability::OperationContract,
+                fsl_route::request::ExtentClassification::Unbounded {
+                    finite_bound_available: available,
+                },
+            );
+            let mut records = terminal_records(analyze_items(&engines, vec![item], &Cancel::new()));
+            let record = records.remove(0);
+            let document = analyze_document(std::slice::from_ref(&record), &[])
+                .expect("the disposed analyzer record serializes");
+            let wire: serde_json::Value =
+                serde_json::from_slice(&document.to_bytes().expect("the document encodes"))
+                    .expect("the document is JSON");
+            (record, wire["items"][0].clone())
+        };
+
+        let (record, item) = write(true);
+        let written = item["diagnostic"].clone();
+        assert!(record.settled_by_disposition());
+        assert!(record.backend().is_none());
+        assert_eq!(item["category"], "unsupported");
+        assert_eq!(
+            written,
+            json!({"code": "requires_bound", "cause": "requires-bound", "detail": {}})
+        );
+        assert_eq!(item["result"], "unsupported");
+        let mut members: Vec<&str> = item
+            .as_object()
+            .expect("an item object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        members.sort_unstable();
+        assert_eq!(
+            members,
+            ["category", "diagnostic", "request_index", "result"],
+            "a disposition carries no verdict, certificate or evidence: {item}"
+        );
+
+        let (record, item) = write(false);
+        let written = item["diagnostic"].clone();
+        assert!(record.settled_by_disposition());
+        assert!(record.backend().is_none());
+        assert_eq!(item["category"], "unsupported");
+        assert_eq!(
+            written,
+            json!({
+                "code": "unsupported_projection",
+                "cause": "unbounded-extent",
+                "detail": {
+                    "kind": "operation-contract",
+                    "candidate": "test-a",
+                    "modes": ["bounded"],
+                },
+            })
+        );
+        assert_eq!(item["result"], "unsupported");
+        let mut members: Vec<&str> = item
+            .as_object()
+            .expect("an item object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        members.sort_unstable();
+        assert_eq!(
+            members,
+            ["category", "diagnostic", "request_index", "result"],
+            "a disposition carries no verdict, certificate or evidence: {item}"
+        );
+    }
+
+    /// FSpec FR-290-AC-14: preserve the pre-negotiated missing-population
+    /// disposition through the analyzer request and output path. Candidate
+    /// domain negotiation itself belongs to the driver.
+    #[trace("FSpec-TC-950", "FSpec-FR-290-AC-14")]
+    #[test]
+    fn operation_contract_preserves_missing_population_disposition() {
+        use serde_json::json;
+
+        let mut engines = Engines::default();
+        engines
+            .with(engine("test-a", Capability::OperationContract))
+            .expect("first");
+        let diagnostic = unsupported_kind(Capability::OperationContract);
+        let item = refusing(|| {
+            Refusal::Failed(CatalogCode::new(
+                "runtime_invariant",
+                "established-invariant-broken",
+            ))
+        })
+        .disposed(Disposition::Unsupported, Some(diagnostic));
+        let mut records = terminal_records(analyze_items(&engines, vec![item], &Cancel::new()));
+        let record = records.remove(0);
+        let document = analyze_document(std::slice::from_ref(&record), &[])
+            .expect("the negotiated disposition serializes");
+        let wire: serde_json::Value =
+            serde_json::from_slice(&document.to_bytes().expect("the document encodes"))
+                .expect("the document is JSON");
+        let item = wire["items"][0].clone();
+        let written = item["diagnostic"].clone();
+
+        assert!(record.settled_by_disposition());
+        assert!(record.backend().is_none());
+        assert_eq!(item["category"], "unsupported");
+        assert_eq!(
+            written,
+            json!({
+                "code": "unsupported_projection",
+                "cause": "unsupported-requested-capability",
+                "detail": {"kind": "operation-contract"},
+            })
+        );
+        assert_eq!(item["result"], "unsupported");
+        let mut members: Vec<&str> = item
+            .as_object()
+            .expect("an item object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        members.sort_unstable();
+        assert_eq!(
+            members,
+            ["category", "diagnostic", "request_index", "result"],
+            "a disposition carries no verdict, certificate or evidence: {item}"
+        );
+    }
+
     fn refusing<'a>(refusal: impl Fn() -> Refusal + 'a) -> AnalyzeItem<'a> {
         AnalyzeItem::new(
             RequestIndex::new(0),
@@ -4529,6 +4733,7 @@ mod proof_value_tests {
         IncompleteCause::LimitReached {
             limit: ModelCheckLimit::ZoneMaxCheckWork,
             value: 7,
+            required: None,
         }
     }
 

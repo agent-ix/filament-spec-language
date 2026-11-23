@@ -167,7 +167,7 @@ fn parameter_object_type(graph: &Graph<'_>, position: usize) -> Option<(String, 
                 Some(target)
             }
             CheckedTerm::Application { arguments, .. }
-            | CheckedTerm::Aggregate { members: arguments } => arguments
+            | CheckedTerm::Aggregate { members: arguments, .. } => arguments
                 .iter()
                 .find_map(|argument| object_reference(package, argument)),
             CheckedTerm::Binding { value, .. } => object_reference(package, value),

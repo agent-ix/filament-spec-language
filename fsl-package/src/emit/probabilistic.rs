@@ -369,7 +369,7 @@ fn workload_node(
 /// The member `position` of an aggregate `term`, bound or not.
 fn member(term: &CheckedTerm, position: usize) -> Option<&CheckedTerm> {
     match term {
-        CheckedTerm::Aggregate { members } => match members.get(position)? {
+        CheckedTerm::Aggregate { members, .. } => match members.get(position)? {
             CheckedTerm::Binding { value, .. } => Some(value),
             _ => None,
         },
@@ -736,7 +736,7 @@ pub(super) fn write_claim_bodies(
         let distributions = refs(&reads.distributions).ok_or_else(missing)?;
         let delays = refs(&reads.delays).ok_or_else(missing)?;
         let statement = claim.statement().ok_or_else(unkeyed)?;
-        let CheckedTerm::Aggregate { members: stated } =
+        let CheckedTerm::Aggregate { members: stated, .. } =
             statement_term(ids, nodes, &text, statement).ok_or_else(missing)??
         else {
             return Err(EmitRefusal::SourceMapInvariant);
@@ -749,7 +749,7 @@ pub(super) fn write_claim_bodies(
             claim_binding("delays", claim_aggregate(delays)),
         ];
         members.extend(stated);
-        let body = CheckedTerm::Aggregate { members };
+        let body = CheckedTerm::aggregate(members);
         let written = nodes
             .iter_mut()
             .find(|node| node.node_id == claim_id)

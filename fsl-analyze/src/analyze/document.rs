@@ -4767,6 +4767,17 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
             item.insert(member.to_owned(), value.clone());
         }
     }
+    // FR-290, FR-621 "diagnostics": an unusable provider counterexample
+    // writes exactly one item diagnostic naming its typed reason.
+    if let Some(reason) = detail
+        .as_ref()
+        .and_then(|detail| detail.unusable_counterexample)
+    {
+        item.insert(
+            "diagnostics".to_owned(),
+            Value::Array(vec![reason.item_diagnostic()]),
+        );
+    }
     if let Some(stats) = detail.as_ref().and_then(|detail| detail.exploration) {
         item.insert(
             "exploration".to_owned(),

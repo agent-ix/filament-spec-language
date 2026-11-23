@@ -129,7 +129,7 @@ fn renamed_id(id: &CheckedNodeId, renames: &[(&str, &str)]) -> CheckedNodeId {
 }
 
 fn rename_bindings(body: &mut CheckedTerm, renames: &[(&str, &str)]) {
-    if let CheckedTerm::Aggregate { members } = body {
+    if let CheckedTerm::Aggregate { members, .. } = body {
         for member in members.iter_mut() {
             if let CheckedTerm::Binding { name, value, .. } = member {
                 if let Some((_, to)) = renames.iter().find(|(from, _)| *from == name.as_ref()) {
@@ -223,7 +223,7 @@ fn rekey(
 fn param_targets(
     node: &CheckedSemanticNodeV2,
 ) -> Result<(Vec<CheckedNodeId>, CheckedNodeId), EmitRefusal> {
-    let CheckedTerm::Aggregate { members } = &node.body else {
+    let CheckedTerm::Aggregate { members, .. } = &node.body else {
         return Err(invariant("a function body is an aggregate"));
     };
     let mut parameters = Vec::new();
@@ -231,7 +231,7 @@ fn param_targets(
     for member in members {
         if let CheckedTerm::Binding { name, value, .. } = member {
             match (name.as_ref(), &**value) {
-                ("parameters", CheckedTerm::Aggregate { members }) => {
+                ("parameters", CheckedTerm::Aggregate { members, .. }) => {
                     for parameter in members {
                         if let CheckedTerm::Reference { target } = parameter {
                             parameters.push(target.clone());
@@ -1227,7 +1227,7 @@ fn follow_final_bindings(
             .iter()
             .find(|node| node.node_id == row.structural_node)
             .ok_or_else(|| invariant("a source record row names a node of the package"))?;
-        let CheckedTerm::Aggregate { members } = &node.body else {
+        let CheckedTerm::Aggregate { members, .. } = &node.body else {
             return Err(invariant("a source record node's body is an aggregate"));
         };
         let names: Vec<&str> = members
@@ -1263,7 +1263,7 @@ pub(super) fn follow_final_positions(
         let node = by_id
             .get(&row.structural_node)
             .ok_or_else(|| invariant("a source tuple row names a node of the package"))?;
-        let CheckedTerm::Aggregate { members } = &node.body else {
+        let CheckedTerm::Aggregate { members, .. } = &node.body else {
             return Err(invariant("a source tuple node's body is an aggregate"));
         };
         let targets: Vec<&CheckedNodeId> = members
@@ -1304,7 +1304,7 @@ pub(super) fn follow_final_collections(
     };
     for row in rows {
         let base = find(&row.base_node)?;
-        let CheckedTerm::Aggregate { members } = &base.body else {
+        let CheckedTerm::Aggregate { members, .. } = &base.body else {
             return Err(invariant("a collection node's body is an aggregate"));
         };
         match (&row.key_node, members.as_slice()) {
@@ -1330,31 +1330,6 @@ pub(super) fn follow_final_collections(
     Ok(())
 }
 
-/// FSpec FR-322: a node's `dependencies` ascend by the structural keys of
-/// the nodes they name. A renamed entry changes the structural key of every
-/// node that holds it as an operand (a call of the entry), so the order of a
-/// node depending on two such calls can change; each list is sorted again by
-/// the final keys. A list naming a node this graph does not hold (a dependency
-/// package's node, which no rename reaches) keeps its order.
-fn order_dependencies(nodes: &mut [CheckedSemanticNodeV2]) -> Result<(), EmitRefusal> {
-    let graph =
-        fsl_semantics::check::wire_id::WireGraph::new(nodes.iter().map(|node| &node.node_id))
-            .map_err(|_| invariant("the writer's graph ids resolve"))?;
-    for node in nodes.iter_mut() {
-        let Ok(mut keyed) = node
-            .dependencies
-            .iter()
-            .map(|id| graph.key(id).map(|key| (key, id.clone())))
-            .collect::<Result<Vec<_>, _>>()
-        else {
-            continue;
-        };
-        keyed.sort_by(|(left, _), (right, _)| left.cmp(right));
-        node.dependencies = keyed.into_iter().map(|(_, id)| id).collect();
-    }
-    Ok(())
-}
-
 /// The shared tail: index the graph, encode and wrap the bytes.
 pub(super) fn finish(
     base: &CheckedPackageV2,
@@ -1366,7 +1341,7 @@ pub(super) fn finish(
     limits: crate::checked::EmitLimits,
 ) -> Result<Emission, EmitRefusal> {
     let lock = base.lock().clone();
-    order_dependencies(&mut nodes)?;
+    super::order_dependencies(&mut nodes, invariant)?;
     let requirement_rows = super::value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
     let operand_rows = super::write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {

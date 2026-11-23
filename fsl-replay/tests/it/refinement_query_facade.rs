@@ -493,7 +493,8 @@ fn public_handoff_stops_at_its_own_exact_stage_limits_and_cancellation() {
                 request.assemble_smt_certificate(&bytes, &short, &Cancel::new()),
                 Err(Error::Stopped(IncompleteCause::LimitReached {
                     limit: ModelCheckLimit::CertificateMaxBytes,
-                    value: bound
+                    value: bound,
+                    required: None,
                 }))
             );
         }
@@ -506,7 +507,8 @@ fn public_handoff_stops_at_its_own_exact_stage_limits_and_cancellation() {
                 request.assemble_smt_certificate(&bytes, &short, &Cancel::new()),
                 Err(Error::Stopped(IncompleteCause::LimitReached {
                     limit: ModelCheckLimit::CertificateMaxEdges,
-                    value: bound
+                    value: bound,
+                    required: None,
                 }))
             );
         }

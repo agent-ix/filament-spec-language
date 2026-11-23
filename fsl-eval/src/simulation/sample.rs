@@ -9,12 +9,12 @@ use filament_exact::ValueType;
 use filament_semantic_value::declaration::TypeEnvironment;
 use fsl_foundation::selection::DefinitionRef;
 
-use crate::simulation::choice::{choose, ChoicePoint, Weights};
-use crate::simulation::expansion::StateFindings;
+use crate::simulation::choice::{ChoicePoint, Weights, choose};
+use crate::simulation::expansion::{ExpansionStop, StateFindings};
 use crate::simulation::explore::TransitionSystem;
 use crate::simulation::key::{EncodingRefusal, StateKey};
-use crate::simulation::not_simulated::{check_requires_bound, NotSimulated, Root};
-use crate::simulation::order::{expand, sorted_initial, Expanded, OrderedSuccessor};
+use crate::simulation::not_simulated::{NotSimulated, Root, check_requires_bound};
+use crate::simulation::order::{Expanded, OrderedSuccessor, expand, sorted_initial};
 use crate::simulation::trace::{SampleProvenance, Step, StopReason, Trace};
 use fsl_foundation::IdentityLimits;
 
@@ -96,16 +96,94 @@ impl Sampler for PinnedSampler {
 
 /// [`sample`]'s result: the trace, `None` for a system with no initial
 /// state, or the first encoding refusal reached.
-type SampleResult<T, F> = Result<Option<Trace<T, F>>, EncodingRefusal>;
-
 /// An owned expansion, or an immutable model-memo entry. Sampling only
 /// takes the chosen successor; an unchosen adjacency is never deep-copied.
-pub(crate) trait SampleExpansion<T, S, F> {
+pub(crate) trait SampleExpansionSource<T, S, F> {
     fn view(&self) -> &Expanded<T, S, F>;
     fn take(self, index: usize) -> Option<OrderedSuccessor<T, S>>;
 }
 
-impl<T, S, F> SampleExpansion<T, S, F> for Expanded<T, S, F> {
+/// What the observer saw at a sampled state: its complete ordered successors,
+/// or the cause that prevented a complete expansion.
+pub enum SampleExpansion<'a, T, S, F> {
+    /// The complete successor list and findings for the current state.
+    Complete {
+        /// Successors in FR-101 canonical order.
+        successors: SampleSuccessors<'a, T, S>,
+        /// Findings from the complete expansion.
+        findings: &'a [F],
+    },
+    /// The expansion stopped before a complete successor list was available.
+    Stopped(ExpansionStop),
+}
+
+/// A view of a state's canonical successor list.
+pub struct SampleSuccessors<'a, T, S>(&'a [OrderedSuccessor<T, S>]);
+
+impl<'a, T, S> SampleSuccessors<'a, T, S> {
+    /// Iterates the full canonical successor list without cloning states.
+    pub fn iter(&self) -> impl Iterator<Item = SampleSuccessorRef<'_, T, S>> + '_ {
+        self.0.iter().map(|successor| SampleSuccessorRef {
+            transition: &successor.transition,
+            state: &successor.state,
+            key: &successor.key,
+        })
+    }
+}
+
+/// A borrowed view of one sampled successor.
+pub struct SampleSuccessorRef<'a, T, S> {
+    /// The transition identity of this edge.
+    pub transition: &'a T,
+    /// The successor state.
+    pub state: &'a S,
+    /// The complete canonical key of the successor.
+    pub key: &'a StateKey,
+}
+
+/// One sampled state and the expansion the sampler obtained before choosing
+/// its next transition.
+pub struct SampleObservation<'a, S, T, F> {
+    /// The number of transitions already taken to reach this state.
+    pub step: usize,
+    /// The current state.
+    pub state: &'a S,
+    /// The current state's canonical key.
+    pub key: &'a StateKey,
+    /// The expansion result for the current state.
+    pub expansion: SampleExpansion<'a, T, S, F>,
+    /// The transition selected to reach this state, absent at step zero.
+    pub incoming: Option<&'a Step<T>>,
+}
+
+/// Whether an observer allows the sampled walk to continue.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ObserverDecision {
+    /// Continue the ordinary seeded walk.
+    Continue,
+    /// Return the captured prefix without trace provenance.
+    Stop,
+}
+
+/// The result of a sampled walk with an incremental observer.
+pub enum ObservedSample<T, F> {
+    /// The walk ended normally or by its ordinary sampler stop condition.
+    Completed(Trace<T, F>),
+    /// The observer stopped the walk; this is a prefix, not a completed trace.
+    ObserverStopped(SamplePrefix<T, F>),
+}
+
+/// A captured observer-stopped walk prefix, without trace provenance.
+pub struct SamplePrefix<T, F> {
+    /// The canonical key of the initial state.
+    pub initial: StateKey,
+    /// The transitions taken from the initial state through the current state.
+    pub steps: Vec<Step<T>>,
+    /// Findings observed at states in this prefix.
+    pub findings: Vec<StateFindings<F>>,
+}
+
+impl<T, S, F> SampleExpansionSource<T, S, F> for Expanded<T, S, F> {
     fn view(&self) -> &Expanded<T, S, F> {
         self
     }
@@ -118,7 +196,7 @@ impl<T, S, F> SampleExpansion<T, S, F> for Expanded<T, S, F> {
     }
 }
 
-impl<T: Clone, S: Clone, F> SampleExpansion<T, S, F> for std::sync::Arc<Expanded<T, S, F>> {
+impl<T: Clone, S: Clone, F> SampleExpansionSource<T, S, F> for std::sync::Arc<Expanded<T, S, F>> {
     fn view(&self) -> &Expanded<T, S, F> {
         self
     }
@@ -154,12 +232,15 @@ struct SamplePlan {
 ///
 /// [`EncodingRefusal`] when a state or transition identity reached during
 /// the run has no RFC 8785 encoding.
-fn sample<S: TransitionSystem, E: SampleExpansion<S::TransitionId, S::State, S::Finding>>(
+fn sample<S: TransitionSystem, E: SampleExpansionSource<S::TransitionId, S::State, S::Finding>>(
     system: &S,
     plan: SamplePlan,
     mut end: impl FnMut(&S::State, &StateKey) -> bool,
     mut expansion: impl FnMut(&S::State, &StateKey) -> Result<E, EncodingRefusal>,
-) -> SampleResult<S::TransitionId, S::Finding> {
+    mut observer: impl FnMut(
+        &SampleObservation<'_, S::State, S::TransitionId, S::Finding>,
+    ) -> ObserverDecision,
+) -> Result<Option<ObservedSample<S::TransitionId, S::Finding>>, EncodingRefusal> {
     let SamplePlan {
         sampler,
         seed,
@@ -182,16 +263,32 @@ fn sample<S: TransitionSystem, E: SampleExpansion<S::TransitionId, S::State, S::
     let mut generator = PinnedSampler::new(seed, trace_index);
     let mut steps = Vec::new();
     let mut findings = Vec::new();
-    let stopped = loop {
+    let outcome = loop {
         if end(&current, &current_key) {
-            break StopReason::Reached;
+            break SampleOutcome::Completed(StopReason::Reached);
         }
         let expanded = expansion(&current, &current_key)?;
-        let (successors, state_findings) = match expanded.view() {
+        let successors = match expanded.view() {
             Expanded::Successors {
                 successors,
-                findings,
-            } => (successors, findings.clone()),
+                findings: state_findings,
+            } => {
+                push_findings(&mut findings, &current_key, steps.len(), state_findings);
+                let observation = SampleObservation {
+                    step: steps.len(),
+                    state: &current,
+                    key: &current_key,
+                    expansion: SampleExpansion::Complete {
+                        successors: SampleSuccessors(successors),
+                        findings: state_findings,
+                    },
+                    incoming: steps.last(),
+                };
+                if observer(&observation) == ObserverDecision::Stop {
+                    break SampleOutcome::ObserverStopped;
+                }
+                successors
+            }
             Expanded::Stopped(stop) => {
                 let state_findings = system.findings_at_stop(&current);
                 if !state_findings.is_empty() {
@@ -201,21 +298,24 @@ fn sample<S: TransitionSystem, E: SampleExpansion<S::TransitionId, S::State, S::
                         findings: state_findings,
                     });
                 }
-                break StopReason::Stopped(stop.cause);
+                let observation = SampleObservation {
+                    step: steps.len(),
+                    state: &current,
+                    key: &current_key,
+                    expansion: SampleExpansion::Stopped(*stop),
+                    incoming: steps.last(),
+                };
+                if observer(&observation) == ObserverDecision::Stop {
+                    break SampleOutcome::ObserverStopped;
+                }
+                break SampleOutcome::Completed(StopReason::Stopped(stop.cause));
             }
         };
-        if !state_findings.is_empty() {
-            findings.push(StateFindings {
-                state: current_key.clone(),
-                depth: steps.len(),
-                findings: state_findings,
-            });
-        }
         if steps.len() >= max_steps {
-            break StopReason::StepLimit;
+            break SampleOutcome::Completed(StopReason::StepLimit);
         }
         if successors.is_empty() {
-            break StopReason::NoSuccessors;
+            break SampleOutcome::Completed(StopReason::NoSuccessors);
         }
         let n = successors.len();
         // `next_index(n)` always returns an index `< n` (its own contract),
@@ -238,17 +338,46 @@ fn sample<S: TransitionSystem, E: SampleExpansion<S::TransitionId, S::State, S::
         });
     };
 
-    Ok(Some(Trace {
-        initial: initial_key,
-        steps,
-        findings,
-        provenance: Some(SampleProvenance {
-            seed,
-            trace: trace_index,
-            sampler,
-            stopped,
+    Ok(Some(match outcome {
+        SampleOutcome::Completed(stopped) => ObservedSample::Completed(Trace {
+            initial: initial_key,
+            steps,
+            findings,
+            provenance: Some(SampleProvenance {
+                seed,
+                trace: trace_index,
+                sampler,
+                stopped,
+            }),
+        }),
+        SampleOutcome::ObserverStopped => ObservedSample::ObserverStopped(SamplePrefix {
+            initial: initial_key,
+            steps,
+            findings,
         }),
     }))
+}
+
+enum SampleOutcome {
+    Completed(StopReason),
+    ObserverStopped,
+}
+
+fn push_findings<F>(
+    output: &mut Vec<StateFindings<F>>,
+    key: &StateKey,
+    depth: usize,
+    state_findings: &[F],
+) where
+    F: Clone,
+{
+    if !state_findings.is_empty() {
+        output.push(StateFindings {
+            state: key.clone(),
+            depth,
+            findings: state_findings.to_vec(),
+        });
+    }
 }
 
 /// Whether `sampler` is the one `filament.simulation.sampler/v1` generator
@@ -350,18 +479,88 @@ pub fn sample_request_until<S: TransitionSystem, R: Root>(
     )
 }
 
+/// Draw a seeded walk and let `observer` inspect every visited state after its
+/// expansion and before the next successor is selected. Returning `Stop`
+/// returns a prefix with no trace provenance. Returning `Continue` at every
+/// state produces the same completed trace and draws as [`sample_request`].
+///
+/// The observer is called on stopped expansions too, with the stop cause, so
+/// callers can evaluate the current state while declining to infer closure.
+///
+/// # Errors
+///
+/// The same admission and encoding refusals as [`sample_request`].
+pub fn sample_request_observed<S: TransitionSystem, R: Root>(
+    system: &S,
+    request: SampleRequest<'_, R>,
+    observer: impl FnMut(
+        &SampleObservation<'_, S::State, S::TransitionId, S::Finding>,
+    ) -> ObserverDecision,
+) -> Result<ObservedSample<S::TransitionId, S::Finding>, NotSimulated> {
+    let identity = request.identity;
+    sample_request_observed_using(
+        system,
+        request,
+        |state, _| expand(system, state, identity),
+        observer,
+    )
+}
+
 /// The same admitted sampler with caller-supplied canonical expansions.
 /// The model walk uses its request-local memo without changing draw order.
 pub(crate) fn sample_request_using<
     S: TransitionSystem,
     R: Root,
-    E: SampleExpansion<S::TransitionId, S::State, S::Finding>,
+    E: SampleExpansionSource<S::TransitionId, S::State, S::Finding>,
 >(
     system: &S,
     request: SampleRequest<'_, R>,
     end: impl FnMut(&S::State, &StateKey) -> bool,
     expansion: impl FnMut(&S::State, &StateKey) -> Result<E, EncodingRefusal>,
 ) -> Result<Trace<S::TransitionId, S::Finding>, NotSimulated> {
+    if !is_pinned_sampler(request.sampler) {
+        return Err(NotSimulated::GeneratorMismatch {
+            supplied: request.sampler.clone(),
+        });
+    }
+    check_requires_bound(request.domains, request.types, request.position_limit)?;
+    let sampled = sample(
+        system,
+        SamplePlan {
+            sampler: request.sampler.clone(),
+            seed: request.seed,
+            trace_index: request.trace,
+            max_steps: request.max_steps,
+            identity: request.identity,
+        },
+        end,
+        expansion,
+        |_| ObserverDecision::Continue,
+    )?
+    .ok_or(NotSimulated::EmptyInitial)?;
+    match sampled {
+        ObservedSample::Completed(trace) => Ok(trace),
+        ObservedSample::ObserverStopped(_) => {
+            unreachable!("sample_request_using always continues its observer")
+        }
+    }
+}
+
+/// The same admitted sampler as [`sample_request_observed`] with a caller-
+/// supplied canonical expansion source. The model walk uses its memoized
+/// expansion without changing draw order.
+pub(crate) fn sample_request_observed_using<
+    S: TransitionSystem,
+    R: Root,
+    E: SampleExpansionSource<S::TransitionId, S::State, S::Finding>,
+>(
+    system: &S,
+    request: SampleRequest<'_, R>,
+    expansion: impl FnMut(&S::State, &StateKey) -> Result<E, EncodingRefusal>,
+    observer: impl FnMut(
+        &SampleObservation<'_, S::State, S::TransitionId, S::Finding>,
+    ) -> ObserverDecision,
+) -> Result<ObservedSample<S::TransitionId, S::Finding>, NotSimulated> {
     if !is_pinned_sampler(request.sampler) {
         return Err(NotSimulated::GeneratorMismatch {
             supplied: request.sampler.clone(),
@@ -377,8 +576,9 @@ pub(crate) fn sample_request_using<
             max_steps: request.max_steps,
             identity: request.identity,
         },
-        end,
+        |_, _| false,
         expansion,
+        observer,
     )?
     .ok_or(NotSimulated::EmptyInitial)
 }

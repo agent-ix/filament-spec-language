@@ -652,7 +652,7 @@ fn assert_matches_vector(
                 None => assert!(undefined.is_none(), "{id}: a false goal names no locus"),
             }
         }
-        TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value }) => {
+        TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value, .. }) => {
             let cause = &expected["cause"];
             assert_eq!(cause["type"], "limit-reached", "{id}");
             assert_eq!(cause["limit"], limit.as_str(), "{id}");
@@ -920,6 +920,7 @@ fn a_large_union_domain_stops_at_the_item_case_budget() {
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::ValueCheckMaxCases,
             value: 2,
+            required: None,
         })
     ));
 }
@@ -962,6 +963,7 @@ fn recursive_function_body_evaluations_consume_the_item_case_budget() {
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::ValueCheckMaxCases,
             value: 5,
+            required: None,
         })
     ));
 }
@@ -1213,7 +1215,7 @@ fn the_item_limit_replaces_the_descriptor_default_and_the_descriptor_default_app
         &serde_json::json!({"role": "claim", "ordinal": 0}),
     );
     let limit = |record: &AnalyzeRecord| match terminal(record) {
-        TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value }) => {
+        TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value, .. }) => {
             assert_eq!(*limit, ModelCheckLimit::ValueCheckMaxCases);
             Some(*value)
         }

@@ -13,7 +13,9 @@ mod locus;
 mod stage;
 pub use budget::{BudgetDenial, BudgetOwner, DeniedCharge};
 pub use locus::{InvalidJsonPointer, JsonPointer, Locus, UnresolvedLocus};
-pub use stage::{LimitExceeded, LimitKind, StageFailure, StageWork, Staged, Stopped};
+pub use stage::{
+    LimitExceeded, LimitKind, RenderedLimit, RequestKind, StageFailure, StageWork, Staged, Stopped,
+};
 
 pub use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::catalog::{CatalogCoded, Category};

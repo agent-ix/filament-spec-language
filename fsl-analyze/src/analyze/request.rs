@@ -1596,10 +1596,40 @@ fn work<'a>(
     if matches!(&item.form, Some(ItemForm::Hybrid(_))) {
         built = built.hybrid();
     }
+    built = contract_checker_bound(built, item, &negotiated.disposition);
     built.required(item.options.required).disposed(
         negotiated.disposition.clone(),
         negotiated.diagnostic.clone(),
     )
+}
+
+/// The one decision both routes take for an operation-contract item the
+/// negotiation routed to the contract checker. The checker advertises only
+/// `bounded` (FSpec FR-483): the item is read in that mode, and one whose
+/// extent is still unbounded asks for a bound it was not given, so the engine
+/// refuses `RequiresBound` and the settlement reads the request's
+/// `finite_bound_available` (FSpec FR-290-AC-14, FSL FR-940). Only this
+/// checker's refusal reads the extent bit; any other engine's `RequiresBound`
+/// keeps its own disposition.
+pub(super) fn contract_checker_bound<'a>(
+    mut built: super::AnalyzeItem<'a>,
+    item: &ClaimItem,
+    disposition: &fsl_route::routing::Disposition,
+) -> super::AnalyzeItem<'a> {
+    let target = item.kind == Capability::OperationContract
+        && disposition.target().is_some_and(|backend| {
+            backend.id().as_str() == crate::contract_check::manifest::BACKEND_ID
+        });
+    if !target {
+        return built;
+    }
+    if matches!(item.extent, ExtentClassification::Unbounded { .. }) {
+        built.work = Some(super::ItemWork::Engine(Box::new(move |_, _| {
+            super::EngineReport::Refused(super::Refusal::RequiresBound)
+        })));
+    }
+    built.mode = fsl_route::Mode::Bounded;
+    built.operation_contract_extent(item.kind, item.extent)
 }
 
 /// FR-940 "Claim occurrence ordinals": whether `claim` names a node an
@@ -1756,6 +1786,130 @@ mod tests {
             };
             assert_eq!(simulation.expansion.max_candidates, 1_000_000);
             assert_eq!(simulation.meter, limits.accounting);
+        }
+    }
+
+    /// The analyzer request adapter forwards both extent bit values from
+    /// `ClaimItem` to the item whose engine refusal is later settled.
+    #[trace("FSpec-TC-950", "FSpec-FR-290-AC-14", "TC-845", "FR-335-AC-2")]
+    #[test]
+    fn request_work_forwards_operation_contract_finite_bound_availability() {
+        use fsl_replay::spine::{check, parse, select, DependencyInput, ParseRequest, SpineLimits};
+
+        let model = include_bytes!(
+            "../../../tools/fsl-probability-check/tests/fixtures/link.semantic-ir.json"
+        );
+        let packages = fsl_semantics::model::intake::package_input([model.as_slice()])
+            .expect("the Link model admits");
+        let text = format!(
+            "{}\nprobabilistic Delivered using ev on M over (m: M::Msg) under Even on origin \
+             with alpha 0.01, beta 0.01, indifference 0.05 \
+             {{ probability >= 0.9 [ eventually[0,2] holds(m.delivered) ] }}",
+            include_str!("../../../tools/fsl-probability-check/tests/fixtures/link.native")
+                .replace(
+                    "profile inf = \"filament.temporal.infinite-trace/v1\";",
+                    "profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+                 profile ev = \"filament.temporal.event-position.false-extension/v1\";"
+                )
+        );
+        let source = fsl_foundation::SourceIdentity::new("test", "operation-contract-extent");
+        let cancel = filament_exact::Cancel::new();
+        let spine = SpineLimits::default();
+        let parsed = parse(
+            &ParseRequest {
+                source: &source,
+                path: "operation-contract-extent.native",
+                bytes: text.as_bytes(),
+            },
+            spine.source,
+            &cancel,
+        )
+        .expect("the Link source parses")
+        .into_value();
+        let models = select(&parsed, &packages, spine.model, &cancel)
+            .expect("the Link model is selected")
+            .into_value();
+        let checked = check(
+            &parsed,
+            "operation-contract-extent".to_owned(),
+            &models,
+            &DependencyInput::default(),
+            spine,
+            &cancel,
+        )
+        .expect("the Link package checks")
+        .into_value();
+        let analysis = super::super::RunInput::source(checked.package());
+        let snapshots = fsl_semantics::model::observation::DocumentProvision::default();
+        let binding = super::super::SubjectBinding {
+            packages: &packages,
+            snapshots: &snapshots,
+            initial: Vec::new(),
+            universes: Vec::new(),
+        };
+        let claim = analysis
+            .package
+            .graph()
+            .probabilistic_model()
+            .claims()
+            .first()
+            .and_then(|claim| claim.occurrence())
+            .expect("the Link package has an authored occurrence")
+            .clone();
+        let engines = super::super::Engines::fsl().expect("the linked engines register");
+        let sources = SourceProvision::default();
+        for backend in [
+            crate::contract_check::manifest::BACKEND_ID,
+            crate::model_check::manifest::BACKEND_ID,
+        ] {
+            let candidate = fsl_route::Candidate::new(fsl_foundation::BackendId::new(backend));
+            for finite_bound_available in [false, true] {
+                let negotiated = super::NegotiatedItem {
+                    item: super::ClaimItem {
+                        request_index: fsl_foundation::RequestIndex::new(0),
+                        claim: claim.clone(),
+                        kind: fsl_semantics::check::Capability::OperationContract,
+                        extent: fsl_route::request::ExtentClassification::Unbounded {
+                            finite_bound_available,
+                        },
+                        backend: Some(candidate.id().clone()),
+                        candidates: vec![candidate.clone()],
+                        options: super::ItemOptions::default(),
+                        form: None,
+                    },
+                    disposition: fsl_route::routing::Disposition::Supported(candidate.clone()),
+                    diagnostic: None,
+                };
+                let built = super::work(
+                    &analysis,
+                    &binding,
+                    &sources,
+                    &negotiated,
+                    &engines,
+                    &super::super::AnalyzeLimits::unbounded(),
+                    None,
+                );
+                if backend == crate::contract_check::manifest::BACKEND_ID {
+                    assert_eq!(
+                        built.operation_contract_finite_bound_available,
+                        Some(finite_bound_available),
+                    );
+                    assert_eq!(built.mode, fsl_route::Mode::Bounded);
+                    let Some(super::super::ItemWork::Engine(refuse)) = built.work else {
+                        panic!("the contract checker's unbounded item carries engine work");
+                    };
+                    let engine = engines
+                        .get(candidate.id())
+                        .expect("the contract checker is registered");
+                    assert!(matches!(
+                        refuse(&filament_exact::Cancel::new(), engine),
+                        super::super::EngineReport::Refused(super::super::Refusal::RequiresBound)
+                    ));
+                } else {
+                    // Another target's refusal keeps its own disposition.
+                    assert_eq!(built.operation_contract_finite_bound_available, None);
+                }
+            }
         }
     }
 

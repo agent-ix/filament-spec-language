@@ -1358,6 +1358,7 @@ mod tests {
             | Refusal::FailedWithDetail(code, _)
             | Refusal::Failed(code) => Some(code.to_string()),
             Refusal::RequiresBound
+            | Refusal::OperationContractRequiresBound { .. }
             | Refusal::RequiresFiniteHyperBound { .. }
             | Refusal::NotStatistical
             | Refusal::InvalidOptionValue { .. }

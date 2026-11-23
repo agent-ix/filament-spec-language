@@ -28,9 +28,9 @@ FR-286-AC-28.
 
 ## Expected Results
 
-- Step 1: `hint` equals `hint_for(Code::IllTyped, Some("type-mismatch"))`,
+- Step 1: `hint` equals `hint_for(Code::IllTyped, Some("type-mismatch"), None)`,
   is nonempty and ends in `.`.
-- Step 2: `hint` equals `hint_for(Code::IoError, None)`.
+- Step 2: `hint` equals `hint_for(Code::IoError, None, None)`.
 - Step 3: neither the `output-failure` diagnostic nor the cause-less
   `invalid-request` diagnostic has a `hint` member.
 - Step 4: none of the four diagnostics has a `hint` member.

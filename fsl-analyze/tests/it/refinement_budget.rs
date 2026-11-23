@@ -221,9 +221,10 @@ fn a_run_over_the_budget_stops_and_settles_incomplete() {
         record.value,
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::EvaluationMeter {
-                counter: filament_exact::LimitKind::WorkUnits
+                counter: filament_exact::LimitKind::WorkUnits,
             },
-            value: b
+            value: b,
+            required: None,
         })
     );
     assert_eq!(record.execution, Execution::ResourceIncomplete);
@@ -258,9 +259,10 @@ fn a_certificate_checked_over_the_budget_stops_not_rejects() {
         check(b),
         TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::EvaluationMeter {
-                counter: filament_exact::LimitKind::WorkUnits
+                counter: filament_exact::LimitKind::WorkUnits,
             },
-            value: b
+            value: b,
+            required: None,
         })
     );
 }
@@ -287,7 +289,11 @@ fn a_true_certificate_under_a_small_meter_never_rejects() {
         .expect("the certificate is checked");
         match check {
             TemporalCertificateCheck::Accepted => {}
-            TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached { limit, value }) => {
+            TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached {
+                limit,
+                value,
+                ..
+            }) => {
                 assert_eq!(
                     (limit, value),
                     (
@@ -369,9 +375,10 @@ fn a_replay_over_the_budget_settles_incomplete_not_parity() {
         record.value,
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::EvaluationMeter {
-                counter: filament_exact::LimitKind::WorkUnits
+                counter: filament_exact::LimitKind::WorkUnits,
             },
-            value: b
+            value: b,
+            required: None,
         })
     );
     assert_eq!(record.execution, Execution::ResourceIncomplete);

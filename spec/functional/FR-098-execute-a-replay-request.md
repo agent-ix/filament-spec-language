@@ -583,8 +583,8 @@ completes: `false` reproduces the violation.
 
 **Application claim: unread parameters.** An owner parameter that is no
 extent root of the record (FR-062 "Extent": the application's argument
-subtrees, the `let` values they read and the guards of its path condition
-read it nowhere) need not be bound by the replay source. The executor
+subtrees, the `let` values they read and the guards in its shared path
+condition read it nowhere) need not be bound by the replay source. The executor
 SHALL bind such a parameter of type `Boolean` to `false`, and one of an
 integer type to the value of its declared range nearest 0 (0 when the range
 holds it, the lower of two equally near values otherwise). A filled value
@@ -616,7 +616,11 @@ included, is a different assignment of the claim's extent roots and is not
 observed. Each evaluation of a binder body is observed. S6a evaluates an
 occurrence only on the path its guards select (left-to-right short circuit
 and the selected conditional branch, FR-006), so every observed evaluation is
-one under which the record's path condition holds.
+one under which the record's shared `PathConditionView` holds. The executor
+SHALL consume the borrowed view over the requirement-map frame table; it
+SHALL NOT expand and retain a guard vector per record. For package-backed
+replay, it uses the view the admitted reader independently checked against
+the owner body (FSpec FR-825 and FSL FR-940).
 
 The executor SHALL tell the selected call's own evaluation from a nested
 one by the call depth S6a reports with the outcome (FR-100

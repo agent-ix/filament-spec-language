@@ -26,7 +26,7 @@ pub(super) fn checked_period(
         return Err(PlanAuthorityRefusal::FinalEmission);
     };
     charge.work(1)?;
-    let Some(CheckedTerm::Aggregate { members }) = package.term(source) else {
+    let Some(CheckedTerm::Aggregate { members, .. }) = package.term(source) else {
         return Err(PlanAuthorityRefusal::FinalEmission);
     };
     // The strict reader admitted the closed dense/tick member order. Inspect

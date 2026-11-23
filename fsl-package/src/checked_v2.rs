@@ -520,13 +520,13 @@ pub(crate) fn compound_unit(
                 crate::wire_form::WireForm::CompoundUnit,
             )
     })?;
-    let CheckedTerm::Aggregate { members } = &node.body else {
+    let CheckedTerm::Aggregate { members, .. } = &node.body else {
         return None;
     };
     let graph = wire_graph(package).ok()?;
     let mut terms = Vec::with_capacity(members.len());
     for member in members {
-        let CheckedTerm::Aggregate { members } = member else {
+        let CheckedTerm::Aggregate { members, .. } = member else {
             return None;
         };
         let mut unit = None;

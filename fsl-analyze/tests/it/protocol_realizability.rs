@@ -1195,6 +1195,7 @@ fn a_driver_run_settles_each_kind_under_each_label() {
     let limit = TerminalValue::Incomplete(IncompleteCause::LimitReached {
         limit: ModelCheckLimit::MaxStates,
         value: 1,
+        required: None,
     });
     for (at, (value, label, basis, execution, truth)) in records.iter().map(axes).enumerate() {
         let (want, axes) = match at {
@@ -1220,6 +1221,7 @@ fn a_driver_run_settles_each_kind_under_each_label() {
                 Some(TerminalValue::Incomplete(IncompleteCause::LimitReached {
                     limit: ModelCheckLimit::MaxTransitions,
                     value: 1,
+                    required: None,
                 })),
                 stopped,
             ),

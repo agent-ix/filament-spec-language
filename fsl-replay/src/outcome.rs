@@ -45,7 +45,7 @@ use filament_exact::{CancelCause, Integer, NodeKey};
 use filament_semantic_value::catalog::Category;
 use filament_semantic_value::location::ExpressionLocation;
 use fsl_cst::format::FormatRefusal;
-use fsl_foundation::diagnostic::{Code, Locus, StageFailure, Staged, Stopped};
+use fsl_foundation::diagnostic::{Code, Locus, RequestKind, StageFailure, Staged, Stopped};
 use fsl_foundation::source::provenance::{OccurrenceKey, RawSourceRef};
 use fsl_foundation::source::{SourceLabel, SourceReadCause};
 use fsl_foundation::{LocatedSpan, RequestIndex};
@@ -486,6 +486,9 @@ pub struct ItemCause {
     defect: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     value: Option<u64>,
+    /// A fixed-N statistical preflight stop's required sample count.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    required: Option<String>,
     /// An `insufficient-data` cause's window count.
     #[serde(skip_serializing_if = "Option::is_none")]
     count: Option<u64>,
@@ -845,6 +848,7 @@ impl ItemCause {
             limit: None,
             defect: None,
             value: None,
+            required: None,
             count: None,
             min_count: None,
             counter: None,
@@ -1426,10 +1430,15 @@ impl OutcomeItem {
                 let mut item = ItemCause::kind(cause.as_str());
                 match cause {
                     IncompleteCause::Cancelled { source } => item.source = Some(*source),
-                    IncompleteCause::LimitReached { limit, value } => {
+                    IncompleteCause::LimitReached {
+                        limit,
+                        value,
+                        required,
+                    } => {
                         item.limit = Some(CauseLimit::Name(limit.as_str()));
                         item.value = Some(*value);
                         item.setting = Some(limit.setting());
+                        item.required = required.as_ref().map(ToString::to_string);
                     }
                     IncompleteCause::PrecisionBudget { lower, upper } => {
                         item.lower = Some((**lower).clone());
@@ -1779,6 +1788,20 @@ impl OutcomeItem {
     }
 }
 
+/// The FR-413 claim-bound object a verdict carries (FR-410 `bound`): the
+/// claim's own comparison and threshold, and a quantile's separate `level`.
+pub fn verdict_bound_wire(bound: &statistical::VerdictBound) -> serde_json::Value {
+    let mut value = serde_json::json!({
+        "type": bound.form.bound_type(),
+        "comparison": bound.comparison.as_str(),
+        "threshold": rational_wire(&bound.threshold),
+    });
+    if let Some(level) = &bound.level {
+        value["level"] = rational_wire(level);
+    }
+    value
+}
+
 fn rational_wire(value: &filament_exact::Rational) -> serde_json::Value {
     serde_json::json!({
         "numerator": value.numerator().to_string(),
@@ -1993,6 +2016,7 @@ fn statistical_verdict_wire(
     // none is today (`omitted_witnesses` says why).
     let mut value = serde_json::json!({
         "decision": decision,
+        "bound": verdict_bound_wire(&verdict.bound),
         "basis": basis,
         "provenance": provenance,
         "tests": tests,
@@ -2564,15 +2588,16 @@ impl OutcomeDiagnostic {
         diagnostic
     }
 
-    /// Project a compile refusal with only the limit-setting mechanism the
-    /// named operation accepts. Replay also accepts request `stage_limits`.
+    /// Project a compile refusal with the limit advice of the request the
+    /// named operation takes: replay also names its `stage_limits` entry,
+    /// every other operation only the CLI `--limit` option.
     fn from_compile_refusal_for_operation(operation: Operation, refusal: &CompileRefusal) -> Self {
         let diagnostic = Self::from_compile_refusal(refusal);
-        Self::for_operation(operation, diagnostic)
+        Self::for_operation(operation, refusal, diagnostic)
     }
 
-    /// Project every retained compile diagnostic with only the limit-setting
-    /// mechanism the named operation accepts.
+    /// Project every retained compile diagnostic with the limit advice of
+    /// the request the named operation takes.
     fn from_compile_refusal_diagnostics_for_operation(
         operation: Operation,
         refusal: &CompileRefusal,
@@ -2580,18 +2605,13 @@ impl OutcomeDiagnostic {
         refusal
             .outcome_diagnostics()
             .into_iter()
-            .map(|diagnostic| Self::for_operation(operation, diagnostic))
+            .map(|diagnostic| Self::for_operation(operation, refusal, diagnostic))
             .collect()
     }
 
-    fn for_operation(operation: Operation, mut diagnostic: Self) -> Self {
-        if operation != Operation::Replay {
-            if let Some((message, _)) = diagnostic
-                .message
-                .split_once(" or the request's `stage_limits` entry ")
-            {
-                diagnostic.message = message.to_owned();
-            }
+    fn for_operation(operation: Operation, refusal: &CompileRefusal, mut diagnostic: Self) -> Self {
+        if operation == Operation::Replay && refusal.limit().is_some() {
+            diagnostic.message = refusal.render_for(RequestKind::Replay);
         }
         diagnostic
     }
@@ -3756,8 +3776,7 @@ mod tests {
         assert_eq!(wire["operation"], "[]");
     }
 
-    /// Trace: FR-255-AC-3, the operation hint follows the entry point's accepted inputs.
-    #[trace("TC-931", "FR-255-AC-3")]
+    #[trace("TC-720", "FR-255-AC-2")]
     #[test]
     fn run_limit_message_omits_stage_limits_while_replay_keeps_it() {
         let run_refusal = RunRefusal::Compile(Box::new(CompileRefusal::Limit(LimitExceeded::new(
@@ -3767,7 +3786,10 @@ mod tests {
         ))));
         let run = OutcomeDocument::from_run_refusal(Operation::Execute, &run_refusal);
         let run_message = run.diagnostics()[0].message();
-        assert!(run_message.contains("--limit s1.tokens"), "{run_message}");
+        assert_eq!(
+            run_message,
+            "S1 token limit 3 reached (4); raise it with `--limit s1.tokens=<n>`"
+        );
         assert!(!run_message.contains("stage_limits"), "{run_message}");
 
         let replay_refusal = ReplayRefusal::Recompile {
@@ -3780,7 +3802,42 @@ mod tests {
         };
         let replay = OutcomeDocument::from_replay(&Err(replay_refusal));
         let replay_message = replay.diagnostics()[0].message();
-        assert!(replay_message.contains("stage_limits"), "{replay_message}");
+        assert_eq!(
+            replay_message,
+            "the recompile refused at stage source: S1 token limit 3 reached (4); raise it with \
+             `--limit s1.tokens=<n>` or the replay \
+             request's `stage_limits` entry `s1.tokens`"
+        );
+    }
+
+    /// A limit reached while compiling a library keeps the library prefix and
+    /// names the replay request's `stage_limits` entry in replay output only.
+    #[trace("TC-720", "FR-255-AC-2")]
+    #[test]
+    fn a_library_limit_names_stage_limits_in_replay_output_only() {
+        let library = || CompileRefusal::Dependency {
+            path: vec![fsl_semantics::library::LibraryName::new("lib/a".to_owned()).unwrap()],
+            refusal: Box::new(CompileRefusal::Limit(LimitExceeded::new(
+                Setting::S1Tokens,
+                3,
+                4,
+            ))),
+        };
+        let replay = OutcomeDocument::from_replay(&Err(ReplayRefusal::Recompile {
+            refusal: Box::new(library()),
+            pointer: None,
+        }));
+        assert_eq!(
+            replay.diagnostics()[0].message(),
+            "the recompile refused at stage source: the library lib/a refused: S1 token limit 3 \
+             reached (4); raise it with `--limit s1.tokens=<n>` or the replay request's \
+             `stage_limits` entry `s1.tokens`"
+        );
+        assert_eq!(
+            library().to_string(),
+            "the library lib/a refused: S1 token limit 3 reached (4); raise it with \
+             `--limit s1.tokens=<n>`"
+        );
     }
 
     #[trace("FR-1045-AC-6", "FR-100-AC-6")]

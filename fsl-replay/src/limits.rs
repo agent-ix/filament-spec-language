@@ -318,7 +318,12 @@ impl CallerLimits {
         for (setting, bound) in fsl_foundation::setting::parse_operands(operands)? {
             match setting {
                 SettingName::Stage(setting) => {
-                    limits.set_bound(setting, bound);
+                    if !limits.set_bound(setting, bound) {
+                        return Err(UsageRefusal {
+                            operand: format!("{}={bound}", setting.name()),
+                            cause: fsl_foundation::UsageCause::UnavailableSetting,
+                        });
+                    }
                 }
                 SettingName::Accounting(setting) => limits.accounting.set_bound(setting, bound),
             }
@@ -415,6 +420,14 @@ mod tests {
 
     use super::*;
     use crate::request::StageLimits;
+
+    const MONITOR_SETTINGS: [Setting; 5] = [
+        Setting::MonitorMaxWindowValues,
+        Setting::MonitorRetainedPositions,
+        Setting::MonitorRetainedIdentities,
+        Setting::MonitorPreparationWorkUnits,
+        Setting::MonitorPreparationStorage,
+    ];
 
     fn bound_of(limits: &CallerLimits, setting: Setting) -> u64 {
         limits
@@ -536,6 +549,18 @@ mod tests {
     #[test]
     fn the_settings_operation_and_a_request_take_every_setting() {
         for setting in Setting::ALL {
+            // The monitor settings belong to the monitor command's own limits
+            // (`fsl_command::command::CommandLimits`), not to a replayed stage.
+            if MONITOR_SETTINGS.contains(setting) {
+                let operand = format!("{}=123456789", setting.name());
+                let refusal = CallerLimits::from_operands([operand.as_str()]).unwrap_err();
+                assert_eq!(refusal.cause, UsageCause::UnavailableSetting);
+                assert_eq!(
+                    refusal.to_string(),
+                    format!("usage: UnavailableSetting in `--limit {operand}`")
+                );
+                continue;
+            }
             let operand = format!("{}=123456789", setting.name());
             let limits = CallerLimits::from_operands([operand.as_str()]).unwrap();
             assert_eq!(bound_of(&limits, *setting), 123_456_789, "{setting}");

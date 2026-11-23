@@ -280,6 +280,7 @@ fn fault_of(refusal: &HybridReplayRefusal, work_units: u64) -> EngineReport {
                     counter: LimitKind::WorkUnits,
                 },
                 value: work_units,
+                required: None,
             }))
         }
     }
@@ -448,9 +449,10 @@ mod tests {
                 exhausted,
                 EngineReport::Refused(Refusal::Incomplete(IncompleteCause::LimitReached {
                     limit: ModelCheckLimit::EvaluationMeter {
-                        counter: LimitKind::WorkUnits
+                        counter: LimitKind::WorkUnits,
                     },
                     value: 10,
+                    required: None,
                 }))
             ),
             "work_units is the limit"

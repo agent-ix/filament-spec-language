@@ -64,7 +64,7 @@ fn strict_body_lookup_recovers_called_integer_and_uncalled_boolean_values() {
             .find(|node| &node.node_id == function)
             .expect("function lookup");
         assert_eq!(function.node_tag.as_ref(), "function");
-        let CheckedTerm::Aggregate { members } = &function.body else {
+        let CheckedTerm::Aggregate { members, .. } = &function.body else {
             panic!("function aggregate");
         };
         let expression = members
@@ -245,7 +245,7 @@ fn a_parameterized_conditional_body_keeps_its_branches_in_order() {
         .iter()
         .find(|node| &node.node_id == id)
         .expect("body lookup");
-    let CheckedTerm::Aggregate { members } = &function.body else {
+    let CheckedTerm::Aggregate { members, .. } = &function.body else {
         panic!("function members");
     };
     let body = members
@@ -290,6 +290,7 @@ fn a_parameterized_conditional_body_keeps_its_branches_in_order() {
         .expect("the body's declared parameters");
     let CheckedTerm::Aggregate {
         members: parameters,
+        ..
     } = parameters
     else {
         panic!("ordered parameter references");
@@ -306,7 +307,7 @@ fn a_parameterized_conditional_body_keeps_its_branches_in_order() {
                 .find(|node| &node.node_id == target)
                 .expect("declared parameter");
             assert_eq!(parameter.semantic_form.as_ref(), "parameter");
-            let CheckedTerm::Aggregate { members } = &parameter.body else {
+            let CheckedTerm::Aggregate { members, .. } = &parameter.body else {
                 panic!("parameter metadata");
             };
             let name = members

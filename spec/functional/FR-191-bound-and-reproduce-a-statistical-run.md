@@ -55,7 +55,8 @@ pub enum StatisticalLimit { MaxSamples, MaxDraws, MaxCycleSteps }  // setting() 
   as the request setting that raises it), `Expansion(ExpansionStop)` for a
   stopped sample expansion such as the clause meter, whose own limit, value
   and setting FR-192 reports (ADR-024 SV-4), or `Cancelled(cause)` for a
-  cancelled `Cancel` handle; and `partial`, the counts reached.
+  cancelled `Cancel` handle; and `partial`, the aggregate `samples`, `draws`
+  and test count reached across the run.
 - On every outcome (a `Completed` verdict, a `Stopped` and an `Unsupported`,
   each carrying the field, FR-189), `StatisticalProvenance{seed, sampler,
   tests}` with, per test, its index, initial state, binding and trace-index
@@ -73,6 +74,15 @@ pub enum StatisticalLimit { MaxSamples, MaxDraws, MaxCycleSteps }  // setting() 
   convention. FSpec FR-408 owns each limit and its setting name; FSL
   publishes the default value. No member SHALL be
   fixed by the language, and none enters the obligation identity.
+- Before drawing any sample, EN-4 SHALL compute the fixed sample count `N`
+  required by Okamoto or Clopper–Pearson for every test. In test-index order,
+  it SHALL compare `N` with that test's `max_samples`, then `max_draws`. If
+  `N` exceeds either configured value, EN-4 SHALL return
+  `Stopped{PreflightLimit{limit, value, required: N}, partial, provenance}`
+  for the first exceeded limit, where `value` is the configured limit and
+  `partial` reports zero samples and zero draws for every test. FR-192 SHALL
+  settle it `incomplete`, naming the setting, configured value and required
+  `N`; no sample or draw occurs. A limit equal to `N` admits the run.
 - When a test has counted `max_samples` samples or cycles and its method
   needs another, EN-4 SHALL stop and return `Stopped` with
   `Limit{MaxSamples, value}`, before it merges the next sample (FR-191 "Workers" for physical draws); a method that decides
@@ -84,6 +94,16 @@ pub enum StatisticalLimit { MaxSamples, MaxDraws, MaxCycleSteps }  // setting() 
   `incomplete`, `limit-reached{limit, value, setting}` (FSpec FR-408). A
   stopped sample expansion (the clause meter) and a cancelled `Cancel` handle
   (FR-276) SHALL stop the run the same way with their own stops.
+- SPRT and regenerative runs, whose stopping sample count is not fixed by
+  the request before sampling, SHALL retain stop-at-limit behavior. A stopped
+  run's `partial.samples` SHALL report the total counted samples across tests
+  and `partial.draws` the total physical draws through the last admitted trace
+  index. `partial.tests` SHALL be the number of tests. `draws` includes a
+  drawn sample whose evaluation is undefined; that sample does not increase
+  `samples`. Its `UndefinedEvaluation`, including sampled location and
+  catalogued cause, is reported in the completed test result (FR-189). For
+  regeneration, `samples` counts completed positive-weight cycles and `draws`
+  counts walk steps, including steps in an unfinished cycle (FR-190).
 - A run stopped before its method completes SHALL never carry a decision; an
   Undecided decision is kept for a run that completed its method.
 - The method, `min_cycles` and `max_witnesses` SHALL be request settings,
@@ -157,12 +177,12 @@ serial execution.
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-191-AC-1 | `NoFault` (ADR-024 §7.1) with Okamoto and `max_samples` set to 1,000,000 stops before deciding: `Stopped` with `Limit{MaxSamples, 1,000,000}`, value 1,000,000, member `statistical.max_samples`, 1,000,000 samples counted and no decision. With `max_samples` 9,210,341, Okamoto's `N`, it completes and decides. A request that omits `max_samples` runs with 16,777,216. | Test (TC-626) |
-| FR-191-AC-2 | FR-189-AC-4's activation variant with `max_draws` 1,000 stops naming `statistical.max_draws`; a cancelled `Cancel` handle stops with `Cancelled`; neither carries a decision. FR-190-AC-2's transient variant stops with `Limit{MaxCycleSteps, value}` and no decision, settling `incomplete`, `limit-reached` naming `statistical.max_cycle_steps`. A regenerative run with `max_draws` below the steps one cycle needs stops `Limit{MaxDraws, value}` with no decision, `max_draws` counting its walk steps. | Test (TC-626) |
+| FR-191-AC-1 | `NoFault` (ADR-024 §7.1) with Okamoto has required `N = 9,210,341`. With `max_samples` 1,000,000, it returns `PreflightLimit{MaxSamples, value: 1,000,000, required: 9,210,341}`, settles `incomplete` naming `statistical.max_samples`, configured value 1,000,000 and required N, and reports zero samples and draws. The same result occurs when only `max_draws` is 1,000,000, naming `statistical.max_draws`; no sample is drawn. With either bound at 9,210,341, it completes and decides. A request that omits `max_samples` runs with 16,777,216. | Test (TC-626) |
+| FR-191-AC-2 | FR-189-AC-4's activation variant with SPRT and `max_draws` 1,000 stops naming `statistical.max_draws`, with `partial.samples = 0` and `partial.draws = 1,000`; a cancelled `Cancel` handle stops with `Cancelled`; neither carries a decision. FR-190-AC-2's transient variant stops with `Limit{MaxCycleSteps, value}` and no decision, settling `incomplete`, `limit-reached` naming `statistical.max_cycle_steps`, with its elapsed walk steps in `partial.draws`. A regenerative run with `max_draws` below the steps one cycle needs stops `Limit{MaxDraws, value}` with no decision, `partial.draws = value` and `partial.samples = 0`. | Test (TC-626) |
 | FR-191-AC-3 | `P95` with SPRT and seed 7 run twice gives byte-equal results: provenance, per-test counts, estimates and decision. The run stopped by `max_samples` 100 and the rerun with the default limit draw equal samples at trace indices 0 to 99. A run with seed 8 records seed 8, the same obligation identity, and a different sample at some trace index. | Test (TC-626) |
 | FR-191-AC-4 | A two-test run records per test its initial state index, binding and trace-index range, with test 1's first trace index equal to 1 and its step 2. Changing the method from Okamoto to SPRT changes the result's method and leaves its obligation identity unchanged. | Test (TC-626) |
-| FR-191-AC-5 | `NoFault` with `max_samples` 9,210,341 completes at exactly 9,210,341 samples while 9,210,340 stops `Limit{MaxSamples, 9,210,340}` after counting 9,210,340 samples without drawing another; a `Stopped` and an `Unsupported` outcome (FR-189-AC-7's `Wide`) each carry the run's `StatisticalProvenance`, and a cancelled handle stops `Cancelled`. | Test (TC-626) |
-| FR-191-AC-6 | `P95` with SPRT and seed 7, and `NoFault` with Okamoto and `max_samples` 1,000 (a stop well below Okamoto's `N`), each run with `workers` 1, 2, 4 and 64, give results byte-equal to the one-worker run's: provenance, per-test counts, estimates, witnesses, decision and, for the second run, `Limit{MaxSamples, 1,000}` with 1,000 samples counted. A sampler test double that makes the sample at a higher trace index finish first changes no result. The run stopped by `max_samples` 100, with `workers` 4, draws samples at trace indices 0 to 99 equal to the one-worker run's samples at those indices and counts none beyond 99; the double records at most 103 draws. | Test (TC-1417) |
+| FR-191-AC-5 | `NoFault` with Okamoto and `max_samples` 9,210,341 completes; with 9,210,340 it returns `PreflightLimit{MaxSamples, value: 9,210,340, required: 9,210,341}` with zero samples and draws. An activation variant with fixed `N` above `max_draws` returns the corresponding `PreflightLimit` with the same required N and zero counts. A `Stopped` and an `Unsupported` outcome (FR-189-AC-7's `Wide`) each carry the run's `StatisticalProvenance`, and a cancelled handle stops `Cancelled`. | Test (TC-626) |
+| FR-191-AC-6 | `P95` with SPRT and seed 7, and `NoFault` with Okamoto and `max_samples` 1,000 (below its `N`), each run with `workers` 1, 2, 4 and 64, give results byte-equal to the one-worker run's. The Okamoto run is a `PreflightLimit{MaxSamples, value: 1,000, required: 9,210,341}` with zero samples and draws. A sampler test double that makes a higher trace-index sample finish first changes no SPRT result. For `P95` with SPRT and the same test double held undecided through 100 counted samples, the run stopped by `max_samples` 100 with `workers` 4 draws samples at trace indices 0 to 99 equal to the one-worker run's samples at those indices and counts none beyond 99; the double records at most 103 draws. | Test (TC-1417) |
 | FR-191-AC-7 | A run with `workers` 4 whose `Cancel` handle is cancelled after a delay returns `Cancelled` with counts and estimates equal to the one-worker run stopped at the same trace index, for the index it reached; the result carries no sample of a higher trace index. `workers` 0 returns `StatisticalRefusal::Workers` (`invalid_runtime_input`/`invalid-value`) and draws no sample. | Test (TC-1417) |
 | FR-191-AC-8 | A two-test model-subject run with cumulative candidate and clause bound B, sufficient for each test alone but insufficient for both in ascending test order, spends the remainder on the later test and stops at the same first unpaid charge with workers 1, 2, 4 and 64. Reversing completion order of speculative samples changes no stop, counts, provenance, estimates or witnesses. Instrumented admitted candidate and clause work never exceeds B across all workers, including discarded samples; no later sample consumes an earlier sample's entitlement. If the first test alone exhausts B, the later test performs no work. Cancellation retains AC-7's prefix semantics. | Test |
 

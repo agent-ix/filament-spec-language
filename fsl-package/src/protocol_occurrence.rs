@@ -620,7 +620,7 @@ fn read_term(
         CheckedTerm::Literal {
             value_kind, value, ..
         } => (None, read_literal(*value_kind, value)),
-        CheckedTerm::Aggregate { members } => (
+        CheckedTerm::Aggregate { members, .. } => (
             None,
             aggregate(
                 members

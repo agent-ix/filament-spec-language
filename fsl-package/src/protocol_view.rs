@@ -460,7 +460,7 @@ fn required<'n>(node: &'n Node, name: &'static str) -> Result<&'n CheckedTerm, V
 
 /// The member `name` of the Group `term`.
 pub(crate) fn group_member<'t>(term: &'t CheckedTerm, name: &str) -> Option<&'t CheckedTerm> {
-    let CheckedTerm::Aggregate { members } = term else {
+    let CheckedTerm::Aggregate { members, .. } = term else {
         return None;
     };
     members.iter().find_map(|member| match member {
@@ -509,7 +509,7 @@ fn members<'t>(
     term: &'t CheckedTerm,
 ) -> Result<&'t [CheckedTerm], ViewRefusal> {
     match term {
-        CheckedTerm::Aggregate { members } => Ok(members),
+        CheckedTerm::Aggregate { members, .. } => Ok(members),
         _ => Err(malformed(&owner.node_id, member)),
     }
 }
@@ -1903,7 +1903,7 @@ fn reads_from(
             CheckedTerm::Application { arguments, .. } => {
                 arguments.iter().for_each(|argument| collect(argument, out));
             }
-            CheckedTerm::Aggregate { members } => {
+            CheckedTerm::Aggregate { members, .. } => {
                 members.iter().for_each(|held| collect(held, out));
             }
             CheckedTerm::Binding { value, .. } => collect(value, out),

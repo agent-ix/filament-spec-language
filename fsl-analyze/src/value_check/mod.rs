@@ -592,6 +592,7 @@ pub(crate) fn settle(
                 IncompleteCause::LimitReached {
                     limit: ModelCheckLimit::ValueCheckMaxCases,
                     value,
+                    required: None,
                 },
             ),
             None,
@@ -609,6 +610,7 @@ pub(crate) fn settle(
                         counter: incomplete.limit_kind,
                     },
                     value: incomplete.limit,
+                    required: None,
                 },
             ),
             None,

@@ -276,6 +276,7 @@ fn a_refinement_check_stops_at_its_byte_budget() {
         let stopped = Ok(SmtProofCheck::Stopped(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::CertificateMaxBytes,
             value: 1,
+            required: None,
         }));
         for _ in 0..2 {
             assert_eq!(
@@ -331,6 +332,7 @@ fn polynomial_normalization_stops_at_the_certificate_edge_budget() {
                 Ok(SmtProofCheck::Stopped(IncompleteCause::LimitReached {
                     limit: ModelCheckLimit::CertificateMaxEdges,
                     value,
+                    ..
                 })) if value == candidate => too_small = candidate,
                 result => panic!("unexpected check at edge budget {candidate}: {result:?}"),
             }
@@ -341,6 +343,7 @@ fn polynomial_normalization_stops_at_the_certificate_edge_budget() {
         let stopped = IncompleteCause::LimitReached {
             limit: ModelCheckLimit::CertificateMaxEdges,
             value: one_short,
+            required: None,
         };
         assert_eq!(
             verified(one_short),
@@ -918,6 +921,7 @@ fn a_stopped_or_faulted_check_settles_incomplete_or_failed() {
     let limit = IncompleteCause::LimitReached {
         limit: ModelCheckLimit::CertificateMaxBytes,
         value: 1,
+        required: None,
     };
     let fault = filament_semantic_value::catalog::InternalFault::new("smt", "broken");
     for (check, value) in [
@@ -1083,6 +1087,7 @@ fn the_rule_order_outranks_the_query_order() {
     let limit = IncompleteCause::LimitReached {
         limit: ModelCheckLimit::CertificateMaxBytes,
         value: 1,
+        required: None,
     };
     let stopped = StepCertification::of_check(Some(Ok(SmtProofCheck::Stopped(limit.clone()))), 7);
     assert_eq!(

@@ -46,12 +46,14 @@ pub struct ProductConstructionCounts {
     pub targets: usize,
     /// Planned edges retained after transition admission.
     pub edges: usize,
+    /// FR-202 best-first path-set searches started.
+    pub path_searches: usize,
 }
 
 #[cfg(feature = "test-support")]
 thread_local! {
     static PRODUCT_CONSTRUCTION: std::cell::Cell<ProductConstructionCounts> =
-        std::cell::Cell::new(ProductConstructionCounts { relations: 0, targets: 0, edges: 0 });
+        std::cell::Cell::new(ProductConstructionCounts::default());
 }
 
 /// Reset this thread's construction observer before exercising a real builder.
@@ -93,6 +95,15 @@ pub(crate) fn observe_edge_construction() {
     });
 }
 
+pub(crate) fn observe_path_search() {
+    #[cfg(feature = "test-support")]
+    PRODUCT_CONSTRUCTION.with(|counts| {
+        let mut next = counts.get();
+        next.path_searches += 1;
+        counts.set(next);
+    });
+}
+
 pub use build::build_product;
 #[cfg(not(feature = "test-support"))]
 pub(crate) use build::BudgetedProductError;
@@ -103,6 +114,7 @@ pub(crate) use build::{
 };
 pub(crate) use digital::model_constraints;
 pub(crate) use digital::ELAPSED_REWARD;
+pub(crate) use fair::bottom_components;
 pub use fair::{
     decide_fair_bounded_event, decide_fair_expected_reward, decide_fair_long_run_mdp,
     decide_fair_reachability, maximal_fair_end_components, ActionChoice, FairBoundedResult,
@@ -117,14 +129,14 @@ pub use fsl_replay::FreeDelayRow;
 pub use rows::free_delays_choice;
 pub use settle::settle_product_refusal;
 pub use unbounded::{
-    decide_always, decide_expected_reward, decide_long_run_mdp, decide_long_run_workload,
-    decide_reachability, decide_reachability_threshold, decide_until, decide_until_threshold,
-    ComponentValue, ExtRational, GainBias, LongRunResult, UnboundedError, UnboundedObjective,
-    UnboundedOutcome, UnboundedResult,
+    avoiding_policy, decide_always, decide_expected_reward, decide_long_run_mdp,
+    decide_long_run_workload, decide_reachability, decide_reachability_threshold, decide_until,
+    decide_until_threshold, ComponentValue, ExtRational, GainBias, LongRunResult, UnboundedError,
+    UnboundedObjective, UnboundedOutcome, UnboundedResult,
 };
 pub use witness::{
-    action_steps, entry_choice, policy_action, produce_witness, witness_scheduler, EntryChoice,
-    ProducedPath, ProducedStep, ProducedWitness, WitnessError, WitnessScope,
+    action_steps, entry_choice, induced_chain, policy_action, produce_witness, witness_scheduler,
+    EntryChoice, ProducedPath, ProducedStep, ProducedWitness, WitnessError, WitnessScope,
 };
 pub(crate) use witness::{produce_quantile_witness, produce_witness_stopping, WitnessWork};
 

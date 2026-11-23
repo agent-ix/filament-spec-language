@@ -1109,7 +1109,7 @@ fn clock_typed_declarations_raise_no_refusal_of_their_own() {
                 .is_some_and(|path| path.len() == 1 && path[0].as_str() == "Timer")
         })
         .expect("the Timer record node");
-    let BodyTerm::Aggregate(AggregateTerm { members }) = timer.body() else {
+    let BodyTerm::Aggregate(AggregateTerm { members, .. }) = timer.body() else {
         panic!("Timer's body is an aggregate: {:?}", timer.body());
     };
     assert_eq!(

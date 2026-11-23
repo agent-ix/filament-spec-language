@@ -1176,7 +1176,8 @@ fn a_stopped_or_undecided_liveness_half_settles_by_its_cause() {
         settled.record.value,
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxTransitions,
-            value: 7
+            value: 7,
+            required: None,
         })
     );
     assert_eq!(settled.record.label, ResultLabel::Failed);

@@ -1,12 +1,12 @@
 [workspace]
-members = [".", "xtask", "tools/arch-lint", "tools/fsl-probability-check", "tools/fsl-hybrid-test-provider", "fsl-walk-grow", "fsl-foundation", "fsl-cst", "fsl-command", "fsl-conformance", "fsl-replay", "fsl-source", "fsl-forms", "fsl-semantics", "fsl-package", "fsl-route", "fsl-eval", "fsl-analyze", "fsl-hybrid-reference", "fsl-inspect", "fsl-bench", "fsl-string-edge", "tests/fixtures/checked-closure-consumer", "tests/fixtures/hyper-query-consumer", "tests/fixtures/facade-contract-consumer"]
+members = [".", "xtask", "tools/arch-lint", "tools/fsl-probability-check", "tools/fsl-hybrid-test-provider", "fsl-walk-grow", "fsl-foundation", "fsl-cst", "fsl-command", "fsl-conformance", "fsl-replay", "fsl-source", "fsl-forms", "fsl-semantics", "fsl-package", "fsl-route", "fsl-eval", "fsl-analyze", "fsl-hybrid-reference", "fsl-inspect", "fsl-bench", "fsl-proptest-policy", "fsl-string-edge", "tests/fixtures/checked-closure-consumer", "tests/fixtures/hyper-query-consumer", "tests/fixtures/facade-contract-consumer"]
 resolver = "2"
 # A cargo-fuzz crate with its own workspace; fuzz/Cargo.toml says why.
 exclude = ["fuzz"]
 
 [workspace.dependencies]
-filament-specification-qualification = { git = "https://github.com/agent-ix/filament-specification", rev = "01f8dd31b8cc540418a4858543aed7231a1ed1ee" }
-filament-specification = { package = "filament-specification-qualification", git = "https://github.com/agent-ix/filament-specification", rev = "01f8dd31b8cc540418a4858543aed7231a1ed1ee" }
+filament-specification-qualification = { git = "https://github.com/agent-ix/filament-specification", rev = "3200a4ed7f18fbbf5d934c22d3c3fa467914ddca" }
+filament-specification = { package = "filament-specification-qualification", git = "https://github.com/agent-ix/filament-specification", rev = "3200a4ed7f18fbbf5d934c22d3c3fa467914ddca" }
 # `default-features = false`: the encoder builds `no_std` + `alloc`, so the
 # layer-SV leaf `filament-semantic-value` can mint the compound-unit id
 # through it; a crate that writes through `io::Write` turns on `std`.
@@ -27,7 +27,7 @@ filament-checked = { git = "https://github.com/agent-ix/filament-eval", rev = "7
 # its own repository so RT and CG depend on it without the FSL repo.
 filament-eval = { git = "https://github.com/agent-ix/filament-eval", rev = "79b8c42b60f43c936e8e50a7fc6519da030c978d" }
 # IR-owned staged identity, operation-member, and model-enum witness joins.
-filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", rev = "14c06b047b6a3b23a4da53723574ad7ce49ba246" }
+filament-contract-model = { git = "https://github.com/agent-ix/filament-contract-ir", rev = "30d96b9c6cac6e1d9053dba665a40b3d92c53da5" }
 # Observation's checked-value vocabulary aligned to the same exact/semantic-value revisions.
 filament-observation = { git = "https://github.com/agent-ix/filament-observation", rev = "004c7c4f934d15022d2a80b98c451d436109b44b" }
 

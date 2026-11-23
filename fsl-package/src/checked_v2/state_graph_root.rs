@@ -107,7 +107,7 @@ enum Slot<'a> {
 /// and `target`.
 #[ix_trace_rs::string_edge]
 fn binding<'a>(node: &'a CheckedSemanticNodeV2, name: &str) -> Option<&'a CheckedTerm> {
-    let CheckedTerm::Aggregate { members } = &node.body else {
+    let CheckedTerm::Aggregate { members, .. } = &node.body else {
         return None;
     };
     members.iter().find_map(|member| match member {
@@ -121,7 +121,7 @@ fn binding<'a>(node: &'a CheckedSemanticNodeV2, name: &str) -> Option<&'a Checke
 fn slot<'a>(node: &'a CheckedSemanticNodeV2, name: &str) -> Option<Slot<'a>> {
     Some(match binding(node, name)? {
         CheckedTerm::Reference { target } => Slot::Reference(target),
-        CheckedTerm::Aggregate { members } if members.is_empty() => Slot::Empty,
+        CheckedTerm::Aggregate { members, .. } if members.is_empty() => Slot::Empty,
         _ => Slot::Other,
     })
 }

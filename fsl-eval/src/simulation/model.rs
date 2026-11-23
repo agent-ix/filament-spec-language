@@ -35,26 +35,26 @@ pub use input::{
 pub use relation_input::{ModelRelationDescriptor, ModelRelationTuple};
 mod operation_coverage;
 pub use operation_coverage::{
-    model_operation_coverage, ModelOperation, ModelOperationCase, ModelOperationCoverage,
-    ModelOperationCoverageEntry, ModelOperationCoverageLimit, ModelOperationCoverageLimits,
-    ModelOperationCoverageReason, ModelOperationCoverageReasonKind, ModelOperationCoverageStatus,
-    ModelOperationCoverageSummaryStatus,
+    ModelOperation, ModelOperationCase, ModelOperationCoverage, ModelOperationCoverageEntry,
+    ModelOperationCoverageLimit, ModelOperationCoverageLimits, ModelOperationCoverageReason,
+    ModelOperationCoverageReasonKind, ModelOperationCoverageStatus,
+    ModelOperationCoverageSummaryStatus, model_operation_coverage,
 };
 mod model_based_test;
 pub use model_based_test::{
-    read_clause, run_model_based_state_invariant, run_model_based_state_invariant_with_value_bits,
-    run_model_based_test, run_model_based_test_with_system, run_model_based_test_with_value_bits,
     ClauseReading, ModelBasedCaseProvenance, ModelBasedCounterexample, ModelBasedCoverage,
     ModelBasedPartitionCoverage, ModelBasedProvenance, ModelBasedRunLimits,
     ModelBasedSizeBoundedRoot, ModelBasedTestCause, ModelBasedTestChecks, ModelBasedTestCounts,
     ModelBasedTestDefect, ModelBasedTestDiscardCount, ModelBasedTestDiscardReason,
     ModelBasedTestError, ModelBasedTestEvidence, ModelBasedTestRecord, ModelBasedTestRefusal,
     ModelBasedTestRequest, ModelBasedTestResult, ModelBasedTestSubject, ModelBasedValueBoundCut,
-    ModelBasedValueBoundCuts, NativeAdmission, RootAdmission,
+    ModelBasedValueBoundCuts, NativeAdmission, RootAdmission, read_clause,
+    run_model_based_state_invariant, run_model_based_state_invariant_with_value_bits,
+    run_model_based_test, run_model_based_test_with_system, run_model_based_test_with_value_bits,
 };
 mod key_budget;
 mod letters;
-pub use behaviours::{model_behaviours, BehaviourState, BehavioursEnd};
+pub use behaviours::{BehaviourState, BehavioursEnd, model_behaviours};
 pub use key_budget::{ModelKeyBudget, ModelKeyError, ModelKeyExpansionError};
 pub(crate) mod probabilistic;
 mod reference_bindings;
@@ -81,9 +81,9 @@ use filament_exact::{
 use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use filament_semantic_value::declaration::TypeEnvironment;
 use filament_semantic_value::model_transition::ModelTransition;
+use fsl_foundation::IdentityLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::selection::DefinitionRef;
-use fsl_foundation::IdentityLimits;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::OperationKey;
 use fsl_semantics::family::ClassifyFailure;
@@ -99,16 +99,19 @@ use quire_canonical::Limits as CanonicalLimits;
 
 use crate::model_subject::ModelInstance;
 use crate::simulation::expansion::{Expansion, ExpansionStop, StateFindings};
-use crate::simulation::explore::{explore_request, Exploration, Limits, TransitionSystem};
+use crate::simulation::explore::{Exploration, Limits, TransitionSystem, explore_request};
 use crate::simulation::footprint::{Footprint, Location};
 use crate::simulation::not_simulated::NotSimulated;
-use crate::simulation::order::{expand, sorted_initial, Expanded};
+use crate::simulation::order::{Expanded, expand, sorted_initial};
 use crate::simulation::protocol::WeakAccessShape;
 use crate::simulation::reduction::{
     ConstraintValue, OfferedReductions, Permutation, SymmetryGroup,
 };
-use crate::simulation::sample::{sample_request, sample_request_until, SampleRequest};
-use crate::simulation::trace::{replay, ReplayError, SampleProvenance, Step, StopReason, Trace};
+use crate::simulation::sample::{
+    ObservedSample, ObserverDecision, SampleObservation, SampleRequest, sample_request,
+    sample_request_observed_using, sample_request_until,
+};
+use crate::simulation::trace::{ReplayError, SampleProvenance, Step, StopReason, Trace, replay};
 use crate::value::QualifiedName;
 
 pub(crate) use application::{FirstApplication, Observed, ObservedIdentities, OperationRef};
@@ -117,16 +120,16 @@ pub use contract::{
     ContractClause, ContractClauseKind, DeclaredStates, DeclaredStatesRefusal, OperationCases,
     OperationStep, PreconditionCase, UndecidedContract,
 };
-pub(crate) use contracts::{verdict, Verdict};
+pub(crate) use contracts::{Verdict, verdict};
 use encode::declaration_text;
 pub use encode::{
-    canonical_json, declaration_identity_text, encode_reference, package_value_json,
-    reference_canonical_text, run_declaration_name, run_value_bytes, typed_value_json,
-    typed_value_json_with_enum_members, value_json, ModelKey, RunValueBudget, SingleOwnerRunBudget,
+    ModelKey, RunValueBudget, SingleOwnerRunBudget, canonical_json, declaration_identity_text,
+    encode_reference, package_value_json, reference_canonical_text, run_declaration_name,
+    run_value_bytes, typed_value_json, typed_value_json_with_enum_members, value_json,
 };
 pub use footprints::{FootprintError, FootprintViolation, WithinStop};
 pub use frames::judge::{
-    operation_identity_text, AbstractApplication, Judged, Judgement, Rejection, ResolvedStep,
+    AbstractApplication, Judged, Judgement, Rejection, ResolvedStep, operation_identity_text,
 };
 pub(crate) use reference_bindings::ReferenceBinding;
 pub use reference_bindings::ReferenceBindings;
@@ -134,20 +137,20 @@ mod hyper_letters;
 pub use hyper_letters::CheckedHyperLetters;
 pub use letters::{ClauseLetters, DecisiveObservation, LettersPreparationError, LettersRefusal};
 pub use probabilistic::{
-    same_rewards, same_values, Action, Draw, NotMarkov, ScheduledIdentity, TransitionId,
-    UndecidedSuccessor, Unsteppable, WeightedStep,
+    Action, Draw, NotMarkov, ScheduledIdentity, TransitionId, UndecidedSuccessor, Unsteppable,
+    WeightedStep, same_rewards, same_values,
 };
 pub use refine::{RowReading, StateObservation};
 pub use state_predicate::PredicateReading;
 pub(crate) use symbolic::{ParameterValues, ResultValues, SymbolicOperation, SymbolicSubject};
 pub use task_automaton::{
-    delay_valuation, AutomatonClock, AutomatonDiagonal, BoundedSubtraction, CertificationRefusal,
-    ClockAtom, ClockCarry, ClockReset, ClockRole, EdgeKind, Guard, JobPhase, LiveJob, LiveJobKey,
+    AutomatonClock, AutomatonDiagonal, BoundedSubtraction, CertificationRefusal, ClockAtom,
+    ClockCarry, ClockReset, ClockRole, EdgeKind, Guard, JobPhase, LiveJob, LiveJobKey,
     LocationInfo, LocationKey, Overflow, Successors, TaskAutomaton, TaskAutomatonRefusal,
-    TaskControl, TaskEdge, TaskLocation, TaskTemplate,
+    TaskControl, TaskEdge, TaskLocation, TaskTemplate, delay_valuation,
 };
 pub use task_key::{
-    write_task_control, TaskKeyControl, TaskKeyIdentityRefusal, TaskKeyJob, TaskKeyPending,
+    TaskKeyControl, TaskKeyIdentityRefusal, TaskKeyJob, TaskKeyPending, write_task_control,
 };
 pub use task_product::{
     AllowancePhase, CriticalityMode, TaskProductClock, TaskProductClockKind,
@@ -159,13 +162,13 @@ pub use task_product::{
 };
 pub use terminal::{TerminalClass, TerminalModel};
 pub use timed::{
-    replay_timed_sample, sample_timed, sample_timed_race, BehaviourLetters, BehaviourReading,
-    ClockPlace, ClockValuation, DelayInterval, GuardedStep, MoveRefusal, PlaceConstraint,
-    ScheduledWindow, TaskArrivalKind, TaskReleaseBinding, TaskTimingRow, TimeLock, TimedBehaviour,
-    TimedPosition, TimedRace, TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample,
-    TimedSampleDisagreement, TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice, TimedSite,
-    TimedState, TimedStop, TimedSubjectRefusal, TimedSystem, TimedTerminalClass,
-    DEFAULT_MAX_CLOCKS,
+    BehaviourLetters, BehaviourReading, ClockPlace, ClockValuation, DEFAULT_MAX_CLOCKS,
+    DelayInterval, GuardedStep, MoveRefusal, PlaceConstraint, ScheduledWindow, TaskArrivalKind,
+    TaskReleaseBinding, TaskTimingRow, TimeLock, TimedBehaviour, TimedPosition, TimedRace,
+    TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement,
+    TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice, TimedSite, TimedState, TimedStop,
+    TimedSubjectRefusal, TimedSystem, TimedTerminalClass, replay_timed_sample, sample_timed,
+    sample_timed_race,
 };
 pub(crate) use walk::{Applied, Budget};
 
@@ -1587,8 +1590,10 @@ impl<'a> ModelSystem<'a> {
         let mut counts: Vec<ClockCount> = Vec::new();
         for timed in input.timed_models {
             for clock in timed.clocks() {
-                let [fsl_semantics::check::PlaceStep::Field(name), fsl_semantics::check::PlaceStep::Slot(shape)] =
-                    clock.path()
+                let [
+                    fsl_semantics::check::PlaceStep::Field(name),
+                    fsl_semantics::check::PlaceStep::Slot(shape),
+                ] = clock.path()
                 else {
                     continue;
                 };
@@ -2522,7 +2527,7 @@ impl<'a> ModelSystem<'a> {
         meter: &mut Meter,
     ) -> Result<Vec<ModelInstance>, crate::automaton::PolicyStateError> {
         use crate::automaton::PolicyStateError;
-        use crate::policy_budget::{declaration_bytes, Budget};
+        use crate::policy_budget::{Budget, declaration_bytes};
         let budget = Budget {
             meter: std::cell::RefCell::new(meter),
             stopped: std::cell::RefCell::new(None),
@@ -3543,7 +3548,7 @@ pub fn sample_model_runs(
     meter: &mut filament_exact::Meter,
     mut poll: impl FnMut() -> bool,
 ) -> Result<SampledDraw, NotSimulated> {
-    use filament_exact::{length_amount, Charge, ChargePoint};
+    use filament_exact::{Charge, ChargePoint, length_amount};
     check_model_bounds(system, position_limit)?;
     let domains = system.rooted_domains();
     let roots: Vec<(NodeKey, Vec<u32>, &ValueType)> = domains
@@ -3664,7 +3669,7 @@ impl WalkMemo {
         key: &crate::simulation::StateKey,
         cancel: Option<&filament_exact::Cancel>,
     ) -> Result<OrderedModelExpansion, crate::simulation::EncodingRefusal> {
-        use filament_exact::{length_amount, Charge, ChargePoint, Meter};
+        use filament_exact::{Charge, ChargePoint, Meter, length_amount};
         let mut work = Meter::new(system.meter);
         if let Some(cancel) = cancel {
             work = work.with_cancel(cancel.clone());
@@ -3806,6 +3811,51 @@ pub fn sample_model_walk_keyed(
         },
         end,
         |state, key| memo.ordered_expansion(system, state, key, settings.cancel),
+    )
+}
+
+/// FR-166's incremental model walk with memoized canonical expansions. The
+/// observer sees every visited state after its expansion and before the next
+/// successor is selected.
+pub fn sample_model_walk_observed_keyed(
+    system: &ModelSystem<'_>,
+    initial: usize,
+    settings: ModelWalkSettings<'_>,
+    memo: &WalkMemo,
+    observer: impl FnMut(
+        &SampleObservation<'_, ModelSimState, ModelTransition, ModelFinding>,
+    ) -> ObserverDecision,
+) -> Result<ObservedSample<ModelTransition, ModelFinding>, NotSimulated> {
+    let start = system
+        .initial
+        .get(initial)
+        .cloned()
+        .ok_or(NotSimulated::EmptyInitial)?;
+    let view = OneInitial {
+        system,
+        start,
+        memo: None,
+    };
+    check_model_bounds(system, settings.position_limit)?;
+    let domains = system.rooted_domains();
+    let roots: Vec<(NodeKey, Vec<u32>, &ValueType)> = domains
+        .iter()
+        .map(|(id, base, value_type)| (id.clone(), base.clone(), value_type))
+        .collect();
+    sample_request_observed_using(
+        &view,
+        SampleRequest {
+            domains: &roots,
+            types: system.types,
+            position_limit: settings.position_limit,
+            sampler: settings.sampler,
+            seed: settings.seed,
+            trace: settings.trace,
+            max_steps: settings.max_steps,
+            identity: identity_limits(),
+        },
+        |state, key| memo.ordered_expansion(system, state, key, settings.cancel),
+        observer,
     )
 }
 

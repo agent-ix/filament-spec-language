@@ -207,8 +207,12 @@ of a probabilistic item" when the request names both evidence kinds. Each `Requi
   `OccurrenceKey` of the `expression` occurrence for the narrow that
   directly wraps this record's scalar application, or `None` when the
   record's result bound is the application's own result type;
-- the record's path condition, as the same ordered sequence of canonical
-  `PathGuard` values returned by `RequirementRecord::path_condition()`;
+- the record's `Option<PathConditionFrameId>` terminal reference, also
+  exposed by `RequirementItem::path_condition_frame()`, and its borrowed
+  `path_condition()` view of canonical `PathGuard` values obtained by walking
+  the shared frame table once per iteration. `RequirementMap::path_condition_frames()`
+  exposes that table by borrow to consumers such as the driver; items built
+  from one map share it;
 - for a `probabilistic-satisfaction` record, its evidence kind, by the
   rule of "Evidence kind of a probabilistic item" below;
 - its requirements: `hybrid-dynamics` for a `temporal-satisfaction` record
@@ -261,13 +265,15 @@ probabilistic item"). FR-395's call
 association names an item by the package's `package_id` and this request
 index (FR-395, "Pairing key"), and the item written at that index carries the member's key.
 
-The path condition is the record's guard sequence, outermost first. Each
-guard is the canonical `PathGuard` value: the guard expression's
-`OccurrenceKey` and the required Boolean outcome (`holds`).
-`RequirementItem::path_condition()` SHALL expose that sequence as
-`&[PathGuard]`, preserving its order and members without translating it,
-deduplicating it, or deriving a second guard representation. An unguarded
-requirement record yields an empty sequence.
+The path condition is the record's guard chain, outermost first. Each guard
+is the canonical `PathGuard` value: the guard expression's `OccurrenceKey`
+and required Boolean outcome (`holds`). `RequirementItem::path_condition()`
+SHALL expose a borrowed `PathConditionView` over the shared parent-linked
+frame table and that item's terminal frame id. Its iterator yields the same
+ordered `PathGuard` values without translating or changing them; it SHALL
+NOT allocate or retain an expanded `Vec<PathGuard>` per item. Items built
+from one requirement map share the frame table. An unguarded requirement
+record yields an empty view.
 
 `RequirementItem::conversion_context()` SHALL expose the record's direct
 conversion context as `Option<&OccurrenceKey>`. This value is carried once
@@ -442,7 +448,7 @@ were added.
 | FR-075-AC-6 | A `backend` member written from a candidate and read back equals it, an identity with leading and trailing spaces is kept verbatim, and an empty identity refuses. | Test (TC-433) |
 | FR-075-AC-7 | Given a registration naming a `BackendId` already held by the registry with equal identity, provider origin, advertised pairs, retained `domains`, evidence-kind set, dynamics set and `state_graph_forms` set, the repeat is one registration and is not refused; the registry and its candidate sets are unchanged. A repeat differing only in any of those compared members is unequal and follows FR-075-AC-4. A different identity is a different registry key. | Test (TC-447, TC-448, TC-982, TC-193) |
 | FR-075-AC-8 | Given the checked package of FR-062's RR-5 (`function sq using v(x: Int[0, 9]): Integer pure { (x + 1) * (x + 1) }`) and a registry holding one backend advertising `value-validity` in `bounded` mode, and no named backend, the request builder returns exactly one `RequirementItem` per requirement record, in bytewise occurrence-key order with request indices 0, 1, 2: the two `+` records are two items with the same node and distinct occurrence keys, and every item is `value-validity`, classified `bounded`, with no unbounded domain, its record's result bound, and that one backend as its candidate set. With RR-6 (`n + 1` over `n: Integer`), the one item is classified `unbounded` with `finite_bound_available` true and carries one unbounded domain, `Integer` at `n`'s parameter node, and a bounded follow-up that supplies an `IntegerRange` for that key is a new request whose single item has request index 0, is classified `bounded` and carries the occurrence key passed to `bounded_item`, the original item's, and the follow-up request holds exactly one item for that occurrence key. With RR-16, the two `+` items carry result bounds `Int[0, 10]` and `Int[0, 20]`. With a registry advertising no `value-validity`, every item is still returned, each with an empty candidate set. With a named unregistered backend, every item carries the unknown-backend marker. A package with no records gives no items. | Test (TC-449) |
-| FR-075-AC-9 | For the checked function `function f using v(x: Int[0, 9], p: Boolean): Integer pure { if p then x + 1 else x + 1 }`, the two `x + 1` requirement records have the same application node and distinct occurrence keys, and the builder returns two items in occurrence-key order. Each item's `path_condition()` equals its own record's canonical path-condition sequence: both contain the `if p` guard occurrence, with `holds` true for the then occurrence and false for the else occurrence. Neither sequence is replaced by the other, flattened, or deduplicated. An unguarded record's item carries an empty path condition. | Test |
+| FR-075-AC-9 | For the checked function `function f using v(x: Int[0, 9], p: Boolean): Integer pure { if p then x + 1 else x + 1 }`, the two `x + 1` records share the same application node and have distinct occurrence keys. Their items preserve the two terminal frame ids and each item's borrowed `path_condition()` view yields the exact `if p` guard occurrence, with holds true for the then occurrence and false for the else occurrence. The table is shared by both items; neither item stores an expanded guard vector, and an unguarded item's view is empty. | Test |
 | FR-075-AC-10 | A descriptor advertising `probabilistic-satisfaction` with evidence kinds `{statistical}`, `{exact}` or `{statistical, exact}` is admitted and retains exactly the supplied set on the descriptor. | Test |
 | FR-075-AC-11 | A descriptor advertising `probabilistic-satisfaction` with an absent evidence-kind set, an empty set, or any member other than the exact labels `statistical` and `exact` is refused by `descriptor_from_manifest` with `invalid_capability`/`unknown-evidence-kind`, keyed by `BackendId`, before registry insertion; it contributes no candidate and leaves any earlier registration under that identity standing. The same conversion judges the labels after every advertised pair, `domains` and `fairness_kinds` (a registration with an earlier defect refuses with the earlier cause), ignores labels supplied for a backend advertising no probabilistic kind, and reads a repeated label as one member. | Test |
 | FR-075-AC-12 | A descriptor that advertises no `probabilistic-satisfaction` kind is admitted without evidence-kind labels, and its admission is unaffected by whether it advertises any of the other eleven kinds. | Test |

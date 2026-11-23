@@ -303,6 +303,7 @@ fn smt_limit_stops_are_named_and_non_smt_limits_refuse() {
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::SmtMaxSolverSteps,
             value: 1000,
+            required: None,
         })
     );
     assert_eq!(
@@ -332,6 +333,7 @@ fn smt_limit_stops_are_named_and_non_smt_limits_refuse() {
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::SmtMaxSolverTime,
             value: 5,
+            required: None,
         })
     );
 
@@ -419,6 +421,7 @@ fn encoding_refusals_keep_their_distinct_rows() {
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::SmtEncodingMaxConstants,
             value: 7,
+            required: None,
         })
     );
 
