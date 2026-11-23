@@ -1436,8 +1436,9 @@ fn set_elapsed(ws: &Workspace, path: &str, ms: i64) {
         serde_json::from_slice(&std::fs::read(&file).expect("the snapshot")).expect("JSON");
     for population in snapshot["populations"].as_array_mut().expect("populations") {
         for object in population["objects"].as_array_mut().expect("objects") {
-            object["fields"]["elapsed"] = json!({"rational": {"numerator": ms.to_string(),
-                "denominator": "1"}, "unit": "ms"});
+            object["fields"]["elapsed"] = json!({"kind": "quantity", "unit": "ms",
+                "magnitude": {"kind": "rational", "numerator": ms.to_string(),
+                    "denominator": "1"}});
         }
     }
     std::fs::write(&file, snapshot.to_string()).expect("write");
