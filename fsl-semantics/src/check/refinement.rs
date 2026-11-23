@@ -47,7 +47,7 @@ use filament_exact::{
     IntegerInterval, NodeKey, Presence, ValueType,
 };
 use filament_semantic_value::catalog::InternalFault;
-use filament_semantic_value::declaration::{CompositeShape, FieldDeclaration, TypeEnvironment};
+use filament_semantic_value::declaration::TypeEnvironment;
 use filament_semantic_value::fairness::{
     FairnessConstraint, FairnessGranularity, FairnessKind, FairnessOperation,
 };
@@ -2359,7 +2359,6 @@ pub(crate) fn check_refinement<'f: 'c, 'a, 'c>(
         lifting: BTreeMap::new(),
         maps_complete: true,
         baseline: 0,
-        profile: declaration.selection.identity.clone(),
         populations: None,
         history: Vec::new(),
         protocol_subject: matches!(form.abstract_side, AbstractSideForm::Protocol { .. }),
@@ -2793,8 +2792,6 @@ struct Checker<'c, 'a> {
     /// How many refusals the header already holds, which say nothing of the
     /// maps.
     baseline: usize,
-    /// The identity of the profile the declaration selects.
-    profile: String,
     /// The concrete populations a row may name, resolved on first use.
     populations: Option<PopulationScope>,
     /// The history fields a row may read (FR-138), in scope once their rows'
