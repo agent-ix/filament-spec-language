@@ -2017,12 +2017,12 @@ fn many_label_protocol(labels: usize) -> String {
     let source = order_protocol(false).replace(
         "run sequence Main {",
         &format!(
-            "run sequence Main {{ parallel Many memory sc {{ {branches}}} join predicate(first) [{}] outstanding continue;",
+            "run sequence Main {{ parallel Many memory sc {{ {branches}}} join predicate(head_of) [{}] outstanding continue;",
             joined.join(", ")
         ),
     );
     format!(
-        "function first using v({}): Boolean pure {{ b0 }}\n{source}",
+        "function head_of using v({}): Boolean pure {{ b0 }}\n{source}",
         parameters.join(", ")
     )
 }
@@ -2071,7 +2071,7 @@ fn a_predicate_join_over_too_many_labels_is_refused_naming_the_bound() {
 #[test]
 fn a_predicate_that_is_never_true_leaves_the_join_unreached() {
     use fsl_analyze::protocol_analysis::recording::{assess_recording, RecordingVerdict};
-    let source = predicate_join_protocol("never", "left and not left", "continue");
+    let source = predicate_join_protocol("contradiction", "left and not left", "continue");
     let observations = json!([
         branch_event("left", "Left", "L"),
         observation("send", "Placed", "Buyer", "m-1")
