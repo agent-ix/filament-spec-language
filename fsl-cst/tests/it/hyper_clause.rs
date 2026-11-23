@@ -183,3 +183,28 @@ fn an_empty_align_skip_list_parses_for_the_s3_refusal() {
     let parsed = parse(&text);
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
 }
+
+/// FR-171 "Behavior", FR-631-AC-4: a clause over `behaviours` with an empty
+/// object-parameter list parses to a domain with no `Parameter`, as the bare
+/// `behaviours` does.
+#[trace("TC-596", "FR-171-AC-1")]
+#[test]
+fn a_clause_over_behaviours_with_no_object_parameter_parses() {
+    for domain in ["behaviours ()", "behaviours"] {
+        let text = source(&format!(
+            "hyper Whole using inf over {domain} \
+             forall trace a of V forall trace b of V {{ always holds(true) }}"
+        ));
+        let parsed = parse(&text);
+        assert!(
+            parsed.is_admissible(),
+            "{domain}: {:?}",
+            parsed.diagnostics()
+        );
+        assert_eq!(
+            texts(&text, &parsed, Production::BehavioursDomain),
+            [domain]
+        );
+        assert!(texts(&text, &parsed, Production::Parameter).is_empty());
+    }
+}

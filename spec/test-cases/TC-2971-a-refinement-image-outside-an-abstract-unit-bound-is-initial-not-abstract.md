@@ -17,7 +17,7 @@ FR-630-AC-6.
 ## Test Procedure
 
 1. Extend the Counter fixture with `elapsed: Quantity<ms>` on both sides, the abstract side under the unit bound `max 3`.
-2. Check the refinement `Late` (`value = self.value; elapsed = self.elapsed + 2 ms;`, `inc` to `stutter`).
+2. Check the refinement `Late` (`value = self.value; elapsed = self.elapsed + 2 ms;`, `inc` to `Spec::Counter::inc(self)`).
 3. Analyze `Late` with no `abstract_subject` over the snapshot `a` at `value` 0, `elapsed` 2 ms.
 4. Repeat over `elapsed` 1 ms.
 
