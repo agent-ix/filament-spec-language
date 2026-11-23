@@ -57,3 +57,4 @@ Re-checked at head 0ac6d707d3bb705df8cae0e6510008a4b922174e (rebased onto origin
 | --- | --- | --- |
 | FND-001 | fixed | verified at 0ac6d707d3: Over the engines `Coin` model (initially tails, as in its `data/coin-tails.json`; `flip` sets heads or tails with equal weight), with the `ev` profile under eve |
 | FND-002 | fixed | verified at 0ac6d707d3: For a checked root `holds(c.heads)` with no temporal operator, `QualifiedBoundedMonitor::supports` and `QualifiedBoundedMonitor::supports_observations` both ret |
+| FND-003 | fixed | round 2, verified at 43bcccecd5: and `BoundedTranslation::clause` over an origin clause under the infinite-trace profile still refuses it `NotTranslated`. |

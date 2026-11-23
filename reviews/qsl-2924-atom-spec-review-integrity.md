@@ -60,3 +60,4 @@ Re-checked at head 0ac6d707d3bb705df8cae0e6510008a4b922174e (rebased onto origin
 | FND-001 | fixed | verified at 0ac6d707d3: A counterexample over the tails subject whose `initial` is the heads state and whose `initial_key` is its accepting decided key is refused, with no token. |
 | FND-002 | fixed | verified at 0ac6d707d3: Over a fixture the test authors, the same `Coin` model with its one coin initially heads (the examples supply no such fixture) |
 | FND-003 | fixed | verified at 0ac6d707d3: The reading rests on FSpec FR-407's bounded event, whose truth depends on positions from its activating position up to its horizon, and on FSpec FR-091's positi |
+| FND-004 | fixed | round 2, verified at 43bcccecd5: The same empty rejecting path, in a counterexample whose `item` and complete keys are rebuilt for `probability <= 0.5 [ holds(c.heads) ]`, is an opposite-verdic |
