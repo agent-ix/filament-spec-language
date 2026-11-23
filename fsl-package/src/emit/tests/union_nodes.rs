@@ -475,7 +475,7 @@ fn an_omitted_owner_leaves_a_shared_application_with_the_written_owners_record()
     let of_application: Vec<_> = admitted
         .requirement_items()
         .iter()
-        .filter_map(|row| row.record.as_ref())
+        .filter_map(crate::emit::value_validity_requirements::value_record)
         .filter(|record| key_of(&record.application) == *claim.node())
         .collect();
     assert_eq!(of_application.len(), 1, "only `b`'s record of `x + 1`");

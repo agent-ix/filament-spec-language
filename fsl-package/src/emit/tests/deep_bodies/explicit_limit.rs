@@ -208,6 +208,9 @@ fn qualify(family: Family, count: usize, require_default_denial: bool) {
         CheckedPackageV2BudgetedReadResult::CatalogUnavailable(_) => {
             panic!("{family:?}: catalog unavailable")
         }
+        CheckedPackageV2BudgetedReadResult::HostAllocationFailed(failure) => {
+            panic!("{family:?}: host allocation failed {failure:?}")
+        }
     };
     let charged = budget.consumed();
     let read_storage = budget.read_storage_consumed();

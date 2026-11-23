@@ -730,7 +730,7 @@ fn the_timed_model_writer_carries_value_validity_rows_through_a_rename() {
     for record in reread
         .requirement_items()
         .iter()
-        .filter_map(|row| row.record.as_ref())
+        .filter_map(crate::emit::value_validity_requirements::value_record)
     {
         assert_eq!(
             reread

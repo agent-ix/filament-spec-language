@@ -15,7 +15,7 @@ use std::{
 };
 
 use filament_contract_model::{
-    encode_checked_package_v2_with_protocol_correlation_occurrences, ApplicationOperator,
+    encode_checked_package_v2_with_path_condition_frames, ApplicationOperator,
     CheckedAbstractionField, CheckedAbstractionFrame, CheckedAbstractionObject,
     CheckedAbstractionParameter, CheckedAbstractionPopulation, CheckedArtifactRef,
     CheckedCapability, CheckedCapabilityDisposition, CheckedComponentClause,
@@ -6879,7 +6879,7 @@ pub fn emit_timed_models(
         &ForeignNodes::default(),
     )?;
     order_dependencies(&mut nodes, EmitRefusal::TimedModelWriterInvariant)?;
-    let requirement_rows =
+    let (requirement_rows, path_condition_frames) =
         value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
     let operand_rows = write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {
@@ -6909,7 +6909,7 @@ pub fn emit_timed_models(
         ProtocolCorrelationProvenance::Unavailable(_) => None,
     };
     let package = EmittedPackage::new(base.name(), |name| {
-        encode_checked_package_v2_with_protocol_correlation_occurrences(
+        encode_checked_package_v2_with_path_condition_frames(
             name,
             &lock,
             &semantic_graph,
@@ -6928,6 +6928,7 @@ pub fn emit_timed_models(
             },
             (!requirement_rows.is_empty()).then_some(requirement_rows.as_slice()),
             correlation_rows.as_deref(),
+            (!path_condition_frames.is_empty()).then_some(path_condition_frames.as_slice()),
             &capability_report,
             &diagnostics,
             limits.canonical(),
@@ -8134,6 +8135,8 @@ fn emit_package_nodes(
         &omitted_causes,
     )?;
     meter.charge(&requirement_rows)?;
+    let path_condition_frames =
+        value_validity_requirements::frame_rows(ids, &producer_node_ids, &value_validity.frames)?;
     let selected_source_collection_rows = source_collection_rows(graph, &emitted_node_ids)?;
     let operation_effects = graph
         .operation_effects()
@@ -8177,7 +8180,7 @@ fn emit_package_nodes(
     drop((declared_forms, source_keys));
     drop(ids_table);
     let package = EmittedPackage::new(graph.package_name(), |name| {
-        encode_checked_package_v2_with_protocol_correlation_occurrences(
+        encode_checked_package_v2_with_path_condition_frames(
             name,
             &lock,
             &semantic_graph,
@@ -8199,6 +8202,7 @@ fn emit_package_nodes(
             },
             (!requirement_rows.is_empty()).then_some(requirement_rows.as_slice()),
             Some(&correlation_rows),
+            (!path_condition_frames.is_empty()).then_some(path_condition_frames.as_slice()),
             &capability_report,
             &diagnostics,
             limits.canonical(),
