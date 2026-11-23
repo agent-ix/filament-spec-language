@@ -22,4 +22,4 @@ Tag the tests `#[trace("TC-2167", "FR-186-AC-10")]`.
 
 ## Expected Results
 
-- The item settles `proved`, not `unsupported`; the start snapshot holds one `Msg` key, so there is one instance, activated at position 0, and its proof basis carries the exact value of the `on origin` claim `Eventually` (`391/400`), its entry naming the key as `instance` with a null `binding` where the `on origin` claim's entry names it as `binding`.
+- The item settles `proved`, not `unsupported`; the start snapshot holds one `Msg` key, so there is one instance, activated at position 0, and its proof basis carries the exact value (`391/400`) of the `on origin` claim `probabilistic Eventually using inf on M over (m: M::Msg) under Even on origin { probability >= rational(9, 10) [ eventually holds(m.delivered) ] }`, its FR-741 `entries` row naming the key as `instance` with a null `binding` where that claim's row names it as `binding`.
