@@ -85,7 +85,7 @@ fn targets(term: &MemberTerm) -> Vec<NodeKey> {
 
 /// The members of a node whose body is an aggregate.
 fn members(node: &SemanticNode) -> &[MemberTerm] {
-    let BodyTerm::Aggregate(AggregateTerm { members }) = node.body() else {
+    let BodyTerm::Aggregate(AggregateTerm { members, .. }) = node.body() else {
         panic!("an aggregate body: {:?}", node.body());
     };
     members
@@ -99,7 +99,7 @@ fn body_targets(node: &SemanticNode) -> Vec<NodeKey> {
             leaf_target(leaf, &mut found);
             found
         }
-        BodyTerm::Aggregate(AggregateTerm { members }) => {
+        BodyTerm::Aggregate(AggregateTerm { members, .. }) => {
             members.iter().flat_map(targets).collect()
         }
         other => panic!("a leaf or aggregate body: {other:?}"),
