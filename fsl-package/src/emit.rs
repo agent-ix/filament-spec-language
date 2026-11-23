@@ -6338,6 +6338,36 @@ fn rekey_timed_model_nodes(
     ))
 }
 
+/// FSpec FR-322: a node's `dependencies` ascend by the structural keys of
+/// the nodes they name. A renamed entry changes the structural key of every
+/// node that holds it as an operand (a call of the entry), so the order of a
+/// node depending on two such calls can change; each list is sorted again by
+/// the final keys. A list naming a node this graph does not hold (a dependency
+/// package's node, which no rename reaches) keeps its order. Both re-encoding
+/// writers (the monitor plan and the timed models) share this function; each
+/// names its own invariant refusal.
+fn order_dependencies(
+    nodes: &mut [CheckedSemanticNodeV2],
+    invariant: fn(&'static str) -> EmitRefusal,
+) -> Result<(), EmitRefusal> {
+    let graph =
+        fsl_semantics::check::wire_id::WireGraph::new(nodes.iter().map(|node| &node.node_id))
+            .map_err(|_| invariant("the writer's graph ids resolve"))?;
+    for node in nodes.iter_mut() {
+        let Ok(mut keyed) = node
+            .dependencies
+            .iter()
+            .map(|id| graph.key(id).map(|key| (key, id.clone())))
+            .collect::<Result<Vec<_>, _>>()
+        else {
+            continue;
+        };
+        keyed.sort_by(|(left, _), (right, _)| left.cmp(right));
+        node.dependencies = keyed.into_iter().map(|(_, id)| id).collect();
+    }
+    Ok(())
+}
+
 /// Resolve original producer keys only through the timed substitutions the
 /// writer actually applied. The shared index keeps its one key per final node
 /// so consumers that reverse it never choose between identity aliases.
@@ -6741,6 +6771,7 @@ pub fn emit_timed_models(
         &mut [],
         &ForeignNodes::default(),
     )?;
+    order_dependencies(&mut nodes, EmitRefusal::TimedModelWriterInvariant)?;
     let requirement_rows = value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
     let operand_rows = write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {
