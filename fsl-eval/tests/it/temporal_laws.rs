@@ -218,3 +218,512 @@ fn weak_until_refuses_naming_its_derived_form_and_next_stays_an_identifier() {
     assert!(message.contains("or always"), "{message}");
     assert_eq!(parse_diagnostics("always[0,1] holds(c.next = 1)"), []);
 }
+
+/// QSL-2060: the operator laws on random traces and formulas.
+mod operator_laws {
+    // SPDX-License-Identifier: AGPL-3.0-or-later
+    //! QSL-2060: the temporal operator laws on random finite traces and lassos.
+    //!
+    //! Formulas come from a small bounded-fragment generator over three atoms
+    //! (`holds(c.level = 1)`, `holds(c.level = 2)`, `holds(c.level = 3)`, read by text, not by value);
+    //! a trace is a vector of 3-bit valuations. Each law builds two clauses as source
+    //! text, takes both through S1, S2, the assembler and the temporal check, and compares
+    //! the full `TemporalOutcome` (pending and undefined included) at every represented
+    //! position with `evaluate_at`. The profiles covered are event-position false-extension
+    //! (closed finite traces) and infinite-trace (finite prefixes and lassos). The
+    //! fixed-sample and timestamped finite-window profiles read their positions through
+    //! their own letters and are not covered here.
+    use filament_exact::Meter;
+    use fsl_bench::prop;
+    use fsl_eval::temporal::{
+        evaluate, evaluate_at, AtomReading, CaptureReading, LetterStop, TemporalLetters,
+        TemporalOutcome, TemporalPosition, TemporalRefusal, TemporalTrace,
+    };
+    use fsl_semantics::check::{FormulaNode, FormulaNodeId, SCALAR_LIMITS_UNLIMITED};
+    use proptest::prelude::*;
+
+    use crate::temporal_trace::{fixture, Fixture, EVENT, INFINITE};
+
+    const OVER: &str = "c: Counter";
+
+    /// An interval `[low, high]`; `high == None` is `[low, *]`.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    struct Span {
+        low: u8,
+        high: Option<u8>,
+    }
+
+    impl Span {
+        fn text(self) -> String {
+            match self.high {
+                Some(high) => format!("[{},{}]", self.low, high),
+                None => format!("[{},*]", self.low),
+            }
+        }
+    }
+
+    /// A formula of the bounded fragment.
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    enum F {
+        Atom(u8),
+        True,
+        False,
+        Not(Box<F>),
+        And(Box<F>, Box<F>),
+        Or(Box<F>, Box<F>),
+        Eventually(Span, Box<F>),
+        Always(Span, Box<F>),
+        Once(Span, Box<F>),
+        Historically(Span, Box<F>),
+        Until(Span, Box<F>, Box<F>),
+        Release(Span, Box<F>, Box<F>),
+        Since(Span, Box<F>, Box<F>),
+        Triggered(Span, Box<F>, Box<F>),
+    }
+
+    use F::*;
+
+    fn b(f: F) -> Box<F> {
+        Box::new(f)
+    }
+
+    /// How `until` is spelled when a formula is rendered: the real operator, or the
+    /// weak-until stand-in of the negative test.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum UntilSpelling {
+        Real,
+        Weak,
+    }
+
+    impl F {
+        fn text(&self, until: UntilSpelling) -> String {
+            let t = |f: &F| f.text(until);
+            match self {
+                Atom(0) => "holds(c.level = 1)".into(),
+                Atom(1) => "holds(c.level = 2)".into(),
+                Atom(_) => "holds(c.level = 3)".into(),
+                True => "true".into(),
+                False => "false".into(),
+                Not(x) => format!("not ({})", t(x)),
+                And(x, y) => format!("(({}) and ({}))", t(x), t(y)),
+                Or(x, y) => format!("(({}) or ({}))", t(x), t(y)),
+                Eventually(i, x) => format!("(eventually{} ({}))", i.text(), t(x)),
+                Always(i, x) => format!("(always{} ({}))", i.text(), t(x)),
+                Once(i, x) => format!("(once{} ({}))", i.text(), t(x)),
+                Historically(i, x) => format!("(historically{} ({}))", i.text(), t(x)),
+                Until(i, x, y) => match until {
+                    UntilSpelling::Real => format!("(({}) until{} ({}))", t(x), i.text(), t(y)),
+                    UntilSpelling::Weak => format!(
+                        "((({}) until{} ({})) or (always{} ({})))",
+                        t(x),
+                        i.text(),
+                        t(y),
+                        i.text(),
+                        t(x)
+                    ),
+                },
+                Release(i, x, y) => format!("(({}) release{} ({}))", t(x), i.text(), t(y)),
+                Since(i, x, y) => format!("(({}) since{} ({}))", t(x), i.text(), t(y)),
+                Triggered(i, x, y) => format!("(({}) triggered{} ({}))", t(x), i.text(), t(y)),
+            }
+        }
+
+        /// Whether the formula is a Boolean combination of atoms.
+        fn propositional(&self) -> bool {
+            match self {
+                Atom(_) | True | False => true,
+                Not(x) => x.propositional(),
+                And(x, y) | Or(x, y) => x.propositional() && y.propositional(),
+                _ => false,
+            }
+        }
+
+        /// Every atom replaced by `false`.
+        fn atoms_false(&self) -> F {
+            match self {
+                Atom(_) => False,
+                Not(x) => Not(b(x.atoms_false())),
+                And(x, y) => And(b(x.atoms_false()), b(y.atoms_false())),
+                Or(x, y) => Or(b(x.atoms_false()), b(y.atoms_false())),
+                other => other.clone(),
+            }
+        }
+    }
+
+    /// What the generated formulas may use: bounded spans everywhere, plus `[l,*]` on infinite traces.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum Shape {
+        /// Event-position false-extension over a closed finite trace.
+        Closed,
+        /// Infinite-trace over a finite prefix.
+        Prefix,
+        /// Infinite-trace over a lasso.
+        Lasso,
+    }
+
+    impl Shape {
+        fn profile(self) -> &'static str {
+            match self {
+                Self::Closed => EVENT,
+                Self::Prefix | Self::Lasso => INFINITE,
+            }
+        }
+        fn open_spans(self) -> bool {
+            self != Self::Closed
+        }
+    }
+
+    fn span(open: bool) -> BoxedStrategy<Span> {
+        let bounded = (0u8..=3, 0u8..=3).prop_map(|(low, width)| Span {
+            low,
+            high: Some(low + width),
+        });
+        if open {
+            prop_oneof![4 => bounded, 1 => (0u8..=3).prop_map(|low| Span { low, high: None })].boxed()
+        } else {
+            bounded.boxed()
+        }
+    }
+
+    fn formula(open: bool) -> BoxedStrategy<F> {
+        let leaf = prop_oneof![
+            4 => (0u8..3).prop_map(Atom),
+            1 => Just(True),
+            1 => Just(False),
+        ];
+        leaf.prop_recursive(3, 12, 2, move |inner| {
+            let sp = span(open);
+            prop_oneof![
+                2 => inner.clone().prop_map(|x| Not(b(x))),
+                1 => (inner.clone(), inner.clone()).prop_map(|(x, y)| And(b(x), b(y))),
+                1 => (inner.clone(), inner.clone()).prop_map(|(x, y)| Or(b(x), b(y))),
+                1 => (sp.clone(), inner.clone()).prop_map(|(i, x)| Eventually(i, b(x))),
+                1 => (sp.clone(), inner.clone()).prop_map(|(i, x)| Always(i, b(x))),
+                1 => (sp.clone(), inner.clone()).prop_map(|(i, x)| Once(i, b(x))),
+                1 => (sp.clone(), inner.clone()).prop_map(|(i, x)| Historically(i, b(x))),
+                1 => (sp.clone(), inner.clone(), inner.clone()).prop_map(|(i, x, y)| Until(i, b(x), b(y))),
+                1 => (sp.clone(), inner.clone(), inner.clone()).prop_map(|(i, x, y)| Release(i, b(x), b(y))),
+                1 => (sp.clone(), inner.clone(), inner.clone()).prop_map(|(i, x, y)| Since(i, b(x), b(y))),
+                1 => (sp, inner.clone(), inner).prop_map(|(i, x, y)| Triggered(i, b(x), b(y))),
+            ]
+        })
+        .boxed()
+    }
+
+    /// A trace and the profile shape it is read under.
+    #[derive(Clone, Debug)]
+    struct Run {
+        shape: Shape,
+        valuations: Vec<u8>,
+        /// Lasso only: the first position of the loop.
+        prefix: usize,
+    }
+
+    impl Run {
+        fn trace(&self) -> TemporalTrace {
+            let len = self.valuations.len() as u64;
+            match self.shape {
+                Shape::Closed | Shape::Prefix => TemporalTrace::Finite { len },
+                Shape::Lasso => TemporalTrace::Lasso {
+                    prefix: self.prefix as u64,
+                    loop_len: len - self.prefix as u64,
+                },
+            }
+        }
+    }
+
+    fn runs() -> BoxedStrategy<Run> {
+        (
+            prop_oneof![Just(Shape::Closed), Just(Shape::Prefix), Just(Shape::Lasso)],
+            proptest::collection::vec(0u8..8, 1..=6),
+            0usize..6,
+        )
+            .prop_map(|(shape, valuations, prefix)| {
+                let prefix = prefix % valuations.len();
+                Run {
+                    shape,
+                    valuations,
+                    prefix,
+                }
+            })
+            .boxed()
+    }
+
+    /// A letter that reads each atom's bit of the position's valuation.
+    struct Bits<'a> {
+        fixture: &'a Fixture,
+        valuations: &'a [u8],
+    }
+
+    impl TemporalLetters for Bits<'_> {
+        fn atom(
+            &mut self,
+            atom: FormulaNodeId,
+            position: TemporalPosition,
+            _meter: &mut Meter,
+        ) -> Result<AtomReading, LetterStop> {
+            let Some(FormulaNode::Holds { span }) =
+                self.fixture.clause.formula().nodes().get(atom.index())
+            else {
+                panic!("the letter reads only holds atoms");
+            };
+            let text = &self.fixture.text[span.start..span.end];
+            let bit = if text.ends_with("= 1)") {
+                0
+            } else if text.ends_with("= 2)") {
+                1
+            } else {
+                2
+            };
+            let valuation = self.valuations[usize::try_from(position.index()).unwrap()];
+            Ok(if valuation >> bit & 1 == 1 {
+                AtomReading::True
+            } else {
+                AtomReading::False
+            })
+        }
+        fn activation(&mut self, _: TemporalPosition, _: &mut Meter) -> Result<AtomReading, LetterStop> {
+            Ok(AtomReading::True)
+        }
+        fn captures(&mut self, _: TemporalPosition, _: &mut Meter) -> Result<CaptureReading, LetterStop> {
+            Ok(CaptureReading::Fixed)
+        }
+        fn counts_step(&self, _: TemporalPosition) -> bool {
+            true
+        }
+        fn counts_loop_edge(&self) -> bool {
+            true
+        }
+    }
+
+    fn clause(run: &Run, body: &str) -> Fixture {
+        fixture(run.shape.profile(), OVER, "on origin", body)
+    }
+
+    /// The outcome of `fixture` at `position`, as a comparable string.
+    fn at(run: &Run, fixture: &Fixture, position: u64) -> Result<TemporalOutcome, TemporalRefusal> {
+        let mut letters = Bits {
+            fixture,
+            valuations: &run.valuations,
+        };
+        let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
+        evaluate_at(
+            &fixture.clause,
+            run.trace(),
+            TemporalPosition::new(position),
+            &mut letters,
+            &mut meter,
+        )
+    }
+
+    fn show(outcome: &Result<TemporalOutcome, TemporalRefusal>) -> String {
+        format!("{outcome:?}")
+    }
+
+    /// Compare `left` and `right` as clause bodies at every represented position.
+    fn agree(run: &Run, left: &str, right: &str) -> Result<(), TestCaseError> {
+        let (l, r) = (clause(run, left), clause(run, right));
+        for position in 0..run.valuations.len() as u64 {
+            let (x, y) = (at(run, &l, position), at(run, &r, position));
+            prop_assert_eq!(
+                show(&x),
+                show(&y),
+                "at position {} on {:?} ({:?})\n  left:  {}\n  right: {}",
+                position,
+                run.valuations,
+                run.shape,
+                left,
+                right
+            );
+        }
+        Ok(())
+    }
+
+    fn suite(name: &'static str, strategy: impl Strategy<Value = (Run, F, F, Span)>, law: fn(&Run, &F, &F, Span) -> Result<(), TestCaseError>) {
+        prop::run(name, prop::config(256), &strategy, |(run, x, y, i)| law(&run, &x, &y, i)).unwrap();
+    }
+
+    /// A run with formulas that match its profile's span rules.
+    fn inputs() -> impl Strategy<Value = (Run, F, F, Span)> {
+        runs().prop_flat_map(|run| {
+            let open = run.shape.open_spans();
+            (Just(run), formula(open), formula(open), span(open))
+        })
+    }
+
+    fn real(f: &F) -> String {
+        f.text(UntilSpelling::Real)
+    }
+
+    fn always_law(run: &Run, x: &F, _: &F, i: Span) -> Result<(), TestCaseError> {
+        agree(
+            run,
+            &real(&Always(i, b(x.clone()))),
+            &real(&Not(b(Eventually(i, b(Not(b(x.clone()))))))),
+        )
+    }
+
+    /// `a release b` against `not (not a until not b)`, with `until` spelled as `spelling`.
+    fn release_law_with(run: &Run, x: &F, y: &F, i: Span, spelling: UntilSpelling) -> Result<(), TestCaseError> {
+        let right = Not(b(Until(i, b(Not(b(x.clone()))), b(Not(b(y.clone()))))));
+        agree(
+            run,
+            &real(&Release(i, b(x.clone()), b(y.clone()))),
+            &right.text(spelling),
+        )
+    }
+
+    fn since_law(run: &Run, x: &F, y: &F, i: Span) -> Result<(), TestCaseError> {
+        agree(
+            run,
+            &real(&Triggered(i, b(x.clone()), b(y.clone()))),
+            &real(&Not(b(Since(i, b(Not(b(x.clone()))), b(Not(b(y.clone()))))))),
+        )
+    }
+
+    /// Provenance: QSL-2060 P1 (FR-043, FR-327). `always a` is `not eventually not a`.
+    #[test]
+    fn always_is_not_eventually_not() {
+        suite("always_is_not_eventually_not", inputs(), always_law);
+    }
+
+    /// Provenance: QSL-2060 P2. `a release b` is `not (not a until not b)`.
+    #[test]
+    fn release_is_the_dual_of_until() {
+        suite("release_is_the_dual_of_until", inputs(), |r, x, y, i| {
+            release_law_with(r, x, y, i, UntilSpelling::Real)
+        });
+    }
+
+    /// Provenance: QSL-2060 P3. `a triggered b` is `not (not a since not b)`.
+    #[test]
+    fn since_and_triggered_are_dual() {
+        suite("since_and_triggered_are_dual", inputs(), since_law);
+    }
+
+    /// Provenance: QSL-2060 P4 (FR-328-AC-3). At position `i >= 1`, `once[1,1] a` is `a` at `i - 1`;
+    /// at position 0, atoms read false before the origin, so for a propositional `a` the value is that
+    /// of `a` with every atom replaced by `false`.
+    #[test]
+    fn once_one_one_is_the_previous_position() {
+        prop::run("once_one_one_is_the_previous_position", prop::config(256), &inputs(), |(run, x, _, _)| {
+            let one = Span { low: 1, high: Some(1) };
+            let once = clause(&run, &real(&Once(one, b(x.clone()))));
+            let plain = clause(&run, &real(&x));
+            for position in 1..run.valuations.len() as u64 {
+                let (got, want) = (at(&run, &once, position), at(&run, &plain, position - 1));
+                // `Violated { at }` names the position evaluated; compare the verdict kind and value.
+                prop_assert_eq!(verdict(&got), verdict(&want), "once[1,1] ({}) at {} on {:?}", real(&x), position, run.valuations);
+            }
+            if x.propositional() {
+                let false_world = clause(&run, &real(&x.atoms_false()));
+                let (got, want) = (at(&run, &once, 0), at(&run, &false_world, 0));
+                prop_assert_eq!(verdict(&got), verdict(&want), "once[1,1] ({}) at 0 on {:?}", real(&x), run.valuations);
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    /// The settled value of an outcome, ignoring which position a violation names.
+    fn verdict(outcome: &Result<TemporalOutcome, TemporalRefusal>) -> String {
+        match outcome {
+            Ok(TemporalOutcome::Violated { .. }) => "Violated".into(),
+            other => show(other),
+        }
+    }
+
+    /// Provenance: QSL-2060 P5. `eventually[l,u] a` at `i` is `eventually[0,u-l] a` at `i + l`
+    /// whenever position `i + l` is represented.
+    #[test]
+    fn bounded_intervals_shift() {
+        prop::run("bounded_intervals_shift", prop::config(256), &inputs(), |(run, x, _, i)| {
+            let Some(high) = i.high else { return Ok(()) };
+            let shifted = Span { low: 0, high: Some(high - i.low) };
+            let wide = clause(&run, &real(&Eventually(i, b(x.clone()))));
+            let narrow = clause(&run, &real(&Eventually(shifted, b(x.clone()))));
+            for position in 0..run.valuations.len() as u64 {
+                let target = position + u64::from(i.low);
+                if target >= run.valuations.len() as u64 {
+                    continue;
+                }
+                let (got, want) = (at(&run, &wide, position), at(&run, &narrow, target));
+                prop_assert_eq!(verdict(&got), verdict(&want), "eventually{} ({}) at {} vs eventually{} at {} on {:?}",
+                    i.text(), real(&x), position, shifted.text(), target, run.valuations);
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+
+    /// Provenance: QSL-2060 P6. `eventually[l,u] a` is `eventually[l,m] a or eventually[m+1,u] a`
+    /// and `always[l,u] a` is the same split with `and`, for `l <= m < u`.
+    #[test]
+    fn bounded_intervals_split() {
+        prop::run("bounded_intervals_split", prop::config(256), &(inputs(), 0u8..8), |((run, x, _, i), cut)| {
+            let high = i.high.map_or(i.low + 3, |h| h);
+            if high <= i.low {
+                return Ok(());
+            }
+            let m = i.low + cut % (high - i.low);
+            let (head, tail) = (
+                Span { low: i.low, high: Some(m) },
+                Span { low: m + 1, high: i.high },
+            );
+            let whole = Span { low: i.low, high: i.high };
+            agree(
+                &run,
+                &real(&Eventually(whole, b(x.clone()))),
+                &real(&Or(b(Eventually(head, b(x.clone()))), b(Eventually(tail, b(x.clone()))))),
+            )?;
+            agree(
+                &run,
+                &real(&Always(whole, b(x.clone()))),
+                &real(&And(b(Always(head, b(x.clone()))), b(Always(tail, b(x.clone()))))),
+            )
+        })
+        .unwrap();
+    }
+
+    /// Provenance: QSL-2060 negative (FR-329-AC-9). A lasso under a bounded profile is refused
+    /// before any atom is read, whatever the formula.
+    #[test]
+    fn lasso_under_a_bounded_profile_is_refused() {
+        prop::run(
+            "lasso_under_a_bounded_profile_is_refused",
+            prop::config(256),
+            &(formula(false), proptest::collection::vec(0u8..8, 1..=6)),
+            |(f, valuations)| {
+                let fx = fixture(EVENT, OVER, "on origin", &real(&f));
+                let mut letters = Bits { fixture: &fx, valuations: &valuations };
+                let mut meter = Meter::new(SCALAR_LIMITS_UNLIMITED);
+                let trace = TemporalTrace::Lasso { prefix: 0, loop_len: valuations.len() as u64 };
+                let refused = evaluate(&fx.clause, trace, &mut letters, &mut meter);
+                prop_assert!(
+                    matches!(refused, Err(TemporalRefusal::LassoUnderBoundedProfile { .. })),
+                    "{}: {:?}", real(&f), refused
+                );
+                Ok(())
+            },
+        )
+        .unwrap();
+    }
+
+    /// Provenance: QSL-2060 negative. With `until` spelled as weak until (the strictness swapped),
+    /// the release law fails and shrinks to a small formula on a short trace.
+    #[test]
+    fn swapped_until_is_caught() {
+        let mut config = prop::config(256);
+        config.failure_persistence = None;
+        let outcome = prop::run("swapped_until_is_caught", config, &inputs(), |(run, x, y, i)| {
+            release_law_with(&run, &x, &y, i, UntilSpelling::Weak)
+        });
+        match outcome {
+            Err(proptest::test_runner::TestError::Fail(_, (run, x, y, _))) => {
+                assert!(run.valuations.len() <= 3, "trace did not shrink: {run:?}");
+                assert!(real(&x).len() + real(&y).len() <= 120, "formula did not shrink: {x:?} {y:?}");
+            }
+            other => panic!("the swapped until went unnoticed: {other:?}"),
+        }
+    }
+}
