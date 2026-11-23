@@ -37,6 +37,26 @@ fn recording_payload(bytes: &[u8]) -> Result<Vec<u8>, String> {
 
 /// Build the recording-mode `global-conformance` result from the checked
 /// protocol and its provisioned FR-737 bytes.
+/// The refusal of a whole incremental item when one of its prefixes is
+/// refused (FR-895 "Incremental assessment"): `invalid_runtime_input`, the
+/// recording refusal's own cause, and its detail and `prefix` index.
+fn prefix_refusal(refused: super::recording::PrefixRefusal) -> crate::analyze::Refusal {
+    crate::analyze::Refusal::DeclinedWithDetail(
+        fsl_replay::ProofRefusalCause::InvalidInput,
+        fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+        refused.refusal.code(),
+        [
+            (
+                "detail".to_owned(),
+                serde_json::json!(refused.refusal.to_string()),
+            ),
+            ("prefix".to_owned(), serde_json::json!(refused.prefix)),
+        ]
+        .into_iter()
+        .collect(),
+    )
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "the recording assessment binds the subject, package, recording, cancellation, and replay limits"
@@ -49,6 +69,7 @@ fn recording_result(
     recording_identity: Option<&fsl_semantics::model::observation::DocumentRef>,
     recording: &[u8],
     population: Option<serde_json::Value>,
+    incremental: bool,
     replay_limits: ReplayLimits,
     cancel: &Cancel,
 ) -> crate::analyze::EngineReport {
@@ -124,6 +145,21 @@ fn recording_result(
             );
         }
     };
+    let prefixes = if incremental {
+        match super::recording::assess_selected_prefixes(
+            package,
+            selected_protocol,
+            &recording,
+            population.as_deref(),
+        ) {
+            Ok(prefixes) => Some(prefixes),
+            Err(refused) => {
+                return crate::analyze::EngineReport::Refused(prefix_refusal(refused));
+            }
+        }
+    } else {
+        None
+    };
     let Some(recording_identity) = recording_identity else {
         return crate::analyze::EngineReport::Refused(crate::analyze::Refusal::DeclinedWithDetail(
             fsl_replay::ProofRefusalCause::InvalidInput,
@@ -179,6 +215,17 @@ fn recording_result(
     };
     let mut output = recording_output(assessment.clone(), recording_identity);
     output.replay = replayed.then_some(fsl_replay::ConformanceReplayOutput { reproduced: true });
+    output.prefixes = prefixes.map(|prefixes| {
+        prefixes
+            .into_iter()
+            .enumerate()
+            .map(|(index, prefix)| fsl_replay::ConformancePrefixOutput {
+                observations: index + 1,
+                label: prefix.global.label,
+                obligations: obligation_outputs(prefix.obligations),
+            })
+            .collect()
+    });
     let terminal = match assessment.global.label.as_str() {
         _ if refused_replay.is_some() => TerminalRecord::inconclusive(
             index,
@@ -255,6 +302,7 @@ pub(crate) fn global_recording_item<'a>(
     recording_identity: Option<fsl_semantics::model::observation::DocumentRef>,
     recording: Option<&'a [u8]>,
     population: Option<serde_json::Value>,
+    incremental: bool,
     replay_limits: ReplayLimits,
 ) -> crate::analyze::AnalyzeItem<'a> {
     global_recording_item_in(
@@ -265,6 +313,7 @@ pub(crate) fn global_recording_item<'a>(
         recording_identity,
         recording,
         population,
+        incremental,
         replay_limits,
     )
 }
@@ -277,6 +326,7 @@ pub(crate) fn package_global_recording_item<'a>(
     recording_identity: Option<fsl_semantics::model::observation::DocumentRef>,
     recording: Option<&'a [u8]>,
     population: Option<serde_json::Value>,
+    incremental: bool,
     replay_limits: ReplayLimits,
 ) -> crate::analyze::AnalyzeItem<'a> {
     global_recording_item_in(
@@ -287,6 +337,7 @@ pub(crate) fn package_global_recording_item<'a>(
         recording_identity,
         recording,
         population,
+        incremental,
         replay_limits,
     )
 }
@@ -303,6 +354,7 @@ fn global_recording_item_in<'a>(
     recording_identity: Option<fsl_semantics::model::observation::DocumentRef>,
     recording: Option<&'a [u8]>,
     population: Option<serde_json::Value>,
+    incremental: bool,
     replay_limits: ReplayLimits,
 ) -> crate::analyze::AnalyzeItem<'a> {
     crate::analyze::AnalyzeItem::new(
@@ -320,6 +372,7 @@ fn global_recording_item_in<'a>(
                 recording_identity.as_ref(),
                 recording,
                 population,
+                incremental,
                 replay_limits,
                 cancel,
             ),
@@ -743,6 +796,7 @@ fn behavior_report(
             ),
             recording: None,
             replay: refuted.then_some(fsl_replay::ConformanceReplayOutput { reproduced: true }),
+            prefixes: None,
         },
         counterexample,
     }))
@@ -1167,7 +1221,7 @@ pub fn replay_counterexample(
                 recording,
                 None,
             )
-                .map_err(ConformanceReplayRefusal::recording)?;
+            .map_err(ConformanceReplayRefusal::recording)?;
             if assessment.global.label == "refuted"
                 && assessment.trace_position == Some(*trace_position)
             {
@@ -1229,32 +1283,10 @@ pub(crate) fn recording_output(
     assessment: super::recording::RecordingAssessment,
     recording_identity: &fsl_semantics::model::observation::DocumentRef,
 ) -> ProtocolConformanceOutput {
-    use fsl_replay::{
-        ConformanceClosureOutput, ConformanceGlobalOutput, ConformanceObligationOutput,
-    };
+    use fsl_replay::{ConformanceClosureOutput, ConformanceGlobalOutput};
 
     ProtocolConformanceOutput {
-        obligations: assessment
-            .obligations
-            .into_iter()
-            .map(|obligation| ConformanceObligationOutput {
-                obligation: serde_json::to_value(obligation.obligation)
-                    .expect("recording obligation IDs serialize"),
-                verdict: match obligation.verdict {
-                    super::recording::RecordingVerdict::Satisfied => "satisfied",
-                    super::recording::RecordingVerdict::Violated => "violated",
-                    super::recording::RecordingVerdict::Pending => "pending",
-                }
-                .to_owned(),
-                cause: obligation
-                    .cause
-                    .map(|cause| serde_json::to_value(cause).expect("recording causes serialize"))
-                    .and_then(|cause| cause.as_str().map(str::to_owned)),
-                basis: "recording".to_owned(),
-                witness: (!obligation.witness.is_empty())
-                    .then(|| serde_json::json!(obligation.witness)),
-            })
-            .collect(),
+        obligations: obligation_outputs(assessment.obligations),
         closure: ConformanceClosureOutput {
             state: assessment.closure.state,
             premises: assessment
@@ -1278,7 +1310,34 @@ pub(crate) fn recording_output(
             identity: recording_identity.identity.clone(),
         }),
         replay: None,
+        prefixes: None,
     }
+}
+
+/// The wire results of a recording's obligations.
+fn obligation_outputs(
+    obligations: Vec<super::recording::RecordingObligation>,
+) -> Vec<fsl_replay::ConformanceObligationOutput> {
+    obligations
+        .into_iter()
+        .map(|obligation| fsl_replay::ConformanceObligationOutput {
+            obligation: serde_json::to_value(obligation.obligation)
+                .expect("recording obligation IDs serialize"),
+            verdict: match obligation.verdict {
+                super::recording::RecordingVerdict::Satisfied => "satisfied",
+                super::recording::RecordingVerdict::Violated => "violated",
+                super::recording::RecordingVerdict::Pending => "pending",
+            }
+            .to_owned(),
+            cause: obligation
+                .cause
+                .map(|cause| serde_json::to_value(cause).expect("recording causes serialize"))
+                .and_then(|cause| cause.as_str().map(str::to_owned)),
+            basis: "recording".to_owned(),
+            witness: (!obligation.witness.is_empty())
+                .then(|| serde_json::json!(obligation.witness)),
+        })
+        .collect()
 }
 
 fn protocol_refusal(refusal: ProtocolRefusal) -> ConformanceReplayRefusal {
@@ -1358,6 +1417,36 @@ mod tests {
     use ix_trace_rs::trace;
 
     use super::*;
+
+    /// FR-896-AC-6: a refused prefix refuses the whole item
+    /// `invalid_runtime_input`, with the refusal's cause code, its detail and
+    /// the prefix index.
+    #[trace("TC-2531", "FR-896-AC-6")]
+    #[test]
+    fn a_refused_prefix_refuses_the_item_naming_the_prefix() {
+        let refusal = prefix_refusal(super::super::recording::PrefixRefusal {
+            prefix: 3,
+            refusal: super::super::recording::RecordingRefusal::new(
+                "invalid-value",
+                "a prefix was refused",
+                None,
+            ),
+        });
+        let crate::analyze::Refusal::DeclinedWithDetail(cause, decline, code, detail) = refusal
+        else {
+            panic!("a declined refusal with detail");
+        };
+        assert!(matches!(cause, fsl_replay::ProofRefusalCause::InvalidInput));
+        assert!(matches!(
+            decline,
+            fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput)
+        ));
+        assert_eq!(code.to_string(), "invalid_runtime_input/invalid-value");
+        assert_eq!(detail["prefix"], serde_json::json!(3));
+        assert!(detail["detail"]
+            .as_str()
+            .is_some_and(|text| text.contains("a prefix was refused")));
+    }
 
     #[trace("TC-2805", "FR-990-AC-1")]
     #[test]

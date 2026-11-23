@@ -103,6 +103,27 @@ impl ProvisionRefusal {
     }
 }
 
+/// How a `global-conformance` item assesses its recording (FR-896).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AssessmentMode {
+    /// The whole recording at once.
+    #[default]
+    Batch,
+    /// One observation at a time, in causal order, with every prefix.
+    Incremental,
+}
+
+impl AssessmentMode {
+    /// The request word.
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Batch => "batch",
+            Self::Incremental => "incremental",
+        }
+    }
+}
+
 /// Common options of one requested claim.
 #[derive(Clone, Debug, Default)]
 pub struct ItemOptions {
@@ -122,6 +143,8 @@ pub struct ItemOptions {
     pub recording: Option<fsl_semantics::model::observation::DocumentRef>,
     /// The caller's activated role population for a recording assessment.
     pub population: Option<serde_json::Value>,
+    /// How the recording is assessed, when the item names a mode.
+    pub assessment: Option<AssessmentMode>,
     /// The named backend's options (FSpec FR-196, FR-331 `options`),
     /// each one the backend publishes (FR-967); empty when none are given.
     pub backend_options: std::collections::BTreeMap<String, String>,
@@ -1144,6 +1167,8 @@ fn work<'a>(
                                         recording_identity,
                                         Some(recording),
                                         item.options.population.clone(),
+                                        item.options.assessment
+                                            == Some(AssessmentMode::Incremental),
                                         limits.replay,
                                     )
                                 }
@@ -1493,7 +1518,16 @@ fn work<'a>(
                 item.backend.as_ref(),
             )
             .map(|routed| routed.with_options(item.options.backend_options.clone()));
-            let selection = fsl_replay::contract_check::select_contract(package, &item.claim);
+            let selection =
+                fsl_replay::contract_check::select_contract(package, &item.claim).map(|claim| {
+                    crate::contract_check::ContractRequest {
+                        package,
+                        claim,
+                        subject: simulation(input, binding, limits),
+                        abstract_subject: None,
+                        max_cases: item.options.max_cases,
+                    }
+                });
             crate::provider::contract_provider_item_over(
                 item.request_index,
                 backend.id(),
@@ -1543,7 +1577,7 @@ fn work<'a>(
                         .get(fsl_foundation::Setting::ScheduleMaxDemandPoints)
                         .unwrap_or(crate::schedulability::DEFAULT_MAX_DEMAND_POINTS),
                 )
-                    .unwrap_or_else(absent)
+                .unwrap_or_else(absent)
             }
         }
         Some(ItemForm::Composition(form)) if item.kind == Capability::Composition => {
@@ -2032,7 +2066,9 @@ mod caller_limit_tests {
         use crate::exact_probabilistic::ExactProbLimits;
         let base = ExactProbLimits::default();
         let rows: [(Setting, fn(&ExactProbLimits) -> u64); 9] = [
-            (Setting::ExactProbMaxStates, |l| l.model.limits.max_states as u64),
+            (Setting::ExactProbMaxStates, |l| {
+                l.model.limits.max_states as u64
+            }),
             (Setting::ExactProbMaxTransitions, |l| {
                 l.model.limits.max_transitions as u64
             }),
@@ -2040,12 +2076,16 @@ mod caller_limit_tests {
                 l.model.max_automaton_states
             }),
             (Setting::ExactProbMaxIterations, |l| l.max_iterations),
-            (Setting::ExactProbPrecisionBits, |l| u64::from(l.precision_bits)),
+            (Setting::ExactProbPrecisionBits, |l| {
+                u64::from(l.precision_bits)
+            }),
             (Setting::ExactProbMaxPrecisionBits, |l| {
                 u64::from(l.max_precision_bits)
             }),
             (Setting::ExactProbMaxRationalBits, |l| l.max_rational_bits),
-            (Setting::ExactProbMaxPolicyIterations, |l| l.max_policy_iterations),
+            (Setting::ExactProbMaxPolicyIterations, |l| {
+                l.max_policy_iterations
+            }),
             (Setting::ExactProbMaxWitnessPaths, |l| l.max_witness_paths),
         ];
         for (setting, read) in rows {
@@ -2058,7 +2098,11 @@ mod caller_limit_tests {
             assert_eq!(read(&changed), bound, "{setting}");
             for (other, other_read) in rows {
                 if other != setting {
-                    assert_eq!(other_read(&changed), other_read(&base), "{setting} moved {other}");
+                    assert_eq!(
+                        other_read(&changed),
+                        other_read(&base),
+                        "{setting} moved {other}"
+                    );
                 }
             }
         }
@@ -2084,7 +2128,11 @@ mod caller_limit_tests {
             assert_eq!(read(&changed), 7, "{setting}");
             for (other, other_read) in rows {
                 if other != setting {
-                    assert_eq!(other_read(&changed), other_read(&base), "{setting} moved {other}");
+                    assert_eq!(
+                        other_read(&changed),
+                        other_read(&base),
+                        "{setting} moved {other}"
+                    );
                 }
             }
         }

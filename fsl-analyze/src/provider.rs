@@ -672,6 +672,15 @@ pub enum ProviderVerdict {
         /// The reported assignment.
         counterexample: Vec<Value>,
     },
+    /// The provider refuted an `operation-contract` item with an FSpec
+    /// FR-485 `contract-counterexample`. FSL replays it by FSpec FR-485
+    /// "Replay" before it counts: a bound one settles `inconclusive` with
+    /// cause `replay-refused`, one the replay does not reproduce
+    /// `inconclusive` with cause `replay-parity`.
+    RefutedContract {
+        /// The reported counterexample.
+        counterexample: Box<fsl_replay::contract_check::ContractCounterexample>,
+    },
     /// The provider refuted the claim, but its counterexample cannot be
     /// mapped to an assignment of the claim's parameters (FR-290
     /// "Behavior"). It carries the typed reason in place of assignments,
@@ -852,6 +861,8 @@ pub(crate) enum ProviderReport {
     Failed(ToolFailure),
     /// The provider's counterexample, confirmed by replay or not.
     Replayed(ValueReport),
+    /// The provider's contract counterexample, read by FSpec FR-485 "Replay".
+    Contract(crate::contract_check::ContractReport),
     /// A composition's interface mismatch the checked declaration gives.
     Mismatch(InterfaceMismatch),
 }
@@ -860,6 +871,8 @@ pub(crate) enum ProviderReport {
 pub(crate) enum ProviderCounterexample {
     /// A replayed violating assignment.
     Assignments(Box<ValueCounterexample>),
+    /// A replayed operation-contract counterexample with its wire spelling.
+    Contract(crate::analyze::Spelled<fsl_replay::contract_check::ContractCounterexample>),
     /// A composition's declared interface mismatch.
     Mismatch(Box<InterfaceMismatch>),
     /// Why an unusable provider counterexample could not be replayed.
@@ -1008,7 +1021,7 @@ enum ProviderSelection<'a> {
     Value(Result<ValueTarget<'a>, Selection>),
     Contract(
         Result<
-            fsl_replay::contract_check::ContractClaim,
+            crate::contract_check::ContractRequest<'a>,
             fsl_replay::contract_check::ContractSelection,
         >,
     ),
@@ -1027,7 +1040,7 @@ impl ProviderSelection<'_> {
         match self {
             Self::Composition(target) => Some(ProviderTarget::Composition(target)),
             Self::Value(Ok(target)) => Some(ProviderTarget::Value(target)),
-            Self::Contract(Ok(target)) => Some(ProviderTarget::Contract(target)),
+            Self::Contract(Ok(request)) => Some(ProviderTarget::Contract(&request.claim)),
             Self::Value(Err(_)) | Self::Contract(Err(_)) => None,
         }
     }
@@ -1122,7 +1135,7 @@ pub(crate) fn contract_provider_item_over<'a>(
     routed: Option<RequirementItem>,
     emit: EmitLimits,
     selection: Result<
-        fsl_replay::contract_check::ContractClaim,
+        crate::contract_check::ContractRequest<'a>,
         fsl_replay::contract_check::ContractSelection,
     >,
     shared: Option<Shared<'a>>,
@@ -1450,6 +1463,7 @@ pub(crate) fn finish(
         },
         _ => None,
     };
+    let mut contract = None;
     let target = match work.selection {
         ProviderSelection::Value(Ok(target)) => Some(target),
         ProviderSelection::Value(Err(Selection::NoForm))
@@ -1468,7 +1482,11 @@ pub(crate) fn finish(
         ))) => return EngineReport::Refused(Refusal::Failed(fault.catalog_code())),
         // A contract and a composition have no value target to replay a
         // counterexample at: a `refuted` verdict is never accepted for them.
-        ProviderSelection::Contract(Ok(_)) | ProviderSelection::Composition(_) => None,
+        ProviderSelection::Contract(Ok(request)) => {
+            contract = Some(request);
+            None
+        }
+        ProviderSelection::Composition(_) => None,
     };
     let verdict = match settled {
         Some(Ok(verdict)) => verdict,
@@ -1517,6 +1535,12 @@ pub(crate) fn finish(
             ProviderVerdict::Refuted { .. } => {
                 EngineReport::Provider(Box::new(ProviderReport::ReplayParity))
             }
+            ProviderVerdict::RefutedContract { counterexample } => match contract {
+                Some(request) => read_contract(request, &counterexample),
+                // A `contract-counterexample` belongs to an `operation-contract`
+                // item only (FR-968 "Verdicts").
+                None => EngineReport::Provider(Box::new(ProviderReport::ReplayParity)),
+            },
             ProviderVerdict::RefutedUnusable { reason } => {
                 EngineReport::Provider(Box::new(ProviderReport::Unusable(reason)))
             }
@@ -1552,6 +1576,10 @@ fn report(
         }
         ProviderVerdict::ProcessFailed { cause } => return process_failure(cause),
         ProviderVerdict::Refuted { counterexample } => counterexample,
+        // A contract counterexample answers no value item.
+        ProviderVerdict::RefutedContract { .. } => {
+            return EngineReport::Provider(Box::new(ProviderReport::ReplayParity));
+        }
         // FR-290: an unusable counterexample is settled without replay.
         ProviderVerdict::RefutedUnusable { reason } => {
             return EngineReport::Provider(Box::new(ProviderReport::Unusable(reason)));
@@ -1658,6 +1686,18 @@ pub(crate) fn settle_record(
             TerminalRecord::refuted_by_interface_mismatch(index, backend),
             Some(ProviderCounterexample::Mismatch(Box::new(found))),
         ),
+        ProviderReport::Contract(report) => {
+            let (record, found) = crate::contract_check::settle(report, index, backend);
+            (
+                record,
+                found.map(|(found, wire)| {
+                    ProviderCounterexample::Contract(crate::analyze::Spelled {
+                        found: Box::new(found),
+                        wire,
+                    })
+                }),
+            )
+        }
     }
 }
 
@@ -1694,4 +1734,36 @@ fn component_premises(
             Ok(premise)
         })
         .collect()
+}
+
+/// A provider's `contract-counterexample` read by FSpec FR-485 "Replay"
+/// over the item's own subject: a reproduced violation settles `refuted`, a
+/// bound one `replay-refused`, any other `replay-parity` (FR-968 "Verdicts").
+fn read_contract(
+    request: crate::contract_check::ContractRequest<'_>,
+    received: &fsl_replay::contract_check::ContractCounterexample,
+) -> EngineReport {
+    use crate::contract_check::ContractRefusal;
+    use crate::contract_check::{read_received, ContractOutcome, ContractReport, ReceivedContract};
+    let found = |outcome| EngineReport::Provider(Box::new(ProviderReport::Contract(outcome)));
+    match read_received(request, received) {
+        Ok(ReceivedContract::Reproduced(reproduced, wire)) => found(ContractReport::Found(
+            ContractOutcome::Refuted(reproduced, wire),
+        )),
+        Ok(ReceivedContract::NotReproduced) => {
+            EngineReport::Provider(Box::new(ProviderReport::ReplayParity))
+        }
+        Ok(ReceivedContract::ReplayRefused) => EngineReport::Provider(Box::new(
+            ProviderReport::ReplayRefused(fsl_foundation::Code::UnsupportedProjection),
+        )),
+        Err(ContractRefusal::Unsupported(form, reason)) => {
+            found(ContractReport::Unsupported(form, reason))
+        }
+        Err(ContractRefusal::Admission) => EngineReport::Refused(Refusal::Failed(
+            CatalogCode::new("invalid_runtime_input", "invalid-value"),
+        )),
+        Err(ContractRefusal::Fault(fault)) => {
+            EngineReport::Refused(Refusal::Failed(fault.catalog_code()))
+        }
+    }
 }

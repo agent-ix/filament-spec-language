@@ -239,7 +239,7 @@ fn native_collection_decimal_retains_ordered_spelling_and_checks_value_membershi
         assert_eq!(refusal.catalog.cause(), "invalid-value");
         assert_eq!(
             refusal.fields.get("expected").map(String::as_str),
-            Some("Decimal[0, 10000; 2, 2]")
+            Some("Decimal[0, 10000; 2, 2; exact]")
         );
     }
     let nested = collection(
