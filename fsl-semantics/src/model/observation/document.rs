@@ -1203,6 +1203,8 @@ pub(super) struct References<'a> {
     clock_references: Vec<(String, ObjectReference)>,
     population_nodes: BTreeMap<String, filament_exact::NodeKey>,
     population_keys: BTreeMap<String, DeclarationKey>,
+    /// Each declared population's member types, by wire population.
+    population_members: BTreeMap<String, Vec<DeclarationKey>>,
     origins: ReferenceOriginBuilder,
     pub(super) parameter_origins: BTreeMap<String, ReferenceOrigins>,
     pub(super) result_origins: ReferenceOrigins,
@@ -1225,6 +1227,7 @@ impl<'a> References<'a> {
     ) -> Result<Self, AdmissionFailure> {
         let mut population_nodes = BTreeMap::new();
         let mut population_keys = BTreeMap::new();
+        let mut population_members = BTreeMap::new();
         for view in views {
             for record in &view.view.domain_package().records {
                 if let crate::model::domain_package::DomainPackageRecord::Population(population) =
@@ -1240,6 +1243,9 @@ impl<'a> References<'a> {
                     population_keys
                         .entry(population.key.node.clone())
                         .or_insert_with(|| population.key.clone());
+                    population_members
+                        .entry(population.key.node.clone())
+                        .or_insert_with(|| population.member_types.clone());
                 }
             }
         }
@@ -1273,6 +1279,7 @@ impl<'a> References<'a> {
             clock_references: Vec::new(),
             population_nodes,
             population_keys,
+            population_members,
             origins: ReferenceOriginBuilder::default(),
             parameter_origins: BTreeMap::new(),
             result_origins: ReferenceOrigins::default(),
@@ -1441,8 +1448,8 @@ impl<'a> References<'a> {
         reference: &SelectedObject,
     ) -> Result<ObjectReference, AdmissionRecord> {
         use crate::model::clock_reference::{
-            encode_identity, identity::DeclarationScope, is_declared_identity,
-            is_declared_owner_scope,
+            encode_identity, has_valid_selectors, identity::DeclarationScope,
+            is_declared_owner_scope, is_declared_template,
         };
         let missing_representation = || {
             admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
@@ -1489,33 +1496,48 @@ impl<'a> References<'a> {
             )
         };
         let wire = (reference.population.as_str(), identity.owner.as_str());
-        let Some(owner) = self.admitted.get(&wire).cloned() else {
-            if self
+        let owner = match self.admitted.get(&wire).cloned() {
+            Some(owner) => owner,
+            // An incomplete population need not list the owner (check 7): the
+            // owner is named by the identity and typed by the population's own
+            // member types, and every scope and template check below still
+            // applies.
+            None if self
                 .completeness
                 .get(reference.population.as_str())
                 .copied()
-                != Some(false)
+                == Some(false) =>
             {
-                return Err(dangling());
+                let members = self
+                    .population_members
+                    .get(&reference.population)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
+                members
+                    .iter()
+                    .find_map(|member| {
+                        let effective = self
+                            .views
+                            .iter()
+                            .find_map(|view| view.view.type_identities().get(member))?;
+                        object_reference(self.views, effective.clone(), &identity.owner).ok()
+                    })
+                    .ok_or_else(|| admission_record(Code::InvalidRuntimeInput, "invalid-value"))?
             }
-            // An incomplete population need not list the owner (check 7).
-            let tolerated = object_reference(
-                self.views,
-                crate::check::clock_reference_target(),
-                &reference.key,
-            )
-            .map_err(|_| admission_record(Code::InvalidRuntimeInput, "invalid-value"))?;
-            self.clock_references
-                .push((reference.population.clone(), tolerated.clone()));
-            return Ok(tolerated);
+            None => return Err(dangling()),
         };
         if &identity.population != scope
             || !is_declared_owner_scope(&identity.template.scope, &owner, table, self.types)
         {
             return Err(admission_record(Code::InvalidRuntimeInput, "invalid-value"));
         }
-        if !is_declared_identity(&identity, scope, &owner, table, self.types) {
+        if !is_declared_template(&identity, scope, &owner, table, self.types) {
             return Err(dangling());
+        }
+        // FR-106-AC-80: a selector the declared template does not admit is an
+        // invalid value, not a dangling place.
+        if !has_valid_selectors(&identity) {
+            return Err(admission_record(Code::InvalidRuntimeInput, "invalid-value"));
         }
         let admitted = encode_identity(
             &owner,
@@ -2578,6 +2600,7 @@ pub fn admit_record_sample(
         clock_references: Vec::new(),
         population_nodes: BTreeMap::new(),
         population_keys: BTreeMap::new(),
+        population_members: BTreeMap::new(),
         origins: ReferenceOriginBuilder::default(),
         parameter_origins: BTreeMap::new(),
         result_origins: ReferenceOrigins::default(),
@@ -3714,9 +3737,10 @@ pub(super) fn admit_population_values<'t>(
                         .map_err(|record| {
                             let field_path =
                                 snapshot_field_path(population_index, object_index, name);
-                            // The typed steps stay as the kernel gave them
-                            // (FR-106: no rendering of the shared path); the
-                            // document-spelled pointer is the `path` member.
+                            // The typed steps are the snapshot field's steps followed by
+                            // the kernel's steps within the value (FR-106: no rendering
+                            // of the shared path); the document-spelled pointer is the
+                            // `path` member.
                             let refusal_path = format!(
                                 "{field_path}{}",
                                 pointer_of(&refusal_steps(raw.form(), &record))
@@ -5362,6 +5386,8 @@ mod tests {
                     clock_references: Vec::new(),
                     population_nodes: BTreeMap::new(),
                     population_keys: BTreeMap::new(),
+                    population_members: BTreeMap::new(),
+                    population_members: BTreeMap::new(),
                     origins: ReferenceOriginBuilder::default(),
                     parameter_origins: BTreeMap::new(),
                     result_origins: ReferenceOrigins::default(),

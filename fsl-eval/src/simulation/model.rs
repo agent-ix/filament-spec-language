@@ -17,6 +17,7 @@
 mod application;
 mod behaviours;
 mod clock_domain;
+pub use clock_domain::ClockDomainRefusal;
 mod cells;
 mod constraint;
 mod contract;
@@ -821,8 +822,13 @@ pub struct ModelSystem<'a> {
     model: StateModel,
     universes: BTreeMap<DeclarationKey, Vec<String>>,
     /// The clock-reference candidates of this model universe, built on first
-    /// use: index 0 without exploration selector maxima, index 1 with them.
-    clock_candidates: [std::sync::OnceLock<Vec<ObjectReference>>; 2],
+    /// use for each distinct set of exploration selector maxima.
+    clock_candidates: std::sync::Mutex<
+        BTreeMap<
+            Option<domain::ClockSelectorMaxima>,
+            Result<std::sync::Arc<Vec<ObjectReference>>, ClockDomainRefusal>,
+        >,
+    >,
     initial: Vec<ModelSimState>,
     /// FR-1000: subject-specific resolutions for checked reference literals.
     reference_bindings: ReferenceBindings,
@@ -2093,13 +2099,8 @@ impl<'a> ModelSystem<'a> {
         objects: &[ObjectReference],
         selectors: Option<&domain::ClockSelectorMaxima>,
     ) -> Option<domain::Domain> {
-        let widened;
-        let objects = if domain::clock_reference_paths(value_type, self.types).is_empty() {
-            objects
-        } else {
-            widened = [objects, self.clock_reference_candidates(selectors)].concat();
-            &widened
-        };
+        let objects = self.with_clock_candidates(value_type, objects, selectors)?;
+        let objects = objects.as_ref();
         let bits = match self
             .max_value_bits
             .load(std::sync::atomic::Ordering::Relaxed)
@@ -3064,6 +3065,24 @@ pub(super) fn clock_reference_domains(
         for path in domain::clock_reference_paths(value_type, system.types) {
             let mut member_path = base.clone();
             member_path.extend(path);
+            if system.input.clock_declarations.is_none() {
+                // No declaration table: no owner population authority validates
+                // a place identity, so the domain is refused as unbounded for
+                // every declared place (an empty slot names the missing authority).
+                for timed in system.input.timed_models {
+                    for template in timed.place_nodes() {
+                        clock_references.push(crate::simulation::ClockReferenceDomain {
+                            member: DomainKey::Node {
+                                node: node.clone(),
+                                path: member_path.clone(),
+                            },
+                            clock: template.clone(),
+                            slot: Vec::new(),
+                        });
+                    }
+                }
+                continue;
+            }
             for timed in system.input.timed_models {
                 for (clock, template) in timed.clocks().iter().zip(timed.place_nodes()) {
                     if selectors.is_some_and(|maxima| maxima.contains_key(template))

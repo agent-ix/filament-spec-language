@@ -110,18 +110,37 @@ pub fn is_declared_identity(
     declarations: &normalization::ClockDeclarationTable,
     types: &filament_semantic_value::declaration::TypeEnvironment,
 ) -> bool {
+    is_declared_template(identity, population, owner, declarations, types)
+        && has_valid_selectors(identity)
+}
+
+/// Whether the identity names a declared clock-place template of `owner` in
+/// `population`, whatever its selectors (the half of [`is_declared_identity`]
+/// whose failure is a dangling place).
+pub fn is_declared_template(
+    identity: &identity::PlaceIdentity,
+    population: &identity::DeclarationScope,
+    owner: &ObjectReference,
+    declarations: &normalization::ClockDeclarationTable,
+    types: &filament_semantic_value::declaration::TypeEnvironment,
+) -> bool {
     if &identity.population != population
         || identity.owner != owner.object().as_str()
         || declarations.origin(&identity.template).is_none()
     {
         return false;
     }
-    if !declarations.run_places().any(|(_, place)| {
+    declarations.run_places().any(|(_, place)| {
         place.template.as_ref() == &identity.template
             && types.conforms(owner.object_type().clone(), place.owner.clone())
-    }) {
-        return false;
-    }
+    })
+}
+
+/// Whether the identity's selectors are exactly those the declared template
+/// admits: one per collection entry, at its path position, below any declared
+/// maximum (the half of [`is_declared_identity`] whose failure is an invalid
+/// value, FR-106-AC-80).
+pub fn has_valid_selectors(identity: &identity::PlaceIdentity) -> bool {
     let mut indices = identity.indices.iter();
     for (position, step) in identity.template.path.iter().enumerate() {
         let identity::PathEntry::Collection { shape, .. } = step else {
