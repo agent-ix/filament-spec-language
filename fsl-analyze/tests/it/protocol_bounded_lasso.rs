@@ -496,7 +496,7 @@ fn an_unfair_zero_counted_lasso_refuses_naming_the_scheduler_constraint() {
         entry, concrete_last,
         "the concrete ProtocolKey comparison must reject this loop before fairness"
     );
-    let protocol = crate::fill::sc_system(&adversarial.subject("Echo"));
+    let protocol = crate::fill::concrete_sc_system(&adversarial.subject("Echo"));
     let mut concrete = protocol.initial().remove(0);
     let mut states = Vec::new();
     for kind in [StepKind::Send, StepKind::Duplicate, StepKind::Lose] {
@@ -560,7 +560,7 @@ pub(crate) fn echo_body(scheduling: &str) -> String {
 
 /// Build the witness from enabled concrete transitions, without model search.
 fn echo_lasso(case: &Case) -> TemporalCounterexample<ProtocolTransition> {
-    let system = crate::fill::sc_system(&case.subject("Echo"));
+    let system = crate::fill::concrete_sc_system(&case.subject("Echo"));
     let mut state = system.initial().remove(0);
     let mut prefix = Vec::new();
     let mut entry = None;
@@ -616,7 +616,7 @@ fn echo_lasso(case: &Case) -> TemporalCounterexample<ProtocolTransition> {
 #[test]
 fn echo_cycle_keys_preserve_read_delivery_labels_and_pair_unread_steps() {
     let case = echo_infinite("scheduling adversarial;", "always holds(k.v = 0)");
-    let system = crate::fill::sc_system(&case.subject("Echo"));
+    let system = crate::fill::concrete_sc_system(&case.subject("Echo"));
     let step = |state: &fsl_eval::simulation::protocol::ProtocolState<
         fsl_eval::simulation::protocol::Sc,
     >,
@@ -732,7 +732,7 @@ fn echo_cycle_keys_preserve_read_delivery_labels_and_pair_unread_steps() {
 #[test]
 fn echo_message_read_set_keeps_ordinals_and_canonicalizes_delivery_indices() {
     let case = echo_infinite("scheduling adversarial;", "always holds(k.v = 0)");
-    let system = crate::fill::sc_system(&case.subject("Echo"));
+    let system = crate::fill::concrete_sc_system(&case.subject("Echo"));
     let step = |state: &fsl_eval::simulation::protocol::ProtocolState<
         fsl_eval::simulation::protocol::Sc,
     >,
@@ -812,7 +812,7 @@ fn echo_message_read_set_keeps_ordinals_and_canonicalizes_delivery_indices() {
         + &protocol("Loop", loop_channel, loop_run, "d")
         + &claim("always holds(k.v = 0)").replace("using tb over", "using t0 over");
     let loop_case = Case::new(&loop_body);
-    let loop_system = crate::fill::sc_system(&loop_case.subject("Loop"));
+    let loop_system = crate::fill::concrete_sc_system(&loop_case.subject("Loop"));
     let initial = loop_system.initial().remove(0);
     let (send0, sent0) = loop_system
         .successors(&initial)
@@ -940,7 +940,7 @@ fn loop_received_message_ordinals_canonicalize_and_en1_closes() {
         + &protocol("Loop", channel, run, "d")
         + &claim("always holds(k.v = 0)").replace("using tb over", "using t0 over");
     let case = Case::new(&body);
-    let system = crate::fill::sc_system(&case.subject("Loop"));
+    let system = crate::fill::concrete_sc_system(&case.subject("Loop"));
     let mut state = system.initial().remove(0);
     let mut loop_states = vec![state.clone()];
     let mut sent_states = Vec::new();
@@ -1135,8 +1135,8 @@ fn echo_infinite_trace_search_and_component_certificate_use_cycle_keys() {
 #[test]
 fn echo_cycle_edges_lift_to_never_reused_concrete_delivery_indices() {
     let case = echo("scheduling adversarial;", "eventually[1,1] holds(k.v = 1)");
-    let raw = crate::fill::sc_system(&case.subject("Echo"));
-    let canonical = crate::fill::sc_system(&case.subject("Echo")).with_cycle_keys(BTreeSet::new());
+    let raw = crate::fill::concrete_sc_system(&case.subject("Echo"));
+    let canonical = crate::fill::concrete_sc_system(&case.subject("Echo")).with_cycle_keys(BTreeSet::new());
     let mut payload = echo_lasso(&case);
     payload.prefix.truncate(1);
     let (_, mut concrete) = raw
@@ -1208,7 +1208,7 @@ fn echo_unordered_cycle_keys_renumber_nonconsecutive_copies() {
         case.checked.graph().protocol("Echo").unwrap().channels[0].ordering,
         fsl_semantics::check::CheckedOrdering::Unordered
     ));
-    let system = crate::fill::sc_system(&case.subject("Echo"));
+    let system = crate::fill::concrete_sc_system(&case.subject("Echo"));
     let take = |state: &fsl_eval::simulation::protocol::ProtocolState<
         fsl_eval::simulation::protocol::Sc,
     >,
@@ -1264,7 +1264,7 @@ fn echo_pending_interval_send_keeps_its_delivery_labels_and_bound() {
             .replace("delivery unknown", "delivery [3,3]")
             .replace(ECHO_RUN, concurrent),
     );
-    let system = crate::fill::sc_system(&case.subject("Echo"));
+    let system = crate::fill::concrete_sc_system(&case.subject("Echo"));
     let (_, forked) = system
         .successors(&system.initial()[0])
         .unwrap()
@@ -1455,7 +1455,7 @@ fn an_on_each_tp3_debt_after_the_origin_is_judged_by_the_fair_uncounted_loop() {
         panic!("the fair loop keeps a later activation's debt open");
     };
     let subject = adversarial.subject("Echo");
-    let system = crate::fill::sc_system(&subject).with_cycle_keys(BTreeSet::new());
+    let system = crate::fill::concrete_sc_system(&subject).with_cycle_keys(BTreeSet::new());
     let origin = system.initial().remove(0);
     let (_, sent) = system
         .successors(&origin)
