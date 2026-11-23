@@ -431,9 +431,8 @@ fn shared_application(package: &CheckedPackage) -> OccurrenceKey {
 #[trace("FR-062-AC-9", "FR-940-AC-1")]
 #[test]
 fn an_omitted_owner_leaves_a_shared_application_with_the_written_owners_record() {
-    let declarations = format!(
-        "{SHAPE}{SHARED}function b using v(x: Int[0, 9]): Integer pure {{ x + 1 }}\n"
-    );
+    let declarations =
+        format!("{SHAPE}{SHARED}function b using v(x: Int[0, 9]): Integer pure {{ x + 1 }}\n");
     let (package, emission) = records_go_with_their_applications(
         &declarations,
         (CheckedNodeTag::CompositeType, "union"),
@@ -442,7 +441,11 @@ fn an_omitted_owner_leaves_a_shared_application_with_the_written_owners_record()
     let claim = shared_application(&package);
     let application = node_id(claim.node());
     let function = |name: &str| node_id(package.graph().function_identity(name).unwrap());
-    let omitted: Vec<&CheckedNodeId> = emission.omitted.iter().map(|omission| &omission.node).collect();
+    let omitted: Vec<&CheckedNodeId> = emission
+        .omitted
+        .iter()
+        .map(|omission| &omission.node)
+        .collect();
     assert!(omitted.contains(&&function("a")), "{omitted:?}");
     assert!(!omitted.contains(&&function("b")), "{omitted:?}");
     assert!(!omitted.contains(&&application), "{omitted:?}");
@@ -495,7 +498,11 @@ fn a_shared_application_is_omitted_once_every_owner_is() {
     let (package, emission) = records_go_with_their_applications(
         &declarations,
         (CheckedNodeTag::CompositeType, "union"),
-        &|_, record| record.owner().is_some_and(|owner| owner == "a" || owner == "b"),
+        &|_, record| {
+            record
+                .owner()
+                .is_some_and(|owner| owner == "a" || owner == "b")
+        },
     );
     let claim = shared_application(&package);
     assert!(
