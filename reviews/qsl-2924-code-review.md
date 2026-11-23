@@ -86,3 +86,18 @@ Re-reviewed at head 1c5aa755680ace647188f84b49148cc35522818f (rebased on main 27
 | FND-007 | fixed | Every per-item vector (member, adjacency, the Tarjan arrays via strongly_connected(&roots, &adjacent, set.len(), ...), roots, and mapping parts back) is now sized to the item's set, with membership by binary search on the sorted set. Per-item cost is proportional to |set| times (degree * log |set|), and visit() runs at least once per member in the prune pass, so the work meter bounds the stage up to the per-edge factor the earlier code also had. No O(count) allocation per item remains. The new test does not show this: FND-010. |
 | FND-008 | fixed | document/mdp.rs is clean under the pinned 1.98 rustfmt, with the guard wrapped. The PR's own hunks in tools/fsl-probability-check/tests/it/bounded.rs (1370-1414) are clean. The remaining diffs at lines 84 and 95 are identical on origin/main and are not this PR's. Other files (fsl-eval): FND-011. |
 | FND-009 | fixed | end_components' doc comment now sits on end_components, and end_component_peak keeps its own. |
+
+## New findings (disposition pass 4)
+
+Re-reviewed at head 2f9f4b1090cab8cff386f690f0a641c3e51f02f3. `git range-diff` shows the eight earlier commits unchanged, and the committed reviews/ files match my d3 files byte for byte. This pass reviews the round commit 2f9f4b1090. No cargo command was run. Pinned 1.98 rustfmt --check was run over every .rs file in the PR diff. FND-012 was reproduced with a standalone rustc 1.98 `--test -D warnings` build of the same item layout.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-012 | medium | The new test-only counter was inserted between end_components' doc comment and the function, so both doc blocks now attach to the `#[cfg(test)] thread_local!` macro invocation. In a cfg(test) build with -D warnings this is `error: unused doc comment` ("rustdoc does not generate documentation for macro invocations"), reproduced with rustc 1.98. CI runs `cargo clippy --workspace --all-targets ... -- -D warnings` (ci.yml:30,34; Makefile:61), so the fsl-replay lib test target fails the gate. end_components has also lost its doc again, regressing FND-009. Fix: move end_components' doc back onto the function, and make the counter's doc a plain `//` comment (or put it inside the macro). | fsl-replay/src/probability_certificate/cyclic_state.rs:299-317 |
+
+## Dispositions (round 4)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-010 | fixed | The wrong comment is gone. end_component_vectors_are_sized_to_each_work_item_not_to_the_graph counts per-item allocation with a cfg(test) thread_local, reset at the start of the test. libtest runs each test on its own thread, so the counter is not shared. Every allocation that used to be count-sized (member, its reallocation after a prune, adjacent, Tarjan number/low/on_stack via note_allocated(3 * count) inside strongly_connected) is noted. kept, roots, stack and parts are not noted, but they were always set-sized. On the 512 line the total is about 3.1k elements (<= 8192, >= 512); the old count-sized vectors would note about 512 * 512 = 262k, so the test now tells the fix apart. Residual: for member and adjacent the noted size is passed separately from the vec! expression, so reverting only a vec! size would go unseen. |
+| FND-011 | fixed | fsl-eval/src/automaton/bounded.rs and fsl-eval/tests/it/qualified_bounded_monitor.rs are clean under the pinned 1.98 rustfmt. Over every .rs file in the PR diff, the only remaining diffs (fsl-analyze/tests/it/main.rs; fsl-replay/src/probability_certificate.rs 1524/3264/3316; tools/fsl-probability-check/tests/it/bounded.rs 84/95) are identical on origin/main, so they are not this PR's. |

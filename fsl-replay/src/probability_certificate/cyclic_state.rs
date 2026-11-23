@@ -4,9 +4,7 @@
 //! over the violating union. Nothing here reads a producer component set,
 //! classification or target set.
 
-use super::cyclic::{
-    analyze, captured_cost, charge, enumerate_graph_capturing, visit, CapturedStates,
-};
+use super::cyclic::{analyze, charge, enumerate_graph_capturing, visit, CapturedStates};
 use super::*;
 use fsl_eval::simulation::model::{TimedSubjectRefusal, TimedSystem};
 
@@ -296,25 +294,25 @@ fn end_component_peak(count: usize, edges: usize) -> usize {
         .saturating_mul(2)
 }
 
-/// The maximal end components of the classification graph, as sorted state
-/// indexes. A decided state has no action, so it is its own absorbing
-/// component and appears in none of them. Under one distribution per state
-/// these are the bottom strongly connected components.
-/// Test-only count of the elements the per-item vectors allocate, so a test
-/// can tell a set-sized refinement from a count-sized one.
+// Test-only count of the elements the per-item vectors allocate, so a test
+// can tell a set-sized refinement from a count-sized one.
 #[cfg(test)]
 thread_local! {
     static ALLOCATED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-#[cfg(test)]
-fn note_allocated(elements: usize) {
+/// `elements` copies of `value`; the one expression that both sizes the
+/// vector and, under test, counts it.
+fn sized<T: Clone>(elements: usize, value: T) -> Vec<T> {
+    #[cfg(test)]
     ALLOCATED.with(|total| total.set(total.get() + elements));
+    vec![value; elements]
 }
 
-#[cfg(not(test))]
-fn note_allocated(_elements: usize) {}
-
+/// The maximal end components of the classification graph, as sorted state
+/// indexes. A decided state has no action, so it is its own absorbing
+/// component and appears in none of them. Under one distribution per state
+/// these are the bottom strongly connected components.
 fn end_components(
     states: &BTreeMap<ProbabilityProductKey, CheckerState>,
     limits: ProbabilityDocumentLimits,
@@ -366,8 +364,7 @@ fn end_components(
     // Every vector below is sized to the work item's set, so a split into many
     // components costs time proportional to the sets, which `visit` meters.
     while let Some(mut set) = work.pop() {
-        note_allocated(set.len());
-        let mut member = vec![true; set.len()];
+        let mut member = sized(set.len(), true);
         let local = |set: &[usize], state: usize| set.binary_search(&state).ok();
         loop {
             let mut removed = false;
@@ -392,14 +389,12 @@ fn end_components(
                 break;
             }
             set = kept;
-            note_allocated(set.len());
-            member = vec![true; set.len()];
+            member = sized(set.len(), true);
         }
         if set.is_empty() {
             continue;
         }
-        note_allocated(set.len());
-        let mut adjacent = vec![Vec::new(); set.len()];
+        let mut adjacent: Vec<Vec<usize>> = sized(set.len(), Vec::new());
         for (at, state) in set.iter().enumerate() {
             for action in &actions[*state] {
                 visit(cancel, meter)?;
@@ -437,10 +432,9 @@ fn strongly_connected(
     cancel: &Cancel,
     meter: &mut filament_exact::Meter,
 ) -> Result<Vec<Vec<usize>>, ProbabilityDocumentError> {
-    note_allocated(3 * count);
-    let mut number = vec![usize::MAX; count];
-    let mut low = vec![0_usize; count];
-    let mut on_stack = vec![false; count];
+    let mut number = sized(count, usize::MAX);
+    let mut low = sized(count, 0_usize);
+    let mut on_stack = sized(count, false);
     let mut stack = Vec::new();
     let mut next = 0_usize;
     let mut parts = Vec::new();
@@ -588,6 +582,7 @@ pub(super) fn claim_acceptance(
 
 #[cfg(test)]
 mod tests {
+    use super::super::cyclic::captured_cost;
     use super::*;
 
     fn key(index: usize) -> ProbabilityProductKey {
