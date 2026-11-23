@@ -1436,7 +1436,7 @@ fn an_image_outside_an_abstract_unit_bound_is_initial_not_abstract() {
          refinement Late using t0 abstract Spec concrete M {\n\
          population Spec::counters from M::counters;\n\
          object Spec::Counter from M::Counter { value = self.value; elapsed = self.elapsed + 2 ms; }\n\
-         step M::Counter::inc -> stutter;\n}\n";
+         step M::Counter::inc -> Spec::Counter::inc(self);\n}\n";
     for (elapsed, expected) in [(2, "refuted"), (1, "proved")] {
         let ws = Workspace::new(&format!("family-refinement-unit-bound-{elapsed}"));
         let request = refinement_request_without_abstract(
