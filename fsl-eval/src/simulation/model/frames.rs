@@ -2438,8 +2438,9 @@ mod clock_reference_tests {
     #[trace("FR-230-AC-71", "TC-3084")]
     #[test]
     fn a_clock_reference_collects_no_object_reference() {
+        let value = clock_reference();
         let mut out = Vec::new();
-        collect_references(&clock_reference(), &mut out).expect("a leaf value");
+        collect_references(&value, &mut out).expect("a leaf value");
         assert!(out.is_empty());
     }
 }
