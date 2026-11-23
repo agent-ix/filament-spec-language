@@ -1345,35 +1345,6 @@ fn default_abstract_initial_states_are_every_admissible_completion() {
     assert_eq!(run.item(0)["record"]["cause"]["limit"], "max_candidates");
 }
 
-/// FR-630-AC-5 (empty completion set): an image outside the abstract unit
-/// bound is `InitialNotAbstract` at position 0, never a refusal.
-///
-/// The refinement row `value = self.value + 3` is refused `ill_typed` by the
-/// row rule that an expression conforms to the type it defines and is never
-/// range-checked into it (ADR-016 SC-2), so the item cannot be built; the spec
-/// gives no mapping that type-checks and has an image outside `Int[0, 3]`.
-#[trace("TC-2964", "FR-630-AC-5")]
-#[test]
-#[ignore = "QSL-2887: spec gap - FR-630-AC-5 Shifted row is ill_typed under ADR-016 SC-2, so no item exists; a_mapping_that_does_not_conform_to_the_abstract_field_is_refused asserts that"]
-fn an_image_outside_the_unit_bound_is_initial_not_abstract() {
-    let body = refinement_stepping("Shifted", "self.value + 3", "stutter", "");
-    let ws = Workspace::new("family-refinement-default-initial-empty");
-    let run = analyze(&refinement_request_without_abstract(
-        &ws,
-        &body,
-        json!([default_initial_item("Shifted", None)]),
-        &[1],
-    ));
-    let refuted = run.item(0);
-    assert_eq!(label(&refuted), "refuted", "{refuted}");
-    assert_eq!(
-        refuted["counterexample"]["refinement_failure"],
-        json!({"kind": "InitialNotAbstract", "initial": "0"}),
-        "{refuted}"
-    );
-    assert_eq!(refuted["replay"]["reproduced"], true, "{refuted}");
-}
-
 /// FR-630-AC-5 (TC-2964): the refinement row `value = self.value + 3` types
 /// `Int[3, 6]`, which does not conform to the abstract field type `Int[0, 3]`
 /// (ADR-016 SC-2), so S3 refuses it `ill_typed`/`type-mismatch` and no item
