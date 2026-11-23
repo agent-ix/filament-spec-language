@@ -4334,6 +4334,11 @@ fn write_run(
                 );
             }
         }
+        if let Some(bytes) = record.exact_counterpart_document() {
+            if let Ok(document) = serde_json::from_slice::<Value>(bytes) {
+                written["counterpart"] = counterpart_member(document);
+            }
+        }
         if let Some(output) = outcome.protocol_conformance.get(&index) {
             if let (Some(record), Ok(Value::Object(members))) =
                 (written.as_object_mut(), serde_json::to_value(output))
@@ -4667,13 +4672,10 @@ fn hybrid_certificate_member(identity: Value, recorded: &fsl_replay::Certificate
 }
 
 /// FR-621's `certificate` of an exact `proved` item (FR-741): `identity`,
-/// `checker` and `accepted`, `kind` (`long-run` for a long-run objective,
+/// `checker` and `accepted`, `kind` (`lower` or `upper` for a value-bounds
+/// document, `long-run` for a long-run objective,
 /// else `exact`) and the `document`.
 fn exact_certificate_member(identity: Option<Value>, document: Value) -> Value {
-    let long_run = document
-        .pointer("/objective/profile")
-        .and_then(Value::as_str)
-        .is_some_and(|profile| profile.contains("long-run"));
     let mut member = Map::new();
     if let Some(identity) = identity {
         member.insert("identity".to_owned(), identity);
@@ -4685,12 +4687,47 @@ fn exact_certificate_member(identity: Option<Value>, document: Value) -> Value {
             .into(),
     );
     member.insert("accepted".to_owned(), true.into());
-    member.insert(
-        "kind".to_owned(),
-        (if long_run { "long-run" } else { "exact" }).into(),
-    );
+    member.insert("kind".to_owned(), certificate_kind(&document).into());
     member.insert("document".to_owned(), document);
     Value::Object(member)
+}
+
+/// FR-741's `counterpart` of a `ValueBounds` proof: the other side's
+/// `{kind, document, accepted}`, its `document` a bare FSpec FR-331
+/// `ProbabilityCertificate`.
+fn counterpart_member(document: Value) -> Value {
+    json!({
+        "kind": certificate_kind(&document),
+        "document": document,
+        "accepted": true,
+    })
+}
+
+/// The FR-741 `kind` a certificate `document` is reported under.
+fn certificate_kind(document: &Value) -> &'static str {
+    let bound = document
+        .get("kind")
+        .and_then(Value::as_str)
+        .filter(|_| {
+            // FR-877's quantile `upper` keeps the exact certificate's kind.
+            document
+                .pointer("/objective/timed/form")
+                .and_then(Value::as_str)
+                != Some("elapsed-quantile")
+        })
+        .and_then(|kind| match kind {
+            "lower" => Some("lower"),
+            "upper" => Some("upper"),
+            _ => None,
+        });
+    let profile = document.pointer("/objective/profile").and_then(Value::as_str);
+    if document.get("kind").and_then(Value::as_str) == Some("conditional")
+        && profile.is_some_and(|profile| profile.contains("on-each"))
+    {
+        return "conditional";
+    }
+    let long_run = profile.is_some_and(|profile| profile.contains("long-run"));
+    bound.unwrap_or(if long_run { "long-run" } else { "exact" })
 }
 
 /// Write `locus` into every `undefined-evaluation` rejection cause of a
@@ -4734,6 +4771,7 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
     let counterexample = record.remove("counterexample");
     let certificate_document = record.remove("certificate_document");
     let certificate = record.remove("certificate");
+    let counterpart = record.remove("counterpart");
     let mut item = Map::new();
     item.insert("request_index".to_owned(), index);
     item.insert(
@@ -4924,5 +4962,8 @@ fn item_document(written: Value, members: ItemMembers) -> Value {
         record.insert("backend".to_owned(), json!(backend));
     }
     item.insert("record".to_owned(), Value::Object(record));
+    if let Some(counterpart) = counterpart {
+        item.insert("counterpart".to_owned(), counterpart);
+    }
     Value::Object(item)
 }

@@ -1577,6 +1577,139 @@ fn an_iteration_begun_concurrently_with_the_step_does_not_reopen_it() {
     assert_eq!(prefixes[7]["obligations"], item["obligations"], "{item}");
 }
 
+const PLACED: &str = "Flow::Main::Placed";
+const LEFT_STEP: &str = "Flow::Main::Both::left::Left::L";
+const RIGHT_STEP: &str = "Flow::Main::Both::right::Right::R";
+
+/// The incremental item of an open recording of `Buyer` observations over
+/// `source`.
+fn parallel_incremental(name: &str, source: &str, observations: &Value) -> Value {
+    let mut recording = parallel_recording(observations.clone());
+    recording["closure"] = json!({"state": "open", "premises": []});
+    replay_with(
+        name,
+        source,
+        &recording,
+        json!({"file": "recording.json", "identity": recording_identity()}),
+        assessed_item("incremental"),
+    )
+    .item(0)
+}
+
+/// Assert the `node` enabledness verdicts of the incremental `item`'s prefixes,
+/// that every obligation only advances over them and that the last prefix is
+/// the item's own assessment.
+fn assert_prefix_verdicts(item: &Value, node: &str, expected: &[Option<&str>]) {
+    let prefixes = item["prefixes"].as_array().expect("prefixes");
+    assert_eq!(node_verdicts(prefixes, node), expected, "{item}");
+    let order: Vec<usize> = (0..prefixes.len()).collect();
+    assert_every_verdict_only_advances(prefixes, &order);
+    assert_eq!(
+        prefixes[prefixes.len() - 1]["obligations"],
+        item["obligations"],
+        "the last prefix is the batch assessment"
+    );
+}
+
+/// [`any_join_protocol`] with `outstanding cancel`.
+fn cancel_join_protocol() -> String {
+    any_join_protocol().replace("outstanding continue", "outstanding cancel")
+}
+
+/// FR-895-AC-29 (TC-2531): under `outstanding cancel` a cancelled branch
+/// takes no further step (ADR-027 ST-7). With `join any`, `L`, `Placed`, `R`
+/// leaves `R`, observed causally after the cancel, `violated`, cause
+/// `unexpected`, in batch and from the third prefix, while `L` and `Placed`
+/// stay `satisfied`; under `outstanding continue` the same recording leaves
+/// `R` `satisfied`.
+#[trace("TC-2531", "FR-895-AC-29")]
+#[test]
+fn a_cancelled_branch_takes_no_step_after_the_cancel() {
+    let left = || branch_event("left", "Left", "L");
+    let right = || branch_event("right", "Right", "R");
+    let placed = || observation("send", "Placed", "Buyer", "m-1");
+    let late = json!([left(), placed(), right()]);
+    let cancel = cancel_join_protocol();
+    assert_enabled(&cancel, &parallel_recording(late.clone()), LEFT_STEP, 0);
+    assert_enabled(&cancel, &parallel_recording(late.clone()), PLACED, 1);
+    assert_unexpected(&cancel, &parallel_recording(late.clone()), RIGHT_STEP, 2);
+    let item = parallel_incremental("replay-cancel-late-branch", &cancel, &late);
+    assert_prefix_verdicts(&item, RIGHT_STEP, &[None, None, Some("violated")]);
+    assert_prefix_verdicts(&item, LEFT_STEP, &[Some("satisfied"); 3]);
+    assert_enabled(
+        &any_join_protocol(),
+        &parallel_recording(late.clone()),
+        RIGHT_STEP,
+        2,
+    );
+    let item = parallel_incremental("replay-continue-late-branch", &any_join_protocol(), &late);
+    assert_prefix_verdicts(&item, RIGHT_STEP, &[None, None, Some("satisfied")]);
+}
+
+/// `parallel_protocol` with `join predicate(<name>)` over `left` and `right`
+/// and the function `<name>` of the two branch completions given by `body`.
+fn predicate_join_protocol(name: &str, body: &str, outstanding: &str) -> String {
+    let source = parallel_protocol().replace(
+        "join all [left, right];",
+        &format!("join predicate({name}) [left, right] outstanding {outstanding};"),
+    );
+    format!(
+        "function {name} using v(left: Boolean, right: Boolean): Boolean pure {{ {body} }}\n{source}"
+    )
+}
+
+/// FR-895-AC-30 (TC-2531): a `predicate` join is reached when its function
+/// holds over the branches finished causally before the step (FR-218
+/// "Predicate joins"). With `left and right`, `L`, `R`, `Placed` leaves
+/// `Placed` `satisfied`, and `L`, `Placed`, `R` leaves it `violated`, cause
+/// `unexpected`, since the join was not reached when `Placed` was observed;
+/// incrementally the second recording gives `Placed` `pending` then
+/// `violated`.
+#[trace("TC-2531", "FR-895-AC-30")]
+#[test]
+fn a_predicate_join_is_reached_when_its_function_holds_over_the_finished_branches() {
+    let left = || branch_event("left", "Left", "L");
+    let right = || branch_event("right", "Right", "R");
+    let placed = || observation("send", "Placed", "Buyer", "m-1");
+    let both = predicate_join_protocol("both", "left and right", "continue");
+    let accepted = json!([left(), right(), placed()]);
+    assert_enabled(&both, &parallel_recording(accepted.clone()), PLACED, 2);
+    let item = parallel_incremental("replay-predicate-both-accepted", &both, &accepted);
+    assert_prefix_verdicts(&item, PLACED, &[None, None, Some("satisfied")]);
+    let violated = json!([left(), placed(), right()]);
+    assert_unexpected(&both, &parallel_recording(violated.clone()), PLACED, 1);
+    let item = parallel_incremental("replay-predicate-both-violated", &both, &violated);
+    assert_prefix_verdicts(&item, PLACED, &[None, Some("pending"), Some("violated")]);
+}
+
+/// FR-895-AC-31 (TC-2531): a predicate that reads only one branch is reached
+/// when that branch has finished, whatever the other did. With `left` as the
+/// function, `L`, `Placed`, `R` leaves `Placed` `satisfied` and `R` observed
+/// after the cancel `violated`, cause `unexpected`, under `outstanding
+/// cancel` and `satisfied` under `outstanding continue`; `R`, `Placed` leaves
+/// `Placed` `violated`, cause `unexpected`, once closed, since `L` was never
+/// observed.
+#[trace("TC-2531", "FR-895-AC-31")]
+#[test]
+fn a_predicate_over_one_branch_cancels_and_enables_by_that_branch_alone() {
+    let left = || branch_event("left", "Left", "L");
+    let right = || branch_event("right", "Right", "R");
+    let placed = || observation("send", "Placed", "Buyer", "m-1");
+    let late = json!([left(), placed(), right()]);
+    let cancel = predicate_join_protocol("left_only", "left", "cancel");
+    assert_enabled(&cancel, &parallel_recording(late.clone()), PLACED, 1);
+    assert_unexpected(&cancel, &parallel_recording(late.clone()), RIGHT_STEP, 2);
+    let item = parallel_incremental("replay-predicate-left-cancel", &cancel, &late);
+    assert_prefix_verdicts(&item, PLACED, &[None, Some("satisfied"), Some("satisfied")]);
+    assert_prefix_verdicts(&item, RIGHT_STEP, &[None, None, Some("violated")]);
+    let keep = predicate_join_protocol("left_only", "left", "continue");
+    assert_enabled(&keep, &parallel_recording(late.clone()), RIGHT_STEP, 2);
+    let right_first = json!([right(), placed()]);
+    assert_unexpected(&keep, &parallel_recording(right_first.clone()), PLACED, 1);
+    let item = parallel_incremental("replay-predicate-left-unfinished", &keep, &right_first);
+    assert_prefix_verdicts(&item, PLACED, &[None, Some("pending")]);
+}
+
 // ---- FR-1032: the recording's document identity ---------------------------
 
 /// FR-895-AC-7's closed, conforming recording of `Flow`.
@@ -1739,4 +1872,815 @@ fn a_bad_recording_identity_refuses_the_request() {
                 "recording": recording_identity()}]),
         "/items/0/recording",
     );
+}
+
+// ---- FR-895 rules 19 to 21: the join step, bounded predicate joins ---------
+
+/// A `Seller` event at `Flow::Main::Both::right::Right::R`.
+fn seller_right() -> Value {
+    json!({"kind": "event", "node": RIGHT_STEP, "role": "Seller", "instance": "w-1",
+           "keys": {}, "record": {"ok": true}})
+}
+
+/// An open recording over `observations`, `Buyer`'s in order at `buyer` and
+/// `Seller`'s at `seller`.
+fn split_recording(observations: Value, buyer: &[usize], seller: &[usize]) -> Value {
+    json!({
+        "format": "filament.protocol-recording/1", "protocol": "Flow",
+        "observations": observations,
+        "local_order": {"Buyer": buyer, "Seller": seller},
+        "correlations": [],
+        "closure": {"state": "open", "premises": []}
+    })
+}
+
+/// FR-895-AC-32 (TC-2531): the join step cancels, and it may fire at any
+/// point after its policy holds (ADR-027 CI-3), so a branch step taken before
+/// a step after the `parallel` is legitimate. Under `join any … outstanding
+/// cancel`, `L`, `R`, `Placed` leaves `R` `satisfied`; `L`, `Placed`, `R`
+/// leaves it `violated`, cause `unexpected`; `R` of `Seller`, unordered with
+/// `Placed`, is not flagged; `join predicate(left_only)` behaves the same.
+#[trace("TC-2531", "FR-895-AC-32")]
+#[test]
+fn a_branch_step_is_after_the_cancel_only_once_a_step_after_the_parallel_precedes_it() {
+    let left = || branch_event("left", "Left", "L");
+    let right = || branch_event("right", "Right", "R");
+    let placed = || observation("send", "Placed", "Buyer", "m-1");
+    let predicate = predicate_join_protocol("left_only", "left", "cancel");
+    for (source, name) in [(cancel_join_protocol(), "any"), (predicate, "predicate")] {
+        // The policy holds after `L` and no later step is observed: `R` is
+        // not after the cancel, since the join step may fire later.
+        let policy_only = json!([left(), right()]);
+        assert_enabled(&source, &parallel_recording(policy_only), RIGHT_STEP, 1);
+        let before = json!([left(), right(), placed()]);
+        assert_enabled(&source, &parallel_recording(before.clone()), RIGHT_STEP, 1);
+        assert_enabled(&source, &parallel_recording(before.clone()), PLACED, 2);
+        let item = parallel_incremental(&format!("replay-cancel-before-{name}"), &source, &before);
+        assert_prefix_verdicts(
+            &item,
+            RIGHT_STEP,
+            &[None, Some("satisfied"), Some("satisfied")],
+        );
+
+        let after = json!([left(), placed(), right()]);
+        assert_unexpected(&source, &parallel_recording(after.clone()), RIGHT_STEP, 2);
+        let item = parallel_incremental(&format!("replay-cancel-after-{name}"), &source, &after);
+        assert_prefix_verdicts(&item, RIGHT_STEP, &[None, None, Some("violated")]);
+
+        // `R` by `Seller` is unordered with `Placed`: no step after the
+        // `parallel` causally precedes it.
+        let split_source = source.replace("event R by Buyer", "event R by Seller");
+        let concurrent = json!([left(), placed(), seller_right()]);
+        let recording = split_recording(concurrent, &[0, 1], &[2]);
+        let package = package_of(&split_source);
+        let assessed = fsl_analyze::protocol_analysis::recording::assess_recording(
+            &package,
+            recording.to_string().as_bytes(),
+        )
+        .expect("readable");
+        let found = enabledness(&assessed, RIGHT_STEP, 2);
+        assert_eq!(
+            found.verdict,
+            fsl_analyze::protocol_analysis::recording::RecordingVerdict::Satisfied,
+            "{name}: {found:#?}"
+        );
+    }
+}
+
+/// The nested `parallel` fixture: `Inner` (`join any … outstanding cancel`
+/// over `L` and `R`) then `M` in branch `a` of `Outer`, and `N` in branch
+/// `b`.
+fn nested_cancel_protocol() -> String {
+    order_protocol(false).replace(
+        "run sequence Main {",
+        "run sequence Main { parallel Outer memory sc { branch a sequence A { parallel Inner memory sc { branch left sequence Left { event L by Buyer as (l: Ack) { true }; } branch right sequence Right { event R by Buyer as (r: Ack) { true }; } } join any [left, right] outstanding cancel; event M by Buyer as (m: Ack) { true }; } branch b sequence B { event N by Buyer as (n: Ack) { true }; } } join all [a, b];",
+    )
+}
+
+/// A `Buyer` event at the nested fixture's `path`.
+fn nested_event(path: &str) -> Value {
+    json!({"kind": "event", "node": format!("Flow::Main::Outer::{path}"), "role": "Buyer",
+           "instance": "w-1", "keys": {}, "record": {"ok": true}})
+}
+
+/// FR-895-AC-33 (TC-2531): in a nested `parallel` the cancel is the inner
+/// join's: `L`, `M`, `R` leaves `R`, after `M` of the sequence after `Inner`,
+/// `violated`, cause `unexpected`; `L`, `R`, `M` leaves it `satisfied`; a step
+/// of the other outer branch (`N`) is never after the inner cancel.
+#[trace("TC-2531", "FR-895-AC-33")]
+#[test]
+fn a_nested_parallel_cancels_at_its_own_join() {
+    let source = nested_cancel_protocol();
+    let inner_left = || nested_event("a::A::Inner::left::Left::L");
+    let inner_right = || nested_event("a::A::Inner::right::Right::R");
+    let after_inner = || nested_event("a::A::M");
+    let other = || nested_event("b::B::N");
+    let right_node = "Flow::Main::Outer::a::A::Inner::right::Right::R";
+    let open = |observations: Value| {
+        let count = observations.as_array().expect("observations").len();
+        json!({
+            "format": "filament.protocol-recording/1", "protocol": "Flow",
+            "observations": observations,
+            "local_order": {"Buyer": (0..count).collect::<Vec<_>>()},
+            "correlations": [],
+            "closure": {"state": "open", "premises": []}
+        })
+    };
+    assert_unexpected(
+        &source,
+        &open(json!([inner_left(), after_inner(), inner_right()])),
+        right_node,
+        2,
+    );
+    assert_enabled(
+        &source,
+        &open(json!([inner_left(), inner_right(), after_inner()])),
+        right_node,
+        1,
+    );
+    assert_enabled(
+        &source,
+        &open(json!([inner_left(), other(), inner_right()])),
+        right_node,
+        2,
+    );
+}
+
+/// A protocol whose `parallel` joins `labels` branches by a predicate
+/// reading the first only, each branch holding one `Buyer` event `E<i>`.
+fn many_label_protocol(labels: usize) -> String {
+    let branches: String = (0..labels)
+        .map(|i| {
+            format!(
+                "branch b{i} sequence S{i} {{ event E{i} by Buyer as (v{i}: Ack) {{ true }}; }} "
+            )
+        })
+        .collect();
+    let joined: Vec<String> = (0..labels).map(|i| format!("b{i}")).collect();
+    let parameters: Vec<String> = (0..labels).map(|i| format!("b{i}: Boolean")).collect();
+    let source = order_protocol(false).replace(
+        "run sequence Main {",
+        &format!(
+            "run sequence Main {{ parallel Many memory sc {{ {branches}}} join predicate(head_of) [{}] outstanding continue;",
+            joined.join(", ")
+        ),
+    );
+    format!(
+        "function head_of using v({}): Boolean pure {{ b0 }}\n{source}",
+        parameters.join(", ")
+    )
+}
+
+/// FR-895-AC-34 (TC-2531): a predicate join names at most 10 labels; at the
+/// bound the recording is assessed, and above it, at 11 and at 64 labels, the
+/// assessment is refused `stage_limit_exceeded`/`work-budget-exceeded`,
+/// naming the join and the bound, before any evaluation.
+#[trace("TC-2531", "FR-895-AC-34")]
+#[test]
+fn a_predicate_join_over_too_many_labels_is_refused_naming_the_bound() {
+    use fsl_analyze::protocol_analysis::recording::{assess_recording, MAX_PREDICATE_JOIN_LABELS};
+    assert_eq!(MAX_PREDICATE_JOIN_LABELS, 10);
+    let empty = json!({
+        "format": "filament.protocol-recording/1", "protocol": "Flow",
+        "observations": [], "local_order": {}, "correlations": [],
+        "closure": {"state": "open", "premises": []}
+    })
+    .to_string();
+    let at_bound = package_of(&many_label_protocol(10));
+    assert!(assess_recording(&at_bound, empty.as_bytes()).is_ok());
+    for labels in [11, 64] {
+        let package = package_of(&many_label_protocol(labels));
+        let refusal = assess_recording(&package, empty.as_bytes())
+            .expect_err("a predicate join over too many labels is refused");
+        assert!(refusal.is_limit(), "{labels}: {refusal}");
+        assert_eq!(refusal.cause(), "predicate-join-label-bound");
+        assert_eq!(
+            refusal.code().to_string(),
+            "stage_limit_exceeded/work-budget-exceeded"
+        );
+        let text = refusal.to_string();
+        assert!(
+            text.contains("Flow::Main::Many")
+                && text.contains(&format!("names {labels} labels"))
+                && text.contains("at most 10"),
+            "{text}"
+        );
+    }
+}
+
+/// FR-895-AC-35 (TC-2531): a predicate that is never true leaves the join
+/// unreached, so every branch's steps stay predecessors: with `left and not
+/// left`, `L`, `Placed` leaves `Placed` `pending` in every open prefix and
+/// `violated`, cause `unexpected`, once the recording is closed.
+#[trace("TC-2531", "FR-895-AC-35")]
+#[test]
+fn a_predicate_that_is_never_true_leaves_the_join_unreached() {
+    use fsl_analyze::protocol_analysis::recording::{assess_recording, RecordingVerdict};
+    let source = predicate_join_protocol("contradiction", "left and not left", "continue");
+    let observations = json!([
+        branch_event("left", "Left", "L"),
+        observation("send", "Placed", "Buyer", "m-1")
+    ]);
+    let item = parallel_incremental("replay-predicate-never", &source, &observations);
+    assert_prefix_verdicts(&item, PLACED, &[None, Some("pending")]);
+    let closed = parallel_recording(observations);
+    assert_unexpected(&source, &closed, PLACED, 1);
+    let mut open = closed;
+    open["closure"] = json!({"state": "open", "premises": []});
+    let assessed =
+        assess_recording(&package_of(&source), open.to_string().as_bytes()).expect("readable");
+    assert_eq!(
+        enabledness(&assessed, PLACED, 1).verdict,
+        RecordingVerdict::Pending
+    );
+}
+
+/// FR-895-AC-34 (TC-2531): on the wire a predicate join over 11 labels
+/// settles the item `declined`, `stage_limit_exceeded`, naming the join and the bound, whether the
+/// assessment is batch or incremental.
+#[trace("TC-2531", "FR-895-AC-34")]
+#[test]
+fn a_refused_predicate_join_settles_the_item_declined() {
+    let recording = json!({
+        "format": "filament.protocol-recording/1", "protocol": "Flow",
+        "observations": [], "local_order": {}, "correlations": [],
+        "closure": {"state": "open", "premises": []}
+    });
+    for assessment in ["batch", "incremental"] {
+        let item = replay_with(
+            &format!("replay-label-bound-{assessment}"),
+            &many_label_protocol(11),
+            &recording,
+            json!({"file": "recording.json", "identity": recording_identity()}),
+            assessed_item(assessment),
+        )
+        .item(0);
+        assert_eq!(label(&item), "declined", "{assessment}: {item}");
+        let text = item.to_string();
+        assert!(
+            text.contains("stage_limit_exceeded")
+                && text.contains("predicate-join-label-bound")
+                && text.contains("Flow::Main::Many"),
+            "{assessment}: {item}"
+        );
+    }
+}
+
+/// [`repeat_protocol`] with a step `P` and then a `parallel` `join any [left,
+/// right] outstanding cancel` of `L` and `R` first in the loop body; `P` runs
+/// once in every iteration, so it fixes the iteration of the steps after it.
+fn cancel_in_repeat_protocol() -> String {
+    repeat_protocol().replace(
+        "sequence Body {",
+        "sequence Body { event P by Buyer as (p: Ack) { true }; parallel Both memory sc { branch left sequence Left { event L by Buyer as (l: Ack) { true }; } branch right sequence Right { event R by Buyer as (r: Ack) { true }; } } join any [left, right] outstanding cancel;",
+    )
+}
+
+/// An event of the body's `parallel` at `Flow::Main::Loop::Body::Both::<path>`.
+fn body_event(path: &str) -> Value {
+    json!({"kind": "event", "node": format!("Flow::Main::Loop::Body::Both::{path}"),
+           "role": "Buyer", "instance": "w-1", "keys": {}, "record": {"ok": true}})
+}
+
+/// The enabledness verdicts of every observation of `node` in `prefix`.
+fn node_verdicts_in(prefix: &Value, node: &str) -> Vec<String> {
+    prefix["obligations"]
+        .as_array()
+        .expect("obligations")
+        .iter()
+        .filter(|verdict| {
+            verdict["obligation"]["kind"] == "enabledness" && verdict["obligation"]["node"] == node
+        })
+        .map(|verdict| verdict["verdict"].as_str().expect("a verdict").to_owned())
+        .collect()
+}
+
+/// An open incremental assessment of `observations` over [`cancel_in_repeat_protocol`]:
+/// `Buyer`'s observations at `buyer` in order, `Seller`'s at `seller`, and
+/// the correlations `(send, receive)`.
+fn cancel_in_repeat_item(
+    name: &str,
+    observations: Value,
+    buyer: &[usize],
+    seller: &[usize],
+    correlations: &[(usize, usize)],
+) -> Value {
+    let mut recording = repeat_recording(
+        observations,
+        json!(seller),
+        json!(buyer),
+        Value::Array(
+            correlations
+                .iter()
+                .map(|(send, receive)| json!({"send": send, "receive": receive}))
+                .collect(),
+        ),
+    );
+    recording["closure"] = json!({"state": "open", "premises": []});
+    replay_with(
+        name,
+        &cancel_in_repeat_protocol(),
+        &recording,
+        json!({"file": "recording.json", "identity": recording_identity()}),
+        assessed_item("incremental"),
+    )
+    .item(0)
+}
+
+const BODY_LEFT: &str = "Flow::Main::Loop::Body::Both::left::Left::L";
+const BODY_RIGHT: &str = "Flow::Main::Loop::Body::Both::right::Right::R";
+
+/// FR-895-AC-37 (TC-2531): a `parallel` with an `outstanding cancel` join in
+/// a `repeat` body cancels per iteration: the first iteration's `Placed`
+/// does not put the second iteration's `L` and `R` after a cancel. The
+/// recording `P`, `L`, `R`, `Placed`, `Got`, `yes` twice (`P` runs once per
+/// iteration, so it fixes the iteration) leaves every `L` and `R` `satisfied`
+/// in batch and in every prefix; with the second `R` after the second
+/// `Placed` it is `violated`, cause `unexpected`.
+#[trace("TC-2531", "FR-895-AC-37")]
+#[test]
+fn a_cancel_in_a_repeat_body_cancels_per_iteration() {
+    let left = || body_event("left::Left::L");
+    let right = || body_event("right::Right::R");
+    let lead = || loop_event("P");
+    let observations = json!([
+        lead(),
+        left(),
+        right(),
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped_case("yes"),
+        lead(),
+        left(),
+        right(),
+        looped("send", "Placed", "Buyer", "m-2"),
+        looped("receive", "Got", "Seller", "m-2"),
+        looped_case("yes"),
+    ]);
+    let item = cancel_in_repeat_item(
+        "replay-cancel-repeat-legit",
+        observations,
+        &[0, 1, 2, 3, 6, 7, 8, 9],
+        &[4, 5, 10, 11],
+        &[(3, 4), (9, 10)],
+    );
+    let prefixes = item["prefixes"].as_array().expect("prefixes");
+    assert_eq!(prefixes.len(), 12, "{item}");
+    for prefix in prefixes {
+        for node in [BODY_LEFT, BODY_RIGHT] {
+            assert!(
+                node_verdicts_in(prefix, node)
+                    .iter()
+                    .all(|verdict| verdict == "satisfied"),
+                "{node}: {prefix}"
+            );
+        }
+    }
+    assert_eq!(
+        node_verdicts_in(&prefixes[11], BODY_RIGHT),
+        ["satisfied"; 2]
+    );
+    let order: Vec<usize> = (0..12).collect();
+    assert_every_verdict_only_advances(prefixes, &order);
+    assert_eq!(prefixes[11]["obligations"], item["obligations"], "{item}");
+
+    // The second `R` after the second `Placed`: the second iteration's join
+    // has fired, and the first `R`, `L` stay satisfied.
+    let after_own_placed = json!([
+        lead(),
+        left(),
+        right(),
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped_case("yes"),
+        lead(),
+        left(),
+        looped("send", "Placed", "Buyer", "m-2"),
+        right(),
+        looped("receive", "Got", "Seller", "m-2"),
+        looped_case("yes"),
+    ]);
+    let item = cancel_in_repeat_item(
+        "replay-cancel-repeat-violated",
+        after_own_placed,
+        &[0, 1, 2, 3, 6, 7, 8, 9],
+        &[4, 5, 10, 11],
+        &[(3, 4), (8, 10)],
+    );
+    let last = &item["prefixes"][11];
+    assert_eq!(
+        node_verdicts_in(last, BODY_LEFT),
+        ["satisfied"; 2],
+        "{item}"
+    );
+    assert_eq!(
+        node_verdicts_in(last, BODY_RIGHT),
+        ["satisfied", "violated"],
+        "{item}"
+    );
+}
+
+/// `Flow` whose `parallel` `join any [left, right] outstanding cancel` holds
+/// a `repeat` of `L` in branch `left`, then `Placed` after it.
+fn repeat_in_cancel_protocol() -> String {
+    order_protocol(false).replace(
+        "run sequence Main {",
+        "run sequence Main { parallel Both memory sc { branch left sequence Left { repeat Loop by Buyer visible () max 2 while { true } sequence Body { event L by Buyer as (l: Ack) { true }; } exhausted sequence Out { } } branch right sequence Right { event R by Buyer as (r: Ack) { true }; } } join any [left, right] outstanding cancel;",
+    )
+}
+
+/// FR-895-AC-38 (TC-2531): a `repeat` below the cancelling `parallel` does
+/// not change the cancel: the steps after the `parallel` are matched whatever
+/// the iteration of a repeat inside its branches. `L`, `L`, `Placed` leaves
+/// both `L` `satisfied`; `L`, `Placed`, `L` leaves the second `L` `violated`,
+/// cause `unexpected`.
+#[trace("TC-2531", "FR-895-AC-38")]
+#[test]
+fn a_repeat_inside_a_cancelling_branch_keeps_the_cancel_after_the_parallel() {
+    let source = repeat_in_cancel_protocol();
+    let node = "Flow::Main::Both::left::Left::Loop::Body::L";
+    let step = || {
+        json!({"kind": "event", "node": node, "role": "Buyer", "instance": "w-1",
+               "keys": {}, "record": {"ok": true}})
+    };
+    let placed = || observation("send", "Placed", "Buyer", "m-1");
+    let open = |observations: Value| {
+        let count = observations.as_array().expect("observations").len();
+        json!({
+            "format": "filament.protocol-recording/1", "protocol": "Flow",
+            "observations": observations,
+            "local_order": {"Buyer": (0..count).collect::<Vec<_>>()},
+            "correlations": [],
+            "closure": {"state": "open", "premises": []}
+        })
+    };
+    assert_enabled(&source, &open(json!([step(), step(), placed()])), node, 1);
+    assert_unexpected(&source, &open(json!([step(), placed(), step()])), node, 2);
+}
+
+/// [`repeat_protocol`] whose body begins with `lead` (an event `P`, or
+/// nothing) and an inner `repeat` of the cancelling `parallel` of `L` and
+/// `R`; `Placed`, `Got` and the `Decide` choice follow the inner `repeat`.
+fn nested_repeat_cancel_protocol(lead: &str) -> String {
+    repeat_protocol().replace(
+        "sequence Body {",
+        &format!("sequence Body {{ {lead}repeat Inner by Buyer visible () max 2 while {{ true }} sequence IBody {{ parallel Both memory sc {{ branch left sequence Left {{ event L by Buyer as (l: Ack) {{ true }}; }} branch right sequence Right {{ event R by Buyer as (r: Ack) {{ true }}; }} }} join any [left, right] outstanding cancel; }} exhausted sequence IOut {{ }}"),
+    )
+}
+
+const NESTED_LEFT: &str = "Flow::Main::Loop::Body::Inner::IBody::Both::left::Left::L";
+const NESTED_RIGHT: &str = "Flow::Main::Loop::Body::Inner::IBody::Both::right::Right::R";
+
+/// A `Buyer` event at `Flow::Main::Loop::Body::<path>`.
+fn loop_event(path: &str) -> Value {
+    json!({"kind": "event", "node": format!("Flow::Main::Loop::Body::{path}"),
+           "role": "Buyer", "instance": "w-1", "keys": {}, "record": {"ok": true}})
+}
+
+/// The open incremental item of `observations` over `source`.
+fn nested_cancel_item(
+    name: &str,
+    source: &str,
+    observations: Value,
+    buyer: &[usize],
+    seller: &[usize],
+    correlations: &[(usize, usize)],
+) -> Value {
+    let mut recording = repeat_recording(
+        observations,
+        json!(seller),
+        json!(buyer),
+        Value::Array(
+            correlations
+                .iter()
+                .map(|(send, receive)| json!({"send": send, "receive": receive}))
+                .collect(),
+        ),
+    );
+    recording["closure"] = json!({"state": "open", "premises": []});
+    replay_with(
+        name,
+        source,
+        &recording,
+        json!({"file": "recording.json", "identity": recording_identity()}),
+        assessed_item("incremental"),
+    )
+    .item(0)
+}
+
+/// FR-895-AC-39 (TC-2531): a cancelling `parallel` in an inner `repeat` in an
+/// outer `repeat` cancels per iteration of each. With `Placed`, `Got` and a
+/// `choice` after the inner `repeat` in the outer body, `L`, `R`, `L`, `R`
+/// twice per outer iteration leaves every `L` and `R` `satisfied` in batch and
+/// every prefix, with or without a step `P` before the inner `repeat` (which
+/// fixes the outer iteration of an inner step); with `P`, the last `R` of the
+/// second outer iteration after that iteration's `Placed` is `violated`,
+/// cause `unexpected`, while the first iteration's `Placed` does not make
+/// the second iteration's steps so.
+#[trace("TC-2531", "FR-895-AC-39")]
+#[test]
+fn a_cancel_in_nested_repeats_cancels_per_iteration_of_each() {
+    let step = |path: &str| loop_event(path);
+    let left = || step("Inner::IBody::Both::left::Left::L");
+    let right = || step("Inner::IBody::Both::right::Right::R");
+    let placed = |message: &str| looped("send", "Placed", "Buyer", message);
+    let got = |message: &str| looped("receive", "Got", "Seller", message);
+    let assert_all_satisfied = |item: &Value, count: usize| {
+        let prefixes = item["prefixes"].as_array().expect("prefixes");
+        assert_eq!(prefixes.len(), count, "{item}");
+        for prefix in prefixes {
+            for node in [NESTED_LEFT, NESTED_RIGHT] {
+                assert!(
+                    node_verdicts_in(prefix, node)
+                        .iter()
+                        .all(|verdict| verdict == "satisfied"),
+                    "{node}: {prefix}"
+                );
+            }
+        }
+        let order: Vec<usize> = (0..count).collect();
+        assert_every_verdict_only_advances(prefixes, &order);
+        assert_eq!(
+            prefixes[count - 1]["obligations"],
+            item["obligations"],
+            "{item}"
+        );
+    };
+
+    // With `P`: the outer iteration of an inner step is the number of `P`
+    // observed before it.
+    let with_p = nested_repeat_cancel_protocol("event P by Buyer as (p: Ack) { true }; ");
+    let legit = json!([
+        step("P"),
+        left(),
+        right(),
+        left(),
+        right(),
+        placed("m-1"),
+        got("m-1"),
+        looped_case("yes"),
+        step("P"),
+        left(),
+        right(),
+        left(),
+        right(),
+        placed("m-2"),
+        got("m-2"),
+        looped_case("yes"),
+    ]);
+    let item = nested_cancel_item(
+        "replay-nested-cancel-legit",
+        &with_p,
+        legit,
+        &[0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13],
+        &[6, 7, 14, 15],
+        &[(5, 6), (13, 14)],
+    );
+    assert_all_satisfied(&item, 16);
+    let last = &item["prefixes"][15];
+    assert_eq!(
+        node_verdicts_in(last, NESTED_RIGHT),
+        ["satisfied"; 4],
+        "{item}"
+    );
+
+    // The last `R` of the second outer iteration after its own `Placed`.
+    let violated = json!([
+        step("P"),
+        left(),
+        right(),
+        left(),
+        right(),
+        placed("m-1"),
+        got("m-1"),
+        looped_case("yes"),
+        step("P"),
+        left(),
+        right(),
+        left(),
+        placed("m-2"),
+        right(),
+        got("m-2"),
+        looped_case("yes"),
+    ]);
+    let item = nested_cancel_item(
+        "replay-nested-cancel-violated",
+        &with_p,
+        violated,
+        &[0, 1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13],
+        &[6, 7, 14, 15],
+        &[(5, 6), (12, 14)],
+    );
+    let last = &item["prefixes"][15];
+    assert_eq!(
+        node_verdicts_in(last, NESTED_LEFT),
+        ["satisfied"; 4],
+        "{item}"
+    );
+    assert_eq!(
+        node_verdicts_in(last, NESTED_RIGHT),
+        ["satisfied", "satisfied", "satisfied", "violated"],
+        "{item}"
+    );
+
+    // Without `P` the outer iteration of an inner step is not determined, so
+    // the first iteration's `Placed` does not cancel the second iteration.
+    let without_p = nested_repeat_cancel_protocol("");
+    let legit = json!([
+        left(),
+        right(),
+        left(),
+        right(),
+        placed("m-1"),
+        got("m-1"),
+        looped_case("yes"),
+        left(),
+        right(),
+        left(),
+        right(),
+        placed("m-2"),
+        got("m-2"),
+        looped_case("yes"),
+    ]);
+    let item = nested_cancel_item(
+        "replay-nested-cancel-probe-n",
+        &without_p,
+        legit,
+        &[0, 1, 2, 3, 4, 7, 8, 9, 10, 11],
+        &[5, 6, 12, 13],
+        &[(4, 5), (11, 12)],
+    );
+    assert_all_satisfied(&item, 14);
+}
+
+/// Every `nodes` verdict of the `count` prefixes of `item` is `satisfied`,
+/// verdicts only advance, and the last prefix is the batch assessment.
+fn assert_nodes_satisfied(item: &Value, nodes: &[&str], count: usize) {
+    let prefixes = item["prefixes"].as_array().expect("prefixes");
+    assert_eq!(prefixes.len(), count, "{item}");
+    for prefix in prefixes {
+        for node in nodes {
+            assert!(
+                node_verdicts_in(prefix, node)
+                    .iter()
+                    .all(|verdict| verdict == "satisfied"),
+                "{node}: {item}"
+            );
+        }
+    }
+    let order: Vec<usize> = (0..count).collect();
+    assert_every_verdict_only_advances(prefixes, &order);
+    assert_eq!(
+        prefixes[count - 1]["obligations"],
+        item["obligations"],
+        "{item}"
+    );
+}
+
+/// FR-895-AC-40 (TC-2531): an iteration is taken only from a step that runs
+/// once in every iteration. When a cancelled branch skips an iteration's
+/// `R`, `P`, `L`, `Placed`, `Got`, `yes`, `P`, `L`, `R`, `Placed`, `Got`,
+/// `yes` leaves the second iteration's `R` `satisfied` in batch and in every
+/// prefix, as it does under `outstanding continue`.
+#[trace("TC-2531", "FR-895-AC-40")]
+#[test]
+fn a_skipped_branch_step_does_not_shift_the_iteration() {
+    let observations = || {
+        json!([
+            loop_event("P"),
+            body_event("left::Left::L"),
+            looped("send", "Placed", "Buyer", "m-1"),
+            looped("receive", "Got", "Seller", "m-1"),
+            looped_case("yes"),
+            loop_event("P"),
+            body_event("left::Left::L"),
+            body_event("right::Right::R"),
+            looped("send", "Placed", "Buyer", "m-2"),
+            looped("receive", "Got", "Seller", "m-2"),
+            looped_case("yes"),
+        ])
+    };
+    for outstanding in ["cancel", "continue"] {
+        let source = cancel_in_repeat_protocol()
+            .replace("outstanding cancel", &format!("outstanding {outstanding}"));
+        let item = nested_cancel_item(
+            &format!("replay-skipped-branch-{outstanding}"),
+            &source,
+            observations(),
+            &[0, 1, 2, 5, 6, 7, 8],
+            &[3, 4, 9, 10],
+            &[(2, 3), (8, 9)],
+        );
+        assert_nodes_satisfied(&item, &[BODY_LEFT, BODY_RIGHT], 11);
+        assert_eq!(
+            node_verdicts_in(&item["prefixes"][10], BODY_RIGHT),
+            ["satisfied"],
+            "{outstanding}: {item}"
+        );
+    }
+}
+
+/// [`nested_repeat_cancel_protocol`] with `P` and a second `repeat` of a step
+/// `X` after the inner `repeat` that holds the cancelling `parallel`.
+fn second_repeat_cancel_protocol() -> String {
+    nested_repeat_cancel_protocol("event P by Buyer as (p: Ack) { true }; ").replace(
+        "exhausted sequence IOut { }",
+        "exhausted sequence IOut { } repeat Second by Buyer visible () max 2 while { true } sequence SBody { event X by Buyer as (x: Ack) { true }; } exhausted sequence SOut { }",
+    )
+}
+
+/// FR-895-AC-41 (TC-2531): steps inside a `repeat` do not count toward an
+/// iteration. With `P`, an inner `repeat` of the cancelling `parallel` and
+/// another inner `repeat` of `X` in the body, `P`, `L`, `R`, `X`, `Placed`,
+/// `Got`, `yes` twice leaves every `L` and `R` `satisfied` in batch and in
+/// every prefix, as under `outstanding continue`.
+#[trace("TC-2531", "FR-895-AC-41")]
+#[test]
+fn a_step_inside_an_inner_repeat_does_not_count_toward_the_iteration() {
+    let observations = || {
+        let round = |message: &str| {
+            [
+                loop_event("P"),
+                loop_event("Inner::IBody::Both::left::Left::L"),
+                loop_event("Inner::IBody::Both::right::Right::R"),
+                loop_event("Second::SBody::X"),
+                looped("send", "Placed", "Buyer", message),
+                looped("receive", "Got", "Seller", message),
+                looped_case("yes"),
+            ]
+        };
+        let mut all = Vec::new();
+        all.extend(round("m-1"));
+        all.extend(round("m-2"));
+        Value::Array(all)
+    };
+    for outstanding in ["cancel", "continue"] {
+        let source = second_repeat_cancel_protocol()
+            .replace("outstanding cancel", &format!("outstanding {outstanding}"));
+        let item = nested_cancel_item(
+            &format!("replay-inner-repeat-step-{outstanding}"),
+            &source,
+            observations(),
+            &[0, 1, 2, 3, 4, 7, 8, 9, 10, 11],
+            &[5, 6, 12, 13],
+            &[(4, 5), (11, 12)],
+        );
+        assert_nodes_satisfied(&item, &[NESTED_LEFT, NESTED_RIGHT], 14);
+    }
+}
+
+/// FR-895-AC-42 (TC-2531): the cases of a `choice` do not count toward an
+/// iteration. With a `choice` taking `a` and then `b` before the inner
+/// `repeat` of the cancelling `parallel` and no `P`, the recording `a`, `A`,
+/// `L`, `R`, `Placed`, `Got`, `yes`, `b`, `B`, `L`, `R`, `Placed`, `Got`,
+/// `yes` leaves the second iteration's `L` and `R` `satisfied` in batch, as
+/// under `outstanding continue`.
+#[trace("TC-2531", "FR-895-AC-42")]
+#[test]
+fn a_choice_before_an_inner_repeat_does_not_count_toward_the_iteration() {
+    let step = |path: &str| {
+        json!({"kind": "event", "node": format!("Flow::Main::Loop::Body::{path}"),
+               "role": "Buyer", "instance": "w-1", "keys": {}, "record": {"ok": true}})
+    };
+    let pick = |case: &str| {
+        json!({"kind": "case", "node": format!("Flow::Main::Loop::Body::Pick::{case}"),
+               "role": "Buyer", "instance": "w-1", "keys": {}})
+    };
+    let round = |case: &str, lead: &str, message: &str| {
+        [
+            pick(case),
+            step(&format!("Pick::{case}::{lead}")),
+            step("Inner::IBody::Both::left::Left::L"),
+            step("Inner::IBody::Both::right::Right::R"),
+            looped("send", "Placed", "Buyer", message),
+            looped("receive", "Got", "Seller", message),
+            looped_case("yes"),
+        ]
+    };
+    let mut all = Vec::new();
+    all.extend(round("a", "CA::A", "m-1"));
+    all.extend(round("b", "CB::B", "m-2"));
+    for outstanding in ["cancel", "continue"] {
+        let source = nested_repeat_cancel_protocol(
+            "choice Pick by Buyer visible () { case a when { true } sequence CA { event A by Buyer as (a: Ack) { true }; } case b when { false } sequence CB { event B by Buyer as (b: Ack) { true }; } } ",
+        )
+        .replace("outstanding cancel", &format!("outstanding {outstanding}"));
+        let item = nested_cancel_item(
+            &format!("replay-choice-before-repeat-{outstanding}"),
+            &source,
+            Value::Array(all.clone()),
+            &[0, 1, 2, 3, 4, 7, 8, 9, 10, 11],
+            &[5, 6, 12, 13],
+            &[(4, 5), (11, 12)],
+        );
+        // Only the second iteration is asserted: QSL-3009 makes the first
+        // iteration's `L` and `R` violated, whatever the join policy.
+        for node in [NESTED_LEFT, NESTED_RIGHT] {
+            assert_eq!(
+                node_verdicts_in(&item, node).get(1).map(String::as_str),
+                Some("satisfied"),
+                "{outstanding} {node}: {item}"
+            );
+        }
+    }
 }

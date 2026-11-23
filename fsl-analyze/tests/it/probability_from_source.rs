@@ -623,7 +623,6 @@ fn an_exact_only_claim_with_statistical_evidence_is_unsupported() {
 #[trace("TC-2167", "FR-186-AC-10")]
 #[trace("FSpec-TC-1650", "FSpec-FR-407-AC-17")]
 #[test]
-#[ignore = "QSL-2979: FR-875 on-each instance settlement is not built; the source route settles internal-failure"]
 fn probabilistic_on_each_settles_per_instance() {
     let claim = "probabilistic E using inf on M under Even \
          on each (k: M::Msg) when (not k.delivered) \
@@ -638,11 +637,17 @@ fn probabilistic_on_each_settles_per_instance() {
     assert_eq!(label(item), "proved", "{item}");
     // The start snapshot holds one `Msg`, `m`, undelivered at position 0, so
     // the one instance activates at position 0 and its exact value is the
-    // `on origin` claim's, `391/400`.
-    assert_eq!(
-        item["record"]["basis"], document["items"][1]["record"]["basis"],
-        "{document}"
-    );
+    // `on origin` claim's, `391/400`. FR-741 "Binding": the on-each entry
+    // names `m` as its `instance` with a null `binding`, where the
+    // `on origin` entry names `m` as its `binding` with a null `instance`.
+    let entry = |item: &Value| item["record"]["basis"]["entries"][0].clone();
+    let (each, origin) = (entry(item), entry(&document["items"][1]));
+    assert_eq!(each["value"], origin["value"], "{document}");
+    assert_eq!(each["binding"], Value::Null, "{each}");
+    assert_eq!(each["instance"]["key"], "m", "{each}");
+    assert_eq!(origin["binding"]["key"], "m", "{origin}");
+    assert_eq!(origin["instance"], Value::Null, "{origin}");
+    assert!(each["value"].to_string().contains("391"), "{each}");
 }
 
 /// `E`: every undelivered message is delivered eventually with probability
@@ -689,7 +694,6 @@ fn run_from(name: &str, claims: &str, start: Vec<u8>, items: Value) -> Value {
 #[trace("TC-2485", "FR-875-AC-1")]
 #[trace("FSpec-TC-1650", "FSpec-FR-407-AC-17")]
 #[test]
-#[ignore = "QSL-2979: FR-875 on-each instance settlement is not built; the source route settles internal-failure"]
 fn probabilistic_on_each_empty_population() {
     let document = run_from(
         "on-each-empty",
@@ -699,7 +703,7 @@ fn probabilistic_on_each_empty_population() {
     );
     let item = &document["items"][0];
     assert_eq!(label(item), "inconclusive", "{item}");
-    assert_eq!(item["record"]["cause"]["type"], "no-instance", "{item}");
+    assert_eq!(item["record"]["cause"]["kind"], "no-instance", "{item}");
 }
 
 /// FR-875-AC-2 (TC-2486): an instance that never activates holds vacuously
@@ -707,7 +711,6 @@ fn probabilistic_on_each_empty_population() {
 #[trace("TC-2486", "FR-875-AC-2")]
 #[trace("FSpec-TC-1650", "FSpec-FR-407-AC-17")]
 #[test]
-#[ignore = "QSL-2979: FR-875 on-each instance settlement is not built; the source route settles internal-failure"]
 fn probabilistic_on_each_never_activating_instance_is_vacuous() {
     let start = || link_start(&[("m", false), ("n", true)]);
     let proved = run_from(
@@ -726,16 +729,16 @@ fn probabilistic_on_each_never_activating_instance_is_vacuous() {
     );
     let item = &refuted["items"][0];
     assert_eq!(label(item), "refuted", "{item}");
-    let counterexample = item["counterexample"].to_string();
-    assert!(counterexample.contains("\"m\""), "{item}");
-    assert!(!counterexample.contains("\"n\""), "{item}");
+    assert_eq!(
+        item["counterexample"]["instance"]["identity"], "m",
+        "{item}"
+    );
 }
 
 /// FR-875-AC-3 (TC-2487): a refuted `on each` item names its first failing
 /// instance in key order, and a rerun gives the same item.
 #[trace("TC-2487", "FR-875-AC-3")]
 #[test]
-#[ignore = "QSL-2979: FR-875 on-each instance settlement is not built; the source route settles internal-failure"]
 fn probabilistic_on_each_names_first_failing_instance() {
     let once = || {
         run_from(
@@ -748,9 +751,10 @@ fn probabilistic_on_each_names_first_failing_instance() {
     let first = once();
     let item = &first["items"][0];
     assert_eq!(label(item), "refuted", "{item}");
-    let counterexample = item["counterexample"].to_string();
-    assert!(counterexample.contains("\"a\""), "{item}");
-    assert!(!counterexample.contains("\"b\""), "{item}");
+    assert_eq!(
+        item["counterexample"]["instance"]["identity"], "a",
+        "{item}"
+    );
     assert_eq!(item, &once()["items"][0], "a rerun names the same instance");
 }
 
@@ -759,7 +763,6 @@ fn probabilistic_on_each_names_first_failing_instance() {
 /// counterexample's `instance` member.
 #[trace("TC-3062", "FR-741-AC-5")]
 #[test]
-#[ignore = "QSL-2979: FR-875 on-each instance settlement and the conditional certificate are not built"]
 fn probabilistic_on_each_reports_conditional_certificate_and_instance() {
     let start = || link_start(&[("m", false), ("n", true)]);
     let proved = run_from(
@@ -773,6 +776,15 @@ fn probabilistic_on_each_reports_conditional_certificate_and_instance() {
     assert_eq!(item["certificate"]["kind"], "conditional", "{item}");
     let conditional = &item["certificate"]["document"]["conditional"];
     assert_eq!(conditional["mode"], "ratio", "{item}");
+    // `m` is the one compared instance, with a null `binding`; `n` never
+    // activates, is confirmed vacuous and has no entry (FR-741 "Binding").
+    let entries = item["record"]["basis"]["entries"]
+        .as_array()
+        .expect("entries");
+    assert_eq!(entries.len(), 1, "{item}");
+    assert_eq!(entries[0]["instance"]["key"], "m", "{item}");
+    assert_eq!(entries[0]["binding"], Value::Null, "{item}");
+    assert!(entries[0]["value"].to_string().contains("391"), "{item}");
     // `m` activates at position 0, so at its initial key the numerator is the
     // `on origin` value and the denominator 1.
     let holds_value = |part: &str, value: Value| {
@@ -1710,6 +1722,47 @@ fn measured_and_proved_items_validate_against_the_backend_provider_schema() {
     );
 }
 
+/// FR-741-AC-2 and FR-1042-AC-6: a `ValueBounds` item writes its `certificate`
+/// as the claim side's `lower` document and a `counterpart` beside it at item
+/// level with exactly `{kind, document, accepted}`, the `upper` document in
+/// FSpec's `ProbabilityCertificate` spelling; the record carries no
+/// `counterpart` member of its own.
+#[trace("TC-2066", "FR-741-AC-2")]
+#[trace("TC-2066", "FR-1042-AC-6")]
+#[test]
+fn a_value_bounds_item_writes_its_counterpart_at_item_level() {
+    const INTERVAL: &str =
+        "probabilistic Interval using ev on M over (m: M::Msg) under Even on origin \
+         { probability >= 0.9 [ eventually[0,2] holds(m.delivered) ] }";
+    let document = run(
+        "value-bounds-item",
+        INTERVAL,
+        json!([{"claim": "Interval", "probabilistic": {
+            "evidence": "exact", "limits": {"max_rational_bits": 4}}}]),
+    );
+    let item = &document["items"][0];
+    assert_eq!(label(item), "proved", "{item}");
+    assert_eq!(item["certificate"]["kind"], "lower", "{item}");
+    assert_eq!(item["certificate"]["accepted"], true, "{item}");
+    let counterpart = item["counterpart"].as_object().expect("a counterpart");
+    let mut members: Vec<&str> = counterpart.keys().map(String::as_str).collect();
+    members.sort_unstable();
+    assert_eq!(members, ["accepted", "document", "kind"], "{item}");
+    assert_eq!(counterpart["kind"], "upper", "{item}");
+    assert_eq!(counterpart["accepted"], true, "{item}");
+    assert_eq!(counterpart["document"]["kind"], "upper", "{item}");
+    assert_eq!(
+        counterpart["document"]["identity"], item["certificate"]["identity"],
+        "{item}"
+    );
+    assert_valid(
+        &provider_definition("ProbabilityCertificate"),
+        &counterpart["document"],
+        "the counterpart document",
+    );
+    assert!(item["record"].get("counterpart").is_none(), "{item}");
+}
+
 /// FR-322, FR-331: a real `refuted` item's claim locus is a schema-valid
 /// `Locus` whose node id holds index segments, never a nested node id.
 #[trace("TC-3154", "FR-621-AC-16")]
@@ -1801,4 +1854,55 @@ fn exact_limits_from_source_reach_the_engine() {
         "the unknown member is refused naming the member: {document}"
     );
     assert_ne!(label(&document["items"][1]), "proved", "{document}");
+}
+
+/// FR-741 Budgets over FR-875: a state limit reached while an `on each` item
+/// builds its phase graph settles `incomplete` naming `exact_prob.max_states`
+/// like every other exact item, never `failed`.
+#[test]
+fn probabilistic_on_each_state_limit_settles_incomplete_naming_the_limit() {
+    let document = run_from(
+        "on-each-limit",
+        &on_each("rational(9, 10)"),
+        link_start(&[("m", false)]),
+        json!([{"claim": "E", "probabilistic": {
+            "evidence": "exact", "limits": {"max_states": 1}}}]),
+    );
+    let item = &document["items"][0];
+    assert_eq!(label(item), "incomplete", "{item}");
+    assert!(item.to_string().contains("exact_prob.max_states"), "{item}");
+}
+
+/// FR-201-AC-80, FR-875 "Unbuilt on-each settlements (current)": an `on each`
+/// claim with authored fairness, and one under every scheduler, are outside
+/// the closed profile. Each settles `unsupported` with the
+/// `not-yet-implemented` diagnostic and no `cause`, and writes no certificate.
+#[trace("TC-3209", "FR-201-AC-80")]
+#[test]
+fn probabilistic_on_each_out_of_profile_form_is_unsupported_with_no_cause() {
+    for (name, scheduler) in [
+        ("fairness", "every scheduler fair weak Msg::send_a"),
+        ("every-scheduler", "every scheduler"),
+    ] {
+        let claim = format!(
+            "probabilistic E using inf on M under {scheduler} \
+             on each (k: M::Msg) when (not k.delivered) \
+             {{ probability >= rational(1, 2) [ eventually holds(k.delivered) ] }}"
+        );
+        let document = run_from(
+            &format!("on-each-{name}"),
+            &claim,
+            link_start(&[("m", false)]),
+            json!([{"claim": "E"}]),
+        );
+        let item = &document["items"][0];
+        assert!(item.is_object(), "{name}: {document}");
+        assert_eq!(label(item), "unsupported", "{name}: {item}");
+        assert!(
+            item.to_string().contains("not-yet-implemented"),
+            "{name}: {item}"
+        );
+        assert!(item["record"].get("cause").is_none(), "{name}: {item}");
+        assert!(item.get("certificate").is_none(), "{name}: {item}");
+    }
 }

@@ -127,7 +127,7 @@ contract, this requirement is.
   every scheduler it carries the witness scheduler. An undefined evaluation
   refutes with FR-202's `Undefined` evidence in FSpec FR-413's
   `undefined-path` spelling, and the record's cause
-  equals its `undefined`. A refuted `on each`
+  equals its `undefined`. An undefined read of an on-each claim's guard or target is not yet built (FR-875 "Unbuilt on-each settlements (current)"). A refuted `on each`
   claim's counterexample names the failing instance in its binding's
   `instance` member: the first failing instance in key order (FR-875).
 - `entries`, for exact evidence: FR-203's `ExactEntry` per initial state and

@@ -207,6 +207,7 @@ fn empty(world: &World) -> ProbabilisticCounterexample {
     ProbabilisticCounterexample {
         item: fsl_replay::probabilistic_claim_identity(world.claim("Claim")).unwrap(),
         binding: reference.clone(),
+        instance: None,
         initial_key: fsl_replay::ProbabilityProductKey::for_model_state(reference.as_ref(), &bytes)
             .unwrap(),
         initial,

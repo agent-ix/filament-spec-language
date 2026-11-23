@@ -64,7 +64,12 @@ exactly as they were.
   SHALL refuse `missing_declaration`/`missing-name`.
 - A declared type that is an enum type or a decimal type, or an option of one,
   SHALL check as a finite value type; the history key encodes its values by
-  their canonical literals, as FR-630 decides.
+  their canonical literals, as FR-630 decides. A decimal's canonical literal
+  retains its scale (FR-120-AC-16), so `decimal(150, 1)` and `decimal(15, 0)`
+  are two values with two keys, and equal literals key equally.
+
+**Present `Option` initial through the package route (current).** A history row typed `Option<T>` with a present initial (for example `Option<Phase> = Phase::OPEN`) checks at S3 and computes in replay, as FR-138-AC-9 states. The package route does not lower it yet: the checked package admits a history initial only as a `literal` term or a reference to a `literal` node, and a present option is an `option_value` node, so the refinement is refused `unsupported_construct`/`not-yet-implemented` as not emitted. A `none` initial lowers. This is the current implementation gap, not a requirement; it closes with QSL-3011 once filament-contract-ir accepts an `option_value` history initial.
+
 - Any other declared type SHALL be a bounded value type (finite domain); an
   unbounded type SHALL refuse `ill_typed`/`type-mismatch` at the type.
 - A history field whose name equals a declared field of the concrete type,
@@ -167,11 +172,7 @@ and not its range, so the range is left only at run time.
   FSpec FR-378 words the product key's order as "history-row order"; the key
   here orders by object, then field name. FSpec's wording should be aligned
   to it.
-- The enum and decimal refusal departs from FSpec in the three ways FR-135's
-  References state.
 - The history-row production, the `history-literal` spellings and the
   history-literal conformance rule: FSpec FR-375. The covering test for the
   `none`, `true`/`false` and enum-member cases, which FR-138 does not
-  restate, is FSpec TC-310 mutation 10 (FR-375-AC-9). This build refuses an
-  enum-typed history row before its literal is checked (FR-138-AC-9), so it
-  admits no enum-member history literal for now.
+  restate, is FSpec TC-310 mutation 10 (FR-375-AC-9).

@@ -134,15 +134,29 @@ unsupported cause `DelayDistribution{operation}`.
   action. Distinct literal action bodies and exact source modes are FR-196;
   no fictitious ScheduledIdentity names these choices.
 - Under a workload, each racing identity SHALL draw its `discrete` delay
-  conditioned on its window, the smallest draw winning with ties ordered by
-  the workload's weights (ADR-026 SD-3); each race outcome SHALL be one
-  edge, delaying by the winning amount and taking the winning identity, with
-  its exact probability. A delay no distribution gives SHALL be an action of
+  conditioned on its window. The smallest draw wins; when several identities
+  of one operation tie, SD-3 repeatedly selects a still-enabled identity in
+  operation-weight order without replacement, using the remaining identity
+  shares defined by ADR-024 PM-2. Each race outcome SHALL be one product edge:
+  it advances time once by the winning delay, applies the selected identities
+  in order to the evolving model state at that same instant, and ends at the
+  product key after the last still-enabled identity is applied. Its edge label
+  retains the complete ordered sequence of identities that fired, its
+  probability is the product of the conditioned draw mass and each ordered
+  selection probability, and its rewards are the ordered firings' rewards.
+  A rejection of a certificate for this outcome is located at the source
+  product key and this complete edge label (not an intermediate same-instant
+  state). Replay expands the label to one trace position for each fired
+  identity, all at the same elapsed time, with each position's actual
+  intermediate model state. A delay no distribution gives SHALL be an action of
   the scheduler. A state where no identity races and delay is bounded SHALL
   is a time-lock, decided by Admission's time-lock rule.
 - Under a workload, a state whose racing identities all have given delays
   (`discrete` distributions) SHALL resolve as above, each race edge carrying
-  `Identity(r)` with `r` the first racing identity in canonical order.
+  `Identity(r)` with `r` the first racing identity in canonical order, and a
+  `fired` sequence containing the actual ordered identities applied at the
+  instant. When the winning identity disables every other tied identity, that
+  sequence has one element.
 - Under a workload, a state whose racing identities all have free delays
   SHALL offer `UnitDelay` and a single `WorkloadResolve{identity, delay: 0}`
   whose `identity` is the first enabled identity and whose probability mass
@@ -158,11 +172,13 @@ unsupported cause `DelayDistribution{operation}`.
   units, to every identity in `F`. One row of the action is one `g` with its
   `f(g)`; a row names every free racing identity, not one.
 - The race of a row SHALL be ADR-026 SD-3's race over the delays `g` and
-  `f(g)` together: the least delay `m` over all racing identities wins, and
-  among the identities tied at `m` the winner is chosen by the workload's
-  weights. The action is one distribution of total probability 1, the sum
-  over rows of `P(g)` times the row's race outcome, each outcome delaying by
-  `m` and taking its winner.
+  `f(g)` together. The least delay `m` wins; the tied identities fire in the
+  PM-2 ordered-without-replacement sequence, applying each still-enabled
+  identity to the evolving state at the same instant. The action is one
+  distribution of total probability 1, the sum over rows of `P(g)` times the
+  row's ordered race outcome. Each outcome is one product edge labeled by its
+  complete ordered firing sequence and ends at the product key after all
+  still-enabled tied identities have fired.
 - `WorkloadResolve{identity, delay}` names one free identity and is made
   before the draw. In a mixed state with one free identity it is exactly the
   `FreeDelays` action whose rows all assign that delay to that identity; with
@@ -253,6 +269,14 @@ unsupported cause `DelayDistribution{operation}`.
 | FR-204-AC-18 | Under the workload `Skew` (weights `A` 1, `B` 2, `C` 3), the model `Trio` of the worked example below, whose `A`, `B` and `C` race with the given delays `discrete { 1 ms: 1, 2 ms: 1 }`, `discrete { 2 ms: 1, 3 ms: 1 }` and `discrete { 2 ms: 1, 3 ms: 3 }`, has at its initial state exactly four race edges and no other action (no `UnitDelay`, `FreeDelays` or `WorkloadResolve`), each edge `Identity(A)`, with `A` at 1 ms `1/2`, `A` at 2 ms `53/192`, `B` at 2 ms `7/48` and `C` at 2 ms `5/64`; `probability >= 0.13 [eventually[0 ms, 3 ms] holds(t.b)]` settles `proved`, `ExactValue{7/48}`, `probability >= 0.07 [eventually[0 ms, 3 ms] holds(t.c)]` settles `proved`, `ExactValue{5/64}`, `probability <= 0.8 [eventually[0 ms, 3 ms] holds(t.a)]` settles `proved`, `ExactValue{149/192}`, and `probability >= 0.5 [eventually[0 ms, 1 ms] holds(t.a)]` settles `proved`, `ExactValue{1/2}`; the `t.b` item's `Exact` certificate with values computed with even ties (initial value `11/96`) and the one computed with ties taken in canonical order (initial value `0`) are each rejected `InequalityFails` at the initial state's `ProbabilisticProductState`, and the test submits both. | Test (TC-3204) |
 | FR-204-AC-19 | Under the workload `Share` (weights `fire` 4, `G` 1), the model `Pair` of the worked example below, whose operation `fire` has the two tied identities `F1` and `F2` with `discrete { 2 ms: 1 }` and whose `G` has `discrete { 2 ms: 1, 3 ms: 1 }`, divides `fire`'s weight between `F1` and `F2` (2 each against `G` 1): its initial state has exactly three race edges and no other action, `F1` at 2 ms `9/20`, `F2` at 2 ms `9/20` and `G` at 2 ms `1/10`; `probability >= 0.45 [eventually[0 ms, 3 ms] holds(n1.hit)]` and `probability <= 0.45 [eventually[0 ms, 3 ms] holds(n1.hit)]` each settle `proved`, `ExactValue{9/20}`; the `n1.hit` item's `Exact` certificates with the weight not divided (initial value `17/36`) and with even ties (initial value `5/12`) are each rejected `InequalityFails` at the initial state's `ProbabilisticProductState`, and the test submits both. | Test (TC-3205) |
 | FR-204-AC-20 | Under the workload `Order` (weights `X` 1, `Y` 2, `Z` 3), the model `Chain` of the worked example below, whose `X`, `Y` and `Z` tie at 2 ms and each fire when still enabled at its turn, orders the tie without replacement by the weights, so `probability >= 0.58 [eventually[0 ms, 3 ms] holds(c.n = 3 and c.last = X)]` settles `proved`, `ExactValue{7/12}`, `probability <= 0.2 [eventually[0 ms, 3 ms] holds(c.n = 3 and c.last = Z)]` settles `proved`, `ExactValue{3/20}`, and `probability <= 0.3 [eventually[0 ms, 3 ms] holds(c.n = 3 and c.last = Y)]` settles `proved`, `ExactValue{4/15}`; the `c.last = Z` item's `Exact` certificates with the first pick weighted and the rest in canonical order (initial value `1/2`), with even orders (initial value `1/3`) and with canonical order (initial value `1`) are each rejected `InequalityFails`, and the test submits all three. | Test (TC-3206) |
+
+The Chain check also asserts that the six firing orders listed in the worked
+example are represented as six outcome edges from the initial product key,
+with probabilities and destination keys as listed; each edge has one delay
+of 2 ms and an ordered identity-sequence label. Its replay witness has one
+trace position for each identity in that sequence, at the same timestamp.
+Changing any edge's probability or destination is rejected at the initial
+product key and that edge label.
 
 ## Worked example: given delays racing under weights
 
@@ -347,9 +371,10 @@ at 81 and 85 and fails at 75, and the claim `<= 0.45` holds at 81 and 75 and
 fails at 85, so the pair holds only at the exact value. The `G` edge mass is
 `1/10` (exact), `1/18` undivided and `1/6` even.
 
-Open question (QSL-2984): SD-3 does not state the weight of an identity that
-remains after an earlier pick of its operation; these examples read only the
-first pick.
+QSL-2984 resolves subsequent picks: each identity begins with its operation's
+weight divided by the number of that operation's tied enabled identities, and
+the picked identity's share is removed. A still-enabled sibling retains only
+its original divided share.
 
 ## Worked example: picks after the first
 
@@ -386,9 +411,10 @@ wrong rules (`0`, `1/3`, `0`), and `probability <= 0.2 [eventually[0 ms,
 3 ms] holds(c.n = 3 and c.last = Z)]` (`3/20 = 0.15`) refutes under all
 three (`1/2`, `1/3`, `1`).
 
-Open question (QSL-2983): FR-204 does not state how a tie taken in several
-steps at one instant appears in the product (intermediate states or one edge
-per outcome), so AC-20 states values and no edge list.
+QSL-2983 resolves the product representation: each ordered tie outcome is one
+product edge, while replay exposes one trace position per firing identity at
+the shared instant. A certificate rejection is located at the source product
+key and the complete ordered edge label.
 
 ## Rulings
 

@@ -23,6 +23,7 @@ mod hyper_smt_settle;
 mod indexed_read_stage;
 mod intake_refusal_outcome;
 mod integer_division_check;
+mod native_fence_failure;
 mod emit_admit_agreement;
 mod outcome_facade;
 mod parse_outcome_facade;
@@ -45,6 +46,7 @@ mod refinement_smt;
 mod refinement_step;
 mod refinement_unmapped;
 mod replay_result_rows;
+mod request_clocks_for_replay;
 #[path = "../../../tests/support/ring_world.rs"]
 mod ring_world;
 mod run_axes;

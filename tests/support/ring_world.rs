@@ -79,6 +79,19 @@ pub struct Variant {
     /// `Queue` has `next: Reference<Queue>`, and `rings` admits a subtype
     /// `SubRing` of `Ring` that no object row names (FR-140-AC-6).
     pub next: bool,
+    /// The concrete `Ring` also has `chain: Sequence<Reference<Ring>>[0, 2]`,
+    /// the abstract `Queue` has `chain: Sequence<Reference<Queue>>[0, 2]`,
+    /// and `rings` admits the subtype `SubRing` (FR-140-AC-16). The abstract
+    /// `enq` also takes `rs: Sequence<Reference<Queue>>[0, 2]`, whose
+    /// postcondition requires `size(rs) = size(self.chain)`: a size check keeps
+    /// the fixture in the layer the unit selects, and the test asserts the
+    /// lifted `rs` itself exactly (FR-141-AC-13).
+    pub chain: bool,
+    /// The abstract package also declares `Cell { value: Digit }` in a
+    /// population `cells`, and the abstract `Queue` a `twin: Reference<Cell>`:
+    /// `Queue` and `Cell` can both be mapped from the one concrete `Ring`
+    /// (FR-140-AC-17, [`twin_refinement`]).
+    pub twin: bool,
     /// The abstract `Queue` has an optional `head: Digit?` field
     /// (FR-140-AC-11).
     pub optional_head: bool,
@@ -129,12 +142,26 @@ fn queue_document(variant: Variant) -> Vec<u8> {
     } else {
         vec![("x", &digit)]
     };
-    let enq = framed(
+    let queue = node(QUEUE, "Queue");
+    let parameters: Vec<(&str, &str)> = if variant.chain {
+        parameters
+            .into_iter()
+            .chain([("rs", queue.as_str())])
+            .collect()
+    } else {
+        parameters
+    };
+    let mut enq = framed(
         ring_queue::operation(QUEUE, "Queue", "enq", &parameters, None, &[]),
         QUEUE,
         &["Queue/items"],
         &[],
     );
+    if variant.chain {
+        // `rs` is a `Sequence<Reference<Queue>>[0, 2]`.
+        enq["params"][parameters.len() - 1]["multiplicity"] =
+            json!({"lower": 0, "upper": 2, "ordered": true, "unique": false});
+    }
     let deq = framed(
         ring_queue::operation(QUEUE, "Queue", "deq", &[], Some(&digit), &[]),
         QUEUE,
@@ -155,11 +182,17 @@ fn queue_document(variant: Variant) -> Vec<u8> {
         queue_fields(variant),
         vec![enq, deq],
     ));
-    ring_queue::document(
-        QUEUE,
-        types,
-        vec![ring_queue::population(QUEUE, "queues", "Queue")],
-    )
+    let mut populations = vec![ring_queue::population(QUEUE, "queues", "Queue")];
+    if variant.twin {
+        types.push(ring_queue::object_type(
+            QUEUE,
+            "Cell",
+            vec![ring_queue::single(QUEUE, "Cell", "value", &digit)],
+            Vec::new(),
+        ));
+        populations.push(ring_queue::population(QUEUE, "cells", "Cell"));
+    }
+    ring_queue::document(QUEUE, types, populations)
 }
 
 /// The fields of the abstract `Queue` of `variant`.
@@ -178,6 +211,23 @@ fn queue_fields(variant: Variant) -> Vec<Json> {
             "Queue",
             "next",
             &node(QUEUE, "Queue"),
+        ));
+    }
+    if variant.twin {
+        fields.push(ring_queue::single(
+            QUEUE,
+            "Queue",
+            "twin",
+            &node(QUEUE, "Cell"),
+        ));
+    }
+    if variant.chain {
+        fields.push(ring_queue::field(
+            QUEUE,
+            "Queue",
+            "chain",
+            &node(QUEUE, "Queue"),
+            (0, 2, true),
         ));
     }
     if variant.optional_head {
@@ -234,7 +284,7 @@ fn ring_document(variant: Variant) -> Vec<u8> {
             ),
         ]
         .into_iter()
-        .chain((variant.next || variant.sub_ring).then(sub_ring))
+        .chain((variant.next || variant.sub_ring || variant.chain).then(sub_ring))
         .collect(),
         vec![
             rings_population(variant),
@@ -257,13 +307,22 @@ fn ring_fields(variant: Variant) -> Vec<Json> {
             &node(RING, "Ring"),
         ));
     }
+    if variant.chain {
+        fields.push(ring_queue::field(
+            RING,
+            "Ring",
+            "chain",
+            &node(RING, "Ring"),
+            (0, 2, true),
+        ));
+    }
     fields
 }
 
 /// The population `rings`, admitting `SubRing` when `variant` declares it.
 fn rings_population(variant: Variant) -> Json {
     let mut rings = ring_queue::population(RING, "rings", "Ring");
-    if variant.next || variant.sub_ring {
+    if variant.next || variant.sub_ring || variant.chain {
         rings["members"] = json!([node(RING, "Ring"), node(RING, "SubRing")]);
     }
     rings
@@ -286,6 +345,11 @@ fn contracts(variant: Variant) -> String {
     let enq = "(size(pre(self.items)) = 0 and self.items = sequence[x]) or (pre(self.items) = sequence[0] and self.items = sequence[0, x]) or (pre(self.items) = sequence[1] and self.items = sequence[1, x])";
     let enq =
         vec![format!("({enq})"); 1 + usize::try_from(variant.heavy).unwrap_or(0)].join(" and ");
+    let enq = if variant.chain {
+        format!("{enq} and size(rs) = size(self.chain)")
+    } else {
+        enq
+    };
     format!(
         "pre CanEnq using v on Q::Queue::enq {{ size(self.items) < 2 }}\n\
          post Enq using v on Q::Queue::enq {{ {enq} }}\n\
@@ -322,6 +386,33 @@ pub fn ring_is_queue(items: &str) -> String {
     )
 }
 
+/// `RingIsQueue` over the `twin` variant: the one concrete `Ring` is the
+/// source of both `Q::Queue` (whose `twin = self` is a `Reference<Cell>`
+/// field) and `Q::Cell`, written in the order `cell_first` says.
+pub fn twin_refinement(cell_first: bool) -> String {
+    let queue = format!(
+        "object Q::Queue from R::Ring {{ {} twin = self; }}",
+        items_row(Variant::default())
+    );
+    let cell = "object Q::Cell from R::Ring { value = self.head; }";
+    let (first, second) = if cell_first {
+        (cell.to_owned(), queue)
+    } else {
+        (queue, cell.to_owned())
+    };
+    format!(
+        "invariant Anything using v on R::Ring at current {{ true }}\n\
+         refinement RingIsQueue using inf abstract Q concrete R {{\n\
+         population Q::queues from R::rings;\n\
+         population Q::cells from R::rings;\n\
+         {first}\n\
+         {second}\n\
+         step R::Slot::put -> Q::Queue::enq(self.ring, x);\n\
+         step R::Slot::take -> Q::Queue::deq(self.ring);\n\
+         }}"
+    )
+}
+
 /// The unit text: both models, the contracts of `variant` and `refinement`.
 fn unit_text(
     documents: &fsl_semantics::model::intake::PackageInput,
@@ -329,13 +420,24 @@ fn unit_text(
     variant: Variant,
 ) -> String {
     let _ = documents;
+    let mut profiles = String::new();
+    let mut declarations = refinement;
+    while let Some((line, rest)) = declarations.split_once('\n') {
+        if !line.starts_with("profile ") {
+            break;
+        }
+        profiles.push_str(line);
+        profiles.push('\n');
+        declarations = rest;
+    }
     format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+         {profiles}\
          model Q = \"{QUEUE}\";\n\
          model R = \"{RING}\";\n\
-         {}{refinement}\n",
+         {}{declarations}\n",
         contracts(variant),
     )
 }
@@ -464,23 +566,36 @@ impl RingWorld {
             queue_fields["next"] =
                 json!({"reference": {"population": node(QUEUE, "queues"), "key": "r"}});
         }
+        if variant.chain {
+            queue_fields["chain"] = json!({"sequence": []});
+        }
+        if variant.twin {
+            queue_fields["twin"] =
+                json!({"reference": {"population": node(QUEUE, "cells"), "key": "r"}});
+        }
         if variant.xy {
             queue_fields["x"] = json!({"integer": "0"});
             queue_fields["y"] = json!({"integer": "0"});
         }
-        let queue_initial = snapshot(
-            QUEUE,
-            vec![
-                json!({"population": node(QUEUE, "queues"), "complete": true,
-                "objects": [{"key": "r", "type": node(QUEUE, "Queue"),
-                    "fields": queue_fields}]}),
-            ],
-            &mut snapshots,
-        );
+        let mut queue_populations = vec![
+            json!({"population": node(QUEUE, "queues"), "complete": true,
+            "objects": [{"key": "r", "type": node(QUEUE, "Queue"),
+                "fields": queue_fields}]}),
+        ];
+        if variant.twin {
+            queue_populations.push(json!({"population": node(QUEUE, "cells"),
+                "complete": true,
+                "objects": [{"key": "r", "type": node(QUEUE, "Cell"),
+                    "fields": {"value": {"integer": "0"}}}]}));
+        }
+        let queue_initial = snapshot(QUEUE, queue_populations, &mut snapshots);
         let mut ring_fields = json!({"head": {"integer": "0"}, "size": {"integer": "0"}});
         if variant.next {
             ring_fields["next"] =
                 json!({"reference": {"population": node(RING, "rings"), "key": "r"}});
+        }
+        if variant.chain {
+            ring_fields["chain"] = json!({"sequence": []});
         }
         let slot = |key: &str, index: u8| {
             json!({"key": key, "type": node(RING, "Slot"), "fields": {
@@ -667,6 +782,9 @@ pub struct RingSpec<'a> {
     pub size: i64,
     /// Its `next`, as the key and type name of the ring it references.
     pub next: Option<(&'a str, &'a str)>,
+    /// Its `chain`, as the key and type name of each ring it references; read
+    /// only by a variant whose `Ring` declares a `chain`.
+    pub chain: &'a [(&'a str, &'a str)],
 }
 
 /// The concrete state with `rings` and the slots `slots`, each as (key, the
@@ -692,6 +810,24 @@ pub fn custom_state(
             ]);
             if let Some((target, type_name)) = ring.next {
                 fields.insert(key(RING, "Ring/next"), reference(type_name, target));
+            }
+            let chain_key = key(RING, "Ring/chain");
+            let declared = system
+                .fields_of(&key(RING, "Ring"))
+                .and_then(|declared| declared.iter().find(|field| field.key == chain_key))
+                .and_then(|field| match &field.value_type {
+                    filament_exact::ValueType::Collection(collection) => {
+                        Some((**collection).clone())
+                    }
+                    _ => None,
+                });
+            if let Some(declared) = declared {
+                let elements = ring
+                    .chain
+                    .iter()
+                    .map(|(target, type_name)| reference(type_name, target))
+                    .collect();
+                fields.insert(chain_key, filament_exact::from_admitted(declared, elements));
             }
             (
                 ring.key.to_owned(),

@@ -15,7 +15,7 @@ use serde_json::{json, Value};
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
 
 /// The `link` snapshot with the added Boolean `spun` set false (clocks carry no snapshot value).
-fn snapshot() -> Vec<u8> {
+pub(super) fn snapshot() -> Vec<u8> {
     let mut snapshot: Value = serde_json::from_slice(SNAPSHOT).unwrap();
     snapshot["populations"][0]["objects"][0]["fields"]["spun"] = json!({"boolean": false});
     serde_json::to_vec(&snapshot).unwrap()
@@ -23,7 +23,7 @@ fn snapshot() -> Vec<u8> {
 
 /// The `link` domain with `Msg.x: Clock` and `Msg.spun: Boolean`; `send_a`
 /// modifies `delivered` and `x`, `send_b` modifies `spun`.
-fn domain() -> Vec<u8> {
+pub(super) fn domain() -> Vec<u8> {
     let mut domain: Value =
         serde_json::from_str(include_str!("../fixtures/link.semantic-ir.json")).unwrap();
     let message = &mut domain["types"][1];
@@ -41,6 +41,9 @@ fn domain() -> Vec<u8> {
     message["operations"][0]["frame"]["modifies"] =
         json!(["ix://test/link/Msg/delivered", "ix://test/link/Msg/x"]);
     message["operations"][1]["frame"]["modifies"] = json!(["ix://test/link/Msg/spun"]);
+    for operation in 0..2 {
+        message["operations"][operation]["frame"]["modifies_receiver"] = json!([]);
+    }
     serde_json::to_vec(&domain).unwrap()
 }
 
@@ -136,4 +139,17 @@ fn assert_separate_checker(route: &str, source: &str) {
     });
     let (code, output) = run(&altered);
     assert_ne!(code, 0, "an altered certificate is rejected: {output}");
+}
+
+/// A timed `on each` claim over `Retx`, for FR-201-AC-80's timed clause.
+pub(super) fn on_each_timed_source() -> String {
+    retx(">= 1 ms", NO_TOGGLE, DEADLINE).replace(
+        "over (m: M::Msg) under every scheduler on origin { probability >= 0.99 [ eventually[0 ms, 4 ms] holds(m.delivered) ] }",
+        "under every scheduler on each (k: M::Msg) when (not k.delivered) { probability >= 0.99 [ eventually[0 ms, 4 ms] holds(k.delivered) ] }",
+    )
+}
+
+/// A request holding a timed proof, whose certificate a test may swap.
+pub(super) fn timed_request() -> Value {
+    certified(&retx(">= 1 ms", NO_TOGGLE, DEADLINE))
 }

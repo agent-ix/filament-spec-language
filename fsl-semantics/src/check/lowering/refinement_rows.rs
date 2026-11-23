@@ -18,7 +18,7 @@ use super::state::AnchorInput;
 use super::{fault, Binder, Binders, Lowering};
 use crate::check::claims::BinderSite;
 use crate::check::family::OccurrenceRole;
-use crate::check::node_key::LeafTerm;
+use crate::check::node_key::{LeafTerm, LiteralValue};
 use crate::check::refinement::{
     CheckedRefinement, CheckedRow, KeyedCatalogClass, KeyedFairnessRow, KeyedHistoryRow,
     KeyedObjectRow, KeyedPopulationRow, KeyedRefinementRows, KeyedStepRow, KeyedStepTarget,
@@ -185,6 +185,20 @@ impl Lowering<'_> {
         declared: &ValueType,
         location: &Location,
     ) -> Result<LeafTerm, CheckRefusal> {
+        // An enum member is written inline: the refinement's history initial is a
+        // literal or a reference to a literal node, and a member's own node is an
+        // enum value, not a literal (FSpec FR-375 `histories`).
+        if let Value::Enum(member) = value {
+            let ty = self
+                .type_ref(declared, location)?
+                .admitted()
+                .cloned()
+                .ok_or_else(|| fault(location, KeyFault::UnresolvedDraft))?;
+            return Ok(LeafTerm::literal(
+                ty,
+                LiteralValue::Enum(member.variant().case().to_owned()),
+            ));
+        }
         self.literal_at(location, value, declared, None)
     }
 

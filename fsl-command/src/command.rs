@@ -70,6 +70,53 @@ fn request_integer_division(
     read_integer_division(value.as_ref(), "integer_division")
 }
 
+/// FR-027: the request's `call_site`, an object of exactly `kind`
+/// `"imported-function"`, `library` (a library identity) and `function` (a
+/// function identifier). Anything else, and a program that is an FR-480 array
+/// of units, refuses `invalid-request` naming `call_site`.
+fn request_call_site(
+    value: Option<&serde_json::Value>,
+    program_sources: usize,
+) -> Result<Option<fsl_replay::ImportedFunctionName>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let refuse = |reason: &str| RunCause::ClauseRequest {
+        member: "call_site".to_owned(),
+        reason: reason.to_owned(),
+    };
+    let serde_json::Value::Object(members) = value else {
+        return Err(refuse("must be an object"));
+    };
+    if let Some(extra) = members
+        .keys()
+        .find(|name| !matches!(name.as_str(), "kind" | "library" | "function"))
+    {
+        return Err(refuse(&format!("has the unknown member {extra}")));
+    }
+    let text = |name: &str| match members.get(name) {
+        Some(serde_json::Value::String(text)) => Ok(text.as_str()),
+        Some(_) => Err(refuse(&format!("member {name} must be a string"))),
+        None => Err(refuse(&format!("lacks the member {name}"))),
+    };
+    let kind = text("kind")?;
+    let library = text("library")?;
+    let function = text("function")?;
+    if kind != "imported-function" {
+        return Err(refuse("kind must be `imported-function`"));
+    }
+    let library = (!library.is_empty())
+        .then(|| fsl_semantics::library::LibraryName::new(library).ok())
+        .flatten()
+        .ok_or_else(|| refuse("library must be a library identity"))?;
+    let function = filament_exact::Identifier::new(function)
+        .map_err(|_| refuse("function must be an identifier"))?;
+    if program_sources > 1 {
+        return Err(refuse("is not supported for an array of program units"));
+    }
+    Ok(Some(fsl_replay::ImportedFunctionName { library, function }))
+}
+
 /// Caller byte ceilings for one command invocation (FR-312, FR-869).
 #[derive(Clone, Copy, Debug)]
 pub struct RunLimits {
@@ -421,8 +468,7 @@ fn check_outcome_inner(
             match fsl_replay::spine::select(&parsed, &packages, inputs.limits.model, &cancel) {
                 Ok(models) => models.into_value(),
                 Err(failure) => {
-                    let document = fsl_replay::OutcomeDocument::from_check(&Err(failure));
-                    return Ok(check_missing_model_help(document, &parsed, &inputs.models));
+                    return Ok(fsl_replay::OutcomeDocument::from_check(&Err(failure)));
                 }
             };
 
@@ -476,45 +522,6 @@ fn check_outcome_inner(
     let sources = crate::Sources::from_sources(intake.sources);
     run.map(|document| (document, sources.clone()))
         .map_err(|cause| Box::new((cause, sources)))
-}
-
-fn check_missing_model_help(
-    document: fsl_replay::OutcomeDocument,
-    parsed: &fsl_replay::spine::ParsedUnitSource,
-    supplied: &[(String, PathBuf)],
-) -> fsl_replay::OutcomeDocument {
-    let Some(diagnostic) = document.diagnostics().first() else {
-        return document;
-    };
-    if diagnostic.code() != Code::MissingImport.as_str()
-        || diagnostic.cause() != Some("missing-selection")
-    {
-        return document;
-    }
-    let Some(missing) = parsed.unit().selections().models.iter().find(|model| {
-        !supplied
-            .iter()
-            .any(|(identity, _)| identity == &model.identity)
-    }) else {
-        return document;
-    };
-    let message = format!(
-        "{}; supply --model {}=<file> or the compile request's models member",
-        diagnostic.message(),
-        missing.identity
-    );
-    fsl_replay::OutcomeDocument::new(
-        fsl_replay::Operation::Check,
-        Some(fsl_replay::OutcomeStage::I1),
-        document.category(),
-    )
-    .with_diagnostics(vec![fsl_replay::OutcomeDiagnostic::new(
-        diagnostic.cause(),
-        diagnostic.code(),
-        diagnostic.locus().cloned(),
-        message,
-    )
-    .with_selection(Some(fsl_replay::outcome::hint::MissingSelection::Model))])
 }
 
 fn validate_check_selections(selections: &[(String, PathBuf)], option: &str) -> Result<()> {
@@ -1034,6 +1041,10 @@ pub enum RunCause {
     /// than malformed.
     #[error("the request's extension names an unknown required capability: {0}")]
     UnknownExtensionCapability(String),
+    /// FR-027: the request's `call_site` selection is refused over the checked
+    /// package, or locating it broke an invariant.
+    #[error("{0}")]
+    CallSite(Box<fsl_replay::CallSiteRefusal>),
     /// Spine compile of a `1-draft` program refused at one stage.
     #[error("{}", .0.refusal)]
     Spine(Box<SpineFailure>),
@@ -1293,6 +1304,7 @@ impl RunCause {
             #[cfg(feature = "quire-extraction")]
             Self::ExtractionFailure { code, .. } => *code,
             Self::Spine(failure) => failure.refusal.code(),
+            Self::CallSite(refusal) => refusal.code(),
             Self::ExtensionCatalog(_) => Code::InvalidPackage,
             Self::UnknownExtensionCapability(_) => Code::UnknownRequiredFeature,
             Self::SpineRun(refusal) => refusal.code(),
@@ -1353,6 +1365,12 @@ impl RunCause {
             | Self::ClauseOutput(_)
             | Self::ExportOutput { .. }
             | Self::TlFault(_) => filament_semantic_value::catalog::Category::InternalFailure,
+            Self::CallSite(refusal) => match **refusal {
+                fsl_replay::CallSiteRefusal::Fault(_) => {
+                    filament_semantic_value::catalog::Category::InternalFailure
+                }
+                _ => self.code().category(),
+            },
             Self::SpineRun(refusal) => refusal.category(),
             // FR-663/TC-1746: an unbounded plan parameter is a check-time
             // admission refusal. Other unsupported projections retain their
@@ -1430,6 +1448,12 @@ impl RunError {
                 self.category(),
             )
             .with_diagnostics(failure.refusal.outcome_diagnostics()),
+            RunCause::CallSite(refusal) => OutcomeDocument::new(
+                operation,
+                Some(fsl_replay::OutcomeStage::I1),
+                self.category(),
+            )
+            .with_diagnostics(vec![OutcomeDiagnostic::from_call_site_refusal(refusal)]),
             RunCause::SpineRun(refusal) => OutcomeDocument::from_run_refusal(operation, refusal),
             RunCause::AnalyzeRefused(refusal) => refusal.document(),
             RunCause::MonitorRefused(refusal) => refusal.document(),
@@ -2328,10 +2352,71 @@ fn check_argv(directory: &Path, bytes: &[u8]) -> Result<Option<RunResult>> {
     if arguments.first().copied() != Some("check") {
         return Ok(None);
     }
-    let (extensions, source) = match arguments.as_slice() {
-        ["check", source] => (Vec::new(), *source),
-        ["check", _authority, _name, source] => (Vec::new(), *source),
-        ["check", "--extensions", set_path, _authority, _name, source] => {
+    let mut markdown = false;
+    let mut format = None;
+    let mut extensions_file = None;
+    let mut positionals = Vec::new();
+    let mut index = 1;
+    let mut options_enabled = true;
+    while index < arguments.len() {
+        if options_enabled && arguments[index] == "--" {
+            options_enabled = false;
+            index += 1;
+            continue;
+        }
+        if !options_enabled {
+            positionals.push(arguments[index]);
+            index += 1;
+            continue;
+        }
+        match arguments[index] {
+            "--markdown" => {
+                if markdown {
+                    return Err(check_option_refusal(
+                        "--markdown",
+                        "is given more than once",
+                    ));
+                }
+                markdown = true;
+                index += 1;
+            }
+            option @ ("--format" | "--extensions") => {
+                let slot = if option == "--format" {
+                    &mut format
+                } else {
+                    &mut extensions_file
+                };
+                if slot.is_some() {
+                    return Err(check_option_refusal(option, "is given more than once"));
+                }
+                match arguments.get(index + 1) {
+                    Some(value) if !value.starts_with("--") => *slot = Some(*value),
+                    _ => return Err(check_option_refusal(option, "expects a value")),
+                }
+                index += 2;
+            }
+            argument if argument.starts_with("--") => {
+                return Err(check_option_refusal(argument, "is not recognized"));
+            }
+            argument => {
+                positionals.push(argument);
+                index += 1;
+            }
+        }
+    }
+    if format.is_some_and(|format| format != "json") {
+        return Err(RunCause::ClauseRequest {
+            member: "format".to_owned(),
+            reason: "check supports only json".to_owned(),
+        });
+    }
+    let (identity, source) = match positionals.as_slice() {
+        [source] if !markdown => (None, *source),
+        [authority, name, source] => (Some((*authority, *name)), *source),
+        _ => return Err(check_argv_refusal()),
+    };
+    let extensions = match extensions_file {
+        Some(set_path) => {
             let set_bytes = read_file(&directory.join(set_path), TOTAL_BYTES)?;
             let set: ExtensionSetFile = serde_json::from_slice(&set_bytes)?;
             if set.format != "filament.extension-set/v1" {
@@ -2340,8 +2425,7 @@ fn check_argv(directory: &Path, bytes: &[u8]) -> Result<Option<RunResult>> {
                     reason: "expected filament.extension-set/v1".to_owned(),
                 });
             }
-            let extensions = set
-                .extensions
+            set.extensions
                 .into_iter()
                 .map(|extension| CheckExtensionInput {
                     authority: extension.authority,
@@ -2354,17 +2438,14 @@ fn check_argv(directory: &Path, bytes: &[u8]) -> Result<Option<RunResult>> {
                         .collect(),
                     capabilities: extension.capabilities,
                 })
-                .collect();
-            (extensions, *source)
+                .collect()
         }
-        _ => {
-            return Err(RunCause::ClauseRequest {
-                member: "argv".to_owned(),
-                reason: "check expects a source or --extensions <file> <authority> <name> <source>"
-                    .to_owned(),
-            });
-        }
+        None => Vec::new(),
     };
+    if markdown {
+        let (authority, name) = identity.expect("markdown requires the document labels");
+        return check_markdown_argv(directory, authority, name, source, extensions).map(Some);
+    }
     let source_path = Path::new(source);
     let source_path = if source_path.is_absolute() {
         source_path.to_path_buf()
@@ -2387,6 +2468,140 @@ fn check_argv(directory: &Path, bytes: &[u8]) -> Result<Option<RunResult>> {
         requirements: None,
         sources: crate::Sources::default(),
     }))
+}
+
+#[cfg(feature = "quire-extraction")]
+fn check_markdown_argv(
+    directory: &Path,
+    authority: &str,
+    name: &str,
+    source: &str,
+    extensions: Vec<CheckExtensionInput>,
+) -> Result<RunResult> {
+    let document = check_markdown_document(directory, authority, name, source, extensions)?;
+    let exit_code = document.category().exit_code();
+    let document = serde_json::to_value(&document).map_err(RunCause::Output)?;
+    Ok(RunResult {
+        exit_code,
+        value: NativeResult::check_document(document),
+        outcome: None,
+        requirements: None,
+        sources: crate::Sources::default(),
+    })
+}
+
+#[cfg(not(feature = "quire-extraction"))]
+fn check_markdown_argv(
+    _directory: &Path,
+    _authority: &str,
+    _name: &str,
+    _source: &str,
+    _extensions: Vec<CheckExtensionInput>,
+) -> Result<RunResult> {
+    Err(RunCause::ClauseRequest {
+        member: "--markdown".to_owned(),
+        reason: "this build of fsl-command has no Markdown extraction (feature quire-extraction)"
+            .to_owned(),
+    })
+}
+
+fn check_option_refusal(option: &str, reason: &str) -> RunCause {
+    RunCause::ClauseRequest {
+        member: option.to_owned(),
+        reason: format!("check option {option} {reason}"),
+    }
+}
+
+fn check_argv_refusal() -> RunCause {
+    RunCause::ClauseRequest {
+        member: "argv".to_owned(),
+        reason: "check expects [--markdown] [--extensions <file>] [--format json] a source, or <authority> <name> <source> (--markdown requires the labels)"
+            .to_owned(),
+    }
+}
+
+/// FR-662, FSpec FR-563: check every `ix:native` fence of one Markdown
+/// document, naming each body `<identity>#<clause id>`.
+#[cfg(feature = "quire-extraction")]
+fn check_markdown_document(
+    directory: &Path,
+    authority: &str,
+    name: &str,
+    source: &str,
+    extensions: Vec<CheckExtensionInput>,
+) -> Result<fsl_replay::OutcomeDocument> {
+    let wire_extensions = extensions
+        .iter()
+        .map(|extension| wire::Extension {
+            authority: extension.authority.clone(),
+            identity: extension.identity.clone(),
+            file: extension
+                .file
+                .strip_prefix(directory)
+                .unwrap_or(&extension.file)
+                .to_string_lossy()
+                .into_owned(),
+            depends_on: extension
+                .depends_on
+                .iter()
+                .map(|(authority, identity)| wire::DefinitionReference {
+                    authority: authority.clone(),
+                    identity: identity.clone(),
+                })
+                .collect(),
+            capabilities: extension.capabilities.clone(),
+        })
+        .collect::<Vec<_>>();
+    validate_extension_entries(&wire_extensions)?;
+    let mut intake = intake_with_bytes(
+        directory,
+        FileCounts {
+            programs: 1,
+            models: 0,
+            observations: 0,
+            extensions: extensions.len(),
+        },
+        CheckInputs::default().dependent_bytes,
+    )?;
+    let document_source = intake.source_outside_budget(
+        &check_source_file(Path::new(source), authority, name, "CheckSource"),
+        "source",
+        TOTAL_BYTES,
+    )?;
+    let catalog = if wire_extensions.is_empty() {
+        None
+    } else {
+        Some(extension_catalog(&wire_extensions, &mut intake)?)
+    };
+    let packages = fsl_semantics::model::intake::PackageInput::new();
+    let dependencies = fsl_replay::spine::DependencyInput::new(Vec::new()).map_err(|refusal| {
+        RunCause::ClauseRequest {
+            member: "libraries".to_owned(),
+            reason: format!("{refusal:?}"),
+        }
+    })?;
+    let request = fsl_replay::spine::NativeFenceRequest {
+        original: document_source.source(),
+        packages: &packages,
+        dependencies: &dependencies,
+        extensions: catalog
+            .as_ref()
+            .map(|catalog| fsl_replay::spine::ProfileCatalogInput {
+                catalog,
+                limits: fsl_semantics::library::bundle::PackageLimits::default(),
+            }),
+        integer_division: None,
+    };
+    Ok(
+        match fsl_replay::spine::check_native_fences(
+            &request,
+            fsl_replay::spine::CheckLimits::default(),
+            &filament_exact::Cancel::new(),
+        ) {
+            Ok(report) => fsl_replay::OutcomeDocument::from_native_fences(&report.into_value()),
+            Err(failure) => fsl_replay::OutcomeDocument::from_native_fence_failure(&failure),
+        },
+    )
 }
 
 /// Inspect a checked-package handoff and return the command's successful
@@ -2839,6 +3054,19 @@ fn compile_outcome_inner(
         let request: wire::CompileRequest = request_with_overrides(bytes, overrides)?;
         // FR-767: a malformed or unknown law refuses before any file is read.
         let integer_division = request_integer_division(request.integer_division.clone())?;
+        if !request.program.sources.is_empty()
+            && request_call_site(request.call_site.as_ref(), request.program.sources.len())?
+                .is_some()
+            && fsl_semantics::library::LibraryName::new(
+                request.program.sources[0].identity.identity.as_str(),
+            )
+            .is_err()
+        {
+            return Err(RunCause::ClauseRequest {
+                member: "call_site".to_owned(),
+                reason: "program identity must be a library identity".to_owned(),
+            });
+        }
         validate_extension_entries(&request.extensions)?;
         if let Some(handoff) = &request.handoff {
             validate_handoff_request(handoff, request.program.sources.len())?;
@@ -2919,6 +3147,7 @@ fn compile_outcome_inner(
                     request.refinement_internals.is_some(),
                 ),
                 ("integer_division", request.integer_division.is_some()),
+                ("call_site", request.call_site.is_some()),
             ] {
                 if present {
                     return Err(RunCause::ClauseRequest {
@@ -3470,6 +3699,15 @@ fn complete_sources(
             );
             let document = fsl_replay::OutcomeDocument::from_package(&result);
             let emitted = result.map_err(failure)?.into_value();
+            if let Some(selection) = request_call_site(request.call_site.as_ref(), sources.len())? {
+                let program_identity = package_name(sources[0].source().identity());
+                fsl_replay::locate_in_checked(
+                    &checked,
+                    &program_identity,
+                    &selection,
+                )
+                .map_err(RunCause::CallSite)?;
+            }
             let package_bytes = emitted.package().bytes().to_vec();
             let handoff_temporal_selections = if request.handoff.is_some() {
                 handoff_clock_selections(&checked, selections)

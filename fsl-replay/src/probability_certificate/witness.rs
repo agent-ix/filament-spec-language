@@ -180,6 +180,8 @@ pub struct ProbabilisticCounterexample {
     pub item: ObligationIdentity,
     /// The claim's object binding, absent for an unbound claim.
     pub binding: Option<ObjectReference>,
+    /// The `on each` instance the evidence refutes, absent for any other claim.
+    pub instance: Option<ObjectReference>,
     /// Actual initial state content.
     pub initial: ModelSimState,
     /// Complete initial product key.
@@ -584,7 +586,7 @@ fn replay_probabilistic_witness_impl(
             subsystem::replay(system, claim, witness, limits, cancel)
         };
     }
-    if super::document::is_timed_deadline_claim(claim) {
+    if super::document::is_timed_witness_claim(system, claim) {
         return super::document::replay_timed_witness(system, claim, witness, limits, cancel);
     }
     if claim.bounded_measure() {

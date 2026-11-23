@@ -21,6 +21,10 @@ use ix_trace_rs::trace;
 
 use crate::refinement_fixture::{cas_refines_counter, World, UNLIMITED};
 use crate::refinement_fixture::{key, Variant, CAS, SPEC};
+use crate::ring_world::{
+    key as ring_key, twin_refinement, RingWorld, Variant as RingVariant, QUEUE as RING_QUEUE,
+    RING as RING_MODEL, UNLIMITED as RING_UNLIMITED,
+};
 
 pub(crate) fn cas_twice(peek: bool, lost_update: bool) -> String {
     let retries = if lost_update {
@@ -2221,6 +2225,96 @@ fn a_node_row_matches_the_attempt_identity_and_binder() {
         fsl_replay::Taken::Protocol(_) | fsl_replay::Taken::ProtocolTraces(_)
     ));
     assert_eq!(counter_value(&post.abstract_states[0]), 1);
+}
+
+/// FR-141-AC-15 (TC-546): a protocol node-row argument has no declared
+/// abstract target type in replay, so several object rows for its reference
+/// type fault instead of selecting by row order.
+#[trace("TC-546", "FR-141-AC-15")]
+#[test]
+fn a_protocol_node_row_faults_when_its_reference_type_has_multiple_object_rows() {
+    let protocol = "profile p = \"filament.protocol.finite-global/v1\";\n\
+        protocol P using p over (q: Q::Queue) on origin {\n\
+        role w on Q::Queue; scheduling adversarial;\n\
+        run sequence Main {\n\
+        attempt a1 by w on Q::Queue::deq contracts [] as (x: Q::Digit) { true };\n\
+        }\n\
+        finish Done as (d: Boolean) { true };\n\
+        }\n";
+    let refinement = twin_refinement(true)
+        .replace("abstract Q concrete R", "abstract Q::P concrete R")
+        .replace(
+            "step R::Slot::put -> Q::Queue::enq(self.ring, x);",
+            "step R::Slot::put -> node Q::P::a1(self.ring, x);",
+        )
+        .replace(
+            "step R::Slot::take -> Q::Queue::deq(self.ring);",
+            "step R::Slot::take -> stutter;",
+        );
+    let source = format!("{protocol}{refinement}");
+    let world = RingWorld::with(
+        RingVariant {
+            twin: true,
+            ..RingVariant::default()
+        },
+        &source,
+    );
+    let over = fsl_eval::model_subject::ModelInstance {
+        population: ring_key(RING_QUEUE, "queues"),
+        key: "r".to_owned(),
+    };
+    let systems = open_protocol_systems(
+        world.refinement(),
+        &world.concrete_request(RING_UNLIMITED),
+        world.package(),
+        vec![world.abstract_initial()],
+        over,
+        &[],
+    )
+    .expect("the admitted protocol subject opens");
+    let protocol = systems
+        .abstract_protocol
+        .as_ref()
+        .expect("the abstract protocol opens");
+    let initial_state = systems.concrete.initial_states()[0].clone();
+    let initial = check_protocol_initial(
+        world.refinement(),
+        &systems.concrete,
+        &systems.abstract_system,
+        protocol,
+        0,
+        initial_state.state(),
+    );
+    let StepVerdict::Passes { post: position, .. } = initial.verdict else {
+        panic!("the initial protocol state maps: {:?}", initial.verdict);
+    };
+    let operation = operation_identity_text(&ring_key(RING_MODEL, "Slot/put"))
+        .expect("the concrete operation identity");
+    let (transition, post) = systems
+        .concrete
+        .successors(&initial_state)
+        .expect("the concrete state expands")
+        .successors
+        .into_iter()
+        .find(|(transition, _)| transition.operation() == operation)
+        .expect("put is enabled");
+    let result = check_protocol_step(
+        world.refinement(),
+        &systems.concrete,
+        &systems.abstract_system,
+        protocol,
+        &position,
+        &ConcreteStep {
+            position: 1,
+            transition: Some(&transition),
+            post: &post,
+        },
+    );
+    assert!(
+        matches!(result.verdict, StepVerdict::Fault(_)),
+        "the node-row argument must fault instead of choosing an object row: {:?}",
+        result.verdict
+    );
 }
 
 fn counter_value(state: &fsl_semantics::model::state::ModelState) -> i64 {

@@ -22,7 +22,7 @@ use std::collections::BTreeMap;
 
 use super::read::{FieldMapping, ObjectMapping, PopulationMapping, RefinementRead};
 use filament_checked::key::DeclarationKey;
-use filament_exact::{CollectionKind, ObjectReference, Value, ValueType};
+use filament_exact::{EffectiveId, ObjectReference, Value, ValueType};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::simulation::model::{ClauseOutcome, ModelSystem, RowReading, StateObservation};
 use fsl_eval::temporal::UndefinedCause;
@@ -242,9 +242,25 @@ pub fn map_state(
                 population: row.concrete_population().clone(),
                 key: key.clone(),
             };
+            // Of the rows that name the object's type, the first whose
+            // abstract type the abstract population admits (ADR-020 RM-2,
+            // RM-3): a concrete type that two abstract populations map is the
+            // source of one abstract object in each.
+            let admits = |candidate: &&dyn ObjectMapping| {
+                abstract_system
+                    .populations()
+                    .iter()
+                    .find(|population| &population.key == row.abstract_population())
+                    .is_none_or(|population| {
+                        population.member_types.iter().any(|member| {
+                            abstract_system.type_conforms(candidate.abstract_type(), member)
+                        })
+                    })
+            };
             let Some(object_row) = refinement
                 .objects()
-                .find(|candidate| candidate.concrete_type() == &object.type_identity)
+                .filter(|candidate| candidate.concrete_type() == &object.type_identity)
+                .find(admits)
             else {
                 outcomes.record(unmapped(&object.type_identity, at));
                 continue;
@@ -475,6 +491,7 @@ fn undetermined(
 }
 
 /// Why a row's value could not be lifted into the abstract model.
+#[derive(Debug)]
 pub(super) enum Lifting {
     /// A reference names an object whose most-specific type no object row
     /// names.
@@ -489,9 +506,9 @@ pub(super) enum Lifting {
 /// A field declared `T?` takes `v` from `Some(v)` and stays unset for `none`;
 /// a field declared `Option<T>` takes the option value unchanged, so `none`
 /// stays an explicit `none`. A reference maps to the abstract reference with
-/// the same key, and a whole-population reference row (`Set<Reference<T>>`)
-/// maps element by element. A reference nested in any other value is not
-/// lifted: FR-135 refuses a row whose type nests one.
+/// the same key, and a reference nested in an option, collection or map, a
+/// whole-population reference row (`Set<Reference<T>>`) among them, maps
+/// element by element at every depth.
 fn lift_field(
     refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
@@ -502,38 +519,84 @@ fn lift_field(
     let Some(value) = unwrap_optional(field, value) else {
         return Ok(None);
     };
-    match value {
-        Value::Reference(reference) => {
-            lift_reference(refinement, concrete_system, abstract_system, &reference)
-                .map(|lifted| Some(Value::Reference(lifted)))
-        }
-        Value::Collection(collection)
-            if collection.collection_type().kind() == CollectionKind::Set
-                && collection
-                    .elements()
-                    .iter()
-                    .all(|element| matches!(element, Value::Reference(_))) =>
-        {
-            let ValueType::Collection(declared) = &field.value_type else {
-                return Err(Lifting::Fault);
+    lift_nested(
+        &mut |reference, declared| {
+            lift_reference(
+                refinement,
+                concrete_system,
+                abstract_system,
+                reference,
+                declared,
+            )
+        },
+        &field.value_type,
+        value,
+    )
+    .map(Some)
+}
+
+/// `value` as the abstract type `declared` reads it: a reference maps to the
+/// abstract reference with the same key, and an option, a collection or a
+/// map maps its elements, and a map its reference keys, the same way at
+/// every depth (FR-140, FR-630). `reference` lifts one reference. A value of
+/// a leaf type is unchanged; an option, collection or map value whose
+/// declared type has another shape is a fault. A reference nested in a
+/// record, tuple or union is not lifted (QSL-2959). `reference` is given the
+/// abstract object type the declared type names for the reference, when it
+/// names one.
+fn lift_nested(
+    reference: &mut dyn FnMut(
+        &ObjectReference,
+        Option<&EffectiveId>,
+    ) -> Result<ObjectReference, Lifting>,
+    declared: &ValueType,
+    value: Value,
+) -> Result<Value, Lifting> {
+    match (value, declared) {
+        (Value::Reference(found), declared) => {
+            let target = match declared {
+                ValueType::Reference(target) => Some(target),
+                _ => None,
             };
+            reference(&found, target).map(Value::Reference)
+        }
+        (Value::Option(option), ValueType::Option(payload_type)) => {
+            let payload = option
+                .payload()
+                .map(|payload| lift_nested(reference, payload_type, payload.clone()))
+                .transpose()?;
+            Ok(filament_exact::OptionValue::from_admitted(
+                (**payload_type).clone(),
+                payload,
+            ))
+        }
+        (Value::Collection(collection), ValueType::Collection(declared)) => {
             let elements = collection
                 .elements()
                 .iter()
-                .map(|element| match element {
-                    Value::Reference(reference) => {
-                        lift_reference(refinement, concrete_system, abstract_system, reference)
-                            .map(Value::Reference)
-                    }
-                    _ => Err(Lifting::Fault),
-                })
+                .map(|element| lift_nested(reference, declared.element(), element.clone()))
                 .collect::<Result<Vec<_>, _>>()?;
-            Ok(Some(filament_exact::from_admitted(
+            Ok(filament_exact::from_admitted(
                 (**declared).clone(),
                 elements,
-            )))
+            ))
         }
-        plain => Ok(Some(plain)),
+        (Value::Map(map), ValueType::Map(declared)) => {
+            let entries = map
+                .entries()
+                .iter()
+                .map(|(key, value)| {
+                    Ok((
+                        lift_nested(reference, declared.key(), key.clone())?,
+                        lift_nested(reference, declared.values(), value.clone())?,
+                    ))
+                })
+                .collect::<Result<Vec<_>, Lifting>>()?;
+            filament_exact::from_admitted_map((**declared).clone(), entries)
+                .map_err(|_| Lifting::Fault)
+        }
+        (Value::Option(_) | Value::Collection(_) | Value::Map(_), _) => Err(Lifting::Fault),
+        (plain, _) => Ok(plain),
     }
 }
 
@@ -553,34 +616,176 @@ fn lift_reference(
     concrete_system: &ModelSystem<'_>,
     abstract_system: &ModelSystem<'_>,
     reference: &ObjectReference,
+    declared: Option<&EffectiveId>,
 ) -> Result<ObjectReference, Lifting> {
     let concrete_type = concrete_system
         .type_key_of(reference)
         .ok_or(Lifting::Fault)?;
-    let row = refinement
+    let candidates: Vec<_> = refinement
         .objects()
-        .find(|row| row.concrete_type() == concrete_type)
-        .ok_or_else(|| Lifting::Unmapped(concrete_type.clone()))?;
+        .filter(|row| row.concrete_type() == concrete_type)
+        .map(|row| (row, abstract_system.type_identity(row.abstract_type())))
+        .collect();
+    let row = match choose_row(&candidates, declared, &|sub, sup| {
+        abstract_system.identity_conforms(sub, sup)
+    }) {
+        Ok(row) => row,
+        Err(RowChoice::NoRow) => return Err(Lifting::Unmapped(concrete_type.clone())),
+        Err(RowChoice::Ambiguous) => return Err(Lifting::Fault),
+    };
     abstract_system
         .object_reference(row.abstract_type(), reference.object().as_str())
         .map_err(|_| Lifting::Fault)
 }
 
+/// Why no object row lifts a reference.
+#[derive(Debug, Eq, PartialEq)]
+enum RowChoice {
+    /// No object row names the concrete type.
+    NoRow,
+    /// Several rows name it and the declared type, if any, does not pick one.
+    Ambiguous,
+}
+
+/// The object row that lifts a reference to a concrete type, among the
+/// `candidates` that name that type as their source, each with its abstract
+/// type's identity (ADR-020 RM-2, RM-3). A lone candidate is the row. Among
+/// several, the row whose abstract type conforms to the `declared` type and
+/// is the most specific such (it conforms to every other conforming one); no
+/// conforming candidate, no most specific one, or no declared type is
+/// [`RowChoice::Ambiguous`].
+fn choose_row<T: Copy>(
+    candidates: &[(T, Option<EffectiveId>)],
+    declared: Option<&EffectiveId>,
+    conforms: &dyn Fn(&EffectiveId, &EffectiveId) -> bool,
+) -> Result<T, RowChoice> {
+    match candidates {
+        [] => return Err(RowChoice::NoRow),
+        [(only, _)] => return Ok(*only),
+        _ => {}
+    }
+    let declared = declared.ok_or(RowChoice::Ambiguous)?;
+    let conforming: Vec<_> = candidates
+        .iter()
+        .filter_map(|(row, identity)| {
+            identity
+                .as_ref()
+                .filter(|identity| conforms(identity, declared))
+                .map(|identity| (*row, identity))
+        })
+        .collect();
+    conforming
+        .iter()
+        .find(|(_, identity)| {
+            conforming
+                .iter()
+                .all(|(_, other)| conforms(identity, other))
+        })
+        .map(|(row, _)| *row)
+        .ok_or(RowChoice::Ambiguous)
+}
+
 /// `value` as the abstract model reads it: a reference maps to the abstract
-/// reference with the same key (RM-3), any other value is unchanged. Used for
-/// the receiver and arguments of an abstract-operation `step` row.
+/// reference with the same key (RM-3), and so does a reference nested in an
+/// option, collection or map; any other value is unchanged. Used for the
+/// receiver and arguments of an abstract-operation `step` row. `declared` is
+/// the abstract parameter's declared type, or for the receiver the type that
+/// declares the operation, which picks the object row where a concrete type
+/// is the source of several (RM-2, RM-3); a protocol node row has none here,
+/// so the abstract type is the value's own type with each reference type
+/// replaced by the abstract type of the one object row that maps it, and a
+/// type several rows map is a fault.
 pub(super) fn lift_value(
     refinement: &dyn RefinementRead,
     concrete_system: &ModelSystem<'_>,
     abstract_system: &ModelSystem<'_>,
+    declared: Option<&ValueType>,
     value: Value,
 ) -> Result<Value, Lifting> {
+    let mut reference = |found: &ObjectReference, target: Option<&EffectiveId>| {
+        lift_reference(refinement, concrete_system, abstract_system, found, target)
+    };
+    if let Some(declared) = declared {
+        return lift_nested(&mut reference, declared, value);
+    }
+    lift_own(
+        &mut reference,
+        &mut |concrete| {
+            let mut rows = refinement.objects().filter(|row| {
+                concrete_system.type_identity(row.concrete_type()).as_ref() == Some(concrete)
+            });
+            // A type several rows name has no abstract type without a
+            // declared one.
+            let (Some(row), None) = (rows.next(), rows.next()) else {
+                return Err(Lifting::Fault);
+            };
+            abstract_system
+                .type_identity(row.abstract_type())
+                .ok_or(Lifting::Fault)
+        },
+        value,
+    )
+}
+
+/// `value` with each nested reference lifted by `reference`, read as the
+/// type its own type becomes when `types` lifts each reference type.
+fn lift_own(
+    reference: &mut dyn FnMut(
+        &ObjectReference,
+        Option<&EffectiveId>,
+    ) -> Result<ObjectReference, Lifting>,
+    types: &mut dyn FnMut(&EffectiveId) -> Result<EffectiveId, Lifting>,
+    value: Value,
+) -> Result<Value, Lifting> {
+    let Some(own) = type_of(&value) else {
+        return Ok(value);
+    };
+    match lift_type(types, &own) {
+        Ok(declared) => lift_nested(reference, &declared, value),
+        // A type no row maps is named by the reference that holds it.
+        Err(fault) => lift_nested(reference, &own, value).and(Err(fault)),
+    }
+}
+
+/// The type of an option, collection, map or reference `value`; `None` for
+/// any other value.
+fn type_of(value: &Value) -> Option<ValueType> {
     match value {
-        Value::Reference(reference) => {
-            lift_reference(refinement, concrete_system, abstract_system, &reference)
-                .map(Value::Reference)
+        Value::Reference(reference) => Some(ValueType::Reference(reference.object_type().clone())),
+        Value::Option(option) => Some(ValueType::option(option.payload_type().clone())),
+        Value::Collection(collection) => {
+            Some(ValueType::collection(collection.collection_type().clone()))
         }
-        plain => Ok(plain),
+        Value::Map(map) => Some(ValueType::Map(std::sync::Arc::new(map.map_type().clone()))),
+        _ => None,
+    }
+}
+
+/// `value_type` with each reference type replaced by `lift`'s result, at
+/// every depth of an option, collection or map.
+fn lift_type(
+    lift: &mut dyn FnMut(&EffectiveId) -> Result<EffectiveId, Lifting>,
+    value_type: &ValueType,
+) -> Result<ValueType, Lifting> {
+    match value_type {
+        ValueType::Reference(object) => lift(object).map(ValueType::Reference),
+        ValueType::Option(payload) => Ok(ValueType::option(lift_type(lift, payload)?)),
+        ValueType::Collection(collection) => {
+            Ok(ValueType::collection(filament_exact::CollectionType::new(
+                collection.kind(),
+                lift_type(lift, collection.element())?,
+                collection.bound(),
+            )))
+        }
+        ValueType::Map(map) => Ok(ValueType::Map(std::sync::Arc::new(
+            filament_exact::MapType::new(
+                lift_type(lift, map.key())?,
+                lift_type(lift, map.values())?,
+                map.bound(),
+            )
+            .map_err(|_| Lifting::Fault)?,
+        ))),
+        other => Ok(other.clone()),
     }
 }
 
@@ -729,5 +934,342 @@ mod tests {
         let ordered = ordered_populations(vec![&later_digest, &earlier_digest]);
         assert_eq!(ordered[0].abstract_population().node, "z");
         assert_eq!(ordered[1].abstract_population().node, "a");
+    }
+
+    fn effective(name: &str) -> EffectiveId {
+        EffectiveId::new(
+            None,
+            filament_exact::OriginalDeclarationKey::new("test", name.to_owned()),
+        )
+    }
+
+    /// The values' debug forms equal: `Value` has no equality of its own.
+    fn same(found: &Value, expected: &Value) {
+        assert_eq!(format!("{found:?}"), format!("{expected:?}"));
+    }
+
+    fn reference_to(type_name: &str, key: &str) -> ObjectReference {
+        let root = filament_exact::NodeKey::new(
+            "test",
+            vec![filament_exact::PathSegment::Text("Root".to_owned())],
+            0,
+        )
+        .expect("a valid structural key");
+        ObjectReference::new(
+            filament_exact::UniverseId::new(root),
+            effective(type_name),
+            filament_exact::ObjectId::new(key).expect("a key"),
+        )
+    }
+
+    /// Lifts `Ring` references to `Queue` references with the same key; a
+    /// `Sub` reference is unmapped.
+    fn ring_to_queue(
+        found: &ObjectReference,
+        _declared: Option<&EffectiveId>,
+    ) -> Result<ObjectReference, Lifting> {
+        if *found.object_type() == effective("Ring") {
+            Ok(reference_to("Queue", found.object().as_str()))
+        } else {
+            Err(Lifting::Unmapped(DeclarationKey {
+                package: "test".to_owned(),
+                node: "Sub".to_owned(),
+            }))
+        }
+    }
+
+    fn bound() -> Option<filament_exact::CardinalityBound> {
+        Some(filament_exact::CardinalityBound::new(0, 2).expect("a bound"))
+    }
+
+    fn sequence_of(element: ValueType) -> filament_exact::CollectionType {
+        filament_exact::CollectionType::new(
+            filament_exact::CollectionKind::Sequence,
+            element,
+            bound(),
+        )
+    }
+
+    fn option_of(reference: &str, type_name: &str) -> Value {
+        filament_exact::OptionValue::from_admitted(
+            ValueType::Reference(effective(type_name)),
+            Some(Value::Reference(reference_to(type_name, reference))),
+        )
+    }
+
+    /// FR-140-AC-16 (TC-1086 step 10): a `some` payload is lifted, a `none`
+    /// stays `none`, and an unmapped payload is `Unmapped`.
+    #[trace("TC-1086", "FR-140-AC-16")]
+    #[test]
+    fn an_option_payload_is_lifted_and_none_stays_none() {
+        let declared = ValueType::option(ValueType::Reference(effective("Queue")));
+        let lifted = lift_nested(&mut ring_to_queue, &declared, option_of("a", "Ring"))
+            .expect("the payload lifts");
+        same(&lifted, &option_of("a", "Queue"));
+
+        let none = filament_exact::OptionValue::none(ValueType::Reference(effective("Ring")));
+        let kept = lift_nested(&mut ring_to_queue, &declared, none).expect("none lifts");
+        same(
+            &kept,
+            &filament_exact::OptionValue::from_admitted(
+                ValueType::Reference(effective("Queue")),
+                None,
+            ),
+        );
+
+        let unmapped = lift_nested(&mut ring_to_queue, &declared, option_of("a", "Sub"));
+        assert!(matches!(unmapped, Err(Lifting::Unmapped(found)) if found.node == "Sub"));
+    }
+
+    /// FR-140-AC-16 (TC-1086 step 10): a map keeps its entry order and the
+    /// keys' identities while its values and its reference keys are lifted,
+    /// and an unmapped value or key is `Unmapped`.
+    #[trace("TC-1086", "FR-140-AC-16")]
+    #[test]
+    fn a_map_lifts_its_values_and_reference_keys_and_keeps_its_order() {
+        let map = |key: &str, value: &str, entries: &[(&str, &str)]| {
+            let map_type = filament_exact::MapType::new(
+                ValueType::Reference(effective(key)),
+                ValueType::Reference(effective(value)),
+                bound(),
+            )
+            .expect("a leaf key");
+            let entries = entries
+                .iter()
+                .map(|(entry_key, entry_value)| {
+                    (
+                        Value::Reference(reference_to(key, entry_key)),
+                        Value::Reference(reference_to(value, entry_value)),
+                    )
+                })
+                .collect();
+            filament_exact::from_admitted_map(map_type, entries).expect("a map")
+        };
+        let declared = ValueType::Map(std::sync::Arc::new(
+            filament_exact::MapType::new(
+                ValueType::Reference(effective("Queue")),
+                ValueType::Reference(effective("Queue")),
+                bound(),
+            )
+            .expect("a leaf key"),
+        ));
+        let lifted = lift_nested(
+            &mut ring_to_queue,
+            &declared,
+            map("Ring", "Ring", &[("a", "b"), ("c", "a")]),
+        )
+        .expect("the map lifts");
+        same(&lifted, &map("Queue", "Queue", &[("a", "b"), ("c", "a")]));
+
+        let value_unmapped = lift_nested(
+            &mut ring_to_queue,
+            &declared,
+            map("Ring", "Sub", &[("a", "b")]),
+        );
+        assert!(matches!(value_unmapped, Err(Lifting::Unmapped(_))));
+        let key_unmapped = lift_nested(
+            &mut ring_to_queue,
+            &declared,
+            map("Sub", "Ring", &[("a", "b")]),
+        );
+        assert!(matches!(key_unmapped, Err(Lifting::Unmapped(_))));
+    }
+
+    /// FR-135-AC-6 "at every depth" (TC-1086 step 10): a `Sequence<Option<
+    /// Reference<Ring>>>` lifts through both carriers, in order.
+    #[trace("TC-1086", "FR-140-AC-16")]
+    #[test]
+    fn a_reference_two_carriers_deep_is_lifted_in_order() {
+        let sequence = |type_name: &str| {
+            filament_exact::from_admitted(
+                sequence_of(ValueType::option(ValueType::Reference(effective(
+                    type_name,
+                )))),
+                vec![
+                    option_of("b", type_name),
+                    filament_exact::OptionValue::none(ValueType::Reference(effective(type_name))),
+                    option_of("a", type_name),
+                ],
+            )
+        };
+        let declared = ValueType::collection(sequence_of(ValueType::option(ValueType::Reference(
+            effective("Queue"),
+        ))));
+        let lifted = lift_nested(&mut ring_to_queue, &declared, sequence("Ring"))
+            .expect("the sequence lifts");
+        same(&lifted, &sequence("Queue"));
+    }
+
+    /// FR-141-AC-13 (TC-546 step 8): the argument of an abstract-operation row
+    /// carries no declared type, so a `Sequence<Option<Reference<Ring>>>` is
+    /// read as the `Sequence<Option<Reference<Queue>>>` its own type lifts to,
+    /// each element lifted and the type replaced; a leaf value is unchanged.
+    #[trace("TC-546", "FR-141-AC-13")]
+    #[test]
+    fn an_argument_without_a_declared_type_is_lifted_by_its_own_type() {
+        let sequence = |type_name: &str| {
+            filament_exact::from_admitted(
+                sequence_of(ValueType::option(ValueType::Reference(effective(
+                    type_name,
+                )))),
+                vec![option_of("b", type_name), option_of("a", type_name)],
+            )
+        };
+        let mut types = |concrete: &EffectiveId| {
+            if *concrete == effective("Ring") {
+                Ok(effective("Queue"))
+            } else {
+                Err(Lifting::Fault)
+            }
+        };
+        let lifted =
+            lift_own(&mut ring_to_queue, &mut types, sequence("Ring")).expect("the argument lifts");
+        same(&lifted, &sequence("Queue"));
+        let kept = lift_own(&mut ring_to_queue, &mut types, Value::Boolean(true));
+        assert!(matches!(kept, Ok(Value::Boolean(true))));
+        let unmapped = lift_own(&mut ring_to_queue, &mut types, sequence("Sub"));
+        assert!(matches!(unmapped, Err(Lifting::Unmapped(_))));
+    }
+
+    /// FR-140-AC-17 (TC-1086 step 11): of the object rows that name a concrete
+    /// type as their source (`Queue` and `Cell` from `Call`), the row whose
+    /// abstract type conforms to the declared type, the most specific one;
+    /// none, or several with no most specific, or no declared type, is
+    /// ambiguous, and a lone row is the row.
+    #[trace("TC-1086", "FR-140-AC-17")]
+    #[test]
+    fn the_declared_type_picks_among_rows_from_one_concrete_type() {
+        let (queue, cell) = (effective("Queue"), effective("Cell"));
+        let (parent, other, special) = (
+            effective("Parent"),
+            effective("Other"),
+            effective("Special"),
+        );
+        // `Cell` and `Queue` both specialize `Parent`, and `Special`
+        // specializes `Cell`.
+        let conforms = |sub: &EffectiveId, sup: &EffectiveId| {
+            sub == sup
+                || (*sup == parent && (*sub == cell || *sub == queue || *sub == special))
+                || (*sub == special && *sup == cell)
+        };
+        let rows = [
+            ("queue row", Some(queue.clone())),
+            ("cell row", Some(cell.clone())),
+        ];
+        assert_eq!(choose_row(&rows, Some(&cell), &conforms), Ok("cell row"));
+        assert_eq!(choose_row(&rows, Some(&queue), &conforms), Ok("queue row"));
+        assert_eq!(
+            choose_row(&rows, Some(&parent), &conforms),
+            Err(RowChoice::Ambiguous)
+        );
+        assert_eq!(
+            choose_row(&rows, Some(&other), &conforms),
+            Err(RowChoice::Ambiguous)
+        );
+        assert_eq!(
+            choose_row(&rows, None, &conforms),
+            Err(RowChoice::Ambiguous)
+        );
+        // A supertype of exactly one candidate picks it.
+        let supertype = [
+            ("queue row", Some(queue.clone())),
+            ("special row", Some(special.clone())),
+        ];
+        assert_eq!(
+            choose_row(&supertype, Some(&cell), &conforms),
+            Ok("special row")
+        );
+        // Of two conforming candidates the most specific wins.
+        let nested = [
+            ("cell row", Some(cell.clone())),
+            ("special row", Some(special.clone())),
+        ];
+        assert_eq!(
+            choose_row(&nested, Some(&parent), &conforms),
+            Ok("special row")
+        );
+        let lone = [("queue row", Some(queue.clone()))];
+        assert_eq!(choose_row(&lone, Some(&other), &conforms), Ok("queue row"));
+        let none: [(&str, Option<EffectiveId>); 0] = [];
+        assert_eq!(
+            choose_row(&none, Some(&cell), &conforms),
+            Err(RowChoice::NoRow)
+        );
+    }
+
+    #[trace("TC-1086", "FR-140-AC-17")]
+    #[test]
+    fn incomparable_conforming_rows_are_ambiguous() {
+        let (queue, cell, parent) = (effective("Queue"), effective("Cell"), effective("Parent"));
+        let conforms = |sub: &EffectiveId, sup: &EffectiveId| {
+            sub == sup || (*sup == parent && (*sub == queue || *sub == cell))
+        };
+        let rows = [
+            ("queue row", Some(queue.clone())),
+            ("cell row", Some(cell.clone())),
+        ];
+
+        assert_eq!(
+            choose_row(&rows, Some(&parent), &conforms),
+            Err(RowChoice::Ambiguous)
+        );
+    }
+
+    /// FR-140-AC-16: two concrete map keys that lift to one abstract key are
+    /// a fault, not a mapped map.
+    #[trace("TC-1086", "FR-140-AC-16")]
+    #[test]
+    fn two_keys_lifting_to_one_abstract_key_are_a_fault() {
+        let map_type = |type_name: &str| {
+            filament_exact::MapType::new(
+                ValueType::Reference(effective(type_name)),
+                ValueType::Boolean,
+                bound(),
+            )
+            .expect("a leaf key")
+        };
+        let concrete = filament_exact::from_admitted_map(
+            map_type("Ring"),
+            vec![
+                (
+                    Value::Reference(reference_to("Ring", "a")),
+                    Value::Boolean(true),
+                ),
+                (
+                    Value::Reference(reference_to("Ring", "b")),
+                    Value::Boolean(false),
+                ),
+            ],
+        )
+        .expect("a map");
+        let mut to_one_key =
+            |_: &ObjectReference, _: Option<&EffectiveId>| -> Result<ObjectReference, Lifting> {
+                Ok(reference_to("Queue", "k"))
+            };
+        let lifted = lift_nested(
+            &mut to_one_key,
+            &ValueType::Map(std::sync::Arc::new(map_type("Queue"))),
+            concrete,
+        );
+        assert!(matches!(lifted, Err(Lifting::Fault)));
+    }
+
+    /// FR-140: a value whose shape is not the declared type's is a fault, as
+    /// is an option value declared as a leaf type; a leaf value is unchanged.
+    #[trace("TC-1086", "FR-140-AC-16")]
+    #[test]
+    fn a_value_of_another_shape_than_its_declared_type_is_a_fault() {
+        let lifted = lift_nested(
+            &mut ring_to_queue,
+            &ValueType::Boolean,
+            option_of("a", "Ring"),
+        );
+        assert!(matches!(lifted, Err(Lifting::Fault)));
+        let kept = lift_nested(
+            &mut ring_to_queue,
+            &ValueType::Boolean,
+            Value::Boolean(true),
+        );
+        assert!(matches!(kept, Ok(Value::Boolean(true))));
     }
 }

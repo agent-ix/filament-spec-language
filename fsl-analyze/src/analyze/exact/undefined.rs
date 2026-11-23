@@ -477,6 +477,7 @@ fn materialize_inner(
             path: ProbabilisticCounterexample {
                 item,
                 binding: reference.cloned(),
+                instance: None,
                 initial: initial.clone(),
                 initial_key,
                 scheduler: scheduler

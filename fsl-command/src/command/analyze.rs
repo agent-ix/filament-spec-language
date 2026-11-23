@@ -852,6 +852,7 @@ fn read<'d>(
         output: None,
         handoff: None,
         integer_division: None,
+        call_site: None,
         check_mode: filament_semantic_value::checking::CheckMode::Linked,
     };
     Ok(Readout::Source(
