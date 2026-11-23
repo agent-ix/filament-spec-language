@@ -38,7 +38,7 @@ fn listed() -> Vec<String> {
 }
 
 /// FR-255-AC-3, AC-12: every accepted `--limit` name is listed, every listed
-/// name is accepted at value 0, and the two lists are equal.
+/// name is accepted at a valid value, and the two lists are equal.
 #[test]
 #[trace("FR-255-AC-3", "FR-255-AC-12")]
 fn every_accepted_limit_name_is_listed_and_every_listed_name_is_accepted() {
@@ -52,7 +52,7 @@ fn every_accepted_limit_name_is_listed_and_every_listed_name_is_accepted() {
             .collect::<Vec<_>>()
     );
     for name in &listed {
-        let operand = format!("{name}=0");
+        let operand = format!("{name}=1");
         let parsed = parse_operands([operand.as_str()])
             .unwrap_or_else(|refusal| panic!("{name} is listed but refused: {refusal}"));
         assert_eq!(parsed.len(), 1);
