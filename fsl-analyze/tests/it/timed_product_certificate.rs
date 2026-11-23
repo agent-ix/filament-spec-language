@@ -1586,10 +1586,93 @@ fn settle_with_rational_bits(world: &World, claim: &str, bits: u64) -> AnalyzeRe
     analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
 }
 
-/// FR-281 "Engine refusals": a timed bounded claim whose values outgrow
-/// `max_rational_bits` is `incomplete` naming that limit, not
-/// `unsupported`/`not-yet-implemented`.
-// QSL-2880 changes the expected outcome: a decided interval will then prove with ValueBounds.
+/// FR-203-AC-1: a timed deadline whose exact value outgrows
+/// `max_rational_bits` settles `proved` with `ValueBounds` when the interval
+/// clears the threshold. `Lax`'s value `99/100` is over `>= 0.98`, so its `lower`
+/// document is the claim side and its `upper` document the counterpart, both in
+/// FR-920's profile.
+#[trace("TC-638", "FR-203-AC-1")]
+#[test]
+fn a_timed_deadline_past_the_rational_budget_proves_with_value_bounds() {
+    let world = retx(
+        GUARD,
+        true,
+        "",
+        &deadline("Lax", "under every scheduler", ">= 0.98"),
+    );
+    let record = settle_with_rational_bits(&world, "Lax", 4);
+    let terminal = record.terminal().expect("a terminal record");
+    let TerminalValue::Proved {
+        basis:
+            ProofBasis::ValueBounds {
+                lower,
+                upper,
+                method,
+                entries,
+                ..
+            },
+        certification: fsl_replay::Certification::Certified,
+    } = terminal.value()
+    else {
+        panic!("a decided interval proves: {record:#?}");
+    };
+    assert_eq!(
+        method,
+        &fsl_replay::BoundsMethod::BackwardInduction { precision_bits: 64 }
+    );
+    assert!(lower.value() <= &ratio(99, 100) && &ratio(99, 100) <= upper.value());
+    assert!(lower.value() > &ratio(98, 100));
+    assert_eq!(entries.len(), 1);
+    let kind = |bytes: Option<&[u8]>| {
+        let document: Value =
+            serde_json::from_slice(bytes.expect("the record carries the document"))
+                .expect("a JSON document");
+        assert_eq!(
+            document["objective"]["profile"],
+            "filament.probability-objective/timed-product/v1"
+        );
+        document["kind"].as_str().expect("a kind").to_owned()
+    };
+    assert_eq!(kind(terminal.exact_certificate_document()), "lower");
+    assert_eq!(kind(terminal.exact_counterpart_document()), "upper");
+    // The documents replay under the request's own limits (4 rational bits),
+    // with no scalar bound widened by hand.
+    let request_limits = ExactProbLimits {
+        max_rational_bits: 4,
+        ..ExactProbLimits::default()
+    };
+    let identity = fsl_replay::probabilistic_claim_identity(
+        world
+            .package
+            .graph()
+            .probabilistic_model()
+            .claim("Lax")
+            .expect("the claim checks"),
+    )
+    .expect("an identity");
+    let system = world.system();
+    for bytes in [
+        terminal.exact_certificate_document(),
+        terminal.exact_counterpart_document(),
+    ] {
+        let checked = check_probability_certificate_document(
+            &system,
+            world.package.graph().probabilistic_model().claims(),
+            &identity,
+            bytes.expect("the record carries the document"),
+            fsl_replay::ProbabilityDocumentLimits::for_interval(&request_limits, limits().accounting),
+            &Cancel::new(),
+        );
+        assert!(
+            matches!(checked, Ok(ExactProbabilityCertificateCheck::Accepted(_))),
+            "{checked:?}"
+        );
+    }
+}
+
+/// FR-281 "Engine refusals" and FR-202: `Bounds` intervals "SHALL NOT become a
+/// bounded refutation", so a timed claim whose interval refutes it settles
+/// `incomplete` naming `max_rational_bits`, not `unsupported`/`not-yet-implemented`.
 #[trace("TC-2489", "FR-281-AC-6")]
 #[test]
 fn a_timed_deadline_past_the_rational_budget_settles_incomplete_naming_the_limit() {
@@ -1609,7 +1692,6 @@ fn a_timed_deadline_past_the_rational_budget_settles_incomplete_naming_the_limit
 /// FR-281 "Engine refusals": a timed bound that equals the exact value stays
 /// inside the interval at every precision, which is `incomplete` with the
 /// precision budget, not `unsupported`/`not-yet-implemented`.
-// QSL-2880 may change the expected outcome once ValueBounds production exists.
 #[trace("TC-2489", "FR-281-AC-6")]
 #[test]
 fn a_timed_deadline_at_its_exact_value_past_the_rational_budget_settles_precision_budget() {
