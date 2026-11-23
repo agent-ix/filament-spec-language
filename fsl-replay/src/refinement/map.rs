@@ -1197,6 +1197,25 @@ mod tests {
         );
     }
 
+    #[trace("TC-1086", "FR-140-AC-17")]
+    #[test]
+    fn incomparable_conforming_rows_are_ambiguous() {
+        let (queue, cell, parent) = (
+            effective("Queue"),
+            effective("Cell"),
+            effective("Parent"),
+        );
+        let conforms = |sub: &EffectiveId, sup: &EffectiveId| {
+            sub == sup || (*sup == parent && (*sub == queue || *sub == cell))
+        };
+        let rows = [("queue row", Some(queue)), ("cell row", Some(cell))];
+
+        assert_eq!(
+            choose_row(&rows, Some(&parent), &conforms),
+            Err(RowChoice::Ambiguous)
+        );
+    }
+
     /// FR-140-AC-16: two concrete map keys that lift to one abstract key are
     /// a fault, not a mapped map.
     #[trace("TC-1086", "FR-140-AC-16")]
