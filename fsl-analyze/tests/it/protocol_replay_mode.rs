@@ -813,9 +813,10 @@ fn repeat_recording(
     })
 }
 
-/// An observation at `Flow::Main::Loop::Body::<node>` without an instance.
+/// An observation at `Flow::Main::Loop::Body::<node>`.
 fn looped(kind: &str, node: &str, role: &str, message: &str) -> Value {
     json!({"kind": kind, "node": format!("Flow::Main::Loop::Body::{node}"), "role": role,
+           "instance": "w-1",
            "keys": {"message": message, "delivery": format!("d-{message}")},
            "record": {"ok": true}})
 }
