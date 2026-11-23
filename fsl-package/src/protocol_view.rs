@@ -1873,6 +1873,26 @@ pub fn decision_reads(
     reads_from(&Index::new(package), &choice.node_id, "visible", &visible)
 }
 
+/// The binders the `visible` expressions of the `repeat` control `node` read:
+/// the guard facts a role that sent or received those messages is told (PA-27,
+/// PA-32), as [`decision_reads`] gives for a `choice`.
+///
+/// # Errors
+///
+/// [`ViewRefusal`] as [`control_operation`]; [`ViewRefusal::MalformedMember`]
+/// naming `operator` when the node is no `repeat`;
+/// [`ViewRefusal::MissingMember`] naming `visible` when the node lacks it.
+pub fn repeat_decision_reads(
+    package: &CheckedPackageV2,
+    node: &CheckedSemanticNodeV2,
+) -> Result<BTreeSet<CheckedNodeId>, ViewRefusal> {
+    if control_operation(node)? != ControlOperation::Repeat {
+        return Err(malformed(&node.node_id, "operator"));
+    }
+    let visible = references(node, "visible")?;
+    reads_from(&Index::new(package), &node.node_id, "visible", &visible)
+}
+
 /// Whether the FIFO key of the channel node `channel` reads the message
 /// binder: when it does not, every message of the channel carries an equal
 /// key value.
