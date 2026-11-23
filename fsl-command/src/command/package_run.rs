@@ -1200,6 +1200,7 @@ fn execute_inner(
             &call.function,
             requirements,
             settle,
+            budget,
         )?)
     } else {
         None
@@ -1223,6 +1224,7 @@ fn settle_value_call(
     function: &str,
     requirements: &super::requirements::Requirements,
     settle: &super::settle::Settle<'_>,
+    budget: filament_contract_model::NativeJoinBudget,
 ) -> Result<fsl_analyze::analyze::document::SettledRun> {
     use fsl_analyze::analyze::document::{CallItem, ItemSelection, PackageRun, SubjectSelection};
     use fsl_package::AnalysisView;
@@ -1313,6 +1315,7 @@ fn settle_value_call(
             items: Some(&selections),
             engines: settle.engines,
             limits: fsl_analyze::analyze::AnalyzeLimits::unbounded(),
+            budget,
         },
         function,
         &items,

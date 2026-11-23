@@ -361,25 +361,27 @@ two indices, over one shared set of premise items.
 
 ### Current system behavior
 
-The architecture ruling on QSL-2739 (PR #3287) lands this requirement with
-the following typed results where the system cannot yet deliver an AC. Each
-AC below stays as written and open on QSL-2739.
-
-- **AC-10, `package` handoff.** Today a `package` handoff of a unit that
-  declares compositions is admitted, and the package route reads no
-  composition term's slots or component packages. A request with no `items`
-  is settled whole as unsupported at the request stage, category
+- **An item naming a composition over a `package` handoff.** Over a
+  `package` handoff (FR-850), a request whose `items` name a composition
+  declaration is refused whole at the request stage: category
   `unsupported`, `unsupported_construct`/`not-yet-implemented` naming the
-  `composition` rule, exit 21, with no item. The package carries a composition's
-  declaration name row, so an item naming it is settled the same way naming
-  the `declaration` family. An item whose name stays unresolved after ordinary
-  claim, declaration and model-alias resolution is settled as the
-  `unnamed-claim` family, never as `unknown-claim`. A name an ordinary row
-  carries resolves as usual, a non-claim declaration name is refused as
-  `declaration`, and a derived item
-  whose model name does not match settles `model-alias`. These typed results
-  are public; the source/package parity of AC-10 stays open and is deferred to the
-  package-consumer API lane, which owns the package form.
+  composition-owning-work-permission family (`items[<i>] composition owning
+  execution is pending missing native before-work permission`), exit 21, no
+  item. In a package that declares a composition, an item whose name stays
+  unresolved after ordinary claim, declaration and model-alias resolution is
+  refused the same way naming the `unnamed-claim` family, and is never settled
+  `unknown-claim`. A name an ordinary row carries resolves as usual. A request
+  with no `items` is not refused: its default items settle as AC-10 states.
+- **Native budget of the `package` route.** The `package` route reads a
+  selected composition's admitted facts, and the component package views its
+  premise items run over, under the handoff's native-join budget (FR-531). The
+  views are the ones the handoff's own join authenticated, so no component is
+  joined again. The source route reads the checked declaration and charges no
+  native-join budget for it. When a charge is denied, the `package` request is
+  refused whole with `stage_limit_exceeded`, naming `i2.work_units` or
+  `i2.native_join_storage` for the denied charge, exit 22, no item. The source
+  request over the same unit still writes its items, so the two routes differ
+  only by this typed refusal.
 - **Text mode.** Text rendering of the outcome belongs to the external driver.
   No test in this repository exercises it, and this requirement does not
   weaken the text half of the fixture.
@@ -449,6 +451,3 @@ verdict the criterion names.
   family) and FSpec FR-331 (the `composition` item with `premises` and
   `assumptions`, the `interface-mismatch` counterexample and the
   `provider-answer-unconfirmed` core-guard cause).
-- Remaining work: QSL-2739 (the registered provider path these criteria
-  describe). Source/package parity (AC-10) stays with the package-consumer API
-  lane.
