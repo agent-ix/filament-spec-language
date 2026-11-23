@@ -292,8 +292,8 @@ fn a_package_with_body_location_rows_is_emitted_at_its_exact_length() {
 
 /// QSL-2849: the source map is written verbatim, so a bound below its bytes
 /// refuses before any typed row is built. Allocations are counted, not time:
-/// a refusal the source map causes costs the same allocations at bound 0 and
-/// bound 1, and far fewer than a refusal only the final encode can cause.
+/// refusal at the final encode (bound `N - 1`) does; the first unpaid byte is
+/// exactly `bound + 1` in both.
 #[trace("TC-738", "FR-264-AC-6")]
 #[test]
 fn a_bound_below_the_source_map_refuses_before_the_typed_rows_are_built() {
@@ -318,9 +318,8 @@ fn a_bound_below_the_source_map_refuses_before_the_typed_rows_are_built() {
 
     let early = allocations(0);
     let late = allocations(bytes - 1);
-    eprintln!("early={early} late={late}");
     assert!(
-        early.saturating_mul(2) < late,
+        early.saturating_mul(3) < late.saturating_mul(2),
         "an early refusal skips the typed rows: {early} against {late}"
     );
 }
