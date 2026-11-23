@@ -67,7 +67,7 @@ message never activates and does not count against the claim.
   instances when the claim has one.
 - A start snapshot whose populations admitting `T` hold no object gives no
   instance. FSL SHALL settle the item `inconclusive` with cause
-  `{"kind": "no-instance"}` (FR-127; the outcome document spells every cause under `kind`, FR-291-AC-1 and FR-286), before any state is
+  `{"kind": "no-instance"}` (FR-127; the outcome document spells a cause under `kind`, FR-291-AC-1, while FSpec FR-331's bare `type` is the provider-entry spelling), before any state is
   explored, and SHALL NOT settle it `proved`: a claim about every member of
   an empty population carries no evidence about the model.
 
