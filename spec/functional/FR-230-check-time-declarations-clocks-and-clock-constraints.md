@@ -55,6 +55,8 @@ relationships:
     type: depends_on
   - target: ix://agent-ix/filament-spec-language/FR-391
     type: depends_on
+  - target: ix://agent-ix/filament-exact/FR-415
+    type: references
 ---
 # FR-230: Check a state model's time declaration, clocks, clock constraints, time invariants and urgency
 
@@ -1104,15 +1106,24 @@ what each such position means.
   The same value is carried in a field, a parameter, a result, a record
   component and a collection element, and `Option<Reference<Clock>>` is absent
   or one place id. The domain-package target form of a `reference` whose
-  `target` is `ix://filament/native/Clock` (or an alias of it) is that place id
-  and needs no kernel value form: it is FSpec FR-181's reference value
+  `target` is `ix://filament/native/Clock` (or an alias of it) is that place id.
+  On the wire it is FSpec FR-181's reference value
   `{"type":"reference","universe","object_type","identity"}`, with the
   population's `universe`, `object_type` the effective id of the Clock
   type after alias resolution (so `Reference<A>` and `Reference<Clock>` to one
   place give one triple, and it never has the shape of an object reference to
   the owner) and `identity` the lowercase hex of the id
-  text's UTF-8 bytes (filament-exact's `ObjectReference` takes any nonempty
-  authored identity). A snapshot-supplied `Reference<Clock>` whose identity
+  text's UTF-8 bytes. A snapshot carries it in FR-106's snapshot form
+  `{"reference":{"population":...,"key":...}}`, whose `key` is the id text
+  itself and whose universe is the universe of the named population. Its
+  kernel value is filament-exact's clock-place reference (Exact FR-415). On
+  both routes, FSL SHALL decode either form to a universe and an id text (from
+  the snapshot form: the universe of `population` and the text of `key`; from
+  the FR-181 form: `universe` and the decoded hex of `identity`), construct
+  the value with `ClockPlaceReference::new`, and type it
+  `ValueType::ClockReference`, never an `ObjectReference`. A kernel
+  `PlaceIdNoncanonical` refusal is an identity that does not decode
+  canonically. A snapshot-supplied `Reference<Clock>` whose identity
   does not decode canonically or disagrees with its authenticated outer
   universe/scope SHALL be refused `invalid_runtime_input`/`invalid-value`
   (FR-120 key encoding). A canonical reference in the authenticated scope
@@ -1298,6 +1309,7 @@ declaration and `clock-type` for a `Clock` in a type position. An unqualified
 | FR-230-AC-68 | `function loop using v(c: Clock, n: Integer): Boolean pure decreases(n) { if n = 0 then c <= 3 ms else loop(c, n - 1) }` with `pre L using v on Config::Call::reply { loop(self.x, 3) }` checks, its guard the one atomic constraint `x <= 3 ms`, and no `TimedNotChecked`; the same pre written `{ loop(self.x, self.n) }` refuses `invalid_timed_model`/`clock-read-outside-constraint` at the call naming `loop`, `loop`. The four unfoldings of `loop(self.x, 3)` (`n` 3, 2, 1, 0) are each charged one unit of the checker's work budget as they are read: with the budget set to 3 the fourth unfolding is denied and the unit refuses `stage_limit_exceeded`/`work-budget-exceeded` at the call, and with the budget one unit below the work the admitted check of that unit used the unit refuses `stage_limit_exceeded`/`work-budget-exceeded` where the budget runs out; in both no guard is recorded. | Test (TC-2392) |
 | FR-230-AC-69 | Over `ts: Sequence<Timer>[0, 3]` with `Timer` holding a clock `x` and `ys: Sequence<Clock>[0, 2]`, `pre G using v on Config::ConfigVersion::attemptUpdate { size(self.ts) >= 1 and self.ts[0].x >= 1 ms }` emits one `clock_guard` with one part whose one `clock_constraint` is on the `ts` element clock template `x` with the one slot term `0`, the literal, and no binder; `size(self.ts) >= 1 and size(self.ts[0].ys) >= 2 and self.ts[0].ys[1] >= 1 ms` writes slot terms `0` then `1`; `time invariant B when { size(self.ts) >= 1 } { self.ts[0].x <= 9 ms }` emits one `time_invariant` whose upper bound carries slot term `0` and whose `binders` is empty. None of them leaves an unwritten member or gives `TimedModelNotEmitted`. Each slot keeps its own presence obligation: with no size conjunct the guard refuses `undefined_expression`/`unproved-presence` at `0`, with `size(self.ts) >= 1` alone the two-step guard refuses the same at `1`, and the time invariant with `when { true }` refuses the same at `0`. | Test (TC-3045) |
 | FR-230-AC-70 | Over `ts: Sequence<Timer>[0, 3]`, a domain package that declares the clock bound `x <= 9 ms` on `Timer`'s clock `x` emits one `time_invariant` with the predicate `true`, one place binder named `ts#0` in `binders`, and one upper-bound `clock_constraint` on the `ts` element clock template whose slot term is that binder: the node a source `time invariant All when { true } { forall(e in self.ts: e.x <= 9 ms) }` emits except for the binder name, the binder `ts#0` taking the level the source binder `e` takes. With a second field `ws: Sequence<Holder>[0, 3]`, `Holder` holding `ys: Sequence<Timer>[0, 2]`, the same bound also emits a second `time_invariant` for the clock `x` of each `ys` element, with binders `ws#0` then `ys#1`. Emitting the package twice gives the same node ids. Over `us: Sequence<Timer>` with no declared maximum, `pre F using v on Config::ConfigVersion::attemptUpdate { forall(e in self.us: e.x < 5 ms) }` emits one `clock_guard` with one family part holding the place binder `e`, the `quantifier` binding `each` and one `clock_constraint` whose slot term is `e`; the same with `exists` emits the same part with `quantifier` `some`, so the two guards have different node ids; neither leaves an unwritten member. With `us` holding no element, the `each` guard is enabled and the `some` guard is not; with `us` holding two elements whose clocks read 3 ms and 7 ms, the `each` guard is not enabled and the `some` guard is. Over a bounded `ts`, the AC-55 parts carry no `quantifier` binding and keep their node ids. | Test (TC-3046; FSpec FR-322-AC-479) |
+| FR-230-AC-71 | On both the source and bare checked routes, every admitted or evaluated `Reference<Clock>` value of TC-464 steps 7 and 8 (`r`, `maybe`, `refs` and `ref(self.x)`) is filament-exact's clock-place reference typed `ValueType::ClockReference`, holding the population's universe and the exact `place/v2` text, and is never an `ObjectReference`; an admitted value's text equals the snapshot `key` it came from byte for byte, and re-emitting it gives the same `key` (round trip). A snapshot `key` with one uppercase hex letter, with the prefix `place/v1`, or with a `J` naming a slot where `T` has no collection step refuses `invalid_runtime_input`/`invalid-value` at that reference; a canonical identity whose scope `S` or population `P` belongs to another authenticated declaration refuses `invalid_runtime_input`/`invalid-value`; and a canonical identity for a removed declared place refuses `dangling_reference`/`absent-target-in-complete-population` (FR-106). | Test (TC-3084) |
 
 ## Dependencies
 
