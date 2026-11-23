@@ -14,18 +14,19 @@
 use std::collections::BTreeMap;
 
 use filament_exact::{
-    admit_text, EffectiveId, IllTypedCause, Meter, OptionValue, Outcome, Rational, TextPayload,
-    Value, ValueType,
+    admit_text, Decimal, EffectiveId, EnumMember, IllTypedCause, Meter, OptionValue, Outcome,
+    Rational, TextPayload, Value, ValueType,
 };
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 use fsl_forms::{
-    ExactNumberKind, HistoryLiteralForm, HistoryRowForm, RefinementForm, RefinementRowForm,
+    ExactNumberKind, HistoryLiteralForm, HistoryRowForm, NameForm, RefinementForm,
+    RefinementRowForm, TypeForm, TypeFormHead,
 };
 use fsl_foundation::Span;
 
-use super::{CheckedRow, Checker, RefinementCause, RowContext, UnsupportedFeature};
+use super::{CheckedRow, Checker, RefinementCause, RowContext};
 use crate::check::check::ScopedHistory;
 use crate::check::refusal::CheckCause;
 use crate::check::state_clause::{ClauseDeclarations, ClauseOperation};
@@ -74,12 +75,13 @@ pub(super) struct Header<'f> {
 /// (FR-138 "S3": a bounded value type).
 fn bounded(declared: &ValueType) -> bool {
     match declared {
-        ValueType::Boolean | ValueType::Int(_) | ValueType::Text(_) | ValueType::Rational(_) => {
-            true
-        }
+        ValueType::Boolean
+        | ValueType::Int(_)
+        | ValueType::Text(_)
+        | ValueType::Rational(_)
+        | ValueType::Enum(_)
+        | ValueType::Decimal(_) => true,
         ValueType::Option(payload) => bounded(payload),
-        // Finite, but no FR-181 form keys one in a product state.
-        ValueType::Enum(_) | ValueType::Decimal(_) => false,
         ValueType::Integer
         | ValueType::Float(_)
         | ValueType::Quantity(_)
@@ -98,14 +100,11 @@ fn bounded(declared: &ValueType) -> bool {
     }
 }
 
-/// The kind of finite type `declared` is or wraps whose values FR-181 gives
-/// no typed canonical form, so a product state could not key one.
-fn unkeyable(declared: &ValueType) -> Option<&'static str> {
-    match declared {
-        ValueType::Enum(_) => Some("enum"),
-        ValueType::Decimal(_) => Some("decimal"),
-        ValueType::Option(payload) => unkeyable(payload),
-        _ => None,
+/// The qualified name an enum-typed row is written with, through `Option`.
+fn enum_name(written: &TypeForm) -> Option<&NameForm> {
+    match &written.head {
+        TypeFormHead::Name(name) => Some(name),
+        _ => written.arguments.first().and_then(enum_name),
     }
 }
 
@@ -120,7 +119,6 @@ impl<'c, 'a> Checker<'c, 'a> {
     pub(super) fn history_headers(
         &mut self,
         form: &'c RefinementForm,
-        profile: &str,
     ) -> Vec<Header<'c>> {
         let types = self.types();
         let concrete_types = {
@@ -183,22 +181,11 @@ impl<'c, 'a> Checker<'c, 'a> {
                     continue;
                 }
             };
-            if let Some(subject) = unkeyable(&declared) {
-                self.findings.refuse(
-                    row.ty.span,
-                    RefinementCause::Unsupported {
-                        feature: UnsupportedFeature::HistoryRow,
-                        profile: profile.to_owned(),
-                        subject: Some(subject),
-                    },
-                );
-                continue;
-            }
             if !bounded(&declared) {
                 self.findings.refuse(row.ty.span, mismatch());
                 continue;
             }
-            let initial = match Self::literal(&row.initial, &declared) {
+            let initial = match Self::literal(&row.initial, &declared, Some(&row.ty)) {
                 Ok(initial) if declared.admits(&initial) => initial,
                 Ok(_) => {
                     self.findings.refuse(row.initial_span, mismatch());
@@ -232,8 +219,34 @@ impl<'c, 'a> Checker<'c, 'a> {
     fn literal(
         literal: &HistoryLiteralForm,
         declared: &ValueType,
+        written: Option<&TypeForm>,
     ) -> Result<Value, RefinementCause> {
         match (literal, declared) {
+            (HistoryLiteralForm::Exact(number), ValueType::Decimal(_))
+                if number.kind == ExactNumberKind::Decimal =>
+            {
+                let scale = number
+                    .second
+                    .to_u64()
+                    .and_then(|scale| u32::try_from(scale).ok())
+                    .ok_or_else(mismatch)?;
+                Ok(Value::Decimal(Decimal::new(number.first.clone(), scale)))
+            }
+            (HistoryLiteralForm::EnumMember(name), ValueType::Enum(shape)) => {
+                let (case, owner) = name.segments.split_last().ok_or_else(mismatch)?;
+                let named = written
+                    .and_then(enum_name)
+                    .and_then(|written| written.segments.last());
+                if owner.last() != named {
+                    return Err(mismatch());
+                }
+                let variant = shape
+                    .variants()
+                    .find(|variant| variant.case() == case)
+                    .ok_or_else(mismatch)?;
+                let rank = shape.rank(variant).ok_or_else(mismatch)?;
+                Ok(Value::Enum(EnumMember::new(variant.clone(), rank)))
+            }
             (HistoryLiteralForm::Integer(integer), ValueType::Int(_)) => {
                 Ok(Value::Integer(integer.clone()))
             }
@@ -260,7 +273,7 @@ impl<'c, 'a> Checker<'c, 'a> {
                     .map_err(|_| mismatch())
             }
             (literal, ValueType::Option(payload)) => {
-                let inner = Self::literal(literal, payload)?;
+                let inner = Self::literal(literal, payload, written.and_then(|written| written.arguments.first()))?;
                 OptionValue::present((**payload).clone(), inner).map_err(|_| mismatch())
             }
             _ => Err(mismatch()),
@@ -371,6 +384,7 @@ mod tests {
         let value = Checker::literal(
             &HistoryLiteralForm::Text(literal),
             &ValueType::Text(text_type),
+            None,
         )
         .expect("the literal is a value of its Text type");
         let Value::Text(text) = value else {

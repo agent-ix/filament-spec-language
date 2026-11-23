@@ -967,7 +967,6 @@ impl<'a> Checker<'_, 'a> {
                                 RefinementCause::Unsupported {
                                     feature: UnsupportedFeature::ProtocolStepApplication,
                                     profile: profile.clone(),
-                                    subject: None,
                                 },
                             );
                             continue;
@@ -1009,7 +1008,6 @@ impl<'a> Checker<'_, 'a> {
                                 RefinementCause::Unsupported {
                                     feature: UnsupportedFeature::ProtocolStepApplication,
                                     profile: profile.clone(),
-                                    subject: None,
                                 },
                             );
                             continue;
