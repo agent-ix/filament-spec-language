@@ -36,7 +36,7 @@ fn composite() -> (Emission, Vec<CheckedNodeId>) {
         "dimension Time; unit s : Time = rational(1, 1); unit ms : Time = rational(1, 1000) * s;\n\
          function same using v(a: Quantity<ms>, b: Quantity<ms>): Boolean pure { a = b and convert<Quantity<ms>>(a) = b }",
     );
-    let mut node_ids = node_ids_of(&base);
+    let mut node_ids = typed_node_ids(&base);
     let compound = emitted_quantities(
         "dimension Length; dimension Area = Length;\n\
          unit m : Length = rational(1, 1); unit cm : Length = rational(1, 100) * m;\n\
@@ -50,25 +50,25 @@ fn composite() -> (Emission, Vec<CheckedNodeId>) {
         .extend(compound.equality_producer_identity_rows.iter().cloned());
     base.equality_fact_witness_rows
         .extend(compound.equality_fact_witness_rows.iter().cloned());
-    node_ids.extend(node_ids_of(&compound));
+    node_ids.extend(typed_node_ids(&compound));
     let enums = emitted_enums(UNIT);
     base.selected_model_enum_declaration_rows = enums.selected_model_enum_declaration_rows.clone();
     base.selected_model_enum_member_rows = enums.selected_model_enum_member_rows.clone();
     let (_, source_enums) = emit_from_text(super::source_enum_rows::STATUS);
     base.selected_enum_declaration_rows = source_enums.selected_enum_declaration_rows.clone();
     base.selected_enum_member_rows = source_enums.selected_enum_member_rows.clone();
-    node_ids.extend(node_ids_of(&source_enums));
+    node_ids.extend(typed_node_ids(&source_enums));
     let (_, source_unions) = emit_from_text(super::source_union_rows::SHAPE);
     base.selected_source_union_rows = source_unions.selected_source_union_rows.clone();
     let (_, source_records) = emit_from_text(super::source_record_rows::RECORDS);
     base.selected_source_record_rows = source_records.selected_source_record_rows.clone();
-    node_ids.extend(node_ids_of(&source_records));
-    node_ids.extend(node_ids_of(&source_unions));
+    node_ids.extend(typed_node_ids(&source_records));
+    node_ids.extend(typed_node_ids(&source_unions));
     base.equality_producer_identity_rows
         .extend(enums.equality_producer_identity_rows.iter().cloned());
     base.equality_fact_witness_rows
         .extend(enums.equality_fact_witness_rows.iter().cloned());
-    node_ids.extend(node_ids_of(&enums));
+    node_ids.extend(typed_node_ids(&enums));
     let id = |name: &str| CheckedNodeId {
         package: "p".into(),
         path: vec![filament_contract_model::CheckedNodePathSegment::Name(
@@ -171,14 +171,6 @@ fn composite() -> (Emission, Vec<CheckedNodeId>) {
         }],
     };
     (base, node_ids)
-}
-
-/// The ids of every node `emission` writes, read back from its bytes.
-fn node_ids_of(emission: &Emission) -> Vec<CheckedNodeId> {
-    typed_nodes(emission)
-        .into_iter()
-        .map(|node| node.node_id)
-        .collect()
 }
 
 /// The renames of every node id in `node_ids` (the nodes of the graphs merged
@@ -660,8 +652,8 @@ fn the_writers_renames_reach_the_rows_it_carries() {
         Some(bodies),
         "the plan writer carries the operation bodies"
     );
-    let after_nodes = typed_nodes(&rooted);
-    let after: Vec<&CheckedNodeId> = after_nodes.iter().map(|node| &node.node_id).collect();
+    let after_ids = typed_node_ids(&rooted);
+    let after: Vec<&CheckedNodeId> = after_ids.iter().collect();
     let carried: Vec<&CheckedNodeId> = rooted.omitted().iter().map(|row| &row.node).collect();
     assert_eq!(carried.len(), 5);
     for (carried, before) in carried

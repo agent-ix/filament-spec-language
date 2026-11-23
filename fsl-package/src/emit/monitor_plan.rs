@@ -1356,6 +1356,15 @@ fn order_dependencies(nodes: &mut [CheckedSemanticNodeV2]) -> Result<(), EmitRef
 }
 
 /// The shared tail: index the graph, encode and wrap the bytes.
+#[cfg(test)]
+thread_local! {
+    /// The typed nodes, with document-held operand indices, of the last plan
+    /// root this thread wrote. An [`Emission`] does not retain its typed nodes,
+    /// and IR refuses some writer fixtures' bytes, so tests read them here.
+    pub(super) static WRITTEN_NODES: std::cell::RefCell<Vec<CheckedSemanticNodeV2>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
 pub(super) fn finish(
     base: &CheckedPackageV2,
     retained: &Emission,
@@ -1459,6 +1468,8 @@ pub(super) fn finish(
     })?;
     let retained_nodes = super::RetainedNodes::of(&semantic_graph);
     let nodes = super::document_nodes(semantic_graph)?;
+    #[cfg(test)]
+    WRITTEN_NODES.with(|written| *written.borrow_mut() = nodes.clone());
     let mut rows = carry_rows(retained, changes);
     follow_final_bindings(&mut rows.selected_source_record_rows, &nodes)?;
     follow_final_positions(&mut rows.selected_source_tuple_rows, &nodes)?;

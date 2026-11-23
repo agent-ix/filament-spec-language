@@ -349,14 +349,30 @@ pub(super) fn raw_wire(emission: &Emission) -> Value {
     serde_json::from_slice(emission.package.bytes()).expect("the wire is JSON")
 }
 
-/// The emitted graph's typed nodes read back from the bytes, each operand slot
-/// resolved to its document index: the nodes the bytes were encoded from, for
-/// every fixture whose bodies serde decodes (an emission does not retain them).
+/// The emitted graph's typed nodes as IR's reader admits them from the bytes,
+/// each node-held operand resolved to its document index: the nodes the bytes
+/// were encoded from (an emission does not retain them).
 pub(crate) fn typed_nodes(emission: &Emission) -> Vec<CheckedSemanticNodeV2> {
-    let graph: CheckedSemanticGraphV2 =
-        serde_json::from_value(raw_wire(emission)["semantic_graph"].clone())
-            .expect("the emitted graph decodes");
-    document_nodes(graph).expect("every operand slot names a row entry")
+    match filament_contract_model::CheckedPackageV2::read(
+        emission.package.bytes(),
+        filament_contract_model::CheckedPackageReadLimits::bounded(),
+        emission.evidence(),
+    ) {
+        filament_contract_model::CheckedPackageV2ReadResult::Admitted(package) => {
+            package.resolved_graph().nodes.clone()
+        }
+        other => panic!("IR admits the emitted package: {other:?}"),
+    }
+}
+
+/// The id of every node the emitted bytes write, in graph order, each operand
+/// slot resolved to its document index. It reads only the ids, so it serves a
+/// writer fixture whose bytes IR refuses.
+pub(crate) fn typed_node_ids(emission: &Emission) -> Vec<CheckedNodeId> {
+    nodes(&wire(emission))
+        .iter()
+        .map(|node| serde_json::from_value(node["node_id"].clone()).expect("a node id"))
+        .collect()
 }
 
 #[trace("FSpec-TC-233", "FSpec-FR-322-AC-280", "TC-416", "FR-093-AC-9")]

@@ -430,8 +430,14 @@ function fromRush using v(e: M::RushOrderPlaced): Integer pure {{ occurredAt(e) 
     // This writer fixture exercises final carry and rename. Its separate
     // monitor-entry ABI is not a native identity-admission oracle; genuine
     // admitted identity rows are projected in the combined fixture above.
-    let rooted_nodes = typed_nodes(&rooted);
-    let base_nodes = typed_nodes(&base);
+    let rooted_nodes =
+        crate::emit::monitor_plan::WRITTEN_NODES.with(|written| written.borrow().clone());
+    let base_nodes = emitted_document_nodes(
+        &checked,
+        |location| checked.graph().region(location),
+        ceiling(),
+    )
+    .expect("original emission");
     let expected_declarations: Vec<usize> = rooted
         .selected_exact_declaration_rows()
         .iter()
