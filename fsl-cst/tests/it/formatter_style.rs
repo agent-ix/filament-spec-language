@@ -220,7 +220,7 @@ fn an_empty_behaviours_parameter_list_prints_canonically() {
     );
     let out = formatted(&text);
     let expected = format!(
-        "{}hyper Whole using inf over behaviours () forall trace a of V forall trace b of V {{ always holds(true) }}\n",
+        "{}hyper Whole using inf over behaviours () forall trace a of V forall trace b of V {{\n  always holds(true)\n}}\n",
         header("filament.temporal.infinite-trace/v1")
     );
     assert_eq!(out, expected);
