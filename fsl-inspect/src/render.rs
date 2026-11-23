@@ -9,7 +9,7 @@ use fsl_foundation::{
     diagnostic::{LimitExceeded, StageFailure, Staged},
     setting::Setting,
     source::{
-        provenance::{PackageSourceMap, RawSourceRef, SourceRegion},
+        provenance::{OccurrenceKey, PackageSourceMap, RawSourceRef, SourceRegion},
         Source,
     },
 };
@@ -145,12 +145,6 @@ impl RenderSources {
             sources: retained,
             source_map: None,
         }
-    }
-
-    /// Retain the admitted package's source correspondence for text witnesses.
-    pub fn with_emission(mut self, emission: &fsl_package::Emission) -> Self {
-        self.source_map = Some(emission.source_map_shared());
-        self
     }
 
     /// Retain a shared admitted package source map for text witnesses.
@@ -502,7 +496,9 @@ fn outcome_text(
                 .get("witness")
                 .filter(|witness| !witness.is_null())
             {
-                writer.unit(|| format!("{}\n", witness_line(witness, sources)))?;
+                if let Some(line) = witness_line(witness, sources) {
+                    writer.unit(|| format!("{line}\n"))?;
+                }
             }
         }
     }
@@ -540,38 +536,39 @@ fn outcome_text(
     Ok(())
 }
 
-fn witness_line(witness: &serde_json::Value, sources: &RenderSources) -> String {
-    let Some(operands) = witness
+/// The witness line of a refuted item: each operand value beside the source
+/// spelling of the expression that produced it. A witness without ordered
+/// operands (a quantifier witness) gets no line.
+fn witness_line(witness: &serde_json::Value, sources: &RenderSources) -> Option<String> {
+    let operands = witness
         .get("operands")
         .and_then(serde_json::Value::as_array)
-    else {
-        return format!("  witness: {}", canonical_json(witness));
-    };
-    let names = witness_operand_names(witness, sources);
+        .filter(|operands| !operands.is_empty())?;
+    let mut names = witness_operand_names(witness, sources);
+    // Names are paired with values by position, so a count mismatch means the
+    // map describes some other shape: no operand is named.
+    if names.len() != operands.len() {
+        names = Vec::new();
+    }
     let rendered = operands
         .iter()
         .take(8)
         .enumerate()
         .map(|(index, value)| {
-            let fallback;
-            let name = match index {
-                0 => names[0].as_deref().unwrap_or("operand 1"),
-                1 => names[1].as_deref().unwrap_or("operand 2"),
-                _ => {
-                    fallback = format!("operand {}", index + 1);
-                    &fallback
-                }
-            };
+            let name = names
+                .get(index)
+                .and_then(Option::as_deref)
+                .map_or_else(|| format!("operand {}", index + 1), str::to_owned);
             format!("{name} = {}", witness_value_text(value))
         })
         .collect::<Vec<_>>()
         .join(", ");
     let omitted = operands.len().saturating_sub(8);
-    if omitted == 0 {
+    Some(if omitted == 0 {
         format!("  witness: {rendered}")
     } else {
         format!("  witness: {rendered}, ... ({omitted} more)")
-    }
+    })
 }
 
 fn witness_value_text(value: &serde_json::Value) -> String {
@@ -583,29 +580,42 @@ fn witness_value_text(value: &serde_json::Value) -> String {
         .map_or_else(|| canonical_json(value), canonical_json)
 }
 
+/// The source spelling of each operand of the deciding comparison, in operand
+/// order; `None` for an operand whose spelling is not certain. Empty when the
+/// comparison's shape or the source map is unavailable.
 fn witness_operand_names(
     witness: &serde_json::Value,
     sources: &RenderSources,
-) -> [Option<String>; 2] {
-    let unavailable = || [None, None];
+) -> Vec<Option<String>> {
     let Some(source_map) = sources.source_map.as_ref() else {
-        return unavailable();
+        return Vec::new();
     };
-    let Some(node_text) = witness
-        .get("deciding_comparison")
-        .and_then(|comparison| comparison.get("node_id"))
-        .and_then(serde_json::Value::as_str)
-    else {
-        return unavailable();
+    let Some(deciding) = witness.get("deciding_comparison") else {
+        return Vec::new();
+    };
+    let Some(node_text) = deciding.get("node_id").and_then(serde_json::Value::as_str) else {
+        return Vec::new();
     };
     let Ok(comparison) = fsl_foundation::node_wire::node_key_from_text(node_text) else {
-        return unavailable();
+        return Vec::new();
+    };
+    // The comparison's own regions bound where an operand's spelling may be
+    // read from, when the map knows them.
+    let bound = match (
+        deciding.get("role").and_then(serde_json::Value::as_str),
+        deciding.get("ordinal").and_then(serde_json::Value::as_u64),
+    ) {
+        (Some(role), Some(ordinal)) => source_map.regions(&OccurrenceKey::new(
+            comparison.clone(),
+            filament_exact::Origin::new(filament_exact::Role::new(role), ordinal),
+        )),
+        _ => None,
     };
     let mut segments = comparison.path().into_iter();
     if !matches!(segments.next(), Some(filament_exact::PathSegment::Text(text)) if text == "expression")
         || !matches!(segments.next(), Some(filament_exact::PathSegment::Text(text)) if text == "binary")
     {
-        return unavailable();
+        return Vec::new();
     }
     let mut child_nodes = Vec::new();
     for segment in segments {
@@ -617,26 +627,30 @@ fn witness_operand_names(
             filament_exact::PathSegment::Text(_) => {}
         }
     }
-    let expression_nodes: Vec<_> = child_nodes
+    let expression_count = child_nodes
         .iter()
         .filter(|node| is_expression_node(node))
-        .cloned()
-        .collect();
-    let operands = if expression_nodes.len() == 2 {
-        expression_nodes.into_iter().map(Some).collect::<Vec<_>>()
-    } else if expression_nodes.len() == 1 && child_nodes.len() == 2 {
+        .count();
+    let operands: Vec<Option<filament_exact::NodeKey>> = if expression_count == 2 {
+        child_nodes
+            .into_iter()
+            .filter(is_expression_node)
+            .map(Some)
+            .collect()
+    } else if expression_count == 1 && child_nodes.len() == 2 {
         child_nodes
             .into_iter()
             .map(|node| is_expression_node(&node).then_some(node))
             .collect()
     } else {
-        return unavailable();
+        return Vec::new();
     };
-    let mut operands = operands.into_iter();
-    [operands.next(), operands.next()].map(|node| {
-        node.flatten()
-            .and_then(|node| source_spelling(source_map, &node, &sources.sources))
-    })
+    operands
+        .into_iter()
+        .map(|node| {
+            node.and_then(|node| source_spelling(source_map, &node, bound, &sources.sources))
+        })
+        .collect()
 }
 
 fn is_expression_node(node: &filament_exact::NodeKey) -> bool {
@@ -646,44 +660,48 @@ fn is_expression_node(node: &filament_exact::NodeKey) -> bool {
     )
 }
 
+/// The one spelling every occurrence of `node` agrees on, or `None` on any
+/// doubt: no occurrence, differing spellings, or a region whose source is not
+/// among `sources` or whose bytes cannot be read as text. With `bound` known,
+/// only occurrences inside one of its regions count.
 fn source_spelling(
     source_map: &PackageSourceMap,
     node: &filament_exact::NodeKey,
+    bound: Option<&[SourceRegion]>,
     sources: &[Source],
 ) -> Option<String> {
     let mut spelling: Option<String> = None;
     for (_, regions) in source_map.occurrences(node) {
         for region in regions {
-            let Some(source) = sources
-                .iter()
-                .find(|source| source.reference() == region.source())
-            else {
-                continue;
-            };
-            let (Ok(start), Ok(end)) = (
-                usize::try_from(region.start()),
-                usize::try_from(region.end()),
-            ) else {
-                continue;
-            };
-            if let Some(region_spelling) = source.text().get(start..end) {
-                let region_spelling = region_spelling.trim();
-                if !region_spelling.is_empty() {
-                    let region_spelling = truncate_spelling(region_spelling);
-                    if spelling
-                        .as_ref()
-                        .is_some_and(|existing| existing != &region_spelling)
-                    {
-                        return None;
-                    }
-                    spelling = Some(region_spelling);
+            if let Some(bound) = bound {
+                if !bound.iter().any(|outer| {
+                    outer.source() == region.source()
+                        && outer.start() <= region.start()
+                        && region.end() <= outer.end()
+                }) {
+                    continue;
                 }
             }
+            let source = sources
+                .iter()
+                .find(|source| source.reference() == region.source())?;
+            let start = usize::try_from(region.start()).ok()?;
+            let end = usize::try_from(region.end()).ok()?;
+            let text = source.text().get(start..end)?;
+            let region_spelling =
+                truncate_spelling(&text.split_whitespace().collect::<Vec<_>>().join(" "));
+            if region_spelling.is_empty()
+                || spelling.as_ref().is_some_and(|s| s != &region_spelling)
+            {
+                return None;
+            }
+            spelling = Some(region_spelling);
         }
     }
     spelling
 }
 
+/// Cap a spelling at 60 characters, marking the cut.
 fn truncate_spelling(spelling: &str) -> String {
     let mut chars = spelling.chars();
     let prefix: String = chars.by_ref().take(60).collect();
@@ -2729,8 +2747,8 @@ mod tests {
         });
 
         assert_eq!(
-            witness_line(&witness, &sources),
-            "  witness: self.charged = 4000, self.total = 4200"
+            witness_line(&witness, &sources).as_deref(),
+            Some("  witness: self.charged = 4000, self.total = 4200")
         );
 
         let literal_comparison = node(
@@ -2755,8 +2773,8 @@ mod tests {
             ]
         });
         assert_eq!(
-            witness_line(&literal_witness, &sources),
-            "  witness: self.charged = 4000, operand 2 = 7"
+            witness_line(&literal_witness, &sources).as_deref(),
+            Some("  witness: self.charged = 4000, operand 2 = 7")
         );
 
         let long = "self.".to_owned() + &"a".repeat(61);
@@ -2769,14 +2787,14 @@ mod tests {
                 .collect::<Vec<_>>()
         });
         assert_eq!(
-            witness_line(&many_operands, &RenderSources::from_sources([])),
-            "  witness: operand 1 = 0, operand 2 = 1, operand 3 = 2, operand 4 = 3, operand 5 = 4, operand 6 = 5, operand 7 = 6, operand 8 = 7, ... (2 more)"
+            witness_line(&many_operands, &RenderSources::from_sources([])).as_deref(),
+            Some("  witness: operand 1 = 0, operand 2 = 1, operand 3 = 2, operand 4 = 3, operand 5 = 4, operand 6 = 5, operand 7 = 6, operand 8 = 7, ... (2 more)")
         );
 
         let without_map = RenderSources::from_sources(Vec::new());
         assert_eq!(
-            witness_line(&witness, &without_map),
-            "  witness: operand 1 = 4000, operand 2 = 4200"
+            witness_line(&witness, &without_map).as_deref(),
+            Some("  witness: operand 1 = 4000, operand 2 = 4200")
         );
 
         let partial_map = PackageSourceMap::from_entries([(
@@ -2789,8 +2807,220 @@ mod tests {
             source_map: Some(Arc::new(partial_map)),
         };
         assert_eq!(
-            witness_line(&witness, &partial_sources),
-            "  witness: self.charged = 4000, operand 2 = 4200"
+            witness_line(&witness, &partial_sources).as_deref(),
+            Some("  witness: self.charged = 4000, operand 2 = 4200")
+        );
+    }
+
+    /// Fixture for witness naming: a comparison node over `children` (each an
+    /// expression node, ordinal = position) with a source map built from
+    /// `entries` (node ordinal, occurrence ordinal, start, end) over `text`.
+    struct WitnessFixture {
+        witness: serde_json::Value,
+        sources: RenderSources,
+    }
+
+    fn witness_fixture(
+        text: &str,
+        child_count: usize,
+        entries: &[(usize, u64, u64, u64)],
+        comparison_region: Option<(u64, u64)>,
+        operand_count: usize,
+    ) -> WitnessFixture {
+        use fsl_foundation::source::provenance::OccurrenceKey;
+
+        let source = source_under("fixture", "rules/fixture.fsl", text);
+        let region = |start: u64, end: u64| {
+            SourceRegion::new(source.reference().clone(), start, end).expect("region is ordered")
+        };
+        let key = |path: Vec<filament_exact::PathSegment>, ordinal| {
+            filament_exact::NodeKey::new("fixture", path, ordinal).expect("fixture key is valid")
+        };
+        let text_segment = |text: &str| filament_exact::PathSegment::Text(text.to_owned());
+        let children: Vec<_> = (0..child_count)
+            .map(|ordinal| {
+                key(
+                    vec![text_segment("expression"), text_segment("query")],
+                    ordinal as u64,
+                )
+            })
+            .collect();
+        let mut path = vec![text_segment("expression"), text_segment("binary")];
+        path.extend(
+            children
+                .iter()
+                .cloned()
+                .map(filament_exact::PathSegment::Node),
+        );
+        path.push(text_segment("filament.op.integer.eq"));
+        let comparison = key(path, 0);
+        let occurrence = |node: filament_exact::NodeKey, ordinal| {
+            OccurrenceKey::new(
+                node,
+                filament_exact::Origin::new(filament_exact::Role::new("expression"), ordinal),
+            )
+        };
+        let mut map_entries: Vec<(OccurrenceKey, Vec<SourceRegion>)> = entries
+            .iter()
+            .map(|&(child, ordinal, start, end)| {
+                (
+                    occurrence(children[child].clone(), ordinal),
+                    vec![region(start, end)],
+                )
+            })
+            .collect();
+        if let Some((start, end)) = comparison_region {
+            map_entries.push((occurrence(comparison.clone(), 0), vec![region(start, end)]));
+        }
+        let map = PackageSourceMap::from_entries(map_entries).expect("fixture map is valid");
+        let witness = serde_json::json!({
+            "deciding_comparison": {
+                "node_id": fsl_foundation::node_wire::node_key_to_text(&comparison)
+                    .expect("comparison encodes"),
+                "role": "expression",
+                "ordinal": 0
+            },
+            "operands": (0..operand_count)
+                .map(|value| serde_json::json!({"kind": "integer", "decimal": value.to_string()}))
+                .collect::<Vec<_>>()
+        });
+        WitnessFixture {
+            witness,
+            sources: RenderSources {
+                sources: vec![source],
+                source_map: Some(Arc::new(map)),
+            },
+        }
+    }
+
+    fn line_of(fixture: &WitnessFixture) -> Option<String> {
+        witness_line(&fixture.witness, &fixture.sources)
+    }
+
+    /// Provenance: QSL-2871.
+    #[test]
+    #[trace("FR-865-AC-2")]
+    fn witness_operand_count_mismatch_names_no_operand() {
+        let text = "aaaa = bbbb";
+        let entries = [(0, 0, 0, 4), (1, 0, 7, 11)];
+        let matching = witness_fixture(text, 2, &entries, None, 2);
+        assert_eq!(
+            line_of(&matching).as_deref(),
+            Some("  witness: aaaa = 0, bbbb = 1")
+        );
+        let one = witness_fixture(text, 2, &entries, None, 1);
+        assert_eq!(line_of(&one).as_deref(), Some("  witness: operand 1 = 0"));
+        let three = witness_fixture(text, 2, &entries, None, 3);
+        assert_eq!(
+            line_of(&three).as_deref(),
+            Some("  witness: operand 1 = 0, operand 2 = 1, operand 3 = 2")
+        );
+    }
+
+    /// Provenance: QSL-2871.
+    #[test]
+    #[trace("FR-865-AC-2")]
+    fn witness_spelling_collapses_whitespace_and_caps_characters() {
+        let multi_line = "self.charged  +\n\t   self.fee  = self.total";
+        let end_first = multi_line.find("  =").expect("fixture has the operator") as u64;
+        let start_second = multi_line
+            .find("self.total")
+            .expect("fixture has the total") as u64;
+        let fixture = witness_fixture(
+            multi_line,
+            2,
+            &[
+                (0, 0, 0, end_first),
+                (1, 0, start_second, multi_line.len() as u64),
+            ],
+            None,
+            2,
+        );
+        assert_eq!(
+            line_of(&fixture).as_deref(),
+            Some("  witness: self.charged + self.fee = 0, self.total = 1")
+        );
+
+        // The cap counts characters, not bytes: 61 two-byte characters cut to 60.
+        let wide = "é".repeat(61);
+        let text = format!("{wide} = x");
+        let fixture = witness_fixture(
+            &text,
+            2,
+            &[
+                (0, 0, 0, wide.len() as u64),
+                (1, 0, text.len() as u64 - 1, text.len() as u64),
+            ],
+            None,
+            2,
+        );
+        let expected = format!("  witness: {}... = 0, x = 1", "é".repeat(60));
+        assert_eq!(line_of(&fixture), Some(expected));
+    }
+
+    /// Provenance: QSL-2871.
+    #[test]
+    #[trace("FR-865-AC-2")]
+    fn witness_without_operands_prints_no_line() {
+        let sources = RenderSources::from_sources([]);
+        for witness in [
+            serde_json::json!({"quantifier": "forall"}),
+            serde_json::json!({"operands": null, "deciding_comparison": null}),
+            serde_json::json!({"operands": []}),
+        ] {
+            assert_eq!(witness_line(&witness, &sources), None);
+        }
+    }
+
+    /// Provenance: QSL-2871.
+    #[test]
+    #[trace("FR-865-AC-2")]
+    fn witness_shared_node_names_only_from_the_comparisons_own_region() {
+        // Operand 0 also occurs in a different rule with another spelling.
+        let text = "aaaa = bbbb; zzzz";
+        let entries = [(0, 0, 0, 4), (0, 1, 13, 17), (1, 0, 7, 11)];
+        let bounded = witness_fixture(text, 2, &entries, Some((0, 11)), 2);
+        assert_eq!(
+            line_of(&bounded).as_deref(),
+            Some("  witness: aaaa = 0, bbbb = 1")
+        );
+        // Region unknown: the differing spellings are a doubt for that operand.
+        let unbounded = witness_fixture(text, 2, &entries, None, 2);
+        assert_eq!(
+            line_of(&unbounded).as_deref(),
+            Some("  witness: operand 1 = 0, bbbb = 1")
+        );
+        // Differing spellings inside the region are a doubt too.
+        let both_inside = witness_fixture(text, 2, &entries, Some((0, 17)), 2);
+        assert_eq!(
+            line_of(&both_inside).as_deref(),
+            Some("  witness: operand 1 = 0, bbbb = 1")
+        );
+    }
+
+    /// Provenance: QSL-2871.
+    #[test]
+    #[trace("FR-865-AC-2")]
+    fn witness_unreadable_regions_fall_back_without_panicking() {
+        let text = "é = bbbb";
+        // Out of range, and a region starting inside the two-byte character.
+        let out_of_range = witness_fixture(text, 2, &[(0, 0, 0, 500), (1, 0, 5, 9)], None, 2);
+        assert_eq!(
+            line_of(&out_of_range).as_deref(),
+            Some("  witness: operand 1 = 0, bbbb = 1")
+        );
+        let split = witness_fixture(text, 2, &[(0, 0, 1, 2), (1, 0, 5, 9)], None, 2);
+        assert_eq!(
+            line_of(&split).as_deref(),
+            Some("  witness: operand 1 = 0, bbbb = 1")
+        );
+
+        // A region in a source that was not provided (a multi-file package).
+        let mut other = witness_fixture(text, 2, &[(0, 0, 0, 2), (1, 0, 5, 9)], None, 2);
+        other.sources.sources = vec![source_under("elsewhere", "rules/other.fsl", text)];
+        assert_eq!(
+            line_of(&other).as_deref(),
+            Some("  witness: operand 1 = 0, operand 2 = 1")
         );
     }
 

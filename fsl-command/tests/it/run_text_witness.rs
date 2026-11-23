@@ -3,9 +3,10 @@
 //! outcome rendering while leaving the outcome JSON unchanged.
 
 use filament_exact::Cancel;
+use filament_semantic_value::catalog::Category;
 use fsl_command::command;
-use fsl_inspect::{render_outcome, RenderForm, RenderLimits};
-use fsl_semantic_value::catalog::Category;
+use fsl_inspect::{render_outcome, RenderForm};
+use fsl_replay::RenderLimits;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
 use std::path::Path;

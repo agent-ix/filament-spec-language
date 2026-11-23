@@ -2111,12 +2111,8 @@ fn run_extracted_clause_bytes(
     {
         return Ok(None);
     }
-    let request = read_clause_run_request_bytes(
-        directory,
-        bytes,
-        Some(dependent_bytes),
-        overrides,
-    )?;
+    let request =
+        read_clause_run_request_bytes(directory, bytes, Some(dependent_bytes), overrides)?;
     let (extraction, map) = extraction_record(&request, &value)?;
     let selection = request.selection.clone();
     let report =
@@ -4789,6 +4785,9 @@ fn execute_prepared(prepared: PreparedRun, settle: &settle::Settle<'_>) -> Resul
         PreparedRun::Clause(prepared) => {
             let PreparedClauseRun { request, sources } = *prepared;
             let selection = request.selection.clone();
+            // The source map is kept on every clause run: it is an Arc clone of the
+            // emission's map, and JSON rendering never reads it, so only text
+            // witness lines pay for it.
             let (report, source_map) = fsl_replay::spine::run_clause_with_source_map(*request)
                 .map_err(|error| RunCause::ClauseRequest {
                     member: "clause".to_owned(),
