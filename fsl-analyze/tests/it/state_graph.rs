@@ -1239,8 +1239,8 @@ fn default_phase_zero_samples_a_witness_for_each_instance() {
 
 /// FR-166-AC-2: `witness_samples` 0 draws no walk, so every witness is
 /// phase 1's; `ReachesThree` under the default `witness_samples` draws its 64
-/// walks per instance, finds none, and phase 1 decides it. The walks take
-/// [`SHORT_WALK`] steps, not the default 4,096 (see [`SHORT_WALK`]).
+/// walks per instance, finds none, and phase 1 decides it. With
+/// [`SHORT_WALK`], 58 walks reach the step ceiling and six close early.
 #[trace("TC-591", "FR-166-AC-2")]
 #[test]
 fn phase_zero_off_and_a_target_no_walk_reaches() {
@@ -1256,7 +1256,7 @@ fn phase_zero_off_and_a_target_no_walk_reaches() {
     let result = run(world.request(AB, vec![world.item("ReachesThree")], short_walks()));
     for instance in &result.items[0] {
         assert_eq!(instance.sampled, vec![None]);
-        assert_eq!(instance.walks_stopped, DEFAULT_WITNESS_SAMPLES);
+        assert_eq!(instance.walks_stopped, 58);
         assert!(matches!(
             instance.outcome,
             StateGraphOutcome::Trapped { .. }
@@ -1501,9 +1501,10 @@ fn a_state_limit_below_the_initial_states_decides_nothing() {
 }
 
 /// A walk that serves `ReachesTwo` and `ReachesThree` runs on after
-/// `ReachesTwo` finds its target, until `max_walk_steps` stops it, yet each
-/// `ReachesTwo` witness records `Reached`: it equals the witness of the walk
-/// the item draws with no other item pending, which ends at its target.
+/// `ReachesTwo` finds its target. The `ReachesThree` walks stop at the short
+/// step ceiling or when their observed subgraph closes, yet each `ReachesTwo`
+/// witness records `Reached`: it equals the witness of the walk the item
+/// draws with no other item pending, which ends at its target.
 #[test]
 fn each_sampled_witness_records_that_its_walk_reached_the_target() {
     let world = config_world(&format!("{REACHES_TWO}{REACHES_THREE}"), &[(0, 0)]);
@@ -1514,7 +1515,7 @@ fn each_sampled_witness_records_that_its_walk_reached_the_target() {
     ));
     for instance in &shared.items[1] {
         assert_eq!(
-            instance.walks_stopped, DEFAULT_WITNESS_SAMPLES,
+            instance.walks_stopped, 58,
             "the premise"
         );
     }
@@ -1533,8 +1534,8 @@ fn each_sampled_witness_records_that_its_walk_reached_the_target() {
 
 /// TC-618 (FR-166-AC-7's engine half; the terminal record is FR-169's):
 /// `ReachesThree` under the default `witness_samples` draws 64 walks per
-/// instance, each stopped by `max_walk_steps` ([`SHORT_WALK`] steps here, the
-/// published default being 4,096); with `max_walk_steps` 1
+/// instance; with [`SHORT_WALK`] steps, exactly 58 hit `max_walk_steps` and
+/// six stop at closure. With `max_walk_steps` 1
 /// `ReachesTwo` gets no sampled witness, its target two steps away; with
 /// horizon 1 no walk is counted as stopped by the budget, and every walk
 /// takes at most 1 step: `ReachesTwo` gets no sampled witness under it,
@@ -1552,7 +1553,7 @@ fn the_walk_budget_bounds_and_counts_each_walk() {
     );
     let result = run(world.request(AB, vec![world.item("ReachesThree")], short_walks()));
     for instance in &result.items[0] {
-        assert_eq!(instance.walks_stopped, 64);
+        assert_eq!(instance.walks_stopped, 58);
     }
 
     let short = ModelCheckLimits {
