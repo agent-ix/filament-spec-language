@@ -160,6 +160,9 @@ pub(super) fn outcome(
             Some(PredicateReading::Refused(outcome)) => Err(ProbabilityDocumentError::Build(
                 Box::new(crate::ExactProbBuildIssue::Predicate(outcome)),
             )),
+            Some(PredicateReading::Undefined { cause, .. }) => {
+                Err(ProbabilityDocumentError::UndefinedPredicate(cause))
+            }
             _ => Err(ExactProbabilityGraphError::ExpansionRefused.into()),
         }
     };

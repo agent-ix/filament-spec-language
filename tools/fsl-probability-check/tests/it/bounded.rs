@@ -1335,3 +1335,58 @@ fn replace_source_and_rebind_with_mode(
     request["item"] = json!({"node_id": fsl_foundation::node_wire::node_key_to_json(item.node()).unwrap(), "model": item.model().map(|model| model.as_str()), "ordinal": item.ordinal()});
     request["certificate"] = json!(String::from_utf8(bytes).unwrap());
 }
+
+#[trace("TC-3195", "FR-201-AC-57")]
+#[test]
+fn an_unwindowed_atom_claim_is_checked_exactly_as_eventually_at_horizon_zero() {
+    for (delivered, operator, value, targets) in [(false, "<=", "0", 0), (true, ">=", "1", 1)] {
+        let mut snapshot: Value = serde_json::from_slice(SNAPSHOT).unwrap();
+        snapshot["populations"][0]["objects"][0]["fields"]["delivered"]["boolean"] =
+            json!(delivered);
+        let snapshot = serde_json::to_vec(&snapshot).unwrap();
+        let mut documents = Vec::new();
+        for event in ["holds(m.delivered)", "eventually[0,0] holds(m.delivered)"] {
+            let source = format!(
+                "{}probabilistic Likely using inf on M over (m: M::Msg) under every scheduler on origin {{ probability {operator} 0.5 [ {event} ] }}\n",
+                model_source()
+            );
+            let request = proof(&source, &snapshot);
+            let (code, result) = run(&request);
+            assert_eq!(code, 0, "{event}: {result}");
+            assert_eq!(result["value"], json!({"numerator": value, "denominator": "1"}));
+            let doc = document(&request);
+            assert_eq!(
+                doc["objective"]["profile"],
+                "filament.probability-objective/reachability/v1"
+            );
+            assert_eq!(doc["objective"]["targets"].as_array().unwrap().len(), targets);
+            assert_eq!(doc["values"].as_array().unwrap().len(), 1);
+            assert_eq!(doc["ranking"][0]["rank"], 0);
+            let changed = mutate(&request, |doc| {
+                doc["values"][0]["value"] = json!({"numerator":"1","denominator":"2"})
+            });
+            let (code, rejected) = run(&changed);
+            assert_eq!(code, 1, "{event}: {rejected}");
+            assert_eq!(rejected["rule"], "inequality-fails");
+            let values: Vec<Value> = doc["values"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row["value"].clone())
+                .collect();
+            let ranks: Vec<Value> = doc["ranking"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| row["rank"].clone())
+                .collect();
+            documents.push((
+                doc["objective"]["optimization"].clone(),
+                doc["objective"]["targets"].as_array().unwrap().len(),
+                values,
+                ranks,
+            ));
+        }
+        assert_eq!(documents[0], documents[1], "the two spellings certify identically");
+    }
+}

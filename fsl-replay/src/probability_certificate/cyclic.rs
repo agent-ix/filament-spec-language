@@ -242,7 +242,11 @@ pub(super) fn enumerate_graph_capturing<P: StatePredicate>(
     })
 }
 
-fn charge(used: &mut u64, bound: u64, bytes: usize) -> Result<(), ProbabilityDocumentError> {
+pub(super) fn charge(
+    used: &mut u64,
+    bound: u64,
+    bytes: usize,
+) -> Result<(), ProbabilityDocumentError> {
     let actual = used.saturating_add(u64::try_from(bytes).unwrap_or(u64::MAX));
     if actual > bound {
         return Err(ProbabilityDocumentError::Limit {
@@ -339,7 +343,7 @@ pub(super) fn enumerate<P: StatePredicate>(
 
 /// Iterative Kosaraju plus a reverse breadth-first search. Graph boundaries
 /// are checker-derived; no SCC or qualitative producer labels enter here.
-fn analyze(
+pub(super) fn analyze(
     graph: &mut CheckerGraph,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
