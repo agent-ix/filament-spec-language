@@ -2056,7 +2056,7 @@ impl fsl_analyze::provider::ExternalProvider for CountingProvider {
 const RECORDING: &str = "fsl.test-recording-provider";
 
 /// The counters one monitor run's recording provider reports.
-#[derive(Default)]
+#[derive(Clone, Default)]
 struct Recorded {
     calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     items: std::sync::Arc<std::sync::atomic::AtomicUsize>,
@@ -2129,6 +2129,84 @@ impl Recorded {
             }),
         )
         .expect("the descriptor is unbounded")
+    }
+
+    /// The recording provider blocks after publishing its in-flight cancel
+    /// handle, so a test can expire the item's deadline without elapsed time.
+    fn blocking_provider(
+        &self,
+        verdict: fsl_analyze::provider::ProviderVerdict,
+        entered: std::sync::mpsc::SyncSender<filament_exact::Cancel>,
+        released: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+    ) -> fsl_analyze::analyze::Engine {
+        let descriptor = fsl_route::descriptor_from_manifest(
+            fsl_route::Candidate::new(fsl_foundation::BackendId::new(RECORDING)),
+            fsl_route::ProviderOrigin::Process,
+            vec![(
+                Some(fsl_semantics::check::Capability::ValueValidity.to_wire()),
+                Some(fsl_route::Mode::Unbounded.to_wire()),
+            )],
+            fsl_route::ManifestMembers {
+                domains: Some(&[fsl_foundation::bound::DomainKind::Integer.to_wire()]),
+                fairness_kinds: None,
+                evidence_kinds: None,
+                memory_models: None,
+                reductions: None,
+            },
+        )
+        .expect("the descriptor advertises the external value arm");
+        fsl_analyze::analyze::Engine::external(
+            descriptor,
+            fsl_analyze::analyze::BackendTool::new("test-provider", "1").expect("a tool"),
+            Box::new(BlockingProvider {
+                verdict,
+                entered,
+                released,
+                calls: std::sync::Arc::clone(&self.calls),
+                items: std::sync::Arc::clone(&self.items),
+                events_before: std::sync::Arc::clone(&self.events_before),
+                events: std::sync::Arc::clone(&self.events),
+            }),
+        )
+        .expect("the descriptor is unbounded")
+    }
+}
+
+#[derive(Debug)]
+struct BlockingProvider {
+    verdict: fsl_analyze::provider::ProviderVerdict,
+    entered: std::sync::mpsc::SyncSender<filament_exact::Cancel>,
+    released: std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+    calls: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    items: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    events_before: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    events: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl fsl_analyze::provider::ExternalProvider for BlockingProvider {
+    fn settle(
+        &self,
+        request: &fsl_analyze::provider::ProviderRequest<'_>,
+        cancel: &filament_exact::Cancel,
+    ) -> Vec<fsl_analyze::provider::ProviderVerdict> {
+        use std::sync::atomic::Ordering;
+        if self.calls.fetch_add(1, Ordering::SeqCst) == 0 {
+            self.events_before
+                .store(self.events.load(Ordering::SeqCst), Ordering::SeqCst);
+        }
+        self.items
+            .fetch_add(request.items().len(), Ordering::SeqCst);
+        self.entered
+            .send(cancel.clone())
+            .expect("the test observes the in-flight request");
+        let (released, changed) = &*self.released;
+        let mut released = released.lock().expect("the provider release lock");
+        while !*released {
+            released = changed
+                .wait(released)
+                .expect("the provider release lock is not poisoned");
+        }
+        vec![self.verdict.clone(); request.items().len()]
     }
 }
 
@@ -2584,26 +2662,81 @@ fn an_items_deadline_expiring_mid_settlement_leaves_the_stream_unchanged() {
     let without = without.expect("the stream runs without items");
 
     let recorded = Recorded::new();
-    let (summary, seen) = monitor_with_members(
-        clauses,
-        json!({"items": [{"claim": "Even", "kind": "value-validity", "backend": RECORDING}],
-            "deadline_ms": 20}),
-        vec![recorded.slow_provider(
-            fsl_analyze::provider::ProviderVerdict::Proved,
-            std::time::Duration::from_millis(200),
-        )],
-        &recorded,
-        &filament_exact::Cancel::new(),
+    let (entered, in_flight) = std::sync::mpsc::sync_channel(1);
+    let released = std::sync::Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let provider = recorded.blocking_provider(
+        fsl_analyze::provider::ProviderVerdict::Proved,
+        entered,
+        std::sync::Arc::clone(&released),
     );
+    let cancel = filament_exact::Cancel::new();
+    let run_recorded = recorded.clone();
+    let run_cancel = cancel.clone();
+    let (finished, completed) = std::sync::mpsc::sync_channel(1);
+    let run = std::thread::spawn(move || {
+        let result = monitor_with_members(
+            clauses,
+            json!({"items": [{"claim": "Even", "kind": "value-validity", "backend": RECORDING}],
+                "deadline_ms": 600_000}),
+            vec![provider],
+            &run_recorded,
+            &run_cancel,
+        );
+        let _ = finished.send(());
+        result
+    });
+    let items_cancel = match in_flight.recv_timeout(std::time::Duration::from_secs(10)) {
+        Ok(cancel) => cancel,
+        Err(error) => {
+            cancel.cancel(filament_exact::CancelCause::Deadline);
+            release_blocked_provider(&released);
+            match completed.recv_timeout(std::time::Duration::from_secs(10)) {
+                Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    let _ = run.join();
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+            }
+            panic!(
+                "provider request did not enter settlement before the watchdog elapsed: {error}"
+            );
+        }
+    };
+    items_cancel.cancel(filament_exact::CancelCause::Deadline);
+    release_blocked_provider(&released);
+    match completed.recv_timeout(std::time::Duration::from_secs(10)) {
+        Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {}
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            cancel.cancel(filament_exact::CancelCause::Deadline);
+            match completed.recv_timeout(std::time::Duration::from_secs(10)) {
+                Ok(()) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    let _ = run.join();
+                    panic!(
+                        "monitor worker finished only after the completion watchdog cancelled it"
+                    );
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                    panic!("monitor worker remains stuck after cancellation and the completion watchdog");
+                }
+            }
+        }
+    }
+    let (summary, seen) = run.join().expect("the monitor thread completes");
     let summary = summary.expect("an items deadline expiring mid-settlement still streams");
     let value = summary.as_value();
     assert_eq!(recorded.calls(), 1, "the provider request was in flight");
     assert_eq!(seen, events_without);
     assert_eq!(clause_summary(value), *without.as_value());
-    assert!(
-        value["items"]
-            .as_array()
-            .is_some_and(|items| !items.is_empty()),
-        "{value}"
-    );
+    let items = value["items"].as_array().expect("settled items");
+    assert_eq!(items.len(), 1, "{value}");
+    assert_eq!(items[0]["category"], "incomplete", "{}", items[0]);
+    assert!(items[0].to_string().contains("deadline"), "{}", items[0]);
+    assert_eq!(summary.exit_code, 22, "{value}");
+}
+
+fn release_blocked_provider(
+    released: &std::sync::Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+) {
+    let (ready, changed) = &**released;
+    *ready.lock().expect("the provider release lock") = true;
+    changed.notify_one();
 }
