@@ -116,6 +116,26 @@ race gives that post-key and elapsed amount.
   under a `>= θ` bound or `Pr(E)` under `<= θ`, with value past the bound,
   or an `Upper` certificate on `Pr(E)` below `θ`. Long-run and
   expected-reward refutations SHALL use certificate evidence.
+- For an unwindowed `eventually holds(E)`, `always holds(P)` or
+  `holds(A) until holds(B)` claim under `INFINITE-TRACE`, EN-5 SHALL run
+  the path-set entry's original-graph acyclicity admission (Acyclic
+  infinite-trace state-predicate path sets below) before starting any
+  path-set search, for `always` and `until` as for `eventually`.
+- When that admission finds a cycle apart from implicit terminal stutter,
+  EN-5 SHALL NOT start the path-set search and SHALL NOT emit a path set for
+  that subject.
+- For such a cyclic subject the `max_witness_paths` rule above SHALL NOT
+  apply.
+- When such a cyclic subject lies within the checked-subject subsystem
+  entry's admission below (an empty fairness set, no timed choices, and
+  either a resolved workload with no free choices or every scheduler with a
+  deterministic memoryless witness scheduler) and the engine's value lies
+  past the threshold, EN-5 SHALL emit that entry's event-avoidance `lower`
+  subsystem certificate, with the witness scheduler under every scheduler
+  and no scheduler under a workload.
+- EN-5 SHALL NOT settle an item admitted by the previous bullet
+  `unsupported` because of its cycle. A cyclic subject outside that
+  admission SHALL keep its existing settlement.
 - For `mean of F op θ` (expectation of a bounded fraction), EN-5 SHALL
   emit FSpec FR-413 subsystem certificate evidence, with an `exact`
   [FR-1043](FR-1043-certify-finite-horizon-measure-verdicts.md) document or
@@ -208,7 +228,8 @@ race gives that post-key and elapsed amount.
 #### Checked-subject long-run, reward and event-avoidance subsystem entry
 
 Layer 6 SHALL expose a checked-subject subsystem replay entry for untimed
-long-run fractions, expected rewards and unwindowed eventual claims with an
+long-run fractions, expected rewards and unwindowed eventual, always and
+until claims with an
 empty fairness set and no timed choices, taking the checked package, admitted
 subject, actual claim occurrence and binding, typed FR-413 evidence, caller
 limits and cancellation. This entry's workload profile requires a resolved
@@ -232,6 +253,41 @@ certificate's lower bound for the probability of reaching their union, and
 apply the strict complement comparison. The checker SHALL not use analyzer
 values, policy optimality assertions, an engine-built graph, or proof-side
 acceptance as a substitute for these checks.
+
+For `eventually holds(E)` with a `<= θ` bound, and for `always holds(P)` and
+`holds(A) until holds(B)` with either bound, the event-avoidance
+check SHALL use the same machinery over the complete reachable finite
+induced chain, reading each state predicate with the actual checked
+occurrence, infinite-trace profile and binding, and absorbing each decided
+state as the acyclic state-predicate subset below decides it: for
+eventually, an E state accepts; for until, a
+B state accepts even when A is false and a state satisfying neither A nor B
+rejects; for always, a not-P state rejects, including before a later P
+state. A genuine model terminal keeps its state predicates on its infinite
+stutter. The checker SHALL derive that chain's bottom strongly connected
+components and classify each one: a component holding an accepting decided
+state accepts, one holding a rejecting decided state rejects, and a
+component with no decided state rejects for eventually (E is never reached)
+and for until (B is never reached, as
+FSpec FR-411 counts remaining in A-and-not-B as missing B) and accepts for
+always (not-P is never reached). For a `>= θ` bound the violated quantity is
+the probability of reaching the union of rejecting components, and the
+checked lower bound SHALL exceed `1 − θ`; for a `<= θ` bound it is the
+probability of reaching the union of accepting components, and the checked
+lower bound SHALL exceed `θ`. The checker SHALL require value 1 at every
+union state and SHALL apply the ordinary `lower` inequalities and progress
+ranks, as in the eventual role. The checker SHALL confirm the union is
+closed and correctly classified; a producer-supplied component set or
+classification is not evidence. The eventual `>= θ` case coincides with the
+event-avoidance check above. The always `<= θ` case is the eventual
+event-avoidance check for the event not-P, with the comparison `> θ`, not
+`> 1 − θ`; the always `>= θ` case is a lower bound on reaching not-P.
+
+For every event-avoidance certificate in this entry, a certificate whose
+conditions hold but whose checked initial lower bound fails the strict
+comparison, including equality, SHALL be rejected `ThresholdMissed` at the
+initial product key and SHALL settle `inconclusive`,
+`CertificateRejected{ThresholdMissed, at}`, without a token.
 
 The entry SHALL return opaque reproduced evidence bound to the package,
 claim, binding, scheduler (when present), and checked certificate only after
@@ -306,7 +362,10 @@ Replay disagreement/refusal SHALL retain OP-2's `replay_parity`/`replay_refused`
 settlement; exhaustion and cancellation SHALL remain `incomplete` without a
 token. Claim, package or binding mismatch SHALL refuse before acceptance.
 
-For the unbounded subset this entry SHALL report unsupported for cyclic subjects.
+For the unbounded and infinite-trace subsets this entry SHALL report a
+cyclic subject unsupported, without a token. Such a subject's refutation is
+the checked-subject subsystem entry's (Emission above); EN-5 SHALL NOT
+settle the item `unsupported` because this entry does not admit it.
 The checked-subject path-set subsets SHALL report unsupported for subsystem evidence,
 randomized schedulers, fairness, multiple initial states/instances, timed or
 other claim forms outside this slice. It SHALL NOT project them onto this
@@ -593,7 +652,7 @@ timed enumerator.
 | FR-202-AC-18 | Always fixture: initial nonterminal P has actions a and b reaching terminal P with probabilities 1/4 and 3/4, otherwise not-P followed by terminal P. At threshold 1/2, a's not-P cylinder of mass 3/4 refutes minimum AtLeast and b's terminal-P cylinder of mass 3/4 refutes maximum AtMost. Equal-weight resolved workload refutes AtLeast 3/5 with rejecting mass 1/2 and AtMost 2/5 with accepting mass 1/2. Later P cannot repair the not-P prefix; the initial live P alone cannot be accepted. | Test |
 | FR-202-AC-19 | With admitted threshold 1/2, empty paths of mass 1 refute AtMost for initial B-and-not-A until and initial terminal-P always; empty paths refute AtLeast for initial neither-A-nor-B until, terminal A-and-not-B until, and initial not-P always even with a later terminal P successor. Terminal A-and-not-B has until probability 0 and terminal P has always probability 1 without a fabricated stutter step. Source threshold endpoints remain refused; probabilities 0 and 1 are admitted. | Test |
 | FR-202-AC-20 | In AC-17/18, changed source/package, foreign claim occurrence or S3 binding refuses identity mismatch; a changed formula that changes the represented verdict, changed threshold to equality, changed actual action/draw/post-state/full key, fabricated binding node, missing binding component or a formula-monitor key prevents a token. Formula spelling alone need not fail if the actual bound claim has identical semantics and identity checks pass. A wrong-verdict path, live undecided prefix, path extended beyond first success/failure, duplicate cylinder or prefix overlap yields no reproduced token; insufficient/equal mass yields replay parity. | Test |
-| FR-202-AC-21 | AC-17/18 two evidence paths demanding different actions at one complete choice key fail policy consistency; a policy under a resolved workload fails replay. Distinct supported draws reaching the same post-state contribute their separate exact masses once, while repeating a draw cannot increase mass. A raw reachable cycle beyond initial B for until or initial not-P for always is unsupported despite immediate absorption; acyclic counterparts remain admitted. Fairness, timed/reward/nested/bounded forms, multiple initials/bindings, unresolved workload, subsystem and randomized-policy evidence remain unsupported in this path-set subset. | Test |
+| FR-202-AC-21 | AC-17/18 two evidence paths demanding different actions at one complete choice key fail policy consistency; a policy under a resolved workload fails replay. Distinct supported draws reaching the same post-state contribute their separate exact masses once, while repeating a draw cannot increase mass. A raw reachable cycle beyond initial B for until or initial not-P for always is not admitted to this path-set subset despite immediate absorption and yields no path-set token; EN-5 refutes such a subject through the checked-subject subsystem entry instead (FR-202-AC-36 to FR-202-AC-39 and FR-202-AC-42) and does not settle it `unsupported`. Acyclic counterparts remain admitted. Fairness, timed/reward/nested/bounded forms, multiple initials/bindings, unresolved workload, subsystem and randomized-policy evidence remain unsupported in this path-set subset. | Test |
 | FR-202-AC-22 | AC-17/18 pre-cancellation, cancellation at final acceptance, or exhaustion of each caller expansion/work/storage/arithmetic limit during original admission or replay preserves its typed incomplete outcome with no truth, token or accepted evidence in a refuted record. Refused predicates preserve refusal. Bounds, PrecisionBudget, certificate acceptance alone and unreplayed exact engine verdicts cannot settle refuted. Native replay needs no emitted package or witness wire codec and imports no analyzer graph types. | Test |
 | FR-202-AC-23 | Over FR-201-AC-56's `Health` chain (value `81/100`), `probability >= 0.9 [always[0,2] holds(ok)]` is refuted by the checked-subject bounded entry with the rejecting cylinders fault after one step (`1/10`) and fault after two steps (`9/100`), mass `19/100 > 1/10`; the cylinder that reaches the accepting decided key after position 2 (`81/100`) refutes `probability <= 0.8 [always[0,2] holds(ok)]`. The rejecting set without its second cylinder (mass `1/10`, equal to `1 − 0.9`) yields replay parity, and a cylinder naming a model-only key yields no reproduced token. | Test |
 | FR-202-AC-24 | The checked-subject undefined entry reproduces FR-202-AC-5's `Coin` evidence (`drop` with `b = 0`, `where` position 1, `absent-key`) for `probability >= T [ always[0,3] holds(c.v = 0) ]` at `T` 0.5 and 0.01 alike, with no emitted package; for `probability >= 0.5 [ always[0,3] holds(c.v = 1) ]`, whose monitor rejects at position 0, a forged undefined path to position 1 settles `ReplayParity` without a token. | Test (TC-3153) |
@@ -608,6 +667,12 @@ timed enumerator.
 | FR-202-AC-33 | For the no-random-line expected-total variation under every scheduler, use the claim `expected total >= 1` whose induced expected total is 0. The counterexample includes the optimizer's deterministic memoryless scheduler and an `upper` expected-reward certificate below 1. Replay rebuilds that scheduler's chain, checks the upper certificate and its properness evidence, applies `< 1` and settles `refuted`; omitting or changing the scheduler prevents acceptance. | Test (TC-3158) |
 | FR-202-AC-34 | For the unwindowed `eventually` variation under every scheduler without a `random` line, claim `probability >= 1/2` has value 0. EN-5 emits a deterministic memoryless scheduler and an event-avoidance `lower` subsystem certificate with initial lower bound `> 1/2`; replay independently derives the event-free bottom component, checks the certificate and strict complement comparison, and settles `refuted`. A cyclic avoiding chain is accepted without a finite path set; a component containing an event state, a missing scheduler, or equality yields no token. | Test (TC-3159) |
 | FR-202-AC-35 | An expected reward whose exact engine value is `+infinity` and whose claim is `expected total <= 1` settles `refuted` only when replay checks a finite `lower` certificate with initial lower bound `> 1`; the result carries the replayed counterexample and no infinite `ExactEntry` or fabricated finite exact value. If the value is finite and the same lower certificate conditions hold, the existing finite refutation path applies. A proof-side certificate is still checked with its original inclusive claim-side rule. | Test (TC-3160) |
+| FR-202-AC-36 | A two-state workload chain: `ok` satisfies P and moves to `ok` and to `down` with `1/2` each; `down` does not satisfy P and returns to `ok` with 1. `probability >= 0.9 [always holds(P)]`, no window, has exact value 0. EN-5's acyclicity admission finds the cycle, and an instrumented path-set search observes no call. EN-5 emits no scheduler and a `lower` certificate with `x(ok) = 1`, `x(down) = 1`, ranks `ok` 1 and `down` 0. Replay, using the independent checker over its own rebuilt chain, derives `{down}` as the only rejecting component, checks the certificate and `1 > 1/10`, returns matching evidence, and the item settles `refuted`, `decisive-counterexample`, retaining the replayed counterexample; it neither settles `unsupported` nor stops `incomplete`. The same certificate with `x(ok) = 1/10` rejects `ThresholdMissed` at the initial key and settles `inconclusive`. If `down` also satisfies P, the value is 1: the claim is not refuted, EN-5 emits no counterexample and starts no path-set search, and its proof-side outcome is the one FR-201 gives today, unchanged by this requirement. | Test (TC-3162) |
+| FR-202-AC-37 | Workload chain: `s` satisfies P and moves to `t` and to `u` with `1/2` each; `t` does not satisfy P and returns to `s`; `u` satisfies P and loops at `u`. `always holds(P)` has value `1/2`. `probability >= 1/2` and `probability <= 1/2` are each not refuted: EN-5 emits no counterexample and starts no path-set search, and their proof-side outcome is unchanged by this requirement. `probability >= 3/5` settles `refuted` with the rejecting-union certificate `x(s) = 1/2`, `x(t) = 1`, ranks 1 and 0 (`1/2 > 2/5`); `probability <= 2/5` settles `refuted` with the accepting-union certificate `x(s) = 1/2`, `x(u) = 1`, ranks 1 and 0 (`1/2 > 2/5`). The same two certificates offered for `>= 1/2` and `<= 1/2` sit at equality, reject `ThresholdMissed` at the initial key and yield no token. Giving `u` value 1 and rank 1 in the rejecting-union certificate rejects `RankBroken` at `u`, since `{u}` is an accepting component. | Test (TC-3163) |
+| FR-202-AC-38 | Every scheduler: `ok` satisfies P and has actions `stay`, to `ok`, and `leave`, to `down`; `down` does not satisfy P and returns to `ok`. For `probability >= 0.9 [always holds(P)]` the minimum is 0. EN-5 emits the deterministic memoryless scheduler `leave` at `ok` and AC-36's certificate; replay rebuilds the `leave`-induced chain and settles `refuted`. A missing or randomized scheduler is rejected without a token; the scheduler `stay` with the same certificate yields no token, since `{ok}` is then the induced chain's only component and it accepts. For `probability <= 1/2 [always holds(P)]` the maximum is 1: the scheduler `stay` and the accepting-union certificate `x(ok) = 1`, rank 0, settle `refuted`. | Test (TC-3164) |
+| FR-202-AC-39 | Until, under a workload. Two states satisfying A and not B alternate deterministically, so `holds(A) until holds(B)` has value 0. `probability >= 1/2` settles `refuted`: the component with no decided state is rejecting, and the certificate with value 1 and rank 0 at both states gives `1 > 1/2`. In a second chain, `s` satisfies A and not B and moves to `s` with `1/2`, to a B-and-not-A state `b` with `1/4` and to a neither-A-nor-B state `n` with `1/4`; `b` and `n` each return to `s`. The value is `1/2`. `>= 3/5` is refuted with the rejecting union `{n}` (`x(s) = 1/2`, `x(n) = 1`, ranks `s` 1 and `n` 0), and `<= 2/5` with the accepting union `{b}` (`x(s) = 1/2`, `x(b) = 1`, ranks `s` 1 and `b` 0). `n` and `b` absorb despite their return to `s`. At `>= 1/2` or `<= 1/2` the same certificates sit at equality, reject `ThresholdMissed` at the initial key and yield no token. | Test (TC-3165) |
+| FR-202-AC-41 | Cyclic eventually at `<= θ`, under a workload: `s` does not satisfy E and moves to `s` and to `e` with `1/2` each; `e` satisfies E and returns to `s`. `probability <= 1/2 [eventually holds(E)]` has value 1. EN-5's acyclicity admission finds the cycle and an instrumented path-set search observes no call. EN-5 emits no scheduler and a `lower` certificate on the accepting union `{e}` with `x(s) = 1`, `x(e) = 1`, ranks `s` 1 and `e` 0; replay derives `{e}` itself, checks `1 > 1/2` and the item settles `refuted`. The certificate with `x(s) = 1/2` satisfies its inequalities but sits at equality, rejects `ThresholdMissed` at the initial key and settles `inconclusive` without a token. | Test (TC-3171) |
+| FR-202-AC-42 | Initial-decided cyclic subjects reach EN-5 refutation. Until: the initial state `b` satisfies B and not A and moves to `s`, which satisfies A and not B and returns to `b`; `probability <= 1/2 [holds(A) until holds(B)]` has value 1. Always: the initial state `f` does not satisfy P and moves to `p`, which satisfies P and returns to `f`; `probability >= 1/2 [always holds(P)]` has value 0. Under a workload each path-set entry call reports the cycle without a token (AC-21's path-set clause). EN-5 starts no path-set search and emits a `lower` certificate on the absorbed initial state: accepting union `{b}` with `x(b) = 1`, rank 0, and rejecting union `{f}` with `x(f) = 1`, rank 0. Replay checks `1 > 1/2` in each case and both items settle `refuted`, not `unsupported`. | Test (TC-3172) |
 
 ## Dependencies
 

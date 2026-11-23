@@ -354,7 +354,9 @@ neither SHALL be trusted as a qualitative result supplied by EN-5.
   required to fail solely because its spelling differs; no invented formula
   identity field is added. Certificate proofs alone are extended here;
   this profile SHALL NOT authorize new FR-202 refutation semantics or
-  complete the blocked FSpec FR-413 witness wire.
+  complete the blocked FSpec FR-413 witness wire. Refutations of until and
+  always over a cyclic subject use FR-202's checked-subject subsystem
+  entry; they do not widen this proof profile's acyclic admission.
 
 ### Closed cyclic DTMC eventual document profile
 
@@ -426,7 +428,8 @@ No policy, component partition, formula AST or additional body field is added.
   profile does not invent an upstream API or establish that prerequisite.
   This proof profile does not define FR-202 refutation handling. FR-202's
   checked-subject entry separately admits the specified untimed eventual,
-  long-run and expected-reward subsystem refutations; this does not widen
+  always, until, long-run and expected-reward subsystem refutations,
+  including over cyclic subjects; this does not widen
   proof-side admission or threshold checks. FSpec FR-413 wire, fairness and
   timed refutation coverage remain outside this profile.
 
