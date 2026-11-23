@@ -109,7 +109,6 @@ fn timed_product_certificates_pass_the_separate_checker() {
 #[trace("TC-2495", "FR-921-AC-4")]
 #[trace("FSpec-TC-1768", "FSpec-FR-751-AC-4")]
 #[test]
-#[ignore = "QSL-2156: elapsed-quantile (FR-877) timed-product documents are not produced or checked yet"]
 fn elapsed_quantile_certificate_passes_the_separate_checker() {
     assert_separate_checker(
         "digital",

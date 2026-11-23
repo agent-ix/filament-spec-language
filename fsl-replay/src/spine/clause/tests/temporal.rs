@@ -4681,7 +4681,7 @@ fn window_and_next_event_pending_runs_are_bare_pending_items() {
 /// `native-run-result/2` writer's spelling; the closed-scope run holds none.
 #[trace("TC-770", "FR-286-AC-10")]
 #[test]
-#[ignore = "QSL-2173 completed; current blocker has no assigned owner: a pending Reaches item still carries a witness where the test asserts none"]
+#[ignore = "QSL-2900: a pending Reaches item still carries a witness where the test asserts none"]
 fn a_violated_item_carries_a_witness_exactly_when_the_report_holds_one() {
     let mut run = report(finite(Unit::Bounded, "Bounded", &[0, 1, 2]));
     assert!(run.witness.is_none());

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-298: deterministic renderings of typed inspect values.
 
-use alloc::{format, string::String, vec::Vec};
+use alloc::{format, string::String, sync::Arc, vec::Vec};
 use core::fmt;
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::{CatalogCode, CatalogCoded};
@@ -9,7 +9,7 @@ use fsl_foundation::{
     diagnostic::{LimitExceeded, StageFailure, Staged},
     setting::Setting,
     source::{
-        provenance::{RawSourceRef, SourceRegion},
+        provenance::{OccurrenceKey, PackageSourceMap, RawSourceRef, SourceRegion},
         Source,
     },
 };
@@ -117,6 +117,7 @@ impl fmt::Display for RenderCause {
 #[derive(Clone)]
 pub struct RenderSources {
     sources: Vec<Source>,
+    source_map: Option<Arc<PackageSourceMap>>,
 }
 
 impl fmt::Debug for RenderSources {
@@ -140,7 +141,16 @@ impl RenderSources {
                 retained.push(source);
             }
         }
-        Self { sources: retained }
+        Self {
+            sources: retained,
+            source_map: None,
+        }
+    }
+
+    /// Retain a shared admitted package source map for text witnesses.
+    pub fn with_source_map(mut self, source_map: Arc<PackageSourceMap>) -> Self {
+        self.source_map = Some(source_map);
+        self
     }
 
     fn get(&self, region: &SourceRegion) -> Option<&Source> {
@@ -479,6 +489,18 @@ fn outcome_text(
                 writer.unit(|| format!("  {key}: {}\n", canonical_json(value)))?;
             }
         }
+        if matches!(operation, "run" | "monitor")
+            && item_wire.get("result").and_then(serde_json::Value::as_str) == Some("refuted")
+        {
+            if let Some(witness) = item_wire
+                .get("witness")
+                .filter(|witness| !witness.is_null())
+            {
+                if let Some(line) = witness_line(witness, sources) {
+                    writer.unit(|| format!("{line}\n"))?;
+                }
+            }
+        }
     }
     if let Some(result) = wire.get("result").filter(|result| !result.is_null()) {
         let kind = result
@@ -512,6 +534,182 @@ fn outcome_text(
         writer.unit(|| format!("result: {kind}{suffix}\n"))?;
     }
     Ok(())
+}
+
+/// The witness line of a refuted item: each operand value beside the source
+/// spelling of the expression that produced it. A witness without ordered
+/// operands (a quantifier witness) gets no line.
+fn witness_line(witness: &serde_json::Value, sources: &RenderSources) -> Option<String> {
+    let operands = witness
+        .get("operands")
+        .and_then(serde_json::Value::as_array)
+        .filter(|operands| !operands.is_empty())?;
+    let mut names = witness_operand_names(witness, sources);
+    // Names are paired with values by position, so a count mismatch means the
+    // map describes some other shape: no operand is named.
+    if names.len() != operands.len() {
+        names = Vec::new();
+    }
+    let rendered = operands
+        .iter()
+        .take(8)
+        .enumerate()
+        .map(|(index, value)| {
+            let name = names
+                .get(index)
+                .and_then(Option::as_deref)
+                .map_or_else(|| format!("operand {}", index + 1), str::to_owned);
+            format!("{name} = {}", witness_value_text(value))
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    let omitted = operands.len().saturating_sub(8);
+    Some(if omitted == 0 {
+        format!("  witness: {rendered}")
+    } else {
+        format!("  witness: {rendered}, ... ({omitted} more)")
+    })
+}
+
+fn witness_value_text(value: &serde_json::Value) -> String {
+    if let Some(decimal) = value.get("decimal").and_then(serde_json::Value::as_str) {
+        return decimal.to_owned();
+    }
+    value
+        .get("value")
+        .map_or_else(|| canonical_json(value), canonical_json)
+}
+
+/// The source spelling of each operand of the deciding comparison, in operand
+/// order; `None` for an operand whose spelling is not certain. Empty when the
+/// comparison's shape or the source map is unavailable.
+fn witness_operand_names(
+    witness: &serde_json::Value,
+    sources: &RenderSources,
+) -> Vec<Option<String>> {
+    let Some(source_map) = sources.source_map.as_ref() else {
+        return Vec::new();
+    };
+    let Some(deciding) = witness.get("deciding_comparison") else {
+        return Vec::new();
+    };
+    let Some(node_text) = deciding.get("node_id").and_then(serde_json::Value::as_str) else {
+        return Vec::new();
+    };
+    let Ok(comparison) = fsl_foundation::node_wire::node_key_from_text(node_text) else {
+        return Vec::new();
+    };
+    // The comparison's own regions bound where an operand's spelling may be
+    // read from, when the map knows them.
+    let bound = match (
+        deciding.get("role").and_then(serde_json::Value::as_str),
+        deciding.get("ordinal").and_then(serde_json::Value::as_u64),
+    ) {
+        (Some(role), Some(ordinal)) => source_map.regions(&OccurrenceKey::new(
+            comparison.clone(),
+            filament_exact::Origin::new(filament_exact::Role::new(role), ordinal),
+        )),
+        _ => None,
+    };
+    let mut segments = comparison.path().into_iter();
+    if !matches!(segments.next(), Some(filament_exact::PathSegment::Text(text)) if text == "expression")
+        || !matches!(segments.next(), Some(filament_exact::PathSegment::Text(text)) if text == "binary")
+    {
+        return Vec::new();
+    }
+    let mut child_nodes = Vec::new();
+    for segment in segments {
+        match segment {
+            filament_exact::PathSegment::Text(text) if text.starts_with("filament.op.") => {
+                break;
+            }
+            filament_exact::PathSegment::Node(node) => child_nodes.push(node),
+            filament_exact::PathSegment::Text(_) => {}
+        }
+    }
+    let expression_count = child_nodes
+        .iter()
+        .filter(|node| is_expression_node(node))
+        .count();
+    let operands: Vec<Option<filament_exact::NodeKey>> = if expression_count == 2 {
+        child_nodes
+            .into_iter()
+            .filter(is_expression_node)
+            .map(Some)
+            .collect()
+    } else if expression_count == 1 && child_nodes.len() == 2 {
+        child_nodes
+            .into_iter()
+            .map(|node| is_expression_node(&node).then_some(node))
+            .collect()
+    } else {
+        return Vec::new();
+    };
+    operands
+        .into_iter()
+        .map(|node| {
+            node.and_then(|node| source_spelling(source_map, &node, bound, &sources.sources))
+        })
+        .collect()
+}
+
+fn is_expression_node(node: &filament_exact::NodeKey) -> bool {
+    matches!(
+        node.path().into_iter().next(),
+        Some(filament_exact::PathSegment::Text(text)) if text == "expression"
+    )
+}
+
+/// The one spelling every occurrence of `node` agrees on, or `None` on any
+/// doubt: no occurrence, differing spellings, or a region whose source is not
+/// among `sources` or whose bytes cannot be read as text. With `bound` known,
+/// only occurrences inside one of its regions count.
+fn source_spelling(
+    source_map: &PackageSourceMap,
+    node: &filament_exact::NodeKey,
+    bound: Option<&[SourceRegion]>,
+    sources: &[Source],
+) -> Option<String> {
+    let mut spelling: Option<String> = None;
+    for (_, regions) in source_map.occurrences(node) {
+        for region in regions {
+            if let Some(bound) = bound {
+                if !bound.iter().any(|outer| {
+                    outer.source() == region.source()
+                        && outer.start() <= region.start()
+                        && region.end() <= outer.end()
+                }) {
+                    continue;
+                }
+            }
+            let source = sources
+                .iter()
+                .find(|source| source.reference() == region.source())?;
+            let start = usize::try_from(region.start()).ok()?;
+            let end = usize::try_from(region.end()).ok()?;
+            let text = source.text().get(start..end)?;
+            let region_spelling =
+                truncate_spelling(&text.split_whitespace().collect::<Vec<_>>().join(" "));
+            if region_spelling.is_empty()
+                || spelling.as_ref().is_some_and(|s| s != &region_spelling)
+            {
+                return None;
+            }
+            spelling = Some(region_spelling);
+        }
+    }
+    spelling
+}
+
+/// Cap a spelling at 60 characters, marking the cut.
+fn truncate_spelling(spelling: &str) -> String {
+    let mut chars = spelling.chars();
+    let prefix: String = chars.by_ref().take(60).collect();
+    if chars.next().is_some() {
+        format!("{prefix}...")
+    } else {
+        prefix
+    }
 }
 
 /// Text lines for an export result (FR-865-AC-7): the target, the bytes
@@ -2453,6 +2651,413 @@ mod tests {
             text.contains("  cause: undefined-evaluation (division-by-zero)"),
             "{text}"
         );
+    }
+
+    /// Provenance: QSL-2871.
+    #[test]
+    #[trace("FR-865-AC-2")]
+    fn text_witness_renders_shop_paid_short_operands_in_source_order() {
+        use fsl_foundation::source::provenance::{OccurrenceKey, PackageSourceMap};
+
+        let text = "self.charged = 4000; self.total = 4200";
+        let source = source_under("paid-short", "rules/paid-in-full.fsl", text);
+        let region_for = |spelling: &str| {
+            let start = text.find(spelling).expect("spelling is in fixture");
+            source
+                .region(Span {
+                    start,
+                    end: start + spelling.len(),
+                })
+                .expect("fixture span is valid")
+        };
+        let receiver = filament_exact::NodeKey::new(
+            "paid-short",
+            vec![filament_exact::PathSegment::Text("receiver".to_owned())],
+            0,
+        )
+        .expect("receiver key is valid");
+        let int_type = filament_exact::NodeKey::new(
+            "paid-short",
+            vec![filament_exact::PathSegment::Text("scalar_type".to_owned())],
+            0,
+        )
+        .expect("type key is valid");
+        let field = |ordinal| {
+            filament_exact::NodeKey::new(
+                "paid-short",
+                vec![
+                    filament_exact::PathSegment::Text("expression".to_owned()),
+                    filament_exact::PathSegment::Text("query".to_owned()),
+                    filament_exact::PathSegment::Node(receiver.clone()),
+                    filament_exact::PathSegment::Text("filament.op.record.project".to_owned()),
+                    filament_exact::PathSegment::Text("false".to_owned()),
+                    filament_exact::PathSegment::Text("query".to_owned()),
+                    filament_exact::PathSegment::Node(int_type.clone()),
+                ],
+                ordinal,
+            )
+            .expect("field key is valid")
+        };
+        let charged = field(0);
+        let total = field(1);
+        let comparison = filament_exact::NodeKey::new(
+            "paid-short",
+            vec![
+                filament_exact::PathSegment::Text("expression".to_owned()),
+                filament_exact::PathSegment::Text("binary".to_owned()),
+                filament_exact::PathSegment::Node(charged.clone()),
+                filament_exact::PathSegment::Node(total.clone()),
+                filament_exact::PathSegment::Text("filament.op.integer.eq".to_owned()),
+                filament_exact::PathSegment::Text("binary".to_owned()),
+                filament_exact::PathSegment::Node(int_type.clone()),
+            ],
+            0,
+        )
+        .expect("comparison key is valid");
+        let occurrence = |node| {
+            OccurrenceKey::new(
+                node,
+                filament_exact::Origin::new(filament_exact::Role::new("expression"), 0),
+            )
+        };
+        let source_map = PackageSourceMap::from_entries([
+            (
+                occurrence(charged.clone()),
+                vec![region_for("self.charged")],
+            ),
+            (occurrence(total.clone()), vec![region_for("self.total")]),
+            (occurrence(int_type.clone()), vec![region_for("self.total")]),
+        ])
+        .expect("fixture source map is valid");
+        let sources = RenderSources {
+            sources: vec![source.clone()],
+            source_map: Some(Arc::new(source_map)),
+        };
+        let witness = serde_json::json!({
+            "deciding_comparison": {
+                "node_id": fsl_foundation::node_wire::node_key_to_text(&comparison)
+                    .expect("comparison encodes"),
+                "role": "expression",
+                "ordinal": 0
+            },
+            "operands": [
+                {"kind": "integer", "decimal": "4000"},
+                {"kind": "integer", "decimal": "4200"}
+            ]
+        });
+
+        assert_eq!(
+            witness_line(&witness, &sources).as_deref(),
+            Some("  witness: self.charged = 4000, self.total = 4200")
+        );
+
+        let literal_comparison = filament_exact::NodeKey::new(
+            "paid-short",
+            vec![
+                filament_exact::PathSegment::Text("expression".to_owned()),
+                filament_exact::PathSegment::Text("binary".to_owned()),
+                filament_exact::PathSegment::Node(charged.clone()),
+                filament_exact::PathSegment::Node(int_type.clone()),
+                filament_exact::PathSegment::Text("7".to_owned()),
+                filament_exact::PathSegment::Text("filament.op.integer.eq".to_owned()),
+            ],
+            0,
+        ).expect("literal comparison key is valid");
+        let literal_witness = serde_json::json!({
+            "deciding_comparison": {
+                "node_id": fsl_foundation::node_wire::node_key_to_text(&literal_comparison)
+                    .expect("literal comparison encodes")
+            },
+            "operands": [
+                {"kind": "integer", "decimal": "4000"},
+                {"kind": "integer", "decimal": "7"}
+            ]
+        });
+        assert_eq!(
+            witness_line(&literal_witness, &sources).as_deref(),
+            Some("  witness: self.charged = 4000, operand 2 = 7")
+        );
+
+        let long = "self.".to_owned() + &"a".repeat(61);
+        let expected = "self.".to_owned() + &"a".repeat(55) + "...";
+        assert_eq!(truncate_spelling(&long), expected);
+
+        let many_operands = serde_json::json!({
+            "operands": (0..10)
+                .map(|index| serde_json::json!({"kind": "integer", "decimal": index.to_string()}))
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            witness_line(&many_operands, &RenderSources::from_sources([])).as_deref(),
+            Some("  witness: operand 1 = 0, operand 2 = 1, operand 3 = 2, operand 4 = 3, operand 5 = 4, operand 6 = 5, operand 7 = 6, operand 8 = 7, ... (2 more)")
+        );
+
+        let without_map = RenderSources::from_sources(Vec::new());
+        assert_eq!(
+            witness_line(&witness, &without_map).as_deref(),
+            Some("  witness: operand 1 = 4000, operand 2 = 4200")
+        );
+
+        let partial_map = PackageSourceMap::from_entries([(
+            occurrence(charged),
+            vec![region_for("self.charged")],
+        )])
+        .expect("partial fixture source map is valid");
+        let partial_sources = RenderSources {
+            sources: vec![source],
+            source_map: Some(Arc::new(partial_map)),
+        };
+        assert_eq!(
+            witness_line(&witness, &partial_sources).as_deref(),
+            Some("  witness: self.charged = 4000, operand 2 = 4200")
+        );
+    }
+
+    /// Fixture for witness naming: a comparison node over `children` (each an
+    /// expression node, ordinal = position) with a source map built from
+    /// `entries` (node ordinal, occurrence ordinal, start, end) over `text`.
+    struct WitnessFixture {
+        witness: serde_json::Value,
+        sources: RenderSources,
+    }
+
+    fn witness_fixture(
+        text: &str,
+        child_count: usize,
+        entries: &[(usize, u64, u64, u64)],
+        comparison_region: Option<(u64, u64)>,
+        operand_count: usize,
+    ) -> WitnessFixture {
+        use fsl_foundation::source::provenance::OccurrenceKey;
+
+        let source = source_under("fixture", "rules/fixture.fsl", text);
+        let region = |start: u64, end: u64| {
+            SourceRegion::new(source.reference().clone(), start, end).expect("region is ordered")
+        };
+        let key = |path: Vec<filament_exact::PathSegment>, ordinal| {
+            filament_exact::NodeKey::new("fixture", path, ordinal).expect("fixture key is valid")
+        };
+        let text_segment = |text: &str| filament_exact::PathSegment::Text(text.to_owned());
+        let children: Vec<_> = (0..child_count)
+            .map(|ordinal| {
+                key(
+                    vec![text_segment("expression"), text_segment("query")],
+                    ordinal as u64,
+                )
+            })
+            .collect();
+        let mut path = vec![text_segment("expression"), text_segment("binary")];
+        path.extend(
+            children
+                .iter()
+                .cloned()
+                .map(filament_exact::PathSegment::Node),
+        );
+        path.push(text_segment("filament.op.integer.eq"));
+        let comparison = key(path, 0);
+        let occurrence = |node: filament_exact::NodeKey, ordinal| {
+            OccurrenceKey::new(
+                node,
+                filament_exact::Origin::new(filament_exact::Role::new("expression"), ordinal),
+            )
+        };
+        let mut map_entries: Vec<(OccurrenceKey, Vec<SourceRegion>)> = entries
+            .iter()
+            .map(|&(child, ordinal, start, end)| {
+                (
+                    occurrence(children[child].clone(), ordinal),
+                    vec![region(start, end)],
+                )
+            })
+            .collect();
+        if let Some((start, end)) = comparison_region {
+            map_entries.push((occurrence(comparison.clone(), 0), vec![region(start, end)]));
+        }
+        let map = PackageSourceMap::from_entries(map_entries).expect("fixture map is valid");
+        let witness = serde_json::json!({
+            "deciding_comparison": {
+                "node_id": fsl_foundation::node_wire::node_key_to_text(&comparison)
+                    .expect("comparison encodes"),
+                "role": "expression",
+                "ordinal": 0
+            },
+            "operands": (0..operand_count)
+                .map(|value| serde_json::json!({"kind": "integer", "decimal": value.to_string()}))
+                .collect::<Vec<_>>()
+        });
+        WitnessFixture {
+            witness,
+            sources: RenderSources {
+                sources: vec![source],
+                source_map: Some(Arc::new(map)),
+            },
+        }
+    }
+
+    fn line_of(fixture: &WitnessFixture) -> Option<String> {
+        witness_line(&fixture.witness, &fixture.sources)
+    }
+
+    /// Provenance: QSL-2871.
+    #[test]
+    #[trace("FR-865-AC-2")]
+    fn witness_operand_count_mismatch_names_no_operand() {
+        let text = "aaaa = bbbb";
+        let entries = [(0, 0, 0, 4), (1, 0, 7, 11)];
+        let matching = witness_fixture(text, 2, &entries, None, 2);
+        assert_eq!(
+            line_of(&matching).as_deref(),
+            Some("  witness: aaaa = 0, bbbb = 1")
+        );
+        let one = witness_fixture(text, 2, &entries, None, 1);
+        assert_eq!(line_of(&one).as_deref(), Some("  witness: operand 1 = 0"));
+        let three = witness_fixture(text, 2, &entries, None, 3);
+        assert_eq!(
+            line_of(&three).as_deref(),
+            Some("  witness: operand 1 = 0, operand 2 = 1, operand 3 = 2")
+        );
+    }
+
+    /// Provenance: QSL-2871.
+    #[test]
+    #[trace("FR-865-AC-2")]
+    fn witness_spelling_collapses_whitespace_and_caps_characters() {
+        let multi_line = "self.charged  +\n\t   self.fee  = self.total";
+        let end_first = multi_line.find("  =").expect("fixture has the operator") as u64;
+        let start_second = multi_line
+            .find("self.total")
+            .expect("fixture has the total") as u64;
+        let fixture = witness_fixture(
+            multi_line,
+            2,
+            &[
+                (0, 0, 0, end_first),
+                (1, 0, start_second, multi_line.len() as u64),
+            ],
+            None,
+            2,
+        );
+        assert_eq!(
+            line_of(&fixture).as_deref(),
+            Some("  witness: self.charged + self.fee = 0, self.total = 1")
+        );
+
+        // The cap counts characters, not bytes: 61 two-byte characters cut to 60.
+        let wide = "é".repeat(61);
+        let text = format!("{wide} = x");
+        let fixture = witness_fixture(
+            &text,
+            2,
+            &[
+                (0, 0, 0, wide.len() as u64),
+                (1, 0, text.len() as u64 - 1, text.len() as u64),
+            ],
+            None,
+            2,
+        );
+        let expected = format!("  witness: {}... = 0, x = 1", "é".repeat(60));
+        assert_eq!(line_of(&fixture), Some(expected));
+    }
+
+    /// Provenance: QSL-2871.
+    #[test]
+    #[trace("FR-865-AC-2")]
+    fn witness_without_operands_prints_no_line() {
+        let sources = RenderSources::from_sources([]);
+        for witness in [
+            serde_json::json!({"quantifier": "forall"}),
+            serde_json::json!({"operands": null, "deciding_comparison": null}),
+            serde_json::json!({"operands": []}),
+        ] {
+            assert_eq!(witness_line(&witness, &sources), None);
+        }
+    }
+
+    /// Provenance: QSL-2871.
+    #[test]
+    #[trace("FR-865-AC-2")]
+    fn witness_shared_node_names_only_from_the_comparisons_own_region() {
+        // Operand 0 also occurs in a different rule with another spelling.
+        let text = "aaaa = bbbb; zzzz";
+        let entries = [(0, 0, 0, 4), (0, 1, 13, 17), (1, 0, 7, 11)];
+        let bounded = witness_fixture(text, 2, &entries, Some((0, 11)), 2);
+        assert_eq!(
+            line_of(&bounded).as_deref(),
+            Some("  witness: aaaa = 0, bbbb = 1")
+        );
+        // Region unknown: the differing spellings are a doubt for that operand.
+        let unbounded = witness_fixture(text, 2, &entries, None, 2);
+        assert_eq!(
+            line_of(&unbounded).as_deref(),
+            Some("  witness: operand 1 = 0, bbbb = 1")
+        );
+        // Differing spellings inside the region are a doubt too.
+        let both_inside = witness_fixture(text, 2, &entries, Some((0, 17)), 2);
+        assert_eq!(
+            line_of(&both_inside).as_deref(),
+            Some("  witness: operand 1 = 0, bbbb = 1")
+        );
+    }
+
+    /// Provenance: QSL-2871.
+    #[test]
+    #[trace("FR-865-AC-2")]
+    fn witness_unreadable_regions_fall_back_without_panicking() {
+        let text = "é = bbbb";
+        // Out of range, and a region starting inside the two-byte character.
+        let out_of_range = witness_fixture(text, 2, &[(0, 0, 0, 500), (1, 0, 5, 9)], None, 2);
+        assert_eq!(
+            line_of(&out_of_range).as_deref(),
+            Some("  witness: operand 1 = 0, bbbb = 1")
+        );
+        let split = witness_fixture(text, 2, &[(0, 0, 1, 2), (1, 0, 5, 9)], None, 2);
+        assert_eq!(
+            line_of(&split).as_deref(),
+            Some("  witness: operand 1 = 0, bbbb = 1")
+        );
+
+        // A region in a source that was not provided (a multi-file package).
+        let mut other = witness_fixture(text, 2, &[(0, 0, 0, 2), (1, 0, 5, 9)], None, 2);
+        other.sources.sources = vec![source_under("elsewhere", "rules/other.fsl", text)];
+        assert_eq!(
+            line_of(&other).as_deref(),
+            Some("  witness: operand 1 = 0, operand 2 = 1")
+        );
+    }
+
+    /// Provenance: QSL-2871.
+    #[test]
+    #[trace("FR-865-AC-2")]
+    fn json_outcome_render_does_not_consult_optional_witness_source_map() {
+        let document = OutcomeDocument::settled(
+            fsl_replay::Operation::Monitor,
+            Some(fsl_replay::OutcomeStage::S6a),
+            vec![fsl_replay::OutcomeItem::undefined_evaluation(
+                fsl_foundation::RequestIndex::new(0),
+                "position 1",
+                "division-by-zero",
+            )],
+        );
+        let without_map = render_outcome(
+            &document,
+            RenderForm::Json,
+            &RenderSources::from_sources([]),
+            RenderLimits::default(),
+            &Cancel::new(),
+        )
+        .expect("the JSON document renders");
+        let with_map = render_outcome(
+            &document,
+            RenderForm::Json,
+            &RenderSources::from_sources([]).with_source_map(Arc::new(
+                fsl_foundation::source::provenance::PackageSourceMap::default(),
+            )),
+            RenderLimits::default(),
+            &Cancel::new(),
+        )
+        .expect("the JSON document renders with retained source correspondence");
+
+        assert_eq!(with_map.value().bytes(), without_map.value().bytes());
     }
 
     #[test]

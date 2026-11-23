@@ -290,7 +290,7 @@ fn plan_refusal(
 
 /// An automaton that reached its state limit is a budget; any other refusal
 /// is the event's.
-fn automaton_refusal(error: AutomatonError) -> ProductRefusal {
+pub(crate) fn automaton_refusal(error: AutomatonError) -> ProductRefusal {
     match error {
         AutomatonError::StateLimit { limit } => ProductRefusal::Stopped(ProductStop::Limit {
             limit: ModelCheckLimit::ExactProbMaxAutomatonStates,

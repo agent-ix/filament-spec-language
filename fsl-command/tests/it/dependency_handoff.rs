@@ -319,7 +319,8 @@ fn replay_boundary(
     unlimited: &Value,
     root_bytes: u64,
     external_bytes: u64,
-) -> (u64, Value) {
+    refused_external_bytes: u64,
+) -> (u64, Value, Value) {
     // The existing decoder runs first. At the root file length it measures
     // the unchanged encoded request, independently of the later artifact charge.
     let (_, measured) = analyze(directory, request.clone(), root_bytes);
@@ -338,6 +339,12 @@ fn replay_boundary(
         "target and source metadata remain charged"
     );
     let total = baseline.checked_add(external_bytes).unwrap();
+    // FR-255-AC-1: `actual` is the count the refused charge would have reached.
+    // The package route charges the supplied artifacts together before any
+    // recompile (`total`); the source route charges each library package as it
+    // is emitted, so its refused charge is the first emitted library (`test/a`,
+    // which `test/z` imports).
+    let crossing = baseline.checked_add(refused_external_bytes).unwrap();
     let (exit, refused) = analyze(directory, request.clone(), baseline);
     assert_eq!(
         exit, 22,
@@ -354,7 +361,7 @@ fn replay_boundary(
         json!({
             "kind": "replay-refused", "code": "stage_limit_exceeded", "cause": "input-bytes-exceeded",
             "setting": "replay.input_bytes", "bound": baseline.to_string(),
-            "message": fsl_replay::BoundExceeded { bound: baseline, actual: u128::from(total) }.to_string(),
+            "message": fsl_replay::BoundExceeded { bound: baseline, actual: u128::from(crossing) }.to_string(),
         }),
         "the encoded request fits; only unique external artifacts exceed the allowance: {refused}"
     );
@@ -371,7 +378,39 @@ fn replay_boundary(
         exact["items"], unlimited["items"],
         "no root is charged a second time: {exact}"
     );
-    (baseline, exact)
+    (baseline, exact, refused["items"][0]["record"]["cause"].clone())
+}
+
+/// FR-850-AC-15: both routes refuse the same request with the same code, cause
+/// and setting; the package route's `actual` is its baseline plus every supplied
+/// artifact (all sizes are known before any work), and the source route's is the
+/// size reached when the bound was crossed: above the bound and at most that
+/// total. Both routes admit at the total (asserted by `replay_boundary`).
+fn assert_bound_rule(
+    source: (u64, &Value),
+    package: (u64, &Value),
+    external_bytes: u64,
+) {
+    let (source_baseline, source_cause) = source;
+    let (package_baseline, package_cause) = package;
+    for member in ["kind", "code", "cause", "setting"] {
+        assert_eq!(source_cause[member], package_cause[member], "{member}");
+    }
+    let actual = |cause: &Value| -> u64 {
+        cause["message"]
+            .as_str()
+            .and_then(|message| message.split_once("encoded size "))
+            .and_then(|(_, rest)| rest.split_whitespace().next())
+            .and_then(|value| value.parse().ok())
+            .expect("the refusal renders its reached size")
+    };
+    assert_eq!(actual(package_cause), package_baseline + external_bytes);
+    let reached = actual(source_cause);
+    assert!(reached > source_baseline, "the crossing is over the bound");
+    assert!(
+        reached <= source_baseline + external_bytes,
+        "the crossing is at most the supplied total"
+    );
 }
 
 #[test]
@@ -432,13 +471,33 @@ fn transitive_library_claim_analysis_and_replay_equal_source_after_source_deleti
             .len()
         })
         .sum();
+    // `test/a` is imported by `test/z`, so it is the first library emitted and
+    // the first package the allowance is charged for.
+    let manifest: Value = serde_json::from_slice(
+        &std::fs::read(directory.join("handoff/dependencies.json")).unwrap(),
+    )
+    .unwrap();
+    let first_directory = manifest["dependencies"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["identity"] == "test/a")
+        .and_then(|row| row["directory"].as_str())
+        .expect("the manifest lists test/a");
+    let first_external_bytes = std::fs::metadata(
+        directory.join(format!("handoff/{first_directory}/checked-package.json")),
+    )
+    .unwrap()
+    .len();
+    assert!(first_external_bytes < external_bytes, "a later library follows the one that crosses");
     assert!(external_bytes > 0);
-    let (source_baseline, source_exact) = replay_boundary(
+    let (source_baseline, source_exact, source_cause) = replay_boundary(
         directory,
         &source_request,
         &source_result,
         root_bytes,
         external_bytes,
+        first_external_bytes,
     );
     let package_request = json!({"package": {"directory": "handoff"}, "models": models, "documents": [{"file": "start.json"}], "items": [{"claim": "LibraryBound"}, {"claim": "Bounded"}]});
     std::fs::remove_dir_all(directory.join("handoff/sources")).unwrap();
@@ -448,11 +507,12 @@ fn transitive_library_claim_analysis_and_replay_equal_source_after_source_deleti
     let (exit, result) = analyze(directory, package_request.clone(), 1 << 20);
     assert_eq!(exit, source_exit, "{result}");
     assert_eq!(result["items"], source_result["items"], "{result}");
-    let (package_baseline, package_exact) = replay_boundary(
+    let (package_baseline, package_exact, package_cause) = replay_boundary(
         directory,
         &package_request,
         &result,
         root_bytes,
+        external_bytes,
         external_bytes,
     );
     assert!(
@@ -460,6 +520,11 @@ fn transitive_library_claim_analysis_and_replay_equal_source_after_source_deleti
         "source references and provisions keep their legitimate byte charges"
     );
     assert_eq!(source_exact["items"], package_exact["items"]);
+    assert_bound_rule(
+        (source_baseline, &source_cause),
+        (package_baseline, &package_cause),
+        external_bytes,
+    );
 }
 
 #[test]

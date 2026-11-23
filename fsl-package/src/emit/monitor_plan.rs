@@ -10,7 +10,10 @@
 //! them with the plan's premises. Nothing is read back here: the node form
 //! is read by IR-721.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    sync::Arc,
+};
 
 use filament_contract_model::CheckedNodePathSegment as Segment;
 use filament_contract_model::{CheckedSemanticNodeV2, CheckedTerm};
@@ -1440,7 +1443,7 @@ pub(super) fn finish(
         omitted: rows.omitted,
         evidence: own_evidence(&lock),
         capability_report,
-        source_map: inspection_source_map,
+        source_map: Arc::new(inspection_source_map),
         selected_operation_member_rows: rows.selected_operation_member_rows,
         selected_tuple_declaration_rows: rows.selected_tuple_declaration_rows,
         selected_source_unit_rows: rows.selected_source_unit_rows,
@@ -1566,7 +1569,7 @@ mod tests {
             &changes,
             nodes,
             source_map,
-            retained.source_map.clone(),
+            (*retained.source_map).clone(),
             limits,
         )
         .expect("the actual final writer emits rekeyed scalar functions");

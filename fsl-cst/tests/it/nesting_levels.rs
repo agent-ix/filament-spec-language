@@ -461,7 +461,7 @@ fn longest_admitted(build: fn(usize) -> String) -> usize {
 // Re-derives the lengths `assert_longest_chain` uses:
 // `cargo test -p fsl-cst --test it nesting_levels::probe -- --ignored --nocapture`.
 #[test]
-#[ignore = "probe: prints the longest chain of each shape the default ceilings admit"]
+#[ignore = "QSL-2904: probe: prints the longest chain of each shape the default ceilings admit"]
 fn probe_longest_chains_at_default_ceilings() {
     on_bounded_stack(|| {
         for (name, build) in [
@@ -485,7 +485,7 @@ fn probe_longest_chains_at_default_ceilings() {
 // Chains parse in time and memory linear in their length:
 // `cargo test --release -p fsl-cst --test it nesting_levels::probe_chain -- --ignored --nocapture`.
 #[test]
-#[ignore = "probe: wall-clock timings belong outside the default test run"]
+#[ignore = "QSL-2904: probe: wall-clock timings belong outside the default test run"]
 fn probe_chain_parse_time() {
     on_bounded_stack(|| {
         for (name, text) in [

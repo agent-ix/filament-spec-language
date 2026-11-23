@@ -1437,3 +1437,68 @@ fn a_bounded_claim_past_the_rational_budget_settles_incomplete_naming_the_limit(
         "{record:#?}"
     );
 }
+
+/// FR-281 "Engine refusals": a document-storage budget or a cancel that stops a
+/// refutation is `incomplete`, at every size and every poll, never
+/// `unsupported`/`not-yet-implemented` and never a fault. This guard also passes
+/// before the QSL-2850 change: its fault exits need fault injection.
+#[trace("TC-763", "FR-281-AC-6")]
+#[test]
+fn a_refutation_settles_refuted_or_incomplete_at_every_storage_budget_and_cancel_poll() {
+    let world = World::new(&prob_world::link(CLAIMS));
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let run = |storage: Option<u64>, cancel: &Cancel| {
+        let mut request = world.request("Unlikely", ModelCheckLimits::default());
+        if let Some(bytes) = storage {
+            request.limits.document.storage_bytes = bytes;
+        }
+        let item = exact_probabilistic_item(RequestIndex::new(0), request);
+        analyze_items(&engines, vec![item], cancel).remove(0)
+    };
+    let settled_or_stopped = |record: &fsl_analyze::analyze::AnalyzeRecord, what: &str| {
+        assert!(
+            matches!(
+                record.terminal().expect("a terminal record").value(),
+                TerminalValue::Refuted | TerminalValue::Incomplete(_)
+            ),
+            "{what}: {record:#?}"
+        );
+    };
+    let live = Cancel::new();
+    let _counting = live.count_charges();
+    let control = run(None, &live);
+    assert_eq!(
+        control.terminal().expect("a terminal record").value(),
+        &TerminalValue::Refuted,
+        "the positive control refutes"
+    );
+    let total = live.charges();
+    let mut stopped = 0_u32;
+    for bytes in [0_u64, 1, 16, 64, 256, 1024, 4096, 16_384, 65_536] {
+        let record = run(Some(bytes), &Cancel::new());
+        settled_or_stopped(&record, &format!("storage {bytes}"));
+        stopped += u32::from(matches!(
+            record.terminal().map(|terminal| terminal.value()),
+            Some(TerminalValue::Incomplete(_))
+        ));
+    }
+    assert!(stopped > 0, "some storage budget must stop the replay");
+    let stride = (total / 6).max(1);
+    for at in (1..=total).step_by(stride as usize) {
+        let slot = Arc::new(OnceLock::<Cancel>::new());
+        let weak = Arc::downgrade(&slot);
+        let polls = Arc::new(AtomicU32::new(0));
+        let seen = Arc::clone(&polls);
+        let cancel = Cancel::observing(move || {
+            if seen.fetch_add(1, Ordering::Relaxed) + 1 == at {
+                weak.upgrade()
+                    .expect("the run owns the slot")
+                    .get()
+                    .expect("the slot is initialized")
+                    .cancel(CancelCause::Requested);
+            }
+        });
+        slot.set(cancel.clone()).expect("initialized once");
+        settled_or_stopped(&run(None, &cancel), &format!("cancel at poll {at} of {total}"));
+    }
+}

@@ -99,7 +99,7 @@ pub use lifecycle::{
 };
 pub(crate) use lifecycle::{
     check_for_continuation, check_units_with_options, parse_for_continuation, ContinuationInputs,
-    UnitCheckOptions,
+    ExternalPackageBytes, UnitCheckOptions,
 };
 pub use protocol_structure::{
     arena_names, replay_protocol_analysis, ProtocolReplayRefusal, StructureError,
@@ -251,7 +251,7 @@ pub use clause::{
     admit_progress, assertion_json, assertion_of, authenticate_emission,
     authenticate_package_trace, clause_trace_binding, disposition_report, incomplete_json,
     incomplete_of, name_clause_atom, pending_report, profile_reads, read_evidence_ledger,
-    read_ledger, render_clause_atom, run_clause, run_clause_batch,
+    read_ledger, render_clause_atom, run_clause, run_clause_batch, run_clause_with_source_map,
     run_clause_with_temporal_selections, run_package_behaviours, run_package_sampled,
     run_package_sampled_authenticated, run_package_snapshots, run_package_temporal,
     run_package_temporal_bounded, run_package_trace_subject, run_package_valuation,
