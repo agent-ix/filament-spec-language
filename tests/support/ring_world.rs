@@ -695,8 +695,8 @@ pub struct RingSpec<'a> {
     pub size: i64,
     /// Its `next`, as the key and type name of the ring it references.
     pub next: Option<(&'a str, &'a str)>,
-    /// Its `chain`, as the key and type name of each ring it references; empty
-    /// leaves a variant without a `chain` field alone.
+    /// Its `chain`, as the key and type name of each ring it references; read
+    /// only by a variant whose `Ring` declares a `chain`.
     pub chain: &'a [(&'a str, &'a str)],
 }
 
@@ -724,18 +724,17 @@ pub fn custom_state(
             if let Some((target, type_name)) = ring.next {
                 fields.insert(key(RING, "Ring/next"), reference(type_name, target));
             }
-            if !ring.chain.is_empty() {
-                let chain_key = key(RING, "Ring/chain");
-                let declared = system
-                    .fields_of(&key(RING, "Ring"))
-                    .and_then(|declared| declared.iter().find(|field| field.key == chain_key))
-                    .and_then(|field| match &field.value_type {
-                        filament_exact::ValueType::Collection(collection) => {
-                            Some((**collection).clone())
-                        }
-                        _ => None,
-                    })
-                    .expect("the ring declares a chain sequence");
+            let chain_key = key(RING, "Ring/chain");
+            let declared = system
+                .fields_of(&key(RING, "Ring"))
+                .and_then(|declared| declared.iter().find(|field| field.key == chain_key))
+                .and_then(|field| match &field.value_type {
+                    filament_exact::ValueType::Collection(collection) => {
+                        Some((**collection).clone())
+                    }
+                    _ => None,
+                });
+            if let Some(declared) = declared {
                 let elements = ring
                     .chain
                     .iter()
