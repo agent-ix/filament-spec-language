@@ -445,14 +445,16 @@ fn a_count_against_an_int_operand_is_a_type_mismatch() {
     }
 }
 
+/// The profile selection the protocol `W` needs; it precedes the model.
+const PROTOCOL_PROFILE: &str = "profile p = \"filament.protocol.finite-global/v1\";";
+
 /// The protocol `W` over the `Counter` unit, with `extra` in its run.
 fn population_protocol(extra: &str) -> String {
     format!(
-        "profile p = \"filament.protocol.finite-global/v1\";\n\
-         record Ack {{ ok: Boolean; }}\n\
+        "record Ack {{ ok: Boolean; }}\n\
          protocol W using p over (c: M::Counter) on origin {{\n\
          capture n: Integer = size(allInstances<M::Counter>(M::counters));\n\
-         capture o: Option<M::Counter> = lookup<M::Counter>(M::counters, c);\n\
+         capture o: Option<M::Counter> = lookup<M::Counter>(M::counters, c) absent empty;\n\
          role R on M::Counter;\nrole S on M::Counter;\n\
          channel ch from R to S carries Ack ordering unordered delivery exactly-once-premise \
          capacity 2 overflow reject;\n\
@@ -468,17 +470,24 @@ fn population_protocol(extra: &str) -> String {
 /// state, refuses the read `operator-ineligible`.
 #[trace("TC-2832", "FR-391-AC-11", "FR-883-AC-1", "FR-883-AC-2")]
 #[test]
-#[ignore = "QSL-2902: the test's protocol source does not parse at S1 (invalid_syntax: expected end of source at the protocol slot)"]
 fn a_protocol_slot_that_reads_model_state_names_a_population() {
-    checked(false, &population_protocol(""));
-    let (code, cause, at) = refused(
+    fixture::check_with_profiles(false, PROTOCOL_PROFILE, &population_protocol(""))
+        .unwrap_or_else(|refusals| panic!("the protocol checks: {refusals:?}"));
+    let refusals = fixture::check_with_profiles(
         false,
+        PROTOCOL_PROFILE,
         &population_protocol(
             "choice Pick by S visible () { \
              case yes when { count(x in M::counters where true) = 0 } sequence Yes { } \
              case no when { true } sequence No { } }",
         ),
-    );
+    )
+    .err()
+    .expect("a choice guard that reads model state is refused");
+    let [refusal] = &refusals[..] else {
+        panic!("one refusal: {refusals:?}");
+    };
+    let (code, cause, at) = (&refusal.code, &refusal.cause, &refusal.at);
     assert_eq!(
         (code.as_str(), cause.as_str()),
         ("ill_typed", "operator-ineligible")
