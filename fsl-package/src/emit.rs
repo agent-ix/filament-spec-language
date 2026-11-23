@@ -8171,6 +8171,7 @@ fn emit_package_nodes(
         graph,
         &producer_node_ids,
         &value_validity.records,
+        &value_validity.operation_records,
         &relation_rows,
         &omitted_causes,
     )?;

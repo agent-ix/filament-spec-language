@@ -85,7 +85,8 @@ mod numeric_conversion;
 mod rust_syntax;
 pub use abstraction::{
     AbstractionKey, AbstractionRefusal, AuthoredBinding, CheckedAbstractionRelation,
-    CheckedBinding, CheckedFrameBinding, FrameBinding, FrameNodes, MalformedEntry, ObjectBinding,
+    CheckedBinding, CheckedFrameBinding, CheckedOperationContractReferences,
+    CheckedOperationPopulation, FrameBinding, FrameNodes, MalformedEntry, ObjectBinding,
     OperationKey, PopulationBinding, RustField, RustParameter, RustPath, RustReceiver,
 };
 pub use abstraction::{AbstractionNodeRefusal, AbstractionNodes};

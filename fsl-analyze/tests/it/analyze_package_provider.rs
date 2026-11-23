@@ -235,35 +235,12 @@ fn contract_package(name: &str, body: &str, items: Json, engines: Vec<Engine>) -
     )
 }
 
-fn assert_contract_record_refusal(run: &Run, index: usize, name: &str) {
-    let document = run.document();
-    assert_eq!(document["items"], json!([]), "{document}");
-    let diagnostic = &document["diagnostics"][0];
-    assert_eq!(diagnostic["code"], "unsupported_construct", "{document}");
-    assert_eq!(diagnostic["cause"], "not-yet-implemented", "{document}");
-    let message = diagnostic["message"].as_str().expect("a refusal message");
-    assert!(message.contains(&format!("items[{index}]")), "{message}");
-    assert!(
-        message.contains(&format!("`{name}` (claim occurrence 0)")),
-        "{message}"
-    );
-    assert!(
-        message.contains("operation-contract requirement record has no package form"),
-        "{message}"
-    );
-    assert!(message.contains("CheckedNodeId"), "{message}");
-    assert!(
-        !message.contains("requirement row"),
-        "no invented row index: {message}"
-    );
-}
-
-/// Trace: FR-940-AC-13, FR-950-AC-1, FR-968-AC-2.
-/// Pre/post selections carry source operation-contract records that the package
-/// does not represent, even though it can resolve their authentic claim names.
+/// Trace: FSL FR-940-AC-6, FSpec FR-825-AC-6.
+/// The package route reads each admitted operation-contract record rather
+/// than refusing the family for lack of a package form.
 #[trace("TC-2410", "FR-940-AC-13")]
 #[test]
-fn contract_package_refuses_missing_operation_contract_requirement_record() {
+fn contract_package_reads_operation_contract_requirement_records() {
     for name in ["CanInc", "Inc"] {
         for backend in [None, Some("contract-checker"), Some(SMT)] {
             let (engine, seen) = spy_for(
@@ -285,8 +262,15 @@ fn contract_package_refuses_missing_operation_contract_requirement_record() {
                 json!([selection]),
                 engines,
             );
-            assert_contract_record_refusal(&run, 0, name);
-            assert!(seen.lock().expect("the provider log").is_empty());
+            let document = run.document();
+            assert_eq!(document["items"].as_array().map(Vec::len), Some(1), "{document}");
+            assert!(
+                !document.to_string().contains("operation-contract requirement record"),
+                "{document}"
+            );
+            if backend == Some(SMT) {
+                assert!(!seen.lock().expect("the provider log").is_empty(), "{document}");
+            }
         }
     }
 }
@@ -322,11 +306,11 @@ fn contract_package_keeps_ambiguous_contract_candidates() {
 }
 
 /// Trace: FR-621-AC-1, FR-950-AC-2, FR-968-AC-3.
-/// An earlier provider item must not run or settle when a later contract needs
-/// an unrepresented record; the request refuses as a whole.
+/// A value item and an operation-contract item can both be settled after their
+/// records have been read from the same admitted package.
 #[trace("TC-2410", "FR-940-AC-13")]
 #[test]
-fn contract_package_mixed_request_refuses_before_any_provider_runs() {
+fn contract_package_mixed_request_reads_records_before_provider_runs() {
     let (engine, seen) = spy(ProviderVerdict::Proved);
     let run = contract_package(
         "pkg-contract-mixed",
@@ -337,13 +321,14 @@ fn contract_package_mixed_request_refuses_before_any_provider_runs() {
         ]),
         vec![engine],
     );
-    assert_contract_record_refusal(&run, 1, "Inc");
-    assert!(seen.lock().expect("the provider log").is_empty());
+    assert_eq!(run.document()["items"].as_array().map(Vec::len), Some(2));
+    assert!(!seen.lock().expect("the provider log").is_empty());
 }
 
 /// Trace: FR-962-AC-1, FR-940-AC-13.
 /// EN-1's invariant/model tie reads the package's invariant form and keeps its
-/// existing result. Naming EN-2 requires the missing contract record instead.
+/// existing result, while a named external candidate proceeds through the
+/// admitted operation-contract record.
 #[trace("TC-2410", "FR-940-AC-13")]
 #[test]
 fn contract_package_keeps_the_native_invariant_tie() {
@@ -360,7 +345,11 @@ fn contract_package_keeps_the_native_invariant_tie() {
             vec![],
         );
         if backend == Some("contract-checker") {
-            assert_contract_record_refusal(&run, 0, "Safe");
+            assert_eq!(run.document()["items"].as_array().map(Vec::len), Some(1));
+            assert!(!run
+                .document()
+                .to_string()
+                .contains("operation-contract requirement record"));
         } else {
             assert_eq!(label(&run.item(0)), "proved", "{}", run.document());
             assert_eq!(run.item(0)["record"]["backend"], "en-1");
@@ -405,11 +394,8 @@ fn contract_package_keeps_unknown_names_and_candidate_refusals() {
     }
 }
 
-/// FSpec FR-290-AC-14 (TC-950), FR-335-AC-2: a per-step contract item whose
-/// extent is unbounded, on the contract checker that advertises only `bounded`,
-/// is written `unsupported` with `requires_bound`/`requires-bound`, settled by
-/// its disposition, with no engine result members, when the request's extent
-/// says a finite bound is available.
+/// FSpec FR-290-AC-14 (TC-950), FR-335-AC-2: the package-route twin preserves
+/// the source route's recorded unbounded extent and `requires_bound` result.
 #[trace("FSpec-TC-950", "FSpec-FR-290-AC-14", "TC-845", "FR-335-AC-2")]
 #[test]
 fn unbounded_operation_contract_item_is_written_requires_bound() {
@@ -419,8 +405,21 @@ fn unbounded_operation_contract_item_is_written_requires_bound() {
         "",
         json!([{"claim": "Keeps", "kind": "operation-contract"}]),
     );
-    let run = analyze_with_providers(&path, vec![]);
-    let item = run.item(0);
+    let source = analyze_with_providers(&path, vec![]);
+    let items = json!([{"claim": "Keeps", "kind": "operation-contract"}]);
+    let (members, _) = package_selection(&ws, &request_members(Some(items)));
+    let package = analyze_with_providers(
+        &ws.write(
+            "analyze-package.json",
+            json!({"format": "native-analyze/1", "request": members}).to_string().as_bytes(),
+        ),
+        vec![],
+    );
+    let item = source.item(0);
+    let package_item = package.item(0);
+    assert_eq!(package_item["request"]["extent"], item["request"]["extent"]);
+    assert_eq!(package_item["category"], item["category"]);
+    assert_eq!(package_item["record"], item["record"]);
     assert_eq!(
         item["request"]["extent"],
         json!({"classification": "unbounded", "finite_bound_available": true}),

@@ -3,7 +3,7 @@
 
 use filament_contract_model::{
     CapabilityKind, DomainKey as WireKey, DomainKind as WireKind, RequirementExtent,
-    RequirementItemRow,
+    RequirementItemRow, RequirementRecord as WireRecord,
 };
 use filament_exact::{Origin, Role};
 use fsl_foundation::bound::{DomainKey, DomainKind};
@@ -58,6 +58,32 @@ pub(super) fn extent(package: &BarePackage<'_>, row: &RequirementItemRow) -> Opt
         })
         .collect::<Option<std::collections::BTreeMap<_, _>>>()?;
     Some(ClaimExtent::from_domains(domains))
+}
+
+/// Read the admitted operation-contract record and its already-classified
+/// extent. The route must use these checked facts instead of classifying the
+/// source clause again.
+pub(crate) fn operation_contract_record(
+    package: &BarePackage<'_>,
+    row: &RequirementItemRow,
+) -> Option<(&filament_contract_model::OperationContractRecord, ClaimExtent)> {
+    if row.kind != CapabilityKind::OperationContract {
+        return None;
+    }
+    let Some(WireRecord::OperationContract(record)) = row.record.as_ref() else {
+        return None;
+    };
+    package.node_key(&record.result_bound)?;
+    if let Some(operation) = &record.operation {
+        package.node_key(operation)?;
+    }
+    for object in &record.model_objects {
+        package.node_key(object)?;
+    }
+    for population in &record.populations {
+        package.node_key(&population.member_type)?;
+    }
+    Some((record, extent(package, row)?))
 }
 
 /// Why an admitted row has no supported request-item read.

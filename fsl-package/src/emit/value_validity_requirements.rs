@@ -6,8 +6,8 @@ use std::collections::{BTreeMap, HashMap};
 use filament_contract_model::{
     CapabilityKind, CheckedNodeId, CheckedOccurrence, CheckedOccurrenceRole, CheckedSemanticNodeV2,
     CheckedSourceMapEntry, CheckedSourceRegion, CheckedTerm, DomainKey, DomainKind, LiteralKind,
-    PathConditionFrame, PathConditionFrameId, RequirementExtent, RequirementItemRow,
-    RequirementRecord as WireRecord, ValueValidityRecord,
+    OperationContractRecord, OperationPopulation, PathConditionFrame, PathConditionFrameId,
+    RequirementExtent, RequirementItemRow, RequirementRecord as WireRecord, ValueValidityRecord,
 };
 use filament_exact::{NodeKey, PathSegment};
 use fsl_foundation::source::provenance::OccurrenceKey;
@@ -16,14 +16,15 @@ use fsl_semantics::check::{Capability, CheckedGraph, NodeTag, RequirementRecord}
 use fsl_semantics::family::ClaimExtent;
 
 use super::{
-    admitted_key, body_reference_targets, checked_literal_json, checked_occurrence,
-    claim_aggregate, claim_binding, encoding, node_id, push_scalar_type, source_artifact,
-    EmitRefusal, OmissionCause, OmittedNode, GRAPH_V2,
+    EmitRefusal, GRAPH_V2, OmissionCause, OmittedNode, admitted_key, body_reference_targets,
+    checked_literal_json, checked_occurrence, claim_aggregate, claim_binding, claim_text, encoding,
+    node_id, push_scalar_type, source_artifact,
 };
 
 mod frames;
 
 type Records = HashMap<OccurrenceKey, ValueValidityRecord>;
+type OperationRecords = HashMap<OccurrenceKey, OperationContractRecord>;
 
 /// The omitted graph nodes, each with its omission cause.
 type Omitted = HashMap<NodeKey, OmissionCause>;
@@ -32,6 +33,8 @@ type Omitted = HashMap<NodeKey, OmissionCause>;
 /// omits because their owner function is omitted.
 pub(super) struct Appended {
     pub(super) records: Records,
+    /// Operation-contract record nodes and their exact typed references.
+    pub(super) operation_records: OperationRecords,
     /// The shared path-condition frames the records cite (FSpec FR-825),
     /// each guard in the id space of the emitted nodes; empty when no record
     /// is guarded.
@@ -74,7 +77,8 @@ impl GuardRows {
             return row;
         }
         self.rows.push((parent, guard.clone()));
-        self.lookup.insert((parent, guard.clone()), self.rows.len() - 1);
+        self.lookup
+            .insert((parent, guard.clone()), self.rows.len() - 1);
         self.rows.len() - 1
     }
 }
@@ -124,6 +128,20 @@ fn record_names_of(
                 .item_object_nodes(claim)
                 .ok_or(EmitRefusal::SourceMapInvariant)?
                 .map_err(|_| EmitRefusal::SourceMapInvariant)?,
+        );
+    } else if source.requirements().kind() == Capability::OperationContract {
+        names.push(source.result_bound().node());
+        let references = graph
+            .item_operation_contract_references(claim)
+            .ok_or(EmitRefusal::SourceMapInvariant)?
+            .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+        names.extend(references.operation);
+        names.extend(references.model_objects);
+        names.extend(
+            references
+                .populations
+                .into_iter()
+                .map(|population| population.member_type),
         );
     }
     Ok(RecordNames {
@@ -182,6 +200,278 @@ fn count(integer: &CheckedNodeId, value: u64) -> Result<CheckedTerm, EmitRefusal
     })
 }
 
+fn occurrence_role_wire(role: &CheckedOccurrenceRole) -> &'static str {
+    match role {
+        CheckedOccurrenceRole::Declaration => "declaration",
+        CheckedOccurrenceRole::Type => "type",
+        CheckedOccurrenceRole::Expression => "expression",
+        CheckedOccurrenceRole::Anchor => "anchor",
+        CheckedOccurrenceRole::Claim => "claim",
+        CheckedOccurrenceRole::Generated => "generated",
+    }
+}
+
+fn operation_contract_key(
+    claim: &OccurrenceKey,
+    occurrence: &CheckedOccurrence,
+    result_bound: &NodeKey,
+    invariant: bool,
+    operation: Option<&NodeKey>,
+    model_objects: &[NodeKey],
+    populations: &[fsl_semantics::check::CheckedOperationPopulation],
+    extent: &ClaimExtent,
+) -> Result<NodeKey, EmitRefusal> {
+    let mut operands = vec![
+        PathSegment::Text("claim".to_owned()),
+        PathSegment::Text("operation_contract".to_owned()),
+        PathSegment::Node(claim.node().clone()),
+        PathSegment::Text(occurrence_role_wire(&occurrence.role).to_owned()),
+        PathSegment::Text(occurrence.ordinal.to_string()),
+        PathSegment::Text("bound".to_owned()),
+        PathSegment::Node(result_bound.clone()),
+        PathSegment::Text("invariant".to_owned()),
+        PathSegment::Text(if invariant { "true" } else { "false" }.to_owned()),
+        PathSegment::Text("operation".to_owned()),
+    ];
+    match operation {
+        Some(operation) => operands.push(PathSegment::Node(operation.clone())),
+        None => operands.push(PathSegment::Text("none".to_owned())),
+    }
+    operands.push(PathSegment::Text("objects".to_owned()));
+    operands.push(PathSegment::Text(model_objects.len().to_string()));
+    operands.extend(model_objects.iter().cloned().map(PathSegment::Node));
+    operands.push(PathSegment::Text("populations".to_owned()));
+    operands.push(PathSegment::Text(populations.len().to_string()));
+    for population in populations {
+        operands.push(PathSegment::Text("population".to_owned()));
+        operands.push(PathSegment::Node(population.member_type.clone()));
+        operands.push(PathSegment::Text(population.ordinal.to_string()));
+        operands.push(PathSegment::Text(
+            population
+                .maximum
+                .map_or_else(|| "none".to_owned(), |maximum| maximum.to_string()),
+        ));
+    }
+    operands.push(PathSegment::Text("extent".to_owned()));
+    match extent {
+        ClaimExtent::Bounded => operands.push(PathSegment::Text("bounded".to_owned())),
+        ClaimExtent::Unbounded(domains) => {
+            operands.push(PathSegment::Text("unbounded".to_owned()));
+            operands.push(PathSegment::Text(domains.len().to_string()));
+            for (domain, kind) in domains.iter() {
+                match domain {
+                    fsl_foundation::bound::DomainKey::Node { node, path } => {
+                        operands.push(PathSegment::Text("node".to_owned()));
+                        operands.push(PathSegment::Node(node.clone()));
+                        operands.push(PathSegment::Text(path.len().to_string()));
+                        operands.extend(
+                            path.iter()
+                                .map(|index| PathSegment::Text(index.to_string())),
+                        );
+                    }
+                    fsl_foundation::bound::DomainKey::Population {
+                        member_type,
+                        ordinal,
+                    } => {
+                        operands.push(PathSegment::Text("population".to_owned()));
+                        operands.push(PathSegment::Node(member_type.clone()));
+                        operands.push(PathSegment::Text(ordinal.to_string()));
+                    }
+                }
+                operands.push(PathSegment::Text(kind.to_wire().to_owned()));
+            }
+        }
+    }
+    fsl_semantics::check::derived_node_key(
+        claim.node().package(),
+        NodeTag::Claim,
+        "operation_contract",
+        operands,
+        0,
+    )
+    .map_err(encoding)
+}
+
+fn append_operation_contract(
+    ids: &StructuralIds,
+    graph: &CheckedGraph,
+    claim: &OccurrenceKey,
+    source: &RequirementRecord,
+    nodes: &mut Vec<CheckedSemanticNodeV2>,
+    source_map: &mut Vec<CheckedSourceMapEntry>,
+    region: &impl Fn(&OccurrenceKey) -> Option<fsl_foundation::source::provenance::SourceRegion>,
+    omitted: &Omitted,
+    omissions: &mut Vec<OmittedNode>,
+    records: &mut OperationRecords,
+    ordinal: &mut u64,
+    types_written: &mut bool,
+    text_type: &CheckedNodeId,
+    integer: &CheckedNodeId,
+    boolean: &CheckedNodeId,
+) -> Result<(), EmitRefusal> {
+    let checked_occurrence =
+        checked_occurrence(claim.origin()).ok_or(EmitRefusal::RequirementNotEmitted {
+            kind: source.requirements().kind().to_wire(),
+            shape: "claim-occurrence",
+        })?;
+    let references = graph
+        .item_operation_contract_references(claim)
+        .ok_or(EmitRefusal::SourceMapInvariant)?
+        .map_err(|_| EmitRefusal::SourceMapInvariant)?;
+    let operation_key = references.operation;
+    let model_object_keys = references.model_objects;
+    let population_facts = references.populations;
+    let key = operation_contract_key(
+        claim,
+        &checked_occurrence,
+        source.result_bound().node(),
+        source.requirements().invariant_clause(),
+        operation_key.as_ref(),
+        &model_object_keys,
+        &population_facts,
+        source.requirements().extent(),
+    )?;
+    let id = node_id(ids, key);
+    let claim_key = claim.node();
+    let claim_id = node_id(ids, claim_key);
+    if omitted.contains_key(claim_key) {
+        omissions.push(OmittedNode {
+            node: id,
+            cause: OmissionCause::NamesOmittedNode(claim_id),
+        });
+        return Ok(());
+    }
+    if names_an_omitted_node(graph, claim, source, omitted)? {
+        return Err(EmitRefusal::SourceMapInvariant);
+    }
+
+    let region = region(claim).ok_or(EmitRefusal::SourceMapInvariant)?;
+    let region = CheckedSourceRegion {
+        source: source_artifact(region.source()),
+        start: region.start(),
+        end: region.end(),
+    };
+    if !*types_written {
+        push_scalar_type(nodes, source_map, text_type, "text", &region);
+        push_scalar_type(nodes, source_map, integer, "integer", &region);
+        push_scalar_type(nodes, source_map, boolean, "boolean", &region);
+        *types_written = true;
+    }
+
+    let result_bound = node_id(ids, source.result_bound().node());
+    let operation = operation_key.as_ref().map(|key| node_id(ids, key));
+    let model_objects = model_object_keys
+        .iter()
+        .map(|key| node_id(ids, key))
+        .collect::<Vec<_>>();
+    let populations = population_facts
+        .iter()
+        .map(|population| {
+            Ok(OperationPopulation {
+                member_type: node_id(ids, &population.member_type),
+                ordinal: u64::try_from(population.ordinal)
+                    .map_err(|_| EmitRefusal::SourceMapInvariant)?,
+                maximum: population.maximum,
+            })
+        })
+        .collect::<Result<Vec<_>, EmitRefusal>>()?;
+
+    let operation_term = operation
+        .as_ref()
+        .map(reference)
+        .unwrap_or_else(|| claim_aggregate(Vec::new()));
+    let population_terms = populations
+        .iter()
+        .map(|population| {
+            Ok(claim_aggregate(vec![
+                claim_binding("member_type", reference(&population.member_type)),
+                claim_binding("ordinal", count(integer, population.ordinal)?),
+                claim_binding(
+                    "maximum",
+                    population.maximum.map_or_else(
+                        || Ok(claim_aggregate(Vec::new())),
+                        |maximum| count(integer, maximum),
+                    )?,
+                ),
+            ]))
+        })
+        .collect::<Result<Vec<_>, EmitRefusal>>()?;
+    let body = claim_aggregate(vec![
+        claim_binding("claim", reference(&claim_id)),
+        claim_binding(
+            "occurrence",
+            claim_aggregate(vec![
+                claim_binding(
+                    "role",
+                    claim_text(text_type, occurrence_role_wire(&checked_occurrence.role))?,
+                ),
+                claim_binding("ordinal", count(integer, checked_occurrence.ordinal)?),
+            ]),
+        ),
+        claim_binding("result_bound", reference(&result_bound)),
+        claim_binding(
+            "invariant",
+            CheckedTerm::Literal {
+                type_id: boolean.clone(),
+                value_kind: LiteralKind::Boolean,
+                value: checked_literal_json(&source.requirements().invariant_clause())?,
+            },
+        ),
+        claim_binding("operation", operation_term),
+        claim_binding(
+            "model_objects",
+            claim_aggregate(model_objects.iter().map(reference).collect()),
+        ),
+        claim_binding("populations", claim_aggregate(population_terms)),
+    ]);
+    let occurrence = CheckedOccurrence {
+        role: CheckedOccurrenceRole::Generated,
+        ordinal: *ordinal,
+    };
+    let node = CheckedSemanticNodeV2 {
+        node_id: id.clone(),
+        schema_version: GRAPH_V2.into(),
+        node_tag: "claim".into(),
+        semantic_form: "operation_contract".into(),
+        semantic_type: boolean.clone(),
+        dependencies: body_reference_targets(&body),
+        occurrences: vec![occurrence.clone()],
+        recursion_group: None,
+        declaration: None,
+        owner: None,
+        owner_model: None,
+        check_mode: None,
+        body,
+    };
+    nodes.push(node);
+    source_map.push(CheckedSourceMapEntry {
+        node_id: id.clone(),
+        role: occurrence.role,
+        ordinal: occurrence.ordinal,
+        regions: vec![region],
+    });
+    if records
+        .insert(
+            claim.clone(),
+            OperationContractRecord {
+                node: id,
+                result_bound,
+                invariant: source.requirements().invariant_clause(),
+                operation,
+                model_objects,
+                populations,
+            },
+        )
+        .is_some()
+    {
+        return Err(EmitRefusal::SourceMapInvariant);
+    }
+    *ordinal = ordinal
+        .checked_add(1)
+        .ok_or(EmitRefusal::SourceMapInvariant)?;
+    Ok(())
+}
+
 pub(super) fn append(
     ids: &StructuralIds,
     graph: &CheckedGraph,
@@ -191,19 +481,29 @@ pub(super) fn append(
     omitted: &Omitted,
 ) -> Result<Appended, EmitRefusal> {
     let mut records = HashMap::new();
+    let mut operation_records = HashMap::new();
     let mut omissions = Vec::new();
-    if !graph
+    let has_value_validity = graph
         .requirements()
         .values()
-        .any(|record| record.requirements().kind() == Capability::ValueValidity)
-    {
+        .any(|record| record.requirements().kind() == Capability::ValueValidity);
+    let has_operation_contract = graph
+        .requirements()
+        .values()
+        .any(|record| record.requirements().kind() == Capability::OperationContract);
+    if !has_value_validity && !has_operation_contract {
         return Ok(Appended {
             records,
+            operation_records,
             frames: Vec::new(),
             omitted: omissions,
         });
     }
-    let frames = frames::derive(ids, graph, nodes, omitted)?;
+    let frames = if has_value_validity {
+        frames::derive(ids, graph, nodes, omitted)?
+    } else {
+        frames::Frames::default()
+    };
     let integer = node_id(
         ids,
         fsl_semantics::check::builtin_integer_type_key(graph.package_name()).map_err(encoding)?,
@@ -213,9 +513,35 @@ pub(super) fn append(
         fsl_semantics::check::builtin_boolean_type_key(graph.package_name()).map_err(encoding)?,
     );
     let mut types_written = false;
+    let mut operation_types_written = false;
+    let mut operation_ordinal = 0_u64;
     let mut ordinals = BTreeMap::<String, u64>::new();
     let mut owners = HashMap::<String, (NodeKey, CheckedNodeId)>::new();
+    let text = node_id(
+        ids,
+        fsl_semantics::check::builtin_text_type_key(graph.package_name()).map_err(encoding)?,
+    );
     for (claim, source) in graph.requirements().iter() {
+        if source.requirements().kind() == Capability::OperationContract {
+            append_operation_contract(
+                ids,
+                graph,
+                claim,
+                source,
+                nodes,
+                source_map,
+                regions,
+                omitted,
+                &mut omissions,
+                &mut operation_records,
+                &mut operation_ordinal,
+                &mut operation_types_written,
+                &text,
+                &integer,
+                &boolean,
+            )?;
+            continue;
+        }
         if source.requirements().kind() != Capability::ValueValidity {
             continue;
         }
@@ -392,6 +718,7 @@ pub(super) fn append(
     }
     Ok(Appended {
         records,
+        operation_records,
         frames: frames.rows,
         omitted: omissions,
     })
@@ -402,6 +729,7 @@ pub(super) fn rows(
     graph: &CheckedGraph,
     emitted: &HashMap<NodeKey, CheckedNodeId>,
     records: &Records,
+    operation_records: &OperationRecords,
     existing: &[RequirementItemRow],
     omitted: &Omitted,
 ) -> Result<Vec<RequirementItemRow>, EmitRefusal> {
@@ -542,16 +870,44 @@ pub(super) fn rows(
                     .map(&mut remap)
                     .collect::<Result<_, _>>()?,
             }))
+        } else if kind == CapabilityKind::OperationContract {
+            let record = operation_records
+                .get(claim)
+                .ok_or(EmitRefusal::SourceMapInvariant)?;
+            Some(WireRecord::OperationContract(OperationContractRecord {
+                node: remap(&record.node)?,
+                result_bound: remap(&record.result_bound)?,
+                invariant: record.invariant,
+                operation: record.operation.as_ref().map(&mut remap).transpose()?,
+                model_objects: record
+                    .model_objects
+                    .iter()
+                    .map(&mut remap)
+                    .collect::<Result<_, _>>()?,
+                populations: record
+                    .populations
+                    .iter()
+                    .map(|population| {
+                        Ok(OperationPopulation {
+                            member_type: remap(&population.member_type)?,
+                            ..population.clone()
+                        })
+                    })
+                    .collect::<Result<_, EmitRefusal>>()?,
+            }))
         } else {
             None
         };
-        rows.push((claim.node().clone(), RequirementItemRow {
+        rows.push((
+            claim.node().clone(),
+            RequirementItemRow {
             claim: claim_id,
             occurrence,
             kind,
             extent,
             record,
-        }));
+            },
+        ));
     }
     Ok(package_order(rows))
 }
@@ -568,7 +924,11 @@ pub(super) fn frame_rows(
         .iter()
         .map(|frame| {
             let guard = emitted
-                .get(&keys.key(&frame.guard).map_err(|_| EmitRefusal::SourceMapInvariant)?)
+                .get(
+                    &keys
+                        .key(&frame.guard)
+                        .map_err(|_| EmitRefusal::SourceMapInvariant)?,
+                )
                 .cloned()
                 .ok_or(EmitRefusal::SourceMapInvariant)?;
             Ok(PathConditionFrame {
@@ -605,9 +965,11 @@ pub(super) fn carry_rows(
         .ok_or(EmitRefusal::RequirementRowCarry(
             "the writer's graph holds fewer nodes than the base package",
         ))?;
-    if base_nodes.iter().zip(finals).any(|(old, new)| {
-        old.node_tag != new.node_tag || old.semantic_form != new.semantic_form
-    }) {
+    if base_nodes
+        .iter()
+        .zip(finals)
+        .any(|(old, new)| old.node_tag != new.node_tag || old.semantic_form != new.semantic_form)
+    {
         return Err(EmitRefusal::RequirementRowCarry(
             "a node of the writer's graph is not the base node at its position",
         ));
@@ -669,7 +1031,9 @@ pub(super) fn carry_rows(
     // package order again by their final claim keys.
     let graph =
         fsl_semantics::check::wire_id::WireGraph::new(nodes.iter().map(|node| &node.node_id))
-            .map_err(|_| EmitRefusal::RequirementRowCarry("the writer's graph ids do not resolve"))?;
+            .map_err(|_| {
+                EmitRefusal::RequirementRowCarry("the writer's graph ids do not resolve")
+            })?;
     // Frames belong to the owner of the first record that cites them, in the
     // base's own row order, and frames are in owner-key order (FSpec FR-825).
     let frame_owners = frame_owners(&rows, &frames)?;
@@ -704,7 +1068,9 @@ fn frame_owners(
     }) {
         let mut at = record.path_condition_frame;
         while let Some(frame) = at {
-            let slot = owners.get_mut(frame.0).ok_or(EmitRefusal::RequirementRowCarry(
+            let slot = owners
+                .get_mut(frame.0)
+                .ok_or(EmitRefusal::RequirementRowCarry(
                 "a carried record cites a frame the table does not hold",
             ))?;
             if slot.is_some() {
@@ -731,7 +1097,9 @@ fn frame_permutation(
                 .as_ref()
                 .map(|owner| {
                     graph.key(owner).map_err(|_| {
-                        EmitRefusal::RequirementRowCarry("a frame's owner is not a node of the graph")
+                        EmitRefusal::RequirementRowCarry(
+                            "a frame's owner is not a node of the graph",
+                        )
                     })
                 })
                 .transpose()
@@ -799,7 +1167,10 @@ fn reorder_frames(
                 "a guarded record's identity path does not cite its terminal frame",
             ))?;
         *cited = filament_contract_model::CheckedNodePathSegment::Name(new.to_string().into());
-        renamed.insert(std::mem::replace(&mut record.node, id.clone()), (id, new as u64));
+        renamed.insert(
+            std::mem::replace(&mut record.node, id.clone()),
+            (id, new as u64),
+        );
     }
     for node in nodes.iter_mut() {
         let Some((id, frame)) = renamed.get(&node.node_id) else {
@@ -807,16 +1178,24 @@ fn reorder_frames(
         };
         node.node_id = id.clone();
         let CheckedTerm::Aggregate { members, .. } = &mut node.body else {
-            return Err(EmitRefusal::RequirementRowCarry("a carried record body is no aggregate"));
+            return Err(EmitRefusal::RequirementRowCarry(
+                "a carried record body is no aggregate",
+            ));
         };
         let Some(CheckedTerm::Binding { value, .. }) = members.get_mut(5) else {
-            return Err(EmitRefusal::RequirementRowCarry("a carried record has no path condition"));
+            return Err(EmitRefusal::RequirementRowCarry(
+                "a carried record has no path condition",
+            ));
         };
         let CheckedTerm::Aggregate { members, .. } = value.as_mut() else {
-            return Err(EmitRefusal::RequirementRowCarry("a carried path condition is no aggregate"));
+            return Err(EmitRefusal::RequirementRowCarry(
+                "a carried path condition is no aggregate",
+            ));
         };
         let Some(CheckedTerm::Literal { value, .. }) = members.first_mut() else {
-            return Err(EmitRefusal::RequirementRowCarry("a carried path condition holds no frame"));
+            return Err(EmitRefusal::RequirementRowCarry(
+                "a carried path condition holds no frame",
+            ));
         };
         *value = checked_literal_json(frame)?;
     }
