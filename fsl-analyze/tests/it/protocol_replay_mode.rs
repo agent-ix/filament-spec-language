@@ -514,7 +514,9 @@ fn the_incremental_assessment_member_reports_each_prefix() {
 
     let item = run("replay-incremental", "incremental").item(0);
     assert_eq!(label(&item), "refuted", "{item}");
-    let prefixes = item["prefixes"].as_array().expect("one prefix each");
+    let prefixes = item["prefixes"]
+        .as_array()
+        .unwrap_or_else(|| panic!("one prefix each: {item}"));
     let labels: Vec<&str> = prefixes
         .iter()
         .map(|prefix| prefix["label"].as_str().expect("a label"))
