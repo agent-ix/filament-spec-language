@@ -3073,7 +3073,7 @@ fn partial_lower_restores_detached_terminal_undecided_and_pending_rows() {
 /// same canonical bytes expand independently: restoring supplies no anchor, so
 /// a violated invariant at those bytes refuses the restored expansion even
 /// after the anchored one has been expanded.
-#[trace("TC-3152", "FR-1043-AC-9", "FR-202-AC-28")]
+#[trace("TC-3152", "FR-1043-AC-9")]
 #[test]
 fn a_restored_named_state_is_not_expanded_from_an_anchored_state_with_equal_bytes() {
     let mut model = retry(&claim(

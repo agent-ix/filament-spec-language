@@ -40,3 +40,16 @@ the AC-1 tags inflate coverage, and the expand-once work rule is unspecified.
 - Stubs: none (no `todo!`, `unimplemented!`, placeholder returns or tautological assertions in the diff).
 - Semantic review: skipped (not opted in).
 - Plan completion: not assessed
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-003 | low | New test `a_restored_named_state_is_not_expanded_from_an_anchored_state_with_equal_bytes` is traced to FR-202-AC-28, whose criterion is the `11/48`/`5/12` minimum and maximum refutations and the `Malformed` at `kind` role rejections over the fast/slow model; the test asserts an `Expansion` refusal (`missing-required-artifact`) for a restored state on a `retry` model and checks none of that | fsl-analyze/tests/it/exact_probabilistic_item/measure_profile.rs:3076 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Both tests are untagged from FR-203-AC-1. The boundary test now traces `TC-638`/`FR-203-AC-13` (cumulative `work_units` stop at B, asserted at B and B-1). The fraction-mean test now traces `TC-3152`/`FR-1043-AC-5` (fraction mean settles `proved` with `ExactValue`), as a contributing binding on a longer window. |
+| FND-002 | deferred | No spec edit in this PR, which is correct for a code fix. `grep` of spec/functional and spec/non-functional confirms that no FR or AC states that an exact measure checker expands each model state once, or bounds the work of a fraction-mean claim. FR-120 "Cumulative probabilistic work" only forbids replenishing the allowance, and FR-047-AC-5 states the analogous rule for object graphs only. The test file now says the boundary pins current accounting and no requirement states it. Follow-up: a small FR-1043 spec ticket (text in the QSL-2922 dispositions comment). |
