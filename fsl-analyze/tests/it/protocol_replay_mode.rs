@@ -229,8 +229,8 @@ fn an_unexpected_send_violates_its_enabledness_obligation() {
 
 /// FR-895-AC-6 (TC-2531): a compensation `within [0, 120]` on clock `c`
 /// whose first attempt reads 130 is a violated window; with no reading and
-/// closure `open` the window is pending. The batch and incremental agreement
-/// of FR-895-AC-6 awaits the spec ruling on the incremental surface.
+/// closure `open` the window is pending; batch and incremental assessment
+/// agree.
 #[trace("TC-2531", "FR-895-AC-6", "FSpec-FR-059-AC-4")]
 #[test]
 fn a_late_compensation_attempt_violates_its_window_and_an_unread_one_is_pending() {
@@ -259,29 +259,42 @@ fn a_late_compensation_attempt_violates_its_window_and_an_unread_one_is_pending(
             "closure": {"state": closure, "premises": pay_premises(closure)}
         });
         ws.write("recording.json", recording.to_string().as_bytes());
-        let run = analyze(&request_over(
-            &ws,
-            &crate::fill::unit_text_with(crate::fill::PROTOCOL_PROFILE, &body),
-            &crate::fill::document(),
-            &snapshots,
-            json!({"items": [{"claim": "Pay", "kind": "global-conformance",
-                              "recording": recording_identity()}],
-                   "clocks": {"c": {"kind": "timed", "unit": "s"}},
-                   "documents": documents_with(snapshots.len(),
-                       json!({"file": "recording.json", "identity": recording_identity()}))}),
-        ));
-        let item = run.item(0);
-        let found = verdicts(&item)
-            .iter()
-            .find(|verdict| verdict["obligation"]["kind"] == "window")
-            .unwrap_or_else(|| panic!("a window obligation: {item}"));
-        assert_eq!(found["verdict"], expected, "{item}");
+        let assess = |assessment: &str| {
+            analyze(&request_over(
+                &ws,
+                &crate::fill::unit_text_with(crate::fill::PROTOCOL_PROFILE, &body),
+                &crate::fill::document(),
+                &snapshots,
+                json!({"items": [{"claim": "Pay", "kind": "global-conformance",
+                                  "recording": recording_identity(),
+                                  "assessment": assessment}],
+                       "clocks": {"c": {"kind": "timed", "unit": "s"}},
+                       "documents": documents_with(snapshots.len(),
+                           json!({"file": "recording.json", "identity": recording_identity()}))}),
+            ))
+            .item(0)
+        };
+        let window = |item: &Value| {
+            verdicts(item)
+                .iter()
+                .find(|verdict| verdict["obligation"]["kind"] == "window")
+                .cloned()
+                .unwrap_or_else(|| panic!("a window obligation: {item}"))
+        };
+        let item = assess("batch");
+        assert_eq!(window(&item)["verdict"], expected, "{item}");
+        // Batch and incremental assessment give equal verdicts: the single
+        // observation's prefix is the whole recording, and its window
+        // verdict is the batch one.
+        let incremental = assess("incremental");
+        let prefixes = incremental["prefixes"].as_array().expect("one prefix");
+        assert_eq!(prefixes.len(), 1, "{incremental}");
+        assert_eq!(window(&prefixes[0])["verdict"], expected, "{incremental}");
+        assert_eq!(
+            prefixes[0]["obligations"], item["obligations"],
+            "{incremental}"
+        );
     }
-    // FR-895-AC-6's "batch and incremental assessment give equal verdicts"
-    // is not asserted here: `fsl analyze` exposes no incremental assessment
-    // to compare against, and re-running prefixes through the same request
-    // equals the batch run by construction. It waits on the spec ruling on
-    // the incremental surface.
 }
 
 /// A closed recording of the `Tell` protocol: `Placed`, `Got`, `Note`,
@@ -338,9 +351,9 @@ fn note_enabledness(item: &Value) -> &Value {
         .unwrap_or_else(|| panic!("a Note enabledness verdict: {item}"))
 }
 
-/// FR-895-AC-5: `Seller` sending `Note` after its `Got` is enabled, and the
+/// FR-895-AC-9: `Seller` sending `Note` after its `Got` is enabled, and the
 /// recording settles `proved`.
-#[trace("TC-2531", "FR-895-AC-5", "FSpec-FR-059-AC-1")]
+#[trace("TC-2531", "FR-895-AC-9", "FSpec-FR-059-AC-1")]
 #[test]
 fn a_send_after_its_earlier_own_receive_is_enabled() {
     let run = replay(
@@ -353,10 +366,10 @@ fn a_send_after_its_earlier_own_receive_is_enabled() {
     assert_eq!(note_enabledness(&item)["verdict"], "satisfied", "{item}");
 }
 
-/// FR-895-AC-5: `Seller`'s local order puts `Note` before its `Got`, so
+/// FR-895-AC-10: `Seller`'s local order puts `Note` before its `Got`, so
 /// `Got` does not precede `Note` and `Note`'s enabledness is `violated`,
 /// cause `unexpected`, though `Got` is in the recording.
-#[trace("TC-2531", "FR-895-AC-5", "FSpec-FR-059-AC-1")]
+#[trace("TC-2531", "FR-895-AC-10", "FSpec-FR-059-AC-1")]
 #[test]
 fn a_send_before_its_earlier_own_receive_is_unexpected() {
     let run = replay(
@@ -371,10 +384,10 @@ fn a_send_before_its_earlier_own_receive_is_unexpected() {
     assert_eq!(note["cause"], "unexpected", "{item}");
 }
 
-/// FR-895-AC-5: the array position of `Got` never makes it precede `Note`:
+/// FR-895-AC-10: the array position of `Got` never makes it precede `Note`:
 /// listed first in the array but after `Note` in `Seller`'s local order, it
 /// leaves `Note`'s enabledness `violated`, cause `unexpected`.
-#[trace("TC-2531", "FR-895-AC-5", "FSpec-FR-737-AC-2")]
+#[trace("TC-2531", "FR-895-AC-10", "FSpec-FR-737-AC-2")]
 #[test]
 fn an_earlier_own_receive_listed_first_but_ordered_later_is_unexpected() {
     let run = replay(
@@ -420,10 +433,10 @@ fn assert_violations_persist(
     }
 }
 
-/// FR-895-AC-6, FSpec FR-059-AC-4: feeding the conforming recording one
+/// FR-895-AC-11, FSpec FR-059-AC-4: feeding the conforming recording one
 /// observation at a time leaves every prefix `inconclusive` while it is open,
 /// and the last prefix equals the batch assessment, `proved`.
-#[trace("TC-2531", "FR-895-AC-6", "FSpec-FR-059-AC-4")]
+#[trace("TC-2531", "FR-895-AC-11", "FSpec-FR-059-AC-4")]
 #[test]
 fn incremental_assessment_of_a_conforming_recording_ends_at_the_batch_verdict() {
     use fsl_analyze::protocol_analysis::recording::{
@@ -448,11 +461,11 @@ fn incremental_assessment_of_a_conforming_recording_ends_at_the_batch_verdict() 
     assert_eq!(incremental.last(), Some(&batch));
 }
 
-/// FR-895-AC-6, FR-895-AC-5: `Seller`'s local order puts `Note` before `Got`.
-/// The first two prefixes are undecided; the prefix that adds `Note`
-/// violates `Note`'s enabledness at once and every later prefix keeps it,
-/// ending at the batch verdict, `refuted`.
-#[trace("TC-2531", "FR-895-AC-6", "FSpec-FR-059-AC-4")]
+/// FR-895-AC-11, FR-895-AC-10: `Seller`'s local order puts `Note` before
+/// `Got`. In causal order the first two prefixes are undecided; the prefix
+/// that adds `Got` violates `Note`'s enabledness at once and every later
+/// prefix keeps it, ending at the batch verdict, `refuted`.
+#[trace("TC-2531", "FR-895-AC-11", "FSpec-FR-059-AC-4")]
 #[test]
 fn incremental_assessment_reports_a_violation_from_the_prefix_that_shows_it() {
     use fsl_analyze::protocol_analysis::recording::{
@@ -565,26 +578,38 @@ fn the_incremental_assessment_member_reports_each_prefix() {
         assert!(item.get("prefixes").is_none(), "{item}");
         assert_eq!(item["obligations"], prefixes[5]["obligations"], "{item}");
     }
+    let none = replay_with(
+        "replay-no-assessment",
+        &told_protocol(),
+        &probe,
+        entry.clone(),
+        flow_item(recording_identity()),
+    )
+    .item(0);
+    assert!(none.get("prefixes").is_none(), "{none}");
+    assert_eq!(none["obligations"], prefixes[5]["obligations"], "{none}");
 
-    let refused = |name: &str, assessment: &str, items: Value| {
+    let refused = |name: &str, items: Value, names: &str| {
         let run = replay_with(name, &told_protocol(), &probe, entry.clone(), items);
-        assert_eq!(run.exit, 20, "{name} {assessment}");
-        assert!(
-            run.document().to_string().contains("/items/0/assessment"),
-            "{name}: {}",
-            run.document()
+        assert_eq!(run.exit, 20, "{name}");
+        let document = run.document();
+        assert_eq!(
+            document["diagnostics"][0]["code"], "invalid-request",
+            "{name}: {document}"
         );
+        assert!(document.to_string().contains(names), "{name}: {document}");
     };
+    // A word other than `batch` or `incremental` is no value of the member.
     refused(
         "replay-assessment-word",
-        "streaming",
         assessed_item("streaming"),
+        "streaming",
     );
     refused(
         "replay-assessment-no-recording",
-        "incremental",
         json!([{"claim": "Flow", "kind": "global-conformance",
                 "assessment": "incremental"}]),
+        "/items/0/assessment",
     );
 }
 
@@ -1235,6 +1260,81 @@ fn a_step_after_awaits_still_needs_the_steps_before_them() {
     let recording = await_recording(&["W2::Seen2", "End"]);
     assert_unexpected(&source, &recording, "P::Main::W2::Seen2", 0);
     assert_unexpected(&source, &recording, "P::Main::End", 1);
+}
+
+/// FR-895-AC-26 (TC-2531): incremental prefixes follow the recording's causal
+/// order, never the array position. `After` listed before the second
+/// iteration in the array is a causal successor of it, so no prefix holds
+/// `After` before its last iteration is complete: it is absent from every
+/// prefix but the last, where it is `satisfied`, and no obligation ever
+/// moves from `violated`, or from `satisfied` to `pending`.
+#[trace("TC-2531", "FR-895-AC-26")]
+#[test]
+fn incremental_prefixes_follow_causal_order_so_a_verdict_never_returns_to_pending() {
+    let observations = json!([
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped_case("yes"),
+        after(),
+        looped("send", "Placed", "Buyer", "m-2"),
+        looped("receive", "Got", "Seller", "m-2"),
+        looped_case("yes"),
+    ]);
+    let recording = after_recording(observations, &[0, 4], &[1, 2, 5, 6, 3], &[(0, 1), (4, 5)]);
+    let item = replay_with(
+        "replay-causal-prefixes",
+        &repeat_then_protocol(),
+        &recording,
+        json!({"file": "recording.json", "identity": recording_identity()}),
+        assessed_item("incremental"),
+    )
+    .item(0);
+    let prefixes = item["prefixes"].as_array().expect("prefixes");
+    assert_eq!(prefixes.len(), 7, "{item}");
+    let after_verdicts: Vec<Option<&str>> = prefixes
+        .iter()
+        .map(|prefix| {
+            prefix["obligations"]
+                .as_array()
+                .expect("obligations")
+                .iter()
+                .find(|verdict| {
+                    verdict["obligation"]["kind"] == "enabledness"
+                        && verdict["obligation"]["node"] == "Flow::Main::After"
+                })
+                .map(|verdict| verdict["verdict"].as_str().expect("a verdict"))
+        })
+        .collect();
+    assert_eq!(
+        after_verdicts,
+        [None, None, None, None, None, None, Some("satisfied")],
+        "{item}"
+    );
+    for pair in prefixes.windows(2) {
+        for before in pair[0]["obligations"].as_array().expect("obligations") {
+            let Some(next) = pair[1]["obligations"]
+                .as_array()
+                .expect("obligations")
+                .iter()
+                .find(|entry| entry["obligation"] == before["obligation"])
+            else {
+                continue;
+            };
+            let (was, now) = (before["verdict"].as_str(), next["verdict"].as_str());
+            assert!(
+                was != Some("violated") || now == Some("violated"),
+                "{before} became {next}"
+            );
+            assert!(
+                was != Some("satisfied") || now != Some("pending"),
+                "{before} became {next}"
+            );
+        }
+    }
+    assert_eq!(
+        prefixes[6]["obligations"], item["obligations"],
+        "the last prefix is the batch assessment"
+    );
 }
 
 // ---- FR-1032: the recording's document identity ---------------------------

@@ -398,84 +398,176 @@ pub fn assess_recording(
 }
 
 /// Assess a recording incrementally (FR-895 "Incremental assessment"): feed
-/// its observations one at a time and return the assessment after each, so
-/// entry `k - 1` is the assessment of the first `k` observations.
+/// its observations one at a time, in the recording's causal order, and
+/// return the assessment after each, so entry `k - 1` is the assessment of
+/// the first `k` observations.
 ///
-/// A prefix keeps the local order and correlations among its own
-/// observations and is `open`, since observations may still arrive; only the
-/// last prefix carries the recording's own closure record, so the last entry
-/// equals [`assess_recording`] of the whole recording.
+/// The order is the topological order of each role's local order joined with
+/// the message correlations, ties by array position; the position of an
+/// observation in the array never orders it. A prefix keeps the local order
+/// and correlations among its own observations and is `open`, since
+/// observations may still arrive; only the last prefix is the whole
+/// recording with its own closure record, so the last entry equals
+/// [`assess_recording`] of it.
 pub fn assess_recording_incrementally(
     package: &fsl_package::CheckedPackage,
     bytes: &[u8],
-) -> Result<Vec<RecordingAssessment>, RecordingRefusal> {
-    assess_prefixes(bytes, |prefix| assess_recording(package, prefix))
+) -> Result<Vec<RecordingAssessment>, PrefixRefusal> {
+    assess_prefixes(bytes, |prefix| {
+        assess_recording(package, prefix.to_string().as_bytes())
+    })
 }
 
 /// [`assess_recording_incrementally`] over any admitted protocol input,
-/// assessing the selected protocol.
+/// assessing the selected protocol. A prefix assesses the activated
+/// population of the instances it has begun.
 pub(super) fn assess_selected_prefixes(
     input: &CheckedPackage<'_>,
     selected_protocol: &str,
     bytes: &[u8],
     population: Option<&[ActivatedRolePopulation]>,
-) -> Result<Vec<RecordingAssessment>, RecordingRefusal> {
+) -> Result<Vec<RecordingAssessment>, PrefixRefusal> {
     assess_prefixes(bytes, |prefix| {
-        assess_selected_recording(input, selected_protocol, prefix, population)
+        let begun: BTreeSet<&str> = prefix["observations"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|observation| observation["instance"].as_str())
+            .collect();
+        let population = population.map(|groups| {
+            groups
+                .iter()
+                .filter(|group| population_instance(group).is_none_or(|name| begun.contains(name)))
+                .cloned()
+                .collect::<Vec<_>>()
+        });
+        assess_selected_recording(
+            input,
+            selected_protocol,
+            prefix.to_string().as_bytes(),
+            population.as_deref(),
+        )
     })
 }
 
-/// The assessment of each observation prefix of the recording `bytes`, by
-/// `assess` over the prefix's own document.
+/// A prefix of an incrementally assessed recording that was refused.
+#[derive(Debug)]
+pub struct PrefixRefusal {
+    /// How many observations the refused prefix holds; 0 when the recording
+    /// itself is unreadable.
+    pub prefix: usize,
+    /// Why the prefix was refused.
+    pub refusal: RecordingRefusal,
+}
+
+/// The indices of `whole`'s observations in causal order: the topological
+/// order of the local orders joined with the correlations, ties by array
+/// position, observations on a cycle last in array order.
+fn causal_prefix_order(whole: &serde_json::Value) -> Vec<usize> {
+    let count = whole["observations"].as_array().map_or(0, Vec::len);
+    let mut edges = vec![BTreeSet::new(); count];
+    let mut indegree = vec![0usize; count];
+    let mut link = |from: Option<u64>, to: Option<u64>| {
+        let (Some(from), Some(to)) = (from, to) else {
+            return;
+        };
+        let (from, to) = (from as usize, to as usize);
+        if from < count && to < count && edges[from].insert(to) {
+            indegree[to] += 1;
+        }
+    };
+    for order in whole["local_order"]
+        .as_object()
+        .into_iter()
+        .flat_map(|orders| orders.values())
+        .filter_map(serde_json::Value::as_array)
+    {
+        for pair in order.windows(2) {
+            link(pair[0].as_u64(), pair[1].as_u64());
+        }
+    }
+    for pair in whole["correlations"].as_array().into_iter().flatten() {
+        link(pair["send"].as_u64(), pair["receive"].as_u64());
+    }
+    let mut ready: BTreeSet<usize> = (0..count).filter(|index| indegree[*index] == 0).collect();
+    let mut ordered = Vec::with_capacity(count);
+    while let Some(position) = ready.pop_first() {
+        ordered.push(position);
+        for target in edges[position].iter().copied() {
+            indegree[target] -= 1;
+            if indegree[target] == 0 {
+                ready.insert(target);
+            }
+        }
+    }
+    let placed: BTreeSet<usize> = ordered.iter().copied().collect();
+    ordered.extend((0..count).filter(|index| !placed.contains(index)));
+    ordered
+}
+
+/// The assessment of each observation prefix, in causal order, of the
+/// recording `bytes`, by `assess` over the prefix's own document.
 fn assess_prefixes(
     bytes: &[u8],
-    assess: impl Fn(&[u8]) -> Result<RecordingAssessment, RecordingRefusal>,
-) -> Result<Vec<RecordingAssessment>, RecordingRefusal> {
-    let whole: serde_json::Value = serde_json::from_slice(bytes).map_err(|error| {
-        RecordingRefusal::new(
-            "invalid-value",
-            format!("recording is not valid JSON: {error}"),
-            None,
-        )
-    })?;
-    let count = whole["observations"].as_array().map_or(0, Vec::len);
-    let mut assessments = Vec::with_capacity(count);
-    for prefix in 1..=count {
+    assess: impl Fn(&serde_json::Value) -> Result<RecordingAssessment, RecordingRefusal>,
+) -> Result<Vec<RecordingAssessment>, PrefixRefusal> {
+    let whole: serde_json::Value =
+        serde_json::from_slice(bytes).map_err(|error| PrefixRefusal {
+            prefix: 0,
+            refusal: RecordingRefusal::new(
+                "invalid-value",
+                format!("recording is not valid JSON: {error}"),
+                None,
+            ),
+        })?;
+    let order = causal_prefix_order(&whole);
+    let mut assessments = Vec::with_capacity(order.len());
+    for prefix in 1..=order.len() {
         let mut document = whole.clone();
-        if prefix < count {
+        if prefix < order.len() {
+            let mut kept: Vec<usize> = order[..prefix].to_vec();
+            kept.sort_unstable();
+            let renumbered = |index: &serde_json::Value| {
+                index
+                    .as_u64()
+                    .and_then(|index| kept.iter().position(|kept| *kept as u64 == index))
+            };
             document["observations"] = serde_json::Value::Array(
-                whole["observations"]
-                    .as_array()
-                    .map_or_else(Vec::new, |all| all[..prefix].to_vec()),
+                kept.iter()
+                    .map(|index| whole["observations"][*index].clone())
+                    .collect(),
             );
             if let Some(orders) = whole["local_order"].as_object() {
-                let kept = orders.iter().map(|(role, order)| {
-                    let order: Vec<_> = order
-                        .as_array()
-                        .map_or_else(Vec::new, |all| all.clone())
-                        .into_iter()
-                        .filter(|index| index.as_u64().is_some_and(|index| index < prefix as u64))
-                        .collect();
-                    (role.clone(), serde_json::Value::Array(order))
-                });
-                document["local_order"] = kept.collect::<serde_json::Map<_, _>>().into();
-            }
-            if let Some(correlations) = whole["correlations"].as_array() {
-                document["correlations"] = correlations
+                document["local_order"] = orders
                     .iter()
-                    .filter(|pair| {
-                        ["send", "receive"].iter().all(|end| {
-                            pair[end]
-                                .as_u64()
-                                .is_some_and(|index| index < prefix as u64)
-                        })
+                    .map(|(role, order)| {
+                        let order: Vec<serde_json::Value> = order
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .filter_map(&renumbered)
+                            .map(|index| serde_json::json!(index))
+                            .collect();
+                        (role.clone(), serde_json::Value::Array(order))
                     })
-                    .cloned()
-                    .collect();
+                    .collect::<serde_json::Map<_, _>>()
+                    .into();
             }
+            document["correlations"] = serde_json::Value::Array(
+                whole["correlations"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|pair| {
+                        let send = renumbered(&pair["send"])?;
+                        let receive = renumbered(&pair["receive"])?;
+                        Some(serde_json::json!({"send": send, "receive": receive}))
+                    })
+                    .collect(),
+            );
             document["closure"] = serde_json::json!({"state": "open", "premises": []});
         }
-        assessments.push(assess(document.to_string().as_bytes())?);
+        assessments.push(assess(&document).map_err(|refusal| PrefixRefusal { prefix, refusal })?);
     }
     Ok(assessments)
 }

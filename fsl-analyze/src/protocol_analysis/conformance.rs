@@ -133,10 +133,23 @@ fn recording_result(
             population.as_deref(),
         ) {
             Ok(prefixes) => Some(prefixes),
-            Err(_) => {
-                return crate::analyze::EngineReport::Refused(crate::analyze::Refusal::Failed(
-                    CatalogCode::new("runtime_invariant", "established-invariant-broken"),
-                ));
+            Err(refused) => {
+                return crate::analyze::EngineReport::Refused(
+                    crate::analyze::Refusal::DeclinedWithDetail(
+                        fsl_replay::ProofRefusalCause::InvalidInput,
+                        fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+                        refused.refusal.code(),
+                        [
+                            (
+                                "detail".to_owned(),
+                                serde_json::json!(refused.refusal.to_string()),
+                            ),
+                            ("prefix".to_owned(), serde_json::json!(refused.prefix)),
+                        ]
+                        .into_iter()
+                        .collect(),
+                    ),
+                );
             }
         }
     } else {

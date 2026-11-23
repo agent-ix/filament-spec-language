@@ -457,3 +457,50 @@ fn on_each_population_groups_match_recorded_instances() {
         "{item}"
     );
 }
+
+/// FR-896-AC-7 (TC-2955): an `on each` recording whose population names an
+/// instance listed later in the array is assessed incrementally without a
+/// prefix refusing the instance as unrecorded: each prefix assesses the
+/// population of the instances it has begun, and the last prefix equals the
+/// batch assessment.
+#[trace("TC-2955", "FR-896-AC-7")]
+#[test]
+fn an_incremental_prefix_assesses_only_the_instances_it_has_begun() {
+    let protocol = FANOUT.replace("on origin", "on each (t: M::Cell)");
+    let recording = recordings(vec![
+        recording_for_instance("a", &["x"], &["x"], "closed"),
+        recording_for_instance("b", &["x"], &["x"], "closed"),
+    ]);
+    let population = json!([
+        {"role": "r", "instance": "a", "members": [member("x")]},
+        {"role": "r", "instance": "b", "members": [member("x")]}
+    ]);
+    let ws = Workspace::new("population-incremental");
+    ws.write("recording.json", recording.to_string().as_bytes());
+    let run = |assessment: Option<&str>| {
+        let mut item = json!({"claim": "R", "kind": "global-conformance",
+                              "recording": {"authority": "test", "identity": "recording"},
+                              "population": population});
+        if let Some(assessment) = assessment {
+            item["assessment"] = json!(assessment);
+        }
+        analyze(&litmus_request(
+            &ws,
+            &protocol,
+            json!({"items": [item],
+                   "documents": [{"file": "recording.json",
+                                  "identity": {"authority": "test", "identity": "recording"}}]}),
+        ))
+        .item(0)
+    };
+    let batch = run(None);
+    assert_eq!(label(&batch), "proved", "{batch}");
+    let incremental = run(Some("incremental"));
+    assert_eq!(label(&incremental), "proved", "{incremental}");
+    let prefixes = incremental["prefixes"].as_array().expect("prefixes");
+    assert_eq!(prefixes.len(), 6, "{incremental}");
+    assert_eq!(
+        prefixes[5]["obligations"], batch["obligations"],
+        "the last prefix is the batch assessment"
+    );
+}

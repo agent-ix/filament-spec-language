@@ -232,7 +232,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 traces: None,
                 recording: None,
                 population: selection.population.clone(),
-                assessment: selection.assessment.clone(),
+                assessment: selection.assessment,
                 backend_options,
                 protocol_analysis: None,
             },

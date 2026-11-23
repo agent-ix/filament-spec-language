@@ -103,6 +103,27 @@ impl ProvisionRefusal {
     }
 }
 
+/// How a `global-conformance` item assesses its recording (FR-896).
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AssessmentMode {
+    /// The whole recording at once.
+    #[default]
+    Batch,
+    /// One observation at a time, in causal order, with every prefix.
+    Incremental,
+}
+
+impl AssessmentMode {
+    /// The request word.
+    pub fn word(self) -> &'static str {
+        match self {
+            Self::Batch => "batch",
+            Self::Incremental => "incremental",
+        }
+    }
+}
+
 /// Common options of one requested claim.
 #[derive(Clone, Debug, Default)]
 pub struct ItemOptions {
@@ -122,8 +143,8 @@ pub struct ItemOptions {
     pub recording: Option<fsl_semantics::model::observation::DocumentRef>,
     /// The caller's activated role population for a recording assessment.
     pub population: Option<serde_json::Value>,
-    /// `incremental` when the recording is assessed one observation at a time.
-    pub assessment: Option<String>,
+    /// How the recording is assessed, when the item names a mode.
+    pub assessment: Option<AssessmentMode>,
     /// The named backend's options (FSpec FR-196, FR-331 `options`),
     /// each one the backend publishes (FR-967); empty when none are given.
     pub backend_options: std::collections::BTreeMap<String, String>,
@@ -1072,7 +1093,7 @@ fn work<'a>(
                                         recording_identity,
                                         Some(recording),
                                         item.options.population.clone(),
-                                        item.options.assessment.as_deref() == Some("incremental"),
+                                        item.options.assessment == Some(AssessmentMode::Incremental),
                                         limits.replay,
                                     )
                                 }

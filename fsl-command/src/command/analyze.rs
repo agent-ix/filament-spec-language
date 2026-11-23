@@ -1518,19 +1518,11 @@ pub(super) fn validate_items(items: Option<&[ItemSelection]>) -> Result<()> {
                 "recording is only valid on a global-conformance item",
             ));
         }
-        if let Some(assessment) = &item.assessment {
-            if item.recording.is_none() {
-                return Err(invalid(
-                    &format!("/items/{position}/assessment"),
-                    "assessment requires a recording",
-                ));
-            }
-            if !matches!(assessment.as_str(), "batch" | "incremental") {
-                return Err(invalid(
-                    &format!("/items/{position}/assessment"),
-                    "assessment is `batch` or `incremental`",
-                ));
-            }
+        if item.assessment.is_some() && item.recording.is_none() {
+            return Err(invalid(
+                &format!("/items/{position}/assessment"),
+                "assessment requires a recording",
+            ));
         }
         if let Some(population) = &item.population {
             if item.kind.as_deref()

@@ -3399,7 +3399,7 @@ fn options(selection: &ItemSelection, backend_options: BTreeMap<String, String>)
             .as_ref()
             .map(super::DocumentSelection::reference),
         population: selection.population.clone(),
-        assessment: selection.assessment.clone(),
+        assessment: selection.assessment,
         backend_options,
         protocol_analysis: None,
     }
@@ -3521,7 +3521,7 @@ impl<'a> WorkInputs<'_, 'a> {
                     item.options.recording.clone(),
                     recording,
                     item.options.population.clone(),
-                    item.options.assessment.as_deref() == Some("incremental"),
+                    item.options.assessment == Some(super::super::request::AssessmentMode::Incremental),
                     self.limits.replay,
                 )
             }
