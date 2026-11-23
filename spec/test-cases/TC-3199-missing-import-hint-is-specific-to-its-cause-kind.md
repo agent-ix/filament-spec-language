@@ -18,7 +18,7 @@ Verify the `selection` and `hint` of each missing_import producer and the text l
 
 1. Refuse FR-866-AC-3's `check_outcome` and its compile request with `models` `[]`.
 2. Refuse FR-099-AC-3's import with no library supplied.
-3. Refuse FR-121-AC-35's `{test/other, big}`.
+3. Refuse FR-027-AC-15's compile request with `call_site` `{test/other, big}`.
 4. Refuse FR-098-AC-33's `function_owner` `test/absent`.
 5. Refuse FR-071-AC-5's package reference with no byte-provision entry.
 6. Refuse a unit importing a supplied sibling unit as a library.
