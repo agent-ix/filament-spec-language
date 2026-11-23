@@ -481,7 +481,7 @@ pub(super) fn admit(family: Family, bytes: &[u8]) -> Result<()> {
         if !document.contains_key("request") {
             absent.push(Missing::Member("/request".to_owned()));
         }
-        if envelope_defect(&document, bytes) {
+        if envelope_defect(&document, bytes, false) {
             return Ok(());
         }
         return Err(missing_members(&absent, None));
@@ -501,8 +501,9 @@ pub(super) fn admit(family: Family, bytes: &[u8]) -> Result<()> {
             accepted: accepted(family),
         });
     };
+    let whole_document = matches!(format, WireFormat::RunRequest | WireFormat::ReplayRequest);
     let Some(request) = document.get("request") else {
-        if envelope_defect(&document, bytes) {
+        if envelope_defect(&document, bytes, whole_document) {
             return Ok(());
         }
         return Err(missing_members(
@@ -538,7 +539,8 @@ pub(super) fn admit(family: Family, bytes: &[u8]) -> Result<()> {
     });
     // An unknown, wrong-kind or repeated member is refused for that defect
     // by the reader that owns it, ahead of any missing member.
-    if envelope_defect(&document, bytes) || another_defect(family, format, &request) {
+    if envelope_defect(&document, bytes, whole_document) || another_defect(family, format, &request)
+    {
         return Ok(());
     }
     Err(missing_members(&missing, sentence))
@@ -546,11 +548,18 @@ pub(super) fn admit(family: Family, bytes: &[u8]) -> Result<()> {
 
 /// Whether the envelope carries a member beyond `format` and `request`, or
 /// the envelope or its `request` object repeats a member name. A repeat
-/// deeper in the document belongs to the reader of that subtree.
-fn envelope_defect(document: &BTreeMap<String, &RawValue>, bytes: &[u8]) -> bool {
+/// deeper in the document belongs to the reader of that subtree, except
+/// that the run and replay readers keep some members as plain JSON values
+/// that drop a repeat, so `whole_document` checks every object.
+fn envelope_defect(
+    document: &BTreeMap<String, &RawValue>,
+    bytes: &[u8],
+    whole_document: bool,
+) -> bool {
     document
         .keys()
         .any(|name| !matches!(name.as_str(), "format" | "request"))
+        || (whole_document && crate::unique_json::read(bytes).is_err())
         || repeats_a_name(bytes)
         || document
             .get("request")

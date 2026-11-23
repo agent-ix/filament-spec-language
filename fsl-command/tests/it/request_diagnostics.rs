@@ -429,6 +429,30 @@ fn a_repeat_inside_a_member_subtree_keeps_the_missing_list() {
     );
 }
 
+/// A run reader keeps `items` as plain JSON: its repeated key is still the
+/// repeated-member refusal, not the missing-members list.
+#[test]
+#[trace("TC-3170")]
+fn a_repeat_in_a_plain_json_run_member_is_refused_as_a_repeat() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("request.json");
+    std::fs::write(
+        &path,
+        r#"{"format":"native-run/1","request":{"items":{"a":1,"a":2}}}"#,
+    )
+    .unwrap();
+    for entry in [Entry::Run, Entry::Export(ExportSelection::Ordinary)] {
+        let (value, exit) = call(entry, &path).expect("refused");
+        assert_eq!(exit, 20, "{value}");
+        assert_eq!(value["code"], "invalid-request", "{value}");
+        assert_eq!(
+            value["message"],
+            "invalid clause request member request: duplicate object key a at byte 51",
+            "{value}"
+        );
+    }
+}
+
 /// The seven inputs of FR-1047-AC-7 with the entry that reads each.
 fn example_inputs() -> Vec<(&'static str, Option<ExportSelection>, Entry)> {
     vec![

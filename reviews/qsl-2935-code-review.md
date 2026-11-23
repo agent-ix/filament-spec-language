@@ -66,3 +66,18 @@ What holds:
 | FND-008 | fixed | `clause_selector` is added only to the package and clause-count cases. The `call` case carries `call` alone. |
 | FND-009 | fixed | The text match is isolated in `is_missing_member`, gated on `Category::Data`, and pinned by a unit test, so a serde wording change fails a test instead of silently reordering refusals. |
 | FND-010 | deferred | The PR title is unchanged. `gh pr edit` is unavailable to the coder lane, and the coordinator is routing the retitle to the arch lead as an action outside this lane. |
+
+## New findings (disposition pass 2)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-014 | low | `envelope_defect` now looks for repeats only at the envelope and `request` level, but the run entry's own reader refuses any nested repeat: `export::run_bytes` calls `admitted_document`, which runs `unique_json::read` over the whole document. `wire::Request` keeps `items`, `requirements`, `tl_lowering` and similar members as `serde_json::Value`, which drops repeats silently, so `another_defect` does not see them either. `{"format":"native-run/1","request":{"items":{"a":1,"a":2}}}` therefore gets FR-1047's list (`/request/models`, `/request/program \| /request/package`) instead of the run reader's repeated-member refusal. FR-1047 says a repeated member is refused for that defect. Fix: use the whole-document repeat check for readers that refuse nested repeats (native-run/1 under the run and export families, and replay), and the shallow check elsewhere. | fsl-command/src/command/request_shape.rs:547-557, fsl-command/src/command/export.rs:129, fsl-command/src/command/export.rs:326-331 |
+
+## Dispositions (round 2)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The replay example now equals spec PR #3565 (head e9f4fb8c) exactly. All 14 members were compared programmatically against its JSON and its list of the other eleven. Over an empty directory the test asserts exit 20, stage `request`, a message naming `entry.fsl`, and a code other than `invalid-request`. With an empty `entry.fsl` it asserts `invalid_syntax`/`unexpected-end`/stage `source`/`the recompile refused at stage source: expected \`language\`` exactly. The amended AC-7 allows that (FR-098 recompile), and the input is deterministic, so the test is not flaky. This depends on #3565 merging. |
+| FND-011 | fixed | `#[cfg(test)]` is on `mod tests`. The `fsl-forms/src/syntax.rs:4629` `clippy::large_enum_variant` error predates this PR: fsl-forms is not in the PR diff (last touched on main by 7d4e560d02), and `cargo clippy --locked -p fsl-forms --lib -- -D warnings` on the pinned 1.98 toolchain reproduces it. CI clippy on main therefore fails the same way. A full-workspace clippy of fsl-command is still unverified behind that error. |
+| FND-012 | fixed | The tag is now `#[trace("TC-3170")]`. The exact owning refusal is asserted for each of 7 entries x 4 documents (message with line/column or byte, code `invalid-request`, no `details.missing`), with an `unknown field \`z\`` prefix for the fourth document. |
+| FND-013 | fixed | `repeats_a_name` is shallow (envelope and `request` only). `a_repeat_inside_a_member_subtree_keeps_the_missing_list` covers compile. The claim that the run entry refuses any nested repeat is true (`export::run_bytes` and `admitted_document` run `unique_json` over the whole document for native-run/1; replay reads its request with `unique_json`), but `admit` now runs first: see FND-014. |

@@ -47,3 +47,9 @@ CONDITIONAL. All eight FR-1047 criteria are tagged, and no criterion is untagged
 | FND-002 | fixed | The AC-3 test removes `records` from the monitor example and asserts `missing required member /request/records` with `{"missing":["/request/records"]}` via `run_with_providers`. |
 | FND-003 | fixed | Unit test `every_missing_member_is_named_at_once` asserts `missing members /profile_selections, /byte_provision at "/profile_selections"`. Its imports cause code-review FND-011. |
 | FND-004 | deferred | Spec PR #3563 (FR-1047 AC-9, the export fallback refusal) is commissioned by the coordinator. The fallback now runs the compile reader first, and the `/request` "expected an object" refusal remains. |
+
+## Dispositions (round 2)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-005 | deferred | Resolved by spec PR #3565 (head e9f4fb8c, not yet merged). It replaces `byte_provision` `[]` with one `entry.fsl` row and a matching lock source, and states the expected refusals. The amended text is satisfiable, and the code matches it. Merge #3565 before or together with #3561. |
