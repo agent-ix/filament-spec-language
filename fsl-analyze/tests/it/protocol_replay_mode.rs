@@ -2799,3 +2799,43 @@ fn a_step_of_another_role_never_makes_the_iteration_read_low() {
         );
     }
 }
+
+/// FR-895-AC-44 (TC-2531): a counter step of Seller fixes an iteration of the
+/// cancelling parallel even when the checked step belongs to Buyer. If the
+/// second Ping is omitted, the recorded second-iteration R is unexpected
+/// relative to the first iteration's Placed under cross-role counting.
+#[trace("TC-2531", "FR-895-AC-44")]
+#[test]
+fn a_cross_role_counter_fixes_the_iteration_of_a_cancelled_parallel_step() {
+    let source = repeat_protocol()
+        .replace(
+            "run sequence Main {",
+            "channel Back from Seller to Buyer carries Ack ordering unordered delivery exactly-once-premise capacity 4 overflow reject;\nrun sequence Main {",
+        )
+        .replace(
+            "sequence Body {",
+            "sequence Body { send Ping via Back as (ping: Ack) { true }; parallel Both memory sc { branch left sequence Left { receive Pong via Back of Ping as (pong: Ack) { true }; event L by Buyer as (l: Ack) { true }; } branch right sequence Right { event R by Buyer as (r: Ack) { true }; } } join any [left, right] outstanding cancel;",
+        );
+    let observations = json!([
+        looped("send", "Ping", "Seller", "p-1"),
+        looped("receive", "Both::left::Left::Pong", "Buyer", "p-1"),
+        body_event("left::Left::L"),
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped_case("yes"),
+        body_event("right::Right::R"),
+    ]);
+    let item = nested_cancel_item(
+        "replay-cross-role-counted-cancel-step",
+        &source,
+        observations,
+        &[1, 2, 3, 6],
+        &[0, 4, 5],
+        &[(0, 1), (3, 4)],
+    );
+    assert_eq!(
+        node_verdicts_in(&item, BODY_RIGHT),
+        ["violated"],
+        "the Seller Ping counter must place R after the prior iteration's cancel: {item}"
+    );
+}
