@@ -1540,5 +1540,10 @@ fn an_on_each_lasso_replays_at_the_activation_where_the_clause_is_false() {
         Case::new(&(echo_body("scheduling adversarial;") + &tp3("on each (q: M::Cell)", each)));
     let letters = CellV(is_zero);
     let payload = refutation(&case, &letters);
+    assert_eq!(
+        payload.trace_position(),
+        Some(0),
+        "the record keeps the lasso origin"
+    );
     assert_reproduced_at(replay(&case, &letters, &payload), 1);
 }
