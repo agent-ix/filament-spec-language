@@ -225,3 +225,9 @@ fsl-foundation = { path = "fsl-foundation" }
 opt-level = 1
 [profile.dev.package.fsl-eval]
 opt-level = 3
+
+# The property suites parse and check about a thousand generated units per
+# property; S1 parsing dominates their debug-build cost, so the
+# parser compiles at opt-level 3.
+[profile.dev.package.fsl-cst]
+opt-level = 3

@@ -142,7 +142,7 @@ fn refused_units_are_not_emitted() {
                 let refusal = failure.into_refused().map_err(|stopped| {
                     TestCaseError::fail(format!("not a typed refusal: {stopped:?}"))
                 })?;
-                prop_assert_eq!(refusal.code(), input.code);
+                prop_assert_eq!(refusal.code().as_str(), input.code);
                 Ok(())
             }
         },

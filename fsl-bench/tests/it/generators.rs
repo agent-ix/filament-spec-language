@@ -99,7 +99,7 @@ fn near_miss_generator_output_is_refused() {
             let refusal = failure.into_refused().map_err(|stopped| {
                 TestCaseError::fail(format!("expected typed refusal, got {stopped:?}"))
             })?;
-            proptest::prop_assert_eq!(refusal.code(), input.code, "{}", input.source);
+            proptest::prop_assert_eq!(refusal.code().as_str(), input.code, "{}", input.source);
             proptest::prop_assert_eq!(
                 refusal.cause(),
                 Some(input.cause),
@@ -112,14 +112,14 @@ fn near_miss_generator_output_is_refused() {
                 .ok_or_else(|| TestCaseError::fail(format!("missing location: {refusal:?}")))?;
             proptest::prop_assert_eq!(
                 region.start(),
-                u64::try_from(input.expression_span.start).unwrap(),
+                u64::try_from(input.expression_span.0).unwrap(),
                 "{:?}\n{}",
                 refusal,
                 input.source
             );
             proptest::prop_assert_eq!(
                 region.end(),
-                u64::try_from(input.expression_span.end).unwrap(),
+                u64::try_from(input.expression_span.1).unwrap(),
                 "{:?}\n{}",
                 refusal,
                 input.source
