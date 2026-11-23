@@ -7189,7 +7189,7 @@ fn emit_package_inner(
         .map(|(position, _)| candidates.order[*position].key.clone())
         .collect::<HashSet<_>>();
     let dropped: HashSet<usize> = omitted.iter().map(|(position, _)| *position).collect();
-    let omitted: Vec<OmittedNode> = omitted.into_iter().map(|(_, omission)| omission).collect();
+    let mut omitted: Vec<OmittedNode> = omitted.into_iter().map(|(_, omission)| omission).collect();
     stale_protocol_reference(ids, &candidates, &dropped)?;
     let kept: Vec<&Candidate<'_>> = candidates
         .values()
@@ -7643,13 +7643,15 @@ fn emit_package_inner(
             .get(claim.node())?
             .expression_region(claim.origin().ordinal(), &regions)
     };
-    let value_validity_records = value_validity_requirements::append(
+    let (value_validity_records, value_validity_omissions) = value_validity_requirements::append(
         ids,
         graph,
         &mut nodes,
         &mut source_map,
         &value_validity_region,
+        &omitted_keys,
     )?;
+    omitted.extend(value_validity_omissions);
     let (mut profile_selections, mut laws) = split_laws(&order);
     for refinement in emitted_refinements {
         let selection = CheckedSelection {
@@ -7846,6 +7848,7 @@ fn emit_package_inner(
         &producer_node_ids,
         &value_validity_records,
         &relation_rows,
+        &omitted_keys,
     )?;
     let selected_source_collection_rows = source_collection_rows(graph, &emitted_node_ids)?;
     let operation_effects = graph

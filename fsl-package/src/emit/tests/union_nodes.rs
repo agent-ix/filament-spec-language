@@ -184,6 +184,105 @@ fn an_ir_that_cannot_decode_the_union_omits_it_and_every_node_naming_it() {
     }
 }
 
+/// FR-062 "Packaging is all-or-nothing" and FSpec FR-825: when the emitter
+/// omits a function, each `claim`/`value_validity` record node of that
+/// function names an omitted node, so it is omitted with cause
+/// `NamesOmittedNode`, together with its `requirement_items` row and its
+/// `generated` source-map entry; the other function's records, rows and
+/// entries are written and the strict reader admits the package.
+#[trace("FR-062-AC-9", "FR-320-AC-2", "FR-940-AC-1")]
+#[test]
+fn omitting_a_function_omits_its_value_validity_records_rows_and_source_map_entries() {
+    let (text, package) = package_from_text(&format!(
+        "{SHAPE}{FUNCTIONS}function keep using v(x: Int[0, 9]): Integer pure {{ x + 1 }}\n"
+    ));
+    let regions = |_: &Location| {
+        Some(SourceRegion::new(package.graph().source().clone(), 0, text.len() as u64).unwrap())
+    };
+    let cannot_decode_union = |tag: CheckedNodeTag, form: &str| {
+        !(tag == CheckedNodeTag::CompositeType && form == "union")
+            && CheckedNodeKind::decode(tag, form).is_some()
+    };
+    let emission = emit_package_decoding(
+        &package,
+        regions,
+        &cannot_decode_union,
+        crate::EmitLimits::fixture(),
+    )
+    .expect("the remaining nodes emit");
+
+    let records_of = |owner: &str| {
+        package
+            .graph()
+            .requirements()
+            .values()
+            .filter(|record| {
+                record.requirements().kind() == fsl_semantics::check::Capability::ValueValidity
+                    && record.owner() == Some(owner)
+            })
+            .count()
+    };
+    let (area, keep) = (records_of("area"), records_of("keep"));
+    assert!(area >= 1, "`w * h` is a scalar claim site of `area`");
+    assert_eq!(keep, 1, "`x + 1` is the one scalar claim site of `keep`");
+
+    // The omitted nodes the checked graph does not hold are the record nodes
+    // of `area`, each omitted for naming an omitted node.
+    let graph_ids: BTreeSet<CheckedNodeId> = package
+        .graph()
+        .semantic_graph()
+        .nodes()
+        .map(|node| node_id(node.key()))
+        .collect();
+    let records: Vec<&OmittedNode> = emission
+        .omitted
+        .iter()
+        .filter(|omission| !graph_ids.contains(&omission.node))
+        .collect();
+    assert_eq!(records.len(), area, "{:?}", emission.omitted);
+    for omission in &records {
+        assert!(
+            matches!(omission.cause, OmissionCause::NamesOmittedNode(_)),
+            "{omission:?}"
+        );
+    }
+
+    // The package holds neither those nodes nor a source-map entry for one,
+    // and holds `keep`'s record node with its row.
+    let wire = wire(&emission);
+    let written = fsl_semantics::check::wire_id::WireGraph::of_package_value(&wire).unwrap();
+    let omitted_keys: BTreeSet<NodeKey> = records
+        .iter()
+        .map(|omission| {
+            let id = serde_json::to_value(&omission.node).expect("an omitted id encodes");
+            fsl_foundation::node_wire::node_key_from_json(&id).expect("an omitted structural key")
+        })
+        .collect();
+    assert!(written.keys().iter().all(|key| !omitted_keys.contains(key)));
+    for entry in wire["source_map"].as_array().expect("a source map") {
+        let key = written
+            .key_of_value(&entry["node_id"])
+            .expect("a source-map entry names a written node");
+        assert!(!omitted_keys.contains(&key), "{entry}");
+    }
+    assert_eq!(of_form(&wire, "value_validity").len(), keep);
+    let admitted = match filament_contract_model::CheckedPackageV2::read(
+        emission.package().bytes(),
+        filament_contract_model::CheckedPackageReadLimits::bounded(),
+        emission.evidence(),
+    ) {
+        filament_contract_model::CheckedPackageV2ReadResult::Admitted(admitted) => admitted,
+        failure => panic!("the strict reader admits the remaining package: {failure:?}"),
+    };
+    let rows = admitted
+        .requirement_items()
+        .iter()
+        .filter(|row| row.kind == filament_contract_model::CapabilityKind::ValueValidity)
+        .count();
+    assert_eq!(rows, keep);
+    verified_exports(&emission);
+}
+
 #[trace("FR-320-AC-4", "FR-319-AC-4", "TC-827")]
 #[test]
 fn a_construction_is_emitted_with_its_application_preimage_key() {
@@ -583,10 +682,27 @@ fn reidentified(
 /// `wire` with the nodes at `dropped` removed, every id naming one of them
 /// replaced by the id of `replacement` (when given), and every node's
 /// identity and `dependencies` re-derived: a well-formed package the emitter
-/// did not write.
+/// did not write. A `claim`/`value_validity` record node naming a removed
+/// node is removed with it (FR-062 "Packaging is all-or-nothing"), and with
+/// it the `requirement_items` row that names it (FSpec FR-825).
 fn edited(wire: &Value, dropped: &[usize], replacement: Option<(usize, usize)>) -> Value {
     let graph = WireGraph::of_package_value(wire).expect("a structural graph");
     let keys = graph.keys().to_vec();
+    let removed: BTreeSet<NodeKey> = dropped.iter().map(|at| keys[*at].clone()).collect();
+    let mut dropped = dropped.to_vec();
+    for (at, node) in nodes(wire).iter().enumerate() {
+        let names_removed = node["dependencies"]
+            .as_array()
+            .expect("dependencies")
+            .iter()
+            .any(|dependency| {
+                removed.contains(&graph.key_of_value(dependency).expect("a dependency"))
+            });
+        if node["semantic_form"] == "value_validity" && names_removed && !dropped.contains(&at) {
+            dropped.push(at);
+        }
+    }
+    let dropped = dropped.as_slice();
     let gone: BTreeSet<NodeKey> = dropped.iter().map(|at| keys[*at].clone()).collect();
     let renamed = |key: &NodeKey| match replacement {
         Some((from, to)) => substituted(key, &keys[from], &keys[to]),

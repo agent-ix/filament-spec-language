@@ -188,6 +188,33 @@ fn renumbered(
         }
         rows.sort_by_key(|row| row["occurrence"].as_u64());
     }
+    // FSpec FR-825: a requirement row's claim is one of its node's
+    // occurrences, and the rows of one claim node, contiguous in package
+    // order, are ordered by occurrence role, then ordinal, then kind.
+    if let Some(rows) = wire
+        .get_mut("requirement_items")
+        .and_then(Value::as_array_mut)
+    {
+        let clause_rows: Vec<usize> = (0..rows.len())
+            .filter(|&at| rows[at]["claim"]["node"] == id)
+            .collect();
+        for &at in &clause_rows {
+            let occurrence = &mut rows[at]["claim"]["occurrence"];
+            if occurrence["role"] == "claim" {
+                occurrence["ordinal"] = renumber(&occurrence["ordinal"]);
+            }
+        }
+        if let (Some(&first), Some(&last)) = (clause_rows.first(), clause_rows.last()) {
+            let order = |row: &Value| {
+                (
+                    row["claim"]["occurrence"]["role"].as_str().map(str::to_owned),
+                    row["claim"]["occurrence"]["ordinal"].as_u64(),
+                    row["kind"].as_str().map(str::to_owned),
+                )
+            };
+            rows[first..=last].sort_by_key(order);
+        }
+    }
     let bytes = crate::emit::tests::wire_bytes(&wire).expect("the wire encodes");
     (bytes, wire)
 }

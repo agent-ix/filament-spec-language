@@ -815,7 +815,8 @@ fn rows() -> Vec<Row> {
         row(K::Claim(ClaimForm::StateGraph), F::StateGraphClaim),
         row(K::Claim(ClaimForm::StepRelation), F::StepRelation),
         row(K::Claim(ClaimForm::Schedulability), F::Schedulability),
-        row(K::Claim(ClaimForm::ValueValidity), F::Tc416Functions),
+        // `area`'s `w * h` is a scalar claim site (FR-062); TC-416's functions hold none.
+        row(K::Claim(ClaimForm::ValueValidity), F::UnionNodes),
         row(K::Temporal(TemporalForm::Terminal), F::Terminal),
         row(K::Hybrid(HybridForm::Model), F::Hybrid),
         row(K::Hybrid(HybridForm::Mode), F::Hybrid),
