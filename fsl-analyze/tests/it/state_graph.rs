@@ -15,27 +15,27 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Cancel, CancelCause, ObjectReference};
 use fsl_analyze::model_check::{
-    check_state_graph, GraphEdge, ModelCheckRefusal, NodeIndex, StateGraphItem, StateGraphRequest,
-    StateGraphRun,
+    GraphEdge, ModelCheckRefusal, NodeIndex, StateGraphItem, StateGraphRequest, StateGraphRun,
+    check_state_graph,
 };
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::model::{ModelSimState, ModelSystem, PredicateReading};
 use fsl_eval::simulation::StateKey;
+use fsl_eval::simulation::model::{ModelSimState, ModelSystem, PredicateReading};
 use fsl_eval::simulation::{StopReason, TransitionSystem};
 use fsl_replay::{
-    CounterexampleKind, GraphWitness, IncompleteCause, ModelCheckLimit, ModelCheckLimits,
-    ModelCheckOutcome, ModelPath, ModelStep, OpenCause, ReachedLimit, RunEnd, StateGraphOutcome,
-    WitnessSource, DEFAULT_MAX_WALK_STEPS, DEFAULT_WITNESS_SAMPLES, DEFAULT_WITNESS_SEED,
+    CounterexampleKind, DEFAULT_MAX_WALK_STEPS, DEFAULT_WITNESS_SAMPLES, DEFAULT_WITNESS_SEED,
+    GraphWitness, IncompleteCause, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome, ModelPath,
+    ModelStep, OpenCause, ReachedLimit, RunEnd, StateGraphOutcome, WitnessSource,
 };
 use fsl_semantics::check::{PredicateRole, StateGraphForm};
 use ix_trace_rs::trace;
 
 use crate::counter::UNLIMITED;
 use crate::graph_world::{
+    CAN_STILL_WIN, DIVIDES, Field, Model, Operation, REACHES_THREE, REACHES_TWO, World,
     config_kernel_world, config_kernel_world_over, config_version, config_world, config_world_over,
     detour_world, fork_world, game_world, job_world, job_world_with_claims, ladder_world,
-    por_reachestwo_world, Field, Model, Operation, World, CAN_STILL_WIN, DIVIDES, REACHES_THREE,
-    REACHES_TWO,
+    por_reachestwo_world,
 };
 
 #[path = "state_graph/replay_contracts.rs"]
@@ -57,7 +57,7 @@ pub(crate) fn system<'w>(world: &'w World, keys: &[&str]) -> ModelSystem<'w> {
 #[test]
 fn keyed_model_walks_preserve_the_seeded_trace_and_step_limit() {
     use fsl_eval::simulation::model::{
-        sample_model_walk, sample_model_walk_keyed, ModelWalkSettings, WalkMemo,
+        ModelWalkSettings, WalkMemo, sample_model_walk, sample_model_walk_keyed,
     };
     let world = config_world(REACHES_TWO, &[(0, 0)]);
     let system = system(&world, AB);
@@ -109,7 +109,7 @@ fn keyed_model_walks_preserve_the_seeded_trace_and_step_limit() {
 #[test]
 fn keyed_model_walks_fall_back_at_storage_limits_and_observe_cancellation() {
     use fsl_eval::simulation::model::{
-        sample_model_walk, sample_model_walk_keyed, ModelWalkSettings, WalkMemo,
+        ModelWalkSettings, WalkMemo, sample_model_walk, sample_model_walk_keyed,
     };
     let world = config_world(REACHES_TWO, &[(0, 0)]);
     let sampler =
@@ -540,11 +540,13 @@ fn symmetry_reduction_quotients_state_graph_and_marks_the_proof_reduced() {
     assert_eq!(reduced.graph.stats.nodes, 18);
     assert_eq!(plain.graph.stats.nodes, 27);
     assert_eq!(reduced.graph.stats.edges, 54);
-    assert!(reduced
-        .graph
-        .edges
-        .iter()
-        .any(|edge| edge.permutation != fsl_eval::simulation::Permutation::identity()));
+    assert!(
+        reduced
+            .graph
+            .edges
+            .iter()
+            .any(|edge| edge.permutation != fsl_eval::simulation::Permutation::identity())
+    );
     let StateGraphOutcome::HoldsReduced {
         reductions,
         witnesses: Some(paths),
@@ -552,11 +554,13 @@ fn symmetry_reduction_quotients_state_graph_and_marks_the_proof_reduced() {
     else {
         panic!("the possible claim has a reduced witness")
     };
-    let [fsl_replay::AppliedReduction::Symmetry {
-        groups,
-        orbit,
-        stabiliser,
-    }] = reductions.as_slice()
+    let [
+        fsl_replay::AppliedReduction::Symmetry {
+            groups,
+            orbit,
+            stabiliser,
+        },
+    ] = reductions.as_slice()
     else {
         panic!("symmetry is the applied reduction: {reductions:?}")
     };
@@ -665,11 +669,13 @@ fn always_possible_under_symmetry_returns_holds_reduced_without_witnesses() {
             instance.outcome
         )
     };
-    let [fsl_replay::AppliedReduction::Symmetry {
-        groups,
-        orbit,
-        stabiliser,
-    }] = reductions.as_slice()
+    let [
+        fsl_replay::AppliedReduction::Symmetry {
+            groups,
+            orbit,
+            stabiliser,
+        },
+    ] = reductions.as_slice()
     else {
         panic!("symmetry is the applied reduction: {reductions:?}")
     };
@@ -1256,6 +1262,31 @@ fn phase_zero_off_and_a_target_no_walk_reaches() {
             StateGraphOutcome::Trapped { .. }
         ));
     }
+}
+
+/// FR-166-AC-2: the default phase-zero walks close on the 9-state/18-edge
+/// cyclic subject before `max_walk_steps`, then phase 1 still proves the trap.
+#[trace("FR-166-AC-2", "FR-166-AC-7")]
+#[test]
+fn default_phase_zero_closes_cyclic_walks_without_budget_stops() {
+    let world = config_world(REACHES_THREE, &[(0, 0)]);
+    let result = run(world.request(
+        AB,
+        vec![world.item("ReachesThree")],
+        ModelCheckLimits::default(),
+    ));
+    for instance in &result.items[0] {
+        assert_eq!(instance.sampled, vec![None]);
+        assert_eq!(instance.walks_stopped, 0);
+        assert!(matches!(
+            instance.outcome,
+            StateGraphOutcome::Trapped { .. }
+        ));
+    }
+    assert_eq!(
+        (result.graph.stats.nodes, result.graph.stats.edges),
+        (9, 18)
+    );
 }
 
 /// FR-166-AC-3: over two snapshots `(0, 0)` and `(1, 1)` the witness for
