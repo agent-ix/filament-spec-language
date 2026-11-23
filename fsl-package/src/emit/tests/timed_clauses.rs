@@ -1751,12 +1751,21 @@ fn an_element_presence_quantifier_is_scoped_in_its_predicate() {
     let (_, _, mut wire) = emit(&guard("forall"));
     let parameter = quantifier_parameter(&wire);
     let guard_id = timed(&wire, "clock_guard")[0]["node_id"].clone();
+    // The guard depends on each node it references, in graph order.
+    let order: Vec<Value> = nodes(&wire)
+        .iter()
+        .map(|node| node["node_id"].clone())
+        .collect();
     let node = wire["semantic_graph"]["nodes"]
         .as_array_mut()
         .expect("nodes")
         .iter_mut()
         .find(|node| node["node_id"] == guard_id)
         .expect("the guard");
+    let dependencies = node["dependencies"].as_array_mut().expect("dependencies");
+    dependencies.push(parameter.clone());
+    dependencies.sort_by_key(|id| order.iter().position(|held| held == id));
+    dependencies.dedup();
     let part = &mut node["body"]["members"]
         .as_array_mut()
         .expect("members")
