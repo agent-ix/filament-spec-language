@@ -51,7 +51,7 @@ pub(super) fn is_replay_request(bytes: &[u8]) -> bool {
 /// # Errors
 ///
 /// `invalid-request` naming `limits` when `caller` was built for another
-/// operation, before any work; the request file's read refusals, `format` for a request of another
+/// operation, before any work; the request file's read refusals, `invalid-request` naming `/format` for a request of another
 /// format, and the replay request reader's and replay's own refusals.
 pub fn replay_with_limits(
     path: &Path,
@@ -70,9 +70,17 @@ pub fn replay_with_limits(
             })
         })?;
     super::with_request_limits(path, limits.request_bytes, |directory, bytes| {
-        if !is_replay_request(bytes) {
-            return Err(RunCause::Format);
+        if let Some(format) = request_format(bytes) {
+            if format != fsl_foundation::wire_format::WireFormat::ReplayRequest.as_str() {
+                return Err(RunCause::FormatNotRead {
+                    message: format!(
+                        "invalid request: format {format} is not read by replay; replay reads native-replay/1"
+                    ),
+                    accepted: vec![fsl_foundation::wire_format::WireFormat::ReplayRequest.as_str()],
+                });
+            }
         }
+        super::request_shape::admit(super::request_shape::Family::Run, bytes)?;
         run_bytes(
             directory,
             path.to_str(),
@@ -81,6 +89,17 @@ pub fn replay_with_limits(
             caller,
         )
     })
+}
+
+/// The string `format` of the request document `bytes`, when it has one.
+fn request_format(bytes: &[u8]) -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct Peek {
+        format: String,
+    }
+    serde_json::from_slice::<Peek>(bytes)
+        .ok()
+        .map(|peek| peek.format)
 }
 
 /// Read the `native-replay/1` request `bytes`, whose byte provision files

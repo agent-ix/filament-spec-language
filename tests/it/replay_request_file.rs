@@ -447,6 +447,22 @@ fn an_entry_point_refuses_the_limits_of_another_operation() {
         error.cause.to_string(),
         "invalid clause request member limits: the `replay` operation was given the limits of the `monitor` operation",
     );
+    let directory = tempfile::tempdir().unwrap();
+    let other = write(
+        directory.path(),
+        "native-run.json",
+        &json!({"format": "native-run/1", "request": {}}),
+    );
+    let error = fsl_command::command::replay_with_limits(
+        &other,
+        RunLimits::default(),
+        &CommandLimits::replay(),
+    )
+    .expect_err("replay refuses a native-run/1 document");
+    assert_eq!(
+        error.cause.to_string(),
+        "invalid request: format native-run/1 is not read by replay; replay reads native-replay/1",
+    );
 }
 
 /// `replay_with_limits` reads the request, replays it, and applies the caller's
