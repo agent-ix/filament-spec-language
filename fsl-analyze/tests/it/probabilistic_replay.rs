@@ -721,7 +721,8 @@ fn merged_draws_expand_into_actual_vectors_with_a_witness_storage_limit() {
         record.terminal().unwrap().value(),
         &TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::ExactProbMaxWitnessPaths,
-            value: 1
+            value: 1,
+            required: None,
         })
     );
     assert!(record.probabilistic_counterexample.is_none());
@@ -779,7 +780,8 @@ fn fix_round_producer_path_exhaustion_settles_incomplete_without_evidence() {
             .value(),
         &TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::ExactProbMaxWitnessPaths,
-            value: 0
+            value: 0,
+            required: None,
         })
     );
     assert!(record.probabilistic_counterexample.is_none());

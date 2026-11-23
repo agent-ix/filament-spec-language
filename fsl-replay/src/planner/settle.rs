@@ -707,15 +707,18 @@ impl PlannerCause {
             ),
             Self::Incomplete {
                 limit: Some(limit), ..
-            } => (
-                "cause",
-                json!({
+            } => {
+                let mut cause = json!({
                     "type": "limit-reached",
                     "limit": limit.limit,
                     "value": limit.value,
                     "setting": limit.setting,
-                }),
-            ),
+                });
+                if let Some(required) = &limit.required {
+                    cause["required"] = json!(required);
+                }
+                ("cause", cause)
+            }
             Self::Incomplete { cause, limit: None } => (
                 "cause",
                 outcome_cause(TerminalValue::Incomplete(cause.clone())),

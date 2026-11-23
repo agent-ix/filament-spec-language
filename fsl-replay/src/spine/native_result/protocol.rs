@@ -257,7 +257,7 @@ impl ProtocolSettlementEntry {
                     },
                 }
             }
-            TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value }) => {
+            TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value, .. }) => {
                 Self::Incomplete {
                     cause: ProtocolIncompleteCause::LimitReached {
                         limit: limit.as_str().to_owned(),

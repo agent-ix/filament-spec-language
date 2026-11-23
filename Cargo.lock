@@ -742,7 +742,7 @@ dependencies = [
 [[package]]
 name = "filament-specification-qualification"
 version = "0.1.1"
-source = "git+https://github.com/agent-ix/filament-specification?rev=01f8dd31b8cc540418a4858543aed7231a1ed1ee#01f8dd31b8cc540418a4858543aed7231a1ed1ee"
+source = "git+https://github.com/agent-ix/filament-specification?rev=3200a4ed7f18fbbf5d934c22d3c3fa467914ddca#3200a4ed7f18fbbf5d934c22d3c3fa467914ddca"
 
 [[package]]
 name = "filament-verification-contracts"

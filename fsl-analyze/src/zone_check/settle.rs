@@ -100,7 +100,7 @@ impl ZoneCheckRecord {
 
     fn incomplete(cause: IncompleteCause) -> Self {
         let limit_reached = match &cause {
-            IncompleteCause::LimitReached { limit, value } => Some(ReachedLimit {
+            IncompleteCause::LimitReached { limit, value, .. } => Some(ReachedLimit {
                 limit: *limit,
                 value: *value,
             }),
@@ -265,6 +265,7 @@ pub fn settle_zone_check<S>(
             }) => ZoneCheckRecord::incomplete(IncompleteCause::LimitReached {
                 limit: reached.limit,
                 value: reached.value,
+                required: None,
             }),
             // A fault stays a tool failure (ADR-013 C-09).
             Err(refusal) => match TerminalValue::from_replay_refusal(&refusal) {
@@ -318,7 +319,11 @@ pub(crate) fn stop_cause(cause: ZoneStop, cancel: &Cancel) -> Option<IncompleteC
                 ZoneCheckLimit::MaxZoneBytes(value) => (ModelCheckLimit::ZoneMaxZoneBytes, value),
                 ZoneCheckLimit::MaxClocks(value) => (ModelCheckLimit::MaxClocks, value),
             };
-            Some(IncompleteCause::LimitReached { limit, value })
+            Some(IncompleteCause::LimitReached {
+                limit,
+                value,
+                required: None,
+            })
         }
         ZoneStop::Cancelled => cancel
             .cause()
@@ -483,6 +488,7 @@ fn violated(
             ZoneCheckRecord::incomplete(IncompleteCause::LimitReached {
                 limit: reached.limit,
                 value: reached.value,
+                required: None,
             })
         }
         // A fault stays a tool failure (ADR-013 C-09).
@@ -511,6 +517,7 @@ fn timed_stopped(cause: TimedRefinementStop, cancel: &Cancel) -> ZoneCheckRecord
             ZoneCheckRecord::incomplete(IncompleteCause::LimitReached {
                 limit: reached.limit,
                 value: reached.value,
+                required: None,
             })
         }
     }

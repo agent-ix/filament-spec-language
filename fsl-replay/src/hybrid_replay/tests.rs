@@ -967,9 +967,10 @@ mod settlement {
             spent.value,
             TerminalValue::Incomplete(IncompleteCause::LimitReached {
                 limit: ModelCheckLimit::EvaluationMeter {
-                    counter: LimitKind::WorkUnits
+                    counter: LimitKind::WorkUnits,
                 },
                 value: 0,
+                required: None,
             })
         );
         assert_eq!(spent.counterexample, None);

@@ -486,6 +486,9 @@ pub struct ItemCause {
     defect: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     value: Option<u64>,
+    /// A fixed-N statistical preflight stop's required sample count.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    required: Option<String>,
     /// An `insufficient-data` cause's window count.
     #[serde(skip_serializing_if = "Option::is_none")]
     count: Option<u64>,
@@ -845,6 +848,7 @@ impl ItemCause {
             limit: None,
             defect: None,
             value: None,
+            required: None,
             count: None,
             min_count: None,
             counter: None,
@@ -1426,10 +1430,15 @@ impl OutcomeItem {
                 let mut item = ItemCause::kind(cause.as_str());
                 match cause {
                     IncompleteCause::Cancelled { source } => item.source = Some(*source),
-                    IncompleteCause::LimitReached { limit, value } => {
+                    IncompleteCause::LimitReached {
+                        limit,
+                        value,
+                        required,
+                    } => {
                         item.limit = Some(CauseLimit::Name(limit.as_str()));
                         item.value = Some(*value);
                         item.setting = Some(limit.setting());
+                        item.required = required.as_ref().map(ToString::to_string);
                     }
                     IncompleteCause::PrecisionBudget { lower, upper } => {
                         item.lower = Some((**lower).clone());
@@ -1779,6 +1788,20 @@ impl OutcomeItem {
     }
 }
 
+/// The FR-413 claim-bound object a verdict carries (FR-410 `bound`): the
+/// claim's own comparison and threshold, and a quantile's separate `level`.
+pub fn verdict_bound_wire(bound: &statistical::VerdictBound) -> serde_json::Value {
+    let mut value = serde_json::json!({
+        "type": bound.form.bound_type(),
+        "comparison": bound.comparison.as_str(),
+        "threshold": rational_wire(&bound.threshold),
+    });
+    if let Some(level) = &bound.level {
+        value["level"] = rational_wire(level);
+    }
+    value
+}
+
 fn rational_wire(value: &filament_exact::Rational) -> serde_json::Value {
     serde_json::json!({
         "numerator": value.numerator().to_string(),
@@ -1993,6 +2016,7 @@ fn statistical_verdict_wire(
     // none is today (`omitted_witnesses` says why).
     let mut value = serde_json::json!({
         "decision": decision,
+        "bound": verdict_bound_wire(&verdict.bound),
         "basis": basis,
         "provenance": provenance,
         "tests": tests,

@@ -315,6 +315,7 @@ fn a_state_budget_of_one_and_a_cancelled_handle_settle_incomplete() {
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxStates,
             value: 1,
+            required: None,
         })
     );
 
@@ -1014,9 +1015,10 @@ fn accounting_limit_before_deadline_keeps_its_typed_result() {
         records[0].value(),
         TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::EvaluationMeter {
-                counter: LimitKind::WorkUnits
+                counter: LimitKind::WorkUnits,
             },
             value: 1,
+            required: None,
         })
     ));
     assert_eq!(cancel.cause(), None);

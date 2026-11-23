@@ -873,6 +873,7 @@ fn cad_replay_work_boundary_is_deterministic_and_both_provider_paths_settle_inco
             counter: filament_exact::LimitKind::WorkUnits,
         },
         value: work - 1,
+        required: None,
     });
     let claimed = HybridCounterexample {
         kind: HybridCounterexampleKind::Formula,
@@ -891,7 +892,7 @@ fn cad_replay_work_boundary_is_deterministic_and_both_provider_paths_settle_inco
     for settled in [provider, solver] {
         assert_eq!(settled.value, expected);
         assert_eq!(settled.counterexample, None);
-        let TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value }) =
+        let TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value, .. }) =
             settled.value
         else {
             panic!("typed incomplete only");

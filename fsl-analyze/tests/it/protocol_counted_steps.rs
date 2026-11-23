@@ -1554,6 +1554,7 @@ fn a_past_tp3_clause_over_the_repaired_fill_keys_distance_history() {
         TemporalCertificateCheck::Stopped(IncompleteCause::LimitReached {
             limit: ModelCheckLimit::MaxStates,
             value,
+            required: None,
         })
     );
 }

@@ -165,6 +165,7 @@ pub fn settle_statistical(
             StatisticalRecord::of(TerminalValue::Incomplete(IncompleteCause::LimitReached {
                 limit: ModelCheckLimit::Statistical(StatisticalLimit::MaxSamples),
                 value: verdict.basis.samples,
+                required: None,
             }))
         }
         StatisticalOutcome::Completed(verdict) => {
@@ -175,13 +176,24 @@ pub fn settle_statistical(
                 StatisticalRecord::of(TerminalValue::Incomplete(IncompleteCause::LimitReached {
                     limit: ModelCheckLimit::Statistical(*limit),
                     value: *value,
+                    required: None,
                 }))
             }
+            StatisticalStop::PreflightLimit {
+                limit,
+                value,
+                required,
+            } => StatisticalRecord::of(TerminalValue::Incomplete(IncompleteCause::LimitReached {
+                limit: ModelCheckLimit::Statistical(*limit),
+                value: *value,
+                required: Some(required.clone()),
+            })),
             StatisticalStop::Expansion(stop) => expansion_stop(stop, subject),
             StatisticalStop::AutomatonStates { value } => {
                 StatisticalRecord::of(TerminalValue::Incomplete(IncompleteCause::LimitReached {
                     limit: ModelCheckLimit::MaxAutomatonStates,
                     value: *value,
+                    required: None,
                 }))
             }
             StatisticalStop::Cancelled(source) => {
@@ -225,6 +237,7 @@ fn expansion_stop(stop: &ExpansionStop, subject: SubjectLimits<'_>) -> Statistic
         StatisticalRecord::of(TerminalValue::Incomplete(IncompleteCause::LimitReached {
             limit,
             value,
+            required: None,
         }))
     };
     match stop.limit {
@@ -312,6 +325,7 @@ fn predicate_refused(outcome: &ClauseOutcome) -> StatisticalRecord {
                     counter: incomplete.limit_kind,
                 },
                 value: incomplete.limit,
+                required: None,
             }))
         }
         ClauseOutcome::KernelUndefined(_)
@@ -402,6 +416,12 @@ mod tests {
     fn completed(decision: Decision) -> StatisticalOutcome {
         StatisticalOutcome::Completed(Box::new(StatisticalVerdict {
             decision,
+            bound: crate::statistical::VerdictBound {
+                form: crate::statistical::ClaimForm::Probability,
+                comparison: crate::statistical::BoundComparison::GreaterOrEqual,
+                threshold: ratio(99, 100),
+                level: None,
+            },
             estimate: Some(ratio(97, 100)),
             interval: Some((ratio(96, 100), ratio(98, 100))),
             quantile: None,
@@ -452,7 +472,11 @@ mod tests {
     }
 
     fn incomplete(limit: ModelCheckLimit, value: u64) -> TerminalValue {
-        TerminalValue::Incomplete(IncompleteCause::LimitReached { limit, value })
+        TerminalValue::Incomplete(IncompleteCause::LimitReached {
+            limit,
+            value,
+            required: None,
+        })
     }
 
     /// EN-4 preserves terminal validation's diagnostic when its raw payload
@@ -643,6 +667,7 @@ mod tests {
             TerminalValue::Incomplete(IncompleteCause::LimitReached {
                 limit: ModelCheckLimit::MaxAutomatonStates,
                 value: 1 << 20,
+                required: None,
             })
         );
         assert_eq!(
@@ -884,6 +909,7 @@ mod tests {
                     counter: LimitKind::TextInputBytes,
                 },
                 value: 9,
+                required: None,
             })
         );
         assert_eq!(
@@ -898,6 +924,7 @@ mod tests {
                     counter: LimitKind::WorkUnits,
                 },
                 value: 9,
+                required: None,
             })
         );
         assert_eq!(

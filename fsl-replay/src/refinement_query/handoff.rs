@@ -60,6 +60,7 @@ impl Budget<'_> {
                 IncompleteCause::LimitReached {
                     limit,
                     value: bound,
+                    required: None,
                 },
             ));
         }

@@ -117,6 +117,7 @@ fn identity_bytes_keep_their_actual_setting_and_wire_limit() {
         IncompleteCause::LimitReached {
             limit: ModelCheckLimit::IdentityInputBytes,
             value: 0,
+            required: None,
         },
     );
     let wire = serde_json::to_value(OutcomeItem::from_terminal(&record)).unwrap();
