@@ -4309,48 +4309,52 @@ mod tests {
             .with(engine("test-a", Capability::OperationContract))
             .expect("first");
         let write = |available| {
-            let item = refusing(|| Refusal::RequiresBound)
-                .operation_contract_extent(
-                    Capability::OperationContract,
-                    fsl_route::request::ExtentClassification::Unbounded {
-                        finite_bound_available: available,
-                    },
-                );
-            let mut records = terminal_records(analyze_items(
-                &engines,
-                vec![item],
-                &Cancel::new(),
-            ));
+            let item = refusing(|| Refusal::RequiresBound).operation_contract_extent(
+                Capability::OperationContract,
+                fsl_route::request::ExtentClassification::Unbounded {
+                    finite_bound_available: available,
+                },
+            );
+            let mut records = terminal_records(analyze_items(&engines, vec![item], &Cancel::new()));
             let record = records.remove(0);
-            let written = serde_json::to_value(
-                analyze_document(std::slice::from_ref(&record), &[])
-                    .expect("the disposed analyzer record serializes"),
-            )
-            .expect("serializes");
-            (record, written["items"][0]["record"].clone())
+            let document = analyze_document(std::slice::from_ref(&record), &[])
+                .expect("the disposed analyzer record serializes");
+            let wire: serde_json::Value =
+                serde_json::from_slice(&document.to_bytes().expect("the document encodes"))
+                    .expect("the document is JSON");
+            (record, wire["items"][0].clone())
         };
 
-        let (record, written) = write(true);
+        let (record, item) = write(true);
+        let written = item["diagnostic"].clone();
         assert!(record.settled_by_disposition());
         assert!(record.backend().is_none());
-        assert_eq!(written["settled_by"], "disposition");
-        assert!(written.get("result").is_none(), "a disposition has no result: {written}");
-        assert_eq!(written["category"], "unsupported");
+        assert_eq!(item["category"], "unsupported");
         assert_eq!(
-            written["diagnostic"],
+            written,
             json!({"code": "requires_bound", "cause": "requires-bound", "detail": {}})
         );
-        assert!(written.get("value").is_none(), "a disposition has no result value: {written}");
-        assert!(written.get("evidence").is_none(), "a disposition has no result evidence: {written}");
+        assert_eq!(item["result"], "unsupported");
+        let mut members: Vec<&str> = item
+            .as_object()
+            .expect("an item object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        members.sort_unstable();
+        assert_eq!(
+            members,
+            ["category", "diagnostic", "request_index", "result"],
+            "a disposition carries no verdict, certificate or evidence: {item}"
+        );
 
-        let (record, written) = write(false);
+        let (record, item) = write(false);
+        let written = item["diagnostic"].clone();
         assert!(record.settled_by_disposition());
         assert!(record.backend().is_none());
-        assert_eq!(written["settled_by"], "disposition");
-        assert!(written.get("result").is_none(), "a disposition has no result: {written}");
-        assert_eq!(written["category"], "unsupported");
+        assert_eq!(item["category"], "unsupported");
         assert_eq!(
-            written["diagnostic"],
+            written,
             json!({
                 "code": "unsupported_projection",
                 "cause": "unbounded-extent",
@@ -4361,8 +4365,19 @@ mod tests {
                 },
             })
         );
-        assert!(written.get("value").is_none(), "a disposition has no result value: {written}");
-        assert!(written.get("evidence").is_none(), "a disposition has no result evidence: {written}");
+        assert_eq!(item["result"], "unsupported");
+        let mut members: Vec<&str> = item
+            .as_object()
+            .expect("an item object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        members.sort_unstable();
+        assert_eq!(
+            members,
+            ["category", "diagnostic", "request_index", "result"],
+            "a disposition carries no verdict, certificate or evidence: {item}"
+        );
     }
 
     /// FSpec FR-290-AC-14: preserve the pre-negotiated missing-population
@@ -4378,33 +4393,47 @@ mod tests {
             .with(engine("test-a", Capability::OperationContract))
             .expect("first");
         let diagnostic = unsupported_kind(Capability::OperationContract);
-        let item = refusing(|| Refusal::Failed(CatalogCode::new(
-            "runtime_invariant",
-            "established-invariant-broken",
-        )))
+        let item = refusing(|| {
+            Refusal::Failed(CatalogCode::new(
+                "runtime_invariant",
+                "established-invariant-broken",
+            ))
+        })
         .disposed(Disposition::Unsupported, Some(diagnostic));
         let mut records = terminal_records(analyze_items(&engines, vec![item], &Cancel::new()));
         let record = records.remove(0);
         let document = analyze_document(std::slice::from_ref(&record), &[])
             .expect("the negotiated disposition serializes");
-        let written = serde_json::to_value(document).expect("serializes")["items"][0]["record"]
-            .clone();
+        let wire: serde_json::Value =
+            serde_json::from_slice(&document.to_bytes().expect("the document encodes"))
+                .expect("the document is JSON");
+        let item = wire["items"][0].clone();
+        let written = item["diagnostic"].clone();
 
         assert!(record.settled_by_disposition());
         assert!(record.backend().is_none());
-        assert_eq!(written["settled_by"], "disposition");
-        assert!(written.get("result").is_none(), "a disposition has no result: {written}");
-        assert_eq!(written["category"], "unsupported");
+        assert_eq!(item["category"], "unsupported");
         assert_eq!(
-            written["diagnostic"],
+            written,
             json!({
                 "code": "unsupported_projection",
                 "cause": "unsupported-requested-capability",
                 "detail": {"kind": "operation-contract"},
             })
         );
-        assert!(written.get("value").is_none(), "a disposition has no result value: {written}");
-        assert!(written.get("evidence").is_none(), "a disposition has no result evidence: {written}");
+        assert_eq!(item["result"], "unsupported");
+        let mut members: Vec<&str> = item
+            .as_object()
+            .expect("an item object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        members.sort_unstable();
+        assert_eq!(
+            members,
+            ["category", "diagnostic", "request_index", "result"],
+            "a disposition carries no verdict, certificate or evidence: {item}"
+        );
     }
 
     fn refusing<'a>(refusal: impl Fn() -> Refusal + 'a) -> AnalyzeItem<'a> {

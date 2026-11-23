@@ -1827,13 +1827,14 @@ mod tests {
             .and_then(|claim| claim.occurrence())
             .expect("the Link package has an authored occurrence")
             .clone();
-        let candidate = fsl_route::Candidate::new(fsl_route::BackendId::new("test-a"));
+        let candidate = fsl_route::Candidate::new(fsl_foundation::BackendId::new("test-a"));
+        let sources = SourceProvision::default();
         for finite_bound_available in [false, true] {
             let negotiated = super::NegotiatedItem {
                 item: super::ClaimItem {
-                    request_index: fsl_route::RequestIndex::new(0),
+                    request_index: fsl_foundation::RequestIndex::new(0),
                     claim: claim.clone(),
-                    kind: fsl_route::Capability::OperationContract,
+                    kind: fsl_semantics::check::Capability::OperationContract,
                     extent: fsl_route::request::ExtentClassification::Unbounded {
                         finite_bound_available,
                     },
@@ -1848,7 +1849,7 @@ mod tests {
             let built = super::work(
                 &analysis,
                 &binding,
-                &SourceProvision::default(),
+                &sources,
                 &negotiated,
                 &super::super::Engines::default(),
                 &super::super::AnalyzeLimits::unbounded(),
