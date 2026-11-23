@@ -68,7 +68,7 @@ fn encoded(key: &ProbabilityProductKey) -> String {
 fn keys(world: &World, name: &str) -> (ProbabilityProductKey, ProbabilityProductKey) {
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     let binding = claim_binding(&system, world.claim(name)).unwrap().unwrap();
-    let key = |state| {
+    let key = |state: &fsl_eval::simulation::model::ModelSimState| {
         let raw = system.state_key(state).unwrap().0;
         ProbabilityProductKey::for_model_state(Some(&binding.reference), &raw).unwrap()
     };
@@ -317,7 +317,7 @@ fn a_failing_workload_long_run_fraction_is_refuted_by_its_replayed_long_run_cert
 
     // A changed bias fails its gain-bias equation over the rebuilt chain.
     let mut broken = doc.clone();
-    broken["components"][0]["bias"][1]["value"] = q(1, 1);
+    broken["components"][0]["bias"][1]["value"] = q(2, 1);
     let replayed = replay(&world, &offering(&found, &broken));
     assert!(
         matches!(
@@ -515,7 +515,16 @@ fn an_every_scheduler_expected_total_carries_its_scheduler_and_a_proper_upper_ce
     let changed = settle_tampered(&world, "Two", move |witness| {
         witness.scheduler[0].1 = ProbabilisticSchedulerChoice::Deterministic(stay.clone());
     });
-    certificate_rejected(&changed, CertificateRule::InequalityFails, &down);
+    // Never calling with `ok` no longer reaches `up`: the upper certificate's
+    // values no longer cover exactly the rebuilt chain.
+    assert_eq!(
+        changed.terminal().expect("a terminal record").value(),
+        &TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+            rule: CertificateRule::Malformed,
+            at: CertificateLocus::CertificateMember(fsl_replay::CertificateMember::Values),
+        })
+    );
+    assert!(changed.probabilistic_counterexample.is_none());
     let mut equal = doc.clone();
     set_value(&mut equal, &down, q(2, 1));
     rejected(
@@ -599,12 +608,12 @@ fn split(claims: &str) -> prob_world::Model {
         object: "Item",
         population: "items",
         key: "x",
-        integers: vec![("Phase", 0, 2), ("Pick", 1, 2)],
+        integers: vec![("Phase", 0, 2)],
         fields: vec![("phase", format!("ix://{package}/Phase"))],
         operations: vec![
             prob_world::Operation {
                 name: "go",
-                parameters: vec![("r", format!("ix://{package}/Pick"))],
+                parameters: vec![("r", format!("ix://{package}/Phase"))],
                 modifies: vec!["phase"],
                 deletes: false,
             },
