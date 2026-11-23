@@ -1033,68 +1033,76 @@ impl CheckedGraph {
         item: &OccurrenceKey,
     ) -> Option<Result<CheckedOperationContractReferences, InternalFault>> {
         let record = self.requirements.get(item)?;
-        let references = record.references();
-        let fault = |invariant| InternalFault::new("check.item-operation-contract-references", invariant);
+        Some((|| {
+            let references = record.references();
+            let fault = |invariant| {
+                InternalFault::new("check.item-operation-contract-references", invariant)
+            };
 
-        let mut model_objects = references
-            .objects
-            .iter()
-            .map(|identity| {
-                self.object_types
-                    .iter()
-                    .find_map(|(declaration, known)| (known == identity).then_some(declaration))
-                    .and_then(|declaration| self.object_nodes.get(declaration))
-                    .cloned()
-                    .ok_or_else(|| fault("referenced-object-has-a-model-node"))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-        model_objects.sort();
-
-        let operation = references
-            .operation
-            .as_ref()
-            .map(|(declaring, name)| {
-                self.operation_frames
-                    .iter()
-                    .find(|frame| {
-                        &frame.operation.declaring == declaring
-                            && frame.operation.declaration.name() == name
-                    })
-                    .map(|frame| frame.anchor.clone())
-                    .ok_or_else(|| fault("referenced-operation-has-an-operation-anchor"))
-            })
-            .transpose()?;
-
-        let mut populations = references
-            .populations
-            .iter()
-            .map(|population| {
-                let member_type = self
-                    .object_types
-                    .iter()
-                    .find_map(|(declaration, known)| {
-                        (known == &population.object)
-                            .then(|| self.object_nodes.get(declaration))
-                            .flatten()
-                    })
-                    .cloned()
-                    .ok_or_else(|| fault("referenced-population-member-type-has-a-model-node"))?;
-                Ok(CheckedOperationPopulation {
-                    member_type,
-                    ordinal: population.ordinal,
-                    maximum: population.maximum,
+            let mut model_objects = references
+                .objects
+                .iter()
+                .map(|identity| {
+                    self.object_types
+                        .iter()
+                        .find_map(|(declaration, known)| {
+                            (known == identity).then_some(declaration)
+                        })
+                        .and_then(|declaration| self.object_nodes.get(declaration))
+                        .cloned()
+                        .ok_or_else(|| fault("referenced-object-has-a-model-node"))
                 })
-            })
-            .collect::<Result<Vec<_>, InternalFault>>()?;
-        populations.sort_by(|left, right| {
-            (&left.member_type, left.ordinal).cmp(&(&right.member_type, right.ordinal))
-        });
+                .collect::<Result<Vec<_>, _>>()?;
+            model_objects.sort();
 
-        Some(Ok(CheckedOperationContractReferences {
-            operation,
-            model_objects,
-            populations,
-        }))
+            let operation = references
+                .operation
+                .as_ref()
+                .map(|(declaring, name)| {
+                    self.operation_frames
+                        .iter()
+                        .find(|frame| {
+                            &frame.operation.declaring == declaring
+                                && frame.operation.declaration.name() == name
+                        })
+                        .map(|frame| frame.anchor.clone())
+                        .ok_or_else(|| fault("referenced-operation-has-an-operation-anchor"))
+                })
+                .transpose()?;
+
+            let mut populations = references
+                .populations
+                .iter()
+                .map(|population| {
+                    let member_type = self
+                        .object_types
+                        .iter()
+                        .find_map(|(declaration, known)| {
+                            (known == &population.object)
+                                .then(|| self.object_nodes.get(declaration))
+                                .flatten()
+                        })
+                        .cloned()
+                        .ok_or_else(|| {
+                            fault("referenced-population-member-type-has-a-model-node")
+                        })?;
+                    Ok(CheckedOperationPopulation {
+                        member_type,
+                        ordinal: population.ordinal,
+                        maximum: population.maximum,
+                    })
+                })
+                .collect::<Result<Vec<_>, InternalFault>>()?;
+            populations.sort_by(|left, right| {
+                (&left.member_type, left.ordinal).cmp(&(&right.member_type, right.ordinal))
+            });
+
+            Ok(CheckedOperationContractReferences {
+                operation,
+                model_objects,
+                populations,
+            })
+        })())
     }
 }
 
