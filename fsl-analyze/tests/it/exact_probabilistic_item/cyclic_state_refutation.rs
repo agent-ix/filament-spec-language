@@ -311,6 +311,37 @@ fn a_cyclic_workload_always_is_refuted_by_its_rejecting_union_without_a_path_sea
     let world = health("x.phase = 0", "");
     let found = refuted(&world, "Always");
     assert!(found.scheduler.is_empty());
+    // `refuted`, `decisive-counterexample`, retaining the replayed evidence;
+    // neither `unsupported` nor `incomplete`.
+    let record = settle(&world, "Always", ModelCheckLimits::default());
+    let axes = fsl_replay::OutcomeAxes::of_record(record.terminal().unwrap().value(), false);
+    assert_eq!(
+        (axes.truth, axes.settlement),
+        (
+            Some(fsl_replay::TruthAxis::False),
+            Some(fsl_replay::SettlementBasis::DecisiveCounterexample)
+        )
+    );
+    assert!(record.probabilistic_counterexample.is_some());
+    // The search counter is live: an acyclic counterpart, whose `ok` breaks
+    // P once and then stops, does start the path-set search.
+    let acyclic = World::new(&item(
+        1,
+        vec![operation("fail", false)],
+        format!(
+            "pre Fail using v on M::Item::fail {{ self.phase = 0 }}\n\
+             post Failed using v on M::Item::fail {{ self.phase = 1 }}\n\
+             workload W on M {{ weight Item::fail = 1; }}\n{}",
+            claim(
+                "Always",
+                "W",
+                "probability >= 0.9 [ always holds(x.phase = 0) ]"
+            ),
+        ),
+    ));
+    let (control, searches) = settle_counted(&acyclic, "Always");
+    assert_eq!(control.terminal().unwrap().value(), &TerminalValue::Refuted);
+    assert!(searches > 0, "the acyclic subject is refuted by a path set");
     let ok = found.initial_key.clone();
     let down = other(&found);
     expect_rows(
@@ -502,21 +533,22 @@ fn cyclic_always_over_every_scheduler_carries_its_witness_scheduler() {
         Err(ProbabilityWitnessError::Refused)
     ));
     // Under `stay`, `{ok}` is the induced chain's only component and it
-    // accepts: `down` is no longer reached, so the certificate cannot cover it.
+    // accepts, so the rejecting union is empty. AC-36's certificate names the
+    // unreached `down` and cannot cover the chain at all.
     let mut staying = found.clone();
     staying.scheduler[0].1 = ProbabilisticSchedulerChoice::Deterministic(stay.clone());
-    assert!(
-        matches!(
-            replay(&world, &staying),
-            Err(ProbabilityWitnessError::CertificateRejected(
-                ProbabilityCertificateRejection {
-                    rule: ProbabilityCertificateRule::Malformed,
-                    at: ProbabilityCertificateLocus::Member("values"),
-                }
-            ))
-        ),
-        "{:?}",
-        replay(&world, &staying)
+    rejected_member(replay(&world, &staying), "values");
+    // Restricted to `ok`, it is checked over that chain: `ok` keeps value 1
+    // only by returning to itself, so it has no progress towards a rejecting
+    // state.
+    let mut only_ok = offered_for(&world, "AtLeast", &found, |rows| {
+        rows.retain(|row| row.0 == ok);
+    });
+    only_ok.scheduler[0].1 = ProbabilisticSchedulerChoice::Deterministic(stay.clone());
+    rejected(
+        replay(&world, &only_ok),
+        ProbabilityCertificateRule::RankBroken,
+        &ok,
     );
 
     let kept = refuted(&world, "AtMost");
@@ -692,5 +724,21 @@ fn initial_decided_cyclic_subjects_are_refuted_not_unsupported() {
             ),
             "{name}: {replayed:?}"
         );
+    }
+}
+
+fn rejected_member(
+    replayed: Result<ProbabilityWitnessReplay, ProbabilityWitnessError>,
+    member: &'static str,
+) {
+    match replayed {
+        Err(ProbabilityWitnessError::CertificateRejected(rejection)) => assert_eq!(
+            rejection,
+            ProbabilityCertificateRejection {
+                rule: ProbabilityCertificateRule::Malformed,
+                at: ProbabilityCertificateLocus::Member(member),
+            }
+        ),
+        other => panic!("expected Malformed at {member}: {other:?}"),
     }
 }

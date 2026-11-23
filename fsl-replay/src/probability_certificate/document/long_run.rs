@@ -1136,63 +1136,15 @@ fn check_graph(
             return Err(ProbabilityDocumentError::Malformed);
         }
     }
-    // Iterative Kosaraju: neither recursion depth nor producer SCC labels enter.
-    let mut seen = vec![false; keys.len()];
-    let mut order = Vec::new();
-    for start in 0..keys.len() {
-        if seen[start] {
-            continue;
-        }
-        seen[start] = true;
-        let mut stack = vec![(start, 0)];
-        while let Some((state, offset)) = stack.last_mut() {
-            #[cfg(feature = "test-support")]
+    let (_, components, bottom) = super::super::bottom_components(&edges, &reverse, &mut |pass| {
+        #[cfg(feature = "test-support")]
+        if pass == super::super::ComponentPass::Order {
             cx.phase(LongRunProbabilityPhase::Components)?;
-            cx.work(1)?;
-            if let Some(&next) = edges[*state].get(*offset) {
-                *offset += 1;
-                if !seen[next] {
-                    seen[next] = true;
-                    stack.push((next, 0));
-                }
-            } else {
-                let (state, _) = stack.pop().ok_or(ProbabilityDocumentError::Malformed)?;
-                order.push(state);
-            }
         }
-    }
-    let mut component_of = vec![usize::MAX; keys.len()];
-    let mut components = Vec::new();
-    for start in order.into_iter().rev() {
-        if component_of[start] != usize::MAX {
-            continue;
-        }
-        let index = components.len();
-        let mut component = Vec::new();
-        let mut stack = vec![start];
-        component_of[start] = index;
-        while let Some(state) = stack.pop() {
-            cx.work(1)?;
-            component.push(state);
-            for &next in &reverse[state] {
-                cx.work(1)?;
-                if component_of[next] == usize::MAX {
-                    component_of[next] = index;
-                    stack.push(next);
-                }
-            }
-        }
-        components.push(component);
-    }
-    let mut bottom = vec![true; components.len()];
-    for (state, successors) in edges.iter().enumerate() {
-        for &next in successors {
-            cx.work(1)?;
-            if component_of[state] != component_of[next] {
-                bottom[component_of[state]] = false;
-            }
-        }
-    }
+        #[cfg(not(feature = "test-support"))]
+        let _ = pass;
+        cx.work(1)
+    })?;
     let mut expected = vec![None; keys.len()];
     let mut unweighted_zero_component = vec![false; keys.len()];
     for (index, component) in components.iter().enumerate() {

@@ -132,6 +132,10 @@ pub(super) fn refute(
             .map(|value| !matches!(value, ExtRational::Finite(value) if *value == extreme))
             .collect::<Vec<_>>()
     };
+    let stopped = |stop: Stop| match stop {
+        Stop::Solver(error) => unbounded_failure(error, limits, subject),
+        Stop::Document(error) => document_failure(error, subject),
+    };
     let selected = match &role {
         Role::Avoidance(boundary) if every && boundary.accepting == boundary.undecided_accepts => {
             avoiding_policy(
@@ -139,20 +143,26 @@ pub(super) fn refute(
                 &region(i64::from(boundary.accepting)),
                 policy,
                 false,
+                &mut || step(budget).map_err(Stop::from),
             )
         }
-        Role::RewardLower if every => avoiding_policy(product, &target, policy, true),
+        Role::RewardLower if every => avoiding_policy(product, &target, policy, true, &mut || {
+            step(budget).map_err(Stop::from)
+        }),
         _ => Ok(policy.to_vec()),
     };
     let selected = match selected {
         Ok(selected) => selected,
-        Err(error) => return unbounded_failure(error, limits, subject),
+        Err(stop) => return stopped(stop),
     };
     let chain = induced_chain(product, &selected);
-    let reached = reached(&chain, start, &stop);
+    let reached = match reached(&chain, start, &stop, budget) {
+        Ok(reached) => reached,
+        Err(error) => return document_failure(error, subject),
+    };
     let evidence = match &role {
         Role::Avoidance(boundary) => {
-            avoidance(&chain, start, boundary, &reached, threshold, limits)
+            avoidance(&chain, start, boundary, &reached, threshold, limits, budget)
         }
         Role::RewardLower | Role::RewardUpper => {
             let ProbForm::ExpectedReward { reward, .. } = &claim.form else {
@@ -167,6 +177,7 @@ pub(super) fn refute(
                 threshold,
                 matches!(role, Role::RewardUpper),
                 limits,
+                budget,
             )
         }
     };
@@ -174,7 +185,7 @@ pub(super) fn refute(
         Ok(Some(evidence)) => evidence,
         // The selected chain does not refute the bound: no counterexample.
         Ok(None) => return not_yet(),
-        Err(error) => return unbounded_failure(error, limits, subject),
+        Err(stop) => return stopped(stop),
     };
     fn state_key(
         product: &ProbProduct,
@@ -315,52 +326,102 @@ pub(super) fn refute(
     )
 }
 
+/// Why producing a subsystem counterexample stopped.
+enum Stop {
+    /// An exact solve on the induced chain.
+    Solver(UnboundedError),
+    /// Cancellation, the caller's meter or candidate storage.
+    Document(ProbabilityDocumentError),
+}
+
+impl From<UnboundedError> for Stop {
+    fn from(error: UnboundedError) -> Self {
+        Self::Solver(error)
+    }
+}
+
+impl From<ProbabilityDocumentError> for Stop {
+    fn from(error: ProbabilityDocumentError) -> Self {
+        Self::Document(error)
+    }
+}
+
+/// Poll cancellation and charge one graph step to the candidate meter.
+fn step(budget: &mut CandidateBudget<'_>) -> Result<(), ProbabilityDocumentError> {
+    if let Some(cause) = budget.cancel.tripped() {
+        return Err(ProbabilityDocumentError::Cancelled(cause));
+    }
+    budget
+        .meter
+        .charge(filament_exact::Charge::new(
+            filament_exact::ChargePoint::CollectionMemberTest,
+        ))
+        .map_err(|incomplete| match budget.cancel.tripped() {
+            Some(cause) => ProbabilityDocumentError::Cancelled(cause),
+            None => ProbabilityDocumentError::Accounting(Box::new(incomplete)),
+        })
+}
+
 /// The states the chain reaches from `start`, stopping at targets.
-fn reached(chain: &ProbProduct, start: ProbStateId, target: &[bool]) -> Vec<bool> {
+fn reached(
+    chain: &ProbProduct,
+    start: ProbStateId,
+    target: &[bool],
+    budget: &mut CandidateBudget<'_>,
+) -> Result<Vec<bool>, ProbabilityDocumentError> {
     let mut reached = vec![false; chain.states.len()];
     let mut pending = vec![start];
     reached[start.index()] = true;
     while let Some(state) = pending.pop() {
+        step(budget)?;
         if target[state.index()] {
             continue;
         }
         for edge in chain.outgoing(state) {
+            step(budget)?;
             if !edge.probability.is_zero() && !reached[edge.to.index()] {
                 reached[edge.to.index()] = true;
                 pending.push(edge.to);
             }
         }
     }
-    reached
+    Ok(reached)
 }
 
-/// Shortest positive-probability distance to a `goal` state over `through`.
-fn distances(chain: &ProbProduct, goal: &[bool], through: &[bool]) -> Vec<Option<u64>> {
+/// Shortest positive-probability distance to a `goal` state over `through`,
+/// by one breadth-first search over predecessor edges.
+fn distances(
+    chain: &ProbProduct,
+    goal: &[bool],
+    through: &[bool],
+    budget: &mut CandidateBudget<'_>,
+) -> Result<Vec<Option<u64>>, ProbabilityDocumentError> {
+    let mut predecessors = vec![Vec::new(); chain.states.len()];
+    for edge in &chain.edges {
+        step(budget)?;
+        if !edge.probability.is_zero() {
+            predecessors[edge.to.index()].push(edge.from.index());
+        }
+    }
     let mut distance = goal
         .iter()
         .map(|goal| goal.then_some(0))
         .collect::<Vec<Option<u64>>>();
-    let mut round = 0;
-    loop {
-        round += 1;
-        let previous = distance.clone();
-        for state in chain.ids() {
-            let index = state.index();
-            if previous[index].is_some() || !through[index] {
-                continue;
+    let mut pending = (0..goal.len())
+        .filter(|state| goal[*state])
+        .collect::<std::collections::VecDeque<_>>();
+    while let Some(state) = pending.pop_front() {
+        step(budget)?;
+        let next = distance[state].map_or(0, |rank| rank + 1);
+        for &previous in &predecessors[state] {
+            step(budget)?;
+            if distance[previous].is_none() && through[previous] {
+                distance[previous] = Some(next);
+                pending.push_back(previous);
             }
-            if chain
-                .outgoing(state)
-                .iter()
-                .any(|edge| !edge.probability.is_zero() && previous[edge.to.index()].is_some())
-            {
-                distance[index] = Some(round);
-            }
-        }
-        if distance == previous {
-            return distance;
         }
     }
+    Ok(distance)
 }
 
 /// The claim's absorbing states on the chain and the side it is refuted on.
@@ -387,25 +448,27 @@ fn avoidance(
     reached: &[bool],
     threshold: &Rational,
     limits: &ExactProbLimits,
-) -> Result<Option<Evidence>, UnboundedError> {
-    let adjacency = chain
-        .ids()
-        .map(|state| {
-            if boundary.stop[state.index()] {
-                return vec![state.index()];
+    budget: &mut CandidateBudget<'_>,
+) -> Result<Option<Evidence>, Stop> {
+    let mut adjacency = Vec::with_capacity(chain.states.len());
+    for state in chain.ids() {
+        step(budget)?;
+        if boundary.stop[state.index()] {
+            adjacency.push(vec![state.index()]);
+            continue;
+        }
+        let mut successors = Vec::new();
+        for edge in chain.outgoing(state) {
+            step(budget)?;
+            if !edge.probability.is_zero() {
+                successors.push(edge.to.index());
             }
-            let mut successors = chain
-                .outgoing(state)
-                .iter()
-                .filter(|edge| !edge.probability.is_zero())
-                .map(|edge| edge.to.index())
-                .collect::<Vec<_>>();
-            if successors.is_empty() {
-                successors.push(state.index());
-            }
-            successors
-        })
-        .collect::<Vec<_>>();
+        }
+        if successors.is_empty() {
+            successors.push(state.index());
+        }
+        adjacency.push(successors);
+    }
     let mut violated = vec![false; chain.states.len()];
     for component in bottom_components(&adjacency) {
         let accepts = if component.iter().any(|state| boundary.success[*state]) {
@@ -442,15 +505,20 @@ fn avoidance(
     let positive = (0..chain.states.len())
         .map(|state| value(state).map(|value| !value.is_zero() && open[state]))
         .collect::<Result<Vec<_>, _>>()?;
-    let distance = distances(chain, &violated, &positive);
+    let distance = distances(chain, &violated, &positive, budget)?;
     let mut values = Vec::new();
     let mut ranks = Vec::new();
     // A `lower` certificate names its positive states; an unnamed one counts 0.
     for (state, reached) in reached.iter().enumerate() {
         let value = value(state)?;
         if *reached && !value.is_zero() {
+            // A positive state with no path to the union cannot be ranked:
+            // decline rather than emit evidence replay must reject.
+            let Some(rank) = distance[state] else {
+                return Ok(None);
+            };
             values.push((state, value));
-            ranks.push((state, distance[state].unwrap_or(0)));
+            ranks.push((state, rank));
         }
     }
     Ok(Some(Evidence {
@@ -474,7 +542,8 @@ fn reward_bound(
     threshold: &Rational,
     upper: bool,
     limits: &ExactProbLimits,
-) -> Result<Option<Evidence>, UnboundedError> {
+    budget: &mut CandidateBudget<'_>,
+) -> Result<Option<Evidence>, Stop> {
     let expected = decide_expected_reward(chain, target, reward, UnboundedObjective::Min, limits)?;
     let one = Rational::from_integer(filament_exact::Integer::from(1_i64));
     let initial = expected.values.get(start.index());
@@ -495,7 +564,7 @@ fn reward_bound(
             };
             values.push((state, value.clone()));
         }
-        let distance = distances(chain, target, &vec![true; target.len()]);
+        let distance = distances(chain, target, &vec![true; target.len()], budget)?;
         let mut ranks = Vec::new();
         for (state, reached) in reached.iter().enumerate() {
             if *reached {
@@ -517,7 +586,7 @@ fn reward_bound(
             let reaches = decide_reachability(chain, target, UnboundedObjective::Min, limits)?;
             let never = |state: usize| match reaches.values.get(state) {
                 Some(ExtRational::Finite(value)) => Ok(one.sub(value)),
-                _ => Err(UnboundedError::InvalidState),
+                _ => Err(Stop::Solver(UnboundedError::InvalidState)),
             };
             let avoided = never(start.index())?;
             let Some(scale) = threshold.div(&avoided).map(|ratio| ratio.add(&one)) else {
@@ -530,7 +599,7 @@ fn reward_bound(
                     .collect::<Result<Vec<_>, _>>()?,
             ))
         }
-        None => return Err(UnboundedError::InvalidState),
+        None => return Err(UnboundedError::InvalidState.into()),
     };
     for (state, reached) in reached.iter().enumerate() {
         if !*reached {
@@ -539,7 +608,7 @@ fn reward_bound(
         let value = match (expected.values.get(state), &scale) {
             (Some(ExtRational::Finite(value)), _) => value.clone(),
             (Some(ExtRational::PlusInfinity), Some((scale, never))) => scale.mul(&never[state]),
-            _ => return Err(UnboundedError::InvalidState),
+            _ => return Err(UnboundedError::InvalidState.into()),
         };
         values.push((state, value));
     }

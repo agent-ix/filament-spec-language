@@ -582,12 +582,27 @@ fn an_every_scheduler_eventually_without_random_is_refuted_by_event_avoidance() 
     assert_eq!(wire(&record)["evidence"]["type"], "subsystem");
 
     // `down` is the event-free bottom component itself: its value is 1.
-    let mut equal = doc.clone();
-    set_value(&mut equal, &down, q(1, 2));
+    let mut halved = doc.clone();
+    set_value(&mut halved, &down, q(1, 2));
     rejected(
-        replay(&world, &offering(&found, &equal)),
+        replay(&world, &offering(&found, &halved)),
         ProbabilityCertificateRule::InequalityFails,
         &down,
+    );
+    // Equality: over a chain avoiding the event with probability 1/2, the
+    // checked bound 1/2 against `>= 1/2` sits at `1 - θ` and does not refute.
+    let split_world = World::new(&split(
+        "probabilistic Event using inf on M over (x: M::Item) under every scheduler on origin \
+         { probability >= rational(3,4) [ eventually holds(x.phase = 1) ] }\n\
+         probabilistic Half using inf on M over (x: M::Item) under every scheduler on origin \
+         { probability >= rational(1,2) [ eventually holds(x.phase = 1) ] }\n",
+    ));
+    let split_found = evidence(&refuted(&split_world, "Event"));
+    let at_half = reidentified(&split_world, "Half", &split_found);
+    rejected(
+        replay(&split_world, &at_half),
+        ProbabilityCertificateRule::ThresholdMissed,
+        &split_found.initial_key,
     );
     let omitted = settle_tampered(&world, "ComesUp", |witness| witness.scheduler.clear());
     replay_refused(&omitted);
@@ -754,16 +769,27 @@ fn an_infinite_expected_total_is_refuted_by_a_finite_lower_certificate() {
     let world = World::new(&architecture(
         false,
         &format!(
-            "{CALLS}{}",
+            "{CALLS}{}{}",
             claim(
                 "Bounded",
                 "every scheduler",
                 "expected accumulate calls until holds(s.up) <= 1"
             ),
+            claim(
+                "AtLeastOne",
+                "every scheduler",
+                "expected accumulate calls until holds(s.up) >= 1"
+            ),
         ),
     ));
     let (down, _) = keys(&world, "Bounded");
     let record = refuted(&world, "Bounded");
+    decisive(&record);
+    // The infinite expectation is carried by no exact result value.
+    let terminal = record.terminal().unwrap();
+    assert!(terminal.exact_certificate().is_none());
+    assert!(terminal.exact_certificate_document().is_none());
+    assert!(wire(&record).get("value").is_none());
     let found = evidence(&record);
     assert_eq!(
         found.scheduler,
@@ -796,6 +822,18 @@ fn an_infinite_expected_total_is_refuted_by_a_finite_lower_certificate() {
         Some(&TerminalValue::Refuted)
     );
     assert!(bare.probabilistic_counterexample.is_none());
+
+    // The proof side keeps its inclusive claim-side rule: the minimum 1
+    // proves `>= 1` at equality.
+    let at_one = settle(&world, "AtLeastOne", ModelCheckLimits::default());
+    let TerminalValue::Proved {
+        basis: ProofBasis::ExactValue { value, .. },
+        ..
+    } = at_one.terminal().unwrap().value()
+    else {
+        panic!("{:?}", at_one.settlement);
+    };
+    assert_eq!(value.value(), &ratio(1, 1));
 }
 
 fn key_from(encoded: &str) -> ProbabilityProductKey {
@@ -815,4 +853,130 @@ fn insert_row(document: &mut Value, key: &ProbabilityProductKey, value: Value, r
                 .cmp(&key_from(right["state"].as_str().unwrap()))
         });
     }
+}
+
+/// FR-203: a replayed refutation settles `refuted` on the
+/// `decisive-counterexample` basis with truth false.
+fn decisive(record: &fsl_analyze::analyze::AnalyzeRecord) {
+    let axes = fsl_replay::OutcomeAxes::of_record(record.terminal().unwrap().value(), false);
+    assert_eq!(
+        (axes.truth, axes.settlement),
+        (
+            Some(fsl_replay::TruthAxis::False),
+            Some(fsl_replay::SettlementBasis::DecisiveCounterexample)
+        )
+    );
+}
+
+/// `found`'s certificate rows written again for the claim `name`.
+fn reidentified(
+    world: &World,
+    name: &str,
+    found: &ProbabilisticCounterexample,
+) -> ProbabilisticCounterexample {
+    let doc = document(found);
+    let rational = |value: &Value| {
+        Rational::new(
+            value["numerator"].as_str().unwrap().parse().unwrap(),
+            value["denominator"].as_str().unwrap().parse().unwrap(),
+        )
+        .unwrap()
+    };
+    let values = doc["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| fsl_replay::ExactProbabilityValue {
+            state: key_from(row["state"].as_str().unwrap()),
+            value: rational(&row["value"]),
+        })
+        .collect::<Vec<_>>();
+    let ranking = doc.get("ranking").map(|rows| {
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .map(|row| {
+                (
+                    key_from(row["state"].as_str().unwrap()),
+                    row["rank"].as_u64().unwrap(),
+                )
+            })
+            .collect::<Vec<_>>()
+    });
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let item = fsl_replay::probabilistic_claim_identity(world.claim(name)).unwrap();
+    let mut offered = found.clone();
+    offered.item = item.clone();
+    offered.subsystem = Some(Box::new(
+        fsl_replay::ProbabilitySubsystemCertificate::value_bound(
+            &system,
+            world.package.graph().probabilistic_model().claims(),
+            &item,
+            if doc["kind"] == "upper" {
+                fsl_replay::SubsystemBoundKind::Upper
+            } else {
+                fsl_replay::SubsystemBoundKind::Lower
+            },
+            &values,
+            ranking.as_deref(),
+            limits(),
+            &Cancel::new(),
+        )
+        .unwrap(),
+    ));
+    offered
+}
+
+#[trace("TC-3159", "FR-202-AC-34")]
+#[test]
+fn the_subsystem_entry_keeps_typed_limit_and_cancellation_causes() {
+    let world = World::new(&architecture(
+        false,
+        &claim(
+            "ComesUp",
+            "every scheduler",
+            "probability >= 0.5 [ eventually holds(s.up) ]",
+        ),
+    ));
+    let found = evidence(&refuted(&world, "ComesUp"));
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let replay_with = |limits: &fsl_analyze::exact_probabilistic::ExactProbLimits,
+                       cancel: &Cancel| {
+        fsl_replay::replay_probabilistic_witness(
+            &world.package,
+            &system,
+            &found.item,
+            &found,
+            limits,
+            cancel,
+        )
+    };
+    let cancelled = Cancel::new();
+    cancelled.cancel(CancelCause::Requested);
+    let replayed = replay_with(
+        &fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
+        &cancelled,
+    );
+    assert!(
+        matches!(
+            replayed,
+            Err(ProbabilityWitnessError::Graph(
+                ExactProbabilityGraphError::Cancelled(CancelCause::Requested)
+            ))
+        ),
+        "{replayed:?}"
+    );
+    let mut one_state = fsl_analyze::exact_probabilistic::ExactProbLimits::default();
+    one_state.model.limits.max_states = 1;
+    let replayed = replay_with(&one_state, &Cancel::new());
+    assert!(
+        matches!(
+            replayed,
+            Err(ProbabilityWitnessError::Limit {
+                limit: ModelCheckLimit::ExactProbMaxStates,
+                value: 1,
+            })
+        ),
+        "{replayed:?}"
+    );
 }

@@ -66,6 +66,8 @@ struct Subject {
     /// `always` keeps P there forever; `eventually` and `until` never reach
     /// their target there.
     undecided_accepts: bool,
+    /// The claim's bound object, which every complete key carries.
+    reference: Option<ObjectReference>,
     identity: Value,
     base: Value,
 }
@@ -361,6 +363,7 @@ fn subject(
         bound: bound.clone(),
         workload: workload.is_some(),
         undecided_accepts,
+        reference: reference.cloned(),
         identity,
         base,
     })
@@ -434,17 +437,17 @@ pub(in crate::probability_certificate) enum SubsystemRefutationCheck {
 }
 
 /// Rebuild the workload- or scheduler-induced chain of an untimed unwindowed
-/// `eventually` or expected-reward claim and check a counterexample-role
-/// certificate over it. `scheduler` maps each scheduled complete key to the
-/// index of its chosen action in the subject's enabled-action order; it is
-/// empty under a workload.
+/// `eventually`, `always`, `until` or expected-reward claim and check a
+/// counterexample-role certificate over it. `scheduler` is the
+/// counterexample's deterministic memoryless rows; it is empty under a
+/// workload.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::probability_certificate) fn check(
     system: &ModelSystem<'_>,
     claims: &[CheckedProbabilisticClaim],
     item: &ObligationIdentity,
     bytes: &[u8],
-    scheduler: &BTreeMap<ProbabilityProductKey, usize>,
+    scheduler: &[(ProbabilityProductKey, crate::ProductAction)],
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<SubsystemRefutationCheck, ProbabilityDocumentError> {
@@ -469,7 +472,23 @@ pub(in crate::probability_certificate) fn check(
     if subject.workload && !scheduler.is_empty() {
         return Ok(SubsystemRefutationCheck::SchedulerRefused);
     }
-    let Some(induced) = induce(&subject, scheduler, &mut meter, cancel)? else {
+    let choices = if subject.workload {
+        BTreeMap::new()
+    } else {
+        match scheduled_choices(
+            system,
+            &subject,
+            scheduler,
+            limits,
+            cancel,
+            &mut meter,
+            &mut storage,
+        )? {
+            Some(choices) => choices,
+            None => return Ok(SubsystemRefutationCheck::SchedulerRefused),
+        }
+    };
+    let Some(induced) = induce(&subject, &choices, &mut meter, cancel)? else {
         return Ok(SubsystemRefutationCheck::SchedulerRefused);
     };
     let reject = |rule, at: &ProbabilityProductKey| {
@@ -742,80 +761,32 @@ fn classified_union(
             }
         }
     }
-    // Iterative Kosaraju over the checker's own induced edges.
-    let mut seen = vec![false; keys.len()];
-    let mut order = Vec::new();
-    for start in 0..keys.len() {
-        if seen[start] {
-            continue;
-        }
-        seen[start] = true;
-        let mut stack = vec![(start, 0)];
-        while let Some((state, offset)) = stack.last_mut() {
-            super::super::reward::visit(cancel, meter)?;
-            if let Some(&next) = edges[*state].get(*offset) {
-                *offset += 1;
-                if !seen[next] {
-                    seen[next] = true;
-                    stack.push((next, 0));
-                }
-            } else {
-                let (state, _) = stack.pop().ok_or(ProbabilityDocumentError::Malformed)?;
-                order.push(state);
-            }
-        }
-    }
-    let mut component_of = vec![usize::MAX; keys.len()];
-    let mut components = Vec::new();
-    for start in order.into_iter().rev() {
-        if component_of[start] != usize::MAX {
-            continue;
-        }
-        let index = components.len();
-        let mut component = Vec::new();
-        let mut stack = vec![start];
-        component_of[start] = index;
-        while let Some(state) = stack.pop() {
-            super::super::reward::visit(cancel, meter)?;
-            component.push(state);
-            for &next in &reverse[state] {
-                if component_of[next] == usize::MAX {
-                    component_of[next] = index;
-                    stack.push(next);
-                }
-            }
-        }
-        components.push(component);
-    }
-    let mut bottom = vec![true; components.len()];
-    for (state, successors) in edges.iter().enumerate() {
-        for &next in successors {
-            if component_of[state] != component_of[next] {
-                bottom[component_of[state]] = false;
-            }
-        }
-    }
+    let (_, components, bottom) = super::super::bottom_components(&edges, &reverse, &mut |_| {
+        super::super::reward::visit(cancel, meter)
+    })?;
     let mut union = BTreeSet::new();
     for (index, component) in components.iter().enumerate() {
-        super::super::reward::visit(cancel, meter)?;
-        let decided = |verdict| {
-            component.iter().any(|state| {
-                graph
-                    .states
-                    .get(keys[*state])
-                    .is_some_and(|state| state.terminal == Some(verdict))
-            })
-        };
+        if !bottom[index] {
+            continue;
+        }
         // A decided state absorbs, so a bottom component holds at most one.
-        let accepts = if decided(true) {
-            true
-        } else if decided(false) {
-            false
-        } else {
-            undecided_accepts
-        };
-        if bottom[index] && accepts == accepting {
-            union.extend(component.iter().map(|state| keys[*state].clone()));
+        let mut verdict = None;
+        for state in component {
+            super::super::reward::visit(cancel, meter)?;
+            let terminal = graph
+                .states
+                .get(keys[*state])
+                .ok_or(ProbabilityDocumentError::Malformed)?
+                .terminal;
+            if terminal.is_some() {
+                verdict = terminal;
+            }
+        }
+        if verdict.unwrap_or(undecided_accepts) == accepting {
+            for state in component {
+                super::super::reward::visit(cancel, meter)?;
+                union.insert(keys[*state].clone());
+            }
         }
     }
     Ok(union)
@@ -835,4 +806,118 @@ pub(in crate::probability_certificate) fn admit_subsystem(
         return admit(bytes, limits, cancel);
     }
     super::measure::bounds::admit_subsystem(bytes, limits, cancel)
+}
+
+/// Resolve each scheduler row to its chosen action's index, walking only the
+/// chain the rows induce from the initial state under the document's own
+/// meter and storage. `None` when a row is not an enabled identity choice at
+/// a state the walk reaches, a reached choice state has no row, or a row
+/// names a state the walk never reaches.
+fn scheduled_choices(
+    system: &ModelSystem<'_>,
+    subject: &Subject,
+    rows: &[(ProbabilityProductKey, crate::ProductAction)],
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
+) -> Result<Option<BTreeMap<ProbabilityProductKey, usize>>, ProbabilityDocumentError> {
+    let identity = fsl_foundation::IdentityLimits::default();
+    let mut wanted = BTreeMap::new();
+    for (key, action) in rows {
+        super::super::reward::visit(cancel, meter)?;
+        let crate::ProductAction::Identity(schedule) = action else {
+            return Ok(None);
+        };
+        if wanted
+            .last_key_value()
+            .is_some_and(|(last, _)| *last >= key)
+        {
+            return Ok(None);
+        }
+        wanted.insert(key, schedule);
+    }
+    let reference = subject.reference.as_ref();
+    let key_of = |state: &ModelSimState,
+                  meter: &mut filament_exact::Meter,
+                  storage: &mut u64|
+     -> Result<ProbabilityProductKey, ProbabilityDocumentError> {
+        let mut admission =
+            ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
+        let encoded = (|| {
+            let bytes =
+                system.state_key_bytes_with_budget(state, identity, &mut admission, cancel)?;
+            ProbabilityProductKey::for_model_state_with_budget(
+                reference,
+                &bytes,
+                identity,
+                &mut admission,
+                cancel,
+            )
+        })();
+        encoded.map_err(|error| admission.refusal(error))
+    };
+    let initials = system.initial();
+    let [initial] = initials.as_slice() else {
+        return Err(ExactProbabilityGraphError::UnsupportedInitial.into());
+    };
+    let root = key_of(initial, meter, storage)?;
+    let mut chosen = BTreeMap::new();
+    let mut seen = BTreeSet::from([root.clone()]);
+    let mut pending = VecDeque::from([(root, initial.clone())]);
+    while let Some((key, state)) = pending.pop_front() {
+        super::super::reward::visit(cancel, meter)?;
+        let checked = subject
+            .graph
+            .states
+            .get(&key)
+            .ok_or(ProbabilityDocumentError::Malformed)?;
+        if checked.choices.is_empty() {
+            continue;
+        }
+        let Some(schedule) = wanted.get(&key) else {
+            return Ok(None);
+        };
+        let actions = {
+            let mut admission =
+                ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
+            system
+                .actions_with_budget(&state, identity, &mut admission, cancel)
+                .map_err(|error| admission.expansion_refusal(error))?
+                .map_err(|_| {
+                    ProbabilityDocumentError::Build(Box::new(
+                        crate::ExactProbBuildIssue::UndecidedSuccessor,
+                    ))
+                })?
+        };
+        let mut index = None;
+        for (position, action) in actions.iter().enumerate() {
+            super::super::reward::visit(cancel, meter)?;
+            if crate::Schedule::of(system, &action.identity).as_ref() == Ok(*schedule) {
+                index = Some(position);
+                break;
+            }
+        }
+        let Some(index) = index else {
+            return Ok(None);
+        };
+        for draw in &actions[index].draws {
+            super::super::reward::visit(cancel, meter)?;
+            if draw.probability == rational(0) {
+                continue;
+            }
+            let [(_, post)] = draw.successors.as_slice() else {
+                return Err(ProbabilityDocumentError::Unsupported);
+            };
+            let next = key_of(post, meter, storage)?;
+            if seen.insert(next.clone()) {
+                pending.push_back((next, post.clone()));
+            }
+        }
+        chosen.insert(key, index);
+    }
+    if wanted.keys().any(|key| !chosen.contains_key(*key)) {
+        return Ok(None);
+    }
+    Ok(Some(chosen))
 }

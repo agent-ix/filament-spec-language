@@ -100,17 +100,12 @@ pub(super) fn replay(
             }
         }
     } else {
-        let scheduler = if workload {
-            BTreeMap::new()
-        } else {
-            choice_indices(system, reference, &rows, limits, cancel)?
-        };
         match refutation::check(
             system,
             claims,
             &witness.item,
             subsystem.as_bytes(),
-            &scheduler,
+            &rows,
             document_limits,
             cancel,
         )
@@ -133,103 +128,4 @@ pub(super) fn replay(
             undefined: None,
         },
     )))
-}
-
-/// Each scheduled complete key's chosen action, as its index in the subject's
-/// own enabled-action order. Entries are strictly key-ordered identity
-/// choices at states the subject actually reaches.
-fn choice_indices(
-    system: &ModelSystem<'_>,
-    reference: Option<&ObjectReference>,
-    rows: &[(ProbabilityProductKey, ProductAction)],
-    limits: &ExactProbLimits,
-    cancel: &Cancel,
-) -> Result<BTreeMap<ProbabilityProductKey, usize>, ProbabilityWitnessError> {
-    if rows.len() > limits.model.limits.max_states {
-        return Err(ExactProbabilityGraphError::LimitReached.into());
-    }
-    let mut wanted = BTreeMap::new();
-    let mut previous: Option<&ProbabilityProductKey> = None;
-    for (key, action) in rows {
-        poll_cancel(cancel)?;
-        let ProductAction::Identity(schedule) = action else {
-            return Err(ProbabilityWitnessError::Refused);
-        };
-        if previous.is_some_and(|previous| previous >= key) {
-            return Err(ProbabilityWitnessError::Refused);
-        }
-        previous = Some(key);
-        wanted.insert(key.clone(), schedule);
-    }
-    let mut states = BTreeMap::new();
-    let storage = std::cell::RefCell::new(0u64);
-    let stopped = std::cell::RefCell::new(None);
-    let mut issue = None;
-    enumerate_model_graph_with_keys_and_reservation(
-        system,
-        None::<&fsl_semantics::check::CheckedPredicate>,
-        reference,
-        None,
-        limits.model.limits.max_states,
-        limits.model.limits.max_transitions,
-        cancel,
-        false,
-        &|state| {
-            key_of(system, reference, state, limits, cancel).map_err(|error| {
-                *stopped.borrow_mut() = Some(error);
-                ExactProbabilityGraphError::ExpansionRefused
-            })
-        },
-        &mut |bytes| {
-            bounded::retain(bytes, &mut storage.borrow_mut(), limits).map_err(|error| {
-                *stopped.borrow_mut() = Some(error);
-                ExactProbabilityGraphError::ExpansionRefused
-            })
-        },
-        #[cfg(feature = "test-support")]
-        &mut |_| {},
-        &mut |key, state| {
-            if wanted.contains_key(key) {
-                bounded::retain(
-                    key.as_bytes().len().saturating_mul(2),
-                    &mut storage.borrow_mut(),
-                    limits,
-                )
-                .map_err(|error| {
-                    *stopped.borrow_mut() = Some(error);
-                    ExactProbabilityGraphError::ExpansionRefused
-                })?;
-                states.insert(key.clone(), state.clone());
-            }
-            Ok(())
-        },
-        &mut |failure| issue = Some(failure),
-    )
-    .map_err(|error| {
-        if let Some(error) = stopped.borrow_mut().take() {
-            return error;
-        }
-        issue
-            .take()
-            .map_or(ProbabilityWitnessError::Graph(error), |issue| {
-                ProbabilityWitnessError::Build(Box::new(issue))
-            })
-    })?;
-    let mut indices = BTreeMap::new();
-    for (key, schedule) in wanted {
-        poll_cancel(cancel)?;
-        let state = states.get(&key).ok_or(ProbabilityWitnessError::Refused)?;
-        let actions = system
-            .actions_with_cancel(state, cancel)
-            .map_err(|stop| cancelled_expansion(stop, cancel))?
-            .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
-        let index = actions
-            .iter()
-            .position(|action| {
-                crate::Schedule::of(system, &action.identity).as_ref() == Ok(schedule)
-            })
-            .ok_or(ProbabilityWitnessError::Refused)?;
-        indices.insert(key, index);
-    }
-    Ok(indices)
 }
