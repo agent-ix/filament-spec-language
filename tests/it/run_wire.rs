@@ -2172,6 +2172,7 @@ impl Recorded {
     }
 }
 
+#[derive(Debug)]
 struct BlockingProvider {
     verdict: fsl_analyze::provider::ProviderVerdict,
     entered: std::sync::mpsc::SyncSender<filament_exact::Cancel>,
