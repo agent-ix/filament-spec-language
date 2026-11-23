@@ -29,8 +29,9 @@ relationships:
 When an analyze item (FR-741) names a `probabilistic` claim whose activation
 is `on each (x: T)`, optionally with `when (g)`, FSL SHALL form one instance
 per key of `T`'s population in the start snapshot, in product with any `over`
-parameter, settle each instance under the claim's scheduler and evidence kind,
-and settle the item from the instances: `inconclusive` with cause
+parameter, and settle each instance under the claim's scheduler and evidence
+kind when its analysis profile admits it. FSL SHALL settle the item from the
+instances: `inconclusive` with cause
 `no-instance` when there is no instance, `refuted` naming the first failing
 instance in key order when one fails, and `proved` or `measured` otherwise.
 An `on each` claim settles from source exactly as an `on origin` claim does;
@@ -96,21 +97,31 @@ message never activates and does not count against the claim.
 - The item SHALL be `refuted` when any instance fails, and its counterexample
   SHALL name the first failing instance in key order, so a rerun names the
   same instance.
-- Otherwise the item SHALL be `proved` under exact evidence, or `measured`
+- Otherwise, for an admitted analysis profile, the item SHALL be `proved`
+  under exact evidence, or `measured`
   under statistical evidence, carrying the instances' evidence in FR-741's
   result members.
 - The item SHALL NOT be settled `unsupported` for its activation.
-- **Unbuilt on-each settlements (current).** FR-201's `on-each-reachability/v1`
-  profile admits only the form its section states. An on-each claim outside it
-  (an every-scheduler optimum, statistical evidence, a cyclic continuation
-  graph, a timed subject, authored fairness or another form) settles
-  `unsupported` with the FR-272 diagnostic
-  `unsupported_construct`/`not-yet-implemented` (no `cause`) until QSL-2995. This is an
-  implementation gap and not a refusal of its activation. An in-profile on-each
-  claim whose guard or target read is undefined at a reachable state of an
-  instance's phase graph likewise settles `unsupported` with the FR-272
-  diagnostic `unsupported_construct`/`not-yet-implemented` (no `cause`) until
-  QSL-3003, which builds FR-741's undefined-path refutation for it.
+- **Profile boundary.** FR-201's `on-each-reachability/v1` profile admits
+  only an exact, untimed, unbounded `eventually` reachability claim under a
+  resolved workload that leaves no choice, with no fairness, clocks, rewards
+  or cyclic continuation. Outside that profile, the current analyzer settles
+  an `on each` item `unsupported` with FR-272's
+  `unsupported_construct`/`not-yet-implemented` diagnostic and no `cause`,
+  numeric value or certificate. The profile excludes every-scheduler and
+  free-delay optima, statistical evidence, cyclic continuation graphs,
+  property forms other than unbounded eventuality reachability, timed
+  subjects, and authored fairness. This is an evidence/profile boundary, not
+  a refusal of the `on each` activation: the source reader and analyzer admit
+  the activation and its instances, and the same form without `on each` may
+  have a profile. For an unsupported profile form, at least one actual
+  instance is present in the acceptance cases below, so `unsupported` is not
+  `no-instance`.
+- An in-profile on-each claim whose guard or target read is undefined at a
+  reachable state of an instance's phase graph likewise settles `unsupported`
+  with the FR-272 diagnostic `unsupported_construct`/`not-yet-implemented`
+  (no `cause`) until QSL-3003, which builds FR-741's undefined-path refutation
+  for it.
 
 ## Acceptance Criteria
 
@@ -119,6 +130,11 @@ message never activates and does not count against the claim.
 | FR-875-AC-1 | Through `fsl analyze` over the `Link` model, the claim `E` of the use case with a start snapshot whose `msgs` population holds no object settles `inconclusive` with cause `no-instance`, never `proved` and never `unsupported`. | Test (TC-2485) |
 | FR-875-AC-2 | With a start snapshot holding `m` undelivered and `n` already delivered, `E` settles `proved`: `n` never activates and holds vacuously. The same claim at `rational(99, 100)` settles `refuted`, its counterexample naming `m` and not `n`. | Test (TC-2486) |
 | FR-875-AC-3 | With a start snapshot holding `a` and `b`, both undelivered, `E` at `rational(99, 100)` settles `refuted` with a counterexample naming `a`, the first failing instance in key order; two runs give equal items. | Test (TC-2487) |
+| FR-875-AC-4 | With a nonempty `Link` snapshot, an on-each eventuality requested under every scheduler, and an on-each eventuality under a workload whose subject has a free delay, each item settles `unsupported` with `unsupported_construct`/`not-yet-implemented`, no `cause`, numeric value or certificate; neither is reported as unsupported for activation or as `no-instance`. | Test (TC-3211) |
+| FR-875-AC-5 | With a nonempty `Link` snapshot, an on-each eventuality requested with statistical evidence settles `unsupported` with `unsupported_construct`/`not-yet-implemented`, no `cause`, measurement or certificate; it is not reported as unsupported for activation or as `no-instance`. | Test (TC-3211) |
+| FR-875-AC-6 | With a nonempty `Link` snapshot whose on-each instance has a cyclic continuation graph, the item settles `unsupported` with `unsupported_construct`/`not-yet-implemented`, no `cause`, numeric value or certificate; it is not reported as unsupported for activation or as `no-instance`. | Test (TC-3211) |
+| FR-875-AC-7 | With a nonempty `Link` snapshot, on-each `always`, `until`, bounded eventuality, expected-reward, long-run-fraction, measure and quantile claims each settle `unsupported` with `unsupported_construct`/`not-yet-implemented`, no `cause`, numeric value or certificate; none is reported as unsupported for activation or as `no-instance`. | Test (TC-3211) |
+| FR-875-AC-8 | With a nonempty `Link` snapshot, an on-each eventuality over a timed subject and one with an authored fairness set each settle `unsupported` with `unsupported_construct`/`not-yet-implemented`, no `cause`, numeric value or certificate; neither is reported as unsupported for activation or as `no-instance`. | Test (TC-3211) |
 
 ## Dependencies
 
