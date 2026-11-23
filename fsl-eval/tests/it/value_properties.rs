@@ -39,7 +39,10 @@
 //!   `d: Rational[1, 20; 1, 9]` is refused `unproved-rational-range` although
 //!   `rational(1, 1) / d` is proved. A quotient nested in another operation
 //!   (`(rational(1, 2) / d) + a`) is refused `unproved-rational-range` or
-//!   `ambiguous-literal`, so `/` is only the root operation. Only the root of a rational expression is
+//!   `ambiguous-literal`, so `/` is only the root operation, and a literal
+//!   nested below the root (`a + (rational(1, 1) + a)`) is refused
+//!   `unproved-rational-range`, so a literal is only an operand of the root.
+//!   Only the root of a rational expression is
 //!   typed at the declared domain; an intermediate typed at the wide domain
 //!   (for example by a `let`) is refused correctly (FR-495-AC-14), so a `let`
 //!   binds only a root.
@@ -1027,22 +1030,25 @@ fn binary(op: Op, left: Qe, right: Qe) -> Qe {
     Qe::Bin(op, Box::new(left), Box::new(right))
 }
 
-/// Rational operations: nested `+`, `-`, `*` and negation, or one division of
-/// a leaf at the root. Only the root is typed at the declared domain; the
-/// checker infers each intermediate interval exactly.
+/// Rational operations: a tree of nested `+`, `-`, `*` and negation over the
+/// parameters, optionally combined with one literal at the root, or one
+/// division of a leaf at the root. Only the root is typed at the declared
+/// domain; the checker infers each intermediate interval exactly.
 fn qe_strategy(unguarded: bool) -> BoxedStrategy<Qe> {
     let literal = (1i64..=6, 1i64..=5).prop_map(|(n, d)| {
         let (n, d) = reduce(i128::from(n), i128::from(d));
         Qe::Lit(i64::try_from(n).unwrap(), i64::try_from(d).unwrap())
     });
-    let leaf = prop_oneof![literal, (0usize..3).prop_map(Qe::Param)];
-    let tree = leaf.clone().prop_recursive(2, 8, 2, |inner| {
+    let parameter = (0usize..3).prop_map(Qe::Param);
+    let leaf = prop_oneof![literal.clone(), parameter.clone()];
+    let tree = parameter.prop_recursive(2, 8, 2, |inner| {
         let op = proptest::sample::select(vec![Op::Add, Op::Subtract, Op::Multiply]);
         prop_oneof![
             inner.clone().prop_map(negate),
             (op, inner.clone(), inner).prop_map(|(op, l, r)| binary(op, l, r)),
         ]
     });
+    let op = proptest::sample::select(vec![Op::Add, Op::Subtract, Op::Multiply]);
     // A parameter divisor can be zero, so it is a `Kernel` case.
     let safe = if unguarded {
         any::<bool>().boxed()
@@ -1050,7 +1056,9 @@ fn qe_strategy(unguarded: bool) -> BoxedStrategy<Qe> {
         Just(true).boxed()
     };
     prop_oneof![
-        4 => tree,
+        3 => tree.clone(),
+        2 => (op.clone(), tree.clone(), literal.clone()).prop_map(|(op, l, r)| binary(op, l, r)),
+        1 => (op, literal, tree).prop_map(|(op, l, r)| binary(op, l, r)),
         1 => (leaf, 0usize..3, safe).prop_map(|(l, p, safe)| Qe::Div(Box::new(l), p, safe)),
     ]
     .boxed()
