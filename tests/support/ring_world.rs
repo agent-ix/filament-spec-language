@@ -420,13 +420,24 @@ fn unit_text(
     variant: Variant,
 ) -> String {
     let _ = documents;
+    let mut profiles = String::new();
+    let mut declarations = refinement;
+    while let Some((line, rest)) = declarations.split_once('\n') {
+        if !line.starts_with("profile ") {
+            break;
+        }
+        profiles.push_str(line);
+        profiles.push('\n');
+        declarations = rest;
+    }
     format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.value.complete/v1\";\n\
          profile inf = \"filament.temporal.infinite-trace/v1\";\n\
+         {profiles}\
          model Q = \"{QUEUE}\";\n\
          model R = \"{RING}\";\n\
-         {}{refinement}\n",
+         {}{declarations}\n",
         contracts(variant),
     )
 }
