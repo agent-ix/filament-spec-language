@@ -102,8 +102,9 @@ pub fn check_built_from(stdout: &str, language: &Path) -> Result<()> {
 }
 
 /// The commit a checkout is at, for the gate to name: the `HEAD` sha, with
-/// ` (dirty)` appended when tracked files differ from it, or
-/// `unknown (not a git checkout)` when git cannot say.
+/// ` (dirty)` appended when tracked files differ from it, ` (dirty state unknown)`
+/// when `git status` fails, or `unknown (not a git checkout)` when git gives no `HEAD`.
+/// Untracked files do not count as dirty.
 pub fn checkout_revision(dir: &Path) -> String {
     let git = |args: &[&str]| {
         Command::new("git")
@@ -122,7 +123,8 @@ pub fn checkout_revision(dir: &Path) -> String {
     };
     match git(&["status", "--porcelain", "--untracked-files=no"]) {
         Some(status) if status.is_empty() => sha,
-        _ => format!("{sha} (dirty)"),
+        Some(_) => format!("{sha} (dirty)"),
+        None => format!("{sha} (dirty state unknown)"),
     }
 }
 
@@ -213,27 +215,59 @@ mod tests {
         assert!(status.success(), "git {args:?}");
     }
 
-    #[test]
-    fn a_clean_checkout_is_named_by_its_head_commit() {
+    fn head(dir: &Path) -> String {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .expect("run git");
+        String::from_utf8_lossy(&output.stdout).trim().to_owned()
+    }
+
+    fn committed() -> tempfile::TempDir {
         let dir = tempfile::tempdir().expect("tempdir");
         git(dir.path(), &["init", "-q"]);
         std::fs::write(dir.path().join("f"), "a").expect("write");
         git(dir.path(), &["add", "f"]);
         git(dir.path(), &["commit", "-q", "-m", "m"]);
+        dir
+    }
+
+    #[test]
+    fn a_clean_checkout_is_named_by_its_head_commit() {
+        let dir = committed();
         let revision = checkout_revision(dir.path());
-        assert_eq!(revision.len(), 40, "{revision}");
-        assert!(revision.bytes().all(|b| b.is_ascii_hexdigit()));
+        assert_eq!(revision, head(dir.path()));
+        assert_eq!(revision.len(), 40);
     }
 
     #[test]
     fn a_modified_checkout_is_marked_dirty() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        git(dir.path(), &["init", "-q"]);
-        std::fs::write(dir.path().join("f"), "a").expect("write");
-        git(dir.path(), &["add", "f"]);
-        git(dir.path(), &["commit", "-q", "-m", "m"]);
+        let dir = committed();
         std::fs::write(dir.path().join("f"), "b").expect("write");
-        assert!(checkout_revision(dir.path()).ends_with(" (dirty)"));
+        assert_eq!(
+            checkout_revision(dir.path()),
+            format!("{} (dirty)", head(dir.path()))
+        );
+    }
+
+    #[test]
+    fn untracked_files_do_not_make_a_checkout_dirty() {
+        let dir = committed();
+        std::fs::write(dir.path().join("untracked"), "x").expect("write");
+        assert_eq!(checkout_revision(dir.path()), head(dir.path()));
+    }
+
+    #[test]
+    fn a_checkout_whose_status_fails_is_marked_dirty_state_unknown() {
+        let dir = committed();
+        // A corrupt index makes `git status` fail while `rev-parse HEAD` works.
+        std::fs::write(dir.path().join(".git/index"), "garbage").expect("corrupt index");
+        assert_eq!(
+            checkout_revision(dir.path()),
+            format!("{} (dirty state unknown)", head(dir.path()))
+        );
     }
 
     #[test]
@@ -248,10 +282,13 @@ mod tests {
     #[test]
     fn the_revision_lines_name_the_driver_examples_and_language_checkouts() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let lines = revision_lines(dir.path(), dir.path(), dir.path());
-        assert_eq!(lines.lines().count(), 3);
-        assert!(lines.contains("examples-check: driver "));
-        assert!(lines.contains("examples-check: examples "));
-        assert!(lines.contains("examples-check: language "));
+        let shown = dir.path().display();
+        let unknown = "unknown (not a git checkout)";
+        assert_eq!(
+            revision_lines(dir.path(), dir.path(), dir.path()),
+            format!(
+                "examples-check: driver {shown} at {unknown}\nexamples-check: examples {shown} at {unknown}\nexamples-check: language {shown} at {unknown}\n"
+            )
+        );
     }
 }
