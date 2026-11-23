@@ -588,7 +588,7 @@ pub(crate) fn check_model_with_stutter_closure(
     }
     let max_automaton_states = request.limits.max_automaton_states;
     // The form is refused before admission reads any snapshot.
-    let (mut item, automaton, certified) =
+    let (mut item, _, certified) =
         prepare(request.item, max_automaton_states, Counting::Every)?;
     let meter = request.subject.simulation.meter;
     let max_candidates = request.subject.simulation.expansion.max_candidates;
@@ -604,7 +604,7 @@ pub(crate) fn check_model_with_stutter_closure(
     ) {
         return Err(ModelCheckRefusal::Item(ItemRefusal::LoopProofOverModel));
     }
-    let (instances, root_cancelled) = if certified {
+    let (mut instances, root_cancelled) = if certified {
         match request.item.instances_for(
             &request.subject,
             &system,
@@ -647,61 +647,119 @@ pub(crate) fn check_model_with_stutter_closure(
         };
     }
     refuse_capture_read(request.item)?;
-    let mut run = Run {
-        system: &system,
-        fairness: item.fairness(),
-        reducer: Some(&system),
-        item: &item,
-        limits: request.limits,
-        max_depth: request.max_depth,
-        meter,
-        max_candidates,
-        cancel,
-        nodes: Vec::new(),
-        canonical: Vec::new(),
-        known: BTreeMap::new(),
-        uncounted_edges: Vec::new(),
-        enabled: BTreeMap::new(),
-        queue: VecDeque::new(),
-        edges: 0,
-        stutter_edges: 0,
-        horizon_cut: false,
-        first_bad: None,
-        deferred_local: BTreeMap::new(),
-        shared_names: BTreeSet::new(),
-        monitor: Monitor::bad_prefix(automaton, max_automaton_states)
-            .map_err(|_| fault("a-safety-item-has-a-safety-automaton"))?,
-        group: SymmetryGroup::default(),
-        constraint: None,
-        boundary: 0,
-        chooser: None,
-        memory_bound: None,
-        bound_limited: BTreeSet::new(),
-        message_bound: None,
-        message_bound_limited: BTreeSet::new(),
-        instance_bound: None,
-        instance_limited: BTreeSet::new(),
-    };
-    if let Some(source) = root_cancelled {
-        return Ok(ModelCheckOutcome::Stopped {
-            cause: IncompleteCause::Cancelled { source },
-            limit: None,
-            stats: run.stats(),
-        });
+    // FR-125: the reported instance of a refuted item is the first refuted
+    // instance in canonical order. A search reports the shortest refutation
+    // of any instance, so when that belongs to a later instance the item is
+    // searched again over the instances before it, until none of them is
+    // refuted; the last refutation found is the reported one.
+    let mut reported: Option<ModelCheckOutcome> = None;
+    let mut limits = request.limits;
+    loop {
+        let (_, automaton, _) = prepare(request.item, max_automaton_states, Counting::Every)?;
+        let mut run = Run {
+            system: &system,
+            fairness: item.fairness(),
+            reducer: Some(&system),
+            item: &item,
+            limits,
+            max_depth: request.max_depth,
+            meter,
+            max_candidates,
+            cancel,
+            nodes: Vec::new(),
+            canonical: Vec::new(),
+            known: BTreeMap::new(),
+            uncounted_edges: Vec::new(),
+            enabled: BTreeMap::new(),
+            queue: VecDeque::new(),
+            edges: 0,
+            stutter_edges: 0,
+            horizon_cut: false,
+            first_bad: None,
+            deferred_local: BTreeMap::new(),
+            shared_names: BTreeSet::new(),
+            monitor: Monitor::bad_prefix(automaton, max_automaton_states)
+                .map_err(|_| fault("a-safety-item-has-a-safety-automaton"))?,
+            group: SymmetryGroup::default(),
+            constraint: None,
+            boundary: 0,
+            chooser: None,
+            memory_bound: None,
+            bound_limited: BTreeSet::new(),
+            message_bound: None,
+            message_bound_limited: BTreeSet::new(),
+            instance_bound: None,
+            instance_limited: BTreeSet::new(),
+        };
+        if let Some(source) = root_cancelled {
+            return Ok(ModelCheckOutcome::Stopped {
+                cause: IncompleteCause::Cancelled { source },
+                limit: None,
+                stats: run.stats(),
+            });
+        }
+        if no_initial {
+            return Ok(ModelCheckOutcome::Undecided {
+                cause: UndecidedCause::NoInitialState,
+                stats: run.stats(),
+            });
+        }
+        if item.instance_count() == 0 {
+            return Ok(ModelCheckOutcome::Undecided {
+                cause: UndecidedCause::NoInstance,
+                stats: run.stats(),
+            });
+        }
+        let outcome = run.decide(&instances)?;
+        let earlier = match (&outcome, &item) {
+            (
+                ModelCheckOutcome::Violated {
+                    counterexample,
+                    stats,
+                },
+                Item::Clause { bindings, .. },
+            ) => counterexample
+                .over_binding
+                .as_ref()
+                .and_then(|found| bindings.iter().position(|binding| binding == found))
+                .filter(|position| *position > 0)
+                .map(|position| (position, stats.product_states, stats.product_edges)),
+            _ => None,
+        };
+        let Some((position, states, edges)) = earlier else {
+            // A search over the earlier instances that found none refuted
+            // keeps the later instance's refutation; one that stopped before
+            // deciding is incomplete, and says so.
+            return Ok(match (outcome, reported) {
+                (found @ ModelCheckOutcome::Violated { .. }, _) => found,
+                (
+                    ModelCheckOutcome::Holds { .. } | ModelCheckOutcome::BoundReached { .. },
+                    Some(kept),
+                ) => kept,
+                (other, _) => other,
+            });
+        };
+        // The re-search is charged to the same budget as the first.
+        limits.limits.max_states = limits
+            .limits
+            .max_states
+            .saturating_sub(usize::try_from(states).unwrap_or(usize::MAX));
+        limits.limits.max_transitions = limits
+            .limits
+            .max_transitions
+            .saturating_sub(usize::try_from(edges).unwrap_or(usize::MAX));
+        reported = Some(outcome);
+        if let Item::Clause {
+            bindings,
+            canonical,
+            ..
+        } = &mut item
+        {
+            bindings.truncate(position);
+            canonical.truncate(position);
+        }
+        instances.truncate(position);
     }
-    if no_initial {
-        return Ok(ModelCheckOutcome::Undecided {
-            cause: UndecidedCause::NoInitialState,
-            stats: run.stats(),
-        });
-    }
-    if item.instance_count() == 0 {
-        return Ok(ModelCheckOutcome::Undecided {
-            cause: UndecidedCause::NoInstance,
-            stats: run.stats(),
-        });
-    }
-    run.decide(&instances)
 }
 
 /// FR-215 "Model checking a protocol subject" (ADR-027 TS-6): one EN-1 run

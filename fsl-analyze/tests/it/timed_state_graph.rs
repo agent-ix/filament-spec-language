@@ -374,10 +374,15 @@ fn timed_state_graph_items_report_empty_instance_and_initial_causes() {
 /// zero-delay `send`, `reply`, `reset` cycle.
 fn zeno_only_unit() -> String {
     let claims = format!(
-        "{CLAIMS}temporal NoLateReply using tt over (c: M::Call) clock \"model-time\" on origin \
+        "{CLAIMS}possible Replied using v over (c: M::Call) {{ c.phase = 2 }}\n\
+         temporal NoLateReply using tt over (c: M::Call) clock \"model-time\" on origin \
          {{ always holds(not c.late) }}\n"
     );
-    crate::analyze_family_cli::rpc_unit_with(4, ">= 0", ">=", &claims).replace(
+    crate::analyze_family_cli::rpc_unit_with(4, ">= 0", ">=", &claims)
+        // FR-244-AC-7 names the possible claim `Replied`; this fixture gives
+        // the unit's `post Replied` clause another name so the two do not clash.
+        .replace("post Replied using", "post ReplyEffect using")
+        .replace(
         "time invariant ServerDeadline when { self.inflight } { self.x <= 3 ms }",
         "time invariant ServerDeadline when { true } { self.x <= 0 ms }",
     )
@@ -390,7 +395,6 @@ fn zeno_only_unit() -> String {
 #[trace("TC-3030", "FR-244-AC-7")]
 #[trace("TC-3030", "FR-245-AC-11")]
 #[test]
-#[ignore = "QSL-2889: the Replied claim is refused invalid_capability/inconsistent-candidates (contract-checker) instead of settling with a zone certificate"]
 fn a_state_graph_certificate_over_a_zeno_only_graph_needs_no_divergence_witness() {
     let unit = zeno_only_unit();
     assert!(unit.contains("when { true } { self.x <= 0 ms }"), "{unit}");
