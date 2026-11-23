@@ -2528,7 +2528,11 @@ fn assert_nodes_satisfied(item: &Value, nodes: &[&str], count: usize) {
                 node_verdicts_in(prefix, node)
                     .iter()
                     .all(|verdict| verdict == "satisfied"),
-                "{node}: {item}"
+                "{node}: {:?}",
+                prefixes
+                    .iter()
+                    .map(|p| node_verdicts_in(p, node))
+                    .collect::<Vec<_>>()
             );
         }
     }
