@@ -14,24 +14,26 @@ relationships:
 
 ## Description
 
-The compile request's `call_site` member runs FR-121's `call_site` entry and writes its refusal as the outcome's diagnostic with `selection` and `hint`.
+The compile request's `call_site` member locates its selection over the command's own checked package and writes a refusal as the outcome's diagnostic with `selection` and `hint`.
 
-Scope: FR-027-AC-15, FR-027-AC-16, FR-027-AC-17.
+Scope: FR-027-AC-15 to FR-027-AC-21.
 
 ## Test Procedure
 
-Through `fsl_command::command::compile_outcome` and the `fsl compile` driver, over FR-121-AC-32's unit and its libraries:
+Through `fsl_command::command::compile_outcome` (`fsl-command/tests/it/cli_contract/compile.rs`) and the text rendering of its document (`fsl-command/tests/it/selection_text.rs`), over FR-121-AC-32's unit and libraries:
 
-1. `call_site` `{"kind": "imported-function", "library": "test/other", "function": "big"}` with `test/other` supplied.
-2. The same with `library` `test/absent`.
-3. A unit importing only `test/wrap` (whose source imports `test/units`) with `library` `test/units`.
-4. `library` `test/units` over the unit that imports it directly.
-5. `kind` `function`, and an extra member.
+1. `call_site` `{test/other, big}` with `test/other` supplied.
+2. The same with `test/absent`, and `test/units` for a unit importing only `test/wrap`.
+3. `{test/units, nope}` and `{test/units, first}` (FR-121-AC-36's fixtures).
+4. `{test/units, big}` over the unit that imports it directly.
+5. `null`, a non-object, a missing member, a non-string value, an extra member, `kind` `function`, a model-unit program and an FR-480 array.
 
-Tag the tests `#[trace("TC-3210", "FR-027-AC-15")]`, `#[trace("TC-3210", "FR-027-AC-16")]` and `#[trace("TC-3210", "FR-027-AC-17")]`.
+The driver surface of `fsl compile` is tested in the filament-driver repository (FR-865-AC-16). Tag the tests `#[trace("TC-3210", "FR-027-AC-15")]` and likewise for AC-16 to AC-21. The test `the_unimported_library_producer_text_holds_its_hint` in `selection_text.rs` builds `UnknownImport` by hand and is tagged FR-865-AC-19; the code change re-points it through `compile_outcome` (step 1) and re-tags it, and until then it does not verify FR-865-AC-19.
 
 ## Expected Results
 
-- Steps 1 to 3: the outcome's `diagnostics` holds exactly one entry with `cause` `missing-selection`, `code` `missing_import`, `details` `null`, `hint` `Call a function of a library that the unit imports directly, or add the import.`, `locus` `null`, `selection` `unimported-library` and a `message` beginning `missing_import/missing-selection: package ` and ending ` imports no library <L>` with `<L>` `test/other`, `test/absent` and `test/units`; the text form holds the line `  hint: Call a function of a library that the unit imports directly, or add the import.`.
-- Step 4: the package bytes equal those of the request without `call_site`.
+- Step 1: AC-15's diagnostic, byte for byte; category `refusal`, exit 20, stage I1; the text form holds `  hint: Call a function of a library that the unit imports directly, or add the import.`.
+- Step 2: AC-15's diagnostic naming `test/absent` and `test/units`.
+- Step 3: `missing_declaration`/`missing-name` and `ill_typed`/`operator-ineligible`, no `selection`.
+- Step 4: the package bytes of the request without `call_site`.
 - Step 5: `invalid-request` naming `call_site`.

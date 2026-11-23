@@ -512,7 +512,6 @@ site from text.
   `UnknownImport` uses), D-3 (the `LibraryName` it names a library by)
   and D-5 (the package-independent signature an imported function has, and
   the call lowering to a `dependency_reference` term).
-- [FR-027](FR-027-export-compiled-native-package.md): the compile request's `call_site` member is this entry's command surface for an `ImportedFunctionName`; its refusal reaches the user as an outcome diagnostic with `selection` `unimported-library`.
 - FSpec FR-322: `dependency_selections`, the direct imports an
   imported-function selection resolves among, and the members of the
   `dependency_reference` term (`package`, the dependency's name, and
