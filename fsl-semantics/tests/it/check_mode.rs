@@ -334,3 +334,22 @@ fn an_unannotated_literal_count_source_is_an_ambiguous_literal() {
         );
     }
 }
+
+/// FR-495-AC-27: a non-literal Rational operand keeps its own domain, so the
+/// result of a nested expression does not depend on how it is parenthesised.
+/// Only a literal operand takes its peer's domain as its hint.
+#[trace("FR-495-AC-27", "TC-3214")]
+#[test]
+fn a_non_literal_rational_operand_keeps_its_own_domain() {
+    let wide = "Rational[-10000, 10000; 1, 1000]";
+    let operands = "a: Rational[-20, 20; 1, 9], c: Rational[-20, 20; 1, 9]";
+    for body in ["a + (a + c)", "a * (a + c)", "a + (a * c)", "(a + a) + c", "(a + c) * a"] {
+        let source = format!("function f using v({operands}): {wide} pure {{ {body} }}");
+        for mode in [CheckMode::Linked, CheckMode::Kernel] {
+            check(&source, mode).unwrap_or_else(|refusals| panic!("{body} {mode:?}: {refusals:?}"));
+        }
+    }
+    // A literal still takes its peer's domain: `rational(1, 2)` against `a`.
+    let literal = format!("function g using v({operands}): {wide} pure {{ a + rational(1, 2) }}");
+    check(&literal, CheckMode::Linked).expect("a literal operand takes its peer's domain");
+}
