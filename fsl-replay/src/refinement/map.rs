@@ -242,9 +242,25 @@ pub fn map_state(
                 population: row.concrete_population().clone(),
                 key: key.clone(),
             };
+            // Of the rows that name the object's type, the first whose
+            // abstract type the abstract population admits (ADR-020 RM-2,
+            // RM-3): a concrete type that two abstract populations map is the
+            // source of one abstract object in each.
+            let admits = |candidate: &&dyn ObjectMapping| {
+                abstract_system
+                    .populations()
+                    .iter()
+                    .find(|population| &population.key == row.abstract_population())
+                    .is_none_or(|population| {
+                        population.member_types.iter().any(|member| {
+                            abstract_system.type_conforms(candidate.abstract_type(), member)
+                        })
+                    })
+            };
             let Some(object_row) = refinement
                 .objects()
-                .find(|candidate| candidate.concrete_type() == &object.type_identity)
+                .filter(|candidate| candidate.concrete_type() == &object.type_identity)
+                .find(admits)
             else {
                 outcomes.record(unmapped(&object.type_identity, at));
                 continue;
