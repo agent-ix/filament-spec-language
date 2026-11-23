@@ -221,9 +221,8 @@ fn operation_contract_key(
     populations: &[fsl_semantics::check::CheckedOperationPopulation],
     extent: &ClaimExtent,
 ) -> Result<NodeKey, EmitRefusal> {
+    // `derived_node_key` writes the `claim`/`operation_contract` prefix.
     let mut operands = vec![
-        PathSegment::Text("claim".to_owned()),
-        PathSegment::Text("operation_contract".to_owned()),
         PathSegment::Node(claim.node().clone()),
         PathSegment::Text(occurrence_role_wire(&occurrence.role).to_owned()),
         PathSegment::Text(occurrence.ordinal.to_string()),
@@ -443,11 +442,6 @@ fn append_operation_contract(
         check_mode: None,
         body,
     };
-    #[cfg(test)]
-    eprintln!(
-        "QSL-2934 operation-contract node: {}",
-        serde_json::to_string(&node).expect("operation-contract node serializes")
-    );
     nodes.push(node);
     source_map.push(CheckedSourceMapEntry {
         node_id: id.clone(),
