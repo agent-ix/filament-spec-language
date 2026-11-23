@@ -3740,7 +3740,6 @@ fn collect_predecessors(
         }
         "parallel" => {
             let policy_all = protocol
-                .slots
                 .parallels
                 .iter()
                 .find(|parallel| parallel.node == node)
