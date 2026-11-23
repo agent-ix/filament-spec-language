@@ -6661,6 +6661,7 @@ pub fn emit_timed_models(
         &mut [],
         &ForeignNodes::default(),
     )?;
+    let requirement_rows = value_validity_requirements::carry_rows(base, &nodes)?;
     let operand_rows = write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {
         graph_version: base.graph().graph_version.clone(),
@@ -6706,7 +6707,7 @@ pub fn emit_timed_models(
                 schedulability_claims: None,
                 operation_bodies: base.operation_body_rows(),
             },
-            None,
+            (!requirement_rows.is_empty()).then_some(requirement_rows.as_slice()),
             correlation_rows.as_deref(),
             &capability_report,
             &diagnostics,

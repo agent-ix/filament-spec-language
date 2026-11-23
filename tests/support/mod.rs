@@ -3,6 +3,7 @@
 
 #[path = "../../examples/config-version/spine_corpus.rs"]
 pub mod config_version_spine;
+pub mod canonical_reference;
 pub mod front_end;
 pub(crate) mod plan_model;
 #[path = "../../fsl-semantics/tests/support/abstraction.rs"]

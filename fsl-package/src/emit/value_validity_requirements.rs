@@ -397,5 +397,67 @@ pub(super) fn rows(
     Ok(rows)
 }
 
+/// The base package's requirement rows, for a writer that re-encodes an
+/// admitted package. FSpec FR-825: a `claim`/`value_validity` node is valid
+/// only when a requirement row names it, so a writer that carries the
+/// record nodes carries their rows too.
+///
+/// `nodes` is the writer's graph in index-segment form before operand slots
+/// are written, holding the base graph's nodes at their base positions. Each
+/// local id a row holds is re-pointed to the id of the node at its base
+/// position, so a node the writer renamed is named by its new id; an id that
+/// names no local node (a dependency node) is kept.
+pub(super) fn carry_rows(
+    base: &filament_contract_model::CheckedPackageV2,
+    nodes: &[CheckedSemanticNodeV2],
+) -> Result<Vec<RequirementItemRow>, EmitRefusal> {
+    let rows = base.requirement_items();
+    if rows.is_empty() {
+        return Ok(Vec::new());
+    }
+    let base_nodes = &base.resolved_graph().nodes;
+    let finals = nodes
+        .get(..base_nodes.len())
+        .ok_or(EmitRefusal::SourceMapInvariant)?;
+    let renamed: BTreeMap<&CheckedNodeId, &CheckedNodeId> = base_nodes
+        .iter()
+        .zip(finals)
+        .filter(|(old, new)| old.node_id != new.node_id)
+        .map(|(old, new)| (&old.node_id, &new.node_id))
+        .collect();
+    let follow = |id: &mut CheckedNodeId| {
+        if let Some(&new) = renamed.get(&*id) {
+            *id = new.clone();
+        }
+    };
+    let mut rows = rows.to_vec();
+    for row in &mut rows {
+        follow(&mut row.claim);
+        if let RequirementExtent::Unbounded(domains) = &mut row.extent {
+            for (domain, _) in domains {
+                match domain {
+                    DomainKey::Node { node, .. } => follow(node),
+                    DomainKey::Population { member_type, .. } => follow(member_type),
+                }
+            }
+        }
+        if let Some(record) = &mut row.record {
+            follow(&mut record.node);
+            follow(&mut record.owner);
+            follow(&mut record.application);
+            follow(&mut record.result_bound);
+            if let Some((narrow, _)) = &mut record.conversion {
+                follow(narrow);
+            }
+            for guard in &mut record.path_condition {
+                follow(&mut guard.guard);
+            }
+            record.extent_roots.iter_mut().for_each(follow);
+            record.objects.iter_mut().for_each(follow);
+        }
+    }
+    Ok(rows)
+}
+
 #[cfg(test)]
 mod tests;
