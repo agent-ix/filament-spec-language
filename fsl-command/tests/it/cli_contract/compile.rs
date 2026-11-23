@@ -466,4 +466,3 @@ fn compile_without_the_selected_model_carries_the_model_selection() {
     );
     drop(case);
 }
-}
