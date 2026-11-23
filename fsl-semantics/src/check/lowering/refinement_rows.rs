@@ -18,12 +18,14 @@ use super::state::AnchorInput;
 use super::{fault, Binder, Binders, Lowering};
 use crate::check::claims::BinderSite;
 use crate::check::family::OccurrenceRole;
-use crate::check::node_key::LeafTerm;
+use crate::check::node_key::{BodyTerm, LeafTerm, LiteralValue, NodeTag};
 use crate::check::refinement::{
-    CheckedRefinement, CheckedRow, KeyedCatalogClass, KeyedFairnessRow, KeyedObjectRow,
-    KeyedPopulationRow, KeyedRefinementRows, KeyedStepRow, KeyedStepTarget, StepClass, StepTarget,
+    CheckedRefinement, CheckedRow, KeyedCatalogClass, KeyedFairnessRow, KeyedHistoryRow,
+    KeyedObjectRow, KeyedPopulationRow, KeyedRefinementRows, KeyedStepRow, KeyedStepTarget,
+    StepClass, StepTarget,
 };
 use crate::check::refusal::{CheckRefusal, KeyFault};
+use filament_exact::{Value, ValueType};
 use filament_semantic_value::fairness::FairnessConstraint;
 
 impl Lowering<'_> {
@@ -63,6 +65,27 @@ impl Lowering<'_> {
                 abstract_type,
                 concrete_type,
                 fields,
+            });
+        }
+        for row in refinement.history() {
+            let concrete_type =
+                self.located(location, |this| this.model_node(&row.object_type, location))?;
+            let type_node =
+                self.located(location, |this| this.type_node(&row.declared, location))?;
+            let initial = self.history_initial(&row.initial, &row.declared, location)?;
+            let mut updates = Vec::with_capacity(row.updates.len());
+            for update in &row.updates {
+                updates.push((
+                    self.operation_anchor_of(&update.operation, location)?,
+                    self.row_term(&update.expression)?,
+                ));
+            }
+            rows.histories.push(KeyedHistoryRow {
+                concrete_type,
+                name: row.field.clone(),
+                type_node,
+                initial,
+                updates,
             });
         }
         for (source, row) in refinement.steps().iter().enumerate() {
@@ -151,6 +174,36 @@ impl Lowering<'_> {
             self.record(key.clone(), OccurrenceRole::Generated, location.clone());
         }
         Ok(key)
+    }
+
+    /// The `literal` node of a history field's initial value, typed at the
+    /// field's declared type (FSpec FR-322 "Refinement row expressions": a
+    /// local history-literal reference), and located at the refinement.
+    fn history_initial(
+        &mut self,
+        value: &Value,
+        declared: &ValueType,
+        location: &Location,
+    ) -> Result<LeafTerm, CheckRefusal> {
+        let literal = match value {
+            Value::Boolean(value) => LiteralValue::Boolean(*value),
+            Value::Integer(value) => LiteralValue::Integer(value.clone()),
+            Value::Rational(value) => LiteralValue::Rational(value.clone()),
+            Value::Text(value) => LiteralValue::Text(value.retained().to_owned()),
+            Value::Option(option) if option.payload().is_none() => LiteralValue::None,
+            _ => return Err(fault(location, KeyFault::UnbuiltLiteral)),
+        };
+        let semantic_type = self.type_ref(declared, location)?;
+        let key = self.insert_ref(
+            location,
+            NodeTag::Value,
+            "literal",
+            Some(semantic_type.clone()),
+            None,
+            BodyTerm::literal_node(semantic_type, literal),
+        )?;
+        self.record(key.clone(), OccurrenceRole::Expression, location.clone());
+        Ok(LeafTerm::reference_node(key))
     }
 
     /// The lowered term of one row expression, over one `parameter` node per

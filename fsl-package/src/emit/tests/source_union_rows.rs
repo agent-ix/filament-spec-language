@@ -455,6 +455,7 @@ fn a_payload_list_that_disagrees_with_the_declaration_is_a_writer_fault() {
                 .map(|(n, p)| (n.as_str(), p.clone()))
                 .collect(),
             emitted,
+            None,
         )
     };
     assert_eq!(

@@ -397,6 +397,8 @@ fn source_object_identity_rows_roundtrip_through_qc30_intake() {
         member_keys,
         [
             "admitted_name",
+            "collections",
+            "member_type",
             "original_member_identity",
             "presence",
             "type_node",
@@ -412,6 +414,9 @@ fn source_object_identity_rows_roundtrip_through_qc30_intake() {
     assert_eq!(member["presence"], "required");
     assert!(member["type_node"].is_object());
     assert!(member["value_type"].is_object());
+    // FR-531: a data entry holds no clock rendering and no collection layer.
+    assert_eq!(member["member_type"], Value::Null);
+    assert_eq!(member["collections"], json!([]));
 
     let read = crate::ReadIdentityRows::read(
         &bytes,
@@ -474,12 +479,11 @@ fn source_object_identity_rows_roundtrip_through_qc30_intake() {
     }
 }
 
-/// FR-569-AC-16 through the QC-30 intake: the reader does not yet admit
-/// source `operation_bodies` rows, so a unit with operations is refused
-/// before its identity rows can be joined.
+/// FR-569-AC-16 through the QC-30 intake: the reader admits source
+/// `operation_bodies` rows, and each own operation joins its identity row as
+/// `{identity, query, clock_parameters, parameters}`.
 #[trace("FR-569-AC-16", "TC-1408")]
 #[test]
-#[ignore = "QSL-2890: the reader admits source operation_bodies rows; not implemented yet"]
 fn source_object_operations_roundtrip_through_qc30_intake() {
     let source = format!(
         "{HEADER}record Point {{ x: Integer; }}\nobject Order {{ point: Point; operation size(): Integer; operation bump(): Boolean modifies self.point; }}\nobject Sub extends Order {{ operation size(): Integer redefines Order::size; }}\n"
@@ -526,13 +530,13 @@ fn source_object_operations_roundtrip_through_qc30_intake() {
     assert_eq!(
         row("Order")["operations"],
         json!([
-            {"identity": "Order::size", "query": true},
-            {"identity": "Order::bump", "query": false},
+            {"identity": "Order::size", "query": true, "clock_parameters": [], "parameters": []},
+            {"identity": "Order::bump", "query": false, "clock_parameters": [], "parameters": []},
         ])
     );
     assert_eq!(
         row("Sub")["operations"],
-        json!([{"identity": "Sub::size", "query": true}])
+        json!([{"identity": "Sub::size", "query": true, "clock_parameters": [], "parameters": []}])
     );
     let read = crate::ReadIdentityRows::read(
         &bytes,
@@ -1518,7 +1522,7 @@ fn identity_row<'a>(file: &'a Value, member: &str, name: &str) -> &'a Value {
         .as_array()
         .unwrap_or_else(|| panic!("{member} rows"))
         .iter()
-        .find(|row| row["source_identity"] == name)
+        .find(|row| row["source_identity"] == name || row["qualified_declaration"] == json!([name]))
         .unwrap_or_else(|| panic!("{member} row {name}"))
 }
 
@@ -1534,7 +1538,6 @@ time O dense unit ms;
 
 #[trace("FR-569-AC-17", "TC-1408")]
 #[test]
-#[ignore = "QSL-2890: identity rows list clock fields as clock entries and operations with clock_parameters; not implemented yet"]
 fn source_identity_rows_list_clock_members_and_clock_parameters() {
     let (_, package, bytes) = admitted_identity_file(TIMED_ARM);
     let file: Value = serde_json::from_slice(&bytes).expect("identity JSON parses");
@@ -1542,17 +1545,29 @@ fn source_identity_rows_list_clock_members_and_clock_parameters() {
     let members = o["members"].as_array().expect("O's members");
     assert_eq!(members.len(), 2, "{o}");
     assert_eq!(members[0]["admitted_name"], "w");
-    assert!(members[0]["type_node"].is_string());
+    assert!(members[0]["type_node"].is_object());
     assert_eq!(members[0]["member_type"], Value::Null);
     assert_eq!(members[1]["admitted_name"], "d");
     assert_eq!(members[1]["type_node"], Value::Null);
     assert_eq!(members[1]["value_type"], Value::Null);
     assert_eq!(members[1]["member_type"], "ix://filament/native/Clock");
     assert_eq!(members[1]["collections"], json!([]));
-    assert_eq!(
-        o["operations"],
-        json!([{"identity": "O::arm", "query": false, "clock_parameters": ["x"]}])
-    );
+    // FR-569-AC-17: the operation lists the clock entry `x`, then the data
+    // entry `k` of `Integer`'s type node.
+    let operations = o["operations"].as_array().expect("O's operations");
+    assert_eq!(operations.len(), 1, "{o}");
+    let arm = &operations[0];
+    assert_eq!(arm["identity"], "O::arm");
+    assert_eq!(arm["query"], false);
+    assert_eq!(arm["clock_parameters"], json!(["x"]));
+    let parameters = arm["parameters"].as_array().expect("arm's parameters");
+    assert_eq!(parameters.len(), 2, "{arm}");
+    assert_eq!(parameters[0]["name"], "x");
+    assert_eq!(parameters[0]["type_node"], Value::Null);
+    assert_eq!(parameters[0]["member_type"], "ix://filament/native/Clock");
+    assert_eq!(parameters[1]["name"], "k");
+    assert!(parameters[1]["type_node"].is_object(), "{arm}");
+    assert_eq!(parameters[1]["member_type"], Value::Null);
     let w = identity_row(&file, "source_records", "W");
     assert_eq!(w["members"][0]["admitted_name"], "c");
     assert_eq!(w["members"][0]["member_type"], "ix://filament/native/Clock");
@@ -1576,7 +1591,6 @@ time O dense unit ms;
 
 #[trace("FR-531-AC-34", "TC-1331")]
 #[test]
-#[ignore = "QSL-2890: identities/5 member entries, source_tuples and clock_payload; not implemented yet"]
 fn the_identity_file_carries_data_and_clock_member_entries() {
     let (_, package, bytes) = admitted_identity_file(CLOCK_ENTRIES);
     let file: Value = serde_json::from_slice(&bytes).expect("identity JSON parses");
@@ -1614,7 +1628,7 @@ fn the_identity_file_carries_data_and_clock_member_entries() {
         p["positions"][0]["member_type"],
         "ix://filament/native/Clock"
     );
-    assert!(p["positions"][1]["type_node"].is_string());
+    assert!(p["positions"][1]["type_node"].is_object());
     let u = identity_row(&file, "source_unions", "U");
     let armed = &u["members"][0];
     assert_eq!(armed["payload_nodes"], json!([]));
@@ -1653,7 +1667,6 @@ fn the_identity_file_carries_data_and_clock_member_entries() {
 
 #[trace("FR-996-AC-3", "TC-2999", "FSpec-FR-789-AC-3", "FSpec-TC-2023")]
 #[test]
-#[ignore = "QSL-2890: the identity-row join checks source clock members; not implemented yet"]
 fn a_source_clock_member_row_refuses_at_the_identity_row_join() {
     let (wire, package, bytes) = admitted_identity_file(TIMED);
     let mut file: Value = serde_json::from_slice(&bytes).expect("identity JSON parses");

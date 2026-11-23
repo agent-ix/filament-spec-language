@@ -190,7 +190,7 @@ fn renames_of(emission: &Emission) -> Vec<(CheckedNodeId, CheckedNodeId)> {
     }
     for row in &emission.selected_source_record_rows {
         push(&row.structural_node);
-        row.members.iter().for_each(|m| push(&m.type_node));
+        row.members.iter().filter_map(|m| m.type_node.as_ref()).for_each(|node| push(node));
     }
     for row in &emission.selected_source_union_rows {
         push(&row.structural_node);
@@ -377,7 +377,7 @@ fn every_retained_row_kind_is_carried_with_its_node_ids_rekeyed() {
         let mut want = was.clone();
         want.structural_node = renamed(&was.structural_node);
         for member in &mut want.members {
-            member.type_node = renamed(&member.type_node);
+            member.type_node = member.type_node.as_ref().map(renamed);
         }
         assert_eq!(got, &want, "source record");
     }

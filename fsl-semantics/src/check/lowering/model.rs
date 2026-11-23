@@ -120,11 +120,40 @@ pub(crate) struct PackagePlace {
     pub(crate) source: bool,
 }
 
+/// One clock member of a source record, tuple or union payload, as FSpec
+/// FR-367 "Member entries" writes it: the FSpec FR-789 rendering of its type
+/// and its collection layers, outermost first.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SourceClockEntry {
+    /// The rendered type, as the member's `resolved_path` row spells it.
+    pub member_type: String,
+    /// Whether the member is optional.
+    pub optional: bool,
+    /// Each collection layer's kind, minimum and maximum (`unbounded` with
+    /// none).
+    pub collections: Vec<(String, String, String)>,
+}
+
+/// The authored members of a source record, tuple or union that holds a
+/// clock directly, in declaration order: `None` for a data member, which has
+/// a node, and the clock entry for a clock member, which has none.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SourceClockMembers {
+    /// A record's fields, each by name.
+    Record(Vec<(String, Option<SourceClockEntry>)>),
+    /// A tuple's positions.
+    Tuple(Vec<Option<SourceClockEntry>>),
+    /// A union's members, each by name with its payload positions.
+    Union(Vec<(String, Vec<Option<SourceClockEntry>>)>),
+}
+
 /// A source value type's clock paths and its FR-322 type identity.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct SourceClockLayout {
     pub identity: String,
     pub places: Vec<SourceClockPlace>,
+    /// The authored members when the type holds a clock directly.
+    pub members: Option<SourceClockMembers>,
 }
 
 /// A clock component's path within a source-declared checked value type.
@@ -1315,6 +1344,7 @@ impl AdmittedModel {
                 layouts.insert(
                     node,
                     SourceClockLayout {
+                        members: None,
                         identity: key.node.clone(),
                         places: places
                             .into_iter()
@@ -1853,6 +1883,16 @@ impl AdmittedModel {
         self.population_domains()
             .map(|(_, _, canonical)| canonical)
             .collect()
+    }
+
+    /// The authored clock members of each source record, tuple and union
+    /// that holds a clock directly.
+    pub(crate) fn source_clock_members(
+        &self,
+    ) -> impl Iterator<Item = (&NodeKey, &SourceClockMembers)> {
+        self.source_places
+            .iter()
+            .filter_map(|(key, layout)| Some((key, layout.members.as_ref()?)))
     }
 
     /// FR-230 "Places": every clock place of an object type of this
@@ -3130,10 +3170,11 @@ impl<'a> Lowering<'a> {
         let effective = model
             .object_type_id(declaration)
             .ok_or_else(|| fault(location, KeyFault::UnknownDeclaration(declaration.clone())))?;
-        let fields =
-            self.scope.types().attributes(effective).ok_or_else(|| {
-                fault(location, KeyFault::UnknownDeclaration(declaration.clone()))
-            })?;
+        let fields = self
+            .scope
+            .types()
+            .attributes(effective.clone())
+            .ok_or_else(|| fault(location, KeyFault::UnknownDeclaration(declaration.clone())))?;
         let mut members = Vec::with_capacity(fields.len());
         for attribute in fields.iter() {
             let field = attribute.field();
@@ -3156,6 +3197,23 @@ impl<'a> Lowering<'a> {
                 ..content
             },
         );
+        // FR-569-AC-16 to AC-18: a data parameter of an operation the object
+        // declares is a member entry with its type's node.
+        let operations = self
+            .scope
+            .operations()
+            .declared_by(effective.clone())
+            .to_vec();
+        for operation in &operations {
+            for (parameter, value_type) in operation.parameters() {
+                let node = self.type_node(value_type, location)?;
+                self.record(node.clone(), OccurrenceRole::Generated, location.clone());
+                self.source_parameter_nodes.insert(
+                    (key.clone(), operation.name().to_owned(), parameter.clone()),
+                    node,
+                );
+            }
+        }
         Ok(key.clone())
     }
 

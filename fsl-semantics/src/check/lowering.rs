@@ -110,7 +110,8 @@ pub(crate) use model::{
 pub use model::{
     collection_kind, model_root_key, AdmittedModel, CollectionShape, ForeignView, ModelClause,
     PlaceRow, PlaceStep, SelectedModelEnumDeclaration, SelectedModelEnumMember, SelectedModelUnion,
-    SelectedModelUnionCase, SelectedModelUnionPayload, SelectedOperationMember,
+    SelectedModelUnionCase, SelectedModelUnionPayload, SelectedOperationMember, SourceClockEntry,
+    SourceClockMembers,
 };
 pub(crate) use model::{model_node_content, population_node_content};
 pub(crate) use protocol::{
@@ -1035,6 +1036,9 @@ pub(crate) struct Lowered {
     /// the slot it binds: the roots a claim's extent is keyed by.
     pub(crate) binders: BTreeMap<BinderSite, NodeKey>,
     pub(crate) parameter_spans: BTreeMap<(NodeKey, OccurrenceOrigin), fsl_foundation::Span>,
+    /// Each data parameter of each source object operation, by the object's
+    /// node, the operation name and the parameter name: its type's node.
+    pub(crate) source_parameter_nodes: BTreeMap<(NodeKey, String, String), NodeKey>,
     /// Each `bounded_domain`/`model_population` node lowering built (FR-094,
     /// FR-380), whose `Type` occurrences take their ordinals in ascending
     /// source order.
@@ -1160,6 +1164,9 @@ pub(crate) struct Lowering<'a> {
     /// Authored function parameters, located by the same binder site whose
     /// node is resolved when a recursion group settles.
     parameter_spans: BTreeMap<BinderSite, fsl_foundation::Span>,
+    /// Each data parameter of each source object operation, by the object's
+    /// node, the operation name and the parameter name: its type's node.
+    source_parameter_nodes: BTreeMap<(NodeKey, String, String), NodeKey>,
     /// The checking stage's work meter (`CheckingLimits::work_budget`):
     /// each node built and each group keyed charges it.
     meter: &'a mut Meter,
@@ -2301,6 +2308,7 @@ impl<'a> Lowering<'a> {
             draft_binders: Vec::new(),
             peeked_declarations: BTreeMap::new(),
             parameter_spans: BTreeMap::new(),
+            source_parameter_nodes: BTreeMap::new(),
             meter,
             node_limit: u64::MAX,
             node_budget: u64::MAX,
@@ -2426,6 +2434,7 @@ impl<'a> Lowering<'a> {
                 .collect(),
             binders: self.binders,
             parameter_spans,
+            source_parameter_nodes: self.source_parameter_nodes,
             population_nodes: self.population_nodes,
             // Ranked first, so collecting compares each key with one neighbour.
             composites,
@@ -5402,13 +5411,33 @@ impl<'a> Lowering<'a> {
                 frames.push(LowerFrame::SlotPresence { node, field, all });
                 return Ok(LowerStep::Descend(owner));
             }
-            NodeKind::History { .. } => {
-                return Err(refuse(
-                    node.location(),
-                    CheckCause::UnsupportedFeature {
-                        loci: vec![node.location().clone()],
-                    },
-                ));
+            NodeKind::History {
+                reference,
+                object_type,
+                field,
+            } => {
+                // FSpec FR-322 "Refinement row expressions": a history read
+                // is `filament.op.refinement.history` over the receiver,
+                // naming the field by the model node of the concrete type
+                // the refinement adds it to. The refinement does not enter
+                // the node's key.
+                let declaration = self.object_node(object_type.clone(), node.location())?;
+                let name = Identifier::new(field.clone()).map_err(|_| {
+                    refuse(
+                        node.location(),
+                        CheckCause::NodePreimage(NodeKeyRefusal::EmptyBindingName),
+                    )
+                })?;
+                (
+                    Keyed::Application(
+                        Operator::Query,
+                        Operation {
+                            member: Some(Member::History { declaration, name }),
+                            ..plain("filament.op.refinement.history")
+                        },
+                    ),
+                    Operands::One(reference),
+                )
             }
             NodeKind::Present(operand) => (
                 Keyed::Application(Operator::Present, plain("filament.op.option.present")),

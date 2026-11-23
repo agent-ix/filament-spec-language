@@ -3946,7 +3946,6 @@ fn an_out_of_order_row_refuses_at_its_first_offending_entry() {
 /// `RefinementNotEmitted`.
 #[trace("TC-2540", "FR-901-AC-1")]
 #[test]
-#[ignore = "QSL-2893: history, whole-population and seq rows refuse RefinementNotEmitted instead of emitting"]
 fn history_population_and_seq_rows_emit() {
     let step = "step C::ConfigVersion::attemptUpdate -> A::ConfigVersion::attemptUpdate(self);";
     let object = |field: &str| {
