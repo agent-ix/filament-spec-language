@@ -3068,3 +3068,90 @@ fn partial_lower_restores_detached_terminal_undecided_and_pending_rows() {
         }
     }
 }
+
+/// A restored state (named by a partial lower) and an anchored state with the
+/// same canonical bytes expand independently: restoring supplies no anchor, so
+/// a violated invariant at those bytes refuses the restored expansion even
+/// after the anchored one has been expanded.
+#[trace("TC-3152", "FR-1043-AC-9")]
+#[test]
+fn a_restored_named_state_is_not_expanded_from_an_anchored_state_with_equal_bytes() {
+    let mut model = retry(&claim(
+        "Q",
+        "every scheduler",
+        "mean of (fraction holds(m.delivered) over [0,2]) <= rational(1,4)",
+    ));
+    model
+        .body
+        .push_str("invariant Seen using v on M::Msg at current { self.delivered }\n");
+    let world = World::new(&model);
+    let baseline = settle(&world, "Q", ModelCheckLimits::default());
+    assert_eq!(
+        baseline.terminal().unwrap().value(),
+        &TerminalValue::Refuted
+    );
+    let mut offered = baseline
+        .probabilistic_counterexample
+        .as_ref()
+        .unwrap()
+        .evidence()
+        .clone();
+    let full: Value =
+        serde_json::from_slice(offered.subsystem.as_ref().unwrap().as_bytes()).unwrap();
+    let initial: Value = serde_json::from_slice(offered.initial_key.as_bytes()).unwrap();
+    let mut document = mean_bound(&offered, true, true);
+    let root = URL_SAFE_NO_PAD.encode(offered.initial_key.as_bytes());
+    // The restored state: the initial bytes again, one step later.
+    document["values"].as_array_mut().unwrap().retain(|row| {
+        let state = key(row);
+        row["state"] == root || (state[4] == initial[4] && state[5][1] == "2")
+    });
+    let named = document["values"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["state"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        named.len(),
+        2,
+        "the root and one restored equal-bytes state"
+    );
+    document["ranking"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|row| named.contains(&row["state"]));
+    document.as_object_mut().unwrap().remove("policy");
+    assert!(full["values"].as_array().unwrap().len() > named.len());
+    offered.scheduler.clear();
+    offered.subsystem = Some(Box::new(
+        fsl_replay::ProbabilitySubsystemCertificate::from_bytes(
+            &serde_json::to_vec(&document).unwrap(),
+            document_limits(),
+            &Cancel::new(),
+        )
+        .unwrap(),
+    ));
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let replayed = fsl_replay::replay_probabilistic_witness(
+        &world.package,
+        &system,
+        &offered.item,
+        &offered,
+        &fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
+        &Cancel::new(),
+    );
+    let Err(fsl_replay::ProbabilityWitnessError::Build(issue)) = replayed else {
+        panic!("the restored equal-bytes state must refuse its expansion: {replayed:?}");
+    };
+    let fsl_replay::ExactProbBuildIssue::Expansion(stop) = *issue else {
+        panic!("expected an expansion refusal: {issue:?}");
+    };
+    assert_eq!(
+        stop.cause,
+        filament_semantic_value::catalog::CatalogCode::new(
+            "invalid_runtime_input",
+            "missing-required-artifact"
+        )
+    );
+}

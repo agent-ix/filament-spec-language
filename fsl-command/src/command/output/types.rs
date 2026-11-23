@@ -16,7 +16,6 @@ pub(super) enum Stage {
     ExtractionSelection,
     Quire,
     Output,
-    Envelope,
     Intake,
     Native(fsl_foundation::Phase),
     /// The spine stage that refused a `1-draft` program.
@@ -36,7 +35,6 @@ impl Serialize for Stage {
             Self::ExtractionSelection => "extraction-selection",
             Self::Quire => "quire",
             Self::Output => "output",
-            Self::Envelope => "envelope",
             Self::Intake => "intake",
             Self::Native(phase) => phase.as_str(),
             Self::Spine(stage) => stage.as_str(),

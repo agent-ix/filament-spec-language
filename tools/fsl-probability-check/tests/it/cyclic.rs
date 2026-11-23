@@ -156,6 +156,7 @@ fn self_loop_and_transient_scc_accept_exact_values_and_shortest_distances() {
 }
 
 #[trace("TC-636", "FR-201-AC-23", "FR-201-AC-25", "FR-282-AC-18")]
+#[trace("FR-202-AC-21")]
 #[test]
 fn target_free_recurrence_forces_zero_and_early_target_cannot_hide_scheduler_choice() {
     let closed = model(true).replace("0: 2, 1: 1, 2: 1", "0: 1");
@@ -229,6 +230,7 @@ fn target_free_recurrence_forces_zero_and_early_target_cannot_hide_scheduler_cho
         "equal action distributions still contain a residual choice: {output}"
     );
     assert_eq!(output["status"], "unsupported");
+    fsl_analyze::exact_probabilistic::reset_product_construction_counts();
     let (emitted, settlement) = request_with(
         &claim(
             &model(false),
@@ -242,11 +244,17 @@ fn target_free_recurrence_forces_zero_and_early_target_cannot_hide_scheduler_cho
         domain().as_bytes(),
     );
     assert!(emitted.is_none(), "cyclic threshold miss has no proof");
-    assert!(
-        matches!(settlement, fsl_analyze::analyze::Settlement::Disposed(disposed)
-        if disposed.kind == fsl_analyze::analyze::DispositionKind::Unsupported),
-        "cyclic threshold miss must not enter native acyclic witness construction"
+    // The cyclic threshold miss never enters native acyclic witness
+    // construction (FR-202-AC-21): no path-set search starts, and EN-5
+    // refutes it through the replayed event-avoidance subsystem certificate.
+    assert_eq!(
+        fsl_analyze::exact_probabilistic::product_construction_counts().path_searches,
+        0
     );
+    let fsl_analyze::analyze::Settlement::Terminal(terminal) = &settlement else {
+        panic!("cyclic threshold miss settles: {settlement:?}");
+    };
+    assert_eq!(terminal.value(), &fsl_replay::TerminalValue::Refuted);
 }
 
 #[trace("TC-636", "FR-201-AC-23", "FR-201-AC-25", "FR-282-AC-19")]

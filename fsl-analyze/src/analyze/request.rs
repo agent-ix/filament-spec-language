@@ -1565,19 +1565,6 @@ fn work<'a>(
             })));
         }
     }
-    // The contract checker advertises only `bounded` (FSpec FR-483): an item
-    // whose extent is still unbounded asks for a bound it was not given, so the
-    // engine refuses `RequiresBound` and the settlement reads the request's
-    // `finite_bound_available` (FSpec FR-290-AC-14).
-    let contract_checker_target = item.kind == Capability::OperationContract
-        && negotiated.disposition.target().is_some_and(|backend| {
-            backend.id().as_str() == crate::contract_check::manifest::BACKEND_ID
-        });
-    if contract_checker_target && matches!(item.extent, ExtentClassification::Unbounded { .. }) {
-        built.work = Some(super::ItemWork::Engine(Box::new(move |_, _| {
-            super::EngineReport::Refused(super::Refusal::RequiresBound)
-        })));
-    }
     built.kind = item.kind;
     built.family = family;
     built.claim = Some(item.claim.clone());
@@ -1593,11 +1580,6 @@ fn work<'a>(
         Some(ItemForm::Temporal(_)) => super::document::timed(package),
         _ => false,
     };
-    // Only the contract checker's refusal reads the request's extent bit; any
-    // other engine's `RequiresBound` keeps its own disposition.
-    if contract_checker_target {
-        built = built.operation_contract_extent(item.kind, item.extent);
-    }
     built.mode = match item.extent {
         _ if zone => fsl_route::Mode::Bounded,
         _ if item.kind == Capability::Schedulability
@@ -1608,17 +1590,46 @@ fn work<'a>(
             fsl_route::Mode::Bounded
         }
         _ if item.kind == Capability::Schedulability => fsl_route::Mode::Unbounded,
-        _ if contract_checker_target => fsl_route::Mode::Bounded,
         ExtentClassification::Bounded => fsl_route::Mode::Bounded,
         ExtentClassification::Unbounded { .. } => fsl_route::Mode::Unbounded,
     };
     if matches!(&item.form, Some(ItemForm::Hybrid(_))) {
         built = built.hybrid();
     }
+    built = contract_checker_bound(built, item, &negotiated.disposition);
     built.required(item.options.required).disposed(
         negotiated.disposition.clone(),
         negotiated.diagnostic.clone(),
     )
+}
+
+/// The one decision both routes take for an operation-contract item the
+/// negotiation routed to the contract checker. The checker advertises only
+/// `bounded` (FSpec FR-483): the item is read in that mode, and one whose
+/// extent is still unbounded asks for a bound it was not given, so the engine
+/// refuses `RequiresBound` and the settlement reads the request's
+/// `finite_bound_available` (FSpec FR-290-AC-14, FSL FR-940). Only this
+/// checker's refusal reads the extent bit; any other engine's `RequiresBound`
+/// keeps its own disposition.
+pub(super) fn contract_checker_bound<'a>(
+    mut built: super::AnalyzeItem<'a>,
+    item: &ClaimItem,
+    disposition: &fsl_route::routing::Disposition,
+) -> super::AnalyzeItem<'a> {
+    let target = item.kind == Capability::OperationContract
+        && disposition.target().is_some_and(|backend| {
+            backend.id().as_str() == crate::contract_check::manifest::BACKEND_ID
+        });
+    if !target {
+        return built;
+    }
+    if matches!(item.extent, ExtentClassification::Unbounded { .. }) {
+        built.work = Some(super::ItemWork::Engine(Box::new(move |_, _| {
+            super::EngineReport::Refused(super::Refusal::RequiresBound)
+        })));
+    }
+    built.mode = fsl_route::Mode::Bounded;
+    built.operation_contract_extent(item.kind, item.extent)
 }
 
 /// FR-940 "Claim occurrence ordinals": whether `claim` names a node an

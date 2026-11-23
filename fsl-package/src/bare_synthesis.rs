@@ -252,7 +252,7 @@ pub(crate) fn plan_candidate_refusal(
         ) {
             continue;
         }
-        let CheckedTerm::Aggregate { members } = &node.body else {
+        let CheckedTerm::Aggregate { members, .. } = &node.body else {
             continue;
         };
         let Some((at, candidate)) =
@@ -408,7 +408,7 @@ fn candidate_binding_path(position: usize, at: usize) -> filament_contract_model
 }
 
 fn binding<'a>(term: &'a CheckedTerm, name: &str) -> Option<&'a CheckedTerm> {
-    let CheckedTerm::Aggregate { members } = term else {
+    let CheckedTerm::Aggregate { members, .. } = term else {
         return None;
     };
     members.iter().find_map(|member| match member {

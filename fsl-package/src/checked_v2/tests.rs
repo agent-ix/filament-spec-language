@@ -2620,9 +2620,9 @@ fn binder_groups(
     use filament_contract_model::{CheckedNodeId, CheckedTerm};
 
     match term {
-        CheckedTerm::Aggregate { members } => members.iter().flat_map(binder_groups).collect(),
+        CheckedTerm::Aggregate { members, .. } => members.iter().flat_map(binder_groups).collect(),
         CheckedTerm::Binding { name, value, .. } if name.as_ref() == "binders" => {
-            let CheckedTerm::Aggregate { members } = value.as_ref() else {
+            let CheckedTerm::Aggregate { members, .. } = value.as_ref() else {
                 panic!("a binder binding contains an aggregate");
             };
             let binders = members
@@ -2776,7 +2776,7 @@ fn assert_family_guard_refuses_missing_binders_or_constraints(
             .iter_mut()
             .find(|node| node.semantic_form.as_ref() == "clock_guard")
             .expect("a family guard node");
-        let CheckedTerm::Aggregate { members: body } = &mut guard.body else {
+        let CheckedTerm::Aggregate { members: body, .. } = &mut guard.body else {
             panic!("the guard body is aggregate");
         };
         let parts = body
@@ -2788,10 +2788,10 @@ fn assert_family_guard_refuses_missing_binders_or_constraints(
                 _ => None,
             })
             .expect("the guard has parts");
-        let CheckedTerm::Aggregate { members: parts } = parts else {
+        let CheckedTerm::Aggregate { members: parts, .. } = parts else {
             panic!("guard parts are aggregate");
         };
-        let Some(CheckedTerm::Aggregate { members }) = parts.first_mut() else {
+        let Some(CheckedTerm::Aggregate { members, .. }) = parts.first_mut() else {
             panic!("the family part is aggregate");
         };
         members

@@ -25,6 +25,8 @@ relationships:
     type: traces_to
   - target: ix://agent-ix/filament-spec-language/FR-624
     type: traces_to
+  - target: ix://agent-ix/filament-spec-language/FR-1047
+    type: references
   - target: ix://agent-ix/filament-specification/FR-331
     type: depends_on
   - target: ix://agent-ix/filament-specification/FR-520
@@ -100,9 +102,11 @@ item per resolved analysis item, or a whole-request refusal (FR-624).
 - An item that carries `temporal.fairness` refuses the whole request the same
   way. The fairness set of a temporal item is the resolved fairness of its
   checked clause; the source is its one authority.
-- A `format` other than `native-analyze/1` handed to the analyze reader, or a
-  `native-analyze/1` document handed to the run or compile reader, refuses at
-  the request stage with `invalid-request`, exit 20.
+- The analyze reader reads only `native-analyze/1`, and the run and compile
+  readers do not read it. A format a reader does not read, and missing
+  request members, are refused as
+  [FR-1047](FR-1047-name-every-request-defect-and-return-a-request-example.md)
+  states.
 
 ### Subject, compilation and default items
 

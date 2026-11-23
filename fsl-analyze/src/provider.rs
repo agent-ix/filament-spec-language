@@ -672,6 +672,15 @@ pub enum ProviderVerdict {
         /// The reported assignment.
         counterexample: Vec<Value>,
     },
+    /// The provider refuted the claim, but its counterexample cannot be
+    /// mapped to an assignment of the claim's parameters (FR-290
+    /// "Behavior"). It carries the typed reason in place of assignments,
+    /// never both and never provider text; FSL settles the item
+    /// `inconclusive`/`replay-parity` without replay.
+    RefutedUnusable {
+        /// Why the counterexample is unusable.
+        reason: UnusableCounterexample,
+    },
     /// The provider exceeded one of FR-287's transport or process limits.
     Failed {
         /// The FR-287 setting that was exceeded.
@@ -687,6 +696,70 @@ pub enum ProviderVerdict {
     },
     /// The provider neither proved nor refuted the claim.
     Unknown,
+}
+
+/// Why a refuted provider verdict's counterexample cannot be mapped to an
+/// assignment of the claim's parameters: FR-290's closed reason set. The
+/// variants are declared in FR-290's classification priority, highest first,
+/// so `Ord` selects the reason when several defects apply.
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub enum UnusableCounterexample {
+    /// The package graph cannot be read to map assignment ids.
+    PackageGraphUnreadable,
+    /// An assigned node id does not resolve in the package graph.
+    NodeIdUnresolved,
+    /// An assignment names a node that is not a parameter of the claim.
+    AssignmentNotClaimParameter,
+    /// A parameter of the claim has no assignment.
+    ClaimParameterUnassigned,
+    /// An assignment value has the wrong kind for its claim parameter.
+    ParameterValueKindMismatch,
+}
+
+impl UnusableCounterexample {
+    /// The reason's spelling in an item diagnostic's `reason` member.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::PackageGraphUnreadable => "package-graph-unreadable",
+            Self::NodeIdUnresolved => "node-id-unresolved",
+            Self::AssignmentNotClaimParameter => "assignment-not-claim-parameter",
+            Self::ClaimParameterUnassigned => "claim-parameter-unassigned",
+            Self::ParameterValueKindMismatch => "parameter-value-kind-mismatch",
+        }
+    }
+
+    /// The reason a spelling names, or `None` for any other text.
+    #[must_use]
+    pub fn from_spelling(spelling: &str) -> Option<Self> {
+        [
+            Self::PackageGraphUnreadable,
+            Self::NodeIdUnresolved,
+            Self::AssignmentNotClaimParameter,
+            Self::ClaimParameterUnassigned,
+            Self::ParameterValueKindMismatch,
+        ]
+        .into_iter()
+        .find(|reason| reason.as_str() == spelling)
+    }
+
+    /// The reason FR-290 selects when every one of `defects` applies: the
+    /// first in its declared order. `None` when there is no defect.
+    #[must_use]
+    pub fn select(defects: impl IntoIterator<Item = Self>) -> Option<Self> {
+        defects.into_iter().min()
+    }
+
+    /// The FR-290 item diagnostic `{"code":"invalid_result","cause":
+    /// "invalid-value","reason":R}` this reason writes (FR-621 `diagnostics`).
+    #[must_use]
+    pub fn item_diagnostic(self) -> serde_json::Value {
+        serde_json::json!({
+            "code": "invalid_result",
+            "cause": "invalid-value",
+            "reason": self.as_str(),
+        })
+    }
 }
 
 /// The FR-287 provider limits that settle an item as failed.
@@ -770,6 +843,9 @@ pub(crate) enum ProviderReport {
     /// The provider's assignment-shaped counterexample could not be replayed
     /// as an operation-contract counterexample.
     ReplayParity,
+    /// The provider's refutation carried an unusable counterexample, which
+    /// FSL settles as [`ProviderReport::ReplayParity`] does and explains.
+    Unusable(UnusableCounterexample),
     /// The provider's counterexample is for an item with no replay.
     ReplayRefused(fsl_foundation::Code),
     /// The provider transport failed while enforcing a typed byte limit.
@@ -786,6 +862,8 @@ pub(crate) enum ProviderCounterexample {
     Assignments(Box<ValueCounterexample>),
     /// A composition's declared interface mismatch.
     Mismatch(Box<InterfaceMismatch>),
+    /// Why an unusable provider counterexample could not be replayed.
+    Unusable(UnusableCounterexample),
 }
 
 /// The FSpec FR-331 request item of the `value-validity` item at `claim`,
@@ -1439,6 +1517,9 @@ pub(crate) fn finish(
             ProviderVerdict::Refuted { .. } => {
                 EngineReport::Provider(Box::new(ProviderReport::ReplayParity))
             }
+            ProviderVerdict::RefutedUnusable { reason } => {
+                EngineReport::Provider(Box::new(ProviderReport::Unusable(reason)))
+            }
         },
     }
 }
@@ -1471,6 +1552,10 @@ fn report(
         }
         ProviderVerdict::ProcessFailed { cause } => return process_failure(cause),
         ProviderVerdict::Refuted { counterexample } => counterexample,
+        // FR-290: an unusable counterexample is settled without replay.
+        ProviderVerdict::RefutedUnusable { reason } => {
+            return EngineReport::Provider(Box::new(ProviderReport::Unusable(reason)));
+        }
     };
     let parameters = target.parameters().iter().map(|p| p.wire()).collect();
     let claim = target.claim().clone();
@@ -1511,6 +1596,23 @@ fn certification(origin: ProviderOrigin) -> Certification {
     }
 }
 
+/// The `inconclusive`/`replay-parity` record of a provider refutation FSL
+/// cannot confirm by replay.
+fn replay_parity_record(index: RequestIndex, backend: BackendId) -> TerminalRecord {
+    TerminalRecord::inconclusive(
+        index,
+        backend,
+        InconclusiveCause::ReplayParity(fsl_replay::DisagreementCause::Verdicts {
+            proved: fsl_replay::Verdict::from_category(
+                filament_semantic_value::catalog::Category::Violation,
+            ),
+            replayed: fsl_replay::Verdict::from_category(
+                filament_semantic_value::catalog::Category::Success,
+            ),
+        }),
+    )
+}
+
 /// Settle the arm's report as the item's FR-331 terminal record, with the
 /// counterexample a `refuted` item keeps.
 pub(crate) fn settle_record(
@@ -1535,20 +1637,10 @@ pub(crate) fn settle_record(
             ),
             None,
         ),
-        ProviderReport::ReplayParity => (
-            TerminalRecord::inconclusive(
-                index,
-                backend,
-                InconclusiveCause::ReplayParity(fsl_replay::DisagreementCause::Verdicts {
-                    proved: fsl_replay::Verdict::from_category(
-                        filament_semantic_value::catalog::Category::Violation,
-                    ),
-                    replayed: fsl_replay::Verdict::from_category(
-                        filament_semantic_value::catalog::Category::Success,
-                    ),
-                }),
-            ),
-            None,
+        ProviderReport::ReplayParity => (replay_parity_record(index, backend), None),
+        ProviderReport::Unusable(reason) => (
+            replay_parity_record(index, backend),
+            Some(ProviderCounterexample::Unusable(reason)),
         ),
         ProviderReport::ReplayRefused(code) => (
             TerminalRecord::inconclusive(index, backend, InconclusiveCause::ReplayRefused(code)),

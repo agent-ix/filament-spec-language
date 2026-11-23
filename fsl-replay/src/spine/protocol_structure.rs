@@ -93,7 +93,7 @@ impl<'p> Reader<'p> {
         node: &CheckedSemanticNodeV2,
         member: &str,
     ) -> Option<CheckedNodeId> {
-        let CheckedTerm::Aggregate { members } = Self::term_member(node, member)? else {
+        let CheckedTerm::Aggregate { members, .. } = Self::term_member(node, member)? else {
             return None;
         };
         match members.as_slice() {
@@ -110,7 +110,7 @@ impl<'p> Reader<'p> {
                 value,
                 ..
             } => value.as_str()?.parse::<u64>().ok(),
-            CheckedTerm::Aggregate { members } => members.iter().find_map(|member| match member {
+            CheckedTerm::Aggregate { members, .. } => members.iter().find_map(|member| match member {
                 CheckedTerm::Binding { value, .. } => Self::integer(value),
                 _ => Self::integer(member),
             }),
@@ -141,7 +141,7 @@ impl<'p> Reader<'p> {
             ),
             Op::Await => {
                 let window = Self::term_member(node, "within").and_then(|term| {
-                    let CheckedTerm::Aggregate { members } = term else {
+                    let CheckedTerm::Aggregate { members, .. } = term else {
                         return None;
                     };
                     let bound = |name| {

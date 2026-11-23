@@ -57,8 +57,9 @@ between two destinations.
 
 - The file at `P` holding exactly the package bytes, with no wrapper and no
   trailing newline (FR-027 "Outputs").
-- The compile's outcome document (FR-286), unchanged by the write:
-  `artifacts` stays `[]`.
+- The compile's outcome document (FR-286): `artifacts` stays `[]`, and on a
+  success `result` is FR-286's `packaged` result, which names the path the
+  file was written to (FR-286 "Compile results").
 
 ## Behavior
 
@@ -104,6 +105,7 @@ between two destinations.
 | FR-810-AC-3 | `compile_outcome_with_overrides` over AC-1's request without `output` and with `RequestOverrides::output` `Some("cli.package.json")` writes a file byte-equal to AC-1's; over AC-1's request (which carries `output`) with `Some(..)` it refuses at stage `request` `invalid-request` naming `output` and `--output` and writes neither file. | Test (TC-2297) |
 | FR-810-AC-4 | The driver's `fsl compile <request> --output <file>` over AC-1's request without `output` writes a file byte-equal to AC-1's, and `--output` on `fsl run` is refused as an unknown option (FSpec FR-301). | Driver test (TC-2297): the `fsl` binary parses the option, so the code ticket QSL-2299 adds the test in the filament-driver repository. |
 | FR-810-AC-5 | A request carrying FR-665-AC-1's `handoff` and `output` `{"package": "spine.package.json"}` writes both, the file and the directory's `checked-package.json` byte-equal; the same request with `output` `{"package": "handoff/pkg.json"}` refuses `invalid-request` at stage `request`, exit 20, naming `output` and `handoff`, and writes neither. | Test (TC-2297) |
+| FR-810-AC-6 | FR-810-AC-1's request, with the request file in directory `reqs`, returns a document whose `result` is `{"kind":"packaged","package":{"bytes":N,"output":"reqs/spine.package.json","handoff":null}}` (FR-286-AC-39), and the file exists at that path. | Test (TC-3203) |
 
 ## Dependencies
 

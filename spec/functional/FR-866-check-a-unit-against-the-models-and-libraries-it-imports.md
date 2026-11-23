@@ -116,7 +116,11 @@ which must give equal documents.
   a `--library` identity that no `import` of the unit names, refuses
   `invalid-request`, exit 20, naming the option and the identity, after the
   source parses and before the file is read: an input that changes nothing
-  is refused, as FR-640 refuses an unused clock selection.
+  is refused, as FR-640 refuses an unused clock selection. The refusal of a
+  `--model` identity also names the identities the source does select, so a
+  caller who mistyped one identity can correct it; the `--library` refusal
+  keeps its bare message, because ticket QSL-2937 names only the model
+  identity and a library list is a separate text no requirement has pinned.
 - A unit whose `model` declaration selects an identity no `--model`
   supplies refuses `missing_import`/`missing-selection` at stage I1 naming
   the identity (FSpec FR-154). The diagnostic's message SHALL name the
@@ -148,6 +152,14 @@ FR-286's `check` outcome document, in the format `--format` selects
 - If a supplied model or library is selected by no declaration of the unit,
   then `check_outcome` SHALL refuse `invalid-request`, exit 20, naming the
   option and the identity.
+- If a `--model` identity is selected by no `model` declaration of the
+  unit, then `check_outcome` SHALL refuse with the message `invalid clause
+  request member --model: --model <identity> is not selected by the source;
+  the source selects: <list>`, `<list>` the identities of the unit's `model`
+  declarations in source order, each once, joined by `, `.
+- Where the unit has no `model` declaration, the refusal of an unselected
+  `--model` identity SHALL end `; the source selects no models` in place of
+  `; the source selects: <list>`.
 - If a selected model is not supplied, then the `missing_import` diagnostic
   SHALL name the identity, `--model` and the request's `models` member.
 - `check_outcome` SHALL charge only the dependent documents (each model,
@@ -166,6 +178,9 @@ FR-286's `check` outcome document, in the format `--format` selects
 | FR-866-AC-5 | `fsl check im.fsl --model example/config-version=m.json` over the unit `model Config = "example/config-version"; invariant NoCycle using v on Config::ConfigVersion at current { not reaches(self, self, parent) }` exits 0; without `--model` it exits 20 with `missing_import` naming the identity and `--model`; `--model example/config-version=m.json` given twice, `--model m.json` (no `=`) and `--model =m.json` each exit 20 `invalid-request` naming `--model` before reading `m.json`. | Driver test (TC-2458): the `fsl` binary parses the options, so the code ticket adds the test in the filament-driver repository. |
 | FR-866-AC-6 | `check_outcome` over a source at path `P` that does not parse (`function f using v(: Boolean pure { true }`) returns a `check` refusal whose every diagnostic locus names the source `{"authority": "filament", "identity": P}`, with `P` byte-equal to the path given, whose admitted `sources` hold that identity, and whose document contains neither `fsl-command` nor `check-source`; the document is byte-equal to the one `parse` and `check` give for the same bytes under that identity. A source that parses and refuses at S3 names the same identity. | Test (TC-2977) |
 | FR-866-AC-7 | `check_outcome` with `dependent_bytes` 0 and no model or library selection, over the source `language "ix:native" edition "1-draft"; profile v = "filament.value.complete/v1"; function Eligible using v(n: Int[0, 12]): Boolean pure { n >= 3 }`, returns a `check` document with category success, `last_stage` S4 and no diagnostic. Over FR-866-AC-2's program with its `test/geometry` library file of `N` bytes selected, `dependent_bytes` `N` returns success at S4, the same with the checked source padded by trailing whitespace to more than `N` bytes still returns success, and `dependent_bytes` `N - 1` returns category `incomplete`, `last_stage` `null` (FR-285 exit 22), with one diagnostic of code `resource_exhausted`, `cause` `null` and `locus` `null`, whose message names `dependent_bytes`, the value `N - 1` and `--dependent-bytes`; no over-limit call reports success. | Test (TC-2457) |
+| FR-866-AC-8 | `check_outcome` over FR-108's unit extended with a second declaration `model Other = "example/other"` after `model Config = "example/config-version"`, with the model selection `example:shop/model`, refuses `invalid-request`, exit 20, with message exactly `invalid clause request member --model: --model example:shop/model is not selected by the source; the source selects: example/config-version, example/other`, the same in text and in machine mode. | Test (TC-3200) |
+| FR-866-AC-9 | `check_outcome` over `tests/fixtures/spine-compile.native` (no `model` line) with the model selection `example:shop/model` refuses `invalid-request`, exit 20, with message exactly `invalid clause request member --model: --model example:shop/model is not selected by the source; the source selects no models`. | Test (TC-3200) |
+| FR-866-AC-10 | `check_outcome` over FR-108's unit with the library selection `example/none` (imported by no `import`) refuses `invalid-request`, exit 20, with message exactly `invalid clause request member --library: --library example/none is not selected by the source`. | Test (TC-3200) |
 
 ## Dependencies
 

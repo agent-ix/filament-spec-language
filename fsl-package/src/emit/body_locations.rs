@@ -93,7 +93,7 @@ impl Paths {
 }
 
 fn body(node: &CheckedSemanticNodeV2) -> Option<&CheckedTerm> {
-    let CheckedTerm::Aggregate { members } = &node.body else {
+    let CheckedTerm::Aggregate { members, .. } = &node.body else {
         return None;
     };
     members.iter().find_map(|member| match member {
@@ -137,7 +137,7 @@ fn references<'a>(
                 }
             }
             CheckedTerm::Application { arguments, .. } => pending.extend(arguments.iter().rev()),
-            CheckedTerm::Aggregate { members } => pending.extend(members.iter().rev()),
+            CheckedTerm::Aggregate { members, .. } => pending.extend(members.iter().rev()),
             CheckedTerm::Binding { value, .. } => pending.push(value),
             _ => {}
         }
