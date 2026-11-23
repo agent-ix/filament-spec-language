@@ -192,7 +192,10 @@ fn a_step_argument_nesting_references_reaches_the_abstract_operation_lifted() {
         })
         .map(|(transition, _)| transition)
         .collect();
-    assert!(!expected.is_empty(), "the abstract enq reaches the mapped post state");
+    assert!(
+        !expected.is_empty(),
+        "the abstract enq reaches the mapped post state"
+    );
 
     let verdict = check_step(
         world.refinement(),
@@ -219,7 +222,30 @@ fn a_step_argument_nesting_references_reaches_the_abstract_operation_lifted() {
     };
     assert_eq!(taken.len(), 1);
     assert!(expected.contains(&taken[0]));
-    assert_eq!(taken[0].arguments(), &["DUMP".to_owned()]);
+    let [x, rs] = taken[0].arguments() else {
+        panic!("enq takes x and rs: {:?}", taken[0].arguments());
+    };
+    assert_eq!(x, r#"{"type":"integer","value":"1"}"#);
+    let rs: serde_json::Value = serde_json::from_str(rs).expect("rs is JSON");
+    let elements = rs["elements"].as_array().expect("rs is a sequence");
+    let found: Vec<(&str, &str)> = elements
+        .iter()
+        .map(|element| {
+            (
+                element["identity"].as_str().expect("an identity"),
+                element["object_type"]["original"]["node"]
+                    .as_str()
+                    .expect("a type"),
+            )
+        })
+        .collect();
+    assert_eq!(
+        found,
+        [
+            ("b", "ix://example/ring-queue-spec/Queue"),
+            ("a", "ix://example/ring-queue-spec/Queue")
+        ]
+    );
 }
 
 /// FR-140-AC-16 (TC-1086 step 10): a `Sequence<Reference<Ring>>[0, 2]` row
