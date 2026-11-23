@@ -289,3 +289,153 @@ fn a_package_with_body_location_rows_is_emitted_at_its_exact_length() {
     assert_eq!(limit.configured_bound(), n - 1);
     assert!(limit.actual() > u128::from(n - 1));
 }
+
+/// QSL-2849: the source map is written verbatim, so a bound below its bytes
+/// refuses before any typed row is built. Allocations are counted, not time: a
+/// refusal the source map causes (bound N/10) allocates under two thirds of what a
+/// refusal at the final encode (bound `N - 1`) does; the first unpaid byte is
+/// exactly `bound + 1` in both.
+#[trace("TC-738", "FR-264-AC-6")]
+#[test]
+fn a_bound_below_the_source_map_refuses_before_the_typed_rows_are_built() {
+    // A `let` chain has no body-location rows, which main already meters per
+    // row, so only the source-map charge can refuse early here.
+    let package = nested_let_package(1_000);
+    let bytes = u64::try_from(emitted_byte_count_of(&package)).expect("a fixture length");
+
+    let allocations = |bound: u64| {
+        let mut outcome = None;
+        let info = allocation_counter::measure(|| {
+            outcome = Some(emitted_at(&package, bound));
+        });
+        let refusal = outcome
+            .expect("emission ran")
+            .expect_err("a bound below N refuses");
+        let limit = limit_of(refusal);
+        assert_eq!(limit.configured_bound(), bound);
+        assert_eq!(limit.actual(), u128::from(bound) + 1);
+        info.count_total
+    };
+    // Initialize the measurement machinery before observing the emitter.
+    let _ = allocation_counter::measure(|| {});
+
+    let early = allocations(bytes / 10);
+    let late = allocations(bytes - 1);
+    assert!(
+        early.saturating_mul(3) < late.saturating_mul(2),
+        "an early refusal skips the typed rows: {early} against {late}"
+    );
+}
+
+/// QSL-2849: typed rows are charged as each section is built. A package whose
+/// source map fits but whose claim-name rows overflow refuses before the
+/// sections after them are built (allocations are counted, not time), with the
+/// first unpaid byte exactly `bound + 1`.
+#[trace("TC-738", "FR-264-AC-6")]
+#[test]
+fn a_bound_below_the_typed_rows_refuses_before_the_later_rows_are_built() {
+    let claims: Vec<String> = (0..150)
+        .map(|index| super::probabilistic::claim(&format!("C{index}_{}", "x".repeat(2_000)), "0.5"))
+        .collect();
+    let refs: Vec<&str> = claims.iter().map(String::as_str).collect();
+    let package = super::probabilistic::claims_package(&refs);
+    let emit = |bound: u64| {
+        crate::emit::emit_checked_uncached(&package, &Cancel::new(), EmitLimits::new(bound))
+    };
+    let bytes = u64::try_from(
+        emit(u64::MAX)
+            .expect("a raised output limit emits")
+            .package()
+            .bytes()
+            .len(),
+    )
+    .expect("a fixture length");
+
+    let allocations = |bound: u64| {
+        let mut outcome = None;
+        let info = allocation_counter::measure(|| {
+            outcome = Some(emit(bound));
+        });
+        let limit = limit_of(
+            outcome
+                .expect("emission ran")
+                .expect_err("a bound below N refuses"),
+        );
+        assert_eq!(limit.configured_bound(), bound);
+        assert_eq!(limit.actual(), u128::from(bound) + 1);
+        info.count_total
+    };
+    let _ = allocation_counter::measure(|| {});
+    let wire: serde_json::Value =
+        serde_json::from_slice(emit(u64::MAX).expect("emits").package().bytes())
+            .expect("the package is JSON");
+    let section = |name: &str| serde_json::to_vec(&wire[name]).expect("a section").len() as u64;
+    let (map, names) = (section("source_map"), section("claim_names"));
+    assert!(map < names, "the claim-name rows are the larger section");
+    // A bound the source map fits under and the claim-name rows overflow.
+    let bound = map + names / 2;
+    let early = allocations(bound);
+    let late = allocations(bytes - 1);
+    assert!(
+        early.saturating_mul(4) < late.saturating_mul(3),
+        "refusing at the claim-name rows skips the rows after them: {early} against {late}"
+    );
+}
+
+/// QSL-2849: body-location rows count into the same running total as the
+/// sections before them, so a package that overruns only when its sections are
+/// summed refuses inside the body rows, before the rows after them are built.
+/// The bound sits below the summed sections and above the body-location rows
+/// alone, which the rows' own meter did not refuse.
+#[trace("TC-738", "FR-264-AC-6")]
+#[test]
+fn body_location_rows_count_into_the_shared_total() {
+    let package = nested_not_package(1_000);
+    let emit = |bound: u64| {
+        crate::emit::emit_checked_uncached(&package, &Cancel::new(), EmitLimits::new(bound))
+    };
+    let emitted = emit(u64::MAX).expect("a raised output limit emits");
+    let bytes = u64::try_from(emitted.package().bytes().len()).expect("a fixture length");
+    let wire: serde_json::Value =
+        serde_json::from_slice(emitted.package().bytes()).expect("the package is JSON");
+    let map = serde_json::to_vec(&wire["source_map"])
+        .expect("a section")
+        .len() as u64;
+    let rows = serde_json::to_vec(&wire["checked_term_data"]["body_locations"])
+        .expect("a section")
+        .len() as u64;
+    let bound = map + rows / 2;
+    assert!(
+        rows < bound,
+        "the rows alone fit the bound: {rows} against {bound}"
+    );
+
+    let allocations = |bound: u64| {
+        let mut outcome = None;
+        let info = allocation_counter::measure(|| {
+            outcome = Some(emit(bound));
+        });
+        let limit = limit_of(
+            outcome
+                .expect("emission ran")
+                .expect_err("a bound below N refuses"),
+        );
+        assert_eq!(limit.configured_bound(), bound);
+        assert_eq!(limit.actual(), u128::from(bound) + 1);
+        info.count_total
+    };
+    let _ = allocation_counter::measure(|| {});
+    let (early, late) = (allocations(bound), allocations(bytes - 1));
+    assert!(
+        early.saturating_mul(4) < late.saturating_mul(3),
+        "refusing inside the body rows skips the work after them: {early} against {late}"
+    );
+}
+
+fn emitted_byte_count_of(package: &CheckedPackage) -> usize {
+    emitted_at(package, u64::MAX)
+        .expect("a raised output limit emits")
+        .package()
+        .bytes()
+        .len()
+}

@@ -14,9 +14,13 @@
 //! crate's optimization level, while these methods compile the whole
 //! expansion here.
 
+use std::any::Any;
 use std::collections::BTreeMap;
 use std::num::NonZeroUsize;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::mpsc;
+use std::sync::{Arc, PoisonError, RwLock};
 
 use super::{MemoryModel, ProtocolState, ProtocolSystem, ProtocolTransition, Ra, Sc, Tso};
 use crate::simulation::expansion::ExpansionStop;
@@ -177,10 +181,28 @@ struct Node<S, T> {
     steps: Vec<(T, usize)>,
 }
 
+/// The states each worker expands between two admissions: the most work done
+/// past the state that crosses `max_states`, and the most successor sets held
+/// unadmitted, per worker.
+const EXPANSIONS_PER_WORKER: usize = 64;
+
+/// One chunk of work for a worker: the frontier positions to expand and the
+/// next one to claim.
+type Job = (Arc<Vec<usize>>, Arc<AtomicUsize>);
+
+/// A worker's outcome for one frontier position: its expansion, or the
+/// payload of the panic that expansion raised.
+type Outcome<T, S> = Result<Expanded<T, S>, Box<dyn Any + Send>>;
+
 /// The breadth-first search behind [`ProtocolSystem::reachable`] over any
 /// state and transition type: `initial` gives the initial states with their
 /// keys and `expand` a state's successors in admission order. Returns the
-/// reached states and the greatest number of workers one level used.
+/// reached states and the greatest number of workers one chunk used.
+///
+/// The workers are spawned once for the whole search. Each chunk is claimed
+/// position by position and finished before admission takes the nodes for
+/// writing, so a chunk costs two channel hand-offs per worker, not a thread
+/// spawn.
 fn search<S, T, F>(
     initial: impl IntoIterator<Item = Result<(StateKey, S), ReachRefusal>>,
     expand: F,
@@ -196,104 +218,125 @@ where
     // distinct states through a key hash collision; an ordered map compares
     // keys with `memcmp` rather than hashing every byte of every key.
     let mut known: BTreeMap<StateKey, usize> = BTreeMap::new();
-    let mut nodes: Vec<Node<S, T>> = Vec::new();
+    let nodes: RwLock<Vec<Node<S, T>>> = RwLock::new(Vec::new());
     let mut frontier = Vec::new();
     let mut workers = 1;
-    let mut admit =
-        |state: S, key: StateKey, nodes: &mut Vec<Node<S, T>>, frontier: &mut Vec<usize>| {
-            if let Some(&index) = known.get(&key) {
-                return Ok(index);
-            }
-            if nodes.len() >= max_states {
-                return Err(ReachRefusal::Limit(Limit::States(max_states)));
-            }
-            let index = nodes.len();
-            known.insert(key.clone(), index);
-            nodes.push(Node {
-                state,
-                key,
-                steps: Vec::new(),
-            });
-            frontier.push(index);
-            Ok(index)
-        };
+    let admit = |state: S,
+                 key: StateKey,
+                 nodes: &mut Vec<Node<S, T>>,
+                 frontier: &mut Vec<usize>,
+                 known: &mut BTreeMap<StateKey, usize>| {
+        if let Some(&index) = known.get(&key) {
+            return Ok(index);
+        }
+        if nodes.len() >= max_states {
+            return Err(ReachRefusal::Limit(Limit::States(max_states)));
+        }
+        let index = nodes.len();
+        known.insert(key.clone(), index);
+        nodes.push(Node {
+            state,
+            key,
+            steps: Vec::new(),
+        });
+        frontier.push(index);
+        Ok(index)
+    };
     for entry in initial {
         let (key, state) = entry?;
-        admit(state, key, &mut nodes, &mut frontier)?;
+        let mut guard = nodes.write().unwrap_or_else(PoisonError::into_inner);
+        admit(state, key, &mut guard, &mut frontier, &mut known)?;
     }
-    while !frontier.is_empty() {
-        let level = std::mem::take(&mut frontier);
-        let (expanded, used) = expand_level(&expand, &nodes, &level, worker_limit);
-        workers = workers.max(used);
-        for (at, successors) in level.into_iter().zip(expanded) {
-            for (transition, state, key) in successors? {
-                let next = admit(state, key, &mut nodes, &mut frontier)?;
-                nodes[at].steps.push((transition, next));
-            }
-        }
-    }
-    Ok((nodes, workers))
-}
-
-/// Expands every state of `frontier` on up to `worker_limit` threads,
-/// returning each expansion at its frontier position and the number of
-/// workers used. Results remain at their frontier positions so admission
-/// chooses the first expansion or budget refusal in breadth-first order.
-fn expand_level<S, T, F>(
-    expand: &F,
-    nodes: &[Node<S, T>],
-    frontier: &[usize],
-    worker_limit: NonZeroUsize,
-) -> (Vec<Expanded<T, S>>, usize)
-where
-    S: Sync + Send,
-    T: Send + Sync,
-    F: Fn(&S) -> Expanded<T, S> + Sync,
-{
-    let workers = worker_limit.get().min(frontier.len());
-    if workers <= 1 {
-        let expanded = frontier
-            .iter()
-            .map(|&at| expand(&nodes[at].state))
-            .collect();
-        return (expanded, 1);
-    }
-    let next = AtomicUsize::new(0);
-    let mut expanded: Vec<Option<Expanded<T, S>>> = std::iter::repeat_with(|| None)
-        .take(frontier.len())
-        .collect();
+    // A level is expanded and admitted a chunk at a time, so a level that
+    // overruns `max_states` refuses within one chunk of the state that
+    // crosses the budget rather than after the whole level is expanded.
+    let chunk = worker_limit.get().saturating_mul(EXPANSIONS_PER_WORKER);
     std::thread::scope(|scope| {
-        let handles: Vec<_> = (0..workers)
+        let (results, collected) = mpsc::channel::<(usize, Outcome<T, S>)>();
+        let pool = if worker_limit.get() > 1 {
+            worker_limit.get()
+        } else {
+            0
+        };
+        let jobs: Vec<mpsc::Sender<Job>> = (0..pool)
             .map(|_| {
-                scope.spawn(|| {
-                    let mut done = Vec::new();
-                    loop {
-                        let position = next.fetch_add(1, Ordering::Relaxed);
-                        let Some(&at) = frontier.get(position) else {
-                            return done;
-                        };
-                        done.push((position, expand(&nodes[at].state)));
+                let (job_tx, job_rx) = mpsc::channel::<Job>();
+                let results = results.clone();
+                let (expand, nodes) = (&expand, &nodes);
+                scope.spawn(move || {
+                    while let Ok((positions, next)) = job_rx.recv() {
+                        loop {
+                            let position = next.fetch_add(1, Ordering::Relaxed);
+                            let Some(&at) = positions.get(position) else {
+                                break;
+                            };
+                            let outcome = {
+                                let nodes = nodes.read().unwrap_or_else(PoisonError::into_inner);
+                                catch_unwind(AssertUnwindSafe(|| expand(&nodes[at].state)))
+                            };
+                            if results.send((position, outcome)).is_err() {
+                                return;
+                            }
+                        }
                     }
-                })
+                });
+                job_tx
             })
             .collect();
-        for handle in handles {
-            let done = handle
-                .join()
-                .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
-            for (position, successors) in done {
-                expanded[position] = Some(successors);
+        drop(results);
+        while !frontier.is_empty() {
+            let level = std::mem::take(&mut frontier);
+            for positions in level.chunks(chunk) {
+                let used = pool.min(positions.len()).max(1);
+                workers = workers.max(used);
+                let expanded: Vec<Expanded<T, S>> = if used <= 1 {
+                    let nodes = nodes.read().unwrap_or_else(PoisonError::into_inner);
+                    positions
+                        .iter()
+                        .map(|&at| expand(&nodes[at].state))
+                        .collect()
+                } else {
+                    let job = (Arc::new(positions.to_vec()), Arc::new(AtomicUsize::new(0)));
+                    for worker in jobs.iter().take(used) {
+                        if worker.send(job.clone()).is_err() {
+                            return Err(broken());
+                        }
+                    }
+                    let mut slots: Vec<Option<Expanded<T, S>>> = std::iter::repeat_with(|| None)
+                        .take(positions.len())
+                        .collect();
+                    // Every position was claimed by exactly one worker, which
+                    // answers it; a worker's panic is raised here with its
+                    // own payload.
+                    for _ in positions {
+                        let Ok((position, outcome)) = collected.recv() else {
+                            return Err(broken());
+                        };
+                        match outcome {
+                            Ok(successors) => slots[position] = Some(successors),
+                            Err(panic) => std::panic::resume_unwind(panic),
+                        }
+                    }
+                    slots
+                        .into_iter()
+                        .map(|successors| successors.unwrap_or_else(|| Err(broken())))
+                        .collect()
+                };
+                // Admission takes the nodes for writing; every worker has
+                // released them by answering its last claimed position.
+                let mut guard = nodes.write().unwrap_or_else(PoisonError::into_inner);
+                for (&at, successors) in positions.iter().zip(expanded) {
+                    for (transition, state, key) in successors? {
+                        let next = admit(state, key, &mut guard, &mut frontier, &mut known)?;
+                        guard[at].steps.push((transition, next));
+                    }
+                }
             }
         }
-    });
-    // Every position below the frontier's length was claimed by exactly one
-    // worker, which ran to completion; the first refusal in frontier order
-    // is the result.
-    let expanded = expanded
-        .into_iter()
-        .map(|successors| successors.unwrap_or_else(|| Err(broken())))
-        .collect();
-    (expanded, workers)
+        Ok(())
+    })?;
+    let nodes = nodes.into_inner().unwrap_or_else(PoisonError::into_inner);
+    Ok((nodes, workers))
 }
 
 /// The refusal of a frontier position no worker expanded: a broken
@@ -516,6 +559,54 @@ mod tests {
                 "initial".to_owned()
             )))
         );
+    }
+
+    /// QSL-2849: a level that overruns `max_states` is refused within one
+    /// chunk of the state that crosses the budget, not after the whole level
+    /// is expanded. The expansions are counted, not timed.
+    #[trace("FR-126-AC-23")]
+    #[test]
+    fn a_level_over_the_state_budget_refuses_within_one_chunk_of_expansions() {
+        const LEVEL: u64 = 1_000;
+        const BUDGET: usize = 1_500;
+        // State 0 has `LEVEL` children; each child has one new child of its
+        // own, so child `i` is the state whose successor is the 500th past
+        // the 1,001 admitted by the first level.
+        let successors = |state: &u64| {
+            let next: Vec<u64> = match *state {
+                0 => (1..=LEVEL).collect(),
+                child if child <= LEVEL => vec![LEVEL + child],
+                _ => Vec::new(),
+            };
+            Ok(next
+                .into_iter()
+                .map(|next| (next, next, key(next)))
+                .collect())
+        };
+        for worker_limit in [1, 2, 4, 8] {
+            let expansions = AtomicUsize::new(0);
+            let counted = |state: &u64| {
+                expansions.fetch_add(1, Ordering::Relaxed);
+                successors(state)
+            };
+            assert_eq!(
+                search(initial(), counted, workers(worker_limit), BUDGET).err(),
+                Some(ReachRefusal::Limit(Limit::States(BUDGET)))
+            );
+            // The budget is crossed by the 500th level state's successor.
+            let crossing: usize = 500;
+            let chunk = worker_limit * EXPANSIONS_PER_WORKER;
+            let expected = 1 + crossing.div_ceil(chunk) * chunk;
+            assert_eq!(
+                expansions.load(Ordering::Relaxed),
+                expected,
+                "{worker_limit} workers"
+            );
+            assert!(
+                expected < 1 + LEVEL as usize,
+                "the level is not expanded whole"
+            );
+        }
     }
 
     /// A worker's panic reaches the caller with its own payload.

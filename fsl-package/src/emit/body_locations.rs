@@ -153,7 +153,7 @@ pub(super) fn checked_body_locations(
     emitted_node_ids: &HashMap<NodeKey, CheckedNodeId>,
     nodes: &[CheckedSemanticNodeV2],
     source_keys: &super::SourceDeclarationKeys,
-    output_bytes: u64,
+    meter: &mut super::OutputMeter,
 ) -> Result<Vec<CheckedBodySemanticLocation>, EmitRefusal> {
     let nodes: BTreeMap<_, _> = nodes.iter().map(|node| (&node.node_id, node)).collect();
     let with_body: BTreeSet<_> = nodes
@@ -190,109 +190,97 @@ pub(super) fn checked_body_locations(
     let applications = applications_at(graph, &origins);
     let mut pending = Vec::new();
 
-    let mut charged = 0_u128;
-    for (id, name, index, root, origin) in &functions {
-        let mut paths = Paths::default();
-        let mut captured = Vec::new();
-        term_rows(
-            graph,
-            *root,
-            &applications,
-            emitted_node_ids,
-            &mut captured,
-            &|at, _, _| (&at.origin == origin).then(|| (name.clone(), at.clone())),
-            true,
-        )?;
-        let captured = ordered(captured, |application, occurrence, ordinal, location| {
-            (application, occurrence, ordinal, location)
-        });
-        let mut by_application: BTreeMap<_, Vec<_>> = BTreeMap::new();
-        for (application, occurrence, _, location) in &captured {
-            by_application
-                .entry(application)
-                .or_default()
-                .push((occurrence, location));
-        }
-        let mut visits: BTreeMap<&CheckedNodeId, usize> = BTreeMap::new();
-        let mut previous = 0;
-        let mut walk = nodes
-            .get(id)
-            .and_then(|node| body(node))
-            .and_then(|body| match body {
-                CheckedTerm::Reference { target }
-                    if target.package.as_ref() == graph.package_name() =>
-                {
-                    nodes.get(target).copied()
-                }
-                _ => None,
-            })
-            .into_iter()
-            .collect::<Vec<_>>();
-        while let Some(node) = walk.pop() {
-            if is_term(node) {
-                let rank = visits.entry(&node.node_id).or_default();
-                let candidates = by_application
-                    .get(&node.node_id)
-                    .ok_or(EmitRefusal::SourceMapInvariant)?;
-                // Sharing through distinct value parents can reach a captured
-                // application again. Retain that application's genuine last
-                // capture; the new visit gets its own term coordinate.
-                let (occurrence, location) = candidates
-                    .get(*rank)
-                    .or_else(|| candidates.last())
-                    .ok_or(EmitRefusal::SourceMapInvariant)?;
-                *rank += 1;
-                let current = paths.intern(location);
-                let (up, down) = paths
-                    .delta(previous, current)
-                    .ok_or(EmitRefusal::SourceMapInvariant)?;
-                previous = current;
-                let location = CheckedBodyLocation {
-                    origin: CheckedBodyLocationOrigin::FunctionBody {
-                        function: (*id).clone(),
-                        name: super::emitted_function_name(name, source_keys).into(),
-                        index: u64::try_from(*index)
-                            .map_err(|_| EmitRefusal::SourceMapInvariant)?,
-                    },
-                    up,
-                    down,
-                };
-                let row = CheckedBodySemanticLocation {
-                    application: node.node_id.clone(),
-                    occurrence: (*occurrence).clone(),
-                    term_ordinal: 0,
-                    location,
-                };
-                charged = charged.saturating_add(
-                    u128::try_from(
-                        serde_json::to_vec(&row)
-                            .map_err(|_| EmitRefusal::SourceMapInvariant)?
-                            .len(),
-                    )
-                    .unwrap_or(u128::MAX)
-                        + 1,
-                );
-                if charged > u128::from(output_bytes) {
-                    return Err(EmitRefusal::OutputLimit(super::output_limit(
-                        output_bytes,
-                        charged,
-                    )));
-                }
-                pending.push(PendingRow {
-                    application: row.application,
-                    occurrence: row.occurrence,
-                    origin_name: name.clone(),
-                    visit: pending.len(),
-                    location: row.location,
-                });
+    meter.section(|writer| {
+        for (id, name, index, root, origin) in &functions {
+            let mut paths = Paths::default();
+            let mut captured = Vec::new();
+            term_rows(
+                graph,
+                *root,
+                &applications,
+                emitted_node_ids,
+                &mut captured,
+                &|at, _, _| (&at.origin == origin).then(|| (name.clone(), at.clone())),
+                true,
+            )?;
+            let captured = ordered(captured, |application, occurrence, ordinal, location| {
+                (application, occurrence, ordinal, location)
+            });
+            let mut by_application: BTreeMap<_, Vec<_>> = BTreeMap::new();
+            for (application, occurrence, _, location) in &captured {
+                by_application
+                    .entry(application)
+                    .or_default()
+                    .push((occurrence, location));
             }
-            walk.extend(
-                references(&node.body, &nodes, graph.package_name())
-                    .into_iter()
-                    .rev(),
-            );
+            let mut visits: BTreeMap<&CheckedNodeId, usize> = BTreeMap::new();
+            let mut previous = 0;
+            let mut walk = nodes
+                .get(id)
+                .and_then(|node| body(node))
+                .and_then(|body| match body {
+                    CheckedTerm::Reference { target }
+                        if target.package.as_ref() == graph.package_name() =>
+                    {
+                        nodes.get(target).copied()
+                    }
+                    _ => None,
+                })
+                .into_iter()
+                .collect::<Vec<_>>();
+            while let Some(node) = walk.pop() {
+                if is_term(node) {
+                    let rank = visits.entry(&node.node_id).or_default();
+                    let candidates = by_application
+                        .get(&node.node_id)
+                        .ok_or(EmitRefusal::SourceMapInvariant)?;
+                    // Sharing through distinct value parents can reach a captured
+                    // application again. Retain that application's genuine last
+                    // capture; the new visit gets its own term coordinate.
+                    let (occurrence, location) = candidates
+                        .get(*rank)
+                        .or_else(|| candidates.last())
+                        .ok_or(EmitRefusal::SourceMapInvariant)?;
+                    *rank += 1;
+                    let current = paths.intern(location);
+                    let (up, down) = paths
+                        .delta(previous, current)
+                        .ok_or(EmitRefusal::SourceMapInvariant)?;
+                    previous = current;
+                    let location = CheckedBodyLocation {
+                        origin: CheckedBodyLocationOrigin::FunctionBody {
+                            function: (*id).clone(),
+                            name: super::emitted_function_name(name, source_keys).into(),
+                            index: u64::try_from(*index)
+                                .map_err(|_| EmitRefusal::SourceMapInvariant)?,
+                        },
+                        up,
+                        down,
+                    };
+                    let row = CheckedBodySemanticLocation {
+                        application: node.node_id.clone(),
+                        occurrence: (*occurrence).clone(),
+                        term_ordinal: 0,
+                        location,
+                    };
+                    writer.push(&row)?;
+                    pending.push(PendingRow {
+                        application: row.application,
+                        occurrence: row.occurrence,
+                        origin_name: name.clone(),
+                        visit: pending.len(),
+                        location: row.location,
+                    });
+                }
+                walk.extend(
+                    references(&node.body, &nodes, graph.package_name())
+                        .into_iter()
+                        .rev(),
+                );
+            }
         }
-    }
+        Ok(())
+    })?;
     let rows = ordered(
         pending,
         |application, occurrence, term_ordinal, location| CheckedBodySemanticLocation {
@@ -302,15 +290,12 @@ pub(super) fn checked_body_locations(
             location,
         },
     );
-    let written = rows.iter().fold(charged, |total, row| {
-        total.saturating_add(u128::from(row.term_ordinal.checked_ilog10().unwrap_or(0)))
+    // Each row was charged with term ordinal zero; its ordinal's further
+    // digits are bytes the package also carries.
+    let digits = rows.iter().fold(0_u64, |total, row| {
+        total.saturating_add(u64::from(row.term_ordinal.checked_ilog10().unwrap_or(0)))
     });
-    if written > u128::from(output_bytes) {
-        return Err(EmitRefusal::OutputLimit(super::output_limit(
-            output_bytes,
-            written,
-        )));
-    }
+    meter.charge_bytes(digits)?;
     Ok(rows)
 }
 
