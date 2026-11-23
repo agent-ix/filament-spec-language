@@ -8,6 +8,7 @@ mod export;
 mod flow;
 mod handoff;
 mod items;
+pub mod limits;
 mod model_based_test;
 pub mod monitor;
 mod output;
@@ -33,8 +34,13 @@ pub use analyze::{
     prepare_analyze, AnalyzeInput, PreparedAnalyze,
 };
 pub use flow::{analyze_flow_report, FlowAnalyzeError};
+pub use limits::{
+    CommandLimits, LimitedOperation, MonitorPreparationLimits, OperationMismatch,
+    PreparationBound, PreparationRefusal, SettingUnavailable,
+};
 pub use monitor::{monitor, MonitorEvent, MonitorProviders, MonitorSummary};
 pub use output::NativeResult;
+pub use replay::replay_with_limits;
 pub use request_shape::{request_example, RequestExampleError};
 pub use tl::{record as tl_record, AtomMapping, TlRecord};
 
@@ -64,16 +70,13 @@ fn request_integer_division(
     read_integer_division(value.as_ref(), "integer_division")
 }
 
-/// Caller byte ceilings for one `run` or `compile` invocation (FR-312, FR-869).
+/// Caller byte ceilings for one command invocation (FR-312, FR-869).
 #[derive(Clone, Copy, Debug)]
 pub struct RunLimits {
     /// Maximum bytes in the request file.
     pub request_bytes: usize,
     /// Maximum aggregate bytes in selected dependent files.
     pub dependent_bytes: usize,
-    /// `replay.input_bytes` (FR-255): the bound on each replay read an
-    /// analyze run starts (FR-940-AC-22).
-    pub replay_input_bytes: u64,
 }
 
 impl Default for RunLimits {
@@ -81,7 +84,6 @@ impl Default for RunLimits {
         Self {
             request_bytes: REQUEST_BYTES,
             dependent_bytes: TOTAL_BYTES,
-            replay_input_bytes: fsl_replay::DEFAULT_REPLAY_INPUT_BYTES,
         }
     }
 }
@@ -2076,7 +2078,14 @@ fn run_configured(
             monitor::run_bytes(directory, bytes, limits.dependent_bytes, &settle).map(Some)
         } else if replay::is_replay_request(bytes) {
             // FR-862: a `native-replay/1` request replays its FR-336 request.
-            replay::run_bytes(directory, path.to_str(), bytes, limits.dependent_bytes).map(Some)
+            replay::run_bytes(
+                directory,
+                path.to_str(),
+                bytes,
+                limits.dependent_bytes,
+                &CommandLimits::replay(),
+            )
+            .map(Some)
         } else {
             // FR-1045 closes the relationship selection. Check duplicate
             // names before special request readers (notably export's unique
