@@ -659,14 +659,8 @@ fn every_unwritten_construct_refuses_the_protocol_naming_its_ticket() {
             "",
         ),
         (bare("on origin", "", "ok()"), vec![], ""),
-        // QSL-1121g: a direct protocol reference in its own body remains
-        // unsupported. Mixed function/protocol cycles are supported by
-        // FR-383 and are covered by the package emission tests.
-        (
-            bare("on origin", "", "protocol Bare"),
-            vec![C::ProtocolReferenceInBody],
-            "QSL-1121g",
-        ),
+        // FR-880: a direct protocol reference in its own body is written.
+        (bare("on origin", "", "protocol Bare"), vec![], ""),
     ];
     for (text, expected, ticket) in cases {
         let text = text.replacen(

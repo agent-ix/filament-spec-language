@@ -4,7 +4,7 @@
 use super::child_composite::fixture;
 use super::*;
 use filament_semantic_value::checking::CheckMode;
-use fsl_semantics::check::{CheckCause, CheckRefusal, ProtocolConstruct, ProtocolReferenceCause};
+use fsl_semantics::check::CheckRefusal;
 
 fn emitted_compensation_unit() -> (Emission, Value, Read) {
     emitted_unit("", "true", "false").expect("unit checks")
@@ -454,28 +454,25 @@ fn full_and_partial_compensation_templates_emit_and_read_back() {
     );
 }
 
-/// QSL-1131, QSL-851: a compensation template's guard and retry relation are
-/// bodies like any other. One that calls a function is emitted and admitted;
-/// one that refers to a protocol directly is refused typed
-/// (`ProtocolReferenceInBody`), whatever the other protocol's `finish`
-/// binder is called.
+/// QSL-1131, QSL-851, FR-880: a compensation template's guard and retry
+/// relation are bodies like any other. One that calls a function is emitted
+/// and admitted, and so is one that refers to a protocol directly, whatever
+/// the other protocol's `finish` binder is called.
 #[test]
-fn a_compensation_body_calls_a_function_but_cannot_refer_to_a_protocol() {
+fn a_compensation_body_calls_a_function_or_refers_to_a_protocol() {
     let other = "protocol Other using p over (input: M::Ledger) on origin {\n\
                  role R on M::Ledger;\nrun sequence Main { }\n\
                  finish End as (done: Boolean) { true };\n}\n";
     let ok = "function ok using v(): Boolean pure { true }\n";
     let (_, _, read) = emitted_unit(ok, "ok()", "ok()").expect("calls check");
     assert!(matches!(read, Read::Verified { .. }), "{read:?}");
-    let refused = CheckCause::ProtocolReference(Box::new(ProtocolReferenceCause::NotEmitted {
-        construct: ProtocolConstruct::ProtocolReferenceInBody,
-    }));
     for (guard, retry) in [("protocol Other", "false"), ("true", "protocol Other")] {
-        let Err(refusals) = emitted_unit(other, guard, retry) else {
-            panic!("a protocol reference in a compensation body is refused: {guard} {retry}");
-        };
-        assert_eq!(refusals.len(), 1, "{guard} {retry}");
-        assert_eq!(refusals[0].cause, refused, "{guard} {retry}");
+        let (_, _, read) = emitted_unit(other, guard, retry)
+            .unwrap_or_else(|refusals| panic!("{guard} {retry}: {refusals:?}"));
+        assert!(
+            matches!(read, Read::Verified { .. }),
+            "{guard} {retry}: {read:?}"
+        );
     }
 }
 

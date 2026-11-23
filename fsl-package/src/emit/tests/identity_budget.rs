@@ -101,8 +101,8 @@ fn authentic_identity_rows_pay_producer_join_and_output_once_and_preserve_native
                     &original.original_member_identity,
                     &original.admitted_name,
                     original.presence,
-                    &Some(original.type_node.clone()),
-                    &Some(original.value_type.clone())
+                    &original.type_node,
+                    &original.value_type
                 ),
                 (
                     &copied.original_member_identity,
@@ -598,7 +598,7 @@ fn later_authentic_record_member_copy_denial_retains_an_observed_admitted_prefix
     );
     assert_eq!(
         second.members[0].value_type,
-        Some(records[tagged_index].members[0].value_type.clone())
+        records[tagged_index].members[0].value_type.clone()
     );
     assert_eq!(
         second.members[1].presence,
@@ -606,7 +606,7 @@ fn later_authentic_record_member_copy_denial_retains_an_observed_admitted_prefix
     );
     assert_eq!(
         second.members[2].value_type,
-        Some(records[tagged_index].members[2].value_type.clone())
+        records[tagged_index].members[2].value_type.clone()
     );
     let need = measure.consumed();
     for (work, storage, kind) in [

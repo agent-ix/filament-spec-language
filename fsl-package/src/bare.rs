@@ -806,8 +806,12 @@ struct SourceObjectMemberJson {
     original_member_identity: String,
     admitted_name: String,
     presence: SourceObjectPresenceJson,
-    type_node: CheckedNodeId,
-    value_type: OriginalValueType,
+    type_node: Option<CheckedNodeId>,
+    value_type: Option<OriginalValueType>,
+    #[serde(default)]
+    member_type: Option<String>,
+    #[serde(default)]
+    collections: Vec<ClockCollectionLayerJson>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -949,9 +953,19 @@ impl SourceObjectJson {
                         Presence::Required => SourceObjectPresenceJson::Required,
                         Presence::Optional => SourceObjectPresenceJson::Optional,
                     },
-                    type_node: member.type_node.clone().ok_or_else(malformed)?,
-                    value_type: OriginalValueType::of(&facts.value_type)
+                    type_node: member.type_node.clone(),
+                    value_type: facts
+                        .value_type
+                        .as_ref()
+                        .map(OriginalValueType::of)
+                        .transpose()
                         .map_err(|_| malformed())?,
+                    member_type: member.member_type.as_deref().map(str::to_owned),
+                    collections: member
+                        .collections
+                        .iter()
+                        .map(ClockCollectionLayerJson::of)
+                        .collect(),
                 })
             })
             .collect::<Result<_, _>>()?;
@@ -1020,12 +1034,35 @@ impl SourceObjectJson {
                 SourceObjectPresenceJson::Required => Presence::Required,
                 SourceObjectPresenceJson::Optional => Presence::Optional,
             };
-            let value_type = member.value_type.value().map_err(|_| malformed())?;
-            members.push(filament_contract_model::SelectedSourceObjectMember::data(
-                member.admitted_name.clone(),
-                member.type_node,
-                presence == Presence::Optional,
-            ));
+            let optional = presence == Presence::Optional;
+            // FR-531: exactly a data entry (both type members, no clock
+            // members) or exactly a clock entry (neither, a `member_type`).
+            let (entry, value_type) =
+                match (member.type_node, member.value_type, member.member_type) {
+                    (Some(node), Some(value_type), None) if member.collections.is_empty() => (
+                        filament_contract_model::SelectedSourceObjectMember::data(
+                            member.admitted_name.clone(),
+                            node,
+                            optional,
+                        ),
+                        Some(value_type.value().map_err(|_| malformed())?),
+                    ),
+                    (None, None, Some(rendering)) => {
+                        let mut entry = filament_contract_model::SelectedSourceObjectMember::clock(
+                            member.admitted_name.clone(),
+                            rendering,
+                        );
+                        entry.optional = optional;
+                        entry.collections = member
+                            .collections
+                            .into_iter()
+                            .map(ClockCollectionLayerJson::layer)
+                            .collect();
+                        (entry, None)
+                    }
+                    _ => return Err(malformed()),
+                };
+            members.push(entry);
             facts.push(crate::emit::SourceObjectMemberFacts {
                 original_member_identity: member.original_member_identity.into(),
                 admitted_name: member.admitted_name.into(),

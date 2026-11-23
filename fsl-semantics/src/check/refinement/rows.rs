@@ -201,17 +201,56 @@ impl std::fmt::Debug for KeyedFairnessRow {
     }
 }
 
+/// One `history` row, keyed (FSpec FR-322 "Refinement row expressions"):
+/// the concrete object type's node, the field's name and declared type's
+/// node, the `literal` node of its initial value, and each update's
+/// concrete operation anchor with its expression.
+#[derive(Clone, Eq, PartialEq)]
+pub(crate) struct KeyedHistoryRow {
+    pub(crate) concrete_type: NodeKey,
+    pub(crate) name: String,
+    pub(crate) type_node: NodeKey,
+    pub(crate) initial: LeafTerm,
+    pub(crate) updates: Vec<(NodeKey, LeafTerm)>,
+}
+
+impl DebugWith for KeyedHistoryRow {
+    fn fmt_with(&self, f: &mut std::fmt::Formatter<'_>, table: &DebugTable) -> std::fmt::Result {
+        let Self {
+            concrete_type,
+            name,
+            type_node,
+            initial,
+            updates,
+        } = self;
+        f.debug_struct("KeyedHistoryRow")
+            .field("concrete_type", &NodeKeyDebug(concrete_type, table))
+            .field("name", &name)
+            .field("type_node", &NodeKeyDebug(type_node, table))
+            .field("initial", &initial)
+            .field("updates", &updates.len())
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for KeyedHistoryRow {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        standalone(f, self)
+    }
+}
+
 /// Every authored row of one refinement, keyed.
 #[derive(Clone, Default, Eq, PartialEq)]
 pub(crate) struct KeyedRefinementRows {
     pub(crate) populations: Vec<KeyedPopulationRow>,
     pub(crate) objects: Vec<KeyedObjectRow>,
     pub(crate) steps: Vec<KeyedStepRow>,
+    pub(crate) histories: Vec<KeyedHistoryRow>,
     pub(crate) assume: Vec<KeyedFairnessRow>,
     pub(crate) ensure: Vec<KeyedFairnessRow>,
 }
 
-fsl_foundation::debug_with_struct!(KeyedRefinementRows, "KeyedRefinementRows" { populations: with, objects: with, steps: with, assume: with, ensure: with });
+fsl_foundation::debug_with_struct!(KeyedRefinementRows, "KeyedRefinementRows" { populations: with, objects: with, steps: with, histories: with, assume: with, ensure: with });
 
 impl KeyedRefinementRows {
     /// Every node of this graph the rows name, which FSpec FR-375 makes the
@@ -232,6 +271,14 @@ impl KeyedRefinementRows {
         for row in &self.objects {
             keys.extend([&row.abstract_type, &row.concrete_type]);
             for (_, expression) in &row.fields {
+                term(&mut keys, expression);
+            }
+        }
+        for row in &self.histories {
+            keys.extend([&row.concrete_type, &row.type_node]);
+            term(&mut keys, &row.initial);
+            for (operation, expression) in &row.updates {
+                keys.push(operation);
                 term(&mut keys, expression);
             }
         }
