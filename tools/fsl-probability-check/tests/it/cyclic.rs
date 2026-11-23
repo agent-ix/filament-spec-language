@@ -156,6 +156,7 @@ fn self_loop_and_transient_scc_accept_exact_values_and_shortest_distances() {
 }
 
 #[trace("TC-636", "FR-201-AC-23", "FR-201-AC-25", "FR-282-AC-18")]
+#[trace("TC-3159", "FR-202-AC-34")]
 #[test]
 fn target_free_recurrence_forces_zero_and_early_target_cannot_hide_scheduler_choice() {
     let closed = model(true).replace("0: 2, 1: 1, 2: 1", "0: 1");
@@ -242,11 +243,13 @@ fn target_free_recurrence_forces_zero_and_early_target_cannot_hide_scheduler_cho
         domain().as_bytes(),
     );
     assert!(emitted.is_none(), "cyclic threshold miss has no proof");
-    assert!(
-        matches!(settlement, fsl_analyze::analyze::Settlement::Disposed(disposed)
-        if disposed.kind == fsl_analyze::analyze::DispositionKind::Unsupported),
-        "cyclic threshold miss must not enter native acyclic witness construction"
-    );
+    // The cyclic threshold miss never enters native acyclic witness
+    // construction; FR-202-AC-34 refutes it through the replayed
+    // event-avoidance subsystem certificate instead.
+    let fsl_analyze::analyze::Settlement::Terminal(terminal) = &settlement else {
+        panic!("cyclic threshold miss settles: {settlement:?}");
+    };
+    assert_eq!(terminal.value(), &fsl_replay::TerminalValue::Refuted);
 }
 
 #[trace("TC-636", "FR-201-AC-23", "FR-201-AC-25", "FR-282-AC-19")]
