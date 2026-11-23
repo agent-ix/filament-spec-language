@@ -21,6 +21,7 @@ pub mod examples_check;
 pub mod facade_tests;
 pub mod feature_scope;
 pub mod import_graph;
+pub mod merge_gate_recipe;
 pub mod pin_check;
 pub mod published_fspec;
 pub mod qualification;

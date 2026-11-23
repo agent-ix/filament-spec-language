@@ -5,7 +5,8 @@
 //! <corpus>` / `cargo xtask refinement layering <corpus>`: refinement gates.
 //! `cargo xtask
 //! canonical-types [<workspace>]` runs on demand, over this workspace or the
-//! one named. `cargo xtask pin-check` checks Agent-IX git dependency pins.
+//! one named. `cargo xtask pin-check` checks Agent-IX git dependency pins;
+//! `cargo xtask merge-gate-recipe <changed-path>...` prints verified test commands.
 #![forbid(unsafe_code)]
 
 use std::ffi::OsString;
@@ -14,10 +15,10 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use xtask::{
-    backend_agreement, canonical_types, checked_input, conformance, consumer_facades,
+    Outcome, backend_agreement, canonical_types, checked_input, conformance, consumer_facades,
     error::{Error, Result},
-    examples_check, facade_tests, pin_check, qualification, refinement, route_lint, seam_probe,
-    string_edge, test_suites, Outcome,
+    examples_check, facade_tests, merge_gate_recipe, pin_check, qualification, refinement,
+    route_lint, seam_probe, string_edge, test_suites,
 };
 
 const USAGE: &str = "usage: cargo xtask seam-probe\n       cargo xtask string-edge\n       \
@@ -30,7 +31,8 @@ const USAGE: &str = "usage: cargo xtask seam-probe\n       cargo xtask string-ed
                      cargo xtask qualify --corpus <dir> [--capability <id>]... [--limit <setting>=<value>]... [--text]\n       \
                      cargo xtask canonical-types [<workspace>]\n       \
                      cargo xtask facade-tests [--tests <dir>] [--inventory <file>]\n       \
-                     cargo xtask consumer-facades [--bindings <file>] [--inventory <file>]";
+                     cargo xtask consumer-facades [--bindings <file>] [--inventory <file>]\n       \
+                     cargo xtask merge-gate-recipe <changed-path>...";
 
 #[ix_trace_rs::string_edge]
 fn run(arguments: &[OsString]) -> Result<Outcome> {
@@ -62,6 +64,9 @@ fn run(arguments: &[OsString]) -> Result<Outcome> {
     }
     if command == "consumer-facades" {
         return consumer_facades::run(&workspace_root, operands);
+    }
+    if command == "merge-gate-recipe" {
+        return merge_gate_recipe::run(&workspace_root, operands).map(Outcome::success);
     }
     let workspace_operand = match (command, operands) {
         (_, []) => None,

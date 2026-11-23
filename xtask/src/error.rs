@@ -51,6 +51,8 @@ pub enum Code {
     ExamplesCheckInput,
     /// FR-765: the driver examples gate could not run or failed.
     ExamplesCheck,
+    /// QSL-2853: a merge-gate path or test filter could not produce a recipe.
+    MergeGateRecipe,
 }
 
 impl Code {
@@ -74,6 +76,7 @@ impl Code {
             Self::Qualification => "qualify",
             Self::ExamplesCheckInput => "examples-check-input",
             Self::ExamplesCheck => "examples-check",
+            Self::MergeGateRecipe => "merge-gate-recipe",
         }
     }
 }
@@ -121,7 +124,9 @@ pub enum Error {
         status: std::process::ExitStatus,
     },
     /// FR-765: the variable naming a checkout examples-check needs is unset.
-    #[error("examples-check: {var} is not set; name a {repository} checkout (clone agent-ix/{repository} next to this repository)")]
+    #[error(
+        "examples-check: {var} is not set; name a {repository} checkout (clone agent-ix/{repository} next to this repository)"
+    )]
     ExamplesCheckUnset {
         /// The variable.
         var: &'static str,
@@ -129,7 +134,9 @@ pub enum Error {
         repository: &'static str,
     },
     /// FR-765: the folder a variable names is not a checkout of its repository.
-    #[error("examples-check: no {repository} checkout at {path} ({var}): {missing} is missing; clone agent-ix/{repository} there or set {var}")]
+    #[error(
+        "examples-check: no {repository} checkout at {path} ({var}): {missing} is missing; clone agent-ix/{repository} there or set {var}"
+    )]
     ExamplesCheckMissing {
         /// The variable.
         var: &'static str,
@@ -162,6 +169,9 @@ pub enum Error {
         /// The child cargo status.
         status: std::process::ExitStatus,
     },
+    /// QSL-2853: a merge-gate path or filter could not produce a verified recipe.
+    #[error("merge-gate-recipe: {0}")]
+    MergeGateRecipe(String),
     /// A filesystem read or write failed.
     #[error("{path}: {source}")]
     Io {
@@ -192,7 +202,9 @@ pub enum Error {
     },
     /// The normal (non-probe) build failed to compile, so nothing else the
     /// probe checks is meaningful until that build succeeds on its own.
-    #[error("seam-probe: the normal (non-probe) build failed to compile; nothing else about the probe is meaningful until it succeeds. stderr:\n{stderr}")]
+    #[error(
+        "seam-probe: the normal (non-probe) build failed to compile; nothing else about the probe is meaningful until it succeeds. stderr:\n{stderr}"
+    )]
     SeamProbeNormalBuildFailed {
         /// The failed build's captured stderr.
         stderr: String,
@@ -200,7 +212,9 @@ pub enum Error {
     /// The normal (non-probe) build failed under `--offline` because its
     /// registry cache was cold -- not a genuine compile error. A warm
     /// (non-`--offline`) build must run first.
-    #[error("seam-probe: the normal (non-probe) build did not compile -- it failed dependency resolution under --offline (a cold registry cache, not a genuine compile error). Run a warm (non---offline) build first, then retry. stderr:\n{stderr}")]
+    #[error(
+        "seam-probe: the normal (non-probe) build did not compile -- it failed dependency resolution under --offline (a cold registry cache, not a genuine compile error). Run a warm (non---offline) build first, then retry. stderr:\n{stderr}"
+    )]
     SeamProbeOfflineRegistryUnavailable {
         /// The failed build's captured stderr.
         stderr: String,
@@ -209,7 +223,9 @@ pub enum Error {
     /// locations. FR-063-AC-3 requires every probe-marked seam to be
     /// unreachable outside the probe build, so any E0004 in the normal
     /// build is itself a defect.
-    #[error("seam-probe: the normal (non-probe) build reported E0004 at: {locations}; the probe variant must be unreachable outside the probe build (FR-063-AC-3)")]
+    #[error(
+        "seam-probe: the normal (non-probe) build reported E0004 at: {locations}; the probe variant must be unreachable outside the probe build (FR-063-AC-3)"
+    )]
     SeamProbeNormalBuildHasE0004 {
         /// The E0004 locations the normal build reported.
         locations: String,
@@ -521,6 +537,7 @@ impl Error {
             Self::ExamplesCheckSpawn { .. }
             | Self::ExamplesCheckFailed { .. }
             | Self::ExamplesCheckUnverified { .. } => Code::ExamplesCheck,
+            Self::MergeGateRecipe(_) => Code::MergeGateRecipe,
         }
     }
 
@@ -549,6 +566,7 @@ impl Error {
             | Code::CanonicalTypes
             | Code::Conformance
             | Code::TestSuites
+            | Code::MergeGateRecipe
             | Code::ExamplesCheck => 1,
             Code::Usage | Code::Io | Code::Metadata | Code::StringEdgeScan => 2,
             Code::ConsumerFacades => 2,

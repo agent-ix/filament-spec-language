@@ -443,6 +443,8 @@ vectors from the version-pinned `filament-specification` Cargo package. The host
 native compiler CI runs only on manual dispatch, so run the gate before opening
 a pull request.
 See [CONTRIBUTING.md](CONTRIBUTING.md) and [AGENTS.md](AGENTS.md).
+For path-based, name-filtered PR controls, use the
+[merge gate recipe](docs/merge-gate-recipe.md).
 
 Contributions require the [CLA](CLA.md).
 
