@@ -12,7 +12,7 @@ relationships:
 
 Verify that the executable monitor plan of FR-251 is self-sufficient, that admission refuses any plan not derived from the selected clause and target, that built monitors do not share state, that executing the plan agrees with FSL's reference evaluator, and that every build, admission and execution fault is a typed non-verdict result.
 
-Scope: FR-251-AC-4 to FR-251-AC-12, FR-251-AC-14, FR-251-AC-15, FR-251-AC-17, FR-251-AC-19, FR-251-AC-21, FR-251-AC-23 to FR-251-AC-25, FR-251-AC-27 to FR-251-AC-30, FR-251-AC-32 to FR-251-AC-39, FR-251-AC-41, FR-251-AC-42, FR-251-AC-43 through FR-251-AC-51.
+Scope: FR-251-AC-4 to FR-251-AC-12, FR-251-AC-14, FR-251-AC-15, FR-251-AC-17, FR-251-AC-19, FR-251-AC-21, FR-251-AC-23 to FR-251-AC-25, FR-251-AC-27 to FR-251-AC-30, FR-251-AC-32 to FR-251-AC-39, FR-251-AC-41, FR-251-AC-42, FR-251-AC-43 through FR-251-AC-51, FR-251-AC-55.
 
 ## Test Procedure
 
@@ -57,6 +57,8 @@ Fixtures: the deadline claim of FR-251-AC-1 on a 20-bit 1 MHz counter with its a
 
 Tag the tests `#[trace("TC-1081", "FR-251-AC-n")]`.
 
+35. Carry a monitor plan over a checked package with guarded value-validity records and a plan-root writer that renames the owner and a guard node. Read the returned emission's requirement rows and condition-frame table, verify renamed guard node ids and any changed frame ids/parents are remapped, and check that each record body and identity path cite only its remapped terminal id. Strictly admit the result and compare each borrowed derived path view with the source chain (AC-55).
+
 ## Expected Results
 
 - Step 1: the monitor builds from the plan alone. The program holds both atom bodies, the ordered implication, eventually and always topology, the activation and capture bindings, the state initializers and the executable event and watermark transitions. The poisoned source is never read, no clause argument is needed, and no callback or translation hook is invoked. The copy without a transition body refuses admission, and no initialization runs and no monitor exists.
@@ -95,6 +97,7 @@ Tag the tests `#[trace("TC-1081", "FR-251-AC-n")]`.
 - Step 33: exact combined allowances return equal complete values and charges; every independent one-short control returns the original fixed native denial/locus with no context and no restoration of prior consumption. A reused or precharged budget cannot receive a new allowance. Package clones follow owner accounting, zero-storage refusal owns no diagnostic, and overflow stops rather than wraps. Owner byte/read limits do not replenish this budget.
 
 - Step 34: the source is the actual retained checked source, the dense IR period is absent, and the tick period has IR's actual canonical component type and exact values. One paid copy establishes the owned IR value; one-short storage returns the original native denial before a copy. Getters borrow the same values without materialization and do not claim that the kernel and IR rational types are aliases.
+- Step 35: the emission carries the source rows and shared condition frames with renamed node and frame references; strict admission independently derives equal outermost-first path views, and no record contains an expanded guard vector.
 
 ## Qualification boundary
 
