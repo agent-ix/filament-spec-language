@@ -18,6 +18,7 @@ them. For spec-only changes it prints `NO CARGO: spec-only change.`
 | --- | --- | --- |
 | `fsl-package/src/emit/**` | `fsl-package` lib `emit` tests, one thread, skip 100k tests and the 2/1000 nested-form stress test | Analyze IT filters `monitor_`, `timed_`, `hyper`, `probabilistic`; command IT `run_requirement_items`; each large emitter and replay control runs alone with timing enabled |
 | `fsl-analyze/src/analyze/exact.rs`, `exact/**` | Touched library module | Analyze IT `probabilistic` and `timed_` |
+| `fsl-analyze/src/zone_check/**` | Touched library module | Analyze IT `timed_`, plus the focused `timed_within_200` and `timed_within_201` regressions |
 | Other `fsl-analyze/src/**` | Touched library module | All four analyze IT engine filters: `monitor_`, `timed_`, `hyper`, `probabilistic` |
 | `fsl-replay/src/**` | Touched replay library module | `fsl-command` IT `dependency_handoff`, `run_requirement_items`, `run_text_witness`; analyze IT `probabilistic_replay`, `bounded_probabilistic_replay`, `package_probabilistic` |
 | `fsl-inspect/src/**` | `fsl-inspect` render tests | `fsl-command` IT `run_text_witness` |
