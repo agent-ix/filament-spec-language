@@ -207,7 +207,9 @@ and FR-894's duplicate kinds. Every causal-order verdict, `satisfied` or
     step on the body's main sequence, not under a `case`, a `parallel`
     branch or another `repeat`, that lies at or before the step in program
     order. The iteration is the number of observations of such a step
-    causally at or before the step.
+    causally at or before the step. A such step of another role is causally
+    before the step in every recording that satisfies the step's
+    enabledness, so it never makes the count read low.
 29. The iteration of a step SHALL be not determined when no such step lies at
     or before it in program order, when such a step was not observed at or
     before it, or when such steps give different counts.
@@ -299,6 +301,8 @@ looking like success, which FSpec FR-059-AC-3 requires.
 | FR-895-AC-40 | Over the AC-37 protocol, the recording `P`, `L`, `Placed`, `Got`, `yes`, `P`, `L`, `R`, `Placed`, `Got`, `yes` (the first `R` skipped) gives the second iteration's `R` `satisfied` in batch and in every incremental prefix, as under `outstanding continue`. | Test (TC-2531) |
 | FR-895-AC-41 | Over a `repeat` whose body holds `P`, an inner `repeat` of the cancelling `parallel`, another inner `repeat` of a step `X`, then `Placed`, `Got` and the `Decide` choice, the recording `P`, `L`, `R`, `X`, `Placed`, `Got`, `yes` twice gives every `L` and `R` `satisfied` in batch and in every incremental prefix, as under `outstanding continue`. | Test (TC-2531) |
 | FR-895-AC-42 | Over a `repeat` whose body holds a `choice` of cases `a` and `b`, each with a step, then an inner `repeat` of the cancelling `parallel` of `L` and `R`, then `Placed`, `Got` and the `Decide` choice, and no step `P`, the recording `a`, `A`, `L`, `R`, `Placed`, `Got`, `yes`, `b`, `B`, `L`, `R`, `Placed`, `Got`, `yes` gives the second iteration's `L` and `R` `satisfied` in batch, as under `outstanding continue`. | Test (TC-2531) |
+| FR-895-AC-43 | Over the AC-37 protocol with a second step `Q` after `P` that runs once in every iteration, the recording `P`, `Q`, `L`, `Placed`, `R` gives `R` `violated`, cause `unexpected`, while `P`, `L`, `Placed`, `R` (`Q` never observed, so the counts differ) leaves `R` not `violated`: the iteration is not determined. | Test (TC-2531) |
+| FR-895-AC-44 | Over a `repeat` whose body holds `Ping` of `Seller`, `Pong` the receive of it by `Buyer`, and the AC-37 `parallel`, the recording `Ping`, `Pong`, `L`, `R`, `Placed`, `Got`, `yes` twice gives every `L` and `R` `satisfied` in batch and in every incremental prefix; with a step `S` of `Seller` in the body that is unordered with `Buyer`'s steps, `R` is `violated` under `outstanding cancel` and under `outstanding continue` alike. | Test (TC-2531) |
 
 ## Dependencies
 

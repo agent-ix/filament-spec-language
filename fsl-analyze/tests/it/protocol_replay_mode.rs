@@ -2684,3 +2684,118 @@ fn a_choice_before_an_inner_repeat_does_not_count_toward_the_iteration() {
         }
     }
 }
+
+/// [`cancel_in_repeat_protocol`] with `extra` after `P` in the loop body.
+fn cancel_in_repeat_protocol_with(extra: &str) -> String {
+    cancel_in_repeat_protocol().replace(
+        "event P by Buyer as (p: Ack) { true };",
+        &format!("event P by Buyer as (p: Ack) {{ true }}; {extra}"),
+    )
+}
+
+/// FR-895-AC-43 (TC-2531): when the steps that run once in every iteration
+/// give different counts, the iteration is not determined and the step is not
+/// matched: `P`, `L`, `Placed`, `R` with a second such step `Q` never
+/// observed leaves `R` not `violated` (`pending`), where the same recording with `Q`
+/// observed gives `R` `violated`, cause `unexpected`.
+#[trace("TC-2531", "FR-895-AC-43")]
+#[test]
+fn counters_that_disagree_leave_the_iteration_not_determined() {
+    let source = cancel_in_repeat_protocol_with("event Q by Buyer as (q: Ack) { true };");
+    let run = |name: &str, with_q: bool| {
+        let mut observations = vec![loop_event("P")];
+        if with_q {
+            observations.push(loop_event("Q"));
+        }
+        observations.push(loop_event("Both::left::Left::L"));
+        observations.push(looped("send", "Placed", "Buyer", "m-1"));
+        observations.push(loop_event("Both::right::Right::R"));
+        let buyer: Vec<usize> = (0..observations.len()).collect();
+        nested_cancel_item(name, &source, Value::Array(observations), &buyer, &[], &[])
+    };
+    let control = run("replay-disagree-control", true);
+    assert_eq!(
+        node_verdicts_in(&control, BODY_RIGHT),
+        ["violated"],
+        "{control}"
+    );
+    let item = run("replay-disagree", false);
+    assert_eq!(node_verdicts_in(&item, BODY_RIGHT), ["pending"], "{item}");
+}
+
+/// FR-895-AC-44 (TC-2531): a once-per-iteration step of another role never
+/// makes a step `violated` by reading the iteration low. Such a step that
+/// precedes the observed step in program order is causally before it in any
+/// recording that does not already violate its enabledness (a step unordered
+/// with it is `violated` whatever the join policy), so the counts agree. With
+/// `Ping` of `Seller` received as `Pong` by `Buyer` before the cancelling
+/// `parallel`, `Ping`, `Pong`, `L`, `R`, `Placed`, `Got`, `yes` twice leaves
+/// every `L` and `R` `satisfied` in batch and in every prefix; with `S` of
+/// `Seller` unordered with `Buyer`'s steps the same `R` is `violated` under
+/// `outstanding cancel` and `outstanding continue` alike.
+#[trace("TC-2531", "FR-895-AC-44")]
+#[test]
+fn a_step_of_another_role_never_makes_the_iteration_read_low() {
+    let source = repeat_protocol()
+        .replace(
+            "run sequence Main {",
+            "channel Back from Seller to Buyer carries Ack ordering unordered delivery exactly-once-premise capacity 4 overflow reject;\nrun sequence Main {",
+        )
+        .replace(
+            "sequence Body {",
+            "sequence Body { send Ping via Back as (ping: Ack) { true }; receive Pong via Back of Ping as (pong: Ack) { true }; parallel Both memory sc { branch left sequence Left { event L by Buyer as (l: Ack) { true }; } branch right sequence Right { event R by Buyer as (r: Ack) { true }; } } join any [left, right] outstanding cancel;",
+        );
+    let round = |tag: &str| {
+        [
+            looped("send", "Ping", "Seller", &format!("p-{tag}")),
+            looped("receive", "Pong", "Buyer", &format!("p-{tag}")),
+            body_event("left::Left::L"),
+            body_event("right::Right::R"),
+            looped("send", "Placed", "Buyer", &format!("m-{tag}")),
+            looped("receive", "Got", "Seller", &format!("m-{tag}")),
+            looped_case("yes"),
+        ]
+    };
+    let mut all = Vec::new();
+    all.extend(round("1"));
+    all.extend(round("2"));
+    let item = nested_cancel_item(
+        "replay-cross-role-counter",
+        &source,
+        Value::Array(all),
+        &[1, 2, 3, 4, 8, 9, 10, 11],
+        &[0, 5, 6, 7, 12, 13],
+        &[(0, 1), (4, 5), (7, 8), (11, 12)],
+    );
+    assert_nodes_satisfied(&item, &[BODY_LEFT, BODY_RIGHT], 14);
+
+    // `S` of `Seller` once per iteration, unordered with `Buyer`'s steps: the
+    // second iteration's `R` is `violated` for its enabledness, whatever the
+    // join policy, so the verdict is not an artefact of the iteration read.
+    let seller_event = || {
+        json!({"kind": "event", "node": "Flow::Main::Loop::Body::S", "role": "Seller",
+               "instance": "w-1", "keys": {}, "record": {"ok": true}})
+    };
+    let unordered = cancel_in_repeat_protocol_with("event S by Seller as (s: Ack) { true };");
+    let observations = json!([
+        loop_event("P"),
+        seller_event(),
+        body_event("right::Right::R"),
+        looped("send", "Placed", "Buyer", "m-1"),
+    ]);
+    for outstanding in ["cancel", "continue"] {
+        let item = nested_cancel_item(
+            &format!("replay-unordered-counter-{outstanding}"),
+            &unordered.replace("outstanding cancel", &format!("outstanding {outstanding}")),
+            observations.clone(),
+            &[0, 2, 3],
+            &[1],
+            &[],
+        );
+        assert_eq!(
+            node_verdicts_in(&item, BODY_RIGHT),
+            ["violated"],
+            "{outstanding}: {item}"
+        );
+    }
+}
