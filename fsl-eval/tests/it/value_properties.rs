@@ -2163,3 +2163,31 @@ fn near_miss_is_never_evaluated_to_a_value() {
         "every zero-spanning case is evaluated"
     );
 }
+
+#[test]
+fn probe_nested() {
+    let ps = "a: Rational[-20, 20; 1, 9], c: Rational[-20, 20; 1, 9]";
+    let w = "Rational[-1000000, 1000000; 1, 1000000]";
+    let args = vec![Arg::Rat(1, 4), Arg::Rat(-1, 3)];
+    for body in [
+        "a + c",
+        "a + (a + c)",
+        "(a + a) + c",
+        "(a + c) + a",
+        "(a + c) * a",
+        "a * (a + c)",
+        "a + (a * c)",
+        "(a + c) + (a + c)",
+        "a + (a + a)",
+        "(a + a) + a",
+    ] {
+        let source = unit(None, "", ps, w, body);
+        for mode in [CheckMode::Linked, CheckMode::Kernel] {
+            let r = match try_compile(&source, mode) {
+                Ok(p) => format!("{:?}", evaluate(&p, &args)),
+                Err(e) => e,
+            };
+            eprintln!("PROBE {mode:?} {body}: {r}");
+        }
+    }
+}
