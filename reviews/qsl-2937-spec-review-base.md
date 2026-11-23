@@ -43,3 +43,13 @@ Review set is the subset the dispatch named (base, ears, integrity, evidence, fa
 - TC-2455 (spec/test-cases/TC-2455-text-form-of-an-outcome-document.md, examined): - Step 1: the header `check: refusal (exit 20) at S3`, FR-298's diagnostic line, then ` cause: type-mismatch`; the package document is the one line `package: success (exit 0) at S4`. - Step 2: the `result:` lines FR-865-AC-2 states, the item line with its clause and the `undefined-evaluation (division-by-zero)` cause line, and `(exit 11)` in the indeterminate header. - Step 3: the diagnostic line begins `src/rule.fsl:`; the compile refusal names the program source's path. Test: `fsl-inspect/src/render.rs` (tests module).
 - TC-2963 (spec/test-cases/TC-2963-a-replay-outcome-carries-and-renders-its-results.md, examined): - Step 1: `{"kind": "replayed", "results": [R]}`, `R` equal to the `results` row (`input`, `reproduced-without-witness`). - Step 2: the header `replay: success (exit 0) at S8`, then `result 0: input reproduced-without-witness`. - Step 3: `result` `null`; refusal header and diagnostic, no `result` line.
 - TC-2996 (spec/test-cases/TC-2996-an-export-outcome-renders-as-four-text-lines.md, examined): - Step 1: exactly `export: success (exit 0) at S4`, `target: tla filament.output.tla2/v1`, `bytes written: <n>` (the text length) and `output: m.tla`. - Step 2: the last two lines are `bytes written: 0` and `output: none`. - Step 3: `export: incomplete (exit 22) at S4`, `bytes written: 0`, and a line naming `export.output_bytes`.
+
+## Dispositions
+
+Round 1, head 6b1b2799540a7015585d05a7aaf109ecf1501034 (rebased on origin/main; fix commit 6b1b279954).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | TC-2455, TC-2963 and TC-2996 now expect the stage words. No other TC or AC on the branch asserts an `at S<n>` header. |
+| FND-002 | fixed | The 'Today' sentences are gone. The before-state now sits in a past-tense Rationale section, and the FR-866 sentence states the decision. |
+| FND-003 | fixed | TC-3201 now gives the exact details. TC-3199 steps 1 to 6 give the exact hint lines. Step 7 refers to the table for four kinds, the same way AC-23 does. |

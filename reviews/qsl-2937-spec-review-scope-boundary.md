@@ -32,3 +32,21 @@ Review set is the subset the dispatch named (base, ears, integrity, evidence, fa
 - FR-865#missing-import-hints (spec/functional/FR-865-render-every-outcome-document-as-text-the-cli-default.md, examined): ### The missing_import hint of each cause kind Today every `missing_import` diagnostic of cause `missing-selection` carries the one catalog hint `Import the package that supplies the selected name.` (FR-286 "Fix hints"), beside a message that may name a model, a library, a byte-provision entry or a function owner, none of which is a package to import. Six producers write the pair; the typed diagnostic SHALL carry the kind of its producer as a member that is not serialized, so the JSON document, its `hint` included, is unchanged. In text mode the ` hint:` line of such a diagnostic is the tex...
 - FR-866#unselected (spec/functional/FR-866-check-a-unit-against-the-models-and-libraries-it-imports.md, examined): - A `--model` identity that no `model` declaration of the unit selects, or a `--library` identity that no `import` of the unit names, refuses `invalid-request`, exit 20, naming the option and the identity, after the source parses and before the file is read: an input that changes nothing is refused, as FR-640 refuses an unused clock selection. For a `--model` identity the refusal also names the identities the source does select. Today its message is `invalid clause request member --model: --model <identity> is not selected by the source`, which leaves a caller who mistyped one identity noth...
 - FR-865#stage-words (spec/functional/FR-865-render-every-outcome-document-as-text-the-cli-default.md, examined): ### Stage words The text writes each stage in words, the word of this table, and never its label. `last_stage` in the JSON document is unchanged. | Label | Word | Stage (ADR-011) | | --- | --- | --- | | `S0` | `source` | source bytes | | `S1` | `syntax` | the lossless CST | | `S2` | `forms` | parsed semantic forms | | `I1` | `intake` | domain-package intake | | `S3` | `checking` | the checked semantic graph | | `S4` | `packaging` | the linked checked package | | `S5` | `contract` | contract IR | | `S6a` | `execution` | reference execution | | `S6b` | `proof` | bounded proof | | `S6c` | `mod...
+
+## New findings (disposition pass 1)
+
+Found at head 6b1b2799540a7015585d05a7aaf109ecf1501034 while checking the fix round.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-004 | medium | AC-16 requires `fsl compile` to write 'the bytes `render_outcome` returns' for the document. Driver FR-002-AC-13 (filament-driver origin/main) says the text header names the invoked CLI command (`compile`) instead of the document's operation (`package`). A byte-exact Driver test will fail against the driver's own contract. AC-3 says 'the text form', which leaves room for that. Use AC-3's wording plus the header exception, or have the driver lane drop the header substitution. | spec/functional/FR-865-render-every-outcome-document-as-text-the-cli-default.md: FR-865-AC-16; filament-driver FR-002-AC-13 |
+
+## Dispositions
+
+Round 1, head 6b1b2799540a7015585d05a7aaf109ecf1501034 (rebased on origin/main; fix commit 6b1b279954).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Answered by the document-only rule. Text renders FSL's document, and the size, path and selection kind are serialized members, so equal JSON gives equal text. The driver-header residue is new FND-004. |
+| FND-002 | accepted-no-change | The author decided to leave `--library` bare. FR-866 records why, and FR-866-AC-10 pins the bare message, so the choice is explicit and tested. |
+| FND-003 | accepted-no-change | The Rationale states that explaining `  cause: missing-selection` is outside QSL-2937's four texts, so it is a recorded scope decision. |

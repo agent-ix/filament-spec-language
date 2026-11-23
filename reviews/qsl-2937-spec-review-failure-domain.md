@@ -44,3 +44,29 @@ Review set is the subset the dispatch named (base, ears, integrity, evidence, fa
 - FR-866-AC-3 (spec/functional/FR-866-check-a-unit-against-the-models-and-libraries-it-imports.md, context_only): A compile request over FR-108's unit with `models` `[]`, and `check_outcome` with no model selection, each refuse `missing_import`/`missing-selection` at stage I1 with a message naming `example/config-version`, `--model` and `models`.
 - FR-1047-AC-9 (spec/functional/FR-1047-name-every-request-defect-and-return-a-request-example.md, examined): `export_with_limits_and_overrides` with `ExportSelection::Ordinary` over `{"format":"native-run/1","request":3}` refuses `invalid-request`, stage `request`, exit 20, with message exactly `invalid clause request member /request: expected an object`; this requirement adds no `missing` list for it, since a `request` that is not an object has no members to list.
 - FR-286#details-new (spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md, examined): - An `invalid-request` diagnostic at stage `request` that FR-1047 writes SHALL carry that requirement's `details`: `{"missing": [...]}` for a request lacking members, and `{"path": "/format", "accepted": [...]}` for a `format` the entry does not read.
+
+## New findings (disposition pass 1)
+
+Found at head 6b1b2799540a7015585d05a7aaf109ecf1501034 while checking the fix round.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-009 | medium | The `source` hint, 'Add the named source to the request's source provision.', points to something the caller cannot edit. `SourceProvision` is built inside the command from the admitted units (fsl-command/src/command/plan.rs:209-214), and `check_provision` (fsl-analyze/src/analyze/request.rs:614-640) refuses when a package's graph names a source the provision lacks. Name the request member or file the caller actually supplies (the program/library source the package was compiled from), or the hint fails FR-286's 'true for every diagnostic' rule in practice. | spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md:579 |
+| FND-010 | low | `dependency` points at `PluginReplayRefusal::UnresolvedDependency`, which its own doc calls 'A defensive check: consistent inputs never reach it' (fsl-replay/src/proof_result/plugin_replay.rs:354-357). Its hint sends the user to 'the request's libraries member', but a plugin replay reads the library sources that `check` already resolved, not a `libraries` member of the replay request. A user-facing fix hint for an unreachable, invariant-like refusal is misleading. Consider a neutral hint, or confirm which member supplies those sources. | spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md:582 |
+| FND-011 | low | Two producer type names in the table do not exist as written. `SiblingImport` is `UnitListRefusal::SiblingImport` (fsl-replay/src/spine.rs:838, 903), not `ImportRefusal::SiblingImport`. 'extension `ResolutionCause::MissingSelection`' is wrong: `ResolutionCause` is the bundle's tag (fsl-semantics/src/library/bundle.rs:628, 921), and the extension producer is `ExtensionRefusal::MissingDependency`, mapped to `ExtensionCause::MissingSelection` (fsl-semantics/src/library/extension.rs:270, 378). AC-40 and TC-3203 build each producer by these names. | spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md:575,580 |
+| FND-012 | low | 'a path that is not UTF-8 is written with each invalid byte as U+FFFD' is not what `Path::to_string_lossy` / `String::from_utf8_lossy` does. They write one U+FFFD per maximal invalid subsequence, so a truncated multi-byte sequence becomes one U+FFFD, not one per byte. Pin it as 'as `Path::to_string_lossy` writes it', or a test written to the letter will disagree with the obvious implementation. Lossy output is otherwise fine for a display path. | spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md:554-555 |
+
+## Dispositions
+
+Round 1, head 6b1b2799540a7015585d05a7aaf109ecf1501034 (rebased on origin/main; fix commit 6b1b279954).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | I re-grepped every `missing_import`/`missing-selection` site on the branch. Each producer that writes an `OutcomeDiagnostic` is in the table, or is an item record the section excludes. The rest (protocol_view, ProfileClosure, monitor authentication, emit temporal clock) are `missing_declaration` or typed statuses that never become this pair. ProvisionRefusal is written as a document diagnostic at fsl-analyze/src/analyze.rs:1229-1237, so the author's claim holds. Type-name slips are new FND-011. |
+| FND-002 | fixed | `library` now maps to `ImportRefusal::MissingSelection`. `UnknownImport` gets its own `unimported-library` kind and a correct hint. AC-18 cites FR-099-AC-3. |
+| FND-003 | fixed | AC-17 names both refusals. The `model` kind now includes `ModelRefusalCause::MissingSelection`, the compile/run producer. |
+| FND-004 | fixed | The header comes from the document. A model-unit compile writes `at stage intake` (AC-15). |
+| FND-005 | fixed | There is a `handoff written to:` line, and the `nothing written` line now covers all three sources. |
+| FND-006 | fixed | The path is the one the command opened: the member joined to the request file's directory, and the `--output` option as given. This matches `directory.join(&member.package)` with `path.parent()` (fsl-command/src/command.rs:2771, 3906). The U+FFFD wording is new FND-012. |
+| FND-007 | fixed | The label assertion is limited to the header and the labels of the table. |
+| FND-008 | fixed | `details` `null` is pinned in the AC and in the Behavior bullet. |

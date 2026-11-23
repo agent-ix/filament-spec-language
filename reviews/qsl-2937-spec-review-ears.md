@@ -31,3 +31,12 @@ Review set is the subset the dispatch named (base, ears, integrity, evidence, fa
 - FR-866#behavior-new (spec/functional/FR-866-check-a-unit-against-the-models-and-libraries-it-imports.md, examined): - If a `--model` identity is selected by no `model` declaration of the unit, then `check_outcome` SHALL end the refusal message with `; the source selects: ` and the unit's model identities in source order, each once, joined by `, `. - Where the unit has no `model` declaration, the refusal message of an unselected `--model` identity SHALL end `; the source selects no models`.
 - FR-286#details-new (spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md, examined): - An `invalid-request` diagnostic at stage `request` that FR-1047 writes SHALL carry that requirement's `details`: `{"missing": [...]}` for a request lacking members, and `{"path": "/format", "accepted": [...]}` for a `format` the entry does not read.
 - FR-1047#non-object (spec/functional/FR-1047-name-every-request-defect-and-return-a-request-example.md, examined): ### A request that is not an object - If the export entry reads an envelope whose `request` member is not a JSON object, then the entry SHALL refuse `invalid-request` at stage `request`, exit 20, with message `invalid clause request member /request: expected an object`, which no member list can improve.
+
+## Dispositions
+
+Round 1, head 6b1b2799540a7015585d05a7aaf109ecf1501034 (rebased on origin/main; fix commit 6b1b279954).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Each new Behavior bullet now has one SHALL. |
+| FND-002 | fixed | The non-serialized member is gone. Setting `selection` is now a Behavior statement whose subject is the producer. |

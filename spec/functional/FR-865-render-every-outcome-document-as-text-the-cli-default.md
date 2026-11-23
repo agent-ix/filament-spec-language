@@ -144,8 +144,9 @@ Each line is one FR-298 output unit, charged against `render.output_bytes`.
 
 ### Stage words
 
-The header names the stage in words: `render_outcome` maps the document's
-`last_stage` label to the word of this table. The map is a function of the
+The header names the stage in words: `render_outcome` writes the word that
+the public function `fsl_inspect::render::stage_word(label: &str) -> String`
+returns for the document's `last_stage` label. The map is a function of the
 text form alone; the JSON document keeps the label (FR-286).
 
 | Label | Word |
@@ -154,7 +155,7 @@ text form alone; the JSON document keeps the label (FR-286).
 | `S1` | `syntax` |
 | `S2` | `forms` |
 | `I1` | `intake` |
-| `I2` | `imports` |
+| `I2` | `imports` (the function only: no document's `last_stage` is `I2`) |
 | `S3` | `checking` |
 | `S4` | `packaging` |
 | `S5` | `contract` |
@@ -164,8 +165,13 @@ text form alone; the JSON document keeps the label (FR-286).
 | `S7` | `witness` |
 | `S8` | `replay` |
 
-A `last_stage` string that is not in the table is written as it is, so a
-stage added to the document before it is added here still renders. The
+`stage_word` returns a label that is not in the table unchanged, so a stage
+added to the document before it is added here still renders. The function
+takes a string because `OutcomeStage` and the schema's `last_stage` values
+hold the twelve other labels and no `I2`; adding `I2` to the wire for a
+stage no document reaches would change `filament-outcome/1` for no reader,
+and `render_outcome` takes a typed document that cannot hold an unknown
+label, so the `I2` and unknown-label cases are asserted on `stage_word`. The
 words describe ADR-011's stages: source bytes, the lossless CST, parsed
 forms, domain-package intake, the dependency import view, the checked graph,
 the linked checked package, contract IR, reference execution, bounded proof,
@@ -230,23 +236,24 @@ exit code of the document's category.
 - When the driver runs a verb without `--format`, it SHALL write the text
   form of the outcome document.
 - When `render_outcome` writes a header line for a document whose
-  `last_stage` is in the "Stage words" table, it SHALL write ` at stage `
-  and the table's word.
+  `last_stage` is not null, it SHALL write ` at stage ` and the word
+  `stage_word` returns for the label.
 - The header line SHALL NOT contain a stage label of the "Stage words"
   table.
-- If `last_stage` is a string that is not in the "Stage words" table, then
-  `render_outcome` SHALL write it unchanged after ` at stage `.
+- If the label handed to `stage_word` is not in the "Stage words" table,
+  then `stage_word` SHALL return it unchanged.
 - When `render_outcome` renders a `package` outcome whose `result` is
   `packaged`, it SHALL write the lines of that result's text form in
   "The text form of an outcome document".
 - When `fsl compile` runs in text mode and succeeds, the driver SHALL write
-  the bytes `render_outcome` returns for the compile's outcome document.
+  the text form of the compile's outcome document, with the CLI command
+  `compile` in place of the operation in the header (driver FR-002-AC-13).
 - When `render_outcome` renders a diagnostic that carries `hint`, it SHALL
   write the hint line the document holds, including the hint of each
   `selection` of a `missing_import` diagnostic.
 - When a producer refuses `missing_import`/`missing-selection`, it SHALL
   set `selection` on its `OutcomeDiagnostic` to the kind of FR-286 "Missing
-  selections".
+  selections", unless no caller input reaches it.
 - The driver's exit code for an invocation SHALL be equal in text mode and
   in machine mode.
 - If `--format` names a value other than `json` or `text`, then the driver
@@ -265,21 +272,21 @@ exit code of the document's category.
 | FR-865-AC-6 | `render_outcome` with `RenderForm::Text` over FR-286-AC-21's replay outcome writes `replay: success (exit 0) at stage replay` followed by `result 0: input reproduced-without-witness`; over the refused replay of FR-862-AC-1 it writes `replay: refusal (exit 20)` and one diagnostic line with code `invalid-request`, and no `result` line. | Test (TC-2963) |
 | FR-865-AC-7 | `render_outcome` with `RenderForm::Text` over FR-286-AC-22's counter export document written to `m.tla` writes exactly `export: success (exit 0) at stage packaging`, `target: tla filament.output.tla2/v1`, `bytes written: <n>` with `<n>` the target text's length, and `output: m.tla`, and no other line; over the same export with no output file named its last two lines are `bytes written: 0` and `output: none`; over the export under `export.output_bytes` 1 it writes `export: incomplete (exit 22) at stage packaging`, `bytes written: 0` and a line naming `export.output_bytes`. | Test (TC-2996) |
 | FR-865-AC-8 | The text of FR-286-AC-28's `check` document follows its diagnostic line with `  cause: type-mismatch` and then `  hint: <text>`, `<text>` the diagnostic's `hint` byte for byte; the text of FR-286-AC-28's `io-error` document follows its diagnostic line with `  hint: <text>`, the diagnostic's `hint`; the texts of FR-286-AC-15's blank-label document (lines `  cause: blank-label` then `  label: <label>`) and of FR-286-AC-23's `output-failure` document, whose diagnostics have no `hint`, hold no line beginning `  hint:`. | Test (TC-3114) |
-| FR-865-AC-9 | `render_outcome` with `RenderForm::Text` over an outcome document whose `last_stage` is each of `S0`, `S1`, `S2`, `I1`, `I2`, `S3`, `S4`, `S5`, `S6a`, `S6b`, `S6c`, `S7` and `S8` writes a header line ending ` at stage source`, ` at stage syntax`, ` at stage forms`, ` at stage intake`, ` at stage imports`, ` at stage checking`, ` at stage packaging`, ` at stage contract`, ` at stage execution`, ` at stage proof`, ` at stage model-checking`, ` at stage witness` and ` at stage replay` in that order, and over a document whose `last_stage` is null a header with no ` at stage `. | Test (TC-3197) |
-| FR-865-AC-10 | `render_outcome` over a document whose `last_stage` is the string `X9` writes a header ending ` at stage X9` and does not fail; the header of no AC-9 document contains a label of the table (`S4`, `I1`, ...) as a word. | Test (TC-3197) |
+| FR-865-AC-9 | `render_outcome` with `RenderForm::Text` over an outcome document whose `last_stage` is each of `S0`, `S1`, `S2`, `I1`, `S3`, `S4`, `S5`, `S6a`, `S6b`, `S6c`, `S7` and `S8` writes a header line ending ` at stage source`, ` at stage syntax`, ` at stage forms`, ` at stage intake`, ` at stage checking`, ` at stage packaging`, ` at stage contract`, ` at stage execution`, ` at stage proof`, ` at stage model-checking`, ` at stage witness` and ` at stage replay` in that order, and over a document whose `last_stage` is null a header with no ` at stage `. | Test (TC-3197) |
+| FR-865-AC-10 | `stage_word("I2")` returns `imports`, `stage_word("X9")` returns `X9`, and `stage_word` of each AC-9 label returns the word AC-9 lists; the header of no AC-9 document contains a label of the table (`S4`, `I1`, ...) as a word. | Test (TC-3197) |
 | FR-865-AC-11 | The JSON of each AC-9 document holds `last_stage` as the label string (`"S4"`, `"I1"`), unchanged by the rendering. | Test (TC-3197) |
 | FR-865-AC-12 | `render_outcome` over FR-286-AC-39's document of the request with `output` writes exactly `package: success (exit 0) at stage packaging`, `produced: checked package (<n> bytes)` with `<n>` the document's `package.bytes`, and `written to: reqs/spine.package.json`. | Test (TC-3198) |
 | FR-865-AC-13 | `render_outcome` over FR-286-AC-39's document of the request without `output` and without `handoff` writes exactly `package: success (exit 0) at stage packaging`, `produced: checked package (<n> bytes)` and `nothing written: no --output option, output member or handoff member was given`. | Test (TC-3198) |
 | FR-865-AC-14 | `render_outcome` over FR-286-AC-39's document of the request with `handoff` and no `output` writes exactly the header, the `produced:` line and `handoff written to: reqs/<directory>`, and no `written to:` line. | Test (TC-3198) |
 | FR-865-AC-15 | `render_outcome` over the document of a compile of a model unit that succeeds at `I1` writes a header ending ` at stage intake`; over a `package` document whose `result` is `null` it writes the header line only. | Test (TC-3198) |
-| FR-865-AC-16 | `fsl compile <request>` and `fsl compile <request> --output <file>` without `--format`, over a succeeding request, write the bytes `render_outcome` returns for the document `--format json` writes for the same invocation, which hold the `produced:` line and the `written to:` or `nothing written:` line, and exit 0. | Driver test (TC-3198): the `fsl` binary selects the format, so the code ticket adds the test in the filament-driver repository. |
+| FR-865-AC-16 | `fsl compile <request>` and `fsl compile <request> --output <file>` without `--format`, over a succeeding request, write the text form of the document `--format json` writes for the same invocation, whose header names `compile` as driver FR-002-AC-13 states and which holds the `produced:` line and the `written to:` or `nothing written:` line of AC-12 and AC-13, and exit 0. | Driver test (TC-3198): the `fsl` binary selects the format, so the code ticket adds the test in the filament-driver repository. |
 | FR-865-AC-17 | The text of FR-866-AC-3's `check_outcome` refusal holds the line `  hint: Supply the model in the request's models member, or with --model <identity>=<file> on fsl check.`; the text of its compile request with `models` `[]` holds the same line; the JSON `hint` of each is that text and `selection` is `model`. | Test (TC-3199) |
 | FR-865-AC-18 | The text of FR-099-AC-3's refusal of an import with no library supplied holds the line `  hint: Supply the library in the request's libraries member, or with --library <identity>=<file> on fsl check.`, and its JSON `selection` is `library`. | Test (TC-3199) |
 | FR-865-AC-19 | The text of FR-121-AC-35's refusal of `{test/other, big}` (`test/other` supplied but imported by no `import`) holds the line `  hint: Call a function of a library that the unit imports directly, or add the import.`, and its JSON `selection` is `unimported-library`. | Test (TC-3199) |
 | FR-865-AC-20 | The text of FR-098-AC-33's refusal of the `function_owner` `test/absent` holds the line `  hint: Name a function_owner that the program imports directly, or add the import.`, and its JSON `selection` is `function-owner`. | Test (TC-3199) |
 | FR-865-AC-21 | The text of FR-071-AC-5's refusal of a package reference with no matching byte-provision entry holds the line `  hint: Add a byte_provision entry for the named source to the replay request.`, and its JSON `selection` is `byte-provision`. | Test (TC-3199) |
 | FR-865-AC-22 | The text of a refusal of a unit whose `import "sibling/unit" as s;` names a supplied sibling unit of identity `sibling/unit` while no library is supplied as `sibling/unit` holds the line `  hint: Supply the imported unit as a library, not as a sibling unit.`, and its JSON `selection` is `sibling-unit`. | Test (TC-3199) |
-| FR-865-AC-23 | For each of the `source`, `extension-definition`, `package-reference` and `dependency` kinds, the diagnostic of its producer in FR-286 "Missing selections" renders a line `  hint: <text>` with `<text>` the table's text for the kind, byte for byte. | Test (TC-3199) |
+| FR-865-AC-23 | For each of the `extension-definition` and `package-reference` kinds, the diagnostic of its producer in FR-286 "Missing selections" renders a line `  hint: <text>` with `<text>` the table's text for the kind, byte for byte. | Test (TC-3199) |
 | FR-865-AC-24 | For every diagnostic of AC-17 to AC-23, the text's `  hint:` line equals the JSON diagnostic's `hint` member byte for byte, and no text line is `  hint: Import the package that supplies the selected name.`. | Test (TC-3199) |
 
 ## Dependencies

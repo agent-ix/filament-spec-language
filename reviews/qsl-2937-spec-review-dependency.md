@@ -31,3 +31,11 @@ Review set is the subset the dispatch named (base, ears, integrity, evidence, fa
 - FR-865-AC-18 (spec/functional/FR-865-render-every-outcome-document-as-text-the-cli-default.md, examined): The text of FR-1044's refusal of a component package that is no dependency of the request's package holds the line ` hint: Name a component package that the request's package lists as a dependency.`.
 - FR-286-AC-38 (spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md, examined): The outcome document of FR-1047-AC-1 serializes with one diagnostic whose `details` is exactly `{"missing":["/request/models",["/request/program","/request/package"],["/request/call","/request/clause","/request/items"]]}`; the document of FR-1047-AC-5's `native-analyze/1` run refusal serializes with `details` exactly `{"accepted":["native-run/1","native-monitor/1","native-replay/1"],"path":"/format"}`; every other member of both documents is as FR-286 states, and a document whose `details` carries neither member is byte-equal to the bytes written before this row.
 - FR-1047-AC-9 (spec/functional/FR-1047-name-every-request-defect-and-return-a-request-example.md, examined): `export_with_limits_and_overrides` with `ExportSelection::Ordinary` over `{"format":"native-run/1","request":3}` refuses `invalid-request`, stage `request`, exit 20, with message exactly `invalid clause request member /request: expected an object`; this requirement adds no `missing` list for it, since a `request` that is not an object has no members to list.
+
+## Dispositions
+
+Round 1, head 6b1b2799540a7015585d05a7aaf109ecf1501034 (rebased on origin/main; fix commit 6b1b279954).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | FR-027 and FR-810 are now `depends_on`. FR-665, FR-098, FR-071, FR-099, FR-109 and FR-121 are referenced, and the Dependencies prose is updated. `CompileOutcome` no longer gains a method: the size and path move into the FR-286 document. |

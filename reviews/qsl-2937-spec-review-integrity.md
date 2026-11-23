@@ -39,3 +39,22 @@ Review set is the subset the dispatch named (base, ears, integrity, evidence, fa
 - FR-865#rule-2 (spec/functional/FR-865-render-every-outcome-document-as-text-the-cli-default.md, examined): 2. One line per diagnostic, in document order, in FR-298's diagnostic form (`<path>:<line>:<column>: <code>: <message>`, or the source reference and byte offsets when the source is not provided). A diagnostic with a cause is followed by the line ` cause: <cause>`, a diagnostic with a `label` by ` label: <label>`, and a diagnostic with a `hint` (FR-286 "Fix hints") by ` hint: <hint>`, in that order, so the reader sees what went wrong, where, and what to change. A diagnostic with no `hint` member has no hint line; the renderer never composes a hint of its own. The one exception is a `missing_...
 - FR-865-AC-8 (spec/functional/FR-865-render-every-outcome-document-as-text-the-cli-default.md, examined): The text of FR-286-AC-28's `check` document follows its diagnostic line with ` cause: type-mismatch` and then ` hint: <text>`, `<text>` the diagnostic's `hint` byte for byte; the text of FR-286-AC-28's `io-error` document follows its diagnostic line with ` hint: <text>`, the diagnostic's `hint`; both hold for every diagnostic except a `missing_import` of cause `missing-selection` (AC-13 to AC-19); the texts of FR-286-AC-15's blank-label document (lines ` cause: blank-label` then ` label: <label>`) and of FR-286-AC-23's `output-failure` document, whose diagnostics have no `hint`, hold no lin...
 - FR-286#fix-hints (spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md, context_only): Every hint comes from one catalog keyed by the diagnostic's code and cause. The catalog lives in the crate that holds `OutcomeDiagnostic`, the outcome module of `fsl-replay`, as `fsl_replay::outcome::hint::HINTS: &[HintRow]`, each `HintRow { code: Code, cause: Option<&'static str>, text: &'static str }`, with the lookup `hint_for(code: Code, cause: Option<&str>) -> Option<&'static str>`. A row whose `cause` is `None` matches a diagnostic with no cause and no other. `OutcomeDiagnostic` takes its `hint` from `hint_for` when it is built, through every constructor; no producer, consumer or driv...
+
+## New findings (disposition pass 1)
+
+Found at head 6b1b2799540a7015585d05a7aaf109ecf1501034 while checking the fix round.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-005 | medium | 'Missing selections' says rows are also keyed by `selection` and that `hint_for` takes the selection as a third argument (FR-286:591-594). The Fix hints paragraph was edited in only one sentence. It still says 'Every hint comes from one catalog keyed by the diagnostic's code and cause', gives `HintRow { code, cause, text }` with no selection, gives the two-argument signature `hint_for(code: Code, cause: Option<&str>)`, and says 'The text is a function of the code and cause alone'. FR-286-AC-28, FR-286-AC-30, TC-3112 and TC-3113 still call `hint_for` with two arguments. Update the paragraph, the struct and the signature (and say how the two-argument call sites read), so that one section does not contradict the other. | spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md:591-594,606-615,944,946 |
+
+## Dispositions
+
+Round 1, head 6b1b2799540a7015585d05a7aaf109ecf1501034 (rebased on origin/main; fix commit 6b1b279954).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | Text is now rendered from the document only. `render_text` is removed, so FR-865-AC-3, the Description and driver text mode agree. |
+| FND-002 | fixed | The missing_import hint is now keyed by a serialized `selection`, which follows FR-286's own rule that distinct refusals get distinct keys. The text form writes the document's hint unchanged. Leftover inconsistencies in Fix hints are new FND-005. |
+| FND-003 | fixed | The item-record producers (FR-1044 component package, FR-280 absent source) are now explicitly excluded. No AC asks for a hint on them. |
+| FND-004 | fixed | A `package` document with `result` `null` renders the header line only. AC-1 and AC-15 pin it. |

@@ -40,3 +40,21 @@ Review set is the subset the dispatch named (base, ears, integrity, evidence, fa
 - FR-866-AC-9 (spec/functional/FR-866-check-a-unit-against-the-models-and-libraries-it-imports.md, examined): `check_outcome` over `tests/fixtures/spine-compile.native` (no `model` line) with the model selection `example:shop/model` refuses `invalid-request`, exit 20, with message exactly `invalid clause request member --model: --model example:shop/model is not selected by the source; the source selects no models`.
 - FR-286-AC-38 (spec/functional/FR-286-serialize-every-outcome-as-one-json-outcome-document.md, examined): The outcome document of FR-1047-AC-1 serializes with one diagnostic whose `details` is exactly `{"missing":["/request/models",["/request/program","/request/package"],["/request/call","/request/clause","/request/items"]]}`; the document of FR-1047-AC-5's `native-analyze/1` run refusal serializes with `details` exactly `{"accepted":["native-run/1","native-monitor/1","native-replay/1"],"path":"/format"}`; every other member of both documents is as FR-286 states, and a document whose `details` carries neither member is byte-equal to the bytes written before this row.
 - FR-1047-AC-9 (spec/functional/FR-1047-name-every-request-defect-and-return-a-request-example.md, examined): `export_with_limits_and_overrides` with `ExportSelection::Ordinary` over `{"format":"native-run/1","request":3}` refuses `invalid-request`, stage `request`, exit 20, with message exactly `invalid clause request member /request: expected an object`; this requirement adds no `missing` list for it, since a `request` that is not an object has no members to list.
+
+## New findings (disposition pass 1)
+
+Found at head 6b1b2799540a7015585d05a7aaf109ecf1501034 while checking the fix round.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-004 | high | `render_outcome` takes a typed `&OutcomeDocument` (fsl-inspect/src/render.rs:261-267) and reads `last_stage` from its serialization. `OutcomeStage` (fsl-replay/src/outcome.rs:141-166) has no `I2` variant and no way to hold an arbitrary string, and the published schema's `last_stage` enum excludes both. So AC-10's document with `last_stage` `X9`, and AC-9's `I2` case, cannot be built and passed to `render_outcome`. As written, no test can exercise those cases. Either state them over the stage-word map itself (a pub function from label string to word), or say that `OutcomeStage` gains `I2` and drop the unknown-label case. | spec/functional/FR-865-render-every-outcome-document-as-text-the-cli-default.md: FR-865-AC-9, FR-865-AC-10, Stage words |
+
+## Dispositions
+
+Round 1, head 6b1b2799540a7015585d05a7aaf109ecf1501034 (rebased on origin/main; fix commit 6b1b279954).
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | AC-16 is a Driver test of `fsl compile` with and without `--output`, delegated as AC-3 is. See scope-boundary FND-004 for its header. |
+| FND-002 | fixed | The 'byte-equal to the bytes before' clauses are replaced by exact properties and schema validation. |
+| FND-003 | fixed | Each kind now cites a concrete source AC or an input: FR-099-AC-3, FR-121-AC-35, FR-098-AC-33, FR-071-AC-5 (all verified to exist and to state those refusals), and an explicit sibling-unit input. |
