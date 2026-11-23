@@ -25,6 +25,8 @@ relationships:
     type: implements
   - target: ix://agent-ix/filament-specification/FR-336
     type: references
+  - target: ix://agent-ix/filament-spec-language/FR-1047
+    type: references
 ---
 # FR-862: Read a replay request file and replay it
 
@@ -79,16 +81,17 @@ result; the exit code is FR-285's for its category.
 - The reader SHALL refuse at stage `request`, `invalid-request`, naming the
   member, before any replay: a `clocks` member of `R` (FR-640: replay reads
   its clocks from the proving package), any other member outside the list
-  above, and a missing member the mapping requires (the first absent one in the
-  order of the list above, `profile_selections` first). A `byte_provision` file that is missing or exceeds the ceilings is
+  above, and missing members the mapping requires, which are listed at once
+  as [FR-1047](FR-1047-name-every-request-defect-and-return-a-request-example.md)
+  states, in the order of the list above. A `byte_provision` file that is missing or exceeds the ceilings is
   refused at stage `request` naming its `bytes_path`.
 - A request that decodes but that FR-071 refuses at construction SHALL be
   reported with FR-071's code and cause at stage `request`; a request that
   FR-098 refuses is reported with FR-098's refusal, and a replay that runs
   is reported with FR-072's result. None of them is reported as a format
   error.
-- The analyze reader SHALL refuse a `native-replay/1` file, and the replay
-  reader an analyze document, with `invalid-request` naming `format`, as FR-620 refuses a mismatched analyze document.
+- The analyze reader does not read a `native-replay/1` file; it is refused as
+  FR-1047 refuses a format an entry does not read.
 - If a row of the replay's FSpec FR-323 `results` document cannot be
   serialized, the replay verb SHALL report FR-301 internal-failure, exit 30,
   from S8's output step: the outcome document carries one diagnostic with
@@ -101,7 +104,7 @@ result; the exit code is FR-285's for its category.
 
 | ID | Criteria | Verification |
 |----|----------|--------------|
-| FR-862-AC-1 | Through `command::run`, a `native-replay/1` request whose `R` is a complete FSpec FR-336 replay request with an added member `clocks` refuses at stage `request`, `invalid-request`, exit 20, naming `clocks`, with no result on stdout; the same request with an added member `extra` refuses naming `extra`; a `native-replay/1` request with an empty `R` refuses naming the first required member. None is refused as an unknown request format. | Test (TC-2443) |
+| FR-862-AC-1 | Through `command::run`, a `native-replay/1` request whose `R` is a complete FSpec FR-336 replay request with an added member `clocks` refuses at stage `request`, `invalid-request`, exit 20, naming `clocks`, with no result on stdout; the same request with an added member `extra` refuses naming `extra`; a `native-replay/1` request with an empty `R` refuses with `details.missing` holding the pointers of all fourteen members from `/request/profile_selections` to `/request/byte_provision` in the order of the list above (FR-1047). None is refused as an unknown request format. | Test (TC-2443) |
 | FR-862-AC-2 | Through `command::run`, the `native-replay/1` request carrying FR-640-AC-11's replay of the function `entry` (its package with `test/plant` as its one `dependencies` entry and its sources in `byte_provision` files) settles `reproduced-without-witness` with the value the in-process `fsl_replay::replay` gives, exit 0; the same request with the package's `lib-ms` `dependency_clock_selections` entry removed refuses `missing-clock-selection` as FR-640-AC-11 states. | Test (TC-2443) |
 | FR-862-AC-3 | A replay whose results row at position 0 fails to encode writes an outcome document with `category` `internal-failure`, exit 30, `last_stage` `null` and one `output-failure` diagnostic naming position 0, and writes no `results` document. | Test (TC-2443) |
 

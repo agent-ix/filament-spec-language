@@ -23,7 +23,7 @@ request to FR-072's result. Scope: FR-862-AC-1 to FR-862-AC-3.
 
 ## Expected Results
 
-- Step 1: `reproduced-without-witness` with the in-process value, exit 0; then stage `request`, `invalid-request`, exit 20, naming `clocks`, `extra` and the first required member respectively, none as an unknown format.
+- Step 1: `reproduced-without-witness` with the in-process value, exit 0; then stage `request`, `invalid-request`, exit 20, naming `clocks` and `extra`, and for the empty `R` listing all fourteen members in `details.missing` in FR-862's order (FR-1047), none as an unknown format.
 - Step 2: `missing-clock-selection` naming `lib-ms` and `test/plant`.
 - Step 3: `internal-failure`, exit 30, `last_stage` `null`, one `output-failure` diagnostic naming position 0, and no `results` document.
 
