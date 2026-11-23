@@ -1711,7 +1711,7 @@ mod tests {
             &changes,
             nodes,
             source_map,
-            retained.source_map.clone(),
+            (*retained.source_map).clone(),
             limits,
         )
         .expect("the final writer emits rekeyed scalar functions");
