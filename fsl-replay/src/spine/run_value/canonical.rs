@@ -158,6 +158,11 @@ impl Forms<'_> {
             .checked_add(1)
             .ok_or(ReadStop::Fault("canonical-preorder-fits-u64"))?;
         if matches!(declared, ValueType::Population(_)) {
+            // Any other kind of value (a tagged canonical value, a bare scalar) is a
+            // different kind than the Population selection the parameter takes.
+            if form.get("population").is_none() {
+                return Err(wrong_kind(path));
+            }
             identity_form::closed(form, &["population"], path)?;
             return Ok(json!({"population": position.copied_selector(&form["population"], node)?}));
         }

@@ -230,6 +230,18 @@ fn current_clause_request() -> Value {
     request
 }
 
+/// FSpec FR-181's tagged canonical reference to the ConfigVersion `key`.
+fn canonical_reference(key: &str) -> Value {
+    let declaration = json!({
+        "package": spine::PACKAGE_IDENTITY,
+        "path": ["model", "object_type", format!("ix://{}/ConfigVersion", spine::PACKAGE_IDENTITY)],
+        "ordinal": 0
+    });
+    let identity: String = key.bytes().map(|byte| format!("{byte:02x}")).collect();
+    json!({"type": "reference", "universe": declaration.clone(),
+        "object_type": declaration, "identity": identity})
+}
+
 /// `command::run` in process over `request` written beside the case.
 fn run_clause_file(path: &Path, request: &Value) -> Output {
     std::fs::write(
@@ -958,14 +970,13 @@ fn clause_run_reader_diagnoses_deep_function_argument() {
 #[test]
 fn clause_run_command_routes_function_and_frame() {
     let directory = tempfile::tempdir().unwrap();
-    let population = format!("ix://{}/config_history", spine::PACKAGE_IDENTITY);
     let path = directory.path().join(Case::Distinct.id());
     let in_process = run_clause(build(&path, Case::Distinct)).unwrap();
     let mut request = current_clause_request();
     request["request"]["clause"]["selection"] = json!({"function": {
         "name": "sameIdentity", "snapshot": "current", "arguments": [
-            {"parameter":"a", "value":{"reference":{"population":population,"key":"child"}}},
-            {"parameter":"b", "value":{"reference":{"population":population,"key":"root"}}}
+            {"parameter":"a", "value":canonical_reference("child")},
+            {"parameter":"b", "value":canonical_reference("root")}
         ]
     }});
     let output = run_clause_file(&path, &request);
@@ -1046,10 +1057,7 @@ fn function_claim_maps_population_and_reference_arguments_by_role() {
         "snapshot": "current",
         "arguments": [
             {"parameter": "p", "value": {"population": history_population}},
-            {"parameter": "r", "value": {"reference": {
-                "population": history_population,
-                "key": "child"
-            }}}
+            {"parameter": "r", "value": canonical_reference("child")}
         ]
     }});
     let output = run_clause_file(&path, &request);

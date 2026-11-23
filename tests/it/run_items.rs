@@ -866,34 +866,7 @@ fn canonical_reference(key: &str) -> Value {
 }
 
 const POPULATION_CLAIMS: &str = "function nonempty using v(p: Population<Config::ConfigVersion>[4]): \
-    Boolean pure { size(allInstances<Config::ConfigVersion>(p)) > 0 }\n\
-    function undefinedClaim using v(p: Population<Config::ConfigVersion>[0], r: Config::ConfigVersion): \
-    Boolean pure { lookup<Config::ConfigVersion>(p, r) absent undefined = r }\n\
-    function missingVersion using v(p: Population<Config::ConfigVersion>[0], r: Config::ConfigVersion): \
-    Config::ConfigVersion pure { lookup<Config::ConfigVersion>(p, r) absent undefined }\n";
-
-fn empty_population() -> String {
-    format!("ix://{}/empty_history", spine::PACKAGE_IDENTITY)
-}
-
-/// Declare a complete, empty `ConfigVersion` population `empty_history` in
-/// the model and the healthy snapshot.
-fn add_empty_population(directory: &Path) {
-    let model_path = directory.join("spine-model.semantic-ir.json");
-    let mut model: Value = serde_json::from_slice(&std::fs::read(&model_path).unwrap()).unwrap();
-    let mut empty = model["populations"][0].clone();
-    empty["identity"] = json!(empty_population());
-    empty["displayName"] = json!(empty_population());
-    empty["origin"]["generated"]["generatorIdentity"] = json!(empty_population());
-    empty["origin"]["generated"]["inputIdentities"] = json!([empty_population()]);
-    model["populations"].as_array_mut().unwrap().push(empty);
-    std::fs::write(&model_path, serde_json::to_vec(&model).unwrap()).unwrap();
-    let snapshot_path = directory.join("spine-snapshot.json");
-    let mut snapshot: Value = serde_json::from_slice(&std::fs::read(&snapshot_path).unwrap()).unwrap();
-    snapshot["populations"].as_array_mut().unwrap().push(json!({
-        "population": empty_population(), "complete": true, "objects": []}));
-    std::fs::write(&snapshot_path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
-}
+    Boolean pure { size(allInstances<Config::ConfigVersion>(p)) > 0 }\n";
 
 fn function_claim(directory: &Path, name: &str, arguments: Value) -> Output {
     canonical_function_claim(directory, name, arguments, None)
@@ -999,10 +972,9 @@ fn function_selection_refuses_a_reference_the_snapshot_does_not_hold() {
     assert_eq!(direct_report(directory.path()), (20, None));
 }
 
-/// FR-312-AC-11: a reference whose universe or object type names no
-/// declaration of the package refuses; an argument of the wrong kind for its
-/// parameter refuses `wrong-value-kind`; the untagged `reference` and
-/// `type: population` spellings are not canonical.
+/// FR-312-AC-11: an argument of the wrong kind for its parameter, an
+/// unknown declaration in a reference, and the untagged or retagged spellings
+/// each refuse as a typed argument refusal, never a fault.
 #[test]
 #[trace("TC-1706", "FR-312-AC-11")]
 fn function_selection_refuses_mistyped_and_untagged_arguments() {
@@ -1010,71 +982,144 @@ fn function_selection_refuses_mistyped_and_untagged_arguments() {
     write_cases(directory.path());
     extend_unit(directory.path(), SAME);
     extend_unit(directory.path(), POPULATION_CLAIMS);
-    let held = json!({"population": population()});
     let mut unknown_type = canonical_child();
     unknown_type["object_type"]["path"] = json!(["model", "object_type", "ix://elsewhere/Nothing"]);
-    for (name, arguments) in [
+    for (name, arguments, cause) in [
         ("sameIdentity", json!([
-            {"parameter": "a", "value": held.clone()},
-            {"parameter": "b", "value": canonical_child()}])),
-        ("nonempty", json!([{"parameter": "p", "value": canonical_child()}])),
-        ("nonempty", json!([{"parameter": "p", "value": {"type": "text", "value": "ab"}}])),
-        ("nonempty", json!([{"parameter": "p", "value": {"type": "population", "population": population()}}])),
+            {"parameter": "a", "value": {"population": population()}},
+            {"parameter": "b", "value": canonical_child()}]), "wrong-value-kind"),
+        ("sameIdentity", json!([
+            {"parameter": "a", "value": {"type": "text", "value": "ab"}},
+            {"parameter": "b", "value": canonical_child()}]), "wrong-value-kind"),
         ("sameIdentity", json!([
             {"parameter": "a", "value": {"reference": child()}},
-            {"parameter": "b", "value": canonical_child()}])),
+            {"parameter": "b", "value": canonical_child()}]), "wrong-value-kind"),
+        ("nonempty", json!([{"parameter": "p", "value": canonical_child()}]), "wrong-value-kind"),
+        ("nonempty", json!([{"parameter": "p", "value": {"type": "text", "value": "ab"}}]),
+            "wrong-value-kind"),
+        ("nonempty", json!([{"parameter": "p", "value": {
+            "type": "population", "population": population()}}]), "unknown-member"),
         ("sameIdentity", json!([
             {"parameter": "a", "value": unknown_type},
-            {"parameter": "b", "value": canonical_child()}])),
+            {"parameter": "b", "value": canonical_child()}]), ""),
     ] {
-        let output = function_claim(directory.path(), name, arguments.clone());
-        assert_eq!(output.status.code(), Some(20), "{arguments}: {output:?}");
-        let document: Value = serde_json::from_slice(&output.stdout).unwrap();
+        let document = claim_document(&function_claim(directory.path(), name, arguments.clone()), 20);
         let refusal = &document["disposition"]["refusal"];
         assert_eq!(document["disposition"]["stage"], "admit", "{arguments}: {document}");
-        assert!(refusal["code"].is_string(), "{arguments}: {document}");
-        assert!(document["disposition"]["truth"].is_null(), "{arguments}: {document}");
+        assert_eq!(refusal["code"].as_str().is_some(), true, "{arguments}: {document}");
         assert_ne!(document["disposition"]["category"], "fault", "{arguments}: {document}");
-        if arguments[0]["value"].get("reference").is_some() || arguments[0]["value"].get("population").is_some()
-            || name == "nonempty"
-        {
+        assert!(document["disposition"]["truth"].is_null(), "{arguments}: {document}");
+        if !cause.is_empty() {
             assert_eq!(refusal["code"], "invalid_runtime_input", "{arguments}: {document}");
-            assert_eq!(refusal["cause"], "wrong-value-kind", "{arguments}: {document}");
+            assert_eq!(refusal["cause"], cause, "{arguments}: {document}");
         }
     }
 }
 
-/// The two shop cases of QSL-2882: a Population and a Reference argument
-/// reach `lookup`, which is undefined outside the selected population, so
-/// the claim is refuted (exit 10) and the call completes undefined.
+/// FSpec FR-181's tagged canonical reference to the shop `Order` `key`.
+fn shop_reference(key: &str) -> Value {
+    let order = json!({
+        "package": "example/shop-outcomes",
+        "path": ["model", "object_type", "ix://example/shop-outcomes/Order"],
+        "ordinal": 0
+    });
+    let identity: String = key.bytes().map(|byte| format!("{byte:02x}")).collect();
+    json!({"type": "reference", "universe": order.clone(), "object_type": order,
+        "identity": identity})
+}
+
+/// Write the shop-outcomes model, rules and snapshot of filament-examples'
+/// shop/claim-function-undefined and shop/outcomes-undefined-call into
+/// `directory`.
+fn write_shop_outcomes(directory: &Path) {
+    let order = "ix://example/shop-outcomes/Order";
+    let population = |name: &str| json!({
+        "identity": format!("ix://example/shop-outcomes/{name}"), "displayName": name,
+        "kind": {"module": "example/shop-outcomes", "name": "population"},
+        "members": [order], "extent": "closed",
+        "origin": {"generated": {"generatorVersion": "1.0.0",
+            "generatorIdentity": format!("ix://example/shop-outcomes/{name}"),
+            "inputIdentities": [format!("ix://example/shop-outcomes/{name}")]}}});
+    let construct = |name: &str, meaning: &str| json!({
+        "kind": {"module": "example/shop-outcomes", "name": name},
+        "moduleVersion": "1.0.0",
+        "construct": {"identity": "none", "shape": "record", "members": {}, "meaning": meaning}});
+    let model = json!({
+        "contractVersion": "2.0.0", "canonicalization": {"algorithm": "rfc8785-v1"},
+        "source": {"identity": "ix://example/shop-outcomes/spec", "version": "1.0.0",
+            "dialect": "spec-bundle"},
+        "package": {"identity": "example/shop-outcomes", "version": "1.0.0",
+            "mappingVersions": [], "profileVersions": []},
+        "occurrences": [], "extensions": [],
+        "constructs": [
+            construct("object_type", "filament.meaning.model.object-type/v1"),
+            construct("population", "filament.meaning.model.population/v1")],
+        "types": [{"identity": order, "displayName": "Order",
+            "kind": {"module": "example/shop-outcomes", "name": "object_type"},
+            "roles": [], "constraints": [], "extensions": [], "unknownPolicy": "reject",
+            "supertypes": [], "fields": [], "operations": [],
+            "origin": {"generated": {"generatorIdentity": order, "generatorVersion": "1.0.0",
+                "inputIdentities": [order]}}}],
+        "populations": [population("orders"), population("lookupTargets")]});
+    let snapshot = json!({
+        "format": "filament.state.snapshot/v1",
+        "identity": {"authority": "example",
+            "identity": "ix://example/shop-outcomes/data/outcomes-undefined-call"},
+        "model": {"identity": "example/shop-outcomes"},
+        "observation": "current", "anchor": {"kind": "handler", "name": "query"},
+        "populations": [
+            {"population": "ix://example/shop-outcomes/orders", "complete": true, "objects": []},
+            {"population": "ix://example/shop-outcomes/lookupTargets", "complete": true,
+                "objects": [{"key": "target", "type": order, "fields": {}}]}]});
+    let rules = "language \"ix:native\" edition \"1-draft\";\n\
+        profile v = \"filament.model.complete/v1\";\n\
+        model Shop = \"example/shop-outcomes\";\n\
+        function undefinedClaim using v(p: Population<Shop::Order>[0], r: Shop::Order): \
+        Boolean pure { lookup<Shop::Order>(p, r) absent undefined = r }\n\
+        function missingOrder using v(p: Population<Shop::Order>[0], r: Shop::Order): \
+        Shop::Order pure { lookup<Shop::Order>(p, r) absent undefined }\n";
+    std::fs::write(directory.join("model.json"), serde_json::to_vec(&model).unwrap()).unwrap();
+    std::fs::write(directory.join("data.json"), serde_json::to_vec(&snapshot).unwrap()).unwrap();
+    std::fs::write(directory.join("rules.fsl"), rules).unwrap();
+}
+
+fn shop_request(directory: &Path, member: &str, body: Value) -> Output {
+    let source = |file: &str, identity: &str| json!({"file": file, "authority": "example",
+        "identity": identity, "document": "shop", "formal_revision": 1});
+    let mut inner = json!({
+        "models": [{"format": "semantic-ir/2.0.0",
+            "source": source("model.json", "example/shop-outcomes/model")}],
+        "program": {"source": source("rules.fsl", "example:shop/claim-functions")}});
+    inner[member] = body;
+    std::fs::write(directory.join("request.json"),
+        serde_json::to_vec(&json!({"format": "native-run/1", "request": inner})).unwrap()).unwrap();
+    run_file(&directory.join("request.json"))
+}
+
+/// QSL-2882: filament-examples' shop/claim-function-undefined and
+/// shop/outcomes-undefined-call with their Population and Reference
+/// arguments in the typed forms. `lookup` finds `target` in no member of the
+/// selected empty population, so the claim is refuted (exit 10) and the call
+/// refuses nothing.
 #[test]
 #[trace("TC-1706", "FR-312-AC-11")]
-fn undefined_lookup_claim_with_population_and_reference_arguments_is_refuted() {
+fn shop_undefined_lookup_requests_run_with_typed_arguments() {
     let directory = tempfile::tempdir().unwrap();
-    write_cases(directory.path());
-    add_empty_population(directory.path());
-    extend_unit(directory.path(), POPULATION_CLAIMS);
+    write_shop_outcomes(directory.path());
     let arguments = json!([
-        {"parameter": "p", "value": {"population": empty_population()}},
-        {"parameter": "r", "value": canonical_reference("target_absent_from_p")}]);
-    // `child` lives in config_history, not in the empty population.
-    let arguments = {
-        let mut arguments = arguments;
-        arguments[1]["value"] = canonical_reference("child");
-        arguments
-    };
-    let document = claim_document(
-        &function_claim(directory.path(), "undefinedClaim", arguments.clone()), 10);
+        {"parameter": "p", "value": {"population": "ix://example/shop-outcomes/orders"}},
+        {"parameter": "r", "value": shop_reference("target")}]);
+    let output = shop_request(directory.path(), "clause", json!({
+        "selection": {"function": {"name": "undefinedClaim", "arguments": arguments,
+            "snapshot": "current"}},
+        "observations": {"current": "data.json"}}));
+    let document = claim_document(&output, 10);
     assert_eq!(document["disposition"]["category"], "violation", "{document}");
     assert_eq!(document["disposition"]["truth"], false, "{document}");
     assert_eq!(direct_report(directory.path()), (10, Some(false)));
 
-    let output = request(
-        directory.path(),
-        "call",
-        json!({"function": "missingVersion", "snapshot": "spine-snapshot.json",
-            "arguments": arguments}),
-    );
+    let output = shop_request(directory.path(), "call", json!({
+        "function": "missingOrder", "snapshot": "data.json", "arguments": arguments}));
     assert_eq!(output.status.code(), Some(10), "{output:?}");
 }
 
