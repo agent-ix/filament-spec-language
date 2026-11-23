@@ -216,6 +216,59 @@ pub fn check_contract(
     })
 }
 
+/// What reading a received `contract-counterexample` gave (FSpec FR-485
+/// "Replay").
+pub(crate) enum ReceivedContract {
+    /// The replay reproduced the violation, with its wire spelling.
+    Reproduced(Box<ReproducedContractViolation>, Box<ContractWire>),
+    /// The replay did not reproduce it.
+    NotReproduced,
+    /// It is bound, and this reader holds no implementation engine.
+    ReplayRefused,
+}
+
+/// Read `received`, a counterexample a provider returned for `request`'s
+/// claim, by replaying it over the item's own subject (FSpec FR-485
+/// "Replay"; FR-968 "Verdicts").
+///
+/// # Errors
+///
+/// [`ContractRefusal`] when the item settles without a replay.
+pub(crate) fn read_received(
+    request: ContractRequest<'_>,
+    received: &ContractCounterexample,
+) -> Result<ReceivedContract, ContractRefusal> {
+    let form = request.claim.form();
+    if let Some(reason) = request.claim.refusal() {
+        return Err(ContractRefusal::Unsupported(form, reason));
+    }
+    let (concrete, abstract_system) = open(&request)?;
+    let target = match ContractTarget::new(
+        request.claim,
+        request.package,
+        &concrete,
+        abstract_system.as_ref(),
+    )
+    .map_err(ContractRefusal::Fault)?
+    {
+        Ok(target) => target,
+        Err(reason) => return Err(ContractRefusal::Unsupported(form, reason)),
+    };
+    let read = target.read(received).map_err(ContractRefusal::Fault)?;
+    Ok(match read {
+        fsl_replay::contract_check::ReadCounterexample::Reproduced(reproduced) => {
+            let wire = target.wire(reproduced.counterexample());
+            ReceivedContract::Reproduced(reproduced, Box::new(wire))
+        }
+        fsl_replay::contract_check::ReadCounterexample::NotReproduced => {
+            ReceivedContract::NotReproduced
+        }
+        fsl_replay::contract_check::ReadCounterexample::ReplayRefused => {
+            ReceivedContract::ReplayRefused
+        }
+    })
+}
+
 /// The model systems one item reads: the subject's, and for a simulation
 /// item the refinement's abstract system beside it.
 type Systems<'a> = (ModelSystem<'a>, Option<ModelSystem<'a>>);
