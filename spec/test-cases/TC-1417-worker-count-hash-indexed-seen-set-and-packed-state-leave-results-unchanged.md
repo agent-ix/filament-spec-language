@@ -50,8 +50,7 @@ results, except where it says otherwise.
    `max_candidates` set so the one-worker run stops at its seventh expanded
    state, with a later state made to finish first; with a delayed cancel;
    and with `workers` 0.
-9. The statistical runs of FR-191-AC-6 (`max_samples` 1,000 and 100) with a sampler double that finishes
-   higher trace indices first; a delayed cancel with `workers` 4; `workers` 0.
+9. `NoFault` with Okamoto at `max_samples` 1,000; `P95` with SPRT held undecided through 100 counted samples and at `max_samples` 100, using a sampler double that finishes higher trace indices first; a delayed cancel with `workers` 4; `workers` 0.
 
 Tag each test `#[trace("TC-1417", "<AC id>")]` with its AC.
 
@@ -75,6 +74,4 @@ Tag each test `#[trace("TC-1417", "<AC id>")]` with its AC.
 - Step 8: equal verdict, counterexample, certificate bytes and stop for
   every count; the same `MaxCandidates` stop at the seventh state; `Stopped{Cancelled, None}`
   with counts and frontier of a one-worker prefix for the delayed cancel; the `workers` 0 refusal.
-- Step 9: byte-equal results and provenance; the `max_samples` 100 run counts
-  no sample beyond trace index 99; the cancelled run equals the one-worker
-  result at its trace index; the refusal.
+- Step 9: the Okamoto run is a preflight stop with required N 9,210,341 and zero samples/draws; byte-equal SPRT results and provenance; the `max_samples` 100 run counts no sample beyond trace index 99; the cancelled run equals the one-worker result at its trace index; the refusal.
