@@ -1066,6 +1066,7 @@ fn genuine_witness_replay_retains_record_absence_regions_and_disagreement() {
         code,
         message,
         region,
+        ..
     } = linked.as_ref()
     else {
         panic!("the unproved divisor is a compile refusal: {linked}");
