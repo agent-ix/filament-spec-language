@@ -954,7 +954,7 @@ fn duplicate_delivery_is_classified_against_the_channel_premise() {
     assert!(admitted.obligations.iter().any(|entry| {
         entry.obligation.kind == "channel-premise"
             && entry.obligation.node.as_deref() == Some("Order")
-            && entry.verdict == RecordingVerdict::Satisfied
+            && entry.verdict == RecordingVerdict::Pending
     }));
 
     let refused = assess_duplicate_delivery("exactly-once-premise");

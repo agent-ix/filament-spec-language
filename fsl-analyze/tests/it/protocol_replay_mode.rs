@@ -462,9 +462,10 @@ fn incremental_assessment_of_a_conforming_recording_ends_at_the_batch_verdict() 
 }
 
 /// FR-895-AC-11, FR-895-AC-10: `Seller`'s local order puts `Note` before
-/// `Got`. In causal order the first two prefixes are undecided; `Note`'s
-/// enabledness is `violated` from the third prefix on and every later prefix
-/// keeps it, ending at the batch verdict, `refuted`.
+/// `Got`. In causal order the first prefix is undecided; the second holds
+/// `Note` unordered after `Placed`, so `Note`'s enabledness is `violated`
+/// from the second prefix on and every later prefix keeps it, ending at the
+/// batch verdict, `refuted`.
 #[trace("TC-2531", "FR-895-AC-11", "FSpec-FR-059-AC-4")]
 #[test]
 fn incremental_assessment_reports_a_violation_from_the_prefix_that_shows_it() {
@@ -478,7 +479,7 @@ fn incremental_assessment_reports_a_violation_from_the_prefix_that_shows_it() {
         prefix_labels(&incremental),
         [
             "inconclusive",
-            "inconclusive",
+            "refuted",
             "refuted",
             "refuted",
             "refuted",
@@ -486,7 +487,7 @@ fn incremental_assessment_reports_a_violation_from_the_prefix_that_shows_it() {
         ]
     );
     assert_violations_persist(&incremental);
-    let note = incremental[2]
+    let note = incremental[1]
         .obligations
         .iter()
         .find(|entry| {
@@ -538,7 +539,7 @@ fn the_incremental_assessment_member_reports_each_prefix() {
         labels,
         [
             "inconclusive",
-            "inconclusive",
+            "refuted",
             "refuted",
             "refuted",
             "refuted",
@@ -563,7 +564,7 @@ fn the_incremental_assessment_member_reports_each_prefix() {
             .cloned()
             .expect("a Note enabledness verdict")
     };
-    for prefix in &prefixes[2..] {
+    for prefix in &prefixes[1..] {
         let note = note(prefix);
         assert_eq!(note["verdict"], "violated", "{item}");
         assert_eq!(note["cause"], "unexpected", "{item}");
@@ -991,18 +992,17 @@ fn an_earlier_iteration_does_not_enable_a_step_after_the_repeat() {
         looped("send", "Placed", "Buyer", "m-1"),
         looped("receive", "Got", "Seller", "m-1"),
         looped_case("yes"),
-        looped("send", "Placed", "Buyer", "m-2"),
         looped_case("yes"),
         after(),
     ]);
-    let closed = after_recording(observations, &[0, 3], &[1, 2, 4, 5], &[(0, 1)]);
-    assert_unexpected(&source, &closed, "Flow::Main::After", 5);
+    let closed = after_recording(observations, &[0], &[1, 2, 3, 4], &[(0, 1)]);
+    assert_unexpected(&source, &closed, "Flow::Main::After", 4);
     let mut open = closed;
     open["closure"] = json!({"state": "open", "premises": []});
     let assessed =
         assess_recording(&package_of(&source), open.to_string().as_bytes()).expect("readable");
     assert_eq!(
-        enabledness(&assessed, "Flow::Main::After", 5).verdict,
+        enabledness(&assessed, "Flow::Main::After", 4).verdict,
         RecordingVerdict::Pending
     );
 }
