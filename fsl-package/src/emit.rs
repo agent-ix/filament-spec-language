@@ -3043,12 +3043,17 @@ fn owner_is_locked(node: &SemanticNode, source: &RawSourceRef, models: &BTreeSet
 /// Which candidates the wire omits, and why: an unsupported form, a
 /// declaration without its occurrence, a nominal owner the lock does not
 /// select, a name outside the graph, and then, transitively, a name of an
-/// omitted node. A requirement record's claim node also names every node
-/// the record names (`record_names`, read only when some node is omitted):
-/// an application whose `claim`/`value_validity` record cannot be written is
-/// omitted with it, so no written scalar operation lacks its record (FR-062
-/// "Packaging is all-or-nothing", FSpec FR-825). The result is in candidate
-/// order.
+/// omitted node. The result is in candidate order.
+///
+/// Requirement records (FSpec FR-825) join the closure as well, read only
+/// when some node is omitted (FR-062 "Packaging is all-or-nothing"). A
+/// `value-validity` record belongs to one occurrence in its owner's body:
+/// when a node it names other than its owner and application is omitted,
+/// its owner is omitted, since that body cannot be written without the
+/// occurrence's record. Its application, which several owners' records may
+/// share, is omitted only once every record of it has an omitted owner, so a
+/// written application always keeps a written record. Any other record's
+/// claim node is omitted with a node the record names.
 fn omissions(
     ids: &StructuralIds,
     candidates: &Candidates<'_>,
@@ -3056,7 +3061,7 @@ fn omissions(
     decodes: &dyn Fn(CheckedNodeTag, &str) -> bool,
     external: &HashSet<NodeKey>,
     models: &BTreeSet<&str>,
-    record_names: &dyn Fn() -> Result<Vec<(NodeKey, Vec<NodeKey>)>, EmitRefusal>,
+    record_names: &dyn Fn() -> Result<Vec<value_validity_requirements::RecordNames>, EmitRefusal>,
 ) -> Result<Vec<(usize, OmittedNode)>, EmitRefusal> {
     let mut omitted: Vec<Option<OmissionCause>> = vec![None; candidates.order.len()];
     for (position, candidate) in candidates.values().enumerate() {
@@ -3089,31 +3094,73 @@ fn omissions(
     let mut pending: VecDeque<usize> = (0..omitted.len())
         .filter(|&position| omitted[position].is_some())
         .collect();
+    // Each name a record holds, to the node its omission takes with it.
     let mut record_named_by: HashMap<NodeKey, Vec<usize>> = HashMap::new();
+    // Each shared application, to the owners of its records; `None` once an
+    // owner is no candidate, which is never omitted.
+    let mut applications: BTreeMap<usize, Option<Vec<usize>>> = BTreeMap::new();
     if !pending.is_empty() {
-        for (claim, names) in record_names()? {
-            let Some(&position) = candidates.index.get(&claim) else {
+        for record in record_names()? {
+            let claim = candidates.index.get(&record.claim).copied();
+            let target = match &record.owner {
+                Some(owner) => {
+                    let owner = candidates.index.get(owner).copied();
+                    if let Some(application) = claim {
+                        let owners = applications.entry(application).or_insert(Some(Vec::new()));
+                        match (owners.as_mut(), owner) {
+                            (Some(owners), Some(owner)) => owners.push(owner),
+                            _ => *owners = None,
+                        }
+                    }
+                    owner
+                }
+                None => claim,
+            };
+            let Some(target) = target else {
                 continue;
             };
-            for name in names {
-                record_named_by.entry(name).or_default().push(position);
+            for name in record.names {
+                record_named_by.entry(name).or_default().push(target);
             }
         }
     }
-    while let Some(gone) = pending.pop_front() {
-        let gone_key = &candidates.order[gone].key;
-        for &dependent in named_by
-            .get(gone_key)
-            .into_iter()
-            .chain(record_named_by.get(gone_key))
-            .flatten()
-        {
-            if omitted[dependent].is_none() {
-                omitted[dependent] = Some(OmissionCause::NamesOmittedNode(
-                    candidates.order[gone].id.clone(),
-                ));
-                pending.push_back(dependent);
+    loop {
+        while let Some(gone) = pending.pop_front() {
+            let gone_key = &candidates.order[gone].key;
+            for &dependent in named_by
+                .get(gone_key)
+                .into_iter()
+                .chain(record_named_by.get(gone_key))
+                .flatten()
+            {
+                if omitted[dependent].is_none() {
+                    omitted[dependent] = Some(OmissionCause::NamesOmittedNode(
+                        candidates.order[gone].id.clone(),
+                    ));
+                    pending.push_back(dependent);
+                }
             }
+        }
+        // An application whose every record lost its owner, named by its
+        // least omitted owner.
+        for (&application, owners) in &applications {
+            let Some(owners) = owners else {
+                continue;
+            };
+            if omitted[application].is_some()
+                || owners.is_empty()
+                || owners.iter().any(|&owner| omitted[owner].is_none())
+            {
+                continue;
+            }
+            let owner = owners.iter().min().copied().unwrap_or(application);
+            omitted[application] = Some(OmissionCause::NamesOmittedNode(
+                candidates.order[owner].id.clone(),
+            ));
+            pending.push_back(application);
+        }
+        if pending.is_empty() {
+            break;
         }
     }
     Ok(omitted

@@ -26,23 +26,34 @@ type Records = HashMap<OccurrenceKey, ValueValidityRecord>;
 type Omitted = HashMap<NodeKey, OmissionCause>;
 
 /// The record nodes [`append`] writes, by claim, and the record nodes it
-/// omits because their application is omitted.
+/// omits because their owner function is omitted.
 pub(super) struct Appended {
     pub(super) records: Records,
-    /// Each with its application's cause.
+    /// Each with cause `NamesOmittedNode` naming its omitted owner.
     pub(super) omitted: Vec<OmittedNode>,
 }
 
-/// The nodes a requirement record names beside its claim node: its extent's
-/// domain nodes, and for a `value-validity` record the nodes its
-/// `claim`/`value_validity` node names (FSpec FR-825): the owner function,
-/// the result bound's type node, the narrow, every guard, every extent root
-/// and every object type.
-fn names(
+/// What a requirement record names (FSpec FR-825), grouped by what its
+/// omission takes with it in the omission closure (FR-062 "Packaging is
+/// all-or-nothing").
+pub(super) struct RecordNames {
+    /// The record's claim node; for a `value-validity` record, its
+    /// application, which other owners' records may share.
+    pub(super) claim: NodeKey,
+    /// The owner function of a `value-validity` record, whose body holds the
+    /// record's occurrence; `None` for every other kind.
+    pub(super) owner: Option<NodeKey>,
+    /// Every other node the record names: its extent's domain nodes, and for
+    /// a `value-validity` record the result bound's type node, the narrow,
+    /// every guard, every extent root and every object type.
+    pub(super) names: Vec<NodeKey>,
+}
+
+fn record_names_of(
     graph: &CheckedGraph,
     claim: &OccurrenceKey,
     source: &RequirementRecord,
-) -> Result<Vec<NodeKey>, EmitRefusal> {
+) -> Result<RecordNames, EmitRefusal> {
     let mut names = Vec::new();
     if let ClaimExtent::Unbounded(domains) = source.requirements().extent() {
         names.extend(domains.iter().map(|(key, _)| match key {
@@ -50,11 +61,12 @@ fn names(
             fsl_foundation::bound::DomainKey::Population { member_type, .. } => member_type.clone(),
         }));
     }
+    let mut owner = None;
     if source.requirements().kind() == Capability::ValueValidity {
-        let owner = source.owner().ok_or(EmitRefusal::SourceMapInvariant)?;
-        names.push(
+        let name = source.owner().ok_or(EmitRefusal::SourceMapInvariant)?;
+        owner = Some(
             graph
-                .function_identity(owner)
+                .function_identity(name)
                 .ok_or(EmitRefusal::SourceMapInvariant)?,
         );
         names.push(source.result_bound().node());
@@ -73,25 +85,26 @@ fn names(
                 .map_err(|_| EmitRefusal::SourceMapInvariant)?,
         );
     }
-    Ok(names)
+    Ok(RecordNames {
+        claim: claim.node().clone(),
+        owner,
+        names,
+    })
 }
 
-/// Each requirement record's claim node with the nodes the record names: the
-/// edges the omission closure follows, so that a claim node is omitted when
-/// its record cannot be written (FR-062 "Packaging is all-or-nothing").
-pub(super) fn record_names(
-    graph: &CheckedGraph,
-) -> Result<Vec<(NodeKey, Vec<NodeKey>)>, EmitRefusal> {
+/// What each requirement record of `graph` names, in requirement-map order.
+pub(super) fn record_names(graph: &CheckedGraph) -> Result<Vec<RecordNames>, EmitRefusal> {
     graph
         .requirements()
         .iter()
-        .map(|(claim, source)| Ok((claim.node().clone(), names(graph, claim, source)?)))
+        .map(|(claim, source)| record_names_of(graph, claim, source))
         .collect()
 }
 
-/// Whether the record of the claim at a written node names an omitted node.
-/// The omission closure omits such a claim node, so this is an invariant
-/// check: a record is never dropped while its claim node is written.
+/// Whether a record the emitter writes names an omitted node. The omission
+/// closure omits the owner of a `value-validity` record, or the claim node of
+/// any other record, that names an omitted node, so this is an invariant
+/// check: a record is never dropped while its owner or claim is written.
 fn names_an_omitted_node(
     graph: &CheckedGraph,
     claim: &OccurrenceKey,
@@ -101,8 +114,10 @@ fn names_an_omitted_node(
     if omitted.is_empty() {
         return Ok(false);
     }
-    Ok(names(graph, claim, source)?
-        .iter()
+    let names = record_names_of(graph, claim, source)?;
+    Ok(std::iter::once(&names.claim)
+        .chain(&names.owner)
+        .chain(&names.names)
         .any(|name| omitted.contains_key(name)))
 }
 
@@ -169,8 +184,11 @@ pub(super) fn append(
                 entry.insert((key, id))
             }
         };
-        let application_cause = omitted.get(claim.node());
-        if application_cause.is_none() && names_an_omitted_node(graph, claim, source, omitted)? {
+        // A record is tied to its owner's occurrence: it is omitted exactly
+        // when its owner is, and then all of that owner's records are, so
+        // the `generated` ordinals of every written owner stay dense.
+        let owner_omitted = omitted.contains_key(&*owner_key);
+        if !owner_omitted && names_an_omitted_node(graph, claim, source, omitted)? {
             return Err(EmitRefusal::SourceMapInvariant);
         }
         let application = node_id(ids, claim.node());
@@ -235,10 +253,10 @@ pub(super) fn append(
         )
         .map_err(encoding)?;
         let id = node_id(ids, key);
-        if let Some(cause) = application_cause {
+        if owner_omitted {
             omissions.push(OmittedNode {
                 node: id,
-                cause: cause.clone(),
+                cause: OmissionCause::NamesOmittedNode(owner.clone()),
             });
             continue;
         }
@@ -373,14 +391,23 @@ pub(super) fn rows(
         .collect();
     let mut rows = Vec::new();
     for (claim, source) in graph.requirements().iter() {
-        // An omitted claim node has no row; a written one keeps its row, as
-        // the omission closure omits a claim node whose record names an
-        // omitted node.
-        if omitted.contains_key(claim.node()) {
-            continue;
-        }
-        if names_an_omitted_node(graph, claim, source, omitted)? {
-            return Err(EmitRefusal::SourceMapInvariant);
+        // A `value-validity` record has no row when its owner is omitted,
+        // and any other record none when its claim node is; the omission
+        // closure leaves no other written record naming an omitted node.
+        if !omitted.is_empty() {
+            let names = record_names_of(graph, claim, source)?;
+            let dropped = names
+                .owner
+                .as_ref()
+                .map_or(omitted.contains_key(&names.claim), |owner| {
+                    omitted.contains_key(owner)
+                });
+            if dropped {
+                continue;
+            }
+            if names_an_omitted_node(graph, claim, source, omitted)? {
+                return Err(EmitRefusal::SourceMapInvariant);
+            }
         }
         let kind = match source.requirements().kind() {
             Capability::ValueValidity => CapabilityKind::ValueValidity,

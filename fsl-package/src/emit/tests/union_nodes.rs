@@ -199,18 +199,19 @@ fn value_validity_records(
 }
 
 /// FR-062 "Packaging is all-or-nothing" and FSpec FR-825, for `declarations`
-/// emitted by an IR that cannot decode `refused`: each `value-validity`
-/// record `selected` picks names a node that form omits, so its application
-/// is omitted with cause `NamesOmittedNode`, and its record node with the
-/// application's cause, and the package holds neither, nor the record's
-/// `requirement_items` row or `generated` source-map entry. Every record
-/// whose application is written keeps its node and row, and the strict
-/// reader admits the package.
+/// emitted by an IR that cannot decode `refused`: the owner of each
+/// `value-validity` record `selected` picks is omitted with cause
+/// `NamesOmittedNode`; every record of an omitted owner is omitted naming
+/// that owner, and the package holds neither its node, nor its
+/// `requirement_items` row, nor its `generated` source-map entry; an
+/// application is omitted once no record of it survives. Every record of a
+/// written owner keeps its node and row, and the strict reader admits the
+/// package.
 fn records_go_with_their_applications(
     declarations: &str,
     refused: (CheckedNodeTag, &'static str),
     selected: &dyn Fn(&OccurrenceKey, &fsl_semantics::check::RequirementRecord) -> bool,
-) {
+) -> (CheckedPackage, Emission) {
     let (text, package) = package_from_text(declarations);
     let regions = |_: &Location| {
         Some(SourceRegion::new(package.graph().source().clone(), 0, text.len() as u64).unwrap())
@@ -229,29 +230,53 @@ fn records_go_with_their_applications(
     };
 
     let records = value_validity_records(&package);
+    let owner_of = |record: &fsl_semantics::check::RequirementRecord| {
+        node_id(
+            package
+                .graph()
+                .function_identity(record.owner().expect("a value-validity owner"))
+                .expect("the owner is a function"),
+        )
+    };
     let chosen: Vec<_> = records
         .iter()
         .filter(|(claim, record)| selected(claim, record))
         .collect();
     assert!(!chosen.is_empty(), "the fixture holds a selected record");
-    for (claim, _) in &chosen {
+    for (claim, record) in &chosen {
         assert!(
             matches!(
-                cause_of(&node_id(claim.node())),
+                cause_of(&owner_of(record)),
                 Some(OmissionCause::NamesOmittedNode(_))
             ),
-            "{claim:?}: the application is omitted: {:?}",
+            "{claim:?}: the owner is omitted: {:?}",
             emission.omitted
         );
     }
-    let omitted_applications: Vec<&OmissionCause> = records
+    // An application is omitted exactly when every record of it has an
+    // omitted owner, or when the graph's own closure omits it.
+    for (claim, _) in &records {
+        let owners_gone = records
+            .iter()
+            .filter(|(other, _)| other.node() == claim.node())
+            .all(|(_, record)| cause_of(&owner_of(record)).is_some());
+        if owners_gone {
+            assert!(
+                cause_of(&node_id(claim.node())).is_some(),
+                "{claim:?}: no record of the application survives: {:?}",
+                emission.omitted
+            );
+        }
+    }
+    let omitted_owners: Vec<CheckedNodeId> = records
         .iter()
-        .filter_map(|(claim, _)| cause_of(&node_id(claim.node())))
+        .map(|(_, record)| owner_of(record))
+        .filter(|owner| cause_of(owner).is_some())
         .collect();
-    let written = records.len() - omitted_applications.len();
+    let written = records.len() - omitted_owners.len();
 
     // The omitted nodes the checked graph does not hold are the record
-    // nodes, one per omitted application, each with that application's cause.
+    // nodes, one per record with an omitted owner, each naming that owner.
     let graph_ids: BTreeSet<CheckedNodeId> = package
         .graph()
         .semantic_graph()
@@ -265,13 +290,14 @@ fn records_go_with_their_applications(
         .collect();
     assert_eq!(
         record_omissions.len(),
-        omitted_applications.len(),
+        omitted_owners.len(),
         "{:?}",
         emission.omitted
     );
     for omission in &record_omissions {
         assert!(
-            omitted_applications.contains(&&omission.cause),
+            matches!(&omission.cause, OmissionCause::NamesOmittedNode(owner)
+                if omitted_owners.contains(owner)),
             "{omission:?}"
         );
     }
@@ -309,6 +335,7 @@ fn records_go_with_their_applications(
         .count();
     assert_eq!(rows, written);
     verified_exports(&emission);
+    (package, emission)
 }
 
 /// An omitted owner: `area` names the union an IR cannot decode, so `area`,
@@ -369,6 +396,119 @@ fn an_omitted_narrow_omits_the_application_it_bounds() {
          function keep using v(p: Boolean): Boolean pure { not p }\n",
         (CheckedNodeTag::Expression, "conversion"),
         &|_, record| record.conversion_context().is_some(),
+    );
+}
+
+/// `a` names the union an IR cannot decode; `b` does not. Both bodies hold
+/// the structurally equal `x + 1`, one application node with one record per
+/// owner.
+const SHARED: &str = "function a using v(x: Int[0, 9], s: Shape): Integer pure \
+     { case s { Empty: x + 1; Circle(r): r; Rect(w, h): 0; } }\n";
+
+/// The claim of `a`'s record of `x + 1`, whose application node `b`'s
+/// record shares.
+fn shared_application(package: &CheckedPackage) -> OccurrenceKey {
+    let records = value_validity_records(package);
+    let of = |owner: &str| -> Vec<&OccurrenceKey> {
+        records
+            .iter()
+            .filter(|(_, record)| record.owner() == Some(owner))
+            .map(|(claim, _)| *claim)
+            .collect()
+    };
+    let (a, b) = (of("a"), of("b"));
+    assert_eq!(a.len(), 1, "`x + 1` is `a`'s one scalar claim site");
+    assert_eq!(b.len(), 1, "`x + 1` is `b`'s one scalar claim site");
+    assert_eq!(a[0].node(), b[0].node(), "the two records share one node");
+    assert_ne!(a[0], b[0], "each record is its own occurrence");
+    a[0].clone()
+}
+
+/// FR-062 "Packaging is all-or-nothing", FSpec FR-825: omitting `a` omits
+/// `a`, its record, row and source-map entry, but not the application it
+/// shares with the written `b`, whose record is the application's only
+/// written record.
+#[trace("FR-062-AC-9", "FR-940-AC-1")]
+#[test]
+fn an_omitted_owner_leaves_a_shared_application_with_the_written_owners_record() {
+    let declarations = format!(
+        "{SHAPE}{SHARED}function b using v(x: Int[0, 9]): Integer pure {{ x + 1 }}\n"
+    );
+    let (package, emission) = records_go_with_their_applications(
+        &declarations,
+        (CheckedNodeTag::CompositeType, "union"),
+        &|_, record| record.owner() == Some("a"),
+    );
+    let claim = shared_application(&package);
+    let application = node_id(claim.node());
+    let function = |name: &str| node_id(package.graph().function_identity(name).unwrap());
+    let omitted: Vec<&CheckedNodeId> = emission.omitted.iter().map(|omission| &omission.node).collect();
+    assert!(omitted.contains(&&function("a")), "{omitted:?}");
+    assert!(!omitted.contains(&&function("b")), "{omitted:?}");
+    assert!(!omitted.contains(&&application), "{omitted:?}");
+    assert!(
+        emission.omitted.iter().any(|omission| omission.cause
+            == OmissionCause::NamesOmittedNode(function("a"))
+            && omission.node != application),
+        "`a`'s record is omitted naming `a`: {:?}",
+        emission.omitted
+    );
+
+    let wire = wire(&emission);
+    let graph = WireGraph::of_package_value(&wire).unwrap();
+    let admitted = match filament_contract_model::CheckedPackageV2::read(
+        emission.package().bytes(),
+        filament_contract_model::CheckedPackageReadLimits::bounded(),
+        emission.evidence(),
+    ) {
+        filament_contract_model::CheckedPackageV2ReadResult::Admitted(admitted) => admitted,
+        failure => panic!("the strict reader admits the package: {failure:?}"),
+    };
+    let key_of = |id: &CheckedNodeId| {
+        graph
+            .key_of_value(&serde_json::to_value(id).unwrap())
+            .expect("a written node")
+    };
+    let of_application: Vec<_> = admitted
+        .requirement_items()
+        .iter()
+        .filter_map(|row| row.record.as_ref())
+        .filter(|record| key_of(&record.application) == *claim.node())
+        .collect();
+    assert_eq!(of_application.len(), 1, "only `b`'s record of `x + 1`");
+    assert_eq!(
+        key_of(&of_application[0].owner),
+        package.graph().function_identity("b").unwrap()
+    );
+}
+
+/// With both owners omitted no record of the shared `x + 1` survives, so the
+/// application is omitted too.
+#[trace("FR-062-AC-9", "FR-940-AC-1")]
+#[test]
+fn a_shared_application_is_omitted_once_every_owner_is() {
+    let declarations = format!(
+        "{SHAPE}{SHARED}function b using v(x: Int[0, 9], s: Shape): Integer pure \
+         {{ case s {{ Empty: 0; Circle(r): x + 1; Rect(w, h): w; }} }}\n\
+         function keep using v(p: Boolean): Boolean pure {{ not p }}\n"
+    );
+    let (package, emission) = records_go_with_their_applications(
+        &declarations,
+        (CheckedNodeTag::CompositeType, "union"),
+        &|_, record| record.owner().is_some_and(|owner| owner == "a" || owner == "b"),
+    );
+    let claim = shared_application(&package);
+    assert!(
+        matches!(
+            emission
+                .omitted
+                .iter()
+                .find(|omission| omission.node == node_id(claim.node()))
+                .map(|omission| &omission.cause),
+            Some(OmissionCause::NamesOmittedNode(_))
+        ),
+        "{:?}",
+        emission.omitted
     );
 }
 
