@@ -4273,6 +4273,27 @@ fn unchecked_selector(
     kind: StateClauseKind,
 ) -> Option<Span> {
     let mut under_ref = BTreeSet::new();
+    // `size(self.ts[0].ys)` reads the size of the collection a literal
+    // selector selects: a data read, which records the presence the
+    // selector proves (FR-230 "Selection").
+    for node in form.expression.iter() {
+        let ExprNode::Size { operand, .. } = node.node() else {
+            continue;
+        };
+        if place_key(form, *operand).is_none() {
+            continue;
+        }
+        let mut at = Some(*operand);
+        while let Some(id) = at.take() {
+            under_ref.insert(id);
+            at = match form.expression.get(id).map(|node| node.node()) {
+                Some(ExprNode::Field { operand, .. } | ExprNode::Index { operand, .. }) => {
+                    Some(*operand)
+                }
+                _ => None,
+            };
+        }
+    }
     // A postcondition conjunct `self.ts[0].x = c` resets the element its
     // literal selectors name (FR-230 "Resets by selection"): the selectors
     // of its left side are checked with the reset.
