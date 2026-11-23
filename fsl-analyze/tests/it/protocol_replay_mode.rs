@@ -1310,13 +1310,29 @@ fn incremental_prefixes_follow_causal_order_so_a_verdict_never_returns_to_pendin
         [None, None, None, None, None, None, Some("satisfied")],
         "{item}"
     );
-    for pair in prefixes.windows(2) {
-        for before in pair[0]["obligations"]
+    assert_every_verdict_only_advances(prefixes);
+    for prefix in &prefixes[..6] {
+        for channel in prefix["obligations"]
             .as_array()
             .expect("obligations")
             .iter()
-            .filter(|entry| entry["obligation"]["kind"] == "enabledness")
+            .filter(|entry| entry["obligation"]["kind"] == "channel-premise")
         {
+            assert_eq!(channel["verdict"], "pending", "{prefix}");
+        }
+    }
+    assert_eq!(
+        prefixes[6]["obligations"], item["obligations"],
+        "the last prefix is the batch assessment"
+    );
+}
+
+/// Every obligation of every prefix keeps its verdict's direction in the
+/// next prefix: `pending` becomes a decision, `satisfied` may become
+/// `violated`, nothing leaves `violated` and nothing returns to `pending`.
+fn assert_every_verdict_only_advances(prefixes: &[Value]) {
+    for pair in prefixes.windows(2) {
+        for before in pair[0]["obligations"].as_array().expect("obligations") {
             let Some(next) = pair[1]["obligations"]
                 .as_array()
                 .expect("obligations")
@@ -1336,10 +1352,78 @@ fn incremental_prefixes_follow_causal_order_so_a_verdict_never_returns_to_pendin
             );
         }
     }
-    assert_eq!(
-        prefixes[6]["obligations"], item["obligations"],
-        "the last prefix is the batch assessment"
+}
+
+/// `After`'s enabledness verdict in each prefix, `None` where the prefix has
+/// no such obligation yet.
+fn after_verdicts(prefixes: &[Value]) -> Vec<Option<&str>> {
+    prefixes
+        .iter()
+        .map(|prefix| {
+            prefix["obligations"]
+                .as_array()
+                .expect("obligations")
+                .iter()
+                .find(|verdict| {
+                    verdict["obligation"]["kind"] == "enabledness"
+                        && verdict["obligation"]["node"] == "Flow::Main::After"
+                })
+                .map(|verdict| verdict["verdict"].as_str().expect("a verdict"))
+        })
+        .collect()
+}
+
+/// FR-895-AC-27 (TC-2531): an iteration begun concurrently with `After` does
+/// not reopen it. The AC-26 recording with a third `Placed` by `Buyer` after
+/// the second, unordered with `After`, closure `open`, leaves `After`
+/// `satisfied` in the seventh prefix and the eighth: the last iteration is
+/// the one begun causally before `After`.
+#[trace("TC-2531", "FR-895-AC-27")]
+#[test]
+fn an_iteration_begun_concurrently_with_the_step_does_not_reopen_it() {
+    let observations = json!([
+        looped("send", "Placed", "Buyer", "m-1"),
+        looped("receive", "Got", "Seller", "m-1"),
+        looped_case("yes"),
+        after(),
+        looped("send", "Placed", "Buyer", "m-2"),
+        looped("receive", "Got", "Seller", "m-2"),
+        looped_case("yes"),
+        looped("send", "Placed", "Buyer", "m-3"),
+    ]);
+    let mut recording = after_recording(
+        observations,
+        &[0, 4, 7],
+        &[1, 2, 5, 6, 3],
+        &[(0, 1), (4, 5)],
     );
+    recording["closure"] = json!({"state": "open", "premises": []});
+    let item = replay_with(
+        "replay-concurrent-iteration",
+        &repeat_then_protocol(),
+        &recording,
+        json!({"file": "recording.json", "identity": recording_identity()}),
+        assessed_item("incremental"),
+    )
+    .item(0);
+    let prefixes = item["prefixes"].as_array().expect("prefixes");
+    assert_eq!(prefixes.len(), 8, "{item}");
+    assert_eq!(
+        after_verdicts(prefixes),
+        [
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some("satisfied"),
+            Some("satisfied")
+        ],
+        "{item}"
+    );
+    assert_every_verdict_only_advances(prefixes);
+    assert_eq!(prefixes[7]["obligations"], item["obligations"], "{item}");
 }
 
 // ---- FR-1032: the recording's document identity ---------------------------

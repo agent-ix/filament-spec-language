@@ -37,6 +37,26 @@ fn recording_payload(bytes: &[u8]) -> Result<Vec<u8>, String> {
 
 /// Build the recording-mode `global-conformance` result from the checked
 /// protocol and its provisioned FR-737 bytes.
+/// The refusal of a whole incremental item when one of its prefixes is
+/// refused (FR-895 "Incremental assessment"): `invalid_runtime_input`, the
+/// recording refusal's own cause, and its detail and `prefix` index.
+fn prefix_refusal(refused: super::recording::PrefixRefusal) -> crate::analyze::Refusal {
+    crate::analyze::Refusal::DeclinedWithDetail(
+        fsl_replay::ProofRefusalCause::InvalidInput,
+        fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+        refused.refusal.code(),
+        [
+            (
+                "detail".to_owned(),
+                serde_json::json!(refused.refusal.to_string()),
+            ),
+            ("prefix".to_owned(), serde_json::json!(refused.prefix)),
+        ]
+        .into_iter()
+        .collect(),
+    )
+}
+
 #[allow(
     clippy::too_many_arguments,
     reason = "the recording assessment binds the subject, package, recording, cancellation, and replay limits"
@@ -134,22 +154,7 @@ fn recording_result(
         ) {
             Ok(prefixes) => Some(prefixes),
             Err(refused) => {
-                return crate::analyze::EngineReport::Refused(
-                    crate::analyze::Refusal::DeclinedWithDetail(
-                        fsl_replay::ProofRefusalCause::InvalidInput,
-                        fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
-                        refused.refusal.code(),
-                        [
-                            (
-                                "detail".to_owned(),
-                                serde_json::json!(refused.refusal.to_string()),
-                            ),
-                            ("prefix".to_owned(), serde_json::json!(refused.prefix)),
-                        ]
-                        .into_iter()
-                        .collect(),
-                    ),
-                );
+                return crate::analyze::EngineReport::Refused(prefix_refusal(refused));
             }
         }
     } else {
@@ -1412,6 +1417,36 @@ mod tests {
     use ix_trace_rs::trace;
 
     use super::*;
+
+    /// FR-896-AC-6: a refused prefix refuses the whole item
+    /// `invalid_runtime_input`, with the refusal's cause code, its detail and
+    /// the prefix index.
+    #[trace("TC-2531", "FR-896-AC-6")]
+    #[test]
+    fn a_refused_prefix_refuses_the_item_naming_the_prefix() {
+        let refusal = prefix_refusal(super::super::recording::PrefixRefusal {
+            prefix: 3,
+            refusal: super::super::recording::RecordingRefusal::new(
+                "invalid-value",
+                "a prefix was refused",
+                None,
+            ),
+        });
+        let crate::analyze::Refusal::DeclinedWithDetail(cause, decline, code, detail) = refusal
+        else {
+            panic!("a declined refusal with detail");
+        };
+        assert!(matches!(cause, fsl_replay::ProofRefusalCause::InvalidInput));
+        assert!(matches!(
+            decline,
+            fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput)
+        ));
+        assert_eq!(code.to_string(), "invalid_runtime_input/invalid-value");
+        assert_eq!(detail["prefix"], serde_json::json!(3));
+        assert!(detail["detail"]
+            .as_str()
+            .is_some_and(|text| text.contains("a prefix was refused")));
+    }
 
     #[trace("TC-2805", "FR-990-AC-1")]
     #[test]

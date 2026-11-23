@@ -1093,7 +1093,8 @@ fn work<'a>(
                                         recording_identity,
                                         Some(recording),
                                         item.options.population.clone(),
-                                        item.options.assessment == Some(AssessmentMode::Incremental),
+                                        item.options.assessment
+                                            == Some(AssessmentMode::Incremental),
                                         limits.replay,
                                     )
                                 }

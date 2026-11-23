@@ -31,11 +31,18 @@ before the `repeat`, every step the last iteration the recording begins takes (f
 taken in that iteration), and, when the `exhausted` path ran, its steps; an earlier iteration's steps are not
 predecessors. An `exhausted` step has as predecessors the steps of the last iteration."
 
-## Dispositions (fix round 1)
+## New findings (disposition pass 1)
 
-| Finding | Disposition |
-| --- | --- |
-| FND-001 | Fixed. FR-895 rule 6 uses the proposed wording and rule 7 states the `exhausted` step's predecessors. |
-| FND-002 | Fixed by arch ruling: prefixes are in causal order, so "never from `violated`" and "satisfied never to pending" hold for enabledness; FR-895-AC-26 states it. |
-| FND-003 | Fixed. FR-895 "Incremental assessment" gives the whole item an `invalid_runtime_input` refusal naming the `prefix` index; prefixes close over begun instances (FR-896-AC-6). |
-| FND-004 | Fixed. The Enabledness cell points to ten numbered rules each with one requirement; AC-11 is positioned after AC-10; FR-896-AC-5 says counts 1 to 6. |
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-005 | medium | Rule 6 picks "the last iteration the recording begins ... the one with the most occurrences of any of the body's steps" without reference to the step, so an iteration begun concurrently with a step after the `repeat` reopens that step (SR-3595001 FND-014). Rule 9 keeps "observed but not yet ordered before the step" `pending`, but under causal-order prefixes and an append-only recording such a pair can never become ordered. Proposed: "the last iteration begun causally before the step"; a later iteration begun concurrently is a violation of that iteration's own steps; an observed predecessor not ordered before the step is `violated`, cause `unexpected`, at once | spec/functional/FR-895-assess-a-recorded-protocol-execution-against-its-obligations.md:146-160 |
+| FND-006 | low | "Each rule below is one requirement" but rules 4, 5 and 6 each hold two or three (for example rule 4's join selection and the unordered branches); FR-896-AC-6's last sentence states the absence of a test, not a criterion | spec/functional/FR-895-assess-a-recorded-protocol-execution-against-its-obligations.md:126-150 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | rules 5 to 7 state the per-iteration case, the last begun iteration and the exhausted path as an alternative exit (ADR-027 FO-1); residual relativity defect is FND-005 |
+| FND-002 | still-open | the prose still claims every obligation changes only from pending to a decision or from satisfied to violated; reproduced enabledness satisfied to pending (SR-3595001 FND-014) and the coder's channel-premise satisfied to pending (FND-015) contradict it; the author must scope the claim or require pending |
+| FND-003 | fixed | Incremental assessment paragraph: prefixes hold the population of begun instances; a refused prefix refuses the item invalid_runtime_input with the prefix index |
+| FND-004 | fixed | Enabledness cell replaced by ten numbered SHALL rules; AC-11 moved into order; FR-896-AC-5 says "counts 1 to 6" |

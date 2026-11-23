@@ -38,6 +38,4 @@ accepted-side and precedence tests (FND-003), and incremental assessment exists 
 | FND-003 | fixed | a_send_after_its_earlier_own_receive_is_enabled (satisfied side) and two precedence tests added |
 | FND-004 | fixed | FR-896 `assessment` member and FR-895 "Incremental assessment" specified and implemented; monotonicity defect is SR-3595001 FND-008 |
 
-## Dispositions (fix round 1)
-
-Every gap is closed by the fix-round tests listed in `qsl-2885-code-review.md` "Dispositions (fix round 1)": FR-895-AC-9, AC-10, AC-11 traced correctly, AC-22 to AC-26 and FR-896-AC-6 added with exact-value tests. The one gap left untested is the refused-prefix refusal, which no admitted recording reaches.
+Disposition pass 2 (head 69344ffc97b7a3ed1fb556e85fa2eab765d48ee7): no findings of this artifact remain open; all four were fixed in round 1.

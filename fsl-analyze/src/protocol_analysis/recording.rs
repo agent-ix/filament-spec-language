@@ -2811,6 +2811,7 @@ fn assess_obligations(
         let (verdict, cause) = if let Some(cause) = violated {
             (RecordingVerdict::Violated, Some(cause))
         } else if undecided
+            || document.closure.state != "closed"
             || channel.delivery == ChannelDelivery::Unknown
             || matches!(
                 channel.capacity,
@@ -3677,10 +3678,11 @@ fn observation_enabled(
 /// instance causally before it (FR-895 "Enabledness"; ADR-027 CI-1). What
 /// each earlier sibling supplies is [`collect_predecessors`].
 ///
-/// A predecessor never observed, or observed but not yet ordered before the
-/// step, leaves the answer open (`None`) until the closure is `closed`,
-/// where it is `Some(false)`. A predecessor the step itself causally precedes
-/// is `Some(false)` at once: order only grows, so nothing can repair it.
+/// A predecessor never observed leaves the answer open (`None`) until the
+/// closure is `closed`, where it is `Some(false)`. A predecessor observed but
+/// not ordered before the step is `Some(false)` at once, as is one the step
+/// itself causally precedes: order between two observations present is fixed
+/// when both are, so nothing can repair either.
 fn earlier_steps_precede(
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
@@ -3717,7 +3719,7 @@ fn earlier_steps_precede(
         let in_body = body_level.is_some_and(|body| level >= body);
         if in_body && child.kind.label() == "case" {
             let name = qualified_name(protocol, child);
-            let taken = choice_observations(protocol, document, observation, parent);
+            let taken = choice_observations(protocol, document, position, parent);
             occurrence = taken
                 .iter()
                 .enumerate()
@@ -3734,7 +3736,7 @@ fn earlier_steps_precede(
                 collect_predecessors(
                     protocol,
                     document,
-                    observation,
+                    position,
                     *sibling,
                     in_body.then_some(occurrence),
                     &mut preds,
@@ -3742,7 +3744,7 @@ fn earlier_steps_precede(
             }
         } else if parent.kind.label() == "repeat" && parent.children.get(1) == Some(&child.node) {
             // The `exhausted` path runs once after the last iteration.
-            last_iteration(protocol, document, observation, parent, &mut preds);
+            last_iteration(protocol, document, position, parent, &mut preds);
         }
     }
     let closed = document.closure.state == "closed";
@@ -3781,11 +3783,7 @@ fn earlier_steps_precede(
         {
             continue;
         }
-        if observed
-            .iter()
-            .any(|index| causally_after(protocol, document, *index, position))
-            || closed
-        {
+        if !observed.is_empty() || closed {
             return Some(false);
         }
         answer = None;
@@ -3812,12 +3810,24 @@ fn qualified_name(
     format!("{}::{}", protocol.name, control.path.join("::"))
 }
 
-/// The observations of the cases of `choice` in `observation`'s instance, in
-/// causal order: one per time the choice was taken.
+/// Whether the observation at `index` is the one at `position` or causally
+/// before it.
+fn begun_before(
+    protocol: &CheckedProtocol,
+    document: &RecordingDocument,
+    position: usize,
+    index: usize,
+) -> bool {
+    index == position || causally_after(protocol, document, position, index)
+}
+
+/// The observations of the cases of `choice` in the instance of the
+/// observation at `position` that begin causally before it, in causal order:
+/// one per time the choice was taken.
 fn choice_observations(
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
-    observation: &Observation,
+    position: usize,
     choice: &fsl_semantics::check::CheckedControl,
 ) -> Vec<usize> {
     let cases: Vec<String> = choice
@@ -3827,22 +3837,26 @@ fn choice_observations(
         .map(|case| qualified_name(protocol, case))
         .collect();
     let order = causal_topological_order(protocol, document);
+    let instance = &document.observations[position].instance;
     let mut taken: Vec<usize> = (0..document.observations.len())
         .filter(|index| {
             let entry = &document.observations[*index];
-            entry.instance == observation.instance && cases.contains(&entry.node)
+            entry.instance == *instance
+                && cases.contains(&entry.node)
+                && begun_before(protocol, document, position, *index)
         })
         .collect();
     taken.sort_by_key(|index| order.iter().position(|entry| entry == index));
     taken
 }
 
-/// How many iterations of the part of a `repeat` body at `node` the
-/// recording holds: the most occurrences of any step, or of any `choice`.
+/// How many iterations of the part of a `repeat` body at `node` begin
+/// causally before the observation at `position`: the most occurrences of
+/// any step, or of any `choice`, that precede it.
 fn iteration_count(
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
-    observation: &Observation,
+    position: usize,
     node: ProtocolNodeId,
 ) -> usize {
     let Some(control) = protocol.controls.control(node) else {
@@ -3851,21 +3865,25 @@ fn iteration_count(
     let counts = |children: &[ProtocolNodeId]| {
         children
             .iter()
-            .map(|child| iteration_count(protocol, document, observation, *child))
+            .map(|child| iteration_count(protocol, document, position, *child))
             .max()
             .unwrap_or(0)
     };
     match control.kind.label() {
         "send" | "receive" | "event" | "attempt" | "effect" | "commit" => {
             let name = qualified_name(protocol, control);
-            document
-                .observations
-                .iter()
-                .filter(|entry| entry.node == name && entry.instance == observation.instance)
+            let instance = &document.observations[position].instance;
+            (0..document.observations.len())
+                .filter(|index| {
+                    let entry = &document.observations[*index];
+                    entry.node == name
+                        && entry.instance == *instance
+                        && begun_before(protocol, document, position, *index)
+                })
                 .count()
         }
         "sequence" => counts(&control.children),
-        "choice" => choice_observations(protocol, document, observation, control).len(),
+        "choice" => choice_observations(protocol, document, position, control).len(),
         "parallel" => control
             .children
             .iter()
@@ -3877,48 +3895,42 @@ fn iteration_count(
     }
 }
 
-/// The predecessors a `repeat` supplies to a step after it, or to a step of
-/// its `exhausted` path: the steps of the last iteration the recording
-/// begins, each `choice` in it by the case taken in that iteration, none for
-/// zero iterations; and, for a step after it, the steps of the `exhausted`
-/// path when that path ran. The `exhausted` path is an alternative exit that
-/// runs once after the last iteration, not part of an iteration.
+/// The predecessors a `repeat` supplies to the step at `position` after it,
+/// or to a step of its `exhausted` path: the steps of the last iteration
+/// begun causally before the step, each `choice` in it by the case taken in
+/// that iteration, none for zero iterations. An iteration begun concurrently
+/// with the step is judged on its own steps, not as a predecessor. The
+/// `exhausted` path is an alternative exit that runs once after the last
+/// iteration, not part of an iteration.
 fn last_iteration(
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
-    observation: &Observation,
+    position: usize,
     repeat: &fsl_semantics::check::CheckedControl,
     out: &mut Vec<Predecessor>,
 ) {
     let Some(body) = repeat.children.first() else {
         return;
     };
-    let iterations = iteration_count(protocol, document, observation, *body);
+    let iterations = iteration_count(protocol, document, position, *body);
     if iterations > 0 {
-        collect_predecessors(
-            protocol,
-            document,
-            observation,
-            *body,
-            Some(iterations),
-            out,
-        );
+        collect_predecessors(protocol, document, position, *body, Some(iterations), out);
     }
 }
 
-/// The predecessors `node` supplies to a later step (FR-895 "Enabledness",
-/// ADR-027 CI-1); `occurrence` is the iteration of the `repeat` the later
-/// step runs in or follows, when it is in or after one. A `sequence` supplies
-/// every child. A `choice` supplies the case actually taken, as its `case`
-/// observation and body, and no untaken case. A `parallel` supplies the steps
-/// of every branch its join requires: every branch under `join all`,
-/// otherwise the branches whose steps were all observed. A `repeat` supplies
-/// [`last_iteration`] and, when it ran, its `exhausted` path. An `await`
-/// supplies none.
+/// The predecessors `node` supplies to the later step at `position` (FR-895
+/// "Enabledness", ADR-027 CI-1); `occurrence` is the iteration of the
+/// `repeat` the later step runs in or follows, when it is in or after one. A
+/// `sequence` supplies every child. A `choice` supplies the case actually
+/// taken, as its `case` observation and body, and no untaken case. A
+/// `parallel` supplies the steps of every branch its join requires: every
+/// branch under `join all`, otherwise the branches whose steps were all
+/// observed. A `repeat` supplies [`last_iteration`] and, when it ran, its
+/// `exhausted` path. An `await` supplies none.
 fn collect_predecessors(
     protocol: &CheckedProtocol,
     document: &RecordingDocument,
-    observation: &Observation,
+    position: usize,
     node: ProtocolNodeId,
     occurrence: Option<usize>,
     out: &mut Vec<Predecessor>,
@@ -3927,11 +3939,12 @@ fn collect_predecessors(
         return;
     };
     let name = qualified_name(protocol, control);
+    let instance = &document.observations[position].instance;
     let count = |name: &str| {
         document
             .observations
             .iter()
-            .filter(|entry| entry.node == name && entry.instance == observation.instance)
+            .filter(|entry| entry.node == name && entry.instance == *instance)
             .count()
     };
     let step = |name: String| match occurrence {
@@ -3942,7 +3955,7 @@ fn collect_predecessors(
         "send" | "receive" | "event" | "attempt" | "effect" | "commit" => out.push(step(name)),
         "sequence" => {
             for child in &control.children {
-                collect_predecessors(protocol, document, observation, *child, occurrence, out);
+                collect_predecessors(protocol, document, position, *child, occurrence, out);
             }
         }
         "choice" => match occurrence {
@@ -3958,14 +3971,7 @@ fn collect_predecessors(
                         taken = true;
                         out.push(Predecessor::Node(case_name));
                         for child in &case.children {
-                            collect_predecessors(
-                                protocol,
-                                document,
-                                observation,
-                                *child,
-                                None,
-                                out,
-                            );
+                            collect_predecessors(protocol, document, position, *child, None, out);
                         }
                     }
                 }
@@ -3974,7 +3980,7 @@ fn collect_predecessors(
                 }
             }
             Some(occurrence) => {
-                let taken = choice_observations(protocol, document, observation, control);
+                let taken = choice_observations(protocol, document, position, control);
                 let Some(index) = taken.get(occurrence - 1) else {
                     out.push(Predecessor::Undecided);
                     return;
@@ -3991,7 +3997,7 @@ fn collect_predecessors(
                     .find(|case| qualified_name(protocol, case) == case_name);
                 out.push(Predecessor::Last(case_name, times));
                 for child in case.iter().flat_map(|case| &case.children) {
-                    collect_predecessors(protocol, document, observation, *child, Some(times), out);
+                    collect_predecessors(protocol, document, position, *child, Some(times), out);
                 }
             }
         },
@@ -4014,12 +4020,7 @@ fn collect_predecessors(
                 let mut steps = Vec::new();
                 for child in &branch.children {
                     collect_predecessors(
-                        protocol,
-                        document,
-                        observation,
-                        *child,
-                        occurrence,
-                        &mut steps,
+                        protocol, document, position, *child, occurrence, &mut steps,
                     );
                 }
                 let completed = steps.iter().all(|step| match step {
@@ -4033,17 +4034,10 @@ fn collect_predecessors(
             }
         }
         "repeat" => {
-            last_iteration(protocol, document, observation, control, out);
+            last_iteration(protocol, document, position, control, out);
             let mut exhausted = Vec::new();
             for child in control.children.iter().skip(1) {
-                collect_predecessors(
-                    protocol,
-                    document,
-                    observation,
-                    *child,
-                    None,
-                    &mut exhausted,
-                );
+                collect_predecessors(protocol, document, position, *child, None, &mut exhausted);
             }
             let ran = exhausted.iter().any(|step| match step {
                 Predecessor::Node(name) => count(name) > 0,
@@ -4226,4 +4220,54 @@ fn protocol_node_name(protocol: &CheckedProtocol, node: usize) -> String {
         })
         .unwrap_or_default();
     format!("{}::{name}", protocol.name)
+}
+
+#[cfg(test)]
+mod tests {
+    use ix_trace_rs::trace;
+
+    use super::*;
+
+    /// FR-896-AC-6: a refusal of the prefix of `k` observations stops the
+    /// incremental assessment and is reported with that `k`.
+    #[trace("TC-2531", "FR-896-AC-6")]
+    #[test]
+    fn a_refused_prefix_is_reported_with_its_index() {
+        let recording = serde_json::json!({
+            "format": "filament.protocol-recording/1", "protocol": "P",
+            "observations": [{"node": "a"}, {"node": "b"}, {"node": "c"}],
+            "local_order": {}, "correlations": [],
+            "closure": {"state": "closed", "premises": []}
+        })
+        .to_string();
+        for refused_at in 1..=3 {
+            let seen = std::cell::Cell::new(0);
+            let refusal = assess_prefixes(recording.as_bytes(), |prefix| {
+                seen.set(prefix["observations"].as_array().map_or(0, Vec::len));
+                if seen.get() == refused_at {
+                    Err(RecordingRefusal::new("invalid-value", "refused", None))
+                } else {
+                    Ok(RecordingAssessment {
+                        obligations: Vec::new(),
+                        closure: RecordingClosure {
+                            state: "open".to_owned(),
+                            premises: Vec::new(),
+                            producer: "test",
+                        },
+                        facts: Vec::new(),
+                        global: RecordingGlobalResult {
+                            label: "inconclusive".to_owned(),
+                            basis: "recording".to_owned(),
+                            complete: false,
+                            cause: None,
+                        },
+                        trace_position: None,
+                    })
+                }
+            })
+            .expect_err("the refused prefix stops the assessment");
+            assert_eq!(refusal.prefix, refused_at);
+            assert_eq!(seen.get(), refused_at, "later prefixes are not assessed");
+        }
+    }
 }

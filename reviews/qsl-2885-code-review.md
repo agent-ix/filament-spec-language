@@ -62,13 +62,28 @@ run in a scratch test appended to the coder's titan worktree and reverted (tree 
 | FND-004 | fixed | test un-ignored, asserts witness [0, 3] and trace_position 0 |
 | FND-005 | fixed | earlier_own_steps_observed and its into_iter removed |
 
-## Dispositions (fix round 1)
+## New findings (disposition pass 2)
 
-| Finding | Disposition |
-| --- | --- |
-| FND-006 (different cases across iterations) | Fixed. Each iteration's predecessors use its own taken case (`collect_predecessors` with an iteration occurrence). Tests: `iterations_taking_different_cases_each_use_their_own` (FR-895-AC-22), `a_case_step_in_the_last_iteration_precedes_the_step_after_the_repeat` (AC-23). |
-| FND-007 (`exhausted` counted as iteration) | Fixed. The `exhausted` path is an alternative exit: its steps precede a later step only when it ran, and its own predecessors are the last iteration's steps. Test: `the_exhausted_path_follows_the_last_iteration_and_precedes_the_step_after` (AC-24); FR-895 rules 6 and 7. |
-| FND-010, FND-011 (test gaps) | Fixed. Non-all join (AC-25), case step in a repeat (AC-23), mixed cases (AC-22), non-empty exhausted path (AC-24); tests now trace AC-9, AC-10, AC-11; AC-6's compensation recordings are also assessed incrementally; FR-896-AC-5 also asserts no `prefixes` without `assessment`; the stale comment is corrected. |
-| Low: rustfmt and `assessment` typing | Fixed. document.rs hunks and the fsl-replay re-export are formatted; `assessment` is the serde enum `AssessmentMode` (`batch`/`incremental`), so library callers cannot pass any word. |
-| Monotonicity (arch ruling, option a) | Implemented. Prefixes follow the causal order, ties by array position. Test: `incremental_prefixes_follow_causal_order_so_a_verdict_never_returns_to_pending` (FR-895-AC-26). The check covers enabledness obligations; channel-premise obligations may return from `satisfied` to `pending` when a later send is not yet received, which is not a wrong verdict. |
-| Refused prefix (arch ruling) | Prefixes close over every instance already begun (FR-896-AC-6, test `an_incremental_prefix_assesses_only_the_instances_it_has_begun`). A prefix refusal now refuses the whole item `invalid_runtime_input` with the cause and `prefix` index in its detail. No fixture of an admitted recording reaches a refused prefix, so that refusal path has no test. |
+Head 69344ffc97b7a3ed1fb556e85fa2eab765d48ee7. Focused run on titan: 87 passed, 0 failed, 0 ignored. Mutation in the coder's
+titan worktree (reverted, clean after): making prefixes follow array position turns exactly
+`incremental_prefixes_follow_causal_order_so_a_verdict_never_returns_to_pending` red, so the AC-26 test discriminates. Probe D
+(scratch test, reverted) reproduces FND-014.
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-014 | high | Enabledness still returns from `satisfied` to `pending` under causal prefixes: the AC-26 recording plus a third `Placed` of `Buyer` after the second (unordered with `After`), closure `open`, gives `After` `satisfied` at prefix 7 and `pending` at prefix 8. `last_iteration` counts the whole prefix's occurrences, so an iteration begun concurrently with `After` reopens it; the third `Got` can never be ordered before `After` because every causal predecessor of `After` is already in the prefix | fsl-analyze/src/protocol_analysis/recording.rs:3886 |
+| FND-015 | medium | The channel-premise obligation can go `satisfied` to `pending` between prefixes (the coder's own note), contradicting FR-895's "a verdict changes only from `pending` to a decision, or from `satisfied` to `violated`", which covers every obligation; the AC-26 test checks enabledness only. An open prefix's `satisfied` channel premise is satisfaction by the absence of a violation, which "Pending, never passed" forbids; it should be `pending` while the prefix is open, and the monotonicity check should cover every obligation | fsl-analyze/tests/it/protocol_replay_mode.rs:1310-1335 |
+| FND-016 | medium | The refused-prefix path is untested although it is reachable: `assess_prefixes` takes the `assess` closure, so a `#[cfg(test)]` unit test can inject a refusal at prefix k and assert `PrefixRefusal { prefix: k }`, and the conformance mapping can be extracted into a function and asserted (invalid_runtime_input, subcode, `detail`, `prefix`). The code choice itself is acceptable: `invalid_runtime_input` is FR-737's recording refusal and FR-895 now names it with the `prefix` detail, so no dedicated catalogue code is needed. FR-896-AC-6's sentence "has no test" is not an acceptance criterion | fsl-analyze/src/protocol_analysis/recording.rs:510-573 |
+
+## Dispositions (round 2)
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-006 | fixed | per-iteration cases; iterations_taking_different_cases_each_use_their_own (AC-22) and a_case_step_in_the_last_iteration_precedes_the_step_after_the_repeat (AC-23) |
+| FND-007 | fixed | exhausted steps collected separately and counted only when they ran; exhausted step has the last iteration as predecessors (AC-24 test) |
+| FND-008 | fixed | prefixes in causal order (causal_prefix_order); mutation to array order turns the AC-26 test red. Residual satisfied-to-pending cases are FND-014 and FND-015 |
+| FND-009 | fixed | prefixes hold the population of begun instances (FR-896-AC-6 wire test); a refused prefix gives invalid_runtime_input with prefix detail. Missing test is FND-016 |
+| FND-010 | fixed | AC-9, AC-10, AC-11 traced; compensation recordings compared batch vs incremental; no-assessment item asserts no prefixes |
+| FND-011 | fixed | AC-22 to AC-25 tests: mixed cases, case step in a repeat, exhausted path, any-join |
+| FND-012 | still-open | rustfmt --check still reports request.rs:1096 (`item.options.assessment == Some(AssessmentMode::Incremental)` exceeds the width) |
+| FND-013 | fixed | AssessmentMode serde enum, kebab-case, default Batch |

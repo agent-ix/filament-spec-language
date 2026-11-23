@@ -133,31 +133,39 @@ and FR-894's duplicate kinds. Every causal-order verdict, `satisfied` or
    observation and the steps of its body, and no untaken case.
 3. A `choice` with no observed case SHALL leave the verdict undecided, as an
    unobserved predecessor does.
-4. An earlier `parallel` SHALL supply the steps of every branch its join
-   requires: every branch under `join all`, otherwise the branches whose
-   steps were all observed; the steps of one branch have no order against a
-   sibling branch.
-5. Within a `repeat`, a step of one iteration SHALL have as predecessors the
+4. An earlier `parallel` under `join all` SHALL supply the steps of every
+   branch.
+5. An earlier `parallel` under any other join SHALL supply the steps of the
+   branches whose steps were all observed.
+6. The assessment SHALL treat the steps of one `parallel` branch as unordered
+   against those of a sibling branch.
+7. Within a `repeat`, a step of one iteration SHALL have as predecessors the
    steps before the `repeat` and the earlier steps of the same iteration, the
    n-th occurrence of a step answering to the n-th occurrence of its
-   predecessor; an earlier iteration's steps neither are required nor
-   satisfy it. A `choice` in an iteration supplies the case taken in that
-   iteration.
-6. A step after a `repeat` SHALL have as predecessors the steps before the
-   `repeat`, every step the last iteration the recording begins takes (for
-   each `choice` in it, the case taken in that iteration) and, when the
-   `exhausted` path ran, its steps; an earlier iteration's steps are not
-   predecessors. A `repeat` run zero times supplies none. The last iteration
-   is the one with the most occurrences of any of the body's steps.
-7. An `exhausted` step SHALL have as predecessors the steps of the last
-   iteration; the `exhausted` path is an alternative exit that runs once
-   after the last iteration, not part of an iteration (ADR-027 FO-1).
-8. The assessment SHALL treat `await` siblings as unordered, so none is a
-   predecessor of another.
-9. A predecessor never observed, or observed but not yet ordered before the
-   step, SHALL leave the verdict `pending` while the closure record is not
-   `closed` and make it `violated`, cause `unexpected`, once it is `closed`.
-10. A predecessor the step itself causally precedes SHALL make the verdict
+   predecessor.
+8. An earlier iteration's steps SHALL neither be required by nor satisfy a
+   step of a later iteration.
+9. A `choice` in an iteration SHALL supply the case taken in that iteration.
+10. A step after a `repeat` SHALL have as predecessors the steps before the
+    `repeat` and every step of the last iteration begun causally before the
+    step, taking for each `choice` in it the case taken in that iteration.
+11. A `repeat` run zero times SHALL supply no predecessor.
+12. An iteration begun concurrently with the step, or after it, SHALL NOT be
+    a predecessor of the step; it is judged on its own steps.
+13. A step after a `repeat` SHALL have as predecessors the steps of the
+    `exhausted` path when that path ran.
+14. An `exhausted` step SHALL have as predecessors the steps of the last
+    iteration; the `exhausted` path is an alternative exit that runs once
+    after the last iteration, not part of an iteration (ADR-027 FO-1).
+15. The assessment SHALL treat `await` siblings as unordered, so none is a
+    predecessor of another.
+16. A predecessor never observed SHALL leave the verdict `pending` while the
+    closure record is not `closed` and make it `violated`, cause
+    `unexpected`, once it is `closed`.
+17. A predecessor observed but not ordered before the step SHALL make the
+    verdict `violated`, cause `unexpected`, at once: with prefixes in causal
+    order no later observation can order the two.
+18. A predecessor the step itself causally precedes SHALL make the verdict
     `violated`, cause `unexpected`, at once.
 
 **Incremental assessment.** An assessment session takes the recording's
@@ -220,7 +228,8 @@ looking like success, which FSpec FR-059-AC-3 requires.
 | FR-895-AC-23 | Over the AC-20 protocol with an event `Shipped` in the `yes` case, the closed recording of two `yes` iterations each holding `Shipped`, then `After`, gives `After` `satisfied`; with the last `Shipped` missing it is `violated`, cause `unexpected`; with `yes` in the first iteration and `no` in the last, `After` is `satisfied` without the first iteration's `Shipped` being a predecessor. | Test (TC-2531) |
 | FR-895-AC-24 | Over the AC-20 protocol whose `exhausted` path holds an event `X`, the closed recording of two iterations, `X` and `After` gives `X` and `After` `satisfied`; the recording whose last iteration lacks its `Got`, then `X`, gives `X` `violated`, cause `unexpected`. | Test (TC-2531) |
 | FR-895-AC-25 | Over a `parallel` of events `L` and `R` under `join any`, followed by `Placed`, the closed recording `L`, `Placed` gives `Placed`'s enabledness obligation `satisfied`; the recording `Placed`, `L` gives it `violated`, cause `unexpected`, as a predecessor the step precedes. | Test (TC-2531) |
-| FR-895-AC-26 | The closed AC-20 protocol recording listed in the array order `Placed`, `Got`, `yes`, `After`, `Placed`, `Got`, `yes`, whose `After` is causally last (its role's local order puts it after the second iteration), assessed incrementally has no `After` enabledness obligation in the first six prefixes, which are in causal order, and `satisfied` in the seventh; no enabledness obligation changes from `violated`, and none from `satisfied` to `pending`, between consecutive prefixes. | Test (TC-2531) |
+| FR-895-AC-26 | The closed AC-20 protocol recording listed in the array order `Placed`, `Got`, `yes`, `After`, `Placed`, `Got`, `yes`, whose `After` is causally last (its role's local order puts it after the second iteration), assessed incrementally has no `After` enabledness obligation in the first six prefixes, which are in causal order, and `satisfied` in the seventh; no obligation of any kind changes from `violated`, and none from `satisfied` to `pending`, between consecutive prefixes; a channel premise stays `pending` in every prefix whose closure is `open` unless a violation has shown. | Test (TC-2531) |
+| FR-895-AC-27 | The AC-26 recording with a third `Placed` by `Buyer` after the second, unordered with `After`, closure `open`, assessed incrementally has no `After` enabledness obligation in the first six prefixes and `satisfied` in the seventh and the eighth: the iteration begun concurrently with `After` does not reopen it, and no obligation changes from `violated` or from `satisfied` to `pending` between consecutive prefixes. | Test (TC-2531) |
 
 ## Dependencies
 
