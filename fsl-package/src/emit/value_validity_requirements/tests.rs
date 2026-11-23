@@ -124,36 +124,3 @@ fn unguarded_record_keeps_an_empty_path_condition() {
         .all(|record| record.path_condition.is_empty()));
 }
 
-/// FSpec FR-825: the timed-model writer re-encodes an admitted base package
-/// and carries its requirement rows with the record nodes they name, so the
-/// strict reader admits the result with the same records.
-#[trace("FR-940-AC-1", "FR-576-AC-1")]
-#[test]
-fn the_timed_model_writer_carries_value_validity_rows() {
-    let (_, emission, records) = emitted_records(GUARDED);
-    let admitted = match filament_contract_model::read_checked_package(
-        emission.package().bytes(),
-        CheckedPackageReadLimits::bounded(),
-        emission.evidence(),
-    ) {
-        filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(admitted) => admitted,
-        other => panic!("the scalar base must read: {other:?}"),
-    };
-    let timed = crate::emit::emit_timed_models(&admitted, &[], crate::EmitLimits::fixture())
-        .expect("a package without timed nodes re-emits");
-    let reread = match filament_contract_model::read_checked_package(
-        timed.package().bytes(),
-        CheckedPackageReadLimits::bounded(),
-        timed.evidence(),
-    ) {
-        filament_contract_model::CheckedPackageDispatchResult::AdmittedV2(reread) => reread,
-        other => panic!("the re-emitted value-validity rows must read: {other:?}"),
-    };
-    assert_eq!(reread.requirement_items(), admitted.requirement_items());
-    let carried = reread
-        .requirement_items()
-        .iter()
-        .filter_map(|row| row.record.clone())
-        .collect::<Vec<_>>();
-    assert_eq!(carried, records);
-}

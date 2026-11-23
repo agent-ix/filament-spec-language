@@ -233,6 +233,11 @@ pub enum EmitRefusal {
     /// (FSpec FR-487).
     #[error("the tick-monitor plan cannot be written: {0}")]
     MonitorPlanInvariant(&'static str),
+    /// A writer that re-encodes an admitted base package cannot carry the
+    /// base requirement rows (FSpec FR-825), because its graph does not hold
+    /// the base nodes at their base positions.
+    #[error("the base requirement rows cannot be carried: {0}")]
+    RequirementRowCarry(&'static str),
     /// FR-640: a clock selection keyed by clock name does not fit the
     /// program's clock-bearing declarations.
     #[error("{0}")]
@@ -535,6 +540,7 @@ impl EmitRefusal {
             | Self::TimedOrder(_) => Code::RuntimeInvariant,
             Self::TimedModelWriterInvariant(_)
             | Self::MonitorPlanInvariant(_)
+            | Self::RequirementRowCarry(_)
             | Self::RefinementSubjectNotEmitted => Code::RuntimeInvariant,
             Self::RefinementIdentityEncoding | Self::LiteralEncoding => Code::OutputFailure,
             Self::RefinementNotEmitted => Code::UnsupportedConstruct,
@@ -577,6 +583,7 @@ impl EmitRefusal {
             | Self::TimedOrder(_)
             | Self::TimedModelWriterInvariant(_)
             | Self::MonitorPlanInvariant(_)
+            | Self::RequirementRowCarry(_)
             | Self::MonitorPlanAmbiguous { .. }
             | Self::RefinementSubjectNotEmitted
             | Self::RefinementIdentityEncoding

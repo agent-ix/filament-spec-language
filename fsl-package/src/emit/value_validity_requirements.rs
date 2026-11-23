@@ -406,7 +406,8 @@ pub(super) fn rows(
 /// are written, holding the base graph's nodes at their base positions. Each
 /// local id a row holds is re-pointed to the id of the node at its base
 /// position, so a node the writer renamed is named by its new id; an id that
-/// names no local node (a dependency node) is kept.
+/// names no local node (a dependency node) is kept. A graph that does not
+/// hold a node of the base's tag and form at each base position is refused.
 pub(super) fn carry_rows(
     base: &filament_contract_model::CheckedPackageV2,
     nodes: &[CheckedSemanticNodeV2],
@@ -418,7 +419,16 @@ pub(super) fn carry_rows(
     let base_nodes = &base.resolved_graph().nodes;
     let finals = nodes
         .get(..base_nodes.len())
-        .ok_or(EmitRefusal::SourceMapInvariant)?;
+        .ok_or(EmitRefusal::RequirementRowCarry(
+            "the writer's graph holds fewer nodes than the base package",
+        ))?;
+    if base_nodes.iter().zip(finals).any(|(old, new)| {
+        old.node_tag != new.node_tag || old.semantic_form != new.semantic_form
+    }) {
+        return Err(EmitRefusal::RequirementRowCarry(
+            "a node of the writer's graph is not the base node at its position",
+        ));
+    }
     let renamed: BTreeMap<&CheckedNodeId, &CheckedNodeId> = base_nodes
         .iter()
         .zip(finals)

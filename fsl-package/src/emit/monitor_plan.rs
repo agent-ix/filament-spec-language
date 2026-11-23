@@ -1646,35 +1646,29 @@ mod tests {
         );
     }
 
-    /// FSpec FR-825: each `claim`/`value_validity` node the final writer
-    /// carries from the base keeps the requirement row that names it, and a
-    /// record whose owner is a rekeyed entry names the entry's new id. A
-    /// package carrying the record nodes without their rows is refused at
-    /// `/requirement_items`.
-    #[ix_trace_rs::trace("FR-251-AC-9", "FR-940")]
-    #[test]
-    fn final_writer_carries_value_validity_rows_through_entry_rekey() {
-        let (_, checked) = super::super::tests::package_from_text(
-            "function init using v(x: Int[0, 9]): Integer pure { x + 1 }\n\
-             function on_event using v(x: Int[0, 9]): Integer pure { x + 2 }\n\
-             function on_watermark using v(x: Int[0, 9]): Integer pure { x + 3 }\n\
-             function on_gap using v(x: Int[0, 9]): Integer pure { x + 4 }\n\
-             function helper using v(x: Int[0, 9]): Integer pure { x + 5 }\n",
-        );
+    /// The base package of `text`, read strictly, and the final writer's
+    /// package after the four monitor entries are rekeyed, read strictly.
+    struct Rekeyed {
+        base: filament_contract_model::CheckedPackageV2,
+        final_package: filament_contract_model::CheckedPackageV2,
+        final_bytes: Vec<u8>,
+        evidence: filament_contract_model::CheckedPackageEvidence,
+        changes: Vec<(CheckedNodeId, CheckedNodeId)>,
+    }
+
+    fn rekeyed_final(text: &str) -> Rekeyed {
+        let (_, checked) = super::super::tests::package_from_text(text);
         let limits = crate::checked::EmitLimits::new(1 << 20);
         let retained = super::super::emit_checked(&checked, limits).expect("scalar functions emit");
         let read_limits = crate::checked_v2::V2ReadLimits::fixture().for_ir();
-        let read = |bytes: &[u8]| read_checked_package(bytes, read_limits, retained.evidence());
-        let base = match read(retained.package().bytes()) {
+        let base = match read_checked_package(
+            retained.package().bytes(),
+            read_limits,
+            retained.evidence(),
+        ) {
             CheckedPackageDispatchResult::AdmittedV2(package) => package,
             other => panic!("the scalar base must read: {other:?}"),
         };
-        let base_records = base
-            .requirement_items()
-            .iter()
-            .filter_map(|row| row.record.clone())
-            .collect::<Vec<_>>();
-        assert_eq!(base_records.len(), 5, "one record per bounded addition");
         let mut nodes = base.resolved_graph().nodes.clone();
         let mut source_map = base.source_map().to_vec();
         let mut changes = Vec::new();
@@ -1715,40 +1709,118 @@ mod tests {
             limits,
         )
         .expect("the final writer emits rekeyed scalar functions");
-        let final_package = match read(final_emission.package().bytes()) {
+        let final_package = match read_checked_package(
+            final_emission.package().bytes(),
+            read_limits,
+            final_emission.evidence(),
+        ) {
             CheckedPackageDispatchResult::AdmittedV2(package) => package,
             other => panic!("the final writer's value-validity rows must read: {other:?}"),
         };
-        let final_records = final_package
-            .requirement_items()
-            .iter()
-            .filter_map(|row| row.record.clone())
-            .collect::<Vec<_>>();
-        assert_eq!(final_records.len(), base_records.len());
-        let mut renamed_owners = 0;
-        for (before, after) in base_records.iter().zip(&final_records) {
-            let owner = changes
-                .iter()
-                .find(|(old, _)| *old == before.owner)
-                .map_or(&before.owner, |(_, new)| {
-                    renamed_owners += 1;
-                    new
-                });
-            assert_eq!(&after.owner, owner);
-            assert_eq!(after.node, before.node);
-            assert_eq!(after.application, before.application);
+        Rekeyed {
+            base,
+            final_package,
+            final_bytes: final_emission.package().bytes().to_vec(),
+            evidence: final_emission.evidence().clone(),
+            changes,
         }
-        assert_eq!(renamed_owners, 4, "each entry's record follows its rekey");
+    }
 
-        let mut stripped: serde_json::Value =
-            serde_json::from_slice(final_emission.package().bytes()).unwrap();
+    impl Rekeyed {
+        /// Asserts that the final rows are the base rows with each rekeyed
+        /// entry renamed in every id a row holds, that `renamed` records are
+        /// owned by a rekeyed entry, and that each record node keeps its
+        /// `generated` source-map entry. Returns the final records.
+        fn assert_rows_follow_the_rekey(
+            &self,
+            renamed: usize,
+        ) -> Vec<filament_contract_model::ValueValidityRecord> {
+            let rename = |id: &CheckedNodeId| {
+                self.changes
+                    .iter()
+                    .find(|(old, _)| old == id)
+                    .map_or_else(|| id.clone(), |(_, new)| new.clone())
+            };
+            let before = self.base.requirement_items();
+            let after = self.final_package.requirement_items();
+            assert_eq!(before.len(), after.len());
+            let mut renamed_owners = 0;
+            for (before, after) in before.iter().zip(after) {
+                assert_eq!(after.claim, rename(&before.claim));
+                assert_eq!(after.kind, before.kind);
+                let (Some(before), Some(after)) = (&before.record, &after.record) else {
+                    assert_eq!(before.record.is_none(), after.record.is_none());
+                    continue;
+                };
+                if self.changes.iter().any(|(old, _)| *old == before.owner) {
+                    renamed_owners += 1;
+                }
+                let mut expected = before.clone();
+                for id in [
+                    &mut expected.node,
+                    &mut expected.owner,
+                    &mut expected.application,
+                    &mut expected.result_bound,
+                ] {
+                    *id = rename(id);
+                }
+                if let Some((narrow, _)) = &mut expected.conversion {
+                    *narrow = rename(narrow);
+                }
+                for guard in &mut expected.path_condition {
+                    guard.guard = rename(&guard.guard);
+                }
+                for id in expected
+                    .extent_roots
+                    .iter_mut()
+                    .chain(expected.objects.iter_mut())
+                {
+                    *id = rename(id);
+                }
+                assert_eq!(*after, expected);
+                let regions = self
+                    .final_package
+                    .source_map()
+                    .iter()
+                    .filter(|entry| {
+                        entry.node_id == after.node
+                            && entry.role == CheckedOccurrenceRole::Generated
+                    })
+                    .count();
+                assert_eq!(regions, 1, "each record keeps its generated source-map entry");
+            }
+            assert_eq!(renamed_owners, renamed, "records of rekeyed entries name the new owner");
+            after.iter().filter_map(|row| row.record.clone()).collect()
+        }
+    }
+
+    /// FSpec FR-825: each `claim`/`value_validity` node the final writer
+    /// carries from the base keeps the requirement row that names it, and a
+    /// record whose owner is a rekeyed entry names the entry's new id. A
+    /// package carrying the record nodes without their rows is refused at
+    /// `/requirement_items`.
+    #[ix_trace_rs::trace("FR-251-AC-9", "FR-940")]
+    #[test]
+    fn final_writer_carries_value_validity_rows_through_entry_rekey() {
+        let rekeyed = rekeyed_final(
+            "function init using v(x: Int[0, 9]): Integer pure { x + 1 }\n\
+             function on_event using v(x: Int[0, 9]): Integer pure { x + 2 }\n\
+             function on_watermark using v(x: Int[0, 9]): Integer pure { x + 3 }\n\
+             function on_gap using v(x: Int[0, 9]): Integer pure { x + 4 }\n\
+             function helper using v(x: Int[0, 9]): Integer pure { x + 5 }\n",
+        );
+        let records = rekeyed.assert_rows_follow_the_rekey(4);
+        assert_eq!(records.len(), 5, "one record per bounded addition");
+
+        let mut stripped: serde_json::Value = serde_json::from_slice(&rekeyed.final_bytes).unwrap();
         stripped
             .as_object_mut()
             .unwrap()
             .remove("requirement_items")
             .expect("the final package carries requirement_items");
         let stripped = serde_json::to_vec(&stripped).unwrap();
-        let refusal = match read(&stripped) {
+        let read_limits = crate::checked_v2::V2ReadLimits::fixture().for_ir();
+        let refusal = match read_checked_package(&stripped, read_limits, &rekeyed.evidence) {
             CheckedPackageDispatchResult::Refused(refusal) => refusal,
             other => panic!("record nodes without rows must be refused: {other:?}"),
         };
@@ -1763,6 +1835,53 @@ mod tests {
             Some("/requirement_items"),
             "{refusal:?}"
         );
+    }
+
+    /// An entry that calls another entry: the call's application holds the
+    /// rekeyed callee as an operand, and the carried rows still read in the
+    /// reader's package order.
+    #[ix_trace_rs::trace("FR-251-AC-9", "FR-940")]
+    #[test]
+    fn final_writer_rows_read_in_order_when_an_entry_calls_another() {
+        let rekeyed = rekeyed_final(
+            "function init using v(x: Int[0, 9]): Int[0, 10] pure { x + 1 }\n\
+             function on_event using v(x: Int[0, 9]): Integer pure { init(x) + 2 }\n\
+             function on_watermark using v(x: Int[0, 9]): Integer pure { init(x) * 3 }\n\
+             function on_gap using v(x: Int[0, 9]): Integer pure { on_event(x) + 4 }\n",
+        );
+        rekeyed.assert_rows_follow_the_rekey(4);
+    }
+
+    /// Guarded, narrowed and unbounded records owned by rekeyed entries carry
+    /// every id they hold through the rekey.
+    #[ix_trace_rs::trace("FR-251-AC-9", "FR-940")]
+    #[test]
+    fn final_writer_carries_guards_conversions_and_unbounded_extents() {
+        let rekeyed = rekeyed_final(
+            "function init using v(x: Int[0, 9], p: Boolean): Int[0, 10] pure { if p then x + 1 else x }\n\
+             function on_event using v(n: Integer): Integer pure { n + 1 }\n\
+             function on_watermark using v(x: Int[0, 9], p: Boolean): Integer pure { if p then x * 2 else x - 1 }\n\
+             function on_gap using v(x: Int[0, 9]): Integer pure { x + 4 }\n",
+        );
+        let records = rekeyed.assert_rows_follow_the_rekey(records_of_entries(&rekeyed));
+        assert!(records.iter().any(|record| !record.path_condition.is_empty()));
+        assert!(records.iter().any(|record| record.conversion.is_some()));
+        assert!(records.iter().all(|record| !record.extent_roots.is_empty()));
+        assert!(rekeyed.final_package.requirement_items().iter().any(|row| matches!(
+            row.extent,
+            filament_contract_model::RequirementExtent::Unbounded(_)
+        )));
+    }
+
+    /// The number of base records whose owner is a rekeyed entry.
+    fn records_of_entries(rekeyed: &Rekeyed) -> usize {
+        rekeyed
+            .base
+            .requirement_items()
+            .iter()
+            .filter_map(|row| row.record.as_ref())
+            .filter(|record| rekeyed.changes.iter().any(|(old, _)| *old == record.owner))
+            .count()
     }
 
     fn node(name: &str, form: &str) -> CheckedSemanticNodeV2 {
