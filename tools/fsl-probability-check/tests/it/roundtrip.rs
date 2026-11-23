@@ -301,29 +301,40 @@ fn cancelling_at_every_observed_document_graph_and_arithmetic_poll_returns_no_ac
         ));
         let total = live.charges();
         assert!(total > 0);
-        for cause in [CancelCause::Requested, CancelCause::Deadline] {
-            for at in 1..=total {
-                let slot = Arc::new(OnceLock::<Cancel>::new());
-                let weak = Arc::downgrade(&slot);
-                let seen = Arc::new(AtomicU32::new(0));
-                let observed = Arc::clone(&seen);
-                let cancel = Cancel::observing(move || {
-                    if observed.fetch_add(1, Ordering::Relaxed) + 1 == at {
-                        weak.upgrade().unwrap().get().unwrap().cancel(cause);
+        // Every poll is cancelled in turn, so the work is quadratic in the poll count
+        // (about 77k polls over a 22 KB certificate document); the polls are striped
+        // across workers so the exhaustive check stays minutes, not half an hour.
+        let workers: u32 = 8;
+        std::thread::scope(|scope| {
+            for worker in 0..workers {
+                let check = &check;
+                scope.spawn(move || {
+                    for cause in [CancelCause::Requested, CancelCause::Deadline] {
+                        for at in (1 + worker..=total).step_by(workers as usize) {
+                            let slot = Arc::new(OnceLock::<Cancel>::new());
+                            let weak = Arc::downgrade(&slot);
+                            let seen = Arc::new(AtomicU32::new(0));
+                            let observed = Arc::clone(&seen);
+                            let cancel = Cancel::observing(move || {
+                                if observed.fetch_add(1, Ordering::Relaxed) + 1 == at {
+                                    weak.upgrade().unwrap().get().unwrap().cancel(cause);
+                                }
+                            });
+                            slot.set(cancel.clone()).unwrap();
+                            assert_eq!(
+                                check(&cancel),
+                                Err(ProbabilityDocumentError::Cancelled(cause)),
+                                "poll {at}/{total}"
+                            );
+                            assert!(
+                                seen.load(Ordering::Relaxed) >= at,
+                                "the bounded key owner may poll again while unwinding cancellation"
+                            );
+                        }
                     }
                 });
-                slot.set(cancel.clone()).unwrap();
-                assert_eq!(
-                    check(&cancel),
-                    Err(ProbabilityDocumentError::Cancelled(cause)),
-                    "poll {at}/{total}"
-                );
-                assert!(
-                    seen.load(Ordering::Relaxed) >= at,
-                    "the bounded key owner may poll again while unwinding cancellation"
-                );
             }
-        }
+        });
     });
 }
 
