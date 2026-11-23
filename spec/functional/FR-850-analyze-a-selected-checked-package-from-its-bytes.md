@@ -499,15 +499,21 @@ The total charged replay input is exactly `R_r = P_r + D`, with `D > 0`.
 No existing metadata or source-provision charge is subtracted from `P_r`.
 
 Run each route's same two-item request with `replay.input_bytes = P_r`.
-The encoded request itself fits; adding the consumed external closure gives
-attempted size exactly `R_r`, over bound `P_r`. The library-dependent item
+The encoded request itself fits; the consumed external closure takes the
+charge over bound `P_r`. Both routes refuse the same request with the same
+code, cause and setting. The directory route holds every external artifact's
+size before any work, so its refused charge is the whole supplied total and
+its actual is exactly `R_r`. The source route charges each library package as
+it is emitted and stops at the library that crosses the bound, so its actual
+is the size reached at that crossing: greater than `P_r` and at most `R_r`.
+The library-dependent item
 settles `inconclusive` with cause `replay_refused`, carrying the original
 `stage_limit_exceeded` / `input-bytes-exceeded` refusal, setting
-`replay.input_bytes`, bound `P_r` and actual `R_r`. It never settles `refuted`
+`replay.input_bytes` and bound `P_r`. It never settles `refuted`
 with an unverified counterexample, `failed`, or a whole-request admission
 refusal. `Bounded` still settles `proved` with its unlimited-run record, and
 the outcome retains both items with category and exit determined by FR-621.
-Assert the complete per-route refusal with its exact `P_r` and `R_r`, including
+Assert the complete per-route refusal with its exact `P_r` and its route's actual, including
 their diagnostic renderings, under the one named exception in "Equality with
 the source route"; no other member is normalized or removed to compare routes.
 
