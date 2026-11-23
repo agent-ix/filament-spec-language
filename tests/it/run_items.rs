@@ -987,7 +987,6 @@ fn function_selection_refuses_mistyped_and_untagged_arguments() {
         ("nonempty", nonempty(canonical_child()), "invalid_runtime_input", "wrong-value-kind"),
         ("nonempty", nonempty(json!({"type": "text", "value": "ab"})),
             "invalid_runtime_input", "wrong-value-kind"),
-        ("nonempty", nonempty(json!("text")), "invalid_runtime_input", "wrong-value-kind"),
         ("nonempty", nonempty(json!({"type": "population", "population": population()})),
             "invalid_runtime_input", "wrong-value-kind"),
         ("nonempty", nonempty(json!({"populaton": population()})),

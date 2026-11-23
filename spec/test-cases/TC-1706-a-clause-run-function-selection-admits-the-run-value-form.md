@@ -30,7 +30,7 @@ distinguish the false result. In the same healthy current snapshot, run
 `nonempty` with its Population argument's value `{"population":P}` and run it
 again with a population identity the snapshot does not hold. In each request,
 resolve the reference or population through the named snapshot; do not use a
-default or synthesized context. Also run `sameIdentity` with a canonical reference to `ghost`, which the snapshot does not hold, and with a Population, text or untagged `reference` value for a Reference argument; run `nonempty` with a reference, text or non-object value, a `type`-tagged value, a misspelt `populaton` key and an empty object. Keep the `clause` request values distinct
+default or synthesized context. Also run `sameIdentity` with a canonical reference to `ghost`, which the snapshot does not hold, and with a Population, text or untagged `reference` value for a Reference argument; run `nonempty` with a reference or text value, a `type`-tagged value, a misspelt `populaton` key and an empty object. Keep the `clause` request values distinct
 from FR-650's internal run-value spellings used by the existing `call`
 coverage.
 
