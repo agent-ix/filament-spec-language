@@ -67,7 +67,7 @@ that show it, or `pending`.
 | Obligation | Satisfied when |
 | --- | --- |
 | Causal order, one per communication and per FSpec FR-052 edge | the source's observation precedes the target's in the recording's causal order, which is each role's local order joined with the message correlations, never a timestamp |
-| Enabledness, one per observation | every causal predecessor of the observed step (ADR-027 CI-1) has an observation in the same protocol instance that precedes it in the recording's causal order. The predecessors a `sequence` supplies are every earlier step of that sequence, whatever its role or kind (message, `event`, `attempt`, `effect`, `commit`), including the steps of earlier nested `sequence` siblings. An earlier `choice` supplies the case actually taken, as its `case` observation and the steps of its body, and no untaken case; a `choice` with no observed case leaves the verdict undecided as an unobserved predecessor does. An earlier `parallel` supplies the steps of every branch its join requires: every branch under `join all`, otherwise the branches whose steps were all observed; the steps of one branch have no order against a sibling branch. Within a `repeat`, a step of one iteration has as predecessors the steps before the `repeat` and the earlier steps of the same iteration, the n-th occurrence of a step answering to the n-th occurrence of its predecessor; an earlier iteration's steps neither are required nor satisfy it. A step after a `repeat` has as predecessors the steps before the `repeat` and the steps of its last completed iteration, the iteration with the most occurrences of any of the body's steps; a `repeat` run zero times supplies none, and an earlier iteration's steps are not predecessors. `await` siblings are unordered and are not predecessors of each other. A predecessor never observed, or observed but not yet ordered before the step, leaves the verdict `pending` while the closure record is not `closed` and makes it `violated`, cause `unexpected`, once it is `closed`; a predecessor the step itself causally precedes makes it `violated`, cause `unexpected`, at once |
+| Enabledness, one per observation | every causal predecessor of the observed step (ADR-027 CI-1) has an observation in the same protocol instance that precedes it in the recording's causal order; "Enabledness predecessors" below states which steps are predecessors |
 | Channel premise, one per channel | deliveries respect the delivery policy (FR-894's `duplicate-delivery` only where duplication is admitted, loss only where it is admitted), FIFO order per key value, and capacity and overflow |
 | Constraint, one per bound event node | the node's constraint holds over the observed record |
 | Control, one per `choice`, `repeat`, `join` and `check` | the case taken has its guard true; a repeat runs within its `max`; a join fires only when its policy holds; a `check` holds |
@@ -123,16 +123,61 @@ The record lists every obligation's verdict, with FR-893's outcome facts
 and FR-894's duplicate kinds. Every causal-order verdict, `satisfied` or
 `violated`, names its two observations as `witness` `[receiving, sending]`.
 
+**Enabledness predecessors.** Each rule below is one requirement.
+
+1. A `sequence` SHALL supply every earlier step of that sequence as a
+   predecessor, whatever the step's role or kind (message, `event`,
+   `attempt`, `effect`, `commit`), including the steps of earlier nested
+   `sequence` siblings.
+2. An earlier `choice` SHALL supply the case actually taken, as its `case`
+   observation and the steps of its body, and no untaken case.
+3. A `choice` with no observed case SHALL leave the verdict undecided, as an
+   unobserved predecessor does.
+4. An earlier `parallel` SHALL supply the steps of every branch its join
+   requires: every branch under `join all`, otherwise the branches whose
+   steps were all observed; the steps of one branch have no order against a
+   sibling branch.
+5. Within a `repeat`, a step of one iteration SHALL have as predecessors the
+   steps before the `repeat` and the earlier steps of the same iteration, the
+   n-th occurrence of a step answering to the n-th occurrence of its
+   predecessor; an earlier iteration's steps neither are required nor
+   satisfy it. A `choice` in an iteration supplies the case taken in that
+   iteration.
+6. A step after a `repeat` SHALL have as predecessors the steps before the
+   `repeat`, every step the last iteration the recording begins takes (for
+   each `choice` in it, the case taken in that iteration) and, when the
+   `exhausted` path ran, its steps; an earlier iteration's steps are not
+   predecessors. A `repeat` run zero times supplies none. The last iteration
+   is the one with the most occurrences of any of the body's steps.
+7. An `exhausted` step SHALL have as predecessors the steps of the last
+   iteration; the `exhausted` path is an alternative exit that runs once
+   after the last iteration, not part of an iteration (ADR-027 FO-1).
+8. `await` siblings SHALL be unordered and SHALL NOT be predecessors of each
+   other.
+9. A predecessor never observed, or observed but not yet ordered before the
+   step, SHALL leave the verdict `pending` while the closure record is not
+   `closed` and make it `violated`, cause `unexpected`, once it is `closed`.
+10. A predecessor the step itself causally precedes SHALL make the verdict
+    `violated`, cause `unexpected`, at once.
+
 **Incremental assessment.** An assessment session takes the recording's
 observations one at a time and, after each, gives the assessment of the
-prefix of the observations taken so far (FSpec FR-059-AC-4). A prefix keeps
-the local order and correlations among its own observations and has closure
-`open`, since further observations may arrive; only the last prefix carries
-the recording's own closure record. The last prefix's assessment equals the
-batch assessment. An obligation `violated` in one prefix is `violated` in
-every later prefix: a verdict changes only from `pending` to a decision, or
-from `satisfied` to `violated`, never from `violated`. FR-896's `assessment`
-member selects the session on an item.
+prefix of the observations taken so far (FSpec FR-059-AC-4). Prefixes are
+formed in the recording's causal order, the topological order of each role's
+local order joined with the message correlations, ties broken by array
+position; an observation's position in the `observations` array never orders
+it. A prefix keeps the local order and correlations among its own
+observations and has closure `open`, since further observations may arrive;
+only the last prefix carries the recording's own closure record. A prefix
+holds the activated population of the protocol instances it has begun, so
+every prefix of an admitted recording is itself admissible. The last
+prefix's assessment equals the batch assessment. An obligation `violated` in
+one prefix is `violated` in every later prefix: a verdict changes only from
+`pending` to a decision, or from `satisfied` to `violated`, never from
+`violated`. If a prefix is nevertheless refused, the whole item is refused
+`invalid_runtime_input`, with the cause of the refusal and the `prefix`
+index in its detail. FR-896's `assessment` member selects the session on an
+item.
 
 ### Decision: a recording is evidence, so a deviation is a finding, not an input error
 
@@ -160,6 +205,7 @@ looking like success, which FSpec FR-059-AC-3 requires.
 | FR-895-AC-8 | The AC-1 protocol with a `requires temporal` clause activated `on each` under a guard that is false at every observation of AC-1's recording (an `eventually` over an order total above any the recording holds), gives the clause's requirement obligation `satisfied` and the item `proved` when the closure is `closed`; the same recording with closure `open` gives that obligation `pending` and the item `inconclusive`, `open-history`, never `proved`. | Test (TC-2530) |
 | FR-895-AC-9 | Over the AC-2 protocol, the closed recording `Placed`, `Got`, `Note`, `Heard`, the `yes` case and `finish`, with `Seller`'s local order `Got`, `Note`, `yes`, `finish`, `Buyer`'s `Placed`, `Heard` and correlations `Placed` to `Got` and `Note` to `Heard`, has every step's predecessors observed before it: `Note`'s enabledness obligation is `satisfied` and the item settles `proved`. | Test (TC-2531) |
 | FR-895-AC-10 | The AC-9 recording with `Seller`'s local order changed to `Note`, `Got`, `yes`, `finish`, so `Got` is observed but comes after `Note`, gives `Note`'s enabledness obligation `violated`, cause `unexpected`, and the item `refuted`, never `proved`; listing `Got` earlier in the `observations` array changes nothing. | Test (TC-2531) |
+| FR-895-AC-11 | Assessing the AC-9 recording incrementally gives `inconclusive` for each of its first five prefixes and `proved` for the last, which equals the batch assessment. Assessing the AC-10 recording incrementally gives `inconclusive` for the first two prefixes and `refuted` for the rest, `Note`'s enabledness `violated`, cause `unexpected`, from the third prefix on, and the last prefix equals the batch assessment. | Test (TC-2531) |
 | FR-895-AC-12 | Over the order fixture with a `Tell` channel, `Dropped` sent in case `no`, `Told` sent in case `yes` and `Note` sent after the `choice`, the closed recording `Placed`, `Got`, the `yes` case, `Told`, `Note`, with `Dropped` never observed, gives `Note`'s enabledness obligation `satisfied`: only the case taken supplies predecessors. | Test (TC-2531) |
 | FR-895-AC-13 | The AC-12 recording without `Told` gives `Note`'s enabledness obligation `violated`, cause `unexpected`. | Test (TC-2531) |
 | FR-895-AC-14 | Over the order fixture with, before `Placed`, a `parallel` of events `L` and `R` of `Buyer` under `join all`, the closed recording `L`, `R`, `Placed` in `Buyer`'s order gives `Placed`'s enabledness obligation `satisfied`. | Test (TC-2531) |
@@ -170,7 +216,11 @@ looking like success, which FSpec FR-059-AC-3 requires.
 | FR-895-AC-19 | The AC-18 recording without `Start` gives `W2`'s matched event and `End` enabledness `violated`, cause `unexpected`. | Test (TC-2531) |
 | FR-895-AC-20 | Over the AC-16 protocol with an event `After` of `Seller` after the `repeat`, the closed recording `After` alone (zero iterations), and the closed recording `Placed`, `Got`, `Placed`, `Got`, `After` with each `Placed` correlated to its `Got`, give `After`'s enabledness obligation `satisfied`. | Test (TC-2531) |
 | FR-895-AC-21 | The closed recording `Placed`, `Got`, `Placed`, `After`, whose last iteration lacks its `Got`, gives `After`'s enabledness obligation `violated`, cause `unexpected`, although the first iteration's `Got` precedes it; the same recording with closure `open` gives `pending`. | Test (TC-2531) |
-| FR-895-AC-11 | Assessing the AC-9 recording incrementally gives `inconclusive` for each of its first five prefixes and `proved` for the last, which equals the batch assessment. Assessing the AC-10 recording incrementally gives `inconclusive` for the first two prefixes and `refuted` for the rest, `Note`'s enabledness `violated`, cause `unexpected`, from the third prefix on, and the last prefix equals the batch assessment. | Test (TC-2531) |
+| FR-895-AC-22 | Over the AC-20 protocol, the closed recording `Placed`, `Got`, `yes`, `Placed`, `Got`, `no`, `After`, with each `Placed` correlated to its `Got`, gives `After`'s enabledness obligation `satisfied`: each iteration's predecessors use the case that iteration took. The same recording with the second `Got` missing gives it `violated`, cause `unexpected`. | Test (TC-2531) |
+| FR-895-AC-23 | Over the AC-20 protocol with an event `Shipped` in the `yes` case, the closed recording of two `yes` iterations each holding `Shipped`, then `After`, gives `After` `satisfied`; with the last `Shipped` missing it is `violated`, cause `unexpected`; with `yes` in the first iteration and `no` in the last, `After` is `satisfied` without the first iteration's `Shipped` being a predecessor. | Test (TC-2531) |
+| FR-895-AC-24 | Over the AC-20 protocol whose `exhausted` path holds an event `X`, the closed recording of two iterations, `X` and `After` gives `X` and `After` `satisfied`; the recording whose last iteration lacks its `Got`, then `X`, gives `X` `violated`, cause `unexpected`. | Test (TC-2531) |
+| FR-895-AC-25 | Over a `parallel` of events `L` and `R` under `join any`, followed by `Placed`, the closed recording `L`, `Placed` gives `Placed`'s enabledness obligation `satisfied`; the recording `Placed`, `L` gives it `violated`, cause `unexpected`, as a predecessor the step precedes. | Test (TC-2531) |
+| FR-895-AC-26 | The closed AC-20 protocol recording listed in the array order `Placed`, `Got`, `yes`, `After`, `Placed`, `Got`, `yes`, whose `After` is causally last (its role's local order puts it after the second iteration), assessed incrementally has no `After` enabledness obligation in the first six prefixes, which are in causal order, and `satisfied` in the seventh; no enabledness obligation changes from `violated`, and none from `satisfied` to `pending`, between consecutive prefixes. | Test (TC-2531) |
 
 ## Dependencies
 

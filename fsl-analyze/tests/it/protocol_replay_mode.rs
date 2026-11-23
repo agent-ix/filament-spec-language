@@ -462,9 +462,9 @@ fn incremental_assessment_of_a_conforming_recording_ends_at_the_batch_verdict() 
 }
 
 /// FR-895-AC-11, FR-895-AC-10: `Seller`'s local order puts `Note` before
-/// `Got`. In causal order the first two prefixes are undecided; the prefix
-/// that adds `Got` violates `Note`'s enabledness at once and every later
-/// prefix keeps it, ending at the batch verdict, `refuted`.
+/// `Got`. In causal order the first two prefixes are undecided; `Note`'s
+/// enabledness is `violated` from the third prefix on and every later prefix
+/// keeps it, ending at the batch verdict, `refuted`.
 #[trace("TC-2531", "FR-895-AC-11", "FSpec-FR-059-AC-4")]
 #[test]
 fn incremental_assessment_reports_a_violation_from_the_prefix_that_shows_it() {

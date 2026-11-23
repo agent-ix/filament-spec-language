@@ -458,12 +458,12 @@ fn on_each_population_groups_match_recorded_instances() {
     );
 }
 
-/// FR-896-AC-7 (TC-2955): an `on each` recording whose population names an
+/// FR-896-AC-6 (TC-2531): an `on each` recording whose population names an
 /// instance listed later in the array is assessed incrementally without a
 /// prefix refusing the instance as unrecorded: each prefix assesses the
 /// population of the instances it has begun, and the last prefix equals the
 /// batch assessment.
-#[trace("TC-2955", "FR-896-AC-7")]
+#[trace("TC-2531", "FR-896-AC-6")]
 #[test]
 fn an_incremental_prefix_assesses_only_the_instances_it_has_begun() {
     let protocol = FANOUT.replace("on origin", "on each (t: M::Cell)");
