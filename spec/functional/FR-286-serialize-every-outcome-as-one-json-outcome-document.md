@@ -87,6 +87,7 @@ the same document (FSpec FR-300-AC-3). The document's members are:
   `SourceLabel`. Every other source cause omits `label`, including
   `empty-path`. A source refusal with no region has `locus` `null`, never a
   fabricated position at byte zero.
+- `result` of a compile: see "Compile results".
 - `artifacts`: always an empty array `[]`. No operation writes an artifact
   identity into the outcome document: `check` produces a `CheckedPackage` and
   no `package_id` (ADR-029 OP-1).
@@ -468,10 +469,10 @@ envelope reads, and the driver can show them.
 - An `unimplemented_capability` diagnostic with cause `unimplemented-meaning`
   SHALL carry `{"capability": C}`, where C is the capability name required
   by FSpec FR-272, matching the export refusal when one is present.
-- An `invalid-request` diagnostic at stage `request` that FR-1047 writes SHALL
-  carry that requirement's `details`: `{"missing": [...]}` for a request
-  lacking members, and `{"path": "/format", "accepted": [...]}` for a
-  `format` the entry does not read.
+- An `invalid-request` diagnostic at stage `request` that FR-1047 writes for
+  a request lacking members SHALL carry `{"missing": [...]}`, and one it
+  writes for a `format` the entry does not read SHALL carry `{"path":
+  "/format", "accepted": [...]}`.
 - Every other diagnostic, a source, profile or compile-stage diagnostic
   included, SHALL carry `details` `null`: its `locus`, `cause` and payload
   members already locate it.
@@ -499,8 +500,8 @@ meaning and one JSON kind, and no other member is written:
 | `capability` | string | the valid meaning the selected producer does not implement, for FSpec FR-272's `unimplemented-meaning` cause |
 
 `missing` is written alone, and `accepted` only with `path` `/format`; both
-are additive to the vocabulary, so every document written before them
-stays valid. Each FR-100 row fixes which members its object holds; the members are
+are additive to the vocabulary, so a document that carries neither stays
+valid. Each FR-100 row fixes which members its object holds; the members are
 written in RFC 8785 order with the document. A `details` object is never
 empty, and a refusal whose row has no `details` writes `null`.
 
@@ -527,12 +528,70 @@ members, and no other:
 | `construct` | a forms refusal that names one | the refused construct's form |
 | `declaration` | a forms refusal that names one | the declaration that holds the construct |
 | `details` | always, an object or `null` | "Diagnostic details" |
-| `hint` | when the hint catalog has a row for the code and cause | "Fix hints" |
+| `hint` | when the hint catalog has a row for the code and cause, and for a `missing_import` diagnostic of cause `missing-selection` the row of its `selection` | "Fix hints" |
+| `selection` | a `missing_import` diagnostic of cause `missing-selection`, always | "Missing selections" |
 | `label` | a source `blank-label` cause only | `authority` or `identity` |
 | `locus` | always, a `Locus` or `null` | FR-095 |
 | `message` | always | the human message |
 | `profile` | a forms refusal that names one | the profile that prohibits the construct |
 | `text` | a forms refusal that names one | the construct's source text |
+
+### Compile results
+
+The `package` outcome document that `fsl_command::command::compile_outcome*`
+returns for a success SHALL carry `result` `{"kind": "packaged", "package":
+{"bytes": N, "output": P, "handoff": D}}`, so the document alone says what
+the compile produced and where it went; FR-865's text form is written from
+it. `N` is the length in bytes of the package FR-027's `CompileOutcome::
+package_bytes()` returns, as a JSON integer. `P` is the path of the package
+file the compile wrote for the request's `output` member or for
+`RequestOverrides::output` (FR-810), or `null` when it wrote none. `D` is the
+path of the handoff directory written for the request's `handoff` member
+(FR-665), or `null`. Each path is the path the command opened, as a string:
+the `output` member and the `handoff` `directory` member joined to the
+directory of the request file (the request path's parent, so a request
+`reqs/c.json` with `output` `{"package": "p.json"}` writes `reqs/p.json`; no
+join when the parent is empty), and an `--output` option as given; a path
+that is not UTF-8 is written with each invalid byte as U+FFFD. A compile that
+is not a success, a `check` outcome and `OutcomeDocument::from_package` over a
+checked package carry `result` `null` as before. `artifacts` stays `[]`
+(FR-810).
+
+### Missing selections
+
+A `missing_import` diagnostic of cause `missing-selection` has ten producers
+that refuse for ten different missing things, and one hint cannot be true for
+all of them. Such a diagnostic SHALL carry `selection`, the kind of the thing
+that is missing, one of the ten strings of this table; the hint catalog keys
+that pair's rows by `selection` as well, so the JSON `hint` is the text of
+the kind and the text form (FR-865) writes it unchanged. The producers are
+all the producers of the pair that write an `OutcomeDiagnostic`; a typed
+cause that writes the pair adds its row here in the same change.
+
+| `selection` | What is missing | Producers (typed cause) | `hint` |
+| --- | --- | --- | --- |
+| `model` | the domain package a `model` declaration selects | fsl-semantics model intake `ModelRefusalCause::MissingSelection`; assembly `AssemblyCause::UnadmittedModel`; `check_outcome`'s refusal of an unsupplied `--model` (FR-866) | `Supply the model in the request's models member, or with --model <identity>=<file> on fsl check.` |
+| `library` | the library an `import` declaration names | fsl-replay spine `ImportRefusal::MissingSelection`; assembly `AssemblyCause::UnsuppliedImport`; fsl-semantics `LibraryRefusal::MissingImport` | `Supply the library in the request's libraries member, or with --library <identity>=<file> on fsl check.` |
+| `sibling-unit` | a library, where the import names a sibling unit | fsl-replay spine `ImportRefusal::SiblingImport` | `Supply the imported unit as a library, not as a sibling unit.` |
+| `unimported-library` | an `import` of the unit for the library a call site names | fsl-replay `CallSiteRefusal::UnknownImport` | `Call a function of a library that the unit imports directly, or add the import.` |
+| `function-owner` | an `import` of the unit for the request's `function_owner` | fsl-replay `ReplayRefusal::UnknownOwner` | `Name a function_owner that the program imports directly, or add the import.` |
+| `byte-provision` | the byte-provision entry for a source the package reference names | fsl-replay request `IncompleteByteProvision` | `Add a byte_provision entry for the named source to the replay request.` |
+| `source` | a source the analyze request's package names, absent from its provision | fsl-analyze `ProvisionRefusal`, where written as a document diagnostic | `Add the named source to the request's source provision.` |
+| `extension-definition` | the definition of a selected extension | fsl-semantics library bundle `PackageError::MissingDefinition` and extension `ResolutionCause::MissingSelection` | `Add the selected extension's definition to the request's extensions member, or remove the selection.` |
+| `package-reference` | the domain package or library a checked package's bytes name | fsl-package `PackageAdmissionRefusal` of code `missing_import` | `Supply the domain package or library that the package names, in the request's models or libraries member.` |
+| `dependency` | the resolved source of a library dependency | fsl-replay plugin replay `PluginReplayRefusal::UnresolvedDependency` (defensive) | `Supply the dependency's library source in the request's libraries member.` |
+
+An analyze item's terminal record that is settled `missing_import`/
+`missing-selection` (FR-1044's component package that is no dependency, and
+FR-280's declined record for an absent source) is an item record, not a
+diagnostic: it carries no `selection` and no hint, and this section does not
+change it. `fsl-cst` lists the pair in its `CATALOG_PAIRS` and writes no
+diagnostic of it.
+
+The catalog row of the pair with no `selection` stays, so that `hint_for(code,
+cause)` keeps answering for each of the 23 pairs of the table below; no
+producer writes the pair without a `selection`. `hint_for` takes the
+selection as a third argument, `None` for every other pair.
 
 ### Fix hints
 
@@ -557,7 +616,9 @@ of the code and cause alone and holds no payload value: the message and the
 payload members already name the offending name, type, path or limit, and a
 static text keeps the document's bytes a function of the outcome and lets
 one reviewer read every hint in one place. A row is written only when its
-text is true for every diagnostic that carries its code and cause: a key
+text is true for every diagnostic that carries its key, its code and cause
+and, for the `missing_import`/`missing-selection` pair, its `selection`
+("Missing selections"): a key
 that several unrelated refusals share, such as `invalid-request` with no
 cause (a malformed request document, an output path that exists, a member
 given twice, an unknown option), has no row until those refusals carry
@@ -752,7 +813,7 @@ every depth. The writers and the members each contributes:
 | The `analyze` document (`fsl-analyze`) | the root `aggregate` (`status`, `gaps`, each gap `request_index`, `reason`, `result`) and `registry` (FR-635); each item's FR-621 members (`request_index`, `claim_name`, `request`, `category`, `record`, `certificate`, `counterexample`, `replay`, `accounting`, `exploration`, optional `diagnostics`, `axes`), `disposition` for a finite-replay item (FR-941), and `obligations`, `closure`, `global`, `projections` and `recording` (FR-990, FR-1032); the record's `settled_by`, `backend`, `non_zeno`, `memory_bound`, `trace` and `steps` |
 | A `simulation` item (FR-634, `fsl-analyze` `simulation_item`) | `request_index`, `kind` (`simulation`), `simulation` (the admitted settings: `mode`, `seed` and `samples` for `sample`, `max_steps`, `max_states`, `max_state_key_bytes`), `category`, `seed` for a `sample` run, `traces`, `coverage` (`states`, `transitions`, `choices`), `findings` (always present, an empty array when none), `frontier`, and `cause` when the run stopped at a limit or could not simulate; no `record` |
 | `check_fences` (`from_native_fences`) | FR-355's fence entries as `items` |
-| `result` | each kind of the Description: `completed`, `undefined`, `incomplete`, `parsed` (FR-663), `formatted`, `replayed` (FSpec FR-323 rows), `exported` (FSpec FR-817) |
+| `result` | each kind of the Description: `completed`, `undefined`, `incomplete`, `parsed` (FR-663), `formatted`, `replayed` (FSpec FR-323 rows), `exported` (FSpec FR-817), `packaged` ("Compile results") |
 
 - A record whose spelling another requirement owns (an FSpec FR-331
   terminal record and its counterexample variants, an FR-650 run value, the
@@ -772,6 +833,10 @@ every depth. The writers and the members each contributes:
 - Members that depend on `operation` are selected by `if`/`then` on
   `operation`, so an `analyze` document without `aggregate` fails, and a
   `check` document with one fails.
+- `selection` is a diagnostic member whose values are the ten strings of
+  "Missing selections", and `details` admits the members `missing` and
+  `accepted` of "Diagnostic details"; the schema file declares all three in
+  the change that adds them.
 - `hint` is an optional diagnostic member with `minLength` 1 and the pattern
   `^[^\u0000-\u001F\u007F-\u009F]*\.$`; its 200-byte bound is checked by
   `check_hint_catalog`, since a schema counts code points.
@@ -887,7 +952,9 @@ member goes untested against a real writer's bytes.
 | FR-286-AC-35 | Genuine projection refutations assembled through both intake routes give the same body type with `kind` `projection` and preserve the typed key, role, decision and separating witness. A choice decision retains both indexed cases, paths and nullable actions with its choice and owner; an acting-instance decision retains event, owner, both instances and maximum. The result remains `refuted`, category violation, with a separate canonical body and no fabricated realizability strategy. | Test |
 | FR-286-AC-36 | Running the exact Source request `fsl-analyze/tests/fixtures/hidden-choice-source/requests/protocols/protocol-unrealizable.json` with its referenced `handover-hidden-choice.fsl`, `lock.semantic-ir.json` and `lock-free.json` gives one `Handover` item at request index 0, `record.result` `refuted`, category violation and a non-null `protocol-analysis-counterexample` body equal to the genuine realizability counterexample. The document is `filament-outcome/1`, operation `analyze`, category violation, with the non-null last stage FR-621 assigns to the completed analysis, and exits 10. Exit 30 with `runtime_invariant`, `items` `[]` and `last_stage` `null` does not satisfy this criterion. | Test |
 | FR-286-AC-37 | For each of AC-33 to AC-35, the full emitted document validates against the published outcome schema and its body satisfies FR-331's positive/adverse protocol-counterexample contract vectors. Removing a required body member, adding an unknown member, using an unknown kind, mixing members of different kinds, omitting a send step's `send_record`, adding it to a non-send step or setting it to `null` fails that body contract. Removing the body makes the shared producer return `MissingCounterexample`; attaching a valid body from a different request item fails association checks. A record alone, a graph substitution or a rewritten `declined`/`unsupported` result never passes as the original refutation. Existing non-protocol counterexample spellings and non-refuted item behavior remain as specified above. | Test |
-| FR-286-AC-38 | The outcome document of FR-1047-AC-1 serializes with one diagnostic whose `details` is exactly `{"missing":["/request/models",["/request/program","/request/package"],["/request/call","/request/clause","/request/items"]]}`; the document of FR-1047-AC-5's `native-analyze/1` run refusal serializes with `details` exactly `{"accepted":["native-run/1","native-monitor/1","native-replay/1"],"path":"/format"}`; every other member of both documents is as FR-286 states, and a document whose `details` carries neither member is byte-equal to the bytes written before this row. | Test (TC-3201) |
+| FR-286-AC-38 | The outcome document of FR-1047-AC-1's refusal serializes with one diagnostic whose `details` is exactly `{"missing":["/request/models",["/request/program","/request/package"],["/request/call","/request/clause","/request/items"]]}`; the document of FR-1047-AC-5's `native-analyze/1` run refusal serializes with `details` exactly `{"accepted":["native-run/1","native-monitor/1","native-replay/1"],"path":"/format"}`; both validate against `OUTCOME_SCHEMA_1`. | Test (TC-3201) |
+| FR-286-AC-39 | `compile_outcome_with_overrides` over FR-810-AC-1's request (`output` `{"package": "spine.package.json"}`, the request file in directory `reqs`) returns a document with `operation` `package`, `result` exactly `{"kind":"packaged","package":{"bytes":N,"output":"reqs/spine.package.json","handoff":null}}` with `N` the length of `package_bytes()`, `artifacts` `[]`, valid against `OUTCOME_SCHEMA_1`; the same request without `output` has `"output":null`; with `RequestOverrides::output` `cli.package.json` has `"output":"cli.package.json"`; with FR-665-AC-1's `handoff` and no `output` has `"handoff":"reqs/<directory>"`, `D` the `directory` member joined to `reqs`. A compile refusal and a `check` outcome have `result` `null`. | Test (TC-3203) |
+| FR-286-AC-40 | For each `selection` of "Missing selections", the diagnostic its producer writes carries `selection` equal to that string, `code` `missing_import`, `cause` `missing-selection`, and `hint` equal to that row's text byte for byte; the document validates against `OUTCOME_SCHEMA_1`, which accepts exactly those ten `selection` values; `hint_for(Code::MissingImport, Some("missing-selection"), Some(<selection>))` returns the row's text for each of the ten, and `check_hint_catalog` returns `Ok`. | Test (TC-3203) |
 
 ## Status
 

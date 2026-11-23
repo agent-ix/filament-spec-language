@@ -18,6 +18,6 @@ Verify the export entry's refusal of a non-object request. Scope: FR-1047-AC-9.
 
 ## Expected Results
 
-- Step 1: `invalid-request`, stage `request`, exit 20, message exactly `invalid clause request member /request: expected an object`.
+- Step 1: `invalid-request`, stage `request`, exit 20, message exactly `invalid clause request member /request: expected an object`, `details` `null`.
 
 Test: `fsl-command/tests/it` (request shape).
