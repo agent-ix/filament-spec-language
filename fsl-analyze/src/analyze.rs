@@ -69,7 +69,7 @@ use fsl_eval::simulation::model::PopulationUniverse;
 use fsl_eval::simulation::protocol::ProtocolTransition;
 use fsl_foundation::diagnostic::category_of;
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_foundation::{BackendId, RequestIndex};
+use fsl_foundation::{BackendId, RequestIndex, Setting};
 use fsl_package::CheckedPackage;
 use fsl_replay::statistical::StatisticalRecord;
 use fsl_replay::{
@@ -678,6 +678,103 @@ impl SubjectBinding<'_> {
     }
 }
 
+/// Every analysis-item engine setting a caller can pass to `analyze`, and to
+/// `monitor` beside routed `items` (FR-255 "Lifecycle caller-limit
+/// coverage"). `plan_search.*` is absent: neither operation executes it.
+pub const ENGINE_SETTINGS: [Setting; 44] = [
+    Setting::ModelCheckMaxStates,
+    Setting::ModelCheckMaxTransitions,
+    Setting::ModelCheckMaxAutomatonStates,
+    Setting::ModelCheckWitnessSamples,
+    Setting::ModelCheckMaxWalkSteps,
+    Setting::ModelCheckMaxWitnessSet,
+    Setting::ModelCheckMaxRelationTuples,
+    Setting::ModelCheckMaxLiveInstances,
+    Setting::ModelCheckMaxStoreBuffer,
+    Setting::ModelCheckMaxMessages,
+    Setting::ExpansionMaxCandidates,
+    Setting::SimulationMaxSteps,
+    Setting::ExactProbMaxStates,
+    Setting::ExactProbMaxTransitions,
+    Setting::ExactProbMaxAutomatonStates,
+    Setting::ExactProbMaxIterations,
+    Setting::ExactProbPrecisionBits,
+    Setting::ExactProbMaxPrecisionBits,
+    Setting::ExactProbMaxRationalBits,
+    Setting::ExactProbMaxPolicyIterations,
+    Setting::ExactProbMaxWitnessPaths,
+    Setting::StatisticalMaxSamples,
+    Setting::StatisticalMaxDraws,
+    Setting::StatisticalMaxCycleSteps,
+    Setting::StatisticalMaxSampleSteps,
+    Setting::ZoneCheckMaxSymbolicStates,
+    Setting::ZoneCheckMaxSymbolicTransitions,
+    Setting::ZoneCheckMaxAutomatonStates,
+    Setting::ZoneCheckMaxZoneBytes,
+    Setting::CertificateCheckMaxCertificateEdges,
+    Setting::CertificateCheckMaxCertificateBytes,
+    Setting::CertificateCheckMaxWorkingBytes,
+    Setting::CertificateCheckMaxRank,
+    Setting::ScheduleMaxDemandPoints,
+    Setting::HybridMaxSolverSteps,
+    Setting::HybridMaxSolverTime,
+    Setting::SmtEncodingMaxConstants,
+    Setting::SmtEncodingMaxApplications,
+    Setting::SmtEncodingMaxMonitorAtoms,
+    Setting::SmtEncodingMaxMonitorStates,
+    Setting::SmtEncodingMaxCandidates,
+    Setting::SmtEncodingMaxScriptBytes,
+    Setting::SmtMaxSolverSteps,
+    Setting::SmtMaxSolverTime,
+];
+
+/// The engine settings the caller set for one run: a bound is present only
+/// when the caller named it, so an item that states the same limit in its own
+/// `limits` member is refused rather than silently overridden (FR-255
+/// "Caller limits and item limits").
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct EngineBounds {
+    values: [Option<u64>; ENGINE_SETTINGS.len()],
+}
+
+impl Default for EngineBounds {
+    fn default() -> Self {
+        Self {
+            values: [None; ENGINE_SETTINGS.len()],
+        }
+    }
+}
+
+impl EngineBounds {
+    fn index(setting: Setting) -> Option<usize> {
+        ENGINE_SETTINGS.iter().position(|engine| *engine == setting)
+    }
+
+    /// The caller's bound for `setting`, when it set one.
+    #[must_use]
+    pub fn get(&self, setting: Setting) -> Option<u64> {
+        Self::index(setting).and_then(|index| self.values[index])
+    }
+
+    /// Record the caller's `bound` for `setting`; `false` when `setting` is
+    /// no engine setting.
+    pub fn set(&mut self, setting: Setting, bound: u64) -> bool {
+        match Self::index(setting) {
+            Some(index) => {
+                self.values[index] = Some(bound);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Whether the caller set no engine setting.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.values.iter().all(Option::is_none)
+    }
+}
+
 /// The caller's shared accounting, observation, normalization and deadline
 /// limits for one analyze request (FR-277, FR-281).
 ///
@@ -711,6 +808,10 @@ pub struct AnalyzeLimits {
     /// The bound on each replay read the analysis starts
     /// (`replay.input_bytes`, FR-255; FR-940-AC-22).
     pub replay: fsl_replay::ReplayLimits,
+    /// The engine settings the caller named (FR-255 "Lifecycle caller-limit
+    /// coverage"), each over the published default and each refused when an
+    /// item states the same limit itself.
+    pub engines: EngineBounds,
 }
 
 impl AnalyzeLimits {
@@ -734,6 +835,7 @@ impl AnalyzeLimits {
             deadline: DeadlineSupply::Unbounded,
             emit: fsl_package::EmitLimits::new(fsl_replay::spine::EMIT_OUTPUT_BYTES_DEFAULT),
             replay: fsl_replay::ReplayLimits::default(),
+            engines: EngineBounds::default(),
         }
     }
 }

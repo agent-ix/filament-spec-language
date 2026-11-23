@@ -12,7 +12,7 @@
 
 use std::collections::BTreeMap;
 
-use fsl_analyze::analyze::AnalyzeLimits;
+use fsl_analyze::analyze::{AnalyzeLimits, ENGINE_SETTINGS};
 use fsl_analyze::monitor::{
     MonitorLimits, DEFAULT_MAX_WINDOW_VALUES, DEFAULT_RETAINED_IDENTITIES,
     DEFAULT_RETAINED_POSITIONS,
@@ -195,6 +195,7 @@ const COMMON: &[Setting] = &[
     Setting::S1Tokens,
     Setting::S1Nodes,
     Setting::S1WorkUnits,
+    Setting::S1Diagnostics,
     Setting::S3Nodes,
     Setting::S3InputBytes,
     Setting::S3WorkUnits,
@@ -227,6 +228,13 @@ const COMMON: &[Setting] = &[
     Setting::DependencyImportEdges,
     Setting::DependencySourceBytes,
     Setting::IntakeInputBytes,
+    Setting::AdmissionPopulationMembers,
+    Setting::AdmissionWorkUnits,
+    Setting::AdmissionAncestorSteps,
+    Setting::LibraryDefinitions,
+    Setting::LibraryDependencyEdges,
+    Setting::LibraryArtifactBytes,
+    Setting::LibrarySingleArtifactBytes,
 ];
 
 /// What `analyze` consumes beyond [`COMMON`]: the replay read bound and the
@@ -246,13 +254,6 @@ const MONITOR_ONLY: &[Setting] = &[
 /// resolution, the reader bound and the three model-check bounds graph
 /// replay consumes.
 const REPLAY_ONLY: &[Setting] = &[
-    Setting::AdmissionPopulationMembers,
-    Setting::AdmissionWorkUnits,
-    Setting::AdmissionAncestorSteps,
-    Setting::LibraryDefinitions,
-    Setting::LibraryDependencyEdges,
-    Setting::LibraryArtifactBytes,
-    Setting::LibrarySingleArtifactBytes,
     Setting::ReplayInputBytes,
     Setting::ModelCheckMaxStates,
     Setting::ModelCheckMaxTransitions,
@@ -335,8 +336,14 @@ impl CommandLimits {
     pub fn exposes(&self, setting: Setting) -> bool {
         COMMON.contains(&setting)
             || match self.operation {
-                LimitedOperation::Analyze => ANALYZE_ONLY.contains(&setting),
-                LimitedOperation::Monitor => MONITOR_ONLY.contains(&setting),
+                LimitedOperation::Analyze => {
+                    ANALYZE_ONLY.contains(&setting) || ENGINE_SETTINGS.contains(&setting)
+                }
+                LimitedOperation::Monitor => {
+                    MONITOR_ONLY.contains(&setting)
+                        || ENGINE_SETTINGS.contains(&setting)
+                        || setting == Setting::EmitOutputBytes
+                }
                 LimitedOperation::Replay => REPLAY_ONLY.contains(&setting),
             }
     }
@@ -360,6 +367,26 @@ impl CommandLimits {
                 Ok(())
             }
         }
+    }
+
+    /// The settings the caller set that a monitor run accepts only beside
+    /// provider-routed `items` (FR-255 "Lifecycle caller-limit coverage"):
+    /// the engine settings and `emit.output_bytes`. A monitor request without
+    /// `items` refuses the first of them before any work.
+    ///
+    /// # Errors
+    ///
+    /// [`SettingUnavailable`] naming the first such setting.
+    pub fn require_no_routed_only(&self) -> Result<(), SettingUnavailable> {
+        for setting in self.stage.keys() {
+            if ENGINE_SETTINGS.contains(setting) || *setting == Setting::EmitOutputBytes {
+                return Err(SettingUnavailable {
+                    operation: self.operation,
+                    setting: SettingName::Stage(*setting),
+                });
+            }
+        }
+        Ok(())
     }
 
     /// The monitor plan preparation bounds: the caller's starting values with
@@ -405,6 +432,9 @@ impl CommandLimits {
         limits.replay = caller.replay;
         if let Some(bound) = self.stage.get(&Setting::EmitOutputBytes) {
             limits.emit = fsl_package::EmitLimits::new(*bound);
+        }
+        for (setting, bound) in &self.stage {
+            limits.engines.set(*setting, *bound);
         }
     }
 
@@ -511,6 +541,7 @@ mod tests {
         "s1.tokens",
         "s1.nodes",
         "s1.work_units",
+        "s1.diagnostics",
         "s3.nodes",
         "s3.input_bytes",
         "s3.work_units",
@@ -543,6 +574,13 @@ mod tests {
         "dependency.import_edges",
         "dependency.source_bytes",
         "intake.input_bytes",
+        "admission.population_members",
+        "admission.work_units",
+        "admission.ancestor_steps",
+        "library.definitions",
+        "library.dependency_edges",
+        "library.artifact_bytes",
+        "library.single_artifact_bytes",
     ];
 
     fn names(limits: &CommandLimits) -> Vec<&'static str> {
@@ -553,6 +591,17 @@ mod tests {
             .collect();
         names.sort_unstable();
         names
+    }
+
+    /// The engine settings `analyze` accepts, and `monitor` beside routed items.
+    /// `expansion.max_candidates` is required of the caller, so no bound is
+    /// reported until it is set.
+    fn engine_names() -> Vec<&'static str> {
+        ENGINE_SETTINGS
+            .iter()
+            .filter(|setting| **setting != Setting::ExpansionMaxCandidates)
+            .map(|setting| setting.name())
+            .collect()
     }
 
     fn expected(extra: &[&'static str]) -> Vec<&'static str> {
@@ -572,30 +621,27 @@ mod tests {
     #[trace("TC-721")]
     #[test]
     fn each_operation_exposes_the_settings_accepted_today() {
-        assert_eq!(
-            names(&CommandLimits::analyze()),
-            expected(&["replay.input_bytes", "emit.output_bytes"])
-        );
+        let mut analyze = vec!["replay.input_bytes", "emit.output_bytes"];
+        analyze.extend(engine_names());
+        assert_eq!(names(&CommandLimits::analyze()), expected(&analyze));
         assert_eq!(
             names(&monitor()),
-            expected(&[
-                "monitor.max_window_values",
-                "monitor.retained_positions",
-                "monitor.retained_identities",
-                "monitor.preparation_work_units",
-                "monitor.preparation_storage",
-            ])
+            {
+                let mut monitor = vec![
+                    "monitor.max_window_values",
+                    "monitor.retained_positions",
+                    "monitor.retained_identities",
+                    "monitor.preparation_work_units",
+                    "monitor.preparation_storage",
+                    "emit.output_bytes",
+                ];
+                monitor.extend(engine_names());
+                expected(&monitor)
+            }
         );
         assert_eq!(
             names(&CommandLimits::replay()),
             expected(&[
-                "admission.population_members",
-                "admission.work_units",
-                "admission.ancestor_steps",
-                "library.definitions",
-                "library.dependency_edges",
-                "library.artifact_bytes",
-                "library.single_artifact_bytes",
                 "replay.input_bytes",
                 "model_check.max_states",
                 "model_check.max_transitions",

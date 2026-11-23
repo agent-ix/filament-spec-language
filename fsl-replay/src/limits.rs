@@ -19,7 +19,10 @@ use fsl_semantics::model::observation::ObservationLimits;
 use fsl_semantics::model::population::PopulationAdmissionLimits;
 
 use crate::bounds::ReplayLimits;
-use crate::model_check::limits::ModelCheckLimits;
+use crate::certificate::zone_certificate::CertificateCheckLimits;
+use crate::model_check::limits::{ExactProbLimits, ModelCheckLimits};
+use crate::statistical::{StatisticalLimits, TimedSampling};
+use crate::SmtEncodingLimits;
 use crate::spine::{default_accounting, SpineLimits, DEFAULT_WORK_UNITS};
 
 /// The call's accounting limits (`filament.value.accounting/v1`): each of the
@@ -159,10 +162,18 @@ impl SettingLimits for RenderLimits {
     }
 }
 
+/// FR-255 "Engine limit setting names" defaults of the `plan_search.*` rows
+/// (FR-1011).
+const PLAN_SEARCH_DEFAULTS: [u64; 5] = [10_000_000, 100_000_000, 16_777_216, 100_000_000, 1_048_576];
+
+/// The default of `certificate_check.max_rank` (FR-255): the closed
+/// profile's Count representability ceiling.
+pub const DEFAULT_CERTIFICATE_MAX_RANK: u64 = 9_007_199_254_740_991;
+
 /// The FR-255 engine-table limits accepted by the settings operation.
 /// `expansion` is absent until a caller supplies its required
-/// `expansion.max_candidates` bound; the model-check and protocol-method
-/// limits use their published defaults.
+/// `expansion.max_candidates` bound; every other engine limit holds its
+/// published default.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct EngineLimits {
     /// EN-1's search and product budgets.
@@ -175,6 +186,32 @@ pub struct EngineLimits {
     pub max_store_buffer: u64,
     /// EN-1's weak-memory RA live-message bound.
     pub max_messages: u64,
+    /// `simulation.max_steps`: the trace positions of a simulation item.
+    pub simulation_max_steps: u64,
+    /// EN-5's `exact_prob.*` limits, including its document ceilings.
+    pub exact_prob: ExactProbLimits,
+    /// EN-4's `statistical.*` limits.
+    pub statistical: StatisticalLimits,
+    /// `statistical.max_sample_steps` (FR-254).
+    pub statistical_max_sample_steps: u64,
+    /// `zone_check.max_symbolic_states`, `.max_symbolic_transitions`,
+    /// `.max_automaton_states` and `.max_zone_bytes` (FR-239), in that order.
+    pub zone_check: [u64; 4],
+    /// The certificate checkers' limits (FR-245): edges and bytes.
+    pub certificate: CertificateCheckLimits,
+    /// `certificate_check.max_rank` (FR-201).
+    pub certificate_max_rank: u64,
+    /// `schedule.max_demand_points` (FR-247).
+    pub schedule_max_demand_points: u64,
+    /// `hybrid.max_solver_steps` and `hybrid.max_solver_time` (FR-250).
+    pub hybrid: [u64; 2],
+    /// `smt_encoding.*` (FR-315).
+    pub smt_encoding: SmtEncodingLimits,
+    /// `smt.max_solver_steps` and `smt.max_solver_time` (FR-315).
+    pub smt: [u64; 2],
+    /// `plan_search.max_states`, `.max_work`, `.max_certificate_entries`,
+    /// `.max_check_work` and `.max_state_key_bytes` (FR-1011), in that order.
+    pub plan_search: [u64; 5],
 }
 
 impl Default for EngineLimits {
@@ -185,21 +222,44 @@ impl Default for EngineLimits {
             max_live_instances: 3,
             max_store_buffer: 4,
             max_messages: 4,
+            simulation_max_steps: 16_777_216,
+            exact_prob: ExactProbLimits::default(),
+            statistical: StatisticalLimits::default(),
+            statistical_max_sample_steps: TimedSampling::default().max_sample_steps,
+            zone_check: [1 << 20, 1 << 24, 1 << 20, 1 << 30],
+            certificate: CertificateCheckLimits::default(),
+            certificate_max_rank: DEFAULT_CERTIFICATE_MAX_RANK,
+            schedule_max_demand_points: 1_048_576,
+            hybrid: [1_000_000, 60],
+            smt_encoding: SmtEncodingLimits::default(),
+            smt: [100_000_000, 60],
+            plan_search: PLAN_SEARCH_DEFAULTS,
         }
     }
+}
+
+fn widen(value: usize) -> u64 {
+    u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+fn narrow(bound: u64) -> usize {
+    usize::try_from(bound).unwrap_or(usize::MAX)
+}
+
+fn narrow32(bound: u64) -> u32 {
+    u32::try_from(bound).unwrap_or(u32::MAX)
 }
 
 impl SettingLimits for EngineLimits {
     fn bounds(&self) -> Vec<(Setting, u64)> {
         let model = &self.model_check;
+        let exact = &self.exact_prob;
+        let smt = &self.smt_encoding;
         let mut bounds = vec![
-            (
-                Setting::ModelCheckMaxStates,
-                u64::try_from(model.limits.max_states).unwrap_or(u64::MAX),
-            ),
+            (Setting::ModelCheckMaxStates, widen(model.limits.max_states)),
             (
                 Setting::ModelCheckMaxTransitions,
-                u64::try_from(model.limits.max_transitions).unwrap_or(u64::MAX),
+                widen(model.limits.max_transitions),
             ),
             (
                 Setting::ModelCheckMaxAutomatonStates,
@@ -215,6 +275,80 @@ impl SettingLimits for EngineLimits {
             (Setting::ModelCheckMaxLiveInstances, self.max_live_instances),
             (Setting::ModelCheckMaxStoreBuffer, self.max_store_buffer),
             (Setting::ModelCheckMaxMessages, self.max_messages),
+            (Setting::SimulationMaxSteps, self.simulation_max_steps),
+            (
+                Setting::ExactProbMaxStates,
+                widen(exact.model.limits.max_states),
+            ),
+            (
+                Setting::ExactProbMaxTransitions,
+                widen(exact.model.limits.max_transitions),
+            ),
+            (
+                Setting::ExactProbMaxAutomatonStates,
+                exact.model.max_automaton_states,
+            ),
+            (Setting::ExactProbMaxIterations, exact.max_iterations),
+            (
+                Setting::ExactProbPrecisionBits,
+                u64::from(exact.precision_bits),
+            ),
+            (
+                Setting::ExactProbMaxPrecisionBits,
+                u64::from(exact.max_precision_bits),
+            ),
+            (Setting::ExactProbMaxRationalBits, exact.max_rational_bits),
+            (
+                Setting::ExactProbMaxPolicyIterations,
+                exact.max_policy_iterations,
+            ),
+            (Setting::ExactProbMaxWitnessPaths, exact.max_witness_paths),
+            (Setting::StatisticalMaxSamples, self.statistical.max_samples),
+            (Setting::StatisticalMaxDraws, self.statistical.max_draws),
+            (
+                Setting::StatisticalMaxCycleSteps,
+                self.statistical.max_cycle_steps,
+            ),
+            (
+                Setting::StatisticalMaxSampleSteps,
+                self.statistical_max_sample_steps,
+            ),
+            (Setting::ZoneCheckMaxSymbolicStates, self.zone_check[0]),
+            (Setting::ZoneCheckMaxSymbolicTransitions, self.zone_check[1]),
+            (Setting::ZoneCheckMaxAutomatonStates, self.zone_check[2]),
+            (Setting::ZoneCheckMaxZoneBytes, self.zone_check[3]),
+            (
+                Setting::CertificateCheckMaxCertificateEdges,
+                self.certificate.max_certificate_edges,
+            ),
+            (
+                Setting::CertificateCheckMaxCertificateBytes,
+                self.certificate.max_certificate_bytes,
+            ),
+            (
+                Setting::CertificateCheckMaxWorkingBytes,
+                exact.document.storage_bytes,
+            ),
+            (Setting::CertificateCheckMaxRank, self.certificate_max_rank),
+            (
+                Setting::ScheduleMaxDemandPoints,
+                self.schedule_max_demand_points,
+            ),
+            (Setting::HybridMaxSolverSteps, self.hybrid[0]),
+            (Setting::HybridMaxSolverTime, self.hybrid[1]),
+            (Setting::SmtEncodingMaxConstants, smt.max_constants),
+            (Setting::SmtEncodingMaxApplications, smt.max_applications),
+            (Setting::SmtEncodingMaxMonitorAtoms, smt.max_monitor_atoms),
+            (Setting::SmtEncodingMaxMonitorStates, smt.max_monitor_states),
+            (Setting::SmtEncodingMaxCandidates, smt.max_candidates),
+            (Setting::SmtEncodingMaxScriptBytes, smt.max_script_bytes),
+            (Setting::SmtMaxSolverSteps, self.smt[0]),
+            (Setting::SmtMaxSolverTime, self.smt[1]),
+            (Setting::PlanSearchMaxStates, self.plan_search[0]),
+            (Setting::PlanSearchMaxWork, self.plan_search[1]),
+            (Setting::PlanSearchMaxCertificateEntries, self.plan_search[2]),
+            (Setting::PlanSearchMaxCheckWork, self.plan_search[3]),
+            (Setting::PlanSearchMaxStateKeyBytes, self.plan_search[4]),
         ];
         if let Some(expansion) = self.expansion {
             bounds.push((Setting::ExpansionMaxCandidates, expansion.max_candidates));
@@ -224,13 +358,11 @@ impl SettingLimits for EngineLimits {
 
     fn set_bound(&mut self, setting: Setting, bound: u64) -> bool {
         let model = &mut self.model_check;
+        let exact = &mut self.exact_prob;
+        let smt = &mut self.smt_encoding;
         match setting {
-            Setting::ModelCheckMaxStates => {
-                model.limits.max_states = usize::try_from(bound).unwrap_or(usize::MAX);
-            }
-            Setting::ModelCheckMaxTransitions => {
-                model.limits.max_transitions = usize::try_from(bound).unwrap_or(usize::MAX);
-            }
+            Setting::ModelCheckMaxStates => model.limits.max_states = narrow(bound),
+            Setting::ModelCheckMaxTransitions => model.limits.max_transitions = narrow(bound),
             Setting::ModelCheckMaxAutomatonStates => model.max_automaton_states = bound,
             Setting::ModelCheckWitnessSamples => model.witness_samples = bound,
             Setting::ModelCheckMaxWalkSteps => model.max_walk_steps = bound,
@@ -244,6 +376,49 @@ impl SettingLimits for EngineLimits {
                     max_candidates: bound,
                 });
             }
+            Setting::SimulationMaxSteps => self.simulation_max_steps = bound,
+            Setting::ExactProbMaxStates => exact.model.limits.max_states = narrow(bound),
+            Setting::ExactProbMaxTransitions => exact.model.limits.max_transitions = narrow(bound),
+            Setting::ExactProbMaxAutomatonStates => exact.model.max_automaton_states = bound,
+            Setting::ExactProbMaxIterations => exact.max_iterations = bound,
+            Setting::ExactProbPrecisionBits => exact.precision_bits = narrow32(bound),
+            Setting::ExactProbMaxPrecisionBits => exact.max_precision_bits = narrow32(bound),
+            Setting::ExactProbMaxRationalBits => exact.max_rational_bits = bound,
+            Setting::ExactProbMaxPolicyIterations => exact.max_policy_iterations = bound,
+            Setting::ExactProbMaxWitnessPaths => exact.max_witness_paths = bound,
+            Setting::StatisticalMaxSamples => self.statistical.max_samples = bound,
+            Setting::StatisticalMaxDraws => self.statistical.max_draws = bound,
+            Setting::StatisticalMaxCycleSteps => self.statistical.max_cycle_steps = bound,
+            Setting::StatisticalMaxSampleSteps => self.statistical_max_sample_steps = bound,
+            Setting::ZoneCheckMaxSymbolicStates => self.zone_check[0] = bound,
+            Setting::ZoneCheckMaxSymbolicTransitions => self.zone_check[1] = bound,
+            Setting::ZoneCheckMaxAutomatonStates => self.zone_check[2] = bound,
+            Setting::ZoneCheckMaxZoneBytes => self.zone_check[3] = bound,
+            Setting::CertificateCheckMaxCertificateEdges => {
+                self.certificate.max_certificate_edges = bound;
+            }
+            Setting::CertificateCheckMaxCertificateBytes => {
+                self.certificate.max_certificate_bytes = bound;
+                exact.document.bytes = bound;
+            }
+            Setting::CertificateCheckMaxWorkingBytes => exact.document.storage_bytes = bound,
+            Setting::CertificateCheckMaxRank => self.certificate_max_rank = bound,
+            Setting::ScheduleMaxDemandPoints => self.schedule_max_demand_points = bound,
+            Setting::HybridMaxSolverSteps => self.hybrid[0] = bound,
+            Setting::HybridMaxSolverTime => self.hybrid[1] = bound,
+            Setting::SmtEncodingMaxConstants => smt.max_constants = bound,
+            Setting::SmtEncodingMaxApplications => smt.max_applications = bound,
+            Setting::SmtEncodingMaxMonitorAtoms => smt.max_monitor_atoms = bound,
+            Setting::SmtEncodingMaxMonitorStates => smt.max_monitor_states = bound,
+            Setting::SmtEncodingMaxCandidates => smt.max_candidates = bound,
+            Setting::SmtEncodingMaxScriptBytes => smt.max_script_bytes = bound,
+            Setting::SmtMaxSolverSteps => self.smt[0] = bound,
+            Setting::SmtMaxSolverTime => self.smt[1] = bound,
+            Setting::PlanSearchMaxStates => self.plan_search[0] = bound,
+            Setting::PlanSearchMaxWork => self.plan_search[1] = bound,
+            Setting::PlanSearchMaxCertificateEntries => self.plan_search[2] = bound,
+            Setting::PlanSearchMaxCheckWork => self.plan_search[3] = bound,
+            Setting::PlanSearchMaxStateKeyBytes => self.plan_search[4] = bound,
             _ => return false,
         }
         true
