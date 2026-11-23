@@ -1779,37 +1779,57 @@ fn given_delays_race_under_unequal_weights() {
         assert_eq!(exact_value(&record), value, "{claim}");
     }
 
-    let own = settle_trio(&world, "PB", None);
+    assert_forged_initial_values_rejected(
+        &world,
+        "PB",
+        ratio(7, 48),
+        &[ratio(11, 96), ratio(0, 1)],
+    );
+}
+
+/// The `Exact` certificate of `claim`, whose initial state's value is
+/// `exact`, with that value replaced by each of `forged`: the checker rejects
+/// each `InequalityFails` at that initial state.
+fn assert_forged_initial_values_rejected(
+    world: &World,
+    claim: &str,
+    exact: Rational,
+    forged: &[Rational],
+) {
+    let own = settle_trio(world, claim, None);
     let document: serde_json::Value = serde_json::from_slice(
         own.terminal()
             .and_then(|terminal| terminal.exact_certificate_document())
             .expect("the proof retains its certificate"),
     )
     .expect("a JSON document");
+    let text = |value: &Rational| {
+        json!({"numerator": value.numerator().to_string(),
+               "denominator": value.denominator().to_string()})
+    };
     let initial_row = document["values"]
         .as_array()
         .expect("rows")
         .iter()
-        .position(|row| row["value"] == json!({"numerator": "7", "denominator": "48"}))
+        .position(|row| row["value"] == text(&exact))
         .expect("the initial state's value");
     let identity = fsl_replay::probabilistic_claim_identity(
         world
             .package
             .graph()
             .probabilistic_model()
-            .claim("PB")
+            .claim(claim)
             .expect("the claim checks"),
     )
     .expect("an identity");
-    for (numerator, denominator) in [("11", "96"), ("0", "1")] {
-        let mut forged = document.clone();
-        forged["values"][initial_row]["value"] =
-            json!({"numerator": numerator, "denominator": denominator});
+    for value in forged {
+        let mut altered = document.clone();
+        altered["values"][initial_row]["value"] = text(value);
         let checked = fsl_replay::check_probability_certificate_document(
             &world.system(),
             world.package.graph().probabilistic_model().claims(),
             &identity,
-            &serde_json::to_vec(&forged).expect("serializes"),
+            &serde_json::to_vec(&altered).expect("serializes"),
             fsl_replay::ProbabilityDocumentLimits {
                 states: 4096,
                 edges: 65_536,
@@ -1818,17 +1838,18 @@ fn given_delays_race_under_unequal_weights() {
             &Cancel::new(),
         );
         let Ok(fsl_replay::ExactProbabilityCertificateCheck::Rejected(rejection)) = checked else {
-            panic!("{numerator}/{denominator}: expected a rejection, got {checked:?}");
+            panic!("{value:?}: expected a rejection, got {checked:?}");
         };
         assert_eq!(
             rejection.rule,
-            fsl_replay::ProbabilityCertificateRule::InequalityFails
+            fsl_replay::ProbabilityCertificateRule::InequalityFails,
+            "{value:?}"
         );
         let key = {
             use base64::Engine as _;
             base64::engine::general_purpose::URL_SAFE_NO_PAD
                 .decode(
-                    forged["values"][initial_row]["state"]
+                    altered["values"][initial_row]["state"]
                         .as_str()
                         .expect("a state key"),
                 )
@@ -1838,7 +1859,196 @@ fn given_delays_race_under_unequal_weights() {
             rejection.at,
             fsl_replay::ProbabilityCertificateLocus::ProductState(
                 fsl_replay::ProbabilityProductKey::from_canonical_bytes(key)
-            )
+            ),
+            "{value:?}"
         );
     }
+}
+
+/// `Chain` of FR-204's worked example over the timed fixture's `Call`: `n` is
+/// `phase`, `last` a further `Phase` field (0 `None`, 1 `X`, 2 `Y`, 3 `Z`)
+/// and the flags `x`, `y`, `z` are `inflight`, `late` and `retried`. `X`, `Y`
+/// and `Z` each guard on their own flag, set it, increment `n` and set `last`,
+/// all with `delay discrete { 2 ms: 1 }`, under `Order` (weights 1, 2, 3).
+fn chain(claims: &str) -> World {
+    let operation = |name: &str, flag: &str, last: u8| {
+        format!(
+            "pre G{name} using v on M::Call::{name} {{ not self.{flag} and self.phase < 3 }}\n\
+             post P{name} using v on M::Call::{name} {{ self.{flag} = true \
+             and self.phase = pre(self.phase) + 1 and self.last = {last} }}\n"
+        )
+    };
+    let mut document: serde_json::Value = serde_json::from_slice(&timed_world::document(
+        &["x"],
+        &[
+            ("X", &["phase", "inflight", "last"]),
+            ("Y", &["phase", "late", "last"]),
+            ("Z", &["phase", "retried", "last"]),
+        ],
+    ))
+    .expect("the timed fixture is JSON");
+    document["types"][1]["fields"]
+        .as_array_mut()
+        .expect("Call fields")
+        .push(timed_world::wire_field(
+            "last",
+            &timed_world::ident("Phase"),
+        ));
+    timed_world::world_holding(
+        &serde_json::to_vec(&document).expect("serializes"),
+        PROFILES,
+        &format!(
+            "{}{}{}{}\
+             time invariant Wait when {{ self.phase < 3 }} {{ self.x <= 3 ms }}\n\
+             delay M::Call::X ~ discrete {{ 2 ms: 1 }};\n\
+             delay M::Call::Y ~ discrete {{ 2 ms: 1 }};\n\
+             delay M::Call::Z ~ discrete {{ 2 ms: 1 }};\n\
+             workload Order on M {{ weight Call::X = 1; weight Call::Y = 2; weight Call::Z = 3; }}\n\
+             {claims}",
+            timed_world::DENSE,
+            operation("X", "inflight", 1),
+            operation("Y", "late", 2),
+            operation("Z", "retried", 3),
+        ),
+        &json!({"last": {"integer": "0"}}),
+    )
+}
+
+/// A claim `name` under `Order` that all three fired and `last` is `last`.
+fn chain_claim(name: &str, bound: &str, last: u8) -> String {
+    format!(
+        "probabilistic {name} using ev on M over (c: M::Call) under Order on origin \
+         {{ probability {bound} [ eventually[0 ms, 3 ms] holds(c.phase = 3 and c.last = {last}) ] }}\n"
+    )
+}
+
+/// FR-204-AC-20 (TC-3206): three operations that tie at 2 ms and each fire
+/// when still enabled at their turn are ordered without replacement by the
+/// weights (`XYZ` 1/15, `XZY` 1/10, `YXZ` 1/12, `YZX` 1/4, `ZXY` 1/6, `ZYX`
+/// 1/3), so the third pick is `X` with 7/12, `Y` with 4/15 and `Z` with
+/// 3/20; the certificates of the first-pick-weighted (1/2), even (1/3) and
+/// canonical-order (1) readings are rejected.
+#[trace("TC-3206", "FR-204-AC-20")]
+#[test]
+fn tied_operations_are_ordered_without_replacement() {
+    let world = chain(&format!(
+        "{}{}{}",
+        chain_claim("LastX", ">= 0.58", 1),
+        chain_claim("LastZ", "<= 0.2", 3),
+        chain_claim("LastY", "<= 0.3", 2),
+    ));
+    for (claim, value) in [
+        ("LastX", ratio(7, 12)),
+        ("LastZ", ratio(3, 20)),
+        ("LastY", ratio(4, 15)),
+    ] {
+        let record = settle_trio(&world, claim, None);
+        assert_eq!(exact_value(&record), value, "{claim}");
+    }
+    assert_forged_initial_values_rejected(
+        &world,
+        "LastZ",
+        ratio(3, 20),
+        &[ratio(1, 2), ratio(1, 3), ratio(1, 1)],
+    );
+}
+
+/// `Pair` of FR-204's worked example over the timed fixture's `Call`. The
+/// operation `fire(which: Boolean)` has the two identities `F1` (`which`
+/// true) and `F2` (`which` false), both guarded by `phase = 0` (`Idle`); `F1`
+/// sets `late` (the hit of the first identity, read as `n1.hit`) and `F2`
+/// `retried`, each setting `phase` 1 (`Done`). `G` sets `inflight` (the flag
+/// `g`) and `phase` 1. `fire` takes `discrete { 2 ms: 1 }` and `G`
+/// `discrete { 2 ms: 1, 3 ms: 1 }` under `Share` (`fire` 4, `G` 1).
+fn pair(claims: &str) -> World {
+    let mut document: serde_json::Value = serde_json::from_slice(&timed_world::document(
+        &["x"],
+        &[
+            ("fire", &["phase", "late", "retried"]),
+            ("G", &["phase", "inflight"]),
+        ],
+    ))
+    .expect("the timed fixture is JSON");
+    document["types"][1]["operations"][0]["params"] = json!([{
+        "identity": timed_world::ident("Call/fire/which"),
+        "name": "which",
+        "typeRef": "ix://filament/native/Boolean",
+        "presence": "required",
+        "nullable": false,
+        "defaultKind": "none",
+        "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+        "origin": {"source": {"sourceIdentity": timed_world::ident("spec"),
+            "path": "spec.fspec", "startLine": 1, "startColumn": 1}},
+    }]);
+    timed_world::world(
+        &serde_json::to_vec(&document).expect("serializes"),
+        PROFILES,
+        &format!(
+            "{}\
+             pre Gfire using v on M::Call::fire {{ self.phase = 0 }}\n\
+             post Pfire using v on M::Call::fire \
+             {{ self.phase = 1 and self.late = which and self.retried = not which }}\n\
+             pre GG using v on M::Call::G {{ self.phase = 0 }}\n\
+             post PG using v on M::Call::G {{ self.phase = 1 and self.inflight = true }}\n\
+             time invariant Wait when {{ self.phase = 0 }} {{ self.x <= 3 ms }}\n\
+             delay M::Call::fire ~ discrete {{ 2 ms: 1 }};\n\
+             delay M::Call::G ~ discrete {{ 2 ms: 1, 3 ms: 1 }};\n\
+             workload Share on M {{ weight Call::fire = 4; weight Call::G = 1; }}\n\
+             {claims}",
+            timed_world::DENSE,
+        ),
+    )
+}
+
+/// A claim `name` under `Share` that the first identity's hit (`late`) holds.
+fn pair_claim(name: &str, bound: &str) -> String {
+    format!(
+        "probabilistic {name} using ev on M over (c: M::Call) under Share on origin \
+         {{ probability {bound} [ eventually[0 ms, 3 ms] holds(c.late) ] }}\n"
+    )
+}
+
+/// FR-204-AC-19 (TC-3205): the weight of an operation is divided among its
+/// tied identities. Under `Share` the initial state has exactly three race
+/// edges at 2 ms and no other action, with masses `9/20`, `9/20` and `1/10`
+/// (`fire`'s identities carry 2 each against `G`'s 1 when all three tie, 2
+/// each between themselves when `G` draws 3 ms); both claims settle
+/// `proved` at `9/20`, and the certificates of the undivided weight (`17/36`)
+/// and of even ties (`5/12`) are rejected at the initial state.
+#[trace("TC-3205", "FR-204-AC-19")]
+#[test]
+fn operation_weight_is_shared_among_tied_identities() {
+    let world = pair(&format!(
+        "{}{}",
+        pair_claim("AtLeast", ">= 0.45"),
+        pair_claim("AtMost", "<= 0.45")
+    ));
+    let built = product(&world, "AtLeast");
+    let start = built.initial[0].2;
+    let mut edges: Vec<(u64, Rational)> = Vec::new();
+    for edge in built.edges.iter().filter(|edge| edge.from == start) {
+        assert!(
+            matches!(edge.choice, ProductAction::Identity(_)),
+            "a race edge is an identity: {:?}",
+            edge.choice
+        );
+        let (clocks, _) = digital_clocks_of(&built.states[edge.to.index()]);
+        edges.push((clocks[0], edge.probability.clone()));
+    }
+    edges.sort();
+    assert_eq!(
+        edges,
+        vec![(2, ratio(1, 10)), (2, ratio(9, 20)), (2, ratio(9, 20))]
+    );
+
+    for claim in ["AtLeast", "AtMost"] {
+        let record = settle_trio(&world, claim, None);
+        assert_eq!(exact_value(&record), ratio(9, 20), "{claim}");
+    }
+    assert_forged_initial_values_rejected(
+        &world,
+        "AtLeast",
+        ratio(9, 20),
+        &[ratio(17, 36), ratio(5, 12)],
+    );
 }
