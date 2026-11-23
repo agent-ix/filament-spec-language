@@ -1765,6 +1765,18 @@ mod tests {
         assert_eq!(ReadEqualityRows::decode(&bytes, "p", &joins).unwrap(), rows);
     }
 
+    /// The equality file has no form for a clock-place reference type yet
+    /// (QSL-3001): writing one is a typed refusal naming it, never a wrong
+    /// kind.
+    #[test]
+    fn a_clock_place_reference_type_is_refused_not_written() {
+        let Err(Bad::Malformed(detail)) = value_type(&OriginalKeys, &ValueType::ClockReference)
+        else {
+            panic!("a clock-place reference type has no equality-file form");
+        };
+        assert_eq!(detail, "a clock-place reference type (QSL-3001)");
+    }
+
     fn every_value_type(keys: &BTreeMap<&str, NodeKey>) -> Vec<ValueType> {
         let int = |lo: i64, hi: i64| IntegerInterval::new(lo.into(), hi.into()).unwrap();
         let unit = UnitId::compound(vec![(keys["U"].clone(), Integer::from(-2_i64))]);
