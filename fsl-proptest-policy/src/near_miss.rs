@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Deliberate semantic refusals with independently authored expected loci.
-use super::value::VALUE_HEADER;
-use fsl_foundation::{Code, Span};
+use crate::value::VALUE_HEADER;
 use proptest::prelude::{BoxedStrategy, Strategy};
 
 /// One deliberate failure family.
@@ -23,11 +22,11 @@ pub struct NearMiss {
     /// Complete source that parses but must not check.
     pub source: String,
     /// Expected catalog code.
-    pub code: Code,
+    pub code: &'static str,
     /// Expected catalog cause.
     pub cause: &'static str,
     /// Whole expression containing the invalid construct.
-    pub expression_span: Span,
+    pub expression_span: (usize, usize),
 }
 
 /// Vary literals while preserving a deliberate semantic error.
@@ -45,19 +44,19 @@ pub fn near_misses() -> BoxedStrategy<NearMiss> {
                 NearMissKind::WrongDomain => (
                     "Integer",
                     format!("true + {value}"),
-                    Code::IllTyped,
+                    "ill_typed",
                     "type-mismatch",
                 ),
                 NearMissKind::OutOfRange => (
                     "Int[0, 3]",
                     value.to_string(),
-                    Code::UndefinedExpression,
+                    "undefined_expression",
                     "unproved-range",
                 ),
                 NearMissKind::DivisionByZero => (
                     "Integer",
                     format!("{value} div 0"),
-                    Code::UndefinedExpression,
+                    "undefined_expression",
                     "unproved-nonzero",
                 ),
             };
@@ -74,7 +73,7 @@ pub fn near_misses() -> BoxedStrategy<NearMiss> {
                 source: format!("{prefix}{expression} }}\n"),
                 code,
                 cause,
-                expression_span: Span { start, end },
+                expression_span: (start, end),
             }
         })
         .boxed()

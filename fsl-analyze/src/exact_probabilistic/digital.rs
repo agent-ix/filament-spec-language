@@ -731,10 +731,18 @@ fn each_ordering(
             None => operations.push((identity.operation.as_str(), weight, 1)),
         }
     }
-    let total = operations
+    // FR-187: the draw weights are fsl-eval's, shared with `weighted_steps`.
+    let effective = fsl_eval::simulation::model::draw_weights(
+        operations.iter().map(|(_, weight, _)| *weight),
+    );
+    let total = effective
         .iter()
-        .fold(zero(), |sum, (_, weight, _)| sum.add(weight));
-    for (name, weight, count) in &operations {
+        .flatten()
+        .fold(zero(), |sum, weight| sum.add(weight));
+    for ((name, _, count), weight) in operations.iter().zip(effective) {
+        let Some(weight) = weight else {
+            continue;
+        };
         let each = weight
             .div(&total)
             .and_then(|share| {

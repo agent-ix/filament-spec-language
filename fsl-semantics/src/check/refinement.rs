@@ -68,8 +68,8 @@ pub(crate) use internal_list::{ImportedProtocolClasses, NodeClass, ParsedLists, 
 pub use protocol::{ChannelStepKind, MemoryStepKind, ProtocolStepKind, RoleStepKind};
 pub(crate) use protocol::{ProtocolClause, ProtocolRefinement, SelectedProtocol};
 pub(crate) use rows::{
-    KeyedFairnessRow, KeyedObjectRow, KeyedPopulationRow, KeyedRefinementRows, KeyedStepRow,
-    KeyedStepTarget,
+    KeyedFairnessRow, KeyedHistoryRow, KeyedObjectRow, KeyedPopulationRow, KeyedRefinementRows,
+    KeyedStepRow, KeyedStepTarget,
 };
 pub use step_label::{observation, LabelStep, RowObservation, StepLabel};
 
@@ -657,6 +657,35 @@ impl CheckedRefinement {
                 })
             })
             .collect::<Result<Vec<_>, RefinementV2EncodingError>>()?;
+        let mut keyed_histories: Vec<&KeyedHistoryRow> = rows.histories.iter().collect();
+        keyed_histories.sort_by(|left, right| {
+            left.concrete_type
+                .cmp(&right.concrete_type)
+                .then_with(|| left.name.as_bytes().cmp(right.name.as_bytes()))
+        });
+        let histories = keyed_histories
+            .into_iter()
+            .map(|row| {
+                let mut updates = row
+                    .updates
+                    .iter()
+                    .map(|(operation, expression)| {
+                        Ok(filament_contract_model::RefinementHistoryUpdate {
+                            operation: structural_id(operation),
+                            expression: term(expression)?,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, RefinementV2EncodingError>>()?;
+                updates.sort_by(|left, right| left.operation.cmp(&right.operation));
+                Ok(filament_contract_model::RefinementHistory {
+                    concrete_type: structural_id(&row.concrete_type),
+                    name: row.name.as_str().into(),
+                    type_id: structural_id(&row.type_node),
+                    initial: term(&row.initial)?,
+                    updates,
+                })
+            })
+            .collect::<Result<Vec<_>, RefinementV2EncodingError>>()?;
         let mut steps = Vec::with_capacity(rows.steps.len());
         let mut step_sources = Vec::with_capacity(rows.steps.len());
         for row in &rows.steps {
@@ -741,7 +770,7 @@ impl CheckedRefinement {
             populations,
             objects,
             steps,
-            histories: Vec::new(),
+            histories,
             assume,
             ensure,
             protocol: self
@@ -849,10 +878,23 @@ impl CheckedRefinement {
         .map_err(RefinementV2EncodingError::Identity)
     }
 
+    /// Whether every history row's initial value has a FSpec FR-322
+    /// `literal` form: a present `Option` payload has none, so a refinement
+    /// holding one is not written.
+    pub(crate) fn history_initials_have_literals(&self) -> bool {
+        self.history.iter().all(|row| {
+            !matches!(
+                &row.initial,
+                filament_exact::Value::Option(option) if option.payload().is_some()
+            )
+        })
+    }
+
     /// Whether this declaration is in the current V2 emission slice: its
-    /// rows and its class catalog, when it has one, lowered to node keys, a
-    /// protocol subject's clause keyed, and no history row (whose fields
-    /// are not written yet).
+    /// rows and its class catalog, when it has one, lowered to node keys and
+    /// a protocol subject's clause keyed, and every history row's initial
+    /// value one FSpec FR-322 has a `literal` form for (a present `Option`
+    /// payload has none).
     pub fn v2_emittable(&self) -> bool {
         let subject = match &self.abstract_side {
             AbstractSide::Model => self.abstract_internal.is_empty(),
@@ -860,7 +902,7 @@ impl CheckedRefinement {
         };
         subject
             && self.row_keys.is_some()
-            && self.history.is_empty()
+            && self.history_initials_have_literals()
             && self.class_catalog.is_some() == self.class_catalog_keys.is_some()
             && self.abstract_subject_node.is_some()
             && self.concrete_subject_node.is_some()
@@ -1852,18 +1894,6 @@ impl CheckedRefinement {
             .iter()
             .flat_map(|history| history.updates.iter().map(|update| &update.expression));
         fields.chain(steps).chain(updates)
-    }
-
-    /// Whether every row expression has an S4 node form. History reads are
-    /// not emitted yet (FR-138); population reads and `seq` lower through
-    /// their catalogued FR-322 operations.
-    pub(crate) fn rows_have_nodes(&self) -> bool {
-        self.rows().all(|row| {
-            row.body()
-                .descendants()
-                .into_iter()
-                .all(|node| !matches!(node.kind(), NodeKind::History { .. }))
-        })
     }
 
     /// The history rows, in source order (FR-138).

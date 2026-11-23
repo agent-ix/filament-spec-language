@@ -101,8 +101,8 @@ fn authentic_identity_rows_pay_producer_join_and_output_once_and_preserve_native
                     &original.original_member_identity,
                     &original.admitted_name,
                     original.presence,
-                    &Some(original.type_node.clone()),
-                    &Some(original.value_type.clone())
+                    &original.type_node,
+                    &original.value_type
                 ),
                 (
                     &copied.original_member_identity,
@@ -430,13 +430,20 @@ function fromRush using v(e: M::RushOrderPlaced): Integer pure {{ occurredAt(e) 
     // This writer fixture exercises final carry and rename. Its separate
     // monitor-entry ABI is not a native identity-admission oracle; genuine
     // admitted identity rows are projected in the combined fixture above.
+    let rooted_nodes =
+        crate::emit::monitor_plan::WRITTEN_NODES.with(|written| written.borrow().clone());
+    let base_nodes = emitted_document_nodes(
+        &checked,
+        |location| checked.graph().region(location),
+        ceiling(),
+    )
+    .expect("original emission");
     let expected_declarations: Vec<usize> = rooted
         .selected_exact_declaration_rows()
         .iter()
         .enumerate()
         .filter_map(|(index, row)| {
-            rooted
-                .wire_nodes
+            rooted_nodes
                 .iter()
                 .any(|node| {
                     fsl_semantics::model::intake::selected_exact_declaration_row_matches_node(
@@ -451,8 +458,7 @@ function fromRush using v(e: M::RushOrderPlaced): Integer pure {{ occurredAt(e) 
         .iter()
         .enumerate()
         .filter_map(|(index, row)| {
-            rooted
-                .wire_nodes
+            rooted_nodes
                 .iter()
                 .any(|node| {
                     fsl_semantics::model::intake::selected_exact_field_row_matches_node(row, node)
@@ -508,16 +514,14 @@ function fromRush using v(e: M::RushOrderPlaced): Integer pure {{ occurredAt(e) 
         pair.structural_node, original_pair.structural_node,
         "the named declaration retains its original structural identity"
     );
-    let before_value = base
-        .wire_nodes
+    let before_value = base_nodes
         .iter()
         .find(|node| {
             node.semantic_form.as_ref() == "record_value"
                 && node.semantic_type == original_pair.structural_node
         })
         .expect("the real authored mkPair value");
-    let after_value = rooted
-        .wire_nodes
+    let after_value = rooted_nodes
         .iter()
         .find(|node| {
             node.semantic_form.as_ref() == "record_value"
@@ -529,8 +533,7 @@ function fromRush using v(e: M::RushOrderPlaced): Integer pure {{ occurredAt(e) 
         "renaming the value's binding really rekeys its content node"
     );
     assert!(
-        !rooted
-            .wire_nodes
+        !rooted_nodes
             .iter()
             .any(|node| node.node_id == before_value.node_id),
         "the stale value id is absent from the final graph"
@@ -595,7 +598,7 @@ fn later_authentic_record_member_copy_denial_retains_an_observed_admitted_prefix
     );
     assert_eq!(
         second.members[0].value_type,
-        Some(records[tagged_index].members[0].value_type.clone())
+        records[tagged_index].members[0].value_type.clone()
     );
     assert_eq!(
         second.members[1].presence,
@@ -603,7 +606,7 @@ fn later_authentic_record_member_copy_denial_retains_an_observed_admitted_prefix
     );
     assert_eq!(
         second.members[2].value_type,
-        Some(records[tagged_index].members[2].value_type.clone())
+        records[tagged_index].members[2].value_type.clone()
     );
     let need = measure.consumed();
     for (work, storage, kind) in [

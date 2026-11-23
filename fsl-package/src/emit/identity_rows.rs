@@ -11,7 +11,7 @@ use filament_exact::{EffectiveId, MemberId, MemberOwner};
 use crate::native_row as charge;
 use crate::{IdentityFileRefusal, NativeRowError, ReadIdentityRows};
 
-use super::Emission;
+use super::{CheckedSemanticNodeV2, Emission};
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct IdentityRowSelection {
@@ -23,13 +23,13 @@ impl Emission {
     /// Derive producer membership again after every final carry/rekey. These
     /// flags avoid allocating structural comparisons in the budgeted adapter;
     /// they do not replace the subsequent native validation of the rows.
-    pub(super) fn with_identity_row_selection(mut self) -> Self {
+    pub(super) fn with_identity_row_selection(mut self, nodes: &[CheckedSemanticNodeV2]) -> Self {
         self.identity_row_selection.declarations =
             self.selected_exact_declaration_rows
                 .iter()
                 .enumerate()
                 .filter_map(|(index, row)| {
-                    self.wire_nodes.iter().any(|node| {
+                    nodes.iter().any(|node| {
                 fsl_semantics::model::intake::selected_exact_declaration_row_matches_node(row, node)
             }).then_some(index)
                 })
@@ -39,7 +39,7 @@ impl Emission {
             .iter()
             .enumerate()
             .filter_map(|(index, row)| {
-                self.wire_nodes
+                nodes
                     .iter()
                     .any(|node| {
                         fsl_semantics::model::intake::selected_exact_field_row_matches_node(
@@ -194,7 +194,9 @@ impl Emission {
                         charge::work(budget, locus, 1)?;
                         charge::text(budget, locus, &fact.original_member_identity)?;
                         charge::text(budget, locus, &fact.admitted_name)?;
-                        charge::value_type(budget, locus, &fact.value_type)?;
+                        if let Some(value_type) = &fact.value_type {
+                            charge::value_type(budget, locus, value_type)?;
+                        }
                         Ok(fact.clone())
                     })
                     .collect::<Result<Vec<_>, NativeRowError>>()?,
@@ -364,8 +366,16 @@ pub(super) fn copy_source_record(
         charge::work(budget, locus, 1)?;
         charge::text(budget, locus, &member.original_member_identity)?;
         charge::text(budget, locus, &member.admitted_name)?;
-        charge::node(budget, locus, &member.type_node)?;
-        charge::value_type(budget, locus, &member.value_type)?;
+        if let Some(node) = &member.type_node {
+            charge::node(budget, locus, node)?;
+        }
+        if let Some(value_type) = &member.value_type {
+            charge::value_type(budget, locus, value_type)?;
+        }
+        if let Some(rendering) = &member.member_type {
+            charge::text(budget, locus, rendering)?;
+        }
+        charge::items(budget, locus, member.collections.len())?;
     }
     Ok(SelectedSourceRecordRow {
         structural_node: row.structural_node.clone(),
@@ -381,10 +391,10 @@ pub(super) fn copy_source_record(
                     original_member_identity: member.original_member_identity.clone(),
                     admitted_name: member.admitted_name.clone(),
                     presence: member.presence,
-                    type_node: Some(member.type_node.clone()),
-                    value_type: Some(member.value_type.clone()),
-                    member_type: None,
-                    collections: Vec::new(),
+                    type_node: member.type_node.clone(),
+                    value_type: member.value_type.clone(),
+                    member_type: member.member_type.clone(),
+                    collections: member.collections.clone(),
                 },
             )
             .collect(),

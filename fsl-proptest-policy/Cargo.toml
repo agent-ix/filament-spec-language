@@ -5,9 +5,9 @@ publish = false
 edition = "2021"
 rust-version = "1.98"
 license = "AGPL-3.0-or-later"
-description = "QSL-2054: the one property-test policy every FSL property suite shares (case count, fixed RNG seed, bounded shrinking, seed-only regression files, elapsed-time report)."
+description = "QSL-2054, QSL-2055: the one property-test policy every FSL property suite shares (case count, fixed RNG seed, bounded shrinking, seed-only regression files, elapsed-time report) and the pure proptest generators for value expressions and near misses."
 
-# Depends on `proptest` only, so a layer-1 or layer-0 crate can dev-depend on it
+# Policy and generators; depends on `proptest` only, so a layer-1 or layer-0 crate can dev-depend on it
 # without reaching the rest of the workspace. No crate depends on it in
 # `[dependencies]`; `fsl-bench` re-exports it for its generators.
 [dependencies]

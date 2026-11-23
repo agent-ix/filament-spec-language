@@ -60,8 +60,7 @@ fn a_source_enum_emits_its_declaration_and_member_rows() {
         "the declaration row's key is its node's key"
     );
     assert_eq!(
-        emission
-            .wire_nodes
+        typed_nodes(&emission)
             .iter()
             .find(|node| node.node_id == declaration.structural_node)
             .and_then(|node| node.declaration.as_ref())

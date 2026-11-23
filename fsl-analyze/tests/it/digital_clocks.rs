@@ -1292,7 +1292,6 @@ fn reordering_two_delays_changes_no_delay_node() {
 /// orders it after `send` with no probability lost to the order draw.
 #[trace("FSpec-TC-1561", "FSpec-FR-420-AC-8")]
 #[test]
-#[ignore = "QSL-2889: exact-probabilistic-digital still fails with an internal fault (invariant workload-weights-sum) on a weight-0 tie"]
 fn a_weight_zero_operation_takes_its_turn_last_in_a_tie() {
     let world = retx_with(
         &[("send", &["late", "x"]), ("tick", &["retried"])],
@@ -1378,6 +1377,33 @@ fn discrete_delay_applies_over_every_scheduler() {
 #[test]
 fn zero_delay_cycle_is_decided_with_time_divergence() {
     let world = every("", false);
+    let built = product(&world, "Deadline");
+    for bound in [
+        Bound::AtLeast(ratio(99, 100)),
+        Bound::AtMost(ratio(999, 1000)),
+    ] {
+        assert_eq!(exact_initial(&built, bound), Some(ratio(1, 1)));
+    }
+}
+
+/// FR-204-AC-16 (TC-2175): the guardless, resetless `Retx` with an instant
+/// `spin` at `x >= 2 ms` has a zero-time end component at `x = 2 ms`, while
+/// `send`'s zero-delay self-loop at `x = 0 ms` and `x = 1 ms` lies in no
+/// component. Every scheduler that lets time pass delivers with probability 1:
+/// `send` delivers with 9/10 and repeats with 1/10, and at `x = 2 ms` the
+/// component's only exit is `send`, worth `(9/10) / (1 - 1/10) = 1`. So the
+/// minimum and maximum are both 1.
+#[trace("TC-2175", "FR-204-AC-16")]
+#[test]
+fn zero_delay_loop_beside_an_end_component_is_decided() {
+    let world = retx_with(
+        &[("send", &["late", "x"]), ("spin", &["retried"])],
+        "",
+        false,
+        "pre Spin using v on M::Call::spin { self.x >= 2 ms }\n\
+         post Spun using v on M::Call::spin { self.retried = not pre(self.retried) }\n",
+        &every_claims(),
+    );
     let built = product(&world, "Deadline");
     for bound in [
         Bound::AtLeast(ratio(99, 100)),

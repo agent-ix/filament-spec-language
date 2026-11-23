@@ -1601,6 +1601,10 @@ fn map_member(
             declaration: map_key(map, pending_member, declaration),
             name,
         },
+        Member::History { declaration, name } => Member::History {
+            declaration: map_key(map, pending_member, declaration),
+            name,
+        },
         Member::TypeArgument { declaration, alias } => Member::TypeArgument {
             declaration: map_key(map, pending_member, declaration),
             alias,

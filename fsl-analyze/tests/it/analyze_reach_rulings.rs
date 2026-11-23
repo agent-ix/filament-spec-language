@@ -293,18 +293,63 @@ fn state_graph_evidence_keys_loci_and_budget_stops() {
     );
 }
 
-/// FR-621-AC-9: the first refuted instance in key order is reported, and a
-/// refuted state-graph item names its claim as the replay target.
+/// The Counter document with every operation framed to its receiver
+/// (`modifies_receiver`): a step leaves every other counter's value as it was.
+fn receiver_framed_document() -> Vec<u8> {
+    fn frame(value: &mut Value) -> usize {
+        match value {
+            Value::Object(members) => {
+                let mut framed = 0;
+                if let Some(Value::Object(frame)) = members.get_mut("frame") {
+                    if let Some(modifies) = frame.remove("modifies") {
+                        frame.insert("modifies_receiver".to_owned(), modifies);
+                        frame.insert("modifies".to_owned(), json!([]));
+                        framed += 1;
+                    }
+                }
+                framed + members.values_mut().map(frame).sum::<usize>()
+            }
+            Value::Array(items) => items.iter_mut().map(frame).sum(),
+            _ => 0,
+        }
+    }
+    let mut document: Value = serde_json::from_slice(&document(false)).expect("document JSON");
+    assert!(frame(&mut document) > 0, "the document frames an operation");
+    document.to_string().into_bytes()
+}
+
+/// [`counters_request`] over a document with the given operation frames.
+fn counters_request_over(
+    ws: &Workspace,
+    document: &[u8],
+    objects: &[(&str, i64)],
+    body: &str,
+    items: Value,
+) -> std::path::PathBuf {
+    request_over(
+        ws,
+        &unit_text(&format!("{CONTRACT}{body}")),
+        document,
+        &[counter_snapshot(objects)],
+        json!({"items": items}),
+    )
+}
+
+const AT_LEAST_ONE: &str = "temporal AtLeastOne using t0 over (c: M::Counter) clock \"model-steps\" \
+                            on origin { always holds(c.value >= 1) }\n";
+
+/// FR-621-AC-9 (FR-125): over the receiver-framed Counter, `a` at 1 is proved,
+/// so `b` is the first refuted instance in key order; and a refuted
+/// state-graph item names its claim as the replay target.
 #[trace("TC-2292", "FR-621-AC-9")]
 #[test]
 fn several_instances_report_the_first_refuted_and_state_graph_replay_names_the_claim() {
-    let body = "temporal AtLeastOne using t0 over (c: M::Counter) clock \"model-steps\" on origin \
-                { always holds(c.value >= 1) }\n";
     let ws = Workspace::new("rulings-instances");
-    let path = counters_request(
+    let path = counters_request_over(
         &ws,
+        &receiver_framed_document(),
         &[("a", 1), ("b", 0), ("d", 0)],
-        body,
+        AT_LEAST_ONE,
         json!([{"claim": "AtLeastOne"}]),
     );
     let first = analyze(&path);
@@ -333,6 +378,34 @@ fn several_instances_report_the_first_refuted_and_state_graph_replay_names_the_c
         "{item}"
     );
     assert_eq!(item["replay"]["reproduced"], true, "{item}");
+}
+
+/// FR-125 (FSpec FR-361-AC-10): over the unframed Counter, whose operations may
+/// modify any counter's value, `a` at 1 is refuted too, after one step: an `inc`
+/// of `b` can leave `a` at 0. `a` is first in key order, so it is reported,
+/// with its own one-step counterexample, over `b`'s shorter one (`b` is refuted
+/// at position 0).
+#[trace("TC-520", "FR-125-AC-16")]
+#[trace("FSpec-TC-290", "FSpec-FR-361-AC-10")]
+#[test]
+fn an_instance_refuted_only_after_a_step_is_reported_first_in_key_order() {
+    let ws = Workspace::new("rulings-instances-unframed");
+    let path = counters_request_over(
+        &ws,
+        &document(false),
+        &[("a", 1), ("b", 0), ("d", 0)],
+        AT_LEAST_ONE,
+        json!([{"claim": "AtLeastOne"}]),
+    );
+    let refuted = analyze(&path).item(0);
+    assert_eq!(label(&refuted), "refuted", "{refuted}");
+    let found = &refuted["counterexample"];
+    assert_eq!(found["over_binding"]["identity"], "a", "{refuted}");
+    assert_eq!(found["prefix"].as_array().map(Vec::len), Some(1), "{refuted}");
+    assert_eq!(
+        found["prefix"][0]["transition"]["receiver"]["identity"], "b",
+        "{refuted}"
+    );
 }
 
 /// FR-634-AC-4, AC-5: enumeration reports one trace per discovery-tree
