@@ -4,6 +4,8 @@
 //! each model state once, however many (remaining, count) product states
 //! stand over it.
 use super::*;
+// The window-10 work boundary pins the current accounting of the independent
+// product check; it is not stated by a requirement.
 
 const WINDOW: u64 = 10;
 
@@ -27,7 +29,7 @@ fn settle_under(world: &World, work_units: u64) -> fsl_analyze::analyze::Analyze
     analyze_items(&engines, vec![item], &Cancel::new()).remove(0)
 }
 
-#[trace("TC-638", "FR-203-AC-1")]
+#[trace("TC-3152", "FR-1043-AC-5")]
 #[test]
 fn a_ten_step_fraction_mean_on_two_states_proves_within_the_default_work_allowance() {
     let world = World::new(&mean(WINDOW));
@@ -46,21 +48,75 @@ fn a_ten_step_fraction_mean_on_two_states_proves_within_the_default_work_allowan
     );
 }
 
-#[trace("TC-638", "FR-203-AC-1")]
+#[trace("TC-638", "FR-203-AC-13")]
 #[test]
 fn the_ten_step_fraction_mean_needs_exactly_the_measured_work_units() {
     let world = World::new(&mean(WINDOW));
-    let needed = 265_325;
+    let needed = 294_699;
     assert!(matches!(
         settle_under(&world, needed).terminal().unwrap().value(),
         TerminalValue::Proved { .. }
     ));
     let short = settle_under(&world, needed - 1);
+    assert_eq!(
+        short.terminal().unwrap().value(),
+        &TerminalValue::Incomplete(IncompleteCause::LimitReached {
+            limit: ModelCheckLimit::EvaluationMeter {
+                counter: filament_exact::LimitKind::WorkUnits
+            },
+            value: needed - 1,
+        })
+    );
+}
+
+fn build_document(
+    world: &World,
+    edges: usize,
+    work_units: u64,
+) -> Result<(), fsl_replay::ProbabilityDocumentError> {
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let item = fsl_replay::probabilistic_claim_identity(world.claim("Up")).unwrap();
+    let mut accounting = fsl_replay::AccountingLimits::default().0;
+    accounting.work_units = work_units;
+    fsl_replay::measure_probability_certificate_document(
+        &system,
+        world.package.graph().probabilistic_model().claims(),
+        &item,
+        &fsl_replay::ExactProbabilityCertificate { values: Vec::new() },
+        fsl_replay::MeasurePayoffKind::Fraction,
+        fsl_replay::ProbabilityDocumentLimits {
+            bytes: 1_000_000,
+            storage_bytes: 8_000_000,
+            states: 128,
+            edges,
+            scalar_bits: 128,
+            accounting,
+        },
+        &Cancel::new(),
+    )
+    .map(|_| ())
+}
+
+/// A successor's key is encoded only once its edge is admitted, so a transition
+/// ceiling that the second edge exceeds is reported before that edge's key work.
+#[trace("TC-3152", "FR-1043-AC-7")]
+#[test]
+fn the_edge_ceiling_is_reported_before_the_next_successors_key_is_encoded() {
+    let world = World::new(&mean(0));
+    let stopped = build_document(&world, 1, 31_116);
     assert!(
         matches!(
-            short.terminal().unwrap().value(),
-            TerminalValue::Incomplete(IncompleteCause::LimitReached { .. })
+            stopped,
+            Err(fsl_replay::ProbabilityDocumentError::Limit {
+                limit: fsl_replay::ProbabilityDocumentLimit::Edges,
+                bound: 1,
+                actual: 2,
+            })
         ),
-        "{short:?}"
+        "{stopped:?}"
     );
+    assert!(matches!(
+        build_document(&world, 1, 31_115),
+        Err(fsl_replay::ProbabilityDocumentError::KeyEncoding(_))
+    ));
 }

@@ -10,6 +10,7 @@ use fsl_eval::simulation::model::{ModelKeyBudget, ModelKeyError, PredicateReadin
 use fsl_semantics::check::{BoundedMeasure, CheckedPredicate, Event, Weighting};
 use quire_canonical::{Encode, Error, Node, Sink, Writer};
 use std::cell::RefCell;
+use std::rc::Rc;
 
 pub(super) const PROFILE: &str = "filament.probability-objective/finite-horizon-measure/v1";
 pub(in crate::probability_certificate) mod bounds;
@@ -409,13 +410,11 @@ type Resolution = (
     Vec<(filament_exact::Identifier, filament_exact::Value)>,
 );
 
-#[derive(Clone)]
 enum Successor {
     Position(
         Rational,
         ModelSimState,
         Vec<(filament_exact::Identifier, filament_exact::Value)>,
-        Option<Vec<u8>>,
     ),
     Draw(
         Rational,
@@ -424,6 +423,13 @@ enum Successor {
         Vec<ModelSimState>,
         Vec<(filament_exact::Identifier, filament_exact::Value)>,
     ),
+}
+/// One model state's expansion: its distributions and action labels, and the
+/// canonical key of each successor state once a product edge has needed it.
+struct Expansion {
+    distributions: Vec<Vec<Successor>>,
+    labels: Vec<Option<crate::ProductAction>>,
+    post_raws: RefCell<Vec<Vec<Option<Vec<u8>>>>>,
 }
 struct State {
     terminal: Option<Rational>,
@@ -680,10 +686,7 @@ fn enumerate(
     // reached under many product keys is encoded once.
     let mut raws: BTreeMap<ProbabilityProductKey, Vec<u8>> = BTreeMap::new();
     // A model state's expansion, shared by every product state over it.
-    let mut expansions: BTreeMap<
-        Vec<u8>,
-        (Vec<Vec<Successor>>, Vec<Option<crate::ProductAction>>),
-    > = BTreeMap::new();
+    let mut expansions: BTreeMap<(Vec<u8>, String), Rc<Expansion>> = BTreeMap::new();
     let mut initials = Vec::new();
     for (index, initial) in initial.iter().enumerate() {
         poll(cancel)?;
@@ -845,14 +848,19 @@ fn enumerate(
                     None => raw_of(&model, meter, storage)?,
                 })
             };
-            let cached = model_raw
+            // Expansion reads the state's provenance (a restored state has no
+            // anchor), so the anchor is part of the cache key.
+            let cache_key = model_raw
                 .as_ref()
-                .and_then(|raw| expansions.get(raw))
+                .map(|raw| (raw.clone(), format!("{:?}", model.anchor())));
+            let cached = cache_key
+                .as_ref()
+                .and_then(|at| expansions.get(at))
                 .cloned();
-            let distributions = if let Some((distributions, labels)) = cached {
-                action_labels = labels;
-                distributions
+            let expansion = if let Some(expansion) = cached {
+                expansion
             } else {
+                let mut action_labels = Vec::new();
                 let mut admission =
                     ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
                 let distributions = if let Some((posts, rewards)) = resolution {
@@ -860,12 +868,7 @@ fn enumerate(
                         .into_iter()
                         .map(|post| {
                             action_labels.push(None);
-                            vec![Successor::Position(
-                                rational(1),
-                                post,
-                                rewards.clone(),
-                                None,
-                            )]
+                            vec![Successor::Position(rational(1), post, rewards.clone())]
                         })
                         .collect()
                 } else if let Some(workload) = workload {
@@ -891,9 +894,7 @@ fn enumerate(
                     action_labels.push(None);
                     vec![steps
                         .into_iter()
-                        .map(|step| {
-                            Successor::Position(step.probability, step.post, step.rewards, None)
-                        })
+                        .map(|step| Successor::Position(step.probability, step.post, step.rewards))
                         .collect::<Vec<_>>()]
                 } else {
                     let actions = system
@@ -916,7 +917,6 @@ fn enumerate(
                             rational(1),
                             model.clone(),
                             rewards,
-                            None,
                         )]]
                     } else {
                         let mut distributions = Vec::new();
@@ -962,7 +962,6 @@ fn enumerate(
                                         draw.probability,
                                         post,
                                         draw.rewards,
-                                        None,
                                     ));
                                 } else {
                                     distribution.push(Successor::Draw(
@@ -980,34 +979,39 @@ fn enumerate(
                     }
                 };
                 drop(admission);
-                let mut distributions: Vec<Vec<Successor>> = distributions;
-                for successor in distributions.iter_mut().flatten() {
-                    if let Successor::Position(probability, post, _, post_raw) = successor {
-                        if !probability.is_zero() {
-                            *post_raw = Some(raw_of(post, meter, storage)?);
-                        }
-                    }
-                }
-                if let Some(raw) = &model_raw {
+                let post_raws = distributions
+                    .iter()
+                    .map(|distribution| vec![None; distribution.len()])
+                    .collect();
+                let expansion = Rc::new(Expansion {
+                    distributions,
+                    labels: action_labels,
+                    post_raws: RefCell::new(post_raws),
+                });
+                if let Some(at) = cache_key {
+                    // The entry keeps every successor state for the run: charge
+                    // the model key, and one state's encoded size per successor.
+                    let retained = at.0.len().saturating_mul(1usize.saturating_add(
+                        expansion.distributions.iter().map(Vec::len).sum::<usize>(),
+                    ));
                     charge(
                         storage,
                         limits.storage_bytes,
-                        u64::try_from(
-                            raw.len().saturating_mul(3).saturating_add(
-                                std::mem::size_of::<Successor>().saturating_mul(
-                                    distributions.iter().map(Vec::len).sum::<usize>(),
-                                ),
+                        u64::try_from(retained.saturating_add(at.1.len()).saturating_add(
+                            std::mem::size_of::<Successor>().saturating_mul(
+                                expansion.distributions.iter().map(Vec::len).sum::<usize>(),
                             ),
-                        )
+                        ))
                         .unwrap_or(u64::MAX),
                     )?;
-                    expansions.insert(raw.clone(), (distributions.clone(), action_labels.clone()));
+                    expansions.insert(at, Rc::clone(&expansion));
                 }
-                distributions
+                expansion
             };
-            for distribution in distributions {
+            action_labels = expansion.labels.clone();
+            for (choice_index, distribution) in expansion.distributions.iter().enumerate() {
                 let mut choice = Vec::new();
-                for successor in distribution {
+                for (successor_index, successor) in distribution.iter().enumerate() {
                     if let Successor::Draw(probability, scheduled, random, posts, rewards) =
                         successor
                     {
@@ -1089,17 +1093,16 @@ fn enumerate(
                                 control,
                                 accumulator.clone(),
                                 truths.clone(),
-                                Some((posts, rewards)),
+                                Some((posts.clone(), rewards.clone())),
                             ));
                         }
                         choice.push(ProbabilityEdge {
                             target,
-                            probability,
+                            probability: probability.clone(),
                         });
                         continue;
                     }
-                    let Successor::Position(probability, post, rewards, post_raw) = successor
-                    else {
+                    let Successor::Position(probability, post, rewards) = successor else {
                         return Err(ProbabilityDocumentError::Malformed);
                     };
                     poll(cancel)?;
@@ -1117,7 +1120,7 @@ fn enumerate(
                         ));
                     }
                     let post_truths = if plan.control.reads_post(Some(control)) {
-                        read(&post)?
+                        read(post)?
                     } else {
                         Vec::new()
                     };
@@ -1128,13 +1131,28 @@ fn enumerate(
                             Some(&accumulator),
                             &truths,
                             &post_truths,
-                            &rewards,
+                            rewards,
                             meter,
                         )
                         .map_err(ProbabilityDocumentError::from)?;
                     let next = next.ok_or(ProbabilityDocumentError::Malformed)?;
                     let sums = sums.ok_or(ProbabilityDocumentError::Malformed)?;
-                    let post_raw = post_raw.ok_or(ProbabilityDocumentError::Malformed)?;
+                    let cached_raw =
+                        expansion.post_raws.borrow()[choice_index][successor_index].clone();
+                    let post_raw = match cached_raw {
+                        Some(raw) => raw,
+                        None => {
+                            let raw = raw_of(post, meter, storage)?;
+                            charge(
+                                storage,
+                                limits.storage_bytes,
+                                u64::try_from(raw.len()).unwrap_or(u64::MAX),
+                            )?;
+                            expansion.post_raws.borrow_mut()[choice_index][successor_index] =
+                                Some(raw.clone());
+                            raw
+                        }
+                    };
                     let target = product_key(&post_raw, next, &sums, meter, storage)?;
                     charge(
                         storage,
@@ -1157,11 +1175,18 @@ fn enumerate(
                             ));
                         }
                         raws.insert(target.clone(), post_raw);
-                        queue.push_back((target.clone(), post, next, sums, post_truths, None));
+                        queue.push_back((
+                            target.clone(),
+                            post.clone(),
+                            next,
+                            sums,
+                            post_truths,
+                            None,
+                        ));
                     }
                     choice.push(ProbabilityEdge {
                         target,
-                        probability,
+                        probability: probability.clone(),
                     });
                 }
                 if resolving {
