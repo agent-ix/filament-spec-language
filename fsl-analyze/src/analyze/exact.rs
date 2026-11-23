@@ -1247,9 +1247,11 @@ fn run(
         if bounded_fair {
             return not_yet();
         }
-        let subsystem_refutation = |budget: Option<&mut candidate::CandidateBudget<'_>>| {
-            let Some(budget) = budget else {
-                return broken();
+        let mut own_budget = candidate::CandidateBudget::new(document_limits, cancel);
+        let mut subsystem_refutation = || {
+            let budget = match candidate_budget.as_mut() {
+                Some(budget) => budget,
+                None => &mut own_budget,
             };
             subsystem::refute(
                 &system,
@@ -1257,7 +1259,7 @@ fn run(
                 &product,
                 &policy,
                 *start,
-                &target,
+                &values,
                 reference,
                 &limits,
                 cancel,
@@ -1267,23 +1269,17 @@ fn run(
             )
         };
         if expected_reward {
-            return subsystem_refutation(candidate_budget.as_mut());
+            return subsystem_refutation();
         }
-        if let ProbForm::Reach {
-            bound,
-            target: ReachTarget::Eventually(_),
-        } = &claim.form
-        {
+        // The path-set search never starts on a cyclic subject (FR-202): an
+        // unwindowed `eventually`, `always` or `until` there is refuted by
+        // the event-avoidance lower certificate for its violation.
+        if let ProbForm::Reach { .. } = &claim.form {
             match fsl_replay::admit_acyclic_probabilistic_refutation_subject(
                 &system, &limits, cancel,
             ) {
                 Ok(true) => {}
-                // A cyclic subject's `>=` claim is refuted by event avoidance
-                // (FSpec FR-412); its `<=` side has no subsystem role here.
-                Ok(false) if matches!(bound, Bound::AtLeast(_)) => {
-                    return subsystem_refutation(candidate_budget.as_mut());
-                }
-                Ok(false) => return not_yet(),
+                Ok(false) => return subsystem_refutation(),
                 Err(error) => return document_failure(error, subject),
             }
         }

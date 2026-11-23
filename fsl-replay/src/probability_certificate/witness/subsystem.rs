@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! FR-202's checked-subject subsystem entry for untimed long-run fractions,
-//! expected rewards and unwindowed `eventually` claims.
+//! expected rewards and unwindowed `eventually`, `until` and `always` claims.
 
 use super::*;
 use crate::probability_certificate::document::{long_run, refutation};
@@ -22,7 +22,7 @@ pub(super) fn replay(
         || matches!(
             claim.form,
             ProbForm::Reach {
-                target: ReachTarget::Eventually(_),
+                target: ReachTarget::Eventually(_) | ReachTarget::Until(..) | ReachTarget::Always(_),
                 ..
             }
         ))

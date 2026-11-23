@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-202 subsystem counterexamples for a failing unwindowed `eventually` or
-//! expected-reward claim. EN-5 selects the witness scheduler (none under a
-//! workload), solves the chain it induces, writes a `lower` or `upper`
+//! FR-202 subsystem counterexamples for a failing unwindowed `eventually`,
+//! `until`, `always` or expected-reward claim. EN-5 selects the witness
+//! scheduler (none under a workload), solves the chain it induces, writes a
+//! `lower` or `upper`
 //! certificate over that chain and settles `refuted` only after the core's
 //! independent replay reproduces it.
 
@@ -13,10 +14,9 @@ use crate::exact_probabilistic::{
 };
 use fsl_replay::{ProbabilitySubsystemCertificate, SubsystemBoundKind};
 
-#[derive(Clone, Copy, Eq, PartialEq)]
 enum Role {
-    /// `probability >= θ [eventually E]`: a lower bound on avoiding E.
-    EventAvoidance,
+    /// A failing `>=` unwindowed state event: a lower bound on its violation.
+    Avoidance(Boundary),
     /// `expected ... <= θ`: a lower bound on the expected reward.
     RewardLower,
     /// `expected ... >= θ`: a proper upper bound on the expected reward.
@@ -36,7 +36,7 @@ pub(super) fn refute(
     product: &ProbProduct,
     policy: &[Option<usize>],
     start: ProbStateId,
-    target: &[bool],
+    values: &[ExtRational],
     binding: Option<&ObjectReference>,
     limits: &ExactProbLimits,
     cancel: &Cancel,
@@ -44,11 +44,68 @@ pub(super) fn refute(
     budget: &mut CandidateBudget<'_>,
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
+    let label = |state: usize, at: usize| {
+        product
+            .labels
+            .get(state)
+            .and_then(|labels| labels.get(at))
+            .copied()
+            .unwrap_or(false)
+    };
+    let stutters = |state: ProbStateId| {
+        product
+            .outgoing(state)
+            .iter()
+            .all(|edge| matches!(edge.choice, ProductAction::TerminalStutter))
+    };
+    let count = product.states.len();
     let (role, threshold) = match &claim.form {
-        ProbForm::Reach {
-            bound: Bound::AtLeast(threshold),
-            target: ReachTarget::Eventually(_),
-        } => (Role::EventAvoidance, threshold),
+        ProbForm::Reach { bound, target } => {
+            let (accepting, threshold) = match bound {
+                Bound::AtLeast(threshold) => (false, threshold),
+                Bound::AtMost(threshold) => (true, threshold),
+            };
+            let boundary = match target {
+                ReachTarget::Eventually(_) => {
+                    let success = (0..count).map(|state| label(state, 0)).collect::<Vec<_>>();
+                    Boundary {
+                        stop: success.clone(),
+                        success,
+                        undecided_accepts: false,
+                        accepting,
+                    }
+                }
+                ReachTarget::Until(..) => {
+                    let success = (0..count).map(|state| label(state, 1)).collect::<Vec<_>>();
+                    let stop = product
+                        .ids()
+                        .map(|state| {
+                            let index = state.index();
+                            success[index] || !label(index, 0) || stutters(state)
+                        })
+                        .collect();
+                    Boundary {
+                        success,
+                        stop,
+                        undecided_accepts: false,
+                        accepting,
+                    }
+                }
+                ReachTarget::Always(_) => Boundary {
+                    success: product
+                        .ids()
+                        .map(|state| label(state.index(), 0) && stutters(state))
+                        .collect(),
+                    stop: product
+                        .ids()
+                        .map(|state| !label(state.index(), 0) || stutters(state))
+                        .collect(),
+                    undecided_accepts: true,
+                    accepting,
+                },
+            };
+            (Role::Avoidance(boundary), threshold)
+        }
         ProbForm::ExpectedReward {
             bound: Bound::AtMost(threshold),
             ..
@@ -59,19 +116,42 @@ pub(super) fn refute(
         } => (Role::RewardUpper, threshold),
         _ => return not_yet(),
     };
+    let target = (0..count).map(|state| label(state, 0)).collect::<Vec<_>>();
+    let stop = match &role {
+        Role::Avoidance(boundary) => boundary.stop.clone(),
+        Role::RewardLower | Role::RewardUpper => target.clone(),
+    };
     let every = matches!(claim.scheduler, ProbScheduler::Every);
-    let selected = if every && role != Role::RewardUpper {
-        match avoiding_policy(product, target, policy, role == Role::RewardLower) {
-            Ok(selected) => selected,
-            Err(error) => return unbounded_failure(error, limits, subject),
+    // Where the optimum is already extreme the solver's choice may be any
+    // value-preserving action; keep the witness inside that region so the
+    // undecided bottom component it reaches realizes the extreme.
+    let region = |extreme: i64| {
+        let extreme = Rational::from_integer(filament_exact::Integer::from(extreme));
+        values
+            .iter()
+            .map(|value| !matches!(value, ExtRational::Finite(value) if *value == extreme))
+            .collect::<Vec<_>>()
+    };
+    let selected = match &role {
+        Role::Avoidance(boundary) if every && boundary.accepting == boundary.undecided_accepts => {
+            avoiding_policy(
+                product,
+                &region(i64::from(boundary.accepting)),
+                policy,
+                false,
+            )
         }
-    } else {
-        policy.to_vec()
+        Role::RewardLower if every => avoiding_policy(product, &target, policy, true),
+        _ => Ok(policy.to_vec()),
+    };
+    let selected = match selected {
+        Ok(selected) => selected,
+        Err(error) => return unbounded_failure(error, limits, subject),
     };
     let chain = induced_chain(product, &selected);
-    let reached = reached(&chain, start, target);
-    let evidence = match role {
-        Role::EventAvoidance => avoidance(&chain, start, target, &reached, threshold, limits),
+    let reached = reached(&chain, start, &stop);
+    let evidence = match &role {
+        Role::Avoidance(boundary) => avoidance(&chain, start, boundary, &reached, threshold, limits),
         Role::RewardLower | Role::RewardUpper => {
             let ProbForm::ExpectedReward { reward, .. } = &claim.form else {
                 return broken();
@@ -79,11 +159,11 @@ pub(super) fn refute(
             reward_bound(
                 &chain,
                 start,
-                target,
+                &target,
                 &reached,
                 reward.as_str(),
                 threshold,
-                role == Role::RewardUpper,
+                matches!(role, Role::RewardUpper),
                 limits,
             )
         }
@@ -145,7 +225,7 @@ pub(super) fn refute(
     let mut spelled = Vec::new();
     if every {
         for state in product.ids() {
-            if !reached[state.index()] || target[state.index()] {
+            if !reached[state.index()] || stop[state.index()] {
                 continue;
             }
             let Some(action) = policy_action(product, state, &selected) else {
@@ -189,7 +269,7 @@ pub(super) fn refute(
         system,
         system.input().probabilistic.claims(),
         &item,
-        if role == Role::RewardUpper {
+        if matches!(role, Role::RewardUpper) {
             SubsystemBoundKind::Upper
         } else {
             SubsystemBoundKind::Lower
@@ -281,12 +361,27 @@ fn distances(chain: &ProbProduct, goal: &[bool], through: &[bool]) -> Vec<Option
     }
 }
 
-/// FSpec FR-412's event-avoidance values: the probability of reaching the
-/// chain's event-free bottom components, with ranks by distance to them.
+/// The claim's absorbing states on the chain and the side it is refuted on.
+struct Boundary {
+    /// Accepting decided states: the event, `until`'s target, or an `always`
+    /// state that keeps `P` by terminal stutter.
+    success: Vec<bool>,
+    /// States where the replayed product stops: accepting and rejecting.
+    stop: Vec<bool>,
+    /// Whether a bottom component with no decided state accepts (`always`).
+    undecided_accepts: bool,
+    /// Refute a `<=` bound through the accepting union; otherwise a `>=`
+    /// bound through the rejecting union.
+    accepting: bool,
+}
+
+/// FSpec FR-412's lower values for the violating quantity: the probability
+/// of reaching the union of the chain's bottom components classified on the
+/// violating side, with ranks by distance to it.
 fn avoidance(
     chain: &ProbProduct,
     start: ProbStateId,
-    target: &[bool],
+    boundary: &Boundary,
     reached: &[bool],
     threshold: &Rational,
     limits: &ExactProbLimits,
@@ -294,7 +389,7 @@ fn avoidance(
     let adjacency = chain
         .ids()
         .map(|state| {
-            if target[state.index()] {
+            if boundary.stop[state.index()] {
                 return vec![state.index()];
             }
             let mut successors = chain
@@ -309,33 +404,50 @@ fn avoidance(
             successors
         })
         .collect::<Vec<_>>();
-    let mut avoided = vec![false; chain.states.len()];
+    let mut violated = vec![false; chain.states.len()];
     for component in bottom_components(&adjacency) {
-        if component.iter().all(|state| !target[*state]) {
+        let accepts = if component.iter().any(|state| boundary.success[*state]) {
+            true
+        } else if component.iter().any(|state| boundary.stop[*state]) {
+            false
+        } else {
+            boundary.undecided_accepts
+        };
+        if accepts == boundary.accepting {
             for state in component {
-                avoided[state] = true;
+                violated[state] = true;
             }
         }
     }
-    let outside = target.iter().map(|target| !target).collect::<Vec<_>>();
-    let solved = decide_until(chain, &outside, &avoided, UnboundedObjective::Min, limits)?;
+    // Decided states outside the union absorb at value 0.
+    let open = (0..chain.states.len())
+        .map(|state| violated[state] || !boundary.stop[state])
+        .collect::<Vec<_>>();
+    let solved = decide_until(chain, &open, &violated, UnboundedObjective::Min, limits)?;
     let value = |state: usize| match solved.values.get(state) {
         Some(ExtRational::Finite(value)) => Ok(value.clone()),
         _ => Err(UnboundedError::InvalidState),
     };
     let one = Rational::from_integer(filament_exact::Integer::from(1_i64));
-    if value(start.index())? <= one.sub(threshold) {
+    let past = if boundary.accepting {
+        threshold.clone()
+    } else {
+        one.sub(threshold)
+    };
+    if value(start.index())? <= past {
         return Ok(None);
     }
     let positive = (0..chain.states.len())
-        .map(|state| value(state).map(|value| !value.is_zero() && !target[state]))
+        .map(|state| value(state).map(|value| !value.is_zero() && open[state]))
         .collect::<Result<Vec<_>, _>>()?;
-    let distance = distances(chain, &avoided, &positive);
+    let distance = distances(chain, &violated, &positive);
     let mut values = Vec::new();
     let mut ranks = Vec::new();
+    // A `lower` certificate names its positive states; an unnamed one counts 0.
     for (state, reached) in reached.iter().enumerate() {
-        if *reached {
-            values.push((state, value(state)?));
+        let value = value(state)?;
+        if *reached && !value.is_zero() {
+            values.push((state, value));
             ranks.push((state, distance[state].unwrap_or(0)));
         }
     }

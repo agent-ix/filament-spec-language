@@ -46,12 +46,14 @@ pub struct ProductConstructionCounts {
     pub targets: usize,
     /// Planned edges retained after transition admission.
     pub edges: usize,
+    /// FR-202 best-first path-set searches started.
+    pub path_searches: usize,
 }
 
 #[cfg(feature = "test-support")]
 thread_local! {
     static PRODUCT_CONSTRUCTION: std::cell::Cell<ProductConstructionCounts> =
-        std::cell::Cell::new(ProductConstructionCounts { relations: 0, targets: 0, edges: 0 });
+        std::cell::Cell::new(ProductConstructionCounts::default());
 }
 
 /// Reset this thread's construction observer before exercising a real builder.
@@ -89,6 +91,15 @@ pub(crate) fn observe_edge_construction() {
     PRODUCT_CONSTRUCTION.with(|counts| {
         let mut next = counts.get();
         next.edges += 1;
+        counts.set(next);
+    });
+}
+
+pub(crate) fn observe_path_search() {
+    #[cfg(feature = "test-support")]
+    PRODUCT_CONSTRUCTION.with(|counts| {
+        let mut next = counts.get();
+        next.path_searches += 1;
         counts.set(next);
     });
 }

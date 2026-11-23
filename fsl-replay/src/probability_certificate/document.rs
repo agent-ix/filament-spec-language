@@ -1236,6 +1236,7 @@ fn subject_graph_with_identity(
                 workload,
                 limits,
                 cancel,
+                true,
                 &mut |failure| {
                     issue = Some(failure);
                 },

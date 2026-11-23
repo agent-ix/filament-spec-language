@@ -646,68 +646,74 @@ fn event_avoidance_derives_the_event_free_bottom_component_itself() {
     let found = evidence(&record);
     let doc = document(&found);
     let s = found.initial_key.clone();
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let binding = claim_binding(&system, world.claim("Event")).unwrap().unwrap();
+    let successors = system
+        .actions(&system.initial()[0])
+        .unwrap()
+        .unwrap()
+        .into_iter()
+        .flat_map(|action| action.draws)
+        .flat_map(|draw| draw.successors)
+        .map(|(_, post)| {
+            let raw = system.state_key(&post).unwrap().0;
+            ProbabilityProductKey::for_model_state(Some(&binding.reference), &raw).unwrap()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(successors.len(), 2);
+    // The producer names the positive states; the event state counts 0.
     let named = doc["values"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|row| {
-            (
-                row["state"].as_str().unwrap().to_owned(),
-                row["value"].clone(),
-            )
-        })
+        .map(|row| key_from(row["state"].as_str().unwrap()))
         .collect::<Vec<_>>();
-    assert_eq!(named.len(), 3);
-    let root = encoded(&s);
-    let value = |state: &str| {
-        named
-            .iter()
-            .find(|(key, _)| key == state)
-            .map(|(_, value)| value.clone())
-            .unwrap()
-    };
-    assert_eq!(value(&root), q(1, 2));
-    let others = named
+    let a = named
         .iter()
-        .filter(|(key, _)| key != &root)
-        .map(|(_, value)| value.clone())
-        .collect::<Vec<_>>();
-    assert!(
-        others.contains(&q(1, 1)) && others.contains(&q(0, 1)),
-        "{others:?}"
-    );
-    let state_of = |wanted: &Value| -> ProbabilityProductKey {
-        let (key, _) = named
-            .iter()
-            .find(|(key, value)| key != &root && value == wanted)
-            .unwrap();
-        ProbabilityProductKey::from_canonical_bytes(URL_SAFE_NO_PAD.decode(key).unwrap())
-    };
-    let (a, e) = (state_of(&q(1, 1)), state_of(&q(0, 1)));
-    let ranks = doc["ranking"].as_array().unwrap();
-    let rank = |key: &ProbabilityProductKey| {
-        ranks
-            .iter()
-            .find(|row| row["state"] == encoded(key))
-            .unwrap()["rank"]
-            .clone()
-    };
+        .find(|key| **key != s)
+        .expect("the avoiding state is named")
+        .clone();
+    let e = successors
+        .into_iter()
+        .find(|key| *key != a)
+        .expect("the event state");
+    let mut expected = vec![(s.clone(), q(1, 2), 1), (a.clone(), q(1, 1), 0)];
+    expected.sort_by(|left, right| left.0.cmp(&right.0));
     assert_eq!(
-        (rank(&s), rank(&a), rank(&e)),
-        (json!(1), json!(0), json!(0))
+        doc["values"],
+        Value::Array(
+            expected
+                .iter()
+                .map(|(key, value, _)| json!({"state": encoded(key), "value": value}))
+                .collect()
+        )
+    );
+    assert_eq!(
+        doc["ranking"],
+        Value::Array(
+            expected
+                .iter()
+                .map(|(key, _, rank)| json!({"state": encoded(key), "rank": rank}))
+                .collect()
+        )
     );
     // Both `s` and `a` make their one choice under the witness scheduler.
     assert_eq!(found.scheduler.len(), 2);
     reproduced(replay(&world, &found));
 
-    let mut above = doc.clone();
+    // FSpec FR-412-AC-24's certificate also names the event state at 0.
+    let mut full = doc.clone();
+    insert_row(&mut full, &e, q(0, 1), 0);
+    reproduced(replay(&world, &offering(&found, &full)));
+
+    let mut above = full.clone();
     set_value(&mut above, &s, q(3, 4));
     rejected(
         replay(&world, &offering(&found, &above)),
         ProbabilityCertificateRule::InequalityFails,
         &s,
     );
-    let mut event = doc.clone();
+    let mut event = full.clone();
     set_value(&mut event, &e, q(1, 1));
     rejected(
         replay(&world, &offering(&found, &event)),
@@ -787,4 +793,23 @@ fn an_infinite_expected_total_is_refuted_by_a_finite_lower_certificate() {
         Some(&TerminalValue::Refuted)
     );
     assert!(bare.probabilistic_counterexample.is_none());
+}
+
+fn key_from(encoded: &str) -> ProbabilityProductKey {
+    ProbabilityProductKey::from_canonical_bytes(URL_SAFE_NO_PAD.decode(encoded).unwrap())
+}
+
+/// Name one more state, keeping both row groups in complete-key order.
+fn insert_row(document: &mut Value, key: &ProbabilityProductKey, value: Value, rank: u64) {
+    for (member, row) in [
+        ("values", json!({"state": encoded(key), "value": value})),
+        ("ranking", json!({"state": encoded(key), "rank": rank})),
+    ] {
+        let rows = document[member].as_array_mut().unwrap();
+        rows.push(row);
+        rows.sort_by(|left, right| {
+            key_from(left["state"].as_str().unwrap())
+                .cmp(&key_from(right["state"].as_str().unwrap()))
+        });
+    }
 }

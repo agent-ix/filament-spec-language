@@ -62,6 +62,10 @@ struct Subject {
     reward: Option<super::super::reward::RewardGraph>,
     bound: Bound,
     workload: bool,
+    /// Whether a bottom component with no decided state accepts the claim:
+    /// `always` keeps P there forever; `eventually` and `until` never reach
+    /// their target there.
+    undecided_accepts: bool,
     identity: Value,
     base: Value,
 }
@@ -237,6 +241,9 @@ fn subject(
     let workload = claim_workload(system, claim)?;
     let identity = fsl_foundation::IdentityLimits::default();
     let control = super::super::reward::RewardControl::new(cancel);
+    let mut event = None;
+    let mut failures = Vec::new();
+    let mut undecided_accepts = false;
     let (bound, graph, reward) = match &claim.form {
         ProbForm::ExpectedReward {
             bound,
@@ -264,9 +271,10 @@ fn subject(
             )?;
             (bound, graph, Some(reward))
         }
-        // Event avoidance refutes only the `>=` side: `Pr(not eventually E) > 1 - θ`.
+        // A failing event is refuted by its violation: `Pr(not eventually E)`
+        // past `1 - θ` against `>=`, `Pr(eventually E)` past `θ` against `<=`.
         ProbForm::Reach {
-            bound: bound @ Bound::AtLeast(_),
+            bound,
             target: ReachTarget::Eventually(predicate),
         } => (
             bound,
@@ -285,21 +293,58 @@ fn subject(
             )?,
             None,
         ),
+        // A failing `>=` state event is refuted by the probability of its
+        // violation: reaching a failure state, or for `until` also an
+        // undecided bottom component that never reaches its target.
+        ProbForm::Reach {
+            bound,
+            target: target @ (ReachTarget::Until(..) | ReachTarget::Always(_)),
+        } => {
+            let mut issue = None;
+            let enumerated = super::super::state_predicate::enumerate(
+                system,
+                target,
+                reference,
+                workload,
+                limits,
+                cancel,
+                false,
+                &mut |failure| issue = Some(failure),
+            );
+            let (state_event, graph, derived) = match (enumerated, issue) {
+                (Ok(enumerated), _) => enumerated,
+                (Err(_), Some(issue)) => {
+                    return Err(ProbabilityDocumentError::Build(Box::new(issue)))
+                }
+                (Err(error), None) => return Err(error),
+            };
+            event = Some(state_event);
+            failures = derived;
+            undecided_accepts = matches!(target, ReachTarget::Always(_));
+            (bound, graph, None)
+        }
         _ => return Err(ProbabilityDocumentError::Unsupported),
     };
+    let state_profile = event.is_some();
     let base = ProbabilityCertificateDocument {
-        cyclic_dtmc: workload.is_some(),
+        cyclic_dtmc: workload.is_some() && !state_profile,
         identity: item.clone(),
         targets: target_keys(&graph),
-        event: None,
-        failures: Vec::new(),
+        event,
+        failures,
         reward: reward.as_ref().map(|reward| reward.objective.clone()),
         optimization: claim_objective(&claim.scheduler, bound),
         timed: None,
         values: Vec::new(),
         ranking: Vec::new(),
     };
-    let written = writer::encode_fair_profile(&base, limits, cancel, workload.is_none(), &[])?;
+    let written = writer::encode_fair_profile(
+        &base,
+        limits,
+        cancel,
+        workload.is_none() && !state_profile,
+        &[],
+    )?;
     let mut written: Value =
         serde_json::from_slice(&written).map_err(|_| ProbabilityDocumentError::Malformed)?;
     let identity = written
@@ -315,6 +360,7 @@ fn subject(
         reward,
         bound: bound.clone(),
         workload: workload.is_some(),
+        undecided_accepts,
         identity,
         base,
     })
@@ -480,10 +526,20 @@ pub(in crate::probability_certificate) fn check(
     }
     let ranks = decoded.ranking.as_ref();
     let control = super::super::reward::RewardControl::new(cancel);
-    let avoided = if subject.reward.is_none() {
-        Some(event_free_bottom(graph, &induced, &mut meter, cancel)?)
-    } else {
+    // The union whose reaching probability the lower certificate bounds,
+    // derived and classified from the rebuilt chain alone: the rejecting
+    // components against a `>=` bound, the accepting ones against `<=`.
+    let union = if subject.reward.is_some() {
         None
+    } else {
+        Some(classified_union(
+            graph,
+            &induced,
+            matches!(subject.bound, Bound::AtMost(_)),
+            subject.undecided_accepts,
+            &mut meter,
+            cancel,
+        )?)
     };
     for (key, value) in &decoded.values {
         super::super::reward::visit(cancel, &mut meter)?;
@@ -492,19 +548,17 @@ pub(in crate::probability_certificate) fn check(
             .get(key)
             .ok_or(ProbabilityDocumentError::Malformed)?;
         let choice = induced.get(key).copied().flatten();
-        if state.terminal == Some(true) {
-            // The event or the reward target: its fixed value is 0 for the
-            // avoided-event probability and for the remaining reward.
+        if union.as_ref().is_some_and(|union| union.contains(key)) {
+            // A union state is an auxiliary target of value 1.
+            continue;
+        }
+        if state.terminal == Some(true) || union.is_some() && state.terminal.is_some() {
+            // A decided state outside the union, or the reward target: its
+            // fixed value is 0 for the violating probability and for the
+            // remaining reward.
             if expected == SubsystemBoundKind::Lower && *value != rational(0) {
                 return reject(ProbabilityCertificateRule::InequalityFails, key);
             }
-            continue;
-        }
-        if avoided
-            .as_ref()
-            .is_some_and(|avoided| avoided.contains(key))
-        {
-            // An event-free bottom state is an auxiliary target of value 1.
             continue;
         }
         let Some(index) = choice else {
@@ -575,7 +629,7 @@ pub(in crate::probability_certificate) fn check(
         (None, Bound::AtLeast(threshold)) => *initial > rational(1).sub(threshold),
         (Some(_), Bound::AtMost(threshold)) => initial > threshold,
         (Some(_), Bound::AtLeast(threshold)) => initial < threshold,
-        (None, Bound::AtMost(_)) => return Err(ProbabilityDocumentError::Unsupported),
+        (None, Bound::AtMost(threshold)) => initial > threshold,
     };
     if !refutes {
         return reject(ProbabilityCertificateRule::ThresholdMissed, &graph.initial);
@@ -635,11 +689,16 @@ fn induce(
     Ok(Some(induced))
 }
 
-/// The union of the induced chain's bottom strongly connected components that
-/// contain no event state. A stopped event state and a terminal state stutter.
-fn event_free_bottom(
+/// The union of the induced chain's bottom strongly connected components
+/// classified `accepting` (or rejecting). A stopped decided state and a
+/// terminal state stutter. A component holding an accepting decided state
+/// accepts, one holding a rejecting decided state rejects, and one with no
+/// decided state accepts exactly when `undecided_accepts` (`always`).
+fn classified_union(
     graph: &CheckerGraph,
     induced: &BTreeMap<ProbabilityProductKey, Option<usize>>,
+    accepting: bool,
+    undecided_accepts: bool,
     meter: &mut filament_exact::Meter,
     cancel: &Cancel,
 ) -> Result<BTreeSet<ProbabilityProductKey>, ProbabilityDocumentError> {
@@ -733,20 +792,30 @@ fn event_free_bottom(
             }
         }
     }
-    let mut avoided = BTreeSet::new();
+    let mut union = BTreeSet::new();
     for (index, component) in components.iter().enumerate() {
         super::super::reward::visit(cancel, meter)?;
-        let event = component.iter().any(|state| {
-            graph
-                .states
-                .get(keys[*state])
-                .is_some_and(|state| state.terminal == Some(true))
-        });
-        if bottom[index] && !event {
-            avoided.extend(component.iter().map(|state| keys[*state].clone()));
+        let decided = |verdict| {
+            component.iter().any(|state| {
+                graph
+                    .states
+                    .get(keys[*state])
+                    .is_some_and(|state| state.terminal == Some(verdict))
+            })
+        };
+        // A decided state absorbs, so a bottom component holds at most one.
+        let accepts = if decided(true) {
+            true
+        } else if decided(false) {
+            false
+        } else {
+            undecided_accepts
+        };
+        if bottom[index] && accepts == accepting {
+            union.extend(component.iter().map(|state| keys[*state].clone()));
         }
     }
-    Ok(avoided)
+    Ok(union)
 }
 
 /// Admit any subsystem certificate a probabilistic counterexample may carry:

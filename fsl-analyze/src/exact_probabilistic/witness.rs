@@ -822,6 +822,7 @@ fn produce_with_goal(
     limits: &ExactProbLimits,
     control: &mut impl FnMut(WitnessWork<'_>) -> Result<(), WitnessError>,
 ) -> Result<Option<ProducedWitness>, WitnessError> {
+    super::observe_path_search();
     if accepting.len() != product.states.len() || initial.index() >= product.states.len() {
         return Err(WitnessError::InvalidState);
     }
