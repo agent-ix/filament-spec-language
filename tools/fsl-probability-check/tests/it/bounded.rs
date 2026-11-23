@@ -1123,7 +1123,7 @@ fn bounded_altered_horizon_binding_and_rank_never_certify_the_original_claim() {
 
 #[trace("TC-636", "FR-201-AC-14", "FR-282-AC-13")]
 #[test]
-fn bounded_wrong_source_and_nonexact_rows_never_produce_an_accepted_document() {
+fn bounded_wrong_source_and_precision_budget_rows_never_accept_while_a_decided_interval_proves() {
     let (evidence, missed) = request(
         &cyclic_source(2, "0.9"),
         SNAPSHOT,
@@ -1456,7 +1456,7 @@ fn value_bounds_documents_are_accepted_by_the_separate_checker_under_the_request
         max_rational_bits: 4,
         ..ExactProbLimits::default()
     };
-    let scalar_bits = fsl_replay::ProbabilityDocumentLimits::for_exact(
+    let scalar_bits = fsl_replay::ProbabilityDocumentLimits::for_interval(
         &exact,
         fsl_replay::AccountingLimits::default().0,
     )

@@ -39,3 +39,10 @@ this PR.
 - FR-203-AC-9: untagged; this diff builds the behaviour it names (FND-002).
 - Semantic review: skipped (not opted in); intent checks were done in the code-review SR.
 - Plan completion: not assessed
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `the_lower_document_ranks_by_remaining_horizon_and_a_changed_rank_is_broken` (decided keys rank 0, ranks 1..=1000, upper has no ranking, changed rank is RankBroken) plus `value_bounds_documents_are_accepted_by_the_separate_checker_under_the_request_limits` |
+| FND-002 | fixed | The lowered-upper case asserts inconclusive `CertificateRejected{InequalityFails, key}` with the counterpart's locus (FR-203-AC-9 row); the item counterpart emission is tested in probability_from_source.rs |

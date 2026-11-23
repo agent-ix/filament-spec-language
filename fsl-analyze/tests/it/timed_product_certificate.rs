@@ -1615,7 +1615,7 @@ fn a_timed_deadline_past_the_rational_budget_proves_with_value_bounds() {
             world.package.graph().probabilistic_model().claims(),
             &identity,
             bytes.expect("the record carries the document"),
-            fsl_replay::ProbabilityDocumentLimits::for_exact(&request_limits, limits().accounting),
+            fsl_replay::ProbabilityDocumentLimits::for_interval(&request_limits, limits().accounting),
             &Cancel::new(),
         );
         assert!(

@@ -1516,7 +1516,7 @@ fn a_value_bounds_document_is_accepted_only_for_the_side_it_certifies() {
     let identity = fsl_replay::probabilistic_claim_identity(world.claim("NoFault")).unwrap();
     // Replay under the request's own limits, with no scalar bound widened by hand.
     let limits =
-        fsl_replay::ProbabilityDocumentLimits::for_exact(&request_limits, prob_world::UNLIMITED);
+        fsl_replay::ProbabilityDocumentLimits::for_interval(&request_limits, prob_world::UNLIMITED);
     let check = |bytes: &[u8]| {
         fsl_replay::check_probability_certificate_document(
             &system,
@@ -1681,7 +1681,7 @@ fn the_lower_document_ranks_by_remaining_horizon_and_a_changed_rank_is_broken() 
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     let identity = fsl_replay::probabilistic_claim_identity(world.claim("NoFault")).unwrap();
     let limits =
-        fsl_replay::ProbabilityDocumentLimits::for_exact(&request_limits, prob_world::UNLIMITED);
+        fsl_replay::ProbabilityDocumentLimits::for_interval(&request_limits, prob_world::UNLIMITED);
     let first = lower["ranking"]
         .as_array_mut()
         .and_then(|rows| rows.iter_mut().find(|row| row["rank"].as_u64() > Some(0)))
@@ -1705,6 +1705,64 @@ fn the_lower_document_ranks_by_remaining_horizon_and_a_changed_rank_is_broken() 
         "{:?}",
         rejection.at
     );
+}
+
+/// FR-255 and FR-1042: an exact document's scalar bound is exactly
+/// `max_rational_bits`, whatever `max_precision_bits` is; only a dyadic
+/// interval document's bound widens to sixteen bits per bit of
+/// `max_precision_bits`, and a stop names the setting that raises the bound
+/// that stopped it, with that setting's own value.
+#[trace("TC-2066", "FR-1042-AC-6")]
+#[test]
+fn only_an_interval_documents_scalar_bound_widens_and_names_its_own_setting() {
+    use fsl_replay::{ModelCheckLimit, ProbabilityDocumentLimits};
+    let limits = |rational: u64, precision: u32| {
+        let mut limits = fsl_replay::ExactProbLimits::default();
+        limits.max_rational_bits = rational;
+        limits.max_precision_bits = precision;
+        limits
+    };
+    for (rational, precision, widened, setting) in [
+        (
+            4,
+            4096,
+            65_536,
+            (ModelCheckLimit::ExactProbMaxPrecisionBits, 4096),
+        ),
+        (
+            1024,
+            64,
+            1024,
+            (ModelCheckLimit::ExactProbMaxRationalBits, 1024),
+        ),
+        (
+            1024,
+            128,
+            2048,
+            (ModelCheckLimit::ExactProbMaxPrecisionBits, 128),
+        ),
+        (
+            65_536,
+            4096,
+            65_536,
+            (ModelCheckLimit::ExactProbMaxRationalBits, 65_536),
+        ),
+    ] {
+        let request = limits(rational, precision);
+        assert_eq!(
+            ProbabilityDocumentLimits::for_exact(&request, prob_world::UNLIMITED).scalar_bits,
+            rational,
+            "an exact document keeps max_rational_bits"
+        );
+        assert_eq!(
+            ProbabilityDocumentLimits::for_interval(&request, prob_world::UNLIMITED).scalar_bits,
+            widened
+        );
+        assert_eq!(
+            ProbabilityDocumentLimits::interval_scalar_setting(&request),
+            setting
+        );
+    }
 }
 
 /// FR-281 "Engine refusals": a document-storage budget or a cancel that stops a

@@ -432,6 +432,7 @@ fn run_timed(
         _ => return not_yet(),
     };
     let document_limits = ProbabilityDocumentLimits::for_exact(&limits, meter);
+    let interval_limits = ProbabilityDocumentLimits::for_interval(&limits, meter);
     let admitted = ModelSystem::new_with_cancel(simulation.clone(), cancel);
     if let Some(cause) = cancel.tripped() {
         return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
@@ -663,7 +664,7 @@ fn run_timed(
                 if let Some(tamper) = tamper {
                     tamper(&mut certificate);
                 }
-                let (checked, optimization) = verify(&certificate, Some(side), document_limits);
+                let (checked, optimization) = verify(&certificate, Some(side), interval_limits);
                 let claim_side = matches!(
                     (side, bound),
                     (fsl_replay::SubsystemBoundKind::Lower, Bound::AtLeast(_))
@@ -680,6 +681,7 @@ fn run_timed(
             };
             finish_interval(
                 bound,
+                &limits,
                 lower,
                 upper,
                 binding.as_ref(),
@@ -1512,12 +1514,13 @@ fn run(
             bound,
             extremum,
             binding: binding.as_ref(),
+            request_limits: &limits,
         };
         return raise_until_accepted(&product, bound, &limits, interval, |interval| {
             settle_interval(
                 &subject_of,
                 interval,
-                document_limits,
+                ProbabilityDocumentLimits::for_interval(&limits, meter),
                 cancel,
                 tamper,
                 subject,
@@ -1787,6 +1790,7 @@ struct IntervalSubject<'a> {
     bound: &'a Bound,
     extremum: Option<Extremum>,
     binding: Option<&'a fsl_replay::ClaimBinding>,
+    request_limits: &'a crate::exact_probabilistic::ExactProbLimits,
 }
 
 /// FR-1042: settle an interval's documents, and when a self-checked document
@@ -1900,6 +1904,7 @@ fn settle_interval(
     };
     finish_interval(
         subject_of.bound,
+        subject_of.request_limits,
         lower,
         upper,
         subject_of.binding,
@@ -1907,6 +1912,28 @@ fn settle_interval(
         interval.precision_bits,
         subject,
     )
+}
+
+/// A stop of an interval document names the setting that raises its bound
+/// (FR-255): `max_precision_bits` when the widened term binds it, else
+/// `max_rational_bits`.
+fn interval_failure(
+    error: ProbabilityDocumentError,
+    limits: &crate::exact_probabilistic::ExactProbLimits,
+    subject: SubjectLimits<'_>,
+) -> EngineReport {
+    let scalar_stop = matches!(
+        &error,
+        ProbabilityDocumentError::Limit {
+            limit: fsl_replay::ProbabilityDocumentLimit::RationalBits,
+            ..
+        } | ProbabilityDocumentError::IntegerText { .. }
+    );
+    if !scalar_stop {
+        return document_failure(error, subject);
+    }
+    let (limit, value) = ProbabilityDocumentLimits::interval_scalar_setting(limits);
+    settled(&ExactProbBuildIssue::Limit { limit, value }, subject)
 }
 
 /// An interval end's certificate and the checker's verdict on its document.
@@ -1923,6 +1950,7 @@ type IntervalDocument = Result<
 /// both accepted, and a rejection of either as that document's rejection.
 fn finish_interval(
     bound: &Bound,
+    limits: &crate::exact_probabilistic::ExactProbLimits,
     lower: IntervalDocument,
     upper: IntervalDocument,
     binding: Option<&fsl_replay::ClaimBinding>,
@@ -1936,11 +1964,11 @@ fn finish_interval(
     };
     let (certificate, claim_check) = match claim {
         Ok(accepted) => accepted,
-        Err(error) => return Ok(document_failure(error, subject)),
+        Err(error) => return Ok(interval_failure(error, limits, subject)),
     };
     let (_, counterpart_check) = match counterpart {
         Ok(accepted) => accepted,
-        Err(error) => return Ok(document_failure(error, subject)),
+        Err(error) => return Ok(interval_failure(error, limits, subject)),
     };
     let accepted = |check: &ExactProbabilityCertificateCheck| {
         matches!(check, ExactProbabilityCertificateCheck::Accepted(_))

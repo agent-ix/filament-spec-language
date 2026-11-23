@@ -249,11 +249,43 @@ impl ProbabilityDocumentLimits {
             storage_bytes: limits.document.storage_bytes,
             states: limits.model.limits.max_states,
             edges: limits.model.limits.max_transitions,
+            scalar_bits: limits.max_rational_bits,
+            accounting,
+        }
+    }
+
+    /// The ceilings of a dyadic value-bounds document: `for_exact`'s, with the
+    /// scalar bound widened to the larger of `max_rational_bits` and
+    /// `INTERVAL_BITS_PER_PRECISION_BIT` times `max_precision_bits`.
+    pub fn for_interval(
+        limits: &ExactProbLimits,
+        accounting: filament_exact::ScalarLimits,
+    ) -> Self {
+        Self {
             scalar_bits: limits.max_rational_bits.max(
                 INTERVAL_BITS_PER_PRECISION_BIT
                     .saturating_mul(u64::from(limits.max_precision_bits)),
             ),
-            accounting,
+            ..Self::for_exact(limits, accounting)
+        }
+    }
+
+    /// The setting that raises `for_interval`'s scalar bound, with its value:
+    /// `max_precision_bits` when its widened term is the binding one,
+    /// otherwise `max_rational_bits` (FR-255).
+    pub fn interval_scalar_setting(limits: &ExactProbLimits) -> (crate::ModelCheckLimit, u64) {
+        let widened =
+            INTERVAL_BITS_PER_PRECISION_BIT.saturating_mul(u64::from(limits.max_precision_bits));
+        if widened > limits.max_rational_bits {
+            (
+                crate::ModelCheckLimit::ExactProbMaxPrecisionBits,
+                u64::from(limits.max_precision_bits),
+            )
+        } else {
+            (
+                crate::ModelCheckLimit::ExactProbMaxRationalBits,
+                limits.max_rational_bits,
+            )
         }
     }
 }
