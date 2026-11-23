@@ -466,7 +466,25 @@ pub(super) fn carry_rows(
             record.objects.iter_mut().for_each(follow);
         }
     }
-    Ok(rows)
+    // FSpec FR-825 package order: rows ascend by the claim node's structural
+    // key, then occurrence role, ordinal and kind. A rename changes the
+    // structural key of every node holding the renamed node as an operand
+    // (a call of a rekeyed entry), so rows are re-sorted by the final key;
+    // the sort is stable, so rows of one claim keep their base order.
+    let graph =
+        fsl_semantics::check::wire_id::WireGraph::new(nodes.iter().map(|node| &node.node_id))
+            .map_err(|_| EmitRefusal::RequirementRowCarry("the writer's graph ids do not resolve"))?;
+    let mut keyed = rows
+        .into_iter()
+        .map(|row| {
+            let key = graph.key(&row.claim).map_err(|_| {
+                EmitRefusal::RequirementRowCarry("a carried row's claim is not a node of the graph")
+            })?;
+            Ok((key, row))
+        })
+        .collect::<Result<Vec<_>, EmitRefusal>>()?;
+    keyed.sort_by(|(left, _), (right, _)| left.cmp(right));
+    Ok(keyed.into_iter().map(|(_, row)| row).collect())
 }
 
 #[cfg(test)]

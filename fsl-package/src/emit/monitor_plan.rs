@@ -1745,9 +1745,20 @@ mod tests {
             let after = self.final_package.requirement_items();
             assert_eq!(before.len(), after.len());
             let mut renamed_owners = 0;
-            for (before, after) in before.iter().zip(after) {
-                assert_eq!(after.claim, rename(&before.claim));
-                assert_eq!(after.kind, before.kind);
+            // The writer re-sorts rows by the final structural key, so each
+            // base row is matched by its renamed claim, occurrence and kind.
+            for before in before {
+                let matching = after
+                    .iter()
+                    .filter(|row| {
+                        row.claim == rename(&before.claim)
+                            && row.occurrence == before.occurrence
+                            && row.kind == before.kind
+                    })
+                    .collect::<Vec<_>>();
+                let [after] = matching.as_slice() else {
+                    panic!("one final row per base row, got {}", matching.len());
+                };
                 let (Some(before), Some(after)) = (&before.record, &after.record) else {
                     assert_eq!(before.record.is_none(), after.record.is_none());
                     continue;
