@@ -69,3 +69,4 @@ merge on its own.
 | --- | --- | --- |
 | FND-001 | accepted-no-change | AC-18 is not split. That is acceptable: FR-204's existing rows (AC-6, AC-10) are bundled the same way, every conjunct is pinned to an exact value, and the finding was marked optional. AC-19 and AC-20 follow the same pattern. |
 | FND-002 | fixed | b84df6c5: AC-18 reads "exactly four race edges and no other action (no `UnitDelay`, `FreeDelays` or `WorkloadResolve`)". TC-3204 lags behind this text, recorded as FND-003. |
+| FND-003 | fixed | 36c0aec2: TC-3204's Expected Results now reads "Exactly four race edges and no other action (no `UnitDelay`, `FreeDelays` or `WorkloadResolve`) at the initial state". |

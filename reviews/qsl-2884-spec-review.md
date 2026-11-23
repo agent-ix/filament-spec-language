@@ -137,3 +137,7 @@ On AC-19's first-pick pin: every reading of SD-3 gives F1, F2 and G 2/5, 2/5 and
 | FND-004 | fixed | b84df6c5: TC-3204's procedure submits both `Exact` certificates (`11/96` and `0`), and Expected Results rejects both. |
 | FND-005 | fixed | b84df6c5: the worked example gives `P(a) = 149/192` over `[0 ms, 3 ms]` and notes that `[0 ms, 2 ms]` gives the same. |
 | FND-006 | fixed | b84df6c5: the sentence now reads "`A`, `B` and `C` are three distinct operations of one identity each, so no operation's weight is shared among tied identities here". |
+| FND-007 | deferred | Deferred by the lead to QSL-2983, "FR-204/FR-196: product representation of a same-instant multi-identity tie (ADR-026 SD-3 ordered takes)". 36c0aec2 adds an "Open question (QSL-2983)" note under the `Chain` worked example. |
+| FND-008 | deferred | Deferred by the lead to QSL-2984, "ADR-026 SD-3: order and weight of the identities of one operation within a tie". 36c0aec2 adds an "Open question (QSL-2984)" note under the `Pair` worked example. |
+| FND-009 | fixed | 36c0aec2: the `Pair` example now reads `delay Pair::Node::fire ~ discrete { 2 ms: 1 };`. |
+| FND-010 | fixed | 36c0aec2: AC-20 states the item `probability <= 0.3 [eventually[0 ms, 3 ms] holds(c.n = 3 and c.last = Y)]` settles `proved`, `ExactValue{4/15}`, and TC-3206 decides it. 4/15 ≈ 0.267 ≤ 0.3. The canonical-order checker (Y = 0) also passes the 0.3 bound. That is acceptable: the stated `ExactValue{4/15}` catches it, and so do the X and Z claims and the Z certificate. The two other wrong checkers (1/2, 1/3) refute it. |
