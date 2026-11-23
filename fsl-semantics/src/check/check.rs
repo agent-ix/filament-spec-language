@@ -5520,29 +5520,36 @@ impl<'a> Typer<'a> {
         }
     }
 
+    /// Whether `value_type` is, or holds through an option, a collection or a
+    /// map's values, a reference. The descent is a loop, so a type nested to
+    /// any depth the parser admits does not consume the thread's stack.
     fn holds_references(value_type: &ValueType) -> bool {
-        match value_type {
-            ValueType::Reference(_) => true,
-            ValueType::Option(element) => Self::holds_references(element),
-            ValueType::Collection(collection) => Self::holds_references(collection.element()),
-            ValueType::Map(map) => Self::holds_references(map.values()),
-            ValueType::Boolean
-            | ValueType::Int(_)
-            | ValueType::Integer
-            | ValueType::Text(_)
-            | ValueType::String
-            | ValueType::Uuid
-            | ValueType::Timestamp
-            | ValueType::Enum(_)
-            | ValueType::Composite(_)
-            | ValueType::Rational(_)
-            | ValueType::Decimal(_)
-            | ValueType::Float(_)
-            | ValueType::Quantity(_)
-            | ValueType::BoundedQuantity(_)
-            | ValueType::CarriedQuantity(_)
-            | ValueType::Population(_) => false,
-            ValueType::Bytes | ValueType::JsonObject => false,
+        let mut current = value_type;
+        loop {
+            current = match current {
+                ValueType::Reference(_) => return true,
+                ValueType::Option(element) => element,
+                ValueType::Collection(collection) => collection.element(),
+                ValueType::Map(map) => map.values(),
+                ValueType::Boolean
+                | ValueType::Int(_)
+                | ValueType::Integer
+                | ValueType::Text(_)
+                | ValueType::String
+                | ValueType::Uuid
+                | ValueType::Timestamp
+                | ValueType::Enum(_)
+                | ValueType::Composite(_)
+                | ValueType::Rational(_)
+                | ValueType::Decimal(_)
+                | ValueType::Float(_)
+                | ValueType::Quantity(_)
+                | ValueType::BoundedQuantity(_)
+                | ValueType::CarriedQuantity(_)
+                | ValueType::Population(_)
+                | ValueType::Bytes
+                | ValueType::JsonObject => return false,
+            };
         }
     }
 
@@ -6781,6 +6788,34 @@ mod holds_float_tests {
     /// behind an option, a collection or a map's values (filament-exact
     /// FR-386); a bounded quantity is not a float. No FSL criterion pins the
     /// map arm itself.
+    /// FR-356-AC-7: the model-receiver reference test and the clock-leaf
+    /// rewrite walk a 100,000-deep `Option` type on a 512 KiB stack.
+    #[test]
+    fn a_100000_deep_option_type_is_walked_on_a_small_stack() {
+        std::thread::Builder::new()
+            .stack_size(512 * 1024)
+            .spawn(|| {
+                let nest = |leaf: ValueType| {
+                    let mut value_type = leaf;
+                    for _ in 0..100_000 {
+                        value_type = ValueType::option(value_type);
+                    }
+                    value_type
+                };
+                let clock = ValueType::Reference(super::super::clock_reference_target());
+                let held = nest(clock);
+                let plain = nest(ValueType::Integer);
+                assert!(Typer::holds_references(&held));
+                assert!(!Typer::holds_references(&plain));
+                let leafed = clock_reference_as_leaf(&held).expect("a leaf rewrite");
+                assert!(!Typer::holds_references(&leafed));
+                assert_eq!(clock_reference_as_leaf(&plain), Some(plain.clone()));
+            })
+            .expect("the thread spawns")
+            .join()
+            .expect("the walks do not overflow a 512 KiB stack");
+    }
+
     #[test]
     fn a_float_behind_a_map_is_seen() {
         let float = ValueType::Float(filament_exact::FloatType::new(

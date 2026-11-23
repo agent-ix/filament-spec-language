@@ -408,6 +408,8 @@ pub fn resolve_root_field_redefinition(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fsl_semantics::model::accounting::LimitKind;
+    use fsl_semantics::model::normalize::normalize_with_meter;
 
     #[test]
     fn smallest_shape_admits_and_queries() {
@@ -517,5 +519,56 @@ mod tests {
         assert!(refusal.detail.contains("SCHEMA_VIOLATION"));
         assert!(refusal.detail.contains("/ir/types/0/fields/0/presence"));
         assert!(refusal.detail.contains("presence is a closed enumeration"));
+    }
+
+    /// FR-154: a typed declaration refusal that the shared reader does not
+    /// raise is retained on the package, and normalization charges every
+    /// source record before it reports it. A frame entry naming no
+    /// declaration is such a refusal: `intake` returns the package, the
+    /// refusal arrives from normalization after all five source records (the
+    /// type, its field, the population and the operation with its frame) are
+    /// charged.
+    #[test]
+    fn source_byte_intake_retains_declaration_refusals_until_normalization_charges_records() {
+        let mut value: Value = serde_json::from_slice(&document(ModelShape { types: 1, depth: 0 }))
+            .expect("the generated document is JSON");
+        let operation = node("C0/touch");
+        value["types"][0]["operations"] = json!([{
+            "identity": operation,
+            "name": "touch",
+            "params": [],
+            "pre": [],
+            "post": [],
+            "frame": {"modifies": [node("Nope")], "creates": [], "deletes": []},
+            "origin": origin(&operation),
+        }]);
+        let package = intake(&offer(
+            serde_json::to_vec(&value).expect("the invalid fixture serializes"),
+        ))
+        .expect("intake retains a declaration refusal until normalization charges records");
+        let (outcome, meter) = normalize_with_meter(&package, ModelNormalizationLimits::default());
+        assert_eq!(
+            meter.admission_count(),
+            5,
+            "every source record, the operation's two included, is charged before the refusal"
+        );
+        assert_eq!(
+            meter.consumed(LimitKind::DeclarationRecords),
+            5,
+            "all five source records are charged before refusal"
+        );
+        let NormalizeOutcome::Refused(refusals) = outcome else {
+            panic!("normalization reports the retained declaration refusal");
+        };
+        assert_eq!(refusals.len(), 1);
+        assert_eq!(refusals[0].code.as_str(), "missing_declaration");
+        assert!(matches!(
+            &refusals[0].cause,
+            fsl_semantics::model::refusal::ModelRefusalCause::FrameEntryMissing {
+                node,
+                entry,
+                ..
+            } if node == "ix://bench/model/C0/touch" && entry == "ix://bench/model/Nope"
+        ));
     }
 }
