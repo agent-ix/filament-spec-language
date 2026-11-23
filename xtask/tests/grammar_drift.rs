@@ -141,6 +141,8 @@ const CORRESPONDENCE: &[(&str, &str)] = &[
     ("node-ref", "NodeReference"),
     ("progress-premise", "GuaranteeProgress"),
     ("protocol-step-row", "StepRow"),
+    // The names correspond but the alternatives differ: the standard accepts cfail, ctimeout and
+    // cexpire, which the parser's StepSource does not (QSL-2967).
     ("protocol-step-source", "StepSource"),
     ("protocol-step-target", "StepTarget"),
     ("quantity-unit", "UnitExpression"),
@@ -187,69 +189,69 @@ const STANDARD_ONLY: &[(&str, &str)] = &[
     ("possible-clause", "inlined alternative (FR-600 Behavior): alternative of StateGraphClaim"),
     ("power", "inlined alternative (FR-600 Behavior): precedence level the parser writes in place in the expression ladder"),
     ("protocol-reference", "inlined alternative (FR-600 Behavior): two-token form the parser writes in place"),
-    ("rust-field", "lexical terminal (FR-600 Behavior): a string position, a string token in the parser"),
-    ("rust-name", "lexical terminal (FR-600 Behavior): a string position, a string token in the parser"),
-    ("rust-path", "lexical terminal (FR-600 Behavior): a string position, a string token in the parser"),
-    ("rust-receiver", "lexical terminal (FR-600 Behavior): a string position, a string token in the parser"),
+    ("rust-field", "named alias of string in the shared grammar (not one of FR-503's five lexical terminals), written as a string token in the parser"),
+    ("rust-name", "named alias of string in the shared grammar (not one of FR-503's five lexical terminals), written as a string token in the parser"),
+    ("rust-path", "named alias of string in the shared grammar (not one of FR-503's five lexical terminals), written as a string token in the parser"),
+    ("rust-receiver", "named alias of string in the shared grammar (not one of FR-503's five lexical terminals), written as a string token in the parser"),
     ("synthesis-objective", "inlined alternative (FR-600 Behavior): optional clause the parser writes in place inside SynthesisDeclaration"),
     ("temporal-relation-unbounded", "inlined alternative (FR-600 Behavior): precedence level the parser writes in place of the unbounded temporal ladder"),
     ("temporal-unary-unbounded", "inlined alternative (FR-600 Behavior): precedence level the parser writes in place of the unbounded temporal ladder"),
     ("unique-path-clause", "inlined alternative (FR-600 Behavior): alternative of StateGraphClaim"),
-    ("unit-term", "inlined alternative (FR-600 Behavior): term of a unit expression, written in place inside UnitExpression"),
+    ("unit-term", "the parser reuses DimensionTerm for the unit term; the standard names it unit-term"),
 ];
 
 /// FR-600's parser-only allow-list: a parser production with no standard
 /// production, and why.
 const PARSER_ONLY: &[(&str, &str)] = &[
     ("AggregateKind", "inlined alternatives (FR-600 Behavior) the standard writes in place inside aggregate-term"),
-    ("AllocationDeclaration", "extension-only production (FR-600 Behavior): a form of the domain-package model unit of FR-710, which the shared grammar does not define"),
+    ("AllocationDeclaration", "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define"),
     ("CaseBinder", "parser-internal helper: one binder of a case arm, written in place by the standard (FR-600 Behavior)"),
     ("CaseExpression", "parser-internal helper: the standard writes the case form inside expr (FR-600 Behavior)"),
     ("CompositionDepends", "inlined alternative (FR-600 Behavior) of the standard composition-member"),
     ("CompositionGuarantee", "inlined alternative (FR-600 Behavior) of the standard composition-member"),
     ("CompositionRely", "inlined alternative (FR-600 Behavior) of the standard composition-member"),
     ("CompositionSupplies", "inlined alternative (FR-600 Behavior) of the standard composition-member"),
-    ("ConnectionDeclaration", "extension-only production (FR-600 Behavior): a form of the domain-package model unit of FR-710, which the shared grammar does not define"),
-    ("DomainContract", "extension-only production (FR-600 Behavior): a form of the domain-package model unit of FR-710, which the shared grammar does not define"),
-    ("DomainDeclaration", "extension-only production (FR-600 Behavior): a form of the domain-package model unit of FR-710, which the shared grammar does not define"),
-    ("DomainField", "extension-only production (FR-600 Behavior): a form of the domain-package model unit of FR-710, which the shared grammar does not define"),
-    ("DomainInvariant", "extension-only production (FR-600 Behavior): a form of the domain-package model unit of FR-710, which the shared grammar does not define"),
-    ("DomainMultiplicity", "extension-only production (FR-600 Behavior): a form of the domain-package model unit of FR-710, which the shared grammar does not define"),
-    ("DomainObject", "extension-only production (FR-600 Behavior): a form of the domain-package model unit of FR-710, which the shared grammar does not define"),
-    ("DomainOperation", "extension-only production (FR-600 Behavior): a form of the domain-package model unit of FR-710, which the shared grammar does not define"),
-    ("DomainPopulation", "extension-only production (FR-600 Behavior): a form of the domain-package model unit of FR-710, which the shared grammar does not define"),
-    ("DomainRecordDeclaration", "extension-only production (FR-600 Behavior): a form of the domain-package model unit of FR-710, which the shared grammar does not define"),
-    ("DomainRelationship", "extension-only production (FR-600 Behavior): a form of the domain-package model unit of FR-710, which the shared grammar does not define"),
+    ("ConnectionDeclaration", "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define"),
+    ("DomainContract", "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define"),
+    ("DomainDeclaration", "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define"),
+    ("DomainField", "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define"),
+    ("DomainInvariant", "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define"),
+    ("DomainMultiplicity", "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define"),
+    ("DomainObject", "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define"),
+    ("DomainOperation", "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define"),
+    ("DomainPopulation", "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define"),
+    ("DomainRecordDeclaration", "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define"),
+    ("DomainRelationship", "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define"),
     ("EnumValue", "parser-internal helper: an enum member reference, written in place by the standard (FR-600 Behavior)"),
-    ("EventDeclaration", "extension-only production (FR-600 Behavior): a form of the domain-package model unit of FR-710, which the shared grammar does not define"),
+    ("EventDeclaration", "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define"),
     ("ExtensionDeclaration", "extension-only production (FR-600 Behavior): the declarations an installed extension adds (FR-354)"),
-    ("FairnessRow", "refinement row of FSpec FR-375; FSpec FR-503 keeps prose-only forms out of the production inventory, so FR-600 Behavior records it as parser-only"),
-    ("FieldRow", "refinement row of FSpec FR-375; FSpec FR-503 keeps prose-only forms out of the production inventory, so FR-600 Behavior records it as parser-only"),
-    ("HistoryLiteral", "refinement row of FSpec FR-375; FSpec FR-503 keeps prose-only forms out of the production inventory, so FR-600 Behavior records it as parser-only"),
-    ("HistoryRow", "refinement row of FSpec FR-375; FSpec FR-503 keeps prose-only forms out of the production inventory, so FR-600 Behavior records it as parser-only"),
-    ("HistoryUpdate", "refinement row of FSpec FR-375; FSpec FR-503 keeps prose-only forms out of the production inventory, so FR-600 Behavior records it as parser-only"),
-    ("HyperComparison", "parser-internal helper with no source meaning (FR-600 Behavior): a precedence level of the hyper body, which the standard writes as expr (FSpec FR-395)"),
-    ("HyperConjunction", "parser-internal helper with no source meaning (FR-600 Behavior): a precedence level of the hyper body, which the standard writes as expr (FSpec FR-395)"),
-    ("HyperDisjunction", "parser-internal helper with no source meaning (FR-600 Behavior): a precedence level of the hyper body, which the standard writes as expr (FSpec FR-395)"),
-    ("HyperExpression", "parser-internal helper with no source meaning (FR-600 Behavior): the root of the hyper body ladder, which the standard writes as expr (FSpec FR-395)"),
-    ("HyperImplication", "parser-internal helper with no source meaning (FR-600 Behavior): a precedence level of the hyper body, which the standard writes as expr (FSpec FR-395)"),
-    ("HyperPostfix", "parser-internal helper with no source meaning (FR-600 Behavior): a precedence level of the hyper body, which the standard writes as expr (FSpec FR-395)"),
-    ("HyperPrimary", "parser-internal helper with no source meaning (FR-600 Behavior): a precedence level of the hyper body, which the standard writes as expr (FSpec FR-395)"),
-    ("HyperProduct", "parser-internal helper with no source meaning (FR-600 Behavior): a precedence level of the hyper body, which the standard writes as expr (FSpec FR-395)"),
-    ("HyperSum", "parser-internal helper with no source meaning (FR-600 Behavior): a precedence level of the hyper body, which the standard writes as expr (FSpec FR-395)"),
-    ("HyperUnary", "parser-internal helper with no source meaning (FR-600 Behavior): a precedence level of the hyper body, which the standard writes as expr (FSpec FR-395)"),
-    ("InterfaceDeclaration", "extension-only production (FR-600 Behavior): a form of the domain-package model unit of FR-710, which the shared grammar does not define"),
-    ("MachineDeclaration", "extension-only production (FR-600 Behavior): a form of the domain-package model unit of FR-710, which the shared grammar does not define"),
-    ("MapDeclaration", "extension-only production (FR-600 Behavior): a form of the domain-package model unit of FR-710, which the shared grammar does not define"),
-    ("ModelUnit", "extension-only production (FR-600 Behavior): a form of the domain-package model unit of FR-710, which the shared grammar does not define"),
-    ("NamespaceDeclaration", "extension-only production (FR-600 Behavior): a form of the domain-package model unit of FR-710, which the shared grammar does not define"),
-    ("ObjectRow", "refinement row of FSpec FR-375; FSpec FR-503 keeps prose-only forms out of the production inventory, so FR-600 Behavior records it as parser-only"),
-    ("PartDeclaration", "extension-only production (FR-600 Behavior): a form of the domain-package model unit of FR-710, which the shared grammar does not define"),
+    ("FairnessRow", "the standard has no ebnf production for this refinement form (FSpec FR-375 describes it in prose); QSL-2968"),
+    ("FieldRow", "the standard has no ebnf production for this refinement form (FSpec FR-375 describes it in prose); QSL-2968"),
+    ("HistoryLiteral", "the standard has no ebnf production for this refinement form (FSpec FR-375 describes it in prose); QSL-2968"),
+    ("HistoryRow", "the standard has no ebnf production for this refinement form (FSpec FR-375 describes it in prose); QSL-2968"),
+    ("HistoryUpdate", "the standard has no ebnf production for this refinement form (FSpec FR-375 describes it in prose); QSL-2968"),
+    ("HyperComparison", "parser-internal helper with no source meaning (FR-600 Behavior): a precedence level of the hyper body, which the standard writes as a block or a temporal-expr (hyper-clause of the shared grammar; FSpec FR-395)"),
+    ("HyperConjunction", "parser-internal helper with no source meaning (FR-600 Behavior): a precedence level of the hyper body, which the standard writes as a block or a temporal-expr (hyper-clause of the shared grammar; FSpec FR-395)"),
+    ("HyperDisjunction", "parser-internal helper with no source meaning (FR-600 Behavior): a precedence level of the hyper body, which the standard writes as a block or a temporal-expr (hyper-clause of the shared grammar; FSpec FR-395)"),
+    ("HyperExpression", "parser-internal helper with no source meaning (FR-600 Behavior): the root of the hyper body ladder, which the standard writes as a block or a temporal-expr (hyper-clause of the shared grammar; FSpec FR-395)"),
+    ("HyperImplication", "parser-internal helper with no source meaning (FR-600 Behavior): a precedence level of the hyper body, which the standard writes as a block or a temporal-expr (hyper-clause of the shared grammar; FSpec FR-395)"),
+    ("HyperPostfix", "parser-internal helper with no source meaning (FR-600 Behavior): a precedence level of the hyper body, which the standard writes as a block or a temporal-expr (hyper-clause of the shared grammar; FSpec FR-395)"),
+    ("HyperPrimary", "parser-internal helper with no source meaning (FR-600 Behavior): a precedence level of the hyper body, which the standard writes as a block or a temporal-expr (hyper-clause of the shared grammar; FSpec FR-395)"),
+    ("HyperProduct", "parser-internal helper with no source meaning (FR-600 Behavior): a precedence level of the hyper body, which the standard writes as a block or a temporal-expr (hyper-clause of the shared grammar; FSpec FR-395)"),
+    ("HyperSum", "parser-internal helper with no source meaning (FR-600 Behavior): a precedence level of the hyper body, which the standard writes as a block or a temporal-expr (hyper-clause of the shared grammar; FSpec FR-395)"),
+    ("HyperUnary", "parser-internal helper with no source meaning (FR-600 Behavior): a precedence level of the hyper body, which the standard writes as a block or a temporal-expr (hyper-clause of the shared grammar; FSpec FR-395)"),
+    ("InterfaceDeclaration", "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define"),
+    ("MachineDeclaration", "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define"),
+    ("MapDeclaration", "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define"),
+    ("ModelUnit", "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define"),
+    ("NamespaceDeclaration", "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define"),
+    ("ObjectRow", "the standard has no ebnf production for this refinement form (FSpec FR-375 describes it in prose); QSL-2968"),
+    ("PartDeclaration", "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define"),
     ("PopulationCall", "parser-internal helper: the population call form the standard writes inside primary (FR-600 Behavior)"),
-    ("PopulationRow", "refinement row of FSpec FR-375; FSpec FR-503 keeps prose-only forms out of the production inventory, so FR-600 Behavior records it as parser-only"),
-    ("PortDeclaration", "extension-only production (FR-600 Behavior): a form of the domain-package model unit of FR-710, which the shared grammar does not define"),
-    ("ProcessDeclaration", "extension-only production (FR-600 Behavior): a form of the domain-package model unit of FR-710, which the shared grammar does not define"),
-    ("Refinement", "refinement declaration of FSpec FR-375; FSpec FR-503 keeps prose-only forms out of the production inventory, so FR-600 Behavior records it as parser-only"),
+    ("PopulationRow", "the standard has no ebnf production for this refinement form (FSpec FR-375 describes it in prose); QSL-2968"),
+    ("PortDeclaration", "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define"),
+    ("ProcessDeclaration", "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define"),
+    ("Refinement", "the standard has no ebnf production for this refinement form (FSpec FR-375 describes it in prose); QSL-2968"),
     ("ResponseDeclaration", "inlined alternative (FR-600 Behavior) of the standard schedulability-clause"),
     ("SchedulableDeclaration", "inlined alternative (FR-600 Behavior) of the standard schedulability-clause"),
     ("ScrutineeComparison", "parser-internal helper with no source meaning (FR-600 Behavior): a precedence level of a case scrutinee, which the standard writes as expr"),
@@ -262,11 +264,11 @@ const PARSER_ONLY: &[(&str, &str)] = &[
     ("ScrutineeProduct", "parser-internal helper with no source meaning (FR-600 Behavior): a precedence level of a case scrutinee, which the standard writes as expr"),
     ("ScrutineeSum", "parser-internal helper with no source meaning (FR-600 Behavior): a precedence level of a case scrutinee, which the standard writes as expr"),
     ("ScrutineeUnary", "parser-internal helper with no source meaning (FR-600 Behavior): a precedence level of a case scrutinee, which the standard writes as expr"),
-    ("StepArgument", "named by the standard only in prose (FSpec FR-375) with no ebnf definition; the standard-side gap is QSL-2960"),
-    ("StepDeclaration", "extension-only production (FR-600 Behavior): a form of the domain-package model unit of FR-710, which the shared grammar does not define"),
+    ("StepArgument", "the standard has no ebnf production for this form (named in prose by FSpec FR-375); QSL-2960"),
+    ("StepDeclaration", "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define"),
     ("StepSumObjective", "parser-internal helper: the step-sum form of a synthesis objective, written inside expr by the standard (FR-600 Behavior)"),
-    ("StoreDeclaration", "extension-only production (FR-600 Behavior): a form of the domain-package model unit of FR-710, which the shared grammar does not define"),
-    ("TransitionDeclaration", "extension-only production (FR-600 Behavior): a form of the domain-package model unit of FR-710, which the shared grammar does not define"),
+    ("StoreDeclaration", "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define"),
+    ("TransitionDeclaration", "FSL-owned form (FR-710): a form of the domain-package model unit, which the shared grammar does not define"),
     ("TupleValue", "parser-internal helper: a tuple value, written in place inside primary by the standard (FR-600 Behavior)"),
 ];
 
@@ -320,6 +322,12 @@ fn disagreements(
             ));
         }
     }
+    let mut keys = BTreeSet::new();
+    for (name, _) in correspondence {
+        if !keys.insert(*name) {
+            found.push(format!("duplicate correspondence entry `{name}`"));
+        }
+    }
     for (name, production) in correspondence {
         if !standard.contains(*name) {
             found.push(format!(
@@ -335,11 +343,21 @@ fn disagreements(
     for (name, _) in standard_only {
         if !standard.contains(*name) {
             found.push(format!("stale standard-only entry `{name}`"));
+        } else if parser.contains(&mapped(name)) {
+            found.push(format!(
+                "stale standard-only entry `{name}`: the parser has `{}`",
+                mapped(name)
+            ));
         }
     }
     for (production, _) in parser_only {
         if !parser.contains(*production) {
             found.push(format!("stale parser-only entry `{production}`"));
+        }
+        if matched.contains(*production) {
+            found.push(format!(
+                "stale parser-only entry `{production}`: a standard production matches it"
+            ));
         }
     }
     found
