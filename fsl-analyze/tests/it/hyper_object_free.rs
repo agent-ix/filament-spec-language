@@ -13,12 +13,15 @@ use fsl_semantics::model::intake::package_input;
 
 use crate::hyper_world::{document, non_interference, package_with_clause, Vault};
 
-/// The emitted wire of `world`'s package.
+/// The emitted bytes and their resolved wire, in which a node id names graph
+/// positions.
 fn emitted(package: &fsl_package::CheckedPackage) -> (Vec<u8>, Value) {
     let emission = fsl_package::emit_checked(package, fsl_package::EmitLimits::fixture())
         .unwrap_or_else(|refusal| panic!("S4 emits the hyper clause: {refusal:?}"));
     let bytes = emission.package().bytes().to_vec();
-    let wire = serde_json::from_slice(&bytes).expect("wire JSON");
+    let mut wire = serde_json::from_slice(&bytes).expect("wire JSON");
+    fsl_semantics::check::wire_id::resolve_operand_slots(&mut wire)
+        .expect("every operand slot names a row entry");
     (bytes, wire)
 }
 
@@ -94,7 +97,7 @@ fn an_object_free_hyper_wrapper_ranges_over_the_model_root() {
 #[test]
 fn a_model_root_over_on_a_wrapper_that_reads_a_slot_is_refused() {
     let package = package_with_clause(Vault::Secure, &non_interference(""));
-    let (_, mut wire) = emitted(&package);
+    let (bytes, wire) = emitted(&package);
     let (over, _) = wrapper_over(&wire);
     assert_eq!(
         node(&wire, &over)["body"]["members"][0]["value"]["value"],
@@ -107,23 +110,21 @@ fn a_model_root_over_on_a_wrapper_that_reads_a_slot_is_refused() {
         .find(|node| node["semantic_form"] == "model_root")
         .expect("a model root")["node_id"]
         .clone();
-    let nodes = wire["semantic_graph"]["nodes"]
+    let mut raw: Value = serde_json::from_slice(&bytes).expect("wire JSON");
+    let nodes = raw["semantic_graph"]["nodes"]
         .as_array_mut()
         .expect("nodes");
     let wrapper = nodes
         .iter_mut()
-        .find(|node| {
-            node["semantic_form"] == "temporal_clause"
-                && node["body"]["arguments"][0]["target"] == over
-        })
+        .find(|node| node["semantic_form"] == "temporal_clause")
         .expect("the wrapper");
     wrapper["body"]["arguments"][0]["target"] = root.clone();
     if let Some(deps) = wrapper["dependencies"].as_array_mut() {
         deps.push(root);
     }
-    let bytes = serde_json::to_vec(&wire).expect("bytes");
+    let edited = serde_json::to_vec(&raw).expect("bytes");
     assert!(
-        !admitted(&bytes, &wire),
+        !admitted(&edited, &raw),
         "a model-root over beside a slot read refuses"
     );
 }
