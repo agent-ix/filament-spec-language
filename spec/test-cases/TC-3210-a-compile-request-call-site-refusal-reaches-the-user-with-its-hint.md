@@ -26,7 +26,7 @@ Through `fsl_command::command::compile_outcome` (`fsl-command/tests/it/cli_contr
 2. The same with `test/absent`, and `test/units` for a unit importing only `test/wrap`.
 3. `{test/units, nope}` and `{test/units, pick}` (FR-121-AC-36's fixtures).
 4. `{test/units, big}` over the unit that imports it directly.
-5. `null`, a non-object, a missing member, a non-string value, an extra member, `kind` `function`, a model-unit program and an FR-480 array.
+5. `null`, a non-object, a missing member, a non-string value, an extra member, `kind` `function`, a model-unit program and an FR-480 array of two units; then an FR-480 array of exactly one unit with a valid `call_site`, which behaves exactly like the single-object form.
 
 The driver surface of `fsl compile` is tested in the filament-driver repository (FR-865-AC-16). Tag the tests `#[trace("TC-3210", "FR-027-AC-15")]` and likewise for AC-16 to AC-21. The test `the_unimported_library_producer_text_holds_its_hint` in `selection_text.rs` builds `UnknownImport` by hand and is tagged FR-865-AC-19; the code change re-points it through `compile_outcome` (step 1) and re-tags it, and until then it does not verify FR-865-AC-19.
 
