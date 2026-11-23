@@ -206,13 +206,7 @@ fn child() -> Value {
 }
 
 fn canonical_child() -> Value {
-    let declaration = json!({
-        "package": spine::PACKAGE_IDENTITY,
-        "path": ["model", "object_type", format!("ix://{}/ConfigVersion", spine::PACKAGE_IDENTITY)],
-        "ordinal": 0
-    });
-    json!({"type": "reference", "universe": declaration.clone(),
-        "object_type": declaration, "identity": "6368696c64"})
+    crate::support::canonical_reference::config_version("child")
 }
 
 /// A native-run/1 request over the spine files carrying `body` as its
@@ -859,12 +853,6 @@ fn function_selection_admits_an_identity_reference() {
     assert_eq!(document["disposition"]["truth"], true, "{document}");
 }
 
-fn canonical_reference(key: &str) -> Value {
-    let mut reference = canonical_child();
-    reference["identity"] = json!(key.bytes().map(|byte| format!("{byte:02x}")).collect::<String>());
-    reference
-}
-
 const POPULATION_CLAIMS: &str = "function nonempty using v(p: Population<Config::ConfigVersion>[4]): \
     Boolean pure { size(allInstances<Config::ConfigVersion>(p)) > 0 }\n";
 
@@ -972,9 +960,10 @@ fn function_selection_refuses_a_reference_the_snapshot_does_not_hold() {
     assert_eq!(direct_report(directory.path()), (20, None));
 }
 
-/// FR-312-AC-11: an argument of the wrong kind for its parameter, an
-/// unknown declaration in a reference, and the untagged or retagged spellings
-/// each refuse as a typed argument refusal, never a fault.
+/// FR-312-AC-11, FR-650 (run request defects): an argument of the wrong kind
+/// for its parameter, a reference naming an undeclared type, and a malformed
+/// Population selection each refuse with the cause FR-650's defect table
+/// names, never a fault.
 #[test]
 #[trace("TC-1706", "FR-312-AC-11")]
 fn function_selection_refuses_mistyped_and_untagged_arguments() {
@@ -984,35 +973,33 @@ fn function_selection_refuses_mistyped_and_untagged_arguments() {
     extend_unit(directory.path(), POPULATION_CLAIMS);
     let mut unknown_type = canonical_child();
     unknown_type["object_type"]["path"] = json!(["model", "object_type", "ix://elsewhere/Nothing"]);
-    for (name, arguments, cause) in [
-        ("sameIdentity", json!([
-            {"parameter": "a", "value": {"population": population()}},
-            {"parameter": "b", "value": canonical_child()}]), "wrong-value-kind"),
-        ("sameIdentity", json!([
-            {"parameter": "a", "value": {"type": "text", "value": "ab"}},
-            {"parameter": "b", "value": canonical_child()}]), "wrong-value-kind"),
-        ("sameIdentity", json!([
-            {"parameter": "a", "value": {"reference": child()}},
-            {"parameter": "b", "value": canonical_child()}]), "wrong-value-kind"),
-        ("nonempty", json!([{"parameter": "p", "value": canonical_child()}]), "wrong-value-kind"),
-        ("nonempty", json!([{"parameter": "p", "value": {"type": "text", "value": "ab"}}]),
-            "wrong-value-kind"),
-        ("nonempty", json!([{"parameter": "p", "value": {
-            "type": "population", "population": population()}}]), "unknown-member"),
-        ("sameIdentity", json!([
-            {"parameter": "a", "value": unknown_type},
-            {"parameter": "b", "value": canonical_child()}]), ""),
+    let held = json!({"population": population()});
+    let same = |a: Value| json!([
+        {"parameter": "a", "value": a}, {"parameter": "b", "value": canonical_child()}]);
+    let nonempty = |p: Value| json!([{"parameter": "p", "value": p}]);
+    for (name, arguments, code, cause) in [
+        ("sameIdentity", same(held.clone()), "invalid_runtime_input", "wrong-value-kind"),
+        ("sameIdentity", same(json!({"type": "text", "value": "ab"})),
+            "invalid_runtime_input", "wrong-value-kind"),
+        ("sameIdentity", same(json!({"reference": child()})),
+            "invalid_runtime_input", "wrong-value-kind"),
+        ("sameIdentity", same(unknown_type), "UNKNOWN_TYPE_CODE", "UNKNOWN_TYPE_CAUSE"),
+        ("nonempty", nonempty(canonical_child()), "invalid_runtime_input", "wrong-value-kind"),
+        ("nonempty", nonempty(json!({"type": "text", "value": "ab"})),
+            "invalid_runtime_input", "wrong-value-kind"),
+        ("nonempty", nonempty(json!("text")), "invalid_runtime_input", "wrong-value-kind"),
+        ("nonempty", nonempty(json!({"type": "population", "population": population()})),
+            "invalid_runtime_input", "wrong-value-kind"),
+        ("nonempty", nonempty(json!({"populaton": population()})),
+            "invalid_runtime_input", "unknown-member"),
+        ("nonempty", nonempty(json!({})), "invalid_runtime_input", "missing-member"),
     ] {
         let document = claim_document(&function_claim(directory.path(), name, arguments.clone()), 20);
         let refusal = &document["disposition"]["refusal"];
         assert_eq!(document["disposition"]["stage"], "admit", "{arguments}: {document}");
-        assert_eq!(refusal["code"].as_str().is_some(), true, "{arguments}: {document}");
-        assert_ne!(document["disposition"]["category"], "fault", "{arguments}: {document}");
         assert!(document["disposition"]["truth"].is_null(), "{arguments}: {document}");
-        if !cause.is_empty() {
-            assert_eq!(refusal["code"], "invalid_runtime_input", "{arguments}: {document}");
-            assert_eq!(refusal["cause"], cause, "{arguments}: {document}");
-        }
+        assert_eq!(refusal["code"], code, "{arguments}: {document}");
+        assert_eq!(refusal["cause"], cause, "{arguments}: {document}");
     }
 }
 

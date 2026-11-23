@@ -158,9 +158,10 @@ impl Forms<'_> {
             .checked_add(1)
             .ok_or(ReadStop::Fault("canonical-preorder-fits-u64"))?;
         if matches!(declared, ValueType::Population(_)) {
-            // Any other kind of value (a tagged canonical value, a bare scalar) is a
-            // different kind than the Population selection the parameter takes.
-            if form.get("population").is_none() {
+            // A tagged canonical value or a non-object is another kind than the
+            // Population selection (FR-650: a form of another kind, or a `type`
+            // naming another declaration, is wrong-value-kind).
+            if !form.is_object() || form.get("type").is_some() {
                 return Err(wrong_kind(path));
             }
             identity_form::closed(form, &["population"], path)?;
