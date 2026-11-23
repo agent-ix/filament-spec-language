@@ -150,6 +150,7 @@ fn admitted_source(source: &str, slot: ValueType) -> Result<Value, AdmissionReco
         unresolved: Vec::new(),
         clock_references: Vec::new(),
         population_nodes: BTreeMap::new(),
+        population_keys: BTreeMap::new(),
         origins: crate::model::object_environment::ReferenceOriginBuilder::default(),
         parameter_origins: BTreeMap::new(),
         result_origins: ReferenceOrigins::default(),

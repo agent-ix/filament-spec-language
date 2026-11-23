@@ -5361,6 +5361,7 @@ mod tests {
                     unresolved: Vec::new(),
                     clock_references: Vec::new(),
                     population_nodes: BTreeMap::new(),
+                    population_keys: BTreeMap::new(),
                     origins: ReferenceOriginBuilder::default(),
                     parameter_origins: BTreeMap::new(),
                     result_origins: ReferenceOrigins::default(),
