@@ -35,6 +35,7 @@ Fixtures: `CasRefinesCounter` and its lost-update model (ADR-020 §8);
 8. On the `chain` variant of `RingIsQueue` (FR-141-AC-13), run `put(1)` over ring `a` whose `chain` is `[b, a]`.
 
 9. On the `twin` variant of `RingIsQueue` with the `Cell` row first (FR-141-AC-14), run `put(1)` on ring `r`.
+10. Over the `twin` models and the protocol node row for `put` whose argument is `self.ring` (FR-141-AC-15), run the `put` transition through `check_protocol_step`.
 
 Tag the tests `#[trace("TC-546", "FR-141-AC-n")]`, and the test of step 7 also `#[trace("TC-546", "FR-138-AC-8")]`.
 
@@ -56,5 +57,8 @@ Tag the tests `#[trace("TC-546", "FR-141-AC-n")]`, and the test of step 7 also `
   transition whose `rs` is the lifted chain.
 - Step 9: passes as `Taken::Abstract([enq(r, 1)])` whose receiver is the
   `Queue` `r`.
+- Step 10: `StepVerdict::Fault`; the node-row argument is a `Reference<Ring>`
+  and both the `Queue` and `Cell` object rows name `Ring`, so replay cannot
+  choose an abstract target type without a declared type.
 
 Every call passes the concrete `ModelSystem` and the abstract system (FR-141).
