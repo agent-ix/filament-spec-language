@@ -75,9 +75,12 @@ compiler, readers and engines carry it.
 ## Setting names
 
 A setting name follows FSpec FR-461's naming rule. The table is the set of
-names FSL accepts at every entry point, and lists every limit of the
+names accepted by FSL's settings operation and the entry points that expose
+each bound, and lists every limit of the
 requirements named below. Each row's default is the published default a
-caller gets when it does not configure the limit (ADR-014 §2, "inherited").
+caller gets when it does not configure the limit (ADR-014 §2, "inherited"),
+except a row marked "required caller-supplied value", which has no default
+below the outer caller.
 Every limit has no ceiling beyond the width of the quantity it bounds: a
 caller raises or lowers it, and the value is used as given (a limit over a
 `u32` quantity, `model.sequence_maximum`, takes at most `u32::MAX`; FR-506). The requirement that owns each limit defines its counter:
@@ -299,7 +302,7 @@ its row (FR-315 "Size limits").
 | `monitor.max_window_values` | `max_window_values` | window aggregates | the monitor run's max_window_values | 1048576 values | FR-194 |
 | `monitor.retained_positions` | `retained_positions` | monitor evidence retention | the monitor run's retained_positions | 1048576 positions | FR-194, FR-643 |
 | `monitor.retained_identities` | `retained_identities` | monitor evidence retention | the monitor run's retained_identities | 1048576 identities | FR-194, FR-643 |
-| `monitor.preparation_work_units` | `work_units` | monitor plan preparation | `MonitorPreparationLimits.work` | 16777216 units | FR-194 |
+| `monitor.preparation_work_units` | `work_units` | monitor plan preparation | `MonitorPreparationLimits.work` | required caller-supplied value; no default specified here | FR-194 |
 | `monitor.preparation_storage` | `storage` | monitor plan read storage | `MonitorPreparationLimits.storage` | 268435456 bytes in `fsl monitor` (driver FR-003); other library callers supply their own value | FR-194 |
 | `inspect.max_view_entries` | `max_view_entries` | typed view construction | `fsl_inspect::InspectLimits` max_view_entries | 10000000 entries | FR-297 |
 | `hybrid.max_solver_steps` | `max_solver_steps` | hybrid provider; `fsl-hybrid-reference` publishes this default in its descriptor `bounds` and counts one step per Picard attempt (FR-1019) | `hybrid.limits` max_solver_steps | 1000000 steps | FR-250, FR-1019 |
@@ -358,10 +361,10 @@ all ten `model_check.*` settings, all nine `exact_prob.*` settings, all four
 `smt_encoding.max_script_bytes`, `smt.max_solver_steps`, `smt.max_solver_time`,
 `certificate_check.max_certificate_edges`,
 `certificate_check.max_certificate_bytes`,
-`certificate_check.max_working_bytes`, `certificate_check.max_rank`, and
-`evaluation.live_occurrences` when the corresponding analysis items are
-selected. Analyze does not consume `render.*`, `prepare.*`, `explore.*`,
-`progress.covered_positions`, `monitor.*`, `temporal_evidence.*` or
+`certificate_check.max_working_bytes` and `certificate_check.max_rank` when
+the corresponding analysis items are selected. Analyze does not consume
+`render.*`, `prepare.*`, `explore.*`, `progress.covered_positions`,
+`evaluation.live_occurrences`, `monitor.*`, `temporal_evidence.*` or
 `plan_search.*`.
 
 `monitor` SHALL accept the source, package, admission and evidence settings
@@ -382,7 +385,6 @@ it uses: `s1.input_bytes`, `s1.tokens`, `s1.nodes`, `s1.work_units`, `s1.diagnos
 `dependency.import_edges`, `dependency.source_bytes`, `library.definitions`,
 `library.dependency_edges`, `library.artifact_bytes`,
 `library.single_artifact_bytes`, `intake.input_bytes`,
-`progress.covered_positions`, `evaluation.live_occurrences`,
 `monitor.max_window_values`, `monitor.retained_positions`,
 `monitor.retained_identities`, `monitor.preparation_work_units`, and
 `monitor.preparation_storage`. If `items` requests provider-routed analysis,
@@ -417,24 +419,25 @@ request can execute: `s1.input_bytes`, `s1.tokens`, `s1.nodes`, `s1.work_units`,
 `dependency.import_edges`, `dependency.source_bytes`, `library.definitions`,
 `library.dependency_edges`, `library.artifact_bytes`,
 `library.single_artifact_bytes`, `intake.input_bytes`, `replay.input_bytes`,
-`prepare.compile_work_units`, `prepare.code_bytes`,
-`expansion.max_candidates`, `simulation.max_steps`, all ten
-`model_check.*` settings, `evaluation.live_occurrences`,
-all thirteen `temporal_evidence.*` settings, and the applicable
-`progress.covered_positions`,
-`monitor.max_window_values`, `monitor.retained_positions` and
-`monitor.retained_identities` evidence limits. Replay does not execute
+`expansion.max_candidates`, `model_check.max_states`,
+`model_check.max_transitions`, and `model_check.max_automaton_states`. Replay does not execute
 `exact_prob.*`, `statistical.*`, `zone_check.*`, `schedule.max_demand_points`
-or `plan_search.*`, and does not render output or explore a state graph, so it SHALL refuse those settings as
-operation-unavailable.
+or `plan_search.*`; it also does not consume
+`model_check.witness_samples`, `model_check.max_walk_steps`,
+`model_check.max_witness_set`, `model_check.max_relation_tuples`,
+`model_check.max_live_instances`, `model_check.max_store_buffer`,
+`model_check.max_messages`, `prepare.*`, `simulation.max_steps`,
+`evaluation.live_occurrences`, `temporal_evidence.*`, `progress.covered_positions`,
+or `monitor.*`. It does not render output or explore a state graph. These
+settings SHALL be refused as operation-unavailable.
 
 “All ten `accounting.*` settings” expands to `accounting.integer_bits`,
 `accounting.decimal_digits`, `accounting.scale_expansion`,
 `accounting.text_input_bytes`, `accounting.text_scalars`,
 `accounting.normalized_scalars`, `accounting.unit_edges`,
 `accounting.value_occurrences`, `accounting.work_units`, and
-`accounting.result_units`. “All thirteen `temporal_evidence.*` settings”
-expands to `temporal_evidence.formula_nodes`,
+`accounting.result_units`. The thirteen `temporal_evidence.*` names are
+`temporal_evidence.formula_nodes`,
 `temporal_evidence.instances`, `temporal_evidence.positions`,
 `temporal_evidence.valuations`, `temporal_evidence.captures`,
 `temporal_evidence.support`, `temporal_evidence.history_span`,
@@ -477,7 +480,8 @@ The operation lists' grouped names expand to these exact `--limit` spellings:
   `accounting.normalized_scalars`, `accounting.unit_edges`,
   `accounting.value_occurrences`, `accounting.work_units`, and
   `accounting.result_units`.
-- The thirteen temporal-evidence names, when accepted by replay, are
+- The thirteen temporal-evidence names (not accepted by replay under this
+  operation matrix) are
   `temporal_evidence.formula_nodes`, `temporal_evidence.instances`,
   `temporal_evidence.positions`, `temporal_evidence.valuations`,
   `temporal_evidence.captures`, `temporal_evidence.support`,
