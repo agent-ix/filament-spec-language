@@ -428,8 +428,7 @@ fn slot(
         if let Some((present, absent)) =
             binder_presence_literal(located, *left, quantifier, binding, clocks)
         {
-            let (positive, negative) =
-                slot(located, *right, quantifier, binding, clocks, budget)?;
+            let (positive, negative) = slot(located, *right, quantifier, binding, clocks, budget)?;
             return Ok((
                 [absent, budget.product(&present, &positive)?].concat(),
                 budget.product(&present, &negative)?,

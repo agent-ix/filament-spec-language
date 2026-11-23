@@ -3067,9 +3067,7 @@ impl DataLiteral {
     /// The literal's own form, `None` for a node of the clause.
     fn form(&self) -> Option<&ExpressionForm> {
         match self {
-            Self::Site(_) | Self::Family(_) | Self::Presence(_) | Self::ElementPresence(..) => {
-                None
-            }
+            Self::Site(_) | Self::Family(_) | Self::Presence(_) | Self::ElementPresence(..) => None,
             Self::Formed(form) | Self::Element(form, ..) => Some(form),
             Self::EmptyCollection(form) => Some(form),
         }
