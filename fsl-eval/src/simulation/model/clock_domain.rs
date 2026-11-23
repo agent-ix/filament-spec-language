@@ -117,6 +117,13 @@ impl ModelSystem<'_> {
         ))
     }
 
+    /// Whether `value_type` holds no Clock reference, or this universe's Clock
+    /// reference candidates can be enumerated for it.
+    pub(super) fn clock_candidates_exist(&self, value_type: &ValueType) -> bool {
+        clock_reference_paths(value_type, self.types).is_empty()
+            || self.clock_reference_candidates(None).is_ok()
+    }
+
     /// FR-120's domain of `value_type` over `objects`, with the Clock
     /// references of this universe where the type holds any; `None` when the
     /// type has no finite domain here, so every route refuses or skips it as it

@@ -113,9 +113,14 @@ impl<'a> ModelSystem<'a> {
         if let filament_exact::ValueType::Composite(_) | filament_exact::ValueType::Enum(_) =
             value_type
         {
+            // A Clock reference in the record ranges over this universe's
+            // declared places, never over nothing; no candidates, no domain.
+            let Some(objects) = self.with_clock_candidates(value_type, &references, None) else {
+                return Ok(None);
+            };
             return super::domain::composite_values(
                 value_type,
-                &references,
+                &objects,
                 self.types,
                 &self.record_orders,
                 || budget.charge(),
@@ -138,6 +143,7 @@ impl<'a> ModelSystem<'a> {
     /// enumerates, or an enum, record, tuple or union of finite fields.
     pub(crate) fn enumerates(&self, value_type: &filament_exact::ValueType) -> bool {
         super::domain::enumerable_in(value_type, self.types)
+            && self.clock_candidates_exist(value_type)
     }
 
     /// The child-index paths of the leaves of `value_type` that
@@ -146,7 +152,15 @@ impl<'a> ModelSystem<'a> {
         &self,
         value_type: &filament_exact::ValueType,
     ) -> Vec<Vec<u32>> {
-        super::domain::unenumerable_paths(value_type, self.types)
+        let mut paths = super::domain::unenumerable_paths(value_type, self.types);
+        if !self.clock_candidates_exist(value_type) {
+            // The Clock leaves cannot be ranged here (no declaration authority,
+            // or too many places), so they are the unenumerable ones.
+            paths.extend(super::domain::clock_reference_paths(value_type, self.types));
+            paths.sort();
+            paths.dedup();
+        }
+        paths
     }
 
     /// The candidate budget of one expansion (FR-120 "Post-states").

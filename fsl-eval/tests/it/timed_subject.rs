@@ -1267,7 +1267,12 @@ fn raw_reference_origins_share_deep_prefixes_across_a_wide_sequence() {
         .is_none());
 }
 
-fn clock_reference_domain_world(mut document: Json, unit: &str) -> World {
+fn clock_reference_domain_world(document: Json, unit: &str) -> World {
+    clock_reference_domain_world_with(document, "", unit)
+}
+
+/// [`clock_reference_domain_world`] under the extra unit `profiles`.
+fn clock_reference_domain_world_with(mut document: Json, profiles: &str, unit: &str) -> World {
     let mut reference = wire_type(
         &ident("ClockRef"),
         "unused",
@@ -1293,7 +1298,7 @@ fn clock_reference_domain_world(mut document: Json, unit: &str) -> World {
     let unit = format!("{unit}\npost PointPresent using v on M::Call::point {{ present(self.r) }}");
     let mut world = world_holding(
         serde_json::to_vec(&document).expect("JSON"),
-        "",
+        profiles,
         &unit,
         json!({}),
     );
@@ -7646,5 +7651,320 @@ fn clock_reference_candidates_are_bounded_and_need_declaration_authority() {
                 .all(|site| site.slot.is_empty()),
         "{:?}",
         required.clock_references
+    );
+}
+
+/// The protocol the Clock-reference record tests run: one event whose record
+/// holds a `Reference<Clock>`.
+const CLOCK_RECORD_PROTOCOL: &str = r#"
+record Pick { c: Reference<Clock>; }
+protocol Gate using p over (input: M::Call) on origin {
+  role R on M::Call;
+  run sequence Main { event Read by R as (pick: Pick) { true }; }
+  finish End as (outcome: Boolean) { true };
+}
+"#;
+
+fn clock_record_world(document: Json) -> World {
+    clock_reference_domain_world_with(
+        document,
+        "profile p = \"filament.protocol.finite-global/v1\";\n",
+        &only(&["point"], CLOCK_RECORD_PROTOCOL),
+    )
+}
+
+fn clock_record_protocol<'w>(
+    world: &'w World,
+    authority: bool,
+) -> Result<
+    fsl_eval::simulation::protocol::ProtocolSystem<'w, fsl_eval::simulation::protocol::Sc>,
+    fsl_eval::simulation::protocol::ProtocolRefusal,
+> {
+    use fsl_eval::model_subject::{ModelInstance, ModelSubject, ProtocolSubject, RoleBinding};
+    use fsl_eval::simulation::protocol::{ProtocolSystem, ResolvedMemory, Sc};
+    let population = DeclarationKey {
+        package: PACKAGE.to_owned(),
+        node: ident("calls"),
+    };
+    let mut input = fsl_eval::simulation::model::ModelCheckInput::source(&world.package);
+    if !authority {
+        input.clock_declarations = None;
+    }
+    let request = ModelSimulationRequest {
+        emit: fsl_package::EmitLimits::fixture(),
+        input,
+        packages: &world.packages,
+        normalization: ModelNormalizationLimits::default(),
+        snapshots: &world.snapshots,
+        initial: vec![world.initial.clone()],
+        universes: vec![PopulationUniverse {
+            population: population.clone(),
+            keys: vec!["c".to_owned()],
+        }],
+        observation: ObservationLimits::default(),
+        expansion: ExpansionLimits {
+            max_candidates: 1_000,
+        },
+        meter: METER,
+    };
+    let model = ModelSystem::new(request.clone()).expect("the model admits");
+    let protocol = world.package.graph().protocol("Gate").expect("protocol");
+    let subject = ProtocolSubject {
+        model: ModelSubject {
+            simulation: request,
+            proof_bounds: Vec::new(),
+        },
+        protocol: "Gate".to_owned(),
+        over: ModelInstance {
+            population,
+            key: "c".to_owned(),
+        },
+        roles: vec![RoleBinding {
+            role: "R".to_owned(),
+            model: PACKAGE.to_owned(),
+        }],
+        capacities: Vec::new(),
+        memory: ResolvedMemory::resolve(protocol, &[]).expect("SC memory selected"),
+    };
+    ProtocolSystem::new(model, &subject, Sc)
+}
+
+/// A protocol event whose record holds a `Reference<Clock>` ranges that leaf
+/// over the declared places: the bounded universe's `Read` has one event per
+/// place (x and y), where an empty candidate set would drop the event; an
+/// unbounded `q` slot refuses at the bound check instead of enumerating a
+/// partial record domain.
+#[trace("TC-3084", "FR-106-AC-80")]
+#[test]
+fn a_protocol_event_record_ranges_a_clock_reference_over_the_declared_places() {
+    use fsl_eval::simulation::protocol::{check_protocol_bounds, Capacities, StepKind};
+    let world = clock_record_world(
+        serde_json::from_slice(&clocked_document(true, &["y"])).expect("JSON"),
+    );
+    let model = system(&world);
+    let protocol = world.package.graph().protocol("Gate").expect("protocol");
+    let capacities = Capacities::admit(protocol, &[]).expect("no capacity names");
+    check_protocol_bounds(&model, protocol, &capacities, &world.package, BOUND_POSITIONS)
+        .expect("a bounded universe's Clock-reference record has a finite domain");
+
+    let system = clock_record_protocol(&world, true).expect("the protocol subject builds");
+    let reachable = system
+        .reachable(
+            std::num::NonZeroUsize::new(1).expect("one worker"),
+            fsl_eval::simulation::Limits::default().max_states,
+        )
+        .expect("the bounded protocol explores");
+    let reads = reachable.states[0]
+        .steps
+        .iter()
+        .filter(|(transition, _)| matches!(transition.kind(), StepKind::Event))
+        .count();
+    assert_eq!(reads, 2, "one Read per declared place, x and y");
+
+    // Without a declaration table the record's Clock leaf has no candidates,
+    // so the step binder is an unenumerable record, not an empty one.
+    assert!(
+        matches!(
+            clock_record_protocol(&world, false),
+            Err(fsl_eval::simulation::protocol::ProtocolRefusal::Unsupported(
+                fsl_eval::simulation::protocol::Unsupported::UnenumerableRecord
+            ))
+        ),
+        "no declaration authority refuses the record"
+    );
+
+    let unbounded = clock_record_world(unbounded_clock_reference_document());
+    let model = self::system(&unbounded);
+    let protocol = unbounded.package.graph().protocol("Gate").expect("protocol");
+    let capacities = Capacities::admit(protocol, &[]).expect("no capacity names");
+    assert!(
+        check_protocol_bounds(
+            &model,
+            protocol,
+            &capacities,
+            &unbounded.package,
+            BOUND_POSITIONS
+        )
+        .is_err(),
+        "an unbounded Clock slot is refused, never an empty or partial record domain"
+    );
+}
+
+/// A model-based value function whose parameter holds a `Reference<Clock>` has
+/// no population or declaration table to range it over, so the run refuses the
+/// binding; an `Option<Reference<Clock>>` is never ranged over absence alone.
+#[trace("TC-3084", "FR-106-AC-80")]
+#[test]
+fn a_model_based_parameter_holding_a_clock_reference_is_refused() {
+    use fsl_eval::simulation::model::{
+        run_model_based_test, ModelBasedTestRefusal, ModelBasedTestRequest, NativeAdmission,
+    };
+    let world = clock_reference_domain_world(
+        serde_json::from_slice(&clocked_document(true, &["y"])).expect("JSON"),
+        &only(
+            &["point"],
+            "function Pick using v(r: Option<Reference<Clock>>): Boolean pure { true }\n",
+        ),
+    );
+    let identity = world
+        .package
+        .graph()
+        .function_identity("Pick")
+        .expect("value clause");
+    let request = ModelBasedTestRequest {
+        clause: Some(identity),
+        profile: fsl_foundation::selection::DefinitionRef::new(
+            "agent-ix",
+            "filament.simulation.sampler/v1",
+        )
+        .expect("a valid DefinitionRef"),
+        seed: 7,
+        max_cases: 10,
+        max_trace_length: None,
+        max_value_bits: None,
+        subject: None,
+        expansion: ExpansionLimits {
+            max_candidates: 1_000_000,
+        },
+        accounting: METER,
+        normalization: ModelNormalizationLimits::default(),
+        observation: ObservationLimits::default(),
+        emit: fsl_package::EmitLimits::fixture(),
+        exploration: fsl_eval::simulation::Limits::default(),
+        position_limit: 10_000,
+    };
+    let refused = run_model_based_test(
+        &world.package,
+        &request,
+        &NativeAdmission,
+        &filament_exact::Cancel::new(),
+    )
+    .expect_err("a Clock-reference parameter has no domain to generate from");
+    assert_eq!(
+        refused,
+        ModelBasedTestRefusal {
+            member: "clause",
+            code: "invalid_model_binding",
+            cause: "malformed-declaration",
+        }
+    );
+}
+
+/// `document` with an enabled operation `pick`, whose parameter `p` is a
+/// Clock reference when `parameter` and which returns one when `result`.
+fn with_pick_operation(mut document: Json, parameter: bool, result: bool) -> Json {
+    let reference = ident("ClockRef");
+    let mut pick = operation("pick", &[]);
+    if parameter {
+        let identity = ident("Call/pick/p");
+        pick["params"] = json!([{
+            "identity": identity, "name": "p", "typeRef": reference, "presence": "required",
+            "nullable": false, "defaultKind": "none",
+            "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+            "origin": origin(&identity),
+        }]);
+    }
+    if result {
+        pick["returns"] = json!({"typeRef": reference, "nullable": false,
+            "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true}});
+    }
+    document["types"][1]["operations"]
+        .as_array_mut()
+        .expect("operations")
+        .push(pick);
+    document
+}
+
+/// The refusal `encode_smt_query` gives the deadlock-freedom unrolling of
+/// the model `world` holds.
+fn clock_smt_refusal(world: &World) -> fsl_eval::smt::SmtEncodingRefusal {
+    use fsl_eval::model_subject::ModelSubject;
+    use fsl_eval::smt::{encode_smt_query, SmtEncodingLimits, SmtItem, SmtQueryKind};
+    let subject = ModelSubject {
+        simulation: ModelSimulationRequest {
+            emit: fsl_package::EmitLimits::fixture(),
+            input: fsl_eval::simulation::model::ModelCheckInput::source(&world.package),
+            packages: &world.packages,
+            normalization: ModelNormalizationLimits::default(),
+            snapshots: &world.snapshots,
+            initial: vec![world.initial.clone()],
+            universes: vec![PopulationUniverse {
+                population: DeclarationKey {
+                    package: PACKAGE.to_owned(),
+                    node: ident("calls"),
+                },
+                keys: vec!["c".to_owned()],
+            }],
+            observation: ObservationLimits::default(),
+            expansion: ExpansionLimits {
+                max_candidates: 1_000_000,
+            },
+            meter: METER,
+        },
+        proof_bounds: Vec::new(),
+    };
+    encode_smt_query(
+        &subject,
+        SmtItem::DeadlockFreedom,
+        SmtQueryKind::Unrolling { depth: 1 },
+        &SmtEncodingLimits::default(),
+    )
+    .expect_err("an unbounded Clock slot leaves the domain without a finite encoding")
+}
+
+/// [`clock_reference_domain_world`] without the Clock-reference field `r`
+/// and its operation, so a symbolic subject's layout accepts every field.
+fn clock_reference_parameter_world(mut document: Json, unit: &str) -> World {
+    let mut reference = wire_type(
+        &ident("ClockRef"),
+        "unused",
+        json!({"target": "ix://filament/native/Clock"}),
+    );
+    reference["kind"] = json!("reference");
+    document["types"]
+        .as_array_mut()
+        .expect("types")
+        .push(reference);
+    world_holding(
+        serde_json::to_vec(&document).expect("JSON"),
+        "",
+        unit,
+        json!({}),
+    )
+}
+
+/// The symbolic subject's operation parameter and declared result hold the
+/// declared Clock identities and refuse, typed and named, when the slot is
+/// unbounded; a Clock-reference parameter or result is never encoded as an
+/// empty domain. (The field route, `symbolic()`'s hidden-field domains, is
+/// reached only through callers that run `StateLayout::of` before reading
+/// them, and the layout refuses every Reference, Option, collection and record
+/// field with `field-sort` first, so no entry observes it.)
+#[trace("TC-3084", "FR-106-AC-80")]
+#[test]
+fn symbolic_subjects_refuse_an_unbounded_clock_reference_domain_by_name() {
+    use fsl_eval::smt::{Refusal, SmtEncodingRefusal};
+    let unit = only(&[], "");
+    let parameter = clock_reference_parameter_world(
+        with_pick_operation(unbounded_clock_reference_document(), true, false),
+        &unit,
+    );
+    assert_eq!(
+        clock_smt_refusal(&parameter),
+        SmtEncodingRefusal::Refused(Refusal::ParameterDomain {
+            operation: "pick".to_owned(),
+            parameter: "p".to_owned(),
+        }),
+    );
+    let result = clock_reference_parameter_world(
+        with_pick_operation(unbounded_clock_reference_document(), false, true),
+        &unit,
+    );
+    assert_eq!(
+        clock_smt_refusal(&result),
+        SmtEncodingRefusal::Refused(Refusal::ParameterDomain {
+            operation: "pick".to_owned(),
+            parameter: "result".to_owned(),
+        }),
     );
 }

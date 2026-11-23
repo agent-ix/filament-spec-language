@@ -33,3 +33,24 @@ Defects: invalid selectors refuse with the wrong cause. The incomplete-populatio
 | FND-005 | medium | The package route sets `clock_declarations: None`, and `ModelSystem::new` no longer refuses, so its Clock domains hold only snapshot seeds and no declared places. Today the Bare `missing-type-representation` refusal hides this, but once QSL-2776 lands the route would enumerate an incomplete domain silently. FR-106 requires a typed refusal when owner-population authority is missing. | fsl-eval/src/simulation/model/input.rs:1036, fsl-eval/src/simulation/model/clock_domain.rs:59 |
 | FND-006 | low | `clock_candidates` caches by `selectors.is_some()` only, so a second `TimedSystem` with a different `max_clocks` over the same `ModelSystem` reuses the first selector set. A declared maximum that does not parse as `u64` silently drops the template. | fsl-eval/src/simulation/model.rs:825, fsl-eval/src/simulation/model/clock_domain.rs:43, fsl-eval/src/simulation/model/clock_domain.rs:159 |
 | FND-007 | low | The comment "The typed steps stay as the kernel gave them" is now false: the steps are prefixed with the snapshot field steps. This prefix applies to every object-field refusal, not only Clock ones. | fsl-semantics/src/model/observation/document.rs:3717 |
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-008 | high | `ModelSystem::values_of` enumerates a composite or enum type through `composite_values` over the owner references only, without clock candidates. Protocol event, finish, channel, role and compensation record types that hold a `Reference<Clock>` now enumerate an empty or partial set, which silently drops events and records. On main they were refused (`Domain::of` was `None`, so `Space::of` was `None`, so the fault refusal fired). Because clock leaves now count as enumerable, `enumerable_in` / `unenumerable_paths` no longer make the protocol bound check (protocol.rs:879) refuse either. | fsl-eval/src/simulation/model/application.rs:116 |
+| FND-009 | medium | Model-based-test parameter domains use `Domain::of_bounded(value_type, &[], ..)`. An `Option<Reference<Clock>>` parameter now enumerates only absence, and a record parameter with a Clock-reference leaf loses its present values. On main both refused `ValueDomain`. | fsl-eval/src/simulation/model/model_based_test.rs:1442 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | `has_valid_selectors` is split out of `is_declared_identity`; an invalid selector now refuses `invalid_runtime_input`/`invalid-value` after the template check. `invalid_clock_selectors_refuse_invalid_value_on_source` passes on titan at 0b4a656a. |
+| FND-002 | fixed | The unlisted owner is typed by the population's member types and goes through the same scope, template and selector checks and `encode_identity` as a listed owner. `an_unlisted_clock_owner_is_dangling_when_complete_and_tolerated_when_incomplete` passes. |
+| FND-003 | fixed | `domain_values`, `complete_open_fields` and the symbolic field, parameter and result domains use `domain_with_clocks`, which returns real candidates or `None`. Probabilistic reward parameters return `None` for a Clock reference, which matches main. Two remaining routes are filed as FND-008 and FND-009. |
+| FND-004 | fixed | The product size is charged against `max_candidates` before any identity is built, and over-limit returns `ClockDomainRefusal::TooMany`. `clock_reference_candidates_are_bounded_and_need_declaration_authority` passes. |
+| FND-005 | fixed | With no table, `MissingAuthority` is returned and `check_model_bounds` gives `RequiresBound` with empty-slot `ClockReferenceDomain` sites; tested. |
+| FND-006 | fixed | The cache is keyed by `Option<ClockSelectorMaxima>`, and an unparseable maximum is the typed `UnparseableMaximum`. It is untested because it needs a declared maximum above u64; accepted as a typed refusal. |
+| FND-007 | fixed | The comment is rewritten to describe the field steps followed by the kernel steps. |
+| FND-008 | fixed | `values_of` adds the Clock candidates to the objects it enumerates composites over, or returns `None`; `enumerates` and `unenumerable_paths` report the Clock leaves unenumerable when the candidates cannot be built. `a_protocol_event_record_ranges_a_clock_reference_over_the_declared_places` asserts two `Read` events (x and y) and `UnenumerableRecord` without a declaration table; both assertions fail on the reverted code. |
+| FND-009 | fixed | A model-based parameter holding a `Reference<Clock>` is refused `invalid_model_binding`/`malformed-declaration`. `a_model_based_parameter_holding_a_clock_reference_is_refused` fails on the reverted code (a run over absence alone). |

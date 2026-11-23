@@ -508,19 +508,26 @@ FSpec FR-829, using FR-230's canonical `place/v2` identity.
 > handcrafted Clock references are outside that trusted interface contract.
 > Map-keyed Clock-reference identities remain unsupported.
 >
-> The Clock-reference domain is built from the model system'"'"'s declaration
+> The Clock-reference domain is built from the model system's declaration
 > table. A route that carries none (the package route, whose
 > `ModelCheckInput.clock_declarations` is `None`) refuses the domain as
 > `RequiresBound` with an empty slot rather than enumerating admitted seeds
 > alone; a candidate count above `max_candidates`, a declared maximum that is
 > not a machine integer, and an unbounded slot without a derived maximum each
-> refuse typed (`ClockDomainRefusal`), never an empty domain.
+> refuse typed (`ClockDomainRefusal`). Every enumeration route reads this one
+> candidate set or refuses: field, parameter and result domains, the protocol
+> event, finish, channel, role and compensation record domains, and the
+> enumerability check of a compensation attempt type (a Clock leaf the set
+> cannot supply is reported unenumerable). A model-based value function whose
+> parameter holds a `Reference<Clock>` has no population to range it over and
+> is refused `invalid_model_binding`, never run over absence alone. No route
+> ranges a Clock reference over an empty or partial set.
 >
 > The Bare route is unmet: the Contract IR object-field projection reads no
 > `Reference<Clock>` data member, so Bare admission refuses
 > `unknown_required_feature`/`unsupported-feature`, naming
 > `missing-type-representation`, before any snapshot is read (QSL-2776). The
-> QSL-2776 handoff must supply the package route'"'"'s declaration table.
+> QSL-2776 handoff must supply the package route's declaration table.
 
 > Current STEP2 implementation boundary: the shared object closure cannot
 > retain two explicitly listed populations of the same declared type with
