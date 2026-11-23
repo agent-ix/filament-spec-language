@@ -1327,18 +1327,16 @@ fn unbounded_clock_reference_document() -> Json {
     document
 }
 
-/// Clock-reference data domains need explicit population-qualified owner
-/// candidates on every enumeration route. Both public constructors refuse
-/// that current boundary, for bounded and unbounded declared clock slots.
+/// Clock-reference data members enumerate on the Source route (FR-106): a
+/// bounded declared clock slot is a finite domain and an unbounded slot
+/// returns `RequiresBound` naming its `ClockReferenceDomain`.
 #[trace("TC-3084")]
 #[test]
-fn clock_reference_enumeration_refuses_both_model_routes() {
-    fn refusal<'a>(
+fn clock_reference_enumeration_on_the_source_route() {
+    fn bounds<'a>(
         world: &'a World,
         input: fsl_eval::simulation::model::ModelCheckInput<'a>,
-        reason: &str,
-        member: Option<&str>,
-    ) {
+    ) -> Result<Result<(), NotSimulated>, fsl_semantics::model::observation::AdmissionFailure> {
         let result = ModelSystem::new(ModelSimulationRequest {
             emit: fsl_package::EmitLimits::fixture(),
             input,
@@ -1359,29 +1357,38 @@ fn clock_reference_enumeration_refuses_both_model_routes() {
             },
             meter: METER,
         });
-        let Err(fsl_semantics::model::observation::AdmissionFailure::Refused(record)) = result
-        else {
-            panic!("Clock-reference enumeration has an explicit typed boundary");
-        };
-        assert_eq!(record.catalog.code(), "unknown_required_feature");
-        assert_eq!(record.catalog.cause(), "unsupported-feature");
-        assert_eq!(
-            record.fields.get("reason").map(String::as_str),
-            Some(reason)
-        );
-        assert_eq!(record.fields.get("member").map(String::as_str), member);
+        result
+            .map(|system| fsl_eval::simulation::model::check_model_bounds(&system, BOUND_POSITIONS))
     }
-    for document in [
-        serde_json::from_slice(&clocked_document(true, &["y"])).expect("JSON"),
-        unbounded_clock_reference_document(),
+    for (document, bounded) in [
+        (
+            serde_json::from_slice(&clocked_document(true, &["y"])).expect("JSON"),
+            true,
+        ),
+        (unbounded_clock_reference_document(), false),
     ] {
         let world = clock_reference_domain_world(document, &only(&["point"], ""));
-        refusal(
+        let result = bounds(
             &world,
             fsl_eval::simulation::model::ModelCheckInput::source(&world.package),
-            "clock-reference-enumeration",
-            Some(&ident("Call/r")),
-        );
+        )
+        .expect("source Clock-reference data members construct");
+        if bounded {
+            assert!(result.is_ok(), "{result:?}");
+        } else {
+            let Err(NotSimulated::RequiresBound(required)) = result else {
+                panic!("an unbounded clock slot requires a bound: {result:?}");
+            };
+            assert!(required.domains.is_none() && required.capacities.is_empty());
+            let [site] = required.clock_references.as_slice() else {
+                panic!("one clock-reference site: {:?}", required.clock_references);
+            };
+            assert_eq!(site.slot, vec![1]);
+            let fsl_foundation::bound::DomainKey::Node { path, .. } = &site.member else {
+                panic!("a node member: {:?}", site.member);
+            };
+            assert_eq!(path, &vec![0, 4, 0]);
+        }
         let read = fsl_package::read_evaluation_package(
             &world.package,
             fsl_semantics::library::LibraryName::new(world.package.graph().package_name())
@@ -1421,7 +1428,19 @@ fn clock_reference_enumeration_refuses_both_model_routes() {
             ModelNormalizationLimits::default(),
         )
         .expect("actual bare model input");
-        refusal(&world, input.input(), "missing-type-representation", None);
+        // Source-owned Bare raw object materialization remains the separate
+        // FR-106 boundary (QSL-2178), independent of Clock enumeration.
+        let Err(fsl_semantics::model::observation::AdmissionFailure::Refused(record)) =
+            bounds(&world, input.input())
+        else {
+            panic!("the Bare route keeps its materialization boundary");
+        };
+        assert_eq!(record.catalog.code(), "unknown_required_feature");
+        assert_eq!(record.catalog.cause(), "unsupported-feature");
+        assert_eq!(
+            record.fields.get("reason").map(String::as_str),
+            Some("missing-type-representation")
+        );
     }
 }
 
@@ -3601,7 +3620,9 @@ fn a_granted_field_ranges_over_its_finite_domain_or_stops() {
         use fsl_foundation::bound::{DomainKey, DomainKind};
         let node = fsl_semantics::model::key::object_type_node_key(&clock_fixture_key("Call"))
             .expect("the actual model owner");
-        let domains = bound.domains.expect("the granted data has unbounded domains");
+        let domains = bound
+            .domains
+            .expect("the granted data has unbounded domains");
         assert_eq!(
             domains
                 .iter()

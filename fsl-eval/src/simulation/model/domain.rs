@@ -531,8 +531,9 @@ impl Domain {
                 if fsl_semantics::model::clock_reference::is_clock_type(target) =>
             {
                 // Timed declarations and selector bounds do not authenticate
-                // the original population of a generated clock reference.
-                // The model admission boundary reports this unsupported domain.
+                // the original population of a generated clock reference, so
+                // no candidate domain is generated here; the bound check
+                // reports the missing selector maxima as `RequiresBound`.
                 None
             }
             ValueType::Reference(target) => Some(Self::Reference(

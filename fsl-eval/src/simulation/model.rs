@@ -1753,40 +1753,7 @@ impl<'a> ModelSystem<'a> {
             clock_bits: bits,
             bounded: std::sync::OnceLock::new(),
         };
-        // The shared enumeration routes do not yet carry an authenticated
-        // population beside each clock-owner candidate. Refuse those actual
-        // data domains before reward or frame probing can enumerate them.
-        system.check_clock_reference_enumeration()?;
         Ok(system)
-    }
-
-    fn check_clock_reference_enumeration(&self) -> Result<(), AdmissionFailure> {
-        for field in self.fields.values().flatten() {
-            if !domain::clock_reference_paths(&field.value_type, self.types).is_empty() {
-                return Err(refused(
-                    Code::UnknownRequiredFeature,
-                    "unsupported-feature",
-                    &[
-                        ("reason", "clock-reference-enumeration".to_owned()),
-                        ("member", field.key.node.clone()),
-                    ],
-                ));
-            }
-        }
-        for (node, path, value_type) in self.generation_domains() {
-            if !domain::clock_reference_paths(&value_type, self.types).is_empty() {
-                return Err(refused(
-                    Code::UnknownRequiredFeature,
-                    "unsupported-feature",
-                    &[
-                        ("reason", "clock-reference-enumeration".to_owned()),
-                        ("member", format!("{node:?}")),
-                        ("domain_path", format!("{path:?}")),
-                    ],
-                ));
-            }
-        }
-        Ok(())
     }
 
     /// The RFC 8785 key bytes and `filament.simulation.state-key/v1` state key of
