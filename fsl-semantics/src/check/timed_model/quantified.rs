@@ -741,6 +741,7 @@ pub(super) fn reset(
         .transpose()?;
     Ok(Some(ResetDraft {
         parameter: None,
+        slots: Vec::new(),
         clock,
         value,
         span,

@@ -255,6 +255,24 @@ impl Lowering<'_> {
                     Some(position) => ResetTargetNodes::Parameter {
                         parameter: clock_parameter_name(written.operation(), position, location)?,
                     },
+                    None if !reset.slots().is_empty() => {
+                        // A reset of the element each literal selector names
+                        // (FR-230 "Selection"): one slot term for each
+                        // collection level, no binder, condition `true`.
+                        let owner = self.timed_self(context.clone(), location)?;
+                        let slots = reset
+                            .slots()
+                            .iter()
+                            .map(|slot| self.slot_literal_node(*slot, location))
+                            .collect::<Result<Vec<_>, _>>()?;
+                        ResetTargetNodes::Place {
+                            clock: reset.clock(),
+                            owner,
+                            slots,
+                            binders: Vec::new(),
+                            condition: self.timed_true(location)?,
+                        }
+                    }
                     None => {
                         let owner = self.timed_self(context.clone(), location)?;
                         let binders = match reset.selection() {

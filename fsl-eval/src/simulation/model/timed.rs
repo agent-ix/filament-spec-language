@@ -1126,7 +1126,11 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
         let set: Vec<ClockId> = clauses
             .iter()
             .flat_map(|resets| resets.resets())
-            .filter(|reset| reset.selection().is_none() && reset.parameter().is_none())
+            .filter(|reset| {
+                reset.selection().is_none()
+                    && reset.parameter().is_none()
+                    && reset.slots().is_empty()
+            })
             .map(|reset| reset.clock())
             .collect();
         // The places a reset of a `Clock` parameter writes for `instance`.
@@ -1957,6 +1961,9 @@ impl<'s, 'a> TimedSystem<'s, 'a> {
                                             .get(*place)
                                             .is_some_and(|held| held.clock == reset.clock())
                                     }),
+                                None if !reset.slots().is_empty() => {
+                                    self.place_at(&vector.receiver, reset.clock(), reset.slots())
+                                }
                                 None => self.place(&vector.receiver, reset.clock()),
                             };
                             if let Some(place) = place {
