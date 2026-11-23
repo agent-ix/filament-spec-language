@@ -23,13 +23,13 @@ and alternate deterministically. Check `holds(A) until holds(B)` at
 `>= 1/4` with targets `{c, n}`, values `s = 3/4`, `b = 0`, `c = 1`,
 `n = 1`, ranks 1, 0, 0, 0, and at `<= 1/4` with targets `{b}`, values
 `s = 1/4`, `b = 1`, `n = c = d = 0`, rank 1 at `s` and 0 elsewhere. Offer
-them at `>= 3/10` and `<= 1/5`, the first with rank 2 at `s`, and offer for
-`>= 1/2` a document with targets `{n}` and values `s = 1/4`, `n = 1`,
-`b = c = d = 0`.
+the valid documents at `>= 3/10` and `<= 1/5`. In a separate check, offer the
+`>= 1/4` document with rank 2 at `s` at `>= 1/4`. Offer for `>= 1/2` a
+document with targets `{n}` and values `s = 1/4`, `n = 1`, `b = c = d = 0`.
 
 ## Expected Results
 
-Both documents are accepted; the first has no row for `d`. `>= 3/10` and
-`<= 1/5` reject `ThresholdMissed` at `s`; rank 2 at `s` rejects `RankBroken`
-at `s`. The `{n}` document refuses objective mismatch because the checker
+Both documents are accepted; the first has no row for `d`. The valid
+documents at `>= 3/10` and `<= 1/5` reject `ThresholdMissed` at `s`. The
+rank-2 document at `>= 1/4` rejects `RankBroken` at `s`. The `{n}` document refuses objective mismatch because the checker
 derives `{c, n}`, although its initial value would pass the threshold.

@@ -23,12 +23,14 @@ targets and values `s = 0`, `b = 0`. (ii) `ok` satisfies P with actions
 returns to `ok`. Check `probability <= 1/2 [always holds(P)]` with targets
 `{ok}`, value 1 and rank 0, and with empty targets and values 0. Check
 `probability >= 1/2 [always holds(P)]` with targets `{down}`, values
-`ok = 1`, `down = 1`, ranks 1, 0, and with `ok = 0`.
+`ok = 1`, `down = 1`, ranks 1, 0, and with values `ok = 0`, `down = 1`
+and ranks 0, 0.
 
 ## Expected Results
 
 The checker derives `{s}` under `wait` as rejecting and `{ok}` under `stay`
 as accepting. The correct documents reject `ThresholdMissed`. The
 empty-target documents refuse objective mismatch. The `>= 1/2` always
-document rejects `ThresholdMissed`, and `ok = 0` rejects `InequalityFails`
-at `ok`.
+document rejects `ThresholdMissed` although `ok` lies in the accepting end
+component `{ok}` outside the union, and the `ok = 0` variant rejects
+`InequalityFails` at `ok` because `Q_leave = 1`.
