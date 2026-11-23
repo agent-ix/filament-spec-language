@@ -909,6 +909,8 @@ fn witness_leaf(
         _ => return Err(RequestDefect::new(pointer, "unknown witness value")),
     })
 }
+
+#[cfg(test)]
 mod tests {
     use super::{closed_members, MEMBERS};
     use ix_trace_rs::trace;

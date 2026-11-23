@@ -43,3 +43,26 @@ What holds:
 | FND-008 | low | In `error_producer_inputs.rs`, adding `clause` to `base` also changes the `call` case, which now carries both `call` and `clause`. `ExtractionRequiresRun` is therefore exercised with two selectors instead of `call` alone. Add `clause` only to the cases that lack a selector (package, clause-count). | tests/it/error_producer_inputs.rs:1017-1024 |
 | FND-009 | low | `another_defect` decides "missing member versus another defect" by matching serde's `Display` text (`starts_with("missing field \`")`). That is an unstable contract across serde versions and wrappers, so a wording change silently reorders refusals. Classify on a typed signal (for example a deny-unknown and duplicate pre-pass) instead of error text. | fsl-command/src/command/request_shape.rs:571 |
 | FND-010 | low | The PR's tracker attachment is titled "QSL-2935, QSL-2937: ..." but delivers nothing for QSL-2937, which is deliberately left to a separate spec PR. Retitle so that the merge does not read as closing QSL-2937. | - |
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-011 | medium | The new test in `replay_request.rs` sits in `mod tests`, which has no `#[cfg(test)]` (that much predates the PR). Its new `use super::{closed_members, MEMBERS};` is used only inside a `#[test]` fn, which is stripped from non-test builds. CI's `cargo clippy --workspace --all-targets -- -D warnings` (ci.yml:30/34, Makefile:61) checks the lib target and fails with `unused imports: MEMBERS and closed_members`. A rustc probe with `-D warnings` on the same pattern reproduces it. Fix: add `#[cfg(test)]` to the module, or move the imports into the test fn. | fsl-command/src/replay_request.rs:912-927 |
+| FND-012 | low | `an_unknown_or_repeated_member_wins_over_missing_members` is tagged `FR-1047-AC-1`. It verifies the FR-1047 Behavior clause on unknown, wrong-kind and repeated members, which no AC states, not AC-1's list of missing members, so the tag inflates AC-1. The test also asserts only that the refusal is not FR-1047's, never which defect is named. | fsl-command/tests/it/request_diagnostics.rs:331-372 |
+| FND-013 | low | `envelope_defect` yields to the typed reader whenever `unique_json::read` finds a repeated name in any object of the whole document, including subtrees that `wire::Request` keeps as raw values or maps (for example inside `clause`). Where the owning reader does not refuse that repeat, a request that also lacks in-scope members falls to serde's first-missing refusal, with line and column, instead of FR-1047's list. Limit the repeat check to the envelope, the `request` object and the in-scope objects. | fsl-command/src/command/request_shape.rs:544-551 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | still-open | The example now decodes all 14 members and carries a function record and occurrence key, but `run_with_providers` still refuses it: `invalid_package`/`invalid-value`, `/package/lock/sources: the list is empty`. Verified unsatisfiable under the merged spec. Replay Rule 2 requires a non-empty `lock.sources` (fsl-replay execute.rs:2092-2095, 2408). Decode requires a `byte_provision` row for every source (execute.rs:2104-2110). FSpec FR-336 rows are only `{authority, identity, bytes_path}` files, with no inline bytes. FR-1047 fixes `byte_provision` at `[]`. Blocked on the commissioned FR-1047-AC-7 amendment (gap FND-005). |
+| FND-002 | fixed | `envelope_defect` (unknown envelope member or any repeat) and `another_defect` yield to the owning reader. Tested over 7 entries x 4 documents. |
+| FND-003 | fixed | The selected-member bypass is removed. The export_selection.rs expectation is now `invalid request: unknown field \`z\``. |
+| FND-004 | fixed | FR-1015's `request::read` now runs only when `format` is `native-run/1`. `the_format_is_refused_before_a_present_export_member` covers it. |
+| FND-005 | fixed | A strict outcome is asserted per case: replay's exact refusal, evidence's `unimplemented-meaning`, `io-error` naming `program.fsl` for the others (panics if accepted), and an exact `details.missing` for each removed member. |
+| FND-006 | fixed | `an_argv_document_is_not_refused_as_a_missing_envelope`. |
+| FND-007 | fixed | `an_export_lacking_its_profile_keeps_the_export_refusal` asserts `invalid_runtime_input` with `details` `{"path":"/request/export/profile"}`. |
+| FND-008 | fixed | `clause_selector` is added only to the package and clause-count cases. The `call` case carries `call` alone. |
+| FND-009 | fixed | The text match is isolated in `is_missing_member`, gated on `Category::Data`, and pinned by a unit test, so a serde wording change fails a test instead of silently reordering refusals. |
+| FND-010 | deferred | The PR title is unchanged. `gh pr edit` is unavailable to the coder lane, and the coordinator is routing the retitle to the arch lead as an action outside this lane. |

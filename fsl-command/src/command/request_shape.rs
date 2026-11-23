@@ -339,7 +339,12 @@ const REPLAY: &[Entry] = &[
     required(crate::replay_request::MEMBERS[10], Shape::Leaf("null")),
     required(crate::replay_request::MEMBERS[11], Shape::Leaf("null")),
     required(crate::replay_request::MEMBERS[12], Shape::Leaf("[]")),
-    required(crate::replay_request::MEMBERS[13], Shape::Leaf("[]")),
+    required(
+        crate::replay_request::MEMBERS[13],
+        Shape::Leaf(
+            "[{\"authority\":\"example\",\"bytes_path\":\"entry.fsl\",\"identity\":\"entry\"}]",
+        ),
+    ),
 ];
 
 fn export_shape(selection: ExportSelection) -> &'static [Entry] {
@@ -540,12 +545,52 @@ pub(super) fn admit(family: Family, bytes: &[u8]) -> Result<()> {
 }
 
 /// Whether the envelope carries a member beyond `format` and `request`, or
-/// any object of the document repeats a member name.
+/// the envelope or its `request` object repeats a member name. A repeat
+/// deeper in the document belongs to the reader of that subtree.
 fn envelope_defect(document: &BTreeMap<String, &RawValue>, bytes: &[u8]) -> bool {
     document
         .keys()
         .any(|name| !matches!(name.as_str(), "format" | "request"))
-        || crate::unique_json::read(bytes).is_err()
+        || repeats_a_name(bytes)
+        || document
+            .get("request")
+            .is_some_and(|request| repeats_a_name(request.get().as_bytes()))
+}
+
+/// Whether the JSON object in `bytes` repeats a member name at its own level.
+fn repeats_a_name(bytes: &[u8]) -> bool {
+    struct Names(Vec<String>);
+    impl<'de> serde::Deserialize<'de> for Names {
+        fn deserialize<D: serde::Deserializer<'de>>(
+            decoder: D,
+        ) -> std::result::Result<Self, D::Error> {
+            struct Visitor;
+            impl<'de> serde::de::Visitor<'de> for Visitor {
+                type Value = Names;
+                fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    f.write_str("an object")
+                }
+                fn visit_map<A: serde::de::MapAccess<'de>>(
+                    self,
+                    mut map: A,
+                ) -> std::result::Result<Names, A::Error> {
+                    let mut names = Vec::new();
+                    while let Some((name, _)) = map.next_entry::<String, &'de RawValue>()? {
+                        names.push(name);
+                    }
+                    Ok(Names(names))
+                }
+            }
+            decoder.deserialize_map(Visitor)
+        }
+    }
+    let Ok(Names(mut names)) = serde_json::from_slice(bytes) else {
+        return false;
+    };
+    let total = names.len();
+    names.sort();
+    names.dedup();
+    names.len() != total
 }
 
 /// Whether the request's typed reader refuses it for a defect other than a
@@ -720,7 +765,7 @@ pub fn request_example(
 
 /// The one node of the replay example's package, and the obligation that
 /// names it.
-const NODE_PACKAGE: &str = "{\"lock\":{\"sources\":[]},\"name\":\"example\",\"semantic_graph\":{\"nodes\":[{\"check_mode\":\"linked\",\"declaration\":{\"qualified_name\":[\"entry\"]},\"node_id\":{\"ordinal\":0,\"package\":\"example\",\"path\":[\"entry\"]},\"node_tag\":\"function\"}]}}";
+const NODE_PACKAGE: &str = "{\"lock\":{\"sources\":[{\"authority\":\"example\",\"identity\":\"entry\"}]},\"name\":\"example\",\"semantic_graph\":{\"nodes\":[{\"check_mode\":\"linked\",\"declaration\":{\"qualified_name\":[\"entry\"]},\"node_id\":{\"ordinal\":0,\"package\":\"example\",\"path\":[\"entry\"]},\"node_tag\":\"function\"}]}}";
 const REPLAY_TARGET: &str = "{\"arguments\":false,\"members\":{\"function\":\"entry\"},\"occurrence_key\":{\"node_id\":{\"ordinal\":0,\"package\":\"example\",\"path\":[\"entry\"]},\"ordinal\":\"0\",\"role\":\"declaration\"},\"over\":null}";
 const NODE_OBLIGATION: &str = "{\"model\":null,\"node_id\":{\"ordinal\":0,\"package\":\"example\",\"path\":[\"entry\"]},\"ordinal\":0}";
 

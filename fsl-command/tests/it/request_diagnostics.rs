@@ -326,10 +326,22 @@ fn the_format_is_refused_before_a_present_export_member() {
     );
 }
 
+fn entry_name(entry: Entry) -> &'static str {
+    match entry {
+        Entry::Run => "run",
+        Entry::RunReader => "run-reader",
+        Entry::Monitor => "monitor",
+        Entry::Compile => "compile",
+        Entry::Analyze => "analyze",
+        Entry::Export(ExportSelection::Ordinary) => "export",
+        Entry::Export(ExportSelection::Evidence) => "evidence",
+    }
+}
+
 /// FR-1047 Behavior: an unknown or repeated member is refused for that
 /// defect, ahead of any missing member.
 #[test]
-#[trace("TC-3170", "FR-1047-AC-1")]
+#[trace("TC-3170")]
 fn an_unknown_or_repeated_member_wins_over_missing_members() {
     let directory = tempfile::tempdir().unwrap();
     let raw = [
@@ -358,16 +370,63 @@ fn an_unknown_or_repeated_member_wins_over_missing_members() {
             let path = directory.path().join(format!("request-{index}.json"));
             std::fs::write(&path, &text).unwrap();
             let (value, _) = call(entry, &path).expect("refused");
-            assert!(
-                value["details"].get("missing").is_none()
-                    && !value["message"]
-                        .as_str()
-                        .unwrap()
-                        .contains("missing required"),
-                "{text}: {value}"
-            );
+            let length = format.len();
+            let prefix = match entry {
+                Entry::Analyze => "invalid analyze request member request: ",
+                _ => "invalid request: ",
+            };
+            let message = value["message"].as_str().unwrap();
+            let expected = match (index, entry) {
+                (0, _) => Some(format!(
+                    "{prefix}unknown field `x`, expected `format` or `request` at line 1 column {}",
+                    29 + length
+                )),
+                (1 | 2, Entry::Run | Entry::Export(_)) => Some(format!(
+                    "invalid clause request member request: duplicate object key {} at byte {}",
+                    if index == 1 { "format" } else { "models" },
+                    if index == 1 { 25 } else { 48 }
+                )),
+                (1, _) => Some(format!(
+                    "{prefix}duplicate field `format` at line 1 column {}",
+                    21 + length
+                )),
+                (2, _) => Some(format!(
+                    "{prefix}duplicate field `models` at line 1 column 21"
+                )),
+                _ => None,
+            };
+            match expected {
+                Some(expected) => assert_eq!(message, expected, "{text}"),
+                None => assert!(
+                    message.starts_with(&format!("{prefix}unknown field `z`, expected one of `")),
+                    "{text}: {message}"
+                ),
+            }
+            assert_eq!(value["code"], "invalid-request", "{text}: {value}");
+            assert!(value["details"].get("missing").is_none(), "{text}: {value}");
         }
     }
+}
+
+/// A repeated name inside a subtree this requirement does not read leaves
+/// the missing-members list intact.
+#[test]
+#[trace("TC-3170", "FR-1047-AC-1")]
+fn a_repeat_inside_a_member_subtree_keeps_the_missing_list() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("request.json");
+    std::fs::write(
+        &path,
+        r#"{"format":"native-compile/1","request":{"refinement_internals":{"a":1,"a":2}}}"#,
+    )
+    .unwrap();
+    let (value, exit) = call(Entry::Compile, &path).expect("refused");
+    assert_eq!(exit, 20, "{value}");
+    assert_eq!(
+        value["details"],
+        json!({"missing": ["/request/program"]}),
+        "{value}"
+    );
 }
 
 /// The seven inputs of FR-1047-AC-7 with the entry that reads each.
@@ -429,25 +488,29 @@ fn every_request_example_is_read_back_and_each_member_is_required() {
         std::fs::write(&path, &text).unwrap();
         match (format, selection) {
             ("native-replay/1", _) => {
-                // The request decodes in full: every member, the function
-                // target and its occurrence key. Only the package's own
-                // semantic admission refuses it, for a lock naming no
-                // source, and no provisioned file is read.
-                let (value, _) = call(entry, &path).expect("no package replays");
-                assert_eq!(value["code"], "invalid_package", "{value}");
-                assert_eq!(value["cause"], "invalid-value", "{value}");
+                // Over an empty directory the request's own byte provision
+                // is read while decoding: the missing file is refused.
+                let (value, exit) = call(entry, &path).expect("entry.fsl is missing");
+                assert_eq!(exit, 20, "{value}");
+                assert_eq!(value["stage"], "request", "{value}");
                 assert!(
-                    value["message"]
-                        .as_str()
-                        .unwrap()
-                        .contains("/package/lock/sources: the list is empty"),
+                    value["message"].as_str().unwrap().contains("entry.fsl"),
                     "{value}"
                 );
-                let files: Vec<_> = std::fs::read_dir(directory.path())
-                    .unwrap()
-                    .map(|entry| entry.unwrap().file_name())
-                    .collect();
-                assert_eq!(files, ["request.json"], "{value}");
+                assert_ne!(value["code"], "invalid-request", "{value}");
+                // With an empty entry.fsl the request decodes in full and
+                // FR-098's recompile or package admission refuses it.
+                std::fs::write(directory.path().join("entry.fsl"), "").unwrap();
+                let (value, _) = call(entry, &path).expect("the example does not replay");
+                // The recompile of the empty source refuses at stage `source`
+                // (the spec does not pin the stage).
+                assert_eq!(value["code"], "invalid_syntax", "{value}");
+                assert_eq!(value["cause"], "unexpected-end", "{value}");
+                assert_eq!(value["stage"], "source", "{value}");
+                assert_eq!(
+                    value["message"], "the recompile refused at stage source: expected `language`",
+                    "{value}"
+                );
             }
             (_, Some(ExportSelection::Evidence)) => {
                 let result = command::export_with_limits_and_overrides(

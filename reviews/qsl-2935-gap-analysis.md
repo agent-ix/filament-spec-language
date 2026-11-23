@@ -32,3 +32,18 @@ CONDITIONAL. All eight FR-1047 criteria are tagged, and no criterion is untagged
 - Matrix: grep index (quire matrix stalled past 150 s). FR-1047-AC-1 to AC-8 are each tagged once by `#[trace("TC-3170", "FR-1047-AC-n")]` in fsl-command/tests/it/request_diagnostics.rs. Tag counts are 2 per AC (doc comment plus attribute) and 3 for AC-7.
 - Stubs and coverage inflation: no source stubs. The AC-7 test asserts weakly (code-review FND-005).
 - Semantic review: no separate fan-out was run. The intent, test and code checks were done in the code-review pass (SR-967175026302197768900474181941935084789).
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-005 | high | FR-1047 cannot be satisfied for the replay example. Its Behavior requires every value in the example to pass its reader's checks before any file is read, and fixes the replay example's `byte_provision` at `[]`. FR-862 and FSpec FR-336 make every `byte_provision` row a `bytes_path` file. The replay reader requires a non-empty `package.lock.sources`, each source matched by a provision row. No replay example with `byte_provision` `[]` can be admitted. AC-7's "reads no provisioned file" does not say what refusal is expected. FR-1047-AC-7 and the `byte_provision` clause need amending: name one provision row (for example `program.fsl`) and expect FR-862's stage-request refusal naming that `bytes_path` in an empty directory, or state the refusal the example settles. | spec/functional/FR-1047-name-every-request-defect-and-return-a-request-example.md, fsl-replay/src/execute.rs:2092-2110, fsl-replay/src/execute.rs:2408 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | deferred | Spec PR #3563 (FR-286 details `missing` and `accepted`) is commissioned by the coordinator. |
+| FND-002 | fixed | The AC-3 test removes `records` from the monitor example and asserts `missing required member /request/records` with `{"missing":["/request/records"]}` via `run_with_providers`. |
+| FND-003 | fixed | Unit test `every_missing_member_is_named_at_once` asserts `missing members /profile_selections, /byte_provision at "/profile_selections"`. Its imports cause code-review FND-011. |
+| FND-004 | deferred | Spec PR #3563 (FR-1047 AC-9, the export fallback refusal) is commissioned by the coordinator. The fallback now runs the compile reader first, and the `/request` "expected an object" refusal remains. |
