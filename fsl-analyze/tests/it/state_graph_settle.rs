@@ -258,10 +258,9 @@ fn a_state_graph_replay_allocation_stops_before_the_next_real_instance() {
     );
 }
 
-/// FR-337-AC-30: state-graph identity read-back emits the whole package, so a
+/// State-graph identity read-back emits the whole package, so a
 /// configured temporal clause in the same package requires the fixture's
 /// independently selected typed clock row.
-#[trace("TC-1326", "FR-337-AC-30")]
 #[test]
 fn state_graph_identity_readback_uses_the_explicit_temporal_selection() {
     let world = crate::graph_world::temporal_config_world();
