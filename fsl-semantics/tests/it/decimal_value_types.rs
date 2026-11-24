@@ -594,9 +594,10 @@ fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() 
         pre S1 using v on Config::Meter::adjust { Config::Meter::adjust::step >= 0.00 }\n\
         pre S2 using v on Config::Meter::adjust { step >= 0.00 }\n\
         pre LetStep using v on Config::Meter::adjust { let step = Config::Meter::adjust::by in Config::Meter::adjust::step >= step }\n\
+        pre AfterLet using v on Config::Meter::adjust { (let step = Config::Meter::adjust::by in step >= 0.00) and step >= 0.00 }\n\
         pre Gauge using v on Config::Gauge::adjust { Config::Gauge::adjust::by >= 0.00 }\n";
     let checked = check(&bytes, &unit_text(PACKAGE, "Config", source));
-    for name in ["A", "APost", "S1", "S2", "LetStep", "Gauge"] {
+    for name in ["A", "APost", "S1", "S2", "LetStep"] {
         let clause = checked
             .graph
             .state_clause(name)
@@ -606,7 +607,6 @@ fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() 
                 .parameters()
                 .iter()
                 .any(|(parameter, value_type)| parameter == "by" && value_type == &p)
-                || name == "Gauge"
         );
         assert!(
             clause
@@ -617,6 +617,20 @@ fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() 
             "{name} has an operand typed P"
         );
     }
+    let gauge = checked.graph.state_clause("Gauge").unwrap();
+    let inherited_by = gauge
+        .parameters()
+        .iter()
+        .find(|(parameter, _)| parameter == "by")
+        .expect("the inherited Gauge::adjust operation retains its by parameter");
+    assert_eq!(inherited_by.1, p);
+    let gauge_read = gauge.body().children()[0];
+    assert!(matches!(gauge_read.kind(), NodeKind::Local(1)));
+    assert_eq!(
+        gauge_read.value_type(),
+        &p,
+        "the inherited Gauge::adjust::by parameter retains Meter::adjust::by's declared type"
+    );
     assert_eq!(
         checked.graph.state_clause("S1").unwrap().body().id(),
         checked.graph.state_clause("S2").unwrap().body().id(),
@@ -643,6 +657,50 @@ fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() 
         "let-bound step node: {:?}",
         let_comparison[1].kind()
     );
+
+    let after_let = checked
+        .graph
+        .state_clause("AfterLet")
+        .unwrap()
+        .body()
+        .children();
+    let after_let_comparison = after_let[1].children();
+    assert!(matches!(
+        after_let_comparison[0].kind(),
+        NodeKind::Local(2)
+    ));
+    assert_eq!(
+        after_let_comparison[0].value_type(),
+        &p,
+        "leaving the let restores the operation's `step` parameter"
+    );
+
+    // FR-016's active-local-name refusal is retained here: FR-104-AC-18
+    // permits the first let to shadow an operation parameter, not another
+    // let binder that is still in scope.
+    let nested_shadow = match check_result(
+        &bytes,
+        &unit_text(
+            PACKAGE,
+            "Config",
+            "pre NestedShadow using v on Config::Meter::adjust { let step = Config::Meter::adjust::by in let step = Config::Meter::adjust::by in step >= 0.00 }\n",
+        ),
+    ) {
+        Err(refusals) => refusals,
+        Ok(_) => panic!("a let binder may not shadow another active let binder"),
+    };
+    let [refusal] = nested_shadow.as_slice() else {
+        panic!("one nested-shadow refusal: {nested_shadow:?}");
+    };
+    assert_eq!(
+        (refusal.cause.code().as_str(), refusal.cause.cause()),
+        ("ambiguous_declaration", Some("ambiguous-name"))
+    );
+    let CheckCause::AmbiguousName { name, loci } = refusal.cause.as_ref() else {
+        panic!("the nested binder is ambiguous: {refusal:?}");
+    };
+    assert_eq!(name, "step");
+    assert_eq!(loci.len(), 2, "the active and nested binders are named");
 
     for (name, expression) in [
         ("BadBy", "pre(Config::Meter::adjust::by)"),
