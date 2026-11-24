@@ -2047,7 +2047,7 @@ fn run(
         }));
     }
     if fair_eventual && interval.is_none() && holds {
-        return broken();
+        return not_yet();
     }
     if !holds {
         if interval.is_some() {

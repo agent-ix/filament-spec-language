@@ -1488,8 +1488,7 @@ fn a_bounded_claim_past_the_rational_budget_proves_with_value_bounds() {
         method,
         &fsl_replay::BoundsMethod::BackwardInduction { precision_bits: 64 }
     );
-    let fsl_replay::ExactBound::Finite(upper) = upper
-    else {
+    let fsl_replay::ExactBound::Finite(upper) = upper else {
         panic!("complete product interval has a finite upper endpoint");
     };
     let exact = ratio(9_999_999, 10_000_000)
@@ -1530,8 +1529,8 @@ fn a_bounded_claim_past_the_rational_budget_proves_with_value_bounds() {
 #[trace("FR-1042-AC-22")]
 #[test]
 fn fair_cyclic_low_rational_budget_proves_with_value_bounds() {
-    const CLAIM: &str = "probabilistic FairHalf using inf on M over (o: M::Once) under every scheduler fair strong Once::go on origin { probability >= 0.4 [ eventually holds(o.done) ] }";
-    let world = World::new(&prob_world::one_shot(CLAIM));
+    const CLAIM: &str = "probabilistic FairHalf using inf on M over (w: M::W) under every scheduler fair strong W::go on origin { probability >= 0.4 [ eventually holds(w.g) ] }";
+    let world = World::new(&prob_world::fair_bounds_w(CLAIM));
     let mut request = world.request("FairHalf", ModelCheckLimits::default());
     request.limits.max_rational_bits = 1;
     request.limits.precision_bits = 16;
@@ -1559,7 +1558,8 @@ fn fair_cyclic_low_rational_budget_proves_with_value_bounds() {
         panic!("the fair upper interval endpoint is finite");
     };
     assert!(lower.value() >= &ratio(2, 5));
-    assert!(upper.value() <= &ratio(1, 2));
+    assert!(lower.value() <= &ratio(1, 2));
+    assert!(upper.value() >= &ratio(1, 2));
     assert!(matches!(
         method,
         fsl_replay::BoundsMethod::IntervalIteration {
@@ -1574,29 +1574,28 @@ fn fair_cyclic_low_rational_budget_proves_with_value_bounds() {
 #[trace("FR-1042-AC-22")]
 #[test]
 fn fair_cyclic_rejects_a_flipped_lower_bellman_direction() {
-    const CLAIM: &str = "probabilistic FairHalf using inf on M over (o: M::Once) under every scheduler fair strong Once::go on origin { probability >= 0.4 [ eventually holds(o.done) ] }";
-    let world = World::new(&prob_world::one_shot(CLAIM));
+    const CLAIM: &str = "probabilistic FairHalf using inf on M over (w: M::W) under every scheduler fair strong W::go on origin { probability >= 0.4 [ eventually holds(w.g) ] }";
+    let world = World::new(&prob_world::fair_bounds_w(CLAIM));
     let mut request = world.request("FairHalf", ModelCheckLimits::default());
     request.limits.max_rational_bits = 1;
     request.limits.precision_bits = 16;
     request.limits.max_precision_bits = 16;
     let call = std::cell::Cell::new(0_usize);
     let touched = std::cell::RefCell::new(None);
-    let item = exact_probabilistic_item_tampered(
-        RequestIndex::new(0),
-        request,
-        |certificate| {
-            if call.get() == 0 {
-                let entry = interior_value(certificate);
-                entry.value = ratio(1, 1);
-                *touched.borrow_mut() = Some(entry.state.clone());
-            }
-            call.set(call.get() + 1);
-        },
-    );
+    let item = exact_probabilistic_item_tampered(RequestIndex::new(0), request, |certificate| {
+        if call.get() == 0 {
+            let entry = interior_value(certificate);
+            entry.value = ratio(1, 1);
+            *touched.borrow_mut() = Some(entry.state.clone());
+        }
+        call.set(call.get() + 1);
+    });
     let engines = Engines::fsl().expect("the linked engines are admitted");
     let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
-    let key = touched.borrow().clone().expect("the lower value was changed");
+    let key = touched
+        .borrow()
+        .clone()
+        .expect("the lower value was changed");
     assert_eq!(
         record
             .terminal()
@@ -1609,6 +1608,167 @@ fn fair_cyclic_rejects_a_flipped_lower_bellman_direction() {
     );
     assert!(record.exact_probabilistic.is_none());
     assert!(record.probabilistic_counterexample.is_none());
+}
+
+/// FR-1042-AC-22: a strong-enabled state is removed and the remaining fair
+/// MEC is still checked, even when it shares an SCC with that state.
+#[trace("FR-1042-AC-22")]
+#[test]
+fn fair_cyclic_rejects_positive_values_on_refined_fair_mecs() {
+    const CLAIM: &str = "probabilistic FairHalf using inf on M over (w: M::W) under every scheduler fair strong W::z_go on origin { probability >= 0.4 [ eventually holds(w.g) ] }";
+    let world = World::new(&prob_world::fair_mec_refinement(CLAIM));
+    let cancel = Cancel::new();
+    let request = world.request("FairHalf", ModelCheckLimits::default());
+    let fsl_analyze::exact_probabilistic::ProductRequest {
+        subject,
+        claim,
+        limits,
+    } = request;
+    let fsl_analyze::exact_probabilistic::ProbBuild::Built(product) =
+        fsl_analyze::exact_probabilistic::build_product(
+            fsl_analyze::exact_probabilistic::ProductRequest {
+                subject,
+                claim,
+                limits,
+            },
+            &cancel,
+        )
+        .expect("the fair product is finite")
+    else {
+        panic!("the fixture builds a complete product");
+    };
+    let system = ModelSystem::new(world.subject().simulation).expect("the checked model admits");
+    let claims = world.package.graph().probabilistic_model().claims();
+    let item = fsl_replay::probabilistic_claim_identity(world.claim("FairHalf"))
+        .expect("the checked claim has an identity");
+    let binding = claim_binding(&system, world.claim("FairHalf"))
+        .expect("the claim binding is checked")
+        .map(|binding| binding.reference);
+    let io = fsl_replay::ProbabilityDocumentIoLimits {
+        bytes: limits.document.bytes,
+        storage_bytes: limits.document.storage_bytes,
+    };
+    let mut certificate = fsl_replay::ExactProbabilityCertificate {
+        values: product
+            .states
+            .iter()
+            .map(|state| {
+                let key = match &state.certificate_state {
+                    Some(key) => key.clone(),
+                    None => fsl_replay::ProbabilityProductKey::for_model_state_with_limits(
+                        binding.as_ref(),
+                        &state.model,
+                        io,
+                        &cancel,
+                    )
+                    .expect("the product state has a canonical key"),
+                };
+                fsl_replay::ExactProbabilityValue {
+                    state: key,
+                    value: ratio(1, 1),
+                }
+            })
+            .collect(),
+    };
+    certificate
+        .values
+        .sort_by(|left, right| left.state.cmp(&right.state));
+    let document = fsl_replay::fair_cyclic_probability_proof_document(
+        &system,
+        claims,
+        &item,
+        &certificate,
+        fsl_replay::ProbabilityDocumentLimits::for_exact(
+            &limits,
+            fsl_replay::AccountingLimits::default().0,
+        ),
+        &cancel,
+    )
+    .expect("the unchecked fair cyclic document can be written");
+    let bytes = fsl_replay::write_value_bounds_proof_document(
+        &document,
+        fsl_replay::SubsystemBoundKind::Lower,
+        fsl_replay::ProbabilityDocumentLimits::for_exact(
+            &limits,
+            fsl_replay::AccountingLimits::default().0,
+        ),
+        &cancel,
+    )
+    .expect("the lower proof role is well formed");
+    assert!(
+        matches!(
+            fsl_replay::check_probability_certificate_document_as(
+                &system,
+                claims,
+                &item,
+                &bytes,
+                fsl_replay::CertificateRole::Claim,
+                fsl_replay::ProbabilityDocumentLimits::for_exact(
+                    &limits,
+                    fsl_replay::AccountingLimits::default().0,
+                ),
+                &cancel,
+            ),
+            Ok(ExactProbabilityCertificateCheck::Rejected(rejection))
+                if rejection.rule == ProbabilityCertificateRule::RankBroken
+        ),
+        "the checker must reject a positive lower value on the refined fair MEC"
+    );
+}
+
+/// FR-201-AC-47 and TC-1406: bounded `[0,2]` fairness keeps its bounded
+/// profile when the exact cyclic constructor is also available.
+#[trace("TC-1406", "FR-201-AC-47")]
+#[test]
+fn bounded_fair_eventual_remains_in_the_bounded_profile() {
+    const CLAIM: &str = "probabilistic FairBounded using ev on M over (m: M::Msg) under every scheduler fair strong Msg::send_b on origin { probability >= 0.9 [ eventually[0,2] holds(m.delivered) ] }";
+    let world = World::new(&prob_world::link(CLAIM));
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let item = exact_probabilistic_item(
+        RequestIndex::new(0),
+        world.request("FairBounded", ModelCheckLimits::default()),
+    );
+    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let bytes = record
+        .terminal()
+        .and_then(|terminal| terminal.exact_certificate_document())
+        .expect("the bounded proof carries its exact document");
+    let document = fsl_replay::read_probability_proof_document(
+        bytes,
+        fsl_replay::ProbabilityDocumentLimits::for_exact(
+            &fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
+            fsl_replay::AccountingLimits::default().0,
+        ),
+        &Cancel::new(),
+    )
+    .expect("the bounded fair document is well formed");
+    assert!(document.is_bounded_fair());
+    assert!(!document.is_fair_cyclic_mdp());
+}
+
+/// FR-1042-AC-22: an exact fair claim without interval endpoints stays
+/// unsupported by this interval profile instead of becoming a checker error.
+#[trace("FR-1042-AC-22")]
+#[test]
+fn fair_exact_fallback_is_not_yet() {
+    const CLAIM: &str = "probabilistic FairHalf using inf on M over (w: M::W) under every scheduler fair strong W::go on origin { probability >= 0.4 [ eventually holds(w.g) ] }";
+    let world = World::new(&prob_world::fair_bounds_w(CLAIM));
+    let item = exact_probabilistic_item(
+        RequestIndex::new(0),
+        world.request("FairHalf", ModelCheckLimits::default()),
+    );
+    let record = analyze_items(
+        &Engines::fsl().expect("the linked engines are admitted"),
+        vec![item],
+        &Cancel::new(),
+    )
+    .remove(0);
+    assert!(record.terminal().is_none());
+    assert!(matches!(
+        &record.settlement,
+        fsl_analyze::analyze::Settlement::Disposed(disposal)
+            if disposal.kind == fsl_analyze::analyze::DispositionKind::Unsupported
+    ));
 }
 
 /// FR-1042-AC-6: the checker accepts the claim-side `lower` document and the

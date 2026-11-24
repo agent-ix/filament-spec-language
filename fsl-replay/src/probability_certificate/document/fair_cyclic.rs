@@ -59,6 +59,7 @@ pub(super) fn check_bounds(
         BTreeMap::new()
     };
     let mut selected = Vec::new();
+    let mut existential_choices = Vec::new();
     for (key, state) in &graph.states {
         cx.tick(mdp::CyclicMdpProbabilityPhase::ActionSums)?;
         let value = values.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
@@ -100,19 +101,19 @@ pub(super) fn check_bounds(
                     order
                 }
             };
-            let Some(index) = candidates
+            let accepted = candidates
                 .into_iter()
-                .find(|index| sums.get(*index).is_some_and(satisfies))
-            else {
+                .filter(|index| sums.get(*index).is_some_and(satisfies))
+                .map(|index| crate::ProductAction::Identity(schedules[index].clone()))
+                .collect::<Vec<_>>();
+            let Some(first) = accepted.first() else {
                 return Ok(rejected(
                     ProbabilityCertificateRule::InequalityFails,
                     key.clone(),
                 ));
             };
-            selected.push((
-                key.clone(),
-                crate::ProductAction::Identity(schedules[index].clone()),
-            ));
+            selected.push((key.clone(), first.clone()));
+            existential_choices.push((key.clone(), accepted));
         } else if sums.iter().any(|sum| !satisfies(sum)) {
             return Ok(rejected(
                 ProbabilityCertificateRule::InequalityFails,
@@ -122,10 +123,22 @@ pub(super) fn check_bounds(
     }
     if existential {
         if !policy_is_fair(system, claim, graph, captured, &selected, cx)? {
-            return Ok(rejected(
-                ProbabilityCertificateRule::RankBroken,
-                graph.initial.clone(),
-            ));
+            let mut alternative = Vec::with_capacity(selected.len());
+            if !fair_policy_search(
+                system,
+                claim,
+                graph,
+                captured,
+                &existential_choices,
+                &mut alternative,
+                cx,
+            )? {
+                return Ok(rejected(
+                    ProbabilityCertificateRule::RankBroken,
+                    graph.initial.clone(),
+                ));
+            }
+            selected = alternative;
         }
     }
     match (objective, side) {
@@ -154,6 +167,46 @@ pub(super) fn check_bounds(
         accepted.policy = selected;
     }
     Ok(result)
+}
+
+fn fair_policy_search(
+    system: &ModelSystem<'_>,
+    claim: &CheckedProbabilisticClaim,
+    graph: &CheckerGraph,
+    captured: &super::super::cyclic::CapturedStates,
+    choices: &[(ProbabilityProductKey, Vec<crate::ProductAction>)],
+    selected: &mut Vec<(ProbabilityProductKey, crate::ProductAction)>,
+    cx: &mut mdp::Context<'_, '_>,
+) -> Result<bool, ProbabilityDocumentError> {
+    let mut indices = vec![0; choices.len()];
+    loop {
+        selected.clear();
+        for ((key, candidates), index) in choices.iter().zip(&indices) {
+            cx.tick(mdp::CyclicMdpProbabilityPhase::Components)?;
+            let candidate = candidates
+                .get(*index)
+                .ok_or(ProbabilityDocumentError::Malformed)?;
+            selected.push((key.clone(), candidate.clone()));
+        }
+        if policy_is_fair(system, claim, graph, captured, selected, cx)? {
+            return Ok(true);
+        }
+        if indices.is_empty() {
+            return Ok(false);
+        }
+        let mut cursor = indices.len();
+        while cursor > 0 {
+            cursor -= 1;
+            indices[cursor] += 1;
+            if indices[cursor] < choices[cursor].1.len() {
+                break;
+            }
+            indices[cursor] = 0;
+        }
+        if cursor == 0 && indices[0] == 0 {
+            return Ok(false);
+        }
+    }
 }
 
 /// Reject a positive lower value on a reachable fair non-target end component.
@@ -295,6 +348,7 @@ fn has_fair_non_target_end_component(
             }
 
             let mut fair = true;
+            let mut strong_enabled = BTreeSet::new();
             for constraint in &claim.fairness {
                 cx.tick(mdp::CyclicMdpProbabilityPhase::Components)?;
                 let Some(operation) = system.operation_text(
@@ -340,13 +394,33 @@ fn has_fair_non_target_end_component(
                         FairnessKind::Strong => enabled_any,
                     };
                     if required && !internal_any {
-                        fair = false;
+                        if constraint.kind() == FairnessKind::Strong {
+                            strong_enabled.extend(
+                                candidate
+                                    .iter()
+                                    .copied()
+                                    .filter(|state| identities[*state].iter().any(matches)),
+                            );
+                        } else {
+                            fair = false;
+                        }
                         break;
                     }
                 }
-                if !fair {
+                if !fair || !strong_enabled.is_empty() {
                     break;
                 }
+            }
+            if !strong_enabled.is_empty() {
+                let retained = candidate
+                    .iter()
+                    .copied()
+                    .filter(|state| !strong_enabled.contains(state))
+                    .collect::<Vec<_>>();
+                if !retained.is_empty() {
+                    pending.push(retained);
+                }
+                break;
             }
             if fair
                 && candidate.iter().any(|state| {

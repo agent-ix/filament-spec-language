@@ -153,7 +153,7 @@ pub fn probability_proof_document(
         )?;
         if fair_mdp {
             cx.fair_mdp = true;
-            let mut proof = construct(system, claims, item, certificate, &mut cx)?;
+            let mut proof = construct(system, claims, item, certificate, &mut cx, false)?;
             proof.document.cyclic_dtmc = false;
             proof.cyclic_mdp = false;
             proof.fair_mdp = true;
@@ -200,7 +200,7 @@ pub fn probability_proof_document(
                 || (error == ProbabilityDocumentError::ObjectiveMismatch
                     && super::super::cyclic_state::is_claim(claim)) =>
         {
-            construct(system, claims, item, certificate, &mut cx)
+            construct(system, claims, item, certificate, &mut cx, false)
         }
         Err(error) => Err(error),
     }
@@ -223,7 +223,7 @@ pub fn fair_cyclic_probability_proof_document(
         return Err(ProbabilityDocumentError::Unsupported);
     }
     super::fairness::admit(claim)?;
-    construct(system, claims, item, certificate, &mut cx)
+    construct(system, claims, item, certificate, &mut cx, true)
 }
 
 fn may_retry(error: &ProbabilityDocumentError) -> bool {
@@ -261,6 +261,7 @@ pub fn cyclic_mdp_probability_certificate_document(
         item,
         certificate,
         &mut Context::new(limits, cancel, None),
+        false,
     )
 }
 
@@ -286,6 +287,7 @@ pub fn cyclic_mdp_reward_probability_certificate_document(
         item,
         certificate,
         &mut Context::new(limits, cancel, None),
+        false,
     )
 }
 
@@ -1153,13 +1155,14 @@ fn construct(
     item: &ObligationIdentity,
     certificate: &ExactProbabilityCertificate,
     cx: &mut Context<'_, '_>,
+    fair_cyclic: bool,
 ) -> Result<ProbabilityProofDocument, ProbabilityDocumentError> {
     cx.reward = matches!(
         bind_claim(claims, item, cx.cancel)?.form,
         ProbForm::ExpectedReward { .. }
     );
     let claim = bind_claim(claims, item, cx.cancel)?;
-    let fair_cyclic = !claim.fairness.is_empty() && !cx.fair_mdp;
+    let fair_cyclic = fair_cyclic && !claim.fairness.is_empty() && !cx.fair_mdp;
     let fairness = if fair_cyclic {
         super::fairness::checked(
             system,

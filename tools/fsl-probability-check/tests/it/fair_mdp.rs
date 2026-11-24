@@ -11,7 +11,7 @@ const DOMAIN: &[u8] = include_bytes!("../fixtures/link.semantic-ir.json");
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
 const LINK_SOURCE: &str = include_str!("../fixtures/link.native");
 
-fn fair_w_source() -> String {
+pub(super) fn fair_w_source() -> String {
     let header = LINK_SOURCE.lines().take(4).collect::<Vec<_>>().join("\n");
     format!(
         "{header}\n\
