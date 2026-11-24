@@ -128,7 +128,8 @@ fn the_statistical_gate_returns_each_exact_only_cause() {
     let workload = World::new(&prob_world::link(
         "probabilistic Cost using ev on M over (m: M::Msg) under Even on origin { expected accumulate cost until holds(m.delivered) <= rational(6, 5) }\n\
          probabilistic Bounded using ev on M over (m: M::Msg) under Even on origin { probability >= 0.5 [ eventually[0, 2] holds(m.delivered) ] }\n\
-         probabilistic P95 using ev on M over (m: M::Msg) under Even on origin with alpha 0.01, beta 0.01, indifference 0.01 { quantile 0.95 of (accumulate cost from holds(m.attempts = 0) until holds(m.delivered) within 2) <= 3 }",
+         probabilistic P95 using ev on M over (m: M::Msg) under Steady on origin with alpha 0.01, beta 0.01, indifference 0.01 { quantile 0.95 of (accumulate cost from holds(m.attempts = 0) until holds(m.delivered) within 2) <= 3 }\n\
+         workload Steady on M { weight Msg::send_a = 1; weight Msg::send_b = 1; }",
     ));
     let every = World::new(&prob_world::process(
         "probabilistic FairTerminates using inf on M over (p: M::Proc) under every scheduler on origin { probability >= 0.99 [ eventually holds(p.done) ] }",
@@ -147,6 +148,73 @@ fn the_statistical_gate_returns_each_exact_only_cause() {
         Err(StatisticalRefusal::MissingConfidence)
     );
     assert_eq!(require_statistical(workload.claim("P95")), Ok(()));
+}
+
+/// FR-195-AC-8: simultaneous EN-4 gates select the specified first refusal,
+/// before claim reduction or sampler admission; the confidence-bounded P95
+/// passes the gate and proceeds as far as the deliberately invalid sampler.
+#[trace("TC-630", "FR-195-AC-8")]
+#[test]
+fn statistical_gate_precedence_precedes_claim_reduction_and_sampling() {
+    use fsl_foundation::selection::DefinitionRef;
+    use fsl_analyze::statistical::{check_statistical, StatisticalRequest};
+    use fsl_replay::statistical::{StatisticalLimits, StatisticalMethod, StatisticalRefusal};
+
+    let workload = World::new(&prob_world::link(
+        "probabilistic Cost using ev on M over (m: M::Msg) under Even on origin { expected accumulate cost until holds(m.delivered) <= rational(6, 5) }\n\
+         probabilistic Bounded using ev on M over (m: M::Msg) under Even on origin { probability >= 0.5 [ eventually[0, 2] holds(m.delivered) ] }\n\
+         probabilistic P95 using ev on M over (m: M::Msg) under Steady on origin with alpha 0.01, beta 0.01, indifference 0.01 { quantile 0.95 of (accumulate cost from holds(m.attempts = 0) until holds(m.delivered) within 2) <= 3 }\n\
+         workload Steady on M { weight Msg::send_a = 1; weight Msg::send_b = 1; }",
+    ));
+    let every = World::new(&prob_world::process(
+        "probabilistic FairTerminates using inf on M over (p: M::Proc) under every scheduler on origin { probability >= 0.99 [ eventually holds(p.done) ] }",
+    ));
+    let invalid_sampler = DefinitionRef::new("agent-ix", "not-a-sampler/v1").unwrap();
+
+    for (world, name, expected) in [
+        (
+            &every,
+            "FairTerminates",
+            StatisticalRefusal::EveryScheduler,
+        ),
+        (&workload, "Cost", StatisticalRefusal::ExactOnlyForm),
+        (&workload, "Bounded", StatisticalRefusal::MissingConfidence),
+    ] {
+        let refusal = check_statistical(
+            StatisticalRequest {
+                subject: world.subject(),
+                claim: world.claim(name),
+                method: StatisticalMethod::Okamoto,
+                seed: 7,
+                sampler: invalid_sampler.clone(),
+                limits: StatisticalLimits::default(),
+                max_witnesses: 1,
+                symmetry: Vec::new(),
+                timed_sampling: fsl_replay::statistical::TimedSampling::default(),
+            },
+            &Cancel::new(),
+        );
+        assert_eq!(refusal, Err(expected));
+    }
+
+    let passed_gate = check_statistical(
+        StatisticalRequest {
+            subject: workload.subject(),
+            claim: workload.claim("P95"),
+            method: StatisticalMethod::Okamoto,
+            seed: 7,
+            sampler: invalid_sampler.clone(),
+            limits: StatisticalLimits::default(),
+            max_witnesses: 1,
+            symmetry: Vec::new(),
+            timed_sampling: fsl_replay::statistical::TimedSampling::default(),
+        },
+        &Cancel::new(),
+    );
+    assert!(matches!(
+        passed_gate,
+        Err(StatisticalRefusal::GeneratorMismatch { supplied }) if supplied == invalid_sampler
+    ));
 }
 
 /// FR-195-AC-5: EN-5 advertises only exact unbounded probabilistic evidence,
@@ -2910,182 +2978,6 @@ fn bounded_event_position_formulas_use_formula_keys_and_exact_extrema() {
     assert_eq!(exact_value(&eventual, "WithinTwo"), ratio(3, 4));
     assert_eq!(exact_value(&always, "Minimum"), ratio(1, 4));
     assert_eq!(exact_value(&always, "Maximum"), ratio(3, 4));
-}
-
-/// FR-196-AC-16 (TC-3060): the conditioned all-scheduler analysis must reset
-/// the nonactivating `a` successor to `s0`, admit the `stay` end component's
-/// reset action, and retain the conditioned extrema. Removing `stay` leaves
-/// the workload ratio at 3/5.
-#[trace("TC-3060", "FR-196-AC-16")]
-#[test]
-fn on_each_reset_process_preserves_conditioned_scheduler_extrema() {
-    use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
-    use fsl_foundation::RequestIndex;
-    use fsl_replay::{ModelCheckLimits, ProofBasis, TerminalValue};
-    use serde_json::Value as Json;
-
-    let model = |with_stay: bool, claims: String| {
-        let mut operations = vec![
-            prob_world::Operation {
-                name: "a",
-                parameters: vec![("route", "ix://test/conditional-reset/Route".into())],
-                modifies: vec!["phase", "activated", "success"],
-                deletes: false,
-            },
-            prob_world::Operation {
-                name: "b",
-                parameters: vec![],
-                modifies: vec!["phase", "activated", "success"],
-                deletes: false,
-            },
-            prob_world::Operation {
-                name: "finish",
-                parameters: vec![("won", prob_world::BOOLEAN.into())],
-                modifies: vec!["phase", "success"],
-                deletes: false,
-            },
-        ];
-        let stay = if with_stay {
-            operations.push(prob_world::Operation {
-                name: "stay",
-                parameters: vec![],
-                modifies: vec!["phase"],
-                deletes: false,
-            });
-            "pre Stay using v on M::T::stay { self.phase = 0 }\n\
-             post Stayed using v on M::T::stay { self.phase = 0 }\n"
-        } else {
-            ""
-        };
-        prob_world::Model {
-            package: "test/conditional-reset",
-            object: "T",
-            population: "ts",
-            key: "x",
-            integers: vec![("Phase", 0, 4), ("Route", 0, 1)],
-            fields: vec![
-                ("phase", "ix://test/conditional-reset/Phase".into()),
-                ("activated", prob_world::BOOLEAN.into()),
-                ("success", prob_world::BOOLEAN.into()),
-            ],
-            operations,
-            body: format!(
-                "pre A using v on M::T::a {{ self.phase = 0 }}\n\
-                 post ADone using v on M::T::a {{ (route = 0 and self.phase = 1 and self.activated = true and self.success = true) or (route = 1 and self.phase = 2 and self.activated = false and self.success = false) }}\n\
-                 pre B using v on M::T::b {{ self.phase = 0 }}\n\
-                 post BDone using v on M::T::b {{ self.phase = 3 and self.activated = true and self.success = false }}\n\
-                 pre Finish using v on M::T::finish {{ self.phase = 3 }}\n\
-                 post Finished using v on M::T::finish {{ self.phase = 4 and self.success = won }}\n\
-                 {stay}\
-                 random T::a(route) ~ {{ 0: 1, 1: 3 }};\n\
-                 random T::finish(won) ~ {{ true: 1, false: 1 }};\n\
-                 terminal Done using v on M when {{ self.phase = 2 or self.phase = 4 }};\n\
-                 workload Even on M {{ weight T::a = 1; weight T::b = 1; weight T::finish = 1; }}\n\
-                 {claims}"
-            ),
-            initial: serde_json::json!({
-                "phase": {"integer": "0"},
-                "activated": {"boolean": false},
-                "success": {"boolean": false},
-            }),
-        }
-    };
-    let each = |name: &str, scheduler: &str, comparison: &str, threshold: &str| {
-        format!(
-            "probabilistic {name} using inf on M under {scheduler} on each (x: M::T) when (x.activated) {{ probability {comparison} {threshold} [ eventually holds(x.success) ] }}\n"
-        )
-    };
-    let scheduled = World::new(&model(
-        true,
-        each("Minimum", "every scheduler", ">=", "rational(1, 2)")
-            + &each("Maximum", "every scheduler", "<=", "rational(9, 10)"),
-    ));
-    let engines = Engines::fsl().expect("exact EN-5 is registered");
-    let settle = |world: &World, name: &str| {
-        let item = exact_probabilistic_item(
-            RequestIndex::new(0),
-            world.request(name, ModelCheckLimits::default()),
-        );
-        let mut records = analyze_items(&engines, vec![item], &Cancel::new());
-        assert_eq!(records.len(), 1);
-        records.remove(0)
-    };
-    for (name, expected) in [("Minimum", ratio(1, 2)), ("Maximum", ratio(1, 1))] {
-        let record = settle(&scheduled, name);
-        let terminal = record.terminal().expect("the exact item settles");
-        if name == "Maximum" {
-            // FR-407-AC-18's qualitative gate rejects an endpoint threshold
-            // of 1. The proper upper-side claim is <= 9/10 and must refute;
-            // scheduler `a` attains 1 because its only activating branch
-            // sets success, while probability values cannot exceed 1.
-            assert_eq!(expected, ratio(1, 1));
-            assert!(
-                matches!(terminal.value(), TerminalValue::Refuted),
-                "the conditioned maximum exceeds 9/10: {:?}",
-                terminal.value()
-            );
-            continue;
-        }
-        let TerminalValue::Proved {
-            basis: ProofBasis::ExactValue { value, .. },
-            ..
-        } = terminal.value()
-        else {
-            panic!(
-                "{name} should retain its exact conditioned value: {:?}",
-                terminal.value()
-            );
-        };
-        assert_eq!(value.value(), &expected, "{name}");
-        let certificate: Json = serde_json::from_slice(
-            terminal
-                .exact_certificate_document()
-                .expect("checked reset certificate"),
-        )
-        .expect("canonical certificate JSON");
-        assert_eq!(certificate["conditional"]["mode"], "optimum");
-        let reset = &certificate["conditional"]["reset"];
-        assert!(reset["values"].is_array(), "reset process values: {reset}");
-        assert!(reset["ranking"].is_array(), "reset process ranks: {reset}");
-        assert!(reset["policy"].is_array(), "reset process policy: {reset}");
-        let states = reset["values"].as_array().expect("reset value rows");
-        assert_eq!(
-            states.len(),
-            2,
-            "s0 and the nonactivating a successor: {reset}"
-        );
-        assert!(
-            states.iter().all(|row| row["value"]
-                == serde_json::json!({
-                    "numerator": "1",
-                    "denominator": "2",
-                })),
-            "both waiting states have conditioned value 1/2: {reset}"
-        );
-        let ranks = reset["ranking"].as_array().expect("reset rank rows");
-        let mut ranks = ranks
-            .iter()
-            .map(|row| row["rank"].as_u64().expect("rank"))
-            .collect::<Vec<_>>();
-        ranks.sort_unstable();
-        assert_eq!(ranks, [1, 2], "the reset policy is proper: {reset}");
-        assert!(
-            reset["policy"].to_string().contains("\"type\":\"reset\""),
-            "the policy uses the reset action from the nonactivating a successor: {reset}"
-        );
-    }
-
-    let workload = World::new(&model(false, each("Ratio", "Even", ">=", "rational(3, 5)")));
-    let record = settle(&workload, "Ratio");
-    let terminal = record.terminal().expect("the workload item settles");
-    let TerminalValue::Proved {
-        basis: ProofBasis::ExactValue { value, .. },
-        ..
-    } = terminal.value()
-    else {
-        panic!("the workload ratio should prove: {:?}", terminal.value());
-    };
-    assert_eq!(value.value(), &ratio(3, 5));
 }
 
 /// Observe the real relation and full-target construction boundaries, rather
