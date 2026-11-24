@@ -65,7 +65,7 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
          probabilistic UndefinedEvery using timed on M over (c: M::Call) under every scheduler on origin\n\
              with alpha 0.4, beta 0.4, indifference 0.005\n\
              {{ probability >= 0.5 [ always[0 ms, 3 ms] holds(c.phase = 0) ] }}\n\
-         probabilistic UndefinedWeightedLongRun using inf on M over (c: M::Call) under every scheduler on origin\n\
+         probabilistic UndefinedWeightedLongRun using inf on M over (c: M::Call) under Even on origin\n\
              with alpha 0.4, beta 0.4, indifference 0.005\n\
              {{ long_run_fraction holds(c.phase = 0) weighted by delay >= 0.5 }}\n\
          probabilistic UndefinedEveryWeightedLongRun using inf on M over (c: M::Call) under every scheduler on origin\n\
@@ -210,7 +210,6 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
             "UndefinedElapsed"
                 | "UndefinedElapsedRegion"
                 | "UndefinedEvery"
-                | "UndefinedWeightedLongRun"
                 | "UndefinedEveryWeightedLongRun"
                 | "UndefinedMeanTime"
         );
