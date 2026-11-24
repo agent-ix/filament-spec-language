@@ -47,10 +47,6 @@ const Q_WITH_TIME_ROOT: &str = "language \"ix:native\" edition \"1-draft\";\n\
     domain \"acme/q\";\n dimension Time;\n\
     unit s : Time = rational(1, 1);\n\
     object Anchor { operation anchor(): Boolean; }\n";
-const Q_WITH_TIME_AND_MS: &str = "language \"ix:native\" edition \"1-draft\";\n\
-    domain \"acme/q\";\n dimension Time;\n\
-    unit s : Time = rational(1, 1);\n\
-    object Anchor { operation anchor(): Boolean; }\n";
 
 fn package_input_from(sources: &[&str]) -> PackageInput {
     let mut documents: Vec<&[u8]> = sources.iter().map(|source| source.as_bytes()).collect();
@@ -585,7 +581,7 @@ fn dimension_equivalence_declarations_match_u37() {
 #[test]
 fn conversions_over_equivalent_dimensions_match_u38() {
     vector_contains("U38", "3000");
-    let mut packages = package_input_from(&[P_WITH_TIME_AND_LENGTH_ROOT, Q_WITH_TIME_AND_MS]);
+    let mut packages = package_input_from(&[P_WITH_TIME_AND_LENGTH_ROOT, Q_WITH_TIME_ROOT]);
     add_package_unit_edge(&mut packages, "acme/q", "ms", "Time", "s", "1/1000");
     let equivalence = "dimension P::Time ~ Q::Time by 1 P::s = 1000 Q::ms;\n";
     assert_eq!(
@@ -628,7 +624,7 @@ fn root_ratios_across_three_packages_match_u40() {
     vector_contains("U40", "1000");
     let mut packages = package_input_from(&[
         P_WITH_TIME_AND_LENGTH_ROOT,
-        Q_WITH_TIME_AND_MS,
+        Q_WITH_TIME_ROOT,
         G_WITH_MILLISECOND_ROOT,
     ]);
     add_package_unit_edge(&mut packages, "acme/q", "ms", "Time", "s", "1/1000");
