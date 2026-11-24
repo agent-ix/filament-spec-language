@@ -13,7 +13,7 @@ use fsl_foundation::diagnostic::Code;
 use super::document::{
     admit_initial_populations, map_environment_refusal, read_document, DocumentKind,
 };
-use super::helpers::object_reference;
+use super::helpers::{object_reference, object_reference_with_universe};
 use super::relationships::{admit_supplied_extents, model_facts};
 use super::{
     check_model_any, fault, refuse, view_of, AdmissionFailure, AnchorKind, DocumentRef, ModelView,
@@ -190,6 +190,7 @@ pub(crate) fn observe_state(
     let mut completeness = BTreeMap::new();
     let mut sizes = BTreeMap::new();
     let mut listed = BTreeMap::new();
+    let mut universes = BTreeMap::new();
     for (population, members) in &state.populations {
         completeness.insert(population.node.clone(), true);
         sizes.insert(
@@ -217,7 +218,18 @@ pub(crate) fn observe_state(
                 };
                 slots.push((attribute.field().name(), slot));
             }
-            let reference = object_reference(views, effective, key)?;
+            let reference = match universes.get(&effective) {
+                Some(universe) => {
+                    object_reference_with_universe(effective.clone(), key, universe.clone())?
+                }
+                None => {
+                    let universe = super::population_universe(views, effective.clone())?;
+                    let reference =
+                        object_reference_with_universe(effective.clone(), key, universe.clone())?;
+                    universes.insert(effective, universe);
+                    reference
+                }
+            };
             references.push(reference.clone());
             objects.push((reference, slots));
         }

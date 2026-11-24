@@ -4545,7 +4545,7 @@ pub fn admit_frame_invocation<'a, 't>(
 /// unequal (a spurious `foreign_reference`/`DanglingReference`).
 /// `pub(crate)`: `fsl_replay::spine::clause` resolves an object argument
 /// the same way.
-fn population_universe(
+pub(super) fn population_universe(
     views: &[ModelView],
     type_identity: EffectiveId,
 ) -> Result<UniverseId, AdmissionFailure> {
@@ -4572,12 +4572,22 @@ mod helpers {
         type_identity: EffectiveId,
         key: &str,
     ) -> Result<ObjectReference, AdmissionFailure> {
+        let universe = population_universe(views, type_identity.clone())?;
+        object_reference_with_universe(type_identity, key, universe)
+    }
+
+    /// The reference for `type_identity` and `key` when its already-resolved
+    /// population universe is `universe`.
+    pub(crate) fn object_reference_with_universe(
+        type_identity: EffectiveId,
+        key: &str,
+        universe: UniverseId,
+    ) -> Result<ObjectReference, AdmissionFailure> {
         let object = ObjectId::new(key.to_owned()).map_err(|_| {
             refuse(
                 admission_record(Code::InvalidRuntimeInput, "invalid-value").with("field", "key"),
             )
         })?;
-        let universe = population_universe(views, type_identity.clone())?;
         Ok(ObjectReference::new(universe, type_identity, object))
     }
 
