@@ -52,6 +52,20 @@ impl StateEnvironment {
     }
 }
 
+/// Whether a replay request's stage-limits wire can carry this setting.
+pub(crate) const fn is_replay_wire_stage_setting(setting: Setting) -> bool {
+    !matches!(
+        setting,
+        Setting::ReplayInputBytes
+            | Setting::FormatOutputBytes
+            | Setting::MonitorMaxWindowValues
+            | Setting::MonitorRetainedPositions
+            | Setting::MonitorRetainedIdentities
+            | Setting::MonitorPreparationWorkUnits
+            | Setting::MonitorPreparationStorage
+    ) && !setting.is_item_engine_setting()
+}
+
 /// The proving run's stage limits (ADR-013 O-26, FR-263): a map from setting
 /// name (FR-255) to the bound the proving run configured, so a request never
 /// silently substitutes FSL's own compiled-in defaults for the proving run's
@@ -103,18 +117,7 @@ impl StageLimits {
     /// two by name as well.
     pub fn with_named(mut self, name: &str, bound: u64) -> Result<Self, StageLimitNameRefusal> {
         match SettingName::from_name(name) {
-            Some(SettingName::Stage(setting))
-                if !matches!(
-                    setting,
-                    Setting::ReplayInputBytes
-                        | Setting::FormatOutputBytes
-                        | Setting::MonitorMaxWindowValues
-                        | Setting::MonitorRetainedPositions
-                        | Setting::MonitorRetainedIdentities
-                        | Setting::MonitorPreparationWorkUnits
-                        | Setting::MonitorPreparationStorage
-                ) && !setting.is_item_engine_setting() =>
-            {
+            Some(SettingName::Stage(setting)) if is_replay_wire_stage_setting(setting) => {
                 self.stages.insert(setting, bound);
             }
             Some(SettingName::Accounting(setting)) => {
@@ -1275,6 +1278,19 @@ mod tests {
                     name: name.to_owned()
                 },
                 "{name}"
+            );
+        }
+    }
+
+    #[trace("TC-721", "FR-255-AC-4")]
+    #[test]
+    fn stage_limits_admit_only_settings_the_replay_wire_carries() {
+        for setting in Setting::ALL {
+            assert_eq!(
+                StageLimits::default().with_named(setting.name(), 1).is_ok(),
+                is_replay_wire_stage_setting(*setting),
+                "{}",
+                setting.name()
             );
         }
     }

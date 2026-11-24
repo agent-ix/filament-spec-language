@@ -1096,9 +1096,9 @@ fn tc_774_limits_flow_into_the_request_and_refusals_are_ordered() {
         ) {
             continue;
         }
-        // Replay never runs an analysis item engine, so a request omits its
-        // rows (FR-255 "Lifecycle caller-limit coverage").
-        let expected = (!setting.is_item_engine_setting()).then_some(&bound);
+        // Keep replay request encoding aligned with the settings accepted by
+        // request decoding.
+        let expected = crate::request::is_replay_wire_stage_setting(setting).then_some(&bound);
         assert_eq!(wire.stage_limits.get(name), expected, "{name}");
     }
 

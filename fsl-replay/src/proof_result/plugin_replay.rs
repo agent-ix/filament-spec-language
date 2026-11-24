@@ -20,7 +20,9 @@ use crate::execute::{process_provider_obligation, BoundEntries, IdentityEncodeEr
 use crate::identity::{DeclaredDomain, DefinitionSourceRef, QualifiedName};
 use crate::limits::CallerLimits;
 use crate::outcome::OutcomeDiagnostic;
-use crate::request::{DependencyEntryWire, ReplayRequestWire, StateEnvironment};
+use crate::request::{
+    is_replay_wire_stage_setting, DependencyEntryWire, ReplayRequestWire, StateEnvironment,
+};
 use crate::spine::{AdmittedModels, CheckedUnit, EmittedUnit};
 use crate::witness::{CanonicalAssignment, ReplaySource};
 use filament_exact::{Identifier, Origin, Role, ScalarLimits, ValueType};
@@ -138,15 +140,7 @@ impl PluginReplayContext {
         let stage_limits = limits
             .bounds()
             .into_iter()
-            .filter(|(setting, _)| {
-                // A request carries neither of these two nor the analysis item
-                // engine rows replay never executes: decode refuses them
-                // (FR-255 "Lifecycle caller-limit coverage").
-                !matches!(
-                    setting,
-                    Setting::ReplayInputBytes | Setting::FormatOutputBytes
-                ) && !setting.is_item_engine_setting()
-            })
+            .filter(|(setting, _)| is_replay_wire_stage_setting(*setting))
             .map(|(setting, bound)| (setting.name().to_owned(), bound))
             .collect();
         Self {
