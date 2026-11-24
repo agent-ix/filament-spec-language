@@ -57,18 +57,21 @@ pub(super) fn run(
     ) {
         Ok(ProbabilityWitnessReplay::Reproduced(token)) => {
             let quantile_bound;
-            let (bound, claim_type) = match &claim.form {
-                ProbForm::Reach { bound, .. } => (bound, "probability"),
-                ProbForm::Probability { bound, .. } => (bound, "probability"),
-                ProbForm::LongRunFraction { bound, .. } => (bound, "long-run-fraction"),
-                ProbForm::ExpectedReward { bound, .. } => (bound, "expected-total"),
-                ProbForm::MeanOfFraction { bound, .. } => (bound, "mean-of-fraction"),
+            let Some(claim_type) = super::probabilistic_bound_type(&claim.form) else {
+                return not_yet();
+            };
+            let bound = match &claim.form {
+                ProbForm::Reach { bound, .. }
+                | ProbForm::Probability { bound, .. }
+                | ProbForm::LongRunFraction { bound, .. }
+                | ProbForm::ExpectedReward { bound, .. }
+                | ProbForm::MeanOfFraction { bound, .. } => bound,
                 ProbForm::Quantile { q, threshold, .. } => {
                     quantile_bound = match threshold {
                         Bound::AtMost(_) => Bound::AtLeast(q.clone()),
                         Bound::AtLeast(_) => Bound::AtMost(q.clone()),
                     };
-                    (&quantile_bound, "quantile")
+                    &quantile_bound
                 }
                 _ => return not_yet(),
             };

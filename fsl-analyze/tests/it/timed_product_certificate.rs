@@ -554,14 +554,13 @@ fn deadline_at_995_refutes_with_two_losses_at_the_horizon() {
     }
     assert_eq!(loss_times, [ratio(2, 1), ratio(4, 1)]);
     assert!(
-        path.steps.last().is_some_and(|step| {
-            matches!(&step.choice, fsl_replay::ProductAction::UnitDelay)
-        }),
+        path.steps
+            .last()
+            .is_some_and(|step| { matches!(&step.choice, fsl_replay::ProductAction::UnitDelay) }),
         "after the second loss at 4 ms, the witness advances past the horizon"
     );
     assert_eq!(elapsed, ratio(5, 1));
-    let (_, counterexamples) =
-        fsl_analyze::analyze::split_records(vec![record], &world.package);
+    let (_, counterexamples) = fsl_analyze::analyze::split_records(vec![record], &world.package);
     let wire = counterexamples[0]
         .wire
         .as_ref()

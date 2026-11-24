@@ -224,6 +224,20 @@ fn assert_replayed_undefined(
         token.wire.as_ref().unwrap()["evidence"]["undefined"]["cause"],
         "absent-key"
     );
+    let expected_bound = match claim {
+        "Dropped" => serde_json::json!({
+            "type": "long-run-fraction",
+            "comparison": "greater-or-equal",
+            "threshold": {"numerator": "1", "denominator": "2"}
+        }),
+        "RewardUndefined" => serde_json::json!({
+            "type": "expected-total",
+            "comparison": "less-or-equal",
+            "threshold": {"numerator": "1", "denominator": "1"}
+        }),
+        _ => panic!("unexpected undefined claim {claim}"),
+    };
+    assert_eq!(token.wire.as_ref().unwrap()["bound"], expected_bound);
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     let replay = fsl_replay::replay_probabilistic_undefined(
         &world.package,

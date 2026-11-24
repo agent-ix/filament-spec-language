@@ -1146,6 +1146,14 @@ fn workload_mean_refutation_uses_a_checked_subsystem_and_equality_never_refutes(
         token.wire.as_ref().unwrap()["evidence"]["type"],
         "subsystem"
     );
+    assert_eq!(
+        token.wire.as_ref().unwrap()["bound"]["type"],
+        "mean-of-fraction"
+    );
+    assert_eq!(
+        token.wire.as_ref().unwrap()["bound"]["comparison"],
+        "greater-or-equal"
+    );
     let system = ModelSystem::new(world.subject().simulation).unwrap();
     let replay = fsl_replay::replay_probabilistic_witness(
         &world.package,
