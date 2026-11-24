@@ -609,8 +609,7 @@ pub(super) fn run(
     } = trace
     {
         super::run_finite_window_core(
-            context.clause,
-            context.key,
+            (context.clause, context.key),
             (
                 &super::Timestamped {
                     observations,

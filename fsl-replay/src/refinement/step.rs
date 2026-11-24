@@ -742,8 +742,7 @@ fn check_protocol_node_step(
     };
     let (evaluated, soft) = match evaluate_node_arguments(
         refinement,
-        concrete_system,
-        abstract_system,
+        (concrete_system, abstract_system),
         pre,
         step,
         row,

@@ -491,7 +491,7 @@ fn roots_over(
     let mut found = Vec::new();
     for start in &instances.initials {
         for over in &instances.overs {
-            for (instance, reference) in &instances.each {
+            for (_, reference) in &instances.each {
                 let walked = walk(
                     system,
                     subject,

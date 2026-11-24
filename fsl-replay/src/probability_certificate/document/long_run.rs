@@ -1277,10 +1277,8 @@ fn induced_graph(
         &graph,
         reference,
         rows,
-        cx.limits,
-        cx.cancel,
-        &mut cx.meter,
-        &mut cx.storage,
+        (cx.limits, cx.cancel),
+        (&mut cx.meter, &mut cx.storage),
         with_enabled.then_some(&mut enabled),
     )?
     else {
