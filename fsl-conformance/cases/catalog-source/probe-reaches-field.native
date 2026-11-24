@@ -1,5 +1,4 @@
 language "ix:native" edition "1-draft";
-profile v = "filament.value.complete/v1";
-profile mdl = "filament.model.complete/v1";
+profile v = "filament.model.complete/v1";
 object Node identity (id) { id: Int[0,9]; next: Reference<Node>?; population nodes; }
 invariant R using v on Node at current { reaches(self, self, next) }

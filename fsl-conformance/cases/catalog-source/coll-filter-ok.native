@@ -1,3 +1,0 @@
-language "ix:native" edition "1-draft";
-profile v = "filament.value.complete/v1";
-function f using v(s: Sequence<Integer>[0,3]): Sequence<Integer>[0,3] pure { filter(x in s: x > 0) }
