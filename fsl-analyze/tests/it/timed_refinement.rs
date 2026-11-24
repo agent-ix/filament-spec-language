@@ -511,10 +511,17 @@ fn clock_reference_selectors_use_the_timed_profile_before_refinement_gates() {
     r["presence"] = json!("optional");
     r["multiplicity"]["lower"] = json!(0);
     fields.push(r);
+    // The checked model type orders fields by declaration identity, which is
+    // also the index basis used by the nested bound path.
+    let mut effective_field_ids: Vec<_> = fields
+        .iter()
+        .map(|field| field["identity"].as_str().expect("field identity"))
+        .collect();
+    effective_field_ids.sort_unstable();
     let r_field_index = u32::try_from(
-        fields
+        effective_field_ids
             .iter()
-            .position(|field| field["name"] == "r")
+            .position(|identity| *identity == ident("Call/r"))
             .expect("r is a concrete object field"),
     )
     .expect("the field index fits the checked path representation");
@@ -565,7 +572,7 @@ fn clock_reference_selectors_use_the_timed_profile_before_refinement_gates() {
             matches!(
                 &domain.member,
                 fsl_foundation::bound::DomainKey::Node { path, .. }
-                    if path.first() == Some(&r_field_index)
+                    if path.get(1) == Some(&r_field_index)
             ),
             "the domain path begins at concrete object field `r`: {domain:?}"
         );
