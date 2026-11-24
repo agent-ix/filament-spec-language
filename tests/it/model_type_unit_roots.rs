@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! TC-419: a selected model's otherwise unused type positions root nominal units.
+//! TC-419: selected model type positions root nominal units without conflating
+//! declaration nodes.
 
 use fsl_command::checked_handoff::{write, CheckedHandoffRequest, Corpus};
 use fsl_command::emit_checked_v2::Request;
@@ -141,7 +142,9 @@ fn assert_root(position: &str) {
     assert!(dependencies.contains(&dimension["node_id"]));
     assert!(dependencies.contains(&base["node_id"]));
     assert_eq!(base["dependencies"], json!([dimension["node_id"]]));
-    assert!(declared("Unused").is_none());
+    let unused = declared("Unused").expect("FR-910 retains the source declaration node");
+    assert_eq!(unused["semantic_form"], "unit");
+    assert_eq!(unused["owner"]["kind"], "source");
 }
 
 #[trace("FR-094-AC-15", "TC-419")]
