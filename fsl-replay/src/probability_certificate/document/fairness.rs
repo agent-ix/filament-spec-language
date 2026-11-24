@@ -113,6 +113,23 @@ struct WireTarget<'a> {
 pub(super) fn admit(claim: &CheckedProbabilisticClaim) -> Result<(), ProbabilityDocumentError> {
     if matches!(
         &claim.form,
+        ProbForm::Reach {
+            target: ReachTarget::Eventually(_),
+            ..
+        }
+    ) {
+        return if !claim.fairness.is_empty()
+            && matches!(claim.scheduler, ProbScheduler::Every)
+            && fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
+                == Some(fsl_semantics::check::TemporalProfile::InfiniteTrace)
+        {
+            Ok(())
+        } else {
+            Err(ProbabilityDocumentError::Unsupported)
+        };
+    }
+    if matches!(
+        &claim.form,
         ProbForm::Quantile { .. }
             | ProbForm::MeanOfFraction { .. }
             | ProbForm::Probability {
