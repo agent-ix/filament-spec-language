@@ -151,6 +151,23 @@ fn every_result_names_the_checked_subject_it_was_evaluated_for() {
                     assert_eq!(raised.usage.get(counter), 0, "{kind} {counter:?}");
                     continue;
                 }
+                let default_ceiling = TemporalEvidenceLimits::default().ceiling(counter);
+                let raised_ceiling = default_ceiling.saturating_add(1);
+                if raised_ceiling > default_ceiling {
+                    let mut raised = asked.clone();
+                    raised.limits =
+                        TemporalEvidenceLimits::default().with_ceiling(counter, raised_ceiling);
+                    let (raised, _) = run(&package, &clause, &raised);
+                    let raised = raised.expect("a cap above default yields a complete result");
+                    assert!(raised.incomplete.is_none(), "{kind} {counter:?}");
+                    assert_eq!(raised.truth, result.truth, "{kind} {counter:?}");
+                    assert_eq!(raised.support, result.support, "{kind} {counter:?}");
+                    assert_eq!(raised.subject, result.subject, "{kind} {counter:?}");
+                    assert_ne!(
+                        raised.result_identity, result.result_identity,
+                        "the changed {counter:?} ceiling participates in result identity"
+                    );
+                }
                 for ceiling in [0, used, used + 1] {
                     let mut funded = asked.clone();
                     funded.limits =

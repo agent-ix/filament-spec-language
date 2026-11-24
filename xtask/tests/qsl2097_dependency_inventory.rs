@@ -117,12 +117,71 @@ fn direct_workspace_dependencies_are_present_in_the_lockfile() {
     }
 }
 
-/// The lock identifies the reviewed parser package, whose exact grant and
-/// both required notices must remain present. A package substitution with a
-/// different grant therefore fails this independent rights assertion.
+fn manifest_version(manifest: &Value, name: &str) -> &str {
+    let declaration = manifest["dependencies"]
+        .get(name)
+        .unwrap_or_else(|| panic!("xtask declares {name}"));
+    let required = declaration
+        .as_table()
+        .and_then(|declaration| declaration.get("version"))
+        .and_then(Value::as_str)
+        .or_else(|| declaration.as_str())
+        .unwrap_or_else(|| panic!("{name} version"));
+    required
+}
+
+fn assert_registry_dependency_grant(
+    lock: &Value,
+    registry: &Path,
+    name: &str,
+    version: &str,
+    expected_license: &str,
+) {
+    let package = lock["package"]
+        .as_array()
+        .expect("lock packages")
+        .iter()
+        .find(|package| {
+            package["name"].as_str() == Some(name) && package["version"].as_str() == Some(version)
+        })
+        .unwrap_or_else(|| panic!("{name} {version} is locked"));
+    assert!(package["source"]
+        .as_str()
+        .is_some_and(|source| source.starts_with("registry+")));
+    assert!(package["checksum"]
+        .as_str()
+        .is_some_and(|checksum| !checksum.is_empty()));
+
+    let crate_manifest = fs::read_dir(&registry)
+        .unwrap_or_else(|error| panic!("{}: {error}", registry.display()))
+        .filter_map(Result::ok)
+        .map(|cache| cache.path().join(format!("{name}-{version}/Cargo.toml")))
+        .find(|path| path.is_file())
+        .unwrap_or_else(|| panic!("locked {name} source is available for grant inspection"));
+    let source: Value = toml::from_str(
+        &fs::read_to_string(&crate_manifest).expect("read locked dependency manifest"),
+    )
+    .expect("parse locked dependency manifest");
+    assert_eq!(
+        source["package"]["license"].as_str(),
+        Some(expected_license),
+        "{name} {version} retains its reviewed grant"
+    );
+    let crate_dir = crate_manifest.parent().expect("crate directory");
+    for notice in ["LICENSE-MIT", "LICENSE-APACHE"] {
+        let notice = crate_dir.join(notice);
+        let contents = fs::read_to_string(&notice)
+            .unwrap_or_else(|error| panic!("{}: {error}", notice.display()));
+        assert!(!contents.trim().is_empty(), "{} is empty", notice.display());
+    }
+}
+
+/// Check grants and notices for two independent third-party packages used by
+/// xtask. A changed grant on either package fails against its literal reviewed
+/// identity, while the lock and source metadata retain the full audit evidence.
 #[test]
 #[trace("NFR-004-M-2")]
-fn locked_parser_dependency_retains_its_grant_and_notices() {
+fn locked_registry_dependencies_retain_their_grants_and_notices() {
     let root = root();
     let manifest: Value = toml::from_str(
         &fs::read_to_string(root.join("xtask/Cargo.toml")).expect("read xtask manifest"),
@@ -131,56 +190,23 @@ fn locked_parser_dependency_retains_its_grant_and_notices() {
     let lock: Value =
         toml::from_str(&fs::read_to_string(root.join("Cargo.lock")).expect("read lockfile"))
             .expect("parse lockfile");
-    let declaration = manifest["dependencies"]
-        .get("toml")
-        .expect("xtask declares toml");
-    let required = declaration
-        .as_table()
-        .and_then(|declaration| declaration.get("version"))
-        .and_then(Value::as_str)
-        .or_else(|| declaration.as_str())
-        .expect("toml version");
-    let package = lock["package"]
-        .as_array()
-        .expect("lock packages")
-        .iter()
-        .find(|package| {
-            package["name"].as_str() == Some("toml")
-                && package["version"].as_str() == Some(required)
-        })
-        .expect("the parser dependency is locked at the manifest version");
-    assert!(package["source"]
-        .as_str()
-        .is_some_and(|source| source.starts_with("registry+")));
-    assert!(package["checksum"]
-        .as_str()
-        .is_some_and(|checksum| !checksum.is_empty()));
-
     let registry = std::env::var_os("CARGO_HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| {
             PathBuf::from(std::env::var_os("HOME").expect("HOME or CARGO_HOME")).join(".cargo")
         })
         .join("registry/src");
-    let crate_manifest = fs::read_dir(&registry)
-        .unwrap_or_else(|error| panic!("{}: {error}", registry.display()))
-        .filter_map(Result::ok)
-        .map(|cache| cache.path().join(format!("toml-{required}/Cargo.toml")))
-        .find(|path| path.is_file())
-        .expect("locked parser source is available for grant inspection");
-    let source: Value =
-        toml::from_str(&fs::read_to_string(&crate_manifest).expect("read locked parser manifest"))
-            .expect("parse locked parser manifest");
-    assert_eq!(
-        source["package"]["license"].as_str(),
-        Some("MIT OR Apache-2.0")
-    );
-    let crate_dir = crate_manifest.parent().expect("crate directory");
-    for notice in ["LICENSE-MIT", "LICENSE-APACHE"] {
-        let notice = crate_dir.join(notice);
-        let contents = fs::read_to_string(&notice)
-            .unwrap_or_else(|error| panic!("{}: {error}", notice.display()));
-        assert!(!contents.trim().is_empty(), "{} is empty", notice.display());
+    for (name, license) in [
+        ("toml", "MIT OR Apache-2.0"),
+        ("serde", "MIT OR Apache-2.0"),
+    ] {
+        assert_registry_dependency_grant(
+            &lock,
+            &registry,
+            name,
+            manifest_version(&manifest, name),
+            license,
+        );
     }
 }
 
