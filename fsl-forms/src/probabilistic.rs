@@ -352,7 +352,10 @@ fn probabilistic_body(
             threshold: expression(0)?,
         }),
         b"mean" => Ok(ProbabilisticBody::MeanOfFraction {
-            fraction: fraction_form(cst, only(&form_items, Production::Fraction, form)?)?,
+            fraction: Box::new(fraction_form(
+                cst,
+                only(&form_items, Production::Fraction, form)?,
+            )?),
             op,
             threshold: exact(0)?,
         }),

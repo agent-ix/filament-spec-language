@@ -4650,7 +4650,7 @@ pub enum ProbabilisticBody {
     /// `mean of (fraction) op threshold`.
     MeanOfFraction {
         /// The fraction.
-        fraction: FractionForm,
+        fraction: Box<FractionForm>,
         /// The comparison.
         op: BoundOp,
         /// The threshold.
