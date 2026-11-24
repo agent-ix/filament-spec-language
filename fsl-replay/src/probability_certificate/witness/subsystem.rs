@@ -17,6 +17,39 @@ pub(super) fn replay(
     cancel: &Cancel,
 ) -> Result<ProbabilityWitnessReplay, ProbabilityWitnessError> {
     let long_run_claim = matches!(claim.form, ProbForm::LongRunFraction { .. });
+    let fair_minimum_ranked = !claim.fairness.is_empty()
+        && matches!(claim.scheduler, ProbScheduler::Every)
+        && matches!(
+            claim.form,
+            ProbForm::Reach {
+                bound: Bound::AtLeast(_),
+                target: ReachTarget::Eventually(_),
+            }
+        )
+        && witness.subsystem.as_ref().is_some_and(|certificate| {
+            serde_json::from_slice::<serde_json::Value>(certificate.as_bytes())
+                .ok()
+                .is_some_and(|document| {
+                    document
+                        .pointer("/objective/base/profile")
+                        .and_then(serde_json::Value::as_str)
+                        == Some("filament.probability-objective/cyclic-mdp-fair-eventual/v1")
+                        && document.get("ranking").is_some()
+                })
+        });
+    if fair_minimum_ranked
+        && !super::super::cyclic::admit_acyclic_probabilistic_refutation_subject(
+            system, limits, cancel,
+        )
+        .map_err(bounded::document_error)?
+    {
+        return Err(ProbabilityWitnessError::CertificateRejected(
+            ProbabilityCertificateRejection {
+                rule: ProbabilityCertificateRule::Malformed,
+                at: ProbabilityCertificateLocus::Member("ranking"),
+            },
+        ));
+    }
     if !(long_run_claim
         || matches!(claim.form, ProbForm::ExpectedReward { .. })
         || matches!(
