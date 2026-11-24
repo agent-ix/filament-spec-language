@@ -228,7 +228,7 @@ fn cargo_child(
         command.args(["child_determinism", "--", "--test-threads=2"]);
     } else {
         command.args([
-            "qualification_determinism::child_determinism_sample",
+            "child_determinism_sample",
             "--",
             "--exact",
             "--test-threads=1",
