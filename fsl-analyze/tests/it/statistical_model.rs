@@ -10,9 +10,10 @@ use filament_checked::key::DeclarationKey;
 use filament_exact::{Cancel, Integer, Rational, Value};
 use filament_semantic_value::catalog::UndefinedReason;
 use fsl_analyze::statistical::{
-    BehaviourSampler, DEFAULT_MAX_WITNESSES, Drawn, QuantileComparison, RegenerationWalk, Sample,
-    SampleHalt, SampledRequest, StatisticalClaim, StatisticalRequest, TestSubject, WalkStep,
     check_sampled, check_statistical, witness_reader, witness_reader_with_timed_sampling,
+    BehaviourSampler, Drawn, QuantileComparison, RegenerationWalk, Sample, SampleHalt,
+    SampledRequest, StatisticalClaim, StatisticalRequest, TestSubject, WalkStep,
+    DEFAULT_MAX_WITNESSES,
 };
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::TransitionId;
@@ -20,23 +21,23 @@ use fsl_eval::simulation::model::{ExpansionLimits, TimedSystem};
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::selection::DefinitionRef;
-use fsl_replay::SymmetryRefusal;
 use fsl_replay::statistical::{
-    Confidence, Decision, MeasureValue, StatisticalLimit, StatisticalLimits, StatisticalMethod,
-    StatisticalOutcome, StatisticalRefusal, StatisticalStop, StatisticalUnsupported,
-    StatisticalVerdict, UndecidedCause, WitnessReplay, WitnessValue, replay_sampled_witness,
+    replay_sampled_witness, Confidence, Decision, MeasureValue, StatisticalLimit,
+    StatisticalLimits, StatisticalMethod, StatisticalOutcome, StatisticalRefusal, StatisticalStop,
+    StatisticalUnsupported, StatisticalVerdict, UndecidedCause, WitnessReplay, WitnessValue,
 };
-use fsl_replay::statistical::{SubjectLimits, settle_statistical, settle_statistical_refusal};
-use fsl_replay::{ClaimPredicate, TerminalValue, UndefinedLocus};
+use fsl_replay::statistical::{settle_statistical, settle_statistical_refusal, SubjectLimits};
+use fsl_replay::SymmetryRefusal;
 use fsl_replay::{
-    ExactProbBuildIssue, IncompleteCause, ModelCheckLimit, settle_exact_prob_build_issue,
+    settle_exact_prob_build_issue, ExactProbBuildIssue, IncompleteCause, ModelCheckLimit,
 };
+use fsl_replay::{ClaimPredicate, TerminalValue, UndefinedLocus};
 use fsl_route::reductions::SymmetryDeclaration;
 use fsl_semantics::check::{Event, ProbForm, ProbScheduler};
 use ix_trace_rs::trace;
 use serde_json::json;
 
-use crate::analyze_cli_support::{Workspace, analyze as analyze_source, request_over};
+use crate::analyze_cli_support::{analyze as analyze_source, request_over, Workspace};
 use crate::prob_world::{self, World};
 
 fn ratio(numerator: i64, denominator: i64) -> Rational {
@@ -693,7 +694,7 @@ fn sampled_seven_reproduces_a_stopped_prefix_and_seed_eight_changes_it() {
 /// FR-191-AC-6: native model requests preserve the serial model-work order
 /// for every requested worker count, while a real concurrent sampler
 /// completes high trace indices first and is merged in trace order.
-#[trace("TC-1417")]
+#[trace("TC-1417", "FR-191-AC-6")]
 #[test]
 fn worker_counts_preserve_model_results_and_merge_concurrent_samples_by_trace() {
     let service = service();
@@ -744,11 +745,11 @@ fn worker_counts_preserve_model_results_and_merge_concurrent_samples_by_trace() 
             stop: StatisticalStop::PreflightLimit {
                 limit: StatisticalLimit::MaxSamples,
                 value: 1_000,
-                required: 9_210_341,
+                required,
             },
             partial,
             ..
-        } if partial.samples == 0 && partial.draws == 0
+        } if partial.samples == 0 && partial.draws == 0 && required == &filament_exact::Integer::from(9_210_341_u64)
     ));
     for workers in [2, 4, 64] {
         let parallel = run_workers(
@@ -803,16 +804,14 @@ fn worker_counts_preserve_model_results_and_merge_concurrent_samples_by_trace() 
         "only the merged trace prefix contributes samples"
     );
     assert!(concurrent_sampler.draws.len() <= 103);
-    assert!(
-        concurrent_sampler
-            .completed
-            .chunks(4)
-            .all(|batch| batch[0] == *batch.iter().max().expect("nonempty batch"))
-    );
+    assert!(concurrent_sampler
+        .completed
+        .chunks(4)
+        .all(|batch| batch[0] == *batch.iter().max().expect("nonempty batch")));
 }
 
 /// FR-191-AC-7: a zero-worker request is refused before the sampler is called.
-#[trace("TC-1417")]
+#[trace("TC-1417", "FR-191-AC-7")]
 #[test]
 fn zero_workers_refuses_without_drawing_a_sample() {
     let claim = sampled_p95();
@@ -853,7 +852,7 @@ fn zero_workers_refuses_without_drawing_a_sample() {
 
 /// FR-191-AC-7: cancellation after a shared prefix retains exactly the
 /// one-worker merged prefix and exposes no speculative higher trace.
-#[trace("TC-1417")]
+#[trace("TC-1417", "FR-191-AC-7")]
 #[test]
 fn concurrent_cancellation_discards_unmerged_higher_traces() {
     let claim = sampled_p95();

@@ -809,7 +809,10 @@ impl Plan<'_> {
                     .min(sampler.sample_batch_width())
                     .min(usize::try_from(remaining).unwrap_or(usize::MAX));
                 if batch_len == 0 {
-                    return Err(fault("sampler-declared-zero-sample-batch-width"));
+                    return Err(fault(InternalFault::new(
+                        "statistical",
+                        "sampler-declared-zero-sample-batch-width",
+                    )));
                 }
                 let mut traces = Vec::with_capacity(batch_len);
                 for offset in 0..batch_len {
@@ -830,16 +833,23 @@ impl Plan<'_> {
                 }
                 for (sample_trace, sample) in batch {
                     if !traces.contains(&sample_trace) {
-                        return Err(fault("worker-batch-returned-an-unrequested-trace"));
+                        return Err(fault(InternalFault::new(
+                            "statistical",
+                            "worker-batch-returned-an-unrequested-trace",
+                        )));
                     }
                     if speculative.insert(sample_trace, sample).is_some() {
-                        return Err(fault("worker-batch-returned-a-duplicate-trace"));
+                        return Err(fault(InternalFault::new(
+                            "statistical",
+                            "worker-batch-returned-a-duplicate-trace",
+                        )));
                     }
                 }
             }
-            let drawn = speculative
-                .remove(&trace)
-                .ok_or(fault("worker-batch-omitted-a-trace"))?;
+            let drawn = speculative.remove(&trace).ok_or(fault(InternalFault::new(
+                "statistical",
+                "worker-batch-omitted-a-trace",
+            )))?;
             tally.draws += 1;
             let Drawn { sample, steps } = match drawn {
                 Err(halt) => return halted(halt),
