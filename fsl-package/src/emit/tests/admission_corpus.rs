@@ -3323,6 +3323,45 @@ fn step_rows_carry_their_source_regions_by_ordinal() {
             .collect();
         assert_eq!(written_targets, targets);
         let written = wire(&emitted.emission);
+        for step in node["body"]["steps"].as_array().expect("steps") {
+            if step["target"]["kind"] == "operation" {
+                let operation_key = &step["target"]["operation"];
+                let operation_anchor = nodes(&written)
+                    .iter()
+                    .find(|candidate| candidate["node_id"] == *operation_key)
+                    .expect("the step target names its serialized operation anchor");
+                assert_eq!(operation_anchor["semantic_form"], "operation_anchor");
+                let members = operation_anchor["body"]["members"]
+                    .as_array()
+                    .expect("an operation anchor has serialized members");
+                let context_ref = members
+                    .iter()
+                    .find(|member| member["name"] == "context")
+                    .expect("the operation anchor context")["value"]
+                    .clone();
+                assert_eq!(context_ref["term"], "reference");
+                let declaring_type = nodes(&written)
+                    .iter()
+                    .find(|candidate| candidate["node_id"] == context_ref["target"])
+                    .expect("the operation anchor's declaring type");
+                assert_eq!(declaring_type["semantic_form"], "object_type");
+                assert_eq!(
+                    declaring_type["owner"],
+                    json!({
+                        "identity": "example/rows-abstract",
+                        "kind": "model",
+                        "node": "ix://example/rows-abstract/ConfigVersion",
+                    })
+                );
+                let operation = members
+                    .iter()
+                    .find(|member| member["name"] == "operation")
+                    .expect("the anchored operation")["value"]["value"]
+                    .clone();
+                assert_eq!(operation, json!("attemptUpdate"));
+                assert_eq!(operation_anchor["node_id"], *operation_key);
+            }
+        }
         let sidecar = written["refinement_step_rows"]
             .as_array()
             .expect("a step-row sidecar");
