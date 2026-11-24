@@ -1360,14 +1360,16 @@ fn plan_test_path(workspace_root: &Path, path: &str, recipe: &mut Recipe) -> Res
         for name in names {
             add_target_filter(
                 recipe,
-                "xtask",
-                TestTarget::Integration(target.to_owned()),
-                Some(name),
-                true,
-                &[],
-                false,
-                None,
-                false,
+                TestSelector {
+                    package: "xtask".to_owned(),
+                    target: TestTarget::Integration(target.to_owned()),
+                    filter: Some(name),
+                    exact: true,
+                    skip: Vec::new(),
+                    timed: false,
+                    threads: None,
+                    no_match_is_note: false,
+                },
             );
         }
         return Ok(());
@@ -1482,14 +1484,16 @@ fn apply_rule(workspace_root: &Path, path: &str, rule: &Rule, recipe: &mut Recip
             }
             LibRule::Fixed(filter) => add_target_filter(
                 recipe,
-                package,
-                TestTarget::Library,
-                Some(filter.to_owned()),
-                false,
-                rule.skips,
-                false,
-                rule.threads,
-                false,
+                TestSelector {
+                    package: package.to_owned(),
+                    target: TestTarget::Library,
+                    filter: Some(filter.to_owned()),
+                    exact: false,
+                    skip: rule.skips.iter().map(|skip| (*skip).to_owned()).collect(),
+                    timed: false,
+                    threads: rule.threads,
+                    no_match_is_note: false,
+                },
             ),
             LibRule::Whole => add_whole_library(recipe, package),
         }
@@ -1565,7 +1569,7 @@ fn add_all_it_modules(workspace_root: &Path, package: &str, recipe: &mut Recipe)
         let module_file = module
             .attrs
             .iter()
-            .find_map(|attribute| path_attribute(attribute))
+            .find_map(path_attribute)
             .map(|relative| base.join(relative))
             .unwrap_or_else(|| base.join(format!("{module_name}.rs")));
         let module_file = if module_file.exists() {
@@ -1623,7 +1627,7 @@ fn top_level_integration_modules(workspace_root: &Path, package: &str) -> Result
         let file = module
             .attrs
             .iter()
-            .find_map(|attribute| path_attribute(attribute))
+            .find_map(path_attribute)
             .map(|relative| base.join(relative))
             .unwrap_or_else(|| base.join(format!("{name}.rs")));
         let file = if file.exists() {
@@ -1753,82 +1757,71 @@ fn apply_crate_fallback(path: &str, workspace_root: &Path, recipe: &mut Recipe) 
     Ok(())
 }
 
-fn add_target_filter(
-    recipe: &mut Recipe,
-    package: &str,
-    target: TestTarget,
-    filter: Option<String>,
-    exact: bool,
-    skips: &[&str],
-    timed: bool,
-    threads: Option<usize>,
-    no_match_is_note: bool,
-) {
-    recipe.selectors.insert(TestSelector {
-        package: package.to_owned(),
-        target,
-        filter,
-        exact,
-        skip: skips.iter().map(|skip| (*skip).to_owned()).collect(),
-        timed,
-        threads,
-        no_match_is_note,
-    });
+fn add_target_filter(recipe: &mut Recipe, selector: TestSelector) {
+    recipe.selectors.insert(selector);
 }
 
 fn add_library(recipe: &mut Recipe, package: &str, filter: String, no_match_is_note: bool) {
     add_target_filter(
         recipe,
-        package,
-        TestTarget::Library,
-        Some(filter),
-        false,
-        &[],
-        false,
-        None,
-        no_match_is_note,
+        TestSelector {
+            package: package.to_owned(),
+            target: TestTarget::Library,
+            filter: Some(filter),
+            exact: false,
+            skip: Vec::new(),
+            timed: false,
+            threads: None,
+            no_match_is_note,
+        },
     );
 }
 
 fn add_whole_library(recipe: &mut Recipe, package: &str) {
     add_target_filter(
         recipe,
-        package,
-        TestTarget::Library,
-        None,
-        false,
-        &[],
-        false,
-        None,
-        false,
+        TestSelector {
+            package: package.to_owned(),
+            target: TestTarget::Library,
+            filter: None,
+            exact: false,
+            skip: Vec::new(),
+            timed: false,
+            threads: None,
+            no_match_is_note: false,
+        },
     );
 }
 
 fn add_integration(recipe: &mut Recipe, package: &str, filter: impl Into<String>) {
     add_target_filter(
         recipe,
-        package,
-        TestTarget::Integration("it".to_owned()),
-        Some(filter.into()),
-        false,
-        &[],
-        false,
-        None,
-        false,
+        TestSelector {
+            package: package.to_owned(),
+            target: TestTarget::Integration("it".to_owned()),
+            filter: Some(filter.into()),
+            exact: false,
+            skip: Vec::new(),
+            timed: false,
+            threads: None,
+            no_match_is_note: false,
+        },
     );
 }
 
 fn add_large_input(recipe: &mut Recipe, input: &LargeInput) {
     add_target_filter(
         recipe,
-        input.package,
-        TestTarget::Library,
-        Some(input.filter.to_owned()),
-        input.exact,
-        &[],
-        true,
-        Some(1),
-        false,
+        TestSelector {
+            package: input.package.to_owned(),
+            target: TestTarget::Library,
+            filter: Some(input.filter.to_owned()),
+            exact: input.exact,
+            skip: Vec::new(),
+            timed: true,
+            threads: Some(1),
+            no_match_is_note: false,
+        },
     );
 }
 
@@ -2223,9 +2216,11 @@ mod tests {
     }
 
     fn runs_modules(recipe: &Recipe, modules: &[String]) -> bool {
-        modules
-            .iter()
-            .all(|module| recipe.selectors.contains(&selector("fsl-probability-check", module)))
+        modules.iter().all(|module| {
+            recipe
+                .selectors
+                .contains(&selector("fsl-probability-check", module))
+        })
     }
 
     #[test]
@@ -2359,7 +2354,10 @@ mod tests {
         for filter in ["monitor_", "timed_", "hyper", "probabilistic"] {
             assert!(recipe.selectors.contains(&selector("fsl-analyze", filter)));
         }
-        let zone = plan(workspace_root(), &["fsl-analyze/src/zone_check/divergence.rs"]);
+        let zone = plan(
+            workspace_root(),
+            &["fsl-analyze/src/zone_check/divergence.rs"],
+        );
         for filter in ["timed_", "timed_within_200", "timed_within_201"] {
             assert!(zone.selectors.contains(&selector("fsl-analyze", filter)));
         }
@@ -2367,7 +2365,10 @@ mod tests {
 
     #[test]
     fn request_and_analyze_roots_run_the_source_and_package_parity_modules() {
-        for path in ["fsl-analyze/src/analyze/request.rs", "fsl-analyze/src/analyze.rs"] {
+        for path in [
+            "fsl-analyze/src/analyze/request.rs",
+            "fsl-analyze/src/analyze.rs",
+        ] {
             let recipe = plan(workspace_root(), &[path]);
             for filter in [
                 "analyze_package_selection",
@@ -2425,12 +2426,16 @@ mod tests {
                 "tests/it/bare_package.rs",
             ],
         );
-        assert!(recipe
-            .selectors
-            .contains(&selector("fsl-analyze", "analyze_composition_cli")));
-        assert!(recipe
-            .selectors
-            .contains(&selector("filament-spec-language", "bare_package")));
+        assert!(
+            recipe
+                .selectors
+                .contains(&selector("fsl-analyze", "analyze_composition_cli"))
+        );
+        assert!(
+            recipe
+                .selectors
+                .contains(&selector("filament-spec-language", "bare_package"))
+        );
     }
 
     #[test]
@@ -2554,14 +2559,14 @@ mod tests {
             &runner,
         )
         .expect("print recipe");
-        assert!(result.contains(
-            "cargo test --locked -p fsl-analyze --test it -- probabilistic"
-        ));
-        assert!(runner
-            .calls
-            .borrow()
-            .iter()
-            .all(|(program, _)| program == "git"));
+        assert!(result.contains("cargo test --locked -p fsl-analyze --test it -- probabilistic"));
+        assert!(
+            runner
+                .calls
+                .borrow()
+                .iter()
+                .all(|(program, _)| program == "git")
+        );
     }
 
     #[test]
@@ -2570,20 +2575,22 @@ mod tests {
             no_tests: true,
             ..FakeRunner::new()
         };
-        assert!(run_with_runner(
-            workspace_root(),
-            &[
-                OsString::from("--preflight"),
-                OsString::from("fsl-analyze/src/analyze/exact.rs"),
-            ],
-            &runner,
-        )
-        .is_err());
-        assert!(runner
-            .calls
-            .borrow()
-            .iter()
-            .any(|(program, args)| { program != "git" && args.contains(&"--ignored".to_owned()) }));
+        assert!(
+            run_with_runner(
+                workspace_root(),
+                &[
+                    OsString::from("--preflight"),
+                    OsString::from("fsl-analyze/src/analyze/exact.rs"),
+                ],
+                &runner,
+            )
+            .is_err()
+        );
+        assert!(
+            runner.calls.borrow().iter().any(|(program, args)| {
+                program != "git" && args.contains(&"--ignored".to_owned())
+            })
+        );
     }
 
     #[test]
@@ -2720,8 +2727,15 @@ mod tests {
 
     #[test]
     fn simulation_changes_run_the_protocol_state_key_modules() {
-        let recipe = plan(workspace_root(), &["fsl-eval/src/simulation/protocol/reach.rs"]);
-        for filter in ["protocol_bounded_lasso", "race_freedom", "native_correlation"] {
+        let recipe = plan(
+            workspace_root(),
+            &["fsl-eval/src/simulation/protocol/reach.rs"],
+        );
+        for filter in [
+            "protocol_bounded_lasso",
+            "race_freedom",
+            "native_correlation",
+        ] {
             assert!(
                 recipe
                     .selectors
