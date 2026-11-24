@@ -17,39 +17,40 @@ mod subsystem;
 mod undefined;
 
 use filament_exact::{Cancel, ObjectReference, Rational};
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::ModelSystem;
+use fsl_eval::simulation::TransitionSystem;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_replay::statistical::SubjectLimits;
-use fsl_replay::{CertificateLocus, CertificateRule};
 use fsl_replay::{
-    ExactBinding, ExactProbBuildIssue, ExactProbBuildRecord, ExactProbabilityCertificate,
+    check_probability_certificate_document, claim_binding, probability_proof_document,
+    write_probability_certificate, write_probability_proof_document, ExactBinding,
+    ExactProbBuildIssue, ExactProbBuildRecord, ExactProbabilityCertificate,
     ExactProbabilityCertificateCheck, ExactProbabilityGraphError, ExactProbabilityValue, Extremum,
     ModelCheckLimit, ProbabilityBoundSide, ProbabilityCertificateDocument,
     ProbabilityDocumentError, ProbabilityDocumentLimits, ProbabilityObjective,
     ProbabilityProductKey, TerminalRecord, TimedProbabilityForm, TimedProbabilityObjective,
-    TimedProbabilityRoute, check_probability_certificate_document, claim_binding,
-    probability_proof_document, write_probability_certificate, write_probability_proof_document,
+    TimedProbabilityRoute,
 };
-use fsl_replay::{InconclusiveCause, ProbabilityCertificateLocus, ProbabilityCertificateRule};
 use fsl_replay::{
+    replay_probabilistic_witness, replay_probabilistic_witness_from_package,
     ProbabilisticCounterexample, ProbabilityWitnessError, ProbabilityWitnessPath,
     ProbabilityWitnessReplay, ProbabilityWitnessStep, ReproducedProbabilityWitness,
-    replay_probabilistic_witness, replay_probabilistic_witness_from_package,
 };
+use fsl_replay::{CertificateLocus, CertificateRule};
+use fsl_replay::{InconclusiveCause, ProbabilityCertificateLocus, ProbabilityCertificateRule};
 use fsl_route::Mode;
 use fsl_semantics::check::{
     Bound, Capability, DeclarationFamily, Event, ProbForm, ProbScheduler, ReachTarget,
 };
 
-use super::items::{BROKEN, NOT_YET, admission};
+use super::items::{admission, BROKEN, NOT_YET};
 use super::timed_item::subject_refusal;
 use super::{AnalyzeItem, EngineReport, Refusal};
 use crate::exact_probabilistic::{
-    ExtRational, FhError, FhResult, ProbBuild, ProbProduct, ProductRefusal, ProductRequest,
-    UnboundedError, UnboundedObjective, build_retaining_monitor, decide_always,
-    decide_bounded_event, decide_expected_reward, decide_reachability, decide_until,
-    manifest as en5, settle_product_refusal,
+    build_retaining_monitor, decide_always, decide_bounded_event, decide_expected_reward,
+    decide_reachability, decide_until, manifest as en5, settle_product_refusal, ExtRational,
+    FhError, FhResult, ProbBuild, ProbProduct, ProductRefusal, ProductRequest, UnboundedError,
+    UnboundedObjective,
 };
 
 /// The certificate EN-5 produced and the core's checker accepted for a
@@ -1269,7 +1270,7 @@ fn run(
         .then(|| candidate::CandidateBudget::new(document_limits, cancel));
     let built = if let Some(budget) = candidate_budget.as_mut() {
         use crate::exact_probabilistic::{
-            BudgetedProductError, build_retaining_monitor_with_budget,
+            build_retaining_monitor_with_budget, BudgetedProductError,
         };
         let identity = budget.identity;
         let mut admission = budget.admission();
@@ -1317,7 +1318,7 @@ fn run(
                 cancel,
                 subject,
                 tamper_witness,
-            );
+            )
         }
     };
     if let Some(error) = reward_subject_undefined {
@@ -1359,7 +1360,7 @@ fn run(
         ) {
             Ok(fair) => fair,
             Err(crate::exact_probabilistic::FairProductError::Product(error)) => {
-                return unbounded_failure(error, &limits, subject);
+                return unbounded_failure(error, &limits, subject)
             }
             Err(_) => return broken(),
         };
@@ -2436,7 +2437,7 @@ fn replay_refutation(
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
     use crate::exact_probabilistic::{
-        FormulaState, MonitorState, MonitorVerdict, ProductAction, WitnessScope, produce_witness,
+        produce_witness, FormulaState, MonitorState, MonitorVerdict, ProductAction, WitnessScope,
     };
     let mut producer_meter =
         filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
@@ -2852,9 +2853,6 @@ fn replay_produced_witness(
         let Some(state) = product.states.get(state.index()) else {
             return broken();
         };
-        if matches!(&entry, ProductAction::TerminalStutter) {
-            continue;
-        }
         let key = match key_of(state) {
             Ok(key) => key,
             Err(error) => return document_failure(error, subject),
@@ -3505,7 +3503,7 @@ fn replay_timed_refutation(
     subject: SubjectLimits<'_>,
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
-    use crate::exact_probabilistic::{WitnessScope, produce_witness};
+    use crate::exact_probabilistic::{produce_witness, WitnessScope};
     use fsl_eval::probabilistic::{DeadlinePhase, MonitorState};
     let forbidden = match bound {
         Bound::AtMost(_) => DeadlinePhase::Accept,
@@ -3719,6 +3717,9 @@ fn replay_timed_paths(
         let Some(state) = product.states.get(state.index()) else {
             return broken();
         };
+        if matches!(&entry, ProductAction::TerminalStutter) {
+            continue;
+        }
         let key = match key_of(state) {
             Ok(key) => key,
             Err(error) => return document_failure(error, subject),
@@ -3824,7 +3825,8 @@ fn timed_step_for(
                         if identity.is_some_and(|identity| {
                             step.operation() != identity.operation
                                 || step.receiver() != &identity.receiver
-                        }) {
+                        })
+                        {
                             continue;
                         }
                         Some((step.transition().clone(), post.discrete().clone()))
