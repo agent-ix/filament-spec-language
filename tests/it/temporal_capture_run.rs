@@ -104,6 +104,39 @@ fn run_with(directory: &Path, extra: &str, name: &str, trace: Value) -> Output {
     ))
 }
 
+/// Compiles the capture-fault unit under Kernel checking and runs it from the
+/// checked package bytes, as FR-860-AC-4 specifies.
+fn run_kernel_package(directory: &Path, name: &str, trace: Value) -> Output {
+    let unit_path = directory.join("unit.native");
+    std::fs::write(&unit_path, unit() + DIVISION).unwrap();
+    let compile_path = directory.join("compile.json");
+    std::fs::write(
+        &compile_path,
+        serde_json::to_vec(&json!({"format": "native-compile/1", "request": {
+            "models": [], "program": program(), "check_mode": "kernel",
+            "clocks": clocks(),
+            "output": {"package": "package.json"}}}))
+        .unwrap(),
+    )
+    .unwrap();
+    let compiled = crate::command_harness::compile_file(&compile_path);
+    assert_eq!(
+        compiled.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    std::fs::remove_file(unit_path).unwrap();
+
+    let request_path = directory.join("package-run.json");
+    let request = json!({"format": "native-run/1", "request": {
+        "models": [], "package": {"file": "package.json"},
+        "clause": {"selection": {"temporal": {"name": name, "trace": trace}},
+            "observations": {}}}});
+    std::fs::write(&request_path, serde_json::to_vec(&request).unwrap()).unwrap();
+    run_file(&request_path)
+}
+
 /// The result document of a run that wrote one; a capture reading is never
 /// an internal fault (exit 30).
 fn result(output: &Output) -> Value {
@@ -220,16 +253,15 @@ fn each_activation_reads_its_own_capture_at_later_positions() {
 /// at its activation, never an internal failure.
 #[test]
 #[trace("TC-2440", "FR-860-AC-4")]
-#[ignore = "QSL-2879: the fixture must be checked under CheckMode::Kernel and selected as a package (FR-860-AC-4); a capture fault through `k` is reported as runtime_invariant (exit 30), not at the capture"]
 fn an_undefined_capture_is_reported_at_the_capture() {
     let directory = tempfile::tempdir().unwrap();
-    let output = run_with(
-        directory.path(),
-        DIVISION,
-        "Div",
-        json!({"finite": moving(&[2, 0])}),
+    let output = run_kernel_package(directory.path(), "Div", json!({"finite": moving(&[2, 0])}));
+    assert_eq!(
+        output.status.code(),
+        Some(10),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(output.status.code(), Some(10));
     let undefined = result(&output);
     assert_eq!(temporal(&undefined)["kind"], "undefined", "{undefined}");
     assert_eq!(temporal(&undefined)["position"], 0, "{undefined}");
@@ -241,9 +273,8 @@ fn an_undefined_capture_is_reported_at_the_capture() {
         undefined.to_string().contains("division-by-zero"),
         "{undefined}"
     );
-    let defined = result(&run_with(
+    let defined = result(&run_kernel_package(
         directory.path(),
-        DIVISION,
         "Div",
         json!({"finite": moving(&[0, 2])}),
     ));
