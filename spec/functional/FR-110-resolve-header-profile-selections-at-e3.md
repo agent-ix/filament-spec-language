@@ -271,6 +271,25 @@ each once, in this order:
 An extension's row appears only in `definition_selections`: the emitter
 adds no `required_features` entry and no `profile_selections` row for it.
 
+### Reading definition selections against a catalog
+
+Every row of a package's `definition_selections`, closed row, law row or
+extension row, names a definition the selected `DefinitionCatalog` defines.
+A consumer that holds that catalog (the definition closure of FR-111 at
+compile, the replay request of FR-071, and a run or analyze request over a
+package) SHALL refuse a package with a row the catalog does not define before
+any item, step or run: `unknown_profile`/`unsupported-selection` at
+`/lock/definition_selections/{i}`, retaining the row's `authority`,
+`identity` and index, and producing no result. A row whose identity the
+catalog defines only under another authority is the same refusal. A row whose
+definition the catalog holds with a role the row cannot take (a law identity
+in the position of a layer, or the reverse) refuses
+`unknown_profile`/`wrong-selection-role` at the same pointer. The first
+failing row in `definition_selections` order decides the refusal. The strict
+checked-package reader (FR-531) holds no catalog: it admits the bytes by
+structure alone and states nothing about a row's identity, so this refusal
+belongs to the consumer that holds the catalog and never to the reader.
+
 ## Constraints
 
 | ID | Constraint | Type | Validation |
@@ -295,6 +314,7 @@ adds no `required_features` entry and no `profile_selections` row for it.
 | FR-110-AC-13 | A unit whose one header profile names `filament.temporal.complete/v1` resolves to that layer as a header-selectable layer, with no new refusal code; `complete::header_profile_catalog()` contains the identity, and `complete::parse_with_catalog` over the unit adds no `unknown_profile` diagnostic. A declaration whose `using` alias names the layer is admitted under the layer's and its `requires` closure's admitted forms, and an equality `r = q` over records, `a = b` over `Reference<Order>` and `s = t` over sequences compile under it. | Test (TC-490) |
 | FR-110-AC-14 | A unit with the `root` profile `v` and a second header profile `r` naming `ext.retention`, an identity no layer has, compiled with a `ProfileCatalogInput` whose `DefinitionCatalog` holds `agent-ix`/`ext.retention` as a `DefinitionRole::Extension` definition, resolves `r` to the extension selection `{agent-ix, ext.retention}` and reports no `unknown_profile` refusal; the same unit with a catalog that does not hold the identity, and with one that holds it under another role, each refuse `unknown_profile`/`unsupported-selection` at the identity literal's span, as FR-110-AC-2. | Test (TC-490) |
 | FR-110-AC-15 | The AC-14 unit's emitted lock has `definition_selections` whose last row is `{agent-ix, ext.retention}`, after every closed row and law row; a unit selecting `agent-ix`/`ext.b` and then `agent-ix`/`ext.a` ends `definition_selections` with `ext.a` then `ext.b`; no extension identity appears in `required_features` or `profile_selections`. | Test (TC-490) |
+| FR-110-AC-16 | A unit whose body divides with `div` under the floor law selection (FR-670) emits a package whose `definition_selections` holds the law row `{authority, filament.value.integer-division.floor/v1}`. That package with the row's identity changed to `filament.value.integer-division.ceiling/v1` (an identity the catalog does not define) is refused by a replay request, by a run request over the package and by an analyze request over the package, each holding the unit's `DefinitionCatalog`: `unknown_profile`/`unsupported-selection` at `/lock/definition_selections/{i}` for that row's index, retaining `{authority, identity}`, with no item, step or run and no result record. The same package with the row's authority changed to one under which the catalog holds no definition refuses the same way; FR-110-AC-14's package with its `{agent-ix, ext.retention}` row's identity replaced by an identity no catalog entry holds refuses at that row's index; a layer identity written in the law row refuses `unknown_profile`/`wrong-selection-role`. With two defective rows the refusal names the first in `definition_selections` order. The unchanged packages are admitted by all three consumers, and the strict reader admits every altered package, since it holds no catalog. | Test (TC-3217) |
 
 ## Dependencies
 

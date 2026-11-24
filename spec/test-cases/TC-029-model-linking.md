@@ -5,20 +5,21 @@ type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-006
     type: verifies
-  - target: ix://agent-ix/filament-spec-language/FR-016
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: verifies
 ---
 
 ## Description
 
-Clause roots are Boolean. Type: Integration; priority P1. Traces: FR-006-AC-5.
-Planned, not executed. Requires the qualified inputs and actual native APIs
-specified by IT-005; a setup refusal is not an observed application outcome.
+Verify that a clause whose root is not Boolean is refused although every part
+is well typed. Scope: FR-006-AC-5, FR-104-AC-3 and FR-104-AC-19.
 
 ## Test Procedure
 
-Under the qualified rule model, check a current invariant whose entire expression is self.n. Compare a current Boolean comparison self.n = self.n and the Boolean operation-result postcondition under its proper operation context.
+Over the rule model, check the invariant `self.versionNumber` (a well-typed
+field read), then a Boolean comparison of the same field with itself.
 
 ## Expected Results
 
-The numeric root returns ill_typed even though self.n resolves and is individually well typed. The two Boolean-root controls establish Boolean clause typing. No rejected root becomes a reference-evaluable clause.
+The field read refuses `ill_typed`/`non-boolean-root` at the whole body. The
+comparison and the postcondition `result` of a Boolean-result operation check. No rejected root becomes a reference-evaluable clause.

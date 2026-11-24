@@ -16,7 +16,7 @@ Verify `check_initial` and `check_step` over functional mappings, with `_`
 arguments and bound results, with hidden fields tracked as a candidate set,
 and with protocol step-class rows.
 
-Scope: FR-141-AC-1 to FR-141-AC-5, FR-141-AC-11 to FR-141-AC-16 and FR-138-AC-8.
+Scope: FR-141-AC-1 to FR-141-AC-5, FR-141-AC-11 to FR-141-AC-17 and FR-138-AC-8.
 
 ## Test Procedure
 
@@ -61,7 +61,7 @@ Tag the tests `#[trace("TC-546", "FR-141-AC-n")]`, and the test of step 7 also `
   transition whose `rs` is the lifted chain.
 - Step 9: passes as `Taken::Abstract([enq(r, 1)])` whose receiver is the
   `Queue` `r`.
-- Step 10: passes with the `Reference<Ring>` argument lifted to the `Queue`
+- Step 10: the declared type neither row conforms to is refused at S3 `ill_typed`/`type-mismatch` and never reaches `check_protocol_step`; the `Fault` is asserted at the row-choice function over a hand-built row set (FR-141-AC-17). Otherwise passes with the `Reference<Ring>` argument lifted to the `Queue`
   reference when the node record's field is declared `Reference<Queue>` and to
   the `Cell` reference when declared `Reference<Cell>`, by the declared field
   type and never by row order.
@@ -71,3 +71,9 @@ Tag the tests `#[trace("TC-546", "FR-141-AC-n")]`, and the test of step 7 also `
   row conforms to; swapping the object rows' order changes no verdict.
 
 Every call passes the concrete `ModelSystem` and the abstract system (FR-141).
+
+## Step 12
+
+12. Over a row set built directly in a unit test, ask the row-choice function for a declared type no row conforms to, for a type both of two unrelated rows (`Queue`, `Cell`) conform to, and for nested rows (`Queue`, `SubQueue`) in each source order; over the `twin` models check a node field declared with a type neither row conforms to and one declared with a type both unrelated rows conform to (FR-141-AC-17).
+
+Expected: `Fault` for the first two; the `SubQueue` row for the third in either order; S3 refuses the two node fields `ill_typed`/`type-mismatch` with no step decision.

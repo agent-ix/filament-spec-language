@@ -26,14 +26,16 @@ The checker consumes the reviewed finite-state semantics. Presence facts cannot 
 
 **QSL-499 disposition:** the native 0-draft carrier of the retired acceptance criteria below (`native_model`, `model_source`, `located_json`, `link_native` and the native `checking` pipeline) is deleted under ADR-011, ADR-033 and FR-499. Each retired criterion is retained as migration history and is not an active acceptance obligation; its behavior is owned by FR-104 (state-clause definedness, presence and range proofs, `ambiguous-literal`) and FR-172 (hyper and relation clauses), checked by the fsl-semantics suites tagged with those requirements.
 
+**Retired criteria.** A criterion marked RETIRED is migration history, not a scope cut and not an acceptance obligation: the behavior it described that is still in the product is owned by a live criterion named in its row or in this section (FR-104 for state-clause typing, definedness and ambiguous literals, FR-766-AC-9 for a literal `count` source, FR-099 and FR-111 for imports and definition bundles), and a test of that behavior is traced to the live criterion. A retired row is excluded from the computed Test Matrix, so the matrix counts only live criteria.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
 | --- | --- | --- |
 | FR-006-AC-1 | An unguarded optional unwrap receives undefined_expression. | Test (TC-025) |
 | FR-006-AC-2 | A cross-snapshot presence proof is rejected. | Test (TC-026) |
-| FR-006-AC-3 | **RETIRED in QSL-499; historical only.** A guarded in-range addition is admitted. | Test (TC-027) |
-| FR-006-AC-4 | **RETIRED in QSL-499; historical only.** An ambiguous scalar inference receives ill_typed. | Test (TC-028) |
+| FR-006-AC-3 | **RETIRED in QSL-499; historical only.** A guarded in-range addition is admitted. Ruling: the behavior is owned by FR-104 definedness proofs and tested as TC-027 (FR-016-AC-3 trace). | Test (TC-027) |
+| FR-006-AC-4 | **RETIRED in QSL-499; historical only.** An ambiguous scalar inference receives ill_typed. Ruling: carried by FR-104-AC-13, FR-104-AC-16 and FR-766-AC-9 (TC-028). | Test (TC-028) |
 | FR-006-AC-5 | A non-Boolean clause root receives ill_typed. | Test (TC-029) |
 
 ## Dependencies

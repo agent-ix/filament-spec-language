@@ -3,22 +3,30 @@ id: TC-028
 title: "Ambiguous scalar inference"
 type: TC
 relationships:
-  - target: ix://agent-ix/filament-spec-language/FR-006
+  - target: ix://agent-ix/filament-spec-language/FR-104
     type: verifies
-  - target: ix://agent-ix/filament-spec-language/FR-016
+  - target: ix://agent-ix/filament-spec-language/FR-766
     type: verifies
 ---
 
 ## Description
 
-Ambiguous scalar inference. Type: Integration; priority P1. Traces: FR-006-AC-4.
-Planned, not executed. Requires the qualified inputs and actual native APIs
-specified by IT-005; a setup refusal is not an observed application outcome.
+Verify that an expression whose literal operands or collection-literal source
+supply no unique type is refused `ill_typed`/`ambiguous-literal`, and that the
+same shape checks when the context supplies the type. Scope: FR-104-AC-13,
+FR-104-AC-16 and FR-766-AC-9. The retired FR-006-AC-4 and FR-016-AC-4 are
+carried by these criteria; the refusal's cause is `ambiguous-literal`, located
+at the literal or the arithmetic node, not a bare `ill_typed`.
 
 ## Test Procedure
 
-Under the separately qualified rule-model declarations, check the ambiguous-literals expression 1 + 2 = 3 and size-needs-context expression size(self.items) = 2. Compare size-preserves-duplicates, which supplies the explicit compatible Count context.
+1. Check the decimal bodies of FR-104-AC-13 and FR-104-AC-16 whose operands are
+   all `decimal(c, s)` literals with no expected type.
+2. Check the invariant of FR-766-AC-9 whose `count` source is a bare
+   `sequence[...]` literal, under `Linked` and `Kernel` modes.
+3. Check each with a typed operand or an annotated source.
 
 ## Expected Results
 
-The context-free cases return ill_typed. The explicit compatible Count context establishes Boolean typing without choosing an arbitrary numeric type. No hypothetical collection evaluation outcome is counted as a typechecker observation.
+Steps 1 and 2 refuse `ill_typed`/`ambiguous-literal` at the stated locus. Step 3
+checks. No refused clause becomes a checked clause.
