@@ -1,0 +1,4 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.value.complete/v1";
+type T = Decimal[0,300;0,2;exact];
+function f using v(s: Sequence<Decimal[0,100;0,2;exact]>[0,3]): T pure { sum<T>(x in s: x) }
