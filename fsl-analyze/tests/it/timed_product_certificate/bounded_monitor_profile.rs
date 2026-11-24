@@ -218,6 +218,7 @@ fn timed_eventually_zero_delay_cycle_has_a_finite_repeated_key() {
         &product,
         &fsl_semantics::check::Bound::AtMost(ratio(1, 2)),
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("the mixed-delay finite product has an exact bounded value");
     let fsl_analyze::exact_probabilistic::FhResult::Exact { values, .. } = exact else {
