@@ -30,7 +30,6 @@ use fsl_replay::{
     UndecidedCause, UndefinedLocus, DEFAULT_MAX_AUTOMATON_STATES,
 };
 use fsl_route::reductions::Reductions;
-use fsl_semantics::check::CheckedTemporalClause;
 use fsl_semantics::model::observation::DocumentRef;
 use ix_trace_rs::trace;
 
@@ -71,21 +70,14 @@ fn world_with(document: Vec<u8>, body: &str, starts: &[&[(&str, i64)]]) -> World
     world_in_mode(document, body, starts, CheckMode::Linked)
 }
 
-fn temporal_worker_world(formula: &str) -> (World, CheckedTemporalClause) {
-    let document = document(false);
-    let body = format!("{CONTRACT}{ANY}");
-    let (package, mut clauses) =
-        package_with_clauses(&document, &body, &[("WorkerClaim", "", formula)]);
-    let mut documents = Documents::new(document);
-    let initial = vec![documents.start("initial", &[("a", 0), ("b", 0), ("c", 0)])];
-    let world = World {
-        body,
-        package,
-        documents,
-        initial,
-    };
-    let clause = clauses.pop().expect("the worker claim is declared");
-    (world, clause)
+fn temporal_worker_fixture(formula: &str) -> crate::liveness::Fixture {
+    crate::liveness::fixture(
+        document(false),
+        CONTRACT,
+        "",
+        formula,
+        &[("a", 0), ("b", 0), ("c", 0)],
+    )
 }
 
 /// [`world_with`] checked under `mode`: a unit whose divisor may be zero is
@@ -222,25 +214,33 @@ fn run_with_workers_and_reductions(
     )
 }
 
-fn run_clause_with_workers(
-    world: &World,
-    clause: &CheckedTemporalClause,
+fn run_temporal_fixture_with_workers(
+    fixture: &crate::liveness::Fixture,
     atom: fn(i64) -> Option<bool>,
     limits: ModelCheckLimits,
     workers: usize,
 ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
-    let letters = Letters { atom };
-    run_with_workers(
-        world,
-        &["a", "b", "c"],
-        ModelCheckItem::Clause {
-            clause,
-            letters: &letters,
+    let letters = fixture.letters(atom);
+    check_model(
+        ModelCheckRequest {
+            workers,
+            temporal_clock_selections: &fixture.temporal_clock_selections,
+            subject: subject(
+                &fixture.package,
+                &fixture.documents,
+                fixture.initial.clone(),
+                &fixture.keys,
+                UNLIMITED,
+            ),
+            item: ModelCheckItem::Clause {
+                clause: &fixture.clauses[0],
+                letters: &letters,
+            },
+            max_depth: None,
+            limits,
+            reductions: Reductions::default(),
         },
-        None,
-        limits,
-        UNLIMITED,
-        workers,
+        &Cancel::new(),
     )
 }
 
@@ -276,29 +276,18 @@ fn certificate_bytes(outcome: &ModelCheckOutcome) -> Vec<u8> {
 #[trace("TC-1417", "FR-126-AC-20")]
 #[test]
 fn workers_preserve_counter_lassos_certificates_and_state_limit() {
-    let (violated_world, violated_clause) =
-        temporal_worker_world("always eventually holds(c.value = 0)");
+    let violated_fixture = temporal_worker_fixture("always eventually holds(c.value = 0)");
     let mut violation = None;
     for workers in [1, 2, 4, 64] {
-        let outcome = run_clause_with_workers(
-            &violated_world,
-            &violated_clause,
+        let outcome = run_temporal_fixture_with_workers(
+            &violated_fixture,
             |value| Some(value == 0),
             ModelCheckLimits::default(),
             workers,
         )
         .expect("the worker request is admitted");
         let counterexample = violated(&outcome).clone();
-        assert_eq!(
-            values(
-                &violated_world,
-                &["a", "b", "c"],
-                &counterexample,
-                "a",
-                "value"
-            ),
-            [0, 1, 2, 3]
-        );
+        assert_eq!(violated_fixture.values(&counterexample, "a"), [0, 1, 2, 3]);
         assert_eq!(
             counterexample.lasso.as_ref().map(|lasso| lasso.entry),
             Some(3)
@@ -317,13 +306,12 @@ fn workers_preserve_counter_lassos_certificates_and_state_limit() {
         }
     }
 
-    let (held_world, held_clause) = temporal_worker_world("always holds(c.value <= 3)");
+    let held_fixture = temporal_worker_fixture("always holds(c.value <= 3)");
     let mut certificate = None;
     let mut held_stats = None;
     for workers in [1, 2, 4, 64] {
-        let outcome = run_clause_with_workers(
-            &held_world,
-            &held_clause,
+        let outcome = run_temporal_fixture_with_workers(
+            &held_fixture,
             |value| Some(value <= 3),
             ModelCheckLimits::default(),
             workers,
@@ -345,18 +333,10 @@ fn workers_preserve_counter_lassos_certificates_and_state_limit() {
     limits.limits.max_states = 5;
     let mut stopped = None;
     for workers in [1, 2, 4, 64] {
-        let outcome = run_with_workers(
-            &held_world,
-            &["a", "b", "c"],
-            ModelCheckItem::Clause {
-                clause: &held_clause,
-                letters: &Letters {
-                    atom: |value| Some(value <= 3),
-                },
-            },
-            None,
+        let outcome = run_temporal_fixture_with_workers(
+            &held_fixture,
+            |value| Some(value <= 3),
             limits,
-            UNLIMITED,
             workers,
         )
         .expect("the bounded worker request is admitted");
@@ -384,6 +364,32 @@ fn workers_preserve_counter_lassos_certificates_and_state_limit() {
             stopped = Some((stats, cause, limit));
         }
     }
+}
+
+/// FR-126-AC-20: the model safety and reduced expansion paths return the same
+/// records as the worker count changes.
+#[trace("TC-1417", "FR-126-AC-20")]
+#[test]
+fn model_safety_worker_modes_preserve_results() {
+    let world = self::world("", &[&[("a", 0), ("b", 0), ("c", 0)]]);
+    let mut expected = None;
+    for workers in [1, 2, 4, 64] {
+        let outcome = run_with_workers(
+            &world,
+            &["a", "b", "c"],
+            ModelCheckItem::DeadlockFreedom,
+            None,
+            ModelCheckLimits::default(),
+            UNLIMITED,
+            workers,
+        )
+        .expect("the worker request is admitted");
+        if let Some(expected) = &expected {
+            assert_eq!(&outcome, expected, "workers={workers}");
+        } else {
+            expected = Some(outcome);
+        }
+    }
 
     let reduced_world = self::world("", &[&[("a", 0), ("b", 0), ("c", 0)]]);
     let mut reductions = Reductions::default();
@@ -407,7 +413,12 @@ fn workers_preserve_counter_lassos_certificates_and_state_limit() {
             expected_reduced = Some(outcome);
         }
     }
+}
 
+/// FR-126-AC-20 refuses `workers = 0` before admitting an empty subject.
+#[trace("TC-1417", "FR-126-AC-20")]
+#[test]
+fn zero_workers_are_refused_before_empty_subject_admission() {
     let no_initial = self::world(ANY, &[]);
     let refusal = run_with_workers(
         &no_initial,
