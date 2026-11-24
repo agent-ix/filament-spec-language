@@ -6924,8 +6924,9 @@ pub fn emit_timed_models(
         &ForeignNodes::default(),
     )?;
     order_dependencies(&mut nodes, EmitRefusal::TimedModelWriterInvariant)?;
+    let mut meter = OutputMeter::new(limits);
     let (requirement_rows, path_condition_frames, renumbered) =
-        value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
+        value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map, &mut meter)?;
     if let Some(data) = &mut checked_term_data {
         value_validity_requirements::ordinals::relabel_term_data(&renumbered, data);
     }

@@ -33,6 +33,8 @@ use super::{frames, EmitRefusal, Omitted};
 enum Use {
     Body(usize),
     Measure(usize),
+    /// Anywhere else: a state clause, or the body of an owner the checked
+    /// graph keeps no function declaration for (a reward function).
     Other,
 }
 
@@ -156,27 +158,22 @@ pub(in crate::emit) fn renumber(
     meter.charge_bytes(
         (walked.len() as u64).saturating_mul(std::mem::size_of::<frames::Visit>() as u64),
     )?;
-    let mut owner_use = HashMap::<usize, usize>::new();
+    let mut owner_use = HashMap::<usize, Option<usize>>::new();
     let mut visited = HashMap::<usize, Vec<Use>>::new();
     for visit in &walked {
         let function = match owner_use.get(&visit.owner) {
             Some(&function) => function,
             None => {
-                let function = *function_index
-                    .get(&node_keys[visit.owner])
-                    .ok_or(EmitRefusal::SourceMapInvariant)?;
+                let function = function_index.get(&node_keys[visit.owner]).copied();
                 owner_use.insert(visit.owner, function);
                 function
             }
         };
-        visited
-            .entry(visit.node)
-            .or_default()
-            .push(if visit.measure {
-                Use::Measure(function)
-            } else {
-                Use::Body(function)
-            });
+        visited.entry(visit.node).or_default().push(match function {
+            Some(function) if visit.measure => Use::Measure(function),
+            Some(function) => Use::Body(function),
+            None => Use::Other,
+        });
     }
     drop(walked);
     // The uses the checker located, each node's by owner in the order of the
@@ -370,6 +367,7 @@ pub(in crate::emit) fn rewalk(
     base_source_map: &[CheckedSourceMapEntry],
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut [CheckedSourceMapEntry],
+    meter: &mut super::super::OutputMeter,
 ) -> Result<BTreeMap<CheckedNodeId, Mapping>, EmitRefusal> {
     let carry = |reason| EmitRefusal::RequirementRowCarry(reason);
     let finals = nodes
@@ -388,18 +386,24 @@ pub(in crate::emit) fn rewalk(
                 > 1
         })
         .collect();
-    let owners = |nodes: &[CheckedSemanticNodeV2], source_map: &[CheckedSourceMapEntry]| {
+    let mut owners = |nodes: &[CheckedSemanticNodeV2],
+                      source_map: &[CheckedSourceMapEntry]|
+     -> Result<HashMap<usize, Vec<(usize, bool)>>, EmitRefusal> {
         let mut owners = HashMap::<usize, Vec<(usize, bool)>>::new();
-        for visit in frames::visits(nodes, source_map, &keep) {
+        let walked = frames::visits(nodes, source_map, &keep);
+        meter.charge_bytes(
+            (walked.len() as u64).saturating_mul(std::mem::size_of::<frames::Visit>() as u64),
+        )?;
+        for visit in walked {
             owners
                 .entry(visit.node)
                 .or_default()
                 .push((visit.owner, visit.measure));
         }
-        owners
+        Ok(owners)
     };
-    let before = owners(base_nodes, base_source_map);
-    let after = owners(finals, source_map);
+    let before = owners(base_nodes, base_source_map)?;
+    let after = owners(finals, source_map)?;
     let mut changed = BTreeMap::<usize, Mapping>::new();
     for (position, base) in &before {
         let Some(now) = after.get(position) else {

@@ -558,7 +558,7 @@ pub(super) fn append(
         ordinals::Renumbering::default()
     };
     let frames = if has_value_validity {
-        frames::derive(ids, graph, nodes, source_map, omitted, &renumbering)?
+        frames::derive(ids, graph, nodes, source_map, omitted, &renumbering, meter)?
     } else {
         frames::Frames::default()
     };
@@ -1126,6 +1126,7 @@ pub(super) fn carry_rows(
     base: &filament_contract_model::CheckedPackageV2,
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut [CheckedSourceMapEntry],
+    meter: &mut super::OutputMeter,
 ) -> Result<CarriedRows, EmitRefusal> {
     let rows = base.requirement_items();
     if rows.is_empty() {
@@ -1205,6 +1206,7 @@ pub(super) fn carry_rows(
         base.source_map(),
         nodes,
         source_map,
+        meter,
     )?;
     relabel_rows(&mut rows, &renumbered);
     // A rename changes the structural key of every node holding the renamed
@@ -1225,7 +1227,7 @@ pub(super) fn carry_rows(
         })
         .collect::<Result<Vec<_>, EmitRefusal>>()?;
     let mut rows = package_order(keyed);
-    frames = rederived_frames(frames, &mut rows, nodes, source_map)?;
+    frames = rederived_frames(frames, &mut rows, nodes, source_map, meter)?;
     renumber_records(&rows, nodes, source_map)?;
     Ok((rows, frames, renumbered))
 }
@@ -1239,6 +1241,7 @@ fn rederived_frames(
     rows: &mut [RequirementItemRow],
     nodes: &mut [CheckedSemanticNodeV2],
     source_map: &mut [CheckedSourceMapEntry],
+    meter: &mut super::OutputMeter,
 ) -> Result<Vec<PathConditionFrame>, EmitRefusal> {
     let guarded: Vec<&ValueValidityRecord> = rows
         .iter()
@@ -1260,7 +1263,7 @@ fn rederived_frames(
             occurrence: record.occurrence,
         })
         .collect();
-    let (table, terminals) = frames::rederive(nodes, source_map, &carried)?;
+    let (table, terminals) = frames::rederive(nodes, source_map, &carried, meter)?;
     let refuse = |reason| EmitRefusal::RequirementRowCarry(reason);
     let mut new_ids = vec![usize::MAX; frames.len()];
     for (record, terminal) in guarded.iter().zip(&terminals) {

@@ -1944,7 +1944,8 @@ fn a_malformed_slot_domain_is_refused_at_its_locus() {
         .iter()
         .position(|node| {
             node["node_id"]
-                == base["semantic_graph"]["nodes"][quantifier]["body"]["arguments"][1]["value"]["target"]
+                == base["semantic_graph"]["nodes"][quantifier]["body"]["arguments"][1]["value"]
+                    ["target"]
         })
         .expect("the presence read the quantifier's body names");
     let refused = |mutate: &dyn Fn(&mut Value), cause: &str, locus: &str| {
