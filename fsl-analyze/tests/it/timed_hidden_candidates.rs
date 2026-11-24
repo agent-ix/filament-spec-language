@@ -9,7 +9,8 @@
 use filament_exact::{Cancel, Integer};
 use fsl_analyze::zone_check::{
     certificate_item, check_timed_refinement, settle_timed_refinement, TimedLivenessHalf,
-    TimedLivenessOutcome, TimedSafetyOutcome, ZoneCheckLimits,
+    TimedLivenessOutcome, TimedRefinementUndecided, TimedSafetyOutcome, ZoneCheckLimits,
+    ZoneUndecided,
 };
 use fsl_replay::{
     check_zone_certificate, CertEdge, CertificateCheckLimits, CertificateRule, Certification,
@@ -782,6 +783,56 @@ fn landing(abstract_guard: &str) -> Refining {
     )
     .unwrap_or_else(|refusals| panic!("{refusals:?}"))
     .with_abstract_hidden_initials(&abstract_document, &[false])
+}
+
+/// A concrete `send` is enabled at zero, fails its mapped abstract guard over
+/// the whole source zone, and lands in an invariant-locked successor. The
+/// producer records the failure as completeness loss because no
+/// time-divergent behaviour is admitted.
+fn undelayed_failure_into_locked_successor() -> Refining {
+    let abstract_document = abstract_document(&[("send", &["inflight"])]);
+    let concrete = document(&["x"], &[("send", &["inflight"])]);
+    refining(
+        &abstract_document,
+        &concrete,
+        &format!(
+            "{DENSE}time A dense unit ms;\n\
+             post ASend using v on A::Call::send {{ self.inflight }}\n\
+             pre ASendable using v on A::Call::send {{ self.y < 0 ms }}\n\
+             time invariant MCap when {{ true }} {{ self.x <= 0 ms }}\n\
+             pre MSend using v on M::Call::send {{ self.x >= 0 ms }}\n\
+             post MSent using v on M::Call::send {{ self.inflight }}\n{}",
+            refinement("self.inflight").replace(" late = self.late;", "")
+        ),
+    )
+    .unwrap_or_else(|refusals| panic!("{refusals:?}"))
+    .with_abstract_hidden_initials(&abstract_document, &[false])
+}
+
+/// An undelayed failing mapped edge into a time-locked successor does not
+/// produce a refutation or a proof: the producer settles only the explicit
+/// `NoAdmittedBehaviour` completeness outcome.
+#[trace(
+    "TC-699",
+    "TC-700",
+    "FSpec-FR-740-AC-6",
+    "FSpec-FR-418-AC-22",
+    "FR-244-AC-8",
+    "FR-245-AC-12"
+)]
+#[test]
+fn an_undelayed_failure_into_a_locked_successor_is_completeness_only() {
+    let outcome = safety_with_limits(&undelayed_failure_into_locked_successor());
+    assert!(
+        matches!(
+            outcome,
+            TimedSafetyOutcome::Undecided {
+                cause: TimedRefinementUndecided::Zone(ZoneUndecided::NoAdmittedBehaviour),
+                ..
+            }
+        ),
+        "the producer must preserve this as completeness loss: {outcome:?}"
+    );
 }
 
 /// The guard failure is judged on the delayed landing zone, so it refutes;
