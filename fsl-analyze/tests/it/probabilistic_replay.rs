@@ -210,7 +210,7 @@ fn semantic_mutations_cannot_obtain_a_reproduced_token() {
         Err(ProbabilityWitnessError::Refused)
     ));
 }
-#[trace("TC-637", "FR-202-AC-21")]
+#[trace("TC-637", "FR-202-AC-11", "FR-202-AC-21")]
 #[test]
 fn randomized_scheduler_entry_without_a_fairness_set_has_no_token() {
     let world = World::new(&prob_world::link(CLAIMS));
@@ -237,6 +237,74 @@ fn randomized_scheduler_entry_without_a_fairness_set_has_no_token() {
         ));
     }
 }
+
+/// FR-202-AC-11 (TC-637): this path-set replay profile refuses more than one
+/// initial state or more than one claim binding without producing a token.
+#[trace("TC-637", "FR-202-AC-11")]
+#[test]
+fn multiple_initials_and_instances_are_unsupported_without_a_token() {
+    let model = prob_world::link(CLAIMS);
+    let world = World::new(&model);
+    let witness = evidence(&world, "TooMuch");
+
+    let mut delivered = model.initial.clone();
+    delivered["delivered"] = serde_json::json!({"boolean": true});
+    let multiple_initials = World::with_initials(&model, &[model.initial.clone(), delivered]);
+    assert!(matches!(
+        replay(
+            &multiple_initials,
+            &witness,
+            &ExactProbLimits::default(),
+            &Cancel::new()
+        ),
+        Err(ProbabilityWitnessError::Graph(
+            ExactProbabilityGraphError::UnsupportedInitial
+        ))
+    ));
+    let engines = Engines::fsl().expect("the linked EN-5 engine is admitted");
+    let initial_record = analyze_items(
+        &engines,
+        vec![exact_probabilistic_item(
+            RequestIndex::new(0),
+            multiple_initials.request("TooMuch", ModelCheckLimits::default()),
+        )],
+        &Cancel::new(),
+    )
+    .remove(0);
+    assert!(matches!(
+        initial_record.terminal().unwrap().value(),
+        TerminalValue::Unsupported(_)
+    ));
+    assert!(initial_record.probabilistic_counterexample.is_none());
+
+    let multiple_instances = World::with_objects(&model, &["m", "n"]);
+    assert!(matches!(
+        replay(
+            &multiple_instances,
+            &witness,
+            &ExactProbLimits::default(),
+            &Cancel::new()
+        ),
+        Err(ProbabilityWitnessError::Graph(
+            ExactProbabilityGraphError::UnsupportedBinding
+        ))
+    ));
+    let instance_record = analyze_items(
+        &engines,
+        vec![exact_probabilistic_item(
+            RequestIndex::new(0),
+            multiple_instances.request("TooMuch", ModelCheckLimits::default()),
+        )],
+        &Cancel::new(),
+    )
+    .remove(0);
+    assert!(matches!(
+        instance_record.terminal().unwrap().value(),
+        TerminalValue::Unsupported(_)
+    ));
+    assert!(instance_record.probabilistic_counterexample.is_none());
+}
+
 #[trace("TC-637", "FR-202-AC-10")]
 #[test]
 fn duplicate_paths_live_prefixes_and_threshold_equality_have_no_token() {
@@ -547,6 +615,11 @@ fn replay_parity_and_refusal_settle_inconclusive_without_evidence() {
         }
         assert!(record.probabilistic_counterexample.is_none());
         assert!(record.exact_probabilistic.is_none());
+        let outcome = serde_json::to_value(fsl_replay::OutcomeItem::from_terminal(
+            record.terminal().unwrap(),
+        ))
+        .unwrap();
+        assert!(outcome.get("measured").is_none(), "{outcome}");
     }
 }
 

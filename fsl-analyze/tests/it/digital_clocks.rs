@@ -3,6 +3,7 @@
 //! §15.5's `Retx`, decided by the finite-horizon solver.
 
 use filament_exact::{Cancel, Integer, Rational};
+use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
 use fsl_analyze::exact_probabilistic::{
     build_product, decide_bounded_event, witness_scheduler, ActionChoice, EntryChoice,
     ExactProbLimits, FhResult, MonitorVerdict, ProbBuild, ProbProduct, ProductAction, ProductKind,
@@ -13,6 +14,7 @@ use fsl_analyze::exact_probabilistic::{
 };
 use fsl_analyze::exact_probabilistic::{DeadlinePhase, MonitorState};
 use fsl_eval::model_subject::ModelSubject;
+use fsl_replay::{OutcomeItem, TerminalValue, UnavailabilityCause};
 use fsl_semantics::check::{
     Bound, BoundedMeasure, CheckCause, Event, ProbForm, ProbabilisticCause, TimeTypeMismatchReason,
     Weighting,
@@ -1418,7 +1420,62 @@ fn zero_delay_loop_beside_an_end_component_is_decided() {
 #[test]
 fn time_locked_state_is_terminal() {
     let world = one_workload("delay M::Call::send ~ discrete { 5 ms: 1 };\n");
-    assert!(matches!(build(&world, "Under"), Ok(ProbBuild::Built(_))));
+    let built = product(&world, "Under");
+    let [(index, binding, initial)] = built.initial.as_slice() else {
+        panic!(
+            "one origin and one unbound initial state: {:?}",
+            built.initial
+        );
+    };
+    assert_eq!(*index, 0);
+    assert!(binding.is_none());
+    assert!(built.outgoing(*initial).is_empty(), "time-lock has no move");
+    assert!(built.decided.contains(&(*initial, MonitorVerdict::Reject)));
+    assert_eq!(
+        initial_value(&built, Bound::AtLeast(ratio(99, 100))),
+        ratio(0, 1),
+        "a deadline that cannot advance from the locked initial state is rejected"
+    );
+}
+
+/// FR-203-AC-3 / FR-204-AC-3 (TC-639): an exponential delay requested as
+/// exact evidence settles unsupported with its typed delay cause and no value.
+#[trace("TC-639", "FR-203-AC-3", "FR-204-AC-3")]
+#[test]
+fn exponential_delay_exact_item_is_unsupported_without_a_measured_value() {
+    let world = one_workload("delay M::Call::send ~ exponential(1);\n");
+    let claim = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .claim("Under")
+        .expect("the exact workload claim checks");
+    let item = exact_probabilistic_item(
+        fsl_foundation::RequestIndex::new(0),
+        ProductRequest {
+            subject: ModelSubject {
+                simulation: world.request(),
+                proof_bounds: Vec::new(),
+            },
+            claim,
+            limits: ExactProbLimits::default(),
+        },
+    );
+    let engines = Engines::fsl().expect("the linked EN-5 engine is admitted");
+    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let terminal = record.terminal().expect("unsupported is terminal");
+    assert!(matches!(
+        terminal.value(),
+        TerminalValue::Unsupported(UnavailabilityCause::DelayDistribution { operation })
+            if operation.contains("send")
+    ));
+    assert!(record.exact_probabilistic.is_none());
+    assert!(record.probabilistic_counterexample.is_none());
+    let outcome = serde_json::to_value(OutcomeItem::from_terminal(terminal))
+        .expect("the unsupported outcome serializes");
+    assert_eq!(outcome["result"], "unsupported");
+    assert!(outcome.get("measured").is_none(), "{outcome}");
+    assert!(outcome.get("value").is_none(), "{outcome}");
 }
 
 /// FR-186-AC-12 (TC-2169): over the timed `Retx` subject `expected elapsed`,
