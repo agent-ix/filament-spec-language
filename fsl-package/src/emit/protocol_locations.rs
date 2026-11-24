@@ -13,7 +13,7 @@
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-use filament_checked::node::NodeKind;
+use filament_checked::node::{NodeKind, Visit};
 use filament_contract_model::{
     CheckedKeyOrdinal, CheckedNodeId, CheckedOccurrence, CheckedProtocolLocation,
     CheckedProtocolLocationOrigin, CheckedProtocolSemanticLocation,
@@ -27,7 +27,7 @@ use fsl_semantics::check::{
     CheckedOrdering, CheckedProtocol, CheckedTerminalMember, LeafTerm, NodeTag,
 };
 
-use super::{EmitRefusal, checked_occurrence};
+use super::{checked_occurrence, EmitRefusal};
 
 /// The largest integer a JSON number carries exactly.
 pub(super) const MAX_SAFE: u64 = 9_007_199_254_740_991;
@@ -451,7 +451,10 @@ fn term_application<'c>(
     // query and collection terms from being mistaken for another application
     // at the same location; no display-string or substring search is used.
     let form = match node.kind() {
-        NodeKind::Query { .. } => Some("query"),
+        NodeKind::Query { visit, .. } => Some(match visit {
+            Visit::Forall | Visit::Exists => "quantify",
+            Visit::Map | Visit::Filter | Visit::Count | Visit::Sum | Visit::Only => "collection",
+        }),
         NodeKind::Collection { .. } => Some("collection"),
         _ => None,
     };
@@ -576,7 +579,7 @@ fn is_deref_application(key: &NodeKey) -> bool {
 mod tests {
     use super::*;
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
-    use fsl_semantics::check::{PackageDeclarations, test_support::ZeroRewardEvaluator};
+    use fsl_semantics::check::{test_support::ZeroRewardEvaluator, PackageDeclarations};
     use ix_trace_rs::trace;
 
     /// A count's retained collection has query and equality operands at
