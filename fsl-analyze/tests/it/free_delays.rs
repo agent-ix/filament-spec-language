@@ -1106,6 +1106,29 @@ fn timed_detour_refutation_replays_its_free_delay_scheduler() {
         .collect();
     path_lengths.sort_unstable();
     assert_eq!(path_lengths, [1, 2]);
+
+    let minimum_world = detour(&claim(
+        "Min",
+        "under All",
+        ">= 0.45",
+        "eventually[0 ms, 2 ms] holds(c.late)",
+    ));
+    let minimum_product = build(&minimum_world, "Min");
+    let FhResult::Exact { values, policy } = decide_bounded_event(
+        &minimum_product,
+        &Bound::AtLeast(ratio(9, 20)),
+        &ExactProbLimits::default(),
+    )
+    .expect("the digital product is acyclic")
+    else {
+        panic!("exact minimum value");
+    };
+    let initial = minimum_product.initial[0].2;
+    assert_eq!(values[initial.index()], ratio(3, 8));
+    assert_eq!(
+        witness(&minimum_world, &minimum_product, initial, &policy),
+        [row(&[("A", 1)], &[("B", 1)]), row(&[("A", 3)], &[("B", 2)])]
+    );
 }
 
 /// FR-202-AC-8: tampering with any part of a timed `FreeDelays` scheduler
