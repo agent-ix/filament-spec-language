@@ -2782,6 +2782,55 @@ fn each_over_binding_has_its_own_states() {
     assert!(differing);
 }
 
+/// FR-196-AC-10 (TC-631): each of two subject initial states is represented
+/// once per live binding, and equal model and monitor states under those
+/// bindings have different product keys.
+#[trace("TC-631", "FR-196-AC-10")]
+#[test]
+fn each_over_binding_has_its_own_initial_for_every_subject_initial() {
+    let model = prob_world::process(BINDINGS);
+    let world = World::with_object_initials(
+        &model,
+        &["p", "q"],
+        &[
+            serde_json::json!({"done": {"boolean": false}}),
+            serde_json::json!({"done": {"boolean": true}}),
+        ],
+    );
+    let product = built(&world, "Terminates");
+
+    assert_eq!(product.initial.len(), 4, "two bindings per subject initial");
+    for subject_initial in [0, 1] {
+        let entries: Vec<_> = product
+            .initial
+            .iter()
+            .filter(|(initial, _, _)| *initial == subject_initial)
+            .collect();
+        let [(left_initial, left_binding, left_state), (right_initial, right_binding, right_state)] =
+            entries.as_slice()
+        else {
+            panic!("two binding initials for subject state {subject_initial}: {entries:?}");
+        };
+        assert_eq!(*left_initial, *right_initial);
+        let (Some(left_binding), Some(right_binding)) = (left_binding, right_binding) else {
+            panic!("each initial carries its over binding: {entries:?}");
+        };
+        assert_ne!(left_binding, right_binding);
+
+        let (left_key, right_key) = (
+            &product.states[left_state.index()],
+            &product.states[right_state.index()],
+        );
+        assert_eq!(
+            (&left_key.model, &left_key.monitor),
+            (&right_key.model, &right_key.monitor)
+        );
+        assert_eq!(left_key.binding.as_ref(), Some(left_binding));
+        assert_eq!(right_key.binding.as_ref(), Some(right_binding));
+        assert_ne!(left_key, right_key, "binding changes the product key");
+    }
+}
+
 /// Checks FR-196 "Behavior": reaching `max_states` or `max_transitions` stops the
 /// build, and a build of exactly that size completes.
 #[trace("TC-631")]

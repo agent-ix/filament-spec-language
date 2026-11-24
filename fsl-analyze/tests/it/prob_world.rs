@@ -397,6 +397,13 @@ impl World {
         Self::build(model, &[model.key], &[model.key], &initials, false, false)
     }
 
+    /// `model`, over live `keys`, with one initial snapshot per field set of
+    /// `initials`, in order.
+    pub(crate) fn with_object_initials(model: &Model, keys: &[&str], initials: &[Json]) -> Self {
+        let initials: Vec<&Json> = initials.iter().collect();
+        Self::build(model, keys, keys, &initials, false, false)
+    }
+
     /// `model`, checked, with its population declared `symmetric` and its
     /// operations scoped to their receivers, over a universe of `keys`,
     /// every one of them live in the initial snapshot.
