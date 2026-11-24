@@ -2122,7 +2122,6 @@ fn check_document_bytes(
     };
     if bound_side.is_some()
         && (!bound_base
-            || reward.is_some() && bound_side != Some(SubsystemBoundKind::Lower)
             || !fairness_records.is_empty())
     {
         return Err(ProbabilityDocumentError::Unsupported);
@@ -2151,7 +2150,8 @@ fn check_document_bytes(
             return Ok(ExactProbabilityCertificateCheck::Rejected(rejection));
         }
     };
-    let ranked = bound_side != Some(SubsystemBoundKind::Upper);
+    let reward_upper = reward.is_some() && bound_side == Some(SubsystemBoundKind::Upper);
+    let ranked = bound_side != Some(SubsystemBoundKind::Upper) || reward_upper;
     for (key, state) in graph
         .states
         .iter()
@@ -2194,7 +2194,7 @@ fn check_document_bytes(
     let progress_checked = match bound_side {
         None => true,
         Some(SubsystemBoundKind::Lower) => document.cyclic_dtmc,
-        Some(SubsystemBoundKind::Upper) => false,
+        Some(SubsystemBoundKind::Upper) => reward_upper,
     };
     for (key, state) in graph
         .states
@@ -2211,17 +2211,17 @@ fn check_document_bytes(
             let progress = if state.terminal == Some(true) {
                 *rank == 0
             } else {
-                let mut lower = false;
+                let mut progress = false;
                 for edge in state.choices.iter().flatten() {
                     super::reward::visit(cancel, &mut meter)?;
                     if edge.probability > rational(0)
                         && ranks.get(&edge.target).is_some_and(|next| next < rank)
                     {
-                        lower = true;
+                        progress = true;
                         break;
                     }
                 }
-                *rank > 0 && lower
+                *rank > 0 && progress
             };
             if !progress {
                 return Ok(rejected(

@@ -440,7 +440,7 @@ impl Ord for ProbKey {
 }
 
 /// What an MDP chooses at a state, or the one move of a DTMC state.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ProductAction {
     /// A scheduled identity (FR-187): the operation, its receiver and its
     /// non-random arguments.

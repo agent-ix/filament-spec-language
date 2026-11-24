@@ -10,7 +10,7 @@
 //! two spellings, and the base's checker compares every member with its own
 //! derivation.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use super::*;
 
@@ -20,7 +20,12 @@ use super::*;
 fn is_wrappable_base(profile: &str) -> bool {
     matches!(
         profile,
-        PROFILE | CYCLIC_PROFILE | CYCLIC_MDP_PROFILE | CYCLIC_REWARD_PROFILE | measure::PROFILE
+        PROFILE
+            | CYCLIC_PROFILE
+            | CYCLIC_MDP_PROFILE
+            | CYCLIC_REWARD_PROFILE
+            | CYCLIC_MDP_REWARD_PROFILE
+            | measure::PROFILE
     )
 }
 
@@ -139,6 +144,14 @@ pub(super) fn unwrap(
         .pointer("/objective/profile")
         .and_then(Value::as_str)
         .map(str::to_owned);
+    let cyclic_mdp_reward = document
+        .pointer("/objective/base/profile")
+        .and_then(Value::as_str)
+        == Some(CYCLIC_MDP_REWARD_PROFILE);
+    let cyclic_reward = document
+        .pointer("/objective/base/profile")
+        .and_then(Value::as_str)
+        == Some(CYCLIC_REWARD_PROFILE);
     let root = document
         .as_object_mut()
         .ok_or(ProbabilityDocumentError::Malformed)?;
@@ -167,10 +180,15 @@ pub(super) fn unwrap(
             }
             match side {
                 SubsystemBoundKind::Upper => {
-                    if root.contains_key("ranking") {
+                    if root.contains_key("ranking") && !cyclic_mdp_reward && !cyclic_reward {
                         return Err(ProbabilityDocumentError::MalformedMember("ranking"));
                     }
-                    root.insert("ranking".into(), json!([]));
+                    if !root.contains_key("ranking") {
+                        root.insert("ranking".into(), json!([]));
+                    }
+                }
+                SubsystemBoundKind::Lower if cyclic_mdp_reward || cyclic_reward => {
+                    root.entry("ranking").or_insert_with(|| json!([]));
                 }
                 SubsystemBoundKind::Lower => {}
             }
@@ -219,6 +237,16 @@ pub(super) fn wrap(
         .and_then(|objective| objective.get("profile"))
         .and_then(Value::as_str)
         == Some(TIMED_PROFILE);
+    let cyclic_mdp_reward = root
+        .get("objective")
+        .and_then(|objective| objective.get("profile"))
+        .and_then(Value::as_str)
+        == Some(CYCLIC_MDP_REWARD_PROFILE);
+    let cyclic_reward = root
+        .get("objective")
+        .and_then(|objective| objective.get("profile"))
+        .and_then(Value::as_str)
+        == Some(CYCLIC_REWARD_PROFILE);
     if !timed {
         let base = root
             .remove("objective")
@@ -227,7 +255,7 @@ pub(super) fn wrap(
             "objective".into(),
             json!({"profile": measure::bounds::PROFILE, "base": base}),
         );
-        if side == SubsystemBoundKind::Upper {
+        if side == SubsystemBoundKind::Upper && !cyclic_mdp_reward && !cyclic_reward {
             root.remove("ranking");
         }
     }

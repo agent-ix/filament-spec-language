@@ -4,10 +4,10 @@
 use std::io::Write;
 use std::process::{Command, Stdio};
 
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use filament_checked::key::DeclarationKey;
 use filament_exact::Cancel;
-use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines, Settlement};
+use fsl_analyze::analyze::{Engines, Settlement, analyze_items, exact_probabilistic_item};
 use fsl_analyze::exact_probabilistic::{ExactProbLimits, ProductRequest};
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, PopulationUniverse};
@@ -16,7 +16,7 @@ use fsl_replay::spine::{self, DependencyInput, ParseRequest, SpineLimits};
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const DOMAIN: &[u8] = include_bytes!("../fixtures/link.semantic-ir.json");
 const SNAPSHOT: &[u8] = include_bytes!("../fixtures/link.snapshot.json");
@@ -33,7 +33,9 @@ fn model_source() -> String {
 }
 
 fn claim(scheduler: &str, operator: &str, threshold: &str, horizon: u64) -> String {
-    format!("probabilistic Likely using inf on M over (m: M::Msg) under {scheduler} on origin {{ probability {operator} {threshold} [ eventually[0,{horizon}] holds(m.delivered) ] }}\n")
+    format!(
+        "probabilistic Likely using inf on M over (m: M::Msg) under {scheduler} on origin {{ probability {operator} {threshold} [ eventually[0,{horizon}] holds(m.delivered) ] }}\n"
+    )
 }
 
 pub(super) fn compile_source(
@@ -323,6 +325,73 @@ pub(super) fn requests_with_mode(
     // The claim-side document comes first; a value-bounds proof's counterpart follows.
     let requests = documents.into_iter().enumerate().map(wire).collect();
     (requests, record.settlement)
+}
+
+/// FR-1042-AC-23: the separate checker replays a finite-horizon fraction mean.
+#[trace("TC-3212", "FR-1042-AC-23")]
+#[test]
+fn fraction_mean_documents_are_accepted_by_the_separate_checker() {
+    let mut source = model_source()
+        .replace("{ true: 1, false: 9 }", "{ true: 1, false: 1 }")
+        .replace("{ true: 1, false: 4 }", "{ true: 1, false: 3 }")
+        .replace(
+            "workload Even on M { weight Msg::send_a = 1; weight Msg::send_b = 1; }",
+            "workload Steady on M { weight Msg::send_a = 1; weight Msg::send_b = 0; }",
+        );
+    source.push_str("\nprobabilistic Likely using inf on M over (m: M::Msg) under Steady on origin { mean of (fraction holds(m.delivered) over [0,2]) >= rational(2,5) }\n");
+    let limits = ExactProbLimits::default();
+    let (requests, settlement) = requests_with_mode(&source, SNAPSHOT, limits, DOMAIN, false);
+    assert!(
+        !requests.is_empty(),
+        "mean proof carries a document: {settlement:?}"
+    );
+    let Settlement::Terminal(record) = settlement else {
+        panic!("mean interval settles terminal: {settlement:?}");
+    };
+    assert!(matches!(
+        record.value(),
+        fsl_replay::TerminalValue::Proved { .. }
+    ));
+    for request in &requests {
+        let (code, output) = run(request);
+        assert_eq!(code, 0, "{output}");
+        let altered = mutate(request, |doc| {
+            doc["values"][0]["value"] = json!({"numerator":"1","denominator":"7"});
+        });
+        assert_ne!(run(&altered).0, 0, "mutated mean bound must fail");
+    }
+}
+
+/// FR-1042-AC-24: the fast/slow retry model's shifted quantile interval is
+/// checked independently at both ends, including a changed-value refusal.
+#[trace("TC-3212", "FR-1042-AC-24")]
+#[test]
+fn shifted_quantile_documents_are_accepted_by_the_separate_checker() {
+    let mut source = model_source()
+        .replace("{ true: 1, false: 9 }", "{ true: 1, false: 1 }")
+        .replace("{ true: 1, false: 4 }", "{ true: 1, false: 3 }");
+    source.push_str("\nprobabilistic Likely using inf on M over (m: M::Msg) under every scheduler on origin { quantile 0.4 of (steps from holds(true) until holds(m.delivered) within 4) <= 2 }\n");
+    let limits = ExactProbLimits::default();
+    let (requests, settlement) = requests_with_mode(&source, SNAPSHOT, limits, DOMAIN, false);
+    assert!(
+        !requests.is_empty(),
+        "quantile proof carries a document: {settlement:?}"
+    );
+    let Settlement::Terminal(record) = settlement else {
+        panic!("quantile interval settles terminal: {settlement:?}");
+    };
+    assert!(matches!(
+        record.value(),
+        fsl_replay::TerminalValue::Proved { .. }
+    ));
+    for request in &requests {
+        let (code, output) = run(request);
+        assert_eq!(code, 0, "{output}");
+        let altered = mutate(request, |doc| {
+            doc["values"][0]["value"] = json!({"numerator":"1","denominator":"7"});
+        });
+        assert_ne!(run(&altered).0, 0, "mutated quantile bound must fail");
+    }
 }
 
 pub(super) fn proof(source: &str, snapshot: &[u8]) -> Value {

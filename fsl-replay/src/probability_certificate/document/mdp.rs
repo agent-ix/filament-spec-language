@@ -633,6 +633,7 @@ fn rows(
     graph: &CheckerGraph,
     certificate: &ExactProbabilityCertificate,
     cx: &mut Context<'_, '_>,
+    allow_partial: bool,
 ) -> Result<CertificateValues, ProbabilityDocumentError> {
     for row in &certificate.values {
         cx.tick(CyclicMdpProbabilityPhase::Rows)?;
@@ -655,7 +656,12 @@ fn rows(
             return Err(ProbabilityDocumentError::Malformed);
         }
     }
-    Ok(certificate_values(graph, certificate, cx.cancel, false)?)
+    Ok(certificate_values(
+        graph,
+        certificate,
+        cx.cancel,
+        allow_partial,
+    )?)
 }
 
 fn sums(
@@ -745,7 +751,7 @@ fn equality_failure(
                             ProbabilityObjective::Workload
                             | ProbabilityObjective::WorkloadMinimum
                             | ProbabilityObjective::WorkloadMaximum => {
-                                return Err(ProbabilityDocumentError::Unsupported)
+                                return Err(ProbabilityDocumentError::Unsupported);
                             }
                         },
                     });
@@ -795,13 +801,13 @@ fn progress_failure(
                             return Ok(Some((
                                 ProbabilityCertificateRule::InequalityFails,
                                 key.clone(),
-                            )))
+                            )));
                         }
                         ProbabilityObjective::Maximum => closed = true,
                         ProbabilityObjective::Workload
                         | ProbabilityObjective::WorkloadMinimum
                         | ProbabilityObjective::WorkloadMaximum => {
-                            return Err(ProbabilityDocumentError::Unsupported)
+                            return Err(ProbabilityDocumentError::Unsupported);
                         }
                     }
                 }
@@ -843,7 +849,7 @@ fn progress_failure(
             ProbabilityObjective::Workload
             | ProbabilityObjective::WorkloadMinimum
             | ProbabilityObjective::WorkloadMaximum => {
-                return Err(ProbabilityDocumentError::Unsupported)
+                return Err(ProbabilityDocumentError::Unsupported);
             }
         };
         if !progress {
@@ -913,7 +919,7 @@ fn derive_ranks(
                     ProbabilityObjective::Workload
                     | ProbabilityObjective::WorkloadMinimum
                     | ProbabilityObjective::WorkloadMaximum => {
-                        return Err(ProbabilityDocumentError::Unsupported)
+                        return Err(ProbabilityDocumentError::Unsupported);
                     }
                 }
             }
@@ -989,13 +995,13 @@ fn construct(
     } else {
         certificate
     };
-    let values = match rows(&graph, certificate, cx)? {
+    let values = match rows(&graph, certificate, cx, false)? {
         CertificateValues::Complete(values) => values,
         CertificateValues::Partial { .. } => {
-            return Err(ProbabilityDocumentError::MalformedMember("values"))
+            return Err(ProbabilityDocumentError::MalformedMember("values"));
         }
         CertificateValues::Rejected(_) => {
-            return Err(ProbabilityDocumentError::MalformedMember("values"))
+            return Err(ProbabilityDocumentError::MalformedMember("values"));
         }
     };
     let action_sums = sums(&graph, &values, reward.as_ref(), cx)?;
@@ -1135,31 +1141,47 @@ fn check_with_context(
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
     if let (Some(side), Some(captured)) = (offer.side, captured) {
-        // FR-1042 bounds an unbounded eventual probability, not a reward or
-        // a state-event value.
-        if cx.reward || event.is_some() {
+        // FR-1042 value bounds currently cover cyclic reward only on a
+        // structurally valid expected-reward subject; state-event bounds use
+        // their separate profile rules.
+        if event.is_some() {
             return Err(ProbabilityDocumentError::Unsupported);
         }
         let relation = offer.relation();
         if relation.misplaced(&bound) {
             return Ok(misplaced_kind());
         }
-        let values = match rows(
+        let allow_partial_reward_lower = cx.reward && side == SubsystemBoundKind::Lower;
+        let mut values = match rows(
             &graph,
             &ExactProbabilityCertificate {
                 values: document.values,
             },
             &mut cx,
+            allow_partial_reward_lower,
         )? {
             CertificateValues::Complete(values) => values,
+            CertificateValues::Partial { values, .. } if allow_partial_reward_lower => values,
             CertificateValues::Partial { .. } => {
-                return Err(ProbabilityDocumentError::MalformedMember("values"))
+                return Err(ProbabilityDocumentError::MalformedMember("values"));
             }
             CertificateValues::Rejected(rejection) => {
-                return Ok(ExactProbabilityCertificateCheck::Rejected(rejection))
+                return Ok(ExactProbabilityCertificateCheck::Rejected(rejection));
             }
         };
+        if cx.reward && side == SubsystemBoundKind::Lower {
+            for key in graph.states.keys() {
+                values.entry(key.clone()).or_insert_with(|| rational(0));
+            }
+        }
         let ranks = match side {
+            SubsystemBoundKind::Lower if cx.reward => BTreeMap::new(),
+            SubsystemBoundKind::Upper if cx.reward => {
+                match offered_ranks(&graph, document.ranking, &mut cx)? {
+                    Some(ranks) => ranks,
+                    None => return Ok(malformed_ranking()),
+                }
+            }
             SubsystemBoundKind::Lower => match offered_ranks(&graph, document.ranking, &mut cx)? {
                 Some(ranks) => ranks,
                 None => return Ok(malformed_ranking()),
@@ -1176,14 +1198,14 @@ fn check_with_context(
             Some(_) if !existential => {
                 return document_admission_error(ProbabilityDocumentError::MalformedMember(
                     "policy",
-                ))
+                ));
             }
             Some(rows) => match hinted_choices(system, &graph, &captured, rows, &mut cx) {
                 Ok(hints) => hints,
                 Err(error) => return document_admission_error(error),
             },
         };
-        let action_sums = sums(&graph, &values, None, &mut cx)?;
+        let action_sums = sums(&graph, &values, reward.as_ref(), &mut cx)?;
         let selected = match bound_failure(
             system,
             &graph,
@@ -1218,13 +1240,14 @@ fn check_with_context(
             values: document.values,
         },
         &mut cx,
+        false,
     )? {
         CertificateValues::Complete(values) => values,
         CertificateValues::Partial { .. } => {
-            return Err(ProbabilityDocumentError::MalformedMember("values"))
+            return Err(ProbabilityDocumentError::MalformedMember("values"));
         }
         CertificateValues::Rejected(rejection) => {
-            return Ok(ExactProbabilityCertificateCheck::Rejected(rejection))
+            return Ok(ExactProbabilityCertificateCheck::Rejected(rejection));
         }
     };
     let Some(ranks) = offered_ranks(&graph, document.ranking, &mut cx)? else {
@@ -1372,9 +1395,10 @@ fn progresses(
     for edge in choice {
         cx.tick(CyclicMdpProbabilityPhase::Progress)?;
         if edge.probability > rational(0)
-            && values
-                .get(&edge.target)
-                .is_some_and(|value| *value > rational(0))
+            && (cx.reward
+                || values
+                    .get(&edge.target)
+                    .is_some_and(|value| *value > rational(0)))
             && ranks.get(&edge.target).is_some_and(|next| *next < rank)
         {
             return Ok(true);
@@ -1410,6 +1434,9 @@ fn bound_failure(
     >,
     ProbabilityDocumentError,
 > {
+    if cx.reward && side == SubsystemBoundKind::Upper && !hints.is_empty() {
+        return Err(ProbabilityDocumentError::MalformedMember("policy"));
+    }
     let existential = match (objective, side) {
         (ProbabilityObjective::Minimum, SubsystemBoundKind::Upper)
         | (ProbabilityObjective::Maximum, SubsystemBoundKind::Lower) => true,
@@ -1421,13 +1448,18 @@ fn bound_failure(
             | ProbabilityObjective::WorkloadMaximum,
             _,
         ) => return Err(ProbabilityDocumentError::Unsupported),
-    };
+    } && !(cx.reward && side == SubsystemBoundKind::Upper);
     let mut selected = Vec::new();
     for (key, state) in &graph.states {
         cx.tick(CyclicMdpProbabilityPhase::ActionSums)?;
         let value = values.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
         if let Some(target) = state.terminal {
-            if *value != rational(i64::from(target)) {
+            let terminal_value = if cx.reward {
+                rational(0)
+            } else {
+                rational(i64::from(target))
+            };
+            if *value != terminal_value {
                 return Ok(Err((
                     ProbabilityCertificateRule::InequalityFails,
                     key.clone(),
@@ -1448,8 +1480,11 @@ fn bound_failure(
                 SubsystemBoundKind::Upper => sum <= value,
             })
         };
-        // A `lower` document shows progress wherever its value is positive.
-        let needs_progress = side == SubsystemBoundKind::Lower && *value > rational(0);
+        // Probability lower bounds show positive-value progress. A reward
+        // upper bound also needs a proper selected policy, even at zero-valued
+        // states, so the rank reaches a terminal boundary.
+        let needs_progress = cx.reward && side == SubsystemBoundKind::Upper
+            || !cx.reward && side == SubsystemBoundKind::Lower && *value > rational(0);
         let rank = if needs_progress {
             *ranks.get(key).ok_or(ProbabilityDocumentError::Malformed)?
         } else {
@@ -1478,7 +1513,7 @@ fn bound_failure(
                 return Ok(Err((
                     ProbabilityCertificateRule::InequalityFails,
                     key.clone(),
-                )))
+                )));
             }
             Some(Some(index)) => vec![*index],
             None => {
@@ -1726,16 +1761,18 @@ mod tests {
         let values = BTreeMap::from([(key(0), rational(1)), (key(1), rational(1))]);
         let action_sums = sums(&graph, &values, None, &mut cx).unwrap();
         for objective in [ProbabilityObjective::Minimum, ProbabilityObjective::Maximum] {
-            assert!(progress_failure(
-                &graph,
-                &values,
-                &action_sums,
-                &BTreeMap::from([(key(0), 1), (key(1), 0)]),
-                objective,
-                &mut cx
-            )
-            .unwrap()
-            .is_some());
+            assert!(
+                progress_failure(
+                    &graph,
+                    &values,
+                    &action_sums,
+                    &BTreeMap::from([(key(0), 1), (key(1), 0)]),
+                    objective,
+                    &mut cx
+                )
+                .unwrap()
+                .is_some()
+            );
         }
         let mut graph = graph;
         graph.states.get_mut(&key(0)).unwrap().choices[0] = vec![ProbabilityEdge {
@@ -1756,16 +1793,18 @@ mod tests {
                 .unwrap(),
                 None
             );
-            assert!(progress_failure(
-                &graph,
-                &values,
-                &action_sums,
-                &BTreeMap::from([(key(0), 0), (key(1), 0)]),
-                objective,
-                &mut cx
-            )
-            .unwrap()
-            .is_some());
+            assert!(
+                progress_failure(
+                    &graph,
+                    &values,
+                    &action_sums,
+                    &BTreeMap::from([(key(0), 0), (key(1), 0)]),
+                    objective,
+                    &mut cx
+                )
+                .unwrap()
+                .is_some()
+            );
         }
     }
 }

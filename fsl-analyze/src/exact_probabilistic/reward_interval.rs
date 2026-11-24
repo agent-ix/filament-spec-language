@@ -32,10 +32,10 @@ pub enum ExpectedRewardOutcome {
     },
 }
 
-/// Use monotone Bellman iteration to bound a DTMC's expected total reward.
+/// Use monotone Bellman iteration to bound a single-action product's expected total reward.
 ///
 /// MDP policy selection remains in the exact solver; this interval routine is
-/// for resolved workloads, where each state has one semantic action.
+/// also valid for a product whose states each have one semantic action.
 pub fn decide_expected_reward_threshold(
     product: &ProbProduct,
     target: &[bool],
@@ -43,8 +43,7 @@ pub fn decide_expected_reward_threshold(
     threshold: &Rational,
     limits: &ExactProbLimits,
 ) -> Result<ExpectedRewardOutcome, UnboundedError> {
-    if product.kind != ProductKind::Dtmc
-        || target.len() != product.states.len()
+    if target.len() != product.states.len()
         || limits.precision_bits == 0
         || limits.max_precision_bits < limits.precision_bits
     {
@@ -60,6 +59,15 @@ pub fn decide_expected_reward_threshold(
             return Err(UnboundedError::InvalidState);
         }
         row.push(edge);
+    }
+    if product.kind == ProductKind::Mdp
+        && rows.iter().any(|edges| {
+            edges
+                .first()
+                .is_some_and(|first| edges.iter().any(|edge| edge.choice != first.choice))
+        })
+    {
+        return Err(UnboundedError::InvalidState);
     }
     if has_non_target_bottom_component(&rows, target) {
         let exact = super::decide_expected_reward(
