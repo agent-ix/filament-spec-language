@@ -3228,18 +3228,18 @@ fn finish_replay(
         Ok(ProbabilityWitnessReplay::Reproduced(token)) => {
             let input = system.input();
             let quantile_bound;
-            let bound = match &claim.form {
-                ProbForm::Reach { bound, .. }
-                | ProbForm::Probability { bound, .. }
-                | ProbForm::MeanOfFraction { bound, .. }
-                | ProbForm::LongRunFraction { bound, .. }
-                | ProbForm::ExpectedReward { bound, .. } => bound,
+            let (bound, claim_type) = match &claim.form {
+                ProbForm::Reach { bound, .. } => (bound, "probability"),
+                ProbForm::Probability { bound, .. } => (bound, "probability"),
+                ProbForm::MeanOfFraction { bound, .. } => (bound, "mean-of-fraction"),
+                ProbForm::LongRunFraction { bound, .. } => (bound, "long-run-fraction"),
+                ProbForm::ExpectedReward { bound, .. } => (bound, "expected-total"),
                 ProbForm::Quantile { q, threshold, .. } => {
                     quantile_bound = match threshold {
                         Bound::AtMost(_) => Bound::AtLeast(q.clone()),
                         Bound::AtLeast(_) => Bound::AtMost(q.clone()),
                     };
-                    &quantile_bound
+                    (&quantile_bound, "quantile")
                 }
                 _ => return not_yet(),
             };
@@ -3250,6 +3250,7 @@ fn finish_replay(
                 Some(enum_members) => fsl_replay::probabilistic_wire_with_enum_members(
                     witness,
                     bound,
+                    claim_type,
                     input.types,
                     input.variant_types,
                     enum_members,
@@ -3259,6 +3260,7 @@ fn finish_replay(
                 None => fsl_replay::probabilistic_wire(
                     witness,
                     bound,
+                    claim_type,
                     input.types,
                     input.variant_types,
                     &state_key,

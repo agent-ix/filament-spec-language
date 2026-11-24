@@ -693,6 +693,7 @@ fn refute_mean(
             let wire = fsl_replay::probabilistic_wire(
                 token.evidence(),
                 bound,
+                "mean-of-fraction",
                 scope.types(),
                 scope.variant_types(),
                 &|state| system.state_key(state).ok().map(|(_, key)| key),

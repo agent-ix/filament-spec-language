@@ -57,18 +57,18 @@ pub(super) fn run(
     ) {
         Ok(ProbabilityWitnessReplay::Reproduced(token)) => {
             let quantile_bound;
-            let bound = match &claim.form {
-                ProbForm::Reach { bound, .. }
-                | ProbForm::Probability { bound, .. }
-                | ProbForm::LongRunFraction { bound, .. }
-                | ProbForm::ExpectedReward { bound, .. }
-                | ProbForm::MeanOfFraction { bound, .. } => bound,
+            let (bound, claim_type) = match &claim.form {
+                ProbForm::Reach { bound, .. } => (bound, "probability"),
+                ProbForm::Probability { bound, .. } => (bound, "probability"),
+                ProbForm::LongRunFraction { bound, .. } => (bound, "long-run-fraction"),
+                ProbForm::ExpectedReward { bound, .. } => (bound, "expected-total"),
+                ProbForm::MeanOfFraction { bound, .. } => (bound, "mean-of-fraction"),
                 ProbForm::Quantile { q, threshold, .. } => {
                     quantile_bound = match threshold {
                         Bound::AtMost(_) => Bound::AtLeast(q.clone()),
                         Bound::AtLeast(_) => Bound::AtMost(q.clone()),
                     };
-                    &quantile_bound
+                    (&quantile_bound, "quantile")
                 }
                 _ => return not_yet(),
             };
@@ -80,6 +80,7 @@ pub(super) fn run(
                 &witness,
                 occurrence,
                 bound,
+                claim_type,
                 scope.types(),
                 scope.variant_types(),
                 &|state| system.state_key(state).ok().map(|(_, key)| key),
