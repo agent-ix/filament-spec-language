@@ -40,3 +40,54 @@ Reviewed the QSL-2043 corpus and saga-route test changes at frozen head `c12fbe6
 - Required workspace Clippy gate: not completed because other Cargo builds were active in the shared target directory.
 - `cargo deny check`: failed with existing duplicate `quire-canonical` entries and a `Url::origin()` stack overflow advisory; this diff changes no dependency declarations.
 - Linear issue access: `linear issue view QSL-2043` did not return within 30 seconds, so findings could not be posted or read back as comments.
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | Added the two-source G-114 program with its current-main `exit_code:20`, `ambiguous_declaration` / `ambiguous-name` expectation and added all eight ticket-new fixtures to `PROTOCOL_FLIPS`. |
+| FND-002 | fixed | Added `symbolic-capacity-saga` to `SAGAS` and explicit realizability refusal assertions for replicated roles, on-each activation, symbolic capacity, and compensation. Correction to the original subclaim: `declaration-on-each` has one role, so results are one projection, realizability, then deadlock; its final `failed` result is the deadlock outcome. The realizability result at `roles.len()` is explicitly asserted as the typed `activation-on-each` refusal. |
+| FND-003 | fixed | Reordered the sibling modules to rustfmt order. |
+
+### Round 1 evidence
+
+| FND | Outcome | After excerpt |
+| --- | --- | --- |
+| FND-001 | fixed | `p-two-protocols-one-name` expected JSON: `{"verb":"compile","exit_code":20,"category":"refusal","last_stage":"I1","code":"ambiguous_declaration","cause":"ambiguous-name","flips_with":"G-114"}`. `PROTOCOL_FLIPS` now includes each of the eight ticket-new programs: `p-two-protocols-one-name`, `p-channel-bounded-scalar`, `p-fifo-value-key`, `p-role-on-model`, `p-protocol-reference`, `p-over-scalar`, `p-terminal-reads-over-on-each`, and `p-repeat-post-test-body-binder`. |
+| FND-002 | fixed | The on-each test has one role; it asserts the second item (realizability) is the typed refusal, while the third item (`failed`) is deadlock. |
+| FND-003 | fixed | `#[cfg(feature = "checked-handoff")]\nmod protocol_saga_route;\n#[cfg(feature = "checked-handoff")]\nmod protocol_source_routes;` |
+
+```yaml
+dispositions:
+  - fnd: FND-001
+    outcome: fixed
+    after_excerpt: |-
+      pub(super) const PROTOCOL_FLIPS: &[(&str, &str)] = &[
+          ("p-two-protocols-one-name", "G-114"),
+          ("p-channel-bounded-scalar", "QSL-1137"),
+          ("p-fifo-value-key", "QSL-1997 / G-129"),
+          ("p-role-on-model", "QSL-1136"),
+          ("p-protocol-reference", "G-119"),
+          ("p-over-scalar", "G-120"),
+          ("p-terminal-reads-over-on-each", "G-121"),
+          ("p-repeat-post-test-body-binder", "G-122"),
+      ];
+  - fnd: FND-002
+    outcome: fixed
+    after_excerpt: |-
+      let realizability = actual
+          .get(roles.len())
+          .unwrap_or_else(|| panic!("{stem}: missing realizability result in {actual:?}"));
+      assert_eq!(
+          realizability,
+          &format!("unsupported:{cause}"),
+          "{stem}: realizability must expose the typed refusal cause"
+      );
+  - fnd: FND-003
+    outcome: fixed
+    after_excerpt: |-
+      #[cfg(feature = "checked-handoff")]
+      mod protocol_saga_route;
+      #[cfg(feature = "checked-handoff")]
+      mod protocol_source_routes;
+```
