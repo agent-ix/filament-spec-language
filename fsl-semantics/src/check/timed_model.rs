@@ -1613,6 +1613,9 @@ impl TimedModel {
                     .map_or(0, |clock| clock.slots().count());
                 let omission = match &reset.selection {
                     None if slots == 0 => continue,
+                    // The element each literal selector names is written with one
+                    // slot term per level (FR-230-AC-67).
+                    None if reset.slots.len() == slots => continue,
                     // A condition reading the element's presence alone is
                     // the `presence_read` of its place (FSpec `SD-02`).
                     Some(SlotSelection {

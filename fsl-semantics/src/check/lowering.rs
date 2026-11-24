@@ -5396,16 +5396,19 @@ impl<'a> Lowering<'a> {
                 place,
                 slots,
             } => {
+                // A collection-typed read is the slot domain of the place (FSpec FR-772).
+                let keyed = if matches!(node.value_type(), ValueType::Collection(_)) {
+                    Keyed::Application(Operator::Slots, plain("filament.op.option.slots"))
+                } else {
+                    Keyed::Application(Operator::PlaceRef, plain("filament.op.clock_reference.ref"))
+                };
                 return self.next_operand(
                     Box::new(OperandsFrame {
                         node,
                         operands: Operands::FirstThenEach(reference, slots),
                         next: 0,
                         terms: vec![LeafTerm::reference_node(place.clone().into())],
-                        keyed: Keyed::Application(
-                            Operator::PlaceRef,
-                            plain("filament.op.clock_reference.ref"),
-                        ),
+                        keyed,
                     }),
                     frames,
                 );
