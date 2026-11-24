@@ -130,6 +130,19 @@ fn package_schedulability_items_keep_the_requests_order() {
     assert_eq!(package_exit, source_exit);
 }
 
+/// FR-246-AC-4: a named backend outside the claim's requirement candidates
+/// stays excluded on the package route, as it is on the source route.
+#[trace("TC-2961", "FR-246-AC-4")]
+#[test]
+fn a_package_schedulability_claim_rejects_a_backend_outside_its_requirements() {
+    let items = json!([{"claim": "FullEdf", "backend": "en-6"}]);
+    let (source, source_exit, package, package_exit) =
+        both("package-sched-requirement-candidates", &items);
+
+    assert_eq!(package, source, "{package}");
+    assert_eq!(package_exit, source_exit);
+}
+
 /// FR-850-AC-3 (negative): package bytes missing the claim rows or nodes
 /// refuse the request `invalid_package`, with no internal failure.
 #[trace("TC-1593", "FR-850-AC-3")]
