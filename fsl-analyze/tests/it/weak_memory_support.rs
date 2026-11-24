@@ -264,6 +264,7 @@ impl Case {
     ) {
         let outcome = check_protocol(
             ProtocolCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &self.temporal_clock_selections,
                 subject: self.subject_within(selection, max_candidates, absent),
                 item: ModelCheckItem::DeadlockFreedom,
@@ -330,6 +331,7 @@ impl Case {
     ) -> ModelCheckOutcome<ProtocolTransition> {
         check_protocol(
             ProtocolCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &self.temporal_clock_selections,
                 subject: self.subject(selection),
                 item,
