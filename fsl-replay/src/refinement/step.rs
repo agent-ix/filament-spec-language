@@ -145,7 +145,8 @@ pub fn check_initial(
     let history = initial_history(refinement, concrete_system, concrete_initial);
     let mapped = match map_state(
         refinement,
-        (concrete_system, abstract_system),
+        concrete_system,
+        abstract_system,
         concrete_initial,
         &history,
     ) {
