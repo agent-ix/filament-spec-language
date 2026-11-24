@@ -22,7 +22,7 @@ use crate::check::checked_dispatch::{DispatchRoot, OperationClauses, checked_dis
 use crate::check::family::fixtures::{empty_scope, fixture_source};
 use crate::check::family::{OccurrenceMap, OccurrenceRole};
 use crate::check::{CheckCause, CheckedGraph, PackageDeclarations, Scope};
-use crate::model::accounting::{Meter, ModelNormalizationLimits, NormalizationMeter};
+use crate::model::accounting::{ModelNormalizationLimits, NormalizationMeter};
 use crate::model::dispatch::GeneralizationClosure;
 use crate::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, EnumRecord, FieldMemberRecord,
@@ -586,7 +586,7 @@ fn model_union_refusal(
             let no_union_row = lowering.graph.selected_model_unions().next().is_none();
             (refusal, no_union_row)
         });
-    let CheckCause::InternalFault(fault) = refusal.cause else {
+    let CheckCause::InternalFault(fault) = *refusal.cause else {
         panic!(
             "a typed internal union-lowering fault, got {:?}",
             refusal.cause
