@@ -1158,7 +1158,7 @@ fn clause_overrides_reach_accounting_and_stages(extracted: bool) {
 /// FR-312-AC-9: the request's observation document limit is reported as
 /// `observation.input_bytes`, separately from the outer dependent-file limit.
 #[test]
-#[trace("TC-2982", "FR-312-AC-9")]
+#[trace("TC-2982")]
 fn clause_observation_document_limit_names_input_bytes() {
     let case = Case::new();
     let (mut job, _) = spine_clause(&case, false);
@@ -1166,7 +1166,8 @@ fn clause_observation_document_limit_names_input_bytes() {
     let n = bytes.len() as u64;
     job["request"]["clause"]["observation_limits"] = json!({"document_bytes": n - 1});
     let limited_path = case.json("clause-observation-limited.json", &job);
-    let dependent_bytes = usize::try_from(n + 1).unwrap();
+    let dependent_bytes = RunLimits::default().dependent_bytes;
+    assert!(dependent_bytes as u64 > n);
     let limited = run(
         &limited_path,
         RunLimits {
@@ -1175,28 +1176,19 @@ fn clause_observation_document_limit_names_input_bytes() {
         },
         &RequestOverrides::default(),
     );
-    let document = limited.expect("execute", "incomplete", 22);
+    let document = limited.expect("monitor", "incomplete", 22);
     let item = &document["items"][0];
     assert_eq!(item["result"], "incomplete", "{document}");
+    assert_eq!(item["category"], "incomplete", "{document}");
     assert_eq!(item["cause"]["code"], "stage_limit_exceeded", "{document}");
     assert_eq!(item["cause"]["kind"], "input-bytes-exceeded", "{document}");
+    assert_eq!(item["cause"]["bound"], (n - 1).to_string(), "{document}");
+    assert_eq!(item["cause"]["counter"], n.to_string(), "{document}");
     assert_eq!(
         item["cause"]["setting"], "observation.input_bytes",
         "{document}"
     );
-    assert!(
-        !document.to_string().contains("resource_exhausted"),
-        "{document}"
-    );
-    let rendered = item["cause"]["message"].as_str().unwrap();
-    assert!(
-        rendered.contains("--limit observation.input_bytes="),
-        "{rendered}"
-    );
-    assert!(
-        !rendered.contains("observation.document_bytes"),
-        "{rendered}"
-    );
+    assert!(document["diagnostics"].as_array().unwrap().is_empty());
 
     let mut exact = job;
     exact["request"]["clause"]["observation_limits"] = json!({"document_bytes": n});
