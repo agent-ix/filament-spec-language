@@ -343,27 +343,26 @@ impl<'a, 'p> Context<'a, 'p> {
         let evaluation = match observed.result {
             Ok(evaluation) => evaluation,
             Err(fsl_eval::temporal::TemporalRefusal::Fault(fault)) => {
-                return Ok(WindowRun::stopped(ClauseDisposition::EvaluateFault(fault)))
+                return Ok(WindowRun::stopped(ClauseDisposition::EvaluateFault(fault)));
             }
             Err(refusal) => {
                 return Ok(WindowRun::stopped(ClauseDisposition::TemporalRefusal(
                     super::trace_refusal(refusal),
-                )))
+                )));
             }
         };
         let mut requested: Vec<FormulaNodeId> =
             evaluation.support.iter().map(|pair| pair.atom).collect();
         let mut named_atom = None;
-        if let fsl_eval::temporal::WindowVerdict::Indeterminate { reason, .. } = &evaluation.verdict
-        {
-            match reason {
+        if let fsl_eval::temporal::WindowVerdict::Indeterminate {
+            reason:
                 fsl_eval::temporal::IndeterminateReason::MissingValuation { atom, .. }
-                | fsl_eval::temporal::IndeterminateReason::ConflictingValuation { atom, .. } => {
-                    named_atom = Some(*atom);
-                    requested.push(*atom)
-                }
-                _ => {}
-            }
+                | fsl_eval::temporal::IndeterminateReason::ConflictingValuation { atom, .. },
+            ..
+        } = &evaluation.verdict
+        {
+            named_atom = Some(*atom);
+            requested.push(*atom)
         }
         if let fsl_eval::temporal::WindowVerdict::Undefined(
             fsl_eval::temporal::UndefinedEvaluation {
@@ -453,7 +452,7 @@ impl<'a, 'p> Context<'a, 'p> {
 pub(super) fn screen(
     clause: &CheckedTemporalClause,
     trace: &TraceInput,
-) -> Result<Option<super::super::late_data::Screened>, ClauseDisposition> {
+) -> Result<Option<super::super::late_data::Screened>, Box<ClauseDisposition>> {
     let TraceInput::Timestamped {
         observations,
         progress,
@@ -475,18 +474,19 @@ pub(super) fn screen(
                 })
         })
     {
-        return Err(super::refused("invalid-value", BTreeMap::new()));
+        return Err(Box::new(super::refused("invalid-value", BTreeMap::new())));
     }
     super::super::late_data::admit_intervals(observations, &window.late)
-        .map_err(|refusal| *refusal)?;
-    super::super::late_data::screen(observations, *progress, window).map_err(|refusal| *refusal)
+        .map_err(|refusal| Box::new(*refusal))?;
+    super::super::late_data::screen(observations, *progress, window)
+        .map_err(|refusal| Box::new(*refusal))
 }
 
 pub(super) fn progressed(
     clause: &CheckedTemporalClause,
     trace: &TraceInput,
     meter: &mut Meter,
-) -> Result<Option<TimestampedTrace>, ClauseDisposition> {
+) -> Result<Option<TimestampedTrace>, Box<ClauseDisposition>> {
     let TraceInput::Progressed {
         trace,
         progress,
@@ -517,10 +517,10 @@ pub(super) fn progressed(
         meter,
     ) {
         Ok(Ok(trace)) => Ok(Some(trace)),
-        Ok(Err(fsl_eval::temporal::ProgressedRefusal::Incomplete(incomplete))) => Err(
+        Ok(Err(fsl_eval::temporal::ProgressedRefusal::Incomplete(incomplete))) => Err(Box::new(
             ClauseDisposition::Temporal(TemporalVerdict::Incomplete(incomplete)),
-        ),
-        Ok(Err(refusal)) => Err(super::refused(
+        )),
+        Ok(Err(refusal)) => Err(Box::new(super::refused(
             "invalid-value",
             BTreeMap::from([(
                 "member",
@@ -533,16 +533,16 @@ pub(super) fn progressed(
                     }
                     fsl_eval::temporal::ProgressedRefusal::NotSampleProfile { .. } => "profile",
                     fsl_eval::temporal::ProgressedRefusal::Incomplete(incomplete) => {
-                        return Err(ClauseDisposition::Temporal(TemporalVerdict::Incomplete(
-                            incomplete,
-                        )))
+                        return Err(Box::new(ClauseDisposition::Temporal(
+                            TemporalVerdict::Incomplete(incomplete),
+                        )));
                     }
                 }
                 .to_owned(),
             )]),
-        )),
-        Err(refusal) => Err(ClauseDisposition::TemporalRefusal(super::trace_refusal(
-            refusal,
+        ))),
+        Err(refusal) => Err(Box::new(ClauseDisposition::TemporalRefusal(
+            super::trace_refusal(refusal),
         ))),
     }
 }
@@ -609,8 +609,7 @@ pub(super) fn run(
     } = trace
     {
         super::run_finite_window_core(
-            context.clause,
-            context.key,
+            (context.clause, context.key),
             (
                 &super::Timestamped {
                     observations,

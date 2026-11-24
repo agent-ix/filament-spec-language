@@ -62,9 +62,7 @@ struct Walk {
 
 /// One instance read from one initial state.
 struct Root {
-    initial: u32,
     over: Option<(ModelInstance, ObjectReference)>,
-    instance: ModelInstance,
     reference: ObjectReference,
     start: ModelSimState,
     walk: Walk,
@@ -342,12 +340,12 @@ fn walk(
     system: &ModelSystem<'_>,
     subject: &Subject<'_>,
     start: &ModelSimState,
-    over: Option<&ObjectReference>,
-    instance: &ObjectReference,
+    binding: (Option<&ObjectReference>, &ObjectReference),
     limits: ProbabilityDocumentLimits,
     spent: &mut Spent,
     cancel: &Cancel,
 ) -> Result<Walk, ProbabilityDocumentError> {
+    let (over, instance) = binding;
     let key = |state: &ModelSimState, active: bool| {
         phase_key(
             system,
@@ -491,24 +489,20 @@ fn roots_over(
 ) -> Result<Vec<Root>, ProbabilityDocumentError> {
     let mut spent = Spent::default();
     let mut found = Vec::new();
-    for (position, start) in instances.initials.iter().enumerate() {
-        let initial = u32::try_from(position).map_err(|_| ProbabilityDocumentError::Malformed)?;
+    for start in &instances.initials {
         for over in &instances.overs {
-            for (instance, reference) in &instances.each {
+            for (_, reference) in &instances.each {
                 let walked = walk(
                     system,
                     subject,
-                    &start,
-                    over.as_ref().map(|(_, reference)| reference),
-                    reference,
+                    start,
+                    (over.as_ref().map(|(_, reference)| reference), reference),
                     limits,
                     &mut spent,
                     cancel,
                 )?;
                 found.push(Root {
-                    initial,
                     over: over.clone(),
-                    instance: instance.clone(),
                     reference: reference.clone(),
                     start: start.clone(),
                     walk: walked,
@@ -1864,10 +1858,10 @@ pub(super) fn check(
             }
             None => {}
             Some(value) => {
-                if !meets(subject.bound, value) {
-                    if missed.as_ref().is_none_or(|known| root.key < *known) {
-                        missed = Some(root.key.clone());
-                    }
+                if !meets(subject.bound, value)
+                    && missed.as_ref().is_none_or(|known| root.key < *known)
+                {
+                    missed = Some(root.key.clone());
                 }
                 let worse = match (&least, subject.bound) {
                     (None, _) => true,

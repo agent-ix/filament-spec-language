@@ -923,10 +923,12 @@ fn subject(
                         ExactProbabilityGraphError::UnsupportedDraw,
                     ));
                 }
-                Ok(vec![steps
-                    .into_iter()
-                    .map(|step| (step.probability, step.post))
-                    .collect()])
+                Ok(vec![
+                    steps
+                        .into_iter()
+                        .map(|step| (step.probability, step.post))
+                        .collect(),
+                ])
             })();
             evaluated.map_err(|error| {
                 *stopped.borrow_mut() = Some(error);
@@ -1021,12 +1023,12 @@ fn subject(
                     }
                     fsl_eval::simulation::model::PredicateReading::False => {}
                     fsl_eval::simulation::model::PredicateReading::Undefined { cause, .. } => {
-                        return Err(ProbabilityDocumentError::UndefinedPredicate(cause))
+                        return Err(ProbabilityDocumentError::UndefinedPredicate(cause));
                     }
                     fsl_eval::simulation::model::PredicateReading::Refused(outcome) => {
                         return Err(ProbabilityDocumentError::Build(Box::new(
                             crate::ExactProbBuildIssue::Predicate(outcome),
-                        )))
+                        )));
                     }
                 }
                 Ok(())
@@ -1194,9 +1196,13 @@ pub(in crate::probability_certificate) fn check_refutation(
 /// The outcome of checking long-run evidence in its counterexample role.
 pub(in crate::probability_certificate) enum LongRunRefutation {
     /// The rebuilt chain's check, accepted or rejected.
-    Checked(ExactProbabilityCertificateCheck),
+    Checked(Box<ExactProbabilityCertificateCheck>),
     /// The scheduler is missing, extra or names no choice of the rebuilt graph.
     SchedulerRefused,
+}
+
+fn checked(check: ExactProbabilityCertificateCheck) -> LongRunRefutation {
+    LongRunRefutation::Checked(Box::new(check))
 }
 
 /// Admit canonical long-run or weighted long-run bytes without checking them.
@@ -1249,7 +1255,7 @@ fn check_with_context(
     cx: &mut Context<'_>,
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     match check_scheduled(system, claims, item, bytes, &[], cx)? {
-        LongRunRefutation::Checked(check) => Ok(check),
+        LongRunRefutation::Checked(check) => Ok(*check),
         LongRunRefutation::SchedulerRefused => Err(ProbabilityDocumentError::Unsupported),
     }
 }
@@ -1271,10 +1277,8 @@ fn induced_graph(
         &graph,
         reference,
         rows,
-        cx.limits,
-        cx.cancel,
-        &mut cx.meter,
-        &mut cx.storage,
+        (cx.limits, cx.cancel),
+        (&mut cx.meter, &mut cx.storage),
         with_enabled.then_some(&mut enabled),
     )?
     else {
@@ -1409,9 +1413,7 @@ fn has_unfair_bottom(
                 for &state in component {
                     for identity in identities(state) {
                         cx.work(1)?;
-                        if identity.operation == text
-                            && !obligations.iter().any(|seen| *seen == Some(identity))
-                        {
+                        if identity.operation == text && !obligations.contains(&Some(identity)) {
                             obligations.push(Some(identity));
                         }
                     }
@@ -1455,10 +1457,10 @@ fn check_scheduled(
     let decoded = match read(bytes, cx) {
         Ok(document) => document,
         Err(ProbabilityDocumentError::MissingMember("components")) => {
-            return Ok(LongRunRefutation::Checked(malformed("components")))
+            return Ok(checked(malformed("components")));
         }
         Err(ProbabilityDocumentError::MalformedMember(member)) => {
-            return Ok(LongRunRefutation::Checked(malformed(member)))
+            return Ok(checked(malformed(member)));
         }
         Err(error) => return Err(error),
     };
@@ -1483,7 +1485,7 @@ fn check_scheduled(
     let workload = subject.optimization == LongRunOptimization::Workload;
     if workload && document.components.iter().any(|c| c.policy.is_some()) {
         // Under a workload no choice exists to name.
-        return Ok(LongRunRefutation::Checked(malformed("policy")));
+        return Ok(checked(malformed("policy")));
     }
     if workload && !scheduler.is_empty() {
         // A workload has no scheduler to rebuild a chain from.
@@ -1516,11 +1518,11 @@ fn check_scheduled(
             if let ExactProbabilityCertificateCheck::Accepted(accepted) = &mut check {
                 accepted.document = Some(bytes.into());
             }
-            LongRunRefutation::Checked(check)
+            checked(check)
         });
     }
     if !workload && !policy_matches_scheduler(&document, scheduler) {
-        return Ok(LongRunRefutation::Checked(malformed("policy")));
+        return Ok(checked(malformed("policy")));
     }
     cx.scheduled = !workload;
     let graph = if workload {
@@ -1541,7 +1543,7 @@ fn check_scheduled(
         // FR-412-AC-27: under a fairness set a deterministic witness counts
         // only if every bottom component of its induced chain is fair.
         if fair && has_unfair_bottom(system, &induced, &subject.constraints, cx)? {
-            return Ok(LongRunRefutation::Checked(rejected(
+            return Ok(checked(rejected(
                 ProbabilityCertificateRule::InequalityFails,
                 induced.graph.initial.clone(),
             )));
@@ -1559,7 +1561,7 @@ fn check_scheduled(
         if let ExactProbabilityCertificateCheck::Accepted(accepted) = &mut check {
             accepted.document = Some(bytes.into());
         }
-        LongRunRefutation::Checked(check)
+        checked(check)
     })
 }
 

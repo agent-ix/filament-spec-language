@@ -10,16 +10,16 @@ use fsl_foundation::SourceIdentity;
 use fsl_package::ObligationIdentity;
 use fsl_replay::spine::{self, ParseRequest};
 use fsl_replay::{
-    call_site, replay, replay_state_clause, DependencyEntryWire, DependencyInput, EnvelopeSource,
-    QualifiedName, ReplayLimits, ReplayRefusal, ReplayRequestWire, ReplaySource,
-    ReplayTargetMembers, RequestTargetWire, StateClauseCounterexample, StateEnvironment,
-    SuppliedLibrary, WitnessEnvelope, WitnessPacket,
+    DependencyEntryWire, DependencyInput, EnvelopeSource, QualifiedName, ReplayLimits,
+    ReplayRefusal, ReplayRequestWire, ReplaySource, ReplayTargetMembers, RequestTargetWire,
+    StateClauseCounterexample, StateEnvironment, SuppliedLibrary, WitnessEnvelope, WitnessPacket,
+    call_site, replay, replay_state_clause,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::package_input;
 use fsl_semantics::model::observation::{ClauseSelectionInput, DocumentRef, SelectedObject};
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 const UNLIMITED: ScalarLimits = ScalarLimits {
     integer_bits: u64::MAX,
@@ -143,9 +143,7 @@ fn request(source_order: Vec<&str>, documents: Vec<Vec<u8>>) -> ReplayRequestWir
     let first_identity = SourceIdentity::new(AUTHORITY, FIRST_ID);
     let selection = call_site(
         first_identity,
-        "fixture".to_owned(),
-        FIRST_ID,
-        CALL_SITE_SEED.as_bytes(),
+        fsl_replay::CallSiteUnit::new("fixture".to_owned(), FIRST_ID, CALL_SITE_SEED.as_bytes()),
         std::iter::empty::<&[u8]>(),
         &DependencyInput::default(),
         &fsl_replay::RequestClocks::default(),
@@ -487,9 +485,7 @@ fn multi_source_dependency_request(
         .expect("both units belong to one library");
     let selection = call_site(
         SourceIdentity::new(AUTHORITY, FIRST_ID),
-        "fixture".to_owned(),
-        FIRST_ID,
-        LIBRARY_CALLER.as_bytes(),
+        fsl_replay::CallSiteUnit::new("fixture".to_owned(), FIRST_ID, LIBRARY_CALLER.as_bytes()),
         std::iter::empty::<&[u8]>(),
         &dependencies,
         &fsl_replay::RequestClocks::default(),

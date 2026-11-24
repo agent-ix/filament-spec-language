@@ -13,11 +13,11 @@ use filament_exact::Rational;
 use filament_semantic_value::fairness::FairnessConstraint;
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::model::ModelFinding;
-use fsl_eval::simulation::protocol::{BlockedThread, ThreadPath, WaitCause};
 use fsl_eval::simulation::Location;
 use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::SubjectTransition;
+use fsl_eval::simulation::model::ModelFinding;
+use fsl_eval::simulation::protocol::{BlockedThread, ThreadPath, WaitCause};
 use fsl_eval::temporal::TemporalPosition;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_foundation::bound::TemporalInterval;
@@ -517,7 +517,7 @@ pub enum ClauseRunCounterexample {
     /// A supplied snapshot or record-sample trace.
     Observed(ObservedTemporalCounterexample),
     /// A re-executed and validated model behaviour.
-    Model(ModelClauseCounterexample),
+    Model(Box<ModelClauseCounterexample>),
 }
 
 impl From<ObservedTemporalCounterexample> for ClauseRunCounterexample {

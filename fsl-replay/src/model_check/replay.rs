@@ -981,7 +981,7 @@ impl HandoffSupply<'_> {
 
 fn admission_replay_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> ReplayRefusal {
     if let Some(failure) = refusal.host_allocation_failure {
-        return ReplayRefusal::HostAllocationFailed(failure);
+        return ReplayRefusal::HostAllocationFailed(*failure);
     }
     match refusal.limit {
         Some(limit) => ReplayRefusal::Recompile {
@@ -1035,7 +1035,7 @@ mod host_allocation_admission_tests {
                         cause: None,
                         pointer: None,
                         identity: None,
-                        host_allocation_failure: Some(failure),
+                        host_allocation_failure: Some(Box::new(failure)),
                     })
                 },
             )

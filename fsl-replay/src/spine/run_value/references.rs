@@ -82,16 +82,21 @@ pub(crate) fn reference_refusal(cause: ReferenceCodecError) -> Box<super::super:
     })
 }
 
+type RunValueDeclarations<'a> = (
+    &'a filament_semantic_value::declaration::TypeEnvironment,
+    &'a [fsl_semantics::check::EnumBinding],
+    &'a [fsl_semantics::check::VariantTypeDeclaration],
+    Option<&'a filament_semantic_value::enumeration::EnumMemberIndex>,
+);
+
 pub(crate) fn write_run_value(
     value: &filament_exact::Value,
-    types: &filament_semantic_value::declaration::TypeEnvironment,
-    enums: &[fsl_semantics::check::EnumBinding],
-    variants: &[fsl_semantics::check::VariantTypeDeclaration],
-    enum_members: Option<&filament_semantic_value::enumeration::EnumMemberIndex>,
+    declarations: RunValueDeclarations<'_>,
     codec: Option<&crate::reference_codec::ReferenceCodec<'_, '_, '_>>,
     budget: &mut NormalizationReferenceBudget<'_>,
     cancel: &filament_exact::Cancel,
 ) -> Result<serde_json::Value, super::WriteStop> {
+    let (types, enums, variants, enum_members) = declarations;
     let written = fsl_eval::simulation::model::run_value_bytes(
         value,
         fsl_eval::simulation::model::RunValueContext::new(

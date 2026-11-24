@@ -985,9 +985,7 @@ pub enum DependencySelectionsCause {
 /// # let small = QualifiedName::new(vec![Identifier::new("small").unwrap()]).unwrap();
 /// # let site = call_site(
 /// #     SourceIdentity::new("a", "u"),
-/// #     "fixture".to_owned(),
-/// #     "u",
-/// #     unit.as_bytes(),
+/// #     CallSiteUnit::new("fixture", "u", unit.as_bytes()),
 /// #     [],
 /// #     &DependencyInput::default(),
 /// #     &fsl_replay::RequestClocks::default(),
@@ -1043,9 +1041,7 @@ pub enum DependencySelectionsCause {
 /// # let small = QualifiedName::new(vec![Identifier::new("small").unwrap()]).unwrap();
 /// # let site = call_site(
 /// #     SourceIdentity::new("a", "u"),
-/// #     "fixture".to_owned(),
-/// #     "u",
-/// #     unit.as_bytes(),
+/// #     CallSiteUnit::new("fixture", "u", unit.as_bytes()),
 /// #     [],
 /// #     &DependencyInput::default(),
 /// #     &fsl_replay::RequestClocks::default(),

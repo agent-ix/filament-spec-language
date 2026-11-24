@@ -67,7 +67,10 @@ pub struct MeasureProbabilityDocument {
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum Conditional {
-    Ratio(MeasureProbabilityDocument, MeasureProbabilityDocument),
+    Ratio(
+        Box<MeasureProbabilityDocument>,
+        Box<MeasureProbabilityDocument>,
+    ),
     Vacuous,
 }
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -343,65 +346,72 @@ pub fn measure_probability_product_key(
 ) -> Result<ProbabilityProductKey, ProbabilityDocumentError> {
     poll(cancel)?;
     let mut admission = ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
-    let scope = RefCell::new(&mut admission as &mut dyn ModelKeyBudget);
-    struct Reserve<'a, 'b>(&'a RefCell<&'b mut dyn ModelKeyBudget>);
-    impl quire_canonical::Reservation for Reserve<'_, '_> {
-        fn reserve(&mut self, bytes: usize) -> Result<(), quire_canonical::ReservationDenied> {
-            self.0
+    let result = {
+        let scope = RefCell::new(&mut admission as &mut dyn ModelKeyBudget);
+        struct Reserve<'a, 'b>(&'a RefCell<&'b mut dyn ModelKeyBudget>);
+        impl quire_canonical::Reservation for Reserve<'_, '_> {
+            fn reserve(&mut self, bytes: usize) -> Result<(), quire_canonical::ReservationDenied> {
+                self.0
+                    .borrow_mut()
+                    .reserve(bytes)
+                    .map_err(|_| quire_canonical::ReservationDenied)
+            }
+        }
+        let identity = fsl_foundation::IdentityLimits::default();
+        (|| {
+            scope
                 .borrow_mut()
-                .reserve(bytes)
-                .map_err(|_| quire_canonical::ReservationDenied)
-        }
-    }
-    let identity = fsl_foundation::IdentityLimits::default();
-    let result = (|| {
-        scope
-            .borrow_mut()
-            .work(u64::try_from(raw.len()).unwrap_or(u64::MAX))
-            .map_err(|_| ModelKeyError::Denied)?;
-        let model =
-            quire_canonical::read_with_reservation(raw, identity.input_bytes, &mut Reserve(&scope))
-                .map_err(|error| key_parse_error(error, identity))?;
-        if !key::model_form(model.root()) {
-            return Err(ModelKeyError::Unsupported("canonical model body"));
-        }
-        let original = writer::encode_admitted(&model, identity.input_bytes, &mut Reserve(&scope))
-            .map_err(|_| ModelKeyError::Denied)?;
-        if original != raw {
-            return Err(ModelKeyError::Unsupported("canonical model body"));
-        }
-        let pending = pending
-            .map(|bytes| {
-                quire_canonical::read_with_reservation(
-                    bytes,
-                    identity.input_bytes,
-                    &mut Reserve(&scope),
-                )
-                .map_err(|error| key_parse_error(error, identity))
-            })
-            .transpose()?;
-        let key = fsl_eval::probabilistic::key::MeasureProductKey {
-            binding,
-            model: model.root(),
-            control,
-            accumulator,
-            pending: pending.as_ref().map(|pending| pending.root()),
-            reward: reward.map(|reward| fsl_eval::probabilistic::key::RewardKey {
-                model: &reward.model,
-                name: &reward.name,
-                unit: reward.unit.as_ref(),
-            }),
-            budget: &scope,
-            max_bytes: identity.input_bytes,
-        };
-        key.validate().map_err(ModelKeyError::Unsupported)?;
-        writer::encode_admitted(&key, identity.input_bytes, &mut Reserve(&scope))
-            .map(ProbabilityProductKey::from_canonical_bytes)
-            .map_err(|error| {
-                ModelKeyError::Encoding(fsl_eval::simulation::EncodingRefusal::of(&error, identity))
-            })
-    })();
-    drop(scope);
+                .work(u64::try_from(raw.len()).unwrap_or(u64::MAX))
+                .map_err(|_| ModelKeyError::Denied)?;
+            let model = quire_canonical::read_with_reservation(
+                raw,
+                identity.input_bytes,
+                &mut Reserve(&scope),
+            )
+            .map_err(|error| key_parse_error(error, identity))?;
+            if !key::model_form(model.root()) {
+                return Err(ModelKeyError::Unsupported("canonical model body"));
+            }
+            let original =
+                writer::encode_admitted(&model, identity.input_bytes, &mut Reserve(&scope))
+                    .map_err(|_| ModelKeyError::Denied)?;
+            if original != raw {
+                return Err(ModelKeyError::Unsupported("canonical model body"));
+            }
+            let pending = pending
+                .map(|bytes| {
+                    quire_canonical::read_with_reservation(
+                        bytes,
+                        identity.input_bytes,
+                        &mut Reserve(&scope),
+                    )
+                    .map_err(|error| key_parse_error(error, identity))
+                })
+                .transpose()?;
+            let key = fsl_eval::probabilistic::key::MeasureProductKey {
+                binding,
+                model: model.root(),
+                control,
+                accumulator,
+                pending: pending.as_ref().map(|pending| pending.root()),
+                reward: reward.map(|reward| fsl_eval::probabilistic::key::RewardKey {
+                    model: &reward.model,
+                    name: &reward.name,
+                    unit: reward.unit.as_ref(),
+                }),
+                budget: &scope,
+                max_bytes: identity.input_bytes,
+            };
+            key.validate().map_err(ModelKeyError::Unsupported)?;
+            writer::encode_admitted(&key, identity.input_bytes, &mut Reserve(&scope))
+                .map(ProbabilityProductKey::from_canonical_bytes)
+                .map_err(|error| {
+                    ModelKeyError::Encoding(fsl_eval::simulation::EncodingRefusal::of(
+                        &error, identity,
+                    ))
+                })
+        })()
+    };
     result.map_err(|error| admission.refusal(error))
 }
 
@@ -892,10 +902,14 @@ fn enumerate(
                             }))
                         })?;
                     action_labels.push(None);
-                    vec![steps
-                        .into_iter()
-                        .map(|step| Successor::Position(step.probability, step.post, step.rewards))
-                        .collect::<Vec<_>>()]
+                    vec![
+                        steps
+                            .into_iter()
+                            .map(|step| {
+                                Successor::Position(step.probability, step.post, step.rewards)
+                            })
+                            .collect::<Vec<_>>(),
+                    ]
                 } else {
                     let actions = system
                         .actions_with_budget(
@@ -1046,8 +1060,8 @@ fn enumerate(
                                 .map_err(|error| admission.refusal(error))?;
                             let pending = system
                                 .pending_key_bytes_with_budget(
-                                    &scheduled,
-                                    &random,
+                                    scheduled,
+                                    random,
                                     identity,
                                     &mut admission,
                                     cancel,
@@ -1456,7 +1470,7 @@ fn read_wire(
             Some(Box::new(match conditional.mode.as_str() {
                 "ratio" if objective.optimization == ProbabilityObjective::Workload => {
                     Conditional::Ratio(
-                        read_wire(
+                        Box::new(read_wire(
                             *conditional
                                 .numerator
                                 .ok_or(ProbabilityDocumentError::MalformedMember("numerator"))?,
@@ -1465,8 +1479,8 @@ fn read_wire(
                             meter,
                             storage,
                             depth + 1,
-                        )?,
-                        read_wire(
+                        )?),
+                        Box::new(read_wire(
                             *conditional
                                 .denominator
                                 .ok_or(ProbabilityDocumentError::MalformedMember("denominator"))?,
@@ -1475,7 +1489,7 @@ fn read_wire(
                             meter,
                             storage,
                             depth + 1,
-                        )?,
+                        )?),
                     )
                 }
                 "vacuous"
@@ -1487,7 +1501,7 @@ fn read_wire(
             }))
         }
         ("conditional", None) => {
-            return Err(ProbabilityDocumentError::MalformedMember("conditional"))
+            return Err(ProbabilityDocumentError::MalformedMember("conditional"));
         }
         _ => return Err(ProbabilityDocumentError::MalformedMember("kind")),
     };
@@ -1544,7 +1558,7 @@ pub fn read_measure_probability_certificate(
     let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
     let document =
         decode_measure_probability_certificate(bytes, limits, cancel, &mut meter, &mut 0)?;
-    validate_ranges(&document, limits, cancel, &mut meter)?;
+    validate_ranges(&document, cancel, &mut meter)?;
     Ok(document)
 }
 pub(super) fn identity(
@@ -1563,7 +1577,6 @@ pub(super) fn identity(
 }
 fn validate_ranges(
     document: &MeasureProbabilityDocument,
-    limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
     meter: &mut filament_exact::Meter,
 ) -> Result<(), ProbabilityDocumentError> {
@@ -1598,8 +1611,8 @@ fn validate_ranges(
     }
     if let Some(conditional) = &document.conditional {
         if let Conditional::Ratio(numerator, denominator) = conditional.as_ref() {
-            validate_ranges(numerator, limits, cancel, meter)?;
-            validate_ranges(denominator, limits, cancel, meter)?;
+            validate_ranges(numerator, cancel, meter)?;
+            validate_ranges(denominator, cancel, meter)?;
         }
     }
     Ok(())
@@ -1911,7 +1924,10 @@ pub fn conditional_measure_probability_certificate(
         values: Vec::new(),
         ranking: Vec::new(),
         objective: numerator.objective.clone(),
-        conditional: Some(Box::new(Conditional::Ratio(numerator, denominator))),
+        conditional: Some(Box::new(Conditional::Ratio(
+            Box::new(numerator),
+            Box::new(denominator),
+        ))),
     })
 }
 
@@ -1994,7 +2010,7 @@ fn checked_values(
                             ProbabilityObjective::Workload
                             | ProbabilityObjective::WorkloadMinimum
                             | ProbabilityObjective::WorkloadMaximum => {
-                                return Err(ProbabilityDocumentError::Malformed)
+                                return Err(ProbabilityDocumentError::Malformed);
                             }
                         },
                     });
@@ -2152,7 +2168,7 @@ pub(super) fn check(
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
     if document.conditional.is_none() {
-        if let Err(error) = validate_ranges(&document, limits, cancel, &mut meter) {
+        if let Err(error) = validate_ranges(&document, cancel, &mut meter) {
             return document_admission_error(error);
         }
     }
@@ -2218,7 +2234,7 @@ pub(super) fn check(
                 &mut meter,
                 &mut storage,
             )?;
-            if let Err(error) = validate_ranges(part, limits, cancel, &mut meter) {
+            if let Err(error) = validate_ranges(part, cancel, &mut meter) {
                 return document_admission_error(error);
             }
             if graph.is_none() {
@@ -2686,7 +2702,7 @@ pub(in crate::probability_certificate) fn check_mean_refutation(
     if selected.objective != document.objective {
         return Err(ProbabilityDocumentError::ObjectiveMismatch);
     }
-    validate_ranges(&document, limits, cancel, &mut meter)?;
+    validate_ranges(&document, cancel, &mut meter)?;
     let graph = enumerate(
         system,
         claim,
@@ -2700,7 +2716,7 @@ pub(in crate::probability_certificate) fn check_mean_refutation(
     let values = match checked_values(&document, &graph, limits, cancel, &mut meter)? {
         Ok(values) => values,
         Err(ExactProbabilityCertificateCheck::Rejected(rejection)) => {
-            return Ok(MeanRefutationCheck::Rejected(rejection))
+            return Ok(MeanRefutationCheck::Rejected(rejection));
         }
         Err(_) => return Err(ProbabilityDocumentError::Malformed),
     };

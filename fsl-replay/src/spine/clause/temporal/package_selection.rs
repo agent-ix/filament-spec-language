@@ -16,20 +16,20 @@ use std::collections::{BTreeMap, BTreeSet};
 use filament_checked::node::NodeKind;
 use filament_exact::{Meter, NodeKey, ScalarLimits, ValueType};
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, ModelSystem};
-use fsl_eval::temporal::{evaluate_package_positions_decisive, DecisiveAtom, PackagePositions};
+use fsl_eval::temporal::{DecisiveAtom, PackagePositions, evaluate_package_positions_decisive};
 use fsl_eval::value::{CheckedPackageEvaluation, HoldsAtom, HoldsBinders, ObservationIdentity};
 use fsl_semantics::check::{CheckedTemporalClause, FormulaNode};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::PackageInput;
 use fsl_semantics::model::observation::{
-    admit_trace_snapshot, AdmissionUsage, DocumentProvision, ModelSelections, ObservationLimits,
+    AdmissionUsage, DocumentProvision, ModelSelections, ObservationLimits, admit_trace_snapshot,
 };
 
 use super::super::model_trace::{behaviour_payload, expansion_stop, replay_refusal, universes};
 use super::super::trace_refusal::{PackageClauseSite, TraceSite};
 use super::super::{ClauseDisposition, ClauseRunReport, ClauseRunUsage, TemporalVerdict};
-use super::{refused, resolve_over_in, with_counterexample, OverObject, TraceInput};
-use crate::model_check::replay::{evaluate_model_trace, ModelTraceEnd, ModelTraceRun};
+use super::{OverObject, TraceInput, refused, resolve_over_in, with_counterexample};
+use crate::model_check::replay::{ModelTraceEnd, ModelTraceRun, evaluate_model_trace};
 
 /// A run the package route reads no verdict for, and why.
 #[derive(Debug)]
@@ -167,7 +167,7 @@ pub fn run_package_snapshots(
     };
     let screened = match super::package_window::screen(clause, trace) {
         Ok(screened) => screened,
-        Err(disposition) => return early(disposition),
+        Err(disposition) => return early(*disposition),
     };
     let trace = screened.as_ref().map_or(trace, |screened| &screened.trace);
     // A ledger retains progress; a trace that asserts none has nothing to
@@ -200,7 +200,7 @@ pub fn run_package_snapshots(
     let mut meter = Meter::new(accounting);
     let progressed = match super::package_window::progressed(clause, trace, &mut meter) {
         Ok(progressed) => progressed,
-        Err(disposition) => return early(disposition),
+        Err(disposition) => return early(*disposition),
     };
     let named = named_populations(package, clause, key);
     let mut admitted = AdmissionUsage::default();
@@ -571,7 +571,9 @@ fn run_model(
         terminal_state,
     );
     let mut report = finished(disposition, (&meter, admitted), None, None);
-    report.counterexample = counterexample.map(crate::ClauseRunCounterexample::Model);
+    report.counterexample = counterexample
+        .map(Box::new)
+        .map(crate::ClauseRunCounterexample::Model);
     report.decisive = decisive;
     Ok(report)
 }
@@ -624,10 +626,10 @@ pub(super) fn decisive_over(
         FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)) => {
             return Err(Box::new(ClauseDisposition::Temporal(
                 TemporalVerdict::Incomplete(incomplete.clone()),
-            )))
+            )));
         }
         FamilyOutcome::Evaluated(_) | FamilyOutcome::FamilyEvaluated(_) => {
-            return Err(decisive_fault("decisive-atom-reads-false-again"))
+            return Err(decisive_fault("decisive-atom-reads-false-again"));
         }
     }
     let term = package

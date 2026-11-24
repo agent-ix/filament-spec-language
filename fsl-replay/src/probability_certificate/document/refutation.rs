@@ -316,7 +316,7 @@ fn subject(
             let (state_event, graph, derived) = match (enumerated, issue) {
                 (Ok(enumerated), _) => enumerated,
                 (Err(_), Some(issue)) => {
-                    return Err(ProbabilityDocumentError::Build(Box::new(issue)))
+                    return Err(ProbabilityDocumentError::Build(Box::new(issue)));
                 }
                 (Err(error), None) => return Err(error),
             };
@@ -480,10 +480,8 @@ pub(in crate::probability_certificate) fn check(
             &subject.graph,
             subject.reference.as_ref(),
             scheduler,
-            limits,
-            cancel,
-            &mut meter,
-            &mut storage,
+            (limits, cancel),
+            (&mut meter, &mut storage),
             None,
         )? {
             Some(choices) => choices,
@@ -820,10 +818,8 @@ pub(super) fn scheduled_choices(
     graph: &CheckerGraph,
     reference: Option<&ObjectReference>,
     rows: &[(ProbabilityProductKey, crate::ProductAction)],
-    limits: ProbabilityDocumentLimits,
-    cancel: &Cancel,
-    meter: &mut filament_exact::Meter,
-    storage: &mut u64,
+    (limits, cancel): (ProbabilityDocumentLimits, &Cancel),
+    (meter, storage): (&mut filament_exact::Meter, &mut u64),
     mut enabled: Option<
         &mut BTreeMap<ProbabilityProductKey, Vec<fsl_eval::simulation::model::ScheduledIdentity>>,
     >,

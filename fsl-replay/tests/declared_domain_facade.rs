@@ -5,9 +5,9 @@
 //! re-export that is not `pub` fails to compile here.
 
 use fsl_replay::{
-    call_site, DeclaredDomain, DependencyInput, DomainKey, DomainKind, EmptyFiniteBound,
-    EmptyInterval, FiniteBound, FiniteBoundKind, Identifier, Integer, IntegerInterval, ProofBound,
-    QualifiedName, SourceIdentity,
+    DeclaredDomain, DependencyInput, DomainKey, DomainKind, EmptyFiniteBound, EmptyInterval,
+    FiniteBound, FiniteBoundKind, Identifier, Integer, IntegerInterval, ProofBound, QualifiedName,
+    SourceIdentity, call_site,
 };
 use ix_trace_rs::trace;
 
@@ -29,9 +29,7 @@ fn a_declared_domain_is_built_through_the_facade_alone() {
     let name = QualifiedName::new(vec![Identifier::new("p").unwrap()]).unwrap();
     let site = call_site(
         SourceIdentity::new("a", "u"),
-        "fixture".to_owned(),
-        "unit.native",
-        UNIT.as_bytes(),
+        fsl_replay::CallSiteUnit::new("fixture".to_owned(), "unit.native", UNIT.as_bytes()),
         [],
         &DependencyInput::default(),
         &fsl_replay::RequestClocks::default(),

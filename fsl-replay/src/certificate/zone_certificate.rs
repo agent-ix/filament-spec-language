@@ -86,8 +86,8 @@ mod wire;
 pub use wire::{ZoneCertificateReferenceError, ZoneCertificateWireError};
 mod product;
 pub use task_check::{
-    explore_task_product, recomputed_member, QuotientEdge, QuotientIdentity, QuotientInitial,
-    QuotientStop, QuotientVertex, TaskProductQuotient,
+    QuotientEdge, QuotientIdentity, QuotientInitial, QuotientStop, QuotientVertex,
+    TaskProductQuotient, explore_task_product, recomputed_member,
 };
 mod task_check;
 
@@ -99,9 +99,9 @@ use std::fmt;
 use filament_exact::{Cancel, Integer, Meter, Rational, ValueType};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{
-    position_automaton, AutomatonError, ClockedEdge, Read, Stamp, WindowClaim, WindowRefusal,
+    AutomatonError, ClockedEdge, Read, Stamp, WindowClaim, WindowRefusal, position_automaton,
 };
-use fsl_eval::fairness::{components, EdgeLabel, FairnessError, Graph, Identity};
+use fsl_eval::fairness::{EdgeLabel, FairnessError, Graph, Identity, components};
 use fsl_eval::model_subject::{ModelInstance, ModelLetters};
 use fsl_eval::simulation::model::{
     GuardedStep, ModelSimState, ModelSimulationRequest, ModelSystem, PlaceConstraint,
@@ -119,15 +119,15 @@ use fsl_semantics::model::observation::{AdmissionFailure, DocumentRef};
 use fsl_semantics::model::state::ModelState;
 
 use super::closure::CertificateRejection;
-use super::simulation::{position_matches, CertifiedPosition, EvaluationOutcome};
+use super::simulation::{CertifiedPosition, EvaluationOutcome, position_matches};
 use super::zone::{LuBounds, Zone, ZoneError};
 use super::{CertificateLocus, CertificateMember, CertificateRule};
 use crate::model_check::identity::node_occurrence;
 use crate::model_check::limits::ModelCheckLimit;
 use crate::proof_result::IncompleteCause;
 use crate::refinement::{
-    check_initial, check_step, open_systems, ConcreteStep, RefinementPosition, StepVerdict,
-    SubjectRefusal, Taken,
+    ConcreteStep, RefinementPosition, StepVerdict, SubjectRefusal, Taken, check_initial,
+    check_step, open_systems,
 };
 
 /// FR-244's certificate of a zone search's proof of the item `obligation`
@@ -900,8 +900,7 @@ pub fn check_zone_certificate<O: Clone + Eq>(
         certificate,
         limits,
         cancel,
-        false,
-        &mut None,
+        (false, &mut None),
     )
 }
 
@@ -979,8 +978,7 @@ pub fn check_free_delay_zone_certificate<O: Clone + Eq>(
         certificate,
         limits,
         cancel,
-        true,
-        &mut None,
+        (true, &mut None),
     )
 }
 
@@ -1016,8 +1014,7 @@ pub(crate) fn check_state_graph_certificate<O: Clone + Eq>(
         certificate,
         limits,
         cancel,
-        false,
-        &mut decision,
+        (false, &mut decision),
     )?;
     Ok((verdict, decision))
 }
@@ -1029,8 +1026,7 @@ fn check_zone_certificate_with_time_source<O: Clone + Eq>(
     certificate: &ZoneCertificate<O>,
     limits: CertificateCheckLimits,
     cancel: &Cancel,
-    free_delay: bool,
-    decision: &mut Option<StateGraphCertificateDecision>,
+    (free_delay, decision): (bool, &mut Option<StateGraphCertificateDecision>),
 ) -> Result<ZoneCertificateVerdict, ZoneCertificateRefusal<O>> {
     if certificate.task_product.is_some()
         && !matches!(request.item, CertifiedItem::Schedulability { .. })
@@ -3798,11 +3794,7 @@ impl<O> Checker<'_, '_, O> {
                 self.advancing_cycle(at, cycle)? && self.repeats(cycle, &zone)?
             }
         };
-        if holds {
-            Ok(())
-        } else {
-            fails(at)
-        }
+        if holds { Ok(()) } else { fails(at) }
     }
 
     /// The exact zone of an initial state the initial node `node` holds.

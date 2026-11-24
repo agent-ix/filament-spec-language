@@ -6,8 +6,8 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
-use serde_json::value::RawValue;
 use serde_json::Value;
+use serde_json::value::RawValue;
 
 use super::{
     Basis, CallLocationRead, CallLocationWire, Category, DeclarationKeyRead, DispositionRead,
@@ -193,7 +193,7 @@ pub(super) enum ProgressValueWire {
 #[derive(Serialize)]
 #[serde(untagged)]
 pub(super) enum CounterexampleWire {
-    Observed(ObservedCounterexampleWire),
+    Observed(Box<ObservedCounterexampleWire>),
     Model(serde_json::Value),
 }
 
@@ -377,27 +377,29 @@ fn counterexample_wire(
         }
         _ => return Err(NativeRunResultError::Counterexample),
     };
-    Ok(CounterexampleWire::Observed(ObservedCounterexampleWire {
-        trace: "observed",
-        kind,
-        initial_state: (),
-        prefix,
-        loop_steps,
-        over_binding: (),
-        fairness: counterexample
-            .fairness
-            .iter()
-            .map(fairness_wire)
-            .collect::<Result<_, _>>()?,
-        interval: counterexample.interval.map(|interval| IntervalWire {
-            lower: interval.lower().to_string(),
-            upper: match interval.upper() {
-                fsl_foundation::bound::TemporalUpper::Finite(upper) => upper.to_string(),
-                fsl_foundation::bound::TemporalUpper::Open => "*".to_owned(),
-            },
-        }),
-        trace_position: position,
-    }))
+    Ok(CounterexampleWire::Observed(Box::new(
+        ObservedCounterexampleWire {
+            trace: "observed",
+            kind,
+            initial_state: (),
+            prefix,
+            loop_steps,
+            over_binding: (),
+            fairness: counterexample
+                .fairness
+                .iter()
+                .map(fairness_wire)
+                .collect::<Result<_, _>>()?,
+            interval: counterexample.interval.map(|interval| IntervalWire {
+                lower: interval.lower().to_string(),
+                upper: match interval.upper() {
+                    fsl_foundation::bound::TemporalUpper::Finite(upper) => upper.to_string(),
+                    fsl_foundation::bound::TemporalUpper::Open => "*".to_owned(),
+                },
+            }),
+            trace_position: position,
+        },
+    )))
 }
 
 fn closure(value: ProgressClosure) -> &'static str {

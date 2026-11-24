@@ -32,10 +32,11 @@ pub struct PackageAdmissionRefusal {
     pub pointer: Option<String>,
     /// The domain or library identity a `missing-selection` refusal names.
     pub identity: Option<String>,
-    /// A host allocation failure the strict reader admitted before the host
-    /// refused. This is a tool failure and carries no package refusal data.
+    /// A boxed host allocation failure the strict reader admitted before the
+    /// host refused. This is a tool failure and carries no package refusal
+    /// data; boxing keeps the common package-refusal representation small.
     pub host_allocation_failure:
-        Option<filament_contract_model::CheckedPackageHostAllocationFailed>,
+        Option<Box<filament_contract_model::CheckedPackageHostAllocationFailed>>,
 }
 
 /// Read `bytes` as a `filament.checked-package/v2` artifact, with `documents`
@@ -111,7 +112,7 @@ fn host_allocation_failed(
         cause: None,
         pointer: None,
         identity: None,
-        host_allocation_failure: Some(failure),
+        host_allocation_failure: Some(Box::new(failure)),
     }
 }
 
@@ -288,7 +289,7 @@ impl PackageAdmissionRefusal {
     /// when present.
     #[must_use]
     pub fn label(&self) -> String {
-        if let Some(failure) = self.host_allocation_failure {
+        if let Some(failure) = self.host_allocation_failure.as_deref() {
             return format!(
                 "host allocation failed at {:?}, requested {} bytes (consumed {})",
                 failure.stage, failure.requested, failure.consumed
@@ -434,7 +435,7 @@ mod host_allocation_tests {
         assert_eq!(refusal.cause, None);
         assert_eq!(refusal.pointer, None);
         assert_eq!(refusal.identity, None);
-        assert_eq!(refusal.host_allocation_failure, Some(failure));
+        assert_eq!(refusal.host_allocation_failure, Some(Box::new(failure)));
         assert!(refusal.label().contains("Envelope"));
         assert!(refusal.label().contains("32 bytes"));
     }

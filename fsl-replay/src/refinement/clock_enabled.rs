@@ -13,15 +13,13 @@
 //! checker's own reading: the product in `fsl-analyze` splits its cells by
 //! the same guards with its own code.
 
-use std::collections::BTreeSet;
-
 use filament_exact::{Integer, Rational};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::simulation::model::{GuardedStep, ModelSystem, PlaceConstraint, TimedSystem};
 use fsl_semantics::check::ClockOp;
 use fsl_semantics::model::state::ModelState;
 
-use crate::refinement::clock_rows::{row_clock_step, RowClockStep};
+use crate::refinement::clock_rows::{RowClockStep, row_clock_step};
 use crate::refinement::failure::Taken;
 
 /// The transitions enabled at one segment of a delay: each with the key of
@@ -112,12 +110,14 @@ struct Enabling {
     parts: Vec<Vec<PlaceConstraint>>,
 }
 
+type CandidateInvariants = Vec<(Vec<u8>, Vec<PlaceConstraint>)>;
+
 /// Each candidate's state key with its own time invariants.
 fn candidate_invariants(
     abstract_system: &ModelSystem<'_>,
     timed: &TimedSystem<'_, '_>,
     candidates: &[ModelState],
-) -> Result<Vec<(Vec<u8>, Vec<PlaceConstraint>)>, &'static str> {
+) -> Result<CandidateInvariants, &'static str> {
     let mut held = Vec::with_capacity(candidates.len());
     for candidate in candidates {
         let key = abstract_system
@@ -284,20 +284,21 @@ fn instants_of(
     span: Option<&Rational>,
 ) -> Result<Vec<Rational>, &'static str> {
     let two = Rational::from_integer(Integer::one().add(&Integer::one()));
-    let mut crossings = BTreeSet::new();
-    crossings.insert(zero());
+    let mut crossings = vec![zero()];
     if let Some(span) = span {
         for constraint in parts.iter().flatten() {
             if let Some(Some(value)) = values.get(constraint.place()) {
                 let at = constraint.bound().sub(value);
                 if at > zero() && at < *span {
-                    crossings.insert(at);
+                    crossings.push(at);
                 }
             }
         }
-        crossings.insert(span.clone());
+        crossings.push(span.clone());
     }
-    let points: Vec<Rational> = crossings.into_iter().collect();
+    crossings.sort();
+    crossings.dedup();
+    let points = crossings;
     let mut instants = Vec::new();
     for (position, point) in points.iter().enumerate() {
         instants.push(point.clone());

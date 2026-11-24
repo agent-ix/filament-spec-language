@@ -5,9 +5,9 @@ use std::collections::BTreeMap;
 use super::{identity, source};
 use filament_semantic_value::call::InputRefusal;
 use fsl_replay::{
-    call_site, replay, CanonicalAssignment, DependencyInput, EnvelopeSource, EvaluatedValue,
-    Identifier, InputSettlement, QualifiedName, ReplayLimits, ReplayPackage, ReplayRefusal,
-    ReplayRequestWire, ReplayResult, RequestTargetWire, StateEnvironment, WitnessValue,
+    CanonicalAssignment, DependencyInput, EnvelopeSource, EvaluatedValue, Identifier,
+    InputSettlement, QualifiedName, ReplayLimits, ReplayPackage, ReplayRefusal, ReplayRequestWire,
+    ReplayResult, RequestTargetWire, StateEnvironment, WitnessValue, call_site, replay,
 };
 use ix_trace_rs::trace;
 
@@ -22,9 +22,11 @@ fn request(function: &str, supplied: &[(&str, WitnessValue)]) -> ReplayRequestWi
     let selected = qualified(function);
     let located = call_site(
         identity(),
-        "replay-boundaries".to_owned(),
-        "bindings.native",
-        text.as_bytes(),
+        fsl_replay::CallSiteUnit::new(
+            "replay-boundaries".to_owned(),
+            "bindings.native",
+            text.as_bytes(),
+        ),
         std::iter::empty::<&[u8]>(),
         &DependencyInput::default(),
         &fsl_replay::RequestClocks::default(),
@@ -173,9 +175,11 @@ fn another_declared_functions_parameter_cannot_bind_the_selected_predicate() {
     let text = source(PROGRAM);
     let foreign = call_site(
         identity(),
-        "replay-boundaries".to_owned(),
-        "bindings.native",
-        text.as_bytes(),
+        fsl_replay::CallSiteUnit::new(
+            "replay-boundaries".to_owned(),
+            "bindings.native",
+            text.as_bytes(),
+        ),
         std::iter::empty::<&[u8]>(),
         &DependencyInput::default(),
         &fsl_replay::RequestClocks::default(),
