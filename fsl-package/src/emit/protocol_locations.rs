@@ -581,6 +581,13 @@ mod tests {
     #[trace("FR-383", "TC-1063")]
     #[test]
     fn query_siblings_share_a_location_but_keep_their_actual_parent_operands() {
+        fn application_form(key: &NodeKey) -> String {
+            match key.path().get(1) {
+                Some(PathSegment::Text(form)) => form.clone(),
+                _ => panic!("an expression application has its form in the key path"),
+            }
+        }
+
         let document = include_bytes!("../../../examples/config-version/model.semantic-ir.json");
         let packages = fsl_semantics::model::intake::package_input([document.as_slice()])
             .expect("the actual ConfigVersion model admits");
@@ -640,10 +647,7 @@ protocol Places using p over (call: Reference<C::ConfigVersion>) on each (opened
         // assuming a source location uniquely identifies one application.
         let root_forms = root_keys
             .iter()
-            .filter_map(|(key, _)| match key.path().get(1) {
-                Some(PathSegment::Text(form)) => Some(form.clone()),
-                _ => None,
-            })
+            .map(|(key, _)| application_form(key))
             .collect::<HashSet<_>>();
         assert!(root_forms.contains("collection") && root_forms.contains("query"));
         let roots_with_two_operands = root_keys
@@ -663,9 +667,13 @@ protocol Places using p over (call: Reference<C::ConfigVersion>) on each (opened
                 (operands.len() == 2).then_some((key.clone(), operands))
             })
             .collect::<Vec<_>>();
-        let [(_, operands)] = roots_with_two_operands.as_slice() else {
+        let [(retained_root, operands)] = roots_with_two_operands.as_slice() else {
             panic!("one actual retained count root with its two operands");
         };
+        assert_eq!(application_form(retained_root), "collection");
+        let mut operand_forms = operands.iter().map(application_form).collect::<Vec<_>>();
+        operand_forms.sort_unstable();
+        assert_eq!(operand_forms, vec!["binary".to_owned(), "query".to_owned()]);
         let positions = walk(capture.initializer.root());
         let located_operands = operands
             .iter()
@@ -678,13 +686,11 @@ protocol Places using p over (call: Reference<C::ConfigVersion>) on each (opened
                 let [location] = locations.as_slice() else {
                     panic!("each retained operand has one actual location: {operand}");
                 };
-                let path = operand.path();
-                let operation = match path.as_slice() {
-                    [PathSegment::Text(form), ..] if form == "expression" => match path.get(1) {
-                        Some(PathSegment::Text(operation)) => operation.as_str(),
-                        _ => panic!("an expression operand has its operator path"),
-                    },
-                    _ => panic!("a retained term operand has an expression path"),
+                let operation = application_form(operand);
+                let expected_kind = match operation.as_str() {
+                    "query" => "query",
+                    "binary" => "equality",
+                    _ => panic!("the retained operands are the query and its equality predicate"),
                 };
                 let visits = positions
                     .iter()
@@ -693,17 +699,16 @@ protocol Places using p over (call: Reference<C::ConfigVersion>) on each (opened
                             return false;
                         }
                         matches!(
-                            (operation, node.kind()),
-                            ("query", NodeKind::Query { .. }) | ("binary", NodeKind::Equality(..))
+                            (expected_kind, node.kind()),
+                            ("query", NodeKind::Query { .. })
+                                | ("equality", NodeKind::Equality(..))
                         )
                     })
                     .count();
-                if operation == "query" {
-                    assert_eq!(
-                        visits, 1,
-                        "the query has one checked visit at its shared location"
-                    );
-                }
+                assert_eq!(
+                    visits, 1,
+                    "the {expected_kind} operand has one checked visit"
+                );
                 (operand.clone(), location.clone(), visits)
             })
             .collect::<Vec<_>>();
