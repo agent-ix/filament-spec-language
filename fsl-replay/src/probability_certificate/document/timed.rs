@@ -4964,8 +4964,16 @@ mod witness_pricing_tests {
         threshold: Rational,
         sequences: &[Vec<ProbabilityProductKey>],
     ) -> Option<(Vec<usize>, Rational)> {
-        price_witness_paths(graph, false, &threshold, sequences, 4096, &Cancel::new())
-            .expect("the graph prices")
+        price_witness_paths(
+            graph,
+            &BTreeMap::new(),
+            false,
+            &threshold,
+            sequences,
+            4096,
+            &Cancel::new(),
+        )
+        .expect("the graph prices")
     }
 
     /// The tie's two orderings: `A` fires the operation that retries at once, `B`
