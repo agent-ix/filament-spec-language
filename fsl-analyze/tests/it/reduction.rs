@@ -1014,12 +1014,49 @@ fn a_constrained_run_is_deterministic() {
     ));
 }
 
+/// Partial TC-581 coverage: a constraint does not alter the full obligation
+/// identity, including the model subject that owns it. It remains a request
+/// selection; AC-4 stays open for the terminal method and boundary count.
+#[trace("TC-581")]
+#[test]
+fn a_constraint_preserves_full_model_obligation_identity() {
+    let world = count(&[infinite("always holds(x.v <= 3)")]);
+    let subject = world.subject();
+    let context = SubjectContext::new(&subject).expect("the package emits");
+    let [clause] = world.package.graph().temporal_clauses() else {
+        panic!("one declared clause");
+    };
+    let written = |reductions: Reductions| {
+        let mut request = ModelRequest::reduced(reductions);
+        let index = context
+            .author_clause(&mut request, clause)
+            .expect("the clause has a record");
+        let obligation = request.obligation(index).expect("written").clone();
+        let selected = request.items()[index.get()].reductions().to_vec();
+        (obligation, selected)
+    };
+
+    let (plain, plain_selection) = written(Reductions::default());
+    let (constrained, constrained_selection) = written(constraint("Low"));
+    assert_eq!(
+        plain.subject, constrained.subject,
+        "the owning model subject is equal"
+    );
+    assert_eq!(plain.kind, constrained.kind, "the claim occurrence is equal");
+    assert_eq!(
+        plain, constrained,
+        "the constraint is a method selection, outside the full obligation identity"
+    );
+    assert!(plain_selection.is_empty());
+    assert_eq!(constrained_selection, [ReductionKind::StateConstraint]);
+}
+
 /// Partial TC-581 coverage: repeating the AC-1 run produces equal outcomes,
 /// paths and product-state counts. This engine API does not expose the
 /// number of boundary states for a violated outcome.
 #[trace("TC-581")]
 #[test]
-fn repeating_ac1_keeps_the_same_boundary_counterexample() {
+fn two_ac1_runs_have_equal_outcomes_and_counterexample_paths() {
     let world = count(&[infinite("always holds(x.v <= 1)")]);
     let first = run(
         &world,
