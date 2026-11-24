@@ -26,6 +26,7 @@ use fsl_foundation::SourceIdentity;
 use fsl_replay::spine::{
     self, DependencyInput, EmittedUnit, FrontEndFailure, PackageLimits, ParseRequest, SpineLimits,
 };
+use ix_trace_rs::trace;
 use proptest::prelude::*;
 
 fn emit(source: &str) -> Result<EmittedUnit, FrontEndFailure> {
@@ -157,9 +158,10 @@ fn refused_units_are_not_emitted() {
 /// package that is admitted and differs is a defect: the reader would accept a package other
 /// than the one emitted. "Equal" is the `Debug` of the admitted package, which may omit fields
 /// the reader keeps opaque: the admitted-although-corrupted positions are printed so that the
-/// bytes can be judged (at the time of writing: a rule identity digit and a source-map region
-/// end, which the reader does not cross-check).
+/// bytes can be judged (including source-map region ends, which the reader does not
+/// cross-check).
 #[test]
+#[trace("FR-110-AC-16", "TC-3217")]
 fn corrupted_package_is_refused() {
     let source = unit::package_units()
         .new_tree(&mut proptest::test_runner::TestRunner::new(prop::config(1)))
@@ -264,35 +266,34 @@ fn corrupted_package_is_refused() {
         admitted_with_changed_end > 0,
         "FR-038: a changed source-map region end is admitted and retained"
     );
-    // A rule identity in `lock.definition_selections` is an opaque `DefinitionRef`
-    // (FR-110: `{authority, identity}` rows; no FR makes the strict reader check an
-    // identity against a registry), so a changed identity character is INTENTIONALLY
-    // admitted. FR gap: no requirement says whether the reader must refuse an unknown
-    // definition identity (QSL-3106).
-    let lock_at = text
-        .find("\"definition_selections\"")
-        .expect("the lock carries definition selections");
-    let rule = text[lock_at..]
-        .find("filament.rule.fr-")
-        .map(|found| lock_at + found + "filament.rule.fr-".len())
-        .expect("a rule definition is selected");
-    let mut corrupt = bytes.clone();
-    corrupt[rule] = if corrupt[rule] == b'9' {
-        b'8'
-    } else {
-        corrupt[rule] + 1
+    // This binds only the catalog-free reader clause of FR-110-AC-16. Replay,
+    // run and analyze catalog refusals remain covered by their consumer tests.
+    // The reader admits the row without resolving either string and retains both.
+    let mut altered: serde_json::Value = serde_json::from_slice(&bytes).expect("emitted JSON");
+    let row = altered["lock"]["definition_selections"]
+        .as_array_mut()
+        .and_then(|rows| rows.first_mut())
+        .expect("the generated package has a definition selection");
+    let expected_authority = "qsl-2947-reader-authority";
+    let expected_identity = "qsl-2947-reader-unknown-definition";
+    row["authority"] = expected_authority.into();
+    row["identity"] = expected_identity.into();
+    let altered = serde_json::to_vec(&altered).expect("serialize altered package");
+    let admitted = match read_checked_package(
+        &altered,
+        CheckedPackageReadLimits::bounded(),
+        emitted.evidence(),
+    ) {
+        CheckedPackageDispatchResult::AdmittedV2(package) => package,
+        other => panic!("catalog-free reader refuses altered definition row: {other:?}"),
     };
-    assert!(
-        matches!(
-            read_checked_package(
-                &corrupt,
-                CheckedPackageReadLimits::bounded(),
-                emitted.evidence()
-            ),
-            CheckedPackageDispatchResult::AdmittedV2(_)
-        ),
-        "a changed rule identity is an opaque DefinitionRef and is admitted"
-    );
+    let retained = admitted
+        .lock()
+        .definition_selections
+        .first()
+        .expect("admitted package retains the definition row");
+    assert_eq!(retained.authority.as_ref(), expected_authority);
+    assert_eq!(retained.identity.as_ref(), expected_identity);
     // Truncation is always refused.
     assert!(!matches!(
         read_checked_package(
