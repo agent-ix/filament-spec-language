@@ -172,7 +172,7 @@ pub(crate) fn case(body: &str, values: &[i64]) -> Case {
 /// [`case`] over a body whose `functions` (unit-level declarations) are checked
 /// in `CheckMode::Kernel`, so a function whose divisor may be zero is checked
 /// by the Kernel (FR-495-AC-3).
-fn kernel_case(body: &str, functions: &str, values: &[i64]) -> Case {
+pub(crate) fn kernel_case(body: &str, functions: &str, values: &[i64]) -> Case {
     case_in_mode(&format!("{body}{functions}"), values, CheckMode::Kernel)
 }
 
