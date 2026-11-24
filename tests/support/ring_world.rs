@@ -679,6 +679,11 @@ impl RingWorld {
         &self.package
     }
 
+    /// The domain package documents selected by the unit.
+    pub fn packages(&self) -> &fsl_semantics::model::intake::PackageInput {
+        &self.packages
+    }
+
     /// The unit's one refinement.
     pub fn refinement(&self) -> &CheckedRefinement {
         let [refinement] = self.package.graph().refinements() else {
