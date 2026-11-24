@@ -31,7 +31,7 @@ mod state_compensation;
     reason = "the shared TC-1070 model fixture is used by sibling integration tests"
 )]
 mod tc1070;
-use tc1070::{document, document_ep, model, SOURCE};
+use tc1070::{SOURCE, document, document_ep, model};
 
 #[test]
 fn ep_extension_is_admitted_by_the_shared_tc1070_fixture() {
@@ -1086,6 +1086,29 @@ fn observation_with_row<'a>(
     ObservationAdmission<fsl_package::AdmittedProtocolObservation<'a>>,
     ObjectReference,
 ) {
+    observation_with_document(
+        package,
+        evaluation_view,
+        view,
+        keys,
+        row,
+        &document(),
+        false,
+    )
+}
+
+fn observation_with_document<'a>(
+    package: &'a CheckedPackage,
+    evaluation_view: &fsl_package::AdmittedEvaluationView<'a>,
+    view: &fsl_semantics::model::normalize::EffectiveView,
+    keys: &[&str],
+    row: Option<bool>,
+    domain_document: &serde_json::Value,
+    unrelated_incomplete: bool,
+) -> (
+    ObservationAdmission<fsl_package::AdmittedProtocolObservation<'a>>,
+    ObjectReference,
+) {
     let key = filament_checked::key::DeclarationKey {
         package: model::PACKAGE.to_owned(),
         node: model::id("Node"),
@@ -1095,7 +1118,7 @@ fn observation_with_row<'a>(
         view.type_identities()[&key].clone(),
         ObjectId::new(keys[0]).unwrap(),
     );
-    let domain_bytes = serde_json::to_vec(&document()).unwrap();
+    let domain_bytes = serde_json::to_vec(domain_document).unwrap();
     let packages = fsl_semantics::model::intake::package_input([domain_bytes.as_slice()]).unwrap();
     let selected = DocumentRef {
         authority: "test".to_owned(),
@@ -1112,7 +1135,7 @@ fn observation_with_row<'a>(
             })
         })
         .collect();
-    let populations: Vec<_> = row
+    let mut populations: Vec<_> = row
         .map(|complete| {
             serde_json::json!({
                 "population": model::id("nodes"),
@@ -1122,6 +1145,13 @@ fn observation_with_row<'a>(
         })
         .into_iter()
         .collect();
+    if unrelated_incomplete {
+        populations.push(serde_json::json!({
+            "population": model::id("otherSpare"),
+            "complete": false,
+            "objects": [],
+        }));
+    }
     let snapshot = serde_json::json!({
         "format": "filament.state.snapshot/v1",
         "identity": {

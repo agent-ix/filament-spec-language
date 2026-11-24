@@ -247,6 +247,12 @@ fn optional_operation_parameters_admit_present_absent_and_omitted_values() {
         );
     };
     assert_eq!(record.catalog.cause(), "wrong-value-kind");
+    assert_eq!(record.catalog.code(), "invalid_runtime_input");
+    assert!(
+        format!("{:?}", record.path).contains("expectedVersion"),
+        "the refusal is at the parameter's member path: {:?}",
+        record.path
+    );
 
     let required = run_bump(
         bump_invocation(2, |document| {
@@ -266,6 +272,12 @@ fn optional_operation_parameters_admit_present_absent_and_omitted_values() {
         );
     };
     assert_eq!(record.catalog.cause(), "missing-member");
+    assert_eq!(record.catalog.code(), "invalid_runtime_input");
+    assert!(
+        format!("{:?}", record.path).contains("expectedVersion"),
+        "the refusal is at the parameter's member path: {:?}",
+        record.path
+    );
 }
 
 fn bump_frame_selection(invocation: DocumentRef) -> ClauseRunSelection {

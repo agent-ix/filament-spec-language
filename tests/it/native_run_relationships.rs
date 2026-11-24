@@ -2,17 +2,17 @@
 //! FR-1045: native-run relationship selection request admission.
 
 use crate::workflow_relationship_navigation::{
-    canonical_argument_reference, instance, relationship_row, run_selected, ORDER, PAYMENTS,
-    PAYMENT_ATTEMPT, SHIPMENT, SHIPMENTS,
+    ORDER, PAYMENT_ATTEMPT, PAYMENTS, SHIPMENT, SHIPMENTS, canonical_argument_reference, instance,
+    relationship_row, run_selected, run_selected_typed,
 };
 use filament_observation::{
-    ProducerConfiguration, ProducerDigest, RelationshipDeclaration,
-    RelationshipEndpointDeclaration, Revision, StaticProducerBundle, PRODUCER_INTERFACE_VERSION,
+    PRODUCER_INTERFACE_VERSION, ProducerConfiguration, ProducerDigest, RelationshipDeclaration,
+    RelationshipEndpointDeclaration, Revision, StaticProducerBundle,
 };
 use fsl_command::command::{self, RunLimits};
 use fsl_replay::Operation;
 use ix_trace_rs::trace;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn refused(request: Value) -> (Value, Value) {
     refused_bytes(serde_json::to_vec(&request).expect("request JSON"))
@@ -357,8 +357,7 @@ fn unknown_package_relationship_in_mapping_refuses_after_package_admission() {
     assert_eq!(document["code"], "invalid-request", "{document}");
     assert_eq!(document["stage"], "request", "{document}");
     assert_eq!(
-        document["details"]["path"],
-        "/call/relationships/relationship_identities/0/relationship",
+        document["details"]["path"], "/call/relationships/relationship_identities/0/relationship",
         "{document}"
     );
 }
@@ -849,8 +848,7 @@ fn assert_identity_refusal(rows: Vec<Value>) {
     assert_eq!(failure["code"], "invalid-request", "{failure}");
     assert_eq!(failure["stage"], "request", "{failure}");
     assert_eq!(
-        failure["details"]["path"],
-        "/call/snapshot/relationships/0/instances/0/identity",
+        failure["details"]["path"], "/call/snapshot/relationships/0/instances/0/identity",
         "{failure}"
     );
 }
@@ -1037,7 +1035,7 @@ fn mapped_relationships_correlate_and_unmapped_relationships_are_ignored() {
 }
 
 #[test]
-#[trace("FR-1045-AC-6", "FR-100-AC-6")]
+#[trace("FR-1045-AC-6", "FR-100-AC-6", "FR-106-AC-75")]
 fn unknown_relationship_type_in_correlation_is_invalid_request_after_snapshot_read() {
     let unknown = relationship_row(
         "ix://test/workflow/relationship/unknown",
@@ -1055,14 +1053,31 @@ fn unknown_relationship_type_in_correlation_is_invalid_request_after_snapshot_re
     assert_eq!(failure["code"], "invalid-request", "{failure}");
     assert_eq!(failure["stage"], "request", "{failure}");
     assert_eq!(
-        failure["details"]["path"],
-        "/call/snapshot/relationships/0/relationship",
+        failure["details"]["path"], "/call/snapshot/relationships/0/relationship",
         "{failure}"
     );
+}
 
-    let ordinary = run_selected("shipments", "o1", vec![unknown], None);
-    let failure = request_failure(&ordinary);
-    assert_eq!(ordinary.status.code(), Some(20), "{failure}");
-    assert_eq!(failure["code"], "invalid_runtime_input", "{failure}");
-    assert_eq!(failure["stage"], "call", "{failure}");
+#[test]
+#[trace("FR-106-AC-75")]
+fn unknown_relationship_type_without_correlation_keeps_wrong_role_mapping() {
+    let unknown = relationship_row(
+        "ix://test/workflow/relationship/unknown",
+        true,
+        vec![instance("o1", "s1")],
+    );
+    let ordinary = run_selected_typed("shipments", "o1", vec![unknown], None)
+        .expect_err("an unknown relationship type without correlation refuses");
+    let fsl_command::command::RunCause::SpineRun(refusal) = ordinary.cause else {
+        panic!("the call returns its typed spine refusal: {ordinary:?}");
+    };
+    let fsl_replay::spine::RunRefusal::ObjectEnvironment(record) = *refusal else {
+        panic!("the refusal is the typed object environment record: {refusal:?}");
+    };
+    assert_eq!(record.catalog.code(), "invalid_runtime_input");
+    assert_eq!(record.catalog.cause(), "wrong-role-mapping");
+    assert_eq!(
+        record.fields["relationship"],
+        "ix://test/workflow/relationship/unknown"
+    );
 }

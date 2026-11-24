@@ -1114,3 +1114,5 @@ fn wrapped_call_site_refusals_keep_their_cause_selection_and_hint() {
         assert_eq!(wire["hint"], *hint, "{wire}");
     }
 }
+
+mod imported_call;

@@ -109,6 +109,8 @@ mod quantities;
 mod rational_value_types;
 mod readme_first_rule_checks;
 #[cfg(feature = "test-support")]
+mod record_valued_model;
+#[cfg(feature = "test-support")]
 mod refinement_class_catalog;
 #[cfg(feature = "test-support")]
 mod refinement_declarations;

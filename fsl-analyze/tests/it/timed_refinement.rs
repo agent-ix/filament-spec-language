@@ -5,29 +5,29 @@
 
 use filament_exact::{Cancel, Integer, Rational};
 use fsl_analyze::zone_check::{
-    check_free_delay_refinement, check_timed_model, check_timed_refinement, TimedLivenessHalf,
-    TimedLivenessOutcome, TimedRefinementRequest, TimedRefinementStop, TimedRefinementUndecided,
-    TimedSafetyOutcome, ZoneCheckItem, ZoneCheckLimit, ZoneCheckLimits, ZoneCheckOutcome,
-    ZoneCheckRequest, ZoneStop, ZoneUndecided,
+    TimedLivenessHalf, TimedLivenessOutcome, TimedRefinementRequest, TimedRefinementStop,
+    TimedRefinementUndecided, TimedSafetyOutcome, ZoneCheckItem, ZoneCheckLimit, ZoneCheckLimits,
+    ZoneCheckOutcome, ZoneCheckRequest, ZoneStop, ZoneUndecided, check_free_delay_refinement,
+    check_timed_model, check_timed_refinement,
 };
-use fsl_eval::simulation::model::{ModelSystem, TimedSystem};
 use fsl_eval::simulation::Limits;
-use fsl_replay::{
-    open_systems, replay_free_delay_refinement_trace, replay_timed_refinement_trace,
-    RefinementFailure, RefinementTraceSettlement, TemporalCounterexample,
-};
+use fsl_eval::simulation::model::{ModelSystem, TimedSystem};
 use fsl_replay::{CertifiedItem, ZoneCertificateRequest};
+use fsl_replay::{
+    RefinementFailure, RefinementTraceSettlement, TemporalCounterexample, open_systems,
+    replay_free_delay_refinement_trace, replay_timed_refinement_trace,
+};
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::reductions::{ObligationReductions, Reductions};
 use fsl_semantics::check::CheckedRefinement;
 use ix_trace_rs::trace;
 
 use fsl_semantics::model::intake::meaning;
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 use crate::timed_world::{
-    document, ident, refining, refining_from, renamed_package, wire_field, wire_type, Refining,
-    DENSE, PACKAGE,
+    DENSE, PACKAGE, Refining, document, ident, refining, refining_from, renamed_package,
+    wire_field, wire_type,
 };
 
 /// FR-430-AC-1's untimed `Req`: the object `c` (here `Call`) with `sent`
@@ -193,8 +193,8 @@ fn s3_admits_a_timed_concrete_model_under_an_untimed_abstract_one() {
 fn the_timed_refinement_record_routes_to_en6_alone() {
     use fsl_analyze::zone_check::manifest as en6;
     use fsl_route::deadlock::ModelRefinementItem;
-    use fsl_route::request::items_from_requirements;
     use fsl_route::request::ItemKind;
+    use fsl_route::request::items_from_requirements;
 
     let world = unit("self.inflight").unwrap_or_else(|refusals| panic!("{refusals:?}"));
     let graph = world.package.graph();
@@ -482,7 +482,7 @@ fn a_violated_safety_half_is_reported_with_no_liveness_half() {
 
 /// The default timed profile supplies the selector bound for concrete
 /// ClockRef data, and a hidden abstract field no longer refuses the check.
-#[trace("TC-3084", "FR-1040-AC-8")]
+#[trace("TC-3084", "FR-1040-AC-8", "FR-106-AC-78")]
 #[test]
 fn clock_reference_selectors_use_the_timed_profile_before_refinement_gates() {
     const ZONE_BYTES: u64 = 4 << 20;
@@ -511,6 +511,20 @@ fn clock_reference_selectors_use_the_timed_profile_before_refinement_gates() {
     r["presence"] = json!("optional");
     r["multiplicity"]["lower"] = json!(0);
     fields.push(r);
+    // The checked model type orders fields by declaration identity, which is
+    // also the index basis used by the nested bound path.
+    let mut effective_field_ids: Vec<_> = fields
+        .iter()
+        .map(|field| field["identity"].as_str().expect("field identity"))
+        .collect();
+    effective_field_ids.sort_unstable();
+    let r_field_index = u32::try_from(
+        effective_field_ids
+            .iter()
+            .position(|identity| *identity == ident("Call/r"))
+            .expect("r is a concrete object field"),
+    )
+    .expect("the field index fits the checked path representation");
     let abstract_model = renamed_package(
         &document(&["y"], &[("send", &["inflight"])]),
         "test/abstract",
@@ -540,16 +554,33 @@ fn clock_reference_selectors_use_the_timed_profile_before_refinement_gates() {
         world.abstract_initials.clone(),
     )
     .expect("subjects open");
-    assert!(
-        matches!(
-            fsl_eval::simulation::model::check_model_bounds(
-                &systems.concrete,
-                fsl_eval::simulation::BOUND_POSITIONS
-            ),
-            Err(fsl_eval::simulation::NotSimulated::RequiresBound(_)),
-        ),
-        "the generic subject has no clock-profile selector bound"
+    let generic = fsl_eval::simulation::model::check_model_bounds(
+        &systems.concrete,
+        fsl_eval::simulation::BOUND_POSITIONS,
     );
+    let Err(fsl_eval::simulation::NotSimulated::RequiresBound(bound)) = generic else {
+        panic!("the generic subject has no clock-profile selector bound: {generic:?}");
+    };
+    // FR-106-AC-78: the refusal names the `ClockReferenceDomain` of `r` and
+    // of its unbounded place slot, one entry per declared place template.
+    assert!(
+        !bound.clock_references.is_empty(),
+        "the refusal names the clock-reference domain: {bound:?}"
+    );
+    for domain in &bound.clock_references {
+        assert!(
+            matches!(
+                &domain.member,
+                fsl_foundation::bound::DomainKey::Node { path, .. }
+                    if path.get(1) == Some(&r_field_index)
+            ),
+            "the domain path begins at concrete object field `r`: {domain:?}"
+        );
+        assert!(
+            !domain.slot.is_empty(),
+            "the domain names the unbounded place slot: {domain:?}"
+        );
+    }
     let mut request = safety_request(&world);
     request.concrete = concrete_request;
     // The hidden abstract field no longer refuses, and the timed
@@ -870,13 +901,10 @@ fn a_timed_refinement_counterexample_with_an_early_step_is_refused() {
         vec![free.abstract_initial.clone()],
     )
     .expect("the subjects open");
-    assert!(replay_timed_refinement_trace(
-        refinement,
-        &systems,
-        &counterexample,
-        &Limits::default()
-    )
-    .is_err());
+    assert!(
+        replay_timed_refinement_trace(refinement, &systems, &counterexample, &Limits::default())
+            .is_err()
+    );
 }
 
 /// FR-430-AC-1: a clock read in a step row is refused at the read.
@@ -1242,7 +1270,7 @@ fn an_undetermined_step_is_undecided_whatever_its_post_state() {
 /// through `timed_refinement_item` and FR-145's replay over FR-241's delays.
 pub(crate) fn analyzed(world: &Refining) -> fsl_analyze::analyze::AnalyzeRecord {
     use fsl_analyze::analyze::{
-        analyze_items, timed_refinement_item, Engines, TimedRefinementItem,
+        Engines, TimedRefinementItem, analyze_items, timed_refinement_item,
     };
     let [refinement] = world.package.graph().refinements() else {
         panic!("one refinement");
