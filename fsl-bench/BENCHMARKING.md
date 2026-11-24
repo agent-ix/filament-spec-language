@@ -27,8 +27,20 @@ through `BENCH_ARGS`. Run benches with `-p fsl-bench`, never `--workspace`;
 other crates' dev-dependencies can enable `filament-exact/test-support` and make
 the meter log every charge.
 
-The evaluator-kernel target also runs its Rust report tool before and after
-Criterion so it can identify and summarize only estimates from that invocation.
+The evaluator targets run `fsl-bench-evaluator-report` before and after
+Criterion so the report includes only estimates from that invocation.
+
+`make bench-evaluator` and `make bench-evaluator_kernel` also run a separate
+allocation-probe process after Criterion. That process traverses every checked
+node in each input once and measures the allocations made by
+`CheckedNode::children`; it separately measures allocations for one evaluator
+call. The report joins those probe rows with the fresh Criterion estimate and
+writes `target/evaluator-cost-<axis>-<run-id>.json`. Each per-size row contains
+`wall_time_ns`, `child_traversal_allocation_count`,
+`child_traversal_allocation_share`, and `evaluation_allocation_count`. The
+report refuses stale or missing rows and any nonzero child-traversal allocation
+count. Allocation probing runs in its own process, so its allocator does not
+affect the timed Criterion process.
 
 ### Evaluator kernels
 

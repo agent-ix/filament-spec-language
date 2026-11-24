@@ -1099,6 +1099,7 @@ dependencies = [
 name = "fsl-bench"
 version = "0.1.0"
 dependencies = [
+ "allocation-counter",
  "criterion",
  "filament-checked",
  "filament-eval",

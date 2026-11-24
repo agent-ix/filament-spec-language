@@ -15,6 +15,7 @@ description = "The committed performance benchmarks (parser, checker, CST identi
 # example a change to `intake::admit`'s return type). Every model-intake call goes
 # through `src/model.rs` so such a change is one edit there.
 [dependencies]
+allocation-counter = { version = "0.8.1", optional = true }
 fsl-cst = { path = "../fsl-cst" }
 fsl-foundation = { path = "../fsl-foundation" }
 fsl-forms = { path = "../fsl-forms" }
@@ -49,6 +50,7 @@ nix = { version = "0.31.3", default-features = false, features = ["resource"] }
 [features]
 counters = []
 property-generators = ["dep:proptest", "dep:fsl-proptest-policy"]
+allocation-probe = ["dep:allocation-counter"]
 
 [dev-dependencies]
 # Grammar derivations are consumed only by the property-generator acceptance
@@ -81,6 +83,15 @@ harness = false
 [[bench]]
 name = "evaluator_kernel"
 harness = false
+
+[[bin]]
+name = "fsl-bench-evaluator-report"
+path = "src/bin/fsl-bench-evaluator-report.rs"
+required-features = ["allocation-probe"]
+
+[[test]]
+name = "evaluator_cost_report"
+path = "tests/it/evaluator_cost_report.rs"
 
 [[bench]]
 name = "text_cluster"

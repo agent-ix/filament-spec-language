@@ -535,7 +535,7 @@ arch-lint: arch-lint-api-surface-fsl arch-lint-qualified-core arch-lint-trusted-
 # -- timing is not a pass/fail gate.
 BENCH_ARGS ?=
 BENCH_AXES := parser checker cst model evaluator evaluator_kernel text_cluster mc reach key en4
-BENCH_GENERIC_AXES := $(filter-out evaluator_kernel,$(BENCH_AXES))
+BENCH_GENERIC_AXES := $(filter-out evaluator evaluator_kernel,$(BENCH_AXES))
 
 .PHONY: bench bench-probe $(addprefix bench-,$(BENCH_AXES))
 
@@ -544,10 +544,17 @@ bench: $(addprefix bench-,$(BENCH_AXES))
 $(addprefix bench-,$(BENCH_GENERIC_AXES)): bench-%:
 	cargo bench --locked -p fsl-bench --bench $* -- $(BENCH_ARGS)
 
+bench-evaluator:
+	cargo run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- start
+	cargo bench --locked -p fsl-bench --bench evaluator -- $(BENCH_ARGS)
+	cargo run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- profile evaluator/call_chain
+	cargo run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- report evaluator/call_chain
+
 bench-evaluator_kernel:
-	cargo run --locked -p fsl-bench --bin fsl-bench-kernel-report -- start
+	cargo run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- start
 	cargo bench --locked -p fsl-bench --bench evaluator_kernel -- $(BENCH_ARGS)
-	cargo run --locked -p fsl-bench --bin fsl-bench-kernel-report -- report -- $(BENCH_ARGS)
+	cargo run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- profile evaluator/kernel
+	cargo run --locked -p fsl-bench --features allocation-probe --bin fsl-bench-evaluator-report -- report evaluator/kernel
 
 # One process per `check`/`eval` size: peak RSS is process-wide.
 BENCH_PROBE := cargo run --locked --release -q -p fsl-bench --bin fsl-bench-probe --
