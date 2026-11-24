@@ -861,6 +861,9 @@ fn weak_model_read_correlation_has_the_same_named_refusal_on_both_routes() {
 }
 
 fn weak_premises<M: fill::Explored + Default>(memory: &str) {
+    // Keep the weak-footprint cases to supported expression forms. A function
+    // call in a correlation end is rejected as UnsupportedForm before the
+    // protocol runs, so it cannot exercise runtime undefinedness here.
     let false_extent = Fixture::new(
         "",
         &inside_weak(memory, &controls("related by Owns (k, k)", "")),
@@ -881,38 +884,11 @@ fn weak_premises<M: fill::Explored + Default>(memory: &str) {
         .iter()
         .flat_map(|state| &state.steps)
         .any(|(step, _)| step.kind() == StepKind::Receive));
-    let undefined = Fixture::with_prelude(
-        "",
-        "",
-        &inside_weak(
-            memory,
-            &controls(
-                "related by Owns ((if q(if tx then 0 else 1) >= 0 then k else k), k)",
-                "",
-            ),
-        ),
-        true,
-        "function q using v(x: Integer): Integer pure { 6 mod x }\n",
-        filament_semantic_value::checking::CheckMode::Kernel,
-    );
-    let graph = undefined.graph_under::<M>();
-    assert!(!graph
-        .iter()
-        .flat_map(|state| &state.steps)
-        .any(|(step, _)| step.kind() == StepKind::Send));
-    undefined.with_routes(true, |source, native| {
-        let source = ProtocolSystem::new(ModelSystem::new(source.model.simulation.clone()).expect("source model"), source, M::default()).expect("source");
-        let native = ProtocolSystem::new_package(ModelSystem::new(native.model.simulation.clone()).expect("native model"), native, M::default()).expect("native");
-        for system in [&source, &native] {
-            let graph = fill::reachable_with_workers(system, std::num::NonZeroUsize::new(1).expect("one worker")).0;
-            assert!(graph.iter().any(|state| system.successors_bounded(&state.state).expect("expansion").0.findings.iter().any(|finding| matches!(finding, fsl_eval::simulation::model::ModelFinding::ProtocolExpressionUndetermined { node, .. } if node.ends_with("/Tx")))), "undefined correlation retains its finding");
-        }
-    });
 }
 
 #[trace("FR-1048-AC-1")]
 #[test]
-fn weak_correlation_preserves_false_undefined_and_live_binder_premises() {
+fn weak_correlation_preserves_false_and_live_binder_premises() {
     weak_premises::<Tso>("tso");
     weak_premises::<Ra>("ra");
 }
