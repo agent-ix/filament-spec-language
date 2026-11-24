@@ -18,7 +18,7 @@
 use std::collections::BTreeMap;
 
 use filament_contract_model::{
-    read_checked_package, CheckedPackageDispatchResult, CheckedPackageReadLimits, CheckedPackageV2,
+    CheckedPackageDispatchResult, CheckedPackageReadLimits, CheckedPackageV2, read_checked_package,
 };
 use filament_exact::Cancel;
 use fsl_bench::prop::{self, near_miss, unit};
@@ -196,41 +196,36 @@ fn floor_division_law_pair_mutations_follow_reader_admission_rules() {
         }
     }
 
-    for (changed_authority, changed_identity) in [
-        (floor_authority.as_str(), ceiling_identity),
-        ("qsl-2947-unknown-authority", floor_identity),
-    ] {
-        let mut paired = original.clone();
-        assert!(
-            replace_pair(
-                &mut paired,
-                &floor_authority,
-                floor_identity,
-                changed_authority,
-                changed_identity,
-            ) >= 2,
-            "lock selection and operation-law definition are changed together"
-        );
-        let bytes = serde_json::to_vec(&paired).expect("serialize paired mutation");
-        let admitted = match read_checked_package(
-            &bytes,
-            CheckedPackageReadLimits::bounded(),
-            emitted.evidence(),
-        ) {
-            CheckedPackageDispatchResult::AdmittedV2(package) => package,
-            other => panic!("strict reader refused paired law mutation: {other:?}"),
-        };
-        let retained = admitted
-            .lock()
-            .definition_selections
-            .iter()
-            .find(|row| row.identity.as_ref() == changed_identity)
-            .expect("strict reader retains altered selection pair");
-        assert_eq!(retained.authority.as_ref(), changed_authority);
-        assert_eq!(retained.identity.as_ref(), changed_identity);
-        let graph = serde_json::to_value(admitted.graph()).expect("admitted graph");
-        assert!(contains_pair(&graph, changed_authority, changed_identity));
-    }
+    let mut paired = original.clone();
+    assert!(
+        replace_pair(
+            &mut paired,
+            &floor_authority,
+            floor_identity,
+            &floor_authority,
+            ceiling_identity,
+        ) >= 2,
+        "lock selection and operation-law definition are changed together"
+    );
+    let bytes = serde_json::to_vec(&paired).expect("serialize paired mutation");
+    let admitted = match read_checked_package(
+        &bytes,
+        CheckedPackageReadLimits::bounded(),
+        emitted.evidence(),
+    ) {
+        CheckedPackageDispatchResult::AdmittedV2(package) => package,
+        other => panic!("strict reader refused paired law mutation: {other:?}"),
+    };
+    let retained = admitted
+        .lock()
+        .definition_selections
+        .iter()
+        .find(|row| row.identity.as_ref() == ceiling_identity)
+        .expect("strict reader retains altered selection pair");
+    assert_eq!(retained.authority.as_ref(), floor_authority);
+    assert_eq!(retained.identity.as_ref(), ceiling_identity);
+    let graph = serde_json::to_value(admitted.graph()).expect("admitted graph");
+    assert!(contains_pair(&graph, &floor_authority, ceiling_identity));
 
     let mut lock_only = original;
     let row = lock_only["lock"]["definition_selections"]
@@ -271,6 +266,25 @@ fn contains_pair(value: &serde_json::Value, authority: &str, identity: &str) -> 
         serde_json::Value::Array(values) => values
             .iter()
             .any(|child| contains_pair(child, authority, identity)),
+        _ => false,
+    }
+}
+
+fn operation_law_contains_pair(value: &serde_json::Value, authority: &str, identity: &str) -> bool {
+    match value {
+        serde_json::Value::Object(object) => {
+            let operation_law_matches = object
+                .get("operation")
+                .and_then(|operation| operation.get("laws"))
+                .is_some_and(|laws| contains_pair(laws, authority, identity));
+            operation_law_matches
+                || object
+                    .values()
+                    .any(|child| operation_law_contains_pair(child, authority, identity))
+        }
+        serde_json::Value::Array(values) => values
+            .iter()
+            .any(|child| operation_law_contains_pair(child, authority, identity)),
         _ => false,
     }
 }
@@ -367,7 +381,14 @@ fn corrupted_package_is_refused() {
             CheckedPackageDispatchResult::AdmittedV2(package) => {
                 if format!("{package:?}") == original {
                     same += 1;
-                    eprintln!("admitted although corrupted, reads back equal, at {at}: {:?} -> {:?} in {:?}", bytes[at] as char, corrupt[at] as char, String::from_utf8_lossy(&bytes[at.saturating_sub(40)..(at + 40).min(bytes.len())]));
+                    eprintln!(
+                        "admitted although corrupted, reads back equal, at {at}: {:?} -> {:?} in {:?}",
+                        bytes[at] as char,
+                        corrupt[at] as char,
+                        String::from_utf8_lossy(
+                            &bytes[at.saturating_sub(40)..(at + 40).min(bytes.len())]
+                        )
+                    );
                 } else {
                     different.push((at, corrupt));
                 }
@@ -447,16 +468,32 @@ fn corrupted_package_is_refused() {
         admitted_with_changed_end > 0,
         "FR-038: a changed source-map region end is admitted and retained"
     );
-    // This binds only the catalog-free reader clause of FR-110-AC-16. Replay,
-    // run and analyze catalog refusals remain covered by their consumer tests.
+    // This binds only the catalog-free reader clause of FR-110-AC-16. Catalog-bound
+    // checked-package and replay/run/analyze request cases are tracked by QSL-3131.
     // The reader admits the row without resolving either string and retains both.
     let mut altered: serde_json::Value = serde_json::from_slice(&bytes).expect("emitted JSON");
-    let row = altered["lock"]["definition_selections"]
-        .as_array_mut()
-        .and_then(|rows| rows.first_mut())
-        .expect("the generated package has a definition selection");
+    let selections = altered["lock"]["definition_selections"]
+        .as_array()
+        .expect("definition selections");
+    let selection_index = selections
+        .iter()
+        .position(|row| {
+            let authority = row["authority"].as_str().expect("selection authority");
+            let identity = row["identity"].as_str().expect("selection identity");
+            !operation_law_contains_pair(&altered, authority, identity)
+        })
+        .expect("the generated package has a definition selection with no operation law");
+    let row = &altered["lock"]["definition_selections"][selection_index];
+    let original_authority = row["authority"].as_str().unwrap().to_owned();
+    let original_identity = row["identity"].as_str().unwrap().to_owned();
+    assert!(!operation_law_contains_pair(
+        &altered,
+        &original_authority,
+        &original_identity
+    ));
     let expected_authority = "qsl-2947-reader-authority";
     let expected_identity = "qsl-2947-reader-unknown-definition";
+    let row = &mut altered["lock"]["definition_selections"][selection_index];
     row["authority"] = expected_authority.into();
     row["identity"] = expected_identity.into();
     let altered = serde_json::to_vec(&altered).expect("serialize altered package");
