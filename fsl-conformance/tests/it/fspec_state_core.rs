@@ -583,17 +583,23 @@ fn run_boundary(case: &Value) -> Result<Settled, String> {
                 &format!("\"typeRef\":\"{CONFIG_VERSION}\""),
                 "\"typeRef\":\"ix://foreign/config/type/Hidden\"",
             );
-            check_unit(&good, Some(mutated))?
+            checked_then_run(&good, mutated)?
         }
         "ambiguous-export" => {
             let mut document: Value =
                 serde_json::from_str(&model_json).map_err(|error| error.to_string())?;
-            let duplicate = document["types"][1].clone();
+            // Two exported type identities under the name ConfigVersion.
+            let duplicate: Value = serde_json::from_str(
+                &document["types"][1]
+                    .to_string()
+                    .replace(CONFIG_VERSION, "ix://example/config/other/ConfigVersion"),
+            )
+            .map_err(|error| error.to_string())?;
             document["types"]
                 .as_array_mut()
                 .ok_or("types")?
                 .push(duplicate);
-            check_unit(&good, Some(document.to_string()))?
+            checked_then_run(&good, document.to_string())?
         }
         "unbounded-integer" => {
             let mut document: Value =
@@ -602,7 +608,7 @@ fn run_boundary(case: &Value) -> Result<Settled, String> {
                 .as_array_mut()
                 .ok_or("constraints")?
                 .pop();
-            check_unit(&good, Some(document.to_string()))?
+            checked_then_run(&good, document.to_string())?
         }
         "wrong-invocation" | "deleted-object" | "exhausted-evaluation" => return run_future_input(id, &wanted),
         "unavailable-observation" => {
@@ -618,6 +624,29 @@ fn run_boundary(case: &Value) -> Result<Settled, String> {
         }
     };
     Ok(compare_code(id, &wanted, &actual))
+}
+
+/// A model mutation is refused when the unit is checked against it or, if
+/// the check accepts it, when a healthy snapshot is admitted and run over it.
+fn checked_then_run(unit: &str, model: String) -> Result<Observed, String> {
+    let checked = check_unit(unit, Some(model.clone()))?;
+    if checked != Observed::Completed(true) {
+        return Ok(checked);
+    }
+    let identity = label("agent-ix", "ix://example/config/snapshot/mutated-model");
+    let object = |key: &str, n: i64, parent: Value| json!({"id": key, "type": FIXTURE_TYPE, "fields": {"versionNumber": n, "parent": parent}});
+    let document = json!({"complete": true, "objects": [
+        object("root", 1, Value::Null),
+        object("child", 2, json!({"type": FIXTURE_TYPE, "object": "root"})),
+    ]});
+    run(Run {
+        unit: unit.to_owned(),
+        model: Some(model),
+        snapshots: BTreeMap::from([(identity.clone(), snapshot(&document, "current", &identity))]),
+        invocations: BTreeMap::new(),
+        selection: current_selection("ParentPrecedes", &identity, Some("child")),
+        work: WORK,
+    })
 }
 
 /// The boundary cases over inputs the file calls future: each is the

@@ -17,7 +17,7 @@ use std::collections::BTreeSet;
 use std::ffi::OsStr;
 use std::path::Path;
 
-use crate::fspec_pending::{Pending, PENDING};
+use crate::fspec_pending::{Pending, ALLOWED_TICKETS, PENDING};
 
 /// Reads `path` (relative to the standard's root) from `directory` when one
 /// is named, otherwise from the pinned package.
@@ -93,6 +93,12 @@ pub(crate) fn settle(
     let mut tally = Tally::default();
     let known: BTreeSet<&str> = cases.iter().map(|(id, _)| id.as_str()).collect();
     for entry in registry.iter().filter(|entry| entry.runner == runner) {
+        if !ALLOWED_TICKETS.contains(&entry.ticket) {
+            tally.failures.push(format!(
+                "{runner}: registry key {} for {} is not in the allowed set",
+                entry.ticket, entry.case
+            ));
+        }
         if !is_ticket_key(entry.ticket) {
             tally.failures.push(format!(
                 "{runner}: registry key {:?} for {} is not a ticket key",

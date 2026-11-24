@@ -1136,12 +1136,12 @@ fn a_mismatch_needs_a_ticket_key_and_a_fixed_case_loses_it() {
         crate::fspec_pending::Pending {
             runner: RUNNER,
             case: "A",
-            ticket: "QSL-1",
+            ticket: "QSL-3027",
         },
         crate::fspec_pending::Pending {
             runner: RUNNER,
             case: "B",
-            ticket: "QSL-2",
+            ticket: "QSL-3028",
         },
     ];
     let cases = vec![
@@ -1155,7 +1155,7 @@ fn a_mismatch_needs_a_ticket_key_and_a_fixed_case_loses_it() {
     ];
     let tally = fspec_standard::settle(RUNNER, cases, KEYED);
     assert_eq!(tally.keyed.len(), 1);
-    assert_eq!(tally.keyed[0].1, "QSL-1");
+    assert_eq!(tally.keyed[0].1, "QSL-3027");
     assert_eq!(tally.failures.len(), 3, "{:?}", tally.failures);
     assert!(tally
         .failures
@@ -1178,5 +1178,24 @@ fn a_mismatch_needs_a_ticket_key_and_a_fixed_case_loses_it() {
         ticket: "bad",
     }];
     let tally = fspec_standard::settle(RUNNER, Vec::new(), STRAY);
-    assert_eq!(tally.failures.len(), 2, "{:?}", tally.failures);
+    assert_eq!(tally.failures.len(), 3, "{:?}", tally.failures);
+    static FOREIGN: &[crate::fspec_pending::Pending] = &[crate::fspec_pending::Pending {
+        runner: RUNNER,
+        case: "A",
+        ticket: "QSL-9999",
+    }];
+    let tally = fspec_standard::settle(
+        RUNNER,
+        vec![("A".to_owned(), Settled::Mismatch("x".to_owned()))],
+        FOREIGN,
+    );
+    assert!(
+        tally
+            .failures
+            .iter()
+            .any(|text| text.contains("not in the allowed set")),
+        "{:?}",
+        tally.failures
+    );
+    assert!(crate::fspec_pending::ALLOWED_TICKETS.contains(&"QSL-3035"));
 }
