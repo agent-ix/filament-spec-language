@@ -5,18 +5,18 @@
 
 use filament_eval::FamilyOutcome;
 use filament_exact::{
-    admit_text, ChargePoint, Decimal, DecimalRepresentation, Incomplete, Integer, LimitKind, Meter,
-    Outcome, Quantity, Rational, Refusal, ScalarLimits, TextPayload, TextProfile, TextType,
-    UnitDomain, Value,
+    ChargePoint, Decimal, DecimalRepresentation, IeeeComparison, IeeeValue, Incomplete, Integer,
+    LimitKind, Meter, Outcome, Quantity, Rational, Refusal, ScalarLimits, TextPayload, TextProfile,
+    TextType, UnitDomain, Value, admit_text, compare_ieee,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use filament_semantic_value::loss::ValueLoss;
-use filament_specification::{QualificationVector, TestCase, QUALIFICATION_VECTORS};
+use filament_specification::{QUALIFICATION_VECTORS, QualificationVector, TestCase};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
-use fsl_semantics::check::PackageDeclarations;
+use fsl_semantics::check::{CheckedGraph, PackageDeclarations};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use fsl_semantics::value::{admit_ieee_profile, DefinitionRole};
+use fsl_semantics::value::{DefinitionRole, admit_ieee_profile};
 use ix_trace_rs::trace;
 
 const UNLIMITED: ScalarLimits = ScalarLimits {
@@ -94,8 +94,6 @@ struct SourceCase {
     limits: ScalarLimits,
     /// Charge points for the expression node, excluding the wrapper call.
     expected_charges: Option<Vec<ChargePoint>>,
-    /// Literal source-call count expected by the row, independent of source spelling.
-    expected_function_call_charges: Option<usize>,
     check_mode: CheckMode,
 }
 
@@ -107,7 +105,6 @@ fn function(result: &str, body: &str, expected: Expected) -> SourceCase {
         quantity_parameter_arguments: Vec::new(),
         limits: UNLIMITED,
         expected_charges: None,
-        expected_function_call_charges: None,
         check_mode: CheckMode::Linked,
     }
 }
@@ -146,7 +143,6 @@ fn limited_function_with(
         quantity_parameter_arguments: Vec::new(),
         limits,
         expected_charges: Some(expected_charges.to_vec()),
-        expected_function_call_charges: Some(1),
         check_mode: CheckMode::Linked,
     }
 }
@@ -275,7 +271,6 @@ fn decimal_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
             quantity_parameter_arguments: Vec::new(),
             limits: UNLIMITED,
             expected_charges: None,
-            expected_function_call_charges: None,
             check_mode: CheckMode::Linked,
         }],
         "D02" | "D04" => {
@@ -334,7 +329,6 @@ fn decimal_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                 quantity_parameter_arguments: Vec::new(),
                 limits: UNLIMITED,
                 expected_charges: None,
-                expected_function_call_charges: None,
                 check_mode: CheckMode::Linked,
             })
             .collect(),
@@ -480,32 +474,32 @@ fn decimal_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCa
         "D15" => vec![
             {
                 let mut case = limited_function_with(
-                "Decimal[-1000, 1000; 0, 2; nearest-even]",
-                "a: Decimal[-1000, 1000; 0, 2; nearest-even], b: Decimal[-1000, 1000; 0, 2; nearest-even]",
-                "a / b",
-                vec![exact(1, 0), exact(0, 3)],
-                tuple(8, 3, 2, 1, 1),
-                Expected::Undefined,
-                &[ChargePoint::DecimalOperands],
+                    "Decimal[-1000, 1000; 0, 2; nearest-even]",
+                    "a: Decimal[-1000, 1000; 0, 2; nearest-even], b: Decimal[-1000, 1000; 0, 2; nearest-even]",
+                    "a / b",
+                    vec![exact(1, 0), exact(0, 3)],
+                    tuple(8, 3, 2, 1, 1),
+                    Expected::Undefined,
+                    &[ChargePoint::DecimalOperands],
                 );
                 case.check_mode = CheckMode::Kernel;
                 case
             },
             {
                 let mut case = limited_function_with(
-                "Decimal[-1000, 1000; 0, 2; nearest-even]",
-                "a: Decimal[-1000, 1000; 0, 2; nearest-even], b: Decimal[-1000, 1000; 0, 2; nearest-even]",
-                "a / b",
-                vec![exact(1, 0), exact(0, 3)],
-                tuple(8, 3, 2, 0, 1),
-                Expected::Incomplete {
-                    limit_kind: LimitKind::WorkUnits,
-                    limit: 0,
-                    consumed: 0,
-                    next_charge: Integer::from(1_i64),
-                    charge_point: ChargePoint::DecimalOperands,
-                },
-                &[],
+                    "Decimal[-1000, 1000; 0, 2; nearest-even]",
+                    "a: Decimal[-1000, 1000; 0, 2; nearest-even], b: Decimal[-1000, 1000; 0, 2; nearest-even]",
+                    "a / b",
+                    vec![exact(1, 0), exact(0, 3)],
+                    tuple(8, 3, 2, 0, 1),
+                    Expected::Incomplete {
+                        limit_kind: LimitKind::WorkUnits,
+                        limit: 0,
+                        consumed: 0,
+                        next_charge: Integer::from(1_i64),
+                        charge_point: ChargePoint::DecimalOperands,
+                    },
+                    &[],
                 );
                 case.check_mode = CheckMode::Kernel;
                 case
@@ -609,7 +603,13 @@ fn decimal_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCa
                 ),
                 "a < b",
                 vec![left.clone(), right.clone()],
-                tuple(full_bits, if vector.id == "D20" { 2 } else { 3 }, full_scale, 3, 1),
+                tuple(
+                    full_bits,
+                    if vector.id == "D20" { 2 } else { 3 },
+                    full_scale,
+                    3,
+                    1,
+                ),
                 Expected::Boolean(true),
                 &[
                     ChargePoint::OrderingOperands,
@@ -759,7 +759,6 @@ fn text_comparison(
         quantity_parameter_arguments: Vec::new(),
         limits: UNLIMITED,
         expected_charges: None,
-        expected_function_call_charges: None,
         check_mode: CheckMode::Linked,
     }
 }
@@ -792,9 +791,11 @@ fn text_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
             let inputs = quoted(vector.inputs);
             let left = quote(&unicode_scalars(vector.inputs)[0].to_string());
             let right = quote(inputs[0]);
-            assert!(vector
-                .expected
-                .starts_with("equal under compatibility profiles; unequal under `nfc`"));
+            assert!(
+                vector
+                    .expected
+                    .starts_with("equal under compatibility profiles; unequal under `nfc`")
+            );
             inputs[1..]
                 .iter()
                 .map(|profile| text_comparison(profile, &left, &right, "=", *profile != "nfc"))
@@ -807,7 +808,6 @@ fn text_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
             quantity_parameter_arguments: Vec::new(),
             limits: UNLIMITED,
             expected_charges: None,
-            expected_function_call_charges: None,
             check_mode: CheckMode::Linked,
         }],
         "T06b" => {
@@ -889,7 +889,6 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 &full_points,
             );
             complete.declarations = declarations.clone();
-            complete.expected_function_call_charges = Some(3);
             let mut normalized_limit = limited_function(
                 "Boolean",
                 "true",
@@ -904,7 +903,6 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 &full_points[..4],
             );
             normalized_limit.declarations = declarations.clone();
-            normalized_limit.expected_function_call_charges = Some(3);
             let mut result_limit = limited_function(
                 "Boolean",
                 "true",
@@ -919,7 +917,6 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 &full_points[..5],
             );
             result_limit.declarations = declarations;
-            result_limit.expected_function_call_charges = Some(3);
             vec![complete, normalized_limit, result_limit]
         }
         "T14" => {
@@ -930,7 +927,6 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 );
                 let mut complete = function("Boolean", "true", Expected::Boolean(false));
                 complete.declarations = body.clone();
-                complete.expected_function_call_charges = Some(3);
                 complete.limits = limits(5, 3, 0, 2, 3, 1);
                 complete.expected_charges = Some(vec![
                     ChargePoint::TextInputBytes,
@@ -949,7 +945,6 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                     },
                 );
                 denied.declarations = body.clone();
-                denied.expected_function_call_charges = Some(3);
                 denied.limits = limits(5, 3, 0, 2, 2, 1);
                 denied.expected_charges = Some(vec![
                     ChargePoint::TextInputBytes,
@@ -971,7 +966,6 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 quantity_parameter_arguments: Vec::new(),
                 limits: limits(0, 0, 0, 0, 0, 0),
                 expected_charges: Some(Vec::new()),
-                expected_function_call_charges: Some(0),
                 check_mode: CheckMode::Linked,
             },
             SourceCase {
@@ -984,7 +978,6 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 quantity_parameter_arguments: Vec::new(),
                 limits: limits(0, 0, 0, 0, 0, 0),
                 expected_charges: Some(Vec::new()),
-                expected_function_call_charges: Some(0),
                 check_mode: CheckMode::Linked,
             },
         ],
@@ -995,13 +988,41 @@ fn text_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
 fn float_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
     let operands = hexes(vector.inputs);
     let (width, expression, expected) = match vector.id {
-        "F03" | "F04" => (32, format!("float32(bits: {:#010x}) + float32(bits: {:#010x})", operands[0], operands[1]), float_expected(vector.expected)),
+        "F03" | "F04" => (
+            32,
+            format!(
+                "float32(bits: {:#010x}) + float32(bits: {:#010x})",
+                operands[0], operands[1]
+            ),
+            float_expected(vector.expected),
+        ),
         "F07" | "F08" | "F10" => {
             let width = if vector.id == "F10" { 64 } else { 32 };
-            (width, format!("float{width}(bits: {:#x}) + float{width}(bits: {:#x})", operands[0], operands[1]), float_expected(vector.expected))
+            (
+                width,
+                format!(
+                    "float{width}(bits: {:#x}) + float{width}(bits: {:#x})",
+                    operands[0], operands[1]
+                ),
+                float_expected(vector.expected),
+            )
         }
-        "F11" => (32, format!("filament::value::ieee::fma(float32(bits: {:#x}), float32(bits: {:#x}), float32(bits: {:#x}))", operands[0], operands[1], operands[2]), float_expected(vector.expected)),
-        "F15" | "F16" => (32, format!("float32(bits: {:#010x}) * float32(bits: {:#010x})", operands[0], operands[1]), float_expected(vector.expected)),
+        "F11" => (
+            32,
+            format!(
+                "filament::value::ieee::fma(float32(bits: {:#x}), float32(bits: {:#x}), float32(bits: {:#x}))",
+                operands[0], operands[1], operands[2]
+            ),
+            float_expected(vector.expected),
+        ),
+        "F15" | "F16" => (
+            32,
+            format!(
+                "float32(bits: {:#010x}) * float32(bits: {:#010x})",
+                operands[0], operands[1]
+            ),
+            float_expected(vector.expected),
+        ),
         _ => return None,
     };
     Some(vec![function(
@@ -1031,13 +1052,97 @@ fn float_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase
         ChargePoint::IeeeResultRetain,
     ];
     Some(match vector.id {
-        "F17" => vec![limited_function(
-            "Boolean",
-            "filament::value::ieee::numericEqual(float32(bits: 0x7fc00001), float32(bits: 0x3f800000))",
-            limits(32, 2, 2, 1),
-            Expected::Boolean(false),
-            &[ChargePoint::IeeeOperands, ChargePoint::IeeeResultRetain],
-        )],
+        "F17" => {
+            let mut cases = Vec::new();
+            for (width, ty, qn_bits, one_bits) in [
+                (
+                    32_u64,
+                    "Float32[nearest-even]",
+                    0x7fc0_0001_u64,
+                    0x3f80_0000_u64,
+                ),
+                (
+                    64,
+                    "Float64[nearest-even]",
+                    0x7ff8_0000_0000_0001,
+                    0x3ff0_0000_0000_0000,
+                ),
+            ] {
+                let (qn, one) = if width == 32 {
+                    (
+                        Value::Float(IeeeValue::binary32(
+                            u32::try_from(qn_bits).expect("binary32 NaN bits fit u32"),
+                        )),
+                        Value::Float(IeeeValue::binary32(
+                            u32::try_from(one_bits).expect("binary32 one bits fit u32"),
+                        )),
+                    )
+                } else {
+                    (
+                        Value::Float(IeeeValue::binary64(qn_bits)),
+                        Value::Float(IeeeValue::binary64(one_bits)),
+                    )
+                };
+                let params = format!("qn: {ty}, one: {ty}");
+                for (body, expected, includes_boolean_retain) in [
+                    ("qn = one", false, false),
+                    ("filament::value::ieee::numericEqual(qn, one)", false, false),
+                    ("qn != one", true, true),
+                    ("one = one", true, false),
+                ] {
+                    let mut charges =
+                        vec![ChargePoint::IeeeOperands, ChargePoint::IeeeResultRetain];
+                    if includes_boolean_retain {
+                        charges.push(ChargePoint::BooleanResultRetain);
+                    }
+                    cases.push(limited_function_with(
+                        "Boolean",
+                        &params,
+                        body,
+                        vec![qn.clone(), one.clone()],
+                        limits(
+                            width,
+                            2,
+                            2 + u64::from(includes_boolean_retain),
+                            1 + u64::from(includes_boolean_retain),
+                        ),
+                        Expected::Boolean(expected),
+                        &charges,
+                    ));
+                    cases.push(limited_function_with(
+                        "Boolean",
+                        &params,
+                        body,
+                        vec![qn.clone(), one.clone()],
+                        limits(width, 2, 1, 1),
+                        Expected::Incomplete {
+                            limit_kind: LimitKind::WorkUnits,
+                            limit: 1,
+                            consumed: 1,
+                            next_charge: Integer::from(1_u64),
+                            charge_point: ChargePoint::IeeeResultRetain,
+                        },
+                        &[ChargePoint::IeeeOperands],
+                    ));
+                    cases.push(limited_function_with(
+                        "Boolean",
+                        &params,
+                        body,
+                        vec![qn.clone(), one.clone()],
+                        limits(width, 0, 2, 1),
+                        Expected::Incomplete {
+                            limit_kind: LimitKind::ValueOccurrences,
+                            limit: 0,
+                            consumed: 0,
+                            next_charge: Integer::from(2_u64),
+                            charge_point: ChargePoint::IeeeOperands,
+                        },
+                        &[],
+                    ));
+                }
+            }
+            cases
+        }
         "F18" => vec![limited_function(
             "Float32[nearest-even]",
             "float32(bits: 0x00000000) * float32(bits: 0x7f800000)",
@@ -1059,8 +1164,14 @@ fn float_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase
             &ieee,
         )],
         "F21" => [
-            ("float32(bits: 0x00000000) + float32(bits: 0x00000000)", 0x00000000),
-            ("float32(bits: 0x80000000) * float32(bits: 0x3f800000)", 0x80000000),
+            (
+                "float32(bits: 0x00000000) + float32(bits: 0x00000000)",
+                0x00000000,
+            ),
+            (
+                "float32(bits: 0x80000000) * float32(bits: 0x3f800000)",
+                0x80000000,
+            ),
         ]
         .into_iter()
         .flat_map(|(body, bits)| {
@@ -1248,7 +1359,6 @@ fn float_extended_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>>
             quantity_parameter_arguments: Vec::new(),
             limits: limits(0, 0, 0, 0),
             expected_charges: Some(Vec::new()),
-            expected_function_call_charges: Some(0),
             check_mode: CheckMode::Linked,
         })
         .collect(),
@@ -1683,7 +1793,6 @@ fn unit_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
         quantity_parameter_arguments: Vec::new(),
         limits: UNLIMITED,
         expected_charges: None,
-        expected_function_call_charges: None,
         check_mode: CheckMode::Linked,
     }])
 }
@@ -1752,7 +1861,6 @@ fn accounting_unit_case(
         quantity_parameter_arguments: Vec::new(),
         limits,
         expected_charges: Some(charges.to_vec()),
-        expected_function_call_charges: Some(1),
         check_mode: CheckMode::Linked,
     }
 }
@@ -1857,7 +1965,6 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                     quantity_parameter_arguments: Vec::new(),
                     limits: unit_limits(0, 0, 0, 0, 0, 0, 0),
                     expected_charges: Some(Vec::new()),
-                    expected_function_call_charges: Some(0),
                     check_mode: CheckMode::Linked,
                 })
                 .collect()
@@ -1903,7 +2010,12 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                     code: "inexact_conversion".to_owned(),
                     cause: Some("inexact-conversion".to_owned()),
                 },
-                &[UnitIdentityRead, UnitEdge, UnitRationalArithmetic, UnitRationalArithmetic],
+                &[
+                    UnitIdentityRead,
+                    UnitEdge,
+                    UnitRationalArithmetic,
+                    UnitRationalArithmetic,
+                ],
             ),
             accounting_unit_case(
                 "Quantity<m, Decimal[-1000, 1000; 0, 2; nearest-even]>",
@@ -1916,7 +2028,12 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                     next_charge: Integer::from(1_i64),
                     charge_point: UnitTargetDomain,
                 },
-                &[UnitIdentityRead, UnitEdge, UnitRationalArithmetic, UnitRationalArithmetic],
+                &[
+                    UnitIdentityRead,
+                    UnitEdge,
+                    UnitRationalArithmetic,
+                    UnitRationalArithmetic,
+                ],
             ),
         ],
         "U17" => vec![
@@ -2018,7 +2135,6 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                     quantity_parameter_arguments: Vec::new(),
                     limits: unit_limits(0, 0, 0, 0, 0, 0, 0),
                     expected_charges: Some(Vec::new()),
-                    expected_function_call_charges: Some(0),
                     check_mode: CheckMode::Linked,
                 });
             std::iter::once(result).chain(affine).collect()
@@ -2076,7 +2192,6 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 quantity_parameter_arguments: Vec::new(),
                 limits: unit_limits(0, 0, 0, 0, 0, 0, 0),
                 expected_charges: Some(Vec::new()),
-                expected_function_call_charges: Some(0),
                 check_mode: CheckMode::Linked,
             },
             accounting_unit_case_with_quantity_parameter(
@@ -2206,7 +2321,6 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 quantity_parameter_arguments: Vec::new(),
                 limits: unit_limits(0, 0, 0, 0, 0, 0, 0),
                 expected_charges: Some(Vec::new()),
-                expected_function_call_charges: Some(0),
                 check_mode: CheckMode::Linked,
             },
             SourceCase {
@@ -2221,7 +2335,6 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 quantity_parameter_arguments: Vec::new(),
                 limits: unit_limits(0, 0, 0, 0, 0, 0, 0),
                 expected_charges: Some(Vec::new()),
-                expected_function_call_charges: Some(0),
                 check_mode: CheckMode::Linked,
             },
         ],
@@ -2391,7 +2504,12 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                     code: "inexact_conversion".to_owned(),
                     cause: Some("inexact-conversion".to_owned()),
                 },
-                &[UnitIdentityRead, UnitEdge, UnitRationalArithmetic, UnitRationalArithmetic],
+                &[
+                    UnitIdentityRead,
+                    UnitEdge,
+                    UnitRationalArithmetic,
+                    UnitRationalArithmetic,
+                ],
             ),
             accounting_unit_case(
                 "Quantity<m, Int[-2, 2; nearest-even]>",
@@ -2404,7 +2522,12 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                     next_charge: Integer::from(1_i64),
                     charge_point: UnitTargetDomain,
                 },
-                &[UnitIdentityRead, UnitEdge, UnitRationalArithmetic, UnitRationalArithmetic],
+                &[
+                    UnitIdentityRead,
+                    UnitEdge,
+                    UnitRationalArithmetic,
+                    UnitRationalArithmetic,
+                ],
             ),
             accounting_unit_case(
                 "Quantity<m, Int[-2, 2]>",
@@ -2450,10 +2573,69 @@ struct Observation {
     result: Expected,
     node_charges: Vec<ChargePoint>,
     function_call_charges: usize,
+    structural_function_call_charges: usize,
+    charge_log: Vec<ChargeProjection>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ChargeProjection {
+    point: ChargePoint,
+    sizes: Vec<(LimitKind, Integer)>,
+}
+
+fn charge_projection(point: ChargePoint, sizes: &[(LimitKind, u64)]) -> ChargeProjection {
+    ChargeProjection {
+        point,
+        sizes: sizes
+            .iter()
+            .map(|(kind, size)| (*kind, Integer::from(*size)))
+            .collect(),
+    }
+}
+
+fn structural_function_call_charges(graph: &CheckedGraph, entry_index: usize) -> usize {
+    fn called_function_charges(
+        graph: &CheckedGraph,
+        function_index: usize,
+        active: &mut Vec<usize>,
+    ) -> usize {
+        assert!(
+            !active.contains(&function_index),
+            "qualification source call graph is acyclic"
+        );
+        active.push(function_index);
+        let function = graph
+            .function_state(function_index)
+            .expect("checked call target has a source body");
+        let mut local_calls = Vec::new();
+        let mut imported_calls = 0_usize;
+        let mut pending = vec![function.body];
+        while let Some(node) = pending.pop() {
+            match node.kind() {
+                filament_checked::NodeKind::Call { function, .. } => local_calls.push(function),
+                filament_checked::NodeKind::ImportedCall { .. } => imported_calls += 1,
+                _ => {}
+            }
+            pending.extend(node.children());
+        }
+        let count = 1
+            + imported_calls
+            + local_calls
+                .into_iter()
+                .map(|callee| called_function_charges(graph, *callee, active))
+                .sum::<usize>();
+        active.pop();
+        count
+    }
+
+    called_function_charges(graph, entry_index, &mut Vec::new())
 }
 
 fn observed(case: &SourceCase) -> Observation {
-    let source = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{}", case.declarations);
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{}",
+        case.declarations
+    );
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("qualification", "source"),
         "vector.native",
@@ -2473,6 +2655,8 @@ fn observed(case: &SourceCase) -> Observation {
             },
             node_charges: Vec::new(),
             function_call_charges: 0,
+            structural_function_call_charges: 0,
+            charge_log: Vec::new(),
         };
     }
     let unit = fsl_forms::build_unit(&parsed).expect("forms of admitted source");
@@ -2493,6 +2677,8 @@ fn observed(case: &SourceCase) -> Observation {
                 },
                 node_charges: Vec::new(),
                 function_call_charges: 0,
+                structural_function_call_charges: 0,
+                charge_log: Vec::new(),
             };
         }
     };
@@ -2515,6 +2701,8 @@ fn observed(case: &SourceCase) -> Observation {
                 },
                 node_charges: Vec::new(),
                 function_call_charges: 0,
+                structural_function_call_charges: 0,
+                charge_log: Vec::new(),
             };
         }
     };
@@ -2523,15 +2711,24 @@ fn observed(case: &SourceCase) -> Observation {
             result: Expected::Admitted,
             node_charges: Vec::new(),
             function_call_charges: 0,
+            structural_function_call_charges: 0,
+            charge_log: Vec::new(),
         };
     }
     let package = CheckedPackage::link(checked);
+    let entry_index = (0..)
+        .find(|index| {
+            package
+                .graph()
+                .function_state(*index)
+                .is_some_and(|function| function.name == "f")
+        })
+        .expect("checked source function f exists");
+    let structural_function_call_charges =
+        structural_function_call_charges(package.graph(), entry_index);
     let mut limits = case.limits;
     if case.expected_charges.is_some() && limits.work_units != u64::MAX {
-        let source_function_calls = case
-            .expected_function_call_charges
-            .expect("a metered source case declares its literal FunctionCall count")
-            as u64;
+        let source_function_calls = structural_function_call_charges as u64;
         limits.work_units = limits
             .work_units
             .checked_add(source_function_calls)
@@ -2686,10 +2883,32 @@ fn observed(case: &SourceCase) -> Observation {
         .iter()
         .filter(|charge| charge.point == ChargePoint::FunctionCall)
         .count();
+    let charge_log = meter
+        .admitted_charges()
+        .iter()
+        .map(|charge| ChargeProjection {
+            point: charge.point,
+            sizes: [
+                (LimitKind::IntegerBits, charge.integer_bits),
+                (LimitKind::DecimalDigits, charge.decimal_digits),
+                (LimitKind::ScaleExpansion, charge.scale_expansion),
+                (LimitKind::TextInputBytes, charge.text_input_bytes),
+                (LimitKind::TextScalars, charge.text_scalars),
+                (LimitKind::NormalizedScalars, charge.normalized_scalars),
+                (LimitKind::UnitEdges, charge.unit_edges),
+                (LimitKind::ValueOccurrences, charge.value_occurrences),
+            ]
+            .into_iter()
+            .filter_map(|(kind, size)| size.map(|size| (kind, Integer::from(size))))
+            .collect(),
+        })
+        .collect();
     Observation {
         result,
         node_charges,
         function_call_charges,
+        structural_function_call_charges,
+        charge_log,
     }
 }
 
@@ -2703,20 +2922,20 @@ fn compare(vector: &QualificationVector) -> Result<usize, String> {
             .expected_charges
             .as_ref()
             .is_none_or(|expected| *expected == actual.node_charges);
-        let expected_function_call_charges = case.expected_function_call_charges;
-        let function_calls_match = expected_function_call_charges
-            .is_none_or(|expected| actual.function_call_charges == expected);
+        let function_calls_match =
+            actual.function_call_charges == actual.structural_function_call_charges;
         if !matches || !charges_match || !function_calls_match {
             failures.push(format!(
-                "{}:{}[{index}] expected {:?} with node charges {:?} and {expected_function_call_charges:?} FunctionCall charges, actual {:?} with node charges {:?} and {} FunctionCall charges; source {}",
+                "{}:{}[{index}] expected {:?} with node charges {:?} and {} structural FunctionCall charges, actual {:?} with node charges {:?} and {} FunctionCall charges; source {}",
                 vector.test_case.id(),
                 vector.id,
                 case.expected,
                 case.expected_charges,
+                actual.structural_function_call_charges,
                 actual.result,
                 actual.node_charges,
                 actual.function_call_charges,
-                case.declarations
+                case.declarations,
             ));
         }
     }
@@ -2756,6 +2975,140 @@ macro_rules! accounting_source_vectors {
     )+};
 }
 
+#[trace("FR-397-AC-27", "FSpec-TC-193")]
+#[test]
+fn f32_negation_source_vectors_cover_each_profile_and_meter_boundary() {
+    let limits = |integer_bits, value_occurrences, work_units, result_units| ScalarLimits {
+        integer_bits,
+        decimal_digits: 0,
+        scale_expansion: 0,
+        text_input_bytes: 0,
+        text_scalars: 0,
+        normalized_scalars: 0,
+        unit_edges: 0,
+        value_occurrences,
+        work_units,
+        result_units,
+    };
+    let patterns = [
+        (0x0000_0000_u32, 0x8000_0000_u32),
+        (0x8000_0000, 0x0000_0000),
+        (0x0000_0001, 0x8000_0001),
+        (0x3f80_0000, 0xbf80_0000),
+        (0x7f80_0000, 0xff80_0000),
+        (0x7fc0_0012, 0xffc0_0012),
+        (0x7f80_0001, 0xff80_0001),
+    ];
+    let mut count = 0;
+    for mode in ["nearest-even", "toward-zero", "exact"] {
+        let ty = format!("Float32[{mode}]");
+        for (input, negated) in patterns {
+            let value = Value::Float(IeeeValue::binary32(input));
+            for (body, expected_bits, operations) in [
+                ("-a".to_owned(), u64::from(negated), 1_u64),
+                ("-(-a)".to_owned(), u64::from(input), 2),
+            ] {
+                let mut points = Vec::new();
+                for _ in 0..operations {
+                    points.extend([ChargePoint::IeeeOperands, ChargePoint::IeeeResultRetain]);
+                }
+                let cases = [
+                    limited_function_with(
+                        &ty,
+                        &format!("a: {ty}"),
+                        &body,
+                        vec![value.clone()],
+                        limits(32 * operations, operations, operations * 2, operations),
+                        Expected::Float {
+                            bits: expected_bits,
+                            flags: Vec::new(),
+                        },
+                        &points,
+                    ),
+                    limited_function_with(
+                        &ty,
+                        &format!("a: {ty}"),
+                        &body,
+                        vec![value.clone()],
+                        limits(32 * operations, operations, 1, 1),
+                        Expected::Incomplete {
+                            limit_kind: LimitKind::WorkUnits,
+                            limit: 1,
+                            consumed: 1,
+                            next_charge: Integer::from(1_u64),
+                            charge_point: ChargePoint::IeeeResultRetain,
+                        },
+                        &[ChargePoint::IeeeOperands],
+                    ),
+                    limited_function_with(
+                        &ty,
+                        &format!("a: {ty}"),
+                        &body,
+                        vec![value.clone()],
+                        limits(32 * operations, 0, operations * 2, operations),
+                        Expected::Incomplete {
+                            limit_kind: LimitKind::ValueOccurrences,
+                            limit: 0,
+                            consumed: 0,
+                            next_charge: Integer::from(1_u64),
+                            charge_point: ChargePoint::IeeeOperands,
+                        },
+                        &[],
+                    ),
+                ];
+                for case in cases {
+                    let actual = observed(&case);
+                    assert_eq!(
+                        actual.result, case.expected,
+                        "{mode}, {input:#010x}, {body}"
+                    );
+                    assert_eq!(
+                        actual.node_charges,
+                        *case.expected_charges.as_ref().unwrap(),
+                        "{mode}, {input:#010x}, {body}"
+                    );
+                    assert_eq!(
+                        actual.function_call_charges, 1,
+                        "one authored source call per case"
+                    );
+                    assert_eq!(
+                        actual.structural_function_call_charges, 1,
+                        "one checked function invocation per case"
+                    );
+                    let expected_log: Vec<_> = case
+                        .expected_charges
+                        .as_ref()
+                        .unwrap()
+                        .iter()
+                        .map(|point| match point {
+                            ChargePoint::IeeeOperands => charge_projection(
+                                *point,
+                                &[
+                                    (LimitKind::IntegerBits, 32),
+                                    (LimitKind::ValueOccurrences, 1),
+                                ],
+                            ),
+                            ChargePoint::IeeeResultRetain => charge_projection(*point, &[]),
+                            other => panic!("unexpected F32 node charge {other:?}"),
+                        })
+                        .collect();
+                    let actual_node_log: Vec<_> = actual
+                        .charge_log
+                        .into_iter()
+                        .filter(|charge| charge.point != ChargePoint::FunctionCall)
+                        .collect();
+                    assert_eq!(
+                        actual_node_log, expected_log,
+                        "{mode}, {input:#010x}, {body}"
+                    );
+                    count += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(count, 126);
+}
+
 fn compare_accounting(vector: &QualificationVector) -> Result<usize, String> {
     let cases = source_cases(vector).expect("accounting vector has a declared adapter");
     assert!(!cases.is_empty(), "{} must have cases", vector.id);
@@ -2771,21 +3124,14 @@ fn compare_accounting(vector: &QualificationVector) -> Result<usize, String> {
                 "{}[{index}] has no row budget",
                 vector.id
             );
-            assert!(
-                case.expected_function_call_charges.is_none(),
-                "{}[{index}] has no call budget",
-                vector.id
-            );
         } else if case.expected_charges.is_some() {
             assert!(
-                case.expected_function_call_charges.is_some(),
-                "{}[{index}] lacks a literal FunctionCall count",
-                vector.id
-            );
-        } else {
-            assert!(
-                case.expected_function_call_charges.is_none(),
-                "{}[{index}] has a call count without a tuple budget",
+                !case.expected_charges.as_ref().unwrap().is_empty()
+                    || matches!(
+                        case.expected,
+                        Expected::Refused { .. } | Expected::Incomplete { .. }
+                    ),
+                "{}[{index}] has an explicit charge expectation",
                 vector.id
             );
         }
@@ -2798,6 +3144,69 @@ fn compare_accounting(vector: &QualificationVector) -> Result<usize, String> {
         );
     }
     compare(vector)
+}
+
+#[trace("FR-397-AC-28", "FSpec-TC-193")]
+#[test]
+fn f17_source_charge_log_matches_literal_node_events_and_comparison_oracle() {
+    let cases = source_cases(vector("F17")).expect("F17 source adapter");
+    assert_eq!(cases.len(), 24);
+    for (index, case) in cases.iter().enumerate() {
+        let actual = observed(case);
+        assert_eq!(
+            actual.function_call_charges,
+            actual.structural_function_call_charges
+        );
+        let width = case.limits.integer_bits;
+        let mut expected = vec![charge_projection(ChargePoint::FunctionCall, &[])];
+        for point in case.expected_charges.as_ref().expect("F17 row budget") {
+            expected.push(match point {
+                ChargePoint::IeeeOperands => charge_projection(
+                    *point,
+                    &[
+                        (LimitKind::IntegerBits, width),
+                        (LimitKind::ValueOccurrences, 2),
+                    ],
+                ),
+                ChargePoint::IeeeResultRetain | ChargePoint::BooleanResultRetain => {
+                    charge_projection(*point, &[])
+                }
+                other => panic!("unexpected F17 node charge {other:?}"),
+            });
+        }
+        assert_eq!(actual.charge_log, expected, "F17 case {index}");
+        if matches!(&case.expected, Expected::Boolean(_)) {
+            let (Value::Float(qn), Value::Float(one)) = (&case.arguments[0], &case.arguments[1])
+            else {
+                panic!("F17 arguments are IEEE values")
+            };
+            let (left, right) = if case.declarations.contains("one = one") {
+                (one, one)
+            } else {
+                (qn, one)
+            };
+            let expected_equal = compare_ieee(
+                IeeeComparison::NumericEqual,
+                *left,
+                *right,
+                &mut Meter::new(case.limits),
+            )
+            .expect("same-width F17 values");
+            let expected_value = match expected_equal {
+                Outcome::Completed(value) => value,
+                other => panic!("complete F17 tuple gives a comparison: {other:?}"),
+            };
+            let source_value = match &case.expected {
+                Expected::Boolean(value) => *value,
+                _ => unreachable!(),
+            };
+            if case.declarations.contains("qn != one") {
+                assert_eq!(source_value, !expected_value);
+            } else {
+                assert_eq!(source_value, expected_value);
+            }
+        }
+    }
 }
 
 struct T16ProfileRow {
@@ -3134,19 +3543,9 @@ fn qsl3060_members_have_explicit_source_qualification_status() {
                         .collect::<Vec<_>>();
                     assert!(!budgeted.is_empty(), "{id} has tuple cases");
                     assert!(
-                        budgeted
-                            .iter()
-                            .all(|case| case.expected_function_call_charges.is_some()),
-                        "{id} tuple cases carry literal FunctionCall counts"
+                        budgeted.iter().all(|case| case.expected_charges.is_some()),
+                        "{id} tuple cases have explicit node charge expectations"
                     );
-                    for (index, case) in cases.iter().enumerate() {
-                        if case.expected_charges.is_none() {
-                            assert!(
-                                case.expected_function_call_charges.is_none(),
-                                "{id}[{index}] has a call count without a tuple"
-                            );
-                        }
-                    }
                 }
             }
         }
