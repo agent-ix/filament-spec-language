@@ -153,7 +153,7 @@ fn enum_draws_and_arguments_preserve_package_refutation_witness_parity() {
 }
 
 /// A fairness-bearing Every claim settles identically from source and package.
-#[trace("FR-940-AC-6", "FR-741-AC-3", "FR-203-AC-8")]
+#[trace("FR-940-AC-6", "FR-741-AC-3", "FR-203-AC-8", "FR-200", "FR-200-AC-4")]
 #[test]
 fn every_fairness_preserves_source_package_refutation_parity() {
     for fairness in [
@@ -184,6 +184,9 @@ fn fairness_source_package_equality(claim: &str) {
         "fairness-package.json",
         json!({"format": "native-analyze/1", "request": members}).to_string().as_bytes(),
     ));
+    // FR-200 fair minimum 24/25 refutes 99/100 with a replayed fair witness.
+    assert_eq!(source.exit, 10, "{}", source.document());
+    assert_eq!(label(&source.item(0)), "refuted", "{}", source.document());
     assert_eq!(package.exit, source.exit, "{}", package.document());
     assert_eq!(package.document(), source.document());
     assert_ne!(
@@ -193,15 +196,16 @@ fn fairness_source_package_equality(claim: &str) {
     );
 }
 
-/// Positive fairness refutation parity awaits analyzer support for fair
-/// every-scheduler eventual claims (QSL-2830).
-#[trace("FR-940-AC-6", "FR-741-AC-3", "FR-203-AC-8")]
+/// A fair every-scheduler eventual claim is refuted by a randomized fair
+/// witness whose evidence replays with source and package parity (FR-200,
+/// FR-413). The fair maximum is 99/100 (two `send_a` attempts), so the
+/// refuted bound is 98/100.
+#[trace("FR-940-AC-6", "FR-741-AC-3", "FR-203-AC-8", "FR-200", "FR-200-AC-4")]
 #[test]
-#[ignore = "QSL-2830: analyzer does not admit fair every-scheduler eventual claims yet"]
 fn a_fair_every_scheduler_refutation_replays_with_source_package_parity() {
     let claim = TOO_LIKELY
         .replace("under Even", "under every scheduler fair weak M::Msg::send_a")
-        .replace("probability >= rational(99, 100)", "probability <= rational(99, 100)");
+        .replace("probability >= rational(99, 100)", "probability <= rational(98, 100)");
     refutation_parity("fair-every-positive-parity", LINK_UNIT, LINK_MODEL, &claim);
 }
 

@@ -2133,8 +2133,17 @@ fn probabilistic_wire_using(
         written["instance"] = Json::Null;
         written["evidence"] = json!({"type":"subsystem","certificates":[certificate]});
     }
+    // A randomized entry spells its identity alternatives from the scheduler
+    // rows of its state, in alternative order (FR-413).
+    let randomized_at = witness
+        .scheduler
+        .iter()
+        .filter(|(_, entry)| matches!(entry, crate::ProbabilisticSchedulerChoice::Randomized(_)))
+        .map(|(at, _)| at.as_bytes().to_vec())
+        .collect::<std::collections::BTreeSet<_>>();
     let mut entries = scheduler
         .iter()
+        .filter(|(at, _)| !randomized_at.contains(at.as_bytes()))
         .map(|(at, choice)| Ok(json!({"state": state(at)?, "choice": identity(choice)?})))
         .collect::<Result<Vec<_>, CounterexampleWireError>>()?;
     for (at, entry) in &witness.scheduler {
@@ -2155,7 +2164,16 @@ fn probabilistic_wire_using(
                 entries.push(json!({"state": state(&at)?, "choice": choice}));
             }
             crate::ProbabilisticSchedulerChoice::Randomized(distribution) => {
-                entries.push(randomized_scheduler_wire_entry(&at, distribution)?);
+                let spelled = scheduler
+                    .iter()
+                    .filter(|(row, _)| row.as_bytes() == at.as_bytes())
+                    .map(|(_, choice)| identity(choice))
+                    .collect::<Result<Vec<_>, _>>()?;
+                entries.push(randomized_scheduler_wire_entry(
+                    &at,
+                    distribution,
+                    &spelled,
+                )?);
             }
         }
     }
@@ -2168,6 +2186,7 @@ fn probabilistic_wire_using(
 fn randomized_scheduler_wire_entry(
     at: &fsl_eval::simulation::StateKey,
     distribution: &[(crate::ProductAction, Rational)],
+    spelled: &[Json],
 ) -> Result<Json, CounterexampleWireError> {
     // One encoding per choice: a single certain choice is a deterministic entry.
     if distribution.len() < 2 {
@@ -2177,7 +2196,20 @@ fn randomized_scheduler_wire_entry(
     }
     let alternatives = distribution
         .iter()
-        .map(|(action, weight)| {
+        .enumerate()
+        .map(|(index, (action, weight))| {
+            if matches!(action, crate::ProductAction::Identity(_)) {
+                let ordinal = distribution[..index]
+                    .iter()
+                    .filter(|(earlier, _)| matches!(earlier, crate::ProductAction::Identity(_)))
+                    .count();
+                let spelled = spelled
+                    .get(ordinal)
+                    .ok_or(CounterexampleWireError::Unspelled(
+                        "probabilistic internal choice",
+                    ))?;
+                return Ok(json!({"choice": spelled, "probability": rational(weight)}));
+            }
             let bytes = action
                 .to_bytes()
                 .map_err(|_| CounterexampleWireError::Unspelled("probabilistic internal choice"))?;
@@ -2432,8 +2464,8 @@ mod tests {
     #[test]
     fn randomized_scheduler_writer_refuses_fewer_than_two_choices() {
         let one = [(crate::ProductAction::TerminalStutter, rational(1, 1))];
-        assert!(randomized_scheduler_wire_entry(&key(0), &one).is_err());
-        assert!(randomized_scheduler_wire_entry(&key(0), &[]).is_err());
+        assert!(randomized_scheduler_wire_entry(&key(0), &one, &[]).is_err());
+        assert!(randomized_scheduler_wire_entry(&key(0), &[], &[]).is_err());
     }
 
     #[test]
@@ -2444,6 +2476,7 @@ mod tests {
                 (crate::ProductAction::TerminalStutter, rational(1, 3)),
                 (crate::ProductAction::UnitDelay, rational(2, 3)),
             ],
+            &[],
         )
         .expect("randomized entry is spellable");
         assert_eq!(

@@ -860,3 +860,61 @@ fn fix_round_producer_frontier_and_rational_stops_follow_a_successful_real_solve
         }
     }
 }
+
+const FAIR_CLAIMS: &str = "
+probabilistic TooMuchFair using inf on M over (m: M::Msg) under every scheduler fair weak Msg::send_a on origin
+{ probability <= 0.5 [ eventually holds(m.delivered) ] }
+probabilistic TooLittleFair using inf on M over (m: M::Msg) under every scheduler fair weak Msg::send_a on origin
+{ probability >= 0.99 [ eventually holds(m.delivered) ] }
+";
+
+/// FR-200 / FR-413-AC-5: the fair refutation of both bound directions carries
+/// evidence whose fairness replay accepts.
+#[trace("TC-364", "FR-200", "FR-200-AC-4", "FR-413-AC-5")]
+#[test]
+fn a_fair_every_scheduler_refutation_replays_through_the_fairness_check() {
+    let world = World::new(&prob_world::link(FAIR_CLAIMS));
+    for claim in ["TooMuchFair", "TooLittleFair"] {
+        let witness = evidence(&world, claim);
+        let limits = ExactProbLimits::default();
+        assert!(
+            matches!(
+                replay(&world, &witness, &limits, &Cancel::new()),
+                Ok(ProbabilityWitnessReplay::Reproduced(_))
+            ),
+            "{claim}"
+        );
+    }
+}
+
+/// FR-413-AC-5: a witness the fairness walk cannot cover (no entry at a
+/// reached state) is not a fair witness and settles `inconclusive`,
+/// `replay-parity`, not a refusal.
+#[trace("TC-364", "FR-413-AC-5", "FR-202-AC-3")]
+#[test]
+fn an_unfair_witness_settles_inconclusive_replay_parity() {
+    use fsl_analyze::analyze::exact_probabilistic_item_witness_tampered;
+    let world = World::new(&prob_world::link(FAIR_CLAIMS));
+    let witness = evidence(&world, "TooMuchFair");
+    let limits = ExactProbLimits::default();
+    let mut changed = witness.clone();
+    changed.scheduler.remove(0);
+    assert!(matches!(
+        replay(&world, &changed, &limits, &Cancel::new()),
+        Ok(ProbabilityWitnessReplay::Parity)
+    ));
+    let engines = Engines::fsl().unwrap();
+    let item = exact_probabilistic_item_witness_tampered(
+        RequestIndex::new(0),
+        world.request("TooMuchFair", ModelCheckLimits::default()),
+        |witness| {
+            witness.scheduler.remove(0);
+        },
+    );
+    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    assert!(matches!(
+        record.terminal().unwrap().value(),
+        TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::ReplayParity(_))
+    ));
+    assert!(record.probabilistic_counterexample.is_none());
+}
