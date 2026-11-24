@@ -24,8 +24,8 @@ use fsl_foundation::Span;
 
 use super::reading::free_occurrences;
 use super::{
-    self_path, timed, ClockConstraint, ClockId, ClockOp, Clocks, DataLiteral, Dnf, ElementBinding,
-    FamilyDraft, Located, PartBudget, ResetDraft, SlotRef,
+    ClockConstraint, ClockId, ClockOp, Clocks, DataLiteral, Dnf, ElementBinding, FamilyDraft,
+    Located, PartBudget, ResetDraft, SlotRef, self_path, timed,
 };
 use crate::check::check::reserved_slot_cause;
 use crate::check::lowering::{CollectionShape, PlaceStep};

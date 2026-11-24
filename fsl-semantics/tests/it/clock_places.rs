@@ -4767,7 +4767,7 @@ fn quantified_presence_over_a_clock_map_uses_its_key_domain() {
             _ => None,
         })
         .collect();
-    let [(slots_node, slots_application)] = slots.as_slice() else {
+    let [(slots_node, _slots_application)] = slots.as_slice() else {
         panic!("one map slot domain: {slots:?}");
     };
     let slots_type = semantic_graph

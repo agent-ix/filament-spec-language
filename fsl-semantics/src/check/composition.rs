@@ -40,18 +40,18 @@ use fsl_forms::{
 };
 use fsl_foundation::{Code, Span};
 
+use super::CheckedGraph;
 use super::abstraction::name_parts;
 use super::capability::{Capability, DeclarationFamily};
 use super::guarantee::{
-    granularity_spelling, kind_spelling, ClauseConstraint, EnvironmentMember, ExtentClass,
-    ItemKind, ReadEnvironment, SlotBacking, SlotKey, SlotRole, SubjectOperation, Supplies,
+    ClauseConstraint, EnvironmentMember, ExtentClass, ItemKind, ReadEnvironment, SlotBacking,
+    SlotKey, SlotRole, SubjectOperation, Supplies, granularity_spelling, kind_spelling,
 };
 use super::lowering::SemanticNode;
 use super::node_key::{
     ClauseEntry, ComponentEntry, CompositionRule, CompositionTerm, EnvironmentEntry, NodeRef,
     PremiseEntry, SourceOwner, SuppliesEntry, SupplyEntry,
 };
-use super::CheckedGraph;
 
 /// What a refused name was written for.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]

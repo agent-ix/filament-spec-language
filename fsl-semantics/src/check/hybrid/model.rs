@@ -10,12 +10,12 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 use fsl_forms::{BinaryOperator, ExprId, ExprNode, ExpressionForm, HybridForm, SpanId};
-use fsl_foundation::selection::ProfileSelection;
 use fsl_foundation::Span;
+use fsl_foundation::selection::ProfileSelection;
 
 use super::callee::Callees;
 use super::cause::MalformedReason;
-use super::term::{lower, lower_at, Binder, Env, Kind, Lowered, Meter, Stop};
+use super::term::{Binder, Env, Kind, Lowered, Meter, Stop, lower, lower_at};
 use super::{
     CheckedHybridModel, CheckedMode, CheckedTransition, CompareOp, ContinuousVariable, HybridCause,
     HybridModelIndex, HybridTerm, InitialEntry, ModeIndex, ResetConstraint, VariableClass,

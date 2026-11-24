@@ -14,7 +14,7 @@
 //! abstraction-relation binding it also has a second requirement, the code
 //! claim.
 
-use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug};
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, standalone};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
@@ -31,32 +31,32 @@ use fsl_forms::{
     QuantifierKind, SpanId, StepLabelForm, TemporalFormulaForm, TemporalNodeForm, TemporalOperator,
     TypeFormHead,
 };
+use fsl_foundation::Span;
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::{Code, StageFailure, Staged};
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_foundation::Span;
 
+use super::Scope;
 use super::abstraction::{AbstractionKey, CheckedAbstractionRelation, OperationKey};
 use super::check::{HyperTyping, Signatures, Typer};
 use super::ir::{CheckedBody, CheckedNode};
 use super::profile::TemporalProfile;
 use super::refusal::{CheckCause, CheckRefusal, Obligation, TemporalCause};
-use super::state_clause::{population_of, PopulationDomain};
+use super::state_clause::{PopulationDomain, population_of};
 use super::temporal_clause::FormulaNodeId;
 use super::temporal_clause::{
-    build_formula, checked_constraint, checked_operators, in_safety_fragment, CheckedFormula,
-    CheckedOperator, IntervalReading, TemporalClaim, TemporalDeclarations,
+    CheckedFormula, CheckedOperator, IntervalReading, TemporalClaim, TemporalDeclarations,
+    build_formula, checked_constraint, checked_operators, in_safety_fragment,
 };
-use super::Scope;
 use super::{AdmittedModel, Capability};
-use crate::family::requirements::{classify_domains, ClaimExtent, ClassifyFailure, Requirements};
+use crate::family::requirements::{ClaimExtent, ClassifyFailure, Requirements, classify_domains};
 use crate::family::{CheckContext, CheckOutcome, FamilyContract};
 use crate::model::operation::OperationLookup;
 
 pub(crate) mod emission;
 pub(crate) mod lowering;
 
-pub use lowering::{operation_text, AtomSlot, STUTTER_TEXT};
+pub use lowering::{AtomSlot, STUTTER_TEXT, operation_text};
 
 /// The stage name this module's faults report.
 const STAGE: &str = "check.hyper";

@@ -19,7 +19,7 @@
 //! [`PackageDeclarations::check`]: super::PackageDeclarations::check
 
 use filament_checked::node::{AuthoredBound, NodeKind};
-use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug};
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, standalone};
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{EffectiveId, Identifier, NodeKey, Origin, ValueType};
@@ -28,18 +28,18 @@ use fsl_foundation::bound::DomainKey;
 use fsl_foundation::diagnostic::{StageFailure, Staged};
 use fsl_foundation::selection::ProfileSelection;
 
-use super::check::{bind_parameters, Signatures, StateContext, Typer};
-use super::claims::{wire, RequirementRecord};
+use super::check::{Signatures, StateContext, Typer, bind_parameters};
+use super::claims::{RequirementRecord, wire};
 use super::facts::{CheckedFacts, Definedness};
 use super::ir::{CheckedBody, CheckedNode, DispatchTable};
 use super::lowering::{AdmittedModel, LoweredClause};
 use super::observation::Observations;
-use super::references::{body_objects, ModelReferences};
+use super::references::{ModelReferences, body_objects};
 use super::refusal::{CheckCause, CheckRefusal, KeyFault};
 use super::{Capability, Scope};
 use crate::family::{
-    classify_domains, classify_extent, CheckContext, CheckOutcome, ClaimExtent, ClassifyFailure,
-    FamilyContract, Requirements,
+    CheckContext, CheckOutcome, ClaimExtent, ClassifyFailure, FamilyContract, Requirements,
+    classify_domains, classify_extent,
 };
 use crate::model::clause_observation::Observation;
 use crate::model::operation::OperationDeclaration;

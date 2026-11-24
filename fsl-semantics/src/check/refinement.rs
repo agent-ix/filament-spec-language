@@ -33,7 +33,7 @@ mod protocol;
 mod rows;
 mod step_label;
 
-use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug, With};
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, With, standalone};
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::check::wire_id::structural_id;
@@ -71,18 +71,18 @@ pub(crate) use rows::{
     KeyedFairnessRow, KeyedHistoryRow, KeyedObjectRow, KeyedPopulationRow, KeyedRefinementRows,
     KeyedStepRow, KeyedStepTarget,
 };
-pub use step_label::{observation, LabelStep, RowObservation, StepLabel};
+pub use step_label::{LabelStep, RowObservation, StepLabel, observation};
 
 use super::check::{
-    bind_parameters, PopulationScope, ScopedHistory, ScopedPopulation, StateContext, Typer,
+    PopulationScope, ScopedHistory, ScopedPopulation, StateContext, Typer, bind_parameters,
 };
-use super::ir::{static_integer_range, CheckedBody, CheckedNode};
+use super::ir::{CheckedBody, CheckedNode, static_integer_range};
 use super::lowering::AdmittedModel;
 use super::observation::Observations;
 use super::profile::TemporalProfile;
 use super::protocol_clause::ProtocolNodeId;
 use super::refusal::{CheckCause, CheckRefusal, KeyFault};
-use super::state_clause::{observation_of, ClauseDeclarations, ClauseOperation, PopulationDomain};
+use super::state_clause::{ClauseDeclarations, ClauseOperation, PopulationDomain, observation_of};
 use crate::family::CheckContext;
 use crate::model::clause_observation::Observation;
 use crate::model::domain_package::{DomainPackageRef, PopulationRecord};
@@ -947,7 +947,7 @@ impl CheckedRefinement {
                         receiver,
                         arguments,
                         ..
-                    } => std::iter::once(receiver)
+                    } => std::iter::once(receiver.as_ref())
                         .chain(arguments.iter().flatten())
                         .collect::<Vec<_>>(),
                     StepTarget::Node { arguments, .. } => {
@@ -1132,7 +1132,7 @@ fn leaf_checked_term(
     use crate::check::node_key::{LeafTerm, LiteralValue, NodeRef};
     use filament_contract_model::CheckedTerm;
     use serde::de::Error as _;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
     let admitted = |node: &NodeRef| {
         node.admitted().map(structural_id).ok_or_else(|| {
             RefinementV2EncodingError::Body(serde_json::Error::custom(
@@ -1323,7 +1323,7 @@ pub enum StepTarget {
         /// type, or a subtype of it when the operation is inherited (FR-141-AC-16).
         target_type: DeclarationKey,
         /// The receiver, over the concrete step.
-        receiver: CheckedRow,
+        receiver: Box<CheckedRow>,
         /// One entry per abstract parameter; `None` is `_`.
         arguments: Vec<Option<CheckedRow>>,
         /// Whether both operations declare a result, which the abstract
@@ -1886,7 +1886,7 @@ impl CheckedRefinement {
                 receiver,
                 arguments,
                 ..
-            } => std::iter::once(receiver)
+            } => std::iter::once(receiver.as_ref())
                 .chain(arguments.iter().flatten())
                 .collect::<Vec<_>>(),
             StepTarget::Node { arguments, .. } => arguments.iter().flatten().collect(),
@@ -4017,7 +4017,7 @@ impl<'c, 'a> Checker<'c, 'a> {
             StepTarget::Abstract {
                 operation: key,
                 target_type: target_type.key.clone(),
-                receiver,
+                receiver: Box::new(receiver),
                 arguments: checked,
                 binds_result,
             },

@@ -8,8 +8,8 @@ use fsl_foundation::diagnostic::Code;
 use ix_trace_rs::trace;
 
 use super::{
-    ambiguous_population_model, assemble, assemble_against, changed, checked, edit,
-    obligation_causes, only, other, refusals, BASE,
+    BASE, ambiguous_population_model, assemble, assemble_against, changed, checked, edit,
+    obligation_causes, only, other, refusals,
 };
 use crate::check::protocol_clause::ProtocolNodeId;
 use crate::check::{

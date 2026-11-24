@@ -3,13 +3,13 @@
 
 use ix_trace_rs::trace;
 
-use super::attempt_fixture::{attempt_flow, HEADER};
+use super::attempt_fixture::{HEADER, attempt_flow};
 use super::{
     assemble, assembly_errors, checks, empty_scope_and_signatures, only_cause, protocol_causes,
     recovery_flow, refusals,
 };
-use crate::check::refusal::ProtocolAnchorCause;
 use crate::check::CheckCause;
+use crate::check::refusal::ProtocolAnchorCause;
 
 /// SR-770 FND-005: a `contracts` entry naming two state clauses of one
 /// name never binds the first silently. The whole pipeline already

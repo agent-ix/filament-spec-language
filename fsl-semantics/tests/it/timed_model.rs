@@ -12,7 +12,7 @@ use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
     AggregateTerm, BodyTerm, CheckCause, CheckRefusal, CheckedGraph, CheckedNode,
     CheckingLimitKind, ClockOp, MeasureObligation, StatePredicate, TemporalCause, TimeSourceKind,
-    TimedConstruct, TimedModel,
+    TimedModel,
 };
 use fsl_semantics::model::intake::meaning;
 use ix_trace_rs::trace;

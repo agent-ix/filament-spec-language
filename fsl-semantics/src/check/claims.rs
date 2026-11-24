@@ -45,20 +45,20 @@ use filament_exact::{EffectiveId, IntegerInterval, NodeKey, Origin, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_foundation::bound::DomainKey;
 use fsl_foundation::source::node_table::{
-    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList, With,
+    DebugTable, DebugWith, NodeKeyDebug, NodeList, With, standalone,
 };
 use fsl_foundation::source::provenance::OccurrenceKey;
 
-use super::ir::{coerce_node_builds_narrow, scalar_conversion_target, CheckedNode, Slot};
+use super::ir::{CheckedNode, Slot, coerce_node_builds_narrow, scalar_conversion_target};
 use super::lowering::SemanticGraph;
 use super::node_key::{ApplicationTerm, BodyTerm, LeafTerm, MemberTerm, NodeKeyRefusal};
-use super::references::{read_object, ModelReferences};
+use super::references::{ModelReferences, read_object};
 use super::refusal::KeyFault;
 use super::{
-    family::{OccurrenceMap, OccurrenceRole},
     Capability,
+    family::{OccurrenceMap, OccurrenceRole},
 };
-use crate::family::{classify_domains, ClaimExtent, ClassifyFailure, Requirements};
+use crate::family::{ClaimExtent, ClassifyFailure, Requirements, classify_domains};
 use filament_semantic_value::declaration::{
     CompositeShape, TypeEnvironment, UnionMemberDeclaration,
 };

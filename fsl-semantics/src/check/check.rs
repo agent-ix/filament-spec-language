@@ -48,10 +48,10 @@ use filament_checked::node::{
     Arithmetic, CheckedLiteral, Connective, ConnectiveOrigin, NodeKind, OrderedKind, RecordField,
     RecordSlot, Visit,
 };
-use fsl_foundation::source::node_table::{
-    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList,
-};
 use fsl_foundation::Span;
+use fsl_foundation::source::node_table::{
+    DebugTable, DebugWith, NodeKeyDebug, NodeList, standalone,
+};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ops::ControlFlow;
 use std::sync::Arc;
@@ -62,7 +62,7 @@ mod integer_division_range;
 mod modulo_interval;
 mod native_literal;
 mod typing;
-use typing::{is_option_some_constructor, TypedOperand};
+use typing::{TypedOperand, is_option_some_constructor};
 
 use super::ir::{BodyBuilder, DispatchTable, EqualityProducerData, Node, NodeId, Slot};
 use super::model_spelling::{ModelSpellings, Spelled};
@@ -72,8 +72,8 @@ use super::refusal::{
     IdentityObserving, KeyFault, Obligation, ReservedSlotName, SlotTag, StageLimitCause,
 };
 use crate::model::operation::OperationTable;
-use crate::value::definition::{admit_ieee_profile, AdmittedIeeeProfile, DefinitionRole};
-use crate::value::enumeration::{mint_variant_id, AdmittedEnumDeclaration};
+use crate::value::definition::{AdmittedIeeeProfile, DefinitionRole, admit_ieee_profile};
+use crate::value::enumeration::{AdmittedEnumDeclaration, mint_variant_id};
 use filament_checked::key::DeclarationKey;
 use filament_exact::Cancel;
 use filament_exact::EffectiveId;
@@ -90,8 +90,8 @@ use filament_exact::{Value, ValueType};
 use filament_semantic_value::absence::AbsenceMode;
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::declaration::{
-    admits_equality_conversion, CompositeShape, EqualityOperand, EqualityOperator,
-    FieldDeclaration, StorageRequest, StorageUnit, TypeEnvironment,
+    CompositeShape, EqualityOperand, EqualityOperator, FieldDeclaration, StorageRequest,
+    StorageUnit, TypeEnvironment, admits_equality_conversion,
 };
 use filament_semantic_value::enumeration::{EnumDeclaration, EnumMemberIndex, EnumValue};
 use filament_semantic_value::location::{
@@ -99,8 +99,8 @@ use filament_semantic_value::location::{
 };
 use filament_semantic_value::quantity::UnitTable;
 use filament_semantic_value::quantity::{
-    check_comparable, evaluate_quantity_unit, result_unit, IdentifiedUnit, QuantityOperation,
-    QuantityRefusal, QuantityUnit, UnitOperation, UnitScope,
+    IdentifiedUnit, QuantityOperation, QuantityRefusal, QuantityUnit, UnitOperation, UnitScope,
+    check_comparable, evaluate_quantity_unit, result_unit,
 };
 use fsl_forms::{
     Accumulation, BinaryOperator, BinderQuery, ClauseKind, ExprId, ExprNode, ExprRef,
@@ -6374,7 +6374,7 @@ impl<'a> Typer<'a> {
                 | ValueType::Rational(_)
                 | ValueType::Decimal(_),
             ) => {
-                use super::numeric_conversion::{classify, Class};
+                use super::numeric_conversion::{Class, classify};
                 let class = classify(&operand.value_type, target).ok_or_else(|| {
                     CheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible)
                 })?;

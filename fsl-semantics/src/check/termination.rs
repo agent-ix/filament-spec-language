@@ -985,9 +985,11 @@ mod tests {
                     })
                     .collect();
                 let names = names(LENGTH);
-                assert!(recursive_components(&members(&names, &chain))
-                    .list
-                    .is_empty());
+                assert!(
+                    recursive_components(&members(&names, &chain))
+                        .list
+                        .is_empty()
+                );
                 let ring: Vec<Vec<CallSite>> = (0..LENGTH)
                     .map(|member| vec![call((member + 1) % LENGTH, EdgeKind::Ordinary, 0)])
                     .collect();

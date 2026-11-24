@@ -30,7 +30,7 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 
-use super::{fault, require_admitted, Binder, Binders, Lowering};
+use super::{Binder, Binders, Lowering, fault, require_admitted};
 use crate::check::family::OccurrenceRole;
 use crate::check::ir::CheckedNode;
 use crate::check::node_key::{
@@ -38,7 +38,7 @@ use crate::check::node_key::{
     NodeTag, Operation, OperationLaw, Operator,
 };
 use crate::check::refusal::{CheckRefusal, KeyFault};
-use crate::check::temporal_clause::condition::{family, Family, TypedCondition, TypedConditions};
+use crate::check::temporal_clause::condition::{Family, TypedCondition, TypedConditions, family};
 use crate::check::temporal_clause::{
     AggregateKind, AggregateWindow, BinaryTemporal, CheckedAggregate, CheckedFairnessMember,
     CheckedFormula, CheckedInterval, CheckedTemporalClause, DurationWindow, FormulaNode,
@@ -838,7 +838,7 @@ fn temporal_interval(
             interval: Some(*interval),
         },
         Some(CheckedInterval::Timed(_)) if ticks => {
-            return Err("finite-window-interval-is-a-tick-interval")
+            return Err("finite-window-interval-is-a-tick-interval");
         }
         Some(CheckedInterval::Timed(interval)) => timed_member(interval),
     })

@@ -34,16 +34,16 @@ use fsl_forms::{QuantityForm, TimedIntervalForm, TimedUpper};
 use fsl_foundation::bound::TimedInterval;
 use fsl_foundation::diagnostic::{LimitExceeded, StageFailure};
 use fsl_foundation::source::node_table::{
-    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList, With,
+    DebugTable, DebugWith, NodeKeyDebug, NodeList, With, standalone,
 };
 use fsl_foundation::{Setting, Span};
 
 use super::{
-    in_safety_fragment, is_temporal_node, located, Activation, CheckedFormula, CheckedInterval,
-    FormulaNode, TemporalDeclarations, UnaryTemporal,
+    Activation, CheckedFormula, CheckedInterval, FormulaNode, TemporalDeclarations, UnaryTemporal,
+    in_safety_fragment, is_temporal_node, located,
 };
 use crate::check::lowering::AdmittedModel;
-use crate::check::probabilistic::{exact_value, ExactFault};
+use crate::check::probabilistic::{ExactFault, exact_value};
 use crate::check::refusal::{CheckRefusal, ClockSelectionFault, TemporalCause, TimeUnitCause};
 use crate::check::time_units::TimeScale;
 
@@ -467,7 +467,7 @@ fn role_binding(
         Some(other) => {
             return Err(fault(ClockSelectionFault::ClockKindMismatch {
                 supplied: configuration_kind(other),
-            }))
+            }));
         }
     };
     match declarations.timed.units.target(&unit) {

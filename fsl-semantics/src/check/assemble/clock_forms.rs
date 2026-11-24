@@ -160,7 +160,7 @@ impl ClockForms {
                     if self.bearing_types.contains(&name.name)
                         || self.package_bearing.contains(&name.name) =>
                 {
-                    return true
+                    return true;
                 }
                 _ => {}
             }

@@ -6,7 +6,7 @@
 //! S3 identity until S4 lowers the corresponding declaration to a node key.
 
 use fsl_foundation::source::node_table::{
-    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList,
+    DebugTable, DebugWith, NodeKeyDebug, NodeList, standalone,
 };
 use std::collections::BTreeMap;
 
@@ -14,8 +14,8 @@ use filament_checked::key::DeclarationKey;
 use filament_exact::{NodeKey, ValueType};
 use fsl_foundation::MemoryModelName;
 
-use super::protocol::MemoryStepKind;
 use super::ProtocolNodeId;
+use super::protocol::MemoryStepKind;
 
 /// The checked identity that owns one declared refinement step class.
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]

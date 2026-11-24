@@ -20,12 +20,12 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 use fsl_forms::{
-    parse_type_text, BuiltinType, ClauseKind, ExprNode, ExpressionForm, ExtensionClauseForm,
-    ExtensionForm, TypeFormHead,
+    BuiltinType, ClauseKind, ExprNode, ExpressionForm, ExtensionClauseForm, ExtensionForm,
+    TypeFormHead, parse_type_text,
 };
+use fsl_foundation::Span;
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::selection::DefinitionRef;
-use fsl_foundation::Span;
 use ix_trace_rs::string_edge;
 
 use super::check::{Scope, Signatures, Typer};
@@ -477,7 +477,7 @@ impl Builder<'_, '_, '_> {
         let (expected, scalar) = match self.expected_type(&production_clause.type_ref, &location) {
             ClauseType::Value(expected, scalar) => (expected, scalar),
             ClauseType::NodeKind(node_kind) => {
-                return self.node_kind_clause(clause, &node_kind, &location, span)
+                return self.node_kind_clause(clause, &node_kind, &location, span);
             }
             ClauseType::Unbounded(word, scalar) => {
                 match self.unbounded_type(clause, word, &location) {
@@ -491,7 +491,7 @@ impl Builder<'_, '_, '_> {
                                 expected: production_clause.type_ref.clone(),
                                 actual,
                             },
-                        ))
+                        ));
                     }
                 }
             }

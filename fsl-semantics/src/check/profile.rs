@@ -181,13 +181,17 @@ impl ProfileRefusal {
         match self.cause {
             ProfileCause::ConflictingDefinition => format!(
                 "integer-division law `{}` selected by header profile `{}` conflicts with `{}` supplied by `{}`",
-                self.selected, self.alias, self.root.identity,
+                self.selected,
+                self.alias,
+                self.root.identity,
                 self.supplied_by.as_deref().unwrap_or("header profile")
             ),
             ProfileCause::UnsupportedSelection | ProfileCause::WrongSelectionRole => format!(
-                "header profile `{}` selecting `{}` does not resolve: {}/{}", self.alias,
+                "header profile `{}` selecting `{}` does not resolve: {}/{}",
+                self.alias,
                 self.selected,
-                self.code().as_str(), self.cause()
+                self.code().as_str(),
+                self.cause()
             ),
         }
     }

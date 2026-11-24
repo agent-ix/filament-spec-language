@@ -27,7 +27,7 @@ mod conversions;
 mod persistent;
 
 use self::persistent::PersistentMap;
-use super::check::{holds_float, DispatchOperation};
+use super::check::{DispatchOperation, holds_float};
 use super::ir::{CheckedNode, DispatchTable, NodeId, Slot};
 use super::observation::Observations;
 use super::refusal::{
@@ -969,11 +969,7 @@ impl<'a> Definedness<'a> {
         while let NodeKind::ConvertScalar(_, operand) = inner.kind() {
             inner = inner.at(*operand);
         }
-        if is_integer(inner) {
-            inner
-        } else {
-            node
-        }
+        if is_integer(inner) { inner } else { node }
     }
 
     fn comparison(

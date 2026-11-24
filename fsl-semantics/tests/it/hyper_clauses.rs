@@ -2060,7 +2060,8 @@ fn a_finite_trace_set_defect_refuses_with_its_named_cause() {
         .replace("hyper Det", "tuple NotRecord(Int[0, 3]);\nhyper Det")
         .replace("in Obs", "in NotRecord");
     let object = FINITE_DET.replace("in Obs", "in V::ConfigVersion");
-    let cases: [(String, Vec<&str>, Code, &str, fn(&str) -> Span); 5] = [
+    type Case = (String, Vec<&'static str>, Code, &'static str, fn(&str) -> Span);
+    let cases: [Case; 5] = [
         (
             FINITE_DET.replace("bounded 3", "bounded 0"),
             Vec::new(),

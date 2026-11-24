@@ -27,7 +27,7 @@ mod fixture {
     use crate as semantics;
     include!("../../../tests/fixtures/protocol_obligations.rs");
 }
-use fixture::{obligation_model_with, HEADER};
+use fixture::{HEADER, obligation_model_with};
 
 fn key(name: &str) -> DeclarationKey {
     DeclarationKey {

@@ -2,7 +2,7 @@
 //! Membership proofs for explicit numeric narrowing, separate from classification.
 use super::{Definedness, End, Facts, Interval};
 use crate::check::ir::CheckedNode;
-use crate::check::numeric_conversion::{classify, Class};
+use crate::check::numeric_conversion::{Class, classify};
 use crate::check::refusal::{CheckRefusal, Obligation, OperandText};
 use filament_checked::node::{CheckedLiteral, NodeKind};
 use filament_exact::{

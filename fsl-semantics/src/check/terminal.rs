@@ -19,17 +19,17 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{EffectiveId, NodeKey, ValueType};
 use fsl_forms::{ExpressionForm, StateClauseKind};
+use fsl_foundation::Span;
 use fsl_foundation::selection::ProfileSelection;
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_foundation::Span;
 use ix_trace_rs::string_edge;
 
+use super::CheckedGraph;
+use super::SemanticNode;
 use super::ir::{CheckedBody, CheckedNode};
 use super::node_key::{BindingValue, BodyTerm, LeafTerm, LiteralValue, MemberTerm, NodeTag};
 use super::refusal::{CheckCause, CheckRefusal};
 use super::state_clause::{ClauseDeclarations, ClauseView, PopulationDomain};
-use super::CheckedGraph;
-use super::SemanticNode;
 use crate::family::CheckContext;
 
 /// One `terminal` declaration the assembler resolved (FR-124 "Inputs"): its

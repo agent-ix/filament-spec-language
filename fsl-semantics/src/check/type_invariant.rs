@@ -20,7 +20,7 @@ use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
 use fsl_forms::StateClauseKind;
-use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug};
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, standalone};
 
 use super::ir::{CheckedBody, CheckedNode};
 use super::refusal::{CheckCause, CheckRefusal};

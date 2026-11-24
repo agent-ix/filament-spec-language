@@ -12,8 +12,6 @@
 //! - The state machine `Lifecycle` and the process `Fulfilment`, each with a
 //!   `tier: Tier` field.
 
-#![allow(dead_code, reason = "each test binary uses part of the fixture")]
-
 use fsl_semantics::model::intake::meaning;
 use serde_json::{json, Value};
 
@@ -24,7 +22,7 @@ use serde_json::{json, Value};
     reason = "a test binary also loads the K2 builder directly"
 )]
 mod base;
-pub(crate) use base::{id, PACKAGE};
+pub(crate) use base::id;
 
 /// A variant type's source position, which the reader requires of every
 /// case.

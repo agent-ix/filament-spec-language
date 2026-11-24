@@ -100,7 +100,7 @@ impl Lowering<'_> {
                 return Err(super::fault(
                     &claim_at,
                     crate::check::refusal::KeyFault::UnkeyableRequirements,
-                ))
+                ));
             }
         };
         let mode = self.text_literal(mode, &claim_at)?;

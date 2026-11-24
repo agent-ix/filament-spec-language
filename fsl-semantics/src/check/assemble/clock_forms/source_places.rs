@@ -7,8 +7,8 @@ use filament_exact::{CollectionKind, NodeKey, ValueType};
 use fsl_forms::{BuiltinType, DeclarationForm, TypeForm, TypeFormHead};
 
 use crate::check::lowering::{
-    clock_type_identity, CollectionShape, PlaceStep, SourceClockEntry, SourceClockLayout,
-    SourceClockMembers, SourceClockPlace,
+    CollectionShape, PlaceStep, SourceClockEntry, SourceClockLayout, SourceClockMembers,
+    SourceClockPlace, clock_type_identity,
 };
 use crate::check::type_form::TypeNames;
 use crate::model::domain_package::{DomainPackage, DomainPackageRecord, ValueTypeRef};

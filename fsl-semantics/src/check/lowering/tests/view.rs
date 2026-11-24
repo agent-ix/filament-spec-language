@@ -5,7 +5,7 @@
 //! and no node key is parsed back out of it (a node reference renders as its
 //! key's display text).
 
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 use super::*;
 use crate::check::node_key::{

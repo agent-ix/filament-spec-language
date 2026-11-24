@@ -13,23 +13,23 @@ use fsl_forms::{
     QuantityForm, TemporalClauseForm, TemporalFormulaForm, TemporalNodeForm, TemporalNodeId,
     TemporalOperator, TimedUpper, TypeFormHead,
 };
-use fsl_foundation::selection::ProfileSelection;
 use fsl_foundation::Span;
+use fsl_foundation::selection::ProfileSelection;
 
-use super::callee::{kind_of, Callees};
+use super::callee::{Callees, kind_of};
 use super::cause::MalformedReason;
 use super::model::into_refusal;
-use super::term::{lower, ClaimNames, Env, Kind, Meter, Stop};
+use super::term::{ClaimNames, Env, Kind, Meter, Stop, lower};
 use super::{
     CheckedHybridClaim, CheckedHybridModel, HybridActivation, HybridCapture, HybridCause,
     HybridClock, HybridFairness, HybridFormula, HybridHorizon, HybridInterval, HybridModelIndex,
     HybridTerm, LogicOp, ModeIndex, TransitionIndex, VariableIndex,
 };
-use crate::check::probabilistic::{exact_value, ExactFault};
+use crate::check::Scope;
+use crate::check::probabilistic::{ExactFault, exact_value};
 use crate::check::profile::TemporalProfile;
 use crate::check::refusal::{CheckRefusal, CheckingLimitKind};
 use crate::check::time_units::TimeUnits;
-use crate::check::Scope;
 
 /// A hybrid claim as the assembler hands it to the check: the `temporal`
 /// clause S2 built, its whole-declaration span, and the profile selection its
@@ -675,11 +675,7 @@ fn formula(
         }
     }
     let root = take(&mut built, form.root());
-    if ok {
-        root
-    } else {
-        None
-    }
+    if ok { root } else { None }
 }
 
 fn zero() -> Rational {

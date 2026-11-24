@@ -15,9 +15,9 @@ use filament_checked::node::{CheckedLiteral, NodeKind};
 use filament_exact::{NodeKey, Value};
 use filament_semantic_value::location::ExpressionLocation as Location;
 
-use super::{identifiers, require_admitted, Binders, Lowering};
+use super::{Binders, Lowering, identifiers, require_admitted};
 use crate::check::extension::{
-    extension_location, CheckedClause, CheckedExtensionForm, ClauseValue,
+    CheckedClause, CheckedExtensionForm, ClauseValue, extension_location,
 };
 use crate::check::family::OccurrenceRole;
 use crate::check::ir::CheckedNode;

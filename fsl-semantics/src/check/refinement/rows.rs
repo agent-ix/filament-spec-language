@@ -10,7 +10,7 @@
 
 use filament_exact::NodeKey;
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
-use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug, With};
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, With, standalone};
 
 use crate::check::node_key::LeafTerm;
 

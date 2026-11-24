@@ -9,8 +9,8 @@
 //! was checked.
 
 use super::*;
-use crate::check::depth_forms::{declarations, Form, FORMS};
 use crate::check::Obligation;
+use crate::check::depth_forms::{FORMS, Form, declarations};
 use filament_semantic_value::call::WrongSnapshotCause;
 use filament_semantic_value::checking::CheckMode;
 

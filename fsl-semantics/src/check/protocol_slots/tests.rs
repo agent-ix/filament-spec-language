@@ -18,7 +18,7 @@ mod fixture {
     use crate as semantics;
     include!("../../../tests/fixtures/protocol_obligations.rs");
 }
-use fixture::{obligation_model_with, HEADER};
+use fixture::{HEADER, obligation_model_with};
 
 /// ADR-027 §7's `Fill` over `k: M::Node`, activated `activation`, with
 /// `members` written before `run`.
@@ -715,7 +715,7 @@ fn a_composite_of_two_receive_fields_lists_neither_operand() {
         else {
             panic!("wrong-observation refusal, got {cause:?}");
         };
-        reads.push((binder.clone(), field.clone(), reason.clone()));
+        reads.push((binder.clone(), field.clone(), *reason));
     }
     assert_eq!(
         reads,
@@ -851,15 +851,17 @@ fn the_reference_protocols_check_with_their_edges() {
 
     let chatter = format!("{HEADER}{CHATTER}");
     let graph = checks(&chatter);
-    assert!(graph
-        .protocol("Chatter")
-        .expect("checked")
-        .edges
-        .contains(&CausalEdge {
-            kind: EdgeKind::Message,
-            from: port(node_id(&chatter, "Tx"), Port::Exit),
-            to: port(node_id(&chatter, "Rx"), Port::Enter),
-        }));
+    assert!(
+        graph
+            .protocol("Chatter")
+            .expect("checked")
+            .edges
+            .contains(&CausalEdge {
+                kind: EdgeKind::Message,
+                from: port(node_id(&chatter, "Tx"), Port::Exit),
+                to: port(node_id(&chatter, "Rx"), Port::Enter),
+            })
+    );
 
     let graph = checks(&workers("until(r.total > 0)"));
     assert_eq!(

@@ -61,10 +61,16 @@ pub struct ClockDeclarationAmbiguity {
 pub enum ClockDeclarationResolutionError {
     /// Complete declaration context has competing authenticated origins.
     #[error(transparent)]
-    Ambiguous(#[from] ClockDeclarationAmbiguity),
+    Ambiguous(Box<ClockDeclarationAmbiguity>),
     /// An admitted path no longer agrees with its declaration metadata.
     #[error("clock declaration invariant: {0:?}")]
     Fault(InternalFault),
+}
+
+impl From<ClockDeclarationAmbiguity> for ClockDeclarationResolutionError {
+    fn from(ambiguity: ClockDeclarationAmbiguity) -> Self {
+        Self::Ambiguous(Box::new(ambiguity))
+    }
 }
 
 impl From<InternalFault> for ClockDeclarationResolutionError {
@@ -335,7 +341,7 @@ impl SourceDeclarations {
                     std::collections::btree_map::Entry::Occupied(entry)
                         if entry.get() == &namespace => {}
                     std::collections::btree_map::Entry::Occupied(_) => {
-                        return Err(fault("source-package-has-one-authenticated-owner"))
+                        return Err(fault("source-package-has-one-authenticated-owner"));
                     }
                 }
                 result
@@ -726,7 +732,7 @@ fn fault(invariant: &'static str) -> InternalFault {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::check::{test_support::ZeroRewardEvaluator, PackageDeclarations};
+    use crate::check::{PackageDeclarations, test_support::ZeroRewardEvaluator};
     use crate::model::intake::SelectedModels;
     use filament_semantic_value::checking::{CheckMode, CheckingLimits};
     use ix_trace_rs::trace;
@@ -780,7 +786,7 @@ mod tests {
             .expect("nested record clock retains two original fields");
         let names: Vec<_> = nested
             .1
-             .0
+            .0
             .iter()
             .map(|member| match member {
                 OriginalClockMemberOrigin::Source { qualified_name, .. } => qualified_name
@@ -879,7 +885,7 @@ mod tests {
             })
             .collect();
         assert_eq!(authorities, ["first", "second"]);
-        let cause = crate::check::CheckCause::AmbiguousClockDeclaration(Box::new(ambiguity));
+        let cause = crate::check::CheckCause::AmbiguousClockDeclaration(ambiguity);
         assert_eq!(
             cause.code(),
             fsl_foundation::diagnostic::Code::AmbiguousDeclaration

@@ -7,9 +7,9 @@ use filament_exact::ValueType;
 use fsl_forms::{BuiltinType, ObjectMemberForm, TypeForm, TypeFormHead};
 
 use super::{
-    source_member_declaration_key, ModelSpellings, Names, RawSourceRef, SelectedModel, Unit,
+    ModelSpellings, Names, RawSourceRef, SelectedModel, Unit, source_member_declaration_key,
 };
-use crate::check::type_form::{resolve_form, TypeNames};
+use crate::check::type_form::{TypeNames, resolve_form};
 use crate::model::domain_package::DomainPackageRecord;
 use crate::model::intake::type_identity_segment;
 use crate::model::spelling::{AliasNode, AliasTree, MemberSlot, SourceSpellings, TypeView};

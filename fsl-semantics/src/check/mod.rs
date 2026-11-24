@@ -91,23 +91,23 @@ pub use abstraction::{
 };
 pub use abstraction::{AbstractionNodeRefusal, AbstractionNodes};
 pub use composition::{
-    composition_components, CheckedComponent, CheckedComposition, ClauseRef, ComponentGuaranteeKey,
-    ComponentPackages, ComponentSubject, CompositionClauseFacts, CompositionCycle,
-    CompositionGraphErrorCode, CompositionGraphRefusal, CompositionGuarantee, CompositionItem,
-    CompositionName, CompositionPremise, CompositionRefusal, CompositionSlot, CompositionSlotKey,
-    CompositionSpans, CompositionSupply, ItemPlacement, MalformedMember, ReadClause, ReadComponent,
-    ReadComposition, ReadGuaranteeMember, ReadPremise, ReadSupply,
+    CheckedComponent, CheckedComposition, ClauseRef, ComponentGuaranteeKey, ComponentPackages,
+    ComponentSubject, CompositionClauseFacts, CompositionCycle, CompositionGraphErrorCode,
+    CompositionGraphRefusal, CompositionGuarantee, CompositionItem, CompositionName,
+    CompositionPremise, CompositionRefusal, CompositionSlot, CompositionSlotKey, CompositionSpans,
+    CompositionSupply, ItemPlacement, MalformedMember, ReadClause, ReadComponent, ReadComposition,
+    ReadGuaranteeMember, ReadPremise, ReadSupply, composition_components,
 };
 pub use dispatch_link::PendingLinks;
 pub use extension::{ExtensionCause, NamedDeclaration};
 pub use guarantee::{
-    check_member_values, granularity_spelling, kind_spelling, CheckedImplementationGuarantee,
-    ClauseConstraint, Correspondence, EnvironmentMember, ExtentClass, GuaranteeClause,
-    GuaranteeItemRefusal, GuaranteeName, GuaranteeRefusal, GuaranteeSlot, GuaranteeSpans, ItemKind,
-    MeasureValue, MemberValues, ProgressMeasure, ProgressMember, ReadEnvironment, ReadGuarantee,
-    ReadProgress, RustMember, SlotBacking, SlotKey, SlotRole, SubjectOperation, Supplies,
+    CheckedImplementationGuarantee, ClauseConstraint, Correspondence, EnvironmentMember,
+    ExtentClass, GuaranteeClause, GuaranteeItemRefusal, GuaranteeName, GuaranteeRefusal,
+    GuaranteeSlot, GuaranteeSpans, ItemKind, MeasureValue, MemberValues, ProgressMeasure,
+    ProgressMember, ReadEnvironment, ReadGuarantee, ReadProgress, RustMember, SlotBacking, SlotKey,
+    SlotRole, SubjectOperation, Supplies, check_member_values, granularity_spelling, kind_spelling,
 };
-pub use rust_syntax::{path_defect, PathDefect};
+pub use rust_syntax::{PathDefect, path_defect};
 mod facts;
 mod family;
 // The scalar limits of a caller that bounds nothing itself, for the model
@@ -141,7 +141,7 @@ mod layer;
 pub(crate) mod lowering;
 pub(crate) use assemble::variant_type_declarations;
 pub(crate) use lowering::record_node_key;
-pub use lowering::{protocol_site, ProtocolSite, RelatedSide};
+pub use lowering::{ProtocolSite, RelatedSide, protocol_site};
 mod extension;
 mod hybrid;
 mod hybrid_locus;
@@ -192,8 +192,8 @@ pub mod test_support {
 mod settings;
 mod source_model;
 pub use source_model::{
-    object_types_of_source_rows, package_of_source_rows, source_identity, source_type_node_key,
-    SourceRowObject, SourceRowOperation, SourceRowParameter,
+    SourceRowObject, SourceRowOperation, SourceRowParameter, object_types_of_source_rows,
+    package_of_source_rows, source_identity, source_type_node_key,
 };
 mod finite_domain;
 mod plan_value;
@@ -228,7 +228,7 @@ pub use probabilistic::{
     PackageWeight, PackageWorkload, ReadReward,
 };
 pub use state_model::StateModelRefusal;
-pub use sum_case::{mint_union_member_key, ExhaustivenessObligation, SumCaseCause};
+pub use sum_case::{ExhaustivenessObligation, SumCaseCause, mint_union_member_key};
 pub use task_set::{
     Arrival, CheckedScheduleClaim, CheckedTaskSets, Criticality, ModeSwitch, Release,
     ScheduleClaim, SchedulingPolicy, Task, TaskSet, TaskSetDeclaration, TaskSetUnit, Wcet,
@@ -238,20 +238,20 @@ pub mod stratum;
 mod termination;
 pub mod wire_id;
 pub use refinement::{
-    observation, AbstractSide, AbstractStepClass, AbstractStepKind, ChannelStepKind,
-    CheckedRefinement, CheckedRow, FieldRow, HistoryRow, HistoryUpdate, KeyedCatalogClass,
-    KeyedClassCatalog, KeyedMemoryClass, LabelStep, ListDefect, ListDefectKind, MemoryStepKind,
-    ObjectRow, PopulationRow, PopulationUse, PopulationValue, ProtocolStepKind,
-    RefinementCatalogClass, RefinementCatalogNode, RefinementCause, RefinementClassCatalog,
-    RefinementDeclaration, RefinementFairness, RefinementFairnessOrigin, RefinementRefusal,
-    RefinementStepSource, RefinementSupport, RefinementThreadTarget, RefinementV2Emission,
-    RefinementV2EncodingError, RoleStepKind, RowClass, RowObservation, StepClass, StepLabel,
-    StepRow, StepTarget, UnsupportedFeature,
+    AbstractSide, AbstractStepClass, AbstractStepKind, ChannelStepKind, CheckedRefinement,
+    CheckedRow, FieldRow, HistoryRow, HistoryUpdate, KeyedCatalogClass, KeyedClassCatalog,
+    KeyedMemoryClass, LabelStep, ListDefect, ListDefectKind, MemoryStepKind, ObjectRow,
+    PopulationRow, PopulationUse, PopulationValue, ProtocolStepKind, RefinementCatalogClass,
+    RefinementCatalogNode, RefinementCause, RefinementClassCatalog, RefinementDeclaration,
+    RefinementFairness, RefinementFairnessOrigin, RefinementRefusal, RefinementStepSource,
+    RefinementSupport, RefinementThreadTarget, RefinementV2Emission, RefinementV2EncodingError,
+    RoleStepKind, RowClass, RowObservation, StepClass, StepLabel, StepRow, StepTarget,
+    UnsupportedFeature, observation,
 };
 pub use terminal::{
-    terminal_predicate_site, CheckedTerminal, CheckedTerminalPredicate, TerminalClauseDeclaration,
-    TerminalClauseKind, TerminalDeclaration, TerminalKeys, TerminalMismatch, TerminalMode,
-    TerminalNode, TerminalRefusal,
+    CheckedTerminal, CheckedTerminalPredicate, TerminalClauseDeclaration, TerminalClauseKind,
+    TerminalDeclaration, TerminalKeys, TerminalMismatch, TerminalMode, TerminalNode,
+    TerminalRefusal, terminal_predicate_site,
 };
 mod type_form;
 mod type_invariant;
@@ -263,7 +263,7 @@ use crate::model::domain_package::DomainPackageRef;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 pub use check::FormedUnits;
-use check::{bind_parameters, reserved_slot_refusal, NamedScope, Typer};
+use check::{NamedScope, Typer, bind_parameters, reserved_slot_refusal};
 // `Signature` is public only under `test-support`: the layer-5 evaluator's
 // tests build the resolved `Signature` `declarations_for` takes as
 // `own_signature`; no shipped caller outside `check` names it.
@@ -279,8 +279,8 @@ use filament_exact::{Cancel, ValueType};
 use fsl_forms::{ClauseKind, Expression, FunctionDeclaration};
 use fsl_foundation::diagnostic::{Locus, StageFailure};
 use fsl_foundation::source::node_table::{
-    scoped, standalone, DebugTable, DebugWith, Maybe, NodeKeyDebug, NodeList, NodeMap,
-    NodeValueMap, Seq, ValueMap, With,
+    DebugTable, DebugWith, Maybe, NodeKeyDebug, NodeList, NodeMap, NodeValueMap, Seq, ValueMap,
+    With, scoped, standalone,
 };
 use fsl_foundation::source::provenance::{OccurrenceKey, SourceRegion};
 use std::fmt;
@@ -292,14 +292,14 @@ pub use claims::{
 pub use family::{CheckedDeclaration, ValueDeclarations, ValueFunctionFamily};
 pub use model_gate::{ModelFamily, ModelGateRefusal, OwnerKind};
 pub use profile::{
-    integer_division_role, resolve_integer_division, resolve_profiles, ProfileCause, ProfileRefusal,
+    ProfileCause, ProfileRefusal, integer_division_role, resolve_integer_division, resolve_profiles,
 };
 // Named only by `fixtures::measure_resolved`'s return type.
 #[cfg(any(test, feature = "test-support"))]
 pub use family::DeclarationMetrics;
 pub use lowering::{
-    model_root_key, AdmittedModel, ForeignView, ModelClause, SemanticGraph, SemanticNode,
-    SourceCollection, SourceEnumDeclaration, SourceEnumMember,
+    AdmittedModel, ForeignView, ModelClause, SemanticGraph, SemanticNode, SourceCollection,
+    SourceEnumDeclaration, SourceEnumMember, model_root_key,
 };
 pub use node_key::{
     AbstractionTerm, ExtensionClauseTerm, ExtensionTerm, FrameEntry, ObjectEntry, PopulationEntry,
@@ -490,9 +490,9 @@ pub fn builtin_text_type_key(
 // the layer-5 evaluator's tests reach them without widening the items.
 #[cfg(any(test, feature = "test-support"))]
 pub use family::fixtures::{
-    admitted_source, check_context, declaration, declaration_signature, declarations_for,
-    empty_scope, fixture_source, json_depth, limits, measure_resolved, received_kernel_causes,
-    root_location, scope_with, SCALAR_LIMITS_UNLIMITED,
+    SCALAR_LIMITS_UNLIMITED, admitted_source, check_context, declaration, declaration_signature,
+    declarations_for, empty_scope, fixture_source, json_depth, limits, measure_resolved,
+    received_kernel_causes, root_location, scope_with,
 };
 pub use ir::{
     CheckedBody, CheckedNode, EqualityConversionEdgeIdentity, EqualityDimensionIdentity,
@@ -508,8 +508,8 @@ pub use assemble::model_type_environment;
 pub use assemble::{
     AdmittedImport, AssemblyCause, AssemblyError, AssemblyLimits, AssemblyRefusal, AssemblyRun,
     ClockReadingDeclaration, ClockSite, ClockSlot, ClockTypePosition, ClockUse,
-    DimensionEquivalence, EquivalenceClasses, EquivalenceFault, EquivalenceRetained,
-    SourceObjectFault, TimedDeclaration, TopologyFault, TopologyRetained, DEFAULT_DECIMAL_SCALE,
+    DEFAULT_DECIMAL_SCALE, DimensionEquivalence, EquivalenceClasses, EquivalenceFault,
+    EquivalenceRetained, SourceObjectFault, TimedDeclaration, TopologyFault, TopologyRetained,
 };
 pub use capability::{
     Capability, DeclarationFamily, NegotiationCause, NegotiationOutcome, UnknownCapabilityLabel,
@@ -521,8 +521,8 @@ pub use check::{
 #[cfg(any(test, feature = "test-support"))]
 pub use checked_dispatch::checked_dispatch_selected_operation;
 pub use checked_dispatch::{
-    checked_dispatch_operation, object_type_supertypes, DispatchBridgeRefusal, DispatchRoot,
-    MissingClauseField, OperationClauses,
+    DispatchBridgeRefusal, DispatchRoot, MissingClauseField, OperationClauses,
+    checked_dispatch_operation, object_type_supertypes,
 };
 /// A clock role's configuration, as a request's `clocks` member writes it and
 /// [`PackageDeclarations::with_clock_configurations`] takes it (FR-640).
@@ -558,28 +558,27 @@ pub use fsl_forms::{
     ProtocolNodeKind, QuantifierKind, StateClauseKind,
 };
 pub use hybrid::{
-    hybrid_horizon, ArithmeticOp, CaptureIndex, CheckedFunctionRef, CheckedHybridClaim,
-    CheckedHybridModel, CheckedMode, CheckedTransition, CompareOp, ContinuousVariable,
-    HorizonOutOfRange, HybridActivation, HybridCapture, HybridCause, HybridClaimDeclaration,
-    HybridClock, HybridDeclaration, HybridFairness, HybridFormula, HybridHorizon, HybridInterval,
+    ArithmeticOp, CaptureIndex, CheckedFunctionRef, CheckedHybridClaim, CheckedHybridModel,
+    CheckedMode, CheckedTransition, CompareOp, ContinuousVariable, HorizonOutOfRange,
+    HybridActivation, HybridCapture, HybridCause, HybridClaimDeclaration, HybridClock,
+    HybridDeclaration, HybridFairness, HybridFormula, HybridHorizon, HybridInterval,
     HybridModelIndex, HybridTerm, InitialEntry, LogicOp, MalformedReason, ModeIndex,
-    ResetConstraint, TransitionIndex, VariableClass, VariableIndex,
+    ResetConstraint, TransitionIndex, VariableClass, VariableIndex, hybrid_horizon,
 };
 pub use hybrid_locus::{HybridTermHome, HybridTermNode};
 #[cfg(any(test, feature = "test-support"))]
 pub use hyper_clause::check_hyper_clauses;
 pub use hyper_clause::{
-    decodable_argument, operation_text, ArgumentRead, AtomSlot, CheckedFiniteHyperClause,
-    CheckedFiniteTraceQuantifier, CheckedHyper, CheckedHyperClause, CheckedModelRelation,
-    CheckedQuantifier, CheckedStepPredicate, CopyGenerator, CopyGroup, HyperCause,
-    HyperDeclaration, HyperDeclarations, HyperForm, HyperIdentity, HyperTraceFamily,
-    HyperUnsupported, MatchPart, ModelAlias, ObjectParameter, OperationContractClaim,
-    PackageHyperForm, PackageHyperParameter, PackageHyperQuantifier, StepRead, STUTTER_TEXT,
+    ArgumentRead, AtomSlot, CheckedFiniteHyperClause, CheckedFiniteTraceQuantifier, CheckedHyper,
+    CheckedHyperClause, CheckedModelRelation, CheckedQuantifier, CheckedStepPredicate,
+    CopyGenerator, CopyGroup, HyperCause, HyperDeclaration, HyperDeclarations, HyperForm,
+    HyperIdentity, HyperTraceFamily, HyperUnsupported, MatchPart, ModelAlias, ObjectParameter,
+    OperationContractClaim, PackageHyperForm, PackageHyperParameter, PackageHyperQuantifier,
+    STUTTER_TEXT, StepRead, decodable_argument, operation_text,
 };
 pub use identity::{
-    to_kernel_value_type, CheckedClauseKind, CheckedTypeNode, CompositeForm,
-    CorrespondenceConflict, InvalidSumVariants, ModelCorrespondence, ScalarShape, SumVariant,
-    SumVariants,
+    CheckedClauseKind, CheckedTypeNode, CompositeForm, CorrespondenceConflict, InvalidSumVariants,
+    ModelCorrespondence, ScalarShape, SumVariant, SumVariants, to_kernel_value_type,
 };
 pub use ir::{
     CollectionLoss, CollectionProperty, DispatchCandidate, DispatchProducerDecision, DispatchTable,
@@ -622,27 +621,28 @@ pub use refusal::{
     TimeUnitCause, TimedConstruct, TimedOmission, UnwrittenTimedMember,
 };
 pub use state_graph_claim::{
-    state_graph_predicate_site, CheckedPredicateBody, CheckedStateGraphClaim,
-    CheckedStatePredicate, OverParameter, PackagePredicate, PackageStateGraphForm,
-    PackageStateGraphKind, PackageStatePredicate, StateGraphClaim, StateGraphDeclaration,
-    StateGraphFamily, StateGraphForm, StatePredicate,
+    CheckedPredicateBody, CheckedStateGraphClaim, CheckedStatePredicate, OverParameter,
+    PackagePredicate, PackageStateGraphForm, PackageStateGraphKind, PackageStatePredicate,
+    StateGraphClaim, StateGraphDeclaration, StateGraphFamily, StateGraphForm, StatePredicate,
+    state_graph_predicate_site,
 };
 #[cfg(any(test, feature = "test-support"))]
 pub use temporal_clause::check_clauses;
 
 pub use fsl_forms::AggregateComparison;
 pub use lowering::{
-    clock_field_member_type, collection_kind, CollectionShape, PlaceRow, PlaceStep,
-    SelectedModelUnion, SelectedModelUnionCase, SelectedModelUnionPayload, SourceClockEntry,
-    SourceClockMembers,
+    CollectionShape, PlaceRow, PlaceStep, SelectedModelUnion, SelectedModelUnionCase,
+    SelectedModelUnionPayload, SourceClockEntry, SourceClockMembers, clock_field_member_type,
+    collection_kind,
 };
 pub use temporal_clause::{
     Activation, AggregateKind, AggregateWindow, BinaryTemporal, CaptureSite, CheckedAggregate,
     CheckedFormula, CheckedInterval, CheckedOperator, CheckedProtocolFairness,
-    CheckedProtocolTarget, CheckedTemporalClause, ClockUnitSelection, DurationWindow, FormulaNode,
-    FormulaNodeId, ModelTimeBinding, ModelTimeSource, TemporalClaim, TemporalDeclaration,
-    TemporalDeclarations, TemporalSelection, TemporalTraceFamily, TimeNominalForm, TimeNominalNode,
-    TimeNominalOrigin, TimeSourceKind, TimedPropertyForm, UnaryTemporal, DEFAULT_CLOCK_ROLE,
+    CheckedProtocolTarget, CheckedTemporalClause, ClockUnitSelection, DEFAULT_CLOCK_ROLE,
+    DurationWindow, FormulaNode, FormulaNodeId, ModelTimeBinding, ModelTimeSource, TemporalClaim,
+    TemporalDeclaration, TemporalDeclarations, TemporalSelection, TemporalTraceFamily,
+    TimeNominalForm, TimeNominalNode, TimeNominalOrigin, TimeSourceKind, TimedPropertyForm,
+    UnaryTemporal,
 };
 pub use temporal_clause::{
     PackageClauseForm, PackageClauseRefusal, PackageFormulaNode, PackagePropertyRefusal,
@@ -3272,15 +3272,17 @@ impl PackageDeclarations {
         let plan_populations = NamedScope::of(&self.models, &scope, None);
         let checked_syntheses = synthesis::check_forms(
             &self.synthesis_forms,
-            &scope,
-            &signatures,
-            &plan_populations,
-            &self.source,
-            &self.source_owners,
-            &self.package_name,
-            &self.models,
-            &dispatch_tables,
-            &mut contract_meter,
+            synthesis::SynthesisCheckContext {
+                scope: &scope,
+                signatures: &signatures,
+                named: &plan_populations,
+                source: &self.source,
+                source_owners: &self.source_owners,
+                package_name: &self.package_name,
+                models: &self.models,
+                dispatch_tables: &dispatch_tables,
+                sealing_meter: &mut contract_meter,
+            },
         )?;
         let mut seen_operations = std::collections::BTreeSet::new();
         for operation in &scope.dispatch_operations {
@@ -4926,8 +4928,8 @@ impl PackageDeclarations {
                 else {
                     continue;
                 };
-                refusal.cause = Box::new(CheckCause::ProtocolAnchor(Box::new(
-                    ProtocolAnchorCause::RefusedDependency {
+                *refusal.cause =
+                    CheckCause::ProtocolAnchor(Box::new(ProtocolAnchorCause::RefusedDependency {
                         function: function.clone(),
                         refused_dependency: Box::new(RefusedProtocolDependency {
                             declaration: function.clone(),
@@ -4936,8 +4938,7 @@ impl PackageDeclarations {
                         }),
                         consequence: true,
                         span: *span,
-                    },
-                )));
+                    }));
             }
         }
         let original_protocol_index = |checked_index: usize| {
@@ -7653,7 +7654,7 @@ impl PackageDeclarations {
         // The sites no declared form spans (slots, conjunct slots, skipped
         // operations) are located at their conjunct or clause.
         for (index, clause) in checked_hyper.iter().enumerate() {
-            use hyper_clause::lowering::{hyper_site, Site};
+            use hyper_clause::lowering::{Site, hyper_site};
             for slot in 0..clause.atom_slots().len() {
                 type_spans.insert(hyper_site(index, Site::Slot(slot)), clause.span());
             }
@@ -7684,7 +7685,7 @@ impl PackageDeclarations {
             }
         }
         for (finite_index, clause) in checked_finite_hyper.iter().enumerate() {
-            use hyper_clause::lowering::{hyper_site, Site};
+            use hyper_clause::lowering::{Site, hyper_site};
             let index = checked_hyper.len() + finite_index;
             type_spans.insert(hyper_site(index, Site::Claim), clause.span());
             type_spans.insert(hyper_site(index, Site::FiniteDomain), clause.span());
@@ -9715,7 +9716,7 @@ impl CheckedGraph {
                     location: location.clone(),
                     cause: Box::new(match error {
                         ClockDeclarationResolutionError::Ambiguous(ambiguity) => {
-                            CheckCause::AmbiguousClockDeclaration(Box::new(ambiguity))
+                            CheckCause::AmbiguousClockDeclaration(ambiguity)
                         }
                         ClockDeclarationResolutionError::Fault(fault) => {
                             CheckCause::InternalFault(Box::new(KeyFault::StageFault(fault)))
@@ -10926,7 +10927,7 @@ fn register_protocol_sites(
     type_spans: &mut BTreeMap<String, fsl_foundation::Span>,
     site_spans: &mut BTreeMap<String, fsl_forms::ExpressionSpans>,
 ) {
-    use lowering::{protocol_site, ProtocolSite};
+    use lowering::{ProtocolSite, protocol_site};
     let name = protocol.name.name.as_str();
     if let fsl_forms::ActivationForm::Each {
         when: Some(guard), ..
