@@ -626,7 +626,7 @@ mod generated {
 
     /// QSL-2061 P3 and P4 (FR-152): the sort canonicaliser is permutation
     /// invariant, idempotent, and returns a member of the state's orbit.
-    #[trace("FR-152")]
+    #[trace("TC-1583", "FR-152-AC-2")]
     #[test]
     fn canonicalise_is_permutation_invariant() {
         prop::run(
@@ -641,7 +641,7 @@ mod generated {
     }
 
     /// QSL-2061 P4 (FR-152): `canon(canon(s)) = canon(s)` over every reachable state.
-    #[trace("FR-152")]
+    #[trace("TC-1583", "FR-152-AC-4")]
     #[test]
     fn canonicalise_is_idempotent() {
         prop::run(

@@ -22,6 +22,7 @@
 use filament_exact::ScalarLimits;
 use fsl_analyze::model_check::ModelCheckRefusal;
 use fsl_eval::simulation::model::ModelSimState;
+use fsl_eval::simulation::{Permutation, SymmetryClass, SymmetryGroup, TransitionSystem};
 use fsl_replay::{
     AppliedReduction, IncompleteCause, ModelCheckLimit, ModelCheckLimits, ModelCheckOutcome,
     ModelStep, ModelTraceSettlement, ModelTraceValue, ProofCertificate, ReachedLimit,
@@ -111,6 +112,76 @@ fn moved(states: &[ModelSimState]) -> Vec<&'static str> {
                 .expect("a step changes its receiver")
         })
         .collect()
+}
+
+/// The three-counter symmetry class used by the `each`-fairness quotient.
+fn counter_group() -> SymmetryGroup {
+    SymmetryGroup {
+        classes: vec![SymmetryClass {
+            population: counters(),
+            keys: KEYS.iter().map(|key| (*key).to_owned()).collect(),
+        }],
+    }
+}
+
+/// FR-152-AC-2 / FR-623-AC-1: a key permutation of a state in the
+/// `each`-fairness subject has the same canonical quotient representative.
+#[trace("TC-570", "FR-152-AC-2", "FR-623-AC-1")]
+#[test]
+fn canonicalise_is_permutation_invariant_on_each_fairness_quotient() {
+    let system = configs(PROOF).system();
+    let group = counter_group();
+    let states = system.initial();
+    let state = states.first().expect("the subject has an initial state");
+    let permuted = system
+        .permute(
+            state,
+            &Permutation::of(
+                &counters(),
+                [("a", "b"), ("b", "c"), ("c", "a")]
+                    .into_iter()
+                    .map(|(from, to)| (from.to_owned(), to.to_owned())),
+            ),
+        )
+        .expect("permutation applies");
+    let canonical = system
+        .canonicalise(state, &group)
+        .expect("state canonicalises")
+        .0;
+    let canonical_permuted = system
+        .canonicalise(&permuted, &group)
+        .expect("permuted state canonicalises")
+        .0;
+    assert_eq!(
+        system.state_key(&canonical).expect("canonical key").0,
+        system
+            .state_key(&canonical_permuted)
+            .expect("permuted canonical key")
+            .0,
+    );
+}
+
+/// FR-152-AC-4 / FR-623-AC-1: quotient canonicalisation is idempotent on
+/// each state of the `each`-fairness subject.
+#[trace("TC-570", "FR-152-AC-4", "FR-623-AC-1")]
+#[test]
+fn canonicalise_is_idempotent_on_each_fairness_quotient() {
+    let system = configs(PROOF).system();
+    let group = counter_group();
+    for state in system.initial() {
+        let once = system
+            .canonicalise(&state, &group)
+            .expect("state canonicalises")
+            .0;
+        let twice = system
+            .canonicalise(&once, &group)
+            .expect("canonical state canonicalises")
+            .0;
+        assert_eq!(
+            system.state_key(&once).expect("canonical key").0,
+            system.state_key(&twice).expect("twice canonical key").0,
+        );
+    }
 }
 
 const PROOF: &str = "fair weak each M::Counter::bump; always eventually holds(x.v = 2)";
