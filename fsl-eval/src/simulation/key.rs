@@ -123,21 +123,6 @@ pub(crate) fn canonical_state_key(
         .map_err(|error| EncodingRefusal::of(&error, identity))
 }
 
-/// [`state_key`] of the typed canonical form `value`, written by
-/// `canonical`: the same bytes and refusals, without the event writer.
-///
-/// # Errors
-///
-/// [`EncodingRefusal`] when `value` has no RFC 8785 encoding.
-pub(crate) fn state_key_of(
-    canonical: &Canonicalizer,
-    value: &Enc,
-    identity: IdentityLimits,
-) -> Result<(Vec<u8>, StateKey), EncodingRefusal> {
-    let key = canonical_state_key_of(canonical, value, identity)?;
-    Ok((key.0.clone(), key))
-}
-
 /// [`canonical_state_key`] of the typed canonical form `value`, written by
 /// `canonical`.
 pub(crate) fn canonical_state_key_of(
