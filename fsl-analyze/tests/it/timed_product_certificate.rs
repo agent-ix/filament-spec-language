@@ -542,7 +542,7 @@ fn deadline_at_995_refutes_with_two_losses_at_the_horizon() {
         if step
             .transition
             .as_ref()
-            .is_some_and(|transition| transition.operation().contains("Msg/send"))
+            .is_some_and(|transition| transition.operation().contains("Call/send"))
         {
             let draw = step.draw.as_ref().expect("send carries its loss draw");
             assert!(matches!(
@@ -553,11 +553,13 @@ fn deadline_at_995_refutes_with_two_losses_at_the_horizon() {
         }
     }
     assert_eq!(loss_times, [ratio(2, 1), ratio(4, 1)]);
-    assert!(path.steps.last().is_some_and(|step| {
-        step.transition
-            .as_ref()
-            .is_some_and(|transition| transition.operation().contains("Msg/send"))
-    }));
+    assert!(
+        path.steps.last().is_some_and(|step| {
+            matches!(&step.choice, fsl_replay::ProductAction::UnitDelay)
+        }),
+        "after the second loss at 4 ms, the witness advances past the horizon"
+    );
+    assert_eq!(elapsed, ratio(5, 1));
     let (_, counterexamples) =
         fsl_analyze::analyze::split_records(vec![record], &world.package);
     let wire = counterexamples[0]
