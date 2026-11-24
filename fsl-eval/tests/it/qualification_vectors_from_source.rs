@@ -309,22 +309,38 @@ fn decimal_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                 })
                 .collect()
         }
-        "D13" => vec![function(
-            "Decimal[-9,9;0,0;toward-zero]",
-            "decimal(150, 2) * decimal(2, 0)",
-            Expected::Refused {
+        "D13" | "D18" => {
+            let tokens = quoted(vector.inputs);
+            let result_types = tokens
+                .into_iter()
+                .filter(|token| token.starts_with("Decimal["))
+                .collect::<Vec<_>>();
+            assert!(!result_types.is_empty(), "{} has result types", vector.id);
+
+            let operands = pairs(vector.inputs);
+            assert!(operands.len() >= 2, "{} has two operands", vector.id);
+            let operation = vector.inputs.to_ascii_lowercase();
+            let operator = if operation.contains("multiply") {
+                "*"
+            } else if operation.contains("divide") {
+                "/"
+            } else {
+                panic!("{} has no recognized decimal operation", vector.id);
+            };
+            let expression = format!(
+                "{} {operator} {}",
+                decimal(&operands[0]),
+                decimal(&operands[1])
+            );
+            let refusal = || Expected::Refused {
                 code: "ill_typed".to_owned(),
                 cause: Some("type-mismatch".to_owned()),
-            },
-        )],
-        "D18" => vec![function(
-            "Decimal[-1000,1000;0,1;nearest-even]",
-            "decimal(1234, 3) / decimal(2, 0)",
-            Expected::Refused {
-                code: "ill_typed".to_owned(),
-                cause: Some("type-mismatch".to_owned()),
-            },
-        )],
+            };
+            result_types
+                .into_iter()
+                .map(|result_type| function(result_type, &expression, refusal()))
+                .collect()
+        }
         "D10" => quoted(vector.inputs)
             .into_iter()
             .map(|ty| SourceCase {
@@ -3698,9 +3714,6 @@ fn every_published_vector_has_an_explicit_source_qualification_status() {
             sampled.push(identity);
         } else {
             let reason = match (vector.test_case, vector.id) {
-                (TestCase::Tc185, "D13" | "D18") => {
-                    "published evaluator-boundary operands explicitly have no source form"
-                }
                 (TestCase::Tc186, "T06") => {
                     "invalid UTF-8 reader-boundary input, not a source value"
                 }
