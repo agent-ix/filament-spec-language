@@ -4478,7 +4478,8 @@ fn independent_universe_hex(universe: &filament_exact::UniverseId) -> String {
     "FR-390-AC-6",
     "FR-390-AC-20",
     "FR-390-AC-21",
-    "FR-106-AC-62"
+    "FR-106-AC-62",
+    "FR-106-AC-64"
 )]
 fn incomplete_sole_population_is_returned_with_its_population_locus() {
     let (package, view) = fixture_with_view();
@@ -4522,6 +4523,155 @@ fn incomplete_sole_population_is_returned_with_its_population_locus() {
             )
             .unwrap()
         )
+    );
+}
+
+/// FR-106-AC-64: `n5` requires `otherSpare` through its `peer` field, and
+/// `otherSpare` requires `otherNodes` through `next`. Incompleteness follows
+/// that recursive walk order; completing the chain exposes the dangling
+/// reference. An unrelated incomplete population remains admissible.
+#[test]
+#[trace("TC-1071", "FR-106-AC-64")]
+fn recursive_required_populations_follow_walk_order_before_dangling_checks() {
+    let mut domain = document_ep();
+    let node = domain["types"]
+        .as_array_mut()
+        .expect("types")
+        .iter_mut()
+        .find(|ty| ty["displayName"] == "Node")
+        .expect("Node declaration");
+    node["fields"]
+        .as_array_mut()
+        .expect("Node fields")
+        .push(model::field("Node", "peer", &model::id("Other")));
+    let domain_bytes = serde_json::to_vec(&domain).expect("domain JSON");
+    let (package, view) = fixture_from_document(SOURCE, &domain_bytes);
+    let declaration = filament_checked::key::DeclarationKey {
+        package: model::PACKAGE.to_owned(),
+        node: model::id("Node"),
+    };
+    let root = ObjectReference::new(
+        view.object_universe_of(&declaration)
+            .expect("Node universe")
+            .identity()
+            .expect("Node identity"),
+        view.type_identities()[&declaration].clone(),
+        ObjectId::new("n5").expect("n5 identity"),
+    );
+    let selected = DocumentRef {
+        authority: "test".to_owned(),
+        identity: "fr106-ac64".to_owned(),
+    };
+    let evaluation_view = package.evaluation_view();
+    let observe = |incomplete: &[&str], dangling: bool| {
+        let other_next = serde_json::json!({"present": {"reference": {
+            "population": model::id("otherNodes"), "key": "child"
+        }}});
+        let child_next = if dangling {
+            serde_json::json!({"present": {"reference": {
+                "population": model::id("otherNodes"), "key": "field-ghost"
+            }}})
+        } else {
+            serde_json::json!({"absent": {}})
+        };
+        let snapshot = serde_json::json!({
+            "format": "filament.state.snapshot/v1",
+            "identity": {"authority": selected.authority.clone(), "identity": selected.identity.clone()},
+            "observation": "current",
+            "model": {"identity": model::PACKAGE},
+            "populations": [
+                {"population": model::id("nodes"), "complete": true, "objects": [{
+                    "key": "n5", "type": model::id("Node"), "fields": {
+                        "total": {"integer": "5"},
+                        "peer": {"reference": {"population": model::id("otherSpare"), "key": "ghost"}}
+                    }
+                }]},
+                {"population": model::id("otherSpare"), "complete": !incomplete.contains(&"otherSpare"), "objects": [{
+                    "key": "ghost", "type": model::id("Other"), "fields": {
+                        "marker": {"boolean": true}, "next": other_next
+                    }
+                }]},
+                {"population": model::id("otherNodes"), "complete": !incomplete.contains(&"otherNodes"), "objects": [{
+                    "key": "child", "type": model::id("Other"), "fields": {
+                        "marker": {"boolean": true}, "next": child_next
+                    }
+                }]},
+                {"population": model::id("elsewhereNodes"), "complete": false, "objects": []}
+            ],
+            "relationships": [{"relationship": model::id("relationship/otherLinks"), "complete": true, "instances": []}]
+        });
+        let package_input = fsl_semantics::model::intake::package_input([domain_bytes.as_slice()])
+            .expect("domain package input");
+        let snapshots = [(
+            selected.clone(),
+            serde_json::to_vec(&snapshot).expect("snapshot JSON"),
+        )]
+        .into_iter()
+        .collect();
+        evaluation_view.admit_protocol_observation(
+            &package.graph().model_selections()[0],
+            &package_input,
+            fsl_semantics::model::accounting::ModelNormalizationLimits::default(),
+            &snapshots,
+            &selected,
+            ObservationLimits::default(),
+        )
+    };
+    let capture = slot(&package, "Refunds", "Refunds", "captures", Some(0));
+    let call =
+        |observation: &ObservationAdmission<fsl_package::AdmittedProtocolObservation<'_>>| {
+            package.evaluate_protocol_slot(
+                &capture,
+                &supply(
+                    &package,
+                    "Refunds",
+                    vec![("view", Value::Reference(root.clone()))],
+                    Some(observation),
+                ),
+                &mut Meter::new(UNLIMITED),
+            )
+        };
+
+    for (incomplete, expected) in [
+        (&["otherSpare", "otherNodes"][..], "otherSpare"),
+        (&["otherNodes"][..], "otherNodes"),
+    ] {
+        let observation = observe(incomplete, false);
+        let Err(CallFailure::Admission(failure)) = call(&observation) else {
+            panic!("{expected} must stop protocol admission before evaluation")
+        };
+        let CallAdmissionFailure::Incomplete(record) = failure.as_ref() else {
+            panic!("{expected} is incomplete: {failure:?}")
+        };
+        assert_eq!(
+            record.record.catalog,
+            CatalogCode::new("incomplete_population", "incomplete-scope")
+        );
+        assert_eq!(record.record.fields["population"], model::id(expected));
+        assert_eq!(
+            record.locus,
+            CallAdmissionLocus::Population(population_node(expected))
+        );
+    }
+
+    let observation = observe(&[], true);
+    let Err(CallFailure::Admission(failure)) = call(&observation) else {
+        panic!("completing the recursive extent must expose its dangling reference")
+    };
+    let CallAdmissionFailure::Refused(record) = failure.as_ref() else {
+        panic!("the completed nested population exposes check 8: {failure:?}")
+    };
+    assert_eq!(
+        record.record.catalog,
+        CatalogCode::new("dangling_reference", "absent-target-in-complete-population")
+    );
+    assert_eq!(record.record.fields["population"], model::id("otherNodes"));
+    assert_eq!(record.record.fields["object"], "field-ghost");
+
+    let observation = observe(&[], false);
+    assert_value_eq!(
+        completed(call(&observation).expect("complete recursive extents admit")),
+        int(5)
     );
 }
 
