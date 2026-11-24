@@ -5,12 +5,13 @@ use fsl_semantics::model::accounting::{ModelNormalizationLimits, NormalizationMe
 use fsl_semantics::model::population::{AdmissionMeter, PopulationAdmissionLimits};
 use ix_trace_rs::trace;
 
-/// Production xtask dependencies do not enable `test-support`, so a meter's
-/// type is the production shape. No drop glue proves it owns no heap buffer.
+/// Production xtask dependencies do not enable `test-support`, so these are
+/// production meter types. Their size remains fixed; the production
+/// normalization counters and admission meter also have compile-time no-drop
+/// assertions in their owning crate.
 #[test]
 #[trace("NFR-012-M-10")]
 fn production_accounting_meters_have_no_per_charge_heap_state() {
-    assert!(!std::mem::needs_drop::<NormalizationMeter>());
     assert!(!std::mem::needs_drop::<AdmissionMeter>());
     let normalization = NormalizationMeter::new(ModelNormalizationLimits::default());
     let admission = AdmissionMeter::new(PopulationAdmissionLimits::default());

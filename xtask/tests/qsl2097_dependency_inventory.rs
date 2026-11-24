@@ -15,32 +15,50 @@ fn root() -> PathBuf {
         .to_path_buf()
 }
 
-fn dependencies(value: &Value) -> Vec<(String, String)> {
+fn dependencies(value: &Value, workspace_dependencies: &Value) -> Vec<(String, String)> {
     let Some(table) = value.as_table() else {
         return Vec::new();
     };
     table
         .iter()
         .map(|(alias, declaration)| {
-            let name = declaration
-                .get("package")
+            let direct = declaration
+                .as_table()
+                .and_then(|declaration| declaration.get("package"))
                 .and_then(Value::as_str)
-                .unwrap_or(alias)
-                .to_owned();
+                .or_else(|| {
+                    declaration
+                        .as_table()
+                        .and_then(|declaration| declaration.get("workspace"))
+                        .and_then(Value::as_bool)
+                        .filter(|inherited| *inherited)
+                        .and_then(|_| workspace_dependencies.get(alias))
+                        .and_then(|declaration| declaration.as_table())
+                        .and_then(|declaration| declaration.get("package"))
+                        .and_then(Value::as_str)
+                });
+            let name = direct.unwrap_or(alias).to_owned();
             (name, alias.clone())
         })
         .collect()
 }
 
-fn manifest_dependencies(manifest: &Value) -> Vec<(String, String)> {
+fn manifest_dependencies(
+    manifest: &Value,
+    workspace_dependencies: &Value,
+) -> Vec<(String, String)> {
     let mut result = Vec::new();
     for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
-        result.extend(dependencies(&manifest[section]));
+        if let Some(declaration) = manifest.get(section) {
+            result.extend(dependencies(declaration, workspace_dependencies));
+        }
     }
     if let Some(targets) = manifest.get("target").and_then(Value::as_table) {
         for target in targets.values() {
             for section in ["dependencies", "dev-dependencies", "build-dependencies"] {
-                result.extend(dependencies(&target[section]));
+                if let Some(declaration) = target.get(section) {
+                    result.extend(dependencies(declaration, workspace_dependencies));
+                }
             }
         }
     }
@@ -69,6 +87,7 @@ fn direct_workspace_dependencies_are_present_in_the_lockfile() {
     let members = workspace["workspace"]["members"]
         .as_array()
         .expect("workspace members");
+    let workspace_dependencies = &workspace["workspace"]["dependencies"];
     for member in members.iter().filter_map(Value::as_str) {
         let manifest_path = root.join(member).join("Cargo.toml");
         let manifest: Value = toml::from_str(
@@ -76,7 +95,7 @@ fn direct_workspace_dependencies_are_present_in_the_lockfile() {
                 .unwrap_or_else(|error| panic!("{}: {error}", manifest_path.display())),
         )
         .unwrap_or_else(|error| panic!("{}: {error}", manifest_path.display()));
-        for (package, alias) in manifest_dependencies(&manifest) {
+        for (package, alias) in manifest_dependencies(&manifest, workspace_dependencies) {
             assert!(
                 locked.contains(package.as_str()),
                 "{} dependency `{alias}` resolves to `{package}`, absent from Cargo.lock",
