@@ -108,6 +108,88 @@ fn exact_request_over_strict_guard_timed_rpc_is_decided_over_regions() {
     );
 }
 
+/// FR-196-AC-13: a timed product's undefined key keeps its pre-read monitor,
+/// model state, and digital clock/deadline control after the actual delay.
+#[trace("FR-196-AC-13", "TC-641")]
+#[test]
+fn a_timed_undefined_read_keeps_its_complete_pre_read_product_key() {
+    let mut document: serde_json::Value =
+        serde_json::from_slice(&crate::timed_world::document(&["x"], &[("drop", &[])]))
+            .expect("the timed fixture emits JSON");
+    let operation = &mut document["types"][1]["operations"][0];
+    operation["params"] = serde_json::json!([{
+        "identity": crate::timed_world::ident("Call/drop/b"),
+        "name": "b",
+        "typeRef": crate::timed_world::ident("Phase"),
+        "presence": "required",
+        "nullable": false,
+        "defaultKind": "none",
+        "multiplicity": {"lower": 1, "upper": 1, "ordered": false, "unique": true},
+        "origin": {"generated": {
+            "generatorIdentity": crate::timed_world::ident("Call/drop/b"),
+            "generatorVersion": "1.0.0",
+            "inputIdentities": [crate::timed_world::ident("Call/drop/b")]
+        }}
+    }]);
+    operation["frame"]["deletes"] =
+        serde_json::json!([crate::timed_world::ident("Call")]);
+    let body = format!(
+        "{}\
+         post Drop using v on M::Call::drop {{ (b = 0 and count(o in M::calls where true) = 0) or (b = 1 and count(o in M::calls where true) = 1) }}\n\
+         random Call::drop(b) ~ {{ 0: 1, 1: 1 }};\n\
+         delay M::Call::drop ~ discrete {{ 1 ms: 1 }};\n\
+         workload Even on M {{ weight Call::drop = 1; }}\n\
+         probabilistic UndefinedTimed using timed on M over (c: M::Call) under Even on origin\n\
+             with alpha 0.4, beta 0.4, indifference 0.005\n\
+             {{ probability >= 0.5 [ always[0 ms, 3 ms] holds(c.phase = 0) ] }}\n",
+        crate::timed_world::DENSE,
+    );
+    let world = crate::timed_world::world_holding(
+        &document.to_string().into_bytes(),
+        "profile timed = \"filament.temporal.timed/v1\";\n",
+        &body,
+        &serde_json::json!({"x": {"integer": "0"}}),
+    );
+    let claim = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .claim("UndefinedTimed")
+        .expect("the timed undefined claim checks");
+    let request = ProductRequest {
+        subject: ModelSubject {
+            simulation: world.request(),
+            proof_bounds: Vec::new(),
+        },
+        claim,
+        limits: ExactProbLimits::default(),
+    };
+    let ProbBuild::Undefined(path) = build_product(request, &Cancel::new())
+        .expect("the timed product reports its undefined read")
+    else {
+        panic!("the timed product returns an undefined path");
+    };
+    let [step] = path.steps.as_slice() else {
+        panic!("one delayed drop reaches the undefined read: {:?}", path.steps);
+    };
+    assert_eq!(path.position, 1);
+    assert_eq!(path.probability, ratio(1, 2));
+    assert_eq!(step.probability, ratio(1, 2));
+    assert_eq!(step.target, path.key);
+    assert!(matches!(path.read, UndefinedRead::Atom(_)));
+    assert!(path.key.monitor.is_some(), "the bounded control is retained");
+    assert!(path.key.accumulator.is_none());
+    assert!(path.key.pending.is_none());
+    let timed_key = path
+        .key
+        .certificate_state
+        .as_ref()
+        .expect("the product key carries its independently checkable timed state");
+    assert!(fsl_replay::digital_key_clocks(&world.system(), claim, timed_key).is_some(),
+        "the pre-read key carries the delayed clock valuation"
+    );
+}
+
 fn refused(world: &World, claim: &str) -> ProductRefusal {
     match build_product(
         world.request(claim, ModelCheckLimits::default()),
