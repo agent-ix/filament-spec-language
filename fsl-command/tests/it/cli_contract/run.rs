@@ -6,6 +6,7 @@
 //! and odd request and source input.
 
 use fsl_command::command::{RequestOverrides, RunLimits};
+use crate::config_version_spine::spine as config_domain;
 use ix_trace_rs::trace;
 use serde_json::value::RawValue;
 use serde_json::{json, Value};
@@ -18,13 +19,6 @@ const SOURCE: &str = "language \"ix:native\" edition \"1-draft\";\n\
     function IsPacked using v(n: Int[0, 10]): Boolean pure { n >= 6 }\n";
 
 const STAMPED: &str = "filament.temporal.timestamped-event.finite-window/v1";
-
-#[path = "../../../../examples/config-version/spine_unit.rs"]
-#[allow(
-    dead_code,
-    reason = "the command regression uses the genuine domain package"
-)]
-mod config_domain;
 
 fn request(file: &str, function: &str, arguments: &[(&str, Value)]) -> Value {
     let arguments: Vec<Value> = arguments
@@ -930,7 +924,6 @@ fn request_and_dependent_byte_ceilings_are_reached_and_raised() {
         RunLimits {
             request_bytes: request_size,
             dependent_bytes: SOURCE.len(),
-            ..RunLimits::default()
         },
         &RequestOverrides::default(),
     );
