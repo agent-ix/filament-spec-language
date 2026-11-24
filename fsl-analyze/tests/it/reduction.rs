@@ -1014,9 +1014,9 @@ fn a_constrained_run_is_deterministic() {
     ));
 }
 
-/// Partial TC-581 coverage: repeating the AC-1 violating run produces an
-/// equal outcome, replay path and product-state count. This engine API does
-/// not expose the number of boundary states for a violated outcome.
+/// Partial TC-581 coverage: repeating the AC-1 run produces equal outcomes,
+/// paths and product-state counts. This engine API does not expose the
+/// number of boundary states for a violated outcome.
 #[trace("TC-581")]
 #[test]
 fn repeating_ac1_keeps_the_same_boundary_counterexample() {
@@ -1033,8 +1033,14 @@ fn repeating_ac1_keeps_the_same_boundary_counterexample() {
         vec![atom(|v| Some(v <= 1))],
         constraint("Low"),
     );
-    assert_eq!(first, second);
-    assert_eq!(path(&world, &first), [(0, 0, 0), (1, 0, 0), (2, 0, 0)]);
+    assert_eq!(first, second, "repeating AC-1 gives an equal outcome");
+    let first_path = path(&world, &first);
+    let second_path = path(&world, &second);
+    assert_eq!(
+        first_path, second_path,
+        "repeating AC-1 gives an equal path"
+    );
+    assert_eq!(first_path, [(0, 0, 0), (1, 0, 0), (2, 0, 0)]);
     assert_eq!(receivers(&world, &first), ["a", "a"]);
     assert_eq!(first.stats().product_states, second.stats().product_states);
 }

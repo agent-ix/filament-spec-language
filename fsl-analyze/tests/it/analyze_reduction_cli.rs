@@ -353,10 +353,12 @@ fn constraint_request_key_truth_and_invalid_selections_are_typed() {
 }
 
 /// Partial TC-581 coverage: the constrained and unconstrained requests keep
-/// the same claim identity while receiving their own independent outcomes.
+/// one obligation identity, have different request identities, and settle
+/// independently. AC-4 remains open for the terminal method member and
+/// equal boundary counts, which the current public outcome API does not expose.
 #[trace("TC-581")]
 #[test]
-fn a_constraint_does_not_cross_settle_the_same_claim_without_a_constraint() {
+fn a_constraint_keeps_obligation_identity_but_has_a_distinct_request_identity() {
     let ws = Workspace::new("fr158-independent-method-results");
     let body = format!(
         "constraint Low using v on M::Counter at current {{ self.value <= 1 }}\n{}",
@@ -376,10 +378,21 @@ fn a_constraint_does_not_cross_settle_the_same_claim_without_a_constraint() {
     let unconstrained = run.item(1);
 
     assert_ne!(selections[0], selections[1], "the method requests differ");
-    assert_ne!(constrained["request_index"], unconstrained["request_index"]);
+    let constrained_obligation_identity = constrained["request"]["claim"].clone();
+    let unconstrained_obligation_identity = unconstrained["request"]["claim"].clone();
     assert_eq!(
-        constrained["request"]["claim"],
-        unconstrained["request"]["claim"]
+        constrained_obligation_identity, unconstrained_obligation_identity,
+        "adding Low leaves the claim's obligation identity unchanged"
+    );
+    let constrained_request_identity = constrained["request_index"]
+        .as_u64()
+        .expect("the constrained item has a request identity");
+    let unconstrained_request_identity = unconstrained["request_index"]
+        .as_u64()
+        .expect("the plain item has a request identity");
+    assert_ne!(
+        constrained_request_identity, unconstrained_request_identity,
+        "the constrained and plain items have distinct request identities"
     );
     assert!(constrained["request"]["reductions"]["constraint"].is_object());
     assert!(unconstrained["request"]["reductions"].is_null());
