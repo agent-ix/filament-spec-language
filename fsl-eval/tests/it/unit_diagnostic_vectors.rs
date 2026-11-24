@@ -246,14 +246,25 @@ fn u11j_adapts_both_roots_and_preserves_the_first_defect() {
 fn u11k_adapts_the_earlier_cycle_before_the_later_zero_scale() {
     let vector = vector("U11k");
     let inputs = quoted(vector.inputs);
-    assert_eq!(inputs.len(), 4, "U11k");
+    assert_eq!(
+        inputs.as_slice(),
+        &[
+            "L",
+            "T",
+            "L",
+            "unit u_self : L = 1 * u_self;",
+            "T",
+            "unit z : T = 0;",
+        ],
+        "U11k vector tokens in authored order"
+    );
     assert_expected(vector, "`invalid_package`/`definition-cycle`");
     let source = format!(
         "dimension {};\ndimension {};\n{}{}",
         inputs[0],
         inputs[1],
-        adapt_unit(inputs[2]),
-        adapt_unit(inputs[3])
+        adapt_unit(inputs[3]),
+        adapt_unit(inputs[5])
     );
     let (texts, refusal) = assemble_refusal(&[("u11-order", &source)]);
     assert_diagnostic(
@@ -271,7 +282,18 @@ fn u11k_adapts_the_earlier_cycle_before_the_later_zero_scale() {
 fn u11m_adapts_both_dimension_orders_and_their_diagnostic_payloads() {
     let vector = vector("U11m");
     let inputs = quoted(vector.inputs);
-    assert_eq!(inputs.len(), 4, "U11m");
+    assert_eq!(
+        inputs.as_slice(),
+        &[
+            "dimension Area = L ^ 2;",
+            "dimension L;",
+            "unit a : Area = 1 * b;",
+            "unit b : Area = 1 * a;",
+            "dimension L;",
+            "dimension Area = L ^ 2;",
+        ],
+        "U11m vector tokens in authored order"
+    );
     assert_expected(vector, "`invalid_package`/`definition-cycle`");
     assert_expected(vector, "`missing_declaration`/`missing-name`");
     let cycle_source = format!(
@@ -292,8 +314,8 @@ fn u11m_adapts_both_dimension_orders_and_their_diagnostic_payloads() {
 
     let base_source = format!(
         "{}\n{}\n{}{}",
-        inputs[1],
-        inputs[0],
+        inputs[4],
+        inputs[5],
         adapt_unit(inputs[2]),
         adapt_unit(inputs[3])
     );
