@@ -2230,7 +2230,10 @@ fn a_node_row_matches_the_attempt_identity_and_binder() {
 /// The verdict of the `put` step through the protocol node row `E(self.ring)`
 /// whose node field `r` is declared `Reference<declared>`, over the `twin`
 /// models with the object rows in the order `cell_first` says.
-fn node_row_verdict(declared: &str, cell_first: bool) -> StepVerdict {
+fn node_row_verdict(
+    declared: &str,
+    cell_first: bool,
+) -> (StepVerdict, Option<filament_exact::EffectiveId>) {
     let protocol = format!(
         "profile p = \"filament.protocol.finite-global/v1\";\n\
         protocol P using p over (q: Q::Queue) on origin {{\n\
@@ -2319,7 +2322,10 @@ fn node_row_verdict(declared: &str, cell_first: bool) -> StepVerdict {
             post: &post,
         },
     );
-    result.verdict
+    let expected = systems
+        .abstract_system
+        .type_identity(&ring_key(RING_QUEUE, declared.trim_start_matches("Q::")));
+    (result.verdict, expected)
 }
 
 /// FR-141-AC-15 (TC-546 step 10), FR-141-AC-16 (step 11): the node row's
@@ -2330,7 +2336,7 @@ fn node_row_verdict(declared: &str, cell_first: bool) -> StepVerdict {
 fn a_protocol_node_row_lifts_by_the_declared_field_type() {
     for cell_first in [true, false] {
         for declared in ["Q::Queue", "Q::Cell"] {
-            let verdict = node_row_verdict(declared, cell_first);
+            let (verdict, expected) = node_row_verdict(declared, cell_first);
             let StepVerdict::Passes { taken, .. } = verdict else {
                 panic!("{declared} (cell_first {cell_first}) lifts: {verdict:?}");
             };
@@ -2344,10 +2350,14 @@ fn a_protocol_node_row_lifts_by_the_declared_field_type() {
                 .flat_map(|trace| &trace.transitions)
                 .find_map(|transition| transition.binder_record())
                 .expect("the node transition has a binder record");
-            let wanted = format!("ring-queue-spec/{}", declared.trim_start_matches("Q::"));
-            assert!(
-                format!("{record:?}").contains(&wanted),
-                "{declared} (cell_first {cell_first}): r lifts to {wanted}: {record:?}"
+            let expected = expected.expect("the declared type is an abstract type");
+            let filament_exact::Value::Reference(lifted) = record else {
+                panic!("{declared} (cell_first {cell_first}): r is a reference: {record:?}");
+            };
+            assert_eq!(
+                lifted.object_type(),
+                &expected,
+                "{declared} (cell_first {cell_first}): r lifts to the declared type"
             );
         }
     }
