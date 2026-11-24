@@ -15,10 +15,10 @@ use std::path::Path;
 use filament_eval::{CallAdmissionFailure, CallFailure};
 use filament_exact::Meter;
 use fsl_eval::temporal::evidence::{
-    ActivationState, ClauseFormula, ClauseWork, CompletenessRecord, EvidencePackage,
-    EvidencePosition, EvidenceRef, EvidenceRequest, EvidenceResult, ExecutionDisposition,
-    ExecutionOrigin, PackageRows, Payload, Relation, SemanticTriggerIdentity,
-    TemporalEvidenceLimits, TraceBinding, TriggerEvidence,
+    ActivationState, ClauseFormula, ClauseWork, CompletenessRecord, EvidenceCounter,
+    EvidenceIncomplete, EvidencePackage, EvidencePosition, EvidenceRef, EvidenceRequest,
+    EvidenceResult, ExecutionDisposition, ExecutionOrigin, PackageRows, Payload, Relation,
+    SemanticTriggerIdentity, TemporalEvidenceLimits, TraceBinding, TriggerEvidence,
 };
 use fsl_eval::temporal::{ClockCover, ProgressClosure, ProgressCompleteness, Valuation};
 use fsl_foundation::SourceIdentity;
@@ -647,6 +647,205 @@ pub(super) fn cause(failure: &CallFailure) -> String {
     }
 }
 
+/// Checked tick arithmetic stops before evaluation, and an injected eviction
+/// of a valuation the selected clause needs is retained as an incomplete
+/// result naming its position and atom.
+#[test]
+#[trace("NFR-008-M-2", "NFR-008-M-4")]
+fn temporal_overflow_eviction_and_forced_stops_never_produce_truth() {
+    for (index, kind) in KINDS.into_iter().enumerate() {
+        let profile = match kind {
+            "event_position" => "filament.temporal.event-position.false-extension/v1",
+            "fixed_sample" => "filament.temporal.fixed-sample.false-extension/v1",
+            "timestamped_event" => "filament.temporal.timestamped-event.finite-window/v1",
+            _ => unreachable!(),
+        };
+        let sample = recipe(kind);
+        let wire = crate::support::resolved_package(sample.emission.package().bytes());
+        let clock: ClockConfiguration =
+            serde_json::from_value(wire["temporal_bindings"][0]["clock"].clone())
+                .expect("recipe clock");
+        let built = boundary_clause(
+            kind,
+            profile,
+            &clock,
+            "eventually[0,2] holds(c.versionNumber <= 1)",
+            index,
+        )
+        .expect("a simple temporal clause checks");
+        let read = built.read(&built.emission);
+        let package = EvidencePackage::from_read(
+            &read,
+            &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
+        )
+        .expect("read-back temporal package");
+        let clause = clause_ids(&package).into_iter().next().expect("a clause");
+        if kind == "timestamped_event" {
+            let mut overflow = request(&package, &clause, None, 3);
+            for position in &mut overflow.positions {
+                position.position = u64::MAX;
+            }
+            let (overflow, _) = run(&package, &clause, &overflow);
+            let overflow = overflow.expect("overflow is a typed incomplete result");
+            let Some(EvidenceIncomplete::Limit(reached)) = &overflow.incomplete else {
+                panic!(
+                    "{kind}: expected history-span stop, got {:?}",
+                    overflow.incomplete
+                );
+            };
+            assert_eq!(reached.counter, EvidenceCounter::HistorySpan, "{kind}");
+            assert_eq!(overflow.activation, ActivationState::Unavailable, "{kind}");
+            assert!(overflow.truth.is_none(), "{kind}");
+        }
+
+        let mut evicted = request(&package, &clause, None, 3);
+        evicted.evicted = vec![fsl_eval::temporal::evidence::Evicted::Valuation {
+            instance: None,
+            position: 0,
+            atom: 0,
+        }];
+        let (evicted, _) = run(&package, &clause, &evicted);
+        let evicted = evicted.expect("eviction is a typed incomplete result");
+        let Some(EvidenceIncomplete::EvictedValuation { position, atom, .. }) = &evicted.incomplete
+        else {
+            panic!(
+                "{kind}: expected named valuation eviction, got {:?}",
+                evicted.incomplete
+            );
+        };
+        assert_eq!((*position, *atom), (0, 0), "{kind}");
+        assert!(evicted.truth.is_none(), "{kind}");
+    }
+}
+
+fn boundary_clause(
+    kind: &str,
+    profile: &str,
+    clock: &ClockConfiguration,
+    clause: &str,
+    ordinal: usize,
+) -> Result<Built, Box<fsl_replay::spine::CompileRefusal>> {
+    let packages = fsl_semantics::model::intake::package_input([
+        crate::support::config_version_spine::spine::DOMAIN_PACKAGE.as_bytes(),
+    ])
+    .expect("the ConfigVersion model");
+    let source = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.model.complete/v1\";\n\
+         profile t = \"{profile}\";\n\
+         model Config = \"example/config-version\";\n\
+         temporal Sweep{ordinal} using t over (c: Config::ConfigVersion) clock \"model-steps\" on origin {{ {clause} }}\n"
+    );
+    let unit = crate::support::front_end::checked(
+        SourceIdentity::new("test", format!("nfr008-{kind}-{ordinal}")),
+        "boundary.native",
+        source.as_bytes(),
+        &packages,
+        &DependencyInput::default(),
+    )?;
+    Ok(emit(
+        unit,
+        &[(format!("Sweep{ordinal}"), clock.clone())],
+        packages,
+    ))
+}
+
+/// Enumerate all eight bounded operators, three profiles, four nesting
+/// depths, and four authored i64 boundary pairs. Every result is valued or a
+/// typed incomplete/non-value/indeterminate result; no case refuses or wraps.
+#[test]
+#[trace("NFR-008-M-1", "TC-1318")]
+fn temporal_declared_bound_population_returns_only_well_formed_assessments() {
+    let mut cases = 0;
+    let mut assessed = 0;
+    let mut stopped = 0;
+    let operators = [
+        "eventually{i} {a}",
+        "always{i} {a}",
+        "once{i} {a}",
+        "historically{i} {a}",
+        "({a} until{i} {a})",
+        "({a} release{i} {a})",
+        "({a} since{i} {a})",
+        "({a} triggered{i} {a})",
+    ];
+    let bounds = [
+        (0, i64::MAX),
+        (1, i64::MAX),
+        (i64::MAX - 1, i64::MAX),
+        (0, i64::MAX / 2),
+    ];
+    for kind in KINDS {
+        let profile = match kind {
+            "event_position" => "filament.temporal.event-position.false-extension/v1",
+            "fixed_sample" => "filament.temporal.fixed-sample.false-extension/v1",
+            "timestamped_event" => "filament.temporal.timestamped-event.finite-window/v1",
+            other => panic!("unknown temporal profile {other}"),
+        };
+        let sample = recipe(kind);
+        let wire = crate::support::resolved_package(sample.emission.package().bytes());
+        let clock: ClockConfiguration =
+            serde_json::from_value(wire["temporal_bindings"][0]["clock"].clone())
+                .expect("recipe clock configuration");
+        for template in operators {
+            for depth in 1..=4_usize {
+                for (lower, upper) in bounds {
+                    let interval = format!("[{lower}, {upper}]");
+                    let mut body = "holds(c.versionNumber >= 0)".to_owned();
+                    for _ in 0..depth {
+                        body = template.replace("{i}", &interval).replace("{a}", &body);
+                    }
+                    match boundary_clause(kind, profile, &clock, &body, cases) {
+                        Ok(built) => {
+                            let read = built.read(&built.emission);
+                            let package = EvidencePackage::from_read(
+                                &read,
+                                &mut fsl_package::V2ReadLimits::fixture().native_join_budget(),
+                            )
+                            .expect("boundary package reads");
+                            let clause = clause_ids(&package)
+                                .into_iter()
+                                .next()
+                                .expect("one temporal declaration");
+                            let asked = request(&package, &clause, None, 3);
+                            let (result, _) = run(&package, &clause, &asked);
+                            let result = result.unwrap_or_else(|failure| {
+                                panic!("{kind} case {cases}: {failure:?}")
+                            });
+                            if result.truth.is_none() {
+                                assert!(
+                                    result.incomplete.is_some()
+                                        || result.non_value.is_some()
+                                        || result.indeterminate.is_some(),
+                                    "{kind} case {cases}: no typed state: {result:?}"
+                                );
+                            }
+                            assessed += 1;
+                        }
+                        Err(refusal) => match *refusal {
+                            fsl_replay::spine::CompileRefusal::Limit(limit) => {
+                                assert_eq!(
+                                    limit.setting().name(),
+                                    "s3.work_units",
+                                    "{kind} case {cases}"
+                                );
+                                stopped += 1;
+                            }
+                            other => panic!("{kind} case {cases}: {other:?}"),
+                        },
+                    }
+                    cases += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(cases, 384);
+    assert!(
+        assessed > 0 && stopped > 0,
+        "assessed={assessed} stopped={stopped}"
+    );
+}
+
 /// The result of an `Ok` call; the sibling check of every refusal test.
 fn evaluated(result: Result<EvidenceResult, CallFailure>) -> EvidenceResult {
     result.unwrap_or_else(|failure| panic!("a result, not {failure:?}"))
@@ -845,7 +1044,14 @@ fn both_routes_give_the_evaluator_the_same_formula() {
 /// and the clause's own `binding` authenticates; replacing one clock row, one
 /// `CheckedNodeId` or one instance-bound atom of either side makes the two
 /// results differ.
-#[trace("FR-516-AC-18", "FR-516-AC-29", "FR-522-AC-20", "TC-1311", "TC-1317")]
+#[trace(
+    "FR-516-AC-18",
+    "FR-516-AC-29",
+    "FR-522-AC-20",
+    "TC-1311",
+    "TC-1317",
+    "NFR-008-M-5"
+)]
 #[test]
 fn the_call_gives_equal_results_over_both_routes_and_any_replaced_input_differs() {
     for kind in KINDS {
@@ -907,6 +1113,13 @@ fn the_call_gives_equal_results_over_both_routes_and_any_replaced_input_differs(
             changed.instance_bound.insert(atom);
             let bound = evaluated(call(&changed).0);
             assert_ne!(format!("{bound:?}"), format!("{left:?}"));
+            let mut changed_limits = asked.clone();
+            changed_limits.limits = changed_limits
+                .limits
+                .with_ceiling(EvidenceCounter::Positions, u64::MAX);
+            let (changed_limits, _) = run(&emitted, &clause, &changed_limits);
+            let changed_limits = evaluated(changed_limits);
+            assert_ne!(left.result_identity, changed_limits.result_identity);
             // One clock row: the same row under another clock name.
             let mut replaced = subject.occurrences[0].clock.expect("a row").clone();
             replaced.clock_name = "another-clock".into();

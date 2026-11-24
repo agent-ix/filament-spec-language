@@ -137,6 +137,9 @@ fsl-analyze = { path = "fsl-analyze" }
 # FR-865-AC-7: the export outcome's text form through `render_outcome`. No
 # shipped module of this crate renders, so it is a dev dependency only.
 fsl-inspect = { path = "fsl-inspect" }
+# FR-356-AC-7's shared deep-input generator drives the actual S1-to-S4 path
+# from the allowed root integration-test lane.
+fsl-bench = { path = "fsl-bench" }
 tempfile = "3.27.0"
 jsonschema = { version = "0.17.1", default-features = false, features = ["draft202012"] }
 serde_json = { version = "1.0.151", features = ["raw_value"] }

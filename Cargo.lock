@@ -712,6 +712,7 @@ dependencies = [
  "filament-semantic-value",
  "filament-specification-qualification",
  "fsl-analyze",
+ "fsl-bench",
  "fsl-command",
  "fsl-cst",
  "fsl-eval",

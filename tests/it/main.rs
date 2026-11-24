@@ -38,6 +38,7 @@ mod probability_source_routes;
 mod protocol_saga_route;
 #[cfg(feature = "checked-handoff")]
 mod protocol_source_routes;
+mod qsl2097_measurements;
 mod refinement_source_routes;
 mod source_corpus;
 
