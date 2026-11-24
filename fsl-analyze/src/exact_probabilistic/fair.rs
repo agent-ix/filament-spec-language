@@ -3,7 +3,7 @@
 
 use std::collections::{BTreeSet, VecDeque};
 
-use filament_exact::{Integer, Rational};
+use filament_exact::{Cancel, Integer, Rational};
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity, FairnessKind};
 use fsl_replay::ExactProbLimits;
 use fsl_semantics::check::Bound;
@@ -133,9 +133,10 @@ pub fn decide_fair_bounded_event(
     product: &ProbProduct,
     bound: &Bound,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<FairBoundedResult, FhError> {
     Ok(FairBoundedResult {
-        outcome: decide_bounded_event(product, bound, limits)?,
+        outcome: decide_bounded_event(product, bound, limits, cancel)?,
         fairness: product.fairness.clone(),
     })
 }
@@ -310,6 +311,7 @@ pub fn decide_fair_reachability(
     target: &[bool],
     objective: UnboundedObjective,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<FairUnboundedResult, FairProductError> {
     if target.len() != product.states.len()
         || from.is_some_and(|labels| labels.len() != product.states.len())
@@ -402,9 +404,9 @@ fn fair_reachability(
     let (values, policy_values, optimizing_policy) = match objective {
         UnboundedObjective::Max => {
             let result = if let Some(from) = from {
-                decide_until(product, from, target, objective, limits)?
+                decide_until(product, from, target, objective, limits, cancel)?
             } else {
-                decide_reachability(product, target, objective, limits)?
+                decide_reachability(product, target, objective, limits, cancel)?
             };
             (result.values.clone(), result.values, result.policy)
         }
@@ -416,7 +418,7 @@ fn fair_reachability(
                 }
             }
             let transformed = if let Some(from) = from {
-                decide_until(product, from, &fair_states, UnboundedObjective::Max, limits)?
+                decide_until(product, from, &fair_states, UnboundedObjective::Max, limits, cancel)?
             } else {
                 decide_until(
                     product,
@@ -424,6 +426,7 @@ fn fair_reachability(
                     &fair_states,
                     UnboundedObjective::Max,
                     limits,
+                    cancel,
                 )?
             };
             let values = transformed
@@ -465,6 +468,7 @@ pub fn decide_fair_long_run_mdp(
     weight: Option<&str>,
     bound: &Bound,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<FairLongRunResult, FairProductError> {
     if product.kind != ProductKind::Mdp || predicate.len() != product.states.len() {
         return Err(FairProductError::InvalidForm);
@@ -486,15 +490,8 @@ pub fn decide_fair_long_run_mdp(
             .iter()
             .map(|state| state.index())
             .collect::<Vec<_>>();
-        let (rho, policy, bias, _) = optimize_mec_fraction(
-            &graph,
-            &states,
-            predicate,
-            weight,
-            objective,
-            limits.max_policy_iterations,
-            limits.max_rational_bits,
-        )?;
+        let (rho, policy, bias, _) =
+            optimize_mec_fraction(&graph, &states, predicate, weight, objective, limits, cancel)?;
         for state in &states {
             fixed[*state] = Some(rho.clone());
             selected_policy[*state] = policy[*state];
@@ -539,15 +536,8 @@ pub fn decide_fair_long_run_mdp(
         }) {
             continue;
         }
-        let (rho, policy, bias, _) = optimize_mec_fraction(
-            &graph,
-            component,
-            predicate,
-            weight,
-            objective,
-            limits.max_policy_iterations,
-            limits.max_rational_bits,
-        )?;
+        let (rho, policy, bias, _) =
+            optimize_mec_fraction(&graph, component, predicate, weight, objective, limits, cancel)?;
         for state in component {
             fixed[*state] = Some(rho.clone());
             selected_policy[*state] = policy[*state];
@@ -676,12 +666,14 @@ pub fn decide_fair_expected_reward(
     reward: &str,
     objective: UnboundedObjective,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<FairExpectedRewardResult, FairProductError> {
     let evaluation = evaluation_of(product)?;
     let target = evaluation
         .extend(target)
         .ok_or(FairProductError::InvalidForm)?;
-    let mut result = fair_expected_reward(&evaluation.product, &target, reward, objective, limits)?;
+    let mut result =
+        fair_expected_reward(&evaluation.product, &target, reward, objective, limits, cancel)?;
     result.values = evaluation.restrict(result.values);
     Ok(result)
 }
@@ -692,12 +684,13 @@ fn fair_expected_reward(
     reward: &str,
     objective: UnboundedObjective,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<FairExpectedRewardResult, FairProductError> {
     if product.kind != ProductKind::Mdp || target.len() != product.states.len() {
         return Err(FairProductError::InvalidForm);
     }
     if objective == UnboundedObjective::Min {
-        let result = decide_expected_reward(product, target, reward, objective, limits)?;
+        let result = decide_expected_reward(product, target, reward, objective, limits, cancel)?;
         let graph = Graph::new(product)?;
         let policy = deterministic_choices(&result.policy);
         validate_fair_witness(product, &graph, &policy, &product.fairness)?;
@@ -709,8 +702,14 @@ fn fair_expected_reward(
     }
 
     let graph = Graph::new(product)?;
-    let fair_reach =
-        decide_fair_reachability(product, None, target, UnboundedObjective::Min, limits)?;
+    let fair_reach = decide_fair_reachability(
+        product,
+        None,
+        target,
+        UnboundedObjective::Min,
+        limits,
+        cancel,
+    )?;
     let mecs = maximal_end_components(&graph)?;
     let mut positive_components = Vec::new();
     for component in &mecs {
@@ -743,6 +742,7 @@ fn fair_expected_reward(
             &positive_states,
             UnboundedObjective::Max,
             limits,
+            cancel,
         )?)
     } else {
         None
@@ -768,6 +768,7 @@ fn fair_expected_reward(
         reward,
         UnboundedObjective::Max,
         limits,
+        cancel,
     )?;
     let mut values = (0..product.states.len())
         .map(|state| finite.values[collapse_map[state]].clone())

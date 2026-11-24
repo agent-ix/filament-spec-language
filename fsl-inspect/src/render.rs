@@ -1777,8 +1777,12 @@ mod tests {
         type Key = usize;
         type Finding = usize;
 
-        fn initial(&self) -> Vec<usize> {
-            vec![0]
+        type InitialError = std::convert::Infallible;
+
+        fn initial_iter(
+            &self,
+        ) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+            std::iter::once(Ok(0))
         }
         fn key(&self, state: &usize) -> usize {
             *state

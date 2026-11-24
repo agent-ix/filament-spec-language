@@ -1097,7 +1097,7 @@ fn an_attempt_outside_the_precondition_records_one_finding_per_candidate_post_st
     let model = ModelSystem::new(simulation).expect("the subject admits");
     let system = ProtocolSystem::new(model, &subject, Sc).expect("the protocol system builds");
     let expanded = system
-        .successors(&system.initial()[0])
+        .successors(&system.try_initial().expect("initial states settle")[0])
         .expect("the state expands");
     // The argument vector `amount = 5`: the postcondition is refused at every
     // candidate post-state, and the application gives no successor.

@@ -209,7 +209,12 @@ pub(super) fn check(
     let group = if request.reductions.is_empty() {
         SymmetryGroup::default()
     } else {
-        match precheck(&request.reductions, &request.item, &system)? {
+        match precheck(
+            &request.reductions,
+            &request.item,
+            &system,
+            request.limits.limits.max_states,
+        )? {
             Admitted::Group(group) => group,
             Admitted::Settled(outcome) => return Ok(outcome),
         }
@@ -604,9 +609,7 @@ fn retained<'l, S: LiveSubject>(
         || run.cancel.poll() && run.cancel.cause().is_some(),
         |state| product.encoded_key(state, identity),
     )
-    .map_err(|error| {
-        ModelCheckRefusal::Encoding(EncodingRefusal::of(&error, IdentityLimits::default()))
-    })
+    .map_err(|error| error.model_refusal(IdentityLimits::default()))
 }
 
 impl<'a> LiveSubject for ModelSystem<'a> {
@@ -1027,6 +1030,8 @@ enum Halt {
     Cancelled(CancelCause),
     /// The automaton reached `max_automaton_states`.
     Automaton(u64),
+    /// Another distinct initial product state would exceed the remaining budget.
+    InitialStates,
     /// An identity has no canonical encoding, or an invariant broke.
     Refusal(ModelCheckRefusal),
 }
@@ -1320,9 +1325,22 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
 
     /// The initial product states: each initial model state paired with each
     /// property state its letter reads into.
-    fn start_states(&mut self) -> Result<(), ExpansionStop> {
-        let mut initial = Vec::new();
-        for model in self.system.initial() {
+    fn start_states(
+        &mut self,
+        group: &SymmetryGroup,
+        max_states: usize,
+    ) -> Result<(), ExpansionStop> {
+        let mut initial = BTreeMap::new();
+        let identity = IdentityLimits::default();
+        for model in self.system.initial_for_check(max_states) {
+            let model = model.map_err(|refusal| match refusal {
+                InitialStateRefusal::OverBudget(_) => self.record(Halt::InitialStates),
+                InitialStateRefusal::Encoding(refusal) => {
+                    self.record(Halt::Refusal(ModelCheckRefusal::Encoding(refusal)))
+                }
+                InitialStateRefusal::Construction(refusal) => self
+                    .record(Halt::Refusal(ModelCheckRefusal::Protocol(refusal.into()))),
+            })?;
             let (model_key, reading) = self.reading_at(&model, true)?;
             let properties = self.step(Before::Start, &reading)?;
             if properties.is_empty() {
@@ -1333,15 +1351,37 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
                 });
             }
             for property in properties {
-                initial.push(LState {
+                let state = LState {
                     model: model.clone(),
                     model_key: model_key.clone(),
                     property,
                     depth: 0,
-                });
+                };
+                let canonical;
+                let keyed = if group.is_trivial() {
+                    &state
+                } else {
+                    (canonical, _) = self.canonical(&state, group).ok_or_else(|| {
+                        self.record(Halt::Refusal(fault("a-reduced-product-offers-symmetry")))
+                    })??;
+                    &canonical
+                };
+                let key = quire_canonical::to_vec(
+                    &self.key(keyed),
+                    quire_canonical::Limits::new(identity.input_bytes),
+                )
+                .map_err(|error| {
+                    self.record(Halt::Refusal(ModelCheckRefusal::Encoding(
+                        EncodingRefusal::of(&error, identity),
+                    )))
+                })?;
+                initial.entry(key).or_insert(state);
+                if initial.len() > max_states {
+                    return Err(self.record(Halt::InitialStates));
+                }
             }
         }
-        self.initial = initial;
+        self.initial = initial.into_values().collect();
         Ok(())
     }
 }
@@ -1460,8 +1500,10 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
     type Key = ProductKey<S::Key, PropertyKey>;
     type Finding = Finding<Tr<S>>;
 
-    fn initial(&self) -> Vec<Self::State> {
-        self.initial.clone()
+    type InitialError = std::convert::Infallible;
+
+    fn initial_iter(&self) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+        self.initial.iter().cloned().map(Ok)
     }
 
     fn key(&self, state: &Self::State) -> Self::Key {
@@ -2182,12 +2224,12 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             found: Cell::new(None),
             halt: RefCell::new(None),
         };
-        if product.start_states().is_err() {
-            return self.halted(&product, totals).map(Err);
-        }
         // The budgets are the run's, shared by every binding.
         let spent = self.request.limits.limits;
         let (max_states, max_transitions) = totals.remaining(spent);
+        if product.start_states(&binding.group, max_states).is_err() {
+            return self.halted(&product, totals).map(Err);
+        }
         let remaining = Limits {
             max_states,
             max_transitions,
@@ -2286,6 +2328,10 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             ),
             Halt::Cancelled(source) => Ending::Stopped(IncompleteCause::Cancelled { source }, None),
             Halt::Automaton(limit) => reached(ModelCheckLimit::MaxAutomatonStates, limit),
+            Halt::InitialStates => reached(
+                ModelCheckLimit::MaxStates,
+                widen(self.request.limits.limits.max_states),
+            ),
             Halt::Refusal(refusal) => return Err(refusal),
             Halt::Expansion(stop) => match stop.limit {
                 Some(ExpansionLimit::EvaluationMeter(counter)) => reached(

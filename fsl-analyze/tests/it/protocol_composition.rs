@@ -35,7 +35,10 @@ fn order_steps_over(package: &fsl_package::CheckedPackage, kinds: &[StepKind]) -
         .to_vec();
     let model = ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
     let system = ProtocolSystem::new(model, &subject, Sc).expect("the protocol system builds");
-    let mut state = system.initial().remove(0);
+    let mut state = system
+        .try_initial()
+        .expect("initial states settle")
+        .remove(0);
     let mut steps = Vec::new();
     for kind in kinds {
         let (transition, post) = system

@@ -107,10 +107,35 @@ pub enum ConstraintError {
 /// state; `None` when the subject's edges are already concrete.
 pub type LiftedEdge<T, S> = Option<(T, S)>;
 
+/// A refusal encountered while admitting initial states for a check.
+#[derive(Debug, thiserror::Error)]
+pub enum InitialStateRefusal {
+    /// The next distinct root would exceed the state budget.
+    #[error("initial states exceed max_states {0}")]
+    OverBudget(usize),
+    /// An initial root has no canonical encoding.
+    #[error(transparent)]
+    Encoding(#[from] EncodingRefusal),
+    /// The original refusal from settling the root.
+    #[error(transparent)]
+    Construction(crate::simulation::protocol::ProtocolRefusal),
+}
+
 /// A subject's transition system as EN-1 and replay read it.
 pub trait SubjectSystem:
     TransitionSystem<Finding = ModelFinding, State: Clone, TransitionId: SubjectTransition>
 {
+    /// The initial states in declaration order for exploration. Protocols
+    /// check root identity against `max_states` before settling a distinct
+    /// root. The caller also checks the budget on the resulting state keys.
+    fn initial_for_check(
+        &self,
+        _max_states: usize,
+    ) -> impl Iterator<Item = Result<Self::State, InitialStateRefusal>> + '_ {
+        self.initial_iter()
+            .map(|state| state.map_err(|error| InitialStateRefusal::Construction(error.into())))
+    }
+
     /// A target-specific loop-proof violation encoded in `state`, if this
     /// subject is an FR-730 proof-product run.
     fn loop_proof_violation<'s>(

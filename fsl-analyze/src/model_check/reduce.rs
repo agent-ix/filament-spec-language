@@ -11,14 +11,15 @@
 //! V-8 for the first selected reduction the system does not offer; (d)
 //! resolve the constraint. No state is expanded before it passes.
 
+use std::borrow::Borrow;
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_checked::key::DeclarationKey;
 use filament_semantic_value::fairness::PropertyForm;
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::model::ModelSystem;
+use fsl_eval::simulation::model::{ModelSimState, ModelSystem};
 use fsl_eval::simulation::{
-    EncodingRefusal, Permutation, SymmetryClass, SymmetryGroup, TransitionSystem,
+    EncodingRefusal, ExpansionStop, Permutation, SymmetryClass, SymmetryGroup, TransitionSystem,
 };
 use fsl_foundation::ReductionKind;
 use fsl_replay::{ModelCheckItem, ReductionCause, SymmetryBrokenCause, SymmetryRefusal};
@@ -241,39 +242,94 @@ pub fn closure(
     system: &ModelSystem<'_>,
     group: &SymmetryGroup,
 ) -> Result<Option<ReductionCause>, ClosureRefusal> {
-    let initial = system.initial();
-    let mut keys = BTreeSet::new();
-    for state in &initial {
-        keys.insert(system.state_key(state).map_err(ClosureRefusal::Encoding)?.0);
-    }
+    closure_of(system, group, system.generated_initial().enumerate(), None)
+}
+
+/// Check closure over the concrete starts a state-graph run already admitted.
+pub(super) fn closure_of_initial(
+    system: &ModelSystem<'_>,
+    group: &SymmetryGroup,
+    initial: &[ModelSimState],
+) -> Result<Option<ReductionCause>, ClosureRefusal> {
+    closure_of(system, group, initial.iter().enumerate(), None)
+}
+
+/// Check closure without first generating an over-budget initial set.
+pub fn closure_under_limit(
+    system: &ModelSystem<'_>,
+    group: &SymmetryGroup,
+    max_states: usize,
+) -> Result<Option<ReductionCause>, ClosureRefusal> {
+    closure_of(
+        system,
+        group,
+        system.generated_initial().enumerate(),
+        Some(max_states),
+    )
+}
+
+fn closure_of<S: Borrow<ModelSimState>>(
+    system: &ModelSystem<'_>,
+    group: &SymmetryGroup,
+    initial: impl Iterator<Item = (usize, S)>,
+    max_states: Option<usize>,
+) -> Result<Option<ReductionCause>, ClosureRefusal> {
     let generators = generators(group);
-    for (index, state) in initial.iter().enumerate() {
-        for (population, generator) in &generators {
+    if generators.is_empty() {
+        return Ok(None);
+    }
+    let mut keys = BTreeSet::new();
+    let mut orbits = BTreeSet::new();
+    let mut missing = BTreeMap::new();
+    for (index, state) in initial {
+        let state = state.borrow();
+        let (key, _) = system.state_key(state).map_err(ClosureRefusal::Encoding)?;
+        missing.remove(&key);
+        if !keys.insert(key) {
+            continue;
+        }
+        if let Some(max_states) = max_states {
+            let (canonical, _) = system
+                .canonicalise(state, group)
+                .map_err(ClosureRefusal::Stopped)?;
+            let (key, _) = system
+                .state_key(&canonical)
+                .map_err(ClosureRefusal::Encoding)?;
+            if orbits.insert(key) && orbits.len() > max_states {
+                return Err(ClosureRefusal::OverBudget);
+            }
+        }
+        for (order, (_, generator)) in generators.iter().enumerate() {
             let image = system
                 .permute(state, generator)
                 .map_err(|_| ClosureRefusal::Unordered)?;
-            if !keys.contains(
-                &system
-                    .state_key(&image)
-                    .map_err(ClosureRefusal::Encoding)?
-                    .0,
-            ) {
-                return Ok(Some(ReductionCause::SymmetryBroken {
-                    population: population.clone(),
-                    cause: SymmetryBrokenCause::InitialStatesNotClosed {
-                        initial: u64::try_from(index).unwrap_or(u64::MAX),
-                        generator: generator.clone(),
-                    },
-                }));
+            let (key, _) = system.state_key(&image).map_err(ClosureRefusal::Encoding)?;
+            if !keys.contains(&key) {
+                missing.entry(key).or_insert((index, order));
             }
         }
     }
-    Ok(None)
+    Ok(missing.into_values().min().map(|(index, order)| {
+        let (population, generator) = &generators[order];
+        ReductionCause::SymmetryBroken {
+            population: population.clone(),
+            cause: SymmetryBrokenCause::InitialStatesNotClosed {
+                initial: u64::try_from(index).unwrap_or(u64::MAX),
+                generator: generator.clone(),
+            },
+        }
+    }))
 }
 
 /// Why [`closure`] could not decide the initial states' closure.
 #[derive(Debug, thiserror::Error)]
 pub enum ClosureRefusal {
+    /// The distinct orbit representatives exceed max_states.
+    #[error("initial states exceed max_states")]
+    OverBudget,
+    /// Canonicalising an orbit representative stopped.
+    #[error("initial canonicalisation stopped: {0:?}")]
+    Stopped(ExpansionStop),
     /// A state key has no canonical encoding.
     #[error(transparent)]
     Encoding(EncodingRefusal),

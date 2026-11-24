@@ -20,6 +20,7 @@ pub(crate) mod fair_walk;
 pub(crate) mod false_extension;
 mod graph;
 mod hyper;
+mod initial;
 mod liveness;
 pub mod manifest;
 mod product;
@@ -39,17 +40,20 @@ pub use check::{
 };
 pub use fsl_replay::SubjectIdentity;
 pub use graph::{
-    Ample, Choice, GraphExploration, ProductStateId, RetainedEdge, RetainedGraph, RetainedState,
-    retain, retain_reduced,
+    retain, retain_reduced, Ample, Choice, GraphExploration, ProductStateId, RetainError,
+    RetainedEdge, RetainedGraph, RetainedState,
 };
 pub use hyper::{
     HyperCheckRequest, HyperRefusal, SingleExistentialRequest, SingleExistentialRun,
     alias_provisions, alias_system, check_hyper, check_single_existential,
 };
+#[cfg(feature = "test-support")]
+pub use initial::keyed_initial_states;
 pub use liveness::LivenessRefusal;
 pub use product::{
     Product, ProductFinding, ProductKey, ProductState, ProductTransition, PropertyComponent,
 };
+pub(crate) use reduce::closure_under_limit;
 pub use reduce::{
     ClosureRefusal, InstanceGroup, TableForm, admit, closure, generators, instance_groups,
     not_preserving, preserves, unoffered,

@@ -473,6 +473,7 @@ fn protocol_initial_closure(
     let mut queue = VecDeque::new();
     let mut seen = BTreeSet::new();
     for root in protocol.initial() {
+        let root = root.map_err(|error| refused(ModelTraceRefusal::Protocol(error)))?;
         let Some(model) = protocol.model_state(&root) else {
             continue;
         };
@@ -917,6 +918,7 @@ fn replay_abstract_timed_failure(
             payload.initial_state,
             first.state.state(),
         )
+        .map_err(|error| refused(ModelTraceRefusal::Protocol(error)))?
         .verdict
         {
             StepVerdict::Passes { post, .. } => *post,
@@ -1149,6 +1151,7 @@ fn settle_positions(
                         payload.initial_state,
                         position.state.state(),
                     )
+                    .map_err(|error| refused(ModelTraceRefusal::Protocol(error)))?
                     .verdict
                 }
                 None => check_initial(
@@ -2080,6 +2083,7 @@ fn replay_protocol_divergence(
                 payload.initial_state,
                 position.state.state(),
             )
+            .map_err(|error| refused(ModelTraceRefusal::Protocol(error)))?
         };
         match checked.verdict {
             StepVerdict::Passes { post, taken } => {

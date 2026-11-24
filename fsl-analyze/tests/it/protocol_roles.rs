@@ -923,7 +923,7 @@ fn an_on_each_protocol_starts_with_no_instance() {
     let world = World::new(&stuck(), &["c"], &[0, 1]);
     let subject = world.subject();
     let system = sc_system(&subject);
-    let initial = system.initial();
+    let initial = system.try_initial().expect("initial states settle");
     assert_eq!(initial.len(), 2);
     for state in &initial {
         assert!(!state.has_live_instance());
@@ -2384,9 +2384,13 @@ fn a_non_object_over_ranges_over_each_finite_value() {
     let model = ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
     let system = ProtocolSystem::new(model, &subject, Sc)
         .unwrap_or_else(|refusal| panic!("the system is built: {refusal:?}"));
-    assert_eq!(system.initial().len(), 4);
+    assert_eq!(
+        system.try_initial().expect("initial states settle").len(),
+        4
+    );
     let outcomes = system
-        .initial()
+        .try_initial()
+        .expect("initial states settle")
         .iter()
         .map(|state| {
             let Value::Integer(value) = state.over() else {
@@ -2418,9 +2422,13 @@ fn a_non_object_over_ranges_over_each_finite_value() {
     let model = ModelSystem::new(subject.model.simulation.clone()).expect("the subject admits");
     let system = ProtocolSystem::new(model, &subject, Sc)
         .unwrap_or_else(|refusal| panic!("the system is built: {refusal:?}"));
-    assert_eq!(system.initial().len(), 2);
+    assert_eq!(
+        system.try_initial().expect("initial states settle").len(),
+        2
+    );
     let mut booleans = system
-        .initial()
+        .try_initial()
+        .expect("initial states settle")
         .iter()
         .map(|state| {
             let Value::Boolean(value) = state.over() else {
@@ -2431,13 +2439,17 @@ fn a_non_object_over_ranges_over_each_finite_value() {
         .collect::<Vec<_>>();
     booleans.sort_unstable();
     assert_eq!(booleans, [false, true]);
-    assert!(system.initial().iter().all(|state| {
-        !system
-            .successors(state)
-            .expect("expands")
-            .successors
-            .is_empty()
-    }));
+    assert!(system
+        .try_initial()
+        .expect("initial states settle")
+        .iter()
+        .all(|state| {
+            !system
+                .successors(state)
+                .expect("expands")
+                .successors
+                .is_empty()
+        }));
 }
 
 /// FR-882-AC-4 (TC-2506): a checked Boolean attempt binder is present while

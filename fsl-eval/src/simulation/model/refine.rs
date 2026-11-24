@@ -21,7 +21,8 @@ use filament_exact::ValueType;
 use super::domain::Odometer;
 use super::walk::{exhausted, stop};
 use super::{
-    encode, identity_limits, state_document, ClauseOutcome, ModelSimState, ModelSystem, BROKEN,
+    encode, identity_limits, state_document, BoundedDomain, ClauseOutcome, ModelSimState,
+    ModelSystem, BROKEN,
 };
 use crate::simulation::expansion::{ExpansionLimit, ExpansionStop};
 use crate::simulation::key;
@@ -70,7 +71,16 @@ impl ModelSystem<'_> {
 
     /// The initial states, in the order the system was given them.
     pub fn initial_states(&self) -> &[ModelSimState] {
-        &self.initial
+        self.initial_all
+            .get_or_init(|| self.generated_initial().collect())
+    }
+
+    /// The initial states, generated one at a time from the documents' states
+    /// and the clock-count and presence-bit ranges, in the order
+    /// [`Self::initial_states`] lists them. No state past the last one pulled is
+    /// cloned or built, so an exponential set is never held.
+    pub fn generated_initial(&self) -> Box<dyn Iterator<Item = ModelSimState> + '_> {
+        super::generated(&self.initial_base, &self.initial_stages)
     }
 
     /// Evaluate `row` over `observed`, with `bindings` for
@@ -217,15 +227,25 @@ impl ModelSystem<'_> {
         value_type: &ValueType,
         objects: &[ObjectReference],
     ) -> Result<Vec<Value>, ExpansionStop> {
+        Ok(self.bounded_domain(value_type, objects)?.iter().collect())
+    }
+
+    pub(in crate::simulation) fn bounded_domain(
+        &self,
+        value_type: &ValueType,
+        objects: &[ObjectReference],
+    ) -> Result<BoundedDomain, ExpansionStop> {
         let domain = self
             .domain_with_clocks(value_type, objects)
             .ok_or_else(|| exhausted(ExpansionLimit::MaxCandidates))?;
-        if domain.len() > u128::from(self.limits.max_candidates) {
+        let cardinality = domain.len();
+        if cardinality > u128::from(self.limits.max_candidates) {
             return Err(exhausted(ExpansionLimit::MaxCandidates));
         }
-        Ok((0..domain.len())
-            .map_while(|index| domain.nth(index))
-            .collect())
+        Ok(BoundedDomain {
+            domain,
+            cardinality,
+        })
     }
 
     /// FR-101's canonical key of `state`, for a state built outside this system's expansion
@@ -320,10 +340,12 @@ impl<'a> ModelSystem<'a> {
             ),
         >,
     ) -> Self {
-        self.initial = states
+        self.initial_base = states
             .into_iter()
             .map(|(state, anchor)| ModelSimState::anchored(state, anchor))
             .collect();
+        self.initial_stages.clear();
+        self.initial_all = std::sync::OnceLock::new();
         self
     }
 }

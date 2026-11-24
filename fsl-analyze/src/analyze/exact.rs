@@ -602,7 +602,7 @@ fn run_timed(
         return not_yet();
     };
     let mut interval: Option<Interval> = None;
-    let (values, policy) = match decide_bounded_event(&product, bound, &limits) {
+    let (values, policy) = match decide_bounded_event(&product, bound, &limits, cancel) {
         Ok(FhResult::Exact { values, policy }) => (values, policy),
         Ok(FhResult::Bounds {
             lower,
@@ -1519,6 +1519,7 @@ fn run(
             &target,
             objective,
             &solve_limits,
+            cancel,
         ) {
             Ok(fair) => fair,
             Err(crate::exact_probabilistic::FairProductError::Product(error)) => {
@@ -1559,10 +1560,10 @@ fn run(
         (fair.values, Vec::new())
     } else if bounded_formula.is_some() {
         let outcome = if bounded_fair {
-            crate::exact_probabilistic::decide_fair_bounded_event(&product, bound, &limits)
+            crate::exact_probabilistic::decide_fair_bounded_event(&product, bound, &limits, cancel)
                 .map(|result| result.outcome)
         } else {
-            decide_bounded_event(&product, bound, &limits)
+            decide_bounded_event(&product, bound, &limits, cancel)
         };
         match outcome {
             Ok(FhResult::Exact { values, policy }) => (
@@ -2507,7 +2508,7 @@ fn raise_until_accepted(
             precision_bits: raised,
             ..*limits
         };
-        match decide_bounded_event(product, bound, &next) {
+        match decide_bounded_event(product, bound, &next, cancel) {
             Ok(FhResult::Bounds {
                 lower,
                 upper,

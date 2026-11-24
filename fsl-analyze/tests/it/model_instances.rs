@@ -300,6 +300,17 @@ impl World {
         universes: Vec<PopulationUniverse>,
         holds: bool,
     ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
+        self.run_within(over, universes, holds, ModelCheckLimits::default())
+    }
+
+    /// [`Self::run`] under `limits`.
+    fn run_within(
+        &self,
+        over: &str,
+        universes: Vec<PopulationUniverse>,
+        holds: bool,
+        limits: ModelCheckLimits,
+    ) -> Result<ModelCheckOutcome, ModelCheckRefusal> {
         let (package, clause) = self.clause(over);
         let letters = Constant(holds);
         check_model(
@@ -312,7 +323,7 @@ impl World {
                     letters: &letters,
                 },
                 max_depth: None,
-                limits: ModelCheckLimits::default(),
+                limits,
                 smt_encoding: Default::default(),
                 smt_run: Default::default(),
                 reductions: Default::default(),
@@ -329,6 +340,40 @@ impl World {
         over: &str,
         universes: Vec<PopulationUniverse>,
     ) -> Result<Vec<String>, ModelCheckRefusal> {
+        self.reach_within(over, universes, ModelCheckLimits::default())
+    }
+
+    /// [`Self::reach`] under `limits`.
+    fn reach_within(
+        &self,
+        over: &str,
+        universes: Vec<PopulationUniverse>,
+        limits: ModelCheckLimits,
+    ) -> Result<Vec<String>, ModelCheckRefusal> {
+        let run = self.reach_run(over, universes, limits)?;
+        let [instances] = run.items.as_slice() else {
+            panic!("one item");
+        };
+        if matches!(instances.as_slice(), [instance] if instance.outcome == fsl_replay::StateGraphOutcome::NoInstance)
+        {
+            return Ok(Vec::new());
+        }
+        Ok(instances
+            .iter()
+            .map(|instance| {
+                let reference = instance.over.as_ref().expect("a bound object");
+                reference.object().as_str().to_owned()
+            })
+            .collect())
+    }
+
+    /// The state-graph run of [`Self::reach`]'s claim under `limits`.
+    fn reach_run(
+        &self,
+        over: &str,
+        universes: Vec<PopulationUniverse>,
+        limits: ModelCheckLimits,
+    ) -> Result<fsl_analyze::model_check::StateGraphRun, ModelCheckRefusal> {
         let body = format!("possible Reach using v over (x: M::{over}) {{ true }}\n");
         let graph = declarations_in(PACKAGE, &self.document, &body)
             .check(
@@ -349,25 +394,12 @@ impl World {
                 reductions: Default::default(),
                 deadlock_freedom: false,
                 max_depth: None,
-                limits: ModelCheckLimits::default(),
+                limits,
                 seed: None,
             },
             &Cancel::new(),
         )?;
-        let [instances] = run.items.as_slice() else {
-            panic!("one item");
-        };
-        if matches!(instances.as_slice(), [instance] if instance.outcome == fsl_replay::StateGraphOutcome::NoInstance)
-        {
-            return Ok(Vec::new());
-        }
-        Ok(instances
-            .iter()
-            .map(|instance| {
-                let reference = instance.over.as_ref().expect("a bound object");
-                reference.object().as_str().to_owned()
-            })
-            .collect())
+        Ok(run)
     }
 
     /// The core's closure check of `over`'s clause under `universes`, of an
@@ -2079,4 +2111,73 @@ fn a_changed_state_is_observed_afresh() {
         );
     }
     assert_eq!(cached.observations(), 4);
+}
+
+/// `max_states` 0 as the model-check limits.
+fn no_states() -> ModelCheckLimits {
+    let mut limits = ModelCheckLimits::default();
+    limits.limits.max_states = 0;
+    limits
+}
+
+/// FR-126-AC-26 (TC-521): `check_model` keys its initial set one state at a
+/// time and refuses at `max_states` before keying the rest. Two distinct
+/// initial states are both keyed under the default budget, but only the first
+/// under `max_states` 0, which stops with `MaxStates` naming 0.
+#[trace("TC-521", "FR-126-AC-26")]
+#[test]
+fn check_model_refuses_at_max_states_before_keying_the_later_initial_states() {
+    let world = two_state_world();
+    let both = || universes(&[("P1", &["l", "s"])]);
+    let before = fsl_analyze::model_check::keyed_initial_states();
+    let held = world.run("Thing", both(), true).expect("checked");
+    assert!(matches!(held, ModelCheckOutcome::Holds { .. }), "{held:?}");
+    assert_eq!(fsl_analyze::model_check::keyed_initial_states() - before, 2);
+    let before = fsl_analyze::model_check::keyed_initial_states();
+    let stopped = world
+        .run_within("Thing", both(), true, no_states())
+        .expect("checked");
+    assert!(
+        matches!(
+            stopped,
+            ModelCheckOutcome::Stopped {
+                cause: fsl_replay::IncompleteCause::ResourceExhausted,
+                limit: Some(fsl_replay::ReachedLimit {
+                    limit: fsl_replay::ModelCheckLimit::MaxStates,
+                    value: 0,
+                }),
+                ..
+            }
+        ),
+        "{stopped:?}"
+    );
+    assert_eq!(fsl_analyze::model_check::keyed_initial_states() - before, 1);
+}
+
+/// FR-126-AC-26 (TC-521): the state-graph explorer refuses at `max_states`
+/// the same way, keying only the first of two initial states under `max_states`
+/// 0.
+#[trace("TC-521", "FR-126-AC-26")]
+#[test]
+fn state_graph_refuses_at_max_states_before_keying_the_later_initial_states() {
+    let world = two_state_world();
+    let before = fsl_analyze::model_check::keyed_initial_states();
+    let run = world
+        .reach_run("Thing", universes(&[("P1", &["l", "s"])]), no_states())
+        .expect("checked");
+    assert!(
+        matches!(
+            run.graph.end,
+            fsl_replay::RunEnd::Stopped {
+                cause: fsl_replay::IncompleteCause::ResourceExhausted,
+                limit: Some(fsl_replay::ReachedLimit {
+                    limit: fsl_replay::ModelCheckLimit::MaxStates,
+                    value: 0,
+                }),
+            }
+        ),
+        "{:?}",
+        run.graph.end
+    );
+    assert_eq!(fsl_analyze::model_check::keyed_initial_states() - before, 1);
 }

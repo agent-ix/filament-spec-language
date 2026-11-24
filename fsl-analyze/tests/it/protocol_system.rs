@@ -535,7 +535,7 @@ fn a_binder_is_held_by_each_environment_that_reaches_its_reader() {
     let case = Case::new(&fill_unit("self.v = 0", ""), &[0]);
     let subject = case.subject("Fill");
     let system = sc_system(&subject);
-    let initial = system.initial();
+    let initial = system.try_initial().expect("initial states settle");
     assert_eq!(initial.len(), 1);
     let (bytes, _) = system.state_key(&initial[0]).expect("a key");
     let (again, _) = system.state_key(&initial[0]).expect("a key");
@@ -693,6 +693,55 @@ fn a_protocol_subject_refuses_its_bindings() {
     assert_eq!(refusal.cause(), "invalid-value");
 }
 
+/// EN-1 identifies the second distinct protocol root before settling it.
+#[test]
+#[trace("TC-521", "FR-126-AC-26")]
+fn protocol_refuses_at_max_states_before_settling_the_crossing_initial_state() {
+    use fsl_eval::simulation::protocol::constructed_initial_states;
+    use fsl_replay::{IncompleteCause, ModelCheckLimit, ReachedLimit};
+
+    for (starts, constructed) in [([0, 1, 2, 3], 1), ([0, 0, 1, 2], 2)] {
+        let case = Case::new(&fill_unit("self.v = 0", ""), &starts);
+        let mut limits = ModelCheckLimits::default();
+        limits.limits.max_states = 1;
+        let before = constructed_initial_states();
+        let outcome = check_protocol(
+            ProtocolCheckRequest {
+                temporal_clock_selections: &[],
+                subject: case.subject("Fill"),
+                item: ModelCheckItem::DeadlockFreedom,
+                max_depth: None,
+                max_store_buffer: None,
+                max_messages: None,
+                max_live_instances: None,
+                limits,
+                ignore_memory_constraints: false,
+            },
+            &Cancel::new(),
+        )
+        .expect("the protocol subject checks");
+        assert!(
+            matches!(
+                outcome,
+                ModelCheckOutcome::Stopped {
+                    cause: IncompleteCause::ResourceExhausted,
+                    limit: Some(ReachedLimit {
+                        limit: ModelCheckLimit::MaxStates,
+                        value: 1
+                    }),
+                    ..
+                }
+            ),
+            "{outcome:?}"
+        );
+        assert_eq!(
+            constructed_initial_states() - before,
+            constructed,
+            "{starts:?}"
+        );
+    }
+}
+
 /// Part of FR-205-AC-4 (TC-650): two initial snapshots give two initial
 /// protocol states, each with the root at `fork Both`. Not covered: an `on
 /// each` protocol.
@@ -701,7 +750,7 @@ fn each_initial_snapshot_gives_one_initial_protocol_state() {
     let case = Case::new(&fill_unit("self.v = 0", ""), &[0, 1]);
     let subject = case.subject("Fill");
     let system = sc_system(&subject);
-    let initial = system.initial();
+    let initial = system.try_initial().expect("initial states settle");
     assert_eq!(initial.len(), 2);
     for state in &initial {
         let threads = system.threads(state).expect("threads");
@@ -742,7 +791,7 @@ fn an_attempt_is_the_model_application_over_its_selected_clauses() {
     let case = p_case(&run, 0);
     let subject = case.subject("P");
     let system = sc_system(&subject);
-    let start = &system.initial()[0];
+    let start = &system.try_initial().expect("initial states settle")[0];
     let stepped: BTreeSet<(String, i64)> = system
         .successors(start)
         .expect("expands")
@@ -778,7 +827,7 @@ fn an_attempt_is_the_model_application_over_its_selected_clauses() {
         let subject = case.subject("P");
         let system = sc_system(&subject);
         let successors = system
-            .successors(&system.initial()[0])
+            .successors(&system.try_initial().expect("initial states settle")[0])
             .expect("expands")
             .successors;
         assert_eq!(!successors.is_empty(), enabled, "{listed}");
@@ -794,7 +843,7 @@ fn an_attempt_is_the_model_application_over_its_selected_clauses() {
     let case = p_case(&run, 0);
     let subject = case.subject("P");
     let system = sc_system(&subject);
-    let start = &system.initial()[0];
+    let start = &system.try_initial().expect("initial states settle")[0];
     assert!(system
         .successors(start)
         .expect("expands")
@@ -1944,7 +1993,7 @@ fn capacity_case(capacity: &str, second: bool) -> Case {
 fn edges(system: &ProtocolSystem<'_, Sc>) -> BTreeSet<(Vec<u8>, Vec<u8>)> {
     let mut seen = BTreeSet::new();
     let mut edges = BTreeSet::new();
-    let mut queue = system.initial();
+    let mut queue = system.try_initial().expect("initial states settle");
     while let Some(state) = queue.pop() {
         let (key, _) = system.state_key(&state).expect("a key");
         if !seen.insert(key.clone()) {
@@ -2408,7 +2457,7 @@ impl MemoryModel for Interleaving {
 /// memory model's internal step.
 fn keys<M: MemoryModel>(system: &ProtocolSystem<'_, M>) -> BTreeSet<Vec<u8>> {
     let mut seen = BTreeSet::new();
-    let mut queue: Vec<ProtocolState<M>> = system.initial();
+    let mut queue: Vec<ProtocolState<M>> = system.try_initial().expect("initial states settle");
     while let Some(state) = queue.pop() {
         let (key, _) = system.state_key(&state).expect("a key");
         if !seen.insert(key) {
@@ -2754,7 +2803,7 @@ fn an_undefined_contract_or_constraint_ends_an_undefined_evaluation() {
     let subject = decided.subject("P");
     let system = sc_system(&subject);
     let stepped: BTreeSet<(String, i64)> = system
-        .successors(&system.initial()[0])
+        .successors(&system.try_initial().expect("initial states settle")[0])
         .expect("expands")
         .successors
         .iter()
@@ -2797,7 +2846,7 @@ fn an_undefined_contract_or_constraint_ends_an_undefined_evaluation() {
     let subject = post.subject("P");
     let system = sc_system(&subject);
     let findings = system
-        .successors(&system.initial()[0])
+        .successors(&system.try_initial().expect("initial states settle")[0])
         .expect("expands")
         .findings;
     assert!(
@@ -2816,7 +2865,7 @@ fn an_undefined_contract_or_constraint_ends_an_undefined_evaluation() {
     let subject = constraint.subject("P");
     let system = sc_system(&subject);
     let findings = system
-        .successors(&system.initial()[0])
+        .successors(&system.try_initial().expect("initial states settle")[0])
         .expect("expands")
         .findings;
     assert!(

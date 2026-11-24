@@ -1010,7 +1010,10 @@ fn to_two_sends(fixture: &Fixture) -> (Play, fsl_replay::protocol_analysis::Play
     let model = fsl_eval::simulation::model::ModelSystem::new(subject.model.simulation.clone())
         .expect("the model admits");
     let system = ProtocolSystem::new(model, &subject, Sc).expect("the protocol admits");
-    let mut state = system.initial().remove(0);
+    let mut state = system
+        .try_initial()
+        .expect("initial states settle")
+        .remove(0);
     let mut steps = Vec::new();
     loop {
         let successors = system.successors(&state).expect("expands").successors;

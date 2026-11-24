@@ -200,7 +200,7 @@ fn actions(rows: &[Vec<Named>]) -> usize {
 /// The initial value of a deadline claim and the whole `FreeDelays` action
 /// its policy takes at the initial state.
 fn decide(world: &World, product: &ProbProduct, bound: Bound) -> (Rational, Vec<Named>) {
-    let result = decide_bounded_event(product, &bound, &ExactProbLimits::default())
+    let result = decide_bounded_event(product, &bound, &ExactProbLimits::default(), &Cancel::new())
         .expect("the digital product is acyclic");
     let FhResult::Exact { values, policy } = result else {
         panic!("exact values: {result:?}");
@@ -462,6 +462,7 @@ fn detour_separates_the_post_draw_choice_from_the_pre_draw_one() {
         &built,
         &Bound::AtMost(ratio(7, 10)),
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("the digital product is acyclic");
     let FhResult::Exact { values, policy } = result else {
@@ -602,6 +603,7 @@ fn fair_reachability_takes_the_row_factored_exit() {
         &target,
         UnboundedObjective::Max,
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("the fair maximum is decided");
     assert_eq!(result.values.len(), built.states.len());
@@ -630,8 +632,15 @@ fn fair_decisions_read_two_rows_through_the_row_factored_operator() {
     assert_eq!(actions(&row_choices(&world, &built)), 4);
     let target: Vec<bool> = built.labels.iter().map(|labels| labels[0]).collect();
     let limits = ExactProbLimits::default();
-    let reach = decide_fair_reachability(&built, None, &target, UnboundedObjective::Max, &limits)
-        .expect("the fair maximum is decided");
+    let reach = decide_fair_reachability(
+        &built,
+        None,
+        &target,
+        UnboundedObjective::Max,
+        &limits,
+        &Cancel::new(),
+    )
+    .expect("the fair maximum is decided");
     assert_eq!(
         reach.values[start.index()],
         ExtRational::Finite(ratio(1, 1))
@@ -640,9 +649,15 @@ fn fair_decisions_read_two_rows_through_the_row_factored_operator() {
     let built = build(&world, "Cost");
     let start = built.initial[0].2;
     let target: Vec<bool> = built.labels.iter().map(|labels| labels[0]).collect();
-    let minimum =
-        decide_fair_expected_reward(&built, &target, "steps", UnboundedObjective::Min, &limits)
-            .expect("the fair minimum is decided");
+    let minimum = decide_fair_expected_reward(
+        &built,
+        &target,
+        "steps",
+        UnboundedObjective::Min,
+        &limits,
+        &Cancel::new(),
+    )
+    .expect("the fair minimum is decided");
     assert_eq!(minimum.values.len(), built.states.len());
     assert_eq!(
         minimum.values[start.index()],
@@ -653,9 +668,15 @@ fn fair_decisions_read_two_rows_through_the_row_factored_operator() {
         witness(&world, &built, start, &policy),
         [row(&[("A", 1)], &[("B", 2)]), row(&[("A", 2)], &[("B", 2)])]
     );
-    let maximum =
-        decide_fair_expected_reward(&built, &target, "steps", UnboundedObjective::Max, &limits)
-            .expect("the fair maximum is decided");
+    let maximum = decide_fair_expected_reward(
+        &built,
+        &target,
+        "steps",
+        UnboundedObjective::Max,
+        &limits,
+        &Cancel::new(),
+    )
+    .expect("the fair maximum is decided");
     assert_eq!(
         maximum.values[start.index()],
         ExtRational::Finite(ratio(3, 2))
@@ -702,8 +723,14 @@ fn loop_witness_takes_the_end_component_exit() {
     assert!(tie.iter().all(|edge| target[edge.to.index()]));
 
     let limits = ExactProbLimits::default();
-    let maximum = decide_reachability(&built, &target, UnboundedObjective::Max, &limits)
-        .expect("the labelled product is solved");
+    let maximum = decide_reachability(
+        &built,
+        &target,
+        UnboundedObjective::Max,
+        &limits,
+        &Cancel::new(),
+    )
+    .expect("the labelled product is solved");
     assert_eq!(
         maximum.values[start.index()],
         ExtRational::Finite(ratio(1, 1))
@@ -716,8 +743,14 @@ fn loop_witness_takes_the_end_component_exit() {
         witness(&world, &built, start, &maximum.policy),
         [row(&[("A", 2)], &[("B", 2)])]
     );
-    let minimum = decide_reachability(&built, &target, UnboundedObjective::Min, &limits)
-        .expect("the labelled product is solved");
+    let minimum = decide_reachability(
+        &built,
+        &target,
+        UnboundedObjective::Min,
+        &limits,
+        &Cancel::new(),
+    )
+    .expect("the labelled product is solved");
     assert_eq!(
         minimum.values[start.index()],
         ExtRational::Finite(ratio(0, 1))
@@ -915,6 +948,7 @@ fn detour_maximum_witness_is_a_two_path_set_of_merged_steps() {
         &built,
         &Bound::AtMost(ratio(7, 10)),
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("the digital product is acyclic") else {
         panic!("exact values");
@@ -1267,6 +1301,7 @@ fn detour_witness_body_admits_and_its_variants_refuse() {
         &built,
         &Bound::AtMost(ratio(7, 10)),
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("the digital product is acyclic") else {
         panic!("exact values");
@@ -1328,6 +1363,7 @@ fn a_witness_row_naming_b_alone_refuses() {
         &built,
         &Bound::AtMost(ratio(1, 2)),
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("the digital product is acyclic") else {
         panic!("exact values");
@@ -1446,7 +1482,7 @@ fn loop_witness_reaches_b_through_the_exit() {
     let target: Vec<bool> = built.labels.iter().map(|labels| labels[0]).collect();
     let limits = ExactProbLimits::default();
     let produce = |objective| {
-        let solved = decide_reachability(&built, &target, objective, &limits)
+        let solved = decide_reachability(&built, &target, objective, &limits, &Cancel::new())
             .expect("the labelled product is solved");
         produce_witness(
             &built,
@@ -1630,6 +1666,7 @@ fn detour_maximum(world: &World) -> (ProbProduct, Vec<Option<usize>>) {
         &built,
         &Bound::AtMost(ratio(7, 10)),
         &ExactProbLimits::default(),
+        &Cancel::new(),
     )
     .expect("the digital product is acyclic") else {
         panic!("exact values");

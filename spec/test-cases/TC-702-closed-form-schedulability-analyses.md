@@ -12,7 +12,7 @@ relationships:
 
 Verify response-time analysis, the EDF demand test, AMC-rtb, response claims and the demand-point budget.
 
-Scope: FR-247-AC-1 to FR-247-AC-4.
+Scope: FR-247-AC-1 to FR-247-AC-5.
 
 ## Test Procedure
 
@@ -22,6 +22,7 @@ Fixtures: `Ctl`, its WCET-6 variant, the jitter-and-blocking set of FR-247-AC-2,
 2. Analyse the WCET-6 variant under both policies, and the jitter-and-blocking set under fixed priority, rechecking its evidence.
 3. Analyse `Mc`, its `C(HI) = 6` variant and its `C(LO) = C(HI) = 5` variant.
 4. Analyse the EDF set with `max_demand_points` 3.
+5. Analyse `Ctl` under fixed priority and EDF with `max_demand_points` 1.
 
 Tag the tests `#[trace("TC-702", "FR-247-AC-n")]`.
 
@@ -31,3 +32,4 @@ Tag the tests `#[trace("TC-702", "FR-247-AC-n")]`.
 - Step 2: fixed-priority miss for the third task, job 0, iterates `6, 10, 13`; the jitter-and-blocking set misses for `b`, job 0, iterates `5, 7`, and its evidence rechecks; `Miss(Utilization(13/12))`.
 - Step 3: `Schedulable`, low-mode 2, high-mode 4; `SufficientTestFailed`; `Miss`.
 - Step 4: `Stopped(LimitReached, MaxDemandPoints)` naming 3.
+- Step 5: `Stopped(LimitReached, MaxDemandPoints)` naming 1 under both policies.

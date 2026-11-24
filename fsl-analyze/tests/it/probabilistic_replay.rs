@@ -423,8 +423,14 @@ fn workload_replay_preserves_weight_shares_and_emits_no_scheduler() {
         panic!("defined product");
     };
     let target = product.labels.iter().map(|row| row[0]).collect::<Vec<_>>();
-    let solved = decide_reachability(&product, &target, UnboundedObjective::Min, &limits)
-        .expect("workload solver");
+    let solved = decide_reachability(
+        &product,
+        &target,
+        UnboundedObjective::Min,
+        &limits,
+        &Cancel::new(),
+    )
+    .expect("workload solver");
     assert_eq!(
         solved.values[product.initial[0].2.index()],
         fsl_analyze::exact_probabilistic::ExtRational::Finite(ratio(391, 400))
@@ -863,8 +869,14 @@ fn fix_round_producer_frontier_and_rational_stops_follow_a_successful_real_solve
         panic!("defined product");
     };
     let target = product.labels.iter().map(|row| row[0]).collect::<Vec<_>>();
-    let solved = decide_reachability(&product, &target, UnboundedObjective::Max, &ample)
-        .expect("the real product solves before producer-only limits apply");
+    let solved = decide_reachability(
+        &product,
+        &target,
+        UnboundedObjective::Max,
+        &ample,
+        &Cancel::new(),
+    )
+    .expect("the real product solves before producer-only limits apply");
     let start = product.initial[0].2;
     let produce = |limits: &ExactProbLimits| {
         produce_witness(

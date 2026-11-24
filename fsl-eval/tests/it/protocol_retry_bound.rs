@@ -426,7 +426,11 @@ fn bounded_step_successors(
     use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 
     const MAX_STATES: usize = 256;
-    let initial = system.initial().into_iter().next()?;
+    let initial = system
+        .try_initial()
+        .expect("initial states settle")
+        .into_iter()
+        .next()?;
     let (key, _) = SubjectSystem::state_key(system, &initial).ok()?;
     let mut queue = VecDeque::from([(initial, Vec::new())]);
     let mut visited = BTreeSet::from([key]);
@@ -474,7 +478,7 @@ fn complete_fixture_graph(
     let mut states: Vec<ReachedState<Sc>> = Vec::new();
     let mut known = BTreeMap::new();
     let mut key_bytes = 0;
-    for state in system.initial() {
+    for state in system.try_initial().expect("initial states settle") {
         let key = system
             .canonical_state_key(&state)
             .expect("initial state key");
@@ -524,7 +528,11 @@ fn replay_transition_path(
 ) -> Option<serde_json::Value> {
     use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 
-    let mut state = system.initial().into_iter().next()?;
+    let mut state = system
+        .try_initial()
+        .expect("initial states settle")
+        .into_iter()
+        .next()?;
     for expected in path {
         let expansion = system.successors(&state).ok()?;
         let (_, next) = expansion.successors.into_iter().find(|(transition, _)| {

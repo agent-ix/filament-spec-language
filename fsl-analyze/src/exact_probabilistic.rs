@@ -134,6 +134,8 @@ pub use fsl_replay::FreeDelayRow;
 pub use reward_interval::{decide_expected_reward_threshold, ExpectedRewardOutcome};
 pub use rows::free_delays_choice;
 pub use settle::settle_product_refusal;
+#[cfg(feature = "test-support")]
+pub use unbounded::polling_dense_elimination;
 pub use unbounded::{
     avoiding_policy, decide_always, decide_expected_reward, decide_long_run_mdp,
     decide_long_run_workload, decide_reachability, decide_reachability_threshold, decide_until,

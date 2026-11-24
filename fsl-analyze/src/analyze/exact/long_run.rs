@@ -415,7 +415,7 @@ fn every_scheduler(
         other => unbounded_failure(other, limits, subject),
     };
     let (values, policy, solution, fair_witness) = if claim.fairness.is_empty() {
-        match decide_long_run_mdp(product, predicate, None, objective, limits) {
+        match decide_long_run_mdp(product, predicate, None, objective, limits, cancel) {
             Ok(solution) => (
                 solution.values.clone(),
                 solution.policy.clone(),
@@ -425,7 +425,7 @@ fn every_scheduler(
             Err(error) => return stopped(error),
         }
     } else {
-        match decide_fair_long_run_mdp(product, predicate, None, bound, limits) {
+        match decide_fair_long_run_mdp(product, predicate, None, bound, limits, cancel) {
             Ok(solution) => {
                 let fair_witness = solution.witness.clone();
                 let component_solution = LongRunResult {

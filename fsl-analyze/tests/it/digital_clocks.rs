@@ -353,7 +353,7 @@ fn refusal(world: &World, claim: &str) -> ProductRefusal {
 }
 
 fn initial_value(product: &ProbProduct, bound: Bound) -> Rational {
-    let result = decide_bounded_event(product, &bound, &ExactProbLimits::default())
+    let result = decide_bounded_event(product, &bound, &ExactProbLimits::default(), &Cancel::new())
         .expect("the digital product is acyclic");
     let FhResult::Exact { values, .. } = result else {
         panic!("exact values: {result:?}");
@@ -952,9 +952,9 @@ fn reach_and_expected_reward_label_the_digital_product() {
         for objective in [UnboundedObjective::Min, UnboundedObjective::Max] {
             let limits = ExactProbLimits::default();
             let result = if name == "Reach" {
-                decide_reachability(&built, &target, objective, &limits)
+                decide_reachability(&built, &target, objective, &limits, &Cancel::new())
             } else {
-                decide_expected_reward(&built, &target, "sends", objective, &limits)
+                decide_expected_reward(&built, &target, "sends", objective, &limits, &Cancel::new())
             }
             .expect("the labelled product is solved");
             let expected = if name == "Reach" {
@@ -1323,7 +1323,7 @@ fn a_weight_zero_operation_takes_its_turn_last_in_a_tie() {
 /// The exact value the finite-horizon solver gives `product`'s initial state
 /// for `bound`, or `None` when the solver gives no exact value.
 fn exact_initial(product: &ProbProduct, bound: Bound) -> Option<Rational> {
-    match decide_bounded_event(product, &bound, &ExactProbLimits::default()) {
+    match decide_bounded_event(product, &bound, &ExactProbLimits::default(), &Cancel::new()) {
         Ok(FhResult::Exact { values, .. }) => Some(values[product.initial[0].2.index()].clone()),
         _ => None,
     }

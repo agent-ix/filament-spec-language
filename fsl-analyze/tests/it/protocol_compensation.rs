@@ -1143,7 +1143,7 @@ fn assert_keys_determine_successors(system: &ProtocolSystem<'_, Sc>) -> usize {
     };
     let mut known: std::collections::BTreeMap<Vec<u8>, Successors> =
         std::collections::BTreeMap::new();
-    let mut pending = system.initial();
+    let mut pending = system.try_initial().expect("initial states settle");
     let mut again = 0;
     while let Some(state) = pending.pop() {
         let successors = system
@@ -1404,7 +1404,11 @@ fn bounded_cends(
     use fsl_eval::simulation::TransitionSystem;
 
     const MAX_STATES: usize = 256;
-    let mut queue: VecDeque<_> = system.initial().into_iter().collect();
+    let mut queue: VecDeque<_> = system
+        .try_initial()
+        .expect("initial states settle")
+        .into_iter()
+        .collect();
     let mut seen = BTreeSet::new();
     while let Some(state) = queue.pop_front() {
         let (key, _) = SubjectSystem::state_key(system, &state).ok()?;

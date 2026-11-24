@@ -1100,7 +1100,11 @@ fn timed_refinement_refusal(refusal: &TimedRefinementRefusal) -> Refusal {
         TimedRefinementRefusal::Subject(SubjectRefusal::NoModels | SubjectRefusal::NoUniverse)
         | TimedRefinementRefusal::Timed(_) => Refusal::Failed(INVALID_VALUE),
         // EN-6 opens its subjects from snapshots, which stop on no budget.
-        TimedRefinementRefusal::Subject(SubjectRefusal::Stopped(_)) => Refusal::Failed(BROKEN),
+        TimedRefinementRefusal::Subject(
+            SubjectRefusal::Stopped(_)
+            | SubjectRefusal::InitialStateLimit(_)
+            | SubjectRefusal::InitialEncoding,
+        ) => Refusal::Failed(BROKEN),
     }
 }
 

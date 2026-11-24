@@ -55,6 +55,9 @@ pub struct Reachable<M: MemoryModel> {
 /// Why the reachable states could not be computed.
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ReachRefusal {
+    /// An initial state failed while it settled.
+    #[error(transparent)]
+    Initial(#[from] super::ProtocolRefusal),
     /// Admitting another distinct state would exceed the configured budget.
     #[error("the reachable-state search reached {0:?}")]
     Limit(Limit),
@@ -146,10 +149,10 @@ where
     M: MemoryModel + Sync,
     M::Component: Send + Sync,
 {
-    let initial = system
-        .initial()
-        .into_iter()
-        .map(|state| Ok((system.canonical_state_key(&state)?, state)));
+    let initial = system.initial_iter().map(|state| {
+        let state = state?;
+        Ok((system.canonical_state_key(&state)?, state))
+    });
     let (nodes, workers) = search(
         initial,
         |state| expand(system, state),
@@ -564,7 +567,7 @@ mod tests {
     /// QSL-2849: a level that overruns `max_states` is refused within one
     /// chunk of the state that crosses the budget, not after the whole level
     /// is expanded. The expansions are counted, not timed.
-    #[trace("FR-126-AC-23")]
+    #[trace("FR-126-AC-25")]
     #[test]
     fn a_level_over_the_state_budget_refuses_within_one_chunk_of_expansions() {
         const LEVEL: u64 = 1_000;

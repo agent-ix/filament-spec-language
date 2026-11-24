@@ -988,12 +988,16 @@ impl TransitionSystem for Product<'_, '_> {
     type Key = HyperKey;
     type Finding = HyperFinding;
 
-    fn initial(&self) -> Vec<HyperState> {
-        match self {
+    type InitialError = std::convert::Infallible;
+
+    fn initial_iter(&self) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+        (match self {
             Self::Universal(product) => product.initial(),
             Self::Witness(product) => product.initial(),
             Self::Projected(product) => product.initial(),
-        }
+        })
+        .into_iter()
+        .map(Ok)
     }
 
     fn key(&self, state: &HyperState) -> HyperKey {

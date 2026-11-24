@@ -552,6 +552,33 @@ fn qpa_stops_at_the_demand_point_limit_naming_it() {
     );
 }
 
+/// FR-247-AC-5: window iterations of the fixed-priority recurrence and of the
+/// EDF busy period charge the same count as QPA demand points, so no
+/// recurrence runs past `max_demand_points`.
+#[trace("TC-702", "FR-247-AC-5")]
+#[test]
+fn recurrence_iterations_stop_at_the_demand_point_limit() {
+    let limits = ScheduleLimits {
+        max_demand_points: 1,
+    };
+    for policy in [SchedulingPolicy::FixedPriority, SchedulingPolicy::Edf] {
+        let subject = schedulable(ctl(5), policy);
+        assert!(
+            matches!(run(&subject), ClosedFormOutcome::Schedulable(_)),
+            "{policy:?} decides under the default limit"
+        );
+        assert_eq!(
+            analyze(&subject, &limits, &Cancel::new()),
+            ClosedFormOutcome::Stopped(IncompleteCause::LimitReached {
+                limit: ModelCheckLimit::ScheduleMaxDemandPoints,
+                value: 1,
+                required: None,
+            }),
+            "{policy:?}"
+        );
+    }
+}
+
 #[trace("TC-702", "FR-247-AC-4")]
 #[test]
 fn a_cancelled_handle_stops_the_analysis() {

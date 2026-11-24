@@ -16,8 +16,9 @@ use fsl_eval::model_subject::ModelSubject;
 use fsl_foundation::RequestIndex;
 use fsl_replay::{
     check_probability_certificate_document, CertificateRule, ExactProbabilityCertificate,
-    ExactProbabilityCertificateCheck, InconclusiveCause, ProbabilityCertificateLocus,
-    ProbabilityCertificateRule, ProbabilityDocumentError, ProofBasis, TerminalValue,
+    ExactProbabilityCertificateCheck, IncompleteCause, InconclusiveCause, ModelCheckLimit,
+    ProbabilityCertificateLocus, ProbabilityCertificateRule, ProbabilityDocumentError, ProofBasis,
+    TerminalValue,
 };
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
@@ -1340,6 +1341,62 @@ fn zero_time_cycle_without_end_component_is_certified() {
     let record = settle(&world, "Deadline");
     assert_eq!(proved_value(&record), ratio(1, 1));
     assert!(accepted(&world, "Deadline", &document(&record)));
+}
+
+/// A leaking zero-time cycle needs policy evaluation even with a finite
+/// deadline. The timed expectation also needs a dense reward solve.
+#[trace("TC-638", "FR-203-AC-28")]
+#[test]
+fn timed_dense_working_bytes_limit_settles_incomplete() {
+    let deadline_world = retx(
+        "",
+        false,
+        "",
+        &deadline("Deadline", "under every scheduler", ">= 0.99"),
+    );
+    let mean_world = retx(
+        STRICT,
+        true,
+        "",
+        "probabilistic MeanTime using inf on M over (c: M::Call) under every scheduler on origin \
+         { expected elapsed until holds(c.late) <= 3 ms }\n",
+    );
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    for (world, claim) in [(&deadline_world, "Deadline"), (&mean_world, "MeanTime")] {
+        let mut request = request(world, claim);
+        request.limits.document.storage_bytes = 1;
+        let item = exact_probabilistic_item(RequestIndex::new(0), request);
+        let records = analyze_items(&engines, vec![item], &Cancel::new());
+        let terminal = records[0].terminal().unwrap_or_else(|| {
+            panic!(
+                "{claim} must settle incomplete: {:?}",
+                records[0].settlement
+            )
+        });
+        assert_eq!(
+            terminal.value(),
+            &TerminalValue::Incomplete(IncompleteCause::LimitReached {
+                limit: ModelCheckLimit::CertificateMaxWorkingBytes,
+                value: 1,
+                required: None,
+            }),
+            "{claim}",
+        );
+    }
+}
+
+/// Policy evaluation of the leaking zero-time cycle propagates its stop
+/// through the finite-horizon adapter.
+#[trace("TC-638", "FR-203-AC-28")]
+#[test]
+fn timed_deadline_dense_elimination_cancellation_settles_incomplete() {
+    let world = retx(
+        "",
+        false,
+        "",
+        &deadline("Deadline", "under every scheduler", ">= 0.99"),
+    );
+    crate::prob_world::assert_dense_elimination_cancelled(request(&world, "Deadline"));
 }
 
 /// FR-924-AC-5: a time-locked initial state is terminal.
