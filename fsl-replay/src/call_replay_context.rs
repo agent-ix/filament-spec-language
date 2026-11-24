@@ -421,7 +421,7 @@ mod tests {
     }
 
     /// A member's request carries the run's source and limits (FR-404-AC-6), and replays and settles.
-    #[trace("TC-1173", "FR-404-AC-6")]
+    #[trace("TC-1173", "FR-404-AC-6", "FR-255-AC-24")]
     #[test]
     fn a_member_request_carries_the_run_and_replays() {
         let limits = CallerLimits::from_operands([
