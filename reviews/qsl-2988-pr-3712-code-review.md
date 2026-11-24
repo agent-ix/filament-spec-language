@@ -23,3 +23,9 @@ Reviewed PR #3712 at 37e84df290c38cf97b2f098b45f1160ea6dcf16, including the Rust
 | ID | Severity | Summary | Refs |
 | --- | --- | --- | --- |
 | FND-001 | medium | Fair eventual interval solver is never called by production analyzer | fsl-analyze/src/analyze/exact.rs:1407 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | The fair interval threshold solver is now called by the analyzer when exact fair values exceed the rational budget. |

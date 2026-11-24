@@ -28,3 +28,18 @@ The computed criterion matrix and changed tests show missing trace bindings for 
 ## Coverage
 
 Matrix: `quire matrix --scope /home/peter/dev/worktrees/QSL-2988-slice2 --format tsv` completed; `quoin matrix --repo ... --json` refused the request size, so I used the quire fallback. Reverse-gap and stub checks were performed over changed production modules; no other actionable issue identified. Semantic review skipped (not opted in). Plan completion: not assessed.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs | Escape Cause |
+| --- | --- | --- | --- | --- |
+| FND-003 | medium | AC-23/24 tests do not exercise the specified low-budget interval path | tools/fsl-probability-check/tests/it/bounded.rs:333 | correct-requirement-no-evidence |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | deferred | FR-1042-AC-22 trace coverage is explicitly deferred to QSL-3132; AC-19/20/21/23/24 now carry their local AC tags. |
+| FND-002 | fixed | The fair eventual branch now calls `decide_fair_reachability_threshold` when exact values exceed the rational budget. |
+| FND-003 | still-open | The AC-23/24 tests use `ExactProbLimits::default()` and assert only that the settlement is proved and documents replay. They do not force `max_rational_bits: 1`, assert a ValueBounds interval encloses 5/12 or 3/80, or confirm the lower end meets the threshold. |
+| FND-003 | deferred | The AC-23 low-budget test now asserts a certified ValueBounds interval enclosing 5/12 with lower end at least 2/5 and checks both documents. The PR body defers the AC-24 low-budget shifted-quantile interval to QSL-3136; its supported exact shifted-quantile case remains tested here. |
