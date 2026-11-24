@@ -16,7 +16,7 @@ Verify `check_initial` and `check_step` over functional mappings, with `_`
 arguments and bound results, with hidden fields tracked as a candidate set,
 and with protocol step-class rows.
 
-Scope: FR-141-AC-1 to FR-141-AC-5, FR-141-AC-11 to FR-141-AC-14 and FR-138-AC-8.
+Scope: FR-141-AC-1 to FR-141-AC-5, FR-141-AC-11 to FR-141-AC-16 and FR-138-AC-8.
 
 ## Test Procedure
 
@@ -36,6 +36,10 @@ Fixtures: `CasRefinesCounter` and its lost-update model (ADR-020 §8);
 
 9. On the `twin` variant of `RingIsQueue` with the `Cell` row first (FR-141-AC-14), run `put(1)` on ring `r`.
 10. Over the `twin` models and the protocol node row for `put` whose argument is `self.ring` (FR-141-AC-15), run the `put` transition through `check_protocol_step`.
+
+11. On two rows from `Ring` mapped to the subtypes `FastQueue` and `SlowQueue` of the type `Queue` that declares one inherited abstract operation, run each row's step; then over the `twin` models run the protocol node row of step 10 with the node field declared `Reference<Queue>`, with `Reference<Cell>`, and with a declared type neither row conforms to, and swap the object rows' source order (FR-141-AC-16).
+
+The test `a_protocol_node_row_faults_when_its_reference_type_has_multiple_object_rows` (`fsl-analyze/tests/it/refinement_protocol.rs`, tagged `FR-141-AC-15`) asserted the old `StepVerdict::Fault` and is replaced: `a_protocol_node_row_lifts_by_the_declared_field_type` (tagged `TC-546`, `FR-141-AC-15`) asserts the pass of step 10, and `a_protocol_node_row_faults_when_no_object_row_conforms` (tagged `TC-546`, `FR-141-AC-15`) keeps a `StepVerdict::Fault` only for the declared type neither row conforms to. Step 11 is tagged `FR-141-AC-16`.
 
 Tag the tests `#[trace("TC-546", "FR-141-AC-n")]`, and the test of step 7 also `#[trace("TC-546", "FR-138-AC-8")]`.
 
@@ -57,8 +61,13 @@ Tag the tests `#[trace("TC-546", "FR-141-AC-n")]`, and the test of step 7 also `
   transition whose `rs` is the lifted chain.
 - Step 9: passes as `Taken::Abstract([enq(r, 1)])` whose receiver is the
   `Queue` `r`.
-- Step 10: `StepVerdict::Fault`; the node-row argument is a `Reference<Ring>`
-  and both the `Queue` and `Cell` object rows name `Ring`, so replay cannot
-  choose an abstract target type without a declared type.
+- Step 10: passes with the `Reference<Ring>` argument lifted to the `Queue`
+  reference when the node record's field is declared `Reference<Queue>` and to
+  the `Cell` reference when declared `Reference<Cell>`, by the declared field
+  type and never by row order.
+- Step 11: each inherited-operation row decides against its own row's target
+  type with no `Fault`; the node row passes as in step 10 for each declared
+  type and gives `StepVerdict::Fault` only for the declared type that neither
+  row conforms to; swapping the object rows' order changes no verdict.
 
 Every call passes the concrete `ModelSystem` and the abstract system (FR-141).
