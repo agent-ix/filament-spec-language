@@ -1547,7 +1547,10 @@ fn fair_cyclic_low_rational_budget_proves_with_value_bounds() {
                 ..
             },
         certification: Certification::Certified,
-    } = record.terminal().expect("a terminal record").value()
+    } = record
+        .terminal()
+        .unwrap_or_else(|| panic!("the analysis emits a terminal record: {record:#?}"))
+        .value()
     else {
         panic!("the fair interval must be independently certified: {record:#?}");
     };
@@ -1594,7 +1597,10 @@ fn fair_cyclic_rejects_a_flipped_lower_bellman_direction() {
     let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
     let key = touched.borrow().clone().expect("the lower value was changed");
     assert_eq!(
-        record.terminal().expect("a terminal record").value(),
+        record
+            .terminal()
+            .unwrap_or_else(|| panic!("the analysis emits a terminal record: {record:#?}"))
+            .value(),
         &TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
             rule: CertificateRule::InequalityFails,
             at: CertificateLocus::ProbabilityProductState(key),
