@@ -36,7 +36,9 @@ use fsl_package::CheckedPackage;
 use fsl_replay::{check_closure, CertificateRequest, ClosureCertificate, ClosureRefusal};
 use fsl_replay::{CounterexampleKind, ModelCheckItem, ModelCheckLimits};
 use fsl_replay::{ModelCheckOutcome, UndecidedCause};
-use fsl_semantics::check::{CheckedTemporalClause, FormulaNode, FormulaNodeId};
+use fsl_semantics::check::{
+    CheckCause, CheckedTemporalClause, FormulaNode, FormulaNodeId, HyperCause,
+};
 use fsl_semantics::family::ClaimExtent;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{meaning, package_input};
@@ -526,6 +528,7 @@ fn instances_are_each_key_of_each_admitting_population_in_canonical_order() {
 /// absent from every initial record is excluded, including when the key is
 /// repeated in another population. Excluded keys retain first population and
 /// universe occurrence order; a non-overlapping population does not contribute.
+#[trace("TC-520", "FR-125-AC-10")]
 #[test]
 fn excluded_keys_are_initially_unadmitted_and_deduplicated_in_instance_order() {
     let world = world(
@@ -694,7 +697,12 @@ fn hyper_parameters_read_the_held_most_specific_type_or_absent_key() {
     assert!(
         refusal
             .iter()
-            .any(|refusal| format!("{refusal:?}").contains("UnresolvedPopulation")),
+            .any(|refusal| matches!(
+                refusal.cause.as_ref(),
+                CheckCause::Hyper(cause)
+                    if matches!(cause.as_ref(), HyperCause::UnresolvedPopulation { parameter, .. }
+                        if parameter == "v")
+            )),
         "the unrelated parameter keeps its typed unresolved-population refusal: {refusal:?}"
     );
 }
