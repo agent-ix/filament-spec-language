@@ -176,10 +176,14 @@ A typed `CheckRefusal` with a span, and no `CheckedRefinement`, on refusal.
   row that maps `T_A` from `T_C`, element by element, and in a map the key as
   well as the value (FR-630, ADR-020 RM-3). It SHALL admit a whole-population
   reference row (`Set<Reference<T_C>>[0, n]`, FR-139) as FR-139 types it. A
-  `Reference<T_C>` nested inside a record, tuple or union is to be lifted
-  likewise, which QSL-2959 specifies once the pairing rule for the abstract
-  composite is settled; until then S3 does not lift it, and such a row refuses
-  `ill_typed`/`type-mismatch` at the row's expression.
+  `Reference<T_C>` nested inside a record, tuple or union SHALL be lifted by
+  the same rule. The concrete and abstract composites are paired componentwise:
+  record fields by field name, tuple elements by position when the tuples have
+  equal arity, and the active union values by variant tag. The paired component
+  values recursively use this same lifting rule. A missing or extra record
+  field, a tuple arity mismatch, or an active union tag absent from the paired
+  union SHALL refuse `ill_typed`/`type-mismatch` at the first mismatched
+  component path; the checker SHALL produce no `CheckedRefinement`.
 - The checker SHALL refuse a refinement whose abstract model declares a
   relationship with `unsupported_construct`/`declaration-form` at the
   abstract alias of the declaration header, once per refinement, naming the
@@ -246,11 +250,13 @@ subject once the feature is built.
 - This build's support set SHALL hold `protocol-abstract-side`
   and `refinement-internal-list`, which FR-147 checks, and `nested-reference-row`,
   whose rows FR-630 lifts element by element: a `Reference<T_C>` nested inside an
-  option, collection or map value maps to the `Reference<T_A>` of the object
-  row that maps `T_A` from `T_C`, at every nesting depth. A reference nested
-  inside a record, tuple or union is lifted by the same rule once QSL-2959
-  settles the pairing rule for the abstract composite; until then the build
-  does not lift it and the row refuses `ill_typed`/`type-mismatch`.
+  option, collection, map value, record field, tuple element or union payload
+  maps to the `Reference<T_A>` of the object row that maps `T_A` from `T_C`, at
+  every nesting depth. Composite components are paired by record field name,
+  tuple position with equal arity, or active union variant tag; each paired
+  value is lifted recursively. A missing or extra field, unequal tuple arity,
+  or active tag without a paired case refuses `ill_typed`/`type-mismatch` at
+  the first mismatched component path.
 - S3 SHALL check a `history` row whose declared type is an enum type or a
   decimal type, or an option of one, as it checks an integer row: the history key
   encodes each such value by its canonical literal (FR-630). FR-138-AC-9 states
@@ -283,13 +289,20 @@ standing.
 | FR-135-AC-3 | `value = self.busyA` refuses `ill_typed`/`type-mismatch` at the expression's span. In ADR-020 §8's `RingIsQueue`, a field of type `Reference<Q::Queue>` mapped by `self.ring` (of type `Reference<R::Ring>`) checks, and the same field mapped by an expression of type `Reference<R::Slot>` refuses `ill_typed`/`type-mismatch`. | Test (TC-540) |
 | FR-135-AC-4 | With the `value` row removed, `CasRefinesCounter` checks with `value` in `hidden`. Changing the `value` row to `value = self.tmpA` changes the refinement's node identity and the `package_id`. | Test (TC-540) |
 | FR-135-AC-5 | A declaration whose abstract side is a protocol (`CasTwice`, FR-147), in a build whose support set omits `protocol-abstract-side`, refuses `unsupported_construct`/`not-yet-implemented` at the span of `Twice`, naming `protocol-abstract-side`, `CasTwice` and the profile identity, with a payload that has no `subject` member, no other diagnostic about the abstract side and no `CheckedRefinement`. It classifies `unsupported` (FR-341-AC-5). `CasRefinesCounter`, which uses none of the features, checks as FR-135-AC-1 states. The vector refuses a row that uses a feature the build has not built; it does not select a support set. | Test (TC-540) |
-| FR-135-AC-6 | `RingIsQueue` with a `Sequence<Reference<Queue>>[0, 2]` field mapped by a row of type `Sequence<Reference<Ring>>[0, 2]` checks, each nested reference lifted element by element through the object row that maps `Queue` from `Ring` (FR-630), and so do an `Option<Reference<Ring>>` row for an `Option<Reference<Queue>>` field and a `Sequence<Option<Reference<Ring>>>[0, 2]` row for a `Sequence<Option<Reference<Queue>>>[0, 2]` field, an option, collection or map at any depth (the map clause is checked by the unit test of `lift()`, because no validated package declares a map type; a reference nested in a record, tuple or union is pending QSL-2959 and refuses `ill_typed`/`type-mismatch` until then); a population-reference row `cells = R::slots` checks, as does the same field as a plain `Reference<Queue>` mapped by `self`. A nested reference whose concrete type no object row maps (a `Sequence<Reference<Slot>>[0, 2]` row for the `Sequence<Reference<Queue>>[0, 2]` field, `Slot` mapping to `Cell`) refuses `ill_typed`/`type-mismatch` at the row's expression, as a top-level one does (AC-3), and no `CheckedRefinement`. | Test (TC-540) |
+| FR-135-AC-6 | `RingIsQueue` with a `Sequence<Reference<Queue>>[0, 2]` field mapped by a row of type `Sequence<Reference<Ring>>[0, 2]` checks, each nested reference lifted element by element through the object row that maps `Queue` from `Ring` (FR-630), and so do an `Option<Reference<Ring>>` row for an `Option<Reference<Queue>>` field and a `Sequence<Option<Reference<Ring>>>[0, 2]` row for a `Sequence<Option<Reference<Queue>>>[0, 2]` field, an option, collection or map at any depth; a population-reference row `cells = R::slots` checks, as does the same field as a plain `Reference<Queue>` mapped by `self`. A nested reference whose concrete type no object row maps (a `Sequence<Reference<Slot>>[0, 2]` row for the `Sequence<Reference<Queue>>[0, 2]` field, `Slot` mapping to `Cell`) refuses `ill_typed`/`type-mismatch` at the row's expression, as a top-level one does (AC-3), and no `CheckedRefinement`. | Test (TC-540) |
 | FR-135-AC-7 | `RingIsQueue` with the abstract `Queue` declaring a relationship refuses `unsupported_construct`/`declaration-form` at the abstract alias `Q` of the declaration header, once, whatever the support set holds, and no `CheckedRefinement`. | Test (TC-540) |
 | FR-135-AC-8 | In a unit whose own declarations select no layer, `RingIsQueue`'s rows `s.ring = self` and `(self.head + i) mod 2` check, because they are admitted under the layers the governing infinite-trace profile requires; a Boolean field row naming a protocol declared in the unit refuses `unsupported_construct`/`expression-form` at the `protocol` token, naming the layer that admits it (`filament.protocol.complete/v1`). | Test (TC-540) |
 | FR-135-AC-9 | A refinement given a non-empty resolved internal list refuses `unsupported_construct`/`not-yet-implemented` naming `refinement-internal-list` at the first token of the name after `abstract`, once for the refinement, with no `subject` member, no `CheckedRefinement` and the classification `unsupported` (FR-341-AC-5); a list with a resolution defect reports the defect and not this pair (FR-147-AC-7, AC-11). | Test (TC-540) |
 | FR-135-AC-10 | The header `abstract Spec::Twice concrete Impl` is read as FSpec FR-375's `abstract-subject` (model alias `Spec`, protocol `Twice`), and `abstract Spec concrete Impl` as a model subject; the concrete side never names a protocol, and a refinement whose step rows name one protocol clause of `Impl` records it as `concrete_protocol`, one whose rows name none records `None` (FR-136-AC-6). | Test (TC-540) |
 | FR-135-AC-11 | A mapped `state_machine` declaration has one `object` row whose target and source are both state-machine declarations; its declared fields check through that row without a population row. Omitting the row refuses `missing_declaration`/`missing-name`; duplicating it refuses `invalid_model_binding`/`conflicting-binding`; pairing it with an object type refuses `invalid_model_binding`/`malformed-declaration`. `CasRefinesCounter` over the object-type-only `Spec` and `Impl` models checks with its existing population and object rows, with no `state_machine` declaration or synthetic subject. | Test (TC-540) |
 | FR-135-AC-12 | For each selected abstract and concrete model package, the checked refinement binding retains that selection's canonical identity and version; it does not use the source alias or a declaration as a representative. A model-only header binds to the whole-model identity; protocol refinement retains the same abstract model identity plus its exact protocol-clause key. Zero, one and multiple object types or state machines are all valid cardinalities for the same binding rule. The binding is derived from existing model selection state and adds no FCD field. | Test (TC-540) |
+| FR-135-AC-13 | With `record Box { target: Reference<Queue>; }` on the abstract `Queue` and `record Box { target: Reference<Ring>; }` on concrete `Ring`, and `object Q::Queue from R::Ring { box = self.box; }`, S3 accepts the row and records its expression as `Box` with `target` paired by name; the nested reference type is lifted through the object row `Queue from Ring`. | Test (TC-540) |
+| FR-135-AC-14 | With `tuple Pair(Reference<Queue>, Boolean);` on the abstract `Queue`, the same-arity `tuple Pair(Reference<Ring>, Boolean);` on concrete `Ring`, and the row `pair = self.pair` where `pair` has type `Pair` on each side, S3 accepts the row and pairs element 0 by position, lifting `Reference<Ring>` to `Reference<Queue>` while retaining element 1. | Test (TC-540) |
+| FR-135-AC-15 | With `union Holder { Empty, Has(Reference<Queue>) }` on the abstract `Queue` and `union Holder { Empty, Has(Reference<Ring>) }` on concrete `Ring`, and `holder = self.holder`, S3 accepts the row; a `Holder::Has(r)` value pairs the active `Has` case by tag and lifts its payload reference through the `Queue from Ring` object row, while `Holder::Empty` retains that tag. | Test (TC-540) |
+| FR-135-AC-16 | With `record Parcel { owners: Sequence<Option<Reference<Queue>>>[0, 2]; }` on the abstract `Queue` and the corresponding `Parcel` whose `owners` type is `Sequence<Option<Reference<Ring>>>[0, 2]` on concrete `Ring`, `parcel = self.parcel` is accepted; record field `owners`, sequence elements and `Some` payloads are paired recursively, `None` is retained, and every nested reference is lifted through `Queue from Ring`. | Test (TC-540) |
+| FR-135-AC-17 | When the abstract record field is `Box.target: Reference<Queue>` and the concrete paired record has `link: Reference<Ring>` instead of `target`, a row `box = self.box` refuses `ill_typed`/`type-mismatch` at the mismatched record-field path `box.target`, and produces no `CheckedRefinement`. | Test (TC-540) |
+| FR-135-AC-18 | When the abstract field type is `Pair(Reference<Queue>, Boolean)` and the concrete row value has type `Triple(Reference<Ring>, Boolean, Boolean)`, a row `pair = self.triplet` refuses `ill_typed`/`type-mismatch` at the first unmatched tuple position `[2]`, and produces no `CheckedRefinement`. | Test (TC-540) |
+| FR-135-AC-19 | When the abstract field has type `Holder` with case `Has(Reference<Queue>)` and the concrete field has type `State` with case `Points(Reference<Ring>)`, row `holder = self.state` refuses `ill_typed`/`type-mismatch` at the active union-tag path `holder.variant`, and produces no `CheckedRefinement`. With a concrete `State` whose active tag is `Has` and whose payload is `Reference<Ring>`, the same row is accepted and its payload is lifted. | Test (TC-540) |
 
 ## Dependencies
 
