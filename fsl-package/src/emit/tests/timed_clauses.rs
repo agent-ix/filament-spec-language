@@ -1902,11 +1902,11 @@ fn a_presence_quantifier_is_emitted_over_its_slot_domain() {
                 self.x >= 1 ms and forall(e in self.q: present(e)) }\n\
                 time invariant Held when { forall(e in self.q: present(e)) } { self.x <= 9 ms }\n\
                 urgent Soon when { exists(e in self.q: present(e)) };\n";
-    let (_, checked_result) = checked(&document, body);
-    let graph = checked_result.unwrap_or_else(|refusals| panic!("checks: {refusals:?}"));
+    let (_, checked) = checked(&document, body);
+    let graph = checked.unwrap_or_else(|refusals| panic!("checks: {refusals:?}"));
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the package emits");
-    let sequence_wire = wire(&emission);
-    let domains: Vec<&Value> = nodes(&sequence_wire)
+    let wire = wire(&emission);
+    let domains: Vec<&Value> = nodes(&wire)
         .iter()
         .filter(|node| node["body"]["operation"]["identity"] == "filament.op.option.slots")
         .collect();
@@ -1917,7 +1917,7 @@ fn a_presence_quantifier_is_emitted_over_its_slot_domain() {
     let sequence_domain = domain;
     // The wire as written: the node's own id holds operand slots, which
     // `wire` resolves to index segments.
-    let at = nodes(&sequence_wire)
+    let at = nodes(&wire)
         .iter()
         .position(|node| node == domain)
         .expect("the domain is a node");
@@ -1970,12 +1970,9 @@ fn a_presence_quantifier_is_emitted_over_its_slot_domain() {
     else {
         panic!("slot-domain place and owner: {domain}");
     };
-    assert_eq!(
-        target(&sequence_wire, place)["semantic_form"],
-        "clock_place"
-    );
-    assert_eq!(target(&sequence_wire, owner)["semantic_form"], "parameter");
-    let quantifier = nodes(&sequence_wire)
+    assert_eq!(target(&wire, place)["semantic_form"], "clock_place");
+    assert_eq!(target(&wire, owner)["semantic_form"], "parameter");
+    let quantifier = nodes(&wire)
         .iter()
         .find(|node| node["body"]["operation"]["identity"] == "filament.op.collection.forall")
         .expect("forall");
@@ -1985,30 +1982,29 @@ fn a_presence_quantifier_is_emitted_over_its_slot_domain() {
     );
     let binding = &quantifier["body"]["arguments"][1];
     assert_eq!(binding["term"], "binding");
-    let presence = target(&sequence_wire, &binding["value"]);
+    let presence = target(&wire, &binding["value"]);
     assert_eq!(presence["semantic_form"], "presence_read");
-    let slot = target(&sequence_wire, &presence["body"]["arguments"][2]);
+    let slot = target(&wire, &presence["body"]["arguments"][2]);
     assert_eq!(slot["semantic_form"], "parameter");
     assert_eq!(
-        nodes(&sequence_wire)
+        nodes(&wire)
             .iter()
             .find(|node| node["node_id"] == slot["semantic_type"])
             .expect("the Integer selector type")["semantic_form"],
         "integer",
         "Sequence selectors and the binder are Integer"
     );
-    read_presence_package(&document, emission.package.bytes(), &sequence_wire)
+    read_presence_package(&document, emission.package.bytes(), &wire)
         .unwrap_or_else(|failure| panic!("I2 admits the slot domain: {failure}"));
-
     let document = slot_presence_map_document();
-    let (_, map_checked) = checked(
+    let (_, map_checked) = self::checked(
         &document,
         "pre HasElement using v on Config::ConfigVersion::attemptUpdate { \
          self.x >= 1 ms and forall(e in self.q: present(e)) }\n",
     );
     let graph = map_checked.unwrap_or_else(|refusals| panic!("Map checks: {refusals:?}"));
     let emission = emit_checked(&CheckedPackage::link(graph)).expect("the Map package emits");
-    let map_wire = wire(&emission);
+    let map_wire = super::wire(&emission);
     let [domain] = nodes(&map_wire)
         .iter()
         .filter(|node| node["body"]["operation"]["identity"] == "filament.op.option.slots")
@@ -2086,6 +2082,14 @@ fn a_malformed_slot_domain_is_refused_at_its_locus() {
     );
     let boolean = base["semantic_graph"]["nodes"][quantifier]["body"]["result_type"].clone();
     // The presence read the quantifier's body names; its slot term is the binder.
+    let read = nodes(&base)
+        .iter()
+        .position(|node| {
+            node["node_id"]
+                == base["semantic_graph"]["nodes"][quantifier]["body"]["arguments"][1]["value"]
+                    ["target"]
+        })
+        .expect("the presence read the quantifier's body names");
     let refused = |mutate: &dyn Fn(&mut Value), cause: &str, locus: &str| {
         let mut wire = base.clone();
         mutate(&mut wire);

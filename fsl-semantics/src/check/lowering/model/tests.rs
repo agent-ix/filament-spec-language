@@ -22,7 +22,7 @@ use crate::check::checked_dispatch::{checked_dispatch_operation, DispatchRoot, O
 use crate::check::family::fixtures::{empty_scope, fixture_source};
 use crate::check::family::{OccurrenceMap, OccurrenceRole};
 use crate::check::{CheckedGraph, PackageDeclarations};
-use crate::model::accounting::{NormalizationMeter, ModelNormalizationLimits};
+use crate::model::accounting::{ModelNormalizationLimits, NormalizationMeter};
 use crate::model::dispatch::GeneralizationClosure;
 use crate::model::domain_package::{
     FieldMemberRecord, Multiplicity, NativeValueType, ObjectTypeRecord, OperationEffect,
@@ -92,6 +92,51 @@ fn key(name: &str) -> DeclarationKey {
         package: PACKAGE.to_owned(),
         node: format!("ix://acme/orders/{name}"),
     }
+}
+
+/// FR-953-AC-1: a non-native map key keeps its declared type identity in the
+/// rendered map type; unsupported key references have no rendering.
+#[trace("TC-2663", "FR-953-AC-1")]
+#[test]
+fn a_package_map_key_renders_its_declared_type_name() {
+    use crate::model::domain_package::AliasTypeRecord;
+
+    let map_key = key("OrderKey");
+    let records = BTreeMap::from([(
+        map_key.clone(),
+        DomainPackageRecord::AliasType(AliasTypeRecord {
+            key: map_key.clone(),
+            target: ValueTypeRef::Native(NativeValueType::Integer),
+        }),
+    )]);
+    assert_eq!(
+        rendered_map_type(
+            &records,
+            &ValueTypeRef::Package(map_key.clone()),
+            "ix://filament/native/Clock"
+        ),
+        Some(format!("Map<{}, ix://filament/native/Clock>", map_key.node))
+    );
+    assert_eq!(
+        rendered_map_type(
+            &records,
+            &ValueTypeRef::Native(NativeValueType::Text),
+            "ix://filament/native/Clock"
+        ),
+        Some("Map<Text, ix://filament/native/Clock>".to_owned())
+    );
+    assert_eq!(
+        rendered_map_type(
+            &records,
+            &ValueTypeRef::Native(NativeValueType::String),
+            "ix://filament/native/Clock"
+        ),
+        Some("Map<String, ix://filament/native/Clock>".to_owned())
+    );
+    assert_eq!(
+        rendered_map_type(&records, &ValueTypeRef::Clock, "ix://filament/native/Clock"),
+        None
+    );
 }
 
 fn one() -> Multiplicity {
