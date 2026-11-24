@@ -19,6 +19,7 @@ pub(super) fn replay(
         event:
             Event::Formula {
                 formula,
+                horizon,
                 timed_horizon: None,
                 ..
             },
@@ -26,12 +27,28 @@ pub(super) fn replay(
     else {
         return Err(ExactProbabilityGraphError::UnsupportedClaimForm.into());
     };
+    let fair_unbounded_eventual = claim.fairness.len() > 0
+        && claim.scheduler == fsl_semantics::check::ProbScheduler::Every
+        && *horizon == 0
+        && matches!(
+            formula
+                .formula()
+                .nodes()
+                .get(formula.formula().root().index()),
+            Some(fsl_semantics::check::FormulaNode::Unary {
+                operator: fsl_semantics::check::UnaryTemporal::Eventually,
+                interval: None,
+                ..
+            })
+        )
+        && fsl_semantics::check::TemporalProfile::from_identity(claim.profile.identity())
+            == Some(fsl_semantics::check::TemporalProfile::InfiniteTrace);
     match bound {
         Bound::AtLeast(threshold) | Bound::AtMost(threshold) => {
             check_bits(threshold, limits.max_rational_bits)?
         }
     }
-    if !claim.fairness.is_empty()
+    if !claim.fairness.is_empty() && !fair_unbounded_eventual
         || !matches!(
             TimedSystem::new(system, &claim.subject.alias),
             Err(TimedSubjectRefusal::NoTimedModel { .. })
@@ -215,6 +232,19 @@ pub(super) fn replay(
     }
     if scheduler.keys().any(|key| !visited_choices.contains(*key)) {
         return Err(ProbabilityWitnessError::Refused);
+    }
+    if fair_unbounded_eventual {
+        let rows = super::deterministic_scheduler_rows(&witness.scheduler)?;
+        if !super::super::document::fair_scheduler_is_fair(
+            system,
+            system.input().probabilistic.claims(),
+            &witness.item,
+            &rows,
+            ProbabilityDocumentLimits::for_exact(limits, system.meter_limits()),
+            cancel,
+        )? {
+            return Err(ProbabilityWitnessError::Refused);
+        }
     }
     let threshold = match bound {
         Bound::AtMost(threshold) => threshold.clone(),

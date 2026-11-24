@@ -299,6 +299,50 @@ struct Context<'a, 'control> {
     identity: fsl_foundation::IdentityLimits,
     observe: Option<&'a mut dyn FnMut(CyclicMdpProbabilityPhase)>,
 }
+
+/// Independently reconstruct the unbounded fair eventual MDP and verify that
+/// the offered deterministic scheduler has no unfair bottom component.
+pub(super) fn fair_scheduler_is_fair(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    rows: &[(ProbabilityProductKey, crate::ProductAction)],
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> Result<bool, ProbabilityDocumentError> {
+    let claim = bind_claim(claims, item, cancel)?;
+    if claim.fairness.is_empty()
+        || !matches!(
+            &claim.form,
+            ProbForm::Reach {
+                target: ReachTarget::Eventually(_),
+                ..
+            } | ProbForm::Probability {
+                event: fsl_semantics::check::Event::Formula { .. },
+                ..
+            }
+        )
+    {
+        return Err(ProbabilityDocumentError::Unsupported);
+    }
+    let mut cx = Context::new(limits, cancel, None);
+    cx.fair_mdp = true;
+    let (graph, _, _, _, _) = subject(system, claims, item, &mut cx, None)?;
+    let binding = claim_binding(system, claim)?;
+    let reference = binding.as_ref().map(|binding| &binding.reference);
+    Ok(matches!(
+        super::long_run::scheduler_is_fair(
+            system,
+            graph,
+            reference,
+            rows,
+            &claim.fairness,
+            limits,
+            cancel,
+        )?,
+        Some(true)
+    ))
+}
 impl<'a, 'control> Context<'a, 'control> {
     fn new(
         limits: ProbabilityDocumentLimits,
@@ -1351,25 +1395,40 @@ fn check_with_context(
                 values.entry(key.clone()).or_insert_with(|| rational(0));
             }
         }
-        let ranks = match side {
-            SubsystemBoundKind::Lower if cx.reward => BTreeMap::new(),
-            SubsystemBoundKind::Upper if cx.reward => {
-                match offered_ranks(&graph, document.ranking, &mut cx)? {
-                    Some(ranks) => ranks,
-                    None => return Ok(malformed_ranking()),
-                }
-            }
-            SubsystemBoundKind::Lower => match offered_ranks(&graph, document.ranking, &mut cx)? {
-                Some(ranks) => ranks,
-                None => return Ok(malformed_ranking()),
-            },
-            SubsystemBoundKind::Upper => BTreeMap::new(),
-        };
         let existential = matches!(
             (objective, side),
             (ProbabilityObjective::Minimum, SubsystemBoundKind::Upper)
                 | (ProbabilityObjective::Maximum, SubsystemBoundKind::Lower)
         );
+        let ranks = if fair_mdp && existential {
+            match offered_ranks(&graph, document.ranking, &mut cx)? {
+                Some(ranks) => ranks,
+                None => return Ok(malformed_ranking()),
+            }
+        } else if fair_mdp {
+            if !document.ranking.is_empty() {
+                return Ok(malformed_ranking());
+            }
+            BTreeMap::new()
+        } else if cx.reward {
+            match side {
+                SubsystemBoundKind::Lower => BTreeMap::new(),
+                SubsystemBoundKind::Upper => match offered_ranks(&graph, document.ranking, &mut cx)? {
+                    Some(ranks) => ranks,
+                    None => return Ok(malformed_ranking()),
+                },
+            }
+        } else {
+            match side {
+                SubsystemBoundKind::Lower => {
+                    match offered_ranks(&graph, document.ranking, &mut cx)? {
+                        Some(ranks) => ranks,
+                        None => return Ok(malformed_ranking()),
+                    }
+                }
+                SubsystemBoundKind::Upper => BTreeMap::new(),
+            }
+        };
         let hints = match offer.policy {
             None => BTreeMap::new(),
             Some(_) if !existential => {
@@ -1382,6 +1441,30 @@ fn check_with_context(
                 Err(error) => return document_admission_error(error),
             },
         };
+        let fair_zero = if fair_mdp {
+            let claim = bind_claim(claims, item, cancel)?;
+            let states = super::fairness::non_target_fair_end_component_states(
+                system,
+                claim,
+                &graph,
+                limits,
+                cancel,
+                cx.identity,
+                &mut cx.meter,
+                &mut cx.storage,
+            )?;
+            for key in &states {
+                if values.get(key) != Some(&rational(0)) {
+                    return Ok(rejected(
+                        ProbabilityCertificateRule::InequalityFails,
+                        key.clone(),
+                    ));
+                }
+            }
+            Some(states)
+        } else {
+            None
+        };
         let action_sums = sums(&graph, &values, reward.as_ref(), &mut cx)?;
         let selected = match bound_failure(
             system,
@@ -1393,6 +1476,7 @@ fn check_with_context(
             objective,
             side,
             &hints,
+            fair_zero.as_ref(),
             &mut cx,
         )? {
             Ok(selected) => selected,
@@ -1617,9 +1701,8 @@ fn hinted_choices(
             quire_canonical::Limits::new(cx.limits.bytes),
         )
         .map_err(|_| malformed.clone())?;
-        let index = schedules_at(system, captured, &key, cx)?
-            .iter()
-            .position(|schedule| *schedule == hinted);
+        let schedules = schedules_at(system, captured, &key, cx)?;
+        let index = schedules.iter().position(|schedule| *schedule == hinted);
         cx.reserve(
             std::mem::size_of::<(ProbabilityProductKey, Option<usize>)>() + key.as_bytes().len(),
         )?;
@@ -1676,6 +1759,7 @@ fn bound_failure(
     objective: ProbabilityObjective,
     side: SubsystemBoundKind,
     hints: &BTreeMap<ProbabilityProductKey, Option<usize>>,
+    fair_zero: Option<&BTreeSet<ProbabilityProductKey>>,
     cx: &mut Context<'_, '_>,
 ) -> Result<
     Result<
@@ -1717,6 +1801,18 @@ fn bound_failure(
             }
             continue;
         }
+        if cx.fair_mdp && existential {
+            let rank = ranks.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
+            if (*value == rational(0)) != (*rank == 0) {
+                return Ok(Err((ProbabilityCertificateRule::RankBroken, key.clone())));
+            }
+            if fair_zero.is_some_and(|states| states.contains(key)) && *value != rational(0) {
+                return Ok(Err((
+                    ProbabilityCertificateRule::InequalityFails,
+                    key.clone(),
+                )));
+            }
+        }
         let action_sums = sums.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
         if action_sums.is_empty() {
             return Err(ProbabilityDocumentError::Unsupported);
@@ -1730,11 +1826,15 @@ fn bound_failure(
                 SubsystemBoundKind::Upper => sum <= value,
             })
         };
-        // Probability lower bounds show positive-value progress. A reward
-        // upper bound also needs a proper selected policy, even at zero-valued
-        // states, so the rank reaches a terminal boundary.
-        let needs_progress = cx.reward && side == SubsystemBoundKind::Upper
-            || !cx.reward && side == SubsystemBoundKind::Lower && *value > rational(0);
+        // On a fair-MDP existential endpoint, progress proves termination
+        // outside the independently reconstructed non-target fair MEC. The
+        // ordinary bounded profile uses progress only for lower documents.
+        let needs_progress = if cx.fair_mdp {
+            existential && *value > rational(0)
+        } else {
+            cx.reward && side == SubsystemBoundKind::Upper
+                || !cx.reward && side == SubsystemBoundKind::Lower && *value > rational(0)
+        };
         let rank = if needs_progress {
             *ranks.get(key).ok_or(ProbabilityDocumentError::Malformed)?
         } else {

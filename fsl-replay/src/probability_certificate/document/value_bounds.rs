@@ -76,6 +76,26 @@ fn is_fair_base(profile: &str) -> bool {
     profile == "filament.probability-objective/fair-mdp-eventual/v1"
 }
 
+/// Fair-MDP intervals carry a progressing policy on the existential side:
+/// upper for a minimum and lower for a maximum. The opposite endpoint is
+/// certified universally and therefore has no ranking or policy member.
+fn fair_existential_side(
+    base: &Value,
+    side: SubsystemBoundKind,
+) -> Result<bool, ProbabilityDocumentError> {
+    let optimization = base
+        .get("optimization")
+        .and_then(Value::as_str)
+        .ok_or(ProbabilityDocumentError::MalformedMember("objective"))?;
+    match (optimization, side) {
+        ("minimum", SubsystemBoundKind::Upper) | ("maximum", SubsystemBoundKind::Lower) => Ok(true),
+        ("minimum", SubsystemBoundKind::Lower) | ("maximum", SubsystemBoundKind::Upper) => {
+            Ok(false)
+        }
+        _ => Err(ProbabilityDocumentError::Unsupported),
+    }
+}
+
 fn object(value: &Value) -> Result<&serde_json::Map<String, Value>, ProbabilityDocumentError> {
     value.as_object().ok_or(ProbabilityDocumentError::Malformed)
 }
@@ -182,12 +202,22 @@ pub(super) fn unwrap(
                 .get("profile")
                 .and_then(Value::as_str)
                 .is_some_and(is_fair_base);
+            let existential = fair
+                .then(|| fair_existential_side(&base, side))
+                .transpose()?;
             root.insert("objective".into(), base);
             if root.remove("policy").is_some() {
                 policy = Some(policy_hints(bytes)?);
             }
-            if fair && side == SubsystemBoundKind::Lower {
-                if root.contains_key("ranking") || policy.is_some() {
+            if fair {
+                if !existential.expect("fair objective has a role") {
+                    if root.contains_key("ranking") || policy.is_some() {
+                        return Err(ProbabilityDocumentError::MalformedMember("ranking"));
+                    }
+                    root.insert("ranking".into(), json!([]));
+                }
+            } else if side == SubsystemBoundKind::Upper {
+                if root.contains_key("ranking") {
                     return Err(ProbabilityDocumentError::MalformedMember("ranking"));
                 }
                 root.insert("ranking".into(), json!([]));
@@ -275,15 +305,19 @@ pub(super) fn wrap(
             .get("profile")
             .and_then(Value::as_str)
             .is_some_and(is_fair_base);
+        let existential = fair
+            .then(|| fair_existential_side(&base, side))
+            .transpose()?;
         root.insert(
             "objective".into(),
             json!({"profile": measure::bounds::PROFILE, "base": base}),
         );
-        if fair && side == SubsystemBoundKind::Lower {
-            root.remove("ranking");
-            root.remove("policy");
+        if fair {
+            if !existential.expect("fair objective has a role") {
+                root.remove("ranking");
+                root.remove("policy");
+            }
         } else if side == SubsystemBoundKind::Upper
-            && !fair
             && !cyclic_mdp_reward
             && !cyclic_reward
         {

@@ -157,7 +157,7 @@ fn the_statistical_gate_returns_each_exact_only_cause() {
 #[trace("TC-630", "FR-195-AC-8")]
 #[test]
 fn statistical_gate_precedence_precedes_claim_reduction_and_sampling() {
-    use fsl_analyze::statistical::{StatisticalRequest, check_statistical};
+    use fsl_analyze::statistical::{check_statistical, StatisticalRequest};
     use fsl_foundation::selection::DefinitionRef;
     use fsl_replay::statistical::{StatisticalLimits, StatisticalMethod, StatisticalRefusal};
 
@@ -222,7 +222,7 @@ fn exact_probability_manifest_and_statistical_refusal_settlement_are_exact() {
     use fsl_analyze::exact_probabilistic::manifest;
     use fsl_analyze::statistical::manifest as statistical_manifest;
     use fsl_foundation::bound::DomainKind;
-    use fsl_replay::statistical::{StatisticalRefusal, settle_statistical_refusal};
+    use fsl_replay::statistical::{settle_statistical_refusal, StatisticalRefusal};
     use fsl_replay::{StatisticalRequestRefusal, TerminalValue, UnavailabilityCause};
     use fsl_route::{EvidenceKind, Mode, ProviderOrigin};
 
@@ -2022,7 +2022,7 @@ fn fair_eventual_w_exact_minimum_maximum_and_forgery_vectors() {
     assert_eq!(
         records[3]
             .terminal()
-            .expect("the lower maximum bound settles")
+            .unwrap_or_else(|| panic!("lower maximum bound record: {:#?}", records[3]))
             .value(),
         &TerminalValue::Refuted
     );
@@ -2198,10 +2198,11 @@ fn fair_eventual_w_exact_minimum_maximum_and_forgery_vectors() {
 
     let mut without_fairness = base.clone();
     without_fairness["objective"]["fairness"] = serde_json::json!([]);
-    assert!(matches!(
-        check(&serde_json::to_vec(&without_fairness).unwrap()),
-        Err(ProbabilityDocumentError::ObjectiveMismatch)
-    ));
+    let without_fairness_result = check(&serde_json::to_vec(&without_fairness).unwrap());
+    assert!(
+        matches!(without_fairness_result, Err(ProbabilityDocumentError::ObjectiveMismatch)),
+        "removing the fairness record is rejected as objective mismatch: {without_fairness_result:?}"
+    );
     let mut changed = serde_json::from_slice::<serde_json::Value>(min_bytes).unwrap();
     changed["objective"]["fairness"][0]["target"]["declaration"]["package"] =
         serde_json::json!("test/foreign-model");
@@ -2275,26 +2276,30 @@ fn fair_eventual_value_bounds_are_independently_checked() {
         fsl_replay::probabilistic_claim_identity(world.claim("FairBound")).expect("claim identity");
     let doc_limits =
         fsl_replay::ProbabilityDocumentLimits::for_interval(&limits, prob_world::UNLIMITED);
-    let check = |bytes: &[u8]| {
-        fsl_replay::check_probability_certificate_document(
-            &system,
-            system.input().probabilistic.claims(),
-            &identity,
-            bytes,
-            doc_limits,
-            &Cancel::new(),
-        )
-    };
-    for bytes in [
-        terminal
-            .exact_certificate_document()
-            .expect("lower document"),
-        terminal
-            .exact_counterpart_document()
-            .expect("upper document"),
+    for (bytes, role) in [
+        (
+            terminal
+                .exact_certificate_document()
+                .expect("lower document"),
+            fsl_replay::CertificateRole::Claim,
+        ),
+        (
+            terminal
+                .exact_counterpart_document()
+                .expect("upper document"),
+            fsl_replay::CertificateRole::Counterpart,
+        ),
     ] {
         assert!(matches!(
-            check(bytes),
+            fsl_replay::check_probability_certificate_document_as(
+                &system,
+                system.input().probabilistic.claims(),
+                &identity,
+                bytes,
+                role,
+                doc_limits,
+                &Cancel::new(),
+            ),
             Ok(ExactProbabilityCertificateCheck::Accepted(_))
         ));
     }
@@ -2310,7 +2315,15 @@ fn fair_eventual_value_bounds_are_independently_checked() {
     rows[0]["value"]["denominator"] = serde_json::json!("3");
     assert_ne!(rows[0]["value"], old);
     assert!(matches!(
-        check(&serde_json::to_vec(&forged).unwrap()),
+        fsl_replay::check_probability_certificate_document_as(
+            &system,
+            system.input().probabilistic.claims(),
+            &identity,
+            &serde_json::to_vec(&forged).unwrap(),
+            fsl_replay::CertificateRole::Claim,
+            doc_limits,
+            &Cancel::new(),
+        ),
         Ok(ExactProbabilityCertificateCheck::Rejected(_))
     ));
 }
@@ -2325,8 +2338,7 @@ fn fair_eventual_upper_policy_hint_is_optional_but_independently_checked() {
     use fsl_eval::simulation::{model::ModelSystem, TransitionSystem};
     use fsl_foundation::RequestIndex;
     use fsl_replay::{
-        ExactProbabilityCertificateCheck, ProbabilityCertificateRule, ProofBasis, Schedule,
-        TerminalValue,
+        ExactProbabilityCertificateCheck, ProbabilityCertificateRule, ProofBasis, TerminalValue,
     };
 
     const CLAIMS: &str = "probabilistic FairBound using inf on M over (w: M::W) \
@@ -2366,12 +2378,13 @@ fn fair_eventual_upper_policy_hint_is_optional_but_independently_checked() {
         fsl_replay::probabilistic_claim_identity(world.claim("FairBound")).expect("claim identity");
     let doc_limits =
         fsl_replay::ProbabilityDocumentLimits::for_interval(&limits, prob_world::UNLIMITED);
-    let check = |bytes: &[u8]| {
-        fsl_replay::check_probability_certificate_document(
+    let check = |bytes: &[u8], role| {
+        fsl_replay::check_probability_certificate_document_as(
             &system,
             system.input().probabilistic.claims(),
             &identity,
             bytes,
+            role,
             doc_limits,
             &Cancel::new(),
         )
@@ -2385,19 +2398,42 @@ fn fair_eventual_upper_policy_hint_is_optional_but_independently_checked() {
         .actions(&initial)
         .expect("initial actions expand")
         .expect("initial actions are decided");
-    let schedule = |name: &str| {
+    let transition = |name: &str| {
+        let expected = format!("ix://test/fair-bounds-w/W/{name}");
         let action = actions
             .iter()
-            .find(|action| action.identity.operation.ends_with(name))
+            .find(|action| {
+                serde_json::from_str::<serde_json::Value>(&action.identity.operation)
+                    .ok()
+                    .and_then(|identity| {
+                        identity
+                            .get("node")
+                            .and_then(|node| node.as_str())
+                            .map(str::to_owned)
+                    })
+                    .as_deref()
+                    == Some(expected.as_str())
+            })
             .unwrap_or_else(|| panic!("the literal {name} action is enabled"));
-        Schedule::of(&system, &action.identity).expect("scheduled identity is canonical")
+        system
+            .scheduled_identity_key(&action.identity)
+            .expect("scheduled transition identity is canonical")
     };
-    let go = serde_json::from_slice::<serde_json::Value>(schedule("::go").as_bytes())
-        .expect("go schedule is canonical JSON");
-    let wait = serde_json::from_slice::<serde_json::Value>(schedule("::wait").as_bytes())
-        .expect("wait schedule is canonical JSON");
+    let go = serde_json::from_slice::<serde_json::Value>(&transition("go"))
+        .expect("go transition identity is canonical JSON");
+    let wait = serde_json::from_slice::<serde_json::Value>(&transition("wait"))
+        .expect("wait transition identity is canonical JSON");
     let mut upper: serde_json::Value =
         serde_json::from_slice(upper_bytes).expect("upper value-bound JSON is canonical");
+    assert_eq!(
+        upper["objective"]["base"]["profile"],
+        "filament.probability-objective/fair-mdp-eventual/v1"
+    );
+    assert_eq!(upper["objective"]["base"]["optimization"], "minimum");
+    let targets = upper["objective"]["base"]["targets"]
+        .as_array()
+        .expect("the base objective lists its literal target product states")
+        .clone();
     let ranking = upper["ranking"].as_array().expect("upper ranking rows");
     let root = ranking
         .iter()
@@ -2421,12 +2457,7 @@ fn fair_eventual_upper_policy_hint_is_optional_but_independently_checked() {
     for row in upper["values"].as_array().unwrap() {
         let expected = if row["state"] == root {
             serde_json::json!({"numerator": "1", "denominator": "2"})
-        } else if upper["targets"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|target| target == &row["state"])
-        {
+        } else if targets.iter().any(|target| target == &row["state"]) {
             serde_json::json!({"numerator": "1", "denominator": "1"})
         } else {
             serde_json::json!({"numerator": "0", "denominator": "1"})
@@ -2437,28 +2468,59 @@ fn fair_eventual_upper_policy_hint_is_optional_but_independently_checked() {
     for row in upper["ranking"].as_array().unwrap() {
         assert_eq!(row["rank"], if row["state"] == root { 1 } else { 0 });
     }
-    assert!(lower["ranking"].as_array().unwrap().is_empty());
+    assert!(lower.get("ranking").is_none());
     assert!(lower.get("policy").is_none());
-    let lower_replay =
-        check(&serde_json::to_vec(&lower).unwrap()).expect("literal lower bound is checked");
+    let lower_replay = fsl_replay::check_probability_certificate_document_as(
+        &system,
+        system.input().probabilistic.claims(),
+        &identity,
+        &serde_json::to_vec(&lower).unwrap(),
+        fsl_replay::CertificateRole::Claim,
+        doc_limits,
+        &Cancel::new(),
+    )
+    .expect("literal lower bound is checked");
     assert!(matches!(
         lower_replay,
         ExactProbabilityCertificateCheck::Accepted(_)
     ));
-    let upper_replay =
-        check(&serde_json::to_vec(&upper).unwrap()).expect("literal upper bound is checked");
+    let upper_replay = fsl_replay::check_probability_certificate_document_as(
+        &system,
+        system.input().probabilistic.claims(),
+        &identity,
+        &serde_json::to_vec(&upper).unwrap(),
+        fsl_replay::CertificateRole::Counterpart,
+        doc_limits,
+        &Cancel::new(),
+    )
+    .expect("literal upper bound is checked");
     assert!(matches!(
         upper_replay,
         ExactProbabilityCertificateCheck::Accepted(_)
     ));
     upper["policy"] = serde_json::json!([{"state": root, "choice": go}]);
-    assert!(matches!(
-        check(&serde_json::to_vec(&upper).unwrap()),
-        Ok(ExactProbabilityCertificateCheck::Accepted(_))
-    ));
+    let supplied_go = fsl_replay::check_probability_certificate_document_as(
+        &system,
+        system.input().probabilistic.claims(),
+        &identity,
+        &serde_json::to_vec(&upper).unwrap(),
+        fsl_replay::CertificateRole::Counterpart,
+        doc_limits,
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(
+            supplied_go,
+            Ok(ExactProbabilityCertificateCheck::Accepted(_))
+        ),
+        "the explicit go policy satisfies the upper bound: {supplied_go:?}"
+    );
     upper["policy"][0]["choice"] = wait;
-    let refused = check(&serde_json::to_vec(&upper).unwrap())
-        .expect("a canonical but non-progressing policy is a checked rejection");
+    let refused = check(
+        &serde_json::to_vec(&upper).unwrap(),
+        fsl_replay::CertificateRole::Counterpart,
+    )
+    .expect("a canonical but non-progressing policy is a checked rejection");
     assert!(matches!(
         refused,
         ExactProbabilityCertificateCheck::Rejected(ref rejection)
@@ -3931,7 +3993,7 @@ fn exact_unbounded_keys_keep_none_and_budget_stops_have_no_product() {
 #[trace("TC-631", "FR-196-AC-17")]
 #[test]
 fn bounded_event_position_formulas_use_formula_keys_and_exact_extrema() {
-    use fsl_analyze::analyze::{Engines, analyze_items, exact_probabilistic_item};
+    use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
     use fsl_foundation::RequestIndex;
     use fsl_replay::{ModelCheckLimits, ProofBasis, TerminalValue};
 

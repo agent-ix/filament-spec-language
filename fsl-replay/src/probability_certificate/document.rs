@@ -639,6 +639,19 @@ fn profile_dispatch(
     )
 }
 
+/// Verify the fairness of a deterministic scheduler over an independently
+/// reconstructed unbounded fair-MDP subject.
+pub(super) fn fair_scheduler_is_fair(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    rows: &[(ProbabilityProductKey, crate::ProductAction)],
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> Result<bool, ProbabilityDocumentError> {
+    mdp::fair_scheduler_is_fair(system, claims, item, rows, limits, cancel)
+}
+
 fn canonical<T: Serialize>(value: &T, bytes: u64) -> Result<Vec<u8>, ProbabilityDocumentError> {
     let mut counter = EncodedSize {
         used: 0,
@@ -1073,7 +1086,10 @@ fn read_document_profile(
     ) {
         let destination = fairness.ok_or(ProbabilityDocumentError::Unsupported)?;
         *destination = fairness::read(&wire.objective.fairness, limits, cancel, meter, storage)?;
-        if destination.is_empty() || wire.objective.optimization == "workload" {
+        if destination.is_empty() {
+            return Err(ProbabilityDocumentError::ObjectiveMismatch);
+        }
+        if wire.objective.optimization == "workload" {
             return Err(ProbabilityDocumentError::MalformedMember("objective"));
         }
     }
@@ -2086,7 +2102,12 @@ fn check_document_bytes(
     let bound_side = offer.side;
     let dispatch = profile_dispatch(bytes, limits, cancel)?;
     // Only a cyclic MDP base resolves hints against its existential choices.
-    if offer.policy.is_some() && dispatch != ProfileDispatch::CyclicMdp {
+    if offer.policy.is_some()
+        && !matches!(
+            dispatch,
+            ProfileDispatch::CyclicMdp | ProfileDispatch::FairMdp
+        )
+    {
         return document_admission_error(ProbabilityDocumentError::MalformedMember("policy"));
     }
     match dispatch {
