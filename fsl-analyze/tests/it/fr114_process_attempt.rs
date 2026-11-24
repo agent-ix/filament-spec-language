@@ -189,6 +189,18 @@ fn a_process_attempt_binds_the_process_anchor_frame_and_contract() {
 
     let checked = fsl_package::CheckedPackage::link(graph);
     let graph = checked.graph();
+    let anchor_count = graph
+        .semantic_graph()
+        .nodes()
+        .filter(|node| node.semantic_form() == "operation_anchor")
+        .count();
+    let frame_count = graph
+        .semantic_graph()
+        .nodes()
+        .filter(|node| node.semantic_form() == "frame")
+        .count();
+    assert_eq!(anchor_count, 1, "one operation_anchor node for go");
+    assert_eq!(frame_count, 1, "one frame node for go");
     let name = |text: &str| Identifier::new(text).expect("a model identifier");
     let selection = graph
         .resolve_operation(&name("Config"), &name("Flow"), &name("go"))
@@ -224,11 +236,17 @@ fn a_process_attempt_binds_the_process_anchor_frame_and_contract() {
     };
     assert_eq!(missing.cause.code().as_str(), "missing_declaration");
     assert_eq!(missing.cause.cause(), Some("missing-name"));
-    assert!(matches!(
-        missing.cause.as_ref(),
-        fsl_semantics::check::CheckCause::ProtocolAnchor(cause)
-            if matches!(cause.as_ref(), fsl_semantics::check::ProtocolAnchorCause::MissingContract { entry, .. } if entry == "Absent")
-    ));
+    let missing_span = contracts_entry_span(&flow_attempt_unit("Absent"), "Absent");
+    match missing.cause.as_ref() {
+        fsl_semantics::check::CheckCause::ProtocolAnchor(cause) => match cause.as_ref() {
+            fsl_semantics::check::ProtocolAnchorCause::MissingContract { entry, span } => {
+                assert_eq!(entry, "Absent");
+                assert_eq!(*span, missing_span, "the refusal locus is the entry token");
+            }
+            other => panic!("typed missing-contract refusal: {other:?}"),
+        },
+        other => panic!("a protocol-anchor refusal: {other:?}"),
+    }
 
     let wrong_anchor = check_flow_attempt_unit(&flow_attempt_unit("I"))
         .expect_err("an invariant contracts entry refuses");
@@ -237,20 +255,41 @@ fn a_process_attempt_binds_the_process_anchor_frame_and_contract() {
     };
     assert_eq!(wrong_anchor.cause.code().as_str(), "wrong_snapshot");
     assert_eq!(wrong_anchor.cause.cause(), Some("wrong-anchor"));
+    let wrong_anchor_span = contracts_entry_span(&flow_attempt_unit("I"), "I");
     match wrong_anchor.cause.as_ref() {
         fsl_semantics::check::CheckCause::ProtocolAnchor(cause) => match cause.as_ref() {
             fsl_semantics::check::ProtocolAnchorCause::WrongContractAnchor {
                 entry,
                 attempt_anchor,
                 clause_anchor,
-                ..
+                span,
             } => {
                 assert_eq!(entry, "I");
                 assert_eq!(attempt_anchor, "Config::Flow::go");
                 assert_eq!(clause_anchor, "Config::Flow");
+                assert_eq!(
+                    *span, wrong_anchor_span,
+                    "the refusal locus is the entry token"
+                );
             }
             other => panic!("typed wrong-anchor refusal: {other:?}"),
         },
         other => panic!("a protocol-anchor refusal: {other:?}"),
+    }
+}
+
+fn contracts_entry_span(source: &str, entry: &str) -> fsl_foundation::Span {
+    let prefix = "contracts [";
+    let start = source
+        .find(prefix)
+        .expect("the fixture has a contracts list")
+        + prefix.len();
+    let token_start = start
+        + source[start..]
+            .find(entry)
+            .expect("the contracts entry is present");
+    fsl_foundation::Span {
+        start: token_start,
+        end: token_start + entry.len(),
     }
 }
