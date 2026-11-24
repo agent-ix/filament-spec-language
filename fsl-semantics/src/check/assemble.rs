@@ -6532,7 +6532,7 @@ fn state_clauses(
             authored_operation: form
                 .operation
                 .as_ref()
-                .map(|operation| operation.name.clone()),
+                .map(|operation| format!("{}::{}", form.context.name, operation.name)),
             name,
             source_owner: Some(source_owner),
             name_span: form.name.span,

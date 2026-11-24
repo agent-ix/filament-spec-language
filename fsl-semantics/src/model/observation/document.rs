@@ -3521,7 +3521,6 @@ pub(super) fn admit_population_values<'t>(
     let populations = &snapshot.populations[..];
     let mut objects: Vec<(ObjectReference, Vec<(&str, FieldValue)>)> = Vec::new();
     let mut holders: Vec<String> = Vec::new();
-    let mut object_holders = BTreeMap::<ObjectReference, String>::new();
     let mut field_origins = Vec::new();
     let mut listed = super::relationships::Listed::new();
     let mut completeness = BTreeMap::new();
@@ -3822,26 +3821,9 @@ pub(super) fn admit_population_values<'t>(
             // own `invalid-value` (SR-750 FND-004 round 2): propagated
             // directly, never re-mapped to a `Fault`.
             let reference = object_reference(views, effective_type, &object.key)?;
-            if let Some(first_population) = object_holders.get(&reference) {
-                if first_population != &entry.population {
-                    // The shared closure keys objects by their native K2
-                    // reference. It cannot retain these two explicitly
-                    // attributed occurrences as distinct storage entries.
-                    return Err(refuse(
-                        admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
-                            .with("reason", "population-qualified-object-identity")
-                            .with("population", entry.population.clone())
-                            .with("other_population", first_population.clone())
-                            .with("object", object.key.clone())
-                            .at(vec![
-                                PathStep::Field("populations".to_owned()),
-                                PathStep::Index(population_index),
-                            ]),
-                    ));
-                }
-            } else {
-                object_holders.insert(reference.clone(), entry.population.clone());
-            }
+            // FR-125: one object reference may be a member of several
+            // populations. Preserve each population's membership row; the
+            // shared reference and key identify the same object in them.
             if !listed.contains_key(&entry.population) {
                 listed.insert(entry.population.clone(), BTreeMap::new());
             }
@@ -4529,8 +4511,19 @@ pub(super) fn finish_populations(
             })
             .collect()
     };
+    // A native reference may be listed by several populations. Each
+    // population retains its membership row below, while the object closure
+    // stores the shared object once by (universe, type, key).
+    let mut closure_objects = Vec::new();
+    let mut closure_references = BTreeSet::new();
+    for (reference, attributes) in objects {
+        if closure_references.insert(reference.clone()) {
+            closure_objects.push((reference, attributes));
+        }
+    }
     let environment = ObjectEnvironment::new(
-        ObjectClosure::new(closure_types, objects, &tolerated).map_err(map_environment_refusal)?,
+        ObjectClosure::new(closure_types, closure_objects, &tolerated)
+            .map_err(map_environment_refusal)?,
     )
     .with_references(references)
     .with_out_of_range(out_of_range.clone())

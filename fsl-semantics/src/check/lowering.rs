@@ -7873,6 +7873,16 @@ fn is_map(content: &NodeContent) -> bool {
 /// decimal or integer range retains repeated text, so equal bounds repeat.
 fn derived_operands(content: &NodeContent) -> Vec<filament_exact::PathSegment> {
     use filament_exact::PathSegment;
+    // The carrier is keyed by the protocol it names, not just by the
+    // reference expression's source path (FR-092-AC-17).
+    if content.node_tag == NodeTag::Protocol && content.semantic_form == "protocol_reference" {
+        if let BodyTerm::Leaf(LeafTerm::Reference {
+            target: NodeRef::Admitted(target),
+        }) = &content.body
+        {
+            return vec![PathSegment::Node(target.clone())];
+        }
+    }
     if content.node_tag == NodeTag::State {
         match (content.semantic_form, &content.body) {
             // A clause's name is no part of its identity, so neither is its

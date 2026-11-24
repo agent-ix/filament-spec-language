@@ -253,6 +253,7 @@ impl StateClauseDeclaration {
             context: Some(self.context.clone()),
             receiver: Some(("self", ValueType::Reference(self.context.clone()))),
             operation: self.operation.as_ref(),
+            authored_operation: self.authored_operation.as_deref(),
             context_population: self.context_population.clone(),
             frame_population: self.frame_population.clone(),
             binders: &[],
@@ -290,6 +291,7 @@ pub(crate) struct ClauseView<'a> {
     /// `over`).
     pub(crate) receiver: Option<(&'a str, ValueType)>,
     pub(crate) operation: Option<&'a ClauseOperation>,
+    pub(crate) authored_operation: Option<&'a str>,
     pub(crate) context_population: Option<PopulationDomain>,
     pub(crate) frame_population: Option<PopulationDomain>,
     /// Further parameters after the operation's: the collection elements a
@@ -1020,6 +1022,7 @@ fn check_clause_typed(
         operation: form
             .operation
             .map(|operation| operation.declaration.name().to_owned()),
+        authored_operation: form.authored_operation.map(str::to_owned),
         self_slot: 0,
         result_slot: has_result.then_some(1),
     });

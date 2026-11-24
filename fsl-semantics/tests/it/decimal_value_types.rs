@@ -6,11 +6,12 @@
 
 use std::collections::BTreeMap;
 
+use filament_checked::node::NodeKind;
 use filament_exact::{DecimalType, Integer, RoundingMode, ValueType};
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_forms::build_unit;
 use fsl_foundation::SourceIdentity;
-use fsl_semantics::check::{CheckCause, CheckedGraph, PackageDeclarations};
+use fsl_semantics::check::{CheckCause, CheckRefusal, CheckedGraph, PackageDeclarations};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, package_input, PackageInput, UnitIntakeCause};
 use fsl_semantics::model::observation::{
@@ -44,6 +45,10 @@ struct Checked {
 
 /// Admits, assembles and checks `document` under the unit `unit`.
 fn check(document: &[u8], unit: &str) -> Checked {
+    check_result(document, unit).unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"))
+}
+
+fn check_result(document: &[u8], unit: &str) -> Result<Checked, Vec<CheckRefusal>> {
     let packages = package_input([document]).expect("byte admission");
     let parsed = fsl_cst::parse(
         SourceIdentity::new("test", "decimal-value-types"),
@@ -71,18 +76,16 @@ fn check(document: &[u8], unit: &str) -> Checked {
         .unwrap_or_else(|refusal| panic!("assembly succeeds: {refusal:?}"))
     };
     let declarations = assemble();
-    let graph = assemble()
-        .check(
-            CheckMode::Linked,
-            CheckingLimits::default(),
-            &crate::reward_evaluator::ZeroRewardEvaluator,
-        )
-        .unwrap_or_else(|refusals| panic!("the unit checks: {refusals:?}"));
-    Checked {
+    let graph = assemble().check(
+        CheckMode::Linked,
+        CheckingLimits::default(),
+        &crate::reward_evaluator::ZeroRewardEvaluator,
+    )?;
+    Ok(Checked {
         declarations,
         graph,
         packages,
-    }
+    })
 }
 
 fn check_golden(document: &Value) -> Checked {
@@ -529,6 +532,199 @@ fn decimal_members_check_in_clauses() {
     }
     let body = "invariant SocFloor using v on M::Battery at current { self.soc >= 0.20 }\n";
     check(O2, &unit_text("example/plan-battery", "M", body));
+}
+
+/// FR-104-AC-18 / TC-3083: qualified parameter references, temporal reads,
+/// inherited operation ownership and exact scale-two literal typing stay
+/// consistent across preconditions and postconditions.
+#[trace("TC-3083", "FR-104-AC-18")]
+#[test]
+fn qualified_decimal_operation_parameters_resolve_in_their_owner_and_snapshot() {
+    let mut document = golden();
+    let by_identity = "ix://test/decimal/Meter/adjust/by";
+    let step_identity = "ix://test/decimal/Meter/adjust/step";
+    let mut by = type_mut(&mut document, "Meter")["operations"][0]["params"][0].clone();
+    by["typeRef"] = "ix://test/decimal/Soc".into();
+    by.as_object_mut()
+        .expect("parameter object")
+        .remove("decimal");
+    by["identity"] = by_identity.into();
+    by["name"] = "by".into();
+    by["origin"]["generated"]["generatorIdentity"] = by_identity.into();
+    by["origin"]["generated"]["inputIdentities"] = json!([by_identity]);
+    let mut step = by.clone();
+    step["identity"] = step_identity.into();
+    step["name"] = "step".into();
+    step["origin"]["generated"]["generatorIdentity"] = step_identity.into();
+    step["origin"]["generated"]["inputIdentities"] = json!([step_identity]);
+
+    let mut adjust = type_mut(&mut document, "Meter")["operations"][0].clone();
+    adjust["params"] = json!([by.clone(), step]);
+    let mut reset = adjust.clone();
+    reset["identity"] = "ix://test/decimal/Meter/reset".into();
+    reset["name"] = "reset".into();
+    let mut reset_by = by;
+    reset_by["identity"] = "ix://test/decimal/Meter/reset/by".into();
+    reset_by["origin"]["generated"]["generatorIdentity"] =
+        "ix://test/decimal/Meter/reset/by".into();
+    reset_by["origin"]["generated"]["inputIdentities"] =
+        json!(["ix://test/decimal/Meter/reset/by"]);
+    reset["params"] = json!([reset_by]);
+    reset
+        .as_object_mut()
+        .expect("operation object")
+        .remove("returns");
+    type_mut(&mut document, "Meter")["operations"] = json!([adjust, reset]);
+
+    let mut gauge = type_mut(&mut document, "Meter").clone();
+    gauge["identity"] = "ix://test/decimal/Gauge".into();
+    gauge["displayName"] = "Gauge".into();
+    gauge["origin"]["generated"]["generatorIdentity"] = "ix://test/decimal/Gauge".into();
+    gauge["origin"]["generated"]["inputIdentities"] = json!(["ix://test/decimal/Gauge"]);
+    gauge["supertypes"] = json!(["ix://test/decimal/Meter"]);
+    gauge["fields"] = json!([]);
+    gauge["operations"] = json!([]);
+    gauge["relationships"] = json!([]);
+    document["types"].as_array_mut().expect("types").push(gauge);
+    let bytes = serde_json::to_vec(&document).expect("fixture JSON");
+    let p = decimal("0", "100", 2);
+
+    let source = "pre A using v on Config::Meter::adjust { Config::Meter::adjust::by >= 0.00 }\n\
+        post APost using v on Config::Meter::adjust { Config::Meter::adjust::by >= 0.00 }\n\
+        pre S1 using v on Config::Meter::adjust { Config::Meter::adjust::step >= 0.00 }\n\
+        pre S2 using v on Config::Meter::adjust { step >= 0.00 }\n\
+        pre LetStep using v on Config::Meter::adjust { let step = Config::Meter::adjust::by in Config::Meter::adjust::step >= step }\n\
+        pre Gauge using v on Config::Gauge::adjust { Config::Gauge::adjust::by >= 0.00 }\n";
+    let checked = check(&bytes, &unit_text(PACKAGE, "Config", source));
+    for name in ["A", "APost", "S1", "S2", "LetStep", "Gauge"] {
+        let clause = checked
+            .graph
+            .state_clause(name)
+            .unwrap_or_else(|| panic!("{name} checks"));
+        assert!(
+            clause
+                .parameters()
+                .iter()
+                .any(|(parameter, value_type)| parameter == "by" && value_type == &p)
+                || name == "Gauge"
+        );
+        assert!(
+            clause
+                .body()
+                .children()
+                .iter()
+                .any(|node| node.value_type() == &p),
+            "{name} has an operand typed P"
+        );
+    }
+    assert_eq!(
+        checked.graph.state_clause("S1").unwrap().body().id(),
+        checked.graph.state_clause("S2").unwrap().body().id(),
+        "qualified and bare `step` resolve to the same checked node"
+    );
+    let qualified_step = checked.graph.state_clause("S1").unwrap().body().children();
+    let bare_step = checked.graph.state_clause("S2").unwrap().body().children();
+    assert_eq!(qualified_step[0].id(), bare_step[0].id());
+    let let_children = checked
+        .graph
+        .state_clause("LetStep")
+        .unwrap()
+        .body()
+        .children();
+    assert!(matches!(let_children[0].kind(), NodeKind::Local(1)));
+    let let_comparison = let_children[1].children();
+    assert!(
+        matches!(let_comparison[0].kind(), NodeKind::Local(2)),
+        "qualified step node: {:?}",
+        let_comparison[0].kind()
+    );
+    assert!(
+        matches!(let_comparison[1].kind(), NodeKind::Local(3)),
+        "let-bound step node: {:?}",
+        let_comparison[1].kind()
+    );
+
+    for (name, expression) in [
+        ("BadBy", "pre(Config::Meter::adjust::by)"),
+        ("BadStep", "pre(step)"),
+    ] {
+        let refusals = match check_result(
+            &bytes,
+            &unit_text(
+                PACKAGE,
+                "Config",
+                &format!(
+                    "post {name} using v on Config::Meter::adjust {{ {expression} >= 0.00 }}\n"
+                ),
+            ),
+        ) {
+            Err(refusals) => refusals,
+            Ok(_) => panic!("a postcondition cannot read pre(parameter)"),
+        };
+        assert_eq!(refusals.len(), 1);
+        assert!(matches!(
+            refusals[0].cause.as_ref(),
+            CheckCause::WrongSnapshot(
+                filament_semantic_value::call::WrongSnapshotCause::ForbiddenPreRead
+            )
+        ));
+        assert_eq!(refusals[0].location.path(), vec![0]);
+    }
+
+    for (unit, name) in [
+        ("pre X using v on Config::Meter::adjust { Config::Meter::adjust::nope >= 0.00 }\n", "nope"),
+        ("pre X using v on Config::Meter::adjust { Config::Meter::reset::by >= 0.00 }\n", "by"),
+        ("pre X using v on Config::Gauge::adjust { Config::Meter::adjust::by >= 0.00 }\n", "adjust"),
+        ("pre X using v on Config::Meter::adjust { Config::Gauge::adjust::by >= 0.00 }\n", "adjust"),
+        ("invariant X using v on Config::Meter at current { Config::Meter::adjust::by >= 0.00 }\n", "adjust"),
+        ("constraint X using v on Config::Meter at current { Config::Meter::adjust::by >= 0.00 }\n", "adjust"),
+    ] {
+        let refusals = match check_result(&bytes, &unit_text(PACKAGE, "Config", unit)) {
+            Err(refusals) => refusals,
+            Ok(_) => panic!("the qualified parameter is outside its declared owner/snapshot"),
+        };
+        assert_eq!(refusals.len(), 1, "{unit}: {refusals:?}");
+        assert_eq!(refusals[0].cause.code(), fsl_foundation::Code::MissingDeclaration);
+        assert_eq!(refusals[0].cause.cause(), Some("missing-name"));
+        assert!(format!("{:?}", refusals[0].cause).contains(name), "{unit}: {refusals:?}");
+    }
+
+    let invalid_source = unit_text(
+        PACKAGE,
+        "Config",
+        "pre B using v on Config::Meter::adjust { by >= 0.00 }\n",
+    );
+    let parsed = fsl_cst::parse(
+        SourceIdentity::new("test", "decimal-value-types"),
+        "decimal.native",
+        invalid_source.as_bytes(),
+        fsl_cst::Limits::default(),
+    )
+    .expect("source parses into diagnostics");
+    let [diagnostic] = parsed.diagnostics() else {
+        panic!("one syntax diagnostic: {:?}", parsed.diagnostics());
+    };
+    assert_eq!(diagnostic.code, fsl_foundation::Code::InvalidSyntax);
+    assert_eq!(diagnostic.cause, fsl_cst::CompleteCause::UnexpectedToken);
+    let span = diagnostic
+        .byte_span()
+        .expect("the unexpected `by` has a span");
+    assert_eq!(&invalid_source[span.start..span.end], "by");
+
+    let dial = "type P = Config::Soc;\nobject Dial { operation turn(by: P); }\n\
+        pre T using v on Dial::turn { Dial::turn::by >= 0.00 }\n";
+    let dial_graph = check(&bytes, &unit_text(PACKAGE, "Config", dial)).graph;
+    let dial_clause = dial_graph
+        .state_clause("T")
+        .expect("source-owned Dial parameter resolves");
+    assert!(dial_clause
+        .parameters()
+        .iter()
+        .any(|(name, ty)| name == "by" && ty == &p));
+    let dial_operands = dial_clause.body().children();
+    assert!(matches!(dial_operands[0].kind(), NodeKind::Local(1)));
+    assert_eq!(dial_operands[0].value_type(), &p);
+    assert_eq!(dial_operands[1].value_type(), &p);
 }
 
 fn coefficient(c: &str, s: &str) -> Value {

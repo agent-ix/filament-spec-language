@@ -1,8 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! TC-516 (FR-121-AC-34 fully; the library-name and package-bytes parts of
-//! FR-121-AC-32, AC-33, AC-35 and AC-36): the code has no `package_id`, which
-//! those ACs state their package identity in, so those tests are tagged
-//! `TC-516` only and claim none of AC-32, AC-33, AC-35 or AC-36.
+//! TC-516 (FR-121-AC-32/33/34): imported sites retain the declaring
+//! package identity and bytes needed to construct and replay a request.
 //!
 //! `call_site` selects a function a
 //! direct import of the unit declares through an [`ImportedFunctionName`],
@@ -151,11 +149,12 @@ fn dependency_reference(bytes: &[u8]) -> (String, serde_json::Value) {
 /// standalone compile of the library, and its `library` and `function` equal
 /// the `dependency_reference` term of the unit's call; the unit's own
 /// `package` differs from the library's.
-#[trace("TC-516")]
+#[trace("TC-516", "FR-121-AC-32")]
 #[test]
 fn an_imported_function_site_equals_the_standalone_library_site() {
     let unit = unit_source("test/units", UNIT_BODY);
     let unit_site = selected(&unit, vec![units()], &function("q")).expect("q");
+    assert_eq!(unit_site.package_id.as_str(), "fixture");
     let (term_package, term_node) = dependency_reference(&unit_site.package);
 
     for name in ["big", "small", "both"] {
@@ -163,8 +162,11 @@ fn an_imported_function_site_equals_the_standalone_library_site() {
             .unwrap_or_else(|refusal| panic!("{name}: {refusal}"));
         let alone = standalone(&format!("{BIG}{SMALL}{BOTH}"), name);
         assert_eq!(site.site.function, alone.site, "{name}");
+        assert_eq!(site.site.package_id, alone.package_id, "{name}");
+        assert_eq!(site.site.package_id.as_str(), "test/units", "{name}");
         assert_eq!(site.site.package, alone.package, "{name}");
         assert_ne!(site.site.package, site.package, "{name}");
+        assert_ne!(site.site.package_id, unit_site.package_id, "{name}");
         assert_eq!(site.site.library, lib("test/units"));
         let names: Vec<&str> = site
             .site
@@ -235,11 +237,12 @@ fn library_replay(
 
 /// FR-121-AC-33: from the imported site alone a request keyed by the
 /// library's package name and the site's parameter replays `big(3)` to `false`.
-#[trace("TC-516")]
+#[trace("TC-516", "FR-121-AC-33")]
 #[test]
 fn the_imported_site_alone_keys_a_replay_of_the_library_function() {
     let unit = unit_source("test/units", UNIT_BODY);
     let site = selected(&unit, vec![units()], &imported("test/units", "big")).expect("big");
+    assert_eq!(site.site.package_id.as_str(), "test/units");
     let result = library_replay(
         &site.site,
         "big",

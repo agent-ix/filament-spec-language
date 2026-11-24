@@ -543,6 +543,7 @@ fn view_of<'v>(declaration: &'v StateGraphDeclaration, body: &'v Expression) -> 
             .zip(declaration.context.clone())
             .map(|(over, context)| (over.name.name.as_str(), ValueType::Reference(context))),
         operation: None,
+        authored_operation: None,
         context_population: declaration.context_population.clone(),
         frame_population: None,
         binders: &[],

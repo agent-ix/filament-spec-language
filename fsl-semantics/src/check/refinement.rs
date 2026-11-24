@@ -3466,6 +3466,7 @@ impl<'c, 'a> Checker<'c, 'a> {
                 parent_projections: BTreeMap::new(),
                 kind,
                 operation,
+                authored_operation: None,
                 self_slot: 0,
                 result_slot: None,
             });

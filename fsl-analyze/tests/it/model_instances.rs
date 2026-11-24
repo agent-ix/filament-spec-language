@@ -589,13 +589,166 @@ fn an_unbounded_admitting_population_requires_a_bound_and_no_key_is_no_instance(
     ));
 }
 
+/// FR-125-AC-13: instancing exits before exploration in the specified order.
+/// An unbounded overlapping population requires a universe even with no
+/// initial state; bounded empty initials report NoInitialState; conflicting
+/// same-key types refuse before any instance is formed; agreeing types admit;
+/// and a bounded subject with no admitted key reports NoInstance.
+#[trace("TC-520", "FR-125-AC-13")]
+#[test]
+fn model_instancing_checks_bounds_initials_and_cross_snapshot_identity_first() {
+    let mut unbounded = self::world(&[("animals", &["Animal"])], &[]);
+    unbounded.initial.clear();
+    let refusal = unbounded
+        .run("Animal", Vec::new(), true)
+        .expect_err("an overlapping unbounded population requires a bound");
+    assert!(
+        matches!(refusal, ModelCheckRefusal::RequiresBound(_)),
+        "{refusal:?}"
+    );
+
+    let mut empty = self::world(&[("animals", &["Animal"])], &[("animals", &[])]);
+    empty.initial.clear();
+    assert!(matches!(
+        empty.run("Animal", universes(&[("animals", &["c"])]), true),
+        Ok(ModelCheckOutcome::Undecided {
+            cause: UndecidedCause::NoInitialState,
+            stats,
+        }) if stats.product_states == 0
+    ));
+
+    let conflict = |split: bool| {
+        let mut world = if split {
+            self::world(
+                &[("animals", &["Animal"]), ("dogs", &["Dog"])],
+                &[("animals", &[("c", "Animal")]), ("dogs", &[])],
+            )
+        } else {
+            self::world(
+                &[("animals", &["Animal"]), ("dogs", &["Dog"])],
+                &[("animals", &[("c", "Animal")]), ("dogs", &[("c", "Dog")])],
+            )
+        };
+        if split {
+            let identity = "s1";
+            let second = serde_json::json!({
+                "format": "filament.state.snapshot/v1",
+                "identity": {"authority": "test", "identity": identity},
+                "observation": "current",
+                "model": {"identity": PACKAGE},
+                "anchor": {"kind": "initialization", "name": "start"},
+                "populations": [
+                    {"population": ident("animals"), "complete": true, "objects": []},
+                    {"population": ident("dogs"), "complete": true,
+                     "objects": [{"key": "c", "type": ident("Dog"),
+                                 "fields": {"age": {"integer": "5"}}}]}
+                ]
+            })
+            .to_string()
+            .into_bytes();
+            let reference = fsl_semantics::model::observation::document_reference(&second)
+                .expect("snapshot identifies itself");
+            world.snapshots.insert(reference.clone(), second);
+            world.initial = vec![
+                world.initial[0].clone(),
+                DocumentRef {
+                    authority: "test".into(),
+                    identity: identity.into(),
+                },
+            ];
+        }
+        world.run(
+            "Animal",
+            universes(&[("animals", &["c"]), ("dogs", &["c"])]),
+            true,
+        )
+    };
+    for split in [false, true] {
+        let refusal = conflict(split).expect_err("one key cannot have two object types");
+        let ModelCheckRefusal::Admission(failure) = refusal else {
+            panic!("identity conflict is an admission refusal: {refusal:?}");
+        };
+        let AdmissionFailure::Refused(record) = *failure else {
+            panic!("identity conflict is a typed refusal: {failure:?}");
+        };
+        assert_eq!(record.catalog.code(), Code::InvalidRuntimeInput.as_str());
+        assert_eq!(record.catalog.cause(), "conflicting-identity");
+        assert_eq!(record.fields.get("key").map(String::as_str), Some("c"));
+        assert_eq!(
+            record.fields.get("first_type").map(String::as_str),
+            Some(ident("Animal").as_str())
+        );
+        assert_eq!(
+            record.fields.get("second_type").map(String::as_str),
+            Some(ident("Dog").as_str())
+        );
+    }
+
+    let agreeing = self::world(
+        &[("animals", &["Animal"]), ("moreAnimals", &["Animal"])],
+        &[
+            ("animals", &[("c", "Animal")]),
+            ("moreAnimals", &[("c", "Animal")]),
+        ],
+    );
+    let (agreeing_package, _) = agreeing.clause("Animal");
+    assert!(ModelSystem::new(
+        agreeing
+            .subject(
+                &agreeing_package,
+                universes(&[("animals", &["c"]), ("moreAnimals", &["c"])]),
+            )
+            .simulation,
+    )
+    .is_ok());
+    assert_eq!(
+        agreeing.instances(
+            "Animal",
+            universes(&[("animals", &["c"]), ("moreAnimals", &["c"])])
+        ),
+        Ok(vec![instance("animals", "c")])
+    );
+    let system = ModelSystem::new(
+        agreeing
+            .subject(
+                &agreeing_package,
+                universes(&[("animals", &["c"]), ("moreAnimals", &["c"])]),
+            )
+            .simulation,
+    )
+    .expect("agreeing shared reference admits");
+    let initials = fsl_eval::simulation::TransitionSystem::initial(&system);
+    let expansion = fsl_eval::simulation::TransitionSystem::successors(&system, &initials[0]);
+    assert!(expansion.is_ok(), "{expansion:?}");
+    assert!(matches!(
+        agreeing.run(
+            "Animal",
+            universes(&[("animals", &["c"]), ("moreAnimals", &["c"])]),
+            true,
+        ),
+        Ok(ModelCheckOutcome::Holds { stats, .. }) if stats.product_states == 1
+    ));
+    let no_key = self::world(&[("animals", &["Animal"])], &[("animals", &[])]);
+    let no_key_result = no_key.run("Animal", universes(&[("animals", &["c"])]), true);
+    assert!(
+        matches!(
+            &no_key_result,
+            Ok(ModelCheckOutcome::Undecided {
+                cause: UndecidedCause::NoInstance,
+                stats,
+            }) if stats.product_states == 0
+        ),
+        "{no_key_result:?}"
+    );
+}
+
 /// FR-125's Instancing for a state-graph claim: `possible Reach ... over (x:
 /// M::Thing) { true }` is read through the same derivation as a clause, so
 /// over the populations of the instance tests a subtype-conforming population
 /// yields its objects in canonical order, a population that admits `Thing`
 /// and has no universe refuses the run `RequiresBound` naming it, and no
 /// admitting key gives the item no instance.
-#[trace("TC-520")]
+#[trace("TC-520", "FR-125-AC-7")]
 #[test]
 fn a_state_graph_claim_is_instanced_like_a_clause() {
     let world = world(

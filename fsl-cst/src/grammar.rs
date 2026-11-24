@@ -1090,6 +1090,10 @@ fn source_and_types(g: &mut Grammar) {
         ]),
     );
     g.insert(P::Parameter, s(vec![ident(), x(":"), r(P::ParameterType)]));
+    g.insert(
+        P::OperationParameter,
+        s(vec![callable_name(Some("by")), x(":"), r(P::ParameterType)]),
+    );
     let parameters = || s(vec![x("("), opt(list(|| r(P::Parameter))), x(")")]);
     g.insert(
         P::FunctionDeclaration,
@@ -1217,7 +1221,7 @@ fn source_and_types(g: &mut Grammar) {
             literal("operation"),
             member(),
             x("("),
-            opt(list(|| r(P::Parameter))),
+            opt(list(|| r(P::OperationParameter))),
             x(")"),
             opt(s(vec![x(":"), r(P::TypeReference)])),
             opt(s(vec![x("redefines"), ident(), x("::"), member()])),

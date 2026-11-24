@@ -15,14 +15,18 @@
 //! `unit ms`, so a quantity literal types.
 
 use filament_checked::node::CheckedLiteral;
-use filament_exact::{Integer, IntegerInterval, Meter, Rational, Value as KernelValue, ValueType};
+use filament_exact::{
+    Integer, IntegerInterval, Meter, NodeKey, PathSegment, Rational, Value as KernelValue,
+    ValueType,
+};
 use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
-    Bound, BoundedMeasure, CheckCause, CheckRefusal, CheckedGraph, CheckingLimitKind, Confidence,
-    Event, PackageDeclarations, PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause,
+    BindingValue, BodyTerm, Bound, BoundedMeasure, CheckCause, CheckRefusal, CheckedGraph,
+    CheckingLimitKind, Confidence, Event, GroupMember, LeafTerm, MemberTerm, Owner,
+    PackageDeclarations, PreconditionSite, ProbForm, ProbScheduler, ProbabilisticCause,
     ReachTarget, Reward, RewardEvaluationFailure, RewardEvaluator, SemanticNode, WeightOwner,
     Weighting,
 };
@@ -1432,9 +1436,9 @@ fn the_adr_024_claims_check_and_record_their_forms() {
 }
 
 /// FR-186 "Outputs", FR-498, FSpec FR-640: a claim is emitted as its own
-/// node and a reward lowers to a clause function, wherever the claim is
-/// declared.
-#[trace("TC-621")]
+/// node and the duration reward lowers as a linked clause function owned by
+/// its model operation, with operation parameters in declared order.
+#[trace("TC-621", "FR-094-AC-16")]
 #[test]
 fn a_checked_claim_and_a_reward_are_both_lowered() {
     for source in [
@@ -1457,6 +1461,157 @@ fn a_checked_claim_and_a_reward_are_both_lowered() {
             .rewards()
             .iter()
             .any(|reward| reward.name() == "latency"));
+
+        let reward = model
+            .rewards()
+            .iter()
+            .find(|reward| reward.name() == "duration")
+            .expect("the duration reward");
+        let function_key = reward.function().expect("the lowered reward function");
+        assert_eq!(
+            model.reward_function_check_mode(function_key),
+            Some(CheckMode::Linked)
+        );
+        let graph = graph.semantic_graph();
+        let function = graph
+            .node(function_key.clone())
+            .expect("the reward clause function node");
+        assert_eq!(function.semantic_form(), "pure_function");
+        assert_eq!(function.declaration(), None);
+        let Some(Owner::Model(owner)) = function.owner() else {
+            panic!("reward function has a ModelOwner: {:?}", function.owner());
+        };
+        assert_eq!(owner.identity(), P);
+        assert_eq!(owner.node(), format!("ix://{P}/Server/attempt"));
+        let result = graph
+            .node(function.semantic_type().expect("the reward result type"))
+            .expect("the Millis result type node");
+        assert_eq!(
+            result.semantic_form(),
+            "integer_range",
+            "Millis is Int[1, 12]"
+        );
+        let integer_type = NodeKey::new(
+            "fsl-semantics-integration-tests",
+            vec![
+                PathSegment::Text("scalar_type".to_owned()),
+                PathSegment::Text("integer".to_owned()),
+            ],
+            0,
+        )
+        .expect("the scalar integer type identity");
+        let expected_result = NodeKey::new(
+            "fsl-semantics-integration-tests",
+            vec![
+                PathSegment::Text("bounded_domain".to_owned()),
+                PathSegment::Text("integer_range".to_owned()),
+                PathSegment::Text("min".to_owned()),
+                PathSegment::Node(integer_type),
+                PathSegment::Text("1".to_owned()),
+                PathSegment::Text("max".to_owned()),
+                PathSegment::Text("12".to_owned()),
+            ],
+            0,
+        )
+        .expect("the literal Millis interval identity");
+        assert_eq!(function.semantic_type(), Some(expected_result));
+        let BodyTerm::Aggregate(bounds) = result.body() else {
+            panic!("Millis' bounded integer node has min and max bindings");
+        };
+        let values: Vec<_> = bounds
+            .members
+            .iter()
+            .map(|member| match member {
+                MemberTerm::Binding(binding) => match &binding.value {
+                    BindingValue::Leaf(LeafTerm::Literal {
+                        value: fsl_semantics::check::LiteralValue::Integer(value),
+                        ..
+                    }) => value.clone(),
+                    _ => panic!("a bounded integer endpoint is literal"),
+                },
+                _ => panic!("a bounded integer endpoint is bound"),
+            })
+            .collect();
+        assert_eq!(values, [Integer::from(1_i64), Integer::from(12_i64)]);
+        let BodyTerm::Aggregate(body) = function.body() else {
+            panic!("the reward function body is an aggregate");
+        };
+        let [MemberTerm::Binding(parameters), MemberTerm::Binding(_expression), MemberTerm::Binding(clause)] =
+            body.members.as_slice()
+        else {
+            panic!("the reward function has parameters, expression and clause bindings");
+        };
+        assert_eq!(parameters.name, "parameters");
+        let BindingValue::Group(parameters) = &parameters.value else {
+            panic!("the parameters binding is a group");
+        };
+        let parameter_keys: Vec<_> = parameters
+            .members
+            .iter()
+            .map(|parameter| match parameter {
+                GroupMember::Leaf(LeafTerm::Reference { target }) => target
+                    .admitted()
+                    .expect("an admitted operation parameter")
+                    .clone(),
+                _ => panic!("a reward parameter is an operation-parameter reference"),
+            })
+            .collect();
+        assert_eq!(parameter_keys.len(), 2, "random d and outcome are retained");
+        for (level, (key, name)) in parameter_keys.iter().zip(["d", "outcome"]).enumerate() {
+            let parameter = graph.node(key.clone()).expect("operation parameter node");
+            assert_eq!(parameter.semantic_form(), "parameter");
+            let BodyTerm::Aggregate(parameter_body) = parameter.body() else {
+                panic!("the operation parameter has name and level bindings");
+            };
+            let [MemberTerm::Binding(parameter_name), MemberTerm::Binding(parameter_level)] =
+                parameter_body.members.as_slice()
+            else {
+                panic!("the operation parameter has the exact binder shape");
+            };
+            let BindingValue::Leaf(LeafTerm::Literal {
+                value: fsl_semantics::check::LiteralValue::Text(actual_name),
+                ..
+            }) = &parameter_name.value
+            else {
+                panic!("parameter name is text");
+            };
+            assert_eq!(actual_name, name, "declared operation parameter order");
+            let BindingValue::Leaf(LeafTerm::Literal {
+                value: fsl_semantics::check::LiteralValue::Integer(actual_level),
+                ..
+            }) = &parameter_level.value
+            else {
+                panic!("parameter level is an integer");
+            };
+            assert_eq!(actual_level, &Integer::from(level as i64));
+        }
+        assert_eq!(clause.name, "clause");
+        let BindingValue::Leaf(LeafTerm::Literal {
+            value: fsl_semantics::check::LiteralValue::Text(value),
+            ..
+        }) = &clause.value
+        else {
+            panic!("the trailing clause binding is text");
+        };
+        assert_eq!(value, "reward");
+
+        for other in graph.nodes().filter(|node| {
+            node.node_tag() == fsl_semantics::check::NodeTag::Function
+                && matches!(node.owner(), Some(Owner::Model(owner)) if owner.node().ends_with("/Server/attempt"))
+        }) {
+            let BodyTerm::Aggregate(other_body) = other.body() else {
+                continue;
+            };
+            if let Some(MemberTerm::Binding(clause)) = other_body.members.last() {
+                assert!(!matches!(
+                    &clause.value,
+                    BindingValue::Leaf(LeafTerm::Literal {
+                        value: fsl_semantics::check::LiteralValue::Text(value),
+                        ..
+                    }) if value == "precondition" || value == "body"
+                ), "the reward does not build operation guard/body functions");
+            }
+        }
     }
 }
 

@@ -2747,6 +2747,11 @@ pub(crate) struct StateContext {
     pub(crate) kind: fsl_forms::StateClauseKind,
     /// The operation's name, for a `pre` or `post` clause.
     pub(crate) operation: Option<String>,
+    /// The operation designator exactly as written in the state clause
+    /// header. Qualified operation-parameter reads are valid only for this
+    /// active designator (including an inherited operation on the current
+    /// subtype).
+    pub(crate) authored_operation: Option<String>,
     /// The slot `self` reads.
     pub(crate) self_slot: Slot,
     /// The slot `result` reads: only in a postcondition of an operation
@@ -3613,13 +3618,15 @@ impl<'a> Typer<'a> {
             ));
         }
         if let Some(existing) = self.local(name) {
-            return Err(refuse(
-                location,
-                CheckCause::AmbiguousName {
-                    name: name.to_owned(),
-                    loci: vec![existing.location.clone(), location.clone()],
-                },
-            ));
+            if !(kind == LocalKind::Bound && existing.kind == LocalKind::Parameter) {
+                return Err(refuse(
+                    location,
+                    CheckCause::AmbiguousName {
+                        name: name.to_owned(),
+                        loci: vec![existing.location.clone(), location.clone()],
+                    },
+                ));
+            }
         }
         let slot = self.slots;
         self.slots = self.slots.saturating_add(1);
@@ -3637,8 +3644,13 @@ impl<'a> Typer<'a> {
 
     fn unbind(&mut self, count: usize) {
         let keep = self.locals.len().saturating_sub(count);
-        for local in self.locals.drain(keep..) {
-            self.local_names.remove(&local.name);
+        let removed: Vec<String> = self.locals.drain(keep..).map(|local| local.name).collect();
+        for name in removed {
+            if let Some(previous) = self.locals.iter().rposition(|bound| bound.name == name) {
+                self.local_names.insert(name, previous);
+            } else {
+                self.local_names.remove(&name);
+            }
         }
     }
 
@@ -4176,6 +4188,27 @@ impl<'a> Typer<'a> {
                 local.value_type.clone(),
                 location,
             ));
+        }
+        if let Some((operation, parameter)) = name.rsplit_once("::") {
+            if self
+                .state
+                .as_ref()
+                .and_then(|state| state.authored_operation.as_deref())
+                == Some(operation)
+            {
+                if let Some(local) = self
+                    .locals
+                    .iter()
+                    .rev()
+                    .find(|local| local.name == parameter && local.kind == LocalKind::Parameter)
+                {
+                    return Ok(node(
+                        NodeKind::Local(local.slot),
+                        local.value_type.clone(),
+                        location,
+                    ));
+                }
+            }
         }
         let members: Vec<(&EnumBinding, &EnumValue)> =
             self.scope.enum_members_named(name).collect();
