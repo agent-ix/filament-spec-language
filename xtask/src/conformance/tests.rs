@@ -64,6 +64,44 @@ fn run_case(workspace: &Path, mode: &str, fail_at: usize) -> Result<String, Erro
 #[cfg(unix)]
 #[ix_trace_rs::trace("FR-350-AC-21")]
 #[test]
+fn both_source_fixture_runners_are_required_conformance_selections() {
+    for (selection, summary) in [
+        (
+            "fspec_finite_window::conformance_fspec_finite_window_source_windows",
+            "conformance: 77 finite-window source windows matched",
+        ),
+        (
+            "fspec_state_core::conformance_fspec_state_core_source_cases",
+            "conformance: 94 state-core source cases matched",
+        ),
+    ] {
+        let check = CHECKS
+            .iter()
+            .find(|check| check.selection == selection)
+            .unwrap_or_else(|| panic!("{selection} is required"));
+        assert_eq!(check.package, "fsl-conformance");
+        assert!(matches!(check.target, super::Target::Test));
+        let output = std::process::Output {
+            status: std::os::unix::process::ExitStatusExt::from_raw(0),
+            stdout: format!("test result: ok. 1 passed; 0 failed; 0 ignored;\n{summary}\n")
+                .into_bytes(),
+            stderr: Vec::new(),
+        };
+        super::check_output(check, &output).expect("the summary line is accepted");
+        let missing = std::process::Output {
+            stdout: b"test result: ok. 1 passed; 0 failed; 0 ignored;\n".to_vec(),
+            ..output
+        };
+        assert!(matches!(
+            super::check_output(check, &missing),
+            Err(Error::ConformanceCheck { .. })
+        ));
+    }
+}
+
+#[cfg(unix)]
+#[ix_trace_rs::trace("FR-350-AC-21")]
+#[test]
 fn the_finite_window_source_runner_is_a_required_conformance_selection() {
     let check = CHECKS
         .iter()

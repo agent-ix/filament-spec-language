@@ -8,6 +8,7 @@ mod front_end_rows;
 mod fspec_finite_window;
 mod fspec_pending;
 mod fspec_standard;
+mod fspec_state_core;
 mod fspec_vectors;
 mod matrix_shape;
 mod monitor_row;

@@ -34,12 +34,8 @@ pub(crate) fn read_from(directory: Option<&OsStr>, path: &str) -> Result<Vec<u8>
             root.display()
         ));
     }
-    std::fs::read(root.join(path)).map_err(|error| {
-        format!(
-            "FSPEC_DIR={} does not hold {path}: {error}",
-            root.display()
-        )
-    })
+    std::fs::read(root.join(path))
+        .map_err(|error| format!("FSPEC_DIR={} does not hold {path}: {error}", root.display()))
 }
 
 /// Reads `path` from the standard this run is configured to read.
@@ -152,4 +148,3 @@ pub(crate) fn report(runner: &str, tally: &Tally) -> Result<(), String> {
 pub(crate) fn registry() -> &'static [Pending] {
     PENDING
 }
-

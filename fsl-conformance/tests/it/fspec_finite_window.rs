@@ -15,9 +15,9 @@ use fsl_package::{ClockConfiguration, TemporalClockSelection};
 use fsl_replay::spine::{
     self, ClauseDisposition, DependencyInput, PackageAuthentication, PackageTemporalRequest,
     ParseRequest, ProgressAssertion, ProgressClosure, ProgressCompleteness, SpineLimits,
-    StateClauseExecutionPoints, TemporalIndeterminateReason, TemporalTraceRefusal,
-    TemporalVerdict, TimestampedCover, TimestampedMissingValuation, TimestampedObservation,
-    TimestampedOrderKey, TimestampedWindow, TraceBinding, TraceInput,
+    StateClauseExecutionPoints, TemporalIndeterminateReason, TemporalTraceRefusal, TemporalVerdict,
+    TimestampedCover, TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey,
+    TimestampedWindow, TraceBinding, TraceInput,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::PackageInput;
@@ -194,7 +194,10 @@ fn fixtures_from(bytes: Option<&[u8]>, tick_cover: Option<&[u8]>) -> Result<Fixt
         .iter()
         .filter_map(Value::as_str)
         .collect();
-    let have: Vec<&str> = tick_cover.iter().filter_map(|case| case["id"].as_str()).collect();
+    let have: Vec<&str> = tick_cover
+        .iter()
+        .filter_map(|case| case["id"].as_str())
+        .collect();
     if named != have {
         return Err(format!(
             "the fixture names tick-cover vectors {named:?}, the tick-cover file holds {have:?}"
@@ -857,7 +860,10 @@ fn settle_order(case: &Order, all: &[Order]) -> Settled {
                     ..
                 }) => vec![*position],
                 other => {
-                    return Settled::Mismatch(format!("{}: expected a missing valuation, actual {other:?}", case.id))
+                    return Settled::Mismatch(format!(
+                        "{}: expected a missing valuation, actual {other:?}",
+                        case.id
+                    ))
                 }
             };
             let wanted = u64::try_from(rank).unwrap_or(u64::MAX);
@@ -919,9 +925,7 @@ fn settle_tick_cover(case: &Value) -> (String, Settled) {
                         if source_word == word {
                             Settled::Matched
                         } else {
-                            Settled::Mismatch(format!(
-                                "{id}: expected {word}, source run {actual}"
-                            ))
+                            Settled::Mismatch(format!("{id}: expected {word}, source run {actual}"))
                         }
                     }
                     Err(error) => Settled::Mismatch(error),
@@ -936,7 +940,10 @@ fn settle_tick_cover(case: &Value) -> (String, Settled) {
                 case["b_tick"].as_u64(),
                 case["expected"].as_bool(),
             ) else {
-                return (id, Settled::Unsupported("definitely_before fields".to_owned()));
+                return (
+                    id,
+                    Settled::Unsupported("definitely_before fields".to_owned()),
+                );
             };
             let actual = cover.definitely_before(a, b);
             if actual == expected {
@@ -1110,7 +1117,9 @@ fn a_missing_standard_is_an_error_before_any_case_runs() {
     let error = fspec_standard::read_from(Some(empty.path().as_os_str()), FIXTURE)
         .expect_err("a directory without the fixture fails");
     assert!(error.contains("does not hold"), "{error}");
-    let error = fixtures_from(None, None).err().expect("no bytes is an error");
+    let error = fixtures_from(None, None)
+        .err()
+        .expect("no bytes is an error");
     assert!(error.contains("no proposals/finite-window"), "{error}");
     let error = fixtures_from(Some(br#"{"window":[]}"#), Some(b"{}"))
         .err()
@@ -1138,16 +1147,28 @@ fn a_mismatch_needs_a_ticket_key_and_a_fixed_case_loses_it() {
     let cases = vec![
         ("A".to_owned(), Settled::Mismatch("wrong".to_owned())),
         ("B".to_owned(), Settled::Matched),
-        ("C".to_owned(), Settled::Unsupported("no adapter".to_owned())),
+        (
+            "C".to_owned(),
+            Settled::Unsupported("no adapter".to_owned()),
+        ),
         ("D".to_owned(), Settled::Mismatch("wrong".to_owned())),
     ];
     let tally = fspec_standard::settle(RUNNER, cases, KEYED);
     assert_eq!(tally.keyed.len(), 1);
     assert_eq!(tally.keyed[0].1, "QSL-1");
     assert_eq!(tally.failures.len(), 3, "{:?}", tally.failures);
-    assert!(tally.failures.iter().any(|text| text.contains("B now matches")));
-    assert!(tally.failures.iter().any(|text| text.contains("C not executed")));
-    assert!(tally.failures.iter().any(|text| text.contains("D mismatch")));
+    assert!(tally
+        .failures
+        .iter()
+        .any(|text| text.contains("B now matches")));
+    assert!(tally
+        .failures
+        .iter()
+        .any(|text| text.contains("C not executed")));
+    assert!(tally
+        .failures
+        .iter()
+        .any(|text| text.contains("D mismatch")));
     assert!(fspec_standard::is_ticket_key("QSL-2048"));
     assert!(!fspec_standard::is_ticket_key("2048"));
     assert!(!fspec_standard::is_ticket_key("QSL-"));
