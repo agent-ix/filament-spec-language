@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-339-AC-9: a diagnostic made with memory fairness ignored carries no
-//! replayable certificate, while a certificate under the original full TSO
-//! fairness set still resolves and checks both branch `flush` members.
+//! FR-339: TSO component certificates retain resolved memory fairness and
+//! diagnostics made without it cannot enter the replayable certificate path.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -17,14 +16,15 @@ use fsl_eval::simulation::model::{
     ExpansionLimits, ModelCheckInput, ModelSimState, ModelSimulationRequest, PopulationUniverse,
 };
 use fsl_eval::simulation::protocol::{
-    FairnessOrigin, MemorySelection, ProtocolFairness, ProtocolSystem, Tso,
+    FairnessOrigin, MemorySelection, ProtocolFairness, ProtocolSystem, ProtocolTarget, Tso,
 };
 use fsl_eval::temporal::AtomReading;
 use fsl_foundation::{MemoryModelName, SourceIdentity};
 use fsl_package::{CheckedPackage, EmitLimits};
 use fsl_replay::{
-    check_protocol_components, settle_protocol_check, ModelCheckItem, ModelCheckLimits,
-    ModelCheckOutcome, ProofCertificate, ProtocolCertificateRequest, TemporalCertificateCheck,
+    check_protocol_components, settle_protocol_check, CertificateRule, ComponentWitness,
+    ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ProofCertificate,
+    ProtocolCertificateRequest, TemporalCertificateCheck,
 };
 use fsl_semantics::check::footprint::{FootprintRefusal, SymbolicLocation};
 use fsl_semantics::check::{PackageDeclarations, Reward, RewardEvaluationFailure, RewardEvaluator};
@@ -502,4 +502,220 @@ fn ignored_memory_diagnostic_has_no_certificate_and_full_fairness_still_checks()
         .iter()
         .all(|member| (member.kind(), member.granularity())
             == (FairnessKind::Weak, FairnessGranularity::Each)));
+}
+
+/// FR-339-AC-7 (TC-526): the TSO component witnesses identify the `w` flush
+/// and scheduler classes independently, and the checker rejects each of the
+/// three specified substitutions.
+#[trace("TC-526", "FR-339-AC-7")]
+#[test]
+fn tso_component_certificate_names_the_exact_unfair_classes() {
+    let package = checked_package();
+    let documents = Documents::new();
+    let selection = selection();
+    let outcome = check_protocol(
+        protocol_request(&documents, &package, &selection, false),
+        &Cancel::new(),
+    )
+    .expect("the full TSO request checks");
+    let ModelCheckOutcome::Holds {
+        certificate: ProofCertificate::Component(certificate),
+        ..
+    } = outcome
+    else {
+        panic!("the TSO liveness proof carries components: {outcome:?}");
+    };
+    let request = certificate_request(&documents, &package, &selection);
+    assert_eq!(
+        check_protocol_components(
+            &request,
+            &certificate,
+            &ModelCheckLimits::default(),
+            &Cancel::new(),
+        )
+        .expect("the component request is valid"),
+        TemporalCertificateCheck::Accepted
+    );
+
+    let subject = documents.subject(&package, &selection);
+    let model = fsl_eval::simulation::model::ModelSystem::new(subject.model.simulation.clone())
+        .expect("the subject model admits");
+    let system = ProtocolSystem::new(model, &subject, Tso::new(4)).expect("TSO builds");
+    let resolved = system
+        .fairness_set(clause(&package).fairness())
+        .expect("the full fairness set resolves");
+    let fairness_bytes = resolved
+        .iter()
+        .map(|member| {
+            fsl_eval::simulation::protocol::fairness_json(member)
+                .expect("a fairness member has canonical JSON")
+                .to_string()
+                .into_bytes()
+        })
+        .collect::<Vec<_>>();
+    assert!(fairness_bytes.windows(2).all(|pair| pair[0] < pair[1]));
+    assert_eq!(resolved.len(), 5, "both flush classes and 3 schedulers");
+    let flush_w_member = resolved
+        .iter()
+        .position(|member| member == &flush("w"))
+        .expect("the writer flush member resolves");
+    let flush_r_member = resolved
+        .iter()
+        .position(|member| member == &flush("r"))
+        .expect("the reader flush member resolves despite no stores");
+    let scheduler_w_member = resolved
+        .iter()
+        .position(|member| {
+            member.target() == &ProtocolTarget::branch("Both", "w")
+                && member.origin() == FairnessOrigin::Scheduler
+        })
+        .expect("the writer branch scheduler class resolves");
+    for member in [&resolved[flush_w_member], &resolved[flush_r_member]] {
+        assert_eq!(member.kind(), FairnessKind::Weak);
+        assert_eq!(member.granularity(), FairnessGranularity::Each);
+    }
+
+    // The certificate indexes resolved constraints, including the reader's
+    // empty flush class. The two emitted witnesses then name flush(w) and the
+    // scheduler class of branch w.
+    let flush_w = 1;
+    let flush_r = 0;
+    let scheduler_w = 3;
+
+    let component_for = |constraint: usize| {
+        let matching: Vec<_> = certificate
+            .components
+            .iter()
+            .enumerate()
+            .filter(|(_, component)| {
+                component.witness
+                    == (ComponentWitness::UnfairWeak {
+                        constraint: u32::try_from(constraint).expect("constraint index fits"),
+                    })
+            })
+            .map(|(index, _)| index)
+            .collect();
+        assert_eq!(matching.len(), 1, "constraint {constraint}: {matching:?}");
+        matching[0]
+    };
+    let w_flush_component = component_for(flush_w);
+    let w_scheduler_component = component_for(scheduler_w);
+    assert_ne!(w_flush_component, w_scheduler_component);
+    assert_eq!(
+        certificate.components[w_flush_component].witness,
+        ComponentWitness::UnfairWeak { constraint: 1 }
+    );
+    assert_eq!(
+        certificate.components[w_scheduler_component].witness,
+        ComponentWitness::UnfairWeak { constraint: 3 }
+    );
+    let model_states = |component: usize| {
+        certificate.components[component]
+            .states
+            .iter()
+            .map(|state| {
+                serde_json::from_slice::<Json>(state.model_state.as_bytes())
+                    .expect("the model-state key is canonical JSON")
+            })
+            .collect::<Vec<_>>()
+    };
+    let is_thread = |path: &Json, branch: &str| {
+        path["steps"]
+            .as_array()
+            .and_then(|steps| steps.last())
+            .is_some_and(|step| step["node"] == "Both" && step["branch"] == branch)
+    };
+    let writer_states = model_states(w_flush_component);
+    assert!(
+        writer_states.iter().any(|state| {
+            let controls = state["control"]["entries"].as_array();
+            let writer_done = controls.is_some_and(|entries| {
+                entries.iter().any(|entry| {
+                    is_thread(&entry["key"], "w") && entry["value"]["disposition"] == "completed"
+                })
+            });
+            let reader_polls = controls.is_some_and(|entries| {
+                entries.iter().any(|entry| {
+                    is_thread(&entry["key"], "r")
+                        && entry["value"]["rest"]["node"] == "Both/r/Spin/R/Lx"
+                })
+            });
+            let buffered_store = state["memory"]["entries"]
+                .as_array()
+                .is_some_and(|entries| {
+                    entries.iter().any(|entry| {
+                        is_thread(&entry["key"]["thread"], "w")
+                            && entry["value"]["elements"]
+                                .as_array()
+                                .is_some_and(|elements| {
+                                    elements.len() == 1
+                                        && elements[0]["location"]["object"]["identity"] == "x"
+                                        && elements[0]["location"]["field"] == "v"
+                                        && elements[0]["value"]["value"] == "1"
+                                })
+                    })
+                });
+            writer_done && reader_polls && buffered_store
+        }),
+        "flush(w) component has w done with [x := 1] buffered while r polls"
+    );
+    let scheduler_states = model_states(w_scheduler_component);
+    assert!(
+        scheduler_states.iter().any(|state| {
+            let controls = state["control"]["entries"].as_array();
+            let writer_before_store = controls.is_some_and(|entries| {
+                entries.iter().any(|entry| {
+                    is_thread(&entry["key"], "w")
+                        && entry["value"]["disposition"] == "running"
+                        && entry["value"]["rest"]["node"] == "Both/w/W/Sx"
+                })
+            });
+            let reader_polls = controls.is_some_and(|entries| {
+                entries.iter().any(|entry| {
+                    is_thread(&entry["key"], "r")
+                        && entry["value"]["rest"]["node"] == "Both/r/Spin/R/Lx"
+                })
+            });
+            let writer_buffer_empty =
+                state["memory"]["entries"]
+                    .as_array()
+                    .is_some_and(|entries| {
+                        entries.iter().any(|entry| {
+                            is_thread(&entry["key"]["thread"], "w")
+                                && entry["value"]["elements"] == serde_json::json!([])
+                        })
+                    });
+            writer_before_store && reader_polls && writer_buffer_empty
+        }),
+        "scheduler(w) component has r polling before w stores"
+    );
+    assert_eq!(flush_r_member, 0);
+    assert_eq!(flush_w_member, 1);
+    assert_eq!(scheduler_w_member, 3);
+
+    let assert_witness_fails = |mutated| {
+        let TemporalCertificateCheck::Rejected(rejection) = check_protocol_components(
+            &request,
+            &mutated,
+            &ModelCheckLimits::default(),
+            &Cancel::new(),
+        )
+        .expect("a well-shaped mutation is checked") else {
+            panic!("the substituted component witness must fail");
+        };
+        assert_eq!(rejection.rule, CertificateRule::WitnessFails);
+    };
+
+    for incorrect in [scheduler_w, flush_r] {
+        let mut mutated = certificate.clone();
+        mutated.components[w_flush_component].witness = ComponentWitness::UnfairWeak {
+            constraint: u32::try_from(incorrect).expect("constraint index fits"),
+        };
+        assert_witness_fails(mutated);
+    }
+    let mut mutated = certificate;
+    mutated.components[w_scheduler_component].witness = ComponentWitness::UnfairWeak {
+        constraint: u32::try_from(flush_w).expect("constraint index fits"),
+    };
+    assert_witness_fails(mutated);
 }
