@@ -2761,7 +2761,11 @@ mod tests {
                 choices: Vec::new(),
             },
         );
-        CheckerGraph { initial, states }
+        CheckerGraph {
+            initial,
+            states,
+            scheduler_actions: Default::default(),
+        }
     }
 
     fn zero_time_mec_graph() -> CheckerGraph {
@@ -2794,7 +2798,11 @@ mod tests {
                 choices: Vec::new(),
             },
         );
-        CheckerGraph { initial, states }
+        CheckerGraph {
+            initial,
+            states,
+            scheduler_actions: Default::default(),
+        }
     }
 
     fn zero_time_mec_certificate(initial: i64) -> ExactProbabilityCertificate {
@@ -2879,7 +2887,11 @@ mod tests {
                 choices: Vec::new(),
             },
         );
-        let graph = CheckerGraph { initial, states };
+        let graph = CheckerGraph {
+            initial,
+            states,
+            scheduler_actions: Default::default(),
+        };
         let certificate = ExactProbabilityCertificate {
             values: vec![
                 ExactProbabilityValue {
@@ -2972,6 +2984,7 @@ mod tests {
                     }]],
                 },
             )]),
+            scheduler_actions: Default::default(),
         };
         let positive_cost = BTreeMap::from([(no_clock.clone(), vec![vec![rational(1)]])]);
         assert!(nonprogressive_end_components(
@@ -3215,7 +3228,11 @@ mod tests {
                 choices: Vec::new(),
             },
         );
-        let graph = CheckerGraph { initial, states };
+        let graph = CheckerGraph {
+            initial,
+            states,
+            scheduler_actions: Default::default(),
+        };
         let forged = ExactProbabilityCertificate {
             values: vec![
                 ExactProbabilityValue {
@@ -3406,6 +3423,7 @@ mod tests {
             CheckerGraph {
                 initial: key(0),
                 states,
+                scheduler_actions: Default::default(),
             }
         };
         let rewards: BTreeMap<_, _> = BTreeMap::from([
