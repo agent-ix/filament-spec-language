@@ -7,14 +7,14 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use filament_exact::{NodeKey, ObjectReference, ValueType};
+use filament_exact::{FieldValue, NodeKey, ObjectId, ObjectReference, Value, ValueType};
 use fsl_semantics::model::clock_reference::identity::{
     Decimal, PathEntry, PlaceIdentity, SlotIndex,
 };
 use fsl_semantics::model::clock_reference::{encode_identity, is_clock_type};
 
-use super::domain::{clock_reference_paths, ClockSelectorMaxima, Domain};
 use super::ModelSystem;
+use super::domain::{ClockSelectorMaxima, Domain, clock_reference_paths};
 
 /// Why a `Reference<Clock>` domain cannot be enumerated. None of these is an
 /// empty domain: a caller never ranges a hidden field or parameter over fewer
@@ -36,7 +36,7 @@ pub enum ClockDomainRefusal {
         /// The declared maximum, as written.
         maximum: String,
     },
-    /// The candidates exceed the expansion's candidate bound.
+    /// Candidate generation or admitted-seed traversal exceeds its work bound.
     TooMany {
         /// The `max_candidates` bound.
         limit: u64,
@@ -44,6 +44,8 @@ pub enum ClockDomainRefusal {
     /// This route carries no authenticated declaration table, so no owner
     /// population authority validates a place identity.
     MissingAuthority,
+    /// An admitted clock-place value cannot be represented as a model identity.
+    InvalidAdmittedSeed,
 }
 
 type Candidates = Result<Vec<ObjectReference>, ClockDomainRefusal>;
@@ -217,16 +219,7 @@ impl ModelSystem<'_> {
                 .flat_map(|objects| objects.values())
             {
                 for value in object.fields.values() {
-                    let mut named = Vec::new();
-                    if super::frames::collect_references(value, &mut named).is_err() {
-                        continue;
-                    }
-                    admitted.extend(
-                        named
-                            .into_iter()
-                            .filter(|reference| is_clock_type(reference.object_type()))
-                            .cloned(),
-                    );
+                    collect_clock_references(value, &mut admitted, &mut charged, limit)?;
                 }
             }
         }
@@ -237,6 +230,121 @@ impl ModelSystem<'_> {
             }
         }
         Ok(found)
+    }
+}
+
+/// Gather clock references from every admitted value container. Snapshot
+/// seeds are candidates even when they lie outside an exploration selector
+/// maximum; converting them back to the model identity form preserves their
+/// universe and canonical place id.
+fn collect_clock_references(
+    value: &Value,
+    references: &mut Vec<ObjectReference>,
+    work: &mut u128,
+    limit: u64,
+) -> Result<(), ClockDomainRefusal> {
+    match value {
+        Value::ClockReference(reference) => {
+            charge_seed(work, limit)?;
+            let object = ObjectId::new(reference.text())
+                .map_err(|_| ClockDomainRefusal::InvalidAdmittedSeed)?;
+            references.push(ObjectReference::new(
+                reference.universe().clone(),
+                fsl_semantics::check::clock_reference_target(),
+                object,
+            ));
+        }
+        Value::Reference(reference) if is_clock_type(reference.object_type()) => {
+            charge_seed(work, limit)?;
+            references.push(reference.clone());
+        }
+        Value::Option(option) => {
+            if let Some(payload) = option.payload() {
+                collect_clock_references(payload, references, work, limit)?;
+            }
+        }
+        Value::Collection(collection) => {
+            for element in collection.elements() {
+                collect_clock_references(element, references, work, limit)?;
+            }
+        }
+        Value::Composite(composite) => {
+            for slot in composite.slots() {
+                if let FieldValue::Present(value) = slot {
+                    collect_clock_references(value, references, work, limit)?;
+                }
+            }
+        }
+        Value::Union(union) => {
+            for value in union.payload() {
+                collect_clock_references(value, references, work, limit)?;
+            }
+        }
+        Value::Map(map) => {
+            for (key, value) in map.entries() {
+                collect_clock_references(key, references, work, limit)?;
+                collect_clock_references(value, references, work, limit)?;
+            }
+        }
+        Value::Boolean(_)
+        | Value::Integer(_)
+        | Value::Rational(_)
+        | Value::Decimal(_)
+        | Value::Float(_)
+        | Value::Quantity(_)
+        | Value::Text(_)
+        | Value::String(_)
+        | Value::Bytes(_)
+        | Value::JsonObject(_)
+        | Value::Reference(_)
+        | Value::Uuid(_)
+        | Value::Timestamp(_)
+        | Value::Enum(_)
+        | Value::Population(_) => {}
+    }
+    Ok(())
+}
+
+fn charge_seed(work: &mut u128, limit: u64) -> Result<(), ClockDomainRefusal> {
+    *work = work.saturating_add(1);
+    if *work > u128::from(limit) {
+        return Err(ClockDomainRefusal::TooMany { limit });
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use filament_exact::{OptionValue, Value, ValueType};
+    use ix_trace_rs::trace;
+
+    use super::{ClockDomainRefusal, collect_clock_references};
+
+    /// Repeated seed references are still charged during traversal, so a
+    /// duplicate-heavy input cannot evade the candidate work bound.
+    #[trace("FR-106-AC-80", "TC-3084")]
+    #[test]
+    fn clock_reference_seed_traversal_stops_at_its_work_bound() {
+        let Value::ClockReference(seed) = crate::test_clock_reference::clock_reference_of("x")
+        else {
+            panic!("a clock-reference fixture");
+        };
+        let seed_text = seed.text().to_owned();
+        let nested = OptionValue::from_admitted(
+            ValueType::ClockReference,
+            Some(Value::ClockReference(seed)),
+        );
+        let mut references = Vec::new();
+        let mut work = 0;
+        collect_clock_references(&nested, &mut references, &mut work, 1)
+            .expect("the first seed fits the bound");
+        assert_eq!(references.len(), 1);
+        assert_eq!(references[0].object().as_str(), seed_text);
+        assert_eq!(
+            collect_clock_references(&nested, &mut references, &mut work, 1),
+            Err(ClockDomainRefusal::TooMany { limit: 1 })
+        );
+        assert_eq!(work, 2);
     }
 }
 
@@ -266,7 +374,7 @@ fn selector_ranges(
                     return Err(ClockDomainRefusal::UnboundedSlot {
                         clock: node.clone(),
                         slot,
-                    })
+                    });
                 }
             },
         };

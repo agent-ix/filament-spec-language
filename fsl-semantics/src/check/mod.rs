@@ -373,7 +373,12 @@ pub(crate) fn clock_reference_type() -> filament_exact::ValueType {
     filament_exact::ValueType::ClockReference
 }
 
-pub(crate) fn clock_reference_target() -> filament_exact::EffectiveId {
+/// Effective object type identity carried by a canonical clock-place reference.
+///
+/// Model evaluators use this identity when translating a retained
+/// `ClockPlaceReference` into the common reference-key form used by candidate
+/// enumeration.
+pub fn clock_reference_target() -> filament_exact::EffectiveId {
     filament_exact::EffectiveId::new(
         None,
         filament_exact::OriginalDeclarationKey::new("filament/native", "Clock"),
