@@ -14,9 +14,9 @@ use fsl_analyze::zone_check::{
 };
 use fsl_replay::{
     check_zone_certificate, CertEdge, CertificateCheckLimits, CertificateRule, Certification,
-    CertifiedItem, DivergentTarget, ProofBasis, RefinementFailure, RefinementTraceSettlement,
-    SilentMove, TemporalCounterexample, TerminalValue, ZoneCertificate, ZoneCertificateRequest,
-    ZoneCertificateVerdict,
+    CertifiedItem, DivergentTarget, InconclusiveCause, ProofBasis, RefinementFailure,
+    RefinementTraceSettlement, SilentMove, TemporalCounterexample, TerminalValue, ZoneCertificate,
+    ZoneCertificateRequest, ZoneCertificateVerdict,
 };
 use fsl_route::deadlock::ItemObligation;
 use ix_trace_rs::trace;
@@ -822,16 +822,34 @@ fn undelayed_failure_into_locked_successor() -> Refining {
 )]
 #[test]
 fn an_undelayed_failure_into_a_locked_successor_is_completeness_only() {
-    let outcome = safety_with_limits(&undelayed_failure_into_locked_successor());
+    let world = undelayed_failure_into_locked_successor();
+    let mut request = safety_request(&world);
+    request.limits = LIMITS;
+    let outcome =
+        check_timed_refinement(request, &Cancel::new()).expect("EN-6 checks the timed refinement");
     assert!(
         matches!(
-            outcome,
+            outcome.safety,
             TimedSafetyOutcome::Undecided {
                 cause: TimedRefinementUndecided::Zone(ZoneUndecided::NoAdmittedBehaviour),
                 ..
             }
         ),
         "the producer must preserve this as completeness loss: {outcome:?}"
+    );
+    let record = settle_timed_refinement(
+        &outcome,
+        &Cancel::new(),
+        |_| panic!("an undecided producer outcome has no proof certificate"),
+        |_| panic!("an undecided producer outcome has no counterexample"),
+    );
+    assert_eq!(
+        record.value,
+        TerminalValue::Inconclusive(InconclusiveCause::NoAdmittedBehaviour)
+    );
+    assert!(
+        record.counterexample.is_none(),
+        "the edge is not a refutation"
     );
 }
 
