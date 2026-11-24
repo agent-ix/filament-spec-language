@@ -902,6 +902,7 @@ step.
 | FR-940-AC-36 | After the source file is overwritten with bytes that are not a native unit and the handoff `sources/` is deleted, the package request of AC-34 and AC-35 settles the same records: no source file is read and the source route is not a fallback. | Test (TC-3216) |
 | FR-940-AC-37 | No operation-contract item settles `unsupported` or is refused `unsupported_construct`/`not-yet-implemented` on the package route for a contract evaluator the source route has, and no function of `fsl_replay`, `fsl_eval` or `fsl_analyze` on the contract path takes a `CheckedPackage` or `CheckedGraph` or builds one from admitted bytes (the AC-2 source scan covers each; FR-087 R-10). | Test (TC-3216) |
 | FR-940-AC-38 | A requirement row the strict reader refuses, a test-only row whose operation anchor resolves to no admitted node, and a duplicated row each refuse the whole request with the reader's code, cause and pointer before an engine runs. | Test (TC-3216) |
+| FR-940-AC-39 | For each exact probabilistic form exercised by FR-195 through FR-199, FR-877 and FR-1043 acceptance criteria, a `program` request and a `package` request over that program's handoff directory settle equal item records, certificates or replayed witnesses, and process exits. The package request runs the form through the admitted package route and does not settle it `unsupported`/`not-yet-implemented` when the source route decides it. | Test |
 
 ## Dependencies
 
