@@ -147,6 +147,26 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
             .expect("both thresholds reproduce the same undefined path");
         assert_eq!(witness.mass(), &ratio(1, 2));
         let undefined = witness.undefined().expect("the undefined read is replayed");
+        let product_key: Value =
+            serde_json::from_slice(undefined.product_state.as_bytes()).unwrap();
+        assert_eq!(
+            product_key[0], "filament.probability-product-key/v1",
+            "{name} key schema"
+        );
+        assert_eq!(product_key[4][1][0], "digital", "{name} timed route");
+        assert_eq!(product_key[4][1][4][0][1], "1", "{name} clock value");
+        let expected_monitor = match *name {
+            "UndefinedHalf" | "UndefinedSmall" | "UndefinedEvery" => {
+                serde_json::json!(["deadline", "always", "pending"])
+            }
+            "UndefinedUntil" => serde_json::json!(["deadline", "until", "pending"]),
+            "UndefinedElapsed" => serde_json::json!(["measure", null, "active"]),
+            "UndefinedWeightedLongRun" | "UndefinedEveryWeightedLongRun" | "UndefinedMeanTime" => {
+                Value::Null
+            }
+            _ => panic!("unexpected timed undefined fixture: {name}"),
+        };
+        assert_eq!(product_key[5], expected_monitor, "{name} monitor key");
         assert_eq!(undefined.evaluation.site.position, 1, "{name}");
         assert_eq!(
             undefined.evaluation.site.time.as_ref().unwrap().stamp,
