@@ -373,6 +373,7 @@ fn apply_argument(
         operation_postconditions: &clauses.operation_postconditions,
         footprint: footprint.as_ref(),
         references: reference_arguments(&args),
+        result_order_cache: RefCell::new(None),
         frames,
     };
 
@@ -803,6 +804,8 @@ struct Run<'w, 's, 'a> {
     /// The argument vector's reference-valued arguments, by parameter name:
     /// the only arguments the frame decision reads.
     references: References,
+    /// Canonical result order for the current post-state object universe.
+    result_order_cache: RefCell<Option<(Vec<ObjectReference>, Vec<u128>)>>,
     /// What the frame decision found for the application's argument
     /// vectors.
     frames: &'w ArgumentFrames,
@@ -1874,21 +1877,33 @@ impl Run<'_, '_, '_> {
         if domain.len() > RESULT_ORDER_LIMIT {
             return Err(stop(EXHAUSTED));
         }
-        let mut keyed = Vec::new();
-        for index in 0..domain.len() {
-            let value = domain.nth(index).ok_or_else(|| stop(BROKEN))?;
-            let bytes = quire_canonical::to_vec(
-                &value_enc(&value, self.walk.system.typing()),
-                text_limits(),
-            )
-            .map_err(|_| stop(BROKEN))?;
-            keyed.push((bytes, index));
-        }
-        keyed.sort();
-        Ok(Some((
-            domain,
-            keyed.into_iter().map(|(_, index)| index).collect(),
-        )))
+        let known = self
+            .result_order_cache
+            .borrow()
+            .as_ref()
+            .filter(|(references, _)| references == post_references)
+            .map(|(_, order)| order.clone());
+        let order = match known {
+            Some(order) => order,
+            None => {
+                let mut keyed = Vec::new();
+                for index in 0..domain.len() {
+                    let value = domain.nth(index).ok_or_else(|| stop(BROKEN))?;
+                    let bytes = quire_canonical::to_vec(
+                        &value_enc(&value, self.walk.system.typing()),
+                        text_limits(),
+                    )
+                    .map_err(|_| stop(BROKEN))?;
+                    keyed.push((bytes, index));
+                }
+                keyed.sort();
+                let order: Vec<u128> = keyed.into_iter().map(|(_, index)| index).collect();
+                *self.result_order_cache.borrow_mut() =
+                    Some((post_references.to_vec(), order.clone()));
+                order
+            }
+        };
+        Ok(Some((domain, order)))
     }
 
     /// The conjunction of this application's postconditions over `candidate`
