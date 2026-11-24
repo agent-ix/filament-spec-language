@@ -23,7 +23,7 @@ pub fn nested_source(depth: usize) -> String {
     for _ in 0..depth {
         body = format!("({body} + x)");
     }
-    format!("{PRELUDE}function nested using Complete (x: Integer): Integer pure {{ {body} }}\n")
+    format!("{PRELUDE}function nest using Complete (x: Integer): Integer pure {{ {body} }}")
 }
 
 /// `functions` one-line functions, `f0` .. `f{functions - 1}`, each
@@ -139,6 +139,12 @@ pub fn outcome_id(outcome: &ParseOutcome, input: impl std::fmt::Display) -> Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[ix_trace_rs::trace("NFR-141-AC-10", "NFR-141-AC-11")]
+    #[test]
+    fn depth_zero_uses_the_ticket_150_byte_input() {
+        assert_eq!(nested_source(0).len(), 150);
+    }
 
     #[test]
     fn smallest_inputs_parse() {
