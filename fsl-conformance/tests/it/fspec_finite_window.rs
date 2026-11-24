@@ -392,7 +392,7 @@ fn run(scenario: &Scenario) -> Result<spine::ClauseRunReport, String> {
                 },
             }),
             authoritative_origin: scenario.authoritative_origin,
-            cover: scenario.cover.clone(),
+            cover: scenario.cover,
             missing_valuations: missing,
             late: Default::default(),
         }),

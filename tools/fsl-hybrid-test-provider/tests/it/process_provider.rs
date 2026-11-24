@@ -413,8 +413,15 @@ fn solver_proof(horizon: &str, certification: &str) -> Value {
 /// settled as the entry says.
 #[test]
 fn only_a_solver_basis_proof_settles_proved_and_it_is_trusted() {
+    type SettlementRow = (
+        &'static str,
+        Value,
+        &'static str,
+        Option<(&'static str, String)>,
+    );
+
     let refused = |pointer: &str| ("failed", Some(("invalid_result", pointer.to_owned())));
-    let rows: Vec<(&str, Value, &str, Option<(&str, String)>)> = vec![
+    let rows: Vec<SettlementRow> = vec![
         (
             "solver proof",
             solver_proof("10", "trusted"),
@@ -500,12 +507,9 @@ fn only_a_solver_basis_proof_settles_proved_and_it_is_trusted() {
         let item = run(&ws, &unit, named("SlowEnough"), vec![engine], limits());
         assert_eq!(item["record"]["result"], result, "{name}: {item}");
         let text = item.to_string();
-        match marker {
-            Some((marker, pointer)) => {
-                assert!(text.contains(marker), "{name}: {marker}: {item}");
-                assert!(text.contains(&pointer), "{name}: {pointer}: {item}");
-            }
-            None => {}
+        if let Some((marker, pointer)) = marker {
+            assert!(text.contains(marker), "{name}: {marker}: {item}");
+            assert!(text.contains(&pointer), "{name}: {pointer}: {item}");
         }
         if result == "proved" {
             assert_eq!(item["record"]["certification"], "trusted", "{name}: {item}");
