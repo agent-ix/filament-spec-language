@@ -1382,6 +1382,7 @@ impl<'s, 'a> ContractTarget<'s, 'a> {
                 concrete: state.state().clone(),
                 history,
                 abstract_states: vec![mapped.visible],
+                candidate_clock_blocks: vec![0],
                 abstract_protocol_states: Vec::new(),
             },
             Err(failure) => {

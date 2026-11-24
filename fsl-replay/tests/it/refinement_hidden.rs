@@ -406,6 +406,7 @@ fn a_set_of_one_side_that_a_reveal_contradicts_is_no_abstract_match() {
             ("shown", flag(false)),
             ("face", int(0)),
         ])],
+        candidate_clock_blocks: vec![0],
         abstract_protocol_states: Vec::new(),
     };
     let verdict = decide(
