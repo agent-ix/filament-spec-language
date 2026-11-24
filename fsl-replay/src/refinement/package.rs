@@ -112,6 +112,7 @@ impl ObjectMapping for Object<'_> {
 enum Target<'a> {
     Operation {
         key: DeclarationKey,
+        target_type: DeclarationKey,
         receiver: Expression<'a>,
         arguments: Vec<Expression<'a>>,
         binds_result: bool,
@@ -132,12 +133,13 @@ impl StepMapping for Step<'_> {
         match &self.target {
             Target::Operation {
                 key,
+                target_type,
                 receiver,
                 arguments,
                 binds_result,
             } => MappingTarget::Abstract {
                 operation: key,
-                target_type: None,
+                target_type: Some(target_type),
                 receiver,
                 arguments: arguments
                     .iter()
@@ -329,10 +331,12 @@ impl<'a> PackageRefinement<'a> {
             let target = match &row.target {
                 RefinementStepTarget::Operation {
                     operation: target,
+                    target_type,
                     receiver,
                     arguments,
                 } => {
                     let abstract_operation = operation(package, input, local(target)?)?;
+                    let target_type = object_key(package, local(target_type)?)?;
                     if arguments.iter().any(|argument| {
                         matches!(
                             argument,
@@ -350,6 +354,7 @@ impl<'a> PackageRefinement<'a> {
                     }
                     Target::Operation {
                         key: abstract_operation.key.clone(),
+                        target_type,
                         receiver: Expression {
                             world,
                             projection: package.project_refinement_row(
