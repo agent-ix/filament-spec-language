@@ -92,6 +92,11 @@ pub struct Variant {
     /// `Queue` and `Cell` can both be mapped from the one concrete `Ring`
     /// (FR-140-AC-17, [`twin_refinement`]).
     pub twin: bool,
+    /// The abstract package also declares the subtypes `FastQueue` and
+    /// `SlowQueue` of `Queue` (`queues` admits `Queue` and `FastQueue`; `slows`
+    /// holds `SlowQueue`), and the concrete `Slot` a second operation `put2`
+    /// beside `put` (FR-141-AC-16, FR-140-AC-18).
+    pub subtypes: bool,
     /// The abstract `Queue` has an optional `head: Digit?` field
     /// (FR-140-AC-11).
     pub optional_head: bool,
@@ -182,7 +187,19 @@ fn queue_document(variant: Variant) -> Vec<u8> {
         queue_fields(variant),
         vec![enq, deq],
     ));
-    let mut populations = vec![ring_queue::population(QUEUE, "queues", "Queue")];
+    let mut queues = ring_queue::population(QUEUE, "queues", "Queue");
+    if variant.subtypes {
+        queues["members"] = json!([node(QUEUE, "Queue"), node(QUEUE, "FastQueue")]);
+    }
+    let mut populations = vec![queues];
+    if variant.subtypes {
+        for name in ["FastQueue", "SlowQueue"] {
+            let mut subtype = ring_queue::object_type(QUEUE, name, Vec::new(), Vec::new());
+            subtype["supertypes"] = json!([node(QUEUE, "Queue")]);
+            types.push(subtype);
+        }
+        populations.push(ring_queue::population(QUEUE, "slows", "SlowQueue"));
+    }
     if variant.twin {
         types.push(ring_queue::object_type(
             QUEUE,
@@ -260,6 +277,12 @@ fn ring_document(variant: Variant) -> Vec<u8> {
         &["Ring/size"],
         &["Slot/value"],
     );
+    let put2 = framed(
+        ring_queue::operation(RING, "Slot", "put2", &[("x", &digit)], None, &[]),
+        RING,
+        &["Ring/size"],
+        &["Slot/value"],
+    );
     let take = framed(
         ring_queue::operation(RING, "Slot", "take", &[], Some(&digit), &[]),
         RING,
@@ -280,7 +303,11 @@ fn ring_document(variant: Variant) -> Vec<u8> {
                     ring_queue::single(RING, "Slot", "index", &digit),
                     ring_queue::single(RING, "Slot", "value", &digit),
                 ],
-                vec![put, take],
+                if variant.subtypes {
+                    vec![put, put2, take]
+                } else {
+                    vec![put, take]
+                },
             ),
         ]
         .into_iter()
@@ -350,6 +377,11 @@ fn contracts(variant: Variant) -> String {
     } else {
         enq
     };
+    let put2 = if variant.subtypes {
+        "pre CanPut2 using v on R::Slot::put2 { self.ring.size < 2 and self.index + 0 = (self.ring.head + self.ring.size) mod 2 }\npost Put2 using v on R::Slot::put2 { self.value = x and pre(self.ring.size) < 2 and self.ring.size = pre(self.ring.size) + 1 }\n"
+    } else {
+        ""
+    };
     format!(
         "pre CanEnq using v on Q::Queue::enq {{ size(self.items) < 2 }}\n\
          post Enq using v on Q::Queue::enq {{ {enq} }}\n\
@@ -357,6 +389,7 @@ fn contracts(variant: Variant) -> String {
          post Deq using v on Q::Queue::deq {{ (pre(self.items) = sequence[0] and result = 0 and size(self.items) = 0) or (pre(self.items) = sequence[1] and result = 1 and size(self.items) = 0) or (pre(self.items) = sequence[0, 0] and result = 0 and self.items = sequence[0]) or (pre(self.items) = sequence[0, 1] and result = 0 and self.items = sequence[1]) or (pre(self.items) = sequence[1, 0] and result = 1 and self.items = sequence[0]) or (pre(self.items) = sequence[1, 1] and result = 1 and self.items = sequence[1]) }}\n\
          pre CanPut using v on R::Slot::put {{ self.ring.size < 2 and self.index + 0 = (self.ring.head + self.ring.size) mod 2 }}\n\
          post Put using v on R::Slot::put {{ self.value = x and pre(self.ring.size) < 2 and self.ring.size = pre(self.ring.size) + 1 }}\n\
+         {put2}\
          pre CanTake using v on R::Slot::take {{ self.ring.size > 0 and self.index + 0 = {at} }}\n\
          post Take using v on R::Slot::take {{ result = pre(self.value) and pre(self.ring.size) > 0 and self.ring.size = pre(self.ring.size) - 1 and self.ring.head + 0 = (pre(self.ring.head) + 1) mod 2 }}\n"
     )
@@ -582,6 +615,10 @@ impl RingWorld {
             "objects": [{"key": "r", "type": node(QUEUE, "Queue"),
                 "fields": queue_fields}]}),
         ];
+        if variant.subtypes {
+            queue_populations
+                .push(json!({"population": node(QUEUE, "slows"), "complete": true, "objects": []}));
+        }
         if variant.twin {
             queue_populations.push(json!({"population": node(QUEUE, "cells"),
                 "complete": true,

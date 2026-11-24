@@ -2331,9 +2331,23 @@ fn a_protocol_node_row_lifts_by_the_declared_field_type() {
     for cell_first in [true, false] {
         for declared in ["Q::Queue", "Q::Cell"] {
             let verdict = node_row_verdict(declared, cell_first);
+            let StepVerdict::Passes { taken, .. } = verdict else {
+                panic!("{declared} (cell_first {cell_first}) lifts: {verdict:?}");
+            };
+            // The matched node transition carries `r` lifted to the declared
+            // type's reference.
+            let fsl_replay::Taken::ProtocolTraces(traces) = *taken else {
+                panic!("the node row takes a protocol trace");
+            };
+            let record = traces
+                .iter()
+                .flat_map(|trace| &trace.transitions)
+                .find_map(|transition| transition.binder_record())
+                .expect("the node transition has a binder record");
+            let wanted = format!("ring-queue-spec/{}", declared.trim_start_matches("Q::"));
             assert!(
-                matches!(verdict, StepVerdict::Passes { .. }),
-                "{declared} (cell_first {cell_first}) lifts: {verdict:?}"
+                format!("{record:?}").contains(&wanted),
+                "{declared} (cell_first {cell_first}): r lifts to {wanted}: {record:?}"
             );
         }
     }
