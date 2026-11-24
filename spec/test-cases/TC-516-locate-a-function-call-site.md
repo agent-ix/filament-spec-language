@@ -244,13 +244,15 @@ Tag the tests `#[trace("TC-516", "FR-121-AC-n")]`.
 - Step 24: `Config::Sub::size`'s `frame_operation` is `{Config::Sub, size}`
   and `Config::ConfigVersion::size`'s is `{Config::ConfigVersion, size}`,
   at different `frame` nodes (FR-121-AC-24).
-- Step 25: the paths are FR-121-AC-28's, all on `Box`'s `object_type` node;
-  the two no-step selections give equal keys; each refused selection refuses
+- Step 25: on `Box`'s `object_type` node, `span` is `[0, 1]`, `span.lo`
+  `[0, 1, 0]`, `span.hi` `[0, 1, 1]`, `tags` `[0, 2]`, its element
+  `[0, 2, 0]`, `note` `[0, 0]` and `note.hi` `[0, 0, 0, 1]`; the two
+  no-step selections give equal keys; each refused selection refuses
   `CallSiteRefusal::UnknownField` paired with the package.
-- Step 26: no steps and the re-entry both give `[0]`, the walk's `Recursive`
-  key for `Node`; `[Field(value)]` gives `[0, 0]`; the path past the re-entry
-  refuses `CallSiteRefusal::UnknownField`; `Member(Rect, 1)` gives `[0, 2]`,
-  and `Member(Circle, 1)` refuses `CallSiteRefusal::UnknownField`.
+- Step 26: no steps and the re-entry both give `[0, 0]`, the walk's `Recursive`
+  key for `Node`; `[Field(value)]` gives `[0, 0, 0]`, and `Member(Rect, 1)`
+  gives `[0, 0, 2]`; the path past the re-entry and `Member(Circle, 1)` each
+  refuse `CallSiteRefusal::UnknownField`.
 - Step 27: `big`'s site has `library` and `function.function` equal to the
   term's `package` (`test/units`) and `node`, and one parameter pair `x`.
   Each site's `function` equals the standalone `FunctionSite` of the same

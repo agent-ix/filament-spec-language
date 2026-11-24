@@ -219,11 +219,15 @@ pub(super) fn settle_model_item(item: ModelItem<'_>, cancel: &Cancel) -> EngineR
         replay,
     } = item;
     let limits = request.limits;
+    let method = request.reductions.constraint.as_ref().map_or_else(
+        || fsl_replay::EXPLICIT_STATE.to_owned(),
+        |constraint| format!("{} (constraint: {constraint})", fsl_replay::EXPLICIT_STATE),
+    );
     match check_model_with_stutter_closure(request, cancel, stutter_closure) {
         Ok(outcome) => {
             let allocation = super::document::effect_decision::ReplayAllocation::default();
             let replay = |payload: &TemporalCounterexample| allocation.capture(replay(payload));
-            let record = if stutter_closure {
+            let mut record = if stutter_closure {
                 fsl_replay::settle_model_check_over_stutter_closure(
                     &outcome,
                     &limits,
@@ -234,6 +238,7 @@ pub(super) fn settle_model_item(item: ModelItem<'_>, cancel: &Cancel) -> EngineR
             } else {
                 fsl_replay::settle_model_check(&outcome, &limits, &certificate, cancel, replay)
             };
+            record.method = method;
             if let Some(report) = allocation.report() {
                 return report;
             }
