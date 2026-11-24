@@ -901,6 +901,41 @@ impl HandoffSupply<'_> {
         ),
         ReplayRefusal,
     > {
+        self.admit_package_with_reader(
+            bytes,
+            documents,
+            limits,
+            budget,
+            |bytes, evidence, limits, budget| {
+                fsl_package::admit_checked_package_with_evidence(bytes, evidence, limits, budget)
+            },
+        )
+    }
+
+    fn admit_package_with_reader(
+        self,
+        bytes: &[u8],
+        documents: &fsl_semantics::model::intake::PackageInput,
+        limits: fsl_package::V2ReadLimits,
+        budget: &mut filament_contract_model::NativeJoinBudget,
+        mut read: impl FnMut(
+            &[u8],
+            &filament_contract_model::CheckedPackageEvidence,
+            fsl_package::V2ReadLimits,
+            &mut filament_contract_model::NativeJoinBudget,
+        ) -> Result<
+            filament_contract_model::CheckedPackageV2,
+            fsl_package::PackageAdmissionRefusal,
+        >,
+    ) -> Result<
+        (
+            filament_contract_model::CheckedPackageV2,
+            Vec<fsl_package::DependencyArtifact>,
+        ),
+        ReplayRefusal,
+    > {
+        let malformed =
+            || ReplayRefusal::PackageRead(crate::execute::PackageReadRefusal::Malformed);
         let admission_refusal =
             |refusal: fsl_package::PackageAdmissionRefusal| admission_replay_refusal(refusal);
         let mut evidence =
@@ -912,13 +947,8 @@ impl HandoffSupply<'_> {
             if !seen.insert(artifact.identity.as_str()) {
                 return Err(malformed());
             }
-            let package = fsl_package::admit_checked_package_with_evidence(
-                &artifact.bytes,
-                &evidence,
-                limits,
-                budget,
-            )
-            .map_err(admission_refusal)?;
+            let package =
+                read(&artifact.bytes, &evidence, limits, budget).map_err(admission_refusal)?;
             if package.name() != artifact.identity {
                 return Err(malformed());
             }
@@ -944,9 +974,7 @@ impl HandoffSupply<'_> {
                 equality,
             });
         }
-        let package =
-            fsl_package::admit_checked_package_with_evidence(bytes, &evidence, limits, budget)
-                .map_err(admission_refusal)?;
+        let package = read(bytes, &evidence, limits, budget).map_err(admission_refusal)?;
         Ok((package, dependencies))
     }
 }
@@ -966,13 +994,12 @@ fn admission_replay_refusal(refusal: fsl_package::PackageAdmissionRefusal) -> Re
 
 #[cfg(test)]
 mod host_allocation_admission_tests {
-    use super::admission_replay_refusal;
+    use super::{HandoffSupply, ReplayRefusal};
     use filament_contract_model::{
         CheckedPackageHostAllocationFailed, NativeJoinLocus, NativeJoinLocusSource,
         PackageReadStage,
     };
     use fsl_foundation::diagnostic::Code;
-    use fsl_package::PackageAdmissionRefusal;
     use ix_trace_rs::trace;
 
     /// FR-096-AC-24: model-check package admission preserves an injected
@@ -989,15 +1016,32 @@ mod host_allocation_admission_tests {
             requested: 32,
             consumed: 64,
         };
-        let refusal = admission_replay_refusal(PackageAdmissionRefusal {
-            limit: None,
-            code: Code::RuntimeInvariant,
-            cause: None,
-            pointer: None,
-            identity: None,
-            host_allocation_failure: Some(failure),
-        });
+        let supply = HandoffSupply {
+            dependencies: &[],
+            identities: &[],
+            equality: None,
+        };
+        let mut budget = filament_contract_model::NativeJoinBudget::new(100, 100);
+        let refusal = supply
+            .admit_package_with_reader(
+                b"injected bytes",
+                &fsl_semantics::model::intake::PackageInput::new(),
+                fsl_package::V2ReadLimits::bounded(100),
+                &mut budget,
+                move |_bytes, _evidence, _limits, _budget| {
+                    Err(fsl_package::PackageAdmissionRefusal {
+                        limit: None,
+                        code: Code::RuntimeInvariant,
+                        cause: None,
+                        pointer: None,
+                        identity: None,
+                        host_allocation_failure: Some(failure),
+                    })
+                },
+            )
+            .expect_err("the injected host allocation failure must stop admission");
 
+        assert!(matches!(&refusal, ReplayRefusal::HostAllocationFailed(_)));
         assert_eq!(refusal.code(), Code::RuntimeInvariant);
         assert_eq!(refusal.cause(), None);
         assert_eq!(refusal.pointer(), None);
