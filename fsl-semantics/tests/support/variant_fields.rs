@@ -22,7 +22,7 @@ use serde_json::{json, Value};
     reason = "a test binary also loads the K2 builder directly"
 )]
 mod base;
-pub(crate) use base::id;
+pub(crate) use base::{id, PACKAGE};
 
 /// A variant type's source position, which the reader requires of every
 /// case.
