@@ -1448,6 +1448,139 @@ fn run(
         };
         let solved = match result {
             Ok(solved) => solved,
+            Err(UnboundedError::MaxRationalBits) if bounded_formula.is_none() => {
+                let threshold = match bound {
+                    Bound::AtLeast(threshold) | Bound::AtMost(threshold) => threshold,
+                };
+                let interval_result = match &claim.form {
+                    ProbForm::Reach {
+                        target: ReachTarget::Until(..),
+                        ..
+                    } => {
+                        let until = product
+                            .labels
+                            .iter()
+                            .map(|labels| labels.get(1).copied().unwrap_or(false))
+                            .collect::<Vec<_>>();
+                        crate::exact_probabilistic::decide_until_threshold(
+                            &product, &target, &until, objective, threshold, &limits,
+                        )
+                    }
+                    ProbForm::Reach {
+                        target: ReachTarget::Always(_),
+                        ..
+                    } => {
+                        let complement_target = target.iter().map(|value| !value).collect::<Vec<_>>();
+                        let complement_threshold = Rational::from_integer(1_i64.into())
+                            .sub(threshold);
+                        let complement_objective = match objective {
+                            UnboundedObjective::Min => UnboundedObjective::Max,
+                            UnboundedObjective::Max => UnboundedObjective::Min,
+                        };
+                        match crate::exact_probabilistic::decide_reachability_threshold(
+                            &product,
+                            &complement_target,
+                            complement_objective,
+                            &complement_threshold,
+                            &limits,
+                        ) {
+                            Ok(crate::exact_probabilistic::UnboundedOutcome::Bounds {
+                                lower,
+                                upper,
+                                precision_bits,
+                                sweeps,
+                                policy,
+                            }) => Ok(crate::exact_probabilistic::UnboundedOutcome::Bounds {
+                                lower: upper
+                                    .iter()
+                                    .map(|bound| complement_dyadic(bound))
+                                    .collect(),
+                                upper: lower
+                                    .iter()
+                                    .map(|bound| complement_dyadic(bound))
+                                    .collect(),
+                                precision_bits,
+                                sweeps,
+                                policy,
+                            }),
+                            result => result,
+                        }
+                    }
+                    ProbForm::ExpectedReward { reward, .. } => {
+                        match crate::exact_probabilistic::decide_expected_reward_threshold(
+                            &product, &target, reward.as_str(), threshold, &limits,
+                        ) {
+                            Ok(crate::exact_probabilistic::ExpectedRewardOutcome::Bounds {
+                                lower,
+                                upper,
+                                precision_bits,
+                                sweeps,
+                            }) => Ok(crate::exact_probabilistic::UnboundedOutcome::Bounds {
+                                lower,
+                                upper,
+                                precision_bits,
+                                sweeps,
+                                policy: Vec::new(),
+                            }),
+                            Ok(crate::exact_probabilistic::ExpectedRewardOutcome::Exact(result)) => {
+                                Ok(crate::exact_probabilistic::UnboundedOutcome::Exact(result))
+                            }
+                            Ok(crate::exact_probabilistic::ExpectedRewardOutcome::PrecisionBudget {
+                                lower,
+                                upper,
+                            }) => Ok(crate::exact_probabilistic::UnboundedOutcome::PrecisionBudget {
+                                lower,
+                                upper,
+                            }),
+                            Err(error) => Err(error),
+                        }
+                    }
+                    _ => crate::exact_probabilistic::decide_reachability_threshold(
+                        &product, &target, objective, threshold, &limits,
+                    ),
+                };
+                match interval_result {
+                    Ok(crate::exact_probabilistic::UnboundedOutcome::Exact(solved)) => solved,
+                    Ok(crate::exact_probabilistic::UnboundedOutcome::Bounds {
+                        lower,
+                        upper,
+                        precision_bits,
+                        policy,
+                        ..
+                    }) => {
+                        interval = Some(Interval {
+                            lower,
+                            upper,
+                            precision_bits,
+                        });
+                        crate::exact_probabilistic::UnboundedResult {
+                            values: interval
+                                .as_ref()
+                                .expect("interval was just stored")
+                                .lower
+                                .iter()
+                                .map(|end| ExtRational::Finite(end.rational()))
+                                .collect(),
+                            policy,
+                            policy_iterations: 0,
+                        }
+                    }
+                    Ok(crate::exact_probabilistic::UnboundedOutcome::PrecisionBudget {
+                        lower,
+                        upper,
+                    }) => return precision_budget(lower.rational(), upper.rational(), subject),
+                    Ok(crate::exact_probabilistic::UnboundedOutcome::Stopped(limit)) => {
+                        return settled(
+                            &ExactProbBuildIssue::Limit {
+                                limit: ModelCheckLimit::ExactProbMaxPolicyIterations,
+                                value: limit.value(),
+                            },
+                            subject,
+                        );
+                    }
+                    Err(error) => return unbounded_failure(error, &limits, subject),
+                }
+            }
             Err(error) => return unbounded_failure(error, &limits, subject),
         };
         (solved.values, solved.policy)
@@ -1612,21 +1745,22 @@ fn run(
         );
     }
     if let Some(interval) = interval {
-        let (Some(formula), Some(monitor)) = (bounded_formula, monitor) else {
-            return broken();
-        };
         let context = match fsl_replay::probabilistic_formula_monitor_context(claim, reference) {
             Ok(context) => context,
             Err(error) => return graph_failure(error, &limits, subject),
         };
-        let monitor = match fsl_eval::automaton::QualifiedBoundedMonitor::from_monitor(
-            formula.formula(),
-            &context,
-            monitor,
-            limits.model.max_automaton_states,
-        ) {
-            Ok(monitor) => monitor,
-            Err(error) => return bounded_monitor_failure(error, subject),
+        let qualified_monitor = match (bounded_formula, monitor) {
+            (Some(formula), Some(monitor)) => match fsl_eval::automaton::QualifiedBoundedMonitor::from_monitor(
+                formula.formula(),
+                &context,
+                monitor,
+                limits.model.max_automaton_states,
+            ) {
+                Ok(monitor) => Some(monitor),
+                Err(error) => return bounded_monitor_failure(error, subject),
+            },
+            (None, None) => None,
+            _ => return broken(),
         };
         let subject_of = IntervalSubject {
             system: &system,
@@ -1634,22 +1768,32 @@ fn run(
             item: &item,
             product: &product,
             reference,
-            monitor: &monitor,
+            monitor: qualified_monitor.as_ref(),
             bound,
             extremum,
             binding: binding.as_ref(),
             request_limits: &limits,
         };
-        return raise_until_accepted(&product, bound, &limits, interval, |interval| {
-            settle_interval(
-                &subject_of,
-                interval,
-                ProbabilityDocumentLimits::for_interval(&limits, meter),
-                cancel,
-                tamper,
-                subject,
-            )
-        });
+        if subject_of.monitor.is_some() {
+            return raise_until_accepted(&product, bound, &limits, interval, |interval| {
+                settle_interval(
+                    &subject_of,
+                    interval,
+                    ProbabilityDocumentLimits::for_interval(&limits, meter),
+                    cancel,
+                    tamper,
+                    subject,
+                )
+            });
+        }
+        return settle_unbounded_interval(
+            &subject_of,
+            &interval,
+            ProbabilityDocumentLimits::for_interval(&limits, meter),
+            cancel,
+            tamper,
+            subject,
+        );
     }
     let certificate = match (bounded_formula, monitor) {
         (Some(formula), Some(monitor)) => {
