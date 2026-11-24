@@ -2784,6 +2784,32 @@ fn every_emitted_body_of_the_corpus_is_in_the_stratified_grammar() {
                     );
                     continue;
                 }
+                if node["node_tag"] == "claim" && node["semantic_form"] == "operation_contract" {
+                    // FSpec FR-825: an operation-contract record body is a closed
+                    // aggregate of seven bindings whose populations write an absent
+                    // maximum as an empty aggregate; the V2 reader checks it, not the
+                    // ordinary term stratum.
+                    assert_eq!(node["body"]["term"], "aggregate");
+                    let names: Vec<_> = node["body"]["members"]
+                        .as_array()
+                        .expect("the FR-825 body members")
+                        .iter()
+                        .map(|member| member["name"].as_str().expect("member name"))
+                        .collect();
+                    assert_eq!(
+                        names,
+                        [
+                            "claim",
+                            "occurrence",
+                            "result_bound",
+                            "invariant",
+                            "operation",
+                            "model_objects",
+                            "populations"
+                        ]
+                    );
+                    continue;
+                }
                 if matches!(
                     node["body"]["term"].as_str(),
                     Some("enum" | "dimension" | "unit" | "dimension_equivalence")
