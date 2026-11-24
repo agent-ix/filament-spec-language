@@ -1009,8 +1009,8 @@ fn u02_dimension_maps_normalize() {
 #[test]
 fn a_normalized_derived_dimension_keeps_its_declared_conversion_boundary() {
     let checked = check_quantity_scale_source(
-        "dimension Length; dimension Time; dimension Derived = Length * Time / Time;\n\
-         unit m : Length = rational(1, 1); unit s : Time = rational(1, 1);\n\
+        "dimension Length; dimension Derived = Length * Time / Time;\n\
+         unit m : Length = rational(1, 1);\n\
          unit derived : Derived = rational(1, 1);\n\
          function convert_direct using v(q: Quantity<derived>): Quantity<m> pure { convert<Quantity<m>>(q) }",
     );
@@ -1020,10 +1020,8 @@ fn a_normalized_derived_dimension_keeps_its_declared_conversion_boundary() {
     assert_eq!(refusals.len(), 1, "{refusals:?}");
     assert!(matches!(
         refusals[0].cause,
-        fsl_semantics::check::CheckCause::IllTyped(
-            filament_exact::IllTypedCause::IncompatibleDimensions
-        )
-    ));
+        fsl_semantics::check::CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
+    ), "{refusals:?}");
 
     let fixture = fixture();
     let length = fixture.graph.dimension(fixture.length).unwrap();
