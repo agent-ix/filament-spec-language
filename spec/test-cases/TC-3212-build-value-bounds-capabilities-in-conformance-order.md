@@ -21,7 +21,10 @@ finite-horizon measure and quantile bases.
 1. Check AC-1's lower and upper documents with the claim-side flag both set
    and unset, including the threshold miss and wrong-kind cases of AC-16.
 2. Check AC-3's hinted and unhinted policies, including the rejected
-   nonsatisfying hint of AC-17.
+   nonsatisfying hint of AC-17. For AC-17's Every AtMost claim, check the
+   Maximum `upper` as the claim-side document, reject the Minimum `upper` as
+   objective mismatch, then check the Maximum `lower` counterpart with
+   `wait` and `go` policy hints.
 3. Stop AC-1's exploration at `max_states`; check and settle the partial
    lower document without a counterpart, then mutate its threshold value and
    identity as specified by AC-18.
@@ -43,12 +46,16 @@ finite-horizon measure and quantile bases.
    both documents in a separate `fsl-probability-check` process; repeat with
    one value changed.
 
-Tag each assertion `#[trace("TC-3212", "FR-1042-AC-n")]` for its criterion.
+Tag the AC-17 assertions `#[trace("TC-3212", "FR-1042-AC-17")]`; tag each
+other assertion `#[trace("TC-3212", "FR-1042-AC-n")]` for its criterion.
 
 ## Expected Results
 
-- Steps 1 and 2 enforce the supplied claim-side role and policy hint and
-  retain the checker-selected canonical action when no hint is supplied.
+- Step 1 enforces the supplied claim-side role. Step 2 accepts the Maximum
+  `upper` claim-side document for Every AtMost, refuses the Minimum document
+  for that claim with objective mismatch, rejects the Maximum `lower`
+  counterpart with `wait` as `RankBroken`, and accepts it with `go`; the
+  omitted policy retains the first satisfying full-product action.
 - Step 3 settles `proved`, `ValueBounds` with `exploration: Partial`, upper
   1 and no counterpart; its documents are replay-accepted, while either
   mutation prevents proof.
