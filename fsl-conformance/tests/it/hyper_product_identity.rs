@@ -12,10 +12,15 @@ fn dependency(directory: &Path, prefix: &str) -> PathBuf {
         .expect("the integration test dependency directory exists")
         .filter_map(Result::ok)
         .map(|entry| entry.path())
-        .find(|path| {
+        .filter(|path| {
             path.file_name()
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| name.starts_with(prefix) && name.ends_with(".rlib"))
+        })
+        .max_by_key(|path| {
+            fs::metadata(path)
+                .and_then(|metadata| metadata.modified())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
         })
         .unwrap_or_else(|| panic!("the test build contains {prefix} rlib"))
 }
