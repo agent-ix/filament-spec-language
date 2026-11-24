@@ -121,6 +121,7 @@ use fsl_replay::{
 };
 use fsl_semantics::check::{CaptureSite, CheckedTemporalClause, FormulaNodeId};
 use quire_canonical::{Encode, Sink, Writer};
+use quire_canonical_api as canonical_api;
 
 use super::ample::{Atoms, Por};
 use super::check::{
@@ -130,7 +131,8 @@ use super::check::{
 use super::concretise::{Lift, LiftStop, PermuterOf};
 use super::fair_walk::{fairness_constraints, tree_path, FairModel};
 use super::graph::{
-    retain_reduced, Ample, Choice, GraphExploration, ProductStateId, RetainedEdge, RetainedGraph,
+    retain_reduced_with_key, Ample, Choice, GraphExploration, ProductStateId, RetainedEdge,
+    RetainedGraph,
 };
 use super::product::{ProductKey, ProductTransition};
 use super::quotient::{
@@ -570,7 +572,7 @@ fn retained<'l, S: LiveSubject>(
     ample: Option<&dyn Ample<LassoSystem<'l, S>>>,
     limits: Limits,
 ) -> Result<Exploration<S>, ModelCheckRefusal> {
-    retain_reduced(
+    retain_reduced_with_key(
         product,
         group,
         ample,
@@ -578,6 +580,7 @@ fn retained<'l, S: LiveSubject>(
         IdentityLimits::default(),
         None,
         || run.cancel.poll() && run.cancel.cause().is_some(),
+        |state, identity| product.encoded_key(state, identity),
     )
     .map_err(|error| {
         ModelCheckRefusal::Encoding(EncodingRefusal::of(&error, IdentityLimits::default()))
@@ -847,6 +850,7 @@ enum Property {
 }
 
 /// A product state's canonical property key.
+#[derive(Clone, Copy)]
 enum PropertyKey {
     After(usize),
     Undefined,
@@ -869,11 +873,29 @@ impl Encode for PropertyKey {
     }
 }
 
+impl canonical_api::Encode for PropertyKey {
+    fn encode_into<S: canonical_api::Sink + ?Sized>(
+        &self,
+        writer: &mut canonical_api::Writer<'_, S>,
+    ) -> Result<(), canonical_api::Error> {
+        writer.begin_array()?;
+        match self {
+            Self::After(index) => {
+                writer.string("after")?;
+                writer.integer(i128::try_from(*index).unwrap_or(i128::MAX))?;
+            }
+            Self::Undefined => writer.string("undefined")?,
+        }
+        writer.end_array()
+    }
+}
+
 /// A product state: a subject state and the property state it was reached
 /// in, with the depth it was created at.
 #[derive(Clone)]
 struct LState<State> {
     model: State,
+    model_key: StateKey,
     property: Property,
     depth: usize,
 }
@@ -978,6 +1000,26 @@ struct LassoSystem<'r, S: LiveSubject> {
 }
 
 impl<S: LiveSubject> LassoSystem<'_, S> {
+    fn encoded_key(
+        &self,
+        state: &LState<S::State>,
+        identity: IdentityLimits,
+    ) -> Result<Vec<u8>, quire_canonical::Error> {
+        let model = ProductKey::<canonical_api::CanonicalValue, PropertyKey>::read_model_value(
+            state.model_key.as_bytes(),
+            identity.input_bytes,
+        )?;
+        let property = match &state.property {
+            Property::After(state) => PropertyKey::After(state.index()),
+            Property::Undefined { .. } => PropertyKey::Undefined,
+        };
+        ProductKey::<canonical_api::CanonicalValue, _>::canonical_bytes_with_model_value(
+            &model,
+            property,
+            identity.input_bytes,
+        )
+    }
+
     /// Record why the run stops, keeping the first reason, and return the
     /// stop the exploration engine takes.
     fn record(&self, halt: Halt) -> ExpansionStop {
@@ -1026,16 +1068,23 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
 
     /// The letter of `state` for this binding, read once per model state.
     fn reading(&self, state: &S::State) -> Result<Reading, ExpansionStop> {
-        self.reading_at(state, false)
+        self.reading_at(state, false).map(|(_, reading)| reading)
     }
 
     /// The letter of `state`, `initial` when it is position 0 of the trace.
     /// Only an `on origin` clause's captures read differently there.
-    fn reading_at(&self, state: &S::State, initial: bool) -> Result<Reading, ExpansionStop> {
+    fn reading_at(
+        &self,
+        state: &S::State,
+        initial: bool,
+    ) -> Result<(StateKey, Reading), ExpansionStop> {
         let state_key = self.state_key_of(state)?;
-        let key = (state_key, initial && self.captured == CaptureSite::Origin);
+        let key = (
+            state_key.clone(),
+            initial && self.captured == CaptureSite::Origin,
+        );
         if let Some(known) = self.readings.borrow().get(&key) {
-            return Ok(known.clone());
+            return Ok((state_key, known.clone()));
         }
         let state = self.system.atom_state(state);
         let state = state.as_ref();
@@ -1118,7 +1167,7 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
         }
         let reading = reading.unwrap_or(Reading::Defined(letter));
         self.readings.borrow_mut().insert(key, reading.clone());
-        Ok(reading)
+        Ok((state_key, reading))
     }
 
     /// The property states a position reads into, from `before`; none when
@@ -1153,7 +1202,7 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
     fn start_states(&mut self) -> Result<(), ExpansionStop> {
         let mut initial = Vec::new();
         for model in self.system.initial() {
-            let reading = self.reading_at(&model, true)?;
+            let (model_key, reading) = self.reading_at(&model, true)?;
             let properties = self.step(Before::Start, &reading)?;
             if properties.is_empty() {
                 self.dead.borrow_mut().push(DeadRoot {
@@ -1165,6 +1214,7 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
             for property in properties {
                 initial.push(LState {
                     model: model.clone(),
+                    model_key: model_key.clone(),
                     property,
                     depth: 0,
                 });
@@ -1172,6 +1222,114 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
         }
         self.initial = initial;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod key_encoding_tests {
+    use super::{PropertyKey, canonical_api};
+    use crate::model_check::product::ProductKey;
+    use fsl_eval::automaton::GbaBuilder;
+    use fsl_foundation::IdentityLimits;
+    use ix_trace_rs::trace;
+    use serde_json::{Value, json};
+
+    #[trace("TC-453", "FR-101-AC-2")]
+    #[test]
+    fn product_key_matches_the_canonical_array_encoding() {
+        let mut automaton = GbaBuilder::new();
+        let after = automaton.add_state();
+        let properties = [PropertyKey::Undefined, PropertyKey::After(after.index())];
+        let mut checked_literal = false;
+        for model in [
+            json!({"type": "simulation-state", "objects": [{"key": "rover", "speed": 300}]}),
+            json!({"type": "simulation-state", "label": "quote \" and slash \\", "empty": []}),
+        ] {
+            let identity = IdentityLimits::default();
+            let model_bytes =
+                quire_canonical::to_vec(&model, quire_canonical::Limits::new(identity.input_bytes))
+                    .expect("the representative model key is canonical");
+            let model_document =
+                ProductKey::<canonical_api::CanonicalValue, PropertyKey>::read_model_value(
+                    &model_bytes,
+                    identity.input_bytes,
+                )
+                .expect("the representative model key can be read");
+            for property in properties {
+                let product = quire_canonical::to_vec(
+                    &ProductKey {
+                        model: model.clone(),
+                        property,
+                    },
+                    quire_canonical::Limits::new(identity.input_bytes),
+                )
+                .expect("the representative product key is canonical");
+                let reused = ProductKey::<canonical_api::CanonicalValue, _>::
+                    canonical_bytes_with_model_value(
+                        &model_document,
+                        property,
+                        identity.input_bytes,
+                    )
+                    .expect("the cached model key composes within the identity limit");
+                if !checked_literal {
+                    let model_literal =
+                        br#"{"objects":[{"key":"rover","speed":300}],"type":"simulation-state"}"#;
+                    let product_literal = br#"[{"objects":[{"key":"rover","speed":300}],"type":"simulation-state"},["undefined"]]"#;
+                    assert_eq!(model_bytes.as_slice(), model_literal);
+                    assert_eq!(product.as_slice(), product_literal);
+                    assert_eq!(reused.as_slice(), product_literal);
+                    checked_literal = true;
+                }
+                assert_eq!(reused, product);
+                let property_value = match property {
+                    PropertyKey::After(index) => json!(["after", index]),
+                    PropertyKey::Undefined => json!(["undefined"]),
+                };
+                let expected = quire_canonical::to_vec(
+                    &json!([model.clone(), property_value]),
+                    quire_canonical::Limits::new(identity.input_bytes),
+                )
+                .expect("the expected two-component array is canonical");
+                assert_eq!(product, expected);
+
+                let decoded: Value = serde_json::from_slice(&product)
+                    .expect("the product bytes remain valid canonical JSON");
+                assert_eq!(decoded[0], model);
+
+                let boundary = identity.with_input_bytes(
+                    u64::try_from(expected.len().saturating_sub(1))
+                        .expect("the representative key length fits u64"),
+                );
+                let reused_error = ProductKey::<canonical_api::CanonicalValue, _>::
+                    canonical_bytes_with_model_value(
+                        &model_document,
+                        property,
+                        boundary.input_bytes,
+                    )
+                    .expect_err("the reused product key exceeds the one-byte-short limit");
+                let product_error = quire_canonical::to_vec(
+                    &ProductKey {
+                        model: model.clone(),
+                        property,
+                    },
+                    quire_canonical::Limits::new(boundary.input_bytes),
+                )
+                .expect_err("the product key exceeds the one-byte-short limit");
+                let expected_error = quire_canonical::to_vec(
+                    &json!([model.clone(), property_value]),
+                    quire_canonical::Limits::new(boundary.input_bytes),
+                )
+                .expect_err("the expected array exceeds the same limit");
+                assert!(matches!(
+                    (reused_error, product_error, expected_error),
+                    (
+                        quire_canonical::Error::Limit(reused),
+                        quire_canonical::Error::Limit(product),
+                        quire_canonical::Error::Limit(expected),
+                    ) if reused == product && product == expected
+                ));
+            }
+        }
     }
 }
 
@@ -1302,7 +1460,7 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
         }
         let mut successors = Vec::new();
         for (transition, model) in steps {
-            let reading = self.reading(&model)?;
+            let (model_key, reading) = self.reading_at(&model, false)?;
             let properties = self.step(before, &reading)?;
             if let (true, Before::At(at)) = (properties.is_empty(), before) {
                 self.dead.borrow_mut().push(DeadRoot {
@@ -1322,6 +1480,7 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
                     transition.clone(),
                     LState {
                         model: model.clone(),
+                        model_key: model_key.clone(),
                         property,
                         depth: state.depth.saturating_add(1),
                     },
@@ -1366,15 +1525,17 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
         Some(
             self.system
                 .canonical(&state.model, group)?
-                .map(|(model, permutation)| {
-                    (
+                .and_then(|(model, permutation)| {
+                    let model_key = self.state_key_of(&model)?;
+                    Ok((
                         LState {
                             model,
+                            model_key,
                             property: state.property.clone(),
                             depth: state.depth,
                         },
                         permutation,
-                    )
+                    ))
                 })
                 .inspect_err(|&stop| {
                     self.record(Halt::Expansion(stop));

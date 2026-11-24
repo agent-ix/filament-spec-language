@@ -251,7 +251,31 @@ pub fn retain_reduced<S: TransitionSystem>(
     limits: Limits,
     identity: IdentityLimits,
     max_depth: Option<usize>,
+    poll: impl FnMut() -> bool,
+) -> RetainResult<S> {
+    retain_reduced_with_key(
+        system,
+        group,
+        ample,
+        limits,
+        identity,
+        max_depth,
+        poll,
+        |state, identity| encode(&system.key(state), identity),
+    )
+}
+
+/// `retain_reduced` with an internal canonical-key provider. The bytes it
+/// returns must be the exact FR-101 encoding of the system's typed key.
+pub(super) fn retain_reduced_with_key<S: TransitionSystem>(
+    system: &S,
+    group: &SymmetryGroup,
+    ample: Option<&dyn Ample<S>>,
+    limits: Limits,
+    identity: IdentityLimits,
+    max_depth: Option<usize>,
     mut poll: impl FnMut() -> bool,
+    key: impl Fn(&S::State, IdentityLimits) -> Result<Vec<u8>, quire_canonical::Error>,
 ) -> RetainResult<S> {
     let mut graph = RetainedGraph {
         states: Vec::new(),
@@ -272,7 +296,7 @@ pub fn retain_reduced<S: TransitionSystem>(
                 return Ok(GraphExploration { graph, outcome });
             }
         };
-        initial.push((encode(&system.key(&state), identity)?, state));
+        initial.push((key(&state, identity)?, state));
     }
     initial.sort_by(|(a, _), (b, _)| a.cmp(b));
     initial.dedup_by(|(a, _), (b, _)| a == b);
@@ -339,8 +363,8 @@ pub fn retain_reduced<S: TransitionSystem>(
                 }
             };
             let order = encode(&transition, identity)?;
-            let key = encode(&system.key(&state), identity)?;
-            successors.push((order, key, transition, state, permutation));
+            let state_key = key(&state, identity)?;
+            successors.push((order, state_key, transition, state, permutation));
         }
         successors.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
         if let Some(ample) = ample {
