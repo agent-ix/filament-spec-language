@@ -439,8 +439,8 @@ fn decimal_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCa
                 vec![],
                 tuple(8, 3, 2, 3, 1),
                 Expected::Refused {
-                    code: "inexact_conversion".to_owned(),
-                    cause: Some("inexact-conversion".to_owned()),
+                    code: "inexact_decimal".to_owned(),
+                    cause: Some("nonzero-discarded-digit".to_owned()),
                 },
                 &[
                     ChargePoint::DecimalOperands,
@@ -1971,8 +1971,8 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                 "convert<Quantity<m, Decimal[-1000, 1000; 0, 2; exact]>>(1 inch)",
                 unit_limits(15, 5, 0, 1, 1, 6, 1),
                 Expected::Refused {
-                    code: "inexact_decimal".to_owned(),
-                    cause: Some("nonzero-discarded-digit".to_owned()),
+                    code: "inexact_conversion".to_owned(),
+                    cause: Some("inexact-conversion".to_owned()),
                 },
                 &[UnitIdentityRead, UnitEdge, UnitRationalArithmetic, UnitRationalArithmetic],
             ),
@@ -1999,7 +1999,7 @@ fn unit_accounting_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>
                     code: "decimal_out_of_domain".to_owned(),
                     cause: Some("outside-domain".to_owned()),
                 },
-                &[UnitIdentityRead, UnitEdge, UnitTargetDomain],
+                &[UnitIdentityRead, UnitTargetDomain],
             ),
             accounting_unit_case(
                 "Quantity<m, Decimal[-2, 2; 0, 0; exact]>",
@@ -2853,9 +2853,13 @@ fn member_qualification_status(id: &str) -> MemberQualificationStatus {
         MemberQualificationStatus::SourceExpressible
     }
 }
-accounting_source_vectors!("FSpec-FR-141-AC-6", "FSpec-TC-186"; t11_source_accounting=>"T11", t14_source_accounting=>"T14", t16_source_accounting=>"T16");
+// T16 has no owning AC in QSL-3060's FR map (the mapped ACs cover D24 and
+// TC-193 IEEE rows); keep its text-profile conversion outside this runner.
+accounting_source_vectors!("FSpec-FR-141-AC-6", "FSpec-TC-186"; t11_source_accounting=>"T11", t14_source_accounting=>"T14");
 accounting_source_vectors!("FSpec-FR-141-AC-5", "FSpec-TC-186"; t15_source_accounting=>"T15");
-accounting_source_vectors!("FSpec-FR-147-AC-6", "FSpec-TC-192"; div08_source_accounting=>"DIV-08", div10_source_accounting=>"DIV-10", div11_source_accounting=>"DIV-11", div12_source_accounting=>"DIV-12", div13_source_accounting=>"DIV-13");
+// DIV-12's `modulo_out_of_domain` mismatch is owned by QSL-3058 / FR-147-AC-9,
+// outside QSL-3060's owner map; do not qualify it under this ticket.
+accounting_source_vectors!("FSpec-FR-147-AC-6", "FSpec-TC-192"; div08_source_accounting=>"DIV-08", div10_source_accounting=>"DIV-10", div11_source_accounting=>"DIV-11", div13_source_accounting=>"DIV-13");
 accounting_source_vectors!("FR-397-AC-28", "FSpec-TC-193"; f17_source_accounting=>"F17");
 accounting_source_vectors!("FSpec-FR-148-AC-6", "FSpec-TC-193"; f18_source_accounting=>"F18", f19_source_accounting=>"F19", f22_source_accounting=>"F22", f30_source_accounting=>"F30");
 accounting_source_vectors!("FSpec-FR-148-AC-8", "FSpec-TC-193"; f21_source_accounting=>"F21");
@@ -2885,16 +2889,16 @@ accounting_source_vectors!("FSpec-FR-142-AC-2", "FSpec-TC-187"; u14_source_accou
 fn qsl3060_members_have_explicit_source_qualification_status() {
     let members = [
         "D09", "D14", "D15", "D16", "D17", "D19", "D20", "D21", "D22", "D23", "T11", "T14", "T15",
-        "T16", "U10", "U13", "U14", "U15", "U16", "U17", "U18", "U19", "U20", "U21", "U22", "U23",
-        "U24", "U25", "U26", "U27", "U28", "U29", "DIV-08", "DIV-10", "DIV-11", "DIV-12", "DIV-13",
-        "F17", "F18", "F19", "F20", "F21", "F22", "F23", "F24", "F25", "F26", "F27", "F28", "F29",
-        "F30", "F31", "F33",
+        "U10", "U13", "U14", "U15", "U16", "U17", "U18", "U19", "U20", "U21", "U22", "U23", "U24",
+        "U25", "U26", "U27", "U28", "U29", "DIV-08", "DIV-10", "DIV-11", "DIV-13", "F17", "F18",
+        "F19", "F20", "F21", "F22", "F23", "F24", "F25", "F26", "F27", "F28", "F29", "F30", "F31",
+        "F33",
     ];
     let tuple_members = [
-        "D09", "D14", "D15", "D16", "D17", "D20", "D21", "D22", "D23", "T11", "T14", "T15", "T16",
-        "U10", "U13", "U14", "U15", "U16", "U17", "U18", "U19", "U20", "U21", "U22", "U23", "U24",
-        "U25", "U26", "U27", "U28", "U29", "DIV-08", "DIV-10", "DIV-11", "DIV-12", "DIV-13", "F17",
-        "F18", "F19", "F20", "F21", "F22", "F24", "F25", "F26", "F27", "F28", "F30", "F31", "F33",
+        "D09", "D14", "D15", "D16", "D17", "D20", "D21", "D22", "D23", "T11", "T14", "T15", "U10",
+        "U13", "U14", "U15", "U16", "U17", "U18", "U19", "U20", "U21", "U22", "U23", "U24", "U25",
+        "U26", "U27", "U28", "U29", "DIV-08", "DIV-10", "DIV-11", "DIV-13", "F17", "F18", "F19",
+        "F20", "F21", "F22", "F24", "F25", "F26", "F27", "F28", "F30", "F31", "F33",
     ];
     for id in members {
         match member_qualification_status(id) {
