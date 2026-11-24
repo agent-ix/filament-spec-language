@@ -26,6 +26,90 @@ fn assert_quantity(term: &Value, expected: &str, time_unit: &Value) {
     assert_eq!(value["type"], *time_unit);
 }
 
+/// FR-249 release/mode declarations and FR-454 claim emission preserve their
+/// selected operation identities in the schedulability carrier.
+#[trace("FR-249-AC-6", "FR-249-AC-13", "FR-454-AC-1")]
+#[test]
+fn schedulability_claim_rows_emit_selected_release_and_mode_switch_bindings() {
+    use super::receiver_frames::fixture;
+
+    let mut selected_model = fixture::document(&["bump", "noop"], &[]);
+    selected_model["types"]
+        .as_array_mut()
+        .expect("the selected model types")
+        .retain(|ty| ty["identity"] == fixture::id("Counter"));
+    selected_model["populations"][0]["members"] = json!([fixture::id("Counter")]);
+    let document = crate::emit::tests::wire_bytes(&selected_model)
+        .expect("the selected operation fixture serializes");
+    let packages = fsl_semantics::model::intake::package_input([document.as_slice()])
+        .expect("the selected model document is admitted");
+    let unit = format!(
+        "language \"ix:native\" edition \"1-draft\";\n\
+         profile v = \"filament.temporal.complete/v1\";\n\
+         model M = {package:?};\n\
+         dimension Time;\n\
+         unit ms : Time = rational(1, 1);\n\
+         time M dense unit ms;\n\
+         taskset Ctl {{\n\
+         task h periodic 4 ms deadline 4 ms wcet 1 ms priority 1 hi wcet_hi 2 ms;\n\
+         }}\n\
+         release Ctl.h on M::Counter::noop;\n\
+         mode Ctl hi on M::Counter::bump;\n\
+         schedulable CtlFp on Ctl under fixed_priority;\n",
+        package = fixture::PACKAGE,
+    );
+    let graph = assemble_with_models(unit.as_bytes(), &packages)
+        .expect("the schedulability unit assembles")
+        .check(
+            CheckMode::Linked,
+            CheckingLimits::default(),
+            &fsl_semantics::check::test_support::ZeroRewardEvaluator,
+        )
+        .unwrap_or_else(|refusals| panic!("the schedulability unit checks: {refusals:?}"));
+    let emission = emit_checked(&CheckedPackage::link(graph))
+        .expect("the selected release and mode operations emit");
+    let wire = crate::emit::tests::raw_wire(&emission);
+    let nodes = wire["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("the emitted graph nodes");
+    let counter = nodes
+        .iter()
+        .find(|node| {
+            node["node_tag"] == "model"
+                && node["semantic_form"] == "object_type"
+                && node["owner"]["kind"] == "model"
+                && node["owner"]["identity"] == fixture::PACKAGE
+                && node["owner"]["node"] == fixture::id("Counter")
+        })
+        .expect("the selected Counter object_type node is emitted");
+    let [row] = wire["schedulability_claims"]
+        .as_array()
+        .expect("the schedulability claim rows")
+        .as_slice()
+    else {
+        panic!("one schedulability carrier row is emitted");
+    };
+    assert_eq!(row["task_set"], "Ctl");
+    assert_eq!(row["occurrence"], 0);
+    assert_eq!(
+        row["release_bindings"],
+        json!([{
+            "task_name": "h",
+            "selected_model_identity": fixture::PACKAGE,
+            "operation_declaring_identity": counter["node_id"],
+            "operation_member": fixture::id("Counter/noop"),
+        }])
+    );
+    assert_eq!(
+        row["mode_switch_bindings"],
+        json!([{
+            "selected_model_identity": fixture::PACKAGE,
+            "operation_declaring_identity": counter["node_id"],
+            "operation_member": fixture::id("Counter/bump"),
+        }])
+    );
+}
+
 /// Semantic type ids that the claim body literals reference.
 struct Types<'a> {
     text: &'a Value,

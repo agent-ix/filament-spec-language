@@ -4927,7 +4927,7 @@ fn dimension_equivalence_refuses_a_foreign_package_operand_and_keeps_local_ones(
 
 /// FR-094-AC-13: selected foreign dimension operands retain the selected
 /// package identity and declared node, while local dimensions remain Local.
-#[ix_trace_rs::trace("FR-094-AC-13")]
+#[trace("FR-094-AC-13")]
 #[test]
 fn dimension_equivalence_emits_a_package_operand_for_a_selected_model() {
     use filament_exact::{Integer, Rational};
@@ -5441,14 +5441,14 @@ fn flow_millisecond_dimension_equivalence_fixture(include_negative_controls: boo
 }
 
 /// FR-094-AC-13 positive producer, strict IR admission and FSL readback path.
-#[ix_trace_rs::trace("FR-094-AC-13", "TC-419")]
+#[trace("FR-094-AC-13", "TC-419")]
 #[test]
 fn flow_millisecond_dimension_equivalence_emits_and_reads_canonically() {
     flow_millisecond_dimension_equivalence_fixture(false);
 }
 
 /// FR-094-AC-13 independent reader controls for malformed scales and cycles.
-#[ix_trace_rs::trace("FR-094-AC-13", "TC-419")]
+#[trace("FR-094-AC-13", "TC-419")]
 #[test]
 fn flow_millisecond_dimension_equivalence_reader_rejects_invalid_scales() {
     flow_millisecond_dimension_equivalence_fixture(true);
