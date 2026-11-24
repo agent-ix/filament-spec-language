@@ -250,18 +250,14 @@ fn every_staging_row_names_its_owner_and_deletion_condition() {
         .filter_map(|line| {
             let row = line.trim().strip_prefix('|')?.strip_suffix('|')?;
             let fields = row.split('|').map(str::trim).collect::<Vec<_>>();
-            let separator = fields.iter().all(|field| {
-                !field.is_empty()
-                    && field
-                        .chars()
-                        .all(|character| matches!(character, '-' | ':'))
-            });
-            (fields.len() == 3 && fields[0] != "Legacy file or group" && !separator)
-                .then_some(fields)
+            let separator = fields == ["---", "---", "---"];
+            let header = fields == ["Legacy file or group", "Deleted when", "Owner"];
+            (!header && !separator).then_some(fields)
         })
         .collect::<Vec<_>>();
     assert_eq!(rows.len(), 7, "the table's seven legacy groups are covered");
     for fields in rows {
+        assert_eq!(fields.len(), 3, "each staging row has three cells");
         assert!(!fields[0].is_empty(), "the legacy file is named");
         assert!(!fields[1].is_empty(), "the deletion condition is named");
         assert!(!fields[2].is_empty(), "the owner is named");
