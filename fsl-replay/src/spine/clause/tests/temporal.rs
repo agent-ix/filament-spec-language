@@ -4853,7 +4853,10 @@ fn a_temporal_violation_carries_its_decisive_information() {
     let value: serde_json::Value = serde_json::from_str(&written).expect("JSON");
     assert_eq!(value["disposition"]["temporal"]["kind"], "violated");
     assert_eq!(value["disposition"]["temporal"]["position"], 2);
-    assert_eq!(value["disposition"]["temporal"]["counterexample"]["trace_position"], 2);
+    assert_eq!(
+        value["disposition"]["temporal"]["counterexample"]["trace_position"],
+        2
+    );
     assert!(value["disposition"]["temporal"].get("decisive").is_none());
     let crate::spine::NativeRunResult::Clause(record) =
         crate::spine::read_native_run_result(written.as_bytes()).expect("the result reads")
@@ -4865,18 +4868,20 @@ fn a_temporal_violation_carries_its_decisive_information() {
     };
     assert_eq!(*position, 2);
     assert_eq!(
-        record.temporal().and_then(crate::spine::TemporalRecord::verdict),
+        record
+            .temporal()
+            .and_then(crate::spine::TemporalRecord::verdict),
         Some(outcome(&forall))
     );
-    let Some(crate::spine::TemporalRecord::Violated {
-        counterexample, ..
-    }) = record.temporal()
+    let Some(crate::spine::TemporalRecord::Violated { counterexample, .. }) = record.temporal()
     else {
         unreachable!("the temporal result was checked above");
     };
     assert_eq!(counterexample.trace_position(), 2);
-    let crate::ClauseRunCounterexample::Observed(expected) =
-        forall.counterexample.as_ref().expect("the report counterexample")
+    let crate::ClauseRunCounterexample::Observed(expected) = forall
+        .counterexample
+        .as_ref()
+        .expect("the report counterexample")
     else {
         panic!("the observed trace counterexample");
     };
@@ -4885,17 +4890,19 @@ fn a_temporal_violation_carries_its_decisive_information() {
         expected
             .prefix
             .iter()
-            .map(|step| (step.document.authority.as_str(), step.document.identity.as_str()))
+            .map(|step| (
+                step.document.authority.as_str(),
+                step.document.identity.as_str()
+            ))
             .collect::<Vec<_>>()
     );
     assert_eq!(record.basis(), "closed-scope");
 
     let mut injected = value;
     injected["disposition"]["temporal"]["decisive"] = serde_json::json!({});
-    let error = crate::spine::read_native_run_result(
-        &serde_json::to_vec(&injected).expect("JSON bytes"),
-    )
-    .expect_err("decisive is not a temporal member");
+    let error =
+        crate::spine::read_native_run_result(&serde_json::to_vec(&injected).expect("JSON bytes"))
+            .expect_err("decisive is not a temporal member");
     assert!(error.to_string().contains("decisive"), "{error}");
 }
 

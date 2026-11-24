@@ -3,8 +3,8 @@
 
 use std::num::NonZeroU64;
 
-use fsl_foundation::bound::DomainKind;
 use fsl_foundation::BackendId;
+use fsl_foundation::bound::DomainKind;
 use fsl_route::{
     Candidate, ManifestMembers, MaxCasesMember, Mode, ProviderOrigin, RegistrationCause, Registry,
 };
@@ -55,7 +55,10 @@ fn one_manifest_converts_to_descriptors_equal_except_for_host_origin() {
     assert_eq!(linked.origin(), ProviderOrigin::Linked);
     assert_eq!(process.origin(), ProviderOrigin::Process);
     assert_eq!(linked.id(), process.id());
-    assert_eq!(linked.advertises().collect::<Vec<_>>(), process.advertises().collect::<Vec<_>>());
+    assert_eq!(
+        linked.advertises().collect::<Vec<_>>(),
+        process.advertises().collect::<Vec<_>>()
+    );
     assert_eq!(linked.domains(), process.domains());
     assert_eq!(linked.max_cases(), process.max_cases());
     assert_eq!(linked.fairness_kinds(), process.fairness_kinds());
@@ -68,7 +71,10 @@ fn one_manifest_converts_to_descriptors_equal_except_for_host_origin() {
     assert_eq!(linked.dynamics(), process.dynamics());
     assert_eq!(linked.solver_bounds(), process.solver_bounds());
     assert_eq!(linked.decides_timed(), process.decides_timed());
-    assert_eq!(linked.decides_task_product(), process.decides_task_product());
+    assert_eq!(
+        linked.decides_task_product(),
+        process.decides_task_product()
+    );
 }
 
 #[trace("TC-772", "FR-288-AC-2")]
@@ -90,7 +96,10 @@ fn manifest_identity_is_verbatim_and_other_fields_change_descriptor_capabilities
         DomainKind::Integer.to_wire(),
     )
     .expect("changed advertised kind admits");
-    assert_ne!(base.advertises().collect::<Vec<_>>(), changed_kind.advertises().collect::<Vec<_>>());
+    assert_ne!(
+        base.advertises().collect::<Vec<_>>(),
+        changed_kind.advertises().collect::<Vec<_>>()
+    );
     assert_eq!(changed_kind.id().as_str(), BACKEND);
 
     let changed_domain = descriptor(
@@ -103,7 +112,9 @@ fn manifest_identity_is_verbatim_and_other_fields_change_descriptor_capabilities
     assert_ne!(base.domains(), changed_domain.domains());
     assert_eq!(changed_domain.id().as_str(), BACKEND);
 
-    let changed_option = base.clone().with_options([("mode".to_owned(), "strict".to_owned())]);
+    let changed_option = base
+        .clone()
+        .with_options([("mode".to_owned(), "strict".to_owned())]);
     assert_ne!(base.option_defaults(), changed_option.option_defaults());
     assert_eq!(changed_option.id().as_str(), BACKEND);
 
@@ -117,8 +128,13 @@ fn manifest_identity_is_verbatim_and_other_fields_change_descriptor_capabilities
 #[trace("TC-772", "FR-288-AC-3")]
 #[test]
 fn manifest_without_advertised_kind_is_refused_and_only_valid_descriptor_registers() {
-    let refusal = descriptor(BACKEND, ProviderOrigin::Process, None, DomainKind::Integer.to_wire())
-        .expect_err("missing advertised kind is refused by the manifest conversion");
+    let refusal = descriptor(
+        BACKEND,
+        ProviderOrigin::Process,
+        None,
+        DomainKind::Integer.to_wire(),
+    )
+    .expect_err("missing advertised kind is refused by the manifest conversion");
     assert_eq!(refusal.cause(), &RegistrationCause::AbsentKind);
 
     let valid = descriptor(
@@ -129,9 +145,14 @@ fn manifest_without_advertised_kind_is_refused_and_only_valid_descriptor_registe
     )
     .expect("valid manifest converts");
     let mut registry = Registry::new();
-    registry.register(valid).expect("valid descriptor registers");
+    registry
+        .register(valid)
+        .expect("valid descriptor registers");
     assert_eq!(
-        registry.backends().map(BackendId::as_str).collect::<Vec<_>>(),
+        registry
+            .backends()
+            .map(BackendId::as_str)
+            .collect::<Vec<_>>(),
         ["vendor.Valid_2"]
     );
 }

@@ -68,7 +68,7 @@ fn markdown(body: &str, newline: &str) -> String {
 }
 
 #[test]
-#[trace("FR-031-AC-4", "FR-267-AC-17")]
+#[trace("FR-031-AC-4")]
 fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenance() {
     for newline in ["\n", "\r\n"] {
         for (case, category, exit, truth) in [
@@ -111,7 +111,14 @@ fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenanc
                 .collect::<Vec<_>>();
             extraction_members.sort_unstable();
             let expected_members: &[&str] = if case == Case::Violating {
-                &["binding", "body", "map", "original", "original_regions", "outcome"]
+                &[
+                    "binding",
+                    "body",
+                    "map",
+                    "original",
+                    "original_regions",
+                    "outcome",
+                ]
             } else {
                 &["binding", "body", "map", "original", "outcome"]
             };
@@ -137,11 +144,31 @@ fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenanc
             assert_eq!(read.extraction(), Some(extraction));
 
             let malformed = [
-                { let mut value = document.clone(); value["extraction"]["source"] = json!({}); value },
-                { let mut value = document.clone(); value["extraction"].as_object_mut().unwrap().remove("map"); value },
-                { let mut value = document.clone(); value["extraction"]["binding"] = Value::Null; value },
-                { let mut value = document.clone(); value["extraction"]["body"]["identity"] = json!(3); value },
-                { let mut value = document.clone(); value["extraction"]["map"]["segments"] = json!([]); value },
+                {
+                    let mut value = document.clone();
+                    value["extraction"]["source"] = json!({});
+                    value
+                },
+                {
+                    let mut value = document.clone();
+                    value["extraction"].as_object_mut().unwrap().remove("map");
+                    value
+                },
+                {
+                    let mut value = document.clone();
+                    value["extraction"]["binding"] = Value::Null;
+                    value
+                },
+                {
+                    let mut value = document.clone();
+                    value["extraction"]["body"]["identity"] = json!(3);
+                    value
+                },
+                {
+                    let mut value = document.clone();
+                    value["extraction"]["map"]["segments"] = json!([]);
+                    value
+                },
             ];
             for mutant in malformed {
                 let error = fsl_replay::spine::read_native_run_result(
@@ -153,7 +180,10 @@ fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenanc
 
             if case == Case::Violating {
                 assert!(extraction["original_regions"].is_array());
-                assert_eq!(extraction["original_regions"].as_array().map(Vec::len), Some(1));
+                assert_eq!(
+                    extraction["original_regions"].as_array().map(Vec::len),
+                    Some(1)
+                );
             }
         }
     }
