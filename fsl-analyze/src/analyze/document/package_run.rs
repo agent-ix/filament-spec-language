@@ -501,20 +501,18 @@ fn settle_package_run_inner(
     if input
         .as_ref()
         .is_some_and(|input| !input.input().time_sources.is_empty())
-    {
-        if named
+        && named
             .iter()
             .any(|item| !matches!(item, Named::Settled(_) | Named::StateGraph { .. }))
-        {
-            return Err(PackageRunError::Pending(PendingPackageFamily {
-                request_index: None,
-                note: None,
-                family: PendingFamily::ModelForm(UnreadModelForm::TimedModel),
-                node: package
-                    .first_unread_model_form()
-                    .map(|(_, node)| node.clone()),
-            }));
-        }
+    {
+        return Err(PackageRunError::Pending(PendingPackageFamily {
+            request_index: None,
+            note: None,
+            family: PendingFamily::ModelForm(UnreadModelForm::TimedModel),
+            node: package
+                .first_unread_model_form()
+                .map(|(_, node)| node.clone()),
+        }));
     }
     // FR-1044: each composition the default items select, read from its
     // admitted facts, and each component package its premise items run over:
@@ -3594,14 +3592,16 @@ impl<'a> WorkInputs<'_, 'a> {
                     .map(Vec::as_slice);
                 crate::protocol_analysis::conformance::package_global_recording_item(
                     item.request_index,
-                    self.input.input(),
-                    protocol,
-                    item.options.recording.clone(),
-                    recording,
-                    item.options.population.clone(),
-                    item.options.assessment
-                        == Some(super::super::request::AssessmentMode::Incremental),
-                    self.limits.replay,
+                    crate::protocol_analysis::conformance::PackageRecordingRequest {
+                        input: self.input.input(),
+                        selected_protocol: protocol,
+                        recording_identity: item.options.recording.clone(),
+                        recording,
+                        population: item.options.population.clone(),
+                        incremental: item.options.assessment
+                            == Some(super::super::request::AssessmentMode::Incremental),
+                        replay_limits: self.limits.replay,
+                    },
                 )
             }
             (

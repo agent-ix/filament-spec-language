@@ -55,7 +55,7 @@ pub use task_product_item::TaskProductReport;
 pub(crate) mod simulation_item;
 mod state_graph_item;
 mod timed_item;
-pub(crate) use request::analyze_bound;
+pub(crate) use request::{AnalyzeExecution, analyze_bound};
 
 pub use request::{
     ClaimItem, ClaimRefusal, CompositionItem, FiniteHyperItem, HybridItem, ItemForm, ItemOptions,

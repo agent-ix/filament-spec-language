@@ -1196,15 +1196,16 @@ impl<R: PlanRules> Search<'_, '_, R> {
                 })
             })
             .collect::<Result<_, RuleStop>>()?;
-        let enabled: BTreeSet<PlanStep> = candidates
+        let enabled: BTreeSet<_> = candidates
             .iter()
-            .map(|candidate| candidate.step.clone())
+            .map(|candidate| candidate.key.0.clone())
             .collect();
         for step in identities {
-            if !enabled.contains(&PlanStep::from(step.clone())) {
-                let step = PlanStep::from(step);
+            let step = PlanStep::from(step);
+            let key = self.rules.step_key(&step)?;
+            if !enabled.contains(&key) {
                 candidates.push(Candidate {
-                    key: (self.rules.step_key(&step)?, None),
+                    key: (key, None),
                     step,
                     post: None,
                 });

@@ -718,13 +718,15 @@ fn run_timed(
                 return Ok(broken());
             };
             finish_interval(
-                bound,
-                &limits,
-                lower,
-                upper,
-                binding.as_ref(),
-                extremum,
-                interval.precision_bits,
+                IntervalSettlement {
+                    bound,
+                    limits: &limits,
+                    lower,
+                    upper,
+                    binding: binding.as_ref(),
+                    extremum,
+                    precision_bits: interval.precision_bits,
+                },
                 subject,
             )
         });
@@ -1926,7 +1928,7 @@ fn raise_until_accepted(
         }
         let next = crate::exact_probabilistic::ExactProbLimits {
             precision_bits: raised,
-            ..limits.clone()
+            ..*limits
         };
         match decide_bounded_event(product, bound, &next) {
             Ok(FhResult::Bounds {
@@ -2012,13 +2014,15 @@ fn settle_interval(
         return Ok(broken());
     };
     finish_interval(
-        subject_of.bound,
-        subject_of.request_limits,
-        lower,
-        upper,
-        subject_of.binding,
-        subject_of.extremum,
-        interval.precision_bits,
+        IntervalSettlement {
+            bound: subject_of.bound,
+            limits: subject_of.request_limits,
+            lower,
+            upper,
+            binding: subject_of.binding,
+            extremum: subject_of.extremum,
+            precision_bits: interval.precision_bits,
+        },
         subject,
     )
 }
@@ -2054,19 +2058,32 @@ type IntervalDocument = Result<
     ProbabilityDocumentError,
 >;
 
+struct IntervalSettlement<'a> {
+    bound: &'a Bound,
+    limits: &'a crate::exact_probabilistic::ExactProbLimits,
+    lower: IntervalDocument,
+    upper: IntervalDocument,
+    binding: Option<&'a fsl_replay::ClaimBinding>,
+    extremum: Option<Extremum>,
+    precision_bits: u32,
+}
+
 /// Settle a decided interval from its two checked documents: `proved` with
 /// `ValueBounds` only when the claim side's document and its counterpart are
 /// both accepted, and a rejection of either as that document's rejection.
 fn finish_interval(
-    bound: &Bound,
-    limits: &crate::exact_probabilistic::ExactProbLimits,
-    lower: IntervalDocument,
-    upper: IntervalDocument,
-    binding: Option<&fsl_replay::ClaimBinding>,
-    extremum: Option<Extremum>,
-    precision_bits: u32,
+    settlement: IntervalSettlement<'_>,
     subject: SubjectLimits<'_>,
 ) -> Result<EngineReport, EngineReport> {
+    let IntervalSettlement {
+        bound,
+        limits,
+        lower,
+        upper,
+        binding,
+        extremum,
+        precision_bits,
+    } = settlement;
     let (claim, counterpart) = match bound {
         Bound::AtLeast(_) => (lower, upper),
         Bound::AtMost(_) => (upper, lower),
@@ -2814,7 +2831,7 @@ fn replay_produced_witness(
     let measure = claim.bounded_measure();
     let item = match fsl_replay::probabilistic_claim_identity(claim) {
         Ok(item) => item,
-        Err(error) => return graph_failure(error, &limits, subject),
+        Err(error) => return graph_failure(error, limits, subject),
     };
     let initials = system.initial();
     let [first] = initials.as_slice() else {
@@ -3562,7 +3579,7 @@ fn replay_timed_paths(
     use crate::exact_probabilistic::ProductAction;
     let item = match fsl_replay::probabilistic_claim_identity(claim) {
         Ok(item) => item,
-        Err(error) => return graph_failure(error, &limits, subject),
+        Err(error) => return graph_failure(error, limits, subject),
     };
     let initials = system.initial();
     let [first] = initials.as_slice() else {

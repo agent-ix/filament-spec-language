@@ -24,15 +24,15 @@ use filament_exact::{
 };
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::model::{
-    same_rewards, Action, ClockValuation, GuardedStep, ModelSimState, ModelSystem, NotMarkov,
-    PlaceConstraint, PredicateReading, ScheduledIdentity, TimedStop, TimedSystem,
-};
 use fsl_eval::simulation::StateKey;
+use fsl_eval::simulation::model::{
+    Action, ClockValuation, GuardedStep, ModelSimState, ModelSystem, NotMarkov, PlaceConstraint,
+    PredicateReading, ScheduledIdentity, TimedStop, TimedSystem, same_rewards,
+};
 use fsl_replay::{
-    digital_probability_product_key, region_probability_product_key, DigitalClockKey,
-    DigitalDeadlineKey, DigitalProductKeyInput, DigitalTail, ModelCheckLimit,
+    DigitalClockKey, DigitalDeadlineKey, DigitalProductKeyInput, DigitalTail, ModelCheckLimit,
     ProbabilityProductKey, RegionClockKey, RegionDeadlineKey, RegionKeyKind, RegionProductKeyInput,
+    digital_probability_product_key, region_probability_product_key,
 };
 use fsl_semantics::check::{
     BinaryTemporal, BoundedMeasure, CheckedInterval, CheckedPredicate, CheckedProbabilisticClaim,
@@ -42,9 +42,9 @@ use fsl_semantics::check::{
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 use num_traits::{One, ToPrimitive, Zero};
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 
-use super::unbounded::{maximal_end_components_from, same_action, Choice, Graph};
+use super::unbounded::{Choice, Graph, maximal_end_components_from, same_action};
 use super::{
     DeadlineKind, DeadlinePhase, ExactProbLimits, FreeDelayRow, MeasurePhase, MonitorState,
     MonitorVerdict, PathStep, Pending, ProbBuild, ProbEdge, ProbKey, ProbProduct, ProbStateId,
@@ -625,6 +625,17 @@ struct Planned {
     zero_delay: bool,
 }
 
+struct DelayMove<'a> {
+    at: usize,
+    state: &'a DState,
+    choice: ProductAction,
+    delayed: (Vec<u64>, Option<u64>),
+    tail: Tail,
+    elapsed_ticks: u64,
+    planned: &'a [Planned],
+    omit_unchanged: bool,
+}
+
 enum ClockKey {
     Digital(DigitalClockKey),
     Region(RegionClockKey),
@@ -732,9 +743,8 @@ fn each_ordering(
         }
     }
     // FR-187: the draw weights are fsl-eval's, shared with `weighted_steps`.
-    let effective = fsl_eval::simulation::model::draw_weights(
-        operations.iter().map(|(_, weight, _)| *weight),
-    );
+    let effective =
+        fsl_eval::simulation::model::draw_weights(operations.iter().map(|(_, weight, _)| *weight));
     let total = effective
         .iter()
         .flatten()
@@ -1726,17 +1736,17 @@ impl<'c> Builder<'_, '_, 'c> {
     }
 
     /// A pure delay move to `clocks`/`deadline` with the tail `tail`.
-    fn delay_move(
-        &mut self,
-        at: usize,
-        state: &DState,
-        choice: ProductAction,
-        delayed: (Vec<u64>, Option<u64>),
-        tail: Tail,
-        elapsed_ticks: u64,
-        planned: &[Planned],
-        omit_unchanged: bool,
-    ) -> Step<Planned> {
+    fn delay_move(&mut self, movement: DelayMove<'_>) -> Step<Planned> {
+        let DelayMove {
+            at,
+            state,
+            choice,
+            delayed,
+            tail,
+            elapsed_ticks,
+            planned,
+            omit_unchanged,
+        } = movement;
         let reached = DState {
             model: state.model.clone(),
             clocks: delayed.0,
@@ -1778,16 +1788,16 @@ impl<'c> Builder<'_, '_, 'c> {
     ) -> Step<()> {
         if let Some(first_delay) = self.unit_delay(local, state)? {
             if self.subdivisions == 1 {
-                let unit = self.delay_move(
+                let unit = self.delay_move(DelayMove {
                     at,
                     state,
-                    ProductAction::UnitDelay,
-                    first_delay.clone(),
-                    Tail::Running,
-                    1,
+                    choice: ProductAction::UnitDelay,
+                    delayed: first_delay.clone(),
+                    tail: Tail::Running,
+                    elapsed_ticks: 1,
                     planned,
-                    true,
-                )?;
+                    omit_unchanged: true,
+                })?;
                 if unit.target.key != self.nodes[at].key {
                     planned.push(unit);
                 }
@@ -1799,16 +1809,16 @@ impl<'c> Builder<'_, '_, 'c> {
                     let Some(delayed) = self.unit_delay(local, &cursor)? else {
                         break;
                     };
-                    let unit = self.delay_move(
+                    let unit = self.delay_move(DelayMove {
                         at,
-                        &cursor,
-                        ProductAction::UnitDelay,
-                        delayed.clone(),
-                        Tail::Running,
+                        state: &cursor,
+                        choice: ProductAction::UnitDelay,
+                        delayed: delayed.clone(),
+                        tail: Tail::Running,
                         elapsed_ticks,
                         planned,
-                        true,
-                    )?;
+                        omit_unchanged: true,
+                    })?;
                     if unit.target.key != current_key {
                         planned.push(unit);
                         break;
@@ -1821,16 +1831,16 @@ impl<'c> Builder<'_, '_, 'c> {
                 }
             }
             if local.quiescent {
-                planned.push(self.delay_move(
+                planned.push(self.delay_move(DelayMove {
                     at,
                     state,
-                    ProductAction::EnterIdleDelay,
-                    first_delay,
-                    Tail::IdleDelayed,
-                    1,
+                    choice: ProductAction::EnterIdleDelay,
+                    delayed: first_delay,
+                    tail: Tail::IdleDelayed,
+                    elapsed_ticks: 1,
                     planned,
-                    false,
-                )?);
+                    omit_unchanged: false,
+                })?);
             }
         }
         Ok(())
@@ -1840,16 +1850,16 @@ impl<'c> Builder<'_, '_, 'c> {
         let local = self.local(&state.model)?;
         let mut planned = Vec::new();
         if let Some(delayed) = self.unit_delay(&local, state)? {
-            let delay = self.delay_move(
+            let delay = self.delay_move(DelayMove {
                 at,
                 state,
-                ProductAction::IdleDelay,
+                choice: ProductAction::IdleDelay,
                 delayed,
-                Tail::IdleDelayed,
-                1,
-                &planned,
-                self.subdivisions != 1,
-            )?;
+                tail: Tail::IdleDelayed,
+                elapsed_ticks: 1,
+                planned: &planned,
+                omit_unchanged: self.subdivisions != 1,
+            })?;
             if self.subdivisions == 1 || delay.target.key != self.nodes[at].key {
                 planned.push(delay);
             }
