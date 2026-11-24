@@ -5,21 +5,16 @@ use crate::reference_codec::ReferenceCodec;
 use filament_exact::{Cancel, IntegerDecimalBudget, Reservation, ReservationDenied, Value};
 use filament_semantic_value::supplied_stop::{SuppliedLimits, SuppliedPhase, SuppliedRun};
 use fsl_eval::execution::{
-    execute, ExecuteLimits, ExecuteRequest, ExecuteSelection, PrepareLimits, SuppliedBackends,
+    ExecuteLimits, ExecuteRequest, ExecuteSelection, PrepareLimits, SuppliedBackends, execute,
 };
 use fsl_package::ReferenceCatalog;
 use fsl_semantics::model::accounting::{NormalizationChargePoint, NormalizationLimitKind};
-use fsl_semantics::model::intake::{package_input, PackageInput};
+use fsl_semantics::model::intake::{PackageInput, package_input};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use fsl_semantics::model::observation::{admit_current_snapshot, DocumentRef, ObservationLimits};
+use fsl_semantics::model::observation::{DocumentRef, ObservationLimits, admit_current_snapshot};
 use serde_json::json;
 
-#[path = "../../../../examples/config-version/spine_unit.rs"]
-#[allow(
-    dead_code,
-    reason = "the shared domain package supplies genuine identity provenance"
-)]
-mod domain;
+use crate::reference_codec::reference_fixture as domain;
 
 struct Fixture {
     compiled: crate::spine::ComposedUnit,
@@ -32,7 +27,10 @@ fn fixture(work: Option<u64>) -> Fixture {
     if let Some(work) = work {
         limits.model.work_units = work;
     }
-    let text = format!("language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\nmodel Config = {:?};\nfunction keep using v(x: Config::ConfigVersion): Config::ConfigVersion pure {{ x }}\n", domain::PACKAGE_IDENTITY);
+    let text = format!(
+        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.model.complete/v1\";\nmodel Config = {:?};\nfunction keep using v(x: Config::ConfigVersion): Config::ConfigVersion pure {{ x }}\n",
+        domain::PACKAGE_IDENTITY
+    );
     let compiled = crate::spine::compose(
         fsl_foundation::SourceIdentity::new("test", "canonical-run-accounting"),
         "canonical-run.native",

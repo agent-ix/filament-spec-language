@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 //! Shared bytes-only directory admission (FR-850, FR-1039).
 
-use super::{dependency_manifest::Manifest, Intake, Result, RunCause};
+use super::{Intake, Result, RunCause, dependency_manifest::Manifest};
 use filament_contract_model::CheckedPackageV2;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -92,7 +92,7 @@ pub(super) fn read_file(
                     "invalid-value",
                     None,
                     "nonconfined handoff directory",
-                ))
+                ));
             }
         }
     }
@@ -601,7 +601,7 @@ mod tests {
     fn load(
         directory: &Path,
         limits: fsl_package::V2ReadLimits,
-    ) -> std::result::Result<filament_contract_model::NativeJoinCharge, NativeDenial> {
+    ) -> std::result::Result<filament_contract_model::NativeJoinCharge, Box<NativeDenial>> {
         let mut intake = super::super::intake_with_bytes(
             directory,
             super::super::FileCounts {
@@ -627,13 +627,15 @@ mod tests {
                     &mut loaded.budget,
                 )
             })
-            .map_err(|native| NativeDenial {
-                native,
-                consumed: loaded.budget.consumed(),
-                unpaid: loaded
-                    .budget
-                    .first_unpaid()
-                    .expect("a native denial retains its unpaid charge"),
+            .map_err(|native| {
+                Box::new(NativeDenial {
+                    native,
+                    consumed: loaded.budget.consumed(),
+                    unpaid: loaded
+                        .budget
+                        .first_unpaid()
+                        .expect("a native denial retains its unpaid charge"),
+                })
             })?;
         Ok(loaded.budget.consumed())
     }

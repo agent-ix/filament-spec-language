@@ -56,17 +56,16 @@ fn a_driver_writes_a_prove_document_through_the_facade() {
 mod determinism {
     use std::collections::BTreeMap;
 
-    use filament_exact::{Cancel, Integer};
+    use filament_exact::Cancel;
     use fsl_bench::prop;
     use fsl_foundation::SourceIdentity;
-    use fsl_replay::spine::{
-        self, default_accounting, Call, CallOutcome, CallValue, DependencyInput, SpineLimits,
-    };
     use fsl_replay::OutcomeDocument;
+    use fsl_replay::spine::{
+        self, Call, CallOutcome, CallValue, DependencyInput, SpineLimits, default_accounting,
+    };
     use proptest::prelude::*;
 
-    const HEADER: &str =
-        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
+    const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n";
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub enum Kind {
@@ -82,12 +81,12 @@ mod determinism {
         /// `sum<Int[0, 5]>`: the range is not proved, so the checker refuses.
         SumNarrow,
         /// `fold<I>(acc, x in C: acc + x, identity: 0)`, a catalog step.
-        FoldAdd,
+        Add,
         /// `fold<I>(acc, x in C: x * acc, identity: 1)`, a catalog step.
-        FoldMul,
+        Mul,
         /// `fold<I>(acc, x in C: acc - x, identity: 0)`: not a catalog step, so a Set or Bag
         /// source is refused (FR-701-AC-2) and a Sequence source completes.
-        FoldSubtract,
+        Subtract,
         /// `fold<I>(acc, x in C: acc * 10 + x, identity: 0)`: reads the order of its source,
         /// so only a Sequence admits it. Never drawn by `requests`.
         Digits,
@@ -130,15 +129,15 @@ mod determinism {
             Fold::Count(k) => ("Small", bind(&format!("count<Small>(x in s: x < {k})"))),
             Fold::Exists(k) => ("Boolean", bind(&format!("exists(x in s: x = {k})"))),
             Fold::Forall(k) => ("Boolean", bind(&format!("forall(x in s: x < {k})"))),
-            Fold::FoldAdd => (
+            Fold::Add => (
                 "I",
                 bind("fold<I>(acc, x in s: acc + convert<I>(x), identity: 0)"),
             ),
-            Fold::FoldMul => (
+            Fold::Mul => (
                 "I",
                 bind("fold<I>(acc, x in s: convert<I>(x) * acc, identity: 1)"),
             ),
-            Fold::FoldSubtract => (
+            Fold::Subtract => (
                 "I",
                 bind("fold<I>(acc, x in s: acc - convert<I>(x), identity: 0)"),
             ),
@@ -147,7 +146,9 @@ mod determinism {
                 bind("fold<I>(acc, x in s: acc * 10 + convert<I>(x), identity: 0)"),
             ),
         };
-        format!("{HEADER}type Total = Int[0, 100];\ntype Small = Int[0, 4];\ntype Narrow = Int[0, 5];\ntype I = Integer;\nfunction f using v(): {result} pure {{ {body} }}\n")
+        format!(
+            "{HEADER}type Total = Int[0, 100];\ntype Small = Int[0, 4];\ntype Narrow = Int[0, 5];\ntype I = Integer;\nfunction f using v(): {result} pure {{ {body} }}\n"
+        )
     }
 
     /// The outcome document bytes of running `f` in `text`.
@@ -205,9 +206,9 @@ mod determinism {
             prop_oneof![
                 3 => Just(Fold::Sum),
                 1 => Just(Fold::SumNarrow),
-                1 => Just(Fold::FoldAdd),
-                1 => Just(Fold::FoldMul),
-                1 => Just(Fold::FoldSubtract),
+                1 => Just(Fold::Add),
+                1 => Just(Fold::Mul),
+                1 => Just(Fold::Subtract),
                 2 => (0u8..=10).prop_map(Fold::Count),
                 2 => (0u8..=9).prop_map(Fold::Exists),
                 2 => (0u8..=10).prop_map(Fold::Forall),
@@ -239,7 +240,7 @@ mod determinism {
     fn admitted(kind: Kind, fold: Fold) -> bool {
         match fold {
             Fold::SumNarrow => false,
-            Fold::FoldSubtract | Fold::Digits => kind == Kind::Sequence,
+            Fold::Subtract | Fold::Digits => kind == Kind::Sequence,
             _ => true,
         }
     }
@@ -281,9 +282,9 @@ mod determinism {
             Fold::Count(3),
             Fold::Exists(2),
             Fold::Forall(9),
-            Fold::FoldAdd,
-            Fold::FoldMul,
-            Fold::FoldSubtract,
+            Fold::Add,
+            Fold::Mul,
+            Fold::Subtract,
             Fold::Digits,
         ] {
             let text = source(Kind::Sequence, fold, &[1, 2, 3]);
