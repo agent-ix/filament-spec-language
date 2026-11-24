@@ -110,7 +110,7 @@ fn recursive_work_fuel_is_exact_at_the_last_required_charge() {
         let FamilyOutcome::Evaluated(Outcome::Incomplete(incomplete)) = stopped.outcome else { panic!("fuel exhaustion must be typed: {stopped:?}") };
         assert_eq!(incomplete.limit_kind, LimitKind::WorkUnits);
         assert_eq!(incomplete.limit, work - 1);
-        assert!(incomplete.consumed <= work - 1);
+        assert!(incomplete.consumed < work);
         assert!(incomplete.next_charge > Integer::zero());
         let mut exact = Meter::new(limits(work));
         let completed = invoke(&mut exact);
