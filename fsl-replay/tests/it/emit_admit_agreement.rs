@@ -18,7 +18,7 @@
 use std::collections::BTreeMap;
 
 use filament_contract_model::{
-    CheckedPackageDispatchResult, CheckedPackageReadLimits, CheckedPackageV2, read_checked_package,
+    read_checked_package, CheckedPackageDispatchResult, CheckedPackageReadLimits, CheckedPackageV2,
 };
 use filament_exact::Cancel;
 use fsl_bench::prop::{self, near_miss, unit};
@@ -381,14 +381,7 @@ fn corrupted_package_is_refused() {
             CheckedPackageDispatchResult::AdmittedV2(package) => {
                 if format!("{package:?}") == original {
                     same += 1;
-                    eprintln!(
-                        "admitted although corrupted, reads back equal, at {at}: {:?} -> {:?} in {:?}",
-                        bytes[at] as char,
-                        corrupt[at] as char,
-                        String::from_utf8_lossy(
-                            &bytes[at.saturating_sub(40)..(at + 40).min(bytes.len())]
-                        )
-                    );
+                    eprintln!("admitted although corrupted, reads back equal, at {at}: {:?} -> {:?} in {:?}", bytes[at] as char, corrupt[at] as char, String::from_utf8_lossy(&bytes[at.saturating_sub(40)..(at + 40).min(bytes.len())]));
                 } else {
                     different.push((at, corrupt));
                 }
