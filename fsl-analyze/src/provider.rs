@@ -1286,8 +1286,8 @@ pub(crate) fn read_package_with_temporal_selections<'p>(
                     _ => None,
                 })
             },
-            |typed| match typed.host_allocation_failure {
-                Some(failure) => NotAdmitted::HostAllocationFailed(failure),
+            |typed| match typed.host_allocation_failure.as_deref() {
+                Some(failure) => NotAdmitted::HostAllocationFailed(failure.clone()),
                 None => NotAdmitted::Refused(typed),
             },
         )
