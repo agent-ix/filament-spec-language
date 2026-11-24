@@ -32,6 +32,17 @@ use serde_json::{json, Value as Json};
 
 const PACKAGE: &str = "test/rpc";
 
+type ClockReferenceEnumeration = Result<
+    (
+        Result<(), NotSimulated>,
+        Result<
+            std::sync::Arc<Vec<filament_exact::ObjectReference>>,
+            fsl_eval::simulation::model::ClockDomainRefusal,
+        >,
+    ),
+    fsl_semantics::model::observation::AdmissionFailure,
+>;
+
 fn assert_model_key_fields_are_unique(text: &str) {
     let key: Json = serde_json::from_str(text).expect("the model key is JSON");
     let mut records = 0;
@@ -1343,16 +1354,7 @@ fn clock_reference_enumeration_on_the_source_route() {
     fn bounds<'a>(
         world: &'a World,
         input: fsl_eval::simulation::model::ModelCheckInput<'a>,
-    ) -> Result<
-        (
-            Result<(), NotSimulated>,
-            Result<
-                std::sync::Arc<Vec<filament_exact::ObjectReference>>,
-                fsl_eval::simulation::model::ClockDomainRefusal,
-            >,
-        ),
-        fsl_semantics::model::observation::AdmissionFailure,
-    > {
+    ) -> ClockReferenceEnumeration {
         let result = ModelSystem::new(ModelSimulationRequest {
             emit: fsl_package::EmitLimits::fixture(),
             input,

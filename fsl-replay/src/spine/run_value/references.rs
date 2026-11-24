@@ -94,13 +94,15 @@ pub(crate) fn write_run_value(
 ) -> Result<serde_json::Value, super::WriteStop> {
     let written = fsl_eval::simulation::model::run_value_bytes(
         value,
-        types,
-        enums,
-        variants,
-        enum_members,
-        fsl_foundation::IdentityLimits {
-            input_bytes: u64::MAX,
-        },
+        fsl_eval::simulation::model::RunValueContext::new(
+            types,
+            enums,
+            variants,
+            enum_members,
+            fsl_foundation::IdentityLimits {
+                input_bytes: u64::MAX,
+            },
+        ),
         budget,
         cancel,
     );

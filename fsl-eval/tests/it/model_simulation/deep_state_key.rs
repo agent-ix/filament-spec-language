@@ -86,9 +86,8 @@ fn expected_list() -> String {
         list_ident()
     ))
     .expect("a string");
-    let open = format!(
-        r#"{{"fields":[{{"name":"head","value":{{"type":"integer","value":"1"}}}},{{"name":"tail","value":"#
-    );
+    let open = r#"{"fields":[{"name":"head","value":{"type":"integer","value":"1"}},{"name":"tail","value":"#
+        .to_owned();
     let close = format!(r#"}}],"name":{name},"type":"record"}}"#);
     let mut text = String::with_capacity(DEPTH * (open.len() + close.len() + 8));
     for _ in 0..DEPTH - 1 {
@@ -125,6 +124,7 @@ fn a_100_000_long_list_keys_as_its_rfc_8785_text() {
 /// TC-735 step 2 over the unbudgeted `ModelSystem::state_key`, the strict
 /// form of the same requirement. IGNORED because it fails today, for two
 /// reasons found in production code, neither changed here:
+///
 /// 1. `Canonicalizer::write` and `Canonicalizer::object` in
 ///    `fsl-eval/src/simulation/model/encode.rs` recurse once per record
 ///    level, so a 100,000-deep value overflows the 512 KiB stack (the
@@ -132,6 +132,7 @@ fn a_100_000_long_list_keys_as_its_rfc_8785_text() {
 /// 2. `state_key` encodes under the fixed 16 MiB identity limit, and this
 ///    key is 16,777,218 bytes, so on a larger stack it refuses
 ///    `IdentityInputBytes` instead of returning the key.
+///
 /// Remove the `ignore` when `state_key` is iterative and takes a bound.
 #[ignore = "ModelSystem::state_key recurses per record level (stack overflow at 512 KiB) and caps keys at 16 MiB"]
 #[test]

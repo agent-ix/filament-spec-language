@@ -218,6 +218,8 @@ struct SamplePlan {
     identity: IdentityLimits,
 }
 
+type SampleResult<T, F> = Result<Option<ObservedSample<T, F>>, EncodingRefusal>;
+
 /// Draw one sampled run from `system`, starting at trace `trace_index mod m`
 /// among `system`'s `m` distinct initial states (no draw selects the
 /// start). The run ends at the first state where `end` holds, unexpanded
@@ -240,7 +242,7 @@ fn sample<S: TransitionSystem, E: SampleExpansionSource<S::TransitionId, S::Stat
     mut observer: impl FnMut(
         &SampleObservation<'_, S::State, S::TransitionId, S::Finding>,
     ) -> ObserverDecision,
-) -> Result<Option<ObservedSample<S::TransitionId, S::Finding>>, EncodingRefusal> {
+) -> SampleResult<S::TransitionId, S::Finding> {
     let SamplePlan {
         sampler,
         seed,

@@ -5,17 +5,17 @@ use filament_checked::key::DeclarationKey;
 use fsl_foundation::SourceIdentity;
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{
-    admit_unit, compile_model_unit_with_causes, package_input, SelectedModels, UnitIntakeCause,
-    UnitIntakeRefusal,
+    SelectedModels, UnitIntakeCause, UnitIntakeRefusal, admit_unit, compile_model_unit_with_causes,
+    package_input,
 };
-use fsl_semantics::model::key::{effective_id_of, RULE_INHERIT, RULE_QUALIFY, RULE_REDEFINE};
+use fsl_semantics::model::key::{RULE_INHERIT, RULE_QUALIFY, RULE_REDEFINE, effective_id_of};
 use fsl_semantics::model::normalize::{EffectiveView, ModelRefusalCause, ViewEntry};
 use ix_trace_rs::trace;
 use std::collections::BTreeSet;
 
 const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\ndomain \"example/identity\";\n";
 
-fn selected(declarations: &str) -> Result<SelectedModels, UnitIntakeRefusal> {
+fn selected(declarations: &str) -> Result<SelectedModels, Box<UnitIntakeRefusal>> {
     let source = format!("{HEADER}{declarations}");
     let parsed = fsl_forms::cst::parse(
         SourceIdentity::new("test", "identity-model"),
@@ -40,6 +40,7 @@ fn selected(declarations: &str) -> Result<SelectedModels, UnitIntakeRefusal> {
         &packages,
         ModelNormalizationLimits::default(),
     )
+    .map_err(Box::new)
 }
 
 fn view(declarations: &str) -> EffectiveView {
@@ -151,24 +152,28 @@ fn most_specific_source_redefinition_retains_hidden_correspondence() {
     assert_ne!(base.effective_id, mid.effective_id);
     for hidden in [base, mid] {
         assert!(!hidden.preimage.derivation.is_empty());
-        assert!(hidden
-            .preimage
-            .derivation
-            .iter()
-            .any(|fact| fact.rule == RULE_REDEFINE));
-        assert!(!view
-            .links()
-            .unwrap()
-            .expand(&hidden.effective_id, 100)
-            .unwrap()
-            .is_empty());
+        assert!(
+            hidden
+                .preimage
+                .derivation
+                .iter()
+                .any(|fact| fact.rule == RULE_REDEFINE)
+        );
+        assert!(
+            !view
+                .links()
+                .unwrap()
+                .expand(&hidden.effective_id, 100)
+                .unwrap()
+                .is_empty()
+        );
     }
 }
 
 #[test]
 #[trace("FR-081-AC-6", "FR-710-AC-3")]
 fn sibling_source_redefinitions_refuse_without_a_selected_view() {
-    let refusal = selected(
+    let refusal = *selected(
         "object Base { field: Integer; }
         object Left extends Base { field: Integer redefines Base::field; }
         object Right extends Base { field: Integer redefines Base::field; }

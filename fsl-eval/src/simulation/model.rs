@@ -124,9 +124,10 @@ pub use contract::{
 pub(crate) use contracts::{Verdict, verdict};
 use encode::declaration_text;
 pub use encode::{
-    ModelKey, RunValueBudget, SingleOwnerRunBudget, canonical_json, declaration_identity_text,
-    encode_reference, package_value_json, reference_canonical_text, run_declaration_name,
-    run_value_bytes, typed_value_json, typed_value_json_with_enum_members, value_json,
+    ModelKey, RunValueBudget, RunValueContext, SingleOwnerRunBudget, canonical_json,
+    declaration_identity_text, encode_reference, package_value_json, reference_canonical_text,
+    run_declaration_name, run_value_bytes, typed_value_json, typed_value_json_with_enum_members,
+    value_json,
 };
 pub use footprints::{FootprintError, FootprintViolation, WithinStop};
 pub use frames::judge::{
@@ -809,7 +810,14 @@ impl From<AdmissionFailure> for ProbabilityAdmissionFailure {
     }
 }
 
-/// FR-120: the transition system of a checked package's state family.
+type ClockCandidateCache = std::sync::Mutex<
+    BTreeMap<
+        Option<domain::ClockSelectorMaxima>,
+        Result<std::sync::Arc<Vec<ObjectReference>>, ClockDomainRefusal>,
+    >,
+>;
+
+/// FR-120 transition system for exploring one checked package's state family.
 pub struct ModelSystem<'a> {
     /// The identity of the one domain package this system is over, when it
     /// is over one (FR-140's `WrongSystem` check reads it).
@@ -823,12 +831,7 @@ pub struct ModelSystem<'a> {
     universes: BTreeMap<DeclarationKey, Vec<String>>,
     /// The clock-reference candidates of this model universe, built on first
     /// use for each distinct set of exploration selector maxima.
-    clock_candidates: std::sync::Mutex<
-        BTreeMap<
-            Option<domain::ClockSelectorMaxima>,
-            Result<std::sync::Arc<Vec<ObjectReference>>, ClockDomainRefusal>,
-        >,
-    >,
+    clock_candidates: ClockCandidateCache,
     initial: Vec<ModelSimState>,
     /// FR-1000: subject-specific resolutions for checked reference literals.
     reference_bindings: ReferenceBindings,
@@ -1451,12 +1454,7 @@ impl<'a> ModelSystem<'a> {
             Some(table) => selections.with_clock_declaration_table(table),
             None => selections,
         };
-        let model = StateModel::new(
-            selections,
-            types,
-            request.packages,
-            request.normalization,
-        )?;
+        let model = StateModel::new(selections, types, request.packages, request.normalization)?;
         let populations = model.populations();
         let other_populations = other_models
             .map(StateModel::populations)
