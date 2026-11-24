@@ -367,8 +367,7 @@ fn cyclic_mdp_bounds_check_hinted_and_selected_policies() {
         rational(1, 4),
     );
     let wait = selected(&output, &s);
-    let mut minimum_at_most = maximum.clone();
-    replace_source_and_rebind(&mut minimum_at_most, &w("<=", "rational(1,4)"));
+    let minimum_at_most = maximum.clone();
     let minimum_at_most = edit(&minimum_at_most, |doc| {
         doc["objective"]["optimization"] = json!("minimum");
     });
