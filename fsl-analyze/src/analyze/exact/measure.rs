@@ -2,12 +2,12 @@
 //! Shared-control finite-horizon induction and independently accepted proofs.
 use super::*;
 use crate::exact_probabilistic::{
-    Dyadic, FhObjective, QualifiedFhError, backward_induction, decide_measure_exact,
+    backward_induction, decide_measure_exact, Dyadic, FhObjective, QualifiedFhError,
 };
 use fsl_replay::{
-    MeasurePayoffKind, conditional_measure_probability_certificate,
-    measure_probability_certificate_document, measure_probability_objective,
-    measure_probability_product_key, write_measure_probability_certificate,
+    conditional_measure_probability_certificate, measure_probability_certificate_document,
+    measure_probability_objective, measure_probability_product_key,
+    write_measure_probability_certificate, MeasurePayoffKind,
 };
 
 pub(super) fn run(
@@ -45,6 +45,38 @@ pub(super) fn run(
         Err(error) => return document_failure(error.into(), subject),
     };
     let reference = binding.as_ref().map(|binding| &binding.reference);
+    // Timed product forms own their first-read undefined settlement. Probe
+    // that route before the generic measure objective, which does not know
+    // the timed product's monitor/key shape.
+    let timed_product =
+        if fsl_eval::simulation::model::TimedSystem::new(&system, &claim.subject.alias).is_ok() {
+            let timed_request = ProductRequest {
+                subject: fsl_eval::model_subject::ModelSubject {
+                    simulation: simulation.clone(),
+                    proof_bounds: request.subject.proof_bounds.clone(),
+                },
+                claim,
+                limits,
+            };
+            match build_retaining_monitor(timed_request, cancel) {
+                Ok((ProbBuild::Undefined(path), monitor)) => {
+                    return undefined::run(
+                        simulation.clone(),
+                        claim,
+                        path,
+                        monitor,
+                        &limits,
+                        cancel,
+                        subject,
+                        tamper_witness,
+                    );
+                }
+                Ok(built) => Some(built),
+                Err(error) => return build_refusal(error, subject),
+            }
+        } else {
+            None
+        };
     let document_limits = ProbabilityDocumentLimits::for_exact(&limits, scalar);
     let mut meter = filament_exact::Meter::new(scalar).with_cancel(cancel.clone());
     let mut storage = 0;
@@ -72,7 +104,11 @@ pub(super) fn run(
         Ok(selected) => selected,
         Err(error) => return document_failure(error, subject),
     };
-    let (mut product, lower_product) = match build_retaining_monitor(request, cancel) {
+    let built = match timed_product {
+        Some(built) => Ok(built),
+        None => build_retaining_monitor(request, cancel),
+    };
+    let (mut product, lower_product) = match built {
         Ok((ProbBuild::Built(product), _)) => (product, None),
         Ok((
             ProbBuild::Partial {
@@ -680,7 +716,7 @@ fn refute(
     mut storage: u64,
 ) -> EngineReport {
     use crate::exact_probabilistic::{
-        WitnessError, WitnessScope, WitnessWork, produce_quantile_witness, produce_witness,
+        produce_quantile_witness, produce_witness, WitnessError, WitnessScope, WitnessWork,
     };
     let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
     let kind = if matches!(claim.form, ProbForm::Quantile { .. }) {

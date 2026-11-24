@@ -153,7 +153,8 @@ fn materialize_inner(
         .map_err(|_| ProbabilityWitnessError::Refused)?;
     let binding = claim_binding(system, claim)?;
     let reference = binding.as_ref().map(|binding| &binding.reference);
-    let measured = claim.bounded_measure();
+    let timed = path.key.certificate_state.is_some();
+    let measured = claim.bounded_measure() && !timed;
     let document_limits = ProbabilityDocumentLimits::for_exact(limits, system.meter_limits());
     let mut measure_meter =
         filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
@@ -212,7 +213,7 @@ fn materialize_inner(
         (ProbForm::Reach { .. }, None) => None,
         (ProbForm::MeanTime { .. }, None) => None,
         (ProbForm::LongRunFraction { .. } | ProbForm::ExpectedReward { .. }, None) => None,
-        (_, None) if measured => None,
+        (_, None) if measured || timed => None,
         _ => return Err(ProbabilityWitnessError::Refused),
     };
     let key = |state: &crate::exact_probabilistic::ProbKey| -> Result<ProbabilityProductKey, ProbabilityWitnessError> {
@@ -356,7 +357,7 @@ fn materialize_inner(
             .map_err(ProbabilityWitnessError::from)?
     };
     let mut state = initial.clone();
-    let timed_system = if path.key.certificate_state.is_some() {
+    let timed_system = if timed {
         Some(
             TimedSystem::new(system, &claim.subject.alias)
                 .map_err(|_| ProbabilityWitnessError::Refused)?,
