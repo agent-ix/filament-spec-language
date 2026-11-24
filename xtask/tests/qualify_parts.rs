@@ -228,6 +228,40 @@ fn every_staged_successor_location_names_its_traced_test() {
     );
 }
 
+/// FR-500-AC-3 (TC-1294): every deletion-stage row has a named owner and an
+/// explicit condition for deletion.
+#[trace("TC-1294", "FR-500-AC-3")]
+#[test]
+fn every_staging_row_names_its_owner_and_deletion_condition() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let spec = root.join(
+        "spec/functional/FR-500-map-each-fr-042-criterion-to-its-checked-package-successor.md",
+    );
+    let text = std::fs::read_to_string(&spec).expect("FR-500 staging table");
+    let table = text
+        .split_once("## Deletion staging per legacy file")
+        .map(|(_, rest)| rest)
+        .expect("the deletion staging section")
+        .split_once("## Acceptance Criteria")
+        .map(|(table, _)| table)
+        .expect("the acceptance criteria follow the staging table");
+    let rows = table
+        .lines()
+        .filter(|line| line.starts_with("| `"))
+        .collect::<Vec<_>>();
+    assert_eq!(rows.len(), 7, "the table's seven legacy groups are covered");
+    for row in rows {
+        let fields = row.split('|').map(str::trim).collect::<Vec<_>>();
+        assert_eq!(fields.len(), 5, "the staging row has three cells: {row}");
+        assert!(!fields[1].is_empty(), "the legacy file is named: {row}");
+        assert!(
+            !fields[2].is_empty(),
+            "the deletion condition is named: {row}"
+        );
+        assert!(!fields[3].is_empty(), "the owner is named: {row}");
+    }
+}
+
 /// The no-backend half of FR-567-AC-4 and the passing run of AC-1 without a
 /// linked backend: not tagged, because AC-1 needs a linked delegating backend
 /// and AC-4 a reference fault, and the FR-563 runner they need is not in this

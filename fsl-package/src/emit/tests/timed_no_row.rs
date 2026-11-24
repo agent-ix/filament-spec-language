@@ -288,3 +288,41 @@ fn the_reader_refuses_a_supplied_row_for_a_timed_clause_at_the_row() {
     )
     .is_ok());
 }
+
+/// FR-531-AC-52 (TC-1331): a temporal declaration that requires a clock
+/// binding cannot be admitted when the whole `temporal_bindings` channel is
+/// absent; the refusal names the declaration body.
+#[test]
+fn a_required_temporal_binding_channel_cannot_be_omitted() {
+    let (_emission, mut package) = emitted(&unit(
+        "filament.temporal.event-position.false-extension/v1",
+        "",
+    ));
+    let clause = nodes(&package)
+        .iter()
+        .position(|node| {
+            node["node_tag"] == "temporal" && node["semantic_form"] == "temporal_clause"
+        })
+        .expect("the package has a temporal clause");
+    package
+        .as_object_mut()
+        .expect("the package is an object")
+        .remove("temporal_bindings");
+    let bytes = wire_bytes(&package).expect("the malformed package encodes");
+    let refusal = match read_v2(
+        &bytes,
+        library(),
+        V2ReadLimits::fixture(),
+        &evidence_for(&package),
+    ) {
+        Read::Refused(V2ReadRefusal::Envelope { refusal, .. }) => *refusal,
+        other => panic!("the missing required channel is refused: {other:?}"),
+    };
+    assert_eq!(refusal.code, RefusalCode::InvalidPackage);
+    assert_eq!(refusal.cause, Some(Cause::TimedNodeReference));
+    assert_eq!(
+        refusal.loci[0].path.as_ref().map(|path| path.as_str()),
+        Some(format!("/semantic_graph/nodes/{clause}/body").as_str()),
+        "the missing channel is located at the clause body"
+    );
+}

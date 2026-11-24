@@ -83,3 +83,38 @@ fn every_retained_criterion_has_a_tagged_checked_package_successor_test() {
         );
     }
 }
+
+/// FR-521-AC-2 (TC-1316): every named successor criterion has a live
+/// trace-tagged binder in the computed FSL matrix. Removing the sole file
+/// carrying any one of these tags makes its status cease to be `tagged`, so
+/// this assertion fails on the matrix recomputed from that tree.
+#[test]
+fn every_merged_successor_is_tagged_in_the_computed_matrix() {
+    const SUCCESSORS: [&str; 14] = [
+        "FR-042-AC-10",
+        "FR-042-AC-15",
+        "FR-052-AC-9",
+        "FR-052-AC-10",
+        "FR-052-AC-11",
+        "FR-052-AC-12",
+        "FR-052-AC-13",
+        "FR-052-AC-14",
+        "FR-053-AC-7",
+        "FR-053-AC-8",
+        "FR-053-AC-9",
+        "FR-050-AC-5",
+        "FR-513-AC-10",
+        "FR-513-AC-11",
+    ];
+    let matrix = matrix(Path::new(env!("CARGO_MANIFEST_DIR")));
+    for criterion in SUCCESSORS {
+        let (status, binders) = matrix
+            .get(criterion)
+            .unwrap_or_else(|| panic!("{criterion} is present in the computed matrix"));
+        assert_eq!(status, "tagged", "{criterion}: {binders}");
+        assert!(
+            binders.split(',').any(|binder| !binder.trim().is_empty()),
+            "{criterion} has a tagged test binder"
+        );
+    }
+}
