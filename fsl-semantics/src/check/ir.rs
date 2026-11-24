@@ -1244,7 +1244,6 @@ fn try_for_each_node_child<E>(
         | NodeKind::Flatten(operand)
         | NodeKind::BytesLength(operand)
         | NodeKind::Size(operand)
-        | NodeKind::BytesLength(operand)
         | NodeKind::DropFirst(operand)
         | NodeKind::Pre(operand) => [*operand].into_iter().try_for_each(child),
         NodeKind::PlaceReference {
@@ -1290,7 +1289,6 @@ fn try_for_each_node_child<E>(
         | NodeKind::BytesConcat(left, right)
         | NodeKind::Connective(_, _, left, right)
         | NodeKind::Contains(left, right)
-        | NodeKind::BytesConcat(left, right)
         | NodeKind::RemoveOne(left, right)
         | NodeKind::Reaches {
             source: left,

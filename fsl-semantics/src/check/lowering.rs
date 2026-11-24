@@ -6013,20 +6013,6 @@ impl<'a> Lowering<'a> {
                 })));
                 return Ok(LowerStep::Descend(node.at(*source)));
             }
-            NodeKind::BytesLength(operand) => (
-                Keyed::Application(
-                    Operator::Call,
-                    plain("filament.op.bytes.length"),
-                ),
-                Operands::One(operand),
-            ),
-            NodeKind::BytesConcat(left, right) => (
-                Keyed::Application(
-                    Operator::Call,
-                    plain("filament.op.bytes.concat"),
-                ),
-                Operands::Two(left, right),
-            ),
             NodeKind::Size(operand) => match text_profile(node.at(*operand).value_type()) {
                 Some(profile) => (
                     Keyed::Application(

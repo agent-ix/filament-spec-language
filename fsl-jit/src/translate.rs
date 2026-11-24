@@ -1753,18 +1753,6 @@ impl Emitter<'_, '_, '_> {
     }
 }
 
-/// `bound` clamped into `[low, high]`, as an `i128`.
-fn clamp(bound: &Integer, low: i128, high: i128) -> i128 {
-    let negative = bound.is_negative();
-    let wide = match bound.abs().to_u64() {
-        Some(magnitude) if negative => -i128::from(magnitude),
-        Some(magnitude) => i128::from(magnitude),
-        None if negative => i128::MIN / 4,
-        None => i128::MAX / 4,
-    };
-    wide.clamp(low, high)
-}
-
 /// A sound interval for the kernel's `div`, `rem` or `mod` of operands in
 /// the given intervals, whose divisor interval excludes 0.
 ///

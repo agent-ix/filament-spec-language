@@ -7,7 +7,7 @@ use filament_eval::ExecutionBackendChoice;
 use filament_eval::{FamilyOutcome, UnsupportedCause, UntranslatableConstruct};
 use filament_exact::{
     Cancel, Meter, NodeKey, ObjectId, ObjectReference, Outcome, PathSegment, Presence, UniverseId,
-    Value,
+    Value, ValueType,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use fsl_conformance::{
@@ -69,6 +69,13 @@ fn orders_package_with_clause(clause_body: &str) -> CheckedPackage {
 }
 
 fn orders_package_with_clause_source(clause_body: &str) -> (CheckedPackage, Vec<u8>) {
+    orders_package_with_population_clause_source(clause_body, &["Pump"])
+}
+
+fn orders_package_with_population_clause_source(
+    clause_body: &str,
+    population_members: &[&str],
+) -> (CheckedPackage, Vec<u8>) {
     let end = |object: &str, role: &str| RelationshipEnd {
         type_identity: key(object),
         role: Some(role.to_owned()),
@@ -103,7 +110,10 @@ fn orders_package_with_clause_source(clause_body: &str) -> (CheckedPackage, Vec<
         }),
         DomainPackageRecord::Population(PopulationRecord {
             key: key("pumps"),
-            member_types: vec![key("Pump")],
+            member_types: population_members
+                .iter()
+                .map(|member| key(*member))
+                .collect(),
             extent: Extent::Closed,
             symmetric: false,
         }),
@@ -272,6 +282,33 @@ fn a_covered_state_clause_is_compiled_and_matches_the_interpreter_evaluation() {
     assert_eq!(report.backends[0].compared, 1);
     assert!(report.backends[0].unsupported.is_empty());
     assert!(report.backends[0].findings.is_empty());
+
+    let (multi_member_package, _) = orders_package_with_population_clause_source(
+        "only(pump in M::pumps: 1) = 1",
+        &["Pump", "Tank"],
+    );
+    let multi_member_package = Arc::new(multi_member_package);
+    let multi_member_selection = EntrySelection {
+        kind: EntryKind::Clause,
+        name: crate::common::name("TankLevel"),
+    };
+    let multi_member_prepared = Jit
+        .prepare(
+            &multi_member_package,
+            std::slice::from_ref(&multi_member_selection),
+            &PrepareLimits::default(),
+            &Cancel::new(),
+        )
+        .unwrap_or_else(|failure| panic!("the JIT prepares: {failure:?}"));
+    let unsupported = multi_member_prepared.unsupported();
+    assert_eq!(unsupported.len(), 1, "{unsupported:?}");
+    assert!(matches!(
+        &unsupported[0].1.cause,
+        UnsupportedCause::Untranslatable {
+            construct: UntranslatableConstruct::ValueType(value_type),
+            ..
+        } if matches!(value_type.as_ref(), ValueType::Population(_))
+    ));
 }
 
 #[trace("TC-1380", "FR-560-AC-1", "FR-560-AC-7")]

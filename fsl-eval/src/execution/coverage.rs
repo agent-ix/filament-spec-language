@@ -226,6 +226,10 @@ fn coverage_type(graph: &CheckedGraph, value_type: &ValueType) -> CoverageValueT
     }
 }
 
+fn covered_named_population(node: CheckedNode<'_>) -> bool {
+    matches!(node.kind(), NodeKind::NamedPopulation { members, .. } if members.len() == 1)
+}
+
 fn outside_node(
     graph: &CheckedGraph,
     node: CheckedNode<'_>,
@@ -237,20 +241,18 @@ fn outside_node(
             return Ok(Some(UntranslatableConstruct::ExpressionForm(form)));
         }
     }
-    // A `NamedPopulation` is a checked query operand, not a runtime value
-    // carried by the backend. Its parent `AllInstances` consumes the name
-    // and the declaration's member set directly.
-    if !matches!(node.kind(), NodeKind::NamedPopulation { .. })
-        && !coverage.lists_type(graph, node.value_type())
-    {
+    // A singleton `NamedPopulation` is a checked query operand, not a runtime
+    // value carried by the backend. Its parent `AllInstances` consumes the
+    // name and the declaration's single member type directly. Backends that
+    // publish the population form without supporting union member types must
+    // not claim coverage for multi-member populations.
+    if !covered_named_population(node) && !coverage.lists_type(graph, node.value_type()) {
         return Ok(Some(UntranslatableConstruct::ValueType(Box::new(
             node.value_type().clone(),
         ))));
     }
     for child in children {
-        if !matches!(child.kind(), NodeKind::NamedPopulation { .. })
-            && !coverage.lists_type(graph, child.value_type())
-        {
+        if !covered_named_population(*child) && !coverage.lists_type(graph, child.value_type()) {
             return Ok(Some(UntranslatableConstruct::ValueType(Box::new(
                 child.value_type().clone(),
             ))));

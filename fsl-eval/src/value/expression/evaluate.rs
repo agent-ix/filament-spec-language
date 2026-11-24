@@ -4315,24 +4315,6 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 let outer = self.pop_collection()?;
                 collections::flatten(node.value_type(), &outer, self.meter).map_err(lift)?
             }
-            NodeKind::BytesLength(_) => {
-                let Value::Bytes(bytes) = self.pop()? else {
-                    return Err(invariant("bytes-length-operand-expected"));
-                };
-                retain_scalar(Value::Integer(Integer::from(bytes.len())), self.meter)?
-            }
-            NodeKind::BytesConcat(_, _) => {
-                let Value::Bytes(right) = self.pop()? else {
-                    return Err(invariant("bytes-concat-right-operand-expected"));
-                };
-                let Value::Bytes(mut left) = self.pop()? else {
-                    return Err(invariant("bytes-concat-left-operand-expected"));
-                };
-                left.try_reserve(right.len())
-                    .map_err(|_| invariant("bytes-concat-allocation-failed"))?;
-                left.extend_from_slice(&right);
-                Value::Bytes(left)
-            }
             NodeKind::Size(_) => {
                 let operand = self.pop()?;
                 if let Value::Collection(collection) = &operand {
