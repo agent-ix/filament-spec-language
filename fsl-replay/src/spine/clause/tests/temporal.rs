@@ -4870,7 +4870,8 @@ fn a_temporal_violation_carries_its_decisive_information() {
     assert_eq!(
         record
             .temporal()
-            .and_then(crate::spine::TemporalRecord::verdict),
+            .and_then(crate::spine::TemporalRecord::verdict)
+            .cloned(),
         Some(outcome(&forall))
     );
     let Some(crate::spine::TemporalRecord::Violated { counterexample, .. }) = record.temporal()
@@ -4900,9 +4901,12 @@ fn a_temporal_violation_carries_its_decisive_information() {
 
     let mut injected = value;
     injected["disposition"]["temporal"]["decisive"] = serde_json::json!({});
-    let error =
-        crate::spine::read_native_run_result(&serde_json::to_vec(&injected).expect("JSON bytes"))
-            .expect_err("decisive is not a temporal member");
+    let error = match crate::spine::read_native_run_result(
+        &serde_json::to_vec(&injected).expect("JSON bytes"),
+    ) {
+        Err(error) => error,
+        Ok(_) => panic!("decisive is not a temporal member"),
+    };
     assert!(error.to_string().contains("decisive"), "{error}");
 }
 
