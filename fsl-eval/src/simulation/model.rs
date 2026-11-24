@@ -2546,7 +2546,7 @@ impl<'a> ModelSystem<'a> {
         let mut instances = Vec::new();
         for (_, population) in admitting {
             for key in self.universes.get(population).into_iter().flatten() {
-                let admitted = self.generated_initial().any(|state| {
+                let admitted = self.initial_base.iter().any(|state| {
                     state
                         .state
                         .populations
