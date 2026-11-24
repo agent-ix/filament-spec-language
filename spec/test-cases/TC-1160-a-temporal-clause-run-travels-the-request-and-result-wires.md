@@ -26,7 +26,7 @@ every FR-330 temporal disposition is written and read as
 basis, and that a refused `holds` condition settles as a refusal at its
 position.
 
-Scope: FR-312-AC-7, FR-312-AC-8, FR-267-AC-13, FR-267-AC-14, FR-267-AC-15, FR-267-AC-16, FR-267-AC-18, FR-267-AC-24, FR-266-AC-4,
+Scope: FR-312-AC-7, FR-312-AC-8, FR-312-AC-18, FR-267-AC-13, FR-267-AC-14, FR-267-AC-15, FR-267-AC-16, FR-267-AC-18, FR-267-AC-24, FR-266-AC-4,
 FR-327-AC-6, FR-330-AC-7, FR-267-AC-30, FR-267-AC-31 and FR-267-AC-32.
 
 ## Test Procedure

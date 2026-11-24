@@ -15,7 +15,7 @@ Verify FR-312: `read_clause_run_request` reads a `1-draft` request carrying
 `run_clause` and write a `native-run-result/2` document, and the reader
 refuses malformed requests and requests past the intake limit.
 
-Scope: FR-312-AC-1 to FR-312-AC-6.
+Scope: FR-312-AC-1 to AC-6 and AC-12 to AC-17, AC-19 to AC-20.
 
 ## Test Procedure
 
@@ -46,6 +46,19 @@ Scope: FR-312-AC-1 to FR-312-AC-6.
 6. Read a clause request with all ten `accounting` counters set to 1 through
    10, one with `accounting` omitted, and one with a legacy direct
    `work_units` member in `clause`.
+7. Read a request whose `selection` is `context`; read items requests holding
+   `value_invariants` and a population selector; put each of the latter two
+   in `clause` and record its request-stage refusal.
+8. On the healthy clause request, use a duplicate member and positional
+   record array. Separately include two of `call`, `clause` and `items`, then
+   none of them. Try an empty selection, a selection with two variants and a
+   variant with an extra member.
+9. Build extraction requests with `quire-extraction` enabled and disabled.
+   Check a missing required selection member and a role-forbidden member.
+10. Instrument observation reads and `run_clause`: run one valid request
+    whose referenced files are in a sibling directory relative to the request;
+    record read count and verify the admitted request carries bytes but no path.
+    Also send an evaluation result and a refusal through the command entry.
 
 Tag the tests `#[trace("TC-891", "FR-312-AC-n")]`.
 
@@ -67,3 +80,11 @@ Tag the tests `#[trace("TC-891", "FR-312-AC-n")]`.
 - Step 6: all ten counter values reach `ClauseRunRequest.accounting`
   unchanged; omission uses FR-100's defaults; the legacy `clause.work_units`
   request refuses `invalid-request` at stage `request`, exit 20, no result document.
+- Step 7: context is accepted, the items requests are admitted, and either
+  items-only selection in `clause` refuses naming the member.
+- Steps 8-9: each malformed or exclusive-form request refuses at request
+  stage with the offending member or selection identified; extraction is
+  accepted only with the feature enabled.
+- Step 10: each observation is read once relative to the request file, bytes
+  reach `run_clause` without a path, and each admitted request invokes it once;
+  results use the report and a reader refusal uses the command-error envelope.

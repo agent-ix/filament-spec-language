@@ -5,6 +5,8 @@ type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-261
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-259
+    type: verifies
 ---
 # TC-733: Observation reads judge deep documents on their content
 
@@ -14,7 +16,7 @@ Verify that the observation document reader, FR-261's one D-4.10 site,
 reads through the shared reader and keeps malformed input apart from limits
 and from wrong shapes.
 
-Scope: FR-261-AC-2, FR-261-AC-3.
+Scope: FR-259-AC-8; FR-261-AC-2, FR-261-AC-3.
 
 ## Test Procedure
 
@@ -28,8 +30,10 @@ Run every step on a thread spawned with a 512 KiB stack unless the step says oth
    `observation.input_bytes` and `observation.values` raised to fit; then
    with `observation.values` at 50,000, which the nested value alone
    crosses.
+4. Read malformed JSON through observation admission and retain the shared
+   reader's malformed-input refusal and byte offset.
 
-Tag the tests `#[trace("TC-733", "FR-261-AC-2")]`, `#[trace("TC-733", "FR-261-AC-3")]`.
+Tag the tests `#[trace("TC-733", "FR-261-AC-2")]`, `#[trace("TC-733", "FR-261-AC-3")]`, `#[trace("TC-733", "FR-259-AC-8")]`.
 
 ## Expected Results
 
@@ -39,3 +43,5 @@ Tag the tests `#[trace("TC-733", "FR-261-AC-2")]`, `#[trace("TC-733", "FR-261-AC
 - Step 3: refused `invalid_runtime_input`/`wrong-value-kind` at the field;
   then refused `stage_limit_exceeded`/`node-count-exceeded` naming
   `observation.values`, bound 50,000 and the count reached, 50,001.
+- Step 4: malformed input remains distinct from the observation limit and
+  reports the reader's byte offset.

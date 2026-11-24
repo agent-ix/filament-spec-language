@@ -18,6 +18,8 @@ parse.
 
 ## Test Procedure
 
+Scope: FR-259-AC-6 to FR-259-AC-8, in addition to AC-3 and AC-5.
+
 Run steps 1 and 2 on a thread spawned with a 512 KiB stack unless the step says otherwise.
 
 1. Mint the simulation state key of a 100,000-long recursive list value,
@@ -28,12 +30,19 @@ Run steps 1 and 2 on a thread spawned with a 512 KiB stack unless the step says 
 3. Hand an allocation failure of 4096 requested bytes, from the reader and
    from the encoder, to domain package intake, observation admission
    and package identity.
+4. Encode and read identity payloads with `identity.input_bytes` set to 0, a
+   bound B below the payload size, the exact payload byte count and
+   `u64::MAX`; use the setting in every exposed entry point.
+5. Compare a malformed input refusal and byte offset with the allocation
+   failure outcome from step 3.
 
 Tag the tests of steps 1 and 2 `#[trace("TC-729", "FR-259-AC-3")]` and
-those of step 3 `#[trace("TC-729", "FR-259-AC-5")]`.
+those of step 3 `#[trace("TC-729", "FR-259-AC-5")]`; tag step 4 with `FR-259-AC-6` and `FR-259-AC-7`, and step 5 with `FR-259-AC-8`.
 
 ## Expected Results
 
+- Step 4: `0` and `u64::MAX` are accepted; B refuses at the input-byte limit naming B, actual and `identity.input_bytes`; exact-size input succeeds.
+- Step 5: malformed input retains the byte offset and is not reported as a limit; the allocation failure remains `resource_exhausted`/`allocation-failed`.
 - Step 1: the two keys are equal.
 - Step 2: the two RFC 8785 texts are byte-equal.
 - Step 3: each site refuses `resource_exhausted`/`allocation-failed`

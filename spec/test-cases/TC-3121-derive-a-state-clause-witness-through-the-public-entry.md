@@ -18,7 +18,7 @@ and that a replay whose payload carries no record settles the agreement when
 the re-derived record is a comparison record while an absent quantifier
 record stays a `Mismatch`.
 
-Scope: FR-269-AC-6 to FR-269-AC-9.
+Scope: FR-269-AC-6 to FR-269-AC-10.
 
 ## Test Procedure
 
@@ -54,6 +54,11 @@ Scope: FR-269-AC-6 to FR-269-AC-9.
    and FR-265-AC-11's record as `derived`.
 8. Failing cases: replay FR-268-AC-2's no-record `AllBelow` envelope and the
    `MatchesParent` envelope carrying the record with operands `[600, 1]`.
+9. In-crate, settle equal-verdict inputs with a non-comparison record while
+   changing only `given`, then only `derived`; also settle with `given` absent
+   and the derived record present. Compare the complete records and cause.
+
+Tag step 9 with `#[trace("TC-3121", "FR-269-AC-10")]`.
 
 ## Expected Results
 
@@ -79,3 +84,4 @@ Scope: FR-269-AC-6 to FR-269-AC-9.
 | 7 | failed separation, `given` absent | `Witness { given: absent, derived: FR-265-AC-11's record, failure: Separation { Element, Unmet } }` |
 | 8 | no-record `AllBelow` (failing case) | `inconclusive`, `Witness { given: absent, derived: <index-1 record>, failure: Mismatch }` |
 | 8 | operands `[600, 1]` (failing case) | `inconclusive`, `Witness { given: <operands [600, 1]>, derived: FR-265-AC-11's record, failure: Mismatch }` |
+| 9 | change only given, change only derived, absent given | each `Witness` disagreement retains the complete unequal or absent records and settles `inconclusive`; the absent comparison-record exception of AC-9 remains unchanged |

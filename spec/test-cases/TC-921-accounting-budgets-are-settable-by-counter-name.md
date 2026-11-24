@@ -20,7 +20,7 @@ settles `Incomplete` naming its setting, that a replay request's
 request's `call.accounting` object reaches the call as its accounting
 limits.
 
-Scope: FR-255-AC-7, FR-255-AC-8, FR-255-AC-9, FR-255-AC-10, FR-255-AC-11, FR-100-AC-13.
+Scope: FR-263-AC-4 and AC-5; FR-255-AC-7, FR-255-AC-8, FR-255-AC-9, FR-255-AC-10, FR-255-AC-11, FR-100-AC-13.
 
 ## Test Procedure
 
@@ -34,8 +34,7 @@ Scope: FR-255-AC-7, FR-255-AC-8, FR-255-AC-9, FR-255-AC-10, FR-255-AC-11, FR-100
 3. Call the settings operation with `depth=1`, with `work_units=1`,
    with `accounting=1`, with `accounting.work_units=ten`, `accounting.work_units=-1`,
    `accounting.work_units=18446744073709551616`, and `accounting.work_units=5` and `accounting.work_units=6`.
-4. Decode a replay request whose `stage_limits` holds the entry
-   `accounting.work_units`.
+4. Decode and replay requests whose `stage_limits` holds `accounting.work_units` and another accounting counter. Verify each entry changes only its matching accounting bound, other counters retain request values/defaults, and a denied execution charge settles incomplete naming the counter setting.
 5. Run the `1-draft` fixture request for `seven` with `call.accounting`
    naming all ten counters at the values 1 to 10 in accounting-table order,
    with `{"work_units": 7}`, with `{}`, and with no `accounting`, and read

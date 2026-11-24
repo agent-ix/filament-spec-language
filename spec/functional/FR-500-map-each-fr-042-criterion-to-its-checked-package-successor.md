@@ -58,6 +58,12 @@ Paths are under `fsl-package/src/emit/tests/` (QP) and
 
 ## Deletion staging per legacy file
 
+Review/process rule: reviewers SHALL NOT delete a staging-table legacy file
+while its named owner's gate is open. This is a review decision based on the
+gate owner's current status; FR-500 does not encode external gate state or
+introduce a gate-state manifest. The table below supplies the machine-checkable
+owner and deletion condition used to review that decision.
+
 | Legacy file or group | Deleted when | Owner |
 | --- | --- | --- |
 | `native_compensation_emission.rs`, `native_refund_emission.rs`, `native_payment_retry_emission.rs`, `native_split_shipment_emission.rs` | FR-390-AC-1, AC-2, AC-9, AC-10 green and QSL-1414 closed; the timed `/2` test stays until then | QSL-840 |
@@ -74,7 +80,7 @@ Paths are under `fsl-package/src/emit/tests/` (QP) and
 | --- | --- | --- |
 | FR-500-AC-1 | Each of FR-042-AC-1 to AC-15 has a row with a successor test at a stated location or a named PARTIAL, PORT or KEEP disposition. | Inspection (TC-1294) |
 | FR-500-AC-2 | Every successor location stated names a `#[trace(...)]` attribute that carries the stated criterion on the head of the change. | Test (TC-1294) |
-| FR-500-AC-3 | No legacy file in the staging table is deleted while its owner's gate is open. | Test (TC-1294) |
+| FR-500-AC-3 | Every staging-table row names both an owner and a deletion condition; no row has either field missing or empty. | Test (TC-1294) |
 
 ## Dependencies
 

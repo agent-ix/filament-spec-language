@@ -22,6 +22,8 @@ checked types of `Bytes`, `JsonObject` and `Duration`, the literal forms
 `length` and `concat` operations over `Bytes`, the refusals of unlike types,
 ordering and arithmetic, and the lowering of each admitted form.
 
+Scope: FR-091-AC-78 and FR-093-AC-78, in addition to the existing criteria below.
+
 ## Test Procedure
 
 1. Admit each payload vector P1 to P24 through the kernel constructor and
@@ -36,7 +38,7 @@ ordering and arithmetic, and the lowering of each admitted form.
 5. With the unit declaring `dimension Time; unit s : Time = rational(1, 1);
    unit ms : Time = rational(1, 1000) * s;` check the Duration vectors D1 to
    D10.
-6. Lower the admitted functions and the literal bodies and inspect the nodes.
+6. Lower the admitted functions and the literal bodies and inspect the nodes; tag the `length` and `concat` forms with FR-091-AC-78 and FR-093-AC-78.
 7. Admit a snapshot whose object type has `blob: Bytes`, `doc: JsonObject` and
    `span: Duration` with the values of the S vectors.
 

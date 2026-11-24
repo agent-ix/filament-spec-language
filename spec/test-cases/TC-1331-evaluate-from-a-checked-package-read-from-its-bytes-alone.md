@@ -19,7 +19,7 @@ relationships:
 ## Description
 
 Verify the bytes-only entry and its selected-monitor preparation boundary.
-Scope: FR-531-AC-1 through FR-531-AC-35, FR-531-AC-45 through FR-531-AC-48 and FR-531-AC-51. **R** is the package of FR-517.
+Scope: FR-531-AC-1 through FR-531-AC-35, FR-531-AC-45 through FR-531-AC-48 and FR-531-AC-52. **R** is the package of FR-517.
 The isolated bytes-only consumer test crate depends on `filament-contract-model`,
 `fsl-package` and `fsl-eval` only. Producer transport and selected-monitor
 preparation tests additionally obtain authentic final emissions, admitted model
@@ -34,7 +34,8 @@ rows or bytes to the consumer.
 | 2 | 2 | compile-fail probes of a `BarePackage` from bytes, from a decoded graph and from a term; API-surface listing of the signatures | each fails to compile; no signature names `CheckedPackage`, `Emission` or `AdmittedPackageRead` |
 | 3 | 4 | each clause form and each slot kind **R** holds; a non-temporal node; a non-protocol node | results; `clause-root-unresolved` and FR-390-AC-4's refusal, empty charge logs |
 | 4 | 5 | slot call with no supply, foreign rows, unknown rows; the temporal call with no supply; `read_checked_package` over a lock that selects a dependency the evidence lacks | `MissingIdentityWitness`, `ForeignIdentityWitness`, `UnknownIdentityWitness` as exit-21 `Admission`, meter untouched; the temporal call returns; the reader refuses `MissingImport`, so no package is admitted and no dependency refusal exists |
-| 5 | 6 | a package without `temporal_bindings`; without a profile row; with an unknown profile definition; with an infinite-trace profile | `Unavailable` with the clock `Missing`; `clause-unreadable` `profile-selection`; `clause-unreadable` `profile-unknown`; `not-finite-window-profile` |
+| 5 | 6 | an admitted channel missing a clause row; without a profile row; with an unknown profile definition; with an infinite-trace profile | `Unavailable` with the clock `Missing`; `clause-unreadable` `profile-selection`; `clause-unreadable` `profile-unknown`; `not-finite-window-profile` |
+| 52 | 52 | a clock-configured temporal declaration whose required whole `temporal_bindings` channel is absent | Contract IR admission refuses `invalid_package`/`timed-node-reference` at the clause body before evaluation; no empty-channel admission |
 | 6 | 7 | encode **R**'s results; search for the clause names, `source:` labels and source map regions; read the progress binding | none present; the binding holds `package.name()` |
 | 7 | 8 | **R**'s directory: read `identities.json`; compare with the encoding of the in-process rows; write twice; omit the file from the supply | slot call evaluates; bytes equal; two writes equal; `MissingIdentityWitness` for the slot call only |
 | 8 | 9 | enumerate the public methods of `EvidencePackage` and `CheckedPackageEvaluation` against the inventory table | one row each; an unlisted method fails the test |
