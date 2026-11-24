@@ -36,3 +36,20 @@ Checked clean:
 - The BFS terminates: each key is enqueued once, and every key must exist in the checker graph, which is already bounded by max_states.
 - rustfmt --check passes on every changed production file. The 22 rustfmt diffs in the test file are already present on origin/main.
 - The code reads as compile-plausible: Induced::new() through the type alias, impl Into for ProducedRandomizedWitness, Option::is_none_or on toolchain 1.98, and BTreeMap<&K,_>::get(&K).
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-007 | low | randomized_scheduler_wire_entry's identity-alternative spelling (ordinal into spelled rows) still has no test; the residual part of FND-003, judged non-blocking because a misspelled wire entry fails closed on re-replay and the replay verdict reads the typed witness, not the wire | fsl-replay/src/outcome/counterexample.rs:2196-2212 |
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | b68a7fbc: zero-probability draws skipped; draw.successors.len() != 1 returns UnsupportedDraw (fail closed), matching path replay at line 913 |
+| FND-002 | fixed | b68a7fbc: FairProductError::Product(error) routed through unbounded_failure |
+| FND-003 | fixed | b68a7fbc: bottom_components_are_fair split out and covered by four fair_component_tests (non-trivial unfair BSCC under weak and strong, whole and each; vacuous and taken cases; escaping component), plus an integration test reaching replay-parity; identity-spelling residual recorded as FND-007 |
+| FND-004 | fixed | b68a7fbc: doc now states that steps include the choice weight |
+| FND-005 | fixed | b68a7fbc: per-node bounded::visit and bounded::retain; bottom_components and per-component ticks charge the meter |
+| FND-006 | accepted-no-change | The leaf scan is extracted into reach_accepting and shared by both refutation paths. The remaining duplication is the roughly 15-line producer-budget control closure: cosmetic, with no behaviour or budget risk |

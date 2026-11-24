@@ -21,3 +21,10 @@ Ticket: QSL-2830. This is a manual acceptance-criteria-to-tests check scoped to 
 ## Verdict
 
 Partial coverage. The positive route is covered: a fair refutation reproduces with source and package parity, under weak and strong, whole and each fairness. Holding verdicts, cyclic subjects, and the QSL-2778 and QSL-2779 profiles are declared Remaining in the PR and are not counted as gaps here.
+
+## Dispositions
+
+| FND | Outcome | Reason |
+| --- | --- | --- |
+| FND-001 | fixed | b68a7fbc: an_unfair_witness_settles_inconclusive_replay_parity (direct replay and the analyzer tamper seam both settle ReplayParity, with no counterexample); fair_component_tests cover a non-trivial unfair bottom component |
+| FND-002 | fixed | b68a7fbc: both fair tests now trace FR-200 and FR-200-AC-4; the new tests trace FR-413-AC-5 |
