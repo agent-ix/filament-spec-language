@@ -552,7 +552,7 @@ fn q03_flatten_admits_kinds_and_derives_bounds() {
     assert_eq!(checked.value_type(), &integers(CollectionKind::Set, 0, 4));
 }
 
-#[trace("FSpec-TC-190", "FSpec-FR-145-AC-2")]
+#[trace("FSpec-TC-190", "FSpec-FR-145-AC-2", "TC-1907", "FR-701-AC-3")]
 #[test]
 fn q04_empty_fold_uses_identity_and_empty_reduce_is_undefined_or_refused() {
     let package = plain();

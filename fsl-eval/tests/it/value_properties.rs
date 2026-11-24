@@ -2100,27 +2100,6 @@ fn p5_min_max_aggregates_equal_the_reference_fold_in_any_order() {
                     );
                 }
 
-                let empty = [Arg::Coll {
-                    kind: case.kind,
-                    minimum: 0,
-                    items: Vec::new(),
-                }];
-                let reduction = reduce_package
-                    .call(
-                        &QualifiedName::unqualified("f").expect("identifier"),
-                        empty.iter().map(Arg::value).collect(),
-                        &ObjectEnvironment::default(),
-                        &mut Meter::new(UNLIMITED),
-                    )
-                    .expect("the empty reduction returns an outcome");
-                let FamilyOutcome::Evaluated(outcome) = reduction.outcome else {
-                    return Err(TestCaseError::fail("empty reduction has no kernel outcome"));
-                };
-                proptest::prop_assert!(
-                    matches!(outcome, Outcome::Undefined(Undefined::EmptyReduction)),
-                    "empty reduce returned {outcome:?}\n{}",
-                    reduce_source
-                );
             }
             Ok(())
         },
