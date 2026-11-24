@@ -6,11 +6,11 @@
 //! certificate over that chain and settles `refuted` only after the core's
 //! independent replay reproduces it.
 
-use super::candidate::{rational_bytes, sort, CandidateBudget};
+use super::candidate::{CandidateBudget, rational_bytes, sort};
 use super::*;
 use crate::exact_probabilistic::{
-    avoiding_policy, bottom_components, induced_chain, policy_action, ExactProbLimits, ProbStateId,
-    ProductAction,
+    ExactProbLimits, ProbStateId, ProductAction, avoiding_policy, bottom_components, induced_chain,
+    policy_action,
 };
 use fsl_replay::{ProbabilitySubsystemCertificate, SubsystemBoundKind};
 
@@ -190,7 +190,7 @@ pub(super) fn refute(
     };
     let evidence = match require_witness(evidence) {
         Ok(evidence) => evidence,
-        Err(report) => return report,
+        Err(report) => return *report,
     };
     fn state_key(
         product: &ProbProduct,
