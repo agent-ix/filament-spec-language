@@ -13,7 +13,8 @@ relationships:
 Verify that a consumer holding the unit's `DefinitionCatalog` refuses a
 checked package whose `definition_selections` names a definition the catalog
 lacks, with the typed refusal at the row, and that the catalog-free strict
-reader admits the same bytes. Scope: FR-110-AC-16.
+reader admits the same bytes while preserving the opaque row's exact strings.
+Scope: FR-110-AC-16.
 
 ## Test Procedure
 
@@ -24,7 +25,8 @@ reader admits the same bytes. Scope: FR-110-AC-16.
 2. Change the law row's authority; in FR-110-AC-14's package replace the extension row's identity with
    one no entry holds; write a layer identity in a law row's position; change
    two rows.
-3. Read each altered package with the strict reader alone.
+3. Read each altered package with the strict reader alone and inspect the
+   reconstructed package's `definition_selections` row at each changed index.
 
 ## Expected Results
 
@@ -33,4 +35,6 @@ reader admits the same bytes. Scope: FR-110-AC-16.
   `/lock/definition_selections/{i}` with no result.
 - Step 2: the same refusal at each row's index, `wrong-selection-role` for the
   role mismatch, the first row for two defects.
-- Step 3: every altered package is admitted.
+- Step 3: every altered package is admitted; each changed row retains exactly
+  the serialized `{authority, identity}` strings, including an identity not
+  defined by any catalog.
