@@ -29,14 +29,14 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{
-    analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex,
+    Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex, analyze,
 };
-use fsl_eval::simulation::model::{ModelFinding, ModelSimState, PlaceConstraint};
 use fsl_eval::simulation::ExpansionLimit;
+use fsl_eval::simulation::model::{ModelFinding, ModelSimState, PlaceConstraint};
 use fsl_replay::{
-    abstract_classes, candidate_lasso_has_fair_run, check_step, AbstractClass, CandidateFairState,
-    CandidateFairStep, ConcreteStep, CounterexampleKind, Lasso, ModelCheckLimit, ReachedLimit,
-    RefinementFailure, Taken, TemporalCounterexample, Undetermined,
+    AbstractClass, CandidateFairState, CandidateFairStep, ConcreteStep, CounterexampleKind, Lasso,
+    ModelCheckLimit, ReachedLimit, RefinementFailure, Taken, TemporalCounterexample, Undetermined,
+    abstract_classes, candidate_lasso_has_fair_run, check_step,
 };
 use num_bigint::BigInt;
 
@@ -47,11 +47,11 @@ use super::{
     Judgement, Product, TimedRefinementStop, TimedRefinementUndecided, TimedSafetyOutcome,
 };
 use crate::model_check::fair_summary::FairScope;
-use crate::model_check::fair_walk::{fairness_constraints, FairModel};
-use crate::zone_check::concretise::{concretise, Stage, Target};
-use crate::zone_check::liveness::{next_cell, CellAtom, Cells, Sign};
+use crate::model_check::fair_walk::{FairModel, fairness_constraints};
+use crate::zone_check::concretise::{Stage, Target, concretise};
+use crate::zone_check::liveness::{CellAtom, Cells, Sign, next_cell};
 use crate::zone_check::search::{
-    constrain_at, scaled, widen, zone_bytes, Halt, Run, ZoneCheckRefusal, ZoneStats, ZoneUndecided,
+    Halt, Run, ZoneCheckRefusal, ZoneStats, ZoneUndecided, constrain_at, scaled, widen, zone_bytes,
 };
 use crate::zone_check::{Bound, Dbm};
 
@@ -283,7 +283,10 @@ impl Product<'_, '_> {
                         .iter()
                         .filter_map(|step| step.transition.as_ref())
                         .collect(),
-                    Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) | Taken::Failing => Vec::new(),
+                    Taken::Stutter
+                    | Taken::Protocol(_)
+                    | Taken::ProtocolTraces(_)
+                    | Taken::Failing => Vec::new(),
                 })
             }))
         {
@@ -347,7 +350,7 @@ impl Product<'_, '_> {
                         &abstract_fairness,
                     )? {
                         fair_loops::Refuted::By(found) => {
-                            return Ok(Lived::Violated(Box::new(found)));
+                            return Ok(Lived::Violated(found));
                         }
                         fair_loops::Refuted::NotConcretised => not_concretised = true,
                         fair_loops::Refuted::Not => {}

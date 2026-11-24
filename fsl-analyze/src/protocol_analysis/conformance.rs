@@ -6,8 +6,8 @@ use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::model_subject::ProtocolSubject;
 use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::protocol::{
-    live_instance_bound, ProtocolRefusal, ProtocolSystem, ProtocolTransition, Ra, Sc, StepKind,
-    SubjectMemory, Tso,
+    ProtocolRefusal, ProtocolSystem, ProtocolTransition, Ra, Sc, StepKind, SubjectMemory, Tso,
+    live_instance_bound,
 };
 use fsl_eval::simulation::{SubjectSystem, TransitionSystem};
 use fsl_replay::TemporalCounterexample;
@@ -41,7 +41,7 @@ fn recording_payload(bytes: &[u8]) -> Result<Vec<u8>, String> {
 /// recording. `detail` names the join.
 fn engine_refusal(refusal: &super::recording::RecordingRefusal) -> crate::analyze::Refusal {
     if refusal.is_fault() {
-        return crate::analyze::Refusal::FailedWithDetail(
+        return crate::analyze::Refusal::failed_with_detail(
             refusal.code(),
             [
                 ("fact".to_owned(), serde_json::json!(refusal.cause())),
@@ -51,7 +51,7 @@ fn engine_refusal(refusal: &super::recording::RecordingRefusal) -> crate::analyz
             .collect(),
         );
     }
-    crate::analyze::Refusal::DeclinedWithDetail(
+    crate::analyze::Refusal::declined_with_detail(
         fsl_replay::ProofRefusalCause::Refused,
         fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::StageLimitExceeded),
         refusal.code(),
@@ -71,7 +71,7 @@ fn prefix_refusal(refused: super::recording::PrefixRefusal) -> crate::analyze::R
     if refused.refusal.is_limit() || refused.refusal.is_fault() {
         return engine_refusal(&refused.refusal);
     }
-    crate::analyze::Refusal::DeclinedWithDetail(
+    crate::analyze::Refusal::declined_with_detail(
         fsl_replay::ProofRefusalCause::InvalidInput,
         fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
         refused.refusal.code(),
@@ -119,7 +119,7 @@ fn recording_result(
         Ok(recording) => recording,
         Err(detail) => {
             return crate::analyze::EngineReport::Refused(
-                crate::analyze::Refusal::DeclinedWithDetail(
+                crate::analyze::Refusal::declined_with_detail(
                     fsl_replay::ProofRefusalCause::InvalidInput,
                     fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
                     CatalogCode::new("invalid_runtime_input", "invalid-value"),
@@ -138,7 +138,7 @@ fn recording_result(
             Ok(population) => Some(population),
             Err(error) => {
                 return crate::analyze::EngineReport::Refused(
-                    crate::analyze::Refusal::DeclinedWithDetail(
+                    crate::analyze::Refusal::declined_with_detail(
                         fsl_replay::ProofRefusalCause::InvalidInput,
                         fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
                         CatalogCode::new("invalid_runtime_input", "invalid-value"),
@@ -171,7 +171,7 @@ fn recording_result(
                 )
                 .collect();
             return crate::analyze::EngineReport::Refused(
-                crate::analyze::Refusal::DeclinedWithDetail(
+                crate::analyze::Refusal::declined_with_detail(
                     fsl_replay::ProofRefusalCause::InvalidInput,
                     fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
                     refusal.code(),
@@ -196,17 +196,19 @@ fn recording_result(
         None
     };
     let Some(recording_identity) = recording_identity else {
-        return crate::analyze::EngineReport::Refused(crate::analyze::Refusal::DeclinedWithDetail(
-            fsl_replay::ProofRefusalCause::InvalidInput,
-            fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
-            CatalogCode::new("invalid_runtime_input", "missing-member"),
-            [(
-                "detail".to_owned(),
-                serde_json::json!("recording has no provisioned identity"),
-            )]
-            .into_iter()
-            .collect(),
-        ));
+        return crate::analyze::EngineReport::Refused(
+            crate::analyze::Refusal::declined_with_detail(
+                fsl_replay::ProofRefusalCause::InvalidInput,
+                fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
+                CatalogCode::new("invalid_runtime_input", "missing-member"),
+                [(
+                    "detail".to_owned(),
+                    serde_json::json!("recording has no provisioned identity"),
+                )]
+                .into_iter()
+                .collect(),
+            ),
+        );
     };
     let mut refused_replay: Option<fsl_replay::BoundExceeded> = None;
     let replayed = if assessment.global.label == "refuted" {
@@ -366,7 +368,7 @@ pub(crate) fn package_global_recording_item<'a>(
 ) -> crate::analyze::AnalyzeItem<'a> {
     global_recording_item_in(
         index,
-        super::recording_input::Input::Package(input),
+        super::recording_input::Input::Package(Box::new(input)),
         selected_protocol,
         None,
         recording_identity,
@@ -440,7 +442,7 @@ pub(crate) fn missing_role_item(
             let detail = [("role".to_owned(), serde_json::json!(role))]
                 .into_iter()
                 .collect();
-            crate::analyze::EngineReport::Refused(crate::analyze::Refusal::DeclinedWithDetail(
+            crate::analyze::EngineReport::Refused(crate::analyze::Refusal::declined_with_detail(
                 fsl_replay::ProofRefusalCause::IncompleteInput,
                 fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::MissingDeclaration),
                 filament_semantic_value::catalog::CatalogCode::new(
@@ -1478,9 +1480,11 @@ mod tests {
         ));
         assert_eq!(code.to_string(), "invalid_runtime_input/invalid-value");
         assert_eq!(detail["prefix"], serde_json::json!(3));
-        assert!(detail["detail"]
-            .as_str()
-            .is_some_and(|text| text.contains("a prefix was refused")));
+        assert!(
+            detail["detail"]
+                .as_str()
+                .is_some_and(|text| text.contains("a prefix was refused"))
+        );
     }
 
     #[trace("TC-2805", "FR-990-AC-1")]

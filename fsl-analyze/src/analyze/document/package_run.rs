@@ -23,12 +23,12 @@ use fsl_eval::simulation::model::{PackageModelInput, PendingPackageForm};
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_package::{AnalysisView, BarePackage, CheckedNodeId, UnreadModelForm};
-use fsl_replay::value_check::ValueTarget;
 use fsl_replay::TerminalRecord;
+use fsl_replay::value_check::ValueTarget;
 use fsl_route::request::{ExtentClassification, ItemKind};
 use fsl_route::{CandidateOutcome, Registry};
 use fsl_semantics::check::{Capability, DeclarationFamily};
-use serde_json::{json, Map};
+use serde_json::{Map, json};
 
 use super::super::hyper_route::PackageRelationSubject;
 use super::super::package_hyper::PackageHyperSubject;
@@ -43,10 +43,10 @@ mod probability;
 mod schedule;
 
 use super::{
-    candidate_list, invalid_kind, negotiate_items, negotiated_routes, temporal_settings,
-    unknown_claim, unknown_option, write_run, AnalyzeDocumentError, ItemReads, ItemSelection,
-    Negotiate, Negotiation, ResolvedClaim, ResolvedItem, SettledParts, SettledRun,
-    SubjectSelection,
+    AnalyzeDocumentError, ItemReads, ItemSelection, Negotiate, Negotiation, ResolvedClaim,
+    ResolvedItem, SettledParts, SettledRun, SubjectSelection, candidate_list, invalid_kind,
+    negotiate_items, negotiated_routes, temporal_settings, unknown_claim, unknown_option,
+    write_run,
 };
 
 /// A `package` request (FR-850) whose item names a family the package route
@@ -116,7 +116,8 @@ impl PendingPackageFamily {
             ),
             (Some(index), PendingFamily::ValueShape) => format!(
                 ": items[{}] value-validity has unsupported shape {}{at}",
-                index.get(), self.note.as_deref().unwrap_or("unavailable-type")
+                index.get(),
+                self.note.as_deref().unwrap_or("unavailable-type")
             ),
             (Some(index), PendingFamily::CompositionOwningWorkPermission) => format!(
                 ": items[{}] composition owning execution is pending missing native before-work permission{at}",
@@ -254,7 +255,7 @@ pub enum PackageRunError {
         /// The composition declaration node.
         node: CheckedNodeId,
         /// The original refusal.
-        refusal: fsl_replay::planner::PackageCompositionRefusal,
+        refusal: Box<fsl_replay::planner::PackageCompositionRefusal>,
     },
     /// The run was refused or faulted as the source route's is.
     #[error(transparent)]
@@ -750,7 +751,11 @@ fn settle_package_run_inner(
                     resolved.push(ResolvedItem::Claim(claim));
                 }
             },
-            Named::SuppliedProtocol { index, name, selection } => match reads.supplied_protocol(index, name, selection)? {
+            Named::SuppliedProtocol {
+                index,
+                name,
+                selection,
+            } => match reads.supplied_protocol(index, name, selection)? {
                 Resolution::Settled(settled) => resolved.push(settled),
                 Resolution::Claim(claim, ()) => {
                     protocol_claims.push(claim.item.claim.clone());
@@ -1294,8 +1299,16 @@ fn resolve_names<'s>(
             } else {
                 false
             };
-            if matches!(selection.kind.as_deref(), Some("finite-replay" | "global-conformance")) && protocol {
-                return Ok(Named::SuppliedProtocol { index, name, selection });
+            if matches!(
+                selection.kind.as_deref(),
+                Some("finite-replay" | "global-conformance")
+            ) && protocol
+            {
+                return Ok(Named::SuppliedProtocol {
+                    index,
+                    name,
+                    selection,
+                });
             }
             if matches!(
                 selection.kind.as_deref(),
@@ -1762,7 +1775,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                         index,
                         Some(name),
                         "unknown-kind",
-                    )))
+                    )));
                 }
             },
         };
@@ -2289,38 +2302,75 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
         let input = self.input.ok_or_else(fault)?;
         let kind = match selection.kind.as_deref().map(Capability::from_wire) {
             Some(Ok(kind @ (Capability::FiniteReplay | Capability::GlobalConformance))) => kind,
-            _ => return Ok(Resolution::Settled(invalid_kind(index, Some(name), "unknown-kind"))),
+            _ => {
+                return Ok(Resolution::Settled(invalid_kind(
+                    index,
+                    Some(name),
+                    "unknown-kind",
+                )));
+            }
         };
-        let form = input.package().protocol_execution_named(name).map_err(|_| fault())?.ok_or_else(fault)?;
+        let form = input
+            .package()
+            .protocol_execution_named(name)
+            .map_err(|_| fault())?
+            .ok_or_else(fault)?;
         let declaration = form.protocol.clause().clone();
         let key = input.package().node_key(&declaration).ok_or_else(fault)?;
         let claim = OccurrenceKey::declaration(key);
         let named = selection.backend.as_deref().map(BackendId::new);
         let backend_options = selection.options.clone().unwrap_or_default();
-        if let Some(refused) = unknown_option(index, Some(name), self.registry, named.as_ref(), &backend_options) {
+        if let Some(refused) = unknown_option(
+            index,
+            Some(name),
+            self.registry,
+            named.as_ref(),
+            &backend_options,
+        ) {
             return Ok(Resolution::Settled(refused));
         }
         if (kind == Capability::GlobalConformance && selection.recording.is_none())
-            || !crate::protocol_analysis::recording::package_recording_supported(&input.input(), name)
+            || !crate::protocol_analysis::recording::package_recording_supported(
+                &input.input(),
+                name,
+            )
         {
             return Err(PackageRunError::Pending(PendingPackageFamily {
-                request_index: Some(index), family: PendingFamily::Declaration, node: Some(declaration),
-                note: Some(format!("`{name}`: supplied protocol slice requires origin activation, static roles, unordered literal-capacity channels and sequence/choice/message/check controls; temporal requirements, captures, negative replay and behavioral conformance remain pending")),
+                request_index: Some(index),
+                family: PendingFamily::Declaration,
+                node: Some(declaration),
+                note: Some(format!(
+                    "`{name}`: supplied protocol slice requires origin activation, static roles, unordered literal-capacity channels and sequence/choice/message/check controls; temporal requirements, captures, negative replay and behavioral conformance remain pending"
+                )),
             }));
         }
         let candidates = self.registry.candidates(kind, named.as_ref());
         let temporal = selection.temporal.clone().unwrap_or_default();
         let own_subject = self.own_subject(index, selection)?;
-        let item_form = (kind == Capability::GlobalConformance).then(|| ItemForm::Temporal(temporal_settings(&temporal)));
-        Ok(Resolution::Claim(Box::new(ResolvedClaim {
-            item: ClaimItem {
-                request_index: index, claim, kind, extent: ExtentClassification::Bounded,
-                backend: named, candidates: candidate_list(&candidates), options: options(selection, backend_options), form: item_form,
-            },
-            claim_name: name.to_owned(), candidates,
-            unrouted: selection.unrouted() || selection.reductions.is_some() || reads_no_clocks(selection) || !own_subject.same_model(self.subject),
-            subject: own_subject,
-        }), ()))
+        let item_form = (kind == Capability::GlobalConformance)
+            .then(|| ItemForm::Temporal(temporal_settings(&temporal)));
+        Ok(Resolution::Claim(
+            Box::new(ResolvedClaim {
+                item: ClaimItem {
+                    request_index: index,
+                    claim,
+                    kind,
+                    extent: ExtentClassification::Bounded,
+                    backend: named,
+                    candidates: candidate_list(&candidates),
+                    options: options(selection, backend_options),
+                    form: item_form,
+                },
+                claim_name: name.to_owned(),
+                candidates,
+                unrouted: selection.unrouted()
+                    || selection.reductions.is_some()
+                    || reads_no_clocks(selection)
+                    || !own_subject.same_model(self.subject),
+                subject: own_subject,
+            }),
+            (),
+        ))
     }
 
     /// A native projection or realizability item over an admitted protocol declaration.
@@ -2340,7 +2390,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                     index,
                     Some(name),
                     "unknown-kind",
-                )))
+                )));
             }
         };
         let named = selection.backend.as_deref().map(BackendId::new);
@@ -2381,12 +2431,12 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                     index,
                     name,
                     "temporal.subject.protocol",
-                )))
+                )));
             }
             Err(member) => {
                 return Ok(Resolution::Settled(super::invalid_value(
                     index, name, member,
-                )))
+                )));
             }
         };
         let form = input
@@ -2649,7 +2699,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                         index,
                         Some(name),
                         "unknown-kind",
-                    )))
+                    )));
                 }
             },
             None => Capability::TemporalSatisfaction,
@@ -2836,7 +2886,7 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                         index,
                         Some(name),
                         "unknown-kind",
-                    )))
+                    )));
                 }
             },
             None => Capability::TemporalSatisfaction,
@@ -3264,14 +3314,16 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 })
             })?;
         let (record, extent) =
-            super::package_value::operation_contract_record(input.package(), row).ok_or_else(|| {
-                PackageRunError::Pending(PendingPackageFamily {
-                    request_index: Some(index),
-                    family: PendingFamily::OperationContractRequirementRecord,
-                    node: Some(declaration.clone()),
-                    note: Some(format!("`{name}` (claim occurrence {ordinal})")),
-                })
-            })?;
+            super::package_value::operation_contract_record(input.package(), row).ok_or_else(
+                || {
+                    PackageRunError::Pending(PendingPackageFamily {
+                        request_index: Some(index),
+                        family: PendingFamily::OperationContractRequirementRecord,
+                        node: Some(declaration.clone()),
+                        note: Some(format!("`{name}` (claim occurrence {ordinal})")),
+                    })
+                },
+            )?;
         let extent = ExtentClassification::of(&extent);
         let own_subject = self.own_subject(index, selection)?;
         let kind = match selection.kind.as_deref() {
@@ -3509,11 +3561,27 @@ impl<'a> WorkInputs<'_, 'a> {
                 item,
                 &self.limits,
             ),
-            (_, Some(Route::SuppliedProtocol(protocol))) if item.kind == Capability::FiniteReplay => {
-                let trace = item.options.trace.as_ref().and_then(|reference| self.binding.snapshots.get(reference)).map(Vec::as_slice).map_or(
-                    Err(crate::protocol_analysis::TraceDefect::unreadable()), crate::protocol_analysis::SuppliedTrace::read,
-                );
-                crate::protocol_analysis::finite_replay::package_finite_replay_item(item.request_index, self.input.input(), self.binding.clone(), self.limits, protocol, trace)
+            (_, Some(Route::SuppliedProtocol(protocol)))
+                if item.kind == Capability::FiniteReplay =>
+            {
+                let trace = item
+                    .options
+                    .trace
+                    .as_ref()
+                    .and_then(|reference| self.binding.snapshots.get(reference))
+                    .map(Vec::as_slice)
+                    .map_or(
+                        Err(crate::protocol_analysis::TraceDefect::unreadable()),
+                        crate::protocol_analysis::SuppliedTrace::read,
+                    );
+                crate::protocol_analysis::finite_replay::package_finite_replay_item(
+                    item.request_index,
+                    self.input.input(),
+                    self.binding.clone(),
+                    self.limits,
+                    protocol,
+                    trace,
+                )
             }
             (_, Some(Route::SuppliedProtocol(protocol)))
                 if item.kind == Capability::GlobalConformance =>
@@ -3531,7 +3599,8 @@ impl<'a> WorkInputs<'_, 'a> {
                     item.options.recording.clone(),
                     recording,
                     item.options.population.clone(),
-                    item.options.assessment == Some(super::super::request::AssessmentMode::Incremental),
+                    item.options.assessment
+                        == Some(super::super::request::AssessmentMode::Incremental),
                     self.limits.replay,
                 )
             }
@@ -3634,15 +3703,14 @@ impl<'a> WorkInputs<'_, 'a> {
                     |subject| subject.item(item.request_index),
                 )
             }
-            (_, Some(Route::Schedule(route))) if item.kind == Capability::Schedulability => {
-                route.item(
+            (_, Some(Route::Schedule(route))) if item.kind == Capability::Schedulability => route
+                .item(
                     item.request_index,
                     self.limits
                         .engines
                         .get(fsl_foundation::Setting::ScheduleMaxDemandPoints)
                         .unwrap_or(crate::schedulability::DEFAULT_MAX_DEMAND_POINTS),
-                )
-            }
+                ),
             (_, Some(Route::Value(value))) if item.kind == Capability::ValueValidity => {
                 let PackageValue {
                     target,
@@ -3753,11 +3821,7 @@ impl<'a> WorkInputs<'_, 'a> {
             ExtentClassification::Unbounded { .. } => fsl_route::Mode::Unbounded,
         };
         // FR-940: the source route's decision itself, not a copy of it.
-        built = super::super::request::contract_checker_bound(
-            built,
-            item,
-            &negotiated.disposition,
-        );
+        built = super::super::request::contract_checker_bound(built, item, &negotiated.disposition);
         built.required(item.options.required).disposed(
             negotiated.disposition.clone(),
             negotiated.diagnostic.clone(),
@@ -3907,7 +3971,7 @@ fn composition_facts(
 ) -> Result<super::composition_item::CompositionFacts, PackageRunError> {
     let refused = |refusal| PackageRunError::Composition {
         node: node.clone(),
-        refusal,
+        refusal: Box::new(refusal),
     };
     let view = package
         .composition_with_budget(node, budget)
@@ -4076,10 +4140,10 @@ fn model_relation_refusal_record(
     let backend = || BackendId::new(crate::model_check::manifest::BACKEND_ID);
     Some(match refused {
         super::super::Refusal::UnsupportedWithDetail(code, details) => {
-            TerminalRecord::disposition_unsupported_by(index, Some(backend()), code, details)
+            TerminalRecord::disposition_unsupported_by(index, Some(backend()), code, *details)
         }
         super::super::Refusal::FailedWithDetail(code, details) => {
-            TerminalRecord::failed_with(index, backend(), code).with_diagnostic_detail(details)
+            TerminalRecord::failed_with(index, backend(), code).with_diagnostic_detail(*details)
         }
         super::super::Refusal::Failed(code) => TerminalRecord::failed_with(index, backend(), code),
         _ => return None,
@@ -4098,7 +4162,7 @@ mod model_relation_record_tests {
     fn an_unsupported_model_relation_projection_names_en_1() {
         let mut details = Map::new();
         details.insert("fact".to_owned(), json!("model-relation-body"));
-        let refused = super::super::super::Refusal::UnsupportedWithDetail(
+        let refused = super::super::super::Refusal::unsupported_with_detail(
             CatalogCode::new("unsupported_construct", "not-yet-implemented"),
             details,
         );

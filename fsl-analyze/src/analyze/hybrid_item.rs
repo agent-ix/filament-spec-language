@@ -9,13 +9,13 @@
 
 use filament_exact::LimitKind;
 use filament_semantic_value::catalog::CatalogCode;
-use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
+use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::{CheckedPackage, EmitLimits};
 use fsl_replay::{
-    hybrid_locus_wire, Certification, ExactGap, HybridCounterexample, HybridCounterexampleKind,
-    HybridReplayMeter, HybridReplayRefusal, HybridSettlement, HybridSolveRequest, HybridVerdict,
-    IncompleteCause, ModelCheckLimit, TerminalValue, UnsupportedConstruct,
+    Certification, ExactGap, HybridCounterexample, HybridCounterexampleKind, HybridReplayMeter,
+    HybridReplayRefusal, HybridSettlement, HybridSolveRequest, HybridVerdict, IncompleteCause,
+    ModelCheckLimit, TerminalValue, UnsupportedConstruct, hybrid_locus_wire,
 };
 use fsl_route::Mode;
 use fsl_semantics::check::wire_id::WireGraph;
@@ -166,7 +166,7 @@ pub(super) fn hybrid_item<'a>(
                     Err(refusal) => {
                         let mut detail = Map::new();
                         detail.insert("pointer".to_owned(), refusal.pointer.into());
-                        return EngineReport::Refused(Refusal::FailedWithDetail(
+                        return EngineReport::Refused(Refusal::failed_with_detail(
                             CatalogCode::new("invalid_result", refusal.code.as_str()),
                             detail,
                         ));
@@ -244,7 +244,7 @@ fn fault_of(refusal: &HybridReplayRefusal, work_units: u64) -> EngineReport {
         for (member, value) in extra {
             detail.insert(member.to_owned(), value);
         }
-        EngineReport::Refused(Refusal::FailedWithDetail(
+        EngineReport::Refused(Refusal::failed_with_detail(
             CatalogCode::new("runtime_invariant", "established-invariant-broken"),
             detail,
         ))
@@ -253,7 +253,7 @@ fn fault_of(refusal: &HybridReplayRefusal, work_units: u64) -> EngineReport {
         HybridReplayRefusal::Trace(trace) => {
             let mut detail = Map::new();
             detail.insert("pointer".to_owned(), trace.pointer.to_string().into());
-            EngineReport::Refused(Refusal::FailedWithDetail(
+            EngineReport::Refused(Refusal::failed_with_detail(
                 CatalogCode::new("invalid_result", "invalid-value"),
                 detail,
             ))
@@ -332,7 +332,7 @@ fn unsupported_construct(
         detail.insert("variable".to_owned(), variable.name.as_str().into());
     }
     detail.insert("locus".to_owned(), locus);
-    EngineReport::Refused(Refusal::UnsupportedConstruct(detail))
+    EngineReport::Refused(Refusal::unsupported_construct(detail))
 }
 
 /// The v2 bytes of the package emitted for this request, whose node ids spell
@@ -394,7 +394,7 @@ mod tests {
 
     fn failed(report: EngineReport) -> (CatalogCode, Map<String, Value>) {
         match report {
-            EngineReport::Refused(Refusal::FailedWithDetail(code, detail)) => (code, detail),
+            EngineReport::Refused(Refusal::FailedWithDetail(code, detail)) => (code, *detail),
             _ => panic!("expected a failed refusal with detail"),
         }
     }
