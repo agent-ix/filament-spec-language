@@ -4641,7 +4641,7 @@ pub enum ProbabilisticBody {
         /// The level `q`.
         level: ExactValueForm,
         /// The measure.
-        measure: MeasureForm,
+        measure: Box<MeasureForm>,
         /// The comparison.
         op: BoundOp,
         /// The threshold, as written.
@@ -4650,7 +4650,7 @@ pub enum ProbabilisticBody {
     /// `mean of (fraction) op threshold`.
     MeanOfFraction {
         /// The fraction.
-        fraction: FractionForm,
+        fraction: Box<FractionForm>,
         /// The comparison.
         op: BoundOp,
         /// The threshold.

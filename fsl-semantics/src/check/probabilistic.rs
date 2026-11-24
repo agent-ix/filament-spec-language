@@ -935,15 +935,13 @@ fn claim(form: &ProbabilisticForm) -> Vec<ProbabilisticCause> {
         | ProbabilisticBody::LongRunFraction { threshold, .. } => Some(threshold),
         ProbabilisticBody::ExpectedUntil { .. } => None,
     };
-    if let ProbabilisticBody::Quantile {
-        measure: MeasureForm::Fraction(fraction),
-        ..
-    } = &form.body
-    {
-        causes.push(ProbabilisticCause::QuantileOverFraction {
-            claim: claim.clone(),
-            span: fraction.span,
-        });
+    if let ProbabilisticBody::Quantile { measure, .. } = &form.body {
+        if let MeasureForm::Fraction(fraction) = measure.as_ref() {
+            causes.push(ProbabilisticCause::QuantileOverFraction {
+                claim: claim.clone(),
+                span: fraction.span,
+            });
+        }
     }
     let theta = theta.filter(|theta| qualitative(theta, &mut causes));
     confidence(form, theta, &mut causes);

@@ -350,7 +350,7 @@ fn the_adr_024_claims_build_their_probabilistic_forms() {
         reward,
         window,
         span,
-    } = measure
+    } = measure.as_ref()
     else {
         panic!("an accumulate measure: {measure:?}");
     };
@@ -502,12 +502,13 @@ fn mean_expected_steps_and_elapsed_build_their_bodies() {
 
     let (_, body) = body_of("quantile 0.5 of (steps from holds(A) until holds(B) within 10) <= 5");
     let ProbabilisticBody::Quantile {
-        measure: MeasureForm::Steps { window, .. },
-        threshold,
-        ..
+        measure, threshold, ..
     } = body
     else {
         panic!("a quantile over steps: {body:?}");
+    };
+    let MeasureForm::Steps { window, .. } = *measure else {
+        panic!("a steps measure: {measure:?}");
     };
     assert!(matches!(window.within, HorizonForm::Steps(steps) if steps.value == 10));
     assert!(matches!(
@@ -517,12 +518,11 @@ fn mean_expected_steps_and_elapsed_build_their_bodies() {
 
     let (_, body) =
         body_of("quantile 0.5 of (elapsed from holds(A) until holds(B) within 10 ms) <= 5 ms");
-    let ProbabilisticBody::Quantile {
-        measure: MeasureForm::Elapsed { window, .. },
-        ..
-    } = body
-    else {
+    let ProbabilisticBody::Quantile { measure, .. } = body else {
         panic!("a quantile over elapsed: {body:?}");
+    };
+    let MeasureForm::Elapsed { window, .. } = *measure else {
+        panic!("an elapsed measure: {measure:?}");
     };
     let HorizonForm::Quantity(horizon) = window.within else {
         panic!("a quantity horizon: {:?}", window.within);
