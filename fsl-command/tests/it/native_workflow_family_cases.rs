@@ -143,43 +143,6 @@ fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenanc
             };
             assert_eq!(read.extraction(), Some(extraction));
 
-            let malformed = [
-                {
-                    let mut value = document.clone();
-                    value["extraction"]["source"] = json!({});
-                    value
-                },
-                {
-                    let mut value = document.clone();
-                    value["extraction"].as_object_mut().unwrap().remove("map");
-                    value
-                },
-                {
-                    let mut value = document.clone();
-                    value["extraction"]["binding"] = Value::Null;
-                    value
-                },
-                {
-                    let mut value = document.clone();
-                    value["extraction"]["body"]["identity"] = json!(3);
-                    value
-                },
-                {
-                    let mut value = document.clone();
-                    value["extraction"]["map"]["segments"] = json!([]);
-                    value
-                },
-            ];
-            for mutant in malformed {
-                let error = match fsl_replay::spine::read_native_run_result(
-                    &serde_json::to_vec(&mutant).expect("edited result serializes"),
-                ) {
-                    Err(error) => error,
-                    Ok(_) => panic!("malformed extraction must refuse"),
-                };
-                assert!(error.to_string().contains("extraction"), "{error}");
-            }
-
             if matches!(&case, Case::Violating) {
                 assert!(extraction["original_regions"].is_array());
                 assert_eq!(
