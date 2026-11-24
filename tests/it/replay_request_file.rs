@@ -103,7 +103,7 @@ const LIBRARY: &str = "test/plant";
 const PROGRAM: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.value.complete/v1\";\n\
      import \"test/plant\" as P;\n\
-     function entry using v(): Boolean pure { P::flag() }\n";
+     function entry using v(): Boolean pure { true }\n";
 /// A program over the same library whose function settles without calling it.
 const OWN_VALUE: &str = "language \"ix:native\" edition \"1-draft\";\n\
      profile v = \"filament.value.complete/v1\";\n\
@@ -165,27 +165,16 @@ impl Fixture {
         }
     }
 
-    /// The function call site of `entry`, derived from the same library bytes
-    /// and dependency clock recorded in the compiled package.
+    /// The function call site of `entry`, derived without clock selections;
+    /// the selected library clause does not affect this declaration key.
     fn site(&self) -> fsl_replay::CallSite<fsl_replay::FunctionSite> {
         let dependencies = DependencyInput::new([SuppliedLibrary {
             identity: LIBRARY.to_owned(),
             source: SourceIdentity::new(AUTHORITY, LIBRARY_ID),
             path: "plant.native".to_owned(),
-            bytes: self.library.as_bytes().to_vec(),
+            bytes: LIBRARY_HEAD.as_bytes().to_vec(),
         }])
         .unwrap();
-        let clocks = fsl_replay::RequestClocks::for_replay(
-            (AUTHORITY.to_owned(), PROGRAM_ID.to_owned()),
-            BTreeMap::new(),
-            BTreeMap::from([(
-                "lib-ms".to_owned(),
-                filament_contract_model::ClockConfiguration::TimestampedEvent {
-                    timestamp_unit: "ms".into(),
-                },
-            )]),
-        )
-        .expect("the package's dependency clock is valid");
         call_site(
             SourceIdentity::new(AUTHORITY, PROGRAM_ID),
             fsl_replay::CallSiteUnit::new(
@@ -195,7 +184,7 @@ impl Fixture {
             ),
             std::iter::empty::<&[u8]>(),
             &dependencies,
-            &clocks,
+            &fsl_replay::RequestClocks::default(),
             &entry(),
         )
         .expect("the program's call site resolves")
