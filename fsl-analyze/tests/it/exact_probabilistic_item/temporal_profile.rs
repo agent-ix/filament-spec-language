@@ -57,22 +57,23 @@ fn bounded_nested_eventually_always_uses_the_literal_horizon_110() {
 #[test]
 fn bounded_open_upper_event_interval_is_refused_as_an_expression_form() {
     let claim = "probabilistic OpenUpper using ev on M over (n: M::Node) under every scheduler on origin { probability >= 0.99 [ eventually[2, *] holds(n.healthy) ] }";
-    let world = World::new(&prob_world::health(
+    let refusals = match World::try_new(&prob_world::health(
         "self.healthy = true",
         "true: 1",
         false,
         claim,
+    )) {
+        Err(refusals) => refusals,
+        Ok(_) => panic!("an open upper interval is refused before EN-5"),
+    };
+    assert_eq!(refusals.len(), 1, "one temporal profile refusal");
+    let refusal = &refusals[0];
+    assert!(matches!(
+        &*refusal.cause,
+        fsl_semantics::check::CheckCause::Temporal(cause)
+            if matches!(cause.as_ref(), fsl_semantics::check::TemporalCause::OpenInterval { .. })
     ));
-    let record = settle(&world, "OpenUpper", ModelCheckLimits::default());
-    let terminal = record.terminal().expect("the unsupported form settles");
-    assert!(matches!(terminal.value(), TerminalValue::Unsupported(_)));
-    assert_eq!(
-        terminal
-            .diagnostic()
-            .map(|code| code.to_string())
-            .as_deref(),
-        Some("unsupported_construct/expression-form")
-    );
+    assert_eq!(refusal.cause.cause(), Some("expression-form"));
 }
 
 fn bounded_always_world() -> World {
