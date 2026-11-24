@@ -47,8 +47,9 @@ use filament_exact::{
     IeeeFlags, IeeeOperation, IeeeValue, IeeeWidth,
 };
 use filament_exact::{
-    compare_keys, form, form_grouped, retain_composite, CollectionValue, CompositeValue,
-    FieldValue, ObjectReference, OptionValue, Quantity, UnionValue, Value, ValueType,
+    compare_keys, form, form_grouped, retain_composite, ClockPlaceReference, CollectionValue,
+    CompositeValue, FieldValue, ObjectReference, OptionValue, Quantity, UnionValue, Value,
+    ValueType,
 };
 use filament_exact::{
     evaluate_boolean, evaluate_integer_arithmetic, evaluate_rational_arithmetic, order_numbers,
@@ -1312,15 +1313,14 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         origins: &ReferenceOrigins,
         place: &NodeKey,
         selectors: Vec<Value>,
-    ) -> Result<ObjectReference, Halt> {
+    ) -> Result<ClockPlaceReference, Halt> {
         use fsl_semantics::model::clock_reference::identity::{
             Decimal, PathEntry, PlaceIdentity, SlotIndex,
         };
-        use fsl_semantics::model::clock_reference::{encode_identity, is_declared_identity};
-        let ValueType::Reference(clock_type) = node.value_type() else {
-            return Err(invariant("place-reference-result-type-expected"));
-        };
-        if !fsl_semantics::model::clock_reference::is_clock_type(clock_type) {
+        use fsl_semantics::model::clock_reference::is_declared_identity;
+        // FSL FR-230-AC-71 gives `Reference<Clock>` its dedicated kernel type.
+        // It is not an object reference to the native Clock declaration.
+        if !matches!(node.value_type(), ValueType::ClockReference) {
             return Err(invariant("place-reference-result-type-expected"));
         }
         let unavailable = || unavailable_clock_origin(origins);
@@ -1386,12 +1386,13 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         ) {
             return Err(Stop::Undefined(Undefined::NoElement).into());
         }
-        encode_identity(
-            owner,
-            &identity,
-            quire_canonical::Limits::new(fsl_foundation::IdentityLimits::default().input_bytes),
-        )
-        .map_err(clock_identity_halt)
+        let text = identity
+            .encode(quire_canonical::Limits::new(
+                fsl_foundation::IdentityLimits::default().input_bytes,
+            ))
+            .map_err(clock_identity_halt)?;
+        ClockPlaceReference::new(owner.universe().clone(), &text)
+            .map_err(|_| invariant("checked-clock-place-identity-is-canonical"))
     }
 
     /// FR-1000: evaluate against the reference literals admitted with the
@@ -3988,7 +3989,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                 let origins = origins
                     .first()
                     .ok_or_else(|| invariant("place-reference-owner-origin-slot"))?;
-                Value::Reference(self.clock_place_reference(
+                Value::ClockReference(self.clock_place_reference(
                     node,
                     &owner,
                     origins,
@@ -7321,9 +7322,9 @@ mod tests {
         assert_eq!(decisions.iter().flatten().count(), 1, "{decisions:?}");
         assert!(decisions.contains(&Some(true)));
     }
-    /// FR-265: whether a connective records a decision is read from its
-    /// origin, not from where it sits. Every node of this body has one
-    /// location, so an authored connective shares its left operand's.
+    /// Whether a connective records a decision is read from its origin, not
+    /// from where it sits. Every node of this body has one location, so an
+    /// authored connective shares its left operand's.
     #[trace("TC-1091", "FR-397-AC-12")]
     #[test]
     fn a_connective_records_a_decision_by_its_origin_not_its_location() {

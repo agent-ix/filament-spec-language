@@ -21,10 +21,12 @@ use filament_exact::ValueType;
 use super::domain::Odometer;
 use super::walk::{exhausted, stop};
 use super::{
-    encode, identity_limits, state_document, ClauseOutcome, ModelSimState, ModelSystem, BROKEN,
+    encode, identity_limits, state_document, BoundedDomain, ClauseOutcome, ModelSimState,
+    ModelSystem, BROKEN,
 };
 use crate::simulation::expansion::{ExpansionLimit, ExpansionStop};
 use crate::simulation::key;
+use crate::simulation::subject::InitialStateRefusal;
 use crate::temporal::UndefinedCause;
 
 /// What one row evaluation gave (ADR-020 RE-4, RE-5).
@@ -70,7 +72,288 @@ impl ModelSystem<'_> {
 
     /// The initial states, in the order the system was given them.
     pub fn initial_states(&self) -> &[ModelSimState] {
-        &self.initial
+        self.initial_all
+            .get_or_init(|| self.generated_initial().collect())
+    }
+
+    /// The initial states, generated one at a time from the documents' states
+    /// and the clock-count and presence-bit ranges, in the order
+    /// [`Self::initial_states`] lists them. No state past the last one pulled is
+    /// cloned or built, so an exponential set is never held.
+    pub fn generated_initial(&self) -> Box<dyn Iterator<Item = ModelSimState> + '_> {
+        super::generated(&self.initial_base, &self.initial_stages)
+    }
+
+    /// Admit model initial-state recipes without materializing a generated
+    /// `ModelSimState` delivered past the distinct-root budget.
+    pub(crate) fn generated_initial_for_check<'s>(
+        &'s self,
+        max_states: usize,
+        symmetry: Option<&'s crate::simulation::SymmetryGroup>,
+    ) -> Box<dyn Iterator<Item = Result<ModelSimState, InitialStateRefusal>> + 's> {
+        struct Factor {
+            stage: usize,
+            population: DeclarationKey,
+            object: String,
+            cardinality: u128,
+        }
+        struct Plan {
+            base_index: usize,
+            factors: Vec<Factor>,
+            strides: Vec<u128>,
+            combinations: u128,
+        }
+
+        let limits = identity_limits();
+        let prepare = |base_index: usize| -> Result<Option<Plan>, InitialStateRefusal> {
+            let base = &self.initial_base[base_index];
+            let mut factors = Vec::new();
+            let mut combinations = 1_u128;
+            for (stage_index, stage) in self.initial_stages.iter().enumerate() {
+                let holders: Vec<_> = base
+                    .state
+                    .populations
+                    .iter()
+                    .flat_map(|(population, objects)| {
+                        objects
+                            .iter()
+                            .filter(|(_, object)| object.type_identity == stage.type_key)
+                            .map(move |(key, _)| (population.clone(), key.clone()))
+                    })
+                    .collect();
+                if holders.is_empty() {
+                    continue;
+                }
+                let cardinality = stage.values.len();
+                if cardinality == 0 {
+                    combinations = 0;
+                    continue;
+                }
+                for (population, object) in holders {
+                    factors.push(Factor {
+                        stage: stage_index,
+                        population,
+                        object,
+                        cardinality,
+                    });
+                    combinations = combinations.saturating_mul(cardinality);
+                }
+            }
+            if combinations > 0 {
+                let mut strides = vec![1_u128; factors.len()];
+                for index in (0..factors.len().saturating_sub(1)).rev() {
+                    strides[index] =
+                        strides[index + 1].saturating_mul(factors[index + 1].cardinality);
+                }
+                Ok(Some(Plan {
+                    base_index,
+                    factors,
+                    strides,
+                    combinations,
+                }))
+            } else {
+                Ok(None)
+            }
+        };
+        let mut base_index = 0;
+        let mut current: Option<(Plan, u128)> = None;
+        let mut admitted = std::collections::BTreeSet::<Vec<u8>>::new();
+        let mut done = false;
+        Box::new(std::iter::from_fn(move || {
+            if done {
+                return None;
+            }
+            loop {
+                let exhausted = current
+                    .as_ref()
+                    .is_some_and(|(plan, next)| *next >= plan.combinations);
+                if current.is_none() || exhausted {
+                    current = None;
+                    loop {
+                        if base_index >= self.initial_base.len() {
+                            return None;
+                        }
+                        let plan_index = base_index;
+                        base_index += 1;
+                        match prepare(plan_index) {
+                            Ok(Some(plan)) => {
+                                current = Some((plan, 0));
+                                break;
+                            }
+                            Ok(None) => continue,
+                            Err(refusal) => {
+                                done = true;
+                                return Some(Err(refusal));
+                            }
+                        }
+                    }
+                }
+                let (plan, index) = current.as_mut().expect("plan was initialized");
+                let mut values = Vec::with_capacity(plan.factors.len());
+                for (factor, stride) in plan.factors.iter().zip(&plan.strides) {
+                    let digit = (*index / stride) % factor.cardinality;
+                    let stage = &self.initial_stages[factor.stage];
+                    let value = stage
+                        .values
+                        .nth(digit)
+                        .expect("recipe digit is within its initial stage");
+                    values.push(value.clone());
+                }
+                *index += 1;
+                let base = &self.initial_base[plan.base_index];
+                let mut overrides = encode::InitialOverrides::new();
+                for (factor, value) in plan.factors.iter().zip(&values) {
+                    if let Some(object) = base
+                        .state
+                        .populations
+                        .get(&factor.population)
+                        .and_then(|objects| objects.get(&factor.object))
+                    {
+                        overrides
+                            .entry(object as *const _ as usize)
+                            .or_default()
+                            .insert(
+                                self.initial_stages[factor.stage].field.clone(),
+                                value.clone(),
+                            );
+                    }
+                }
+                let permutation = if let Some(group) = symmetry.filter(|group| !group.is_trivial())
+                {
+                    let limits = quire_canonical::Limits::new(identity_limits().input_bytes);
+                    let mut placeholders = Vec::new();
+                    for class in &group.classes {
+                        let text = match encode::declaration_text(&class.population, limits) {
+                            Ok(text) => text,
+                            Err(_) => {
+                                done = true;
+                                return Some(Err(InitialStateRefusal::Expansion(stop(BROKEN))));
+                            }
+                        };
+                        placeholders.push((
+                            self.universes_of(&class.population),
+                            &class.population,
+                            &class.keys,
+                            encode::Enc::Object(vec![
+                                ("type", encode::Enc::text("symmetric")),
+                                ("population", encode::Enc::text(text)),
+                            ]),
+                        ));
+                    }
+                    let placeholder = |reference: &ObjectReference| {
+                        placeholders
+                            .iter()
+                            .find(|(universes, _, keys, _)| {
+                                universes.contains(reference.universe())
+                                    && keys.iter().any(|key| key == reference.object().as_str())
+                            })
+                            .map(|(_, _, _, enc)| enc.clone())
+                    };
+                    let mut permutation = crate::simulation::Permutation::identity();
+                    for class in &group.classes {
+                        let objects = base.state.populations.get(&class.population);
+                        let mut sorted = Vec::with_capacity(class.keys.len());
+                        for key in &class.keys {
+                            let Some(original) = objects.and_then(|objects| objects.get(key))
+                            else {
+                                sorted.push((Vec::new(), key));
+                                continue;
+                            };
+                            let bytes = match quire_canonical::to_vec(
+                                &encode::initial_object_enc(
+                                    &self.model,
+                                    original,
+                                    self.typing(),
+                                    &placeholder,
+                                    &overrides,
+                                    &Vec::new(),
+                                ),
+                                limits,
+                            ) {
+                                Ok(bytes) => bytes,
+                                Err(_) => {
+                                    done = true;
+                                    return Some(Err(InitialStateRefusal::Expansion(stop(BROKEN))));
+                                }
+                            };
+                            sorted.push((bytes, key));
+                        }
+                        sorted.sort_by(|left, right| left.0.cmp(&right.0));
+                        permutation.insert(
+                            &class.population,
+                            sorted
+                                .into_iter()
+                                .zip(&class.keys)
+                                .map(|((_, from), to)| (from.clone(), to.clone())),
+                        );
+                    }
+                    permutation
+                } else {
+                    crate::simulation::Permutation::identity()
+                };
+                let renaming: encode::InitialRenaming = permutation
+                    .maps()
+                    .iter()
+                    .map(|(population, mapping)| (self.universes_of(population), mapping.clone()))
+                    .collect();
+                let projected_key = key::state_key(
+                    &encode::initial_model_key(
+                        &self.model,
+                        &base.state,
+                        self.typing(),
+                        &overrides,
+                        &renaming,
+                    ),
+                    limits,
+                )
+                .map(|(bytes, _)| bytes)
+                .map_err(InitialStateRefusal::Encoding);
+                let key = match projected_key {
+                    Ok(key) => key,
+                    Err(refusal) => {
+                        done = true;
+                        return Some(Err(refusal));
+                    }
+                };
+                if !admitted.contains(&key) {
+                    if admitted.len() >= max_states {
+                        done = true;
+                        return Some(Err(InitialStateRefusal::OverBudget(max_states)));
+                    }
+                    admitted.insert(key.clone());
+                }
+                let mut state = base.state.clone();
+                for (factor, value) in plan.factors.iter().zip(values) {
+                    if let Some(object) = state
+                        .populations
+                        .get_mut(&factor.population)
+                        .and_then(|objects| objects.get_mut(&factor.object))
+                    {
+                        object
+                            .fields
+                            .insert(self.initial_stages[factor.stage].field.clone(), value);
+                    }
+                }
+                let generated = base.without_effect(state);
+                if cfg!(debug_assertions) {
+                    let comparison = match symmetry.filter(|group| !group.is_trivial()) {
+                        Some(group) => self
+                            .canonicalise(&generated, group)
+                            .ok()
+                            .and_then(|(canonical, _)| self.state_key(&canonical).ok())
+                            .map(|(bytes, _)| bytes),
+                        _ => self.state_key(&generated).ok().map(|(bytes, _)| bytes),
+                    };
+                    debug_assert_eq!(
+                        comparison.as_ref(),
+                        Some(&key),
+                        "recipe projection key agrees"
+                    );
+                }
+                super::count_generated_initial_state();
+                return Some(Ok(generated));
+            }
+        }))
     }
 
     /// Evaluate `row` over `observed`, with `bindings` for
@@ -217,15 +500,25 @@ impl ModelSystem<'_> {
         value_type: &ValueType,
         objects: &[ObjectReference],
     ) -> Result<Vec<Value>, ExpansionStop> {
+        Ok(self.bounded_domain(value_type, objects)?.iter().collect())
+    }
+
+    pub(in crate::simulation) fn bounded_domain(
+        &self,
+        value_type: &ValueType,
+        objects: &[ObjectReference],
+    ) -> Result<BoundedDomain, ExpansionStop> {
         let domain = self
             .domain_with_clocks(value_type, objects)
             .ok_or_else(|| exhausted(ExpansionLimit::MaxCandidates))?;
-        if domain.len() > u128::from(self.limits.max_candidates) {
+        let cardinality = domain.len();
+        if cardinality > u128::from(self.limits.max_candidates) {
             return Err(exhausted(ExpansionLimit::MaxCandidates));
         }
-        Ok((0..domain.len())
-            .map_while(|index| domain.nth(index))
-            .collect())
+        Ok(BoundedDomain {
+            domain,
+            cardinality,
+        })
     }
 
     /// FR-101's canonical key of `state`, for a state built outside this system's expansion
@@ -320,10 +613,12 @@ impl<'a> ModelSystem<'a> {
             ),
         >,
     ) -> Self {
-        self.initial = states
+        self.initial_base = states
             .into_iter()
             .map(|(state, anchor)| ModelSimState::anchored(state, anchor))
             .collect();
+        self.initial_stages.clear();
+        self.initial_all = std::sync::OnceLock::new();
         self
     }
 }

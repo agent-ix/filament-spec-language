@@ -133,9 +133,9 @@ use fsl_package::{ModelIdentity, ObligationIdentity};
 
 pub use admitted::{
     compile_admitted, compile_admitted_with_temporal_selections, AdmittedCompilation,
-    AdmittedComposite, AdmittedCompositeForm, AdmittedContext, AdmittedDimension, AdmittedEnum,
-    AdmittedEnumCase, AdmittedLookupRefusal, AdmittedRefusal, AdmittedResource,
-    AdmittedUnionMember, AdmittedUnit,
+    AdmittedComposite, AdmittedCompositeForm, AdmittedContext, AdmittedDimension,
+    AdmittedDimensionEquivalence, AdmittedEnum, AdmittedEnumCase, AdmittedLookupRefusal,
+    AdmittedRefusal, AdmittedResource, AdmittedUnionMember, AdmittedUnit,
 };
 pub use application::{
     acquire_checked_closure, acquire_checked_closure_with_integer_division,
@@ -149,7 +149,9 @@ pub use bounds::{BoundExceeded, ReplayLimits, DEFAULT_REPLAY_INPUT_BYTES};
 pub use build_inventory::{
     build_inventory, Advertisement, Application, BuildInventory, Consumer, Family, Profile,
 };
-pub use call_replay_context::{run_with_replay_context, CallReplayContext, RunWithReplayContext};
+pub use call_replay_context::{
+    run_with_replay_context, CallReplayContext, PackageId, RunWithReplayContext,
+};
 pub use call_requirements::{
     call_requirements_for, run_with_requirements, run_with_requirements_reading,
     run_with_requirements_reading_and_profile_catalog,
@@ -194,7 +196,8 @@ pub use certificate::simulation::{
     UndeterminedStep,
 };
 pub use certificate::smt::{
-    check_refinement_smt_proof, ProofFormat, RefinementSmtCertificate, RefutedQuery, SmtProofCheck,
+    check_refinement_smt_proof, check_smt_proof, ProofFormat, RefinementSmtCertificate,
+    RefutedQuery, SmtProofBasis, SmtProofCertificate, SmtProofCheck, SmtProofOutcome,
 };
 pub use certificate::state_graph::{
     check_state_graph, StateGraphCertificate, StateGraphCertificateRequest,
@@ -287,7 +290,7 @@ pub use identity::{
     DeclaredDomain, DefinitionSourceRef, EmptyQualifiedName, ProfileSelection, QualifiedName,
     TracePosition,
 };
-pub use limits::{AccountingLimits, CallerLimits, EngineLimits, RenderLimits};
+pub use limits::{AccountingLimits, CallerLimits, EngineLimits, RenderLimits, WorkerCounts};
 pub use model_check::counterexample::{
     undefined_finding, ClaimPredicate, ClauseRunCounterexample, ClosureStutter, CounterexampleKind,
     Lasso, LoopProofCounterexample, LoopProofFailure, LoopProofObligation, MappingSite,
@@ -330,6 +333,13 @@ pub use model_check::hyper_smt_outcome::{HyperSmtOutcome, HyperSmtResult, SmtMet
 pub use model_check::hyper_smt_query::{
     encode_hyper_query, HyperProductIdentity, HyperQuery, HyperQueryRequest,
 };
+/// The SMT replay API for HP-2 products, kept together as the replay module's
+/// narrow downstream surface (FR-315).
+pub mod replay {
+    pub use crate::{
+        encode_hyper_query, HyperProductIdentity, HyperQuery, HyperQueryRequest, SubjectIdentity,
+    };
+}
 pub use model_check::identity::{
     node_occurrence, ClauseIdentity, ClauseRootRefusal, HyperIdentity, StateGraphIdentity,
 };
@@ -372,12 +382,13 @@ pub use model_check::replay::{
 };
 pub use model_check::settle::{
     settle_model_check, settle_model_check_over_stutter_closure, settle_protocol_check,
-    CertificateChecker, Execution, ModelCheckRecord, RecordWarning, ResultLabel, Truth,
-    EXPLICIT_STATE, K_INDUCTION,
+    settle_smt_proof, CertificateChecker, Execution, ModelCheckRecord, RecordWarning, ResultLabel,
+    Truth, EXPLICIT_STATE, K_INDUCTION,
 };
 pub use model_check::smt_query::{
     encode_smt_query, Refusal, SmtEncodingLimits, SmtEncodingRefusal, SmtQueryKind,
 };
+pub use fsl_eval::smt::SmtRunLimits;
 pub use model_check::state_graph::{
     GraphEvidence, GraphEvidenceEnvelope, GraphUndefined, GraphWitness, LassoWitness, ModelLasso,
     ModelPath, OpenCause, RunEnd, StateGraphInstanceOutcome, StateGraphOutcome,
@@ -408,12 +419,15 @@ pub use refinement_query::{
 };
 
 pub use refinement::{
-    abstract_classes, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
+    abstract_classes, candidate_edge_target_ordinal, candidate_stutter_target_ordinal,
+    candidate_lasso_has_fair_run,
+    candidate_lasso_has_fair_run_with_recurring_edge, check_initial, check_protocol_initial,
     check_protocol_state_relations, check_protocol_step, check_step, initial_history, map_state,
-    open_protocol_systems, open_systems, protocol_observation_label, protocol_transition_class,
+    open_protocol_systems, open_protocol_systems_with_initial_limit, open_systems,
+    open_systems_with_initial_limit, protocol_observation_label, protocol_transition_class,
     step_history, step_view_over, AbstractClass, AbstractInitial, AbstractProtocolSystem,
     AssumptionIdentity, AssumptionOrigin, AssumptionSelectedMember, AssumptionSide,
-    AssumptionTarget, CandidateFairHop, CandidateFairState, CandidateFairStep,
+    AssumptionTarget, CandidateFairHop, CandidateFairState, CandidateFairStep, CandidateStep,
     CandidateLivenessError, ConcreteStep, EvalFailure, FieldMapping, HiddenSlot, HistoryValues,
     LivenessHalf, MappedState, MappingExpression, MappingFailure, MappingRowRef, MappingTarget,
     MappingUndetermined, ObjectKey, ObjectMapping, ObservationField, ObservationLabel,
@@ -494,21 +508,21 @@ pub use probability_certificate::{
     ActivationPhase, ClaimBinding, DigitalClockKey, DigitalDeadlineKey, DigitalProductKeyInput,
     CertificateRole, DigitalTail, ExactProbabilityAcceptance, ExactProbabilityCertificate,
     ExactProbabilityCertificateCheck, ExactProbabilityGraphError, ExactProbabilityValue,
-    LongRunOptimization, LongRunPolicyRow, LongRunProbabilityComponent, LongRunProbabilityDocument,
-    MeasurePayoffKind, MeasureProbabilityDocument, OnEachOutcome, ProbabilisticCounterexample,
-    ProbabilisticSchedulerChoice, ProbabilityBoundSide, ProbabilityCertificateDocument,
-    ProbabilityCertificateLocus, ProbabilityCertificatePart, ProbabilityCertificateRejection,
-    ProbabilityCertificateRule, ProbabilityDocumentError, ProbabilityDocumentIoLimits,
-    ProbabilityDocumentLimit, ProbabilityDocumentLimits, ProbabilityKeyAdmission,
-    ProbabilityObjective, ProbabilityPackageRequest, ProbabilityProductKey,
-    ProbabilityProofDocument, ProbabilityRewardObjective, ProbabilitySourceError,
-    ProbabilitySourceLimits, ProbabilitySourceRequest, ProbabilityStateEvent,
-    ProbabilitySubsystemCertificate, ProbabilityUndefinedWitness, ProbabilityVacuityAcceptance,
-    ProbabilityWitnessError, ProbabilityWitnessPath, ProbabilityWitnessReplay,
-    ProbabilityWitnessStep, RegionClockKey, RegionDeadlineKey, RegionKeyKind,
-    RegionProductKeyInput, ReproducedProbabilityWitness, SubsystemBoundKind, TimedProbabilityForm,
-    TimedProbabilityObjective, TimedProbabilityRoute, WeightedLongRunProbabilityDocument,
-    WorkloadFreeDelayRefusal,
+    LongRunOptimization, LongRunPolicyChoice, LongRunPolicyRow, LongRunProbabilityComponent,
+    LongRunProbabilityDocument, MeasurePayoffKind, MeasureProbabilityDocument, OnEachOutcome,
+    ProbabilisticCounterexample, ProbabilisticSchedulerChoice, ProbabilityBoundSide,
+    ProbabilityCertificateDocument, ProbabilityCertificateLocus, ProbabilityCertificatePart,
+    ProbabilityCertificateRejection, ProbabilityCertificateRule, ProbabilityDocumentError,
+    ProbabilityDocumentIoLimits, ProbabilityDocumentLimit, ProbabilityDocumentLimits,
+    ProbabilityKeyAdmission, ProbabilityObjective, ProbabilityPackageRequest,
+    ProbabilityProductKey, ProbabilityProofDocument, ProbabilityRewardObjective,
+    ProbabilitySourceError, ProbabilitySourceLimits, ProbabilitySourceRequest,
+    ProbabilityStateEvent, ProbabilitySubsystemCertificate, ProbabilityUndefinedWitness,
+    ProbabilityVacuityAcceptance, ProbabilityWitnessError, ProbabilityWitnessPath,
+    ProbabilityWitnessReplay, ProbabilityWitnessStep, RegionClockKey, RegionDeadlineKey,
+    RegionKeyKind, RegionProductKeyInput, ReproducedProbabilityWitness, SubsystemBoundKind,
+    TimedProbabilityForm, TimedProbabilityObjective, TimedProbabilityRoute,
+    WeightedLongRunProbabilityDocument, WorkloadFreeDelayRefusal,
 };
 #[cfg(feature = "test-support")]
 pub use probability_certificate::{
@@ -563,7 +577,9 @@ pub use fsl_foundation::source::provenance::{OccurrenceKey, SourceRegion};
 // T-12-governed constructor (ADR-011 §3 FB-05), so no rule is broken; CG
 // needs exactly these to build the requests `call_site` and `replay`
 // (FR-098) and `replay_frame` (FR-116) read.
-pub use filament_exact::{Identifier, NodeKey, Origin, Role, ScalarLimits, Value};
+pub use filament_eval::ExecutionBackendChoice;
+pub use filament_exact::{Identifier, NodeKey, Origin, PathSegment, Role, ScalarLimits, Value};
+pub use filament_semantic_value::supplied_stop::SuppliedLimits;
 pub use fsl_foundation::SourceIdentity;
 // FR-395: the types of `run`'s signature and result that the root did not
 // export, so a consumer calls `run_with_requirements` and reads its result

@@ -11,12 +11,14 @@ pub(super) fn document() -> &'static [u8] {
 }
 
 fn relation_unit() -> String {
-    String::from("language \"ix:native\" edition \"1-draft\";\n\
+    String::from(
+        "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.model.complete/v1\";\n\
          profile t = \"filament.temporal.infinite-trace/v1\";\n\
          model Config = \"example/config-version\";\n\
          relation Det using t over (x: Config::ConfigVersion::attemptUpdate, y: Config::ConfigVersion::attemptUpdate) \
-         { x.result = y.result and pre(x.self.versionNumber) = pre(y.self.versionNumber) implies x.self.versionNumber = y.self.versionNumber }\n")
+         { x.result = y.result and pre(x.self.versionNumber) = pre(y.self.versionNumber) implies x.self.versionNumber = y.self.versionNumber }\n",
+    )
 }
 
 pub(super) fn checked_graph() -> fsl_semantics::check::CheckedGraph {

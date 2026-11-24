@@ -169,11 +169,11 @@ fn fast_avail2_witness(world: &World) -> ProbabilisticCounterexample {
     let mut policy = vec![
         fsl_replay::LongRunPolicyRow {
             state: up.clone(),
-            choice: tick.clone(),
+            choice: fsl_replay::LongRunPolicyChoice::Deterministic(tick.clone()),
         },
         fsl_replay::LongRunPolicyRow {
             state: down.clone(),
-            choice: fast.clone(),
+            choice: fsl_replay::LongRunPolicyChoice::Deterministic(fast.clone()),
         },
     ];
     policy.sort_by(|a, b| a.state.cmp(&b.state));
@@ -1269,11 +1269,15 @@ fn scheduled_long_run(
                     let mut rows = vec![
                         fsl_replay::LongRunPolicyRow {
                             state: down.clone(),
-                            choice: call(world, true),
+                            choice: fsl_replay::LongRunPolicyChoice::Deterministic(call(
+                                world, true,
+                            )),
                         },
                         fsl_replay::LongRunPolicyRow {
                             state: up.clone(),
-                            choice: call_staying_up(world),
+                            choice: fsl_replay::LongRunPolicyChoice::Deterministic(
+                                call_staying_up(world),
+                            ),
                         },
                     ];
                     rows.sort_by(|a, b| a.state.cmp(&b.state));
@@ -1290,7 +1294,7 @@ fn scheduled_long_run(
                 bias: vec![row(&down, rational(0))],
                 policy: Some(vec![fsl_replay::LongRunPolicyRow {
                     state: down.clone(),
-                    choice: call(world, false),
+                    choice: fsl_replay::LongRunPolicyChoice::Deterministic(call(world, false)),
                 }]),
             },
         )
@@ -1538,7 +1542,7 @@ fn failing_witness(world: &World, name: &str) -> ProbabilisticCounterexample {
             bias: vec![row(&down_key)],
             policy: Some(vec![fsl_replay::LongRunPolicyRow {
                 state: down_key.clone(),
-                choice: fail_at_down.clone(),
+                choice: fsl_replay::LongRunPolicyChoice::Deterministic(fail_at_down.clone()),
             }]),
         }],
         limits(),

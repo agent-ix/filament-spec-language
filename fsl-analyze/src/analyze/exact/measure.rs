@@ -855,7 +855,9 @@ fn induction_failure(error: QualifiedFhError, cancel: &Cancel) -> ProbabilityDoc
             | FhError::MissingAction
             | FhError::InvalidProbability
             | FhError::InvalidPrecision
-            | FhError::PolicyIterationLimit => ProbabilityDocumentError::Malformed,
+            | FhError::PolicyIterationLimit
+            | FhError::MaxWorkingBytes
+            | FhError::Cancelled(_) => ProbabilityDocumentError::Malformed,
         },
     }
 }

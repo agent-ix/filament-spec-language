@@ -696,8 +696,7 @@ fn value_type(joins: &impl TypeKeys, value: &ValueType) -> Result<Json, Bad> {
         ValueType::Timestamp => simple("timestamp"),
         ValueType::Bytes => simple("bytes"),
         ValueType::JsonObject => simple("json_object"),
-        // The equality file has no clock-place reference form yet (QSL-3001).
-        ValueType::ClockReference => malformed("a clock-place reference type (QSL-3001)"),
+        ValueType::ClockReference => simple("clock_reference"),
         ValueType::Int(range) => {
             let Json::Object(mut members) = interval(range) else {
                 return malformed("an interval");
@@ -926,6 +925,7 @@ const VALUE_TYPES: &[(&str, &[&str])] = &[
     ("string", &[]),
     ("uuid", &[]),
     ("timestamp", &[]),
+    ("clock_reference", &[]),
     ("int", &["lower", "upper"]),
     ("rational", &["numerator", "denominator"]),
     (
@@ -959,6 +959,7 @@ fn value_type_from(joins: &impl TypeKeys, json: &Json) -> Result<ValueType, Bad>
         "string" => ValueType::String,
         "uuid" => ValueType::Uuid,
         "timestamp" => ValueType::Timestamp,
+        "clock_reference" => ValueType::ClockReference,
         "int" => ValueType::Int(
             IntegerInterval::new(integer(m[0])?, integer(m[1])?)
                 .or_else(|_| malformed("an empty interval"))?,
@@ -1765,16 +1766,16 @@ mod tests {
         assert_eq!(ReadEqualityRows::decode(&bytes, "p", &joins).unwrap(), rows);
     }
 
-    /// The equality file has no form for a clock-place reference type yet
-    /// (QSL-3001): writing one is a typed refusal naming it, never a wrong
-    /// kind.
+    /// FSpec FR-181's equality type form retains the ClockReference scalar.
     #[test]
-    fn a_clock_place_reference_type_is_refused_not_written() {
-        let Err(Bad::Malformed(detail)) = value_type(&OriginalKeys, &ValueType::ClockReference)
-        else {
-            panic!("a clock-place reference type has no equality-file form");
-        };
-        assert_eq!(detail, "a clock-place reference type (QSL-3001)");
+    fn a_clock_place_reference_type_roundtrips() {
+        let encoded = value_type(&OriginalKeys, &ValueType::ClockReference)
+            .expect("clock-place reference has an equality-file form");
+        assert_eq!(encoded, object(vec![("kind", text("clock_reference"))]));
+        assert_eq!(
+            value_type_from(&OriginalKeys, &encoded).expect("typed value type reads back"),
+            ValueType::ClockReference
+        );
     }
 
     fn every_value_type(keys: &BTreeMap<&str, NodeKey>) -> Vec<ValueType> {
@@ -1787,6 +1788,7 @@ mod tests {
             ValueType::String,
             ValueType::Uuid,
             ValueType::Timestamp,
+            ValueType::ClockReference,
             ValueType::Int(int(-5, 7)),
             ValueType::Rational(RationalDomain::new(int(-3, 3), int(1, 9)).unwrap()),
             ValueType::Decimal(

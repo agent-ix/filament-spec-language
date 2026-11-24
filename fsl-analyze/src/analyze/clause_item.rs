@@ -242,6 +242,7 @@ impl<'a> ClauseSubject<'a> {
                 let report = settle_model_item(
                     ModelItem {
                         request: ModelCheckRequest {
+                            workers: 1,
                             temporal_clock_selections: &subject.selections,
                             subject: subject.model_subject(),
                             item: item(),
@@ -259,6 +260,12 @@ impl<'a> ClauseSubject<'a> {
                                 .as_ref()
                                 .map(|temporal| temporal.reductions.clone())
                                 .unwrap_or_default(),
+                            smt_encoding: subject
+                                .temporal
+                                .as_ref()
+                                .and_then(|temporal| temporal.smt_encoding)
+                                .unwrap_or_default(),
+                            smt_run: Default::default(),
                         },
                         stutter_closure,
                         certificate: CertificateRequest {
@@ -917,6 +924,7 @@ impl<'a> PackageClauseSubject<'a> {
                 let report = settle_model_item(
                     ModelItem {
                         request: ModelCheckRequest {
+                            workers: 1,
                             temporal_clock_selections: &[],
                             subject: subject.model_subject(),
                             item: item(),
@@ -934,6 +942,12 @@ impl<'a> PackageClauseSubject<'a> {
                                 .as_ref()
                                 .map(|temporal| temporal.reductions.clone())
                                 .unwrap_or_default(),
+                            smt_encoding: subject
+                                .temporal
+                                .as_ref()
+                                .and_then(|temporal| temporal.smt_encoding)
+                                .unwrap_or_default(),
+                            smt_run: Default::default(),
                         },
                         stutter_closure,
                         certificate: CertificateRequest {
@@ -1331,6 +1345,7 @@ impl<'a> PackageProtocolWork<'a> {
                 let run_subject = make_subject();
                 let certificate_subject = make_subject();
                 let request = ProtocolCheckRequest {
+                    workers: 1,
                     temporal_clock_selections: &[],
                     subject: run_subject,
                     item: make_item(),

@@ -105,6 +105,7 @@ fn a_members_item_bounds_build_a_request_that_replays() {
     let wire = result
         .context()
         .request(
+            result.package_id(),
             member.request_index(),
             item.proof_bounds(),
             &plugin,

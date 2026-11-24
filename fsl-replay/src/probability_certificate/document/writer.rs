@@ -63,6 +63,7 @@ impl Reservation for Reserve<'_, '_> {
 struct Events<'a> {
     document: &'a ProbabilityCertificateDocument,
     cyclic_mdp: bool,
+    fair_mdp: bool,
     fairness: &'a [super::fairness::Record],
     text: Text<'a>,
 }
@@ -225,7 +226,9 @@ impl Encode for Events<'_> {
         writer.name("objective")?;
         writer.begin_object()?;
         writer.name("profile")?;
-        writer.string(if !self.fairness.is_empty() {
+        writer.string(if self.fair_mdp {
+            FAIR_MDP_PROFILE
+        } else if !self.fairness.is_empty() {
             BOUNDED_FAIR_PROFILE
         } else if self.document.timed.is_some() {
             TIMED_PROFILE
@@ -366,6 +369,28 @@ impl Encode for Events<'_> {
             writer.end_object()?;
         }
         writer.end_array()?;
+        if let Some(policy) = &self.document.policy {
+            writer.name("policy")?;
+            writer.begin_array()?;
+            for (index, (key, choice)) in policy.iter().enumerate() {
+                self.text.poll()?;
+                writer.begin_object()?;
+                writer.name("state")?;
+                self.text.key(key, writer, index != 0)?;
+                writer.name("choice")?;
+                let parsed = quire_canonical::read_bounded(
+                    choice,
+                    self.text.limits.bytes,
+                    self.text.limits.storage_bytes,
+                )
+                .map_err(|_| Error::ReservationDenied {
+                    requested: choice.len(),
+                })?;
+                parsed.encode_into(writer)?;
+                writer.end_object()?;
+            }
+            writer.end_array()?;
+        }
         writer.end_object()
     }
 }
@@ -384,7 +409,7 @@ pub(super) fn encode_profile(
     cancel: &Cancel,
     cyclic_mdp: bool,
 ) -> Result<Vec<u8>, ProbabilityDocumentError> {
-    encode_fair_profile(document, limits, cancel, cyclic_mdp, &[])
+    encode_fair_profile(document, limits, cancel, cyclic_mdp, false, &[])
 }
 
 pub(super) fn encode_fair_profile(
@@ -392,6 +417,7 @@ pub(super) fn encode_fair_profile(
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
     cyclic_mdp: bool,
+    fair_mdp: bool,
     fairness: &[super::fairness::Record],
 ) -> Result<Vec<u8>, ProbabilityDocumentError> {
     poll(cancel)?;
@@ -420,6 +446,7 @@ pub(super) fn encode_fair_profile(
     let events = Events {
         document,
         cyclic_mdp,
+        fair_mdp,
         fairness,
         text: Text {
             limits,
@@ -538,6 +565,7 @@ mod tests {
             let events = Events {
                 document: &document,
                 cyclic_mdp: false,
+                fair_mdp: false,
                 fairness: &[],
                 text: Text {
                     limits: ProbabilityDocumentLimits {
@@ -641,6 +669,7 @@ mod tests {
         let events = Events {
             document: &document,
             cyclic_mdp: false,
+            fair_mdp: false,
             fairness: &[],
             text: Text {
                 limits: ProbabilityDocumentLimits {
@@ -681,6 +710,7 @@ mod tests {
             let events = Events {
                 document: &document,
                 cyclic_mdp: false,
+                fair_mdp: false,
                 fairness: &[],
                 text: Text {
                     limits: ProbabilityDocumentLimits {

@@ -1,0 +1,11 @@
+language "ix:native" edition "1-draft";
+profile v = "filament.model.complete/v1";
+profile p = "filament.protocol.finite-global/v1";
+model Parts = "example/parts";
+
+protocol PartFlow using p over (job: Parts::Job) on each (order: Parts::WorkOrder) when (order.ok) {
+  role Planning on Parts::PlanningService;
+  terminal when { job.part = 0 };
+  run sequence Main {}
+  finish Over as (closing: Parts::ClosureView) { closing.complete };
+}

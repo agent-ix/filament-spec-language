@@ -321,7 +321,11 @@ pub fn check_hyper(
         .iter()
         .map(|quantifier| slot_of(quantifier.alias.as_str()))
         .collect::<Result<Vec<_>, _>>()?;
-    let keys = match admit_reductions(&request.reductions, &systems)? {
+    let keys = match admit_reductions(
+        &request.reductions,
+        &systems,
+        request.limits.limits.max_states,
+    )? {
         Ok(keys) => keys,
         Err(outcome) => return Ok(outcome),
     };
@@ -361,6 +365,7 @@ fn uses_closed_executions(clause: &CheckedHyperClause) -> bool {
 fn admit_reductions(
     reductions: &Reductions,
     systems: &[ModelSystem<'_>],
+    max_states: usize,
 ) -> Result<Result<SymmetryGroup, HyperOutcome>, ModelCheckRefusal> {
     let mut group = SymmetryGroup::default();
     if !reductions.symmetry.is_empty() {
@@ -368,10 +373,31 @@ fn admit_reductions(
             .first()
             .ok_or_else(|| fault("a-symmetric-run-has-a-subject"))?;
         group = reduce::admit(system, &reductions.symmetry).map_err(ModelCheckRefusal::Symmetry)?;
-        let closed = reduce::closure(system, &group).map_err(|refusal| match refusal {
-            reduce::ClosureRefusal::Encoding(refusal) => ModelCheckRefusal::Encoding(refusal),
-            reduce::ClosureRefusal::Unordered => fault("a-permuted-collection-is-ordered"),
-        })?;
+        let closed = match reduce::closure_under_limit(system, &group, max_states) {
+            Ok(closed) => closed,
+            Err(reduce::ClosureRefusal::OverBudget) => {
+                return Ok(Err(exhausted(
+                    ModelCheckLimit::MaxStates,
+                    widen(max_states),
+                    &Totals::default(),
+                )));
+            }
+            Err(reduce::ClosureRefusal::Stopped(stop)) => {
+                let (cause, limit) =
+                    super::check::expansion_stopped(stop, &system.meter(), system.max_candidates())
+                        .ok_or_else(|| fault("model-expansion-invariant"))?;
+                return Ok(Err(stopped(cause, limit, None, &Totals::default())));
+            }
+            Err(reduce::ClosureRefusal::Encoding(refusal)) => return Err(refusal.into()),
+            Err(reduce::ClosureRefusal::Initial(_)) => {
+                return Err(fault(
+                    "model-initial-admission-has-no-protocol-construction-fault",
+                ));
+            }
+            Err(reduce::ClosureRefusal::Unordered) => {
+                return Err(fault("a-permuted-collection-is-ordered"));
+            }
+        };
         match closed {
             None => {}
             Some(ReductionCause::SymmetryBroken { population, cause }) => {
@@ -520,8 +546,10 @@ impl TransitionSystem for Watched<'_, '_> {
     type Key = ModelKey;
     type Finding = ModelFinding;
 
-    fn initial(&self) -> Vec<Self::State> {
-        self.system.initial()
+    type InitialError = std::convert::Infallible;
+
+    fn initial_iter(&self) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+        self.system.initial_iter()
     }
 
     fn key(&self, state: &Self::State) -> Self::Key {
@@ -1337,12 +1365,7 @@ impl<'a> Run<'_, 'a> {
             let exploration = retain(&watched, limits, IdentityLimits::default(), None, || {
                 self.cancel.poll() && self.cancel.cause().is_some()
             })
-            .map_err(|error| {
-                ModelCheckRefusal::Encoding(fsl_eval::simulation::EncodingRefusal::of(
-                    &error,
-                    IdentityLimits::default(),
-                ))
-            })?;
+            .map_err(|error| error.model_refusal(IdentityLimits::default()))?;
             match exploration.outcome {
                 Outcome::Exhaustive(_) => {}
                 Outcome::Bounded { limit, .. } => {
@@ -1574,9 +1597,7 @@ impl<'a> Run<'_, 'a> {
             Ok(graph) => Ok(graph),
             Err(error) => match take_halt() {
                 Some(Halt::AutomatonKey(error)) => Err(HyperRefusal::Automaton(error).into()),
-                _ => Err(ModelCheckRefusal::Encoding(
-                    fsl_eval::simulation::EncodingRefusal::of(&error, IdentityLimits::default()),
-                )),
+                _ => Err(error.model_refusal(IdentityLimits::default())),
             },
         }
     }

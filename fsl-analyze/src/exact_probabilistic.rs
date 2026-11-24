@@ -119,11 +119,13 @@ pub(crate) use digital::ELAPSED_REWARD;
 pub(crate) use fair::bottom_components;
 pub use fair::{
     decide_fair_bounded_event, decide_fair_expected_reward, decide_fair_long_run_mdp,
-    decide_fair_reachability, deterministic_policy_is_fair, maximal_fair_end_components,
-    ActionChoice, FairBoundedResult, FairEndComponent, FairExpectedRewardResult, FairLongRunResult,
-    FairProductError, FairRandomizedWitness, FairUnboundedResult, SchedulerChoice,
+    decide_fair_reachability, deterministic_policy_is_fair, induced_fair_randomized_chain,
+    maximal_fair_end_components, ActionChoice, FairBoundedResult, FairEndComponent,
+    FairExpectedRewardResult, FairLongRunResult, FairProductError, FairRandomizedWitness,
+    FairUnboundedResult, SchedulerChoice,
 };
 pub use fair_interval::decide_fair_reachability_threshold;
+pub(crate) use finite_horizon::round as round_probability;
 pub use finite_horizon::{
     backward_induction, decide_bounded_event, Dyadic, FhError, FhObjective, FhResult,
 };
@@ -132,6 +134,8 @@ pub use fsl_replay::FreeDelayRow;
 pub use reward_interval::{decide_expected_reward_threshold, ExpectedRewardOutcome};
 pub use rows::free_delays_choice;
 pub use settle::settle_product_refusal;
+#[cfg(feature = "test-support")]
+pub use unbounded::polling_dense_elimination;
 pub use unbounded::{
     avoiding_policy, decide_always, decide_expected_reward, decide_long_run_mdp,
     decide_long_run_workload, decide_reachability, decide_reachability_threshold, decide_until,

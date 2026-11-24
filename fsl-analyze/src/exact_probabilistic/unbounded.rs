@@ -3,7 +3,7 @@
 
 use super::rows::Evaluation;
 use super::{ProbEdge, ProbProduct, ProbStateId, ProductAction, ProductKind};
-use filament_exact::{Integer, Rational, Value};
+use filament_exact::{Cancel, CancelCause, Integer, Rational, Value};
 use fsl_replay::ExactProbLimits;
 use num_bigint::BigInt;
 use num_integer::Integer as BigInteger;
@@ -13,11 +13,66 @@ type RewardPolicySolution = (Vec<ExtRational>, Vec<Option<usize>>, u64);
 type IntervalStep = (Vec<Rational>, Vec<Rational>, Vec<Option<usize>>);
 pub(crate) type MecOptimization = (Rational, Vec<Option<usize>>, Vec<Rational>, u64);
 
+/// What a dense linear solve runs under: the byte ceiling its matrices must fit
+/// (`certificate_check.max_working_bytes`) and the handle its elimination polls.
 #[derive(Clone, Copy)]
-struct PolicyLimits {
+pub(crate) struct Dense<'a> {
+    max_bytes: u64,
+    cancel: &'a Cancel,
+}
+
+impl<'a> Dense<'a> {
+    pub(crate) fn new(limits: &ExactProbLimits, cancel: &'a Cancel) -> Self {
+        Self {
+            max_bytes: limits.document.storage_bytes,
+            cancel,
+        }
+    }
+
+    /// No byte ceiling: a caller whose limits carry none.
+    pub(crate) fn unlimited(cancel: &'a Cancel) -> Self {
+        Self {
+            max_bytes: u64::MAX,
+            cancel,
+        }
+    }
+
+    /// [`UnboundedError::Cancelled`] once the handle is cancelled.
+    fn check(&self) -> Result<(), UnboundedError> {
+        if self.cancel.poll() {
+            return self
+                .cancel
+                .tripped()
+                .map_or(Ok(()), |cause| Err(UnboundedError::Cancelled(cause)));
+        }
+        Ok(())
+    }
+}
+
+/// The bounds one policy iteration runs under.
+#[derive(Clone, Copy)]
+pub(crate) struct PolicyBudget<'a> {
+    pub(crate) max_iterations: u64,
+    pub(crate) max_rational_bits: u64,
+    pub(crate) dense: Dense<'a>,
+}
+
+impl<'a> PolicyBudget<'a> {
+    pub(crate) fn new(limits: &ExactProbLimits, cancel: &'a Cancel) -> Self {
+        Self {
+            max_iterations: limits.max_policy_iterations,
+            max_rational_bits: limits.max_rational_bits,
+            dense: Dense::new(limits, cancel),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct PolicyLimits<'a> {
     objective: UnboundedObjective,
     max_iterations: u64,
     max_rational_bits: u64,
+    dense: Dense<'a>,
 }
 
 /// A finite exact value or positive infinity (FR-198).
@@ -147,6 +202,13 @@ pub enum UnboundedError {
     /// A long-run component has no positive total weight.
     #[error("a long-run component has zero total weight")]
     ZeroWeightComponent,
+    /// A dense linear system would exceed the working-storage ceiling
+    /// (`certificate_check.max_working_bytes`).
+    #[error("the dense exact linear system exceeds the working-storage limit")]
+    MaxWorkingBytes,
+    /// The run was cancelled during a dense solve.
+    #[error("the exact solve was cancelled")]
+    Cancelled(CancelCause),
 }
 
 /// Solve unbounded reachability for one target set by exact policy iteration.
@@ -159,8 +221,9 @@ pub fn decide_reachability(
     target: &[bool],
     objective: UnboundedObjective,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<UnboundedResult, UnboundedError> {
-    decide_reachability_with_blocked(product, target, None, objective, limits)
+    decide_reachability_with_blocked(product, target, None, objective, limits, cancel)
 }
 
 /// Decide `A until B`, fixing states where neither predicate holds to zero.
@@ -170,6 +233,7 @@ pub fn decide_until(
     target: &[bool],
     objective: UnboundedObjective,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<UnboundedResult, UnboundedError> {
     if from.len() != target.len() {
         return Err(UnboundedError::InvalidState);
@@ -179,7 +243,7 @@ pub fn decide_until(
         .zip(target)
         .map(|(from, target)| !from && !target)
         .collect::<Vec<_>>();
-    decide_reachability_with_blocked(product, target, Some(&blocked), objective, limits)
+    decide_reachability_with_blocked(product, target, Some(&blocked), objective, limits, cancel)
 }
 
 /// Decide `always P` as the complement of eventual `not P`, exchanging the
@@ -189,6 +253,7 @@ pub fn decide_always(
     predicate: &[bool],
     objective: UnboundedObjective,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<UnboundedResult, UnboundedError> {
     if predicate.len() != product.states.len() {
         return Err(UnboundedError::InvalidState);
@@ -198,7 +263,8 @@ pub fn decide_always(
         UnboundedObjective::Min => UnboundedObjective::Max,
         UnboundedObjective::Max => UnboundedObjective::Min,
     };
-    let mut result = decide_reachability(product, &complement, complement_objective, limits)?;
+    let mut result =
+        decide_reachability(product, &complement, complement_objective, limits, cancel)?;
     for value in &mut result.values {
         *value = match value {
             ExtRational::Finite(value) => ExtRational::Finite(one().sub(value)),
@@ -262,6 +328,7 @@ fn decide_reachability_with_blocked(
     blocked: Option<&[bool]>,
     objective: UnboundedObjective,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<UnboundedResult, UnboundedError> {
     let (evaluation, target, blocked) = evaluation_of(product, target, blocked)?;
     let mut result = reachability(
@@ -270,6 +337,7 @@ fn decide_reachability_with_blocked(
         blocked.as_deref(),
         objective,
         limits,
+        cancel,
     )?;
     result.values = evaluation.restrict(result.values);
     Ok(result)
@@ -281,6 +349,7 @@ fn reachability(
     blocked: Option<&[bool]>,
     objective: UnboundedObjective,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<UnboundedResult, UnboundedError> {
     if target.len() != product.states.len() {
         return Err(UnboundedError::InvalidState);
@@ -347,9 +416,8 @@ fn reachability(
         &graph,
         &fixed,
         objective,
-        limits.max_policy_iterations,
         initial_policy,
-        limits.max_rational_bits,
+        PolicyBudget::new(limits, cancel),
     )?;
     Ok(UnboundedResult {
         values: values.into_iter().map(ExtRational::Finite).collect(),
@@ -366,8 +434,11 @@ pub fn decide_reachability_threshold(
     objective: UnboundedObjective,
     threshold: &Rational,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<UnboundedOutcome, UnboundedError> {
-    decide_reachability_threshold_with_blocked(product, target, None, objective, threshold, limits)
+    decide_reachability_threshold_with_blocked(
+        product, target, None, objective, threshold, limits, cancel,
+    )
 }
 
 /// Threshold form of [`decide_until`].
@@ -378,6 +449,7 @@ pub fn decide_until_threshold(
     objective: UnboundedObjective,
     threshold: &Rational,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<UnboundedOutcome, UnboundedError> {
     if from.len() != target.len() {
         return Err(UnboundedError::InvalidState);
@@ -394,6 +466,7 @@ pub fn decide_until_threshold(
         objective,
         threshold,
         limits,
+        cancel,
     )
 }
 
@@ -404,6 +477,7 @@ fn decide_reachability_threshold_with_blocked(
     objective: UnboundedObjective,
     threshold: &Rational,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<UnboundedOutcome, UnboundedError> {
     let (evaluation, target, blocked) = evaluation_of(product, target, blocked)?;
     Ok(
@@ -414,6 +488,7 @@ fn decide_reachability_threshold_with_blocked(
             objective,
             threshold,
             limits,
+            cancel,
         )? {
             UnboundedOutcome::Exact(mut result) => {
                 result.values = evaluation.restrict(result.values);
@@ -446,6 +521,7 @@ fn reachability_threshold(
     objective: UnboundedObjective,
     threshold: &Rational,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<UnboundedOutcome, UnboundedError> {
     if target.len() != product.states.len()
         || limits.precision_bits == 0
@@ -532,7 +608,7 @@ fn reachability_threshold(
                 });
             }
         }
-        match reachability(product, target, blocked, objective, limits) {
+        match reachability(product, target, blocked, objective, limits, cancel) {
             Ok(result) => {
                 let lower = result
                     .values
@@ -609,9 +685,17 @@ pub fn decide_expected_reward(
     reward: &str,
     objective: UnboundedObjective,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<UnboundedResult, UnboundedError> {
     let (evaluation, target, _) = evaluation_of(product, target, None)?;
-    let mut result = expected_reward(&evaluation.product, &target, reward, objective, limits)?;
+    let mut result = expected_reward(
+        &evaluation.product,
+        &target,
+        reward,
+        objective,
+        limits,
+        cancel,
+    )?;
     result.values = evaluation.restrict(result.values);
     Ok(result)
 }
@@ -622,6 +706,7 @@ fn expected_reward(
     reward: &str,
     objective: UnboundedObjective,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<UnboundedResult, UnboundedError> {
     if target.len() != product.states.len() {
         return Err(UnboundedError::InvalidState);
@@ -681,6 +766,7 @@ fn expected_reward(
             objective,
             max_iterations: limits.max_policy_iterations,
             max_rational_bits: limits.max_rational_bits,
+            dense: Dense::new(limits, cancel),
         },
         initial_policy,
     )?;
@@ -792,6 +878,7 @@ pub fn decide_long_run_workload(
     predicate: &[bool],
     weight: Option<&str>,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<LongRunResult, UnboundedError> {
     if predicate.len() != product.states.len() || product.kind != ProductKind::Dtmc {
         return Err(UnboundedError::InvalidState);
@@ -818,7 +905,7 @@ pub fn decide_long_run_workload(
         if !bottom {
             continue;
         }
-        let stationary = stationary_distribution(&graph, &states)?;
+        let stationary = stationary_distribution(&graph, &states, Dense::new(limits, cancel))?;
         if stationary
             .iter()
             .any(|value| value.max_part_bits() > limits.max_rational_bits)
@@ -880,6 +967,7 @@ pub fn decide_long_run_workload(
             &rho,
             &policy,
             states[0],
+            Dense::new(limits, cancel),
         )?;
         if rho.max_part_bits() > limits.max_rational_bits
             || bias
@@ -913,7 +1001,7 @@ pub fn decide_long_run_workload(
         .iter()
         .map(|choices| (!choices.is_empty()).then_some(0))
         .collect::<Vec<_>>();
-    let values = evaluate_policy(&graph, &fixed, &policy)?;
+    let values = evaluate_policy(&graph, &fixed, &policy, Dense::new(limits, cancel))?;
     Ok(LongRunResult {
         components,
         values: values.into_iter().map(ExtRational::Finite).collect(),
@@ -931,6 +1019,7 @@ pub fn decide_long_run_mdp(
     weight: Option<&str>,
     objective: UnboundedObjective,
     limits: &ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<LongRunResult, UnboundedError> {
     if predicate.len() != product.states.len() || product.kind != ProductKind::Mdp {
         return Err(UnboundedError::InvalidState);
@@ -945,13 +1034,7 @@ pub fn decide_long_run_mdp(
     let mut gain_bias = Vec::new();
     for component in mecs {
         let (rho, component_policy, bias, _) = optimize_mec_fraction(
-            &graph,
-            &component,
-            predicate,
-            weight,
-            objective,
-            limits.max_policy_iterations,
-            limits.max_rational_bits,
+            &graph, &component, predicate, weight, objective, limits, cancel,
         )?;
         for state in &component {
             selected_policy[*state] = component_policy[*state];
@@ -977,8 +1060,7 @@ pub fn decide_long_run_mdp(
         &components,
         &selected_policy,
         objective,
-        limits.max_policy_iterations,
-        limits.max_rational_bits,
+        PolicyBudget::new(limits, cancel),
     )?;
     Ok(LongRunResult {
         components,
@@ -1001,9 +1083,13 @@ fn solve_long_run_quotient(
     components: &[ComponentValue],
     component_policy: &[Option<usize>],
     objective: UnboundedObjective,
-    max_iterations: u64,
-    max_rational_bits: u64,
+    budget: PolicyBudget<'_>,
 ) -> Result<(Vec<Rational>, Vec<Option<usize>>), UnboundedError> {
+    let PolicyBudget {
+        max_iterations,
+        max_rational_bits,
+        dense,
+    } = budget;
     let count = graph.product.states.len();
     let mecs = components.len();
     // Node ids: a state outside every component is its own node; component `m`
@@ -1078,7 +1164,7 @@ fn solve_long_run_quotient(
         for (position, node) in transient.iter().copied().enumerate() {
             positions[node] = Some(position);
         }
-        let mut matrix = vec![vec![zero(); transient.len() + 1]; transient.len()];
+        let mut matrix = dense_system(transient.len(), dense)?;
         for (row, node) in transient.iter().copied().enumerate() {
             matrix[row][row] = one();
             for (to, probability) in &actions[node][policy[node]] {
@@ -1094,7 +1180,7 @@ fn solve_long_run_quotient(
                 }
             }
         }
-        let solved = solve_linear(matrix)?;
+        let solved = solve_linear(matrix, dense)?;
         let mut values = fixed
             .iter()
             .map(|value| value.clone().unwrap_or_else(zero))
@@ -1536,17 +1622,21 @@ pub(crate) fn policy_iteration(
     graph: &Graph<'_>,
     fixed: &[Option<Rational>],
     objective: UnboundedObjective,
-    max_iterations: u64,
     mut policy: Vec<Option<usize>>,
-    max_rational_bits: u64,
+    budget: PolicyBudget,
 ) -> Result<PolicySolution, UnboundedError> {
+    let PolicyBudget {
+        max_iterations,
+        max_rational_bits,
+        dense,
+    } = budget;
     let count = graph.product.states.len();
     if graph.product.kind == ProductKind::Mdp && max_iterations == 0 {
         return Err(UnboundedError::MaxPolicyIterations);
     }
     let mut iterations = 0;
     loop {
-        let values = evaluate_policy(graph, fixed, &policy)?;
+        let values = evaluate_policy(graph, fixed, &policy, dense)?;
         if values
             .iter()
             .any(|value| value.max_part_bits() > max_rational_bits)
@@ -1607,7 +1697,7 @@ fn policy_iteration_reward(
     target: &[bool],
     infinite: &[bool],
     reward: &str,
-    limits: PolicyLimits,
+    limits: PolicyLimits<'_>,
     mut policy: Vec<Option<usize>>,
 ) -> Result<RewardPolicySolution, UnboundedError> {
     let count = graph.product.states.len();
@@ -1616,7 +1706,15 @@ fn policy_iteration_reward(
     }
     let mut iterations = 0;
     loop {
-        let values = evaluate_reward_policy(graph, fixed, target, infinite, reward, &policy)?;
+        let values = evaluate_reward_policy(
+            graph,
+            fixed,
+            target,
+            infinite,
+            reward,
+            &policy,
+            limits.dense,
+        )?;
         if values.iter().any(|value| match value {
             ExtRational::Finite(value) => value.max_part_bits() > limits.max_rational_bits,
             ExtRational::PlusInfinity => false,
@@ -1683,6 +1781,7 @@ fn evaluate_reward_policy(
     infinite: &[bool],
     reward: &str,
     policy: &[Option<usize>],
+    dense: Dense<'_>,
 ) -> Result<Vec<ExtRational>, UnboundedError> {
     let policy_infinite = policy_infinite_states(graph, target, infinite, policy)?;
     let transient = (0..fixed.len())
@@ -1692,7 +1791,7 @@ fn evaluate_reward_policy(
     for (position, state) in transient.iter().copied().enumerate() {
         positions[state] = Some(position);
     }
-    let mut matrix = vec![vec![zero(); transient.len() + 1]; transient.len()];
+    let mut matrix = dense_system(transient.len(), dense)?;
     for (row, state) in transient.iter().copied().enumerate() {
         matrix[row][row] = one();
         let choice_index = policy[state].ok_or(UnboundedError::MissingAction)?;
@@ -1709,7 +1808,7 @@ fn evaluate_reward_policy(
             }
         }
     }
-    let solved = solve_linear(matrix)?;
+    let solved = solve_linear(matrix, dense)?;
     let mut values = fixed
         .iter()
         .enumerate()
@@ -1841,6 +1940,7 @@ fn evaluate_policy(
     graph: &Graph<'_>,
     fixed: &[Option<Rational>],
     policy: &[Option<usize>],
+    dense: Dense<'_>,
 ) -> Result<Vec<Rational>, UnboundedError> {
     let count = fixed.len();
     let transient = (0..count)
@@ -1850,7 +1950,7 @@ fn evaluate_policy(
     for (position, state) in transient.iter().copied().enumerate() {
         positions[state] = Some(position);
     }
-    let mut matrix = vec![vec![zero(); transient.len() + 1]; transient.len()];
+    let mut matrix = dense_system(transient.len(), dense)?;
     for (row, state) in transient.iter().copied().enumerate() {
         matrix[row][row] = one();
         let choice_index = policy[state].ok_or(UnboundedError::MissingAction)?;
@@ -1870,7 +1970,7 @@ fn evaluate_policy(
             }
         }
     }
-    let solved = solve_linear(matrix)?;
+    let solved = solve_linear(matrix, dense)?;
     let mut values = fixed
         .iter()
         .map(|value| value.clone().unwrap_or_else(zero))
@@ -1881,13 +1981,17 @@ fn evaluate_policy(
     Ok(values)
 }
 
-fn solve_linear(matrix: Vec<Vec<Rational>>) -> Result<Vec<Rational>, UnboundedError> {
+fn solve_linear(
+    matrix: Vec<Vec<Rational>>,
+    dense: Dense<'_>,
+) -> Result<Vec<Rational>, UnboundedError> {
     let size = matrix.len();
     if matrix.iter().any(|row| row.len() != size + 1) {
         return Err(UnboundedError::Singular);
     }
     let mut integer_matrix = Vec::with_capacity(size);
     for row in matrix {
+        dense.check()?;
         let common_denominator = row.iter().fold(BigInt::from(1_u8), |common, value| {
             let denominator = value.denominator().as_big();
             common.lcm(denominator)
@@ -1911,6 +2015,9 @@ fn solve_linear(matrix: Vec<Vec<Rational>>) -> Result<Vec<Rational>, UnboundedEr
         integer_matrix.swap(column, pivot_row);
         let pivot = integer_matrix[column][column].clone();
         for row in column + 1..size {
+            #[cfg(feature = "test-support")]
+            let _poll = PivotPoll::enter();
+            dense.check()?;
             for entry in column + 1..=size {
                 let numerator = &pivot * &integer_matrix[row][entry]
                     - &integer_matrix[row][column] * &integer_matrix[column][entry];
@@ -1940,6 +2047,35 @@ fn solve_linear(matrix: Vec<Vec<Rational>>) -> Result<Vec<Rational>, UnboundedEr
         solution[row] = value.div(&diagonal).ok_or(UnboundedError::Singular)?;
     }
     Ok(solution)
+}
+
+#[cfg(feature = "test-support")]
+thread_local! {
+    static PIVOT_POLL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Whether this thread is polling cancellation during a Bareiss pivot row.
+#[cfg(feature = "test-support")]
+pub fn polling_dense_elimination() -> bool {
+    PIVOT_POLL.with(std::cell::Cell::get)
+}
+
+#[cfg(feature = "test-support")]
+struct PivotPoll;
+
+#[cfg(feature = "test-support")]
+impl PivotPoll {
+    fn enter() -> Self {
+        PIVOT_POLL.with(|polling| polling.set(true));
+        Self
+    }
+}
+
+#[cfg(feature = "test-support")]
+impl Drop for PivotPoll {
+    fn drop(&mut self) {
+        PIVOT_POLL.with(|polling| polling.set(false));
+    }
 }
 
 fn rational_from_big_integer(value: BigInt) -> Rational {
@@ -2287,9 +2423,11 @@ pub(crate) fn optimize_mec_fraction(
     predicate: &[bool],
     weight: Option<&str>,
     objective: UnboundedObjective,
-    limit: u64,
-    max_rational_bits: u64,
+    limits: &ExactProbLimits,
+    cancel: &Cancel,
 ) -> Result<MecOptimization, UnboundedError> {
+    let limit = limits.max_policy_iterations;
+    let max_rational_bits = limits.max_rational_bits;
     if limit == 0 {
         return Err(UnboundedError::MaxPolicyIterations);
     }
@@ -2364,7 +2502,12 @@ pub(crate) fn optimize_mec_fraction(
         let bottom_components = policy_bottom_components(graph, component, &policy)?;
         if bottom_components.len() == 1 {
             let recurrent = &bottom_components[0];
-            let stationary = stationary_distribution_with_policy(graph, recurrent, &policy)?;
+            let stationary = stationary_distribution_with_policy(
+                graph,
+                recurrent,
+                &policy,
+                Dense::new(limits, cancel),
+            )?;
             if stationary
                 .iter()
                 .any(|value| value.max_part_bits() > max_rational_bits)
@@ -2481,6 +2624,7 @@ pub(crate) fn optimize_mec_fraction(
                 &candidate.rho,
                 &candidate.choices,
                 candidate.recurrent[0],
+                Dense::new(limits, cancel),
             )?;
             return Ok((
                 candidate.rho.clone(),
@@ -2694,19 +2838,21 @@ fn expand_one_mec_policy(
 fn stationary_distribution(
     graph: &Graph<'_>,
     states: &[usize],
+    dense: Dense<'_>,
 ) -> Result<Vec<Rational>, UnboundedError> {
     let policy = graph
         .choices
         .iter()
         .map(|choices| (!choices.is_empty()).then_some(0))
         .collect::<Vec<_>>();
-    stationary_distribution_with_policy(graph, states, &policy)
+    stationary_distribution_with_policy(graph, states, &policy, dense)
 }
 
 fn stationary_distribution_with_policy(
     graph: &Graph<'_>,
     states: &[usize],
     policy: &[Option<usize>],
+    dense: Dense<'_>,
 ) -> Result<Vec<Rational>, UnboundedError> {
     let count = states.len();
     if count == 0 {
@@ -2716,7 +2862,7 @@ fn stationary_distribution_with_policy(
     for (index, state) in states.iter().copied().enumerate() {
         local[state] = Some(index);
     }
-    let mut matrix = vec![vec![zero(); count + 1]; count];
+    let mut matrix = dense_system(count, dense)?;
     for (destination, row) in matrix.iter_mut().enumerate().take(count.saturating_sub(1)) {
         row[destination] = one();
         for (source_local, source) in states.iter().copied().enumerate() {
@@ -2733,9 +2879,10 @@ fn stationary_distribution_with_policy(
     }
     matrix[count - 1][..count].fill(one());
     matrix[count - 1][count] = one();
-    solve_linear(matrix)
+    solve_linear(matrix, dense)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn component_bias(
     graph: &Graph<'_>,
     states: &[usize],
@@ -2744,6 +2891,7 @@ fn component_bias(
     gain: &Rational,
     policy: &[Option<usize>],
     reference: usize,
+    dense: Dense<'_>,
 ) -> Result<Vec<Rational>, UnboundedError> {
     let count = states.len();
     if count <= 1 {
@@ -2754,7 +2902,7 @@ fn component_bias(
         local[state] = Some(index);
     }
     let reference_index = local[reference].ok_or(UnboundedError::InvalidState)?;
-    let mut matrix = vec![vec![zero(); count + 1]; count];
+    let mut matrix = dense_system(count, dense)?;
     let mut row = 0;
     for (state_index, state) in states.iter().copied().enumerate() {
         if state == reference {
@@ -2775,7 +2923,26 @@ fn component_bias(
         row += 1;
     }
     matrix[count - 1][reference_index] = one();
-    solve_linear(matrix)
+    solve_linear(matrix, dense)
+}
+
+/// Inline bytes of one cell of a dense system: the rational cell and the integer
+/// cell [`solve_linear`] makes from it.
+const DENSE_CELL_BYTES: usize = std::mem::size_of::<Rational>() + std::mem::size_of::<BigInt>();
+
+/// A zero `rows x (rows + 1)` augmented system, refused before any row is
+/// allocated when its inline cells and those of the integer system
+/// [`solve_linear`] builds from it would exceed the `certificate_check.max_working_bytes`
+/// ceiling (FR-255; digits a cell holds on the heap are not counted).
+fn dense_system(rows: usize, dense: Dense<'_>) -> Result<Vec<Vec<Rational>>, UnboundedError> {
+    let bytes = rows
+        .checked_mul(rows.saturating_add(1))
+        .and_then(|cells| cells.checked_mul(DENSE_CELL_BYTES))
+        .and_then(|bytes| u64::try_from(bytes).ok());
+    if bytes.is_none_or(|bytes| bytes > dense.max_bytes) {
+        return Err(UnboundedError::MaxWorkingBytes);
+    }
+    Ok(vec![vec![zero(); rows + 1]; rows])
 }
 
 fn zero() -> Rational {
@@ -2849,6 +3016,165 @@ mod tests {
         edge
     }
 
+    /// Trace: FR-203-AC-28. The dense system is refused against the working-
+    /// storage ceiling before any row exists: a request for 2^40 rows would abort
+    /// the process if it were allocated, and the bound is exact to the byte.
+    #[trace("TC-638", "FR-203-AC-28")]
+    #[test]
+    fn dense_system_is_refused_before_its_rows_are_allocated() {
+        let cancel = Cancel::new();
+        let at = |max_bytes| Dense {
+            max_bytes,
+            cancel: &cancel,
+        };
+        let default_bound = ExactProbLimits::default().document.storage_bytes;
+        assert!(matches!(
+            dense_system(1 << 40, at(default_bound)),
+            Err(UnboundedError::MaxWorkingBytes)
+        ));
+        assert!(matches!(
+            dense_system(usize::MAX, at(u64::MAX)),
+            Err(UnboundedError::MaxWorkingBytes)
+        ));
+        let rows = 5_usize;
+        let exact = u64::try_from(rows * (rows + 1) * DENSE_CELL_BYTES).expect("small matrix");
+        let Ok(matrix) = dense_system(rows, at(exact)) else {
+            panic!("a matrix of exactly the bound fits");
+        };
+        assert_eq!(matrix.len(), rows);
+        assert!(matrix.iter().all(|row| row.len() == rows + 1));
+        assert!(matches!(
+            dense_system(rows, at(exact - 1)),
+            Err(UnboundedError::MaxWorkingBytes)
+        ));
+    }
+
+    /// Trace: FR-203-AC-28. A handle cancelled while the elimination runs stops
+    /// it at the next pivot-row poll: the handle trips after five polls, the four
+    /// row conversions and the first pivot row, so a solver that stops polling
+    /// once the elimination starts finishes instead, and the stop is recorded.
+    #[trace("TC-638", "FR-203-AC-28")]
+    #[test]
+    fn a_cancelled_handle_stops_the_elimination() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, OnceLock};
+        let slot: Arc<OnceLock<Cancel>> = Arc::new(OnceLock::new());
+        let polls = Arc::new(AtomicUsize::new(0));
+        let cancel = {
+            let (slot, polls) = (Arc::downgrade(&slot), Arc::clone(&polls));
+            Cancel::observing(move || {
+                if polls.fetch_add(1, Ordering::SeqCst) + 1 == 5 {
+                    if let Some(handle) = slot.upgrade().and_then(|slot| slot.get().cloned()) {
+                        handle.cancel(CancelCause::Requested);
+                    }
+                }
+            })
+        };
+        slot.set(cancel.clone()).expect("the slot is set once");
+        let dense = Dense::unlimited(&cancel);
+        let mut matrix = dense_system(4, dense).expect("a four-row system fits");
+        for row in 0..4 {
+            matrix[row][row] = one();
+            matrix[row][4] = one();
+        }
+        assert!(matches!(
+            solve_linear(matrix, dense),
+            Err(UnboundedError::Cancelled(CancelCause::Requested))
+        ));
+        assert_eq!(cancel.tripped(), Some(CancelCause::Requested));
+        assert_eq!(polls.load(Ordering::SeqCst), 5);
+    }
+
+    /// Trace: FR-203-AC-28. A solve whose policy evaluation needs a matrix
+    /// larger than `document.storage_bytes` stops with `MaxWorkingBytes`; the
+    /// default bound decides the same product.
+    #[trace("TC-638", "FR-203-AC-28")]
+    #[test]
+    fn policy_evaluation_stops_at_the_working_storage_limit() {
+        let product = graph(
+            ProductKind::Dtmc,
+            vec![
+                edge(0, 1, one()),
+                edge(1, 2, ratio(1, 2)),
+                edge(1, 3, ratio(1, 2)),
+                edge(2, 2, one()),
+                edge(3, 3, one()),
+            ],
+        );
+        let target = [false, false, true, false];
+        let one_row = u64::try_from(std::mem::size_of::<Rational>()).expect("small");
+        let mut limits = ExactProbLimits::default();
+        limits.document.storage_bytes = one_row;
+        assert!(matches!(
+            decide_reachability(
+                &product,
+                &target,
+                UnboundedObjective::Max,
+                &limits,
+                &Cancel::new()
+            ),
+            Err(UnboundedError::MaxWorkingBytes)
+        ));
+        let decided = decide_reachability(
+            &product,
+            &target,
+            UnboundedObjective::Max,
+            &ExactProbLimits::default(),
+            &Cancel::new(),
+        );
+        assert!(decided.is_ok(), "{:?}", decided.err());
+    }
+
+    /// Trace: FR-203-AC-28. Each of the four dense-system call sites (policy,
+    /// reward policy, stationary distribution, bias) refuses against a zero
+    /// ceiling before building its matrix.
+    #[trace("TC-638", "FR-203-AC-28")]
+    #[test]
+    fn every_dense_call_site_checks_the_ceiling() {
+        let product = graph(
+            ProductKind::Dtmc,
+            vec![edge(0, 1, one()), edge(1, 0, one())],
+        );
+        let sink_product = graph(
+            ProductKind::Dtmc,
+            vec![edge(0, 1, one()), edge(1, 1, one())],
+        );
+        let graph = Graph::new(&product).expect("a two-state chain");
+        let cancel = Cancel::new();
+        let dense = Dense {
+            max_bytes: 0,
+            cancel: &cancel,
+        };
+        let policy = vec![Some(0), Some(0)];
+        let none = vec![None, None];
+        let flags = [false, false];
+        let zeros = vec![zero(), zero()];
+        assert!(matches!(
+            evaluate_policy(&graph, &none, &policy, dense),
+            Err(UnboundedError::MaxWorkingBytes)
+        ));
+        assert!(matches!(
+            evaluate_reward_policy(
+                &Graph::new(&sink_product).expect("a chain into a target"),
+                &[None, Some(zero())],
+                &[false, true],
+                &flags,
+                "r",
+                &policy,
+                dense
+            ),
+            Err(UnboundedError::MaxWorkingBytes)
+        ));
+        assert!(matches!(
+            stationary_distribution_with_policy(&graph, &[0, 1], &policy, dense),
+            Err(UnboundedError::MaxWorkingBytes)
+        ));
+        assert!(matches!(
+            component_bias(&graph, &[0, 1], &zeros, &zeros, &zero(), &policy, 0, dense),
+            Err(UnboundedError::MaxWorkingBytes)
+        ));
+    }
+
     /// Trace: FR-198-AC-3.
     #[trace("TC-633", "FR-198-AC-3")]
     #[test]
@@ -2868,6 +3194,7 @@ mod tests {
             &[false, true, false],
             UnboundedObjective::Max,
             &ExactProbLimits::default(),
+            &Cancel::new(),
         )
         .expect("a finite DTMC reachability problem");
         assert_eq!(result.values[0], ExtRational::Finite(ratio(1, 2)));
@@ -2894,6 +3221,7 @@ mod tests {
                 &[false, true, false],
                 objective,
                 &ExactProbLimits::default(),
+                &Cancel::new(),
             )
             .unwrap();
             assert_eq!(
@@ -2922,6 +3250,7 @@ mod tests {
             &[false, false, true],
             UnboundedObjective::Max,
             &ExactProbLimits::default(),
+            &Cancel::new(),
         )
         .expect("until treats a failed left predicate as a terminal failure");
         assert_eq!(result.values[0], ExtRational::Finite(zero()));
@@ -2940,6 +3269,7 @@ mod tests {
                 &[false],
                 UnboundedObjective::Max,
                 &ExactProbLimits::default(),
+                &Cancel::new()
             ),
             Err(UnboundedError::InvalidState)
         );
@@ -2963,6 +3293,7 @@ mod tests {
             &[true, false, true],
             UnboundedObjective::Min,
             &ExactProbLimits::default(),
+            &Cancel::new(),
         )
         .expect("always complements eventual failure");
         assert_eq!(result.values[0], ExtRational::Finite(ratio(1, 2)));
@@ -2990,6 +3321,7 @@ mod tests {
             UnboundedObjective::Max,
             &ratio(2, 5),
             &ExactProbLimits::default(),
+            &Cancel::new(),
         )
         .expect("intervals separate the threshold");
         let UnboundedOutcome::Bounds {
@@ -3025,6 +3357,7 @@ mod tests {
             &[false, true],
             UnboundedObjective::Min,
             &ExactProbLimits::default(),
+            &Cancel::new(),
         )
         .expect("wait is a zero-probability scheduler");
         let maximum = decide_reachability(
@@ -3032,6 +3365,7 @@ mod tests {
             &[false, true],
             UnboundedObjective::Max,
             &ExactProbLimits::default(),
+            &Cancel::new(),
         )
         .expect("take reaches the target");
         assert_eq!(minimum.values[0], ExtRational::Finite(zero()));
@@ -3053,6 +3387,7 @@ mod tests {
             &[false, true, false],
             UnboundedObjective::Min,
             &ExactProbLimits::default(),
+            &Cancel::new(),
         )
         .expect("the Link delivery probability is exact");
         assert_eq!(delivery.values[0], ExtRational::Finite(ratio(24, 25)));
@@ -3083,6 +3418,7 @@ mod tests {
             UnboundedObjective::Max,
             &ratio(1, 2),
             &limits,
+            &Cancel::new(),
         )
         .expect("budget is a typed solver result");
         assert_eq!(
@@ -3100,6 +3436,7 @@ mod tests {
             UnboundedObjective::Max,
             &ratio(1, 2),
             &solved_limits,
+            &Cancel::new(),
         )
         .expect("policy iteration decides at equality");
         let second = decide_reachability_threshold(
@@ -3108,6 +3445,7 @@ mod tests {
             UnboundedObjective::Max,
             &ratio(1, 2),
             &solved_limits,
+            &Cancel::new(),
         )
         .expect("the exact result is deterministic");
         assert_eq!(first, second);
@@ -3142,6 +3480,7 @@ mod tests {
             UnboundedObjective::Max,
             &ratio(1, 2),
             &limits,
+            &Cancel::new(),
         )
         .expect("the rational ceiling returns sound bounds");
         let UnboundedOutcome::PrecisionBudget { lower, upper } = result else {
@@ -3171,6 +3510,7 @@ mod tests {
             UnboundedObjective::Max,
             &ratio(1, 4),
             &ExactProbLimits::default(),
+            &Cancel::new(),
         )
         .expect("MEC collapse decides the threshold");
         let UnboundedOutcome::Bounds {
@@ -3204,6 +3544,7 @@ mod tests {
                 "cost",
                 objective,
                 &ExactProbLimits::default(),
+                &Cancel::new(),
             )
             .expect("unbounded reward is decided by graph structure");
             assert_eq!(result.values[0], ExtRational::PlusInfinity);
@@ -3234,6 +3575,7 @@ mod tests {
             "cost",
             UnboundedObjective::Min,
             &ExactProbLimits::default(),
+            &Cancel::new(),
         )
         .expect("the target is reached almost surely");
         assert_eq!(result.values[0], ExtRational::Finite(ratio(2, 1)));
@@ -3275,6 +3617,7 @@ mod tests {
             "cost",
             UnboundedObjective::Min,
             &ExactProbLimits::default(),
+            &Cancel::new(),
         )
         .expect("both actions reach the target almost surely");
         let maximum = decide_expected_reward(
@@ -3283,6 +3626,7 @@ mod tests {
             "cost",
             UnboundedObjective::Max,
             &ExactProbLimits::default(),
+            &Cancel::new(),
         )
         .expect("both actions reach the target almost surely");
         assert_eq!(minimum.values[0], ExtRational::Finite(ratio(11, 10)));
@@ -3331,6 +3675,7 @@ mod tests {
             "cost",
             UnboundedObjective::Min,
             &ExactProbLimits::default(),
+            &Cancel::new(),
         )
         .expect("the good action is the finite minimum");
         assert_eq!(result.values[0], ExtRational::Finite(ratio(10, 1)));
@@ -3350,9 +3695,14 @@ mod tests {
                 edge(1, 0, one()),
             ],
         );
-        let result =
-            decide_long_run_workload(&product, &[true, false], None, &ExactProbLimits::default())
-                .expect("the finite DTMC has a BSCC");
+        let result = decide_long_run_workload(
+            &product,
+            &[true, false],
+            None,
+            &ExactProbLimits::default(),
+            &Cancel::new(),
+        )
+        .expect("the finite DTMC has a BSCC");
         assert_eq!(result.components.len(), 1);
         assert_eq!(result.components[0].rho, ratio(4, 5));
         assert_eq!(result.gain_bias[0].gain, ratio(4, 5));
@@ -3370,9 +3720,14 @@ mod tests {
                 edge(1, 1, ratio(1, 10)),
             ],
         );
-        let authored_result =
-            decide_long_run_workload(&authored, &[true, false], None, &ExactProbLimits::default())
-                .expect("the authored workload BSCC is irreducible");
+        let authored_result = decide_long_run_workload(
+            &authored,
+            &[true, false],
+            None,
+            &ExactProbLimits::default(),
+            &Cancel::new(),
+        )
+        .expect("the authored workload BSCC is irreducible");
         assert_eq!(authored_result.components[0].rho, ratio(1800, 1801));
         assert_eq!(authored_result.gain_bias[0].gain, ratio(1800, 1801));
         assert_eq!(
@@ -3404,6 +3759,7 @@ mod tests {
             &[true, false],
             Some("duration"),
             &ExactProbLimits::default(),
+            &Cancel::new(),
         )
         .expect("duration gives each position its leaving-step weight");
         assert_eq!(weighted_result.components[0].rho, ratio(4, 7));
@@ -3426,6 +3782,7 @@ mod tests {
             &[true],
             Some("duration"),
             &ExactProbLimits::default(),
+            &Cancel::new(),
         )
         .expect("a zero-weight component has its unweighted fraction");
         assert_eq!(result.components[0].rho, ratio(1, 1));
@@ -3453,6 +3810,7 @@ mod tests {
             None,
             UnboundedObjective::Min,
             &limits,
+            &Cancel::new(),
         )
         .expect("the MDP MEC has two exact policies");
         let maximum = decide_long_run_mdp(
@@ -3461,6 +3819,7 @@ mod tests {
             None,
             UnboundedObjective::Max,
             &limits,
+            &Cancel::new(),
         )
         .expect("the MDP MEC has two exact policies");
         assert_eq!(minimum.components[0].rho, ratio(1000, 1001));
@@ -3477,8 +3836,9 @@ mod tests {
                 edge(1, 1, ratio(3, 10)),
             ],
         );
-        let expected = decide_long_run_workload(&workload, &[true, false], None, &limits)
-            .expect("the workload chooses the two repairs equally");
+        let expected =
+            decide_long_run_workload(&workload, &[true, false], None, &limits, &Cancel::new())
+                .expect("the workload chooses the two repairs equally");
         assert_eq!(expected.components[0].rho, ratio(1400, 1401));
     }
 
@@ -3500,6 +3860,7 @@ mod tests {
             None,
             UnboundedObjective::Max,
             &ExactProbLimits::default(),
+            &Cancel::new(),
         )
         .expect("the scheduler can reach and remain in the proper end component");
         assert_eq!(result.components.len(), 1);
@@ -3537,6 +3898,7 @@ mod tests {
             None,
             UnboundedObjective::Min,
             &ExactProbLimits::default(),
+            &Cancel::new(),
         )
         .expect("the scheduler can route both states to B");
         let maximum = decide_long_run_mdp(
@@ -3545,6 +3907,7 @@ mod tests {
             None,
             UnboundedObjective::Max,
             &ExactProbLimits::default(),
+            &Cancel::new(),
         )
         .expect("the scheduler can route both states to A");
         assert_eq!(minimum.components[0].rho, zero());
@@ -3600,6 +3963,7 @@ mod tests {
             None,
             UnboundedObjective::Max,
             &ExactProbLimits::default(),
+            &Cancel::new(),
         )
         .expect("both probabilistic route branches reach the optimal sub-MEC");
         assert_eq!(maximum.components.len(), 1);
@@ -3625,6 +3989,7 @@ mod tests {
             None,
             UnboundedObjective::Min,
             &ExactProbLimits::default(),
+            &Cancel::new(),
         )
         .expect("the minimum can use a recurrent policy that includes the route");
         assert_eq!(minimum.components.len(), 1);

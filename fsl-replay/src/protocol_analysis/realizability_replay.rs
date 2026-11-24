@@ -226,7 +226,8 @@ pub fn replay_realizability_counterexample(
 /// The end state of `play`, walked from its initial state through the
 /// successors its steps name, with what the walk showed the roles.
 fn walk(arena: &Arena<'_, '_>, play: &Play) -> Result<Walked, ArenaError> {
-    let Some(initial) = arena.system.initial().into_iter().nth(play.initial) else {
+    let states = arena.system.try_initial().map_err(ArenaError::Protocol)?;
+    let Some(initial) = states.into_iter().nth(play.initial) else {
         return Ok(Err(RealizabilityDisagreement::StepNotSuccessor { at: 0 }));
     };
     let seen = arena.bind(&initial, Seen::new(arena.names.roles().len()))?;

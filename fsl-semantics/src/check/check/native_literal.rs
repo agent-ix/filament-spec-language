@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! FR-091 "Native scalar literals": the calls `UUID("...")`, `Timestamp(n)`
-//! and `Text("...")` check to their typed literal values.
+//! FR-091 "Native scalar literals": the calls `UUID("...")`, `Timestamp(n)`,
+//! `Text("...")`, `Bytes("...")` and `JsonObject("...")` check to their
+//! typed literal values.
 //!
 //! These spellings are ordinary calls to S2; here the native literal
 //! constructor of that name is one candidate beside the unit's declared
@@ -10,7 +11,7 @@
 
 use filament_checked::node::{CheckedLiteral, NodeKind};
 use filament_exact::{
-    Integer, Meter, Outcome, TextPayload, Timestamp, Uuid, Value, ValueType, admit_text,
+    Integer, JsonObject, Meter, Outcome, TextPayload, Timestamp, Uuid, Value, ValueType, admit_text,
 };
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
@@ -31,6 +32,10 @@ pub(super) enum NativeConstructor {
     Timestamp,
     /// `Text("...")`.
     Text,
+    /// `Bytes("hex...")`.
+    Bytes,
+    /// `JsonObject("...")`.
+    JsonObject,
 }
 
 impl NativeConstructor {
@@ -41,6 +46,8 @@ impl NativeConstructor {
             "UUID" => Some(Self::Uuid),
             "Timestamp" => Some(Self::Timestamp),
             "Text" => Some(Self::Text),
+            "Bytes" => Some(Self::Bytes),
+            "JsonObject" => Some(Self::JsonObject),
             _ => None,
         }
     }
@@ -150,6 +157,44 @@ impl Typer<'_> {
                 Ok(node(
                     NodeKind::Literal(CheckedLiteral(Value::Text(text))),
                     ValueType::Text(text_type),
+                    location,
+                ))
+            }
+            NativeConstructor::Bytes => {
+                let ExprNode::String(literal) = argument.node() else {
+                    return Err(mismatch(&argument_location));
+                };
+                let text = literal.text();
+                if text.len() % 2 != 0 {
+                    return Err(mismatch(location));
+                }
+                let mut octets = Vec::with_capacity(text.len() / 2);
+                for pair in text.as_bytes().chunks_exact(2) {
+                    let pair = std::str::from_utf8(pair).map_err(|_| mismatch(location))?;
+                    if !pair
+                        .bytes()
+                        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+                    {
+                        return Err(mismatch(location));
+                    }
+                    let octet = u8::from_str_radix(pair, 16).map_err(|_| mismatch(location))?;
+                    octets.push(octet);
+                }
+                Ok(node(
+                    NodeKind::Literal(CheckedLiteral(Value::Bytes(octets))),
+                    ValueType::Bytes,
+                    location,
+                ))
+            }
+            NativeConstructor::JsonObject => {
+                let ExprNode::String(literal) = argument.node() else {
+                    return Err(mismatch(&argument_location));
+                };
+                let value =
+                    JsonObject::from_json_text(literal.text()).map_err(|_| mismatch(location))?;
+                Ok(node(
+                    NodeKind::Literal(CheckedLiteral(Value::JsonObject(value))),
+                    ValueType::JsonObject,
                     location,
                 ))
             }

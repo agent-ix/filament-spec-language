@@ -92,32 +92,32 @@ use filament_semantic_value::catalog::{CatalogCode, InternalFault};
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::automaton::{
-    translate, Atom, AutomatonError, AutomatonKind, Letter, PropertyAutomaton, StateId, SubjectKind,
+    Atom, AutomatonError, AutomatonKind, Letter, PropertyAutomaton, StateId, SubjectKind, translate,
 };
 use fsl_eval::fairness::{
-    analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex,
+    Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex, analyze,
 };
 use fsl_eval::model_subject::{ModelInstance, ModelLetters, ProtocolSubject};
-use fsl_eval::simulation::model::{check_model_bounds, ModelFinding, ModelSimState, ModelSystem};
-use fsl_eval::simulation::protocol::{
-    protocol_constraints, FairnessOrigin, MemoryModel, ProtocolFairness, ProtocolSystem,
-    ProtocolTransition,
-};
 use fsl_eval::simulation::ConstraintValue;
 use fsl_eval::simulation::StateKey;
+use fsl_eval::simulation::model::{ModelFinding, ModelSimState, ModelSystem, check_model_bounds};
+use fsl_eval::simulation::protocol::{
+    FairnessOrigin, MemoryModel, ProtocolFairness, ProtocolSystem, ProtocolTransition,
+    protocol_constraints,
+};
 use fsl_eval::simulation::{
-    Bounded, Cut, EncodingRefusal, Expansion, ExpansionLimit, ExpansionStop, Footprint, Limit,
-    Limits, OfferedReductions, Outcome, Permutation, SubjectSystem, SubjectTransition,
-    SymmetryGroup, TransitionSystem,
+    Bounded, Cut, EncodingRefusal, Expansion, ExpansionLimit, ExpansionStop, Footprint,
+    InitialStateRefusal, Limit, Limits, OfferedReductions, Outcome, Permutation, SubjectSystem,
+    SubjectTransition, SymmetryGroup, TransitionSystem,
 };
 use fsl_eval::temporal::{AtomReading, CaptureReading, UndefinedCause};
 use fsl_foundation::IdentityLimits;
 use fsl_replay::{
-    undefined_finding, AppliedReduction, ClauseIdentity, ClauseRootRefusal, ClosureStutter,
-    CounterexampleKind, IncompleteCause, Instance, InstanceBound, ItemRefusal, Lasso, MemoryBound,
-    MemoryBoundMember, MemoryCause, ModelCheckItem, ModelCheckLimit, ModelCheckOutcome, ModelStep,
-    ProofCertificate, Proviso, ReachedLimit, ReductionCause, RunStats, StepSite,
-    TemporalCounterexample, UndecidedCause, UndefinedEvaluation, UndefinedLocus, UndefinedSite,
+    AppliedReduction, ClauseIdentity, ClauseRootRefusal, ClosureStutter, CounterexampleKind,
+    IncompleteCause, Instance, InstanceBound, ItemRefusal, Lasso, MemoryBound, MemoryBoundMember,
+    MemoryCause, ModelCheckItem, ModelCheckLimit, ModelCheckOutcome, ModelStep, ProofCertificate,
+    Proviso, ReachedLimit, ReductionCause, RunStats, StepSite, TemporalCounterexample,
+    UndecidedCause, UndefinedEvaluation, UndefinedLocus, UndefinedSite, undefined_finding,
 };
 use fsl_semantics::check::{CaptureSite, CheckedTemporalClause, FormulaNodeId};
 use quire_canonical::{Encode, Sink, Writer};
@@ -125,11 +125,11 @@ use quire_canonical_api as canonical_api;
 
 use super::ample::{Atoms, Por};
 use super::check::{
-    atom_refusal, not_simulated, precheck, refuse_capture_read, Admitted, ModelCheckRefusal,
-    ModelCheckRequest, BOUND_POSITIONS,
+    Admitted, BOUND_POSITIONS, ModelCheckRefusal, ModelCheckRequest, atom_refusal, not_simulated,
+    precheck, refuse_capture_read,
 };
 use super::concretise::{Lift, LiftStop, PermuterOf};
-use super::fair_walk::{fairness_constraints, tree_path, FairModel};
+use super::fair_walk::{FairModel, fairness_constraints, tree_path};
 use super::graph::{
     retain_reduced_with_key, Ample, Choice, GraphExploration, ProductStateId, RetainedEdge,
     RetainConfig, RetainedGraph,
@@ -209,7 +209,12 @@ pub(super) fn check(
     let group = if request.reductions.is_empty() {
         SymmetryGroup::default()
     } else {
-        match precheck(&request.reductions, &request.item, &system)? {
+        match precheck(
+            &request.reductions,
+            &request.item,
+            &system,
+            request.limits.limits.max_states,
+        )? {
             Admitted::Group(group) => group,
             Admitted::Settled(outcome) => return Ok(outcome),
         }
@@ -274,6 +279,7 @@ pub(super) fn check(
         },
         RunRequest {
             max_depth: request.max_depth,
+            workers: request.workers,
             partial_order: request.reductions.partial_order,
             stutter_closure,
             limits: request.limits,
@@ -297,6 +303,7 @@ pub(super) fn check(
 /// [`ModelCheckRefusal`] as [`check`] returns it.
 #[derive(Clone, Copy)]
 pub(super) struct ProtocolLivenessOptions<'c> {
+    pub(super) workers: usize,
     pub(super) limits: fsl_replay::ModelCheckLimits,
     pub(super) ignore_memory_constraints: bool,
     pub(super) instance_bound: Option<InstanceBound>,
@@ -308,7 +315,7 @@ pub(super) struct ProtocolLivenessOptions<'c> {
     clippy::too_many_arguments,
     reason = "protocol liveness inputs plus the explicit clock selection table"
 )]
-pub(super) fn check_protocol<M: MemoryModel>(
+pub(super) fn check_protocol<M>(
     subject: &ProtocolSubject<'_>,
     system: &ProtocolSystem<'_, M>,
     memory_bound: Option<MemoryBound>,
@@ -317,7 +324,11 @@ pub(super) fn check_protocol<M: MemoryModel>(
     max_depth: Option<usize>,
     options: ProtocolLivenessOptions<'_>,
     cancel: &Cancel,
-) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal> {
+) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal>
+where
+    M: MemoryModel + Sync,
+    M::Component: Send + Sync,
+{
     let ModelCheckItem::Clause { clause, letters } = item else {
         return Err(fault("a-liveness-item-is-a-clause"));
     };
@@ -400,6 +411,7 @@ pub(super) fn check_protocol<M: MemoryModel>(
         },
         RunRequest {
             max_depth,
+            workers: options.workers,
             partial_order: false,
             stutter_closure: false,
             limits: options.limits,
@@ -521,6 +533,16 @@ trait LiveSubject: SubjectSystem<TransitionId: Ord> + Sized {
         stutter_closure: bool,
     ) -> Result<Bounded<Tr<Self>, Self::State>, ExpansionStop>;
 
+    /// Expand raw model states concurrently; results are returned in the
+    /// supplied order and all lasso/automaton work remains on the coordinator.
+    fn expand_live_batch(
+        &self,
+        states: Vec<Self::State>,
+        enforce: bool,
+        stutter_closure: bool,
+        workers: usize,
+    ) -> Vec<Result<Bounded<Tr<Self>, Self::State>, ExpansionStop>>;
+
     /// How the state constraint `name` reads at `state` (FR-158).
     fn constraint_value(
         &self,
@@ -582,12 +604,12 @@ fn retained<'l, S: LiveSubject>(
             identity,
             max_depth: None,
         },
+        run.request.workers,
+        |product, states, workers| product.prefetch_expansions(states, workers),
         || run.cancel.poll() && run.cancel.cause().is_some(),
         |state| product.encoded_key(state, identity),
     )
-    .map_err(|error| {
-        ModelCheckRefusal::Encoding(EncodingRefusal::of(&error, IdentityLimits::default()))
-    })
+    .map_err(|error| error.model_refusal(IdentityLimits::default()))
 }
 
 impl<'a> LiveSubject for ModelSystem<'a> {
@@ -611,6 +633,18 @@ impl<'a> LiveSubject for ModelSystem<'a> {
             self.successors(state)
         }
         .map(|expansion| (expansion, Cut::default()))
+    }
+
+    fn expand_live_batch(
+        &self,
+        states: Vec<ModelSimState>,
+        enforce: bool,
+        stutter_closure: bool,
+        workers: usize,
+    ) -> Vec<Result<Bounded<ModelTransition, ModelSimState>, ExpansionStop>> {
+        parallel_map(states, workers, |state| {
+            self.expand_live(state, enforce, stutter_closure)
+        })
     }
 
     fn permuter(&self) -> Option<PermuterOf<'_, Self>> {
@@ -660,7 +694,11 @@ impl<'a> LiveSubject for ModelSystem<'a> {
     }
 }
 
-impl<M: MemoryModel> LiveSubject for ProtocolSystem<'_, M> {
+impl<M> LiveSubject for ProtocolSystem<'_, M>
+where
+    M: MemoryModel + Sync,
+    M::Component: Send + Sync,
+{
     fn cut_steps(cut: &Cut) -> Vec<ProtocolTransition> {
         cut.steps.clone()
     }
@@ -680,6 +718,18 @@ impl<M: MemoryModel> LiveSubject for ProtocolSystem<'_, M> {
         _stutter_closure: bool,
     ) -> Result<Bounded<ProtocolTransition, Self::State>, ExpansionStop> {
         self.successors_bounded(state)
+    }
+
+    fn expand_live_batch(
+        &self,
+        states: Vec<Self::State>,
+        enforce: bool,
+        stutter_closure: bool,
+        workers: usize,
+    ) -> Vec<Result<Bounded<ProtocolTransition, Self::State>, ExpansionStop>> {
+        parallel_map(states, workers, |state| {
+            self.expand_live(state, enforce, stutter_closure)
+        })
     }
 
     fn permuter(&self) -> Option<PermuterOf<'_, Self>> {
@@ -729,6 +779,33 @@ struct Binding {
 
 fn widen(value: usize) -> u64 {
     u64::try_from(value).unwrap_or(u64::MAX)
+}
+
+fn parallel_map<State, Output>(
+    states: Vec<State>,
+    workers: usize,
+    expand: impl Fn(&State) -> Output + Sync,
+) -> Vec<Output>
+where
+    State: Send,
+    Output: Send,
+{
+    if workers <= 1 || states.len() <= 1 {
+        return states.iter().map(expand).collect();
+    }
+    std::thread::scope(|scope| {
+        states
+            .into_iter()
+            .map(|state| {
+                let expand = &expand;
+                scope.spawn(move || expand(&state))
+            })
+            .map(|worker| match worker.join() {
+                Ok(output) => output,
+                Err(panic) => std::panic::resume_unwind(panic),
+            })
+            .collect()
+    })
 }
 
 fn stopped<T: SubjectTransition>(
@@ -819,6 +896,7 @@ impl Totals {
 /// What a run needs of the request beyond the subject and the item.
 struct RunRequest {
     max_depth: Option<usize>,
+    workers: usize,
     /// Whether partial-order reduction is selected (FR-156).
     partial_order: bool,
     /// Add an unfair self-loop at every model state (FR-380).
@@ -952,6 +1030,8 @@ enum Halt {
     Cancelled(CancelCause),
     /// The automaton reached `max_automaton_states`.
     Automaton(u64),
+    /// Another distinct initial product state would exceed the remaining budget.
+    InitialStates,
     /// An identity has no canonical encoding, or an invariant broke.
     Refusal(ModelCheckRefusal),
 }
@@ -981,6 +1061,7 @@ struct LassoSystem<'r, S: LiveSubject> {
     automaton: RefCell<PropertyAutomaton>,
     start: StateId,
     readings: RefCell<BTreeMap<(StateKey, bool), Reading>>,
+    prefetched: RefCell<BTreeMap<RawExpansionKey, Result<Bounded<Tr<S>, S::State>, ExpansionStop>>>,
     /// Where the clause fixes its captures (FR-337).
     captured: CaptureSite,
     initial: Vec<LState<S::State>>,
@@ -1001,6 +1082,8 @@ struct LassoSystem<'r, S: LiveSubject> {
     found: Cell<Option<usize>>,
     halt: RefCell<Option<Halt>>,
 }
+
+type RawExpansionKey = (StateKey, usize);
 
 impl<S: LiveSubject> LassoSystem<'_, S> {
     fn encoded_key(
@@ -1054,12 +1137,52 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
 
     /// The subject's expansion of `state`, and what the memory bound left of
     /// it unexpanded, recording why when it stops.
-    fn expand(&self, state: &S::State) -> Result<Bounded<Tr<S>, S::State>, ExpansionStop> {
-        self.system
-            .expand_live(state, self.enforce, self.stutter_closure)
+    fn expand(&self, state: &LState<S::State>) -> Result<Bounded<Tr<S>, S::State>, ExpansionStop> {
+        let key = Self::raw_expansion_key(state);
+        self.prefetched
+            .borrow_mut()
+            .remove(&key)
+            .unwrap_or_else(|| self.expand_raw(&state.model))
             .inspect_err(|&stop| {
                 self.record(Halt::Expansion(stop));
             })
+    }
+
+    /// Expand a raw model state outside the product cache. The dead-root
+    /// second pass has no automaton state to key, but still commits its result
+    /// on the coordinator.
+    fn expand_raw(&self, state: &S::State) -> Result<Bounded<Tr<S>, S::State>, ExpansionStop> {
+        self.system
+            .expand_live(state, self.enforce, self.stutter_closure)
+    }
+
+    fn prefetch_expansions(&self, states: &[LState<S::State>], workers: usize) {
+        let mut jobs = Vec::new();
+        for state in states {
+            let key = Self::raw_expansion_key(state);
+            if !self.prefetched.borrow().contains_key(&key)
+                && !jobs.iter().any(|(known, _)| *known == key)
+            {
+                jobs.push((key, state.model.clone()));
+            }
+        }
+        if jobs.is_empty() {
+            return;
+        }
+        let (keys, states): (Vec<_>, Vec<_>) = jobs.into_iter().unzip();
+        let results =
+            self.system
+                .expand_live_batch(states, self.enforce, self.stutter_closure, workers);
+        let results: Vec<_> = keys.into_iter().zip(results).collect();
+        self.prefetched.borrow_mut().extend(results);
+    }
+
+    fn raw_expansion_key(state: &LState<S::State>) -> RawExpansionKey {
+        let property = match &state.property {
+            Property::After(at) => at.index(),
+            Property::Undefined { .. } => usize::MAX,
+        };
+        (state.model_key.clone(), property)
     }
 
     fn state_key_of(&self, state: &S::State) -> Result<StateKey, ExpansionStop> {
@@ -1181,7 +1304,7 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
                 return Ok(vec![Property::Undefined {
                     locus: locus.clone(),
                     cause: cause.clone(),
-                }])
+                }]);
             }
             Reading::Defined(letter) => *letter,
         };
@@ -1202,9 +1325,27 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
 
     /// The initial product states: each initial model state paired with each
     /// property state its letter reads into.
-    fn start_states(&mut self) -> Result<(), ExpansionStop> {
-        let mut initial = Vec::new();
-        for model in self.system.initial() {
+    fn start_states(
+        &mut self,
+        group: &SymmetryGroup,
+        max_states: usize,
+    ) -> Result<(), ExpansionStop> {
+        let mut initial = BTreeMap::new();
+        let identity = IdentityLimits::default();
+        for model in self
+            .system
+            .initial_for_check_with_symmetry(max_states, group)
+        {
+            let model = model.map_err(|refusal| match refusal {
+                InitialStateRefusal::OverBudget(_) => self.record(Halt::InitialStates),
+                InitialStateRefusal::Encoding(refusal) => {
+                    self.record(Halt::Refusal(ModelCheckRefusal::Encoding(refusal)))
+                }
+                InitialStateRefusal::Expansion(stop) => self.record(Halt::Expansion(stop)),
+                InitialStateRefusal::Construction(refusal) => {
+                    self.record(Halt::Refusal(ModelCheckRefusal::Protocol(refusal)))
+                }
+            })?;
             let (model_key, reading) = self.reading_at(&model, true)?;
             let properties = self.step(Before::Start, &reading)?;
             if properties.is_empty() {
@@ -1215,15 +1356,37 @@ impl<S: LiveSubject> LassoSystem<'_, S> {
                 });
             }
             for property in properties {
-                initial.push(LState {
+                let state = LState {
                     model: model.clone(),
                     model_key: model_key.clone(),
                     property,
                     depth: 0,
-                });
+                };
+                let canonical;
+                let keyed = if group.is_trivial() {
+                    &state
+                } else {
+                    (canonical, _) = self.canonical(&state, group).ok_or_else(|| {
+                        self.record(Halt::Refusal(fault("a-reduced-product-offers-symmetry")))
+                    })??;
+                    &canonical
+                };
+                let key = quire_canonical::to_vec(
+                    &self.key(keyed),
+                    quire_canonical::Limits::new(identity.input_bytes),
+                )
+                .map_err(|error| {
+                    self.record(Halt::Refusal(ModelCheckRefusal::Encoding(
+                        EncodingRefusal::of(&error, identity),
+                    )))
+                })?;
+                initial.entry(key).or_insert(state);
+                if initial.len() > max_states {
+                    return Err(self.record(Halt::InitialStates));
+                }
             }
         }
-        self.initial = initial;
+        self.initial = initial.into_values().collect();
         Ok(())
     }
 }
@@ -1342,8 +1505,10 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
     type Key = ProductKey<S::Key, PropertyKey>;
     type Finding = Finding<Tr<S>>;
 
-    fn initial(&self) -> Vec<Self::State> {
-        self.initial.clone()
+    type InitialError = std::convert::Infallible;
+
+    fn initial_iter(&self) -> impl Iterator<Item = Result<Self::State, Self::InitialError>> + '_ {
+        self.initial.iter().cloned().map(Ok)
     }
 
     fn key(&self, state: &Self::State) -> Self::Key {
@@ -1367,7 +1532,7 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
                 return Ok(Expansion {
                     successors: Vec::new(),
                     findings: Vec::new(),
-                })
+                });
             }
             Property::After(at) => Before::At(*at),
         };
@@ -1393,7 +1558,7 @@ impl<S: LiveSubject> TransitionSystem for LassoSystem<'_, S> {
                 Err(stop) => return Err(self.record(Halt::Expansion(stop))),
             }
         }
-        let (expansion, cut) = self.expand(&state.model)?;
+        let (expansion, cut) = self.expand(state)?;
         let mut findings: Vec<Self::Finding> = expansion
             .findings
             .into_iter()
@@ -1874,7 +2039,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                         IncompleteCause::Cancelled { source },
                         None,
                         totals.stats(),
-                    ))
+                    ));
                 }
                 Second::Stopped(cause, limit) => return Ok(stopped(cause, limit, totals.stats())),
                 Second::NoneFair => {}
@@ -2038,7 +2203,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     ModelCheckLimit::MaxAutomatonStates,
                     limit,
                     totals.stats(),
-                )))
+                )));
             }
             Err(other) => return Err(LivenessRefusal::from(other).into()),
         };
@@ -2051,6 +2216,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             automaton: RefCell::new(automaton),
             start,
             readings: RefCell::new(BTreeMap::new()),
+            prefetched: RefCell::new(BTreeMap::new()),
             captured: self.clause.capture_site(),
             initial: Vec::new(),
             dead: RefCell::new(Vec::new()),
@@ -2063,12 +2229,12 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             found: Cell::new(None),
             halt: RefCell::new(None),
         };
-        if product.start_states().is_err() {
-            return self.halted(&product, totals).map(Err);
-        }
         // The budgets are the run's, shared by every binding.
         let spent = self.request.limits.limits;
         let (max_states, max_transitions) = totals.remaining(spent);
+        if product.start_states(&binding.group, max_states).is_err() {
+            return self.halted(&product, totals).map(Err);
+        }
         let remaining = Limits {
             max_states,
             max_transitions,
@@ -2117,7 +2283,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 None => return Err(fault("a-stopped-expansion-recorded-its-halt")),
             },
             Outcome::BoundReached { .. } => {
-                return Err(fault("the-horizon-is-the-product-s-not-the-exploration-s"))
+                return Err(fault("the-horizon-is-the-product-s-not-the-exploration-s"));
             }
         };
         Ok(Ok(Explored {
@@ -2167,6 +2333,10 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             ),
             Halt::Cancelled(source) => Ending::Stopped(IncompleteCause::Cancelled { source }, None),
             Halt::Automaton(limit) => reached(ModelCheckLimit::MaxAutomatonStates, limit),
+            Halt::InitialStates => reached(
+                ModelCheckLimit::MaxStates,
+                widen(self.request.limits.limits.max_states),
+            ),
             Halt::Refusal(refusal) => return Err(refusal),
             Halt::Expansion(stop) => match stop.limit {
                 Some(ExpansionLimit::EvaluationMeter(counter)) => reached(
@@ -2177,7 +2347,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     reached(ModelCheckLimit::MaxCandidates, self.request.max_candidates)
                 }
                 None if stop.is_internal_failure() => {
-                    return Err(fault("model-expansion-invariant"))
+                    return Err(fault("model-expansion-invariant"));
                 }
                 None => Ending::Stopped(IncompleteCause::ResourceExhausted, None),
             },
@@ -2354,6 +2524,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             }
         }
         let mut found: Option<usize> = None;
+        let mut prefetched = BTreeMap::new();
         let stop = |phase: &mut DeadPhase<Tr<S>>| -> Result<(), ModelCheckRefusal> {
             phase.stopped = self.halt_ending(&run.product)?;
             Ok(())
@@ -2365,6 +2536,29 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             let Some(model) = nodes.get(index).map(|node| node.model.clone()) else {
                 return Err(fault("a-frontier-index-names-a-node"));
             };
+            if self.request.workers > 1 && !prefetched.contains_key(&index) {
+                let mut jobs = vec![(index, model.clone())];
+                jobs.extend(
+                    frontier
+                        .iter()
+                        .filter(|(next_depth, next)| {
+                            !bound.is_some_and(|bound| *next_depth >= bound)
+                                && !prefetched.contains_key(next)
+                        })
+                        .take(self.request.workers.saturating_sub(1))
+                        .filter_map(|(_, next)| {
+                            nodes.get(*next).map(|node| (*next, node.model.clone()))
+                        }),
+                );
+                let (indices, states): (Vec<_>, Vec<_>) = jobs.into_iter().unzip();
+                let expansions = run.product.system.expand_live_batch(
+                    states,
+                    run.product.enforce,
+                    run.product.stutter_closure,
+                    self.request.workers,
+                );
+                prefetched.extend(indices.into_iter().zip(expansions));
+            }
             if run.product.poll().is_err() {
                 stop(&mut phase)?;
                 return Ok(phase);
@@ -2411,9 +2605,13 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                     Cut::default(),
                 )
             } else {
-                match run.product.expand(&model) {
+                match prefetched
+                    .remove(&index)
+                    .unwrap_or_else(|| run.product.expand_raw(&model))
+                {
                     Ok(expanded) => expanded,
-                    Err(_) => {
+                    Err(stop_cause) => {
+                        run.product.record(Halt::Expansion(stop_cause));
                         stop(&mut phase)?;
                         return Ok(phase);
                     }
@@ -2737,7 +2935,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
             Ok(analyses) => analyses,
             Err(FairnessError::Cancelled) => return self.cancelled(),
             Err(FairnessError::UnknownVertex { .. } | FairnessError::EmptyLoop) => {
-                return Err(fault("the-fairness-graph-is-built-from-retained-states"))
+                return Err(fault("the-fairness-graph-is-built-from-retained-states"));
             }
         };
         let Some(passing) = Analysis::first_fair_in(&analyses) else {
@@ -2755,7 +2953,7 @@ impl<'r, S: LiveSubject> Run<'r, S> {
                 Ok(analyses) => analyses,
                 Err(FairnessError::Cancelled) => return self.cancelled(),
                 Err(FairnessError::UnknownVertex { .. } | FairnessError::EmptyLoop) => {
-                    return Err(fault("the-fairness-graph-is-built-from-retained-states"))
+                    return Err(fault("the-fairness-graph-is-built-from-retained-states"));
                 }
             };
             let Some(full_passing) = Analysis::first_fair_in(&full_analyses) else {

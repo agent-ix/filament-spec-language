@@ -1378,13 +1378,13 @@ impl AdmittedPackageRead<'_> {
         let supplied = match self.witnesses.supply(&self.read.admitted, &mut budget) {
             Ok(supplied) => supplied,
             Err(WitnessSupplyFailure::Exhausted(native)) => {
-                return Err(exhausted(*native, &budget))
+                return Err(exhausted(*native, &budget));
             }
             Err(WitnessSupplyFailure::Rows(rows)) => {
                 return Err(match limits.native_join_limits().refusal(rows, &budget) {
                     Some(denial) => ViewFailure::Exhausted(Box::new(denial)),
                     None => fault(),
-                })
+                });
             }
             Err(WitnessSupplyFailure::Fault) => return Err(fault()),
         };

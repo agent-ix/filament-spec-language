@@ -219,7 +219,7 @@ impl<'a> ModelSystem<'a> {
                     self.types,
                     &self.populations,
                     &self.universes,
-                    &self.initial,
+                    &self.initial_base,
                     &budget,
                 )?)
             }
@@ -285,7 +285,7 @@ impl<'a> ModelSystem<'a> {
                     self.types,
                     &self.populations,
                     &self.universes,
-                    &self.initial,
+                    &self.initial_base,
                 )
                 .map_err(LettersRefusal::ReferenceBindingsAdmission)?
             }
@@ -297,7 +297,7 @@ impl<'a> ModelSystem<'a> {
                     self.types,
                     &self.populations,
                     &self.universes,
-                    &self.initial,
+                    &self.initial_base,
                 )
                 .map_err(LettersRefusal::ReferenceBindingsAdmission)?,
             (ClauseSource::Source(_), None) => self.reference_bindings.clone(),

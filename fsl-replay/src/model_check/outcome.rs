@@ -159,8 +159,8 @@ pub enum MemoryCause {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ModelCheckOutcome<T: SubjectTransition = ModelTransition> {
     /// Every reachable product state was examined and none is bad (V-1),
-    /// with the closure certificate the core checks before the proof
-    /// settles (ADR-018 PC-3).
+    /// with a closure, component or SMT proof certificate that the core
+    /// checks before the proof settles (ADR-018 PC-3, PC-6).
     Holds {
         /// The explored product states.
         certificate: ProofCertificate,

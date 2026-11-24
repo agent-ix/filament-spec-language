@@ -218,6 +218,258 @@ fn genuine_tick_authority_retains_complete_original_values_and_same_emission() {
     );
 }
 
+/// FR-531-AC-32 / TC-1331: the admitted plan authority is the context used by
+/// the final emission's real native identity join and selected type closure.
+#[test]
+fn retained_tick_plan_context_drives_native_join_and_type_closure() {
+    use filament_contract_model::{SelectedMonitorClosureRows, SelectedMonitorTimeSource};
+
+    let root = tick_root();
+    let (view, subject) = observation::admitted(Some(vec![row(&root)]));
+    let source = root.checked_unit().source().identity().clone();
+    let claim = root.plan().subject().clone();
+    let expected_plan = root.plan().clone();
+    let expected_obligations = root.obligations().clone();
+    let mut budget = native_budget(&root);
+    let context = root
+        .admit_authority(
+            PlanAuthoritySelection {
+                source: &source,
+                claim: &claim,
+                observation_subject: &subject,
+                observation_clock: &observation::clock(),
+                observation_source: &observation::source(),
+            },
+            Some(view),
+            limits(),
+            &mut budget,
+            native_locus(),
+        )
+        .expect("the same-emission plan, order, and owner association admit");
+    assert_eq!(context.root().plan(), &expected_plan);
+    assert_eq!(context.root().obligations(), &expected_obligations);
+    let before_borrows = budget.consumed();
+    assert!(!context.admitted_order().is_empty());
+    assert!(!context.progress_context().is_empty());
+    assert_eq!(
+        budget.consumed(),
+        before_borrows,
+        "borrowing admitted context does not charge native storage"
+    );
+    assert_eq!(
+        context.progress_context().as_ptr(),
+        context
+            .progress()
+            .association_canonical_bytes()
+            .unwrap()
+            .as_ptr()
+    );
+
+    let emission = context.root().emission();
+    let package = context.admitted_package();
+    let identity_rows = emission
+        .identity_rows(package, &mut budget)
+        .expect("the final emission supplies its original identity rows");
+    assert_eq!(
+        identity_rows.declarations(),
+        emission.selected_exact_declaration_rows()
+    );
+    assert_eq!(identity_rows.fields(), emission.selected_exact_field_rows());
+    assert_eq!(
+        identity_rows.source_records().len(),
+        emission.selected_source_record_rows().len()
+    );
+    assert_eq!(
+        identity_rows.source_unions(),
+        emission.selected_source_union_rows()
+    );
+    let joined = identity_rows
+        .selected(package, &mut budget)
+        .expect("the native identity join accepts the same final emission");
+    assert_eq!(
+        joined.declaration_rows().count(),
+        identity_rows.declarations().len()
+    );
+    assert_eq!(joined.field_rows(), identity_rows.fields());
+    for row in identity_rows.source_records() {
+        let projection = package
+            .project_exact_type(&row.structural_node, &joined, &mut budget)
+            .expect("the same-emission source record projects through IR");
+        assert_eq!(projection.source_record_view(), Some(row));
+        assert_eq!(
+            projection.value_type(),
+            &filament_exact::ValueType::Composite(row.record_key.clone())
+        );
+    }
+
+    let mut type_budget = budget;
+    let equality = emission
+        .equality_witness(package, &mut type_budget)
+        .expect("the same emission supplies its equality rows");
+    let source_enums = emission
+        .selected_source_enum_rows(&mut type_budget)
+        .expect("the same emission supplies source enum rows");
+    let model_shapes = emission
+        .selected_ir_model_enum_shape_rows(&mut type_budget)
+        .expect("the same emission supplies model enum shapes");
+    let collections = emission
+        .selected_source_collection_rows()
+        .iter()
+        .enumerate()
+        .map(|(index, row)| {
+            row.to_ir(
+                &mut type_budget,
+                filament_contract_model::NativeJoinLocus {
+                    source: filament_contract_model::NativeJoinLocusSource::AdapterRow(index),
+                    form: "monitor_source_collection_row",
+                },
+            )
+            .expect("the same emission's collection rows convert")
+        })
+        .collect::<Vec<_>>();
+    let plan = package
+        .monitor_plans()
+        .next()
+        .expect("the admitted plan root");
+    let checked_time_source = context.checked_time_source();
+    let time_source = match checked_time_source.source {
+        TimeSourceKind::Dense => SelectedMonitorTimeSource::Dense,
+        TimeSourceKind::Tick { .. } => SelectedMonitorTimeSource::Tick {
+            period: context
+                .checked_tick_period()
+                .expect("tick plan has its checked period")
+                .clone(),
+        },
+    };
+    let authority = filament_contract_model::SelectedMonitorAuthorityRow::try_new(
+        context.admission_binding(),
+        plan.clause().clone(),
+        filament_contract_model::CheckedOccurrence {
+            role: filament_contract_model::CheckedOccurrenceRole::Claim,
+            ordinal: expected_plan.subject().occurrence().origin().ordinal(),
+        },
+        time_source,
+        context.admitted_order(),
+        context.progress_context(),
+    )
+    .expect("the retained order and owner association authorize this plan");
+    let closure = plan
+        .project_selected_type_closure(
+            SelectedMonitorClosureRows {
+                declarations: identity_rows.declarations(),
+                fields: identity_rows.fields(),
+                model_tuples: emission.selected_tuple_declaration_rows(),
+                model_unions: emission.selected_model_union_rows(),
+                source_units: emission.selected_source_unit_rows(),
+                model_enum_declarations: emission.selected_model_enum_declaration_rows(),
+                model_enum_members: emission.selected_model_enum_member_rows(),
+                model_enum_shapes: &model_shapes,
+                source_records: identity_rows.source_records(),
+                source_tuples: emission.selected_source_tuple_rows(),
+                source_unions: identity_rows.source_unions(),
+                source_enums: &source_enums,
+                source_collections: &collections,
+                equality_applications: equality.applications(),
+                equality_facts: equality.facts(),
+                authority: &authority,
+            },
+            &mut type_budget,
+        )
+        .expect("the native selected closure accepts the retained context and rows");
+    assert_eq!(
+        closure.identities().declaration_rows().count(),
+        identity_rows.declarations().len()
+    );
+    assert_eq!(closure.identities().field_rows(), identity_rows.fields());
+    for row in identity_rows.source_records() {
+        let projected = package
+            .project_exact_type(&row.structural_node, closure.identities(), &mut type_budget)
+            .expect("the selected closure retains the projected Exact record type");
+        assert_eq!(projected.source_record_view(), Some(row));
+    }
+
+    let foreign = root_of(
+        &authored("eventually[0 ms, 5 ms] holds(c.versionNumber = 3)"),
+        "C",
+        &target(),
+    )
+    .expect("a second genuine emission with the same authored clause name");
+    let (foreign_progress, foreign_subject) = observation::admitted(Some(vec![row(&foreign)]));
+    let mut foreign_budget = native_budget(&foreign);
+    let refusal = foreign
+        .admit_authority(
+            PlanAuthoritySelection {
+                source: &source,
+                claim: &claim,
+                observation_subject: &foreign_subject,
+                observation_clock: &observation::clock(),
+                observation_source: &observation::source(),
+            },
+            Some(foreign_progress),
+            limits(),
+            &mut foreign_budget,
+            native_locus(),
+        )
+        .expect_err("another emission cannot borrow the original context");
+    assert!(matches!(
+        refusal,
+        PlanAuthorityRefusal::Claim | PlanAuthorityRefusal::Selection(_)
+    ));
+    let missing_progress_root = tick_root();
+    let missing_source = missing_progress_root
+        .checked_unit()
+        .source()
+        .identity()
+        .clone();
+    let missing_claim = missing_progress_root.plan().subject().clone();
+    let mut missing_budget = native_budget(&missing_progress_root);
+    assert!(matches!(
+        missing_progress_root.admit_authority(
+            PlanAuthoritySelection {
+                source: &missing_source,
+                claim: &missing_claim,
+                observation_subject: &subject,
+                observation_clock: &observation::clock(),
+                observation_source: &observation::source(),
+            },
+            None,
+            limits(),
+            &mut missing_budget,
+            native_locus(),
+        ),
+        Err(PlanAuthorityRefusal::MissingProgress)
+    ));
+
+    let missing_order_root = tick_root();
+    let (order_progress, order_subject) =
+        observation::admitted(Some(vec![row(&missing_order_root)]));
+    let order_source = missing_order_root
+        .checked_unit()
+        .source()
+        .identity()
+        .clone();
+    let order_claim = missing_order_root.plan().subject().clone();
+    let mut no_order = limits();
+    no_order.order = quire_canonical::Limits::new(0);
+    let mut order_budget = native_budget(&missing_order_root);
+    assert!(matches!(
+        missing_order_root.admit_authority(
+            PlanAuthoritySelection {
+                source: &order_source,
+                claim: &order_claim,
+                observation_subject: &order_subject,
+                observation_clock: &observation::clock(),
+                observation_source: &observation::source(),
+            },
+            Some(order_progress),
+            no_order,
+            &mut order_budget,
+            native_locus(),
+        ),
+        Err(PlanAuthorityRefusal::Order(_))
+    ));
+}
+
 #[trace("TC-1081", "FR-251-AC-49")]
 #[test]
 fn complete_handoffs_measure_work_logical_storage_and_read_storage_on_one_budget() {

@@ -16,8 +16,9 @@ use fsl_eval::model_subject::ModelSubject;
 use fsl_foundation::RequestIndex;
 use fsl_replay::{
     check_probability_certificate_document, CertificateRule, ExactProbabilityCertificate,
-    ExactProbabilityCertificateCheck, InconclusiveCause, ProbabilityCertificateLocus,
-    ProbabilityCertificateRule, ProbabilityDocumentError, ProofBasis, TerminalValue,
+    ExactProbabilityCertificateCheck, IncompleteCause, InconclusiveCause, ModelCheckLimit,
+    ProbabilityCertificateLocus, ProbabilityCertificateRule, ProbabilityDocumentError, ProofBasis,
+    TerminalValue,
 };
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
@@ -478,6 +479,52 @@ fn strict_mean_time_is_certified_over_boundary_regions() {
     let key: Value = serde_json::from_slice(&bytes).expect("canonical ProductKey");
     assert_eq!(key[4][1][0], "boundary-region");
     assert!(accepted(&world, "MeanTime", &doc));
+}
+
+/// FR-204-AC-24: an unreachable target has infinite elapsed time, so every
+/// threshold is proved without manufacturing a finite exact value.
+#[trace("TC-639", "FR-204-AC-24")]
+#[test]
+fn workload_mean_time_proves_infinite_lower_bound_without_exact_value() {
+    let claims = "probabilistic MeanTime using inf on M over (c: M::Call) under One on origin { expected elapsed until holds(false) >= 3 ms }\n";
+    let world = retx(
+        GUARD,
+        true,
+        "workload One on M { weight Call::send = 1; }\n",
+        claims,
+    );
+    let record = settle(&world, "MeanTime");
+    assert!(
+        matches!(
+            record.terminal().map(|terminal| terminal.value()),
+            Some(TerminalValue::Proved {
+                basis: ProofBasis::Exhaustive,
+                ..
+            })
+        ),
+        "{record:#?}"
+    );
+    assert!(record.exact_probabilistic.is_none());
+}
+
+/// FR-204-AC-25: every admitted scheduler has the same unreachable target.
+#[trace("TC-639", "FR-204-AC-25")]
+#[test]
+fn every_scheduler_mean_time_proves_infinite_lower_bound_without_exact_value() {
+    let claims = "probabilistic MeanTime using inf on M over (c: M::Call) under every scheduler on origin { expected elapsed until holds(false) >= 3 ms }\n";
+    let world = retx(GUARD, true, "", claims);
+    let record = settle(&world, "MeanTime");
+    assert!(
+        matches!(
+            record.terminal().map(|terminal| terminal.value()),
+            Some(TerminalValue::Proved {
+                basis: ProofBasis::Exhaustive,
+                ..
+            })
+        ),
+        "{record:#?}"
+    );
+    assert!(record.exact_probabilistic.is_none());
 }
 
 // --- FR-923 (TC-2492) -------------------------------------------------------
@@ -1296,6 +1343,78 @@ fn zero_time_cycle_without_end_component_is_certified() {
     assert!(accepted(&world, "Deadline", &document(&record)));
 }
 
+/// A leaking zero-time cycle needs policy evaluation even with a finite
+/// deadline. The timed expectation also needs a dense reward solve.
+#[trace("TC-638", "FR-203-AC-28")]
+#[test]
+fn timed_dense_working_bytes_limit_settles_incomplete() {
+    let deadline_world = retx(
+        "",
+        false,
+        "",
+        &deadline("Deadline", "under every scheduler", ">= 0.99"),
+    );
+    let mean_world = retx(
+        STRICT,
+        true,
+        "",
+        "probabilistic MeanTime using inf on M over (c: M::Call) under every scheduler on origin \
+         { expected elapsed until holds(c.late) <= 3 ms }\n",
+    );
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    for (world, claim) in [(&deadline_world, "Deadline"), (&mean_world, "MeanTime")] {
+        let mut request = request(world, claim);
+        request.limits.document.storage_bytes = 1;
+        let item = exact_probabilistic_item(RequestIndex::new(0), request);
+        let records = analyze_items(&engines, vec![item], &Cancel::new());
+        let terminal = records[0].terminal().unwrap_or_else(|| {
+            panic!(
+                "{claim} must settle incomplete: {:?}",
+                records[0].settlement
+            )
+        });
+        assert_eq!(
+            terminal.value(),
+            &TerminalValue::Incomplete(IncompleteCause::LimitReached {
+                limit: ModelCheckLimit::CertificateMaxWorkingBytes,
+                value: 1,
+                required: None,
+            }),
+            "{claim}",
+        );
+    }
+}
+
+/// Policy evaluation of the leaking zero-time cycle propagates its stop
+/// through the finite-horizon adapter.
+#[trace("TC-638", "FR-203-AC-28")]
+#[test]
+fn timed_deadline_dense_elimination_cancellation_settles_incomplete() {
+    let world = retx(
+        "",
+        false,
+        "",
+        &deadline("Deadline", "under every scheduler", ">= 0.99"),
+    );
+    crate::prob_world::assert_dense_elimination_cancelled(request(&world, "Deadline"));
+}
+
+/// Expected elapsed time uses the unbounded solver fallback too, and must
+/// preserve its dense-elimination cancellation instead of turning it into an
+/// engine failure.
+#[trace("TC-638", "FR-203-AC-28")]
+#[test]
+fn timed_mean_dense_elimination_cancellation_settles_incomplete() {
+    let world = retx(
+        STRICT,
+        true,
+        "",
+        "probabilistic MeanTime using inf on M over (c: M::Call) under every scheduler on origin \
+         { expected elapsed until holds(c.late) <= 3 ms }\n",
+    );
+    crate::prob_world::assert_dense_elimination_cancelled(request(&world, "MeanTime"));
+}
+
 /// FR-924-AC-5: a time-locked initial state is terminal.
 #[trace("TC-2493", "FR-924-AC-5")]
 #[trace("FSpec-TC-1820", "FSpec-FR-753-AC-6")]
@@ -1682,8 +1801,7 @@ fn a_timed_deadline_past_the_rational_budget_proves_with_value_bounds() {
         method,
         &fsl_replay::BoundsMethod::BackwardInduction { precision_bits: 64 }
     );
-    let fsl_replay::ExactBound::Finite(upper) = upper
-    else {
+    let fsl_replay::ExactBound::Finite(upper) = upper else {
         panic!("complete product interval has a finite upper endpoint");
     };
     assert!(lower.value() <= &ratio(99, 100) && &ratio(99, 100) <= upper.value());

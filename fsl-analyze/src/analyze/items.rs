@@ -149,8 +149,9 @@ pub fn model_item<'a>(
 pub(super) fn run_model_item(
     index: RequestIndex,
     family: Option<DeclarationFamily>,
-    item: ModelItem<'_>,
+    mut item: ModelItem<'_>,
 ) -> AnalyzeItem<'_> {
+    item.certificate = item.request.certificate_request();
     let kind = match item.request.item {
         ModelCheckItem::Invariant { .. } => Capability::OperationContract,
         ModelCheckItem::Clause { .. }
@@ -1104,7 +1105,12 @@ fn timed_refinement_refusal(refusal: &TimedRefinementRefusal) -> Refusal {
         TimedRefinementRefusal::Subject(SubjectRefusal::NoModels | SubjectRefusal::NoUniverse)
         | TimedRefinementRefusal::Timed(_) => Refusal::Failed(INVALID_VALUE),
         // EN-6 opens its subjects from snapshots, which stop on no budget.
-        TimedRefinementRefusal::Subject(SubjectRefusal::Stopped(_)) => Refusal::Failed(BROKEN),
+        TimedRefinementRefusal::Subject(
+            SubjectRefusal::Stopped(_)
+            | SubjectRefusal::InitialStateLimit(_)
+            | SubjectRefusal::InitialEncoding
+            | SubjectRefusal::InitialConstruction(_),
+        ) => Refusal::Failed(BROKEN),
     }
 }
 
@@ -1263,6 +1269,7 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         // A request defect: an operation or subject count the request names
         // wrongly, or the race-freedom item over a model subject.
         ModelCheckRefusal::RaceOverModel
+        | ModelCheckRefusal::Workers
         | ModelCheckRefusal::LoopProofOverModel
         | ModelCheckRefusal::InvariantOverProtocol
         | ModelCheckRefusal::Liveness(LivenessRefusal::UnknownOperation { .. })
@@ -1339,6 +1346,7 @@ pub(super) fn statistical_refusal(
     EngineReport::Refused(match refusal {
         R::Admission(failure) => admission(failure),
         R::Symmetry(_) => symmetry(),
+        R::Workers => named_decline(INVALID_VALUE, "workers", "0".to_owned()),
         R::RequiresBound(_) => Refusal::RequiresBound,
         R::NotStatistical { .. } => Refusal::NotStatistical,
         // FR-192's map settles the rest, a refused predicate by FR-192-AC-7's

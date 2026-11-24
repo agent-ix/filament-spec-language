@@ -5,12 +5,12 @@
 //! (ADR-018 §6 states the same rule).
 
 use filament_exact::Cancel;
-use fsl_analyze::model_check::{check_model, ModelCheckRequest};
+use fsl_analyze::model_check::{ModelCheckRequest, check_model};
 use fsl_replay::{ModelCheckItem, ModelCheckLimits, ModelCheckOutcome};
 use ix_trace_rs::trace;
 
 use crate::counter::{
-    document, instance, package_with_clauses, subject, Documents, Letters, CONTRACT, UNLIMITED,
+    CONTRACT, Documents, Letters, UNLIMITED, document, instance, package_with_clauses, subject,
 };
 
 /// Over the Counter subject with `a` at 0 and `b` at 3 and the universe
@@ -22,7 +22,8 @@ use crate::counter::{
 #[trace("FSpec-TC-290", "FSpec-FR-361-AC-10")]
 #[test]
 fn the_first_refuted_instance_is_reported_over_a_shorter_later_one() {
-    let ModelCheckOutcome::Violated { counterexample, .. } = outcome_under(ModelCheckLimits::default())
+    let ModelCheckOutcome::Violated { counterexample, .. } =
+        outcome_under(ModelCheckLimits::default())
     else {
         panic!("expected Violated");
     };
@@ -101,6 +102,7 @@ fn outcome_with(
     };
     check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: subject(&package, &documents, initial, &["a", "b"], UNLIMITED),
             item: ModelCheckItem::Clause {
@@ -109,6 +111,8 @@ fn outcome_with(
             },
             max_depth,
             limits,
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
             reductions,
         },
         &Cancel::new(),

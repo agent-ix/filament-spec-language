@@ -15,7 +15,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{
-    EnumShape, Identifier, Integer, NodeKey, UnionMember, UnitId, ValueType, VariantId,
+    EnumShape, Identifier, Integer, NodeKey, Rational, UnionMember, UnitId, ValueType, VariantId,
 };
 use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::declaration::{CompositeDeclaration, CompositeShape};
@@ -26,6 +26,7 @@ use fsl_package::CheckedPackage;
 use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::check::{CheckedGraph, CheckedTypeNode, CompositeForm};
 use fsl_semantics::library::LibraryName;
+use fsl_semantics::value::nominal_payload::NominalPayload;
 
 use crate::bounds::ReplayLimits;
 use crate::compile::{recompile_unit_with_temporal_selections, CompileUnit, CompiledPackage};
@@ -238,6 +239,33 @@ pub struct AdmittedDimension {
     terms: Vec<(NodeKey, Integer)>,
 }
 
+/// One admitted dimension equivalence: its structural node id, the two
+/// admitted dimension node ids, and the exact root ratio stated for the
+/// first dimension.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct AdmittedDimensionEquivalence {
+    node: NodeKey,
+    dimensions: [NodeKey; 2],
+    root_scale: Rational,
+}
+
+impl AdmittedDimensionEquivalence {
+    /// The equivalence node id.
+    pub fn node(&self) -> &NodeKey {
+        &self.node
+    }
+
+    /// The related dimension node ids in canonical order.
+    pub fn dimensions(&self) -> &[NodeKey; 2] {
+        &self.dimensions
+    }
+
+    /// The first dimension's root expressed in the second dimension's root.
+    pub fn root_scale(&self) -> &Rational {
+        &self.root_scale
+    }
+}
+
 impl AdmittedDimension {
     /// The id of the dimension's node: the wire node id
     /// [`AdmittedContext::dimension_declaration`] finds it by and
@@ -386,6 +414,7 @@ pub struct AdmittedContext {
     units: BTreeMap<NodeKey, AdmittedUnit>,
     foreign_units: BTreeMap<NodeKey, LibraryName>,
     dimensions: BTreeMap<NodeKey, AdmittedDimension>,
+    dimension_equivalences: Vec<AdmittedDimensionEquivalence>,
     foreign_dimensions: BTreeMap<NodeKey, LibraryName>,
     unit_table: UnitTable,
     /// Every node of this package's checked graph, and every declared unit
@@ -519,6 +548,11 @@ impl AdmittedContext {
     /// dimensions those derive from, ascending by node id.
     pub fn dimensions(&self) -> impl Iterator<Item = &AdmittedDimension> {
         self.dimensions.values()
+    }
+
+    /// Every admitted dimension equivalence, ascending by node id.
+    pub fn dimension_equivalences(&self) -> impl Iterator<Item = &AdmittedDimensionEquivalence> {
+        self.dimension_equivalences.iter()
     }
 
     /// The dimension the wire node id `declaration` names.
@@ -782,6 +816,7 @@ pub(crate) fn context_of(
         dimensions,
         table,
     } = unit_tables(package.graph())?;
+    let dimension_equivalences = dimension_equivalence_table(package.graph());
     let nodes = package
         .graph()
         .semantic_graph()
@@ -836,10 +871,31 @@ pub(crate) fn context_of(
         units,
         foreign_units,
         dimensions,
+        dimension_equivalences,
         foreign_dimensions,
         unit_table: table,
         nodes,
     })
+}
+
+/// The check's lowered nominal nodes retain the exact ratio and canonical
+/// dimension keys that the emitted package carries. Project those admitted
+/// facts directly; do not reconstruct keys from source names.
+fn dimension_equivalence_table(graph: &CheckedGraph) -> Vec<AdmittedDimensionEquivalence> {
+    let mut equivalences = graph
+        .semantic_graph()
+        .nodes()
+        .filter_map(|node| match node.nominal_payload()? {
+            NominalPayload::DimensionEquivalence(payload) => Some(AdmittedDimensionEquivalence {
+                node: node.key(),
+                dimensions: payload.dimensions().clone(),
+                root_scale: payload.scale().clone(),
+            }),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    equivalences.sort_by(|left, right| left.node.cmp(&right.node));
+    equivalences
 }
 
 /// A graph's admitted units and dimensions, and the unit table they came

@@ -87,6 +87,10 @@ fn source_reference(source: &Source) -> DefinitionSourceRef {
 }
 
 impl PluginReplayContext {
+    pub(crate) fn package_bytes(&self) -> &[u8] {
+        &self.package
+    }
+
     /// The context of the package `checked` and `emitted`, compiled with
     /// `models` under `limits`: the `CheckedUnit` from `check`, the
     /// `EmittedUnit` that `package` emitted from it, the `AdmittedModels`
@@ -373,6 +377,14 @@ pub enum PluginReplayRefusal {
         /// The request index.
         request_index: RequestIndex,
     },
+    /// The pairing key belongs to a different compiled package.
+    #[error("invalid-request: package id {received} does not match run package id {run}")]
+    ForeignRun {
+        /// The package id received with the item.
+        received: crate::call_replay_context::PackageId,
+        /// The package id that produced this context.
+        run: crate::call_replay_context::PackageId,
+    },
     /// An invariant of the checked package failed: consistent inputs never
     /// reach it. The item settles `failed`.
     #[error("runtime_invariant: plugin replay request: {0:?}")]
@@ -385,25 +397,28 @@ impl PluginReplayRefusal {
     pub fn diagnostic(&self, item_index: usize) -> OutcomeDiagnostic {
         let (code, cause) = match self {
             Self::PackageRead(quire_canonical::ReadError::Limit(_)) => {
-                (Code::StageLimitExceeded, "replay.input_bytes")
+                (Code::StageLimitExceeded, Some("replay.input_bytes"))
             }
             Self::PackageRead(quire_canonical::ReadError::Allocation { .. }) => {
-                (Code::ResourceExhausted, "storage")
+                (Code::ResourceExhausted, Some("storage"))
             }
             Self::PackageRead(
                 quire_canonical::ReadError::Malformed { .. }
                 | quire_canonical::ReadError::NumberOutOfRange { .. },
-            ) => (Code::RuntimeInvariant, "established-invariant-broken"),
-            Self::PackageRead(_) => (Code::RuntimeInvariant, "established-invariant-broken"),
-            Self::UnknownOccurrence { .. } => (Code::MissingDeclaration, "missing-name"),
-            Self::NotReplayable { .. } => (Code::UnknownRequiredFeature, "unsupported-feature"),
-            Self::UnresolvedDependency { .. } => (Code::MissingImport, "missing-selection"),
-            Self::DuplicateBoundKey { .. } => (Code::InvalidRuntimeInput, "duplicate-member"),
-            Self::NotACallItem { .. } => (Code::MissingDeclaration, "missing-name"),
-            Self::Fault(_) => (Code::RuntimeInvariant, "established-invariant-broken"),
+            ) => (Code::RuntimeInvariant, Some("established-invariant-broken")),
+            Self::PackageRead(_) => (Code::RuntimeInvariant, Some("established-invariant-broken")),
+            Self::UnknownOccurrence { .. } => (Code::MissingDeclaration, Some("missing-name")),
+            Self::NotReplayable { .. } => {
+                (Code::UnknownRequiredFeature, Some("unsupported-feature"))
+            }
+            Self::UnresolvedDependency { .. } => (Code::MissingImport, Some("missing-selection")),
+            Self::DuplicateBoundKey { .. } => (Code::InvalidRuntimeInput, Some("duplicate-member")),
+            Self::NotACallItem { .. } => (Code::MissingDeclaration, Some("missing-name")),
+            Self::ForeignRun { .. } => (Code::InvalidRequest, None),
+            Self::Fault(_) => (Code::RuntimeInvariant, Some("established-invariant-broken")),
         };
         OutcomeDiagnostic::new(
-            Some(cause),
+            cause,
             code.as_str(),
             None,
             format!("result item {item_index}: {self}"),
@@ -429,6 +444,7 @@ impl PluginReplayRefusal {
             | Self::UnresolvedDependency { .. }
             | Self::DuplicateBoundKey { .. }
             | Self::NotACallItem { .. }
+            | Self::ForeignRun { .. }
             | Self::Fault(_) => TerminalRecord::failed(request_index, plugin),
         }
     }

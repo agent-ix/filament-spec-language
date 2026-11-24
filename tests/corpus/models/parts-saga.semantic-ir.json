@@ -1,0 +1,1399 @@
+{
+  "contractVersion": "2.0.0",
+  "canonicalization": {
+    "algorithm": "rfc8785-v1"
+  },
+  "source": {
+    "identity": "ix://example/parts/spec",
+    "version": "1.0.0",
+    "dialect": "spec-bundle"
+  },
+  "package": {
+    "identity": "example/parts",
+    "version": "1.0.0",
+    "mappingVersions": [],
+    "profileVersions": []
+  },
+  "occurrences": [],
+  "extensions": [],
+  "constructs": [
+    {
+      "kind": {
+        "module": "example/parts",
+        "name": "object_type"
+      },
+      "moduleVersion": "1.0.0",
+      "construct": {
+        "identity": "none",
+        "shape": "record",
+        "members": {},
+        "meaning": "filament.meaning.model.object-type/v1"
+      }
+    },
+    {
+      "kind": {
+        "module": "example/parts",
+        "name": "population"
+      },
+      "moduleVersion": "1.0.0",
+      "construct": {
+        "identity": "none",
+        "shape": "record",
+        "members": {},
+        "meaning": "filament.meaning.model.population/v1"
+      }
+    },
+    {
+      "kind": {
+        "module": "example/parts",
+        "name": "message"
+      },
+      "moduleVersion": "1.0.0",
+      "construct": {
+        "identity": "none",
+        "shape": "record",
+        "members": {},
+        "meaning": "filament.meaning.model.record-value-type/v1"
+      }
+    },
+    {
+      "kind": {
+        "module": "example/parts",
+        "name": "value_type"
+      },
+      "moduleVersion": "1.0.0",
+      "construct": {
+        "identity": "none",
+        "shape": "record",
+        "members": {},
+        "meaning": "filament.meaning.model.value-type/v1"
+      }
+    },
+    {
+      "kind": {
+        "module": "example/parts",
+        "name": "variant_type"
+      },
+      "moduleVersion": "1.0.0",
+      "construct": {
+        "identity": "none",
+        "shape": "enumeration",
+        "members": {
+          "variants": "required"
+        },
+        "meaning": "filament.meaning.model.variant-type/v1"
+      }
+    }
+  ],
+  "types": [
+    {
+      "identity": "ix://example/parts/PartId",
+      "displayName": "PartId",
+      "kind": {
+        "module": "example/parts",
+        "name": "value_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/parts/PartId",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/parts/PartId"
+          ]
+        }
+      },
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "scalar": "integer",
+      "constraints": [
+        {
+          "identity": "ix://example/parts/PartId/constraints/min",
+          "keyword": "min",
+          "operands": {
+            "value": "0"
+          },
+          "appliesTo": "ix://filament/native/Integer",
+          "diagnosticCode": "bound.min",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/PartId",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/PartId"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/parts/PartId/constraints/max",
+          "keyword": "max",
+          "operands": {
+            "value": "100000"
+          },
+          "appliesTo": "ix://filament/native/Integer",
+          "diagnosticCode": "bound.max",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/PartId",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/PartId"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "identity": "ix://example/parts/Count",
+      "displayName": "Count",
+      "kind": {
+        "module": "example/parts",
+        "name": "value_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/parts/Count",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/parts/Count"
+          ]
+        }
+      },
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "scalar": "integer",
+      "constraints": [
+        {
+          "identity": "ix://example/parts/Count/constraints/min",
+          "keyword": "min",
+          "operands": {
+            "value": "0"
+          },
+          "appliesTo": "ix://filament/native/Integer",
+          "diagnosticCode": "bound.min",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/Count",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/Count"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/parts/Count/constraints/max",
+          "keyword": "max",
+          "operands": {
+            "value": "10"
+          },
+          "appliesTo": "ix://filament/native/Integer",
+          "diagnosticCode": "bound.max",
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/Count",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/Count"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "identity": "ix://example/parts/PartStatus",
+      "displayName": "PartStatus",
+      "kind": {
+        "module": "example/parts",
+        "name": "variant_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/parts/PartStatus",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/parts/PartStatus"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "variants": [
+        {
+          "identity": "ix://example/parts/variant/PartStatus-Released",
+          "name": "Released",
+          "origin": {
+            "source": {
+              "sourceIdentity": "ix://example/parts/spec",
+              "path": "spec.qspec",
+              "startLine": 1,
+              "startColumn": 1
+            }
+          }
+        },
+        {
+          "identity": "ix://example/parts/variant/PartStatus-Machined",
+          "name": "Machined",
+          "origin": {
+            "source": {
+              "sourceIdentity": "ix://example/parts/spec",
+              "path": "spec.qspec",
+              "startLine": 1,
+              "startColumn": 1
+            }
+          }
+        },
+        {
+          "identity": "ix://example/parts/variant/PartStatus-Passed",
+          "name": "Passed",
+          "origin": {
+            "source": {
+              "sourceIdentity": "ix://example/parts/spec",
+              "path": "spec.qspec",
+              "startLine": 1,
+              "startColumn": 1
+            }
+          }
+        },
+        {
+          "identity": "ix://example/parts/variant/PartStatus-Rework",
+          "name": "Rework",
+          "origin": {
+            "source": {
+              "sourceIdentity": "ix://example/parts/spec",
+              "path": "spec.qspec",
+              "startLine": 1,
+              "startColumn": 1
+            }
+          }
+        },
+        {
+          "identity": "ix://example/parts/variant/PartStatus-Scrapped",
+          "name": "Scrapped",
+          "origin": {
+            "source": {
+              "sourceIdentity": "ix://example/parts/spec",
+              "path": "spec.qspec",
+              "startLine": 1,
+              "startColumn": 1
+            }
+          }
+        },
+        {
+          "identity": "ix://example/parts/variant/PartStatus-Assembled",
+          "name": "Assembled",
+          "origin": {
+            "source": {
+              "sourceIdentity": "ix://example/parts/spec",
+              "path": "spec.qspec",
+              "startLine": 1,
+              "startColumn": 1
+            }
+          }
+        }
+      ]
+    },
+    {
+      "identity": "ix://example/parts/Job",
+      "displayName": "Job",
+      "kind": {
+        "module": "example/parts",
+        "name": "object_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/parts/Job",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/parts/Job"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "supertypes": [],
+      "fields": [
+        {
+          "identity": "ix://example/parts/Job/part",
+          "name": "part",
+          "typeRef": "ix://filament/native/Integer",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/Job/part",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/Job/part"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/parts/Job/status",
+          "name": "status",
+          "typeRef": "ix://example/parts/PartStatus",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/Job/status",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/Job/status"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/parts/Job/reworks",
+          "name": "reworks",
+          "typeRef": "ix://example/parts/Count",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/Job/reworks",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/Job/reworks"
+              ]
+            }
+          }
+        }
+      ],
+      "operations": []
+    },
+    {
+      "identity": "ix://example/parts/PlanningService",
+      "displayName": "PlanningService",
+      "kind": {
+        "module": "example/parts",
+        "name": "object_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/parts/PlanningService",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/parts/PlanningService"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "supertypes": [],
+      "fields": [
+        {
+          "identity": "ix://example/parts/PlanningService/open",
+          "name": "open",
+          "typeRef": "ix://example/parts/Count",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/PlanningService/open",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/PlanningService/open"
+              ]
+            }
+          }
+        }
+      ],
+      "operations": []
+    },
+    {
+      "identity": "ix://example/parts/MachiningStation",
+      "displayName": "MachiningStation",
+      "kind": {
+        "module": "example/parts",
+        "name": "object_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/parts/MachiningStation",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/parts/MachiningStation"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "supertypes": [],
+      "fields": [
+        {
+          "identity": "ix://example/parts/MachiningStation/reserved",
+          "name": "reserved",
+          "typeRef": "ix://filament/native/Boolean",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/MachiningStation/reserved",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/MachiningStation/reserved"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/parts/MachiningStation/busy",
+          "name": "busy",
+          "typeRef": "ix://filament/native/Boolean",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/MachiningStation/busy",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/MachiningStation/busy"
+              ]
+            }
+          }
+        }
+      ],
+      "operations": [
+        {
+          "identity": "ix://example/parts/MachiningStation/reserve",
+          "name": "reserve",
+          "params": [],
+          "returns": {
+            "typeRef": "ix://filament/native/Boolean",
+            "multiplicity": {
+              "lower": 1,
+              "upper": 1,
+              "ordered": false,
+              "unique": true
+            },
+            "nullable": false
+          },
+          "pre": [],
+          "post": [],
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/MachiningStation/reserve",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/MachiningStation/reserve"
+              ]
+            }
+          },
+          "frame": {
+            "modifies": [
+              "ix://example/parts/MachiningStation/reserved"
+            ],
+            "creates": [],
+            "deletes": []
+          }
+        },
+        {
+          "identity": "ix://example/parts/MachiningStation/process",
+          "name": "process",
+          "params": [],
+          "returns": {
+            "typeRef": "ix://filament/native/Boolean",
+            "multiplicity": {
+              "lower": 1,
+              "upper": 1,
+              "ordered": false,
+              "unique": true
+            },
+            "nullable": false
+          },
+          "pre": [],
+          "post": [],
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/MachiningStation/process",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/MachiningStation/process"
+              ]
+            }
+          },
+          "frame": {
+            "modifies": [
+              "ix://example/parts/MachiningStation/busy"
+            ],
+            "creates": [],
+            "deletes": []
+          }
+        },
+        {
+          "identity": "ix://example/parts/MachiningStation/release",
+          "name": "release",
+          "params": [],
+          "returns": {
+            "typeRef": "ix://filament/native/Boolean",
+            "multiplicity": {
+              "lower": 1,
+              "upper": 1,
+              "ordered": false,
+              "unique": true
+            },
+            "nullable": false
+          },
+          "pre": [],
+          "post": [],
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/MachiningStation/release",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/MachiningStation/release"
+              ]
+            }
+          },
+          "frame": {
+            "modifies": [
+              "ix://example/parts/MachiningStation/reserved",
+              "ix://example/parts/MachiningStation/busy"
+            ],
+            "creates": [],
+            "deletes": []
+          }
+        }
+      ]
+    },
+    {
+      "identity": "ix://example/parts/InspectionStation",
+      "displayName": "InspectionStation",
+      "kind": {
+        "module": "example/parts",
+        "name": "object_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/parts/InspectionStation",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/parts/InspectionStation"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "supertypes": [],
+      "fields": [
+        {
+          "identity": "ix://example/parts/InspectionStation/queue",
+          "name": "queue",
+          "typeRef": "ix://example/parts/Count",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/InspectionStation/queue",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/InspectionStation/queue"
+              ]
+            }
+          }
+        }
+      ],
+      "operations": []
+    },
+    {
+      "identity": "ix://example/parts/AssemblyStation",
+      "displayName": "AssemblyStation",
+      "kind": {
+        "module": "example/parts",
+        "name": "object_type"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/parts/AssemblyStation",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/parts/AssemblyStation"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "supertypes": [],
+      "fields": [
+        {
+          "identity": "ix://example/parts/AssemblyStation/reserved",
+          "name": "reserved",
+          "typeRef": "ix://filament/native/Boolean",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/AssemblyStation/reserved",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/AssemblyStation/reserved"
+              ]
+            }
+          }
+        }
+      ],
+      "operations": [
+        {
+          "identity": "ix://example/parts/AssemblyStation/assemble",
+          "name": "assemble",
+          "params": [],
+          "returns": {
+            "typeRef": "ix://filament/native/Boolean",
+            "multiplicity": {
+              "lower": 1,
+              "upper": 1,
+              "ordered": false,
+              "unique": true
+            },
+            "nullable": false
+          },
+          "pre": [],
+          "post": [],
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/AssemblyStation/assemble",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/AssemblyStation/assemble"
+              ]
+            }
+          },
+          "frame": {
+            "modifies": [
+              "ix://example/parts/AssemblyStation/reserved"
+            ],
+            "creates": [],
+            "deletes": []
+          }
+        }
+      ]
+    },
+    {
+      "identity": "ix://example/parts/WorkOrder",
+      "displayName": "WorkOrder",
+      "kind": {
+        "module": "example/parts",
+        "name": "message"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/parts/WorkOrder",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/parts/WorkOrder"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "supertypes": [],
+      "fields": [
+        {
+          "identity": "ix://example/parts/WorkOrder/part",
+          "name": "part",
+          "typeRef": "ix://filament/native/Integer",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/WorkOrder/part",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/WorkOrder/part"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/parts/WorkOrder/ok",
+          "name": "ok",
+          "typeRef": "ix://filament/native/Boolean",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/WorkOrder/ok",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/WorkOrder/ok"
+              ]
+            }
+          }
+        }
+      ],
+      "operations": []
+    },
+    {
+      "identity": "ix://example/parts/Handoff",
+      "displayName": "Handoff",
+      "kind": {
+        "module": "example/parts",
+        "name": "message"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/parts/Handoff",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/parts/Handoff"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "supertypes": [],
+      "fields": [
+        {
+          "identity": "ix://example/parts/Handoff/part",
+          "name": "part",
+          "typeRef": "ix://filament/native/Integer",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/Handoff/part",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/Handoff/part"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/parts/Handoff/ok",
+          "name": "ok",
+          "typeRef": "ix://filament/native/Boolean",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/Handoff/ok",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/Handoff/ok"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/parts/Handoff/pass",
+          "name": "pass",
+          "typeRef": "ix://filament/native/Boolean",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/Handoff/pass",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/Handoff/pass"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/parts/Handoff/rework",
+          "name": "rework",
+          "typeRef": "ix://filament/native/Boolean",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/Handoff/rework",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/Handoff/rework"
+              ]
+            }
+          }
+        }
+      ],
+      "operations": []
+    },
+    {
+      "identity": "ix://example/parts/AttemptView",
+      "displayName": "AttemptView",
+      "kind": {
+        "module": "example/parts",
+        "name": "message"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/parts/AttemptView",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/parts/AttemptView"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "supertypes": [],
+      "fields": [
+        {
+          "identity": "ix://example/parts/AttemptView/ok",
+          "name": "ok",
+          "typeRef": "ix://filament/native/Boolean",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/AttemptView/ok",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/AttemptView/ok"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/parts/AttemptView/id",
+          "name": "id",
+          "typeRef": "ix://filament/native/Integer",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/AttemptView/id",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/AttemptView/id"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/parts/AttemptView/previous",
+          "name": "previous",
+          "typeRef": "ix://filament/native/Integer",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/AttemptView/previous",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/AttemptView/previous"
+              ]
+            }
+          }
+        }
+      ],
+      "operations": []
+    },
+    {
+      "identity": "ix://example/parts/EffectView",
+      "displayName": "EffectView",
+      "kind": {
+        "module": "example/parts",
+        "name": "message"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/parts/EffectView",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/parts/EffectView"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "supertypes": [],
+      "fields": [
+        {
+          "identity": "ix://example/parts/EffectView/ok",
+          "name": "ok",
+          "typeRef": "ix://filament/native/Boolean",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/EffectView/ok",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/EffectView/ok"
+              ]
+            }
+          }
+        },
+        {
+          "identity": "ix://example/parts/EffectView/part",
+          "name": "part",
+          "typeRef": "ix://filament/native/Integer",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/EffectView/part",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/EffectView/part"
+              ]
+            }
+          }
+        }
+      ],
+      "operations": []
+    },
+    {
+      "identity": "ix://example/parts/TriggerView",
+      "displayName": "TriggerView",
+      "kind": {
+        "module": "example/parts",
+        "name": "message"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/parts/TriggerView",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/parts/TriggerView"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "supertypes": [],
+      "fields": [
+        {
+          "identity": "ix://example/parts/TriggerView/scrapped",
+          "name": "scrapped",
+          "typeRef": "ix://filament/native/Boolean",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/TriggerView/scrapped",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/TriggerView/scrapped"
+              ]
+            }
+          }
+        }
+      ],
+      "operations": []
+    },
+    {
+      "identity": "ix://example/parts/RecoveryView",
+      "displayName": "RecoveryView",
+      "kind": {
+        "module": "example/parts",
+        "name": "message"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/parts/RecoveryView",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/parts/RecoveryView"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "supertypes": [],
+      "fields": [
+        {
+          "identity": "ix://example/parts/RecoveryView/complete",
+          "name": "complete",
+          "typeRef": "ix://filament/native/Boolean",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/RecoveryView/complete",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/RecoveryView/complete"
+              ]
+            }
+          }
+        }
+      ],
+      "operations": []
+    },
+    {
+      "identity": "ix://example/parts/CommitView",
+      "displayName": "CommitView",
+      "kind": {
+        "module": "example/parts",
+        "name": "message"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/parts/CommitView",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/parts/CommitView"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "supertypes": [],
+      "fields": [
+        {
+          "identity": "ix://example/parts/CommitView/ok",
+          "name": "ok",
+          "typeRef": "ix://filament/native/Boolean",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/CommitView/ok",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/CommitView/ok"
+              ]
+            }
+          }
+        }
+      ],
+      "operations": []
+    },
+    {
+      "identity": "ix://example/parts/ClosureView",
+      "displayName": "ClosureView",
+      "kind": {
+        "module": "example/parts",
+        "name": "message"
+      },
+      "roles": [],
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/parts/ClosureView",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/parts/ClosureView"
+          ]
+        }
+      },
+      "constraints": [],
+      "extensions": [],
+      "unknownPolicy": "reject",
+      "supertypes": [],
+      "fields": [
+        {
+          "identity": "ix://example/parts/ClosureView/complete",
+          "name": "complete",
+          "typeRef": "ix://filament/native/Boolean",
+          "presence": "required",
+          "nullable": false,
+          "defaultKind": "none",
+          "multiplicity": {
+            "lower": 1,
+            "upper": 1,
+            "ordered": false,
+            "unique": true
+          },
+          "origin": {
+            "generated": {
+              "generatorIdentity": "ix://example/parts/ClosureView/complete",
+              "generatorVersion": "1.0.0",
+              "inputIdentities": [
+                "ix://example/parts/ClosureView/complete"
+              ]
+            }
+          }
+        }
+      ],
+      "operations": []
+    }
+  ],
+  "populations": [
+    {
+      "identity": "ix://example/parts/jobs",
+      "displayName": "jobs",
+      "kind": {
+        "module": "example/parts",
+        "name": "population"
+      },
+      "members": [
+        "ix://example/parts/Job"
+      ],
+      "extent": "closed",
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/parts/jobs",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/parts/jobs"
+          ]
+        }
+      }
+    },
+    {
+      "identity": "ix://example/parts/planning",
+      "displayName": "planning",
+      "kind": {
+        "module": "example/parts",
+        "name": "population"
+      },
+      "members": [
+        "ix://example/parts/PlanningService"
+      ],
+      "extent": "closed",
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/parts/planning",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/parts/planning"
+          ]
+        }
+      }
+    },
+    {
+      "identity": "ix://example/parts/machining",
+      "displayName": "machining",
+      "kind": {
+        "module": "example/parts",
+        "name": "population"
+      },
+      "members": [
+        "ix://example/parts/MachiningStation"
+      ],
+      "extent": "closed",
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/parts/machining",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/parts/machining"
+          ]
+        }
+      }
+    },
+    {
+      "identity": "ix://example/parts/inspection",
+      "displayName": "inspection",
+      "kind": {
+        "module": "example/parts",
+        "name": "population"
+      },
+      "members": [
+        "ix://example/parts/InspectionStation"
+      ],
+      "extent": "closed",
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/parts/inspection",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/parts/inspection"
+          ]
+        }
+      }
+    },
+    {
+      "identity": "ix://example/parts/assembly",
+      "displayName": "assembly",
+      "kind": {
+        "module": "example/parts",
+        "name": "population"
+      },
+      "members": [
+        "ix://example/parts/AssemblyStation"
+      ],
+      "extent": "closed",
+      "origin": {
+        "generated": {
+          "generatorIdentity": "ix://example/parts/assembly",
+          "generatorVersion": "1.0.0",
+          "inputIdentities": [
+            "ix://example/parts/assembly"
+          ]
+        }
+      }
+    }
+  ]
+}

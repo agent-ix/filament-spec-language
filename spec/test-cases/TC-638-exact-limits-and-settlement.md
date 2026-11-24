@@ -12,7 +12,7 @@ relationships:
 
 Verify the verdict map rows, the precision and resource budgets with their defaults, inconclusive and unsupported rows, proof accounting, and the obligation identity.
 
-Scope: FR-203-AC-1 to FR-203-AC-4 and FR-203-AC-6.
+Scope: FR-203-AC-1 to FR-203-AC-4, FR-203-AC-6 and FR-203-AC-28.
 
 ## Test Procedure
 
@@ -23,6 +23,7 @@ Fixtures: §15.1, §15.2, §15.3 and §15.4 claims; the FR-197-AC-4, FR-201-AC-1
 3. Settle the rejected certificate, the duplicated path set and the zero-weight variant.
 4. Count proofs in a summary; compare obligation identities across confidence and `precision_bits`.
 5. Settle a build stopped at `max_automaton_states`, a cancelled build, an undecided successor, an unnamed internal and an unnamed non-internal expansion stop, and an `Internal` refusal.
+6. Size a dense policy-evaluation system against `document.storage_bytes`: 2^40 rows under the default bound, 5 rows at exactly the bound and at one byte under it, a four-state chain solved with a one-cell bound and with the default, and each dense call site (policy, reward policy, stationary distribution, bias) under a zero bound. Cancel a four-row solve at its first Bareiss pivot-row poll. Run a timed deadline, an expected-elapsed claim, and workload and every-scheduler long-run claims under a working-storage bound their dense systems exceed. Run the timed deadline and a workload long-run claim with cancellation at a Bareiss pivot-row poll (FR-203-AC-28).
 
 Tag the tests `#[trace("TC-638", "FR-203-AC-n")]`.
 
@@ -33,3 +34,4 @@ Tag the tests `#[trace("TC-638", "FR-203-AC-n")]`.
 - Step 3: `CertificateRejected`; `ReplayParity`; `ZeroWeightComponent`; no `measured` value.
 - Step 4: 2 proved; distinct identities for confidence, one identity across `precision_bits`.
 - Step 5: `LimitReached`, `Cancelled`, `Inconclusive(UndecidedSuccessor)`, `Failed` with the invariant diagnostic, `Failed` with the stop's cause, `Failed`.
+- Step 6: `MaxWorkingBytes` before any row exists. The 5-row system is built at the bound and refused one byte under. The four-state chain is refused under the one-cell bound and decided under the default. Each dense call site refuses. The pivot-row poll records and returns `Cancelled`. Each claim that exceeds the working-storage bound settles `Incomplete(LimitReached{CertificateMaxWorkingBytes, bound})`. The cancelled requests both settle `Incomplete(Cancelled{Requested})`.

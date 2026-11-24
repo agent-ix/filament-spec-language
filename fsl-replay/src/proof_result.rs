@@ -1744,6 +1744,20 @@ impl TerminalRecord {
         )
     }
 
+    /// A proof established by a first-party engine after it fully explored
+    /// its finite closed decision product, without an independently checked
+    /// certificate.
+    pub fn proved_by_exhaustive_engine(request_index: RequestIndex, backend: BackendId) -> Self {
+        Self::with_backend(
+            request_index,
+            backend,
+            TerminalValue::Proved {
+                basis: ProofBasis::Exhaustive,
+                certification: Certification::Uncertified,
+            },
+        )
+    }
+
     /// FR-203: a `proved` record with basis `ExactValue` for an exact
     /// probability the EN-5 certificate checker accepted. The accepted check
     /// is the only evidence taken: its value is the record's value, and a

@@ -181,7 +181,7 @@ fn the_entry_returns_what_run_with_requirements_returns() {
         CallOutcome::Completed(fsl_replay::CallValue::Integer(value)) if *value == Integer::from(4_i64)
     ));
     assert_eq!(result.requirements().members().len(), 1);
-    assert_eq!(result.context().package_name(), result.package_name());
+    assert_eq!(result.context().package_id(), result.package_id());
     assert_eq!(result.package_name(), plain.package_name());
     assert_eq!(
         outcome_text(result.outcome()),
@@ -275,6 +275,7 @@ fn member_request(
     let ours = result
         .context()
         .request(
+            result.package_id(),
             member.request_index(),
             &bounds,
             &plugin(),
@@ -433,7 +434,7 @@ fn an_index_that_is_no_members_is_not_a_call_item() {
     for index in [r_index, RequestIndex::new(99)] {
         let refusal = result
             .context()
-            .request(index, &[], &plugin(), Vec::new())
+            .request(result.package_id(), index, &[], &plugin(), Vec::new())
             .err()
             .expect("not a call item");
         assert_eq!(
@@ -494,6 +495,7 @@ fn only_the_spine_limits_bound_the_run() {
     let wire = result
         .context()
         .request(
+            result.package_id(),
             member.request_index(),
             &[bound_at(parameter.clone())],
             &plugin(),
@@ -524,7 +526,7 @@ fn not_a_call_item_comes_before_duplicate_bound_key() {
     let refusal = |index| {
         first
             .context()
-            .request(index, &twice, &plugin(), Vec::new())
+            .request(first.package_id(), index, &twice, &plugin(), Vec::new())
             .err()
             .expect("refuses")
     };
@@ -535,7 +537,7 @@ fn not_a_call_item_comes_before_duplicate_bound_key() {
     assert!(matches!(
         first
             .context()
-            .request(q_index, &twice, &plugin(), Vec::new())
+            .request(first.package_id(), q_index, &twice, &plugin(), Vec::new())
             .err(),
         Some(PluginReplayRefusal::DuplicateBoundKey { .. })
     ));

@@ -345,7 +345,9 @@ fn atoms(order: [usize; 4]) -> String {
         &declared_on(
             "Due",
             "on each (q: Config::ConfigVersion) when (q.versionNumber >= 2)",
-            &format!("capture n: Int[0, 1000] = c.versionNumber; always[0,5] ({a} and {b} and {c} and {d})"),
+            &format!(
+                "capture n: Int[0, 1000] = c.versionNumber; always[0,5] ({a} and {b} and {c} and {d})"
+            ),
         ),
     )
 }

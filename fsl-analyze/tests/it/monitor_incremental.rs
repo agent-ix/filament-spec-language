@@ -2414,6 +2414,46 @@ fn batch_over(world: &World, name: &str, trace: &TraceInput) -> ClauseRunReport 
     })
 }
 
+/// FR-504-AC-9 (TC-1299): fixed-sample silence does not create an `on each`
+/// activation. The only real position passes at index zero; adding a second
+/// real position that fails settles at that position instead.
+#[test]
+#[trace("TC-1299", "FR-504-AC-9")]
+fn fixed_sample_silence_does_not_create_a_false_activation() {
+    let source = UNIT.replace(
+        "temporal Sampled using f over (r: Reading) clock \"samples\" on origin { eventually[0,3] holds(r.level = 9) }",
+        "temporal Sampled using f over (r: Reading) clock \"samples\" on each (q: Reading) { eventually[0,0] holds(r.level = 9) }",
+    );
+    let world = world_source(&source);
+    let closed_progress = || ProgressAssertion {
+        watermark: 3,
+        completeness: ProgressCompleteness::Complete { through: 3 },
+        scope: ProgressClosure::Closed,
+        execution: ProgressClosure::Closed,
+    };
+    let progressed = |levels: &[i64]| TraceInput::Progressed {
+        trace: levels
+            .iter()
+            .map(|level| spine::sample_position(&text(*level)))
+            .collect(),
+        progress: closed_progress(),
+        lower_boundary: ProgressLowerBoundary::AuthoritativeOrigin,
+        binding: samples_binding(),
+    };
+
+    let only_real_true = batch_over(&world, "Sampled", &progressed(&[9]));
+    assert!(matches!(
+        only_real_true.disposition,
+        spine::ClauseDisposition::Temporal(spine::TemporalVerdict::Holds)
+    ));
+
+    let real_false_at_one = batch_over(&world, "Sampled", &progressed(&[9, 0]));
+    assert!(matches!(
+        real_false_at_one.disposition,
+        spine::ClauseDisposition::Temporal(spine::TemporalVerdict::Violated { at: 1 })
+    ));
+}
+
 /// FR-820 "Summarized positions" (TC-2320): a `Timestamped` and a
 /// `Progressed` state carry the finite-window evaluation between steps. Each
 /// report equals FR-330's over the prefix, no sample is held by value, and a

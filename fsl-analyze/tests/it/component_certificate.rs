@@ -129,7 +129,7 @@ fn weak(constraint: u32) -> ComponentWitness {
 /// the constraint at 0, which edges inside the components never take, and
 /// for binding `b` the constraint at 1. The 9 waiting states of each binding
 /// carry `MissingAcceptance`. The checker accepts it.
-#[trace("TC-526", "FR-339-AC-1")]
+#[trace("TC-526", "FR-339-AC-1", "FR-126-AC-1")]
 #[test]
 fn the_weak_each_proof_is_a_certificate_the_checker_accepts() {
     let (world, certificate, stats) = weak_each_proof();
@@ -754,11 +754,14 @@ fn guarded_proof(world: &World) -> (ComponentCertificate, RunStats) {
         let request = production.request(production.letters);
         held(check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: request.subject,
                 item: request.item,
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             &Cancel::new(),
