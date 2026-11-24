@@ -1729,7 +1729,7 @@ fn aggregate_source(kind: CollKind, aggregate: Aggregate) -> String {
 }
 
 fn aggregate_reduce_source(kind: CollKind, aggregate: Aggregate) -> String {
-    let parameters = format!("xs: {}<Int[-9, 9]>[0, 6]", kind.name());
+    let parameters = format!("xs: {}<Int[-9, 9]>[1, 6]", kind.name());
     let body = match aggregate {
         Aggregate::Min => "reduce<A>(m, x in xs: min(m, x))",
         Aggregate::Max => "reduce<A>(m, x in xs: max(m, x))",
