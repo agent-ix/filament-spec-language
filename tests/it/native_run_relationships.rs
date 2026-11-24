@@ -1037,7 +1037,7 @@ fn mapped_relationships_correlate_and_unmapped_relationships_are_ignored() {
 }
 
 #[test]
-#[trace("FR-1045-AC-6", "FR-100-AC-6")]
+#[trace("FR-1045-AC-6", "FR-100-AC-6", "FR-106-AC-75")]
 fn unknown_relationship_type_in_correlation_is_invalid_request_after_snapshot_read() {
     let unknown = relationship_row(
         "ix://test/workflow/relationship/unknown",
@@ -1065,4 +1065,11 @@ fn unknown_relationship_type_in_correlation_is_invalid_request_after_snapshot_re
     assert_eq!(ordinary.status.code(), Some(20), "{failure}");
     assert_eq!(failure["code"], "invalid_runtime_input", "{failure}");
     assert_eq!(failure["stage"], "call", "{failure}");
+    // The result document carries the catalog cause only inside its message.
+    let message = failure["message"].as_str().expect("a message");
+    assert!(
+        message.contains(r#"cause: "wrong-role-mapping""#)
+            && message.contains("ix://test/workflow/relationship/unknown"),
+        "{failure}"
+    );
 }

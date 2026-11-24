@@ -38,6 +38,8 @@ mod evaluator_closure_cases;
 mod mbt_generate;
 #[path = "mbt_shrink.rs"]
 mod mbt_shrink;
+#[path = "model_simulation/deep_state_key.rs"]
+mod deep_state_key;
 #[path = "model_simulation/model_based_run.rs"]
 mod model_based_run;
 #[path = "model_simulation/reference_literals.rs"]

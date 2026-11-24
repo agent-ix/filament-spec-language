@@ -482,7 +482,7 @@ fn a_violated_safety_half_is_reported_with_no_liveness_half() {
 
 /// The default timed profile supplies the selector bound for concrete
 /// ClockRef data, and a hidden abstract field no longer refuses the check.
-#[trace("TC-3084", "FR-1040-AC-8")]
+#[trace("TC-3084", "FR-1040-AC-8", "FR-106-AC-78")]
 #[test]
 fn clock_reference_selectors_use_the_timed_profile_before_refinement_gates() {
     const ZONE_BYTES: u64 = 4 << 20;
@@ -540,16 +540,32 @@ fn clock_reference_selectors_use_the_timed_profile_before_refinement_gates() {
         world.abstract_initials.clone(),
     )
     .expect("subjects open");
-    assert!(
-        matches!(
-            fsl_eval::simulation::model::check_model_bounds(
-                &systems.concrete,
-                fsl_eval::simulation::BOUND_POSITIONS
-            ),
-            Err(fsl_eval::simulation::NotSimulated::RequiresBound(_)),
-        ),
-        "the generic subject has no clock-profile selector bound"
+    let generic = fsl_eval::simulation::model::check_model_bounds(
+        &systems.concrete,
+        fsl_eval::simulation::BOUND_POSITIONS,
     );
+    let Err(fsl_eval::simulation::NotSimulated::RequiresBound(bound)) = generic else {
+        panic!("the generic subject has no clock-profile selector bound: {generic:?}");
+    };
+    // FR-106-AC-78: the refusal names the `ClockReferenceDomain` of `r` and
+    // of its unbounded place slot, one entry per declared place template.
+    assert!(
+        !bound.clock_references.is_empty(),
+        "the refusal names the clock-reference domain: {bound:?}"
+    );
+    for domain in &bound.clock_references {
+        assert!(
+            matches!(
+                &domain.member,
+                fsl_foundation::bound::DomainKey::Node { path, .. } if !path.is_empty()
+            ),
+            "the domain is a field position of the concrete object: {domain:?}"
+        );
+        assert!(
+            !domain.slot.is_empty(),
+            "the domain names the unbounded place slot: {domain:?}"
+        );
+    }
     let mut request = safety_request(&world);
     request.concrete = concrete_request;
     // The hidden abstract field no longer refuses, and the timed
