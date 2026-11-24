@@ -1025,7 +1025,7 @@ fn read_document_profile(
             !matches!(
                 wire.objective.profile.as_str(),
                 CYCLIC_MDP_PROFILE | CYCLIC_MDP_REWARD_PROFILE | CYCLIC_MDP_STATE_PROFILE
-            )
+            ) && !(allow_fair && wire.objective.profile == CYCLIC_MDP_FAIR_PROFILE)
         } else {
             !matches!(
                 wire.objective.profile.as_str(),
@@ -1038,11 +1038,18 @@ fn read_document_profile(
                     | TIMED_PROFILE
             ) && !(allow_fair && wire.objective.profile == BOUNDED_FAIR_PROFILE)
         }
-        || !wire.objective.fairness.is_empty() && wire.objective.profile != BOUNDED_FAIR_PROFILE
+        || !wire.objective.fairness.is_empty()
+            && !matches!(
+                wire.objective.profile.as_str(),
+                BOUNDED_FAIR_PROFILE | CYCLIC_MDP_FAIR_PROFILE
+            )
     {
         return Err(ProbabilityDocumentError::Unsupported);
     }
-    if wire.objective.profile == BOUNDED_FAIR_PROFILE {
+    if matches!(
+        wire.objective.profile.as_str(),
+        BOUNDED_FAIR_PROFILE | CYCLIC_MDP_FAIR_PROFILE
+    ) {
         let destination = fairness.ok_or(ProbabilityDocumentError::Unsupported)?;
         *destination = fairness::read(&wire.objective.fairness, limits, cancel, meter, storage)?;
         if destination.is_empty() || wire.objective.optimization == "workload" {
