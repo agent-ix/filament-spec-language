@@ -42,7 +42,7 @@ use super::check::{HyperTyping, Signatures, Typer};
 use super::ir::{CheckedBody, CheckedNode};
 use super::profile::TemporalProfile;
 use super::refusal::{CheckCause, CheckRefusal, Obligation, TemporalCause};
-use super::state_clause::{PopulationDomain, population_of};
+use super::state_clause::{PopulationDomain, populations_overlapping};
 use super::temporal_clause::FormulaNodeId;
 use super::temporal_clause::{
     CheckedFormula, CheckedOperator, IntervalReading, TemporalClaim, TemporalDeclarations,
@@ -880,6 +880,12 @@ impl CheckedHyperClause {
     /// The object parameters, in source order.
     pub fn parameters(&self) -> &[ObjectParameter] {
         &self.parameters
+    }
+
+    /// The declared object type of parameter `index`, before resolving it to
+    /// the canonical member type of its selected population.
+    pub fn parameter_object_type(&self, index: usize) -> Option<&EffectiveId> {
+        self.parameter_objects.get(index)
     }
 
     /// The quantifier prefix, in source order.
@@ -2455,20 +2461,22 @@ fn checked_parameters(
             }));
             continue;
         };
-        match population_of(declarations.models, object.clone(), scope.types()) {
-            Ok(Some(population)) => checked.push((
+        let populations =
+            populations_overlapping(declarations.models, object.clone(), scope.types());
+        match populations.as_slice() {
+            [population] => checked.push((
                 ObjectParameter {
                     name,
                     alias: ModelAlias(alias.to_owned()),
-                    population,
+                    population: population.clone(),
                 },
                 object,
             )),
-            Ok(None) => found.push(Found::Hyper(HyperCause::UnresolvedPopulation {
+            [] => found.push(Found::Hyper(HyperCause::UnresolvedPopulation {
                 parameter: name,
                 span,
             })),
-            Err(_) => found.push(Found::Hyper(HyperCause::AmbiguousPopulation {
+            _ => found.push(Found::Hyper(HyperCause::AmbiguousPopulation {
                 parameter: name,
                 span,
             })),

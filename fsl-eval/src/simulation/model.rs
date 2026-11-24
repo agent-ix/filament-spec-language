@@ -2540,9 +2540,7 @@ impl<'a> ModelSystem<'a> {
                         .state
                         .populations
                         .get(population)
-                        .and_then(|objects| objects.get(key))
-                        .and_then(|object| self.model.type_identity(&object.type_identity))
-                        .is_some_and(|actual| self.types.conforms(actual, parameter.clone()))
+                        .is_some_and(|objects| objects.contains_key(key))
                 });
                 if admitted && seen_instance_keys.insert(key.clone()) {
                     instances.push(ModelInstance {
@@ -2553,6 +2551,50 @@ impl<'a> ModelSystem<'a> {
             }
         }
         Ok(instances)
+    }
+
+    /// The universe keys that do not have an admitted initial member for an
+    /// `over` parameter, in canonical population and key order. Keys listed by
+    /// more than one overlapping population occur once. An object created only
+    /// by a reachable operation remains excluded because instancing is based
+    /// on initial states.
+    ///
+    /// # Errors
+    /// Returns the same bound and identity classification errors as
+    /// [`Self::instances`].
+    pub fn excluded_keys(&self, over: &ValueType) -> Result<Vec<String>, NotSimulated> {
+        let instances = self.instances(over)?;
+        let admitted: BTreeSet<&str> = instances
+            .iter()
+            .map(|instance| instance.key.as_str())
+            .collect();
+        let ValueType::Reference(parameter) = over else {
+            return Ok(Vec::new());
+        };
+        let mut populations = Vec::new();
+        for population in &self.populations {
+            if self.overlaps(population, parameter.clone()) {
+                let text = declaration_text(&population.key, CanonicalLimits::new(u64::MAX))
+                    .map_err(|_| {
+                        NotSimulated::Extent(ClassifyFailure::Fault(InternalFault::new(
+                            "model-simulation",
+                            "population-identity-text",
+                        )))
+                    })?;
+                populations.push((text, &population.key));
+            }
+        }
+        populations.sort_by(|left, right| left.0.cmp(&right.0));
+        let mut seen = BTreeSet::new();
+        let mut excluded = Vec::new();
+        for (_, population) in populations {
+            for key in self.universes.get(population).into_iter().flatten() {
+                if !admitted.contains(key.as_str()) && seen.insert(key.as_str()) {
+                    excluded.push(key.clone());
+                }
+            }
+        }
+        Ok(excluded)
     }
 
     /// List policy instances in the existing deterministic order, charging
