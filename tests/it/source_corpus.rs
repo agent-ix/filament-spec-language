@@ -991,8 +991,7 @@ fn assert_values_corpus_counts() {
 fn corpus_collections() {
     let directory = corpus_root().join("collections");
     let report = run_directory(&directory).unwrap_or_else(|error| panic!("{error}"));
-    families::assert_families("collections", families::COLLECTION_FAMILIES);
-    families::assert_flips("collections", families::COLLECTION_FLIPS);
+    collection_families::assert_families();
     println!("{report}");
 }
 
@@ -1882,3 +1881,6 @@ mod collection_contexts;
 
 #[path = "source_corpus_families.rs"]
 mod families;
+
+#[path = "source_corpus_collection_families.rs"]
+mod collection_families;
