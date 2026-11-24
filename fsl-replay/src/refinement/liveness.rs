@@ -369,10 +369,19 @@ mod candidate_tests {
             &positions,
             &interior,
             &[vec![true]],
-            &constraints,
+            &[Constraint::strong([tick])],
             &cancel,
         )
-        .expect("an interior hop can witness the recurring edge"));
+        .expect("the interior tick hop witnesses both fairness and recurring liveness"));
+        let no_interior_tick = through(&[], None);
+        assert!(!candidate_lasso_has_fair_run_with_recurring_edge(
+            &positions,
+            &no_interior_tick,
+            &[vec![true]],
+            &[Constraint::strong([tick])],
+            &cancel,
+        )
+        .expect("the candidate graph is closed"));
     }
 
     #[test]

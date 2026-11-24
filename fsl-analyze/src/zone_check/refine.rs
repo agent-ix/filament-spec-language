@@ -1103,7 +1103,12 @@ impl Product<'_, '_> {
             run.timed.places().len(),
             timed.places().len(),
             &alive_blocks,
-            run.window.is_some(),
+            clock_tail(
+                zone,
+                run.timed.places().len(),
+                timed.places().len(),
+                position.abstract_states.len(),
+            ),
         )?;
         let mut pruned = position;
         pruned.abstract_states = alive;
@@ -1244,6 +1249,16 @@ impl Product<'_, '_> {
             candidate_states.push((block, key, state));
         }
         match taken {
+            Taken::Stutter => Ok(Some(Some(
+                candidate_states
+                    .into_iter()
+                    .map(|(block, key, _)| Row {
+                        block,
+                        step: None,
+                        post_key: Some(key),
+                    })
+                    .collect(),
+            ))),
             Taken::Abstract(transitions) => {
                 let mut found = Vec::new();
                 for (block, _, state) in &candidate_states {
@@ -1406,12 +1421,18 @@ impl Product<'_, '_> {
             let mut zone = zone;
             let mut transform = None;
             let source_blocks: Vec<_> = ordered_holding.iter().map(|row| row.block).collect();
+            let trailing = clock_tail(
+                &zone,
+                concrete_clocks,
+                abstract_clocks,
+                self.positions[source].abstract_states.len(),
+            );
             zone = project_blocks(
                 &zone,
                 concrete_clocks,
                 abstract_clocks,
                 &source_blocks,
-                run.window.is_some(),
+                trailing,
             )?;
             let mut all_carries = Vec::new();
             let mut all_resets = Vec::new();
@@ -1631,7 +1652,12 @@ impl Product<'_, '_> {
                     run.timed.places().len(),
                     timed.places().len(),
                     &[],
-                    run.window.is_some(),
+                    clock_tail(
+                        &dead,
+                        run.timed.places().len(),
+                        timed.places().len(),
+                        position.abstract_states.len(),
+                    ),
                 )?;
                 self.store(
                     run,
@@ -1659,7 +1685,12 @@ impl Product<'_, '_> {
                 run.timed.places().len(),
                 timed.places().len(),
                 &piece.alive,
-                run.window.is_some(),
+                clock_tail(
+                    &piece.zone,
+                    run.timed.places().len(),
+                    timed.places().len(),
+                    position.abstract_states.len(),
+                ),
             )?;
             self.store(
                 run,
@@ -1930,23 +1961,33 @@ fn auxiliary_constraints(offset: usize, constraints: &[PlaceConstraint]) -> Vec<
         .collect()
 }
 
-/// Keep the concrete clocks and the selected candidate clock blocks in a
-/// joint DBM, preserving their correlations and the optional horizon clock.
+/// Number of trailing clocks after concrete and per-candidate blocks.
+fn clock_tail(
+    zone: &Dbm,
+    concrete_clocks: usize,
+    abstract_clocks: usize,
+    block_count: usize,
+) -> usize {
+    zone.dim()
+        .saturating_sub(1 + concrete_clocks + abstract_clocks * block_count)
+}
+
+/// Keep the concrete clocks and selected candidate clock blocks in a joint
+/// DBM, preserving correlations and every trailing clock (horizon and/or
+/// liveness divergence clock).
 fn project_blocks(
     zone: &Dbm,
     concrete_clocks: usize,
     abstract_clocks: usize,
     blocks: &[usize],
-    horizon: bool,
+    trailing_clocks: usize,
 ) -> Result<Dbm, super::DbmError> {
     let mut coordinates: Vec<usize> = (0..=concrete_clocks).collect();
     for &block in blocks {
         let start = concrete_clocks + block * abstract_clocks + 1;
         coordinates.extend(start..start + abstract_clocks);
     }
-    if horizon {
-        coordinates.push(zone.dim() - 1);
-    }
+    coordinates.extend(zone.dim() - trailing_clocks..zone.dim());
     zone.reindex(&coordinates)
 }
 

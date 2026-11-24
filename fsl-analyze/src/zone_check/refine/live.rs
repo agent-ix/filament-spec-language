@@ -771,7 +771,19 @@ impl Product<'_, '_> {
                 .iter()
                 .map(|&at| self.positions[q].abstract_states[at].clone())
                 .collect();
-            leads.push((self.intern(survivors, run)?, piece.zone, piece.cut));
+            let zone = super::project_blocks(
+                &piece.zone,
+                run.timed.places().len(),
+                timed.places().len(),
+                &piece.alive,
+                super::clock_tail(
+                    &piece.zone,
+                    run.timed.places().len(),
+                    timed.places().len(),
+                    count,
+                ),
+            )?;
+            leads.push((self.intern(survivors, run)?, zone, piece.cut));
         }
         Ok(leads)
     }
@@ -1591,6 +1603,9 @@ fn add_node(
     if let Some(stored) = live.passed.get(&key) {
         for &candidate in stored {
             let held = &live.nodes[candidate].zone;
+            if held.dim() != node.zone.dim() {
+                continue;
+            }
             let bounds = bounds_for_zone(run, &node.zone)?;
             let same = node.zone.alu_covered_by(held, &bounds, &bounds)?
                 && held.alu_covered_by(&node.zone, &bounds, &bounds)?;
