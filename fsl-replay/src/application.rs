@@ -618,6 +618,7 @@ fn reachable_composites(
             | ValueType::Timestamp
             | ValueType::Enum(_)
             | ValueType::Reference(_)
+            | ValueType::ClockReference
             | ValueType::Population(_) => {}
         }
     }

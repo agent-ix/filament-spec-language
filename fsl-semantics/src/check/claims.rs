@@ -578,6 +578,7 @@ fn scalar_equality(compared: &ValueType) -> bool {
         ValueType::CarriedQuantity(_)
         | ValueType::Boolean
         | ValueType::Reference(_)
+        | ValueType::ClockReference
         | ValueType::Option(_)
         | ValueType::Composite(_)
         | ValueType::Collection(_)

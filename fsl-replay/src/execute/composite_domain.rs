@@ -363,6 +363,7 @@ pub(super) fn derive(
             | ValueType::BoundedQuantity(_)
             | ValueType::CarriedQuantity(_)
             | ValueType::Reference(_)
+            | ValueType::ClockReference
             | ValueType::Population(_)
             | ValueType::Uuid
             | ValueType::Timestamp

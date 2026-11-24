@@ -3530,7 +3530,7 @@ fn bare_native_text_rational_and_decimal_model_members_are_admitted() {
 /// native's type and raises no `UnsupportedModelMember`.
 #[trace("TC-3031", "FR-056-AC-63")]
 #[test]
-#[ignore = "QSL-2961: FR-056-AC-63 binds a value_type by target but the pinned semantic-ir schema allows target only on alias constructs; needs a decision between the requirement and the schema"]
+#[ignore = "QSL-2961: core-data a92d60e6 (#364) is spec-only (FR-142-AC-17); semantic-ir code still refuses target on a value_type construct (SCHEMA_VIOLATION); needs the implementing core-data change"]
 fn a_value_type_bound_to_a_data_native_by_target_is_that_native() {
     let package = "test/rational-value-type";
     for native in ["Boolean", "Integer", "String", "Float64", "Float32"] {

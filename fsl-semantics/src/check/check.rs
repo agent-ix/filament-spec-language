@@ -2818,7 +2818,7 @@ fn clock_reference_as_leaf(
     while let Some(step) = steps.pop() {
         match step {
             Step::Visit(visited) => match visited {
-                ValueType::Reference(target) if target == &super::clock_reference_target() => {
+                ValueType::ClockReference => {
                     reserve(&mut built, location)?;
                     built.push(ValueType::Boolean);
                 }
@@ -3886,10 +3886,10 @@ impl<'a> Typer<'a> {
                         return Err(mismatch(location));
                     }
                 }
-                ValueType::Reference(target) if target == &super::clock_reference_target() => {
-                    // `Reference<Clock>` is the checker's synthetic handle
-                    // type for a clock place. The native Clock declaration
-                    // is not an object type in the admitted TypeEnvironment.
+                ValueType::ClockReference => {
+                    // `Reference<Clock>` is the kernel's clock-place
+                    // reference, a native value type with no declaration to
+                    // admit (FR-230-AC-71).
                 }
                 ValueType::Option(payload) => {
                     pending
@@ -4420,6 +4420,7 @@ impl<'a> Typer<'a> {
                 | ValueType::Collection(_)
                 | ValueType::Map(_)
                 | ValueType::Reference(_)
+                | ValueType::ClockReference
                 | ValueType::Population(_) => None,
             };
             if let Some(unit_id) = unit_id {
@@ -5037,6 +5038,7 @@ impl<'a> Typer<'a> {
             | ValueType::Collection(_)
             | ValueType::Map(_)
             | ValueType::Reference(_)
+            | ValueType::ClockReference
             | ValueType::Population(_)
             | ValueType::Uuid
             | ValueType::String
@@ -5711,6 +5713,9 @@ impl<'a> Typer<'a> {
             | ValueType::Quantity(_)
             | ValueType::BoundedQuantity(_)
             | ValueType::CarriedQuantity(_) => false,
+            // A clock-place reference names a place, not an object: it is
+            // never a model receiver (FR-230-AC-71).
+            ValueType::ClockReference => false,
             ValueType::Bytes | ValueType::JsonObject => false,
         }
     }
@@ -5742,6 +5747,7 @@ impl<'a> Typer<'a> {
                 | ValueType::BoundedQuantity(_)
                 | ValueType::CarriedQuantity(_)
                 | ValueType::Population(_)
+                | ValueType::ClockReference
                 | ValueType::Bytes
                 | ValueType::JsonObject => return false,
             };
@@ -7000,14 +7006,20 @@ mod holds_float_tests {
                     }
                     value_type
                 };
-                let clock = ValueType::Reference(super::super::clock_reference_target());
+                let clock = ValueType::ClockReference;
                 let held = nest(clock);
                 let plain = nest(ValueType::Integer);
-                assert!(Typer::holds_references(&held));
                 assert!(!Typer::holds_references(&plain));
                 let location = Location::at(Origin::Expression, &[]);
+                // A clock reference is the checker's own `ClockReference` type; the
+                // rewrite turns it into its Boolean leaf at the bottom of the nest.
                 let leafed = clock_reference_as_leaf(&held, &location).expect("a leaf rewrite");
-                assert!(!Typer::holds_references(&leafed));
+                let (mut depth, mut at) = (0_usize, &leafed);
+                while let ValueType::Option(payload) = at {
+                    depth += 1;
+                    at = payload;
+                }
+                assert_eq!((depth, at), (100_000, &ValueType::Boolean));
                 assert_eq!(
                     clock_reference_as_leaf(&plain, &location),
                     Ok(plain.clone())

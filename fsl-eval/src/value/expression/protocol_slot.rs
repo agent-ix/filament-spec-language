@@ -223,6 +223,7 @@ pub(crate) fn reference_occurrences(
             | Value::Bytes(_)
             | Value::JsonObject(_)
             | Value::Enum(_)
+            | Value::ClockReference(_)
             | Value::Population(_)
             | Value::Uuid(_)
             | Value::Timestamp(_) => {}

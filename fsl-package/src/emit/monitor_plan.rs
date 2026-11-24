@@ -854,7 +854,8 @@ pub(super) fn carry_rows(
         match cause {
             super::OmissionCause::UnsupportedForm { .. }
             | super::OmissionCause::DeclarationOccurrenceMismatch
-            | super::OmissionCause::UnlockedOwner => {}
+            | super::OmissionCause::UnlockedOwner
+            | super::OmissionCause::NoClauseNode => {}
             super::OmissionCause::NamesAbsentNode(id)
             | super::OmissionCause::NamesOmittedNode(id) => rekey.id(id),
         }
@@ -1355,7 +1356,14 @@ pub(super) fn finish(
 ) -> Result<Emission, EmitRefusal> {
     let lock = base.lock().clone();
     super::order_dependencies(&mut nodes, invariant)?;
-    let requirement_rows = super::value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
+    let mut meter = super::OutputMeter::new(limits);
+    let (requirement_rows, path_condition_frames, renumbered) =
+        super::value_validity_requirements::carry_rows(
+            base,
+            &mut nodes,
+            &mut source_map,
+            &mut meter,
+        )?;
     let operand_rows = super::write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {
         graph_version: base.graph().graph_version.clone(),
@@ -1380,6 +1388,7 @@ pub(super) fn finish(
         for (old, new) in changes {
             super::replace_term_data_node(data, old, new);
         }
+        super::value_validity_requirements::ordinals::relabel_term_data(&renumbered, data);
     }
     let operation_bodies = base.operation_body_rows().map(|rows| {
         let mut rows = rows.to_vec();
@@ -1420,7 +1429,7 @@ pub(super) fn finish(
         filament_contract_model::ProtocolCorrelationProvenance::Unavailable(_) => None,
     };
     let package = EmittedPackage::new(base.name(), |name| {
-        filament_contract_model::encode_checked_package_v2_with_protocol_correlation_occurrences(
+        filament_contract_model::encode_checked_package_v2_with_path_condition_frames(
             name,
             &lock,
             &semantic_graph,
@@ -1439,6 +1448,7 @@ pub(super) fn finish(
             },
             (!requirement_rows.is_empty()).then_some(requirement_rows.as_slice()),
             correlation_rows.as_deref(),
+            (!path_condition_frames.is_empty()).then_some(path_condition_frames.as_slice()),
             &capability_report,
             &diagnostics,
             limits.canonical(),
@@ -1743,6 +1753,61 @@ mod tests {
         }
     }
 
+    /// The guards from the outermost to frame `at`, as (guard, holds, region of
+    /// the use the frame's occurrence names). A guard's occurrence is the walk's
+    /// next one, so it follows the final owner order, and the region it names
+    /// is what stays the same across a rekey.
+    fn frame_chain(
+        frames: &[filament_contract_model::PathConditionFrame],
+        source_map: &[filament_contract_model::CheckedSourceMapEntry],
+        at: Option<filament_contract_model::PathConditionFrameId>,
+    ) -> Vec<(CheckedNodeId, bool, (u64, u64))> {
+        let mut chain = Vec::new();
+        let mut at = at;
+        while let Some(id) = at {
+            let frame = &frames[id.0];
+            let used: Vec<_> = source_map
+                .iter()
+                .filter(|entry| {
+                    entry.node_id == frame.guard
+                        && entry.role == CheckedOccurrenceRole::Expression
+                        && entry.ordinal == frame.occurrence
+                })
+                .collect();
+            assert_eq!(
+                used.len(),
+                1,
+                "a frame's occurrence is a source-map entry of its guard"
+            );
+            let region = &used[0].regions[0];
+            chain.push((frame.guard.clone(), frame.holds, (region.start, region.end)));
+            at = frame.parent;
+        }
+        chain.reverse();
+        chain
+    }
+
+    /// `id` with the terminal frame its identity path cites replaced by `frame`.
+    fn cited(
+        id: &CheckedNodeId,
+        frame: Option<filament_contract_model::PathConditionFrameId>,
+    ) -> CheckedNodeId {
+        let mut id = id.clone();
+        let Some(frame) = frame else {
+            return id;
+        };
+        let mut segments = id.path.iter_mut();
+        let cited = segments
+            .by_ref()
+            .find(|segment| {
+                matches!(segment, filament_contract_model::CheckedNodePathSegment::Name(name) if name.as_ref() == "path_condition")
+            })
+            .and_then(|_| segments.next())
+            .expect("a guarded record's identity path cites its frame");
+        *cited = filament_contract_model::CheckedNodePathSegment::Name(frame.0.to_string().into());
+        id
+    }
+
     impl Rekeyed {
         /// Asserts that the final rows are the base rows with each rekeyed
         /// entry renamed in every id a row holds, that `renamed` records are
@@ -1776,7 +1841,10 @@ mod tests {
                 let [after] = matching.as_slice() else {
                     panic!("one final row per base row, got {}", matching.len());
                 };
-                let (Some(before), Some(after)) = (&before.record, &after.record) else {
+                let (Some(before), Some(after)) = (
+                    crate::emit::value_validity_requirements::value_record(before),
+                    crate::emit::value_validity_requirements::value_record(after),
+                ) else {
                     assert_eq!(before.record.is_none(), after.record.is_none());
                     continue;
                 };
@@ -1795,9 +1863,6 @@ mod tests {
                 if let Some((narrow, _)) = &mut expected.conversion {
                     *narrow = rename(narrow);
                 }
-                for guard in &mut expected.path_condition {
-                    guard.guard = rename(&guard.guard);
-                }
                 for id in expected
                     .extent_roots
                     .iter_mut()
@@ -1805,6 +1870,28 @@ mod tests {
                 {
                     *id = rename(id);
                 }
+                // FSpec FR-825: the table is in the reader's canonical order, which
+                // follows the owners' final order, so a rekey may move a record to
+                // another frame id (its identity path cites the id). The record
+                // stands on the same guard chain at the new id.
+                assert_eq!(
+                    frame_chain(
+                        self.base.path_condition_frames(),
+                        self.base.source_map(),
+                        before.path_condition_frame
+                    )
+                    .into_iter()
+                    .map(|(guard, holds, region)| (rename(&guard), holds, region))
+                    .collect::<Vec<_>>(),
+                    frame_chain(
+                        self.final_package.path_condition_frames(),
+                        self.final_package.source_map(),
+                        after.path_condition_frame
+                    ),
+                    "a rekey keeps each record's guards, outcomes and the uses they read"
+                );
+                expected.path_condition_frame = after.path_condition_frame;
+                expected.node = cited(&expected.node, after.path_condition_frame);
                 assert_eq!(*after, expected);
                 let regions = self
                     .final_package
@@ -1815,10 +1902,49 @@ mod tests {
                             && entry.role == CheckedOccurrenceRole::Generated
                     })
                     .count();
-                assert_eq!(regions, 1, "each record keeps its generated source-map entry");
+                assert_eq!(
+                    regions, 1,
+                    "each record keeps its generated source-map entry"
+                );
             }
-            assert_eq!(renamed_owners, renamed, "records of rekeyed entries name the new owner");
-            after.iter().filter_map(|row| row.record.clone()).collect()
+            assert_eq!(
+                renamed_owners, renamed,
+                "records of rekeyed entries name the new owner"
+            );
+            // The shared frames keep their guard chains and outcomes, each guard names its renamed node, and the table is
+            // re-derived in the final canonical order (FSpec FR-825).
+            let frames_before = self.base.path_condition_frames();
+            let frames_after = self.final_package.path_condition_frames();
+            assert_eq!(frames_before.len(), frames_after.len());
+            let mut chains_before = (0..frames_before.len())
+                .map(|at| {
+                    frame_chain(
+                        frames_before,
+                        self.base.source_map(),
+                        Some(filament_contract_model::PathConditionFrameId(at)),
+                    )
+                    .into_iter()
+                    .map(|(guard, holds, region)| (rename(&guard), holds, region))
+                    .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>();
+            let mut chains_after = (0..frames_after.len())
+                .map(|at| {
+                    frame_chain(
+                        frames_after,
+                        self.final_package.source_map(),
+                        Some(filament_contract_model::PathConditionFrameId(at)),
+                    )
+                })
+                .collect::<Vec<_>>();
+            chains_before.sort();
+            chains_after.sort();
+            assert_eq!(chains_before, chains_after);
+            after
+                .iter()
+                .filter_map(crate::emit::value_validity_requirements::value_record)
+                .cloned()
+                .collect()
         }
     }
 
@@ -1853,7 +1979,10 @@ mod tests {
             other => panic!("record nodes without rows must be refused: {other:?}"),
         };
         assert_eq!(refusal.code, CheckedPackageRefusalCode::InvalidPackage);
-        assert_eq!(refusal.cause, Some(CheckedPackageRefusalCause::InvalidValue));
+        assert_eq!(
+            refusal.cause,
+            Some(CheckedPackageRefusalCause::InvalidValue)
+        );
         assert_eq!(
             refusal
                 .loci
@@ -1885,20 +2014,29 @@ mod tests {
     #[ix_trace_rs::trace("FR-251-AC-9", "FR-940")]
     #[test]
     fn final_writer_carries_guards_conversions_and_unbounded_extents() {
+        // contract-ir reader defect A (QSL-2776 chain): `init`'s else branch
+        // holds a scalar operation (`x * 1`, not `x`) until the reader accepts
+        // a branch frame no record cites.
         let rekeyed = rekeyed_final(
-            "function init using v(x: Int[0, 9], p: Boolean): Int[0, 10] pure { if p then x + 1 else x }\n\
+            "function init using v(x: Int[0, 9], p: Boolean): Int[0, 10] pure { if p then x + 1 else x * 1 }\n\
              function on_event using v(n: Integer): Integer pure { n + 1 }\n\
              function on_watermark using v(x: Int[0, 9], p: Boolean): Integer pure { if p then x * 2 else x - 1 }\n\
              function on_gap using v(x: Int[0, 9]): Integer pure { x + 4 }\n",
         );
         let records = rekeyed.assert_rows_follow_the_rekey(records_of_entries(&rekeyed));
-        assert!(records.iter().any(|record| !record.path_condition.is_empty()));
+        assert!(records
+            .iter()
+            .any(|record| record.path_condition_frame.is_some()));
         assert!(records.iter().any(|record| record.conversion.is_some()));
         assert!(records.iter().all(|record| !record.extent_roots.is_empty()));
-        assert!(rekeyed.final_package.requirement_items().iter().any(|row| matches!(
-            row.extent,
-            filament_contract_model::RequirementExtent::Unbounded(_)
-        )));
+        assert!(rekeyed
+            .final_package
+            .requirement_items()
+            .iter()
+            .any(|row| matches!(
+                row.extent,
+                filament_contract_model::RequirementExtent::Unbounded(_)
+            )));
     }
 
     /// The claims of `owner`'s records, in the package's row order.
@@ -1909,7 +2047,10 @@ mod tests {
         package
             .requirement_items()
             .iter()
-            .filter(|row| row.record.as_ref().is_some_and(|record| record.owner == *owner))
+            .filter(|row| {
+                crate::emit::value_validity_requirements::value_record(row)
+                    .is_some_and(|record| record.owner == *owner)
+            })
             .map(|row| row.claim.clone())
             .collect()
     }
@@ -1953,7 +2094,10 @@ mod tests {
             sorted_before.sort();
             let mut sorted_after = after.clone();
             sorted_after.sort();
-            assert_eq!(sorted_before, sorted_after, "the same claims, maybe reordered");
+            assert_eq!(
+                sorted_before, sorted_after,
+                "the same claims, maybe reordered"
+            );
             if before != after {
                 reordered += 1;
             }
@@ -1967,7 +2111,7 @@ mod tests {
             .base
             .requirement_items()
             .iter()
-            .filter_map(|row| row.record.as_ref())
+            .filter_map(crate::emit::value_validity_requirements::value_record)
             .filter(|record| rekeyed.changes.iter().any(|(old, _)| *old == record.owner))
             .count()
     }

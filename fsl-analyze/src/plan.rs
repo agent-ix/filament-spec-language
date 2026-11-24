@@ -1083,6 +1083,7 @@ fn types_consume_value_bits(
             | ValueType::Timestamp
             | ValueType::Enum(_)
             | ValueType::Reference(_)
+            | ValueType::ClockReference
             | ValueType::Population(_) => {}
         }
     }
@@ -1237,5 +1238,23 @@ mod tests {
                 }
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod clock_reference_tests {
+    use super::types_consume_value_bits;
+    use filament_exact::ValueType;
+    use filament_semantic_value::declaration::TypeEnvironment;
+    use ix_trace_rs::trace;
+
+    /// FR-230-AC-71: a clock-place reference is an identity, not an unbounded
+    /// numeric carrier, so it consumes no value bits.
+    #[trace("FR-230-AC-71", "TC-3084")]
+    #[test]
+    fn a_clock_reference_consumes_no_value_bits() {
+        let types = TypeEnvironment::new([], []).expect("an empty environment admits");
+        let consumes = types_consume_value_bits(vec![ValueType::ClockReference], &types);
+        assert!(matches!(consumes, Ok(false)));
     }
 }

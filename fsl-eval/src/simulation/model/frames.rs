@@ -2391,6 +2391,7 @@ pub(super) fn collect_references<'v>(
         | Value::Uuid(_)
         | Value::Timestamp(_)
         | Value::Enum(_)
+        | Value::ClockReference(_)
         | Value::Population(_)
         | Value::Composite(_)
         | Value::Union(_) => {}
@@ -2424,4 +2425,22 @@ fn slot_provenance(
             Some(occurrences.remove(position).1)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod clock_reference_tests {
+    use super::collect_references;
+    use crate::test_clock_reference::clock_reference;
+    use ix_trace_rs::trace;
+
+    /// FR-230-AC-71: a clock-place reference is not an `ObjectReference`, so
+    /// the collector gathers nothing from it.
+    #[trace("FR-230-AC-71", "TC-3084")]
+    #[test]
+    fn a_clock_reference_collects_no_object_reference() {
+        let value = clock_reference();
+        let mut out = Vec::new();
+        collect_references(&value, &mut out).expect("a leaf value");
+        assert!(out.is_empty());
+    }
 }

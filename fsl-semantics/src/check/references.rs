@@ -145,6 +145,8 @@ pub(crate) fn read_object(node: CheckedNode<'_>) -> Option<EffectiveId> {
         | ValueType::Composite(_)
         | ValueType::Collection(_)
         | ValueType::Map(_)
+        // A clock place is not an object: no object type to read through.
+        | ValueType::ClockReference
         | ValueType::Population(_) => None,
     }
 }

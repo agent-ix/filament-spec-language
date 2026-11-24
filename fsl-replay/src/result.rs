@@ -683,6 +683,7 @@ pub(crate) fn value_bytes(value: &Value) -> usize {
             }
             Value::Enum(_) => 32 + 4,
             Value::Population(_) => 32,
+            Value::ClockReference(reference) => 64 + reference.text().len(),
             Value::Reference(reference) => 64 + reference.object().as_str().len(),
             Value::Collection(collection) => {
                 pending.extend(collection.elements());
@@ -1993,5 +1994,24 @@ mod tests {
             charges(),
         ));
         assert!(matches!(result, ReplayResult::Witness(_)));
+    }
+}
+
+#[cfg(test)]
+mod clock_reference_tests {
+    use super::value_bytes;
+    use crate::test_clock_reference::clock_reference;
+    use ix_trace_rs::trace;
+
+    /// FR-230-AC-71: a clock-place reference is measured by its identity: the
+    /// fixed 64 bytes and the place text.
+    #[trace("FR-230-AC-71", "TC-3084")]
+    #[test]
+    fn a_clock_reference_is_measured_by_its_place_text() {
+        let value = clock_reference();
+        let filament_exact::Value::ClockReference(reference) = &value else {
+            panic!("a clock reference");
+        };
+        assert_eq!(value_bytes(&value), 64 + reference.text().len());
     }
 }

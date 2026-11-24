@@ -793,6 +793,7 @@ fn rows() -> Vec<Row> {
         ),
         row(K::Relation(RelationForm::Refinement), F::RefinementV2Empty),
         row(K::State(StateForm::StateClause), F::ConfigVersion),
+        row(K::Claim(ClaimForm::OperationContract), F::ConfigVersion),
         row(K::State(StateForm::Frame), F::ConfigVersion),
         row(K::State(StateForm::OperationAnchor), F::ConfigVersion),
         row(
@@ -2783,6 +2784,32 @@ fn every_emitted_body_of_the_corpus_is_in_the_stratified_grammar() {
                     );
                     continue;
                 }
+                if node["node_tag"] == "claim" && node["semantic_form"] == "operation_contract" {
+                    // FSpec FR-825: an operation-contract record body is a closed
+                    // aggregate of seven bindings whose populations write an absent
+                    // maximum as an empty aggregate; the V2 reader checks it, not the
+                    // ordinary term stratum.
+                    assert_eq!(node["body"]["term"], "aggregate");
+                    let names: Vec<_> = node["body"]["members"]
+                        .as_array()
+                        .expect("the FR-825 body members")
+                        .iter()
+                        .map(|member| member["name"].as_str().expect("member name"))
+                        .collect();
+                    assert_eq!(
+                        names,
+                        [
+                            "claim",
+                            "occurrence",
+                            "result_bound",
+                            "invariant",
+                            "operation",
+                            "model_objects",
+                            "populations"
+                        ]
+                    );
+                    continue;
+                }
                 if matches!(
                     node["body"]["term"].as_str(),
                     Some("enum" | "dimension" | "unit" | "dimension_equivalence")
@@ -4192,5 +4219,84 @@ fn the_reader_refuses_a_history_row_whose_concrete_type_is_not_an_object_type() 
             "/semantic_graph/nodes/{position}/body/histories/0/concrete_type"
         )),
         "{verdict}"
+    );
+}
+
+/// FR-093-AC-19 (TC-416 step 5): the recursive `f` of FR-092's G4 to G6
+/// is emitted and read back through I2 in bounded memory. The path-condition
+/// frame walk of FSpec FR-825, in the emitter and in contract-ir's reader,
+/// enters a recursive owner once: a reference back to a node whose body the
+/// walk is inside is a recursive call, not a body to walk again.
+#[trace("FR-093-AC-19", "TC-416")]
+#[test]
+fn recursive_f_emission_and_admission_terminate() {
+    const CEILING: u64 = 256 * 1024 * 1024;
+    let mut emitted = Vec::new();
+    let measured = allocation_counter::measure(|| emitted = Fixture::RecursiveF.emit());
+    assert!(!emitted.is_empty(), "the fixture emits a package");
+    for package in &emitted {
+        let read = read(package);
+        assert!(
+            read.is_ok(),
+            "the recursive fixture is admitted: {:?}",
+            read.err()
+        );
+    }
+    assert!(
+        measured.bytes_max < CEILING,
+        "the recursive fixture's emission peaked at {} bytes, past {CEILING}",
+        measured.bytes_max
+    );
+}
+
+/// FSpec FR-825 and FR-290 (#826): an `operation-contract` record is written
+/// only for a state clause or an operation frame. A claim owned by a model
+/// refinement or a step relation carries its own capability row, so the
+/// emitted package holds no `claim`/`operation_contract` node for it, though
+/// the checked graph keeps the requirement.
+#[trace("FR-093-AC-19", "TC-416")]
+#[test]
+fn a_refinement_or_step_relation_claim_writes_no_operation_contract_record() {
+    use fsl_semantics::check::Capability;
+    let mut owned = 0;
+    for fixture in [Fixture::RefinementV2Empty, Fixture::StepRelation] {
+        for emitted in fixture.emit() {
+            let graph = emitted.package.graph();
+            let relation_claims: Vec<_> = graph
+                .refinements()
+                .iter()
+                .filter_map(|refinement| refinement.requirement_occurrence())
+                .chain(
+                    graph
+                        .step_relations()
+                        .iter()
+                        .filter_map(|relation| relation.occurrence()),
+                )
+                .map(|key| key.node().clone())
+                .collect();
+            owned += graph
+                .requirements()
+                .iter()
+                .filter(|(claim, source)| {
+                    source.requirements().kind() == Capability::OperationContract
+                        && relation_claims.contains(claim.node())
+                })
+                .count();
+            let written = wire(&emitted.emission);
+            let contracts = nodes(&written)
+                .iter()
+                .filter(|node| {
+                    node["node_tag"] == "claim" && node["semantic_form"] == "operation_contract"
+                })
+                .count();
+            assert_eq!(
+                contracts, 0,
+                "{fixture:?} writes no operation-contract node"
+            );
+        }
+    }
+    assert!(
+        owned > 0,
+        "the fixtures hold a relation-owned operation-contract requirement"
     );
 }

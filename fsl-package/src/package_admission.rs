@@ -88,6 +88,19 @@ pub fn admit_checked_package_with_dependencies(
             pointer: None,
             identity: None,
         }),
+        CheckedPackageDispatchResult::HostAllocationFailed(_) => Err(host_allocation_failed()),
+    }
+}
+
+/// The host refused an allocation the strict read had admitted: no judgement
+/// of the package.
+fn host_allocation_failed() -> PackageAdmissionRefusal {
+    PackageAdmissionRefusal {
+        limit: None,
+        code: Code::ResourceExhausted,
+        cause: Some("allocation-failed".to_owned()),
+        pointer: None,
+        identity: None,
     }
 }
 
@@ -170,6 +183,7 @@ pub fn admit_checked_package_with_evidence(
             pointer: None,
             identity: None,
         }),
+        Read::HostAllocationFailed(_) => Err(host_allocation_failed()),
     }
 }
 
@@ -364,4 +378,26 @@ fn identity_at(bytes: &[u8], pointer: &str) -> Option<String> {
         .as_str()
         .or_else(|| value.get("identity").and_then(serde_json::Value::as_str))
         .map(str::to_owned)
+}
+
+#[cfg(test)]
+mod host_allocation_tests {
+    use super::*;
+
+    /// A host allocation failure during the strict read says nothing about the
+    /// package: it is the catalogued `resource_exhausted`/`allocation-failed`
+    /// refusal, with no limit, locus or identity.
+    #[test]
+    fn a_host_allocation_failure_is_resource_exhausted_allocation_failed() {
+        assert_eq!(
+            host_allocation_failed(),
+            PackageAdmissionRefusal {
+                limit: None,
+                code: Code::ResourceExhausted,
+                cause: Some("allocation-failed".to_owned()),
+                pointer: None,
+                identity: None,
+            }
+        );
+    }
 }

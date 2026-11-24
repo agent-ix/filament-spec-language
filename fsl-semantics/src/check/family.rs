@@ -299,6 +299,7 @@ fn encode_value_type(out: &mut DeclarationMeter, value_type: &ValueType) {
             ValueType::Timestamp => out.write_str("timestamp"),
             ValueType::Bytes => out.write_str("bytes"),
             ValueType::JsonObject => out.write_str("json_object"),
+            ValueType::ClockReference => out.write_str("clock_reference"),
             ValueType::Int(interval) => {
                 out.write_str("int");
                 out.write_str(&interval.lower().to_string());
@@ -1089,6 +1090,8 @@ pub(crate) fn is_package_independent(value_type: &ValueType) -> bool {
             | ValueType::Uuid
             | ValueType::Timestamp => return true,
             ValueType::Bytes | ValueType::JsonObject => return true,
+            // A native scalar: the same type in every package.
+            ValueType::ClockReference => return true,
             ValueType::Option(payload) => current = payload,
             ValueType::Collection(collection) => current = collection.element(),
             ValueType::Map(map) => current = map.values(),

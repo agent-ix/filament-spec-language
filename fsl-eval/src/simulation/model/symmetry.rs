@@ -139,6 +139,7 @@ impl Renaming<'_> {
             | Value::Uuid(_)
             | Value::Timestamp(_)
             | Value::Enum(_)
+            | Value::ClockReference(_)
             | Value::Population(_) => value.clone(),
         })
     }

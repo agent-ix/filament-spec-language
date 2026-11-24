@@ -85,7 +85,8 @@ mod numeric_conversion;
 mod rust_syntax;
 pub use abstraction::{
     AbstractionKey, AbstractionRefusal, AuthoredBinding, CheckedAbstractionRelation,
-    CheckedBinding, CheckedFrameBinding, FrameBinding, FrameNodes, MalformedEntry, ObjectBinding,
+    CheckedBinding, CheckedFrameBinding, CheckedOperationContractReferences,
+    CheckedOperationPopulation, FrameBinding, FrameNodes, MalformedEntry, ObjectBinding,
     OperationKey, PopulationBinding, RustField, RustParameter, RustPath, RustReceiver,
 };
 pub use abstraction::{AbstractionNodeRefusal, AbstractionNodes};
@@ -366,11 +367,10 @@ pub(crate) fn clock_place_node_key(
     )
 }
 
-/// Kernel identity used by `Reference<Clock>` (FR-1040). The checked IR
-/// represents references by effective identity, so the native clock type
-/// uses its canonical native identity here.
+/// The kernel type of `Reference<Clock>` (FR-230-AC-71): filament-exact's
+/// clock-place reference, never an object reference.
 pub(crate) fn clock_reference_type() -> filament_exact::ValueType {
-    filament_exact::ValueType::Reference(clock_reference_target())
+    filament_exact::ValueType::ClockReference
 }
 
 pub(crate) fn clock_reference_target() -> filament_exact::EffectiveId {
@@ -441,6 +441,18 @@ pub fn builtin_boolean_type_key(
     declared_node_key(
         package_name.to_owned(),
         vec!["scalar_type".to_owned(), "boolean".to_owned()],
+        0,
+    )
+}
+
+/// The structural key of the built-in String scalar type. A requirement
+/// record's occurrence role is a `String` literal of this type.
+pub fn builtin_string_type_key(
+    package_name: &str,
+) -> Result<filament_exact::NodeKey, filament_exact::InvalidNodeKey> {
+    declared_node_key(
+        package_name.to_owned(),
+        vec!["scalar_type".to_owned(), "string".to_owned()],
         0,
     )
 }
@@ -7244,7 +7256,22 @@ impl PackageDeclarations {
             .zip(&lowered_attempts)
             .flat_map(|(bindings, lowered)| bindings.iter().zip(lowered))
             .map(|(bound, lowered)| (&bound.operation, &lowered.binding));
-        let operation_frames = operation_frames(clause_frames.chain(attempt_frames));
+        // FR-381: a compensation template names its operation too, bound to the
+        // same one anchor and frame node, so a requirement record may reference
+        // an operation only a template names.
+        let template_frames = checked_protocols
+            .iter()
+            .zip(&lowered_templates)
+            .flat_map(|(checked, lowered)| {
+                checked
+                    .obligations
+                    .compensations
+                    .iter()
+                    .zip(lowered)
+                    .map(|(template, lowered)| (&template.operation, &lowered.binding))
+            });
+        let operation_frames =
+            operation_frames(clause_frames.chain(attempt_frames).chain(template_frames));
         // FR-094: `check` is the model correspondence's only writer; it
         // holds exactly the model declaration nodes lowering keyed, and a
         // conflicting entry refused the lowering above (FR-303).

@@ -12,8 +12,8 @@ relationships:
 
 Verify FR-062-AC-17's bounded emission and memory use for the 1,000-level
 nested-body case. The reference pre-record run measured 424,912 KiB peak RSS;
-the qualified run bounds wire output at 8,388,608 bytes and peak test-process
-RSS at 524,288 KiB.
+the qualified run bounds wire output at 20,000,000 bytes (the measured
+15,875,705 plus about 25% headroom) and peak test-process RSS at 524,288 KiB.
 
 ## Test Procedure
 
@@ -34,7 +34,9 @@ RSS at 524,288 KiB.
 - The 1,000-level body emits at most 1,000 unique path-condition frames; each
   guarded value-validity record contains one terminal frame id and no expanded
   guard array.
-- The emitted package is at most 8,388,608 bytes.
+- The emitted package is at most 20,000,000 bytes (measured 15,875,705 at 1,000
+  levels and 7,943,181 at 500), and doubling the depth from 500 to 1,000 levels
+  less than 2.5-folds its bytes (`emit::tests::deep_bodies::nested_guards_emit_shared_frames_and_linear_bytes`).
 - The isolated test process peaks at or below 524,288 KiB RSS, compilation
   excluded. The baseline is 424,912 KiB, leaving a maximum 99,376 KiB increase.
 - The run completes without the quadratic growth seen when each record

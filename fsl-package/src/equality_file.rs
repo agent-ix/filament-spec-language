@@ -696,6 +696,8 @@ fn value_type(joins: &impl TypeKeys, value: &ValueType) -> Result<Json, Bad> {
         ValueType::Timestamp => simple("timestamp"),
         ValueType::Bytes => simple("bytes"),
         ValueType::JsonObject => simple("json_object"),
+        // The equality file has no clock-place reference form yet (QSL-3001).
+        ValueType::ClockReference => malformed("a clock-place reference type (QSL-3001)"),
         ValueType::Int(range) => {
             let Json::Object(mut members) = interval(range) else {
                 return malformed("an interval");
@@ -1761,6 +1763,18 @@ mod tests {
             String::from_utf8(vector()).unwrap()
         );
         assert_eq!(ReadEqualityRows::decode(&bytes, "p", &joins).unwrap(), rows);
+    }
+
+    /// The equality file has no form for a clock-place reference type yet
+    /// (QSL-3001): writing one is a typed refusal naming it, never a wrong
+    /// kind.
+    #[test]
+    fn a_clock_place_reference_type_is_refused_not_written() {
+        let Err(Bad::Malformed(detail)) = value_type(&OriginalKeys, &ValueType::ClockReference)
+        else {
+            panic!("a clock-place reference type has no equality-file form");
+        };
+        assert_eq!(detail, "a clock-place reference type (QSL-3001)");
     }
 
     fn every_value_type(keys: &BTreeMap<&str, NodeKey>) -> Vec<ValueType> {

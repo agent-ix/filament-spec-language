@@ -227,9 +227,13 @@ fn emitted_claims_with_document(
         .as_array()
         .expect("the graph has nodes")
         .iter()
-        .filter(|node| node["node_tag"] == "claim")
+        // FSpec FR-825: the package also carries `claim`/`operation_contract`
+        // record nodes for the unit's operations; only the probabilistic
+        // claims are this helper's subject.
+        .filter(|node| {
+            node["node_tag"] == "claim" && node["semantic_form"] == "probabilistic_claim"
+        })
         .map(|node| {
-            assert_eq!(node["semantic_form"], "probabilistic_claim");
             (
                 resolved_id(&wire, &node["node_id"], 8),
                 node["occurrences"].clone(),
@@ -3311,4 +3315,100 @@ fn a_source_random_parameter_and_workload_are_read_back_equal() {
 
 fn spelling(value: &filament_exact::Rational) -> String {
     format!("{}/{}", value.numerator(), value.denominator())
+}
+
+/// FSpec FR-322 "Expression occurrence ordinals": a reward function is an owner
+/// the checked graph keeps apart from the declared functions, so no use of its
+/// body is located in a declared function. A scalar application it shares with
+/// a declared function must not refuse the package: the declared function's
+/// record names the ordinal its own visit takes.
+#[trace("FR-825-AC-11", "FR-740-AC-1")]
+#[test]
+fn a_reward_body_sharing_an_application_with_a_function_still_emits() {
+    let package = reward_package(
+        "function total using v(): Integer pure { 1 + 2 }\n\
+         reward cost on ConfigVersion::attemptUpdate = 1 + 2;",
+    );
+    let (_, read) = emit_and_read(&package, config_version_unit::DOMAIN_PACKAGE.as_bytes());
+    let Read::Verified { .. } = read else {
+        panic!("the strict reader admits the package: {read:?}");
+    };
+}
+
+/// FSpec FR-322 "Expression occurrence ordinals": a use in a model operation
+/// clause (no function owner, so no walk reaches it) of an application a
+/// function also uses follows the walk's visits: the function's record names
+/// ordinal 0, the node's region at that ordinal is the function's use, and the
+/// clause's use takes the ordinal after. The checker already numbers the
+/// function's use first here, so this pins the invariant the renumbering keeps
+/// (it also holds without it); `a_reward_body_sharing_...` is the case that
+/// needs the renumbering.
+#[trace("FR-825-AC-11", "FR-322")]
+#[test]
+fn a_clause_use_of_a_shared_application_follows_the_functions_visit() {
+    let package = reward_package(
+        "pre Early using v on Config::ConfigVersion::attemptUpdate { 1 + 2 > 0 }\n\
+         function total using v(): Integer pure { 1 + 2 }",
+    );
+    let emission = emit_checked(&package).expect("the package emits");
+    let mut evidence = read_evidence(&emission);
+    let document = config_version_unit::DOMAIN_PACKAGE.as_bytes();
+    evidence
+        .insert_domain_package_document(package_identity(document), document)
+        .expect("a fresh evidence key");
+    let (admitted, source_map) = admitted_of(read_with(&emission, &evidence));
+    let records: Vec<_> = admitted
+        .requirement_items()
+        .iter()
+        .filter_map(crate::emit::value_validity_requirements::value_record)
+        .collect();
+    let owned: Vec<_> = records
+        .iter()
+        .filter(|record| {
+            admitted.resolved_graph().nodes.iter().any(|node| {
+                node.node_id == record.owner && node.semantic_form.as_ref() == "pure_function"
+            })
+        })
+        .collect();
+    assert!(!owned.is_empty(), "the function's `1 + 2` has a record");
+    let application = &owned[0].application;
+    let uses = admitted
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| node.node_id == *application)
+        .expect("the application is written")
+        .occurrences
+        .iter()
+        .filter(|occurrence| occurrence.role == CheckedOccurrenceRole::Expression)
+        .count();
+    assert!(uses >= 2, "the clause and the function both use `1 + 2`");
+    let region = |node: &CheckedNodeId, role, ordinal: u64| {
+        source_map
+            .iter()
+            .find(|entry| entry.node_id == *node && entry.role == role && entry.ordinal == ordinal)
+            .map(|entry| entry.regions[0].clone())
+            .expect("a source-map entry")
+    };
+    let own = admitted
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| node.node_id == owned[0].node)
+        .expect("the record is written")
+        .occurrences[0]
+        .ordinal;
+    assert_eq!(
+        region(
+            application,
+            CheckedOccurrenceRole::Expression,
+            owned[0].occurrence
+        ),
+        region(&owned[0].node, CheckedOccurrenceRole::Generated, own),
+        "the function's record names the function's own use"
+    );
+    assert_eq!(
+        owned[0].occurrence, 0,
+        "the walk reaches the function first"
+    );
 }

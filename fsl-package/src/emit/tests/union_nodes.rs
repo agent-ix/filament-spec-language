@@ -428,6 +428,11 @@ fn shared_application(package: &CheckedPackage) -> OccurrenceKey {
 /// `a`, its record, row and source-map entry, but not the application it
 /// shares with the written `b`, whose record is the application's only
 /// written record.
+///
+/// FSpec FR-322 "Expression occurrence ordinals": `a` is declared first and
+/// holds the checker's ordinal 0 of the shared node, but the walk never visits
+/// the omitted `a`, so the node keeps one occurrence, `b`'s record names
+/// ordinal 0 and the source-map region of that ordinal is `b`'s use, not `a`'s.
 #[trace("FR-062-AC-9", "FR-940-AC-1")]
 #[test]
 fn an_omitted_owner_leaves_a_shared_application_with_the_written_owners_record() {
@@ -475,13 +480,61 @@ fn an_omitted_owner_leaves_a_shared_application_with_the_written_owners_record()
     let of_application: Vec<_> = admitted
         .requirement_items()
         .iter()
-        .filter_map(|row| row.record.as_ref())
+        .filter_map(crate::emit::value_validity_requirements::value_record)
         .filter(|record| key_of(&record.application) == *claim.node())
         .collect();
     assert_eq!(of_application.len(), 1, "only `b`'s record of `x + 1`");
     assert_eq!(
         key_of(&of_application[0].owner),
         package.graph().function_identity("b").unwrap()
+    );
+    let record = of_application[0];
+    assert_eq!(
+        record.occurrence, 0,
+        "the kept record names the walk's first visit"
+    );
+    let shared = admitted
+        .resolved_graph()
+        .nodes
+        .iter()
+        .find(|node| node.node_id == record.application)
+        .expect("the shared application is written");
+    let expressions: Vec<u64> = shared
+        .occurrences
+        .iter()
+        .filter(|occurrence| {
+            occurrence.role == filament_contract_model::CheckedOccurrenceRole::Expression
+        })
+        .map(|occurrence| occurrence.ordinal)
+        .collect();
+    assert_eq!(expressions, [0], "the omitted owner's use is not carried");
+    let region_of = |node: &CheckedNodeId, role, ordinal: u64| {
+        let entries: Vec<_> = admitted
+            .source_map()
+            .iter()
+            .filter(|entry| {
+                entry.node_id == *node && entry.role == role && entry.ordinal == ordinal
+            })
+            .collect();
+        assert_eq!(
+            entries.len(),
+            1,
+            "one source-map entry for {node:?} {ordinal}"
+        );
+        entries[0].regions.clone()
+    };
+    assert_eq!(
+        region_of(
+            &record.application,
+            filament_contract_model::CheckedOccurrenceRole::Expression,
+            0
+        ),
+        region_of(
+            &record.node,
+            filament_contract_model::CheckedOccurrenceRole::Generated,
+            0
+        ),
+        "the region of the node's only occurrence is the kept record's own use"
     );
 }
 
@@ -1033,6 +1086,10 @@ fn constructions(wire: &Value) -> Vec<(String, &Value)> {
 /// integer payload argument by the exact conversion a function-call argument
 /// gets, an `Integer` argument and a literal take none, and each payload term
 /// has the member's declared payload type node.
+///
+/// Red until contract-ir reader defect B (QSL-2776 chain) is fixed: functions
+/// share the `x` conversion node, and the reader refuses the second owner's
+/// record at `body/members/5`.
 #[trace("TC-3134", "FR-317-AC-7")]
 #[test]
 fn a_union_payload_argument_takes_the_exact_conversion_a_call_argument_takes() {

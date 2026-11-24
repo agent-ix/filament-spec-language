@@ -28,7 +28,7 @@ impl DomainContext {
             | ValueType::BoundedQuantity(_) => {
                 matches!(self, Self::ValueSynthesis).then_some("Quantity")
             }
-            ValueType::Reference(_) | ValueType::Population(None) => {
+            ValueType::Reference(_) | ValueType::ClockReference | ValueType::Population(None) => {
                 matches!(self, Self::ValueSynthesis).then_some("unbounded population")
             }
             ValueType::Boolean

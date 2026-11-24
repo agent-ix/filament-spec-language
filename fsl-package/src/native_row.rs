@@ -383,6 +383,9 @@ pub(crate) fn value_type(
         | ValueType::Bytes
         | ValueType::JsonObject
         | ValueType::Composite(_)
+        // The kernel's clock-place reference holds its text in its own value,
+        // not in the type: nothing to charge here.
+        | ValueType::ClockReference
         | ValueType::Population(_) => Ok(()),
     }
 }

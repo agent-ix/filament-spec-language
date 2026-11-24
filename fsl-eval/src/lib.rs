@@ -319,4 +319,7 @@ pub mod value;
 #[cfg(test)]
 pub(crate) mod test_ids;
 
+#[cfg(test)]
+pub(crate) mod test_clock_reference;
+
 mod policy_budget;

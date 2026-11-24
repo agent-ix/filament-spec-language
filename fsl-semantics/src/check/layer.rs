@@ -51,7 +51,9 @@ pub(super) fn typed_equalities(
         let mut pending = vec![node.at(*left).value_type(), node.at(*right).value_type()];
         while let Some(value_type) = pending.pop() {
             match value_type {
-                ValueType::Reference(_) => reference = true,
+                // A clock-place reference is read through the state graph as
+                // an object reference was before it became its own value.
+                ValueType::Reference(_) | ValueType::ClockReference => reference = true,
                 ValueType::Option(payload) => {
                     whole_value = true;
                     pending.push(payload);

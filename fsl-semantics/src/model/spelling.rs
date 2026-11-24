@@ -241,6 +241,7 @@ fn render(
                 }
                 output.push('>');
             }
+            ValueType::ClockReference => output.push_str("Reference<Clock>"),
             ValueType::Quantity(unit) => {
                 output.push_str(&format!("Quantity<{}>", unit_spelling(unit, spellings)))
             }

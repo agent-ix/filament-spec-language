@@ -674,6 +674,9 @@ pub use fsl_semantics::model::observation::{
 };
 pub use witness::StateClauseCounterexample;
 
+#[cfg(test)]
+mod test_clock_reference;
+
 /// A structural node identity for a test fixture, distinct per `fill`.
 #[cfg(test)]
 pub(crate) fn fixture_node(fill: u8) -> NodeKey {

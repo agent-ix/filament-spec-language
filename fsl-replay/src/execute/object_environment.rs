@@ -155,6 +155,7 @@ pub(super) fn holds_reference(types: &TypeEnvironment, declared: &[ValueType]) -
             | ValueType::Bytes
             | ValueType::JsonObject
             | ValueType::Enum(_)
+            | ValueType::ClockReference
             | ValueType::Population(_)
             | ValueType::Uuid
             | ValueType::Timestamp => {}

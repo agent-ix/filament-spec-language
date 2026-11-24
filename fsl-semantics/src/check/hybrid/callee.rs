@@ -45,6 +45,7 @@ pub(super) fn kind_of(declared: &ValueType) -> Option<Kind> {
         | ValueType::Collection(_)
         | ValueType::Map(_)
         | ValueType::Reference(_)
+        | ValueType::ClockReference
         | ValueType::Population(_) => None,
     }
 }

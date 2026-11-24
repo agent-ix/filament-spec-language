@@ -96,6 +96,7 @@ fn bounded(declared: &ValueType) -> bool {
         | ValueType::Collection(_)
         | ValueType::Map(_)
         | ValueType::Reference(_)
+        | ValueType::ClockReference
         | ValueType::Population(_) => false,
     }
 }

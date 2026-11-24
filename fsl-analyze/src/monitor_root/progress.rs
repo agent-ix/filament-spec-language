@@ -305,6 +305,10 @@ pub enum PlanAuthorityRefusal {
     /// The strict reader's operation catalog is unreadable; nothing was judged.
     #[error("the strict reader's operation catalog is unavailable: {0}")]
     ReadCatalogUnavailable(filament_contract_model::CatalogReadError),
+    /// The host refused an allocation the strict read had admitted and charged:
+    /// a tool fault that says nothing about the package.
+    #[error("the final emission read hit a host allocation failure: {0:?}")]
+    ReadHostAllocationFailed(filament_contract_model::CheckedPackageHostAllocationFailed),
     /// The actual owner clock lookup refused under the shared native ledger.
     #[error(transparent)]
     ClockRead(#[from] CheckedMonitorClockReadError),
@@ -339,6 +343,7 @@ impl PlanAuthorityRefusal {
             Self::ReadRefused(_) => PlanAuthorityRefusalCode::ReadRefused,
             Self::ReadIncomplete(_) => PlanAuthorityRefusalCode::ReadIncomplete,
             Self::ReadCatalogUnavailable(_) => PlanAuthorityRefusalCode::ReadRefused,
+            Self::ReadHostAllocationFailed(_) => PlanAuthorityRefusalCode::Allocation,
             Self::ClockRead(_) => PlanAuthorityRefusalCode::ClockRead,
             Self::Budget { .. } | Self::ReadBudgetIncomplete(_) | Self::ReadExhausted(_) => {
                 PlanAuthorityRefusalCode::Budget
@@ -555,6 +560,9 @@ impl PlanRoot {
             }
             CheckedPackageBudgetedDispatchResult::CatalogUnavailable(error) => {
                 return Err(PlanAuthorityRefusal::ReadCatalogUnavailable(error));
+            }
+            CheckedPackageBudgetedDispatchResult::HostAllocationFailed(failure) => {
+                return Err(PlanAuthorityRefusal::ReadHostAllocationFailed(failure));
             }
         };
         let checked_tick_period = {

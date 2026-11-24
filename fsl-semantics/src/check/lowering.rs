@@ -2059,6 +2059,7 @@ impl<'w> LeafWalk<'w> {
             | ValueType::CarriedQuantity(_)
             | ValueType::Enum(_)
             | ValueType::Reference(_)
+            | ValueType::ClockReference
             | ValueType::Population(_) => {}
             ValueType::Uuid | ValueType::Timestamp => {}
         }
@@ -2129,6 +2130,7 @@ impl<'w> LeafWalk<'w> {
                     | ValueType::String
                     | ValueType::Enum(_)
                     | ValueType::Reference(_)
+                    | ValueType::ClockReference
                     | ValueType::Population(_) => {}
                     ValueType::Uuid | ValueType::Timestamp => {}
                     ValueType::Bytes | ValueType::JsonObject => {}
@@ -3172,6 +3174,11 @@ impl<'a> Lowering<'a> {
                 .map(NodeRef::from),
             ValueType::Reference(target) => self
                 .reference_type(target.clone(), location)
+                .map(NodeRef::from),
+            // FR-230-AC-71: the clock-place reference is its own native
+            // scalar node, never a reference to an object type.
+            ValueType::ClockReference => self
+                .scalar("clock_reference", location)
                 .map(NodeRef::from),
             // FR-094: a `Population<T>[N]` node is built from its binding's
             // resolved type form ([`Self::binder_type`]); the checked type
@@ -4887,6 +4894,7 @@ impl<'a> Lowering<'a> {
                 | ValueType::Map(_)
                 | ValueType::BoundedQuantity(_)
                 | ValueType::Reference(_)
+                | ValueType::ClockReference
                 | ValueType::Population(_) => (
                     Keyed::Application(Operator::Unary, plain("filament.op.integer.negate")),
                     Operands::One(operand),
@@ -5095,6 +5103,7 @@ impl<'a> Lowering<'a> {
                     | ValueType::Map(_)
                     | ValueType::BoundedQuantity(_)
                     | ValueType::Reference(_)
+                    | ValueType::ClockReference
                     | ValueType::Population(_) => {
                         return Err(refuse(
                             node.location(),
@@ -5124,6 +5133,7 @@ impl<'a> Lowering<'a> {
                     | ValueType::Map(_)
                     | ValueType::BoundedQuantity(_)
                     | ValueType::Reference(_)
+                    | ValueType::ClockReference
                     | ValueType::Population(_) => {
                         return Err(refuse(
                             node.location(),
@@ -5164,6 +5174,7 @@ impl<'a> Lowering<'a> {
                     | ValueType::Map(_)
                     | ValueType::BoundedQuantity(_)
                     | ValueType::Reference(_)
+                    | ValueType::ClockReference
                     | ValueType::Population(_) => None,
                 };
                 let member = self.type_argument(target, node.location())?;
@@ -5808,6 +5819,7 @@ impl<'a> Lowering<'a> {
                             | ValueType::Collection(_)
                             | ValueType::Map(_)
                             | ValueType::Reference(_)
+                            | ValueType::ClockReference
                             | ValueType::Population(_) => {
                                 return Err(refuse(
                                     node.location(),
@@ -5959,6 +5971,7 @@ impl<'a> Lowering<'a> {
                     | ValueType::Composite(_)
                     | ValueType::BoundedQuantity(_)
                     | ValueType::Reference(_)
+                    | ValueType::ClockReference
                     | ValueType::Population(_) => Vec::new(),
                 };
                 (
@@ -7362,6 +7375,7 @@ impl<'a> Lowering<'a> {
             | Value::Composite(_)
             | Value::Collection(_)
             | Value::Reference(_)
+            | Value::ClockReference(_)
             | Value::Population(_)
             | Value::Union(_) => return Err(fault(location, KeyFault::UnbuiltLiteral)),
             Value::Map(_) => return Err(Self::unbuilt_map_literal(location)),
@@ -7464,9 +7478,7 @@ impl<'a> Lowering<'a> {
             }
             ValueType::Enum(_) => "enum",
             ValueType::Quantity(_) | ValueType::BoundedQuantity(_) => "quantity",
-            ValueType::Reference(target) if *target == crate::check::clock_reference_target() => {
-                "clock_reference"
-            }
+            ValueType::ClockReference => "clock_reference",
             ValueType::Reference(_) => "reference",
             // FR-497-AC-2: the checker refuses a carried quantity `=` operand
             // before lowering.

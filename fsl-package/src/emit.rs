@@ -15,7 +15,7 @@ use std::{
 };
 
 use filament_contract_model::{
-    encode_checked_package_v2_with_protocol_correlation_occurrences, ApplicationOperator,
+    encode_checked_package_v2_with_path_condition_frames, ApplicationOperator,
     CheckedAbstractionField, CheckedAbstractionFrame, CheckedAbstractionObject,
     CheckedAbstractionParameter, CheckedAbstractionPopulation, CheckedArtifactRef,
     CheckedCapability, CheckedCapabilityDisposition, CheckedComponentClause,
@@ -739,6 +739,11 @@ pub enum OmissionCause {
     /// A nominal node whose owner is not the checked unit's source, so the
     /// lock the emitter writes selects no owner it joins.
     UnlockedOwner,
+    /// A claim the emitter decides to write no node for: a timed presence
+    /// requirement is a presence read with no clause node of its own. The
+    /// records that name the claim are omitted with it (FR-062 "Packaging is
+    /// all-or-nothing").
+    NoClauseNode,
     /// The node names a node the checked graph does not hold.
     NamesAbsentNode(CheckedNodeId),
     /// The node names a node the wire omits.
@@ -3166,7 +3171,13 @@ fn omissions(
     decodes: &dyn Fn(CheckedNodeTag, &str) -> bool,
     external: &HashSet<NodeKey>,
     models: &BTreeSet<&str>,
-    record_names: &dyn Fn() -> Result<Vec<value_validity_requirements::RecordNames>, EmitRefusal>,
+    record_names: &dyn Fn() -> Result<
+        (
+            Vec<value_validity_requirements::RecordNames>,
+            value_validity_requirements::GuardRows,
+        ),
+        EmitRefusal,
+    >,
 ) -> Result<Vec<(usize, OmittedNode)>, EmitRefusal> {
     let mut omitted: Vec<Option<OmissionCause>> = vec![None; candidates.order.len()];
     for (position, candidate) in candidates.values().enumerate() {
@@ -3204,8 +3215,23 @@ fn omissions(
     // Each shared application, to the owners of its records; `None` once an
     // owner is no candidate, which is never omitted.
     let mut applications: BTreeMap<usize, Option<Vec<usize>>> = BTreeMap::new();
+    // The shared guard rows: each row's children, the records ending at it and
+    // the rows that guard each node, so an omitted guard takes the records of
+    // its whole subtree with it, each row once.
+    let mut row_children: Vec<Vec<usize>> = Vec::new();
+    let mut row_targets: Vec<Vec<usize>> = Vec::new();
+    let mut rows_guarding: HashMap<NodeKey, Vec<usize>> = HashMap::new();
     if !pending.is_empty() {
-        for record in record_names()? {
+        let (records, guard_rows) = record_names()?;
+        row_children.resize_with(guard_rows.rows.len(), Vec::new);
+        row_targets.resize_with(guard_rows.rows.len(), Vec::new);
+        for (row, (parent, guard)) in guard_rows.rows.into_iter().enumerate() {
+            if let Some(parent) = parent {
+                row_children[parent].push(row);
+            }
+            rows_guarding.entry(guard).or_default().push(row);
+        }
+        for record in records {
             let claim = candidates.index.get(&record.claim).copied();
             let target = match &record.owner {
                 Some(owner) => {
@@ -3227,8 +3253,12 @@ fn omissions(
             for name in record.names {
                 record_named_by.entry(name).or_default().push(target);
             }
+            if let Some(row) = record.guards {
+                row_targets[row].push(target);
+            }
         }
     }
+    let mut row_done = vec![false; row_children.len()];
     loop {
         while let Some(gone) = pending.pop_front() {
             let gone_key = &candidates.order[gone].key;
@@ -3243,6 +3273,21 @@ fn omissions(
                         candidates.order[gone].id.clone(),
                     ));
                     pending.push_back(dependent);
+                }
+            }
+            let mut rows: Vec<usize> = rows_guarding.get(gone_key).cloned().unwrap_or_default();
+            while let Some(row) = rows.pop() {
+                if std::mem::replace(&mut row_done[row], true) {
+                    continue;
+                }
+                rows.extend(&row_children[row]);
+                for &dependent in &row_targets[row] {
+                    if omitted[dependent].is_none() {
+                        omitted[dependent] = Some(OmissionCause::NamesOmittedNode(
+                            candidates.order[gone].id.clone(),
+                        ));
+                        pending.push_back(dependent);
+                    }
                 }
             }
         }
@@ -6879,8 +6924,12 @@ pub fn emit_timed_models(
         &ForeignNodes::default(),
     )?;
     order_dependencies(&mut nodes, EmitRefusal::TimedModelWriterInvariant)?;
-    let requirement_rows =
-        value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map)?;
+    let mut meter = OutputMeter::new(limits);
+    let (requirement_rows, path_condition_frames, renumbered) =
+        value_validity_requirements::carry_rows(base, &mut nodes, &mut source_map, &mut meter)?;
+    if let Some(data) = &mut checked_term_data {
+        value_validity_requirements::ordinals::relabel_term_data(&renumbered, data);
+    }
     let operand_rows = write_operand_slots(&mut nodes, limits)?;
     let semantic_graph = CheckedSemanticGraphV2 {
         graph_version: base.graph().graph_version.clone(),
@@ -6909,7 +6958,7 @@ pub fn emit_timed_models(
         ProtocolCorrelationProvenance::Unavailable(_) => None,
     };
     let package = EmittedPackage::new(base.name(), |name| {
-        encode_checked_package_v2_with_protocol_correlation_occurrences(
+        encode_checked_package_v2_with_path_condition_frames(
             name,
             &lock,
             &semantic_graph,
@@ -6928,6 +6977,7 @@ pub fn emit_timed_models(
             },
             (!requirement_rows.is_empty()).then_some(requirement_rows.as_slice()),
             correlation_rows.as_deref(),
+            (!path_condition_frames.is_empty()).then_some(path_condition_frames.as_slice()),
             &capability_report,
             &diagnostics,
             limits.canonical(),
@@ -7912,14 +7962,18 @@ fn emit_package_nodes(
         &mut nodes,
         &mut source_map,
     )?;
-    // Use the same recorded expression placement that supplies the
-    // application's source-map occurrence; `CheckedGraph::occurrence` is
-    // not the placement source for caller-built, spanless forms.
+    // Use the recorded expression placement that supplies an application's
+    // source-map occurrence, falling back to the checked occurrence span for
+    // claim-role records such as operation contracts.
     let value_validity_region = |claim: &OccurrenceKey| {
         candidates
-            .get(claim.node())?
-            .expression_region(claim.origin().ordinal(), &regions)
+            .get(claim.node())
+            .and_then(|candidate| candidate.expression_region(claim.origin().ordinal(), &regions))
+            .or_else(|| graph.occurrence_region(claim.node().clone(), claim.origin()))
     };
+    // The meter charges the owner walks the renumbering makes, then every row
+    // section below.
+    let mut meter = OutputMeter::new(limits);
     let value_validity = value_validity_requirements::append(
         ids,
         graph,
@@ -7927,8 +7981,9 @@ fn emit_package_nodes(
         &mut source_map,
         &value_validity_region,
         &omitted_causes,
+        &mut meter,
     )?;
-    omitted.extend(value_validity.omitted);
+    omitted.extend(value_validity.omitted.iter().cloned());
     omitted.sort_by(|left, right| left.node.cmp(&right.node));
     let (mut profile_selections, mut laws) = split_laws(&order);
     for refinement in emitted_refinements {
@@ -8000,7 +8055,6 @@ fn emit_package_nodes(
     // its canonical bytes are a floor on the package's. Charge them, and each
     // typed row section below as it is built, rather than after the final
     // encode.
-    let mut meter = OutputMeter::new(limits);
     meter.charge(&source_map)?;
     let producer_node_ids =
         producer_node_ids_after_timed_rekey(&emitted_node_ids, &timed_substitutions)?;
@@ -8040,7 +8094,7 @@ fn emit_package_nodes(
         &nodes,
         &equality_producer_identity_rows,
     )?;
-    let checked_term_data = checked_term_data(
+    let mut checked_term_data = checked_term_data(
         graph,
         &emitted_node_ids,
         &producer_node_ids,
@@ -8051,6 +8105,17 @@ fn emit_package_nodes(
         &source_keys,
         &mut meter,
     )?;
+    if let Some(data) = &mut checked_term_data {
+        if value_validity.renumbering.renumbers() {
+            let mut row_ids = emitted_node_ids.clone();
+            row_ids.extend(
+                producer_node_ids
+                    .iter()
+                    .map(|(key, id)| (key.clone(), id.clone())),
+            );
+            value_validity.renumbering.relabel_term_data(&row_ids, data);
+        }
+    }
     let selected_operation_member_rows = selected_operation_member_rows
         .into_iter()
         .map(|(key, mut row)| {
@@ -8129,11 +8194,13 @@ fn emit_package_nodes(
         ids,
         graph,
         &producer_node_ids,
-        &value_validity.records,
+        &value_validity,
         &relation_rows,
         &omitted_causes,
     )?;
     meter.charge(&requirement_rows)?;
+    let path_condition_frames =
+        value_validity_requirements::frame_rows(ids, &producer_node_ids, &value_validity.frames)?;
     let selected_source_collection_rows = source_collection_rows(graph, &emitted_node_ids)?;
     let operation_effects = graph
         .operation_effects()
@@ -8177,7 +8244,7 @@ fn emit_package_nodes(
     drop((declared_forms, source_keys));
     drop(ids_table);
     let package = EmittedPackage::new(graph.package_name(), |name| {
-        encode_checked_package_v2_with_protocol_correlation_occurrences(
+        encode_checked_package_v2_with_path_condition_frames(
             name,
             &lock,
             &semantic_graph,
@@ -8199,6 +8266,7 @@ fn emit_package_nodes(
             },
             (!requirement_rows.is_empty()).then_some(requirement_rows.as_slice()),
             Some(&correlation_rows),
+            (!path_condition_frames.is_empty()).then_some(path_condition_frames.as_slice()),
             &capability_report,
             &diagnostics,
             limits.canonical(),

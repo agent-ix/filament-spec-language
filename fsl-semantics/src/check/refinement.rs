@@ -2228,6 +2228,7 @@ fn lift(lifting: &BTreeMap<EffectiveId, EffectiveId>, value_type: &ValueType) ->
         | ValueType::JsonObject
         | ValueType::Enum(_)
         | ValueType::Composite(_)
+        | ValueType::ClockReference
         | ValueType::Population(_)) => other.clone(),
     }
 }

@@ -2135,6 +2135,7 @@ pub(crate) fn argument_value(
             Value::Reference(value) => Ok(Value::Reference(value)),
             _ => Err(wrong()),
         },
+        ValueType::ClockReference => Err(wrong()),
         ValueType::Population(_) => match value {
             Value::Population(value) => Ok(Value::Population(value)),
             _ => Err(wrong()),

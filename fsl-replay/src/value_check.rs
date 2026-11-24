@@ -412,15 +412,16 @@ impl<'p> ValueTarget<'p> {
             && body.occurrences.contains(claim);
         if !is_clause_key
             && package.requirement_items().iter().any(|row| {
-                row.record.as_ref().is_some_and(|record| {
+                value_validity_record(row).is_some_and(|record| {
                     package.node_key(&record.owner).as_ref() == Some(selected.node)
                         && (package.node_key(&row.claim).is_none()
                             || package.node_key(&record.application).is_none()
                             || package.node_key(&record.result_bound).is_none()
-                            || record
-                                .path_condition
+                            || package
+                                .package()
+                                .path_condition(record)
                                 .iter()
-                                .any(|guard| package.node_key(&guard.guard).is_none()))
+                                .any(|guard| package.node_key(guard.guard).is_none()))
                 })
             })
         {
@@ -431,7 +432,7 @@ impl<'p> ValueTarget<'p> {
                 && row.occurrence.role == filament_contract_model::CheckedOccurrenceRole::Expression
                 && row.occurrence.ordinal == claim.origin().ordinal()
                 && row.kind == filament_contract_model::CapabilityKind::ValueValidity
-                && row.record.as_ref().is_some_and(|record| {
+                && value_validity_record(row).is_some_and(|record| {
                     package.node_key(&record.owner).as_ref() == Some(selected.node)
                 })
         });
@@ -463,7 +464,7 @@ impl<'p> ValueTarget<'p> {
             fsl_semantics::family::requirements::classify_extent(&roots, world.types(), u64::MAX)
                 .ok();
         let result_bound = record
-            .and_then(|row| row.record.as_ref())
+            .and_then(value_validity_record)
             .map(|record| {
                 package
                     .exact_type_projections()
@@ -1009,4 +1010,15 @@ pub fn integers(interval: &IntegerInterval) -> impl Iterator<Item = Integer> {
         next = Some(current.add(&Integer::one()));
         Some(current)
     })
+}
+
+/// The value-validity record a requirement row carries; an operation-contract
+/// row or a row without a record has none.
+fn value_validity_record(
+    row: &filament_contract_model::RequirementItemRow,
+) -> Option<&filament_contract_model::ValueValidityRecord> {
+    match &row.record {
+        Some(filament_contract_model::RequirementRecord::ValueValidity(record)) => Some(record),
+        _ => None,
+    }
 }

@@ -786,8 +786,11 @@ fn tc_440_operation_application_records_agree_with_ir_per_node() {
         .collect();
     assert_eq!(multiply, [ClaimExtent::Bounded]);
 
+    // contract-ir reader defect A (QSL-2776 chain): the else branch holds a
+    // scalar operation (`x * 2`, not `0`) until the reader accepts a branch
+    // frame no record cites.
     let (package, _, _) = emit_text(
-        "function k using v(x: Int[0, 9], n: Integer): Integer pure { if n = 0 then x + 1 else 0 }",
+        "function k using v(x: Int[0, 9], n: Integer): Integer pure { if n = 0 then x + 1 else x * 2 }",
     );
     let add: Vec<ClaimExtent> = requirement_records(&package, "filament.op.integer.add")
         .into_iter()

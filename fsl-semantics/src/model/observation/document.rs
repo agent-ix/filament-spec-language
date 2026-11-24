@@ -1669,6 +1669,14 @@ fn admit_leaf(
                 .resolve(reference, type_identity.clone())
                 .map(Value::Reference)
         }
+        // FR-230-AC-71: the value is the kernel's clock-place reference, built
+        // from the snapshot's universe and place id. That admission is
+        // QSL-3002; until then the reference is refused, typed, never read as
+        // an object reference.
+        (RawForm::Reference(_), filament_exact::ValueType::ClockReference) => Err(
+            admission_record(Code::UnknownRequiredFeature, "unsupported-feature")
+                .with("reason", "clock-reference-admission-pending-qsl-3002"),
+        ),
         (RawForm::Variant(variant), filament_exact::ValueType::Enum(slot)) => {
             admit_variant(references, variant, slot)
         }
@@ -2055,6 +2063,7 @@ fn admit_native(
             | filament_exact::ValueType::Collection(_)
             | filament_exact::ValueType::Map(_)
             | filament_exact::ValueType::Reference(_)
+            | filament_exact::ValueType::ClockReference
             | filament_exact::ValueType::Population(_),
         ) => Err(admission_record(
             Code::InvalidRuntimeInput,
@@ -2837,7 +2846,8 @@ fn missing_wire_form(value_type: &filament_exact::ValueType) -> Option<&'static 
             | filament_exact::ValueType::JsonObject
             | filament_exact::ValueType::Enum(_)
             | filament_exact::ValueType::Composite(_)
-            | filament_exact::ValueType::Reference(_) => {}
+            | filament_exact::ValueType::Reference(_)
+            | filament_exact::ValueType::ClockReference => {}
         }
     }
     None
@@ -2879,6 +2889,7 @@ fn unsupported_collection_element(value_type: &filament_exact::ValueType) -> Opt
             | filament_exact::ValueType::Enum(_)
             | filament_exact::ValueType::Composite(_)
             | filament_exact::ValueType::Reference(_)
+            | filament_exact::ValueType::ClockReference
             | filament_exact::ValueType::Population(_) => {}
         }
     }
@@ -4220,6 +4231,8 @@ fn holds_references(value_type: &filament_exact::ValueType) -> bool {
             | filament_exact::ValueType::String
             | filament_exact::ValueType::Enum(_)
             | filament_exact::ValueType::Composite(_)
+            // A clock-place reference names no object (FR-230-AC-71).
+            | filament_exact::ValueType::ClockReference
             | filament_exact::ValueType::Population(_)
             | filament_exact::ValueType::Uuid
             | filament_exact::ValueType::Timestamp
@@ -5134,7 +5147,7 @@ mod tests {
     #[test]
     fn raw_clock_data_refusal_keeps_its_typed_value_locus() {
         let types = TypeEnvironment::default();
-        let clock = ValueType::Reference(crate::check::clock_reference_target());
+        let clock = ValueType::ClockReference;
         let raw = reference("ix://model/calls", "place/v1/not-a-v2-identity");
         for (raw, slot, path) in [
             (raw.clone(), clock.clone(), Vec::new()),
@@ -5156,12 +5169,15 @@ mod tests {
             let mut references =
                 References::over(&[], &types, &[]).expect("empty declared catalog");
             let record = admit_form(&mut references, raw.form(), &slot, None)
-                .expect_err("transported Clock DATA remains unsupported before decoding");
+                .expect_err("transported Clock DATA is refused typed until QSL-3002");
             assert_eq!(record.catalog.code(), Code::UnknownRequiredFeature.as_str());
             assert_eq!(record.catalog.cause(), "unsupported-feature");
             assert_eq!(
                 record.fields,
-                BTreeMap::from([("reason", "missing-route-neutral-place-identity".to_owned())])
+                BTreeMap::from([(
+                    "reason",
+                    "clock-reference-admission-pending-qsl-3002".to_owned()
+                )])
             );
             assert_eq!(record.path, path);
         }

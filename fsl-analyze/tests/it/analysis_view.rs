@@ -185,11 +185,15 @@ fn value_record_views_and_native_charges_equal_the_source() {
     assert_eq!(indices.len(), 2);
     for &index in indices {
         let row = &bare.requirement_items()[index];
-        let record = row.record.as_ref().expect("a scalar record");
+        let Some(filament_contract_model::RequirementRecord::ValueValidity(record)) =
+            row.record.as_ref()
+        else {
+            panic!("a scalar record");
+        };
         assert_eq!(&record.owner, owner);
         assert_eq!(record.application, row.claim);
         assert_eq!(record.occurrence, row.occurrence.ordinal);
-        assert_eq!(record.path_condition.len(), 1);
+        assert_eq!(read.package().path_condition(record).len(), 1);
         assert!(!record.extent_roots.is_empty());
         assert!(bare.node_key(&record.result_bound).is_some());
         let claim = fsl_replay::OccurrenceKey::new(
