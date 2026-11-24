@@ -2,7 +2,7 @@
 //! `ModelNormalizationLimitsV1`: exact `u64` limits, named ordered charge
 //! points and the exact incomplete record for FR-150 normalization.
 //!
-//! Mirrors kernel accounting's `Meter`/`ChargePoint`/`Incomplete`
+//! Mirrors `crate::value::accounting`'s `Meter`/`ChargePoint`/`NormalizationIncomplete`
 //! shape (same atomic-first-denial semantics), over this rung's own,
 //! independent counter set — `ScalarLimitsV1` is A03's complete-value meter
 //! and is not reused here, per `value-accounting.md`: "These counters are

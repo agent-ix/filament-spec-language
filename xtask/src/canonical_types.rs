@@ -925,8 +925,6 @@ mod tests {
         }
     }
 
-    /// TC-748: a namesake's literal old identifier is a typed gate finding at
-    /// its source locus; replacing it with its meaning-specific name clears it.
     fn current_workspace_findings() -> &'static [Finding] {
         static FINDINGS: OnceLock<Vec<Finding>> = OnceLock::new();
         FINDINGS.get_or_init(|| {
@@ -934,9 +932,12 @@ mod tests {
                 .parent()
                 .expect("xtask is a workspace member");
             let metadata = cargo_metadata(workspace_root).expect("workspace metadata");
-            scan(workspace_root, packages(&metadata).expect("workspace packages"))
-                .expect("canonical type scan")
-                .findings
+            scan(
+                workspace_root,
+                packages(&metadata).expect("workspace packages"),
+            )
+            .expect("canonical type scan")
+            .findings
         })
     }
 
@@ -965,13 +966,34 @@ mod tests {
             &format!("pub struct {replacement};\n"),
         );
         assert_eq!(fixture.findings(), vec![], "renamed {ident}");
+        let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .expect("xtask is a workspace member");
+        let production_source = fs::read_to_string(workspace_root.join(production_file))
+            .expect("production source file exists");
+        assert!(
+            production_source.contains(&format!("pub enum {replacement}"))
+                || production_source.contains(&format!("pub struct {replacement}")),
+            "production definition {replacement} must exist in {production_file}",
+        );
         assert!(
             !current_workspace_findings().iter().any(|found| {
                 found.rule == Rule::Identifier
                     && found.ident == ident
-                    && found.other.file == production_file
+                    && Path::new(&found.other.file).ends_with(production_file)
             }),
             "the production {production_file} must not retain identifier {ident}",
+        );
+    }
+
+    fn assert_no_reexport_finding(ident: &str) {
+        assert!(
+            !current_workspace_findings().iter().any(|found| {
+                found.rule == Rule::Reexport
+                    && found.ident == ident
+                    && Path::new(&found.other.file).ends_with("fsl-replay/src/lib.rs")
+            }),
+            "the gate must report no re-export finding for {ident} in fsl-replay/src/lib.rs",
         );
     }
 
@@ -1419,6 +1441,8 @@ mod tests {
 
     #[test]
     #[trace("TC-748", "FR-273-AC-2")]
+    /// TC-748: a namesake's literal old identifier is a typed gate finding at
+    /// its source locus; replacing it with its meaning-specific name clears it.
     fn model_limit_kind_is_reported_until_normalization_name_is_used() {
         renamed_namesake_is_reported_then_cleared(
             "LimitKind",
@@ -1465,6 +1489,7 @@ mod tests {
             "pub use fsl_foundation::source::provenance::{OccurrenceKey, SourceRegion};"
         ));
         assert!(!source.contains("OccurrenceKey as"));
+        assert_no_reexport_finding("OccurrenceKey");
     }
 
     #[test]
@@ -1475,6 +1500,7 @@ mod tests {
             "pub use filament_exact::{Identifier, NodeKey, Origin, Role, ScalarLimits, Value};"
         ));
         assert!(!source.contains("Origin as"));
+        assert_no_reexport_finding("Origin");
     }
 
     #[test]
@@ -1485,6 +1511,7 @@ mod tests {
             "pub use filament_exact::{EmptyInterval, Incomplete, Integer, IntegerInterval};"
         ));
         assert!(!source.contains("Integer as"));
+        assert_no_reexport_finding("Integer");
     }
 
     #[test]
@@ -1493,5 +1520,6 @@ mod tests {
         let source = include_str!("../../fsl-replay/src/lib.rs");
         assert!(source.contains("pub use filament_checked::key::DeclarationKey;"));
         assert!(!source.contains("DeclarationKey as"));
+        assert_no_reexport_finding("DeclarationKey");
     }
 }

@@ -120,7 +120,7 @@ FSL and preserves the S4/E dependency boundary.
 
 | Type | Owner and path | Moved by |
 | --- | --- | --- |
-| `Meter`, `Charge`, `ChargePoint`, `Incomplete`, `ScalarLimits` (the `filament.value.accounting/v1` meter the evaluator charges) | K, `filament_exact` | none. `fsl-semantics`' `model::accounting::Meter` is FR-150's normalization meter, not the evaluation meter, and is not part of the interface |
+| `Meter`, `Charge`, `ChargePoint`, `Incomplete`, `ScalarLimits` (the `filament.value.accounting/v1` meter the evaluator charges) | K, `filament_exact` | none. `fsl-semantics`' `model::accounting::NormalizationMeter` is FR-150's normalization meter, not the evaluation meter, and is not part of the interface |
 | `Cancel`, `CancelCause` | K, `filament_exact` | none |
 | `Value`, `ValueType`, `Outcome`, `NodeKey` | K, `filament_exact` | none |
 | `InputRefusal` | SV, `filament_semantic_value::call` | none |
