@@ -1572,7 +1572,16 @@ impl<'a> Typer<'a> {
                         });
                     }
                 };
-                node(kind, ValueType::Reference(object_type), &location)
+                let reference_type = ValueType::Reference(object_type);
+                if let Some(refusal) = self.identity_observing(
+                    &location,
+                    IdentityNode::ReferenceLiteral,
+                    IdentityForm::KeyedReferenceLiteral,
+                    &reference_type,
+                ) {
+                    return Err(refusal);
+                }
+                node(kind, reference_type, &location)
             }
             ExprNode::Rational(numerator, denominator) => {
                 self.rational_literal(numerator, denominator, hint.as_deref(), &location)?
