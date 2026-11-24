@@ -308,8 +308,15 @@ const fn monitor_input(trace: Input, clauses: &'static [&'static str]) -> Monito
 
 /// The `s3.nodes` counter of [`COMPILE`] less one.
 const COMPILE_S3_NODES_BELOW: u64 = 10;
-/// The `emit.output_bytes` counter of [`COMPILE`]'s package less one.
-const COMPILE_OUTPUT_BYTES_BELOW: u64 = 23_249;
+/// The `emit.output_bytes` counter of [`COMPILE`]'s package less one: the
+/// canonical package is 26_117 bytes, so the limit one below is 26_116. A
+/// literal on purpose: it is fixed by an independent measurement (the package
+/// bytes read back with `quire_canonical::read` and re-encoded by
+/// `quire_canonical::to_vec`, the canonical encoder whose byte meter
+/// `emit.output_bytes` bounds, FR-255, FR-277-AC-1), never by the emitter's
+/// own output length. When the emitted package changes size the test below
+/// names this constant as the single value to re-measure.
+const COMPILE_OUTPUT_BYTES_BELOW: u64 = 26_116;
 
 const fn front_end(unit: Input, limit: FrontEndLimit) -> FrontEndInput {
     FrontEndInput {

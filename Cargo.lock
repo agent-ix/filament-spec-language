@@ -941,6 +941,7 @@ dependencies = [
  "fsl-semantics",
  "ix-trace-rs",
  "jsonschema 0.17.1",
+ "quire-canonical",
  "serde",
  "serde_json",
  "tempfile",
