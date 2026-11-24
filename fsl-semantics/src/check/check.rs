@@ -2793,6 +2793,7 @@ pub(crate) fn cancelled_refusal(location: &Location) -> CheckRefusal {
 ///
 /// The walk keeps its own stack, so a type nested to any depth the parser
 /// admits does not consume the thread's stack (FR-356-AC-7).
+#[cfg(test)]
 fn clock_reference_as_leaf(
     value_type: &ValueType,
     location: &Location,
@@ -3858,14 +3859,16 @@ impl<'a> Typer<'a> {
             return original_check
                 .map_err(|failure| CheckRefusal::from_type_check(location, failure));
         }
-        let whole = clock_reference_as_leaf(value_type, location)?;
-        if original_check.is_err() {
-            self.scope
-                .types
-                .try_check_type(&whole)
-                .map_err(|refusal| CheckRefusal::from_type_check(location, refusal))?;
-        }
-        let mut pending = vec![value_type];
+        // Validate leaves directly instead of rebuilding an equivalent
+        // ValueType with Arc allocations. Arc::new and the collection/map
+        // constructors abort on allocation failure, so they cannot preserve
+        // the owner's typed allocation refusal (FR-534-AC-2).
+        let mut pending = Vec::new();
+        let request = StorageRequest::new(1, StorageUnit::AdditionalElements);
+        pending
+            .try_reserve(1)
+            .map_err(|_| refuse(location, CheckCause::TypeCheckAllocation(request)))?;
+        pending.push(value_type);
         while let Some(value_type) = pending.pop() {
             match value_type {
                 ValueType::Enum(shape) => {
@@ -3888,17 +3891,47 @@ impl<'a> Typer<'a> {
                     // type for a clock place. The native Clock declaration
                     // is not an object type in the admitted TypeEnvironment.
                 }
-                ValueType::Option(payload) => pending.push(payload),
-                ValueType::Collection(collection) => pending.push(collection.element()),
+                ValueType::Option(payload) => {
+                    pending
+                        .try_reserve(1)
+                        .map_err(|_| refuse(location, CheckCause::TypeCheckAllocation(request)))?;
+                    pending.push(payload);
+                }
+                ValueType::Collection(collection) => {
+                    // Collection eligibility is checked before the owner
+                    // descends into its element. Recheck this boundary when
+                    // an earlier owner refusal (such as Reference<Clock>)
+                    // might otherwise hide a separate collection refusal.
+                    if original_check.is_err() {
+                        self.scope
+                            .types
+                            .try_check_type(value_type)
+                            .map_err(|refusal| CheckRefusal::from_type_check(location, refusal))?;
+                    }
+                    pending
+                        .try_reserve(1)
+                        .map_err(|_| refuse(location, CheckCause::TypeCheckAllocation(request)))?;
+                    pending.push(collection.element());
+                }
                 ValueType::Map(map) => {
+                    pending
+                        .try_reserve(2)
+                        .map_err(|_| refuse(location, CheckCause::TypeCheckAllocation(request)))?;
                     pending.push(map.key());
                     pending.push(map.values());
                 }
-                ValueType::Reference(_) | ValueType::Composite(_) => self
-                    .scope
-                    .types
-                    .try_check_type(value_type)
-                    .map_err(|refusal| CheckRefusal::from_type_check(location, refusal))?,
+                // A successful owner walk above has already checked every
+                // reference and composite. Repeat leaf checks only when the
+                // owner stopped at an ordinary refusal (for example, the
+                // synthetic Clock reference), so other invalid leaves
+                // remain detectable without another successful full walk.
+                ValueType::Reference(_) | ValueType::Composite(_) if original_check.is_err() => {
+                    self.scope
+                        .types
+                        .try_check_type(value_type)
+                        .map_err(|refusal| CheckRefusal::from_type_check(location, refusal))?
+                }
+                ValueType::Reference(_) | ValueType::Composite(_) => {}
                 ValueType::Boolean
                 | ValueType::Integer
                 | ValueType::Int(_)
@@ -3910,15 +3943,16 @@ impl<'a> Typer<'a> {
                 | ValueType::CarriedQuantity(_)
                 | ValueType::Text(_)
                 | ValueType::String
-                | ValueType::Population(_)
                 | ValueType::Uuid
                 | ValueType::Timestamp
                 | ValueType::Bytes
-                | ValueType::JsonObject => self
+                | ValueType::JsonObject => {}
+                ValueType::Population(_) if original_check.is_err() => self
                     .scope
                     .types
                     .try_check_type(value_type)
                     .map_err(|refusal| CheckRefusal::from_type_check(location, refusal))?,
+                ValueType::Population(_) => {}
             }
         }
         Ok(())
@@ -6871,8 +6905,7 @@ mod holds_float_tests {
                 assert!(Typer::holds_references(&held));
                 assert!(!Typer::holds_references(&plain));
                 let location = Location::at(Origin::Expression, &[]);
-                let leafed = clock_reference_as_leaf(&held, &location)
-                    .expect("a leaf rewrite");
+                let leafed = clock_reference_as_leaf(&held, &location).expect("a leaf rewrite");
                 assert!(!Typer::holds_references(&leafed));
                 assert_eq!(
                     clock_reference_as_leaf(&plain, &location),
