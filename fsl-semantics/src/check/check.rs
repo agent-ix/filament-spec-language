@@ -4413,17 +4413,35 @@ impl<'a> Typer<'a> {
                 operand.stored = integer;
             }
         }
-        let check = |left: &EqualityOperand, right: &EqualityOperand| {
+        let conversion_location = if left.conversion_target.is_some() {
+            Some(left.node.location.clone())
+        } else if right.conversion_target.is_some() {
+            Some(right.node.location.clone())
+        } else {
+            None
+        };
+        let check = |left_equivalent: &EqualityOperand, right_equivalent: &EqualityOperand| {
             self.scope
                 .types
                 .check_equality_in(
                     &self.units,
                     operator,
-                    left.clone(),
-                    right.clone(),
+                    left_equivalent.clone(),
+                    right_equivalent.clone(),
                     &|shape: &EnumShape| self.scope.enum_members_of(shape),
                 )
-                .map_err(|refusal| CheckRefusal::from_ill_typed(location, refusal))
+                .map_err(|refusal| {
+                    // A type mismatch discovered while admitting an explicit
+                    // equality conversion belongs to that conversion operand,
+                    // whose target is part of the authored operation. Keep
+                    // other equality refusals at the equality expression.
+                    let refusal_location = if refusal.cause == IllTypedCause::TypeMismatch {
+                        conversion_location.as_ref().unwrap_or(location)
+                    } else {
+                        location
+                    };
+                    CheckRefusal::from_ill_typed(refusal_location, refusal)
+                })
         };
         let mut checked = check(&left.checked, &right.checked)?;
         if (&left.stored, &right.stored) != (&left.checked, &right.checked) {
@@ -4823,31 +4841,24 @@ impl<'a> Typer<'a> {
                     ValueType::Quantity(unit.clone()),
                 )
             }
-            (l, r, ArithmeticOperator::Divide) if is_integer(l) && is_integer(r) => {
-                if !self.complete_value {
+            (l, r, ArithmeticOperator::Divide) if is_integer(l) && is_integer(r) => match hint {
+                Some(ValueType::Rational(domain)) if self.complete_value => (
+                    NodeKind::Divide {
+                        left: left_box,
+                        right: right_box,
+                        domain: domain.clone(),
+                    },
+                    ValueType::Rational(domain.clone()),
+                ),
+                Some(ValueType::Rational(_)) => {
                     return Err(refuse(
                         location,
                         CheckCause::ProfileProhibitedOperator(BinaryOperator::Divide),
                     ));
                 }
-                match hint {
-                    Some(ValueType::Rational(domain)) => (
-                        NodeKind::Divide {
-                            left: left_box,
-                            right: right_box,
-                            domain: domain.clone(),
-                        },
-                        ValueType::Rational(domain.clone()),
-                    ),
-                    Some(_) => return Err(mismatch(location)),
-                    None => {
-                        return Err(CheckRefusal::ill_typed(
-                            location,
-                            IllTypedCause::AmbiguousLiteral,
-                        ));
-                    }
-                }
-            }
+                Some(_) => return Err(mismatch(location)),
+                None => return Err(mismatch(location)),
+            },
             (l, r, _) if is_integer(l) && is_integer(r) => {
                 // `Divide` is taken by the preceding arm; naming it here keeps
                 // a later change from silently lowering `/` as `*`.

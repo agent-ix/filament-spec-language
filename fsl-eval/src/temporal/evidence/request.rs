@@ -423,7 +423,7 @@ pub struct ResultSubject {
     pub clause: CheckedNodeId,
     /// The selected occurrence.
     pub occurrence: CheckedOccurrence,
-    /// The source-map entry of the selected occurrence.
+    /// The source map entry for the selected occurrence.
     pub source_map: CheckedSourceMapEntry,
 }
 

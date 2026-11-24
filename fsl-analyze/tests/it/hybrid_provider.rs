@@ -187,6 +187,7 @@ impl World {
 /// `unsupported_projection`/`unsupported-requested-capability`, through
 /// `analyze` and through `provider::run`.
 #[trace("TC-2100", "FR-750-AC-3")]
+#[trace("TC-1187", "FR-447-AC-4")]
 #[trace("FSpec-TC-373", "FSpec-FR-193-AC-7")]
 #[test]
 fn a_hybrid_item_with_no_provider_settles_hybrid_provider_absent() {

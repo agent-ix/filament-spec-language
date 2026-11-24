@@ -75,9 +75,9 @@ mod clock_authority;
 #[cfg(feature = "std")]
 pub use clock_authority::{ClockDeclarationTableError, ClockDeclarations};
 #[cfg(feature = "std")]
-mod bare_slot;
-#[cfg(feature = "std")]
 mod bare_probability;
+#[cfg(feature = "std")]
+mod bare_slot;
 #[cfg(feature = "std")]
 mod bare_state_graph;
 #[cfg(feature = "std")]
@@ -143,11 +143,13 @@ mod wire_form;
 
 #[cfg(feature = "std")]
 pub use bare::{
-    BarePackage, BareSupply, IdentityFileRefusal, IdentityJoinFailure, IdentityMember,
-    IdentityWitnessRefusal, ReadIdentityRows, IDENTITIES_FORMAT,
+    BareCallRequirement, BarePackage, BareSupply, IdentityFileRefusal, IdentityJoinFailure,
+    IdentityMember, IdentityWitnessRefusal, ReadIdentityRows, IDENTITIES_FORMAT,
 };
 #[cfg(feature = "std")]
-pub use bare_slot::{BareSelectionFailure, BareSlot, BareSource};
+pub use bare_slot::{
+    BareSelectionFailure, BareSlot, BareSource, BareSourceOperationFailure, SourceOperationClause,
+};
 #[cfg(feature = "std")]
 #[cfg(feature = "std")]
 pub use bare_state_graph::BareStatePredicate;
@@ -173,15 +175,15 @@ pub use checked_v2::{
     state_graph_roots, supply_closure, AdmittedPackageRead, AdmittedPackages,
     CheckedClockConstraint, CheckedClockGuard, CheckedClockPlace, CheckedClockReset,
     CheckedConstraintTarget, CheckedGuardPart, CheckedGuardQuantifier, CheckedResetTarget,
-    CheckedTimeInvariant,
-    CheckedTimeSource, CheckedTimeSourceKind, CheckedTimedModel, CheckedUrgency, ClauseRoot,
-    ClauseRootUnresolved, ClockComparison, ClockPathStep, EvaluationWitnessSupplier,
-    EvaluationWitnesses, HybridRead, HybridReadError, HyperRoot, HyperRootUnresolved,
-    ImportViewRefusal, NativeJoinLimits, PackageTerminal, PackageTerminalDeclaration,
-    ReadHybridClaim, ReadHybridModel, ReadTerminal, ReadTerminalDeclaration, ResolvedClockPathStep,
-    SchedulabilityRoot, SourceMapDefect, SourceWitnessSupplier, StateGraphKind, StateGraphRoot,
-    TerminalResolveRefusal, TimedLiteralTypes, TimedNodeMetadata, UnsupportedWire, V2ReadLimits,
-    V2ReadRefusal, WitnessSupplyFailure,
+    CheckedTimeInvariant, CheckedTimeSource, CheckedTimeSourceKind, CheckedTimedModel,
+    CheckedUrgency, ClauseRoot, ClauseRootUnresolved, ClockComparison, ClockPathStep,
+    EvaluationWitnessSupplier, EvaluationWitnesses, HybridRead, HybridReadError, HyperRoot,
+    HyperRootUnresolved, ImportViewRefusal, NativeJoinLimits, PackageTerminal,
+    PackageTerminalDeclaration, ReadHybridClaim, ReadHybridModel, ReadTerminal,
+    ReadTerminalDeclaration, ResolvedClockPathStep, SchedulabilityRoot, SourceMapDefect,
+    SourceWitnessSupplier, StateGraphKind, StateGraphRoot, TerminalResolveRefusal,
+    TimedLiteralTypes, TimedNodeMetadata, UnsupportedWire, V2ReadLimits, V2ReadRefusal,
+    WitnessSupplyFailure,
 };
 #[cfg(feature = "std")]
 pub use checked_views::BareHyperTerm;

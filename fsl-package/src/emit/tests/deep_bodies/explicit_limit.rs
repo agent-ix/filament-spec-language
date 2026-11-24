@@ -167,7 +167,16 @@ fn qualify(family: Family, count: usize, require_default_denial: bool) {
         package.graph().semantic_graph().nodes().count(),
         edges,
     );
-    eprintln!("PREDECLARED family={family:?} count={count} source_bytes={} body_nodes={} edges={edges} shape={} bytes={} read_work={} storage={} location_work={}", text.len(), body.len(), limits.shape, limits.bytes, limits.read_work, limits.storage, limits.locations);
+    eprintln!(
+        "PREDECLARED family={family:?} count={count} source_bytes={} body_nodes={} edges={edges} shape={} bytes={} read_work={} storage={} location_work={}",
+        text.len(),
+        body.len(),
+        limits.shape,
+        limits.bytes,
+        limits.read_work,
+        limits.storage,
+        limits.locations
+    );
     let emission = crate::emit::emit_checked(&package, crate::EmitLimits::new(limits.bytes))
         .unwrap_or_else(|failure| {
             panic!("{family:?}: emission failed with code {:?}", failure.code())
@@ -297,7 +306,12 @@ fn qualify(family: Family, count: usize, require_default_denial: bool) {
     assert!(cursor.next_location().unwrap().is_none());
     let location_work = cursor.work_consumed();
     assert!(location_work <= limits.locations);
-    eprintln!("MEASURED family={family:?} count={count} bytes={actual_bytes} rows={} relative_entries={entries} strict_work={} strict_read_storage={read_storage} logical_storage={} location_work={location_work}", rows.len(), charged.work, charged.storage);
+    eprintln!(
+        "MEASURED family={family:?} count={count} bytes={actual_bytes} rows={} relative_entries={entries} strict_work={} strict_read_storage={read_storage} logical_storage={} location_work={location_work}",
+        rows.len(),
+        charged.work,
+        charged.storage
+    );
     drop(cursor);
     drop(admitted);
     drop(emission);

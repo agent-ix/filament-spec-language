@@ -1730,6 +1730,14 @@ impl<'a> Definedness<'a> {
                 if !nonzero {
                     return Err(Self::refuse(node, Obligation::Nonzero));
                 }
+                if let (Some(Value::Integer(dividend)), Some(Value::Integer(divisor))) = (
+                    self.numeric_literal(node.at(*left)),
+                    self.numeric_literal(node.at(*right)),
+                ) {
+                    if Rational::new(dividend, divisor).is_ok_and(|value| domain.contains(&value)) {
+                        return Ok(());
+                    }
+                }
                 let dividend = self.interval(node.at(*left), facts);
                 let zero = End::Finite(Integer::zero());
                 let numerator = if divisor.lower > zero {

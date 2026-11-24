@@ -25,10 +25,11 @@ use std::sync::Arc;
 
 use super::native_literal::NativeConstructor;
 use super::{
-    catalogued_step, contains_pre_eligible_read, contextual, ineligible, is_integer, mismatch,
-    node, refuse, LocalKind, Typer,
+    LocalKind, Typer, catalogued_step, contains_pre_eligible_read, contextual, ineligible,
+    is_integer, mismatch, node, refuse,
 };
-use crate::check::call_target::{resolve_target, ResolvedTarget};
+use crate::check::DispatchOperation;
+use crate::check::call_target::{ResolvedTarget, resolve_target};
 use crate::check::family::Application;
 use crate::check::ir::{CheckedBody, IntegerRange, Node, NodeId, Slot};
 use crate::check::refusal::{
@@ -37,7 +38,6 @@ use crate::check::refusal::{
 };
 use crate::check::sum_case::{ArmHead, CaseBuilder, UnionMember, UnionRef};
 use crate::check::type_form::{IntegerOutsideI128, IntegerSite};
-use crate::check::DispatchOperation;
 use filament_exact::Cancel;
 use filament_exact::{
     ArithmeticOperator, CollectionKind, CollectionType, DecimalType, FloatType, IeeeValue,
@@ -948,6 +948,39 @@ fn exact_rational_literal_type(expression: ExprRef<'_>) -> Option<ValueType> {
     let denominator = IntegerInterval::new(denominator.clone(), denominator).ok()?;
     let domain = RationalDomain::new(numerator, denominator).ok()?;
     Some(ValueType::Rational(domain))
+}
+
+/// The exact Rational range for an integer slash whose operands are exact
+/// integer literals.
+fn integer_slash_result_type(expression: ExprRef<'_>) -> Option<ValueType> {
+    fn integer_literal(expression: ExprRef<'_>) -> Option<Integer> {
+        match expression.node() {
+            ExprNode::Integer(value) => Some(value.clone()),
+            ExprNode::Negate(operand) => {
+                integer_literal(expression.at(*operand)).map(|value| value.neg())
+            }
+            _ => None,
+        }
+    }
+
+    let ExprNode::Binary {
+        operator: BinaryOperator::Divide,
+        left,
+        right,
+    } = expression.node()
+    else {
+        return None;
+    };
+    let dividend = integer_literal(expression.at(*left))?;
+    let divisor = integer_literal(expression.at(*right))?;
+    let value = Rational::new(dividend, divisor).ok()?;
+    let numerator =
+        IntegerInterval::new(value.numerator().clone(), value.numerator().clone()).ok()?;
+    let denominator =
+        IntegerInterval::new(value.denominator().clone(), value.denominator().clone()).ok()?;
+    Some(ValueType::Rational(
+        RationalDomain::new(numerator, denominator).ok()?,
+    ))
 }
 
 impl<'a> Typer<'a> {
@@ -2783,7 +2816,24 @@ impl<'a> Typer<'a> {
             ),
             PeerOperator::Equality(operator) => {
                 let mut converted = None;
-                let goal = self.equality_operand(&mut converted, first, None, first_location)?;
+                // A literal rational peer supplies the conservative domain
+                // for an integer slash in complete-v1 (FR-495-AC-6). Keep the
+                // normal left-to-right order so state.core refuses at `/`,
+                // and two slash operands remain uncontextual (AC-9).
+                let slash_peer = (self.complete_value
+                    && matches!(
+                        first.node(),
+                        ExprNode::Binary {
+                            operator: BinaryOperator::Divide,
+                            ..
+                        }
+                    )
+                    && matches!(second.node(), ExprNode::Rational(..)))
+                .then(|| integer_slash_result_type(first))
+                .flatten()
+                .map(Cow::Owned);
+                let goal =
+                    self.equality_operand(&mut converted, first, slash_peer, first_location)?;
                 (
                     PeerForm::Equality {
                         operator,

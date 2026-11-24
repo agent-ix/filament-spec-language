@@ -9,17 +9,17 @@ use fsl_eval::temporal::evidence::{
 use fsl_eval::temporal::{AggregateSample, UndefinedCause};
 use fsl_foundation::SourceIdentity;
 use fsl_package::{
-    emit_checked_with_temporal_selections, read_evaluation_emission, CheckedPackage,
-    ClockConfiguration, TemporalClockSelection, V2ReadLimits,
+    CheckedPackage, ClockConfiguration, TemporalClockSelection, V2ReadLimits,
+    emit_checked_with_temporal_selections, read_evaluation_emission,
 };
 use fsl_semantics::check::{PackageDeclarations, SCALAR_LIMITS_UNLIMITED};
 use fsl_semantics::library::LibraryName;
-use fsl_semantics::model::intake::{package_input, SelectedModels};
+use fsl_semantics::model::intake::{SelectedModels, package_input};
 use ix_trace_rs::trace;
 use serde_json::json;
 
-use crate::temporal_activation::{id, origin, position, request, rows_for, unlimited, Env};
-use crate::temporal_trace::{fixture, EVENT};
+use crate::temporal_activation::{Env, id, origin, position, request, rows_for, unlimited};
+use crate::temporal_trace::{EVENT, fixture};
 
 struct EvidenceRoutes<'p> {
     from_emission: EvidencePackage<'p>,

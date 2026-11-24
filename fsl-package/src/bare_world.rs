@@ -185,7 +185,7 @@ impl BarePackage<'_> {
         include_units: bool,
     ) -> Result<BareWorld, BareSelectionFailure> {
         let package = self.package();
-        let (_, identities) = self.witness()?;
+        let (_supply, identities) = self.witness()?;
         let mut composites = Vec::new();
         for row in identities.declaration_rows() {
             if !matches!(row.exact_identity, SelectedExactIdentity::Record(_)) {
