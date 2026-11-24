@@ -22,30 +22,24 @@ fn diagnostic_of(record: fsl_analyze::analyze::AnalyzeRecord) -> (TerminalValue,
     )
 }
 
-/// A long-run claim whose product reads an undefined value (a deleted
-/// object's field) is routed to the undefined-path producer as every other
-/// exact form is; FSL FR-202 admits the form, EN-5 does not build its path, so
-/// it settles as that unbuilt form and not as an engine fault.
-#[trace("TC-763", "FR-281-AC-11")]
+/// A positive-probability undefined product predicate refutes a long-run
+/// claim only after its evidence replays against the checked subject.
+#[trace("FSpec-FR-411-AC-12", "FSpec-FR-413-AC-7")]
 #[test]
-fn a_long_run_claim_that_reads_an_undefined_value_is_unbuilt_not_a_fault() {
+fn a_long_run_claim_with_an_undefined_predicate_replays_its_path() {
     let claim = "probabilistic Dropped using inf on M over (c: M::Coin) under Even on origin \
                  { long_run_fraction holds(c.v = 0) >= 0.5 }";
     let world = World::new(&prob_world::coin(claim));
     let record = settle(&world, "Dropped", ModelCheckLimits::default());
-    let (value, diagnostic) = diagnostic_of(record);
-    assert_ne!(value, TerminalValue::Failed, "{diagnostic:?}");
-    assert_eq!(diagnostic.as_deref(), Some(NOT_YET), "{value:?}");
+    assert_replayed_undefined(record, &world, "Dropped");
 }
 
-/// Expected-reward claims enter the budgeted product builder too. The coin's
-/// delete draw reaches an undefined read before the reward's target, and EN-5
-/// has no expected-reward undefined-path producer.
-#[trace("TC-763", "FR-281-AC-11")]
+/// An expected-reward claim's positive-probability undefined target predicate
+/// also produces checked-subject undefined evidence.
+#[trace("FSpec-FR-411-AC-12", "FSpec-FR-413-AC-7")]
 #[test]
-fn an_expected_reward_claim_that_reads_an_undefined_value_is_unbuilt() {
-    let claim =
-        "probabilistic RewardUndefined using inf on M over (c: M::Coin) under Even on origin \
+fn an_expected_reward_claim_with_an_undefined_predicate_replays_its_path() {
+    let claim = "probabilistic RewardUndefined using inf on M over (c: M::Coin) under Even on origin \
                 { expected accumulate cost until holds(c.v = 1) <= 1 }";
     let model = prob_world::coin(&format!("reward cost on Coin::drop = 1;\n{claim}"));
     let world = World::new(&model);
@@ -62,9 +56,40 @@ fn an_expected_reward_claim_that_reads_an_undefined_value_is_unbuilt() {
         "the coin's delete draw must reach the undefined predicate path: {product:?}"
     );
     let record = settle(&world, "RewardUndefined", ModelCheckLimits::default());
-    let (value, diagnostic) = diagnostic_of(record);
-    assert_ne!(value, TerminalValue::Failed, "{diagnostic:?}");
-    assert_eq!(diagnostic.as_deref(), Some(NOT_YET), "{value:?}");
+    assert_replayed_undefined(record, &world, "RewardUndefined");
+}
+
+fn assert_replayed_undefined(
+    record: fsl_analyze::analyze::AnalyzeRecord,
+    world: &World,
+    claim: &str,
+) {
+    assert_eq!(record.terminal().unwrap().value(), &TerminalValue::Refuted);
+    let token = record
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("replayed undefined path");
+    let undefined = token.undefined().expect("undefined evidence");
+    assert_eq!(undefined.evaluation.site.position, 1);
+    assert_eq!(undefined.path.paths[0].steps.len(), 1);
+    assert_eq!(token.mass(), &ratio(1, 2));
+    assert_eq!(
+        token.wire.as_ref().unwrap()["evidence"]["undefined"]["cause"],
+        "absent-key"
+    );
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let replay = fsl_replay::replay_probabilistic_undefined(
+        &world.package,
+        &system,
+        &undefined.path.item,
+        undefined,
+        &world.request(claim, ModelCheckLimits::default()).limits,
+        &Cancel::new(),
+    );
+    assert!(matches!(
+        replay,
+        Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(_))
+    ));
 }
 
 /// A cancel at any poll of a long-run run settles incomplete or with its

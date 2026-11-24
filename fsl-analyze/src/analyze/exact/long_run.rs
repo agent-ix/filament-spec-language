@@ -4,8 +4,8 @@
 use super::candidate::{rational_bytes, sort, values, CandidateBudget};
 use super::*;
 use crate::exact_probabilistic::{
-    build_retaining_monitor_with_budget, decide_long_run_workload, BudgetedProductError,
-    LongRunResult, ProductKind,
+    build_retaining_monitor, build_retaining_monitor_with_budget, decide_long_run_workload,
+    BudgetedProductError, LongRunResult, ProductKind,
 };
 use fsl_replay::{
     long_run_probability_certificate_document, weighted_long_run_probability_certificate_document,
@@ -14,7 +14,7 @@ use fsl_replay::{
 };
 
 pub(super) fn run(
-    request: ProductRequest<'_>,
+    mut request: ProductRequest<'_>,
     cancel: &Cancel,
     tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
     tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
@@ -81,19 +81,51 @@ pub(super) fn run(
     let product = {
         let identity = candidate.identity;
         let mut admission = candidate.admission();
+        let proof_bounds = std::mem::take(&mut request.subject.proof_bounds);
         match build_retaining_monitor_with_budget(request, identity, &mut admission, cancel) {
             Ok((ProbBuild::Built(product), _)) => product,
-            // Long-run forms are outside the undefined witness producer's
-            // supported forms, so their undefined product is unbuilt.
-            Ok((ProbBuild::Undefined(_), _)) => return not_yet(),
+            Ok((ProbBuild::Undefined(path), monitor)) => {
+                return undefined::run(
+                    simulation.clone(),
+                    claim,
+                    path,
+                    monitor,
+                    &limits,
+                    cancel,
+                    subject,
+                    tamper_witness,
+                )
+            }
             Err(BudgetedProductError::Product(error)) => return build_refusal(error, subject),
             Err(BudgetedProductError::Key(error)) => {
                 return document_failure(admission.refusal(error), subject)
             }
-            // The undefined entry builds no long-run path (its guard returns
-            // not-yet for this form), so exploring again to hand it a path
-            // would only double the cost of a known answer.
-            Err(BudgetedProductError::Undefined(_)) => return not_yet(),
+            Err(BudgetedProductError::Undefined(_)) => {
+                let undefined_request = ProductRequest {
+                    subject: fsl_eval::model_subject::ModelSubject {
+                        simulation: simulation.clone(),
+                        proof_bounds,
+                    },
+                    claim,
+                    limits,
+                };
+                match build_retaining_monitor(undefined_request, cancel) {
+                    Ok((ProbBuild::Undefined(path), monitor)) => {
+                        return undefined::run(
+                            simulation.clone(),
+                            claim,
+                            path,
+                            monitor,
+                            &limits,
+                            cancel,
+                            subject,
+                            tamper_witness,
+                        )
+                    }
+                    Ok((ProbBuild::Built(_), _)) => return broken(),
+                    Err(error) => return build_refusal(error, subject),
+                }
+            }
         }
     };
     let kind = if every {

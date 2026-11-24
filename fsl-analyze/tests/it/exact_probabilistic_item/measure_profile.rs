@@ -2406,7 +2406,71 @@ fn a_live_mean_bound_checker_limit_or_cancellation_cannot_produce_a_token() {
     );
 }
 
-#[trace("FR-1043-AC-11", "FR-202-AC-26")]
+#[trace("TC-3152", "FR-1043-AC-11", "FSpec-FR-411-AC-12", "FSpec-FR-413-AC-7")]
+#[test]
+fn a_zero_reward_fraction_replays_the_undefined_fraction_value() {
+    let source = "probabilistic Q using ev on M over (c:M::Coin) under Even on origin { mean of (fraction holds(c.v = 0) over [0,0] weighted by R) >= rational(1,2) }";
+    let mut model = prob_world::coin(source);
+    model.body += "\nreward R on Coin::drop = 0;\n";
+    let world = World::new(&model);
+    let record = settle(&world, "Q", ModelCheckLimits::default());
+    assert_eq!(record.terminal().unwrap().value(), &TerminalValue::Refuted);
+
+    let token = record.probabilistic_counterexample.as_ref().unwrap();
+    let undefined = token.undefined().expect("replayed FractionValue");
+    assert_eq!(undefined.evaluation.site.position, 1);
+    assert_eq!(
+        undefined.evaluation.site.locus,
+        fsl_replay::UndefinedLocus::FractionValue
+    );
+    assert_eq!(token.mass(), &ratio(1, 2));
+    assert_eq!(undefined.path.paths[0].steps.len(), 1);
+    let context: Value = serde_json::from_slice(undefined.product_state.as_bytes()).unwrap();
+    assert_eq!(context[5], json!(["fraction", "1", "collecting"]));
+    assert_eq!(context[6][0], "weighted-fraction");
+    assert_eq!(context[6][3], json!(["0", "1"]));
+    assert_eq!(context[6][4], json!(["0", "1"]));
+    assert_eq!(
+        token.wire.as_ref().unwrap()["evidence"]["undefined"]["cause"],
+        "division-by-zero"
+    );
+
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let post = &undefined.path.paths[0].steps[0].post;
+    let readings = system
+        .state_predicates_with_cancel(
+            post,
+            &[(
+                match &world.claim("Q").form {
+                    fsl_semantics::check::ProbForm::MeanOfFraction { fraction, .. } => {
+                        &fraction.predicate
+                    }
+                    _ => unreachable!(),
+                },
+                undefined.path.binding.as_ref(),
+            )],
+            &Cancel::new(),
+        )
+        .unwrap();
+    assert!(matches!(
+        readings.as_slice(),
+        [fsl_eval::simulation::model::PredicateReading::Undefined { .. }]
+    ));
+    let replay = fsl_replay::replay_probabilistic_undefined(
+        &world.package,
+        &system,
+        &undefined.path.item,
+        undefined,
+        &fsl_analyze::exact_probabilistic::ExactProbLimits::default(),
+        &Cancel::new(),
+    );
+    assert!(matches!(
+        replay,
+        Ok(fsl_replay::ProbabilityWitnessReplay::Reproduced(_))
+    ));
+}
+
+#[trace("FSpec-FR-411-AC-12", "FSpec-FR-413-AC-7")]
 #[test]
 fn zero_weight_fraction_replays_its_tentative_value_before_an_outside_window_predicate() {
     for scheduler in ["Even", "every scheduler"] {

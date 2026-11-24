@@ -19,7 +19,7 @@ pub struct ProbabilityUndefinedWitness {
 /// Re-execute an undefined path against its checked package and admitted subject.
 /// The threshold has no role: only the first undefined observation of an
 /// undecided claim can issue a reproduced-witness token. This entry admits
-/// untimed origin bounded event-position and infinite-trace reach forms.
+/// untimed product forms whose checked predicates are replayed here.
 pub fn replay_probabilistic_undefined(
     package: &CheckedPackage,
     system: &ModelSystem<'_>,
@@ -94,6 +94,7 @@ pub fn replay_probabilistic_undefined(
         {
             None
         }
+        ProbForm::LongRunFraction { .. } | ProbForm::ExpectedReward { .. } => None,
         _ => return Err(ExactProbabilityGraphError::UnsupportedClaimForm.into()),
     };
     let mut control: Option<StateId> = None;
@@ -185,6 +186,14 @@ pub fn replay_probabilistic_undefined(
                     crate::UndefinedLocus::ClaimPredicate(crate::ClaimPredicate::Until),
                 ),
             ],
+            ProbForm::LongRunFraction { predicate, .. } => vec![(
+                predicate,
+                crate::UndefinedLocus::ClaimPredicate(crate::ClaimPredicate::Target),
+            )],
+            ProbForm::ExpectedReward { until, .. } => vec![(
+                until,
+                crate::UndefinedLocus::ClaimPredicate(crate::ClaimPredicate::Until),
+            )],
             _ => return Err(ExactProbabilityGraphError::UnsupportedClaimForm.into()),
         };
         let inputs = predicates
@@ -203,7 +212,7 @@ pub fn replay_probabilistic_undefined(
                 PredicateReading::Refused(outcome) => {
                     return Err(ProbabilityWitnessError::Build(Box::new(
                         crate::ExactProbBuildIssue::Predicate(outcome),
-                    )))
+                    )));
                 }
                 PredicateReading::Undefined { cause, .. } => {
                     if !seen.contains(&pre_key) && seen.len() >= limits.model.limits.max_states {
@@ -282,6 +291,7 @@ pub fn replay_probabilistic_undefined(
                         target: ReachTarget::Until(..),
                         ..
                     } => truths[1] || !truths[0],
+                    ProbForm::LongRunFraction { .. } | ProbForm::ExpectedReward { .. } => false,
                     _ => return Err(ExactProbabilityGraphError::UnsupportedClaimForm.into()),
                 };
                 (pre_key, decided)
