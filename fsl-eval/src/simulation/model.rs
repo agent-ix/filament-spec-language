@@ -168,9 +168,10 @@ pub use timed::{
     TaskReleaseBinding, TaskTimingRow, TimeLock, TimedBehaviour, TimedPosition, TimedRace,
     TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement,
     TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice, TimedSite, TimedState, TimedStop,
-    TimedSubjectRefusal, TimedSystem, TimedTerminalClass, replay_timed_sample, sample_timed,
-    sample_timed_race,
+    TimedSubjectRefusal, TimedSystem, TimedTerminalClass, advance_timed, replay_timed_sample,
+    sample_timed, sample_timed_race,
 };
+pub use timed::TimedAdvance;
 pub(crate) use walk::{Applied, Budget};
 
 /// `resource_exhausted`/`insufficient-next-charge`: a candidate count, or an

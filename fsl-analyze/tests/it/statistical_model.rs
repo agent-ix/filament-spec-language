@@ -1652,3 +1652,238 @@ fn an_at_least_quantile_claim_writes_its_own_bound_with_its_level() {
             "level": {"numerator": "1", "denominator": "2"}})
     );
 }
+
+/// A two-phase model over `Call` (`phase` 0 is `Up`, 1 is `Down`) whose
+/// steps each take `up` and `down` milliseconds, with `reset` the effect on
+/// the clock `x` that each step writes.
+fn up_down_declarations(up: u32, down: u32, claims: &str) -> String {
+    format!(
+        "pre Fall using v on M::Call::fall {{ self.phase = 0 }}\n\
+         post Fell using v on M::Call::fall {{ self.phase = 1 and self.x = 0 ms }}\n\
+         delay M::Call::fall ~ discrete {{ {up} ms: 1 }};\n\
+         pre Rise using v on M::Call::rise {{ self.phase = 1 }}\n\
+         post Rose using v on M::Call::rise {{ self.phase = 0 and self.x = 0 ms }}\n\
+         delay M::Call::rise ~ discrete {{ {down} ms: 1 }};\n\
+         workload Even on M {{ weight Call::fall = 1; weight Call::rise = 1; }}\n\
+         {claims}"
+    )
+}
+
+fn up_down_world(up: u32, down: u32, claims: &str) -> crate::timed_world::World {
+    timed_world_with(
+        &[("fall", &["phase", "x"]), ("rise", &["phase", "x"])],
+        &up_down_declarations(up, down, claims),
+    )
+}
+
+const UP_DOWN_CONFIDENCE: &str = "with alpha 0.1, beta 0.1, indifference 0.05";
+
+/// FSpec FR-420-AC-9, FR-408-AC-20: `Up` lasts 1 ms and `Down` 3 ms with the
+/// one clock reset by each step, so every regeneration cycle has `Y = 1` and
+/// `L = 4`. The delay-weighted fraction is `1/4`, the unweighted one `1/2`;
+/// `>= 1/5` is accepted and `>= 1/3` rejected, with coverage `asymptotic`.
+#[trace(
+    "FSpec-TC-374",
+    "FSpec-FR-420-AC-9",
+    "FSpec-FR-408-AC-20",
+    "FSpec-FR-420-AC-10"
+)]
+#[test]
+fn a_delay_weighted_long_run_fraction_weighs_each_cycle_by_its_delays() {
+    let claims = format!(
+        "probabilistic Low using ev on M over (c: M::Call) under Even on origin \
+         {UP_DOWN_CONFIDENCE} {{ long_run_fraction holds(c.phase = 0) weighted by delay >= rational(1, 5) }}\n\
+         probabilistic High using ev on M over (c: M::Call) under Even on origin \
+         {UP_DOWN_CONFIDENCE} {{ long_run_fraction holds(c.phase = 0) weighted by delay >= rational(1, 3) }}\n\
+         probabilistic Plain using ev on M over (c: M::Call) under Even on origin \
+         {UP_DOWN_CONFIDENCE} {{ long_run_fraction holds(c.phase = 0) >= rational(2, 5) }}\n"
+    );
+    let world = up_down_world(1, 3, &claims);
+    let method = StatisticalMethod::Regenerative { min_cycles: 5 };
+    let mut estimates = Vec::new();
+    for (name, decision) in [
+        ("Low", Decision::Accepted),
+        ("High", Decision::Rejected),
+        ("Plain", Decision::Accepted),
+    ] {
+        let verdict = completed(run_timed_method(
+            &world,
+            name,
+            method,
+            7,
+            fsl_replay::statistical::TimedSampling::default(),
+            1,
+        ));
+        assert_eq!(verdict.decision, decision, "{name}");
+        assert_eq!(
+            verdict.basis.coverage,
+            fsl_replay::statistical::Coverage::Asymptotic,
+            "{name}"
+        );
+        let (low, high) = verdict.interval.clone().expect("an interval");
+        let estimate = verdict.estimate.clone().expect("an estimate");
+        assert!(
+            low < estimate && estimate < high,
+            "{name}: positive half-width"
+        );
+        estimates.push(estimate);
+    }
+    assert_eq!(estimates[0], ratio(1, 4));
+    assert_eq!(estimates[1], ratio(1, 4));
+    assert_eq!(estimates[2], ratio(1, 2));
+}
+
+/// FSpec FR-420-AC-10: a return to the initial discrete state with a clock
+/// above 0 is not a regeneration point. Only the step `Z` to `A` resets the
+/// clock, so every cycle contains the full `A`, `B`, `Z` run: at least three
+/// positions. A model whose steps never reset the clock never returns to the
+/// initial key and stops at `max_cycle_steps`.
+#[trace("FSpec-TC-374", "FSpec-FR-420-AC-10")]
+#[test]
+fn only_a_return_with_every_clock_at_its_initial_value_cuts_a_cycle() {
+    let loop_model = |reset: &str| {
+        format!(
+            "pre Ab using v on M::Call::ab {{ self.phase = 0 }}\n\
+             post Abd using v on M::Call::ab {{ self.phase = 1 }}\n\
+             delay M::Call::ab ~ discrete {{ 1 ms: 1 }};\n\
+             pre Ba using v on M::Call::ba {{ self.phase = 1 }}\n\
+             post Bad using v on M::Call::ba {{ self.phase = 0 }}\n\
+             delay M::Call::ba ~ discrete {{ 1 ms: 1 }};\n\
+             pre Bz using v on M::Call::bz {{ self.phase = 1 }}\n\
+             post Bzd using v on M::Call::bz {{ self.phase = 2 }}\n\
+             delay M::Call::bz ~ discrete {{ 1 ms: 1 }};\n\
+             pre Za using v on M::Call::za {{ self.phase = 2 }}\n\
+             post Zad using v on M::Call::za {{ self.phase = 0{reset} }}\n\
+             delay M::Call::za ~ discrete {{ 1 ms: 1 }};\n\
+             workload Even on M {{ weight Call::ab = 1; weight Call::ba = 1; \
+             weight Call::bz = 1; weight Call::za = 1; }}\n\
+             probabilistic Loop using ev on M over (c: M::Call) under Even on origin \
+             {UP_DOWN_CONFIDENCE} {{ long_run_fraction holds(c.phase = 2) weighted by delay >= rational(1, 10) }}\n"
+        )
+    };
+    let operations: &[(&str, &[&str])] = &[
+        ("ab", &["phase", "x"]),
+        ("ba", &["phase", "x"]),
+        ("bz", &["phase", "x"]),
+        ("za", &["phase", "x"]),
+    ];
+    let resetting = timed_world_with(operations, &loop_model(" and self.x = 0 ms"));
+    let verdict = completed(run_timed_method(
+        &resetting,
+        "Loop",
+        StatisticalMethod::Regenerative { min_cycles: 200 },
+        3,
+        fsl_replay::statistical::TimedSampling::default(),
+        1,
+    ));
+    assert_eq!(verdict.decision, Decision::Accepted);
+    assert!(
+        verdict.basis.draws >= 3 * verdict.basis.samples,
+        "{} steps over {} cycles: a cycle was cut before its clock reset",
+        verdict.basis.draws,
+        verdict.basis.samples
+    );
+    let never = timed_world_with(operations, &loop_model(""));
+    let limits = StatisticalLimits {
+        max_cycle_steps: 50,
+        ..StatisticalLimits::default()
+    };
+    let stopped = run_timed_method_with_limits(
+        &never,
+        "Loop",
+        StatisticalMethod::Regenerative { min_cycles: 5 },
+        3,
+        fsl_replay::statistical::TimedSampling::default(),
+        limits,
+        1,
+    )
+    .expect("the run ends with a stop");
+    assert!(
+        matches!(
+            stopped,
+            StatisticalOutcome::Stopped {
+                stop: StatisticalStop::Limit {
+                    limit: StatisticalLimit::MaxCycleSteps,
+                    value: 50,
+                },
+                ..
+            }
+        ),
+        "{stopped:?}"
+    );
+}
+
+/// FSpec FR-420-AC-11: the initial state moves with weight 1 to a terminal
+/// state where `P` holds and with weight 1 to one where it does not. A
+/// behaviour that terminates has long-run fraction 1 or 0, the estimate is the
+/// mean of those limits over Okamoto's `N` behaviours, `>= 1/4` is accepted
+/// and `>= 3/4` rejected.
+#[trace("FSpec-TC-374", "FSpec-FR-420-AC-11")]
+#[test]
+fn a_terminating_delay_weighted_behaviour_takes_the_limit_of_its_idle_tail() {
+    let claims = format!(
+        "pre Yes using v on M::Call::yes {{ self.phase = 0 }}\n\
+         post Yesd using v on M::Call::yes {{ self.phase = 1 }}\n\
+         delay M::Call::yes ~ discrete {{ 1 ms: 1 }};\n\
+         pre No using v on M::Call::no {{ self.phase = 0 }}\n\
+         post Nod using v on M::Call::no {{ self.phase = 2 }}\n\
+         delay M::Call::no ~ discrete {{ 1 ms: 1 }};\n\
+         workload Even on M {{ weight Call::yes = 1; weight Call::no = 1; }}\n\
+         probabilistic Low using ev on M over (c: M::Call) under Even on origin \
+         {UP_DOWN_CONFIDENCE} {{ long_run_fraction holds(c.phase = 1) weighted by delay >= rational(1, 4) }}\n\
+         probabilistic High using ev on M over (c: M::Call) under Even on origin \
+         {UP_DOWN_CONFIDENCE} {{ long_run_fraction holds(c.phase = 1) weighted by delay >= rational(3, 4) }}\n"
+    );
+    let world = timed_world_with(&[("yes", &["phase"]), ("no", &["phase"])], &claims);
+    let method = StatisticalMethod::Regenerative { min_cycles: 5 };
+    for (name, decision) in [("Low", Decision::Accepted), ("High", Decision::Rejected)] {
+        let verdict = completed(run_timed_method(
+            &world,
+            name,
+            method,
+            11,
+            fsl_replay::statistical::TimedSampling::default(),
+            1,
+        ));
+        assert_eq!(verdict.decision, decision, "{name}");
+        let estimate = verdict.estimate.clone().expect("an estimate");
+        assert!(
+            estimate > ratio(2, 5) && estimate < ratio(3, 5),
+            "{name}: the mean of the limits 1 and 0 is near 1/2, not {estimate:?}"
+        );
+        let (low, high) = verdict.interval.clone().expect("an interval");
+        let half = high.sub(&low).div(&ratio(2, 1)).expect("two");
+        assert_eq!(
+            half,
+            ratio(1, 20),
+            "{name}: the fixed-sample half-width is iota"
+        );
+        assert!(verdict.basis.samples > 1, "{name}: N behaviours were drawn");
+    }
+}
+
+/// FSpec FR-420-AC-11: a cycle of total delay 0 adds nothing to the
+/// denominator, and a run whose every cycle has total delay 0 takes the
+/// unweighted fraction over positions.
+#[trace("FSpec-TC-374", "FSpec-FR-420-AC-11")]
+#[test]
+fn a_run_of_zero_delay_cycles_takes_the_unweighted_fraction() {
+    let claims = format!(
+        "probabilistic Zero using ev on M over (c: M::Call) under Even on origin \
+         {UP_DOWN_CONFIDENCE} {{ long_run_fraction holds(c.phase = 0) weighted by delay >= rational(2, 5) }}\n"
+    );
+    let world = timed_world_with(
+        &[("fall", &["phase", "x"]), ("rise", &["phase", "x"])],
+        &up_down_declarations(0, 0, &claims),
+    );
+    let verdict = completed(run_timed_method(
+        &world,
+        "Zero",
+        StatisticalMethod::Regenerative { min_cycles: 5 },
+        5,
+        fsl_replay::statistical::TimedSampling::default(),
+        1,
+    ));
+    assert_eq!(verdict.decision, Decision::Accepted);
+    assert_eq!(verdict.estimate, Some(ratio(1, 2)));
+}

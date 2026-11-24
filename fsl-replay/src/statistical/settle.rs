@@ -135,10 +135,6 @@ pub enum UnsettledRefusal {
     /// request is invalid, so the refusal is the caller's to report.
     #[error("a symmetry declaration is malformed")]
     Symmetry,
-    /// The claim's form is valid but no engine samples it yet: the caller
-    /// reports it `unsupported`, `not-yet-implemented`.
-    #[error("sampling the claim's form is not yet implemented")]
-    NotYetImplemented,
 }
 
 /// FR-192: settle `outcome` as one terminal record. `subject` supplies the
@@ -278,7 +274,6 @@ pub fn settle_statistical_refusal(
         StatisticalRefusal::RequiresBound(_) => return Err(UnsettledRefusal::RequiresBound),
         StatisticalRefusal::Admission(_) => return Err(UnsettledRefusal::Admission),
         StatisticalRefusal::Symmetry(_) => return Err(UnsettledRefusal::Symmetry),
-        StatisticalRefusal::DelayWeighting => return Err(UnsettledRefusal::NotYetImplemented),
         StatisticalRefusal::PredicateRefused(outcome) => predicate_refused(outcome),
         StatisticalRefusal::GeneratorMismatch { .. } => {
             request(StatisticalRequestRefusal::GeneratorMismatch)

@@ -1557,11 +1557,14 @@ fn absent_probabilistic_members_take_their_published_defaults() {
     assert_eq!(request["max_witnesses"], 8, "{bounded}");
 }
 
-/// Long-run delay weighting remains outside the bounded-window sampler.
+/// FR-420 "Delay-weighted cycles": the `Link` unit's behaviours all end in a
+/// terminal state, so the long-run delay-weighted fraction is the mean of
+/// their terminal limits.
 #[test]
-fn delay_weighting_from_source_is_not_yet_implemented_not_a_method_error() {
+#[trace("FSpec-TC-374", "FSpec-FR-420-AC-11")]
+fn delay_weighting_from_source_settles_the_limit_of_a_terminating_run() {
     let claim = "probabilistic Weighted using t on M over (m: M::Msg) under Even on origin \
-         with alpha 0.01, beta 0.01, indifference 0.05 \
+         with alpha 0.4, beta 0.4, indifference 0.05 \
          { long_run_fraction holds(m.delivered) weighted by delay >= 0.1 }";
     let document = run_timed(
         "delay-weighting-statistical",
@@ -1571,11 +1574,8 @@ fn delay_weighting_from_source_is_not_yet_implemented_not_a_method_error() {
     );
     let item = &document["items"][0];
     assert!(item.is_object(), "{document}");
-    assert_eq!(label(item), "unsupported", "{document}");
-    assert_ne!(
-        item["record"]["diagnostic"]["cause"], "not-statistical",
-        "{item}"
-    );
+    assert_eq!(label(item), "measured", "{document}");
+    assert_eq!(item["verdict"]["decision"]["type"], "accepted", "{item}");
 }
 
 /// Both sends have delay at least 1 ms, so the entire half-ms window is

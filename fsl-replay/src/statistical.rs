@@ -709,10 +709,6 @@ pub enum StatisticalRefusal {
         /// The claim's form.
         form: ClaimForm,
     },
-    /// A delay-weighted long-run fraction: sampling it is not yet implemented,
-    /// and the method the caller chose is not at fault.
-    #[error("sampling a delay-weighted long-run fraction is not yet implemented")]
-    DelayWeighting,
     /// The sampler is not `filament.simulation.sampler/v1` (FR-188).
     #[error("sampler {supplied:?} is not the filament.simulation.sampler/v1 generator")]
     GeneratorMismatch {
