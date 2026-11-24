@@ -3028,6 +3028,7 @@ impl CheckedPackageEvaluation for CheckedPackage {
         }
         let mut env = s6a::protocol_clause::ProtocolClauseEnv::new(
             self.graph(),
+            Some(setup.declaration),
             setup.current,
             setup.pre,
             setup.bindings,
@@ -3609,6 +3610,7 @@ mod tests {
                 S6aFamilyKind::ProtocolClause => {
                     let mut env = s6a::protocol_clause::ProtocolClauseEnv::new(
                         empty.graph(),
+                        None,
                         &objects,
                         None,
                         Vec::new(),

@@ -31,19 +31,6 @@ pub(crate) const ALLOWED_TICKETS: &[&str] = &[
 
 /// The checked-in registry.
 pub(crate) const PENDING: &[Pending] = &[
-    // G1: evaluator internal fault
-    Pending {
-        runner: "state-core",
-        case: "typing/absent-parent-implication",
-        ticket: "QSL-3027",
-        pin: r#"expected Completed(true), actual Other("EvaluateFault/InternalFault stage=witness invariant=decision-path-node-recorded")"#,
-    },
-    Pending {
-        runner: "state-core",
-        case: "typing/present-parent-violation",
-        ticket: "QSL-3027",
-        pin: r#"expected Completed(false), actual Other("EvaluateFault/InternalFault stage=witness invariant=decision-path-node-recorded")"#,
-    },
     // G2
     Pending {
         runner: "state-core",
