@@ -304,9 +304,8 @@ fn a_fold_over_references_into_an_annotated_population_refuses() {
 }
 
 /// FR-150-AC-8 (TC-566): an operation precondition that compares its
-/// receiver with a reference literal is refused at that literal. The
-/// refinement field-conversion half needs the package-level refinement
-/// fixture, which this module does not yet provide.
+/// receiver with a reference literal is refused at that literal. The paired
+/// refinement test below checks the field-conversion half too.
 #[trace("TC-566", "FR-150-AC-8")]
 #[test]
 fn an_operation_precondition_cannot_compare_self_to_a_reference_literal() {
@@ -316,6 +315,54 @@ fn an_operation_precondition_cannot_compare_self_to_a_reference_literal() {
     );
     let payload = identity_refusal(&annotated(&document()), &body, literal);
     assert_eq!(payload.node, IdentityNode::ReferenceLiteral);
+    assert_eq!(payload.population.node, POPULATION);
+}
+
+/// FR-150-AC-8 (TC-566): the concrete model's `config_history` annotation
+/// also bars identity observation in a refinement field row. The model bytes
+/// are duplicated under a second package identity so the refinement has
+/// distinct abstract and concrete selections.
+#[trace("TC-566", "FR-150-AC-8")]
+#[test]
+fn a_refinement_field_cannot_convert_a_symmetric_reference_to_text() {
+    const ABSTRACT: &str = "example/config-version-abstract";
+    let abstract_document = String::from_utf8(document())
+        .expect("model document is UTF-8")
+        .replace("example/config-version", ABSTRACT)
+        .into_bytes();
+    let concrete_document = annotated(&document());
+    let convert = "convert<String>(self.parent)";
+    let body = format!(
+        "refinement ConfigProjection using inf abstract Spec concrete Impl {{\n\
+         population Spec::config_history from Impl::config_history;\n\
+         object Spec::ConfigVersion from Impl::ConfigVersion {{\n\
+         versionNumber = self.versionNumber;\n\
+         parent = {convert};\n\
+         }}\n\
+         step Impl::ConfigVersion::attemptUpdate -> stutter;\n\
+         }}"
+    );
+    let found = crate::refinement_declarations::check_with(
+        "",
+        &[
+            ("Spec", ABSTRACT, &abstract_document),
+            ("Impl", crate::model_operations::PACKAGE_IDENTITY, &concrete_document),
+        ],
+        &body,
+    )
+    .expect_err("the symmetric reference conversion refuses the refinement");
+    let [refusal] = found.as_slice() else {
+        panic!("one refusal: {found:?}");
+    };
+    assert_eq!(
+        refusal.code_and_cause(),
+        (Code::IllTyped, Some("identity-observing-form"))
+    );
+    assert_eq!(refusal.at, convert);
+    let CheckCause::IdentityObservingForm(payload) = &refusal.refusal.cause else {
+        panic!("identity-observing payload: {:?}", refusal.refusal.cause);
+    };
+    assert_eq!(payload.node, IdentityNode::Convert);
     assert_eq!(payload.population.node, POPULATION);
 }
 
