@@ -10,7 +10,7 @@ relationships:
 
 ## Description
 
-Verify protocol-slot evaluation from a bare package and its equality with the source routes. Scope: FR-533-AC-1 to FR-533-AC-23. Row 23 verifies quantity-call parity after equivalence reconstruction. **R** is the package of FR-517.
+Verify protocol-slot evaluation from a bare package and its equality with the source routes. Scope: FR-533-AC-1 to FR-533-AC-24. Row 23 verifies quantity-call parity after equivalence reconstruction; row 24 verifies selected model-tuple rows in the protocol-slot route. **R** is the package of FR-517.
 
 ## Test Procedure
 
@@ -39,6 +39,7 @@ Verify protocol-slot evaluation from a bare package and its equality with the so
 | 21 | 21 | fixture L's two-record variant (TC-1063 row L4e), compiled in each source order of its two clauses, on the in-process and bare routes | `Got.related.from[0]`, `from[1]` and the call `to` end: equal values, charge logs and projected-root read `Location` on both routes; `from[i]` under `related <i> from`, the call `to` end under `related <k> to` with `k` its record's emitted position; the two `from` `Location` values differ; no `Location` under a `related <start> <end>` origin on either route |
 | 22 | 22 | fixture E-P with one unread variant (enum) type added to `M`: `with_supply`, `Refund.trigger.guard`, admission for `M` on both routes; fixture E-P with a native budget that pays every earlier `with_supply` join and the declaration projection but not the population catalog | `with_supply` succeeds and the guard equals the source route's value and charge log; bare admission admits the snapshot the source route admits; `NativeJoinFailure::PopulationCatalog` with its setting and a stage limit diagnostic whose bound and attempted total are the catalog error's `limit` and `consumed`, no `BarePackage` |
 | 23 | 23 | fixture Q, emitted/read with actual identity/equality supply and called through source and `BarePackage`; repeat at each measured counter boundary and with an actual admitted direct-dependency dimension operand | Both routes return `1/4 s`, `3/4 s`, the specified compound-conversion quantities and true arithmetic equalities, with identical unit types and ordered kernel charges. Required allowance minus one returns the same located Incomplete record without a quantity or payment of the denied charge; the exact allowance completes. Same-dimension, affine, unrelated power and nominal ineligibility behavior is preserved. |
+| 24 | 24 | fixture E-P with selected model `M` declaring `tuple Pair(Boolean, Boolean)` and its existing `Refund.trigger.guard` slot; run the source and emitted/read bare routes and admit the observation; repeat after removing only `model_tuples` from the handoff | Equal slot value, ordered charge log and observation-admission result with the joined tuple row; without the row, strict package admission refuses before the slot runs and no source declaration is read. |
 
 ### Q — Dimension-equivalence reconstruction
 
@@ -128,7 +129,7 @@ function ordinary_power using v(): Boolean pure { 2 m ^ 2 = 4 m * 1 m }
    require source-library quantity exports or foreign-operand emission, whose
    producer contract remains separate; steps 1–6 retain both-route parity.
 
-Tag each test with `TC-1333` and the criteria it actually verifies; row 23 carries `FR-533-AC-23`. Rows 1 and 2 also carry FR-390-AC-11 and FR-520-AC-9.
+Tag each test with `TC-1333` and the criteria it actually verifies; rows 23 and 24 carry `FR-533-AC-23` and `FR-533-AC-24` respectively. Rows 1 and 2 also carry FR-390-AC-11 and FR-520-AC-9.
 
 ## Expected Results
 

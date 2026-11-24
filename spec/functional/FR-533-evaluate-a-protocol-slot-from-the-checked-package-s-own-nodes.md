@@ -455,12 +455,6 @@ declaration for it:
   completeness guarantee covers every ordinary record and object type of a
   selected document, but not a state machine, process or systems interface. Such
   a package refuses at step 3, or at step 4 for a snapshot object of such a type.
-- **Tuple rows (FSL):** FR-531-AC-51 adds selected model tuple rows to the
-  identities/7 handoff. This protocol-slot path still calls the declaration
-  projection without those rows, so a selected model that declares a tuple type
-  can still refuse at step 3. Its remaining integration closes when this path
-  passes the joined rows to the projection; FR-940-AC-30 separately owns the
-  analyze route's invariant and state-graph parity over tuple payloads.
 - **Population members:** the bare population types are IR's catalog, which
   normalizes a member through the document's aliases and refuses the whole catalog
   for a member it cannot resolve; the source route takes the member types as the
@@ -513,6 +507,7 @@ FR-520-AC-11 states.
 | FR-533-AC-21 | Over the compiled two-record variant of fixture L (TC-1063 row L4e, FR-383-AC-64), in each source order of its two clauses, the in-process route and the bytes route give `Got.related.from[0]`, `Got.related.from[1]` and the `to` end that is a call equal values, equal charge logs and equal projected-root read `Location` values, that of `related.from[i]` being under `protocol Pipeline run Main Got related <i> from` and that of the call `to` end under `... related <k> to`, `k` its record's emitted position; the two `from` ends' `Location` values differ, and neither route returns a `Location` under a `related <start> <end>` origin. | Test (TC-1333) |
 | FR-533-AC-22 | Over a copy of fixture E-P's model that adds one variant (enum) type no slot reads, `with_supply` succeeds, `Refund.trigger.guard` evaluates to the source route's value and charge log, and `admit_protocol_observation` for `M` admits the snapshot with the source route's result, because the model enum channels carry a payload-free variant type whether or not a slot reads it (FR-531). Over fixture E-P, a native budget that pays every earlier join of `with_supply` and the declaration projection but not the population catalog makes `with_supply` return `NativeJoinFailure::PopulationCatalog` with its setting and a stage limit diagnostic whose bound and attempted total are the catalog error's `limit` and `consumed`, and no `BarePackage`. | Test (TC-1333) |
 | FR-533-AC-23 | In TC-1333 fixture Q, real emitted/read bare calls and source calls convert `1 beat` to exact `1/4 s` and `1 shifted` to exact `3/4 s`; product, quotient and both square equalities are true. Compound conversions return `9/2 s2`, dimensionless `8 one`, `4 s2` and `1/4 s2` with the exact declared target types. Both routes admit identical ordered kernel charges and, at each measured counter's required allowance minus one, return the identical Incomplete record and retained location without a quantity or payment of the denied charge; the exact required allowance completes. A real admitted direct-dependency dimension operand resolves in its exact package and source owner and produces the same cross-class conversion. Nominal `1000 ms` to `s`, affine `1 shifted` to `beat`, unrelated-Length power and nominal operation ineligibility retain their behavior. | Test (TC-1333) |
+| FR-533-AC-24 | Over fixture E-P with selected model `M` declaring `tuple Pair(Boolean, Boolean)` and the existing `Refund.trigger.guard` protocol slot, the source route and a bare call over the emitted and admitted package with its joined `model_tuples` row produce the same value and ordered charge log, and observation admission for `M` agrees. Removing only `model_tuples` from the handoff makes package admission refuse before the slot runs, with the FR-531 missing-channel refusal; the bytes route does not read source or substitute a declaration. | Test (TC-1333) |
 
 ## Dependencies
 
@@ -557,7 +552,7 @@ FR-520-AC-11 states.
   carries the selected object closure those reads need (QSL-1760, QSL-1762).
   FR-533-AC-5, AC-6 and AC-22 need no further upstream change. What the bare route
   cannot yet derive is listed under "What the bare route cannot yet derive"
-  (Contract IR's declaration projection, FSL's tuple rows) and the object type
+  (Contract IR's declaration projection) and the object type
   names under "Names of object types"; the refusal of "Observation admission" step 4 stands meanwhile.
 - **Enum equality fixture:** FR-533-AC-16 covers no enum equality slot, because no
   fixture of the TC-1070, TC-1289 or TC-1290 family defines an enum-typed slot, and

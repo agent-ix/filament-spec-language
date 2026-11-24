@@ -64,20 +64,19 @@ family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6, FR-940-AC-18
     invariant `ReadingInvariant` and state-graph claim `ReadingReach` from the
     source route, then from its handoff package. Compare both item records and
     process exits and check both claims prove. Bind the test
-    `#[trace("TC-2958", "TC-3034", "FR-940-AC-31")]`.
-11. Declare `union Shape { Empty, Circle(Boolean) }` and a pure `isCircle`
+    `#[trace("TC-2958", "FR-940-AC-31")]`.
+11. In `fsl-analyze/tests/it/analyze_package_value.rs`, declare `union Shape { Empty, Circle(Boolean) }` and a pure `isCircle`
     function with a `Shape` parameter whose case returns the `Circle` Boolean
     payload or `false` for `Empty`. Invoke `isCircle` through the source and
     package run-call routes with `Circle(true)` and with `Empty`. Compare the
     argument values, Boolean results and semantic charge logs. Bind the test
     `#[trace("TC-2958", "FR-940-AC-32")]`.
 
-Tests: `fsl-analyze/tests/it/analyze_package_selection.rs` (steps 1 to 3),
+Tests: `fsl-analyze/tests/it/analyze_package_selection.rs` (steps 1 to 3 and 8 to 10),
 `fsl-analyze/tests/it/hyper_wire.rs` (step 4) and
 `fsl-analyze/tests/it/package_refusal_route.rs` (steps 5 and 6), and the
 named `operation_contract_package_route_matches_source` case for step 7.
-`fsl-analyze/tests/it/analyze_package_selection.rs` also covers steps 8 to 10;
-the run-call integration test covers step 11.
+`fsl-analyze/tests/it/analyze_package_value.rs` covers step 11.
 
 ## Expected Results
 
