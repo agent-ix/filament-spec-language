@@ -1416,11 +1416,15 @@ fn push_timed_formula_observation(
     time: u64,
     values: &[bool],
 ) {
-    if history
-        .last()
-        .is_some_and(|last| last.time == time && last.values == values)
-    {
-        return;
+    // TimedTrace is admitted only for one atomic Eventually read. Independently
+    // reconstruct its idempotent same-time truth summary from replayed states.
+    if let Some(observation) = history.iter_mut().rev().find(|entry| entry.time == time) {
+        if observation.values.len() == values.len() {
+            for (summary, value) in observation.values.iter_mut().zip(values) {
+                *summary |= *value;
+            }
+            return;
+        }
     }
     history.push(TimedFormulaObservation {
         time,

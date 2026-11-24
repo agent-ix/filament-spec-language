@@ -32,9 +32,34 @@ fn bounded_eventually_reads_each_position_and_settles_at_three_quarters() {
 #[trace("FR-186-AC-3")]
 #[test]
 fn bounded_nested_eventually_always_uses_the_literal_horizon_110() {
+    let package = "test/temporal-profile-horizon-110";
     let claim = "probabilistic Nested using ev on M over (n: M::Node) under every scheduler on origin { probability >= 0.99 [ eventually[0,100] always[0,10] holds(n.healthy) ] }";
-    let mut model = prob_world::health("self.healthy = true", "true: 1", false, claim);
-    model.initial["healthy"] = serde_json::json!({"boolean": false});
+    let model = prob_world::Model {
+        package,
+        object: "Node",
+        population: "nodes",
+        key: "n",
+        integers: vec![("Phase", 0, 110)],
+        fields: vec![
+            ("phase", format!("ix://{package}/Phase")),
+            ("healthy", prob_world::BOOLEAN.to_owned()),
+        ],
+        operations: vec![prob_world::Operation {
+            name: "tick",
+            parameters: Vec::new(),
+            modifies: vec!["phase", "healthy"],
+            deletes: false,
+        }],
+        body: format!(
+            "pre ReadyTick using v on M::Node::tick {{ self.phase < 110 }}\n\
+             post Ticked using v on M::Node::tick {{ self.phase - pre(self.phase) = 1 and self.healthy = (self.phase >= 100) }}\n\
+             {claim}"
+        ),
+        initial: serde_json::json!({
+            "phase": {"integer": "0"},
+            "healthy": {"boolean": false},
+        }),
+    };
     let world = World::new(&model);
     let record = settle(&world, "Nested", ModelCheckLimits::default());
     let terminal = record
@@ -51,6 +76,44 @@ fn bounded_nested_eventually_always_uses_the_literal_horizon_110() {
         );
     };
     assert_eq!(value.value(), &ratio(1, 1));
+
+    let request = world.request("Nested", ModelCheckLimits::default());
+    let product = match fsl_analyze::exact_probabilistic::build_product(request, &Cancel::new()) {
+        Ok(fsl_analyze::exact_probabilistic::ProbBuild::Built(product)) => product,
+        other => panic!("the horizon-110 product builds: {other:?}"),
+    };
+    let mut at_100 = product.initial[0].2;
+    for _ in 0..100 {
+        let [edge] = product.outgoing(at_100) else {
+            panic!("one deterministic tick reaches event position 100");
+        };
+        at_100 = edge.to;
+    }
+    assert!(
+        matches!(
+            product.states[at_100.index()].monitor,
+            Some(fsl_analyze::exact_probabilistic::MonitorState::Formula(
+                fsl_analyze::exact_probabilistic::FormulaState::Running(_)
+            ))
+        ),
+        "outer activation at 100 is still pending while Always reads through 110"
+    );
+    let mut at_110 = at_100;
+    for _ in 0..10 {
+        let [edge] = product.outgoing(at_110) else {
+            panic!("one deterministic tick reaches event position 110");
+        };
+        at_110 = edge.to;
+    }
+    assert_eq!(
+        product.states[at_110.index()].monitor,
+        Some(fsl_analyze::exact_probabilistic::MonitorState::Formula(
+            fsl_analyze::exact_probabilistic::FormulaState::Decided(
+                fsl_analyze::exact_probabilistic::MonitorVerdict::Accept,
+            ),
+        )),
+        "the inner Always accepts at its closed position 110"
+    );
 }
 
 #[trace("FR-186-AC-7")]

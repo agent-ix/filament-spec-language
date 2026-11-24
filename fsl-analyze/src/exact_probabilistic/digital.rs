@@ -48,16 +48,16 @@ use num_integer::Integer as _;
 use num_traits::{One, ToPrimitive, Zero};
 use serde_json::{Value as JsonValue, json};
 
-fn push_timed_observation(
-    history: &mut Vec<super::TimedObservation>,
-    time: u64,
-    values: &[bool],
-) {
-    if history
-        .last()
-        .is_some_and(|last| last.time == time && last.values == values)
-    {
-        return;
+fn push_timed_observation(history: &mut Vec<super::TimedObservation>, time: u64, values: &[bool]) {
+    // TimedTrace is admitted only for one atomic Eventually read. At a given
+    // timestamp its semantic summary is whether any observation was true.
+    if let Some(observation) = history.iter_mut().rev().find(|entry| entry.time == time) {
+        if observation.values.len() == values.len() {
+            for (summary, value) in observation.values.iter_mut().zip(values) {
+                *summary |= *value;
+            }
+            return;
+        }
     }
     history.push(super::TimedObservation {
         time,
@@ -253,20 +253,29 @@ impl<'c> Form<'c> {
             ..
         } = &claim.form
         {
-            let mut reads = Vec::new();
-            for (index, node) in formula.formula().nodes().iter().enumerate() {
-                if matches!(node, FormulaNode::Holds { .. }) {
-                    reads.push((
-                        UndefinedRead::Atom(FormulaNodeId::from_arena_index(index)),
-                        formula.condition(index).ok_or_else(shape)?,
-                    ));
+            let checked = formula.formula();
+            let root = checked
+                .nodes()
+                .get(checked.root().index())
+                .ok_or_else(shape)?;
+            if let FormulaNode::Unary {
+                operator: UnaryTemporal::Eventually,
+                interval: Some(CheckedInterval::Timed(_)),
+                operand,
+            } = root
+            {
+                if matches!(checked.nodes().get(operand.index()), Some(FormulaNode::Holds { .. })) {
+                    let predicate = formula.condition(operand.index()).ok_or_else(shape)?;
+                    return Ok(Self::TimedTrace {
+                        formula,
+                        horizon: horizon.clone(),
+                        reads: vec![(
+                            UndefinedRead::Atom(FormulaNodeId::from_arena_index(operand.index())),
+                            predicate,
+                        )],
+                    });
                 }
             }
-            return Ok(Self::TimedTrace {
-                formula,
-                horizon: horizon.clone(),
-                reads,
-            });
         }
         match &claim.form {
             ProbForm::MeanTime { bound, until } => Ok(Self::MeanTime {
