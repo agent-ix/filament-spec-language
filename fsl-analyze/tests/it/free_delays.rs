@@ -16,17 +16,18 @@
 
 use filament_exact::{Cancel, Integer, Rational};
 use filament_semantic_value::catalog::CatalogCode;
+use fsl_analyze::analyze::{Engines, analyze_items, exact_probabilistic_item};
 use fsl_analyze::exact_probabilistic::{
-    action_steps, build_product, decide_bounded_event, decide_fair_expected_reward,
-    decide_fair_reachability, decide_reachability, free_delays_choice, produce_witness,
-    witness_scheduler, ActionChoice, EntryChoice, ExactProbLimits, ExtRational, FhResult,
-    FreeDelayRow, MonitorVerdict, ProbBuild, ProbProduct, ProbStateId, ProductAction, ProductKind,
-    ProductRequest, SchedulerChoice, UnboundedObjective, WitnessError, WitnessScope,
+    ActionChoice, EntryChoice, ExactProbLimits, ExtRational, FhResult, FreeDelayRow,
+    MonitorVerdict, ProbBuild, ProbProduct, ProbStateId, ProductAction, ProductKind,
+    ProductRequest, SchedulerChoice, UnboundedObjective, WitnessError, WitnessScope, action_steps,
+    build_product, decide_bounded_event, decide_fair_expected_reward, decide_fair_reachability,
+    decide_reachability, free_delays_choice, produce_witness, witness_scheduler,
 };
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::ScheduledIdentity;
 use fsl_replay::{
-    FreeDelayActionRow, FreeDelaysRace, FreeRacer, GivenRacer,
+    FreeDelayActionRow, FreeDelaysRace, FreeRacer, GivenRacer, ProbabilisticSchedulerChoice,
     ProductAction as ReplayProductAction, ProductActionRefusal, Schedule,
 };
 use fsl_semantics::check::Bound;
@@ -888,11 +889,12 @@ fn detour_maximum_witness_is_a_two_path_set_of_merged_steps() {
     assert_eq!(*entry_state, start);
     assert_eq!(action_rows(&world, entry), expected);
     assert!(matches!(delay, ProductAction::UnitDelay));
-    assert!(witness.paths.iter().all(|path| path
-        .steps
-        .iter()
-        .take(path.steps.len() - 1)
-        .all(|step| step.to != *continuation)));
+    assert!(witness.paths.iter().all(|path| {
+        path.steps
+            .iter()
+            .take(path.steps.len() - 1)
+            .all(|step| step.to != *continuation)
+    }));
 
     let probabilities: Vec<Rational> = witness
         .paths
@@ -977,6 +979,63 @@ fn detour_maximum_witness_is_a_two_path_set_of_merged_steps() {
         produce_with(&ExactProbLimits::default()),
         Ok(Some(_))
     ));
+}
+
+/// FR-204-AC-9/10 and FR-202-AC-8: the checked timed refutation preserves the
+/// post-draw `FreeDelays` scheduler choice and replays its two merged paths.
+#[trace("TC-642", "FR-204-AC-9")]
+#[trace("TC-642", "FR-204-AC-10")]
+#[trace("FR-202-AC-8")]
+#[test]
+fn timed_detour_refutation_replays_its_free_delay_scheduler() {
+    let world = detour(&claim(
+        "Max",
+        "under All",
+        "<= 0.7",
+        "eventually[0 ms, 2 ms] holds(c.late)",
+    ));
+    let engines = Engines::fsl().expect("the linked engines are admitted");
+    let claim = world
+        .package
+        .graph()
+        .probabilistic_model()
+        .claim("Max")
+        .expect("the claim checks");
+    let item = exact_probabilistic_item(
+        fsl_foundation::RequestIndex::new(0),
+        fsl_analyze::exact_probabilistic::ProductRequest {
+            subject: ModelSubject {
+                simulation: world.request(),
+                proof_bounds: Vec::new(),
+            },
+            claim,
+            limits: ExactProbLimits::default(),
+        },
+    );
+    let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
+    let witness = record
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("the independently replayed refutation carries its witness");
+    assert_eq!(witness.mass(), &ratio(3, 4));
+    let expected = [row(&[("A", 1)], &[("B", 2)]), row(&[("A", 3)], &[("B", 1)])];
+    assert!(witness.scheduler.iter().any(|(_, choice)| match choice {
+        ProbabilisticSchedulerChoice::Deterministic(ReplayProductAction::FreeDelays(rows)) => {
+            rows.len() == 2
+                && rows[0].given.len() == 1
+                && rows[0].given[0].1 == 1
+                && rows[0].free.len() == 1
+                && rows[0].free[0].1 == 2
+                && rows[1].given.len() == 1
+                && rows[1].given[0].1 == 3
+                && rows[1].free.len() == 1
+                && rows[1].free[0].1 == 1
+        }
+        _ => false,
+    }));
+    let mut path_lengths: Vec<_> = witness.paths.iter().map(|path| path.steps.len()).collect();
+    path_lengths.sort_unstable();
+    assert_eq!(path_lengths, [1, 2]);
 }
 
 /// TC-637: the `Detour` witness action's canonical body admits
@@ -1435,8 +1494,10 @@ fn randomized_rows_give_an_exact_randomized_entry() {
     );
     let entries = entries_of(&built, &policy, &ExactProbLimits::default())
         .expect("the policy gives an entry at each reached state");
-    let [(state, EntryChoice::Randomized(_)), (continuation, EntryChoice::Action(delay))] =
-        entries.as_slice()
+    let [
+        (state, EntryChoice::Randomized(_)),
+        (continuation, EntryChoice::Action(delay)),
+    ] = entries.as_slice()
     else {
         panic!("a randomized entry at the race state, then a continuation: {entries:?}");
     };
