@@ -117,6 +117,10 @@ fn long_run_and_expected_reward_undefined_replay_reject_adverse_evidence() {
         modifies: vec![],
         deletes: false,
     });
+    model.body = model.body.replace(
+        "weight Coin::drop = 1;",
+        "weight Coin::drop = 1; weight Coin::keep = 0;",
+    );
     let world = World::new(&model);
     let system = ModelSystem::new(world.subject().simulation).unwrap();
 
