@@ -571,7 +571,8 @@ fn replay_request_maps_a_closed_object_environment_and_rejects_extra_identity_me
     .expect("the valid closed identity maps to a replay request");
     assert_eq!(
         decoded
-            .object_environment()
+            .object_environment
+            .as_ref()
             .expect("the object environment is retained")
             .to_value(),
         object_environment
