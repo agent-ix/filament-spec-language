@@ -59,15 +59,15 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
          probabilistic UndefinedElapsed using timed on M over (c: M::Call) under every scheduler on origin\n\
              with alpha 0.4, beta 0.4, indifference 0.005\n\
              {{ quantile 0.5 of (elapsed from holds(c.phase = 0) until holds(c.phase = 1) within 3 ms) <= 1 ms }}\n\
-         probabilistic UndefinedFraction using timed on M over (c: M::Call) under Even on origin\n\
-             with alpha 0.4, beta 0.4, indifference 0.005\n\
-             {{ mean of (fraction holds(c.phase = 0) over [0, 0 ms] weighted by R) >= rational(1, 2) }}\n\
          probabilistic UndefinedEvery using timed on M over (c: M::Call) under every scheduler on origin\n\
              with alpha 0.4, beta 0.4, indifference 0.005\n\
              {{ probability >= 0.5 [ always[0 ms, 3 ms] holds(c.phase = 0) ] }}\n\
          probabilistic UndefinedWeightedLongRun using timed on M over (c: M::Call) under every scheduler on origin\n\
              with alpha 0.4, beta 0.4, indifference 0.005\n\
              {{ long_run_fraction holds(c.phase = 0) weighted by delay >= 0.5 }}\n\
+         probabilistic UndefinedEveryWeightedLongRun using timed on M over (c: M::Call) under every scheduler on origin\n\
+             with alpha 0.4, beta 0.4, indifference 0.005\n\
+             {{ long_run_fraction holds(c.phase = 0) weighted by R >= 0.5 }}\n\
          probabilistic UndefinedMeanTime using timed on M over (c: M::Call) under every scheduler on origin\n\
              with alpha 0.4, beta 0.4, indifference 0.005\n\
              {{ expected elapsed until holds(c.phase = 1) <= 1 ms }}\n\
@@ -88,9 +88,9 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
         "UndefinedSmall",
         "UndefinedUntil",
         "UndefinedElapsed",
-        "UndefinedFraction",
         "UndefinedEvery",
         "UndefinedWeightedLongRun",
+        "UndefinedEveryWeightedLongRun",
         "UndefinedMeanTime",
     ];
     for name in names {
@@ -170,25 +170,11 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
         );
         assert_eq!(
             witness.wire.as_ref().unwrap()["evidence"]["undefined"]["cause"],
-            if *name == "UndefinedFraction" {
-                serde_json::json!("division-by-zero")
-            } else {
-                serde_json::json!("absent-key")
-            },
+            serde_json::json!("absent-key"),
             "{name} undefined cause"
         );
     }
-    assert_eq!(
-        records[4]
-            .probabilistic_counterexample
-            .as_ref()
-            .unwrap()
-            .wire
-            .as_ref()
-            .unwrap()["evidence"]["undefined"]["cause"],
-        "division-by-zero"
-    );
-    let every = records[5]
+    let every = records[4]
         .probabilistic_counterexample
         .as_ref()
         .expect("Every's selected drop path is replayed");
@@ -209,6 +195,21 @@ fn timed_always_undefined_replays_at_any_threshold_and_rejects_decided_control()
         fsl_replay::ProbabilisticSchedulerChoice::Deterministic(
             every_undefined.path.paths[0].steps[0].choice.clone()
         )
+    );
+    let weighted_every = records[6]
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("Every's reward-weighted undefined path is replayed")
+        .undefined()
+        .expect("Every's reward-weighted path has a checked scheduler");
+    assert_eq!(weighted_every.path.scheduler.len(), 1);
+    assert_eq!(
+        weighted_every.path.paths[0].steps[0]
+            .action
+            .as_ref()
+            .unwrap()
+            .operation,
+        "Call/drop"
     );
     let system = fsl_eval::simulation::model::ModelSystem::new(world.request()).unwrap();
     let initial = system.initial().remove(0);

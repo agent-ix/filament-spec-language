@@ -300,6 +300,10 @@ impl<'c> Form<'c> {
                 drop(plan);
                 Ok(Self::Labels(reads))
             }
+            ProbForm::LongRunFraction { predicate, .. } => Ok(Self::Labels(vec![(
+                UndefinedRead::Predicate(super::PredicateRole::Target),
+                predicate,
+            )])),
             _ => Err(shape()),
         }
     }
@@ -1625,11 +1629,8 @@ impl<'c> Builder<'_, '_, 'c> {
                 action: Some(hop.action.clone()),
                 draw: Some(hop.draw.clone()),
                 probability: hop.probability.clone(),
-                elapsed: Rational::new(
-                    Integer::from(hop.elapsed_ticks),
-                    Integer::from(self.scale),
-                )
-                .expect("the digital time scale is positive"),
+                elapsed: Rational::new(Integer::from(hop.elapsed_ticks), Integer::from(self.scale))
+                    .expect("the digital time scale is positive"),
                 target: Box::new(hop.target.clone().unwrap_or_else(|| final_target.clone())),
                 resolved: None,
             })
@@ -1659,7 +1660,12 @@ impl<'c> Builder<'_, '_, 'c> {
                         let key = self.key_of(&hop.reached, binding, source, None)?;
                         hop.target = Some(key.clone());
                         return Err(self.undefined(
-                            Some(at), Some(&taken), None, self.nodes[at].initial, key, hit,
+                            Some(at),
+                            Some(&taken),
+                            None,
+                            self.nodes[at].initial,
+                            key,
+                            hit,
                         ));
                     }
                 };

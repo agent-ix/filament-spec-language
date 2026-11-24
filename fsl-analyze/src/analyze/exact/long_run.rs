@@ -40,10 +40,6 @@ pub(super) fn run(
         return not_yet();
     }
     let every = matches!(claim.scheduler, ProbScheduler::Every);
-    if every && weight.is_some() {
-        // Per-action weights are not part of the MDP long-run profile yet.
-        return not_yet();
-    }
     let simulation = request.subject.simulation.clone();
     let Some(package) = simulation.source_package() else {
         return not_yet();
@@ -101,11 +97,11 @@ pub(super) fn run(
                     cancel,
                     subject,
                     tamper_witness,
-                )
+                );
             }
             Err(BudgetedProductError::Product(error)) => return build_refusal(error, subject),
             Err(BudgetedProductError::Key(error)) => {
-                return document_failure(admission.refusal(error), subject)
+                return document_failure(admission.refusal(error), subject);
             }
             Err(BudgetedProductError::Undefined(_)) => {
                 let undefined_request = ProductRequest {
@@ -127,7 +123,7 @@ pub(super) fn run(
                             cancel,
                             subject,
                             tamper_witness,
-                        )
+                        );
                     }
                     Ok((ProbBuild::Partial { .. }, _)) => return not_yet(),
                     Ok((ProbBuild::Built(_), _)) => return broken(),
@@ -138,6 +134,11 @@ pub(super) fn run(
     };
     // Undefined reads are replayed from their positive timed path before the
     // defined delay-weighted profile is admitted below.
+    if every && weight.is_some() {
+        // Per-action weights are not part of the defined MDP long-run profile
+        // yet; source-decided undefined reads have already replayed above.
+        return not_yet();
+    }
     if delay_weight {
         return not_yet();
     }
@@ -202,7 +203,7 @@ pub(super) fn run(
                     value: limits.max_rational_bits,
                 },
                 subject,
-            )
+            );
         }
         Err(UnboundedError::MaxPolicyIterations) => {
             return settled(
@@ -211,10 +212,10 @@ pub(super) fn run(
                     value: limits.max_policy_iterations,
                 },
                 subject,
-            )
+            );
         }
         Err(UnboundedError::ZeroWeightComponent) => {
-            return EngineReport::Refused(Refusal::Unsupported(ZERO_WEIGHT_COMPONENT))
+            return EngineReport::Refused(Refusal::Unsupported(ZERO_WEIGHT_COMPONENT));
         }
         // `MissingReward` included: `admit_weights` refused every non-numeric or
         // negative reward above, so a solve that still names one is a disagreement
@@ -1019,7 +1020,7 @@ fn components(
                     return Err(match budget.cancel.tripped() {
                         Some(cause) => ProbabilityDocumentError::Cancelled(cause),
                         None => ProbabilityDocumentError::Accounting(Box::new(incomplete)),
-                    })
+                    });
                 }
                 _ => return Err(ProbabilityDocumentError::Malformed),
             };
