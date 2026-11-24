@@ -2701,12 +2701,18 @@ fn has_state_clause_adapter(vector: &QualificationVector) -> bool {
 /// T04, T05 and T13 take runtime payloads through value admission. They are
 /// not source-literal checks, which FR-056-AC-52 specifies separately.
 fn compare_text_admission(vector: &QualificationVector) -> Result<usize, String> {
-    let rows: Vec<(&str, u64, u64, TextProfile, Result<(), (&str, &str)>)> = match vector.id {
+    let rows: Vec<(
+        &str,
+        u64,
+        u64,
+        TextProfile,
+        Result<(&str, u64), (&str, &str)>,
+    )> = match vector.id {
         "T04" => {
             assert!(vector.expected.contains("scalar-profile value succeeds"));
             assert!(vector.expected.contains("text_length_out_of_domain"));
             vec![
-                ("é", 1, 1, TextProfile::Nfc, Ok(())),
+                ("é", 1, 1, TextProfile::Nfc, Ok(("é", 1))),
                 (
                     "é",
                     1,
@@ -2722,8 +2728,8 @@ fn compare_text_admission(vector: &QualificationVector) -> Result<usize, String>
                 .contains("empty and exact-bound inputs succeed"));
             assert!(vector.expected.contains("text_length_out_of_domain"));
             vec![
-                ("", 0, 0, TextProfile::Nfc, Ok(())),
-                ("a", 1, 1, TextProfile::Nfc, Ok(())),
+                ("", 0, 0, TextProfile::Nfc, Ok(("", 0))),
+                ("a", 1, 1, TextProfile::Nfc, Ok(("a", 1))),
                 (
                     "a",
                     0,
@@ -2741,7 +2747,7 @@ fn compare_text_admission(vector: &QualificationVector) -> Result<usize, String>
                 .expected
                 .contains("nfd` and `unicode-scalars` refuse"));
             vec![
-                ("e\u{301}", 1, 1, TextProfile::Nfc, Ok(())),
+                ("e\u{301}", 1, 1, TextProfile::Nfc, Ok(("é", 1))),
                 (
                     "e\u{301}",
                     1,
@@ -2756,7 +2762,7 @@ fn compare_text_admission(vector: &QualificationVector) -> Result<usize, String>
                     TextProfile::UnicodeScalars,
                     Err(("text_length_out_of_domain", "outside-domain")),
                 ),
-                ("é", 2, 2, TextProfile::Nfd, Ok(())),
+                ("é", 2, 2, TextProfile::Nfd, Ok(("e\u{301}", 2))),
             ]
         }
         _ => return Err(format!("{} is not a text-admission vector", vector.id)),
@@ -2769,7 +2775,20 @@ fn compare_text_admission(vector: &QualificationVector) -> Result<usize, String>
             .map_err(|error| format!("{}[{index}] invalid text bounds: {error:?}", vector.id))?;
         let actual = admit_text(&payload, &text_type, &mut Meter::new(UNLIMITED));
         match (expected, actual) {
-            (Ok(()), Outcome::Completed(_)) => {}
+            (Ok((retained, length)), Outcome::Completed(text)) => {
+                assert_eq!(
+                    text.retained(),
+                    *retained,
+                    "{}[{index}] retained text",
+                    vector.id
+                );
+                assert_eq!(
+                    text.length(),
+                    *length,
+                    "{}[{index}] profile length",
+                    vector.id
+                );
+            }
             (Err((code, cause)), Outcome::Refused(refusal))
                 if refusal.code() == Some(*code) && refusal.cause() == Some(*cause) => {}
             (expected, actual) => {
