@@ -2741,7 +2741,7 @@ const PARTIAL: &[Partial] = &[
     },
     Partial {
         id: "U11q",
-        remainder: "authored source span L for the u_self self-cycle; source reports u_self",
+        remainder: "authored source span L for the u_self self-cycle (source reports u_self) and the published vector's multi-document request ordering; the adapter combines both documents into one source unit",
         key: Some(V11),
     },
     Partial {
