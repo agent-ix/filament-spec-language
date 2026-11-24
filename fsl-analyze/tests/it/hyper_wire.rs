@@ -372,16 +372,28 @@ fn analyze_hyper_two_model_infinite_trace_proof_is_checked() {
     );
 }
 
-/// FR-173-AC-4 (TC-598): `SavesPower` names the distinct model subjects `V`
+/// FR-173-AC-4 (TC-598): `SavesPower` names the distinct model subjects `S`
 /// and `N`; each subject contributes its own deadlock-freedom request item.
 #[trace("TC-598", "FR-173-AC-4")]
 #[test]
 fn analyze_hyper_saves_power_writes_each_alias_subject_and_its_deadlock_item() {
-    let declaration = "hyper SavesPower using inf over behaviours (d: V::Vault, e: N::Vault) \
-        forall trace s of V forall trace n of N \
+    let declaration = "hyper SavesPower using inf over behaviours (d: S::Vault, e: N::Vault) \
+        forall trace s of S forall trace n of N \
         { always holds(d.l @ s = e.l @ n) }";
     let (unit, model, other, snapshot) =
         crate::hyper_world::two_model_request_files((1, 0), declaration);
+    let unit = unit.replace("model V =", "model S =").replace("V::", "S::");
+    let mut snapshot: serde_json::Value =
+        serde_json::from_slice(&snapshot).expect("the two-model snapshot is JSON");
+    let other_population = snapshot["populations"]
+        .as_array_mut()
+        .expect("the snapshot populations")
+        .iter_mut()
+        .find(|population| population["population"] == "ix://test/vault-other/vaults")
+        .expect("the N model population");
+    assert_eq!(other_population["objects"][0]["key"], "v");
+    other_population["objects"][0]["key"] = json!("n");
+    let snapshot = serde_json::to_vec(&snapshot).expect("the distinct two-model snapshot");
     let ws = Workspace::new("hyper-wire-saves-power-derived-subjects");
     ws.write("other.json", &other);
     let mut models = crate::analyze_cli_support::request_members(None)["models"].clone();
@@ -409,13 +421,11 @@ fn analyze_hyper_saves_power_writes_each_alias_subject_and_its_deadlock_item() {
         "deadlock-freedom"
     );
     assert_eq!(
-        items[1]["request"]["claim"]["node"]["package"],
-        "test/vault-other",
+        items[1]["request"]["claim"]["node"]["package"], "test/vault-other",
         "{document}"
     );
     assert_eq!(
-        items[2]["request"]["claim"]["node"]["package"],
-        "test/vault",
+        items[2]["request"]["claim"]["node"]["package"], "test/vault",
         "{document}"
     );
 }
@@ -445,7 +455,10 @@ fn analyze_hyper_noninterference_and_opaque_share_one_deadlock_item() {
         items[2]["request"]["temporal"]["item_kind"],
         "deadlock-freedom"
     );
-    assert_eq!(items[2]["request"]["claim"]["node"]["package"], "test/vault");
+    assert_eq!(
+        items[2]["request"]["claim"]["node"]["package"],
+        "test/vault"
+    );
 }
 
 /// FR-173-AC-6 (HP-5) through `native-analyze/1`: under the event-position
