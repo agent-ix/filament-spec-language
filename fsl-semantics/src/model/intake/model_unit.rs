@@ -32,9 +32,9 @@ pub(super) fn looks_like_model_unit(bytes: &[u8]) -> bool {
     ) else {
         return false;
     };
-    let tokens = parsed
-        .cst()
-        .tokens()
+    let cst = parsed.cst();
+    let token_views = cst.tokens();
+    let tokens = token_views
         .iter()
         .filter(|token| token.class() == cst::TokenClass::Token)
         .map(|token| token.spelling())
