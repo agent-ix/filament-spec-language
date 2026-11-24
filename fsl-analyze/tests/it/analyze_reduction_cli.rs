@@ -159,11 +159,12 @@ fn a_constraint_never_proves_past_its_boundary() {
     assert_ne!(label(&item), "proved", "{item}");
 }
 
-/// FR-158-AC-6: a named Low selection executes with true truth and its
-/// request echo retains the selected constraint name. A selection naming
-/// invariant Wide refuses before any state is expanded, and a constraint
-/// anchored at an operation refuses during source compilation.
-#[trace("TC-581", "FR-158-AC-6")]
+/// Partial TC-581 coverage: a named Low selection executes with true truth
+/// and its request echo retains the selected constraint name. A selection
+/// naming invariant Wide refuses before any state is expanded, and a
+/// constraint anchored at an operation refuses during source compilation.
+/// FR-158-AC-6 remains open for node-key request and refusal behavior.
+#[trace("TC-581")]
 #[test]
 fn constraint_request_key_truth_and_invalid_selections_are_typed() {
     let body = format!(
