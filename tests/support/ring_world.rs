@@ -97,6 +97,9 @@ pub struct Variant {
     /// holds `SlowQueue`), and the concrete `Slot` a second operation `put2`
     /// beside `put` (FR-141-AC-16, FR-140-AC-18).
     pub subtypes: bool,
+    /// The abstract `enq` stutters and the refinement's `items` row is a
+    /// source-compatible empty sequence literal for package-reader tests.
+    pub package_readback: bool,
     /// The abstract `Queue` has an optional `head: Digit?` field
     /// (FR-140-AC-11).
     pub optional_head: bool,
@@ -369,7 +372,11 @@ fn contracts(variant: Variant) -> String {
     } else {
         "self.ring.head"
     };
-    let enq = "(size(pre(self.items)) = 0 and self.items = sequence[x]) or (pre(self.items) = sequence[0] and self.items = sequence[0, x]) or (pre(self.items) = sequence[1] and self.items = sequence[1, x])";
+    let enq = if variant.package_readback {
+        "self.items = pre(self.items)"
+    } else {
+        "(size(pre(self.items)) = 0 and self.items = sequence[x]) or (pre(self.items) = sequence[0] and self.items = sequence[0, x]) or (pre(self.items) = sequence[1] and self.items = sequence[1, x])"
+    };
     let enq =
         vec![format!("({enq})"); 1 + usize::try_from(variant.heavy).unwrap_or(0)].join(" and ");
     let enq = if variant.chain {

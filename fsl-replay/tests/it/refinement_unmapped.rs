@@ -960,6 +960,17 @@ fn subtype_world(refinement: &str) -> RingWorld {
     )
 }
 
+fn subtype_readback_world(refinement: &str) -> RingWorld {
+    RingWorld::with(
+        Variant {
+            subtypes: true,
+            package_readback: true,
+            ..Variant::default()
+        },
+        refinement,
+    )
+}
+
 /// FR-140-AC-18 (TC-1086): with `queues` admitting `Queue` and its subtype
 /// `FastQueue`, both rows naming `Ring`, the ring maps to the `FastQueue`
 /// object whichever row is written first, and swapping the rows changes no
@@ -1008,13 +1019,10 @@ fn the_most_specific_admitted_row_maps_the_object_whatever_the_row_order() {
 #[trace("TC-546", "FR-141-AC-16", "FSpec-FR-375-AC-39", "TC-2114")]
 #[test]
 fn an_inherited_operation_row_lifts_its_receiver_against_its_target_subtype() {
-    let queue = format!("object Q::Queue from R::Ring {{ {ITEMS_ROW} }}");
-    let fast = format!("object Q::FastQueue from R::Ring {{ {ITEMS_ROW} }}");
-    for object_rows in [
-        [queue.as_str(), fast.as_str()],
-        [fast.as_str(), queue.as_str()],
-    ] {
-        let world = subtype_world(&subtype_refinement(
+    let queue = "object Q::Queue from R::Ring { items = sequence[]; }";
+    let fast = "object Q::FastQueue from R::Ring { items = sequence[]; }";
+    for object_rows in [[queue, fast], [fast, queue]] {
+        let world = subtype_readback_world(&subtype_refinement(
             object_rows,
             ["Q::FastQueue", "Q::SlowQueue"],
         ));
