@@ -2732,10 +2732,11 @@ fn a_budget_equal_to_the_product_size_completes() {
     ));
 }
 
-/// FR-196-AC-9: an unbounded exact claim retains real None monitor and
-/// accumulator members in its key; exhausting the state budget returns a
-/// typed stop and does not manufacture a partial product.
-#[trace("TC-631", "FR-196-AC-9")]
+/// TC-631: an unbounded exact claim retains real None monitor and accumulator
+/// members in its key; exhausting the state budget returns a typed stop and
+/// does not manufacture a partial product. This does not cover FR-196-AC-9's
+/// timed-key clock/deadline retention or malformed-key admission negatives.
+#[trace("TC-631")]
 #[test]
 fn exact_unbounded_keys_keep_none_and_budget_stops_have_no_product() {
     let world = World::new(&prob_world::no_fault(NO_FAULT));
