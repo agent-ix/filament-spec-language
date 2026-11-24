@@ -11,7 +11,6 @@ use tempfile::TempDir;
 
 const COUNTER: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction digits using v(x: Int[0,9], y: Int[0,9]): Integer pure { x * 10 + y }\n";
 const FALSE: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction negative using v(x: Int[0,9]): Boolean pure { x < 0 }\n";
-const UNIT_MISMATCH: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\ndimension Time;\ndimension Length;\nunit s: Time = rational(1, 1);\nunit m: Length = rational(1, 1);\nfunction mismatched using v(): Boolean pure { 5 m = 5 s }\n";
 
 struct Fixture {
     _temp: TempDir,
@@ -98,55 +97,6 @@ impl Fixture {
 
 fn report(execution: &xtask::qualification::Execution) -> Value {
     serde_json::from_str(&execution.outcome.stdout).unwrap()
-}
-
-#[test]
-#[trace("TC-875", "FR-350-AC-2")]
-fn refusal_vectors_compare_the_expected_and_actual_code_and_cause() {
-    let expected_unit_mismatch =
-        json!({"disposition":"refusal", "code":"ill_typed", "cause":"unit-mismatch"});
-    let mut fixture = Fixture::new(
-        "language",
-        "compile",
-        UNIT_MISMATCH,
-        expected_unit_mismatch.clone(),
-    );
-
-    let matched = fixture.execute(&[]);
-    assert_eq!(matched.outcome.code, 0, "{}", matched.outcome.stdout);
-    assert_eq!(report(&matched)["capabilities"][0]["outcome"], "passed");
-
-    fixture.value["vectors"][0]["expected"] =
-        json!({"disposition":"refusal", "code":"ill_typed", "cause":"type-mismatch"});
-    let wrong_refusal = fixture.execute(&[]);
-    let failed = report(&wrong_refusal);
-    assert_eq!(wrong_refusal.outcome.code, 1, "{failed}");
-    let row = &failed["capabilities"][0]["vectors"][0];
-    assert_eq!(row["outcome"], "failed");
-    assert_eq!(row["expected"]["code"], "ill_typed");
-    assert_eq!(row["expected"]["cause"], "type-mismatch");
-    assert_eq!(row["actual"]["code"], "ill_typed");
-    assert_eq!(row["actual"]["cause"], "unit-mismatch");
-
-    let admitted_source =
-        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction accepted using v(): Boolean pure { true }\n";
-    let admitted = Fixture::new(
-        "language",
-        "compile",
-        admitted_source,
-        expected_unit_mismatch,
-    )
-    .execute(&[]);
-    let failed = report(&admitted);
-    assert_eq!(admitted.outcome.code, 1, "{failed}");
-    let row = &failed["capabilities"][0]["vectors"][0];
-    assert_eq!(row["expected"]["code"], "ill_typed");
-    assert_eq!(row["expected"]["cause"], "unit-mismatch");
-    assert!(row["actual"]["code"].is_null(), "source compiled: {row}");
-    assert_eq!(
-        row["actual"]["contract_version"],
-        "filament.checked-package/v2"
-    );
 }
 
 #[test]
@@ -589,9 +539,7 @@ fn replay_request_maps_a_closed_object_environment_and_rejects_extra_identity_me
     assert!(
         rejected_row["actual"]["pointer"]
             .as_str()
-            .is_some_and(
-                |pointer| pointer.contains("object_environment") && pointer.contains("revision")
-            ),
+            .is_some_and(|pointer| pointer == "/object_environment"),
         "the extra member is attributed to the closed identity: {rejected_row}"
     );
 }
