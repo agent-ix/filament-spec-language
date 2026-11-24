@@ -40,20 +40,25 @@ fn matrix(root: &Path) -> BTreeMap<String, (String, String)> {
         "quire matrix failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
-    String::from_utf8(output.stdout)
-        .expect("tsv output is text")
-        .lines()
+    let text = String::from_utf8(output.stdout).expect("tsv output is text");
+    let mut lines = text.lines();
+    let header: Vec<&str> = lines.next().expect("tsv header").split('\t').collect();
+    let column = |name: &str| {
+        header
+            .iter()
+            .position(|candidate| *candidate == name)
+            .unwrap_or_else(|| panic!("the matrix tsv has a `{name}` column"))
+    };
+    let (criterion, status, binders) = (column("criterion"), column("status"), column("binders"));
+    lines
         .filter_map(|line| {
-            let mut columns = line.split('\t');
-            let (_document, criterion, status, binders) = (
-                columns.next()?,
-                columns.next()?,
-                columns.next()?,
-                columns.next()?,
-            );
+            let columns: Vec<&str> = line.split('\t').collect();
             Some((
-                criterion.to_owned(),
-                (status.to_owned(), binders.to_owned()),
+                (*columns.get(criterion)?).to_owned(),
+                (
+                    (*columns.get(status)?).to_owned(),
+                    (*columns.get(binders)?).to_owned(),
+                ),
             ))
         })
         .collect()
