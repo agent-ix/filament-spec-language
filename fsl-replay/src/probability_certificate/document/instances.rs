@@ -140,17 +140,40 @@ struct Subject<'a> {
     instance_type: &'a filament_exact::ValueType,
 }
 
+/// The `on each` claim `item` names among `claims`, which must be the
+/// subject's own claims.
+fn each_claim<'a>(
+    system: &ModelSystem<'_>,
+    claims: &'a [CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    cancel: &Cancel,
+) -> Result<&'a CheckedProbabilisticClaim, ProbabilityDocumentError> {
+    if !std::ptr::eq(system.input().probabilistic.claims(), claims) {
+        return Err(ProbabilityDocumentError::IdentityMismatch);
+    }
+    let claim = bind_claim(claims, item, cancel)?;
+    if !matches!(claim.activation, ClaimActivation::Each { .. }) {
+        return Err(ProbabilityDocumentError::Unsupported);
+    }
+    Ok(claim)
+}
+
 fn subject<'a>(
     system: &ModelSystem<'a>,
     claims: &'a [CheckedProbabilisticClaim],
     item: &ObligationIdentity,
     cancel: &Cancel,
 ) -> Result<Subject<'a>, ProbabilityDocumentError> {
+    admit(system, each_claim(system, claims, item, cancel)?)
+}
+
+/// The `on-each-reachability/v1` profile's admission of `claim` (FR-875
+/// "Profile boundary"): anything outside it is `Unsupported`.
+fn admit<'a>(
+    system: &ModelSystem<'a>,
+    claim: &'a CheckedProbabilisticClaim,
+) -> Result<Subject<'a>, ProbabilityDocumentError> {
     use fsl_eval::simulation::model::{TimedSubjectRefusal, TimedSystem};
-    if !std::ptr::eq(system.input().probabilistic.claims(), claims) {
-        return Err(ProbabilityDocumentError::IdentityMismatch);
-    }
-    let claim = bind_claim(claims, item, cancel)?;
     let ProbForm::Reach {
         bound,
         target: ReachTarget::Eventually(target),
@@ -412,27 +435,66 @@ fn walk(
     })
 }
 
+/// The instance set of an `on each` claim (FR-875 "Instances"): its initial
+/// states, `over` instances (one `None` without an `over` parameter) and
+/// activation objects, each expanded once.
+struct Instances {
+    initials: Vec<ModelSimState>,
+    overs: Vec<Option<(ModelInstance, ObjectReference)>>,
+    each: Vec<(ModelInstance, ObjectReference)>,
+}
+
+impl Instances {
+    /// Read the populations only; the claim's profile is not consulted.
+    fn of(
+        system: &ModelSystem<'_>,
+        claim: &CheckedProbabilisticClaim,
+    ) -> Result<Self, ProbabilityDocumentError> {
+        let ClaimActivation::Each { value_type, .. } = &claim.activation else {
+            return Err(ProbabilityDocumentError::Unsupported);
+        };
+        let overs = match &claim.over {
+            None => vec![None],
+            Some(over) => instances_of(system, &over.value_type)?
+                .into_iter()
+                .map(Some)
+                .collect(),
+        };
+        Ok(Self {
+            initials: system.initial(),
+            overs,
+            each: instances_of(system, value_type)?,
+        })
+    }
+
+    fn is_empty(&self) -> bool {
+        self.initials.is_empty() || self.overs.is_empty() || self.each.is_empty()
+    }
+}
+
 fn roots(
     system: &ModelSystem<'_>,
     subject: &Subject<'_>,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
 ) -> Result<Vec<Root>, ProbabilityDocumentError> {
-    let claim = subject.claim;
-    let overs: Vec<Option<(ModelInstance, ObjectReference)>> = match &claim.over {
-        None => vec![None],
-        Some(over) => instances_of(system, &over.value_type)?
-            .into_iter()
-            .map(Some)
-            .collect(),
-    };
-    let instances = instances_of(system, subject.instance_type)?;
+    let instances = Instances::of(system, subject.claim)?;
+    roots_over(system, subject, &instances, limits, cancel)
+}
+
+fn roots_over(
+    system: &ModelSystem<'_>,
+    subject: &Subject<'_>,
+    instances: &Instances,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> Result<Vec<Root>, ProbabilityDocumentError> {
     let mut spent = Spent::default();
     let mut found = Vec::new();
-    for (position, start) in system.initial().into_iter().enumerate() {
+    for (position, start) in instances.initials.iter().enumerate() {
         let initial = u32::try_from(position).map_err(|_| ProbabilityDocumentError::Malformed)?;
-        for over in &overs {
-            for (instance, reference) in &instances {
+        for over in &instances.overs {
+            for (instance, reference) in &instances.each {
                 let walked = walk(
                     system,
                     subject,
@@ -661,6 +723,30 @@ pub enum OnEachOutcome {
     },
 }
 
+/// Whether the `on each` claim `item` has an instance over `system`: an
+/// initial state, an `over` instance when the claim has an `over` parameter,
+/// and an object of the activation's type (FR-875 "Instances").
+///
+/// This reads only the populations, before the claim's profile is admitted,
+/// so an empty instance set settles `no-instance` whatever the claim's form
+/// or evidence kind.
+///
+/// No product graph is built, so no state or edge limit is reached.
+///
+/// # Errors
+/// `claims` that are not the subject's own, a claim whose activation is not
+/// `on each`, a population that has no universe or does not expand, or the
+/// supplied cancellation.
+pub fn on_each_has_instance(
+    system: &ModelSystem<'_>,
+    claims: &[CheckedProbabilisticClaim],
+    item: &ObligationIdentity,
+    cancel: &Cancel,
+) -> Result<bool, ProbabilityDocumentError> {
+    let claim = each_claim(system, claims, item, cancel)?;
+    Ok(!Instances::of(system, claim)?.is_empty())
+}
+
 /// Settle every instance of the `on each` claim `item` over `system`.
 /// `max_paths` bounds a refutation's path set (`exact_prob.max_witness_paths`).
 ///
@@ -675,11 +761,14 @@ pub fn on_each_outcome(
     max_paths: u64,
     cancel: &Cancel,
 ) -> Result<OnEachOutcome, ProbabilityDocumentError> {
-    let subject = subject(system, claims, item, cancel)?;
-    let found = roots(system, &subject, limits, cancel)?;
-    if found.is_empty() {
+    let claim = each_claim(system, claims, item, cancel)?;
+    let instances = Instances::of(system, claim)?;
+    // An empty instance set is `no-instance` before the profile is admitted.
+    if instances.is_empty() {
         return Ok(OnEachOutcome::NoInstance);
     }
+    let subject = admit(system, claim)?;
+    let found = roots_over(system, &subject, &instances, limits, cancel)?;
     let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
     let mut arith = Arith {
         meter: &mut meter,

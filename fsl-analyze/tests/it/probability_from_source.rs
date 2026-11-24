@@ -1906,3 +1906,477 @@ fn probabilistic_on_each_out_of_profile_form_is_unsupported_with_no_cause() {
         assert!(item.get("certificate").is_none(), "{name}: {item}");
     }
 }
+
+/// `E`'s activation over `body`, as `name`, written `using profile` under
+/// `scheduler`.
+fn on_each_form(name: &str, profile: &str, scheduler: &str, body: &str) -> String {
+    format!(
+        "probabilistic {name} using {profile} on M under {scheduler} \
+         on each (k: M::Msg) when (not k.delivered) {{ {body} }}"
+    )
+}
+
+/// The `Link` unit whose sends no longer count attempts: a lost send
+/// returns the message to its own undelivered state, so every instance's
+/// phase graph is cyclic.
+fn cyclic_unit(claims: &str) -> String {
+    unit(claims)
+        .replace(
+            "self.attempts - pre(self.attempts) = 1 and self.delivered = (not lost)",
+            "self.attempts = pre(self.attempts) and self.delivered = (not lost)",
+        )
+        .replace(
+            "terminal Stop using v on M when { self.delivered or self.attempts = 2 };",
+            "",
+        )
+}
+
+/// FR-875's profile boundary: the item settles `unsupported` with
+/// `not-yet-implemented`, no `cause`, value, measurement or certificate, and
+/// does not name the activation or `no-instance` as its reason.
+fn settles_at_the_profile_boundary(case: &str, item: &Value) {
+    assert!(item.is_object(), "{case}: {item}");
+    assert_eq!(label(item), "unsupported", "{case}: {item}");
+    let text = item.to_string();
+    assert!(text.contains("not-yet-implemented"), "{case}: {item}");
+    assert!(!text.contains("no-instance"), "{case}: {item}");
+    assert!(item["record"].get("cause").is_none(), "{case}: {item}");
+    assert!(item["record"].get("basis").is_none(), "{case}: {item}");
+    assert!(item.get("certificate").is_none(), "{case}: {item}");
+    assert!(item.get("measurement").is_none(), "{case}: {item}");
+}
+
+/// Analyze `claim` under `source`'s unit text with one undelivered message,
+/// and with an empty `msgs` population, requesting `request`.
+fn on_each_both(case: &str, source: &str, request: Value) -> (Value, Value) {
+    let over = |start: Vec<u8>, suffix: &str| {
+        let ws = Workspace::new(&format!("on-each-{case}-{suffix}"));
+        let path = request_over(
+            &ws,
+            source,
+            LINK_MODEL,
+            &[start],
+            json!({"items": [request.clone()]}),
+        );
+        analyze(&path).document()["items"][0].clone()
+    };
+    (
+        over(link_start(&[("m", false)]), "one"),
+        over(link_start(&[]), "none"),
+    )
+}
+
+/// The item settles `inconclusive` with cause `no-instance`.
+fn settles_no_instance(case: &str, item: &Value) {
+    assert_eq!(label(item), "inconclusive", "{case}: {item}");
+    assert_eq!(
+        item["record"]["cause"]["kind"], "no-instance",
+        "{case}: {item}"
+    );
+}
+
+/// [`on_each_form`] over one undelivered message, requested by `request`.
+fn on_one_message(case: &str, source: &str, request: Value) -> Value {
+    let ws = Workspace::new(&format!("on-each-{case}-one"));
+    let path = request_over(
+        &ws,
+        source,
+        LINK_MODEL,
+        &[link_start(&[("m", false)])],
+        json!({"items": [request]}),
+    );
+    analyze(&path).document()["items"][0].clone()
+}
+
+/// TC-3211: an on-each form outside the `on-each-reachability/v1` profile
+/// settles `unsupported` at the profile boundary over a nonempty instance
+/// set.
+fn assert_profile_boundary(case: &str, source: &str, request: Value) {
+    settles_at_the_profile_boundary(case, &on_one_message(case, source, request));
+}
+
+/// TC-3211 step 1: the admitted exact workload profile is the control. The
+/// one instance `m` activates at position 0, so its value is the `on origin`
+/// value `391/400`, carried by a `ratio` conditional certificate.
+#[trace("TC-3211", "FR-875-AC-4")]
+#[test]
+fn on_each_profile_control_is_proved_with_its_ratio_certificate() {
+    let source = unit(&on_each_form(
+        "E",
+        "inf",
+        "Even",
+        "probability >= rational(9, 10) [ eventually holds(k.delivered) ]",
+    ));
+    let (one, none) = on_each_both("control", &source, json!({"claim": "E"}));
+    assert_eq!(label(&one), "proved", "{one}");
+    assert_eq!(one["certificate"]["kind"], "conditional", "{one}");
+    assert_eq!(
+        one["certificate"]["document"]["conditional"]["mode"], "ratio",
+        "{one}"
+    );
+    assert_eq!(
+        one["record"]["basis"]["entries"][0]["value"],
+        json!({"type": "exact", "value": {"numerator": "391", "denominator": "400"}}),
+        "{one}"
+    );
+    settles_no_instance("control", &none);
+}
+
+/// FR-875 "Instances": an empty instance set settles `no-instance` before
+/// the profile is admitted, so each out-of-profile form of TC-3211 over an
+/// empty `msgs` population is `no-instance`, not `unsupported`. No
+/// acceptance criterion states this precedence yet; the test is traced to
+/// the requirement.
+#[trace("FR-875")]
+#[test]
+fn on_each_empty_population_settles_no_instance_before_the_profile_boundary() {
+    let exact = json!({"claim": "E", "probabilistic": {"evidence": "exact"}});
+    let statistical = json!({"claim": "E", "probabilistic": {
+        "evidence": "statistical", "method": {"type": "okamoto"},
+        "seed": "0", "max_witnesses": 0}});
+    let eventually = "probability >= rational(1, 2) [ eventually holds(k.delivered) ]";
+    for (case, source, request) in [
+        (
+            "every-scheduler",
+            unit(&on_each_form("E", "inf", "every scheduler", eventually)),
+            exact.clone(),
+        ),
+        (
+            "free-delay",
+            timed_unit(&on_each_form("E", "inf", "Even", eventually)),
+            exact.clone(),
+        ),
+        (
+            "statistical",
+            unit(&on_each_form(
+                "E",
+                "ev",
+                "Even",
+                "probability >= 0.9 [ eventually[0,2] holds(k.delivered) ]",
+            ))
+            .replace(
+                "when (not k.delivered)",
+                "when (not k.delivered) with alpha 0.01, beta 0.01, indifference 0.05",
+            ),
+            statistical,
+        ),
+        (
+            "cyclic",
+            cyclic_unit(&on_each_form("E", "inf", "Even", eventually)),
+            exact.clone(),
+        ),
+        (
+            "quantile",
+            unit(&on_each_form(
+                "E",
+                "ev",
+                "Even",
+                "quantile 0.4 of (steps from holds(true) until holds(k.delivered) within 4) <= 3",
+            )),
+            exact.clone(),
+        ),
+        (
+            "timed",
+            timed_unit(&on_each_form(
+                "E",
+                "t",
+                "Even",
+                "probability >= rational(1, 2) [ eventually[0 ms, 3 ms] holds(k.delivered) ]",
+            )),
+            exact.clone(),
+        ),
+        (
+            "fairness",
+            unit(&on_each_form(
+                "E",
+                "inf",
+                "every scheduler fair weak Msg::send_a",
+                eventually,
+            )),
+            exact,
+        ),
+    ] {
+        let (_, none) = on_each_both(case, &source, request);
+        settles_no_instance(case, &none);
+    }
+}
+
+/// FR-875-AC-4: every-scheduler and free-delay optima.
+#[trace("TC-3211", "FR-875-AC-4")]
+#[test]
+fn on_each_optima_settle_at_the_profile_boundary() {
+    let body = "probability >= rational(1, 2) [ eventually holds(k.delivered) ]";
+    assert_profile_boundary(
+        "every-scheduler",
+        &unit(&on_each_form("E", "inf", "every scheduler", body)),
+        json!({"claim": "E"}),
+    );
+    assert_profile_boundary(
+        "free-delay",
+        &timed_unit(&on_each_form("E", "inf", "Even", body)),
+        json!({"claim": "E", "probabilistic": {"evidence": "exact"}}),
+    );
+}
+
+/// FR-875-AC-5: statistical evidence, for a sampled form and for an
+/// exact-only form alike.
+#[trace("TC-3211", "FR-875-AC-5")]
+#[test]
+fn on_each_statistical_evidence_settles_at_the_profile_boundary() {
+    let statistical = json!({"claim": "E", "probabilistic": {
+        "evidence": "statistical", "method": {"type": "okamoto"},
+        "seed": "0", "max_witnesses": 0}});
+    for (case, body) in [
+        (
+            "statistical-bounded",
+            "probability >= 0.9 [ eventually[0,2] holds(k.delivered) ]",
+        ),
+        (
+            "statistical-unbounded",
+            "probability >= 0.9 [ eventually holds(k.delivered) ]",
+        ),
+    ] {
+        let claim = on_each_form("E", "ev", "Even", body).replace(
+            "when (not k.delivered)",
+            "when (not k.delivered) with alpha 0.01, beta 0.01, indifference 0.05",
+        );
+        let claim = if case == "statistical-unbounded" {
+            claim.replace("using ev", "using inf")
+        } else {
+            claim
+        };
+        assert_profile_boundary(case, &unit(&claim), statistical.clone());
+    }
+}
+
+/// FR-875-AC-6: a cyclic continuation graph.
+#[trace("TC-3211", "FR-875-AC-6")]
+#[test]
+fn on_each_cyclic_phase_graph_settles_at_the_profile_boundary() {
+    assert_profile_boundary(
+        "cyclic",
+        &cyclic_unit(&on_each_form(
+            "E",
+            "inf",
+            "Even",
+            "probability >= rational(1, 2) [ eventually holds(k.delivered) ]",
+        )),
+        json!({"claim": "E"}),
+    );
+}
+
+/// FR-875-AC-7: property forms other than unbounded eventuality.
+#[trace("TC-3211", "FR-875-AC-7")]
+#[test]
+fn on_each_other_forms_settle_at_the_profile_boundary() {
+    for (case, profile, body) in [
+        (
+            "always",
+            "ev",
+            "probability >= rational(1, 2) [ always[0,2] holds(k.attempts >= 0) ]",
+        ),
+        (
+            "until",
+            "inf",
+            "probability >= rational(1, 2) [ holds(k.attempts = 0) until holds(k.delivered) ]",
+        ),
+        (
+            "bounded-eventually",
+            "ev",
+            "probability >= rational(1, 2) [ eventually[0,2] holds(k.delivered) ]",
+        ),
+        (
+            "expected-reward",
+            "inf",
+            "expected accumulate cost until holds(k.delivered or k.attempts = 2) <= rational(2, 1)",
+        ),
+        (
+            "long-run-fraction",
+            "inf",
+            "long_run_fraction holds(k.delivered) >= rational(1, 2)",
+        ),
+        (
+            "measure",
+            "ev",
+            "mean of (fraction holds(k.delivered) over [0, 2]) >= rational(1, 5)",
+        ),
+        (
+            "quantile",
+            "ev",
+            "quantile 0.4 of (steps from holds(true) until holds(k.delivered) within 4) <= 3",
+        ),
+    ] {
+        assert_profile_boundary(
+            case,
+            &unit(&on_each_form("E", profile, "Even", body)),
+            json!({"claim": "E", "probabilistic": {"evidence": "exact"}}),
+        );
+    }
+}
+
+/// FR-875-AC-8: a timed subject's eventuality and an authored fairness set.
+#[trace("TC-3211", "FR-875-AC-8")]
+#[test]
+fn on_each_timed_and_fair_claims_settle_at_the_profile_boundary() {
+    assert_profile_boundary(
+        "timed",
+        &timed_unit(&on_each_form(
+            "E",
+            "t",
+            "Even",
+            "probability >= rational(1, 2) [ eventually[0 ms, 3 ms] holds(k.delivered) ]",
+        )),
+        json!({"claim": "E", "probabilistic": {"evidence": "exact"}}),
+    );
+    assert_profile_boundary(
+        "fairness",
+        &unit(&on_each_form(
+            "E",
+            "inf",
+            "every scheduler fair weak Msg::send_a",
+            "probability >= rational(1, 2) [ eventually holds(k.delivered) ]",
+        )),
+        json!({"claim": "E"}),
+    );
+}
+
+/// `E` over the `Link` model with statistical confidence parameters, for an
+/// on-each item requested with statistical evidence.
+const ON_EACH_SAMPLED: &str = "probabilistic Sampled using ev on M under Even \
+     on each (k: M::Msg) when (not k.delivered) \
+     with alpha 0.01, beta 0.01, indifference 0.05 \
+     { probability >= 0.9 [ eventually[0,2] holds(k.delivered) ] }";
+
+/// FR-875 with FR-203: a model-admission stop while an on-each item reads
+/// its instances is classified like any product-admission refusal, naming
+/// the exhausted resource, for statistical and exact evidence alike, and is
+/// never `failed`.
+#[trace("FR-875", "FR-203-AC-13")]
+#[test]
+fn on_each_admission_stop_is_not_an_internal_failure() {
+    let claims = format!("{ON_EACH_SAMPLED}\n{}", on_each("rational(9, 10)"));
+    let source = charged_link_rewards(&unit(&claims));
+    let ws = Workspace::new("on-each-admission-stop");
+    let request = request_over(
+        &ws,
+        &source,
+        LINK_MODEL,
+        &[link_start(&[("m", false)])],
+        json!({
+            "items": [
+                {"claim": "Sampled", "probabilistic": {
+                    "evidence": "statistical", "method": {"type": "okamoto"},
+                    "seed": "0", "max_witnesses": 0}},
+                {"claim": "E", "probabilistic": {"evidence": "exact"}}
+            ],
+            "limits": {"accounting": {"work_units": 0}}
+        }),
+    );
+    let document = analyze(&request).document();
+    let items = document["items"].as_array().expect("both items settle");
+    assert_eq!(items.len(), 2, "{document}");
+    for (item, backend) in items.iter().zip(["en-4", "en-5"]) {
+        assert_eq!(label(item), "declined", "{item}");
+        assert_eq!(item["record"]["backend"], backend, "{item}");
+        assert_eq!(
+            item["record"]["cause"],
+            json!({"code": "resource_exhausted", "kind": "incomplete-input"}),
+            "{item}"
+        );
+        assert_eq!(
+            item["record"]["diagnostic"]["detail"]["limit"], "evaluation_meter",
+            "{item}"
+        );
+    }
+}
+
+/// FR-875 with FR-203: cancellation while a statistical on-each item reads
+/// its instances keeps its cause and draws no sample.
+#[trace("FR-875", "FR-203-AC-13")]
+#[test]
+fn on_each_statistical_cancellation_keeps_its_cause() {
+    use filament_exact::CancelCause;
+    use fsl_analyze::analyze::statistical_item;
+    use fsl_analyze::statistical::StatisticalRequest;
+    use fsl_foundation::selection::DefinitionRef;
+    use fsl_replay::statistical::{StatisticalLimits, StatisticalMethod};
+    use fsl_replay::{IncompleteCause, TerminalValue};
+    let world = World::new(&prob_world::link(ON_EACH_SAMPLED));
+    let engines = Engines::fsl().unwrap();
+    // Cancelled at the first poll, inside the item's own work.
+    let slot = std::sync::Arc::new(std::sync::OnceLock::<Cancel>::new());
+    let weak = std::sync::Arc::downgrade(&slot);
+    let cancel = Cancel::observing(move || {
+        weak.upgrade()
+            .unwrap()
+            .get()
+            .unwrap()
+            .cancel(CancelCause::Requested);
+    });
+    slot.set(cancel.clone()).unwrap();
+    let item = statistical_item(
+        RequestIndex::new(0),
+        StatisticalRequest {
+            subject: world.subject(),
+            claim: world.claim("Sampled"),
+            method: StatisticalMethod::Okamoto,
+            seed: 7,
+            sampler: DefinitionRef::new("agent-ix", "filament.simulation.sampler/v1").unwrap(),
+            limits: StatisticalLimits::default(),
+            max_witnesses: 0,
+            symmetry: Vec::new(),
+            timed_sampling: fsl_replay::statistical::TimedSampling::default(),
+        },
+    );
+    let records = analyze_items(&engines, vec![item], &cancel);
+    let terminal = records[0].terminal().expect("cancellation settles");
+    assert_eq!(
+        terminal.value(),
+        &TerminalValue::Incomplete(IncompleteCause::Cancelled {
+            source: CancelCause::Requested
+        })
+    );
+}
+
+/// FR-875-AC-5: a statistical on-each item over a nonempty instance set
+/// settles at the profile boundary having built no product and started no
+/// path-set search. EN-4 exposes no draw counter; the item carries no
+/// `measurement`, so no sample is reported.
+#[trace("TC-3211", "FR-875-AC-5")]
+#[test]
+fn on_each_statistical_evidence_builds_no_product() {
+    use fsl_analyze::analyze::statistical_item;
+    use fsl_analyze::exact_probabilistic::{
+        product_construction_counts, reset_product_construction_counts,
+    };
+    use fsl_analyze::statistical::StatisticalRequest;
+    use fsl_foundation::selection::DefinitionRef;
+    use fsl_replay::statistical::{StatisticalLimits, StatisticalMethod};
+    let world = World::new(&prob_world::link(ON_EACH_SAMPLED));
+    let engines = Engines::fsl().unwrap();
+    let item = statistical_item(
+        RequestIndex::new(0),
+        StatisticalRequest {
+            subject: world.subject(),
+            claim: world.claim("Sampled"),
+            method: StatisticalMethod::Okamoto,
+            seed: 7,
+            sampler: DefinitionRef::new("agent-ix", "filament.simulation.sampler/v1").unwrap(),
+            limits: StatisticalLimits::default(),
+            max_witnesses: 0,
+            symmetry: Vec::new(),
+            timed_sampling: fsl_replay::statistical::TimedSampling::default(),
+        },
+    );
+    reset_product_construction_counts();
+    let records = analyze_items(&engines, vec![item], &Cancel::new());
+    assert_eq!(product_construction_counts(), Default::default());
+    assert!(
+        matches!(
+            records[0].settlement,
+            fsl_analyze::analyze::Settlement::Disposed(_)
+        ),
+        "unsupported at the profile boundary: {:?}",
+        records[0].settlement
+    );
+}

@@ -273,6 +273,17 @@ const ZERO_WEIGHT_COMPONENT: filament_semantic_value::catalog::CatalogCode =
         "zero-weight-component",
     );
 
+/// An `on each` claim requested with statistical evidence (FR-875 profile
+/// boundary): `no-instance` over an empty instance set, otherwise
+/// `unsupported`.
+pub(super) fn statistical_on_each(
+    subject: fsl_eval::model_subject::ModelSubject<'_>,
+    claim: &fsl_semantics::check::CheckedProbabilisticClaim,
+    cancel: &Cancel,
+) -> EngineReport {
+    instances::statistical(subject, claim, cancel)
+}
+
 fn not_yet() -> EngineReport {
     EngineReport::Refused(Refusal::Unsupported(NOT_YET))
 }
@@ -391,10 +402,9 @@ fn bounded_monitor_failure(
     use fsl_eval::automaton::QualifiedBoundedError;
     match error {
         QualifiedBoundedError::Translation(_) => not_yet(),
-        QualifiedBoundedError::Automaton(error) => build_refusal(
-            crate::exact_probabilistic::automaton_refusal(error),
-            subject,
-        ),
+        QualifiedBoundedError::Automaton(error) => {
+            build_refusal(crate::exact_probabilistic::automaton_refusal(error), subject)
+        }
         QualifiedBoundedError::Key(_) => broken(),
     }
 }
@@ -402,10 +412,7 @@ fn bounded_monitor_failure(
 /// Dyadic refinement reached its maximum precision with the threshold still inside
 /// `[lower, upper]`.
 fn precision_budget(lower: Rational, upper: Rational, subject: SubjectLimits<'_>) -> EngineReport {
-    settled(
-        &ExactProbBuildIssue::PrecisionBudget { lower, upper },
-        subject,
-    )
+    settled(&ExactProbBuildIssue::PrecisionBudget { lower, upper }, subject)
 }
 
 fn settled(issue: &ExactProbBuildIssue, subject: SubjectLimits<'_>) -> EngineReport {
@@ -1080,6 +1087,14 @@ fn run(
     tamper: Option<&dyn Fn(&mut ExactProbabilityCertificate)>,
     tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
+    // Every `on each` form is settled by its instances first (FR-875), so an
+    // empty instance set is `no-instance` whatever the form.
+    if matches!(
+        request.claim.activation,
+        fsl_semantics::check::ClaimActivation::Each { .. }
+    ) {
+        return instances::run(request, cancel, tamper_witness);
+    }
     if matches!(
         &request.claim.form,
         ProbForm::Quantile {
@@ -1088,12 +1103,6 @@ fn run(
         }
     ) {
         return elapsed::run(request, cancel, tamper, tamper_witness);
-    }
-    if matches!(
-        request.claim.activation,
-        fsl_semantics::check::ClaimActivation::Each { .. }
-    ) {
-        return instances::run(request, cancel, tamper_witness);
     }
     if request.claim.bounded_measure() {
         return measure::run(request, cancel, tamper, tamper_witness);
@@ -3618,8 +3627,8 @@ fn timed_step_for(
     TimedStepFailure,
 > {
     use fsl_eval::simulation::model::{TimedState, TimedSystem};
-    let valuation =
-        fsl_replay::digital_key_clocks(system, claim, previous).ok_or(TimedStepFailure::Unbuilt)?;
+    let valuation = fsl_replay::digital_key_clocks(system, claim, previous)
+        .ok_or(TimedStepFailure::Unbuilt)?;
     let timed = TimedSystem::new(system, claim.subject.alias.as_str())
         .map_err(TimedStepFailure::Subject)?;
     // A tie among the zero-time operations of one instant: the product never

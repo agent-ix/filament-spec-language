@@ -19,7 +19,7 @@ mod fairness;
 pub(super) mod instances;
 #[cfg(feature = "test-support")]
 pub use fairness::BoundedFairProbabilityPhase;
-pub use instances::{on_each_outcome, replay_on_each_witness, OnEachOutcome};
+pub use instances::{on_each_has_instance, on_each_outcome, replay_on_each_witness, OnEachOutcome};
 mod key;
 mod mdp;
 #[cfg(feature = "test-support")]
