@@ -4641,7 +4641,7 @@ pub enum ProbabilisticBody {
         /// The level `q`.
         level: ExactValueForm,
         /// The measure.
-        measure: MeasureForm,
+        measure: Box<MeasureForm>,
         /// The comparison.
         op: BoundOp,
         /// The threshold, as written.
