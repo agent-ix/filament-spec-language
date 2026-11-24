@@ -349,6 +349,7 @@ mod tests {
             accumulator: None,
             pending: None,
             certificate_state: None,
+            timed_history: None,
         };
         let half = Rational::new(Integer::one(), Integer::from(2_i64)).unwrap();
         let product = ProbProduct {
