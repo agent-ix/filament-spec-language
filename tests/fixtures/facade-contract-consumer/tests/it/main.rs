@@ -161,7 +161,7 @@ mod code_generation {
         .expect("qualified name");
         let site = fsl_replay::call_site(
             source,
-            fsl_replay::CallSiteUnit::new("consumer".into(), "unit.native", UNIT.as_bytes()),
+            fsl_replay::CallSiteUnit::new("consumer", "unit.native", UNIT.as_bytes()),
             [],
             &fsl_replay::DependencyInput::default(),
             &fsl_replay::RequestClocks::default(),
@@ -191,7 +191,7 @@ mod code_generation {
         };
         let site = fsl_replay::call_site(
             fsl_replay::SourceIdentity::new("consumer", "imported-call-site"),
-            fsl_replay::CallSiteUnit::new("consumer".into(), "unit.native", unit.as_bytes()),
+            fsl_replay::CallSiteUnit::new("consumer", "unit.native", unit.as_bytes()),
             [],
             &dependencies,
             &fsl_replay::RequestClocks::default(),
@@ -212,7 +212,7 @@ mod code_generation {
         .expect("qualified function name");
         let function = fsl_replay::call_site(
             fsl_replay::SourceIdentity::new("consumer", "function-obligation"),
-            fsl_replay::CallSiteUnit::new("consumer".into(), "unit.native", UNIT.as_bytes()),
+            fsl_replay::CallSiteUnit::new("consumer", "unit.native", UNIT.as_bytes()),
             [],
             &fsl_replay::DependencyInput::default(),
             &fsl_replay::RequestClocks::default(),
@@ -230,7 +230,7 @@ mod code_generation {
         let unit = "language \"ix:native\" edition \"1-draft\";\nprofile m = \"filament.model.complete/v1\";\nmodel M = \"acme/orders\";\npost Touch using m on M::Widget::touch { true }\n";
         let site = fsl_replay::call_site(
             fsl_replay::SourceIdentity::new("consumer", "operation-call-site"),
-            fsl_replay::CallSiteUnit::new("consumer".into(), "unit.native", unit.as_bytes()),
+            fsl_replay::CallSiteUnit::new("consumer", "unit.native", unit.as_bytes()),
             [&model[..]],
             &fsl_replay::DependencyInput::default(),
             &fsl_replay::RequestClocks::default(),
@@ -259,7 +259,7 @@ function f using v(x: Integer): Integer pure { x }\n";
         .expect("qualified function name");
         let site = fsl_replay::call_site(
             source,
-            fsl_replay::CallSiteUnit::new("consumer".into(), "unit.native", unit.as_bytes()),
+            fsl_replay::CallSiteUnit::new("consumer", "unit.native", unit.as_bytes()),
             [],
             &fsl_replay::DependencyInput::default(),
             &fsl_replay::RequestClocks::default(),
