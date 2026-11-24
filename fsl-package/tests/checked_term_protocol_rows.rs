@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Public emitter coverage for empty, case-arm, and repeated-related protocol
-//! location rows (FR-383-AC-37/38/60/66).
+//! Public emitter coverage for empty, case-arm, and related protocol location
+//! rows (FR-383-AC-37/38/60/65/66).
 #![cfg(feature = "std")]
 
 use std::collections::BTreeMap;
@@ -244,4 +244,68 @@ fn repeating_the_second_related_clause_preserves_public_rows() {
         base["checked_term_data"]["protocol_locations"],
         repeated["checked_term_data"]["protocol_locations"]
     );
+}
+
+fn provisional_related_origin(name: &str) -> bool {
+    let Some((_, suffix)) = name.rsplit_once(" related ") else {
+        return false;
+    };
+    let positions = suffix.split_whitespace().collect::<Vec<_>>();
+    positions.len() == 2
+        && positions
+            .iter()
+            .all(|position| position.parse::<usize>().is_ok())
+}
+
+#[trace("TC-1063", "FR-383-AC-65")]
+#[test]
+fn related_ends_keep_only_final_record_positions_in_checked_and_wire_locations() {
+    let call_both = "related by Owns (identityRef(view), identityRef(view))";
+    let call_from = "related by Owns (identityRef(view), view)";
+    let base = tc1070::SOURCE
+        .replace(
+            "profile S = \"filament.state.graph/v1\";",
+            "profile S = \"filament.state.graph/v1\";\nprofile v = \"filament.value.complete/v1\";",
+        )
+        .replace(
+            "model M = \"test/orders\";",
+            "model M = \"test/orders\";\nfunction identityRef using v(x: M::Node): M::Node pure { x }",
+        );
+    let domain = tc1070::document().to_string().into_bytes();
+
+    for (first, second) in [(call_from, call_both), (call_both, call_from)] {
+        let source = base.replace(
+            "related by Owns (view, view) { true }",
+            &format!("{first} {second} {{ true }}"),
+        );
+        let package = checked(&source, Some(&domain));
+        let provisional =
+            package
+                .graph()
+                .occurrences()
+                .filter_map(|(_, _, location)| match &location.origin {
+                    filament_semantic_value::location::ExpressionOwner::TypeDeclaration {
+                        name,
+                    } if provisional_related_origin(name) => Some(name.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+        assert!(provisional.is_empty(), "checked locations: {provisional:?}");
+
+        let emitted = wire(&package);
+        let rows = emitted["checked_term_data"]["protocol_locations"]
+            .as_array()
+            .expect("protocol location rows are emitted");
+        let provisional_rows = rows
+            .iter()
+            .filter_map(|row| {
+                let name = row["location"]["origin"]["name"].as_str()?;
+                provisional_related_origin(name).then_some(name)
+            })
+            .collect::<Vec<_>>();
+        assert!(
+            provisional_rows.is_empty(),
+            "wire rows: {provisional_rows:?}"
+        );
+    }
 }
