@@ -419,6 +419,16 @@ refusal IR reports at no value, such as malformed JSON, SHALL carry no
 locus: the whole-document pointer would stand in for a position it does not
 name.
 
+### A host allocation failure remains a host error
+
+When a package read's budget admits an allocation but the host cannot provide
+the requested memory, each FSL consumer of the Contract IR reader in
+`fsl-package`, `fsl-replay`, `fsl-analyze` and `fsl-command` SHALL handle
+`HostAllocationFailed` explicitly as a host/internal failure. The command's
+message SHALL include the failure stage and requested size. It SHALL NOT
+report a package refusal or limit, produce a package record, or direct the user
+to raise a limit. The reader's `body_incomplete` record remains unchanged.
+
 ## Acceptance Criteria
 
 | ID | Criteria | Verification |
@@ -446,6 +456,7 @@ name.
 | FR-096-AC-21 | A received `Refusal::CheckedInvariant { cause: NativeIntegerCapacityBreach }` at S6a, located or unlocated, returns `Err(InternalFault)` with stage `S6a`, invariant `checked-program-invariant`, code `runtime_invariant`, cause `established-invariant-broken`, category internal failure, no named fields and `kernel_cause()` equal to `NativeIntegerCapacityBreach`; building a kernel refusal record from it yields none, and the paired kernel `IntegerOutOfDomain { target: Int[-5, 9] }` stop still yields the `integer_out_of_domain` record with `expected` `Int[-5, 9]`. | Test |
 | FR-096-AC-22 | A partition-proof work-budget stop (FR-218-AC-30's 24-atom `choice` under the default `s3.work_units`) is a `CheckRefusal`/`stage_limit_exceeded` with kind work budget, `region: None` on its `StageLimitCause`, and `DeclarationRegions::refusal_region` resolving to the `choice`'s span, not the declaration span and not a lowering node. | Test (TC-1172) |
 | FR-096-AC-23 | For a call that `CheckedPackage::call` admits over a checked function of integer, rational, decimal or collection type, every completed outcome carries a value inside the checked type of the call node, and no outcome is an `InternalFault` with code `runtime_invariant`; each outcome is completed, undefined or a typed refusal. | Test (TC-3207) |
+| FR-096-AC-24 | For each package-read consumer in `fsl-package`, `fsl-replay`, `fsl-analyze` and `fsl-command`, an injected `HostAllocationFailed` after the reader admits the requested allocation ends as a host/internal failure whose message includes the stage and requested size; it produces no package refusal or package record and does not tell the user to raise a limit. The existing `body_incomplete` outcome and its closed record shape are unchanged. | Test |
 
 The fourth
 no-region case (a span the map splits) is backed directly against the
