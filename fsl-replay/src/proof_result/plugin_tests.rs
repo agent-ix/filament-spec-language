@@ -1087,6 +1087,9 @@ fn tc_774_limits_flow_into_the_request_and_refusals_are_ordered() {
     assert_eq!(wire.accounting_limits.work_units, 5000);
     assert!(!wire.stage_limits.contains_key("replay.input_bytes"));
     assert!(!wire.stage_limits.contains_key("format.output_bytes"));
+    assert!(!wire
+        .stage_limits
+        .contains_key("certificate_check.max_certificate_bytes"));
     use fsl_foundation::SettingLimits;
     for (setting, bound) in defaults.bounds() {
         let name = setting.name();
@@ -1096,7 +1099,10 @@ fn tc_774_limits_flow_into_the_request_and_refusals_are_ordered() {
         ) {
             continue;
         }
-        assert_eq!(wire.stage_limits.get(name), Some(&bound), "{name}");
+        // This literal oracle is independent of the replay setting predicate.
+        let expected = (!crate::request::REPLAY_WIRE_OMITTED_STAGE_LIMIT_NAMES.contains(&name))
+            .then_some(&bound);
+        assert_eq!(wire.stage_limits.get(name), expected, "{name}");
     }
 
     // The occurrence checks come before the bound check: a non-replayable

@@ -20,7 +20,9 @@ use crate::execute::{process_provider_obligation, BoundEntries, IdentityEncodeEr
 use crate::identity::{DeclaredDomain, DefinitionSourceRef, QualifiedName};
 use crate::limits::CallerLimits;
 use crate::outcome::OutcomeDiagnostic;
-use crate::request::{DependencyEntryWire, ReplayRequestWire, StateEnvironment};
+use crate::request::{
+    is_replay_wire_stage_setting, DependencyEntryWire, ReplayRequestWire, StateEnvironment,
+};
 use crate::spine::{AdmittedModels, CheckedUnit, EmittedUnit};
 use crate::witness::{CanonicalAssignment, ReplaySource};
 use filament_exact::{Identifier, Origin, Role, ScalarLimits, ValueType};
@@ -28,7 +30,7 @@ use filament_semantic_value::catalog::InternalFault;
 use fsl_foundation::bound::ProofBound;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::source::{Source, SourceLabel};
-use fsl_foundation::{BackendId, Code, RequestIndex, Setting, SettingLimits};
+use fsl_foundation::{BackendId, Code, RequestIndex, SettingLimits};
 use fsl_semantics::check::Capability;
 
 /// The occurrence role and ordinal of a function's declaration (ADR-013 O-09).
@@ -138,12 +140,7 @@ impl PluginReplayContext {
         let stage_limits = limits
             .bounds()
             .into_iter()
-            .filter(|(setting, _)| {
-                !matches!(
-                    setting,
-                    Setting::ReplayInputBytes | Setting::FormatOutputBytes
-                )
-            })
+            .filter(|(setting, _)| is_replay_wire_stage_setting(*setting))
             .map(|(setting, bound)| (setting.name().to_owned(), bound))
             .collect();
         Self {
