@@ -287,6 +287,11 @@ fn a_rejected_certificate_never_settles_proved() {
     let record = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
     assert!(record.exact_probabilistic.is_none());
     let terminal = record.terminal().expect("a terminal record");
+    assert!(record.probabilistic_counterexample.is_none());
+    let outcome = serde_json::to_value(fsl_replay::OutcomeItem::from_terminal(terminal))
+        .expect("the inconclusive outcome serializes");
+    assert_eq!(outcome["result"], "inconclusive");
+    assert!(outcome.get("measured").is_none(), "{outcome}");
     let system = ModelSystem::new(world.subject().simulation).expect("the model admits");
     let binding = claim_binding(&system, world.claim("Likely"))
         .unwrap()
