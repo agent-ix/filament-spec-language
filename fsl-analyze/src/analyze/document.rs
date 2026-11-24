@@ -1695,6 +1695,7 @@ pub fn resolve_items(
                 Err(never) => match never {},
             };
             resolved.extend(derived);
+            append_hyper_subject_items(package, subject, registry, &mut resolved);
             resolved
         }
         None => default_items(package, subject, registry, units, binding, limits),
@@ -3214,6 +3215,7 @@ fn default_items(
             Err(never) => match never {},
         };
     resolved.extend(written);
+    append_hyper_subject_items(package, subject, registry, &mut resolved);
     resolved
 }
 
@@ -3227,11 +3229,97 @@ fn derived_items(
     authored: &[ResolvedItem],
     first: usize,
 ) -> Vec<ResolvedItem> {
-    let graph = package.graph();
     // FR-124-AC-12: the subject's items are over the models its universes
     // read, not over every model the unit selects.
     let selections = read_identities(package, binding);
-    let timed = timed_over(package, &selections);
+    derived_items_for_selections(
+        package,
+        subject,
+        registry,
+        authored,
+        first,
+        &selections,
+    )
+}
+
+/// The model subjects named by hyper aliases, each of which contributes its
+/// own derived items after the caller's authored items (FR-173, ADR-023 HM-6).
+fn append_hyper_subject_items(
+    package: &CheckedPackage,
+    subject: &SubjectSelection,
+    registry: &Registry,
+    resolved: &mut Vec<ResolvedItem>,
+) {
+    let graph = package.graph();
+    let mut aliases = BTreeSet::new();
+    for item in resolved.iter() {
+        let ResolvedItem::Claim(claim) = item else {
+            continue;
+        };
+        if claim.item.kind != Capability::TemporalSatisfaction {
+            continue;
+        }
+        if let Some(clause) = graph
+            .hyper_clauses()
+            .iter()
+            .find(|clause| clause.assembled_occurrence() == Some(&claim.item.claim))
+        {
+            aliases.extend(
+                clause
+                    .aliases()
+                    .iter()
+                    .map(|alias| alias.as_str().to_owned()),
+            );
+        }
+    }
+    for alias in aliases {
+        let Some(identity) = graph.model_package_identity(&alias) else {
+            continue;
+        };
+        let root = graph
+            .model_roots()
+            .find(|(selection, _)| selection.identity == identity)
+            .map(|(_, root)| root);
+        if root.as_ref().is_some_and(|root| {
+            resolved.iter().any(|item| {
+                matches!(
+                    item,
+                    ResolvedItem::Claim(claim)
+                        if claim.item.claim.node() == root
+                            && matches!(
+                                &claim.item.form,
+                                Some(ItemForm::Temporal(form))
+                                    if form.item_kind == ItemKind::DeadlockFreedom
+                            )
+                )
+            })
+        }) {
+            continue;
+        }
+        let selections = BTreeSet::from([identity]);
+        let first = resolved.len();
+        let derived = derived_items_for_selections(
+            package,
+            subject,
+            registry,
+            &[],
+            first,
+            &selections,
+        );
+        resolved.extend(derived);
+    }
+}
+
+fn derived_items_for_selections(
+    package: &CheckedPackage,
+    subject: &SubjectSelection,
+    registry: &Registry,
+    authored: &[ResolvedItem],
+    first: usize,
+    selections: &BTreeSet<&str>,
+) -> Vec<ResolvedItem> {
+    let graph = package.graph();
+    let timed = timed_over(package, selections);
     let mut request = fsl_route::model_request::ModelRequest::<()>::new();
     // FSpec FR-368: a model subject has its derived items whether or not the
     // unit authors a clause, so the subject is joined to the derivation

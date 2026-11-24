@@ -372,6 +372,82 @@ fn analyze_hyper_two_model_infinite_trace_proof_is_checked() {
     );
 }
 
+/// FR-173-AC-4 (TC-598): `SavesPower` names the distinct model subjects `V`
+/// and `N`; each subject contributes its own deadlock-freedom request item.
+#[trace("TC-598", "FR-173-AC-4")]
+#[test]
+fn analyze_hyper_saves_power_writes_each_alias_subject_and_its_deadlock_item() {
+    let declaration = "hyper SavesPower using inf over behaviours (d: V::Vault, e: N::Vault) \
+        forall trace s of V forall trace n of N \
+        { always holds(d.l @ s = e.l @ n) }";
+    let (unit, model, other, snapshot) =
+        crate::hyper_world::two_model_request_files((1, 0), declaration);
+    let ws = Workspace::new("hyper-wire-saves-power-derived-subjects");
+    ws.write("other.json", &other);
+    let mut models = crate::analyze_cli_support::request_members(None)["models"].clone();
+    models.as_array_mut().expect("models").push(json!({
+        "format": "semantic-ir/2.0.0",
+        "source": {"file": "other.json", "authority": "test", "identity": "vault-other-model", "document": "VaultOther", "formal_revision": 1}
+    }));
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &model,
+        &[snapshot],
+        json!({"models": models, "items": [{"claim": "SavesPower"}]}),
+    ));
+    let document = run.document();
+    let items = document["items"].as_array().expect("written request items");
+    assert_eq!(items.len(), 3, "{}", run.document());
+    assert_eq!(items[0]["claim_name"], "SavesPower");
+    assert_eq!(
+        items[1]["request"]["temporal"]["item_kind"],
+        "deadlock-freedom"
+    );
+    assert_eq!(
+        items[2]["request"]["temporal"]["item_kind"],
+        "deadlock-freedom"
+    );
+    assert_eq!(
+        items[1]["request"]["claim"]["node"]["package"],
+        "test/vault-other",
+        "{document}"
+    );
+    assert_eq!(
+        items[2]["request"]["claim"]["node"]["package"],
+        "test/vault",
+        "{document}"
+    );
+}
+
+/// FR-173-AC-4 (TC-598): `NonInterference` and `Opaque` both name only `V`,
+/// so their shared model subject contributes one deadlock-freedom item.
+#[trace("TC-598", "FR-173-AC-4")]
+#[test]
+fn analyze_hyper_noninterference_and_opaque_share_one_deadlock_item() {
+    let declarations = format!("{}\n{}", non_interference(EQUAL_INPUTS), opaque(""));
+    let (unit, model, snapshots) =
+        request_files_over_starts(Vault::Secure, false, &STARTS, &declarations);
+    let ws = Workspace::new("hyper-wire-shared-alias-derived-subject");
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &model,
+        &snapshots,
+        json!({"items": [{"claim": "NonInterference"}, {"claim": "Opaque"}]}),
+    ));
+    let document = run.document();
+    let items = document["items"].as_array().expect("written request items");
+    assert_eq!(items.len(), 3, "{}", run.document());
+    assert_eq!(items[0]["claim_name"], "NonInterference");
+    assert_eq!(items[1]["claim_name"], "Opaque");
+    assert_eq!(
+        items[2]["request"]["temporal"]["item_kind"],
+        "deadlock-freedom"
+    );
+    assert_eq!(items[2]["request"]["claim"]["node"]["package"], "test/vault");
+}
+
 /// FR-173-AC-6 (HP-5) through `native-analyze/1`: under the event-position
 /// profile `exists trace b of V { eventually [0, 2] holds(v.l @ b = 1) }`
 /// settles `proved` with a closed witness, and the `h` body settles `refuted`
