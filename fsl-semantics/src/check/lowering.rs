@@ -4555,7 +4555,16 @@ impl<'a> Lowering<'a> {
     ) -> Result<LeafTerm, CheckRefusal> {
         let lowered_type = node.lowered_value_type();
         let result_type = if lowered_type.as_ref() == node.value_type() {
-            self.type_ref(node.value_type(), node.location())?
+            let type_location = if matches!(node.kind(), NodeKind::If { .. }) {
+                node.children()
+                    .into_iter()
+                    .skip(1)
+                    .find(|child| child.lowered_value_type().as_ref() == lowered_type.as_ref())
+                    .map_or(node.location(), |child| child.location())
+            } else {
+                node.location()
+            };
+            self.type_ref(&lowered_type, type_location)?
         } else {
             // The application lowers at the Integer node, so its checked
             // interval has no edge from it. Only an integer division keeps
