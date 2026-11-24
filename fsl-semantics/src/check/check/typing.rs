@@ -298,6 +298,7 @@ enum Frame<'e, 'r> {
     SlotPresence(&'e str, bool, Location),
     Attribute(Box<AttributeFrame<'e>>),
     Application(Box<ApplicationFrame<'e, 'r>>),
+    MinMax(Box<MinMaxFrame<'e>>),
     Record(Box<RecordFrame<'e, 'r>>),
     Collection(Box<CollectionFrame<'e>>),
     Query(Box<QueryFrame<'e>>),
@@ -317,6 +318,14 @@ struct IfFrame<'e, 'r> {
     branches: Branches<'r>,
     location: Location,
     stage: IfStage<'e>,
+}
+
+/// A scalar `min(left, right)` or `max(left, right)` awaiting its operands.
+struct MinMaxFrame<'e> {
+    minimum: bool,
+    second: ExprRef<'e>,
+    location: Location,
+    first: Option<Node>,
 }
 
 #[allow(
@@ -680,6 +689,7 @@ enum AccumulateStage {
         accumulator: Slot,
         binder: Slot,
         source_type: Arc<CollectionType>,
+        previous_min_max_fold_step: bool,
     },
     Identity(Fold),
 }
@@ -2085,6 +2095,22 @@ impl<'a> Typer<'a> {
                 return Ok(Step::Descend(Goal::Infer(source, None, source_location)));
             }
             ExprNode::Call { name, arguments } => {
+                if self.min_max_fold_step && (name.name == "min" || name.name == "max") {
+                    let [first, second] = arguments.as_slice() else {
+                        return Err(mismatch(&location));
+                    };
+                    frames.push(Frame::MinMax(Box::new(MinMaxFrame {
+                        minimum: name.name == "min",
+                        second: expression.at(*second),
+                        location: location.clone(),
+                        first: None,
+                    })));
+                    return Ok(Step::Descend(Goal::Infer(
+                        expression.at(*first),
+                        None,
+                        location.child(0),
+                    )));
+                }
                 if is_option_some_constructor(&name.name) {
                     let [argument] = arguments.as_slice() else {
                         return Err(mismatch(&location));
@@ -3313,6 +3339,7 @@ impl<'a> Typer<'a> {
                 self.upcast(typed, &required, &location).map(Step::Typed)
             }
             Frame::If(frame) => self.accept_if(frame, typed, frames),
+            Frame::MinMax(frame) => self.accept_min_max(frame, typed, frames),
             Frame::Let(frame) => self.accept_let(frame, typed, frames),
             Frame::Case(frame) => self.accept_case(frame, typed, frames),
             Frame::Connective(frame) => Ok(self.accept_connective(frame, typed, frames)),
@@ -3583,6 +3610,45 @@ impl<'a> Typer<'a> {
                 )))
             }
         }
+    }
+
+    fn accept_min_max<'e, 'r>(
+        &mut self,
+        mut frame: Box<MinMaxFrame<'e>>,
+        typed: Node,
+        frames: &mut Vec<Frame<'e, 'r>>,
+    ) -> Result<Step<'e, 'r>, CheckRefusal> {
+        let Some(first) = frame.first.take() else {
+            frame.first = Some(typed);
+            let second = frame.second;
+            let location = frame.location.child(1);
+            frames.push(Frame::MinMax(frame));
+            return Ok(Step::Descend(Goal::Infer(second, None, location)));
+        };
+        if first.value_type != typed.value_type {
+            return Err(mismatch(&typed.location));
+        }
+        let (left, right) = (first, typed);
+        let condition = self.ordering(
+            OrderingOperator::Less,
+            left.clone(),
+            right.clone(),
+            &frame.location,
+        )?;
+        let (then, otherwise) = if frame.minimum {
+            (left.clone(), right)
+        } else {
+            (right, left.clone())
+        };
+        Ok(Step::Typed(node(
+            NodeKind::If {
+                condition: self.push(condition),
+                then: self.push(then),
+                otherwise: self.push(otherwise),
+            },
+            left.value_type,
+            &frame.location,
+        )))
     }
 
     fn accept_let<'e, 'r>(
@@ -4260,6 +4326,8 @@ impl<'a> Typer<'a> {
                     &typed,
                     &frame.location,
                 )?;
+                let previous_min_max_fold_step = self.min_max_fold_step;
+                self.min_max_fold_step = !source_type.kind().is_ordered();
                 let goal = Goal::Infer(
                     frame.step,
                     Some(Cow::Owned(frame.value_type.clone())),
@@ -4270,6 +4338,7 @@ impl<'a> Typer<'a> {
                     accumulator,
                     binder,
                     source_type,
+                    previous_min_max_fold_step,
                 };
                 frames.push(Frame::Accumulate(frame));
                 Ok(Step::Descend(goal))
@@ -4279,7 +4348,9 @@ impl<'a> Typer<'a> {
                 accumulator,
                 binder,
                 source_type,
+                previous_min_max_fold_step,
             } => {
+                self.min_max_fold_step = previous_min_max_fold_step;
                 let raw = typed;
                 self.unbind(2);
                 let catalogued = catalogued_step(&self.body, &raw, accumulator, &frame.value_type);

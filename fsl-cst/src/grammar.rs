@@ -1573,7 +1573,7 @@ fn expressions(g: &mut Grammar) {
         ]),
     );
     g.insert(P::CaseBinder, ident());
-    let args = s(vec![x("("), opt(list(|| r(P::Expression))), x(")")]);
+    let args = || s(vec![x("("), opt(list(|| r(P::Expression))), x(")")]);
     g.insert(
         P::Primary,
         c(vec![
@@ -1670,7 +1670,10 @@ fn expressions(g: &mut Grammar) {
                 r(P::QualifiedName),
                 x(")"),
             ]),
-            s(vec![ident(), args]),
+            // FR-701-AC-3: `max` is a reserved word elsewhere in the
+            // language, but is also the spelling of the Set/Bag fold step.
+            s(vec![x("max"), args()]),
+            s(vec![ident(), args()]),
             // `qualified-name '(' ')'`: the empty call of a qualified name
             // (FSpec FR-339-AC-1). A nonempty one is a `TupleValue` and an
             // unqualified one the identifier call above. It precedes

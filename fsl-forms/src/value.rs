@@ -2150,6 +2150,11 @@ impl<'c> Mapping<'c> {
                 let edge_span = edge_node.span();
                 self.with_children(Shape::Reaches(edge, edge_span), &task, operands)
             }
+            b"max" => self.with_children(
+                Shape::Call(NameForm::new("max", token.span())),
+                &task,
+                operands,
+            ),
             b"convert" | b"allInstances" => {
                 let target = type_form(self.cst, only(items, Production::TypeReference, node)?)?;
                 let shape = if token.spelling() == b"convert" {
