@@ -5,6 +5,7 @@ use crate::prob_world::{self, Model, Operation, World};
 use filament_exact::{Cancel, CancelCause, Integer, Rational};
 use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
 use fsl_eval::simulation::model::ModelSystem;
+use fsl_eval::simulation::TransitionSystem;
 use fsl_foundation::RequestIndex;
 use fsl_replay::{
     check_probability_certificate_document, read_long_run_probability_certificate,
@@ -397,9 +398,8 @@ fn reachable_undefined_predicate_retains_its_family_cause() {
 
 #[trace("TC-1401", "FR-201-AC-30")]
 #[test]
-fn every_scheduler_and_finite_profile_claims_issue_no_long_run_document() {
+fn finite_profile_claims_issue_no_long_run_document() {
     for source in [
-        "probabilistic Unsupported using inf on M over (s: M::Server) under every scheduler on origin { long_run_fraction holds(s.phase = 0) >= rational(1,2) }",
         "probabilistic Unsupported using ev on M over (s: M::Server) under Steady on origin { long_run_fraction holds(s.phase = 0) >= rational(1,2) }",
     ] {
         let world=World::new(&prob_world::service(source));
@@ -408,6 +408,30 @@ fn every_scheduler_and_finite_profile_claims_issue_no_long_run_document() {
         assert_eq!(disposed.kind,fsl_analyze::analyze::DispositionKind::Unsupported);
         assert!(records[0].terminal().is_none());assert!(records[0].exact_probabilistic.is_none());
     }
+}
+
+/// FR-411-AC-18: no `Every`-scheduler long-run request settles unsupported for
+/// naming `Every`; a violated bound settles refuted by its scheduler witness
+/// rather than issuing a proof document.
+#[trace("FSpec-TC-362", "FSpec-FR-411-AC-18")]
+#[test]
+fn every_scheduler_long_run_claims_settle_instead_of_unsupported() {
+    let source = "probabilistic Settles using inf on M over (s: M::Server) under every scheduler on origin { long_run_fraction holds(s.phase = 0) >= rational(1,2) }";
+    let world = World::new(&prob_world::service(source));
+    let records = analyze_items(
+        &Engines::fsl().unwrap(),
+        vec![exact_probabilistic_item(
+            RequestIndex::new(0),
+            world.request("Settles", ModelCheckLimits::default()),
+        )],
+        &Cancel::new(),
+    );
+    let terminal = records[0]
+        .terminal()
+        .unwrap_or_else(|| panic!("expected a settlement: {:?}", records[0].settlement));
+    assert_eq!(terminal.value(), &fsl_replay::TerminalValue::Refuted);
+    assert!(terminal.exact_certificate_document().is_none());
+    assert!(records[0].probabilistic_counterexample.is_some());
 }
 
 #[trace("TC-1401", "FR-201-AC-30")]
@@ -610,4 +634,554 @@ fn conflicting_identity_precedes_source_provision_and_compilation() {
         matches!(check(&bytes), Err(ProbabilitySourceError::SourceMismatch)),
         "matching identity must reach the missing provision control"
     );
+}
+
+fn every_claim(name: &str, predicate: &str, bound: &str) -> String {
+    format!("probabilistic {name} using inf on M over (s: M::Server) under every scheduler on origin {{ long_run_fraction holds({predicate}) {bound} }}\n")
+}
+
+/// `go` leaves the initial phase 0 for phase 1, where `stay` loops: phase 0 is
+/// transient, phase 1 the only end component.
+fn drift() -> World {
+    let package = "test/longrun-drift";
+    let claims = [
+        every_claim("Min", "s.phase = 1", ">= rational(1,2)"),
+        every_claim("Max", "s.phase = 0", "<= rational(1,2)"),
+    ]
+    .concat();
+    World::new(&Model {
+        package,
+        object: "Server",
+        population: "servers",
+        key: "s",
+        integers: vec![("Phase", 0, 1)],
+        fields: vec![("phase", format!("ix://{package}/Phase"))],
+        operations: vec![
+            Operation {
+                name: "go",
+                parameters: vec![],
+                modifies: vec!["phase"],
+                deletes: false,
+            },
+            Operation {
+                name: "stay",
+                parameters: vec![],
+                modifies: vec!["phase"],
+                deletes: false,
+            },
+        ],
+        body: format!(
+            "pre Start using v on M::Server::go {{ self.phase = 0 }}\n\
+             post Went using v on M::Server::go {{ self.phase = 1 }}\n\
+             pre Rest using v on M::Server::stay {{ self.phase = 1 }}\n\
+             post Stayed using v on M::Server::stay {{ self.phase = 1 }}\n{claims}"
+        ),
+        initial: serde_json::json!({"phase": {"integer": "0"}}),
+    })
+}
+
+fn rejection(
+    world: &World,
+    name: &str,
+    document: &serde_json::Value,
+) -> ExactProbabilityCertificateCheck {
+    let bytes = serde_json::to_vec(document).unwrap();
+    check(world, name, &bytes, &Cancel::new(), limits()).unwrap()
+}
+
+fn malformed_policy() -> ExactProbabilityCertificateCheck {
+    use fsl_replay::{
+        ProbabilityCertificateLocus, ProbabilityCertificateRejection, ProbabilityCertificateRule,
+    };
+    ExactProbabilityCertificateCheck::Rejected(ProbabilityCertificateRejection {
+        rule: ProbabilityCertificateRule::Malformed,
+        at: ProbabilityCertificateLocus::Member("policy"),
+    })
+}
+
+#[trace("FSpec-TC-362", "FSpec-FR-412-AC-26", "FSpec-FR-411-AC-18")]
+#[test]
+fn an_every_scheduler_long_run_proof_carries_per_component_policy_rows() {
+    let world = drift();
+    for (name, optimization) in [("Min", "minimum"), ("Max", "maximum")] {
+        let bytes = produce(&world, name);
+        let original: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(original["objective"]["optimization"], optimization);
+        assert_eq!(original["components"].as_array().unwrap().len(), 1);
+        let policy = original["components"][0]["policy"].as_array().unwrap();
+        assert_eq!(policy.len(), 1, "one row per state of the component");
+        assert!(matches!(
+            check(&world, name, &bytes, &Cancel::new(), limits()).unwrap(),
+            ExactProbabilityCertificateCheck::Accepted(_)
+        ));
+        let row = policy[0].clone();
+        // The policy removed, a row for a state outside the component, a
+        // duplicated row, and a choice that is no action of its state.
+        let mut removed = original.clone();
+        removed["components"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("policy");
+        assert_eq!(rejection(&world, name, &removed), malformed_policy());
+        let outside = original["values"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value["state"].clone())
+            .find(|state| *state != row["state"])
+            .expect("the transient state");
+        let mut foreign = original.clone();
+        foreign["components"][0]["policy"] = serde_json::json!([
+            {"state": outside, "choice": row["choice"]},
+            row
+        ]);
+        let mut foreign_rows = foreign["components"][0]["policy"]
+            .as_array()
+            .unwrap()
+            .clone();
+        foreign_rows.sort_by(|a, b| a["state"].as_str().cmp(&b["state"].as_str()));
+        foreign["components"][0]["policy"] = serde_json::Value::Array(foreign_rows);
+        assert_eq!(rejection(&world, name, &foreign), malformed_policy());
+        let mut duplicated = original.clone();
+        duplicated["components"][0]["policy"] = serde_json::json!([row.clone(), row.clone()]);
+        assert_eq!(rejection(&world, name, &duplicated), malformed_policy());
+        let mut unnamed = original.clone();
+        unnamed["components"][0]["policy"][0]["choice"] = serde_json::json!(["terminal-stutter"]);
+        assert_eq!(rejection(&world, name, &unnamed), malformed_policy());
+    }
+}
+
+#[trace("FSpec-TC-362", "FSpec-FR-412-AC-26")]
+#[test]
+fn an_every_scheduler_long_run_proof_checks_the_gain_bias_inequalities_and_workload_has_no_policy()
+{
+    use fsl_replay::{
+        ProbabilityCertificateLocus, ProbabilityCertificateRejection, ProbabilityCertificateRule,
+    };
+    let world = availability_with_claims(
+        [
+            every_claim("EveryLower", "s.phase = 0", ">= rational(1800,1801)"),
+            every_claim("EveryUpper", "s.phase = 0", "<= rational(1800,1801)"),
+            claim("Lower", "s.phase = 0", ">= rational(1800,1801)"),
+        ]
+        .concat(),
+        "",
+    );
+    for name in ["EveryLower", "EveryUpper"] {
+        let bytes = produce(&world, name);
+        let original: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(
+            original["components"][0]["policy"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert!(matches!(
+            check(&world, name, &bytes, &Cancel::new(), limits()).unwrap(),
+            ExactProbabilityCertificateCheck::Accepted(_)
+        ));
+        // One bias moved by 1/1000 fails its equality at that state.
+        let mut changed = original.clone();
+        changed["components"][0]["bias"][1]["value"] =
+            serde_json::json!({"numerator": "-2000001", "denominator": "1801000"});
+        assert!(
+            matches!(
+                rejection(&world, name, &changed),
+                ExactProbabilityCertificateCheck::Rejected(ProbabilityCertificateRejection {
+                    rule: ProbabilityCertificateRule::InequalityFails,
+                    at: ProbabilityCertificateLocus::ProductState(_),
+                })
+            ),
+            "{name}: a moved bias fails an equality at a state"
+        );
+    }
+    // Under a workload a policy is rejected, and without one the document is
+    // accepted.
+    let bytes = produce(&world, "Lower");
+    assert!(matches!(
+        check(&world, "Lower", &bytes, &Cancel::new(), limits()).unwrap(),
+        ExactProbabilityCertificateCheck::Accepted(_)
+    ));
+    let mut workload: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    workload["components"][0]["policy"] = serde_json::json!([]);
+    assert_eq!(rejection(&world, "Lower", &workload), malformed_policy());
+}
+
+/// A one-object automaton over `phase` in `0..phases`: operation `name` moves
+/// phase `from` to phase `to`, deterministically. The model starts at phase 0.
+fn automaton(
+    package: &'static str,
+    phases: i64,
+    ops: &[(&'static str, i64, i64)],
+    claims: String,
+) -> World {
+    let mut body = String::new();
+    for (name, from, to) in ops {
+        body.push_str(&format!(
+            "pre Pre_{name} using v on M::Server::{name} {{ self.phase = {from} }}\n\
+             post Post_{name} using v on M::Server::{name} {{ self.phase = {to} }}\n"
+        ));
+    }
+    body.push_str(&claims);
+    World::new(&Model {
+        package,
+        object: "Server",
+        population: "servers",
+        key: "s",
+        integers: vec![("Phase", 0, phases - 1)],
+        fields: vec![("phase", format!("ix://{package}/Phase"))],
+        operations: ops
+            .iter()
+            .map(|(name, _, _)| Operation {
+                name,
+                parameters: vec![],
+                modifies: vec!["phase"],
+                deletes: false,
+            })
+            .collect(),
+        body,
+        initial: serde_json::json!({"phase": {"integer": "0"}}),
+    })
+}
+
+/// The state operation `op` reaches from `state`, with its scheduled action.
+fn apply(
+    world: &World,
+    state: &fsl_eval::simulation::model::ModelSimState,
+    op: &str,
+) -> (
+    fsl_eval::simulation::model::ModelSimState,
+    fsl_replay::ProductAction,
+) {
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let action = system
+        .actions(state)
+        .unwrap()
+        .unwrap()
+        .into_iter()
+        .find(|action| action.identity.operation.contains(op))
+        .unwrap_or_else(|| panic!("{op} is enabled"));
+    let post = action.draws[0].successors[0].1.clone();
+    (
+        post,
+        fsl_replay::ProductAction::Identity(
+            fsl_replay::Schedule::of(&system, &action.identity).unwrap(),
+        ),
+    )
+}
+
+fn product_key(
+    world: &World,
+    name: &str,
+    state: &fsl_eval::simulation::model::ModelSimState,
+) -> fsl_replay::ProbabilityProductKey {
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let binding = fsl_replay::claim_binding(&system, world.claim(name))
+        .unwrap()
+        .unwrap();
+    let raw = system.state_key(state).unwrap().0;
+    fsl_replay::ProbabilityProductKey::for_model_state(Some(&binding.reference), &raw).unwrap()
+}
+
+/// One claimed component: its states, value, bias per state and policy.
+struct Claimed {
+    rho: Rational,
+    rows: Vec<(
+        fsl_replay::ProbabilityProductKey,
+        Rational,
+        fsl_replay::ProductAction,
+    )>,
+}
+
+/// The document a producer that pinned component states would write, written
+/// as a forged proof for `name`, and its check.
+fn forged(
+    world: &World,
+    name: &str,
+    values: Vec<(fsl_replay::ProbabilityProductKey, Rational)>,
+    components: Vec<Claimed>,
+) -> ExactProbabilityCertificateCheck {
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let item = fsl_replay::probabilistic_claim_identity(world.claim(name)).unwrap();
+    let claims = world.package.graph().probabilistic_model().claims();
+    let mut values = values
+        .into_iter()
+        .map(|(state, value)| fsl_replay::ExactProbabilityValue { state, value })
+        .collect::<Vec<_>>();
+    values.sort_by(|a, b| a.state.cmp(&b.state));
+    let mut components = components
+        .into_iter()
+        .map(|claimed| {
+            let mut rows = claimed.rows;
+            rows.sort_by(|a, b| a.0.cmp(&b.0));
+            fsl_replay::LongRunProbabilityComponent {
+                value: claimed.rho.clone(),
+                gain: claimed.rho,
+                bias: rows
+                    .iter()
+                    .map(|(state, bias, _)| fsl_replay::ExactProbabilityValue {
+                        state: state.clone(),
+                        value: bias.clone(),
+                    })
+                    .collect(),
+                policy: Some(
+                    rows.into_iter()
+                        .map(|(state, _, choice)| fsl_replay::LongRunPolicyRow { state, choice })
+                        .collect(),
+                ),
+            }
+        })
+        .collect::<Vec<_>>();
+    components.sort_by(|a, b| a.bias[0].state.cmp(&b.bias[0].state));
+    let document = fsl_replay::long_run_probability_certificate_document(
+        &system,
+        claims,
+        &item,
+        values,
+        components,
+        limits(),
+        &Cancel::new(),
+    )
+    .unwrap();
+    let bytes =
+        write_long_run_probability_certificate(&document, limits(), &Cancel::new()).unwrap();
+    check(world, name, &bytes, &Cancel::new(), limits()).unwrap()
+}
+
+fn failed_at(check: &ExactProbabilityCertificateCheck) -> bool {
+    use fsl_replay::{
+        ProbabilityCertificateLocus, ProbabilityCertificateRejection, ProbabilityCertificateRule,
+    };
+    matches!(
+        check,
+        ExactProbabilityCertificateCheck::Rejected(ProbabilityCertificateRejection {
+            rule: ProbabilityCertificateRule::InequalityFails,
+            at: ProbabilityCertificateLocus::ProductState(_),
+        })
+    )
+}
+
+fn refuted_by_analysis(world: &World, name: &str) -> bool {
+    let records = analyze_items(
+        &Engines::fsl().unwrap(),
+        vec![exact_probabilistic_item(
+            RequestIndex::new(0),
+            world.request(name, ModelCheckLimits::default()),
+        )],
+        &Cancel::new(),
+    );
+    records[0].terminal().map(|t| t.value()) == Some(&fsl_replay::TerminalValue::Refuted)
+}
+
+/// A component state may leave for a better component: phase 0 loops on
+/// `stay0` or leaves by `go` for phase 1, which loops on `stay`.
+#[trace("FSpec-TC-362", "FSpec-FR-412-AC-26", "FSpec-FR-411-AC-18")]
+#[test]
+fn a_component_state_may_leave_for_a_better_component_and_a_pinned_value_is_rejected() {
+    let claims = [
+        every_claim("Max", "s.phase = 1", "<= rational(1,2)"),
+        every_claim("Min", "s.phase = 1", ">= rational(1,2)"),
+    ]
+    .concat();
+    let world = automaton(
+        "test/longrun-leave",
+        2,
+        &[("idle0", 0, 0), ("go", 0, 1), ("park", 1, 1)],
+        claims,
+    );
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let zero_state = system.initial()[0].clone();
+    let (one_state, go) = apply(&world, &zero_state, "go");
+    let (_, stay0) = apply(&world, &zero_state, "idle0");
+    let (_, stay) = apply(&world, &one_state, "park");
+    let key = |name: &str, state| product_key(&world, name, state);
+    let zero = ratio(0, 1);
+    let one = ratio(1, 1);
+    // The true maximum is 1: phase 0 goes to phase 1. A certificate that pins
+    // phase 0 to its own component's value 0 would prove `<= 1/2`.
+    let pinned = forged(
+        &world,
+        "Max",
+        vec![
+            (key("Max", &zero_state), zero.clone()),
+            (key("Max", &one_state), one.clone()),
+        ],
+        vec![
+            Claimed {
+                rho: zero.clone(),
+                rows: vec![(key("Max", &zero_state), zero.clone(), stay0.clone())],
+            },
+            Claimed {
+                rho: one.clone(),
+                rows: vec![(key("Max", &one_state), zero.clone(), stay.clone())],
+            },
+        ],
+    );
+    assert!(failed_at(&pinned), "{pinned:?}");
+    // Likewise the true minimum is 0 (phase 0 stays), not 1: pinning phase 0
+    // to the better component's value is rejected under `minimum`.
+    let min_pinned = forged(
+        &world,
+        "Min",
+        vec![
+            (key("Min", &zero_state), one.clone()),
+            (key("Min", &one_state), one.clone()),
+        ],
+        vec![
+            Claimed {
+                rho: zero.clone(),
+                rows: vec![(key("Min", &zero_state), zero.clone(), stay0)],
+            },
+            Claimed {
+                rho: one.clone(),
+                rows: vec![(key("Min", &one_state), zero.clone(), stay)],
+            },
+        ],
+    );
+    assert!(failed_at(&min_pinned), "{min_pinned:?}");
+    // The analyzer solves the quotient: both claims are refuted, by the
+    // scheduler that goes and the one that stays.
+    assert!(refuted_by_analysis(&world, "Max"));
+    assert!(refuted_by_analysis(&world, "Min"));
+    let _ = go;
+}
+
+/// Under `minimum` a component state may leave for a WORSE component: phase 0
+/// (value 1 inside its own component) can go to phase 1 (value 0), so the true
+/// minimum from phase 0 is 0 and a pinned v(0) = 1 must be rejected.
+#[trace("FSpec-TC-362", "FSpec-FR-412-AC-26", "FSpec-FR-411-AC-18")]
+#[test]
+fn under_minimum_a_component_state_may_leave_for_a_worse_component_and_a_pinned_value_is_rejected()
+{
+    let world = automaton(
+        "test/longrun-leave-worse",
+        2,
+        &[("idle0", 0, 0), ("go", 0, 1), ("park", 1, 1)],
+        every_claim("MinW", "s.phase = 0", ">= rational(1,2)"),
+    );
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let zero_state = system.initial()[0].clone();
+    let (one_state, _) = apply(&world, &zero_state, "go");
+    let (_, stay0) = apply(&world, &zero_state, "idle0");
+    let (_, stay) = apply(&world, &one_state, "park");
+    let key = |state| product_key(&world, "MinW", state);
+    let pinned = forged(
+        &world,
+        "MinW",
+        vec![
+            (key(&zero_state), ratio(1, 1)),
+            (key(&one_state), ratio(0, 1)),
+        ],
+        vec![
+            Claimed {
+                rho: ratio(1, 1),
+                rows: vec![(key(&zero_state), ratio(0, 1), stay0)],
+            },
+            Claimed {
+                rho: ratio(0, 1),
+                rows: vec![(key(&one_state), ratio(0, 1), stay)],
+            },
+        ],
+    );
+    assert!(failed_at(&pinned), "{pinned:?}");
+    assert!(refuted_by_analysis(&world, "MinW"));
+}
+
+/// FR-412-AC-26's component `C` of two states `u`, `v`: `u` has actions `a`
+/// (to `v`) and `b` (to `u`), `v` returns to `u` by `c`. The maximum fraction
+/// of `v` is 1/2, by `a`.
+fn uv(claims: String) -> World {
+    automaton(
+        "test/longrun-uv",
+        2,
+        &[("toV", 0, 1), ("keepU", 0, 0), ("toU", 1, 0)],
+        claims,
+    )
+}
+
+#[trace("FSpec-TC-362", "FSpec-FR-412-AC-26")]
+#[test]
+fn equalities_under_the_policy_do_not_suffice_when_another_action_breaks_an_inequality() {
+    let world = uv([
+        every_claim("Holds", "s.phase = 1", "<= rational(1,2)"),
+        every_claim("Fails", "s.phase = 1", "<= rational(1,4)"),
+    ]
+    .concat());
+    // The analyzer's proof of the maximum 1/2 is accepted.
+    let bytes = produce(&world, "Holds");
+    assert!(matches!(
+        check(&world, "Holds", &bytes, &Cancel::new(), limits()).unwrap(),
+        ExactProbabilityCertificateCheck::Accepted(_)
+    ));
+    assert!(refuted_by_analysis(&world, "Fails"));
+    // Gain 0 with the policy `b` at `u` and `c` at `v` satisfies every equality
+    // (u: h = 0 + h, v: h = 1 + h(u)), yet action `a` at `u` breaks the
+    // inequality h(u) >= h(v): the pair is not the maximum, and a document
+    // claiming `<= 1/4` from it is rejected.
+    let system = ModelSystem::new(world.subject().simulation).unwrap();
+    let u = system.initial()[0].clone();
+    let (v, _) = apply(&world, &u, "toV");
+    let (_, b) = apply(&world, &u, "keepU");
+    let (_, c) = apply(&world, &v, "toU");
+    let key = |state| product_key(&world, "Fails", state);
+    let (ku, kv) = (key(&u), key(&v));
+    let (bias_u, bias_v) = if ku < kv {
+        (ratio(0, 1), ratio(1, 1))
+    } else {
+        (ratio(-1, 1), ratio(0, 1))
+    };
+    let broken = forged(
+        &world,
+        "Fails",
+        vec![(ku.clone(), ratio(0, 1)), (kv.clone(), ratio(0, 1))],
+        vec![Claimed {
+            rho: ratio(0, 1),
+            rows: vec![(ku, bias_u, b), (kv, bias_v, c)],
+        }],
+    );
+    assert!(failed_at(&broken), "{broken:?}");
+}
+
+/// FR-411-AC-18's `Pair`: an initial choice between a component `C1` (phases
+/// 1, 2; fraction 1/2) and `C2` (phases 3 to 6; fraction 3/4), one action per
+/// state in each. `>= 3/4` is refuted, `<= 3/4` proved.
+#[trace("FSpec-TC-362", "FSpec-FR-411-AC-18")]
+#[test]
+fn pair_settles_ge_three_quarters_refuted_and_le_three_quarters_proved() {
+    let claims = [
+        every_claim("Ge", "s.phase = 2 or s.phase >= 4", ">= rational(3,4)"),
+        every_claim("Le", "s.phase = 2 or s.phase >= 4", "<= rational(3,4)"),
+    ]
+    .concat();
+    let world = automaton(
+        "test/longrun-pair",
+        7,
+        &[
+            ("pick1", 0, 1),
+            ("pick2", 0, 3),
+            ("c1a", 1, 2),
+            ("c1b", 2, 1),
+            ("c2a", 3, 4),
+            ("c2b", 4, 5),
+            ("c2c", 5, 6),
+            ("c2d", 6, 3),
+        ],
+        claims,
+    );
+    let bytes = produce(&world, "Le");
+    let proof = read_long_run_probability_certificate(&bytes, limits(), &Cancel::new()).unwrap();
+    assert_eq!(proof.components.len(), 2);
+    let mut values = proof
+        .components
+        .iter()
+        .map(|component| component.value.clone())
+        .collect::<Vec<_>>();
+    values.sort();
+    assert_eq!(values, vec![ratio(1, 2), ratio(3, 4)]);
+    assert!(matches!(
+        check(&world, "Le", &bytes, &Cancel::new(), limits()).unwrap(),
+        ExactProbabilityCertificateCheck::Accepted(_)
+    ));
+    assert!(refuted_by_analysis(&world, "Ge"));
 }

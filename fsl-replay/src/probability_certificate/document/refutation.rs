@@ -477,12 +477,14 @@ pub(in crate::probability_certificate) fn check(
     } else {
         match scheduled_choices(
             system,
-            &subject,
+            &subject.graph,
+            subject.reference.as_ref(),
             scheduler,
             limits,
             cancel,
             &mut meter,
             &mut storage,
+            None,
         )? {
             Some(choices) => choices,
             None => return Ok(SubsystemRefutationCheck::SchedulerRefused),
@@ -813,14 +815,18 @@ pub(in crate::probability_certificate) fn admit_subsystem(
 /// meter and storage. `None` when a row is not an enabled identity choice at
 /// a state the walk reaches, a reached choice state has no row, or a row
 /// names a state the walk never reaches.
-fn scheduled_choices(
+pub(super) fn scheduled_choices(
     system: &ModelSystem<'_>,
-    subject: &Subject,
+    graph: &CheckerGraph,
+    reference: Option<&ObjectReference>,
     rows: &[(ProbabilityProductKey, crate::ProductAction)],
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
     meter: &mut filament_exact::Meter,
     storage: &mut u64,
+    mut enabled: Option<
+        &mut BTreeMap<ProbabilityProductKey, Vec<fsl_eval::simulation::model::ScheduledIdentity>>,
+    >,
 ) -> Result<Option<BTreeMap<ProbabilityProductKey, usize>>, ProbabilityDocumentError> {
     let identity = fsl_foundation::IdentityLimits::default();
     let mut wanted = BTreeMap::new();
@@ -837,7 +843,6 @@ fn scheduled_choices(
         }
         wanted.insert(key, schedule);
     }
-    let reference = subject.reference.as_ref();
     let key_of = |state: &ModelSimState,
                   meter: &mut filament_exact::Meter,
                   storage: &mut u64|
@@ -867,8 +872,7 @@ fn scheduled_choices(
     let mut pending = VecDeque::from([(root, initial.clone())]);
     while let Some((key, state)) = pending.pop_front() {
         super::super::reward::visit(cancel, meter)?;
-        let checked = subject
-            .graph
+        let checked = graph
             .states
             .get(&key)
             .ok_or(ProbabilityDocumentError::Malformed)?;
@@ -890,6 +894,17 @@ fn scheduled_choices(
                     ))
                 })?
         };
+        if let Some(enabled) = enabled.as_mut() {
+            // Every enabled identity at the state, in action order, so a
+            // fairness check can read what a scheduler left untaken.
+            enabled.insert(
+                key.clone(),
+                actions
+                    .iter()
+                    .map(|action| action.identity.clone())
+                    .collect(),
+            );
+        }
         let mut index = None;
         for (position, action) in actions.iter().enumerate() {
             super::super::reward::visit(cancel, meter)?;
@@ -920,4 +935,91 @@ fn scheduled_choices(
         return Ok(None);
     }
     Ok(Some(chosen))
+}
+
+/// The canonical schedule of every enabled action at every state the actions
+/// of the graph reach, in action order: what a policy row's choice names.
+/// States with no action (a terminal stutter) have no entry.
+pub(super) fn enabled_schedules(
+    system: &ModelSystem<'_>,
+    graph: &CheckerGraph,
+    reference: Option<&ObjectReference>,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
+) -> Result<BTreeMap<ProbabilityProductKey, Vec<crate::Schedule>>, ProbabilityDocumentError> {
+    let identity = fsl_foundation::IdentityLimits::default();
+    let key_of = |state: &ModelSimState,
+                  meter: &mut filament_exact::Meter,
+                  storage: &mut u64|
+     -> Result<ProbabilityProductKey, ProbabilityDocumentError> {
+        let mut admission =
+            ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
+        let encoded = (|| {
+            let bytes =
+                system.state_key_bytes_with_budget(state, identity, &mut admission, cancel)?;
+            ProbabilityProductKey::for_model_state_with_budget(
+                reference,
+                &bytes,
+                identity,
+                &mut admission,
+                cancel,
+            )
+        })();
+        encoded.map_err(|error| admission.refusal(error))
+    };
+    let initials = system.initial();
+    let [initial] = initials.as_slice() else {
+        return Err(ExactProbabilityGraphError::UnsupportedInitial.into());
+    };
+    let root = key_of(initial, meter, storage)?;
+    let mut schedules = BTreeMap::new();
+    let mut seen = BTreeSet::from([root.clone()]);
+    let mut pending = VecDeque::from([(root, initial.clone())]);
+    while let Some((key, state)) = pending.pop_front() {
+        super::super::reward::visit(cancel, meter)?;
+        let checked = graph
+            .states
+            .get(&key)
+            .ok_or(ProbabilityDocumentError::Malformed)?;
+        if checked.choices.is_empty() {
+            continue;
+        }
+        let actions = {
+            let mut admission =
+                ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
+            system
+                .actions_with_budget(&state, identity, &mut admission, cancel)
+                .map_err(|error| admission.expansion_refusal(error))?
+                .map_err(|_| {
+                    ProbabilityDocumentError::Build(Box::new(
+                        crate::ExactProbBuildIssue::UndecidedSuccessor,
+                    ))
+                })?
+        };
+        let mut row = Vec::with_capacity(actions.len());
+        for action in &actions {
+            super::super::reward::visit(cancel, meter)?;
+            row.push(
+                crate::Schedule::of(system, &action.identity)
+                    .map_err(|_| ProbabilityDocumentError::Unsupported)?,
+            );
+            for draw in &action.draws {
+                super::super::reward::visit(cancel, meter)?;
+                if draw.probability == rational(0) {
+                    continue;
+                }
+                let [(_, post)] = draw.successors.as_slice() else {
+                    return Err(ProbabilityDocumentError::Unsupported);
+                };
+                let next = key_of(post, meter, storage)?;
+                if seen.insert(next.clone()) {
+                    pending.push_back((next, post.clone()));
+                }
+            }
+        }
+        schedules.insert(key, row);
+    }
+    Ok(schedules)
 }

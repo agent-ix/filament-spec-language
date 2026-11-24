@@ -60,7 +60,7 @@ impl<'a> Control<'a> {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(super) struct Record {
+pub(crate) struct Record {
     kind: FairnessKind,
     granularity: FairnessGranularity,
     declaration: NodeKey,
@@ -324,6 +324,21 @@ pub(super) fn checked_with_control(
     control: &Control<'_>,
 ) -> Result<Vec<Record>, ProbabilityDocumentError> {
     admit(claim)?;
+    records(system, claim, limits, cancel, meter, storage, control)
+}
+
+/// The claim's fairness set as canonical, sorted and de-duplicated records,
+/// for a form that has already been admitted by its own profile.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn records(
+    system: &ModelSystem<'_>,
+    claim: &CheckedProbabilisticClaim,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+    meter: &mut filament_exact::Meter,
+    storage: &mut u64,
+    control: &Control<'_>,
+) -> Result<Vec<Record>, ProbabilityDocumentError> {
     let mut cx = Admission {
         limits,
         cancel,

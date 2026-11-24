@@ -89,8 +89,15 @@ pub struct LongRunResult {
     pub components: Vec<ComponentValue>,
     /// Exact value for each product state, including its eventual component.
     pub values: Vec<ExtRational>,
-    /// Selected action per state for MDP products; absent for workloads.
+    /// Selected action per state for MDP products; absent for workloads. It is
+    /// a deterministic stationary scheduler that attains `values`: a component
+    /// state whose optimum leaves its component takes the exit, and the rest of
+    /// the component heads for it.
     pub policy: Option<Vec<Option<usize>>>,
+    /// Over every scheduler, the action each component state takes to realise
+    /// its own component's value inside it (the policy its gain–bias pair
+    /// belongs to); absent for workloads.
+    pub component_policy: Option<Vec<Option<usize>>>,
     /// Gain–bias equations per recurrent component.
     pub gain_bias: Vec<GainBias>,
 }
@@ -874,6 +881,7 @@ pub fn decide_long_run_workload(
         components,
         values: values.into_iter().map(ExtRational::Finite).collect(),
         policy: None,
+        component_policy: None,
         gain_bias,
     })
 }
@@ -895,13 +903,11 @@ pub fn decide_long_run_mdp(
     if mecs.is_empty() {
         return Err(UnboundedError::InvalidState);
     }
-    let mut fixed = vec![None; predicate.len()];
     let mut selected_policy = vec![None; predicate.len()];
     let mut components = Vec::new();
     let mut gain_bias = Vec::new();
-    let mut policy_iterations = 0_u64;
     for component in mecs {
-        let (rho, component_policy, bias, rounds) = optimize_mec_fraction(
+        let (rho, component_policy, bias, _) = optimize_mec_fraction(
             &graph,
             &component,
             predicate,
@@ -910,9 +916,7 @@ pub fn decide_long_run_mdp(
             limits.max_policy_iterations,
             limits.max_rational_bits,
         )?;
-        policy_iterations = policy_iterations.saturating_add(rounds);
         for state in &component {
-            fixed[*state] = Some(rho.clone());
             selected_policy[*state] = component_policy[*state];
         }
         components.push(ComponentValue {
@@ -929,26 +933,241 @@ pub fn decide_long_run_mdp(
                 .collect(),
         });
     }
-    let mut initial = selected_policy.clone();
-    for (state, choices) in graph.choices.iter().enumerate() {
-        if initial[state].is_none() && !choices.is_empty() {
-            initial[state] = Some(0);
-        }
-    }
-    let (values, policy, _) = policy_iteration(
+    // A component state may do better by leaving its component for another, so
+    // its value is not its component's alone: solve the quotient.
+    let (values, policy) = solve_long_run_quotient(
         &graph,
-        &fixed,
+        &components,
+        &selected_policy,
         objective,
         limits.max_policy_iterations,
-        initial,
         limits.max_rational_bits,
     )?;
     Ok(LongRunResult {
         components,
         values: values.into_iter().map(ExtRational::Finite).collect(),
         policy: Some(policy),
+        component_policy: Some(selected_policy),
         gain_bias,
     })
+}
+
+/// The optimal long-run value of every state over every scheduler, by strategy
+/// iteration on the de Alfaro quotient: each maximal end component collapses
+/// to one node whose options are to stay (value `rho`, a fixed absorbing
+/// node) or to take any action that leaves the component, and every other
+/// state keeps its actions. No policy of the quotient cycles forever, since a
+/// closed cycle of components would be a larger end component. Returns the
+/// values and a deterministic stationary scheduler attaining them.
+fn solve_long_run_quotient(
+    graph: &Graph<'_>,
+    components: &[ComponentValue],
+    component_policy: &[Option<usize>],
+    objective: UnboundedObjective,
+    max_iterations: u64,
+    max_rational_bits: u64,
+) -> Result<(Vec<Rational>, Vec<Option<usize>>), UnboundedError> {
+    let count = graph.product.states.len();
+    let mecs = components.len();
+    // Node ids: a state outside every component is its own node; component `m`
+    // is node `count + m`; its absorbing "stay" node is `count + mecs + m`.
+    let mut node_of = (0..count).collect::<Vec<_>>();
+    let mut members = Vec::with_capacity(mecs);
+    for (m, component) in components.iter().enumerate() {
+        let states = component
+            .states
+            .iter()
+            .map(|state| state.index())
+            .collect::<Vec<_>>();
+        for state in &states {
+            node_of[*state] = count + m;
+        }
+        members.push(states);
+    }
+    let nodes = count + 2 * mecs;
+    let merged = |choice: &Choice<'_>| {
+        let mut sums = std::collections::BTreeMap::<usize, Rational>::new();
+        for edge in &choice.edges {
+            let entry = sums.entry(node_of[edge.to.index()]).or_insert_with(zero);
+            *entry = entry.add(&edge.probability);
+        }
+        sums.into_iter().collect::<Vec<_>>()
+    };
+    // Per node, its actions as successor distributions, and where each came
+    // from: a state's own choice, or (for a component node) an exit.
+    let mut actions: Vec<Vec<Vec<(usize, Rational)>>> = vec![Vec::new(); nodes];
+    let mut origin: Vec<Vec<Option<(usize, usize)>>> = vec![Vec::new(); nodes];
+    for state in 0..count {
+        if node_of[state] != state {
+            continue;
+        }
+        for (index, choice) in graph.choices[state].iter().enumerate() {
+            actions[state].push(merged(choice));
+            origin[state].push(Some((state, index)));
+        }
+    }
+    let mut fixed = vec![None; nodes];
+    for (m, states) in members.iter().enumerate() {
+        let node = count + m;
+        actions[node].push(vec![(count + mecs + m, one())]);
+        origin[node].push(None);
+        fixed[count + mecs + m] = Some(components[m].rho.clone());
+        for state in states {
+            for (index, choice) in graph.choices[*state].iter().enumerate() {
+                if choice
+                    .edges
+                    .iter()
+                    .any(|edge| node_of[edge.to.index()] != node)
+                {
+                    actions[node].push(merged(choice));
+                    origin[node].push(Some((*state, index)));
+                }
+            }
+        }
+    }
+    // Unused ids (a component's states) and the absorbing nodes are fixed.
+    for (id, slot) in fixed.iter_mut().enumerate().take(count) {
+        if node_of[id] != id {
+            *slot = Some(zero());
+        }
+    }
+    let mut policy = vec![0_usize; nodes];
+    let mut iterations = 0_u64;
+    let values = loop {
+        let transient = (0..nodes)
+            .filter(|node| fixed[*node].is_none())
+            .collect::<Vec<_>>();
+        let mut positions = vec![None; nodes];
+        for (position, node) in transient.iter().copied().enumerate() {
+            positions[node] = Some(position);
+        }
+        let mut matrix = vec![vec![zero(); transient.len() + 1]; transient.len()];
+        for (row, node) in transient.iter().copied().enumerate() {
+            matrix[row][row] = one();
+            for (to, probability) in &actions[node][policy[node]] {
+                match fixed[*to].as_ref() {
+                    Some(value) => {
+                        matrix[row][transient.len()] =
+                            matrix[row][transient.len()].add(&probability.mul(value))
+                    }
+                    None => {
+                        let column = positions[*to].ok_or(UnboundedError::InvalidState)?;
+                        matrix[row][column] = matrix[row][column].sub(probability);
+                    }
+                }
+            }
+        }
+        let solved = solve_linear(matrix)?;
+        let mut values = fixed
+            .iter()
+            .map(|value| value.clone().unwrap_or_else(zero))
+            .collect::<Vec<_>>();
+        for (position, node) in transient.iter().copied().enumerate() {
+            values[node] = solved[position].clone();
+        }
+        if values
+            .iter()
+            .any(|value| value.max_part_bits() > max_rational_bits)
+        {
+            return Err(UnboundedError::MaxRationalBits);
+        }
+        let mut improved = false;
+        for node in transient {
+            let value_of = |action: &[(usize, Rational)]| {
+                action
+                    .iter()
+                    .fold(zero(), |sum, (to, p)| sum.add(&p.mul(&values[*to])))
+            };
+            let mut best = policy[node];
+            let mut best_value = value_of(&actions[node][best]);
+            for (index, action) in actions[node].iter().enumerate() {
+                let value = value_of(action);
+                let better = match objective {
+                    UnboundedObjective::Min => value < best_value,
+                    UnboundedObjective::Max => value > best_value,
+                };
+                if better {
+                    best = index;
+                    best_value = value;
+                }
+            }
+            if best != policy[node] {
+                policy[node] = best;
+                improved = true;
+            }
+        }
+        if !improved {
+            break values;
+        }
+        iterations += 1;
+        if iterations > max_iterations {
+            return Err(UnboundedError::MaxPolicyIterations);
+        }
+    };
+    // The scheduler: a state outside every component takes its chosen action;
+    // a component that stays plays its own policy; one that leaves heads, by
+    // the shortest inner route, for the state holding its exit.
+    let mut scheduler = vec![None; count];
+    for state in 0..count {
+        if node_of[state] == state {
+            scheduler[state] = origin[state]
+                .get(policy[state])
+                .copied()
+                .flatten()
+                .map(|(_, index)| index);
+        }
+    }
+    for (m, states) in members.iter().enumerate() {
+        let node = count + m;
+        match origin[node][policy[node]] {
+            None => {
+                for state in states {
+                    scheduler[*state] = component_policy[*state];
+                }
+            }
+            Some((exit, index)) => {
+                let inside = |state: usize, choice: &Choice<'_>| {
+                    let _ = state;
+                    choice
+                        .edges
+                        .iter()
+                        .all(|edge| node_of[edge.to.index()] == node)
+                };
+                scheduler[exit] = Some(index);
+                let mut reached = std::collections::BTreeSet::from([exit]);
+                while reached.len() < states.len() {
+                    let mut grown = false;
+                    for state in states {
+                        if reached.contains(state) {
+                            continue;
+                        }
+                        let route = graph.choices[*state]
+                            .iter()
+                            .enumerate()
+                            .find(|(_, choice)| {
+                                inside(*state, choice)
+                                    && choice
+                                        .edges
+                                        .iter()
+                                        .any(|edge| reached.contains(&edge.to.index()))
+                            });
+                        if let Some((index, _)) = route {
+                            scheduler[*state] = Some(index);
+                            reached.insert(*state);
+                            grown = true;
+                        }
+                    }
+                    if !grown {
+                        return Err(UnboundedError::InvalidState);
+                    }
+                }
+            }
+        }
+    }
+    let state_values = (0..count)
+        .map(|state| values[node_of[state]].clone())
+        .collect();
+    Ok((state_values, scheduler))
 }
 
 #[derive(Clone)]
