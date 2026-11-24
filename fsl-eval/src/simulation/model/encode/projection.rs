@@ -1159,7 +1159,7 @@ pub(super) fn project_value<'a, S: ValueSink>(
                 })
             }
             Value::ClockReference(value) => tagged(sink, "clock_reference", |sink| {
-                sink.name("value")?;
+                sink.name("place_id")?;
                 sink.scalar(Scalar::Text(value.text()))
             }),
             Value::Uuid(value) => tagged(sink, "uuid", |sink| {
@@ -1394,5 +1394,60 @@ mod tests {
         assert!(!synthetic_field(&mut sink, &owner, &ordinary, typing).unwrap());
         assert_eq!(ordinary.name, count.name);
         assert_eq!(ordinary.name, bit.name);
+    }
+
+    /// FSpec FR-181-AC-35: two clock references of one object encode as
+    /// `{"type":"clock_reference","place_id":<text>}` with their own place
+    /// texts and so two distinct canonical keys, ordered by the place text's
+    /// UTF-8 bytes, and never as the reference triple.
+    #[trace("FSpec-TC-2084", "FSpec-FR-181-AC-35")]
+    #[test]
+    fn clock_references_encode_as_their_place_id_text() {
+        let encode = |value: &Value| {
+            retained(|sink| project_value(sink, value, Typing::none(), None, false))
+        };
+        let x = crate::test_clock_reference::clock_reference_of("x");
+        let y = crate::test_clock_reference::clock_reference_of("y");
+        let (Value::ClockReference(x_ref), Value::ClockReference(y_ref)) = (&x, &y) else {
+            panic!("clock references");
+        };
+        assert_ne!(x_ref.text(), y_ref.text());
+        let (x_enc, y_enc) = (encode(&x), encode(&y));
+        assert_eq!(
+            x_enc,
+            Enc::tagged(
+                "clock_reference",
+                vec![("place_id", Enc::text(x_ref.text()))]
+            )
+        );
+        let limits = Limits::new(u64::MAX);
+        let x_bytes = quire_canonical::to_vec(&x_enc, limits).expect("canonical");
+        let y_bytes = quire_canonical::to_vec(&y_enc, limits).expect("canonical");
+        assert_ne!(x_bytes, y_bytes);
+        assert_eq!(
+            x_bytes.cmp(&y_bytes),
+            x_ref.text().as_bytes().cmp(y_ref.text().as_bytes())
+        );
+        let text = String::from_utf8(x_bytes).expect("UTF-8");
+        assert!(text.contains("\"place_id\""), "{text}");
+        assert!(!text.contains("\"package\""), "{text}");
+
+        // A set holding both orders its elements by the place text's bytes,
+        // whichever order they were supplied in.
+        assert!(x_ref.text().as_bytes() < y_ref.text().as_bytes());
+        let set_of = |elements: Vec<Value>| {
+            let set_type = filament_exact::CollectionType::new(
+                CollectionKind::Set,
+                ValueType::ClockReference,
+                None,
+            );
+            encode(&filament_exact::from_admitted(set_type, elements))
+        };
+        let expected = Enc::tagged(
+            "set",
+            vec![("elements", Enc::Array(vec![x_enc.clone(), y_enc.clone()]))],
+        );
+        assert_eq!(set_of(vec![y.clone(), x.clone()]), expected);
+        assert_eq!(set_of(vec![x, y]), expected);
     }
 }

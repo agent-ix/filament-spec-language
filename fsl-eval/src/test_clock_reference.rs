@@ -5,12 +5,12 @@ use filament_exact::{ClockPlaceReference, NodeKey, PathSegment, UniverseId, Valu
 
 /// The `place/v2` text of the smallest canonical identity: a one-field path,
 /// no collection step and no slots.
-fn place_text() -> String {
+fn place_text(field: &str) -> String {
     let components = [
         serde_json::json!([]),
         serde_json::json!("k"),
         serde_json::json!([]),
-        serde_json::json!([["field"]]),
+        serde_json::json!([[field]]),
         serde_json::json!([]),
     ];
     let mut text = "place/v2".to_owned();
@@ -26,10 +26,15 @@ fn place_text() -> String {
 
 /// A clock-place reference value.
 pub(crate) fn clock_reference() -> Value {
+    clock_reference_of("field")
+}
+
+/// The clock-place reference to the clock field `field`.
+pub(crate) fn clock_reference_of(field: &str) -> Value {
     let universe = UniverseId::new(
         NodeKey::new("fixture", vec![PathSegment::Text("universe".into())], 1).expect("a key"),
     );
     Value::ClockReference(
-        ClockPlaceReference::new(universe, &place_text()).expect("a canonical place id"),
+        ClockPlaceReference::new(universe, &place_text(field)).expect("a canonical place id"),
     )
 }

@@ -165,11 +165,11 @@ pub use terminal::{TerminalClass, TerminalModel};
 pub use timed::{
     BehaviourLetters, BehaviourReading, ClockPlace, ClockValuation, DEFAULT_MAX_CLOCKS,
     DelayInterval, GuardedStep, MoveRefusal, PlaceConstraint, ScheduledWindow, TaskArrivalKind,
-    TaskReleaseBinding, TaskTimingRow, TimeLock, TimedBehaviour, TimedPosition, TimedRace,
-    TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement,
+    TaskReleaseBinding, TaskTimingRow, TimeLock, TimedAdvance, TimedBehaviour, TimedPosition,
+    TimedRace, TimedRaceDraw, TimedRaceStep, TimedRaceStop, TimedSample, TimedSampleDisagreement,
     TimedSampleReplay, TimedSampleStop, TimedSchedulerChoice, TimedSite, TimedState, TimedStop,
-    TimedSubjectRefusal, TimedSystem, TimedTerminalClass, replay_timed_sample, sample_timed,
-    sample_timed_race,
+    TimedSubjectRefusal, TimedSystem, TimedTerminalClass, advance_timed, replay_timed_sample,
+    sample_timed, sample_timed_race,
 };
 pub(crate) use walk::{Applied, Budget};
 

@@ -2806,3 +2806,37 @@ fn a_quantile_claim_is_refused_without_its_written_level() {
         Err(ClaimRefusal::QuantileWithoutLevel)
     );
 }
+
+/// FSpec FR-420 "Delay-weighted cycles": under a timed claim a cycle of total
+/// delay 0 stays out of the weighted tally, so it counts toward neither
+/// `min_cycles` nor the half-width, and the estimate reads the unweighted
+/// cycles only until the first positive-delay cycle closes.
+#[ix_trace_rs::trace("FSpec-TC-374", "FSpec-FR-420-AC-11")]
+#[test]
+fn zero_delay_cycles_stay_out_of_the_weighted_tally() {
+    let mut run = Run::new();
+    for _ in 0..3 {
+        run.position(true, &int(0));
+        run.position(false, &int(0));
+        run.close(true);
+    }
+    assert_eq!(run.cycles.count(), 0);
+    assert_eq!(run.counted(true).count(), 3);
+    assert_eq!(
+        run.estimate(true),
+        Some(quotient(&int(1), &int(2)).unwrap())
+    );
+    run.position(true, &int(2));
+    run.position(false, &int(2));
+    run.close(true);
+    assert_eq!(run.cycles.count(), 1);
+    assert_eq!(run.counted(true).count(), 1);
+    assert_eq!(
+        run.estimate(true),
+        Some(quotient(&int(1), &int(2)).unwrap())
+    );
+    let mut untimed = Run::new();
+    untimed.position(true, &int(0));
+    untimed.close(false);
+    assert_eq!(untimed.cycles.count(), 1);
+}

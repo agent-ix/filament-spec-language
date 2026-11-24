@@ -293,6 +293,85 @@ pub fn sample_timed(
     })
 }
 
+/// What one more race of an unbounded timed walk yields (FR-420 "Delay-weighted
+/// cycles").
+#[derive(Clone, Debug)]
+pub enum TimedAdvance {
+    /// No identity races and delay is unbounded: the idle tail of a terminal
+    /// state, whose weight is unbounded.
+    Terminal,
+    /// The race's ordered steps, the first after `elapsed` more delay spent
+    /// reaching a closed invariant boundary with no race (zero when none).
+    Race {
+        /// The delay the walk advanced before the race.
+        elapsed: Rational,
+        /// The ordered operation steps taken at the least sampled delay.
+        steps: Vec<TimedRaceStep>,
+    },
+}
+
+/// Race once at `state` with no horizon: the next step of a walk that runs
+/// until a terminal state, a time-lock or the caller stops it. The race and
+/// its time-lock and free-delay refusals are those of [`sample_timed`].
+pub fn advance_timed(
+    system: &TimedSystem<'_, '_>,
+    state: &TimedState,
+    workload: &Workload,
+    at: ChoicePoint,
+    q: u32,
+) -> Result<TimedAdvance, TimedSampleStop> {
+    let mut state = state.clone();
+    let mut elapsed = zero();
+    loop {
+        let time_lock = system
+            .time_lock(
+                &state,
+                usize::try_from(DEFAULT_MAX_CLOCKS.get()).unwrap_or(usize::MAX),
+            )
+            .map_err(TimedRaceStop::Timed)?;
+        if time_lock == Some(TimeLock::Local) {
+            return Err(TimedSampleStop::TimeLockedSample {
+                state: system
+                    .state_key(&state)
+                    .map_err(|_| TimedRaceStop::StateKey)?,
+            });
+        }
+        let race = sample_timed_race(system, &state, workload, at, q)?;
+        if let Some(choice) = &race.scheduler_choice {
+            let identity = choice
+                .free_delays
+                .first()
+                .ok_or(TimedRaceStop::StateKey)?
+                .transition
+                .transition()
+                .clone();
+            return Err(TimedRaceStop::NotStochastic {
+                state: choice.state.clone(),
+                identity,
+            }
+            .into());
+        }
+        if !race.idle && !race.steps.is_empty() {
+            return Ok(TimedAdvance::Race {
+                elapsed,
+                steps: race.steps,
+            });
+        }
+        let delays = system
+            .admissible_delays(&state)
+            .map_err(TimedRaceStop::Timed)?;
+        let Some((upper, true)) = delays.upper() else {
+            return Ok(TimedAdvance::Terminal);
+        };
+        let upper = upper.clone();
+        state = system
+            .delay(&state, &upper)
+            .map_err(TimedRaceStop::Timed)?
+            .ok_or(TimedRaceStop::StateKey)?;
+        elapsed = elapsed.add(&upper);
+    }
+}
+
 /// Recompute a recorded timed sample from its seed and compare every draw,
 /// delay, successor and end position (FR-254 witness replay).
 #[allow(clippy::too_many_arguments)] // each value is an explicit replay input
