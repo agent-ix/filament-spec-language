@@ -87,6 +87,36 @@ pub(crate) fn count(clauses: &[Clause<'_>]) -> World {
     )
 }
 
+/// §7.3's subject with its named state constraints declared as constraints,
+/// for runs that select `Low` or `Wide` under FR-158.
+fn count_with_state_constraints(clauses: &[Clause<'_>]) -> World {
+    let body = COUNT
+        .replace("invariant Low", "constraint Low")
+        .replace("invariant Wide", "constraint Wide");
+    World::new_with_mode(
+        shape(false, 3),
+        &body,
+        clauses,
+        &[start([0, 0, 0])],
+        &KEYS,
+        CheckMode::Kernel,
+    )
+}
+
+fn count_with_started_constraint(clauses: &[Clause<'_>]) -> World {
+    let body = COUNT
+        .replace("invariant Started", "constraint Started")
+        .replace("invariant Odd", "constraint Odd");
+    World::new_with_mode(
+        shape(false, 3),
+        &body,
+        clauses,
+        &[start([0, 0, 0])],
+        &KEYS,
+        CheckMode::Kernel,
+    )
+}
+
 pub(crate) fn infinite(formula: &str) -> Clause<'_> {
     Clause {
         profile: INFINITE,
@@ -926,7 +956,7 @@ fn an_authored_clauses_letter_is_read_before_a_state_constraint() {
 #[trace("TC-581", "FR-158-AC-3")]
 #[test]
 fn undefined_absent_and_initially_false_constraints_and_bounds() {
-    let world = count(&[infinite("always holds(x.v <= 3)")]);
+    let world = count_with_started_constraint(&[infinite("always holds(x.v <= 3)")]);
     let wide = || vec![atom(|v| Some(v <= 3))];
     let outcome = run(&world, Some(0), wide(), constraint("Odd"));
     let CounterexampleKind::UndefinedEvaluation(evaluation) = &violation(&outcome).kind else {
@@ -1378,7 +1408,7 @@ fn reduced_outcomes_settle_through_the_one_map() {
 #[trace("TC-584", "FR-160-AC-2")]
 #[test]
 fn a_constraint_only_proof_is_exhaustive_and_constraint_reached_wins_over_the_horizon() {
-    let world = count(&[
+    let world = count_with_state_constraints(&[
         infinite("always holds(x.v <= 3)"),
         infinite("always holds(x.v <= 2)"),
     ]);

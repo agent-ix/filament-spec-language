@@ -5,11 +5,11 @@
 //! `counters` population annotated `symmetric`.
 
 use ix_trace_rs::trace;
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
-    HANDOFF, Workspace, analyze, clause, counter_request_with, counter_snapshot, label,
-    package_selection, request_members,
+    analyze, clause, counter_request_with, counter_snapshot, label, package_selection,
+    request_members, Workspace, HANDOFF,
 };
 use crate::counter::{document, symmetric_document};
 
@@ -146,7 +146,7 @@ fn an_unsound_symmetry_is_refused_not_ignored() {
 fn a_constraint_never_proves_past_its_boundary() {
     let ws = Workspace::new("red-constraint");
     let body = format!(
-        "invariant Low using v on M::Counter at current {{ self.value <= 1 }}\n{}",
+        "constraint Low using v on M::Counter at current {{ self.value <= 1 }}\n{}",
         clause("Holds", "", "always holds(c.value <= 3)")
     );
     let run = analyze(&request(
