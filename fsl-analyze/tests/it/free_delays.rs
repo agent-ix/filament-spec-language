@@ -1098,6 +1098,8 @@ fn timed_detour_refutation_replays_its_free_delay_scheduler() {
                 _ => false,
             })
     );
+    // This continuation key is deterministic and has no FreeDelays alias,
+    // so omitting its UnitDelay from the FreeDelays choice map is legitimate.
     assert!(
         replayed_witness
             .evidence()
