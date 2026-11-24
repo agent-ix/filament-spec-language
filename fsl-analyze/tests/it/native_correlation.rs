@@ -805,7 +805,7 @@ fn inside_weak(memory: &str, control: &str) -> String {
 }
 
 fn weak_model_read_refusal<M: fill::Explored + Default>(memory: &str) {
-    let ends = "related by Owns ((if k.v = 0 then k else k), k)";
+    let ends = "related by Owns ((if k.v > 0 then k else k), k)";
     for control in [
         controls(ends, ""),
         controls("", ends),
@@ -837,7 +837,7 @@ fn weak_model_read_refusal<M: fill::Explored + Default>(memory: &str) {
 fn weak_model_read_correlation_has_the_same_named_refusal_on_both_routes() {
     weak_model_read_refusal::<Tso>("tso");
     weak_model_read_refusal::<Ra>("ra");
-    let control = controls("related by Owns ((if k.v = 0 then k else k), k)", "");
+    let control = controls("related by Owns ((if k.v > 0 then k else k), k)", "");
     let outside = Fixture::new(
         "",
         &format!(
@@ -885,7 +885,7 @@ fn weak_premises<M: fill::Explored + Default>(memory: &str) {
         &inside_weak(
             memory,
             &controls(
-                "related by Owns ((if q(if tx then 0 else 1) >= 0 then k else k), k)",
+                "related by Owns ((if 6 mod (if tx then 0 else 1) >= 0 then k else k), k)",
                 "",
             ),
         ),
