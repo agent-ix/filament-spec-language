@@ -7,7 +7,7 @@
 //! derives the classes and each member's root ratio to its class root, which
 //! the checker converts time quantities through (FR-230).
 
-use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug};
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, standalone};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use filament_exact::{Integer, NodeKey, PathSegment, Rational};

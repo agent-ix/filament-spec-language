@@ -20,18 +20,18 @@ use filament_exact::{
 };
 
 use super::{
-    generated_location, identifiers, refuse, require_admitted, type_declaration, Lowering,
-    NodeContent,
+    Lowering, NodeContent, generated_location, identifiers, refuse, require_admitted,
+    type_declaration,
 };
 use crate::check::assemble::DimensionEquivalence;
 use crate::check::family::OccurrenceRole;
 
+use crate::check::VariantTypeDeclaration;
 use crate::check::node_key::{
     Binding, BindingValue, BodyTerm, GroupMember, GroupTerm, LeafTerm, MemberTerm, ModelOwner,
     NodeRef, NodeTag, Owner,
 };
 use crate::check::refusal::{CheckCause, CheckRefusal, KeyFault};
-use crate::check::VariantTypeDeclaration;
 use crate::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, NativeValueType, PopulationRecord,
     ValueTypeRef,
@@ -719,7 +719,7 @@ impl AdmittedModel {
         key: &DeclarationKey,
     ) -> Option<crate::model::systems::ConnectionCheckOutcome> {
         use crate::model::accounting::NormalizationMeter;
-        use crate::model::systems::{check_connection, Kind};
+        use crate::model::systems::{Kind, check_connection};
         let systems = self.systems.as_ref()?;
         if systems.actual_kind(key) != Kind::Connection {
             return None;
@@ -3102,7 +3102,7 @@ impl<'a> Lowering<'a> {
                     return Err(fault(
                         location,
                         KeyFault::UnsupportedUnionPayload(record.key.clone()),
-                    ))
+                    ));
                 }
             };
             cases.push(SelectedModelUnionCase {

@@ -18,7 +18,7 @@
 //! (`fsl_forms::AbstractionDeclarationForm`) carries each spelling as
 //! written.
 
-use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, NodeKeyDebug, With};
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, NodeKeyDebug, With, standalone};
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
 
@@ -32,12 +32,12 @@ use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{Code, Span};
 use ix_trace_rs::string_edge;
 
+use super::CheckedGraph;
 use super::lowering::{
-    generated_location, model_node_content, population_node_content, AdmittedModel, SemanticNode,
+    AdmittedModel, SemanticNode, generated_location, model_node_content, population_node_content,
 };
 use super::node_key::{AbstractionTerm, FrameEntry, NodeKeyRefusal, ObjectEntry, PopulationEntry};
 use super::node_key::{ModelOwner, NodeTag};
-use super::CheckedGraph;
 use crate::model::key::{object_type_node_key, population_node_key};
 use crate::model::operation::OperationLookup;
 use filament_checked::key::DeclarationKey;

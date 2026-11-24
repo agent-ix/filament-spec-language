@@ -13,7 +13,7 @@ use filament_exact::{CollectionKind, EffectiveId, Rational};
 use fsl_forms::{BinderQuery, ExprId, ExprNode};
 use fsl_foundation::Span;
 
-use super::{self_path, ClockId, Clocks, Located, RecordWrite, ResetCut};
+use super::{ClockId, Clocks, Located, RecordWrite, ResetCut, self_path};
 use crate::check::lowering::PlaceStep;
 use crate::check::refusal::TemporalCause;
 

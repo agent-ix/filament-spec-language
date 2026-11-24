@@ -18,14 +18,14 @@ use filament_semantic_value::declaration::{
 use filament_semantic_value::location::{
     ExpressionLocation as Location, ExpressionOwner as Origin,
 };
-use fsl_forms::{build_unit, ClauseKind};
-use fsl_foundation::diagnostic::Code;
+use fsl_forms::{ClauseKind, build_unit};
 use fsl_foundation::SourceIdentity;
+use fsl_foundation::diagnostic::Code;
 use ix_trace_rs::trace;
 
 use super::mint_union_member_key;
 use super::{ExhaustivenessObligation, SumCaseCause};
-use crate::check::check::{bind_parameters, Scope, Signatures, Typer};
+use crate::check::check::{Scope, Signatures, Typer, bind_parameters};
 use crate::check::ir::{CheckedBody, CheckedNode, Slot};
 use crate::check::{
     CheckCause, CheckRefusal, CheckingLimitKind, EnumBinding, PackageDeclarations,
@@ -478,9 +478,11 @@ fn a_case_adds_no_claim_and_its_arm_bodies_are_claim_sites() {
     .expect("the claims walk finds the binders of every arm");
     // `r * r`, `(r * r) * 3` and `w * h`; none at the `case` itself.
     assert_eq!(claims.len(), 3);
-    assert!(claims
-        .iter()
-        .all(|claim| claim.site().location() != &Unit::body()));
+    assert!(
+        claims
+            .iter()
+            .all(|claim| claim.site().location() != &Unit::body())
+    );
 }
 
 /// A function `f` with the given parameter list over the standard unions and

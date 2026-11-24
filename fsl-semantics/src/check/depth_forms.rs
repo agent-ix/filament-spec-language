@@ -14,8 +14,8 @@ use fsl_forms::{
     TypeForm,
 };
 
-use super::family::fixtures::fixture_source;
 use super::PackageDeclarations;
+use super::family::fixtures::fixture_source;
 
 const SPAN: fsl_foundation::Span = fsl_foundation::Span { start: 0, end: 0 };
 

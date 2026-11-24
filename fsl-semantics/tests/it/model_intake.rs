@@ -767,7 +767,7 @@ fn assemble_model_document(
     );
     let parsed = fsl_cst::parse(
         fsl_foundation::SourceIdentity::new("test", source_name),
-        &format!("{source_name}.native"),
+        format!("{source_name}.native"),
         source.as_bytes(),
         fsl_cst::Limits::default(),
     )

@@ -26,13 +26,13 @@ fn the_element_type_reads_through_an_option() {
 #[test]
 fn a_package_map_of_clocks_lists_a_key_selected_place() {
     use super::super::super::PlaceStep;
-    use super::{key, object, one, DomainPackage, DomainPackageRecord};
+    use super::{DomainPackage, DomainPackageRecord, key, object, one};
     use super::{FieldMemberRecord, NativeValueType, ValueTypeRef};
     use crate::check::lowering::model::AdmittedModel;
     use crate::model::accounting::ModelNormalizationLimits;
     use crate::model::domain_package::AliasTypeRecord;
     use crate::model::domain_package::{MapTypeRecord, RecordValueTypeRecord};
-    use crate::model::normalize::{normalize, NormalizeOutcome};
+    use crate::model::normalize::{NormalizeOutcome, normalize};
     use filament_exact::Presence;
 
     let package = DomainPackage::new(
@@ -134,16 +134,16 @@ fn a_package_map_of_clocks_lists_a_key_selected_place() {
 #[trace("FR-230-AC-62")]
 #[test]
 fn a_map_slot_selector_is_the_key_node_of_the_map_type() {
-    use super::{key, object, one, DomainPackage, DomainPackageRecord};
+    use super::{DomainPackage, DomainPackageRecord, key, object, one};
     use super::{FieldMemberRecord, NativeValueType, ValueTypeRef};
-    use crate::check::family::fixtures::{fixture_source, scope_with};
     use crate::check::family::OccurrenceMap;
+    use crate::check::family::fixtures::{fixture_source, scope_with};
     use crate::check::lowering::model::AdmittedModel;
-    use crate::check::lowering::{generated_location, Lowering};
+    use crate::check::lowering::{Lowering, generated_location};
     use crate::check::timed_model::clock_fields;
     use crate::model::accounting::ModelNormalizationLimits;
     use crate::model::domain_package::MapTypeRecord;
-    use crate::model::normalize::{normalize, NormalizeOutcome};
+    use crate::model::normalize::{NormalizeOutcome, normalize};
     use filament_exact::{MapType, Presence, ValueType};
     use filament_semantic_value::declaration::{
         FieldDeclaration, ObjectTypeDeclaration, TypeEnvironment,

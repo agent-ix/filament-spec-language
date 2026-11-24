@@ -12,8 +12,6 @@
 //! - The state machine `Lifecycle` and the process `Fulfilment`, each with a
 //!   `tier: Tier` field.
 
-#![allow(dead_code, reason = "each test binary uses part of the fixture")]
-
 use fsl_semantics::model::intake::meaning;
 use serde_json::{json, Value};
 

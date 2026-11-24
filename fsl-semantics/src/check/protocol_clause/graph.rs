@@ -634,11 +634,7 @@ fn required_labels(parallel: &ParallelForm) -> BTreeSet<&str> {
         JoinPolicy::Any => listed.len() == 1,
         JoinPolicy::Predicate(_) => false,
     };
-    if all {
-        listed
-    } else {
-        BTreeSet::new()
-    }
+    if all { listed } else { BTreeSet::new() }
 }
 
 /// Whether `commit` dominates `effect` (FR-381 "Retry, commit and

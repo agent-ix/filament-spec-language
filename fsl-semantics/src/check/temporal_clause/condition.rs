@@ -21,10 +21,10 @@ use filament_semantic_value::location::ExpressionLocation as Location;
 use fsl_forms::{ActivationForm, ClauseKind, StateClauseKind, TemporalNodeForm};
 
 use super::CheckedTemporalClause;
-use crate::check::check::{bind_parameters, Scope, StateContext, Typer};
+use crate::check::check::{Scope, StateContext, Typer, bind_parameters};
 use crate::check::facts::Definedness;
 use crate::check::ir::CheckedBody;
-use crate::check::lowering::{temporal_location, AggregatePart, TemporalSite};
+use crate::check::lowering::{AggregatePart, TemporalSite, temporal_location};
 use crate::check::observation::Observations;
 use crate::check::refusal::{CheckCause, CheckRefusal};
 use crate::check::state_clause::ClauseDeclarations;

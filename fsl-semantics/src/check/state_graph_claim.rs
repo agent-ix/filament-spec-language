@@ -31,16 +31,16 @@ use fsl_forms::{
     ExprNode, Expression, ExpressionBuilder, ExpressionForm, StateClauseKind, StateGraphClaimForm,
     StateGraphClaimKind, StateGraphPredicateForm,
 };
+use fsl_foundation::Span;
 use fsl_foundation::bound::{DomainKey, DomainKind};
 use fsl_foundation::diagnostic::{StageFailure, Staged};
 use fsl_foundation::selection::ProfileSelection;
 use fsl_foundation::source::provenance::OccurrenceKey;
-use fsl_foundation::Span;
 
+use super::Capability;
 use super::ir::{CheckedBody, CheckedNode};
 use super::refusal::{CheckCause, CheckRefusal, PredicateRole, StateGraphCause};
-use super::state_clause::{check_clause, ClauseDeclarations, ClauseView, PopulationDomain};
-use super::Capability;
+use super::state_clause::{ClauseDeclarations, ClauseView, PopulationDomain, check_clause};
 use crate::family::{CheckContext, CheckOutcome, ClaimExtent, FamilyContract, Requirements};
 use crate::value::layer::HeaderLayer;
 

@@ -33,12 +33,12 @@ use filament_checked::node::{
     Arithmetic, CaseArm, CheckedLiteral, Connective, IntegerDivisionOperator, NodeKind,
     OrderedKind, RecordField, RecordSlot, Visit,
 };
-use std::collections::{hash_map, BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, hash_map};
 use std::fmt;
 use std::ops::ControlFlow;
 
 use fsl_foundation::source::node_table::{
-    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList, With,
+    DebugTable, DebugWith, NodeKeyDebug, NodeList, With, standalone,
 };
 
 use filament_exact::{
@@ -96,34 +96,34 @@ mod timed_clause;
 
 pub(crate) use extension::ExtensionFormInput;
 pub(crate) use hybrid::{
-    hybrid_location, hybrid_site, HybridClaimInput, HybridModelInput, HybridSite,
+    HybridClaimInput, HybridModelInput, HybridSite, hybrid_location, hybrid_site,
 };
 pub(crate) use hyper::{
-    finish_step_relation, FiniteHyperClauseInput, HyperClauseInput, LoweredStepRelation,
-    StepRelationInput,
+    FiniteHyperClauseInput, HyperClauseInput, LoweredStepRelation, StepRelationInput,
+    finish_step_relation,
 };
 pub(crate) use model::ParentSlotFailure;
-pub(crate) use model::{
-    bound_origin, clock_type_identity, equivalence_origin, model_declaration_key, quantity_origin,
-    record_node_key, strictly_below, QuantityKind, SourceClockLayout, SourceClockPlace,
-};
 pub use model::{
-    clock_field_member_type, collection_kind, model_root_key, AdmittedModel, CollectionShape,
-    ForeignView, ModelClause, PlaceRow, PlaceStep, SelectedModelEnumDeclaration,
-    SelectedModelEnumMember, SelectedModelUnion, SelectedModelUnionCase, SelectedModelUnionPayload,
-    SelectedOperationMember, SourceClockEntry, SourceClockMembers,
+    AdmittedModel, CollectionShape, ForeignView, ModelClause, PlaceRow, PlaceStep,
+    SelectedModelEnumDeclaration, SelectedModelEnumMember, SelectedModelUnion,
+    SelectedModelUnionCase, SelectedModelUnionPayload, SelectedOperationMember, SourceClockEntry,
+    SourceClockMembers, clock_field_member_type, collection_kind, model_root_key,
+};
+pub(crate) use model::{
+    QuantityKind, SourceClockLayout, SourceClockPlace, bound_origin, clock_type_identity,
+    equivalence_origin, model_declaration_key, quantity_origin, record_node_key, strictly_below,
 };
 pub(crate) use model::{model_node_content, population_node_content};
 pub(crate) use protocol::{
-    compensation_origin, declaration_origin, protocol_location, AttemptNodes, CompensationNodes,
-    ProtocolInput,
+    AttemptNodes, CompensationNodes, ProtocolInput, compensation_origin, declaration_origin,
+    protocol_location,
 };
-pub use protocol::{protocol_site, ProtocolSite, RelatedSide};
+pub use protocol::{ProtocolSite, RelatedSide, protocol_site};
 pub(crate) use state::{
+    AnchorInput, AttemptInput, LoweredAttempt, LoweredClause, OperationBinding, StateClauseInput,
     protocol_attempt_operation_location, protocol_attempt_operation_site,
     state_clause_name_location, state_clause_name_site, state_operation_location,
-    state_operation_site, AnchorInput, AttemptInput, LoweredAttempt, LoweredClause,
-    OperationBinding, StateClauseInput,
+    state_operation_site,
 };
 pub(crate) use state_graph::StateGraphClaimInput;
 pub(crate) use state_transition::TransitionClause;
@@ -131,10 +131,10 @@ pub(crate) use synthesis::{
     synthesis_location, synthesis_objective_location, synthesis_satisfies_location,
 };
 pub(crate) use temporal::{
-    temporal_location, temporal_site, AggregatePart, LoweredTemporalClause, TemporalClauseInput,
-    TemporalSite,
+    AggregatePart, LoweredTemporalClause, TemporalClauseInput, TemporalSite, temporal_location,
+    temporal_site,
 };
-pub(crate) use terminal::{terminal_location, terminal_site, TerminalInput, TerminalSite};
+pub(crate) use terminal::{TerminalInput, TerminalSite, terminal_location, terminal_site};
 pub(crate) use timed_clause::TimedClauseInput;
 
 /// A node's place in its recursion group (FR-092 "Recursion groups"): the
@@ -1289,11 +1289,11 @@ fn carrier_rounding(carried: &filament_exact::CarriedQuantityType) -> filament_e
 #[ix_trace_rs::string_edge]
 fn variant_type_identity(path: &[filament_exact::PathSegment]) -> Option<&String> {
     match path {
-        [filament_exact::PathSegment::Text(kind), filament_exact::PathSegment::Text(form), filament_exact::PathSegment::Text(identity)]
-            if kind == "model" && form == "variant_type" =>
-        {
-            Some(identity)
-        }
+        [
+            filament_exact::PathSegment::Text(kind),
+            filament_exact::PathSegment::Text(form),
+            filament_exact::PathSegment::Text(identity),
+        ] if kind == "model" && form == "variant_type" => Some(identity),
         _ => None,
     }
 }
@@ -5680,7 +5680,7 @@ impl<'a> Lowering<'a> {
                         ..plain("filament.op.quantity.convert")
                     }
                 } else {
-                    use super::numeric_conversion::{classify, Class};
+                    use super::numeric_conversion::{Class, classify};
                     let identity = match classify(node.at(*operand).value_type(), &target) {
                         Some(Class::RangeNarrowing) => "filament.op.numeric.narrow",
                         Some(Class::RationalNarrowing) => "filament.op.rational.narrow",

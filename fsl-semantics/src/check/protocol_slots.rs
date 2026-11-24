@@ -43,15 +43,15 @@ use fsl_forms::{
     ProtocolDeclarationForm, ProtocolMemberForm, ProtocolNodeKind, ReplicatedRoleForm, RoleForm,
     RoleLifetime, TerminalForm,
 };
-use fsl_foundation::{diagnostic::Locus, Span};
+use fsl_foundation::{Span, diagnostic::Locus};
 
 use super::check::{NamedScope, Scope};
 use super::ir::CheckedBody;
-use super::lowering::{protocol_location, ProtocolSite};
+use super::lowering::{ProtocolSite, protocol_location};
 use super::protocol_clause::{
-    record_binder, written_owner, BoundAttempt, CheckedProtocol, ProtocolNodeId,
+    BoundAttempt, CheckedProtocol, ProtocolNodeId, record_binder, written_owner,
 };
-use super::protocol_obligation::{model_state_reads, span_of, type_named_body, wraps, Goal};
+use super::protocol_obligation::{Goal, model_state_reads, span_of, type_named_body, wraps};
 use super::refusal::{
     ArmFault, CheckCause, CheckRefusal, ObservationReason, ProtocolAnchorCause, RelatedEnd,
     SlotKind,

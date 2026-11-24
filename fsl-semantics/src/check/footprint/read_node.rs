@@ -10,8 +10,8 @@ use filament_semantic_value::declaration::TypeEnvironment;
 use filament_semantic_value::location::ExpressionLocation as Location;
 
 use super::{
-    constraint_reads_of, descendants, BodyScope, Derivation, DerivationClause, FootprintObject,
-    FootprintRefusal, Observed, Reader, ReferenceLiterals, SymbolicFootprint, SymbolicLocation,
+    BodyScope, Derivation, DerivationClause, FootprintObject, FootprintRefusal, Observed, Reader,
+    ReferenceLiterals, SymbolicFootprint, SymbolicLocation, constraint_reads_of, descendants,
 };
 use crate::check::{CheckedGraph, CheckedNode};
 use crate::model::clause_observation::Observation;

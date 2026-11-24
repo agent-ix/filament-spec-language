@@ -6,8 +6,8 @@
 use filament_exact::Rational;
 use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
-use fsl_foundation::diagnostic::Code;
 use fsl_foundation::SourceIdentity;
+use fsl_foundation::diagnostic::Code;
 use ix_trace_rs::trace;
 
 use crate::check::{

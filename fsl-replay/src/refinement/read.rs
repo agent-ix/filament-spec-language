@@ -4,10 +4,10 @@
 use filament_checked::key::DeclarationKey;
 use filament_exact::{NodeKey, Value};
 use filament_semantic_value::fairness::FairnessConstraint;
+use fsl_eval::simulation::ExpansionStop;
 use fsl_eval::simulation::model::{
     ModelCheckInput, ModelSystem, PackageModelInput, RowReading, StateObservation,
 };
-use fsl_eval::simulation::ExpansionStop;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{
     AbstractSide, AbstractStepClass, CheckedRefinement, CheckedRow, FieldRow, HistoryRow,
@@ -198,7 +198,7 @@ impl StepMapping for StepRow {
             } => MappingTarget::Abstract {
                 operation,
                 target_type: Some(target_type),
-                receiver,
+                receiver: receiver.as_ref(),
                 arguments: arguments
                     .iter()
                     .map(|row| row.as_ref().map(|row| row as &dyn MappingExpression))

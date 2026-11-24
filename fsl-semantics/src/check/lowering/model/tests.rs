@@ -13,12 +13,12 @@ use fsl_forms::{
     TypeFormHead,
 };
 use ix_trace_rs::trace;
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 use super::super::tests::view::{node_ref, preimage};
-use super::super::{generated_location, type_declaration, Lowering, SemanticGraph, SemanticNode};
+use super::super::{Lowering, SemanticGraph, SemanticNode, generated_location, type_declaration};
 use super::*;
-use crate::check::checked_dispatch::{checked_dispatch_operation, DispatchRoot, OperationClauses};
+use crate::check::checked_dispatch::{DispatchRoot, OperationClauses, checked_dispatch_operation};
 use crate::check::family::fixtures::{empty_scope, fixture_source};
 use crate::check::family::{OccurrenceMap, OccurrenceRole};
 use crate::check::{CheckedGraph, PackageDeclarations};
@@ -30,7 +30,7 @@ use crate::model::domain_package::{
     RecordValueTypeRecord, RelationshipDirection, RelationshipEnd, RelationshipRecord,
     StateMachineRecord, StateMachineStateRecord, StateMachineTransitionRecord, ValueTypeRef,
 };
-use crate::model::normalize::{normalize, NormalizeOutcome};
+use crate::model::normalize::{NormalizeOutcome, normalize};
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::declaration::{
     FieldDeclaration, ObjectTypeDeclaration, TypeEnvironment,
@@ -1118,7 +1118,7 @@ mod quantities {
     mod bounded;
     use crate::value::nominal_payload::NominalPayload;
     use crate::value::semantic_node::{NodeOwner, OwnerSelection, OwnerSubject};
-    use crate::value::unit::{admit_unit_graph, DimensionPreimage, UnitPreimage};
+    use crate::value::unit::{DimensionPreimage, UnitPreimage, admit_unit_graph};
     use filament_semantic_value::quantity::UnitTable;
 
     fn owner() -> NodeOwner {
@@ -1321,9 +1321,11 @@ mod quantities {
             parameter(graph, "a", 0).semantic_type(),
             Some(node_key(METRE))
         );
-        assert!(graph
-            .nodes()
-            .all(|node| node.semantic_form() != "compound_unit"));
+        assert!(
+            graph
+                .nodes()
+                .all(|node| node.semantic_form() != "compound_unit")
+        );
         // The type node is the unit's nominal node, typed by its dimension's
         // nominal node, which the graph holds too.
         let metre = graph.node(node_key(METRE)).expect("the metre unit node");
@@ -1361,7 +1363,7 @@ mod quantities {
         );
         assert_ne!(u1, node_key(METRE));
 
-        use filament_semantic_value::quantity::{result_unit, UnitOperation};
+        use filament_semantic_value::quantity::{UnitOperation, result_unit};
         let table = units();
         let unit = |hex: &str| {
             table
@@ -1827,9 +1829,11 @@ mod quantities {
         assert_ne!(keys[0], keys[2]);
         assert_ne!(keys[0], keys[3]);
         assert_eq!(keys[4], keys[5], "equal Rational carriers share one node");
-        assert!(graph
-            .nodes()
-            .any(|node| node.semantic_form() == "rational_range"));
+        assert!(
+            graph
+                .nodes()
+                .any(|node| node.semantic_form() == "rational_range")
+        );
         for key in [&keys[0], &keys[2], &keys[3], &keys[4]] {
             let node = graph.node((*key).clone()).expect("the carried type node");
             assert_eq!(node.node_tag(), NodeTag::ScalarType);

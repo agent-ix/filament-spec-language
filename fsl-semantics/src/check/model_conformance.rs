@@ -2,7 +2,7 @@
 //! Conformance consumes the same selection owner and the facts of completed
 //! source checking. Structural target resolution belongs to normalization.
 
-use super::field_refinement::{checked_refinement_failures, RefinementObligation};
+use super::field_refinement::{RefinementObligation, checked_refinement_failures};
 use super::lowering::{AdmittedModel, ParentSlotFailure};
 use super::state_clause::{StateClauseDeclaration, TypedStateClause};
 use crate::model::accounting::{NormalizationIncomplete, NormalizationMeter};
@@ -383,9 +383,11 @@ mod tests {
                 ),
             ]
         );
-        assert!(failures
-            .iter()
-            .all(|failure| failure.writer.is_none() && failure.obligation.is_none()));
+        assert!(
+            failures
+                .iter()
+                .all(|failure| failure.writer.is_none() && failure.obligation.is_none())
+        );
         assert_eq!(
             meter.consumed(NormalizationLimitKind::WorkUnits),
             before + 6

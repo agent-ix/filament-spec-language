@@ -3,12 +3,12 @@
 //! span it names: a declaration's expressions are not the expression tree of
 //! a function a `Location` path resolves in.
 
-use fsl_foundation::diagnostic::Code;
 use fsl_foundation::Span;
+use fsl_foundation::diagnostic::Code;
 
 use crate::check::profile::TemporalProfile;
-use crate::check::refusal::type_fault_class;
 use crate::check::refusal::TimeUnitCause;
+use crate::check::refusal::type_fault_class;
 use crate::check::type_form::TypeFormFault;
 
 /// What made a hybrid declaration malformed (`invalid_model_binding` /

@@ -534,7 +534,7 @@ fn package_admits(text: &str) {
 #[trace("TC-629", "FR-194-AC-12")]
 #[test]
 fn a_carried_aggregate_value_or_threshold_is_refused_at_the_carried_expression() {
-    use crate::check::lowering::{temporal_location, AggregatePart, TemporalSite};
+    use crate::check::lowering::{AggregatePart, TemporalSite, temporal_location};
     let carried = |formula: &str| {
         source(&[EVENT], "Quantity<m>", formula).replace(
             "temporal C using",
@@ -615,7 +615,7 @@ fn a_carried_aggregate_value_or_threshold_is_refused_at_the_carried_expression()
 #[trace("TC-629", "FR-194-AC-11")]
 #[test]
 fn a_window_aggregate_over_a_package_unit_keeps_that_unit() {
-    use crate::check::lowering::{temporal_location, AggregatePart, TemporalSite};
+    use crate::check::lowering::{AggregatePart, TemporalSite, temporal_location};
     use crate::model::domain_package::{
         DomainPackage, DomainPackageRef, PackageDimensionRecord, PackageUnitRecord,
     };
@@ -1390,7 +1390,7 @@ fn a_unit_spelled_or_model_binding_role_over_a_trace_subject_is_refused() {
 #[trace("TC-1541", "FR-610-AC-4", "FSpec-TC-1040")]
 #[test]
 fn a_retired_temporal_profile_spelling_is_an_unknown_profile() {
-    use crate::check::profile::{resolve_profiles, ProfileCause};
+    use crate::check::profile::{ProfileCause, resolve_profiles};
     let selection = |identity: &str| fsl_foundation::selection::ProfileSelection {
         alias: "inf".to_owned(),
         identity: identity.to_owned(),

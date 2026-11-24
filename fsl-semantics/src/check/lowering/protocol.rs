@@ -41,7 +41,7 @@ mod controls;
 use controls::RunInputs;
 pub(crate) use controls::{AttemptNodes, CompensationNodes};
 
-use super::{fault, refuse, require_admitted, Binder, Binders, Lowering, NodeContent, NodeRef};
+use super::{Binder, Binders, Lowering, NodeContent, NodeRef, fault, refuse, require_admitted};
 use crate::check::family::OccurrenceRole;
 use crate::check::ir::{CheckedBody, CheckedNode};
 use crate::check::node_key::{
@@ -2186,7 +2186,7 @@ impl Lowering<'_> {
                     return Err(catalog_fault(
                         location,
                         "catalog-memory-class-has-its-step-kind",
-                    ))
+                    ));
                 }
             };
             return Ok(Some(KeyedCatalogClass::Memory(memory)));

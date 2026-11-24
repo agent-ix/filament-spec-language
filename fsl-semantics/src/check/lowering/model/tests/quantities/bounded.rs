@@ -49,10 +49,12 @@ fn bounded_quantity_identity_retains_both_exact_endpoints_and_unit() {
     let units = UnitTable::declared(&graph);
     let centimetre = UnitId::declared(centimetre_key.clone());
     let metre = UnitId::declared(node_key(METRE));
-    assert!(units
-        .get(metre.clone())
-        .expect("metre")
-        .has_dimension_of(units.get(centimetre.clone()).expect("centimetre")));
+    assert!(
+        units
+            .get(metre.clone())
+            .expect("metre")
+            .has_dimension_of(units.get(centimetre.clone()).expect("centimetre"))
+    );
     let value_type = |unit, lo, hi| bounded(unit, Some(lo), Some(hi));
     let types = [
         value_type(metre.clone(), rational(-3, 2), rational(7, 4)),
@@ -158,9 +160,11 @@ fn bounded_quantity_missing_reversed_or_compound_endpoints_are_refused() {
             );
         }
     });
-    assert!(!graph
-        .nodes()
-        .any(|node| node.semantic_form() == "bounded_quantity"));
+    assert!(
+        !graph
+            .nodes()
+            .any(|node| node.semantic_form() == "bounded_quantity")
+    );
 }
 
 #[trace("TC-413", "FR-093-AC-61")]

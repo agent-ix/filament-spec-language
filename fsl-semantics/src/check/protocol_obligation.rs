@@ -40,15 +40,15 @@ use fsl_forms::{
 use fsl_foundation::Span;
 
 use super::check::{
-    bind_parameters, reserved_slot_refusal, NamedScope, Scope, StateContext, Typer,
+    NamedScope, Scope, StateContext, Typer, bind_parameters, reserved_slot_refusal,
 };
 use super::facts::Definedness;
 use super::ir::CheckedBody;
-use super::lowering::{protocol_location, ProtocolSite};
+use super::lowering::{ProtocolSite, protocol_location};
 use super::observation::Observations;
 use super::protocol_clause::{CheckedProtocol, ProtocolNodeId};
 use super::refusal::{CheckCause, CheckRefusal, KeyFault};
-use super::state_clause::{population_of, ClauseDeclarations, ClauseOperation, PopulationDomain};
+use super::state_clause::{ClauseDeclarations, ClauseOperation, PopulationDomain, population_of};
 use super::type_form::resolve_form;
 use crate::family::CheckContext;
 use crate::model::clause_observation::Observation;

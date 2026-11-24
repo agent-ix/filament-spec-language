@@ -14,12 +14,12 @@
 use std::collections::HashMap;
 use std::fmt;
 
-use fsl_foundation::source::node_table::{standalone, DebugTable, DebugWith, With};
+use fsl_foundation::source::node_table::{DebugTable, DebugWith, With, standalone};
 use fsl_foundation::source::provenance::OccurrenceKey;
 
 use super::RequirementRecord;
-use crate::check::key_order;
 use crate::check::Capability;
+use crate::check::key_order;
 
 /// Requirement records keyed by occurrence and capability, iterated in
 /// ascending occurrence order.

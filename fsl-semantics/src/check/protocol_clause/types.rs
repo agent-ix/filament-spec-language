@@ -6,7 +6,7 @@ use crate::check::protocol_controls::CheckedChannel;
 use crate::check::protocol_obligation::CheckedObligations;
 use crate::check::state_clause::{ClauseOperation, PopulationDomain};
 use fsl_foundation::source::node_table::{
-    standalone, DebugTable, DebugWith, NodeKeyDebug, NodeList, With,
+    DebugTable, DebugWith, NodeKeyDebug, NodeList, With, standalone,
 };
 
 /// The identity of one static protocol node: its index into the

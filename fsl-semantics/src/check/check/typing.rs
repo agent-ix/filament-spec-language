@@ -25,10 +25,11 @@ use std::sync::Arc;
 
 use super::native_literal::NativeConstructor;
 use super::{
-    catalogued_step, contains_pre_eligible_read, contextual, ineligible, is_integer, mismatch,
-    node, refuse, LocalKind, Typer,
+    LocalKind, Typer, catalogued_step, contains_pre_eligible_read, contextual, ineligible,
+    is_integer, mismatch, node, refuse,
 };
-use crate::check::call_target::{resolve_target, ResolvedTarget};
+use crate::check::DispatchOperation;
+use crate::check::call_target::{ResolvedTarget, resolve_target};
 use crate::check::family::Application;
 use crate::check::ir::{CheckedBody, IntegerRange, Node, NodeId, Slot};
 use crate::check::refusal::{
@@ -37,7 +38,6 @@ use crate::check::refusal::{
 };
 use crate::check::sum_case::{ArmHead, CaseBuilder, UnionMember, UnionRef};
 use crate::check::type_form::{IntegerOutsideI128, IntegerSite};
-use crate::check::DispatchOperation;
 use filament_exact::Cancel;
 use filament_exact::{
     ArithmeticOperator, CollectionKind, CollectionType, DecimalType, FloatType, IeeeValue,
@@ -2198,11 +2198,82 @@ impl<'a> Typer<'a> {
                     ExprNode::Negate(inner) => {
                         matches!(operand.at(*inner).node(), ExprNode::DecimalValue { .. })
                     }
-                    _ => false,
+                    ExprNode::Case(_)
+                    | ExprNode::Boolean(_)
+                    | ExprNode::Absent
+                    | ExprNode::Null
+                    | ExprNode::Integer(_)
+                    | ExprNode::Float32(_)
+                    | ExprNode::Float64(_)
+                    | ExprNode::Rational(..)
+                    | ExprNode::Quantity(_)
+                    | ExprNode::String(_)
+                    | ExprNode::ReferenceLiteral { .. }
+                    | ExprNode::Name(_)
+                    | ExprNode::Let { .. }
+                    | ExprNode::If { .. }
+                    | ExprNode::Binary { .. }
+                    | ExprNode::Power { .. }
+                    | ExprNode::Not(_)
+                    | ExprNode::Field { .. }
+                    | ExprNode::Index { .. }
+                    | ExprNode::Present(_)
+                    | ExprNode::Value(_)
+                    | ExprNode::Deref(_)
+                    | ExprNode::Ref(_)
+                    | ExprNode::Call { .. }
+                    | ExprNode::Record { .. }
+                    | ExprNode::Collection { .. }
+                    | ExprNode::Convert { .. }
+                    | ExprNode::Query { .. }
+                    | ExprNode::Flatten(_)
+                    | ExprNode::DropFirst(_)
+                    | ExprNode::RemoveOne { .. }
+                    | ExprNode::Accumulate { .. }
+                    | ExprNode::Count { .. }
+                    | ExprNode::Sum { .. }
+                    | ExprNode::Population { .. }
+                    | ExprNode::Seq { .. }
+                    | ExprNode::Size { .. }
+                    | ExprNode::Contains { .. }
+                    | ExprNode::Select { .. }
+                    | ExprNode::AllInstances { .. }
+                    | ExprNode::Lookup { .. }
+                    | ExprNode::Dispatch { .. }
+                    | ExprNode::Pre(_)
+                    | ExprNode::SelfRef
+                    | ExprNode::Result
+                    | ExprNode::Reaches { .. }
+                    | ExprNode::ProtocolReference { .. }
+                    | ExprNode::Indexed { .. }
+                    | ExprNode::StepLabel { .. }
+                    | ExprNode::Stutter => false,
                 };
                 let operand_hint = match &target {
                     ValueType::Decimal(_) if decimal_literal => Some(Cow::Owned(target.clone())),
-                    _ => None,
+                    ValueType::Boolean
+                    | ValueType::Integer
+                    | ValueType::Int(_)
+                    | ValueType::Rational(_)
+                    | ValueType::Decimal(_)
+                    | ValueType::Float(_)
+                    | ValueType::Quantity(_)
+                    | ValueType::CarriedQuantity(_)
+                    | ValueType::Text(_)
+                    | ValueType::String
+                    | ValueType::Bytes
+                    | ValueType::JsonObject
+                    | ValueType::ClockReference
+                    | ValueType::Uuid
+                    | ValueType::Timestamp
+                    | ValueType::Enum(_)
+                    | ValueType::Option(_)
+                    | ValueType::Composite(_)
+                    | ValueType::Collection(_)
+                    | ValueType::Map(_)
+                    | ValueType::BoundedQuantity(_)
+                    | ValueType::Reference(_)
+                    | ValueType::Population(_) => None,
                 };
                 let goal = Goal::Infer(operand, operand_hint, location.child(0));
                 return Ok(Self::unary(Unary::Convert(target), goal, location, frames));

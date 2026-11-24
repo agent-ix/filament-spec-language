@@ -70,7 +70,7 @@ use super::protocol_requirement::UnitDeclarations;
 use super::refusal::{AliasKind, CheckCause, CheckRefusal, ProtocolAnchorCause};
 use super::state_clause::{AttemptDeclaration, StateClauseDeclaration};
 use super::{Scope, Signatures};
-use anchors::{check_kind, resolve, scope_key, ScopeKey};
+use anchors::{ScopeKey, check_kind, resolve, scope_key};
 use attempts::bind_attempts;
 use binders::shadow_refusals;
 use filament_semantic_value::location::ExpressionOwner as Origin;

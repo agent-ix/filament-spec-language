@@ -32,10 +32,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use filament_exact::{Integer, NodeKey};
 use fsl_forms::{AnchorSite, JoinPolicy, Outstanding, ProtocolNodeKind};
 
-use super::super::{fault, Binder, Binders, Lowering, NodeRef};
+use super::super::{Binder, Binders, Lowering, NodeRef, fault};
 use super::{
-    checked_slot_names, empty_group, identifier, member, protocol_location, protocol_site, sorted,
-    ProtocolInput, ProtocolSite, RelatedSide,
+    ProtocolInput, ProtocolSite, RelatedSide, checked_slot_names, empty_group, identifier, member,
+    protocol_location, protocol_site, sorted,
 };
 use crate::check::family::OccurrenceRole;
 use crate::check::ir::CheckedBody;

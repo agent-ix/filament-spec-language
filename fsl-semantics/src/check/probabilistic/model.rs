@@ -25,20 +25,20 @@ use fsl_forms::{
     ClauseKind, DelayDistributionForm, DelayForm, ExpressionForm, NameForm, QuantityForm,
     RandomForm, RewardForm, WorkloadForm,
 };
-use fsl_foundation::diagnostic::Code;
 use fsl_foundation::Span;
+use fsl_foundation::diagnostic::Code;
 
-use super::super::check::{bind_parameters, Scope, Signatures, Typer};
+use super::super::AdmittedModel;
+use super::super::check::{Scope, Signatures, Typer, bind_parameters};
 use super::super::facts::Definedness;
 use super::super::ir::{CheckedBody, CheckedNode, DispatchTable};
 use super::super::refusal::{CheckCause, CheckRefusal, KeyFault};
 use super::super::state_clause::ClauseOperation;
 use super::super::temporal_clause::{ModelTimeSource, TimeSourceKind};
 use super::super::time_units::TimeUnits;
-use super::super::AdmittedModel;
 use super::claim::CheckedProbabilisticClaim;
 use super::{
-    exact, refusal, DelayFault, ProbabilisticCause, ProbabilisticDeclaration, WeightOwner,
+    DelayFault, ProbabilisticCause, ProbabilisticDeclaration, WeightOwner, exact, refusal,
 };
 use crate::family::CheckContext;
 use crate::model::operation::{OperationDeclaration, OperationLookup};

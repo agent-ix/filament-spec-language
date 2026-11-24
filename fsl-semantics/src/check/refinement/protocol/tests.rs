@@ -10,17 +10,17 @@ use filament_semantic_value::checking::CheckMode;
 use filament_semantic_value::checking::CheckingLimits;
 use filament_semantic_value::fairness::{FairnessGranularity, FairnessKind};
 use fsl_forms::build_unit;
-use fsl_foundation::diagnostic::Code;
 use fsl_foundation::SourceIdentity;
+use fsl_foundation::diagnostic::Code;
 use ix_trace_rs::trace;
 
 use fsl_foundation::Span;
 
 use crate::check::{
-    observation, AbstractSide, CheckCause, CheckRefusal, CheckedGraph, CheckedRefinement,
-    LabelStep, MemoryStepKind, PackageDeclarations, ProtocolStepKind, RefinementCatalogNode,
-    RefinementCause, RefinementFairnessOrigin, RefinementRefusal, RefinementThreadTarget, RowClass,
-    RowObservation, StepClass, StepLabel, UnsupportedFeature,
+    AbstractSide, CheckCause, CheckRefusal, CheckedGraph, CheckedRefinement, LabelStep,
+    MemoryStepKind, PackageDeclarations, ProtocolStepKind, RefinementCatalogNode, RefinementCause,
+    RefinementFairnessOrigin, RefinementRefusal, RefinementThreadTarget, RowClass, RowObservation,
+    StepClass, StepLabel, UnsupportedFeature, observation,
 };
 use crate::model::accounting::ModelNormalizationLimits;
 use crate::model::domain_package::{
@@ -29,7 +29,7 @@ use crate::model::domain_package::{
     OperationParameterRecord, PopulationRecord, ValueTypeRef,
 };
 use crate::model::intake::SelectedModel;
-use crate::model::normalize::{normalize, NormalizeOutcome};
+use crate::model::normalize::{NormalizeOutcome, normalize};
 use filament_checked::key::DeclarationKey;
 
 #[allow(dead_code)]
@@ -37,7 +37,7 @@ mod fixture {
     use crate as semantics;
     include!("../../../../tests/fixtures/protocol_obligations.rs");
 }
-use fixture::{obligation_model_with, HEADER};
+use fixture::{HEADER, obligation_model_with};
 
 /// Fixture R with the population `nodes` of its `Node`s.
 fn concrete_model() -> SelectedModel {
@@ -1082,9 +1082,11 @@ fn a_cattempt_is_covered_by_its_operations_row_or_its_templates() {
         .map(|row| &row.class)
         .collect();
     assert!(classes.contains(&&StepClass::CompensationAttempt("Refund".to_owned())));
-    assert!(classes
-        .iter()
-        .any(|class| matches!(class, StepClass::AttemptNode(_))));
+    assert!(
+        classes
+            .iter()
+            .any(|class| matches!(class, StepClass::AttemptNode(_)))
+    );
 }
 
 /// A row that names a declaration the clause has no such step of refuses
@@ -1251,10 +1253,12 @@ fn a_weak_memory_model_needs_a_row_for_each_internal_step() {
     let flush = "step memory flush -> stutter;";
     let tso = fill("memory tso");
     let graph = checks(&unit(&tso, &format!("{ROWS}\n{flush}")));
-    assert!(only_refinement(&graph)
-        .steps()
-        .iter()
-        .any(|row| row.class == StepClass::MemoryStep(MemoryStepKind::Flush)));
+    assert!(
+        only_refinement(&graph)
+            .steps()
+            .iter()
+            .any(|row| row.class == StepClass::MemoryStep(MemoryStepKind::Flush))
+    );
     let found = refused(&unit(&tso, ROWS));
     assert_eq!(
         only(&found).refinement(),
@@ -1617,10 +1621,12 @@ fn refinements_keep_ordered_s3_refusals_before_protocol_coverage() {
         RefinementCause::Conflicting { name, .. } if name == "Other"
     ));
     assert_eq!(refusals[2].at, "step M::Other::Done -> stutter;");
-    assert!(refusals
-        .iter()
-        .skip(1)
-        .all(|refusal| { !matches!(refusal.refinement(), RefinementCause::MissingRow { .. }) }));
+    assert!(
+        refusals
+            .iter()
+            .skip(1)
+            .all(|refusal| { !matches!(refusal.refinement(), RefinementCause::MissingRow { .. }) })
+    );
 
     let no_invariant = source.replace(
         "invariant Invalid using v on M::Node at current { self.total }\n",
@@ -1983,10 +1989,12 @@ fn a_concrete_protocol_refines_an_abstract_protocol() {
         1,
         "{observed:?}"
     );
-    assert!(observed
-        .iter()
-        .filter(|seen| **seen != node)
-        .all(|seen| *seen == RowObservation::Internal));
+    assert!(
+        observed
+            .iter()
+            .filter(|seen| **seen != node)
+            .all(|seen| *seen == RowObservation::Internal)
+    );
 
     let graph = check_with_internals(&text, Some(internal_list("A::Seq::F")))
         .unwrap_or_else(|found| panic!("{found:?}"));

@@ -20,7 +20,7 @@ use crate::check::node_key::{
 };
 use crate::check::refusal::CheckRefusal;
 use crate::check::state_graph_claim::{
-    state_graph_location, CheckedStateGraphClaim, CheckedStatePredicate, Site, StateGraphForm,
+    CheckedStateGraphClaim, CheckedStatePredicate, Site, StateGraphForm, state_graph_location,
 };
 
 /// One checked state-graph claim, as lowering reads it.

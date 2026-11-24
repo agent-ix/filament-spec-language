@@ -30,7 +30,7 @@
 
 mod claim;
 mod exact;
-pub(crate) use exact::{value as exact_value, ExactFault};
+pub(crate) use exact::{ExactFault, value as exact_value};
 mod model;
 mod node_key;
 
@@ -40,7 +40,6 @@ pub use claim::{
     FractionMeasure, ModelSubjectRef, OverBinding, PackageProbabilityClaimForm, ProbForm,
     ProbScheduler, ReachTarget, Weighting,
 };
-pub(crate) use model::{check, precondition_reads, site_spans, ProbabilisticInput, Unresolved};
 pub use model::{
     CheckedProbabilisticModel, Delay, DelayDistribution, PackageDelay, PackageDelayFamily,
     PackageLiteral, PackageProbabilistic, PackageProbabilisticRefusal, PackageRandomParameter,
@@ -48,6 +47,7 @@ pub use model::{
     ProbabilisticFeature, ProbabilisticOperation, RandomParameter, ReadReward, Reward,
     SupportValue, Workload,
 };
+pub(crate) use model::{ProbabilisticInput, Unresolved, check, precondition_reads, site_spans};
 pub use node_key::{ClaimReadFault, ClaimReads, FairnessRead, SchedulerRead, Statement};
 
 use filament_exact::Integer;
@@ -58,8 +58,8 @@ use fsl_forms::{
     ConfidenceItemForm, ConfidenceKey, DelayForm, ExactValueForm, ExactValueKind, ExprNode,
     MeasureForm, ProbabilisticBody, ProbabilisticForm, RandomForm, RewardForm, WorkloadForm,
 };
-use fsl_foundation::diagnostic::Code;
 use fsl_foundation::Span;
+use fsl_foundation::diagnostic::Code;
 
 use super::layer::visit_located;
 use super::refusal::{

@@ -16,8 +16,8 @@ use fsl_foundation::{SourceIdentity, Span};
 use ix_trace_rs::trace;
 
 use super::{
-    admit_types_with, model_field, model_operation, model_value_type, AssemblyCause, AssemblyError,
-    AssemblyRefusal, TopologyFault, Unmapped,
+    AssemblyCause, AssemblyError, AssemblyRefusal, TopologyFault, Unmapped, admit_types_with,
+    model_field, model_operation, model_value_type,
 };
 use crate::check::{CheckCause, Owner, PackageDeclarations, SourceOwner, TypeFormFault};
 use crate::model::accounting::ModelNormalizationLimits;
@@ -30,7 +30,7 @@ use crate::model::domain_package::{
     TuplePositionRecord, TupleValueTypeRecord, ValueTypeRef, VariantRecord,
 };
 use crate::model::intake::SelectedModel;
-use crate::model::normalize::{normalize, NormalizeOutcome};
+use crate::model::normalize::{NormalizeOutcome, normalize};
 use crate::value::layer::{HeaderLayer, LayerForm};
 use filament_checked::key::DeclarationKey;
 use filament_exact::Cancel;
@@ -541,10 +541,12 @@ fn the_assembler_reports_every_error() {
     );
 
     let (_, found) = errors("type A = B;\ntype B = A;");
-    let [AssemblyError {
-        cause: AssemblyCause::AliasCycle { edges },
-        ..
-    }] = found.as_slice()
+    let [
+        AssemblyError {
+            cause: AssemblyCause::AliasCycle { edges },
+            ..
+        },
+    ] = found.as_slice()
     else {
         panic!("one alias cycle, not {found:?}");
     };
@@ -1058,10 +1060,12 @@ fn using_aliases_resolve_to_the_units_profile_selections() {
     );
     match assemble_as("a", "u", &text) {
         Err(refusal) => {
-            let [AssemblyError {
-                cause: AssemblyCause::DuplicateAlias { alias, spans },
-                ..
-            }] = refusal.errors.as_slice()
+            let [
+                AssemblyError {
+                    cause: AssemblyCause::DuplicateAlias { alias, spans },
+                    ..
+                },
+            ] = refusal.errors.as_slice()
             else {
                 panic!("one duplicate-alias error, not {refusal:?}");
             };
@@ -2860,10 +2864,12 @@ fn name_and_number_errors_are_reported_and_the_topology_does_not_run() {
             ),
         ]
     );
-    assert!(found
-        .iter()
-        .any(|error| error.cause == AssemblyCause::ZeroDenominator
-            && error.span == last(&text, "rational(1, 0)")));
+    assert!(
+        found
+            .iter()
+            .any(|error| error.cause == AssemblyCause::ZeroDenominator
+                && error.span == last(&text, "rational(1, 0)"))
+    );
 
     // Without those three, the topology runs and reports the first defect
     // alone: `Length`'s turn, before `Area`'s `Width` and the `P`/`Q` cycle.

@@ -7,9 +7,9 @@ use filament_semantic_value::checking::CheckMode;
 use fsl_forms::Accumulation;
 
 use super::*;
-use crate::check::check::EnumBinding;
 use crate::check::Obligation;
-use crate::value::definition::{admit_ieee_profile, DefinitionRole};
+use crate::check::check::EnumBinding;
+use crate::value::definition::{DefinitionRole, admit_ieee_profile};
 use filament_exact::IllTypedCause;
 
 /// FSL's text-profile definition, the law a text operation names.

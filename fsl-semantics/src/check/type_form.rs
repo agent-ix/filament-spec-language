@@ -230,7 +230,7 @@ impl TypeFormError {
                 span: self.span,
             },
             TypeFormFault::UnitArithmetic(_) => {
-                return CheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible)
+                return CheckRefusal::ill_typed(location, IllTypedCause::OperatorIneligible);
             }
             TypeFormFault::UnitIdentity(cause) => CheckCause::Identity(cause),
             TypeFormFault::Malformed
@@ -239,7 +239,7 @@ impl TypeFormError {
             | TypeFormFault::MalformedDecimal
             | TypeFormFault::EmptyTextBounds
             | TypeFormFault::EmptyCardinality => {
-                return CheckRefusal::ill_typed(location, IllTypedCause::TypeMismatch)
+                return CheckRefusal::ill_typed(location, IllTypedCause::TypeMismatch);
             }
         };
         CheckRefusal {
@@ -472,7 +472,7 @@ fn resolve_builtin<'f>(
             return Ok(Step::Option {
                 form,
                 argument: only_argument(form)?,
-            })
+            });
         }
         BuiltinType::Map => {
             let [key, values] = form.arguments.as_slice() else {
@@ -543,7 +543,7 @@ pub(super) fn quantity_unit(
     target: &TypeForm,
 ) -> Result<UnitId, TypeFormError> {
     use filament_semantic_value::quantity::{
-        evaluate_quantity_unit, result_unit, QuantityOperation, QuantityRefusal, UnitOperation,
+        QuantityOperation, QuantityRefusal, UnitOperation, evaluate_quantity_unit, result_unit,
     };
     let resolve = |name: &NameForm| {
         names.unit_named(&name.name).ok_or_else(|| {
@@ -651,7 +651,7 @@ fn carried_quantity_type(
                     _ => return Err(malformed(form)),
                 },
                 Step::Option { .. } | Step::Collection { .. } | Step::Map { .. } => {
-                    return Err(malformed(form))
+                    return Err(malformed(form));
                 }
             };
             QuantityCarrier::Decimal(decimal)
@@ -664,7 +664,7 @@ fn carried_quantity_type(
                     _ => return Err(malformed(form)),
                 },
                 Step::Option { .. } | Step::Collection { .. } | Step::Map { .. } => {
-                    return Err(malformed(form))
+                    return Err(malformed(form));
                 }
             };
             QuantityCarrier::Rational(domain)
@@ -1342,8 +1342,10 @@ mod tests {
     fn an_absent_collection_bound_resolves_to_none() {
         let collection = |kind: CollectionKind, bounds: &[&str]| {
             TypeForm::collection(kind, SPAN)
-                .with_arguments(vec![TypeForm::builtin(BuiltinType::Int, SPAN)
-                    .with_bounds(vec!["0".to_owned(), "9".to_owned()])])
+                .with_arguments(vec![
+                    TypeForm::builtin(BuiltinType::Int, SPAN)
+                        .with_bounds(vec!["0".to_owned(), "9".to_owned()]),
+                ])
                 .with_bounds(bounds.iter().map(|bound| (*bound).to_owned()).collect())
         };
         for kind in [
