@@ -19,9 +19,10 @@ no stored measurements or past results are comparison inputs.
 | Protocol reach `reach/workers` at 1, 2, 4 and all workers | `make bench-reach` | `benches/reach.rs` | `src/mc.rs`, `src/world.rs` |
 | Canonical state-key encoding `key/encode` | `make bench-key` | `benches/key.rs` | `src/mc.rs`, `src/world.rs` |
 | EN-4 Okamoto sampling `en4/sample` | `make bench-en4` | `benches/en4.rs` | `src/mc.rs`, `src/world.rs` |
+| Package emit/read and end-to-end replay request | `make bench-package` | `benches/package.rs` | `src/package.rs`, `src/world.rs` |
 | Counts, refusal boundaries, one-shot large inputs and peak RSS | `make bench-probe` | `src/bin/fsl-bench-probe.rs` | all of the above |
 
-`make bench` runs all eleven criterion suites. Each target runs
+`make bench` runs all twelve criterion suites. Each target runs
 `cargo bench --locked -p fsl-bench --bench <axis>`, and criterion options go
 through `BENCH_ARGS`. Run benches with `-p fsl-bench`, never `--workspace`;
 other crates' dev-dependencies can enable `filament-exact/test-support` and make
@@ -50,12 +51,36 @@ needs no benchmark change; an API change requires updating its generator. Each
 generator has a smallest-size test so invalid inputs fail in `make ci` before
 benchmark time.
 
+### Package emit and read (NFR-141)
+
+`make bench-package` runs the separately selectable `package/emit`,
+`package/read` and `replay/request` groups at 1, 10 and 100 timed models. Each model has one object
+type with one clock and one integer value, one operation, one pre/post timed
+transition and one temporal claim. `src/package.rs` prepares the models and
+checked package before timing; the emit row calls the package emitter and the
+read row admits the already emitted bytes through the evaluation-package
+reader. The replay row executes one end-to-end function replay request over
+the same source package. The invocation-local reporter prints Criterion's
+live estimates as milliseconds per package for each M and the 1→10→100
+scaling exponent; `BENCH_ARGS='package/emit'`, `package/read` or
+`replay/request` selects one axis. The shared `counters` feature counts parser
+calls at the replay spine's actual parse-call boundary using a caller-owned
+counter; the report gives calls per source document and M. The separate probe
+command `fsl-bench-probe package replay/request <1|10|100>` runs one replay per
+process and reports wall milliseconds and peak RSS in KiB; `make bench-package`
+runs all three sizes and includes those isolated probe rows in the reporter.
+
 ## Comparing a candidate with current main
 
-1. Build current `origin/main` (A) and the candidate (B) in separate worktrees
-   with separate target directories.
+1. Use the ticket's single worktree. Build current `origin/main` (A) with the
+   identical benchmark-only harness and a target directory inside that
+   worktree, then build candidate (B) in the same worktree with a different
+   target directory. Record each production source SHA; the benchmark harness
+   revision is identical for A and B.
 2. In one session, alternate A and B for five rounds each on the same machine;
-   record load average before and after every round.
+   record load average before and after every round. For Criterion axes, each
+   round runs the named axis at every required size. For isolated probes, each
+   round starts a fresh process at every required size.
 3. For each benchmark, calculate each side's median of its five point estimates.
 4. Calculate the session noise from those ten live observations: the largest
    of A's and B's MAD/median and, for criterion runs, the widest 95%

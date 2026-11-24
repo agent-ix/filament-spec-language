@@ -487,7 +487,7 @@ arch-lint: arch-lint-api-surface-fsl arch-lint-qualified-core
 
 # The committed performance benchmarks (`fsl-bench/`), one
 # criterion bench per axis group, each runnable by name. `make bench` runs all
-# eleven; `make bench-probe` prints the counts, refusal boundaries and one-shot
+# twelve; `make bench-probe` prints the counts, refusal boundaries and one-shot
 # large-input timings (with peak RSS) the criterion benches do not record.
 # Compare a candidate with current main in one interleaved session; see
 # `fsl-bench/BENCHMARKING.md` for the live-run method. No stored baseline is used.
@@ -495,8 +495,14 @@ arch-lint: arch-lint-api-surface-fsl arch-lint-qualified-core
 # Not part of `ci:`
 # -- timing is not a pass/fail gate.
 BENCH_ARGS ?=
-BENCH_AXES := parser checker cst model evaluator evaluator_kernel text_cluster mc reach key en4
+BENCH_AXES := parser checker cst model evaluator evaluator_kernel text_cluster mc reach key en4 package
 BENCH_GENERIC_AXES := $(filter-out evaluator_kernel,$(BENCH_AXES))
+BENCH_PACKAGE_FILTER := $(filter package/emit package/read replay/request,$(BENCH_ARGS))
+ifeq ($(strip $(BENCH_PACKAGE_FILTER)),)
+BENCH_PACKAGE_REPORT := report
+else
+BENCH_PACKAGE_REPORT := report-axis $(BENCH_PACKAGE_FILTER)
+endif
 
 .PHONY: bench bench-probe $(addprefix bench-,$(BENCH_AXES))
 
@@ -504,6 +510,14 @@ bench: $(addprefix bench-,$(BENCH_AXES))
 
 $(addprefix bench-,$(BENCH_GENERIC_AXES)): bench-%:
 	cargo bench --locked -p fsl-bench --bench $* -- $(BENCH_ARGS)
+
+bench-package:
+	cargo run --locked -p fsl-bench --bin fsl-bench-package-report -- start
+	cargo bench --locked -p fsl-bench --bench package -- $(BENCH_ARGS)
+	cargo run --locked --release -p fsl-bench --features counters --bin fsl-bench-probe -- package replay/request 1
+	cargo run --locked --release -p fsl-bench --features counters --bin fsl-bench-probe -- package replay/request 10
+	cargo run --locked --release -p fsl-bench --features counters --bin fsl-bench-probe -- package replay/request 100
+	cargo run --locked -p fsl-bench --bin fsl-bench-package-report -- $(BENCH_PACKAGE_REPORT)
 
 bench-evaluator_kernel:
 	cargo run --locked -p fsl-bench --bin fsl-bench-kernel-report -- start

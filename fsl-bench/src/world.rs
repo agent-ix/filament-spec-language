@@ -193,8 +193,13 @@ impl Model {
         format!("unrelated{index}s")
     }
 
-    /// The domain package document.
-    fn document(&self) -> Vec<u8> {
+    /// The checked-domain input document for this benchmark model.
+    ///
+    /// The package emit/read and replay axes use the same model catalogue as
+    /// the model-layer axes, then compile a source unit that selects these
+    /// package identities. Keeping this encoding here makes fixture shape
+    /// changes visible to both workloads.
+    pub fn document(&self) -> Vec<u8> {
         let mut kinds = vec![
             ("object_type", meaning::OBJECT_TYPE),
             ("population", meaning::POPULATION),

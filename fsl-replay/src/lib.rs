@@ -255,6 +255,8 @@ pub use execute::{
     ParityArgument, ParityBoundRefusal, ParityPreimage, ReplayRefusal, ScalarIdentityMismatch,
     ValueParityArgument, ValueParityPreimage, ValueParityReport, ValueParityResult,
 };
+#[cfg(feature = "bench-counters")]
+pub use execute::replay_with_parse_counter;
 pub use hybrid::{
     hybrid_locus_site, hybrid_locus_wire, settle_hybrid_candidates, AdmittedHybridProcessItem,
     AdmittedHybridProcessRequest, BoundDimension, BudgetRefusal, CertificateRecord,

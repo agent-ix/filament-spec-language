@@ -46,7 +46,7 @@ nix = { version = "0.31.3", default-features = false, features = ["resource"] }
 
 # Off by default: the workload counters of `src/counters.rs`.
 [features]
-counters = []
+counters = ["fsl-replay/bench-counters"]
 property-generators = ["dep:proptest", "dep:fsl-proptest-policy"]
 
 [dev-dependencies]
@@ -99,6 +99,10 @@ harness = false
 
 [[bench]]
 name = "en4"
+harness = false
+
+[[bench]]
+name = "package"
 harness = false
 
 [lints.rust]

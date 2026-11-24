@@ -20,6 +20,8 @@ quire-extraction = ["dep:fsl-source", "fsl-source/quire-extraction"]
 # FR-128's recompile and identity checks, for tests only until S4 writes
 # timed members (QSL-580). Only dev-dependencies enable it.
 test-support = []
+# The benchmark-only, caller-owned source parser invocation counter.
+bench-counters = []
 
 [dependencies]
 ix-trace-rs = { git = "https://github.com/agent-ix/ix-trace-rs", tag = "v0.1.2" }

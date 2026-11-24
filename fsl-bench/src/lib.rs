@@ -49,6 +49,7 @@ pub mod deep_input;
 pub mod kernel;
 pub mod mc;
 pub mod model;
+pub mod package;
 pub mod parse;
 #[cfg(feature = "property-generators")]
 pub mod prop;

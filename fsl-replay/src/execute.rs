@@ -1361,6 +1361,60 @@ pub fn replay_with_cancel_and_temporal_selections(
     replay_limits: ReplayLimits,
     cancel: &Cancel,
 ) -> Result<ReplayResult, ReplayRefusal> {
+    replay_with_cancel_temporal_selections_and_counter(
+        wire,
+        temporal_selections,
+        replay_limits,
+        cancel,
+        &mut NoopParseCallCounter,
+    )
+}
+
+/// Benchmark-only replay entry that counts source-document parse calls in a
+/// caller-owned counter, with no process-global instrumentation.
+#[cfg(feature = "bench-counters")]
+pub fn replay_with_parse_counter(
+    wire: ReplayRequestWire,
+    replay_limits: ReplayLimits,
+    parse_calls: &mut u64,
+) -> Result<ReplayResult, ReplayRefusal> {
+    replay_with_cancel_temporal_selections_and_counter(
+        wire,
+        &[],
+        replay_limits,
+        &Cancel::new(),
+        &mut CallerParseCallCounter(parse_calls),
+    )
+}
+
+trait ParseCallCounter {
+    fn record_source_parse(&mut self);
+}
+
+struct NoopParseCallCounter;
+
+impl ParseCallCounter for NoopParseCallCounter {
+    #[inline(always)]
+    fn record_source_parse(&mut self) {}
+}
+
+#[cfg(feature = "bench-counters")]
+struct CallerParseCallCounter<'a>(&'a mut u64);
+
+#[cfg(feature = "bench-counters")]
+impl ParseCallCounter for CallerParseCallCounter<'_> {
+    fn record_source_parse(&mut self) {
+        *self.0 = self.0.saturating_add(1);
+    }
+}
+
+fn replay_with_cancel_temporal_selections_and_counter<C: ParseCallCounter>(
+    wire: ReplayRequestWire,
+    temporal_selections: &[fsl_package::TemporalClockSelection],
+    replay_limits: ReplayLimits,
+    cancel: &Cancel,
+    parse_calls: &mut C,
+) -> Result<ReplayResult, ReplayRefusal> {
     let request = ReplayRequest::decode(wire, replay_limits)?;
     if matches!(request.source(), ReplaySource::ProtocolAnalysis(_)) {
         return Err(ReplayRefusal::WrongProtocolAnalysisEntry);
@@ -1381,7 +1435,12 @@ pub fn replay_with_cancel_and_temporal_selections(
         request.accounting_limits(),
         replay_limits,
     )?;
-    let compiled = recompile_with_temporal_selections(&request, &caller, temporal_selections)?;
+    let compiled = recompile_with_temporal_selections_and_counter(
+        &request,
+        &caller,
+        temporal_selections,
+        parse_calls,
+    )?;
     if let ReplaySource::ObservedTemporal(_) = request.source() {
         return replay_observed_temporal(request, compiled, caller, cancel);
     }
@@ -2138,6 +2197,20 @@ pub(crate) fn recompile_with_temporal_selections(
     limits: &CallerLimits,
     temporal_selections: &[fsl_package::TemporalClockSelection],
 ) -> Result<Recompiled, ReplayRefusal> {
+    recompile_with_temporal_selections_and_counter(
+        request,
+        limits,
+        temporal_selections,
+        &mut NoopParseCallCounter,
+    )
+}
+
+fn recompile_with_temporal_selections_and_counter<C: ParseCallCounter>(
+    request: &ReplayRequest,
+    limits: &CallerLimits,
+    temporal_selections: &[fsl_package::TemporalClockSelection],
+    parse_calls: &mut C,
+) -> Result<Recompiled, ReplayRefusal> {
     // Rule 1: strictly ascending identities, before anything is built.
     for (index, pair) in request.dependencies().windows(2).enumerate() {
         if let [before, entry] = pair {
@@ -2247,18 +2320,21 @@ pub(crate) fn recompile_with_temporal_selections(
     } else {
         RecompileClocks::Explicit(temporal_selections)
     };
-    let (compiled, evidence) = run_spine_units(SpineUnitRun {
-        units: &units,
-        package: &package_name,
-        packages: &packages,
-        dependencies: &dependencies,
-        clocks,
-        limits: limits.spine,
-        refinement_internals: request.refinement_internals(),
-        check_mode: request.package().check_mode(),
-        function_modes: &request.package().function_modes(),
-        external_package_bytes: request.external_package_allowance(),
-    })
+    let (compiled, evidence) = run_spine_units(
+        SpineUnitRun {
+            units: &units,
+            package: &package_name,
+            packages: &packages,
+            dependencies: &dependencies,
+            clocks,
+            limits: limits.spine,
+            refinement_internals: request.refinement_internals(),
+            check_mode: request.package().check_mode(),
+            function_modes: &request.package().function_modes(),
+            external_package_bytes: request.external_package_allowance(),
+        },
+        parse_calls,
+    )
     .map_err(|failure| {
         locate_dependency_clock_refusal(
             request.package(),
@@ -2582,8 +2658,9 @@ fn replay_input_limit(
     }
 }
 
-fn run_spine_units(
+fn run_spine_units<C: ParseCallCounter>(
     input: SpineUnitRun<'_>,
+    parse_calls: &mut C,
 ) -> Result<(Recompiled, filament_contract_model::CheckedPackageEvidence), ReplayRefusal> {
     let SpineUnitRun {
         units,
@@ -2644,6 +2721,7 @@ fn run_spine_units(
     let parsed = requests
         .iter()
         .map(|request| {
+            parse_calls.record_source_parse();
             spine::parse_for_continuation(request, limits.source, &cancel)
                 .map(|parsed| parsed.into_value())
                 .map_err(&refusal)
