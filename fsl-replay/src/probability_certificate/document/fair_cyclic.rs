@@ -39,6 +39,7 @@ pub(super) fn check_bounds(
         CertificateValues::Rejected(rejection) => {
             return Ok(ExactProbabilityCertificateCheck::Rejected(rejection));
         }
+        CertificateValues::Partial { .. } => return Err(ProbabilityDocumentError::Unsupported),
     };
     let action_sums = mdp::sums(graph, &values, None, cx)?;
     let existential = matches!(
