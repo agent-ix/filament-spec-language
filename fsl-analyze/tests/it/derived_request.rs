@@ -142,6 +142,23 @@ pub(crate) fn items_of_kind<S: Clone + Eq>(
         .collect()
 }
 
+/// Return subjects of derived items of `kind` in derivation order.
+pub(crate) fn derived_subjects<S: Clone + Eq>(
+    written: &WrittenRequest<S>,
+    kind: ItemKind,
+) -> Vec<S> {
+    let unanchored = written
+        .unanchored()
+        .iter()
+        .filter(|item| item.kind == kind)
+        .map(|item| item.subject.clone());
+    items_of_kind(written, kind)
+        .into_iter()
+        .map(|(_, obligation)| obligation.subject)
+        .chain(unanchored)
+        .collect()
+}
+
 /// The claim FSpec FR-368 gives a derived item over a subject reading the
 /// selection `identity` of `package`: its `model_root` node's `generated`
 /// occurrence at ordinal 0.

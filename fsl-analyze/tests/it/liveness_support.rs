@@ -118,6 +118,7 @@ impl Fixture {
         let letters = self.letters(atom);
         check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &self.temporal_clock_selections,
                 subject: subject(
                     &self.package,
@@ -132,6 +133,8 @@ impl Fixture {
                 },
                 max_depth,
                 limits,
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             cancel,
