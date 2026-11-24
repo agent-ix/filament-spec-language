@@ -618,8 +618,10 @@ fn an_every_scheduler_eventually_without_random_is_refuted_by_event_avoidance() 
 /// An unwindowed `always` under a workload whose calls fail 1 time in 1,000
 /// has exact value 0: the path masses `(999/1000)^n` of a path-set search
 /// never close the gap, so the claim is refuted by the rejecting-union
-/// `lower` certificate over the cyclic chain instead, with no path.
-#[trace("TC-3162", "FR-202-AC-36")]
+/// `lower` certificate over the cyclic chain instead: no path-set search
+/// starts (FR-202-AC-21's cyclic `always` clause), and the counterexample
+/// carries no path.
+#[trace("FR-202-AC-21")]
 #[test]
 fn a_rarely_failing_workload_always_is_refuted_by_its_rejecting_union() {
     let world = World::new(&architecture(
@@ -635,7 +637,13 @@ fn a_rarely_failing_workload_always_is_refuted_by_its_rejecting_union() {
         ),
     ));
     let (up, down) = keys(&world, "StaysUp");
+    fsl_analyze::exact_probabilistic::reset_product_construction_counts();
     let record = refuted(&world, "StaysUp");
+    assert_eq!(
+        fsl_analyze::exact_probabilistic::product_construction_counts().path_searches,
+        0,
+        "no path-set search on the cyclic subject"
+    );
     decisive(&record);
     let found = evidence(&record);
     assert!(found.scheduler.is_empty());
