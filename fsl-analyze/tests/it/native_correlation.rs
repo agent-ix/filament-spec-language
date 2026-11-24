@@ -887,12 +887,12 @@ fn weak_premises<M: fill::Explored + Default>(memory: &str) {
         &inside_weak(
             memory,
             &controls(
-                "related by Owns ((if 6 mod (if tx then 0 else 1) >= 0 then k else k), k)",
+                "related by Owns ((if q(if tx then 0 else 1) >= 0 then k else k), k)",
                 "",
             ),
         ),
         true,
-        "",
+        "function q using v(x: Integer): Integer pure { 6 mod x }\n",
         filament_semantic_value::checking::CheckMode::Kernel,
     );
     let graph = undefined.graph_under::<M>();
