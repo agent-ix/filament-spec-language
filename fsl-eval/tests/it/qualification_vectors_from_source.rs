@@ -2785,7 +2785,6 @@ fn compare_accounting(vector: &QualificationVector) -> Result<usize, String> {
     compare(vector)
 }
 
-#[derive(Clone, Copy)]
 struct T16ProfileRow {
     profile: TextProfile,
     input: &'static str,
