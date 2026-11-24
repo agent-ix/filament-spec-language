@@ -56,7 +56,7 @@ use filament_exact::{
     UnionValue, Value, ValueType, compare_keys, form, form_grouped, retain_composite,
 };
 use filament_exact::{Decimal, DecimalOperation, DecimalType, evaluate_decimal};
-use filament_exact::{DivisionMember, IntegerDomain};
+use filament_exact::{DivisionMember, IntegerDomain, IntegerInterval};
 use filament_exact::{FloatType, Rational};
 use filament_exact::{
     IeeeComparison, IeeeFlags, IeeeOperation, IeeeValue, IeeeWidth, compare_ieee,
@@ -773,6 +773,9 @@ fn ordering_composition<'a, N: NodeSource<'a>>(node: N) -> bool {
 enum Task<'a, N> {
     Eval(N),
     Apply(N),
+    /// Apply a division operator against the bounded consumer domain of a
+    /// direct `Coerce` wrapper, so the kernel refuses before retaining it.
+    ApplyDivisionInDomain(N, IntegerInterval),
     /// FR-397 "Ordering parts": a `numeric_equal` evaluated as an ordering
     /// part, which decides without charging.
     ApplyPart(N),
@@ -1824,6 +1827,7 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
             let located: N = match &task {
                 Task::Eval(node)
                 | Task::Apply(node)
+                | Task::ApplyDivisionInDomain(node, _)
                 | Task::Branch(node)
                 | Task::Short(node, _)
                 | Task::ApplyPart(node)
@@ -2656,6 +2660,9 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
         match task {
             Task::Eval(node) => self.eval(node),
             Task::Apply(node) => self.apply(node),
+            Task::ApplyDivisionInDomain(node, domain) => {
+                self.apply_division_in_domain(node, domain)
+            }
             Task::ApplyPart(node) => self.apply_ordering_part(node),
             Task::EvalAt(node, position) => self.eval_at(node, position),
             Task::Branch(node) => {
@@ -2905,15 +2912,30 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     }
 
     fn apply(&mut self, node: N) -> Result<(), Halt> {
-        self.apply_as(node, Application::Standalone)
+        self.apply_as(node, Application::Standalone, None)
+    }
+
+    fn apply_division_in_domain(&mut self, node: N, domain: IntegerInterval) -> Result<(), Halt> {
+        self.apply_as(node, Application::Standalone, Some(domain))
     }
 
     fn apply_ordering_part(&mut self, node: N) -> Result<(), Halt> {
-        self.apply_as(node, Application::OrderingPart)
+        self.apply_as(node, Application::OrderingPart, None)
     }
 
     fn eval(&mut self, node: N) -> Result<(), Halt> {
         match node.kind() {
+            NodeKind::Coerce(operand, domain)
+                if matches!(node.at(*operand).kind(), NodeKind::IntegerDivision { .. }) =>
+            {
+                let division = node.at(*operand);
+                self.tasks
+                    .push(Task::ApplyDivisionInDomain(division, domain.clone()));
+                for child in division.children().into_iter().rev() {
+                    self.tasks.push(Task::Eval(child));
+                }
+                return Ok(());
+            }
             NodeKind::ReferenceLiteral {
                 object_type,
                 identity,
@@ -3086,7 +3108,12 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
     /// (or expressed as a refutable `let ... else`, which this lint does not
     /// reach) rather than left to this `deny` -- see each site's own note.
     #[deny(clippy::wildcard_enum_match_arm)]
-    fn apply_as(&mut self, node: N, application: Application) -> Result<(), Halt> {
+    fn apply_as(
+        &mut self,
+        node: N,
+        application: Application,
+        division_domain: Option<IntegerInterval>,
+    ) -> Result<(), Halt> {
         let mut result_origins = ReferenceOrigins::default();
         let value = match node.kind() {
             NodeKind::Literal(_)
@@ -3343,13 +3370,24 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                             member,
                             &left,
                             &right,
-                            &IntegerDomain::Mathematical,
+                            &division_domain
+                                .as_ref()
+                                .map_or(IntegerDomain::Mathematical, |domain| {
+                                    IntegerDomain::Bounded(domain.clone())
+                                }),
                             self.meter,
                         )
                     }
-                    IntegerDivisionOperator::Mod => {
-                        integer_modulo(&left, &right, &IntegerDomain::Mathematical, self.meter)
-                    }
+                    IntegerDivisionOperator::Mod => integer_modulo(
+                        &left,
+                        &right,
+                        &division_domain
+                            .as_ref()
+                            .map_or(IntegerDomain::Mathematical, |domain| {
+                                IntegerDomain::Bounded(domain.clone())
+                            }),
+                        self.meter,
+                    ),
                 };
                 Value::Integer(outcome_into_stop(outcome)?)
             }

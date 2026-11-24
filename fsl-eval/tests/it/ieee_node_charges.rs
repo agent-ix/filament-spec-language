@@ -324,6 +324,60 @@ fn f32_ieee_negation_preserves_all_non_sign_bits_under_every_rounding_mode() {
     }
 }
 
+/// FSpec FR-148-AC-11 / FSL FR-397-AC-21: contextual source literals retain
+/// their requested rounding profile when negated.
+#[trace("FSpec-FR-148-AC-11", "FR-397-AC-21", "FSpec-TC-193")]
+#[test]
+fn source_float_negation_is_total_for_each_rounding_profile() {
+    for mode in ["nearest-even", "toward-zero", "exact"] {
+        for (width, source, expected) in [
+            (32, 0x3f80_0000, 0xbf80_0000),
+            (32, 0x0000_0000, 0x8000_0000),
+            (32, 0x8000_0000, 0x0000_0000),
+            (32, 0x7f80_0000, 0xff80_0000),
+            (32, 0x7f80_0001, 0xff80_0001),
+            (32, 0xffc0_0005, 0x7fc0_0005),
+            (64, 0x7ff0_0000_0000_0001, 0xfff0_0000_0000_0001),
+        ] {
+            let ty = format!("Float{width}[{mode}]");
+            let literal = format!("float{width}(bits: {source:#x})");
+            let expression = format!("-{literal}");
+            let outcome = run(
+                "",
+                &ty,
+                &expression,
+                Vec::new(),
+                limits(0, 100, 100, 100),
+                (&ty, &literal),
+            );
+            let expected = if width == 32 {
+                f32v(u32::try_from(expected).expect("binary32 expectation"))
+            } else {
+                f64v(expected)
+            };
+            same(&outcome.outcome, Outcome::Completed(expected));
+            assert!(outcome.flags.is_empty(), "{mode}, {source:#x}");
+
+            let expression = format!("-({expression})");
+            let twice = run(
+                "",
+                &ty,
+                &expression,
+                Vec::new(),
+                limits(0, 100, 100, 100),
+                (&ty, &literal),
+            );
+            let original = if width == 32 {
+                f32v(u32::try_from(source).expect("binary32 source"))
+            } else {
+                f64v(source)
+            };
+            same(&twice.outcome, Outcome::Completed(original));
+            assert!(twice.flags.is_empty(), "{mode}, {source:#x}");
+        }
+    }
+}
+
 /// F33: negation charges the operand and retained result in order, and
 /// refuses to produce a value when either charge cannot be paid.
 #[trace("FSpec-TC-193", "FR-397-AC-27")]

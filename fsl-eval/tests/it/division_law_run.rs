@@ -176,3 +176,56 @@ fn a_divisor_the_checker_cannot_exclude_is_undefined_only_under_kernel() {
         integer(5)
     );
 }
+
+/// FR-495-AC-2 / FSpec FR-147-AC-9 and AC-10: the source Kernel route checks
+/// only the exposed division member against the consumer's bounded result.
+#[trace("FR-495-AC-2", "FSpec-FR-147-AC-9", "FSpec-FR-147-AC-10")]
+#[test]
+fn bounded_division_source_refuses_with_member_specific_codes() {
+    let declarations = r#"
+        profile d = "filament.value.integer-division.euclidean/v1";
+        function q using v(a: Int[-9223372036854775808, -9223372036854775808], b: Int[-1, -1]): Int[-9223372036854775808, 9223372036854775807] pure { a div b }
+        function r using v(a: Int[10, 10], b: Int[5, 5]): Int[1, 10] pure { a rem b }
+        function m using v(): Int[0, 1] pure { -7 mod 3 }
+        function safe_q using v(y: Int[5, 5]): Int[1, 10] pure { 10 div y }
+        function safe_r using v(x: Int[-10, -10]): Int[-10, 5] pure { x rem -1 }
+    "#;
+    let package = CheckedPackage::link(
+        check("", declarations, CheckMode::Kernel)
+            .expect("Kernel checks bounded div, rem, and mod consumers"),
+    );
+
+    for (name, arguments, code, cause) in [
+        (
+            "q",
+            vec![i64::MIN, -1],
+            "division_out_of_domain",
+            "quotient-outside-domain",
+        ),
+        (
+            "r",
+            vec![10, 5],
+            "division_out_of_domain",
+            "remainder-outside-domain",
+        ),
+        ("m", Vec::new(), "modulo_out_of_domain", "outside-domain"),
+    ] {
+        let (outcome, located, _) = call(&package, name, &arguments);
+        let Outcome::Refused(refusal) = outcome else {
+            panic!("{name} must refuse without exposing a member: {outcome:?}");
+        };
+        assert_eq!(refusal.code(), Some(code), "{name}");
+        assert_eq!(refusal.cause(), Some(cause), "{name}");
+        assert!(located, "{name} refusal is located at its operator");
+    }
+    assert_eq!(
+        format!("{:?}", call(&package, "safe_q", &[5]).0),
+        integer(2),
+        "the unexposed remainder is outside the consumer domain"
+    );
+    assert_eq!(
+        format!("{:?}", call(&package, "safe_r", &[-10]).0),
+        integer(0),
+        "the unexposed quotient is outside the consumer domain"
+    );
+}

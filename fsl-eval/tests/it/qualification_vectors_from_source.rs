@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Published qualification vectors executed through authored FSL source.
-//! Wire-only obligations and rows without a source adapter remain explicit;
-//! they are not successful source qualifications.
+//! Published qualification vectors executed through authored FSL source or
+//! their specified value-admission boundary. Rows without an applicable
+//! adapter remain explicit; they are not successful qualifications.
 
 use filament_eval::FamilyOutcome;
 use filament_exact::{
@@ -2693,6 +2693,91 @@ fn structural_function_call_charges(graph: &CheckedGraph, entry_index: usize) ->
     called_function_charges(graph, entry_index, &mut Vec::new())
 }
 
+/// T04, T05 and T13 take runtime payloads through value admission. They are
+/// not source-literal checks, which FR-056-AC-52 specifies separately.
+fn compare_text_admission(vector: &QualificationVector) -> Result<usize, String> {
+    let rows: Vec<(&str, u64, u64, TextProfile, Result<(), (&str, &str)>)> = match vector.id {
+        "T04" => {
+            assert!(vector.expected.contains("scalar-profile value succeeds"));
+            assert!(vector.expected.contains("text_length_out_of_domain"));
+            vec![
+                ("é", 1, 1, TextProfile::Nfc, Ok(())),
+                (
+                    "é",
+                    1,
+                    1,
+                    TextProfile::BinaryUtf8,
+                    Err(("text_length_out_of_domain", "outside-domain")),
+                ),
+            ]
+        }
+        "T05" => {
+            assert!(vector
+                .expected
+                .contains("empty and exact-bound inputs succeed"));
+            assert!(vector.expected.contains("text_length_out_of_domain"));
+            vec![
+                ("", 0, 0, TextProfile::Nfc, Ok(())),
+                ("a", 1, 1, TextProfile::Nfc, Ok(())),
+                (
+                    "a",
+                    0,
+                    0,
+                    TextProfile::Nfc,
+                    Err(("text_length_out_of_domain", "outside-domain")),
+                ),
+            ]
+        }
+        "T13" => {
+            assert!(vector
+                .expected
+                .contains("nfc` admits at normalized length one"));
+            assert!(vector
+                .expected
+                .contains("nfd` and `unicode-scalars` refuse"));
+            vec![
+                ("e\u{301}", 1, 1, TextProfile::Nfc, Ok(())),
+                (
+                    "e\u{301}",
+                    1,
+                    1,
+                    TextProfile::Nfd,
+                    Err(("text_length_out_of_domain", "outside-domain")),
+                ),
+                (
+                    "e\u{301}",
+                    1,
+                    1,
+                    TextProfile::UnicodeScalars,
+                    Err(("text_length_out_of_domain", "outside-domain")),
+                ),
+                ("é", 2, 2, TextProfile::Nfd, Ok(())),
+            ]
+        }
+        _ => return Err(format!("{} is not a text-admission vector", vector.id)),
+    };
+
+    for (index, (text, min, max, profile, expected)) in rows.iter().enumerate() {
+        let payload = TextPayload::from_utf8(text.as_bytes())
+            .map_err(|error| format!("{}[{index}] invalid fixture UTF-8: {error:?}", vector.id))?;
+        let text_type = TextType::new(*min, *max, *profile)
+            .map_err(|error| format!("{}[{index}] invalid text bounds: {error:?}", vector.id))?;
+        let actual = admit_text(&payload, &text_type, &mut Meter::new(UNLIMITED));
+        match (expected, actual) {
+            (Ok(()), Outcome::Completed(_)) => {}
+            (Err((code, cause)), Outcome::Refused(refusal))
+                if refusal.code() == Some(*code) && refusal.cause() == Some(*cause) => {}
+            (expected, actual) => {
+                return Err(format!(
+                    "TC-186:{}[{index}] expected value-admission {expected:?}, got {actual:?}",
+                    vector.id
+                ));
+            }
+        }
+    }
+    Ok(rows.len())
+}
+
 fn observed(case: &SourceCase) -> Observation {
     let source = format!(
         "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\n{}",
@@ -2975,6 +3060,9 @@ fn observed(case: &SourceCase) -> Observation {
 }
 
 fn compare(vector: &QualificationVector) -> Result<usize, String> {
+    if vector.test_case == TestCase::Tc186 && matches!(vector.id, "T04" | "T05" | "T13") {
+        return compare_text_admission(vector);
+    }
     let cases = source_cases(vector).expect("this vector has a source adapter");
     let mut failures = Vec::new();
     for (index, case) in cases.iter().enumerate() {
@@ -3025,6 +3113,21 @@ macro_rules! source_vectors {
 
 source_vectors!("FSpec-TC-185"; d01=>"D01", d02=>"D02", d04=>"D04", d05=>"D05", d10=>"D10", d26=>"D26", d27=>"D27");
 source_vectors!("FSpec-TC-186"; t01=>"T01", t02=>"T02", t03=>"T03", t05b=>"T05b", t06b=>"T06b", t12=>"T12");
+#[trace("FSpec-TC-186", "FSpec-FR-141-AC-4")]
+#[test]
+fn t04_text_length_uses_value_admission() {
+    compare(vector("T04")).unwrap_or_else(|failure| panic!("{failure}"));
+}
+#[trace("FSpec-TC-186", "FSpec-FR-141-AC-4")]
+#[test]
+fn t05_text_length_uses_value_admission() {
+    compare(vector("T05")).unwrap_or_else(|failure| panic!("{failure}"));
+}
+#[trace("FSpec-TC-186", "FSpec-FR-141-AC-4")]
+#[test]
+fn t13_normalized_text_length_uses_value_admission() {
+    compare(vector("T13")).unwrap_or_else(|failure| panic!("{failure}"));
+}
 source_vectors!("FSpec-TC-187"; u11a=>"U11a", u11b=>"U11b", u11c=>"U11c", u11f=>"U11f", u11h=>"U11h", u11g1=>"U11g1", u11g2=>"U11g2", u11g3=>"U11g3", u11g4=>"U11g4", u11n=>"U11n", u11o=>"U11o", u11w=>"U11w");
 source_vectors!("FSpec-TC-192"; div02=>"DIV-02", div04=>"DIV-04");
 source_vectors!("FSpec-TC-193"; f03=>"F03", f04=>"F04", f07=>"F07", f08=>"F08", f10=>"F10", f11=>"F11", f15=>"F15", f16=>"F16");
@@ -3709,7 +3812,9 @@ fn every_published_vector_has_an_explicit_source_qualification_status() {
     let mut partial_samples = Vec::new();
     for vector in QUALIFICATION_VECTORS {
         let identity = format!("{}:{}", vector.test_case.id(), vector.id);
-        if source_cases(vector).is_some() {
+        if source_cases(vector).is_some()
+            || (vector.test_case == TestCase::Tc186 && matches!(vector.id, "T04" | "T05" | "T13"))
+        {
             if vector.test_case == TestCase::Tc187
                 || matches!(
                     vector.id,
