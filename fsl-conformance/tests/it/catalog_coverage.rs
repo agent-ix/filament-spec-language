@@ -31,6 +31,17 @@ macro_rules! operators {
     };
 }
 
+macro_rules! sourced {
+    ($name:literal, $operations:expr, $forms:expr) => {
+        Case {
+            name: $name,
+            source: include_str!(concat!("../../cases/catalog-source/", $name, ".native")),
+            operations: $operations,
+            forms: $forms,
+        }
+    };
+}
+
 macro_rules! structural_equality {
     ($name:literal, $declarations:literal, $ty:literal) => {
         Case {
@@ -143,6 +154,57 @@ source_cases! {
         operations: &["filament.op.record.project", "filament.op.function.call", "filament.op.control.let", "filament.op.integer.add"],
         forms: &[("composite_type", "record"), ("expression", "call"), ("expression", "let")],
     },
+    text_comparison => sourced!("text-comparison", &["filament.op.text.ne", "filament.op.text.le", "filament.op.text.gt", "filament.op.text.ge"], &[]),
+    decimal_comparison => sourced!("decimal-comparison", &["filament.op.decimal.ne", "filament.op.decimal.le", "filament.op.decimal.gt"], &[]),
+    enum_comparison => sourced!("enum-comparison", &["filament.op.enum.ne", "filament.op.enum.le", "filament.op.enum.gt", "filament.op.enum.ge"], &[]),
+    quantity_comparison => sourced!("quantity-comparison", &["filament.op.quantity.ne", "filament.op.quantity.le", "filament.op.quantity.gt", "filament.op.quantity.ge"], &[]),
+    native_inequality => sourced!("native-inequality", &["filament.op.uuid.ne", "filament.op.timestamp.ne"], &[]),
+    string_inequality => sourced!("string-inequality", &["filament.op.string.ne"], &[]),
+    bytes_inequality => sourced!("bytes-inequality", &["filament.op.bytes.ne"], &[]),
+    json_object_inequality => sourced!("json-object-inequality", &["filament.op.json_object.ne"], &[]),
+    float_sqrt => sourced!("float-sqrt", &["filament.op.ieee.float64.sqrt", "filament.op.ieee.float32.sqrt"], &[]),
+    float_fma => sourced!("float-fma", &["filament.op.ieee.float64.fma", "filament.op.ieee.float32.fma"], &[]),
+    float_bit_identical => sourced!("float-bit-identical", &["filament.op.ieee.bit_identical"], &[]),
+    float_conversion => sourced!("float-conversion", &["filament.op.ieee.to_float32", "filament.op.ieee.to_float64", "filament.op.ieee.from_exact"], &[]),
+    ordered_set_drop_first => sourced!("ordered-set-drop-first", &["filament.op.collection.ordered_set.drop_first"], &[]),
+    collection_map_flatten => sourced!("collection-map-flatten", &["filament.op.collection.map", "filament.op.collection.flatten"], &[]),
+    float_sum => sourced!("float-sum", &["filament.op.collection.sum.float64", "filament.op.collection.sum.float32"], &[]),
+    quantity_sum => sourced!("quantity-sum", &["filament.op.collection.sum.quantity"], &[]),
+    union_case => sourced!("union-case", &["filament.op.control.case"], &[("composite_type", "union"), ("expression", "case")]),
+    decimal_scale_reduction => sourced!("decimal-scale-reduction", &["filament.op.numeric.convert_rounding"], &[]),
+    text_conversion => sourced!("text-conversion", &["filament.op.text.to_integer", "filament.op.text.to_decimal", "filament.op.text.to_rational", "filament.op.text.to_float64", "filament.op.text.to_float32"], &[]),
+    string_conversion => sourced!("string-conversion", &["filament.op.string.to_integer", "filament.op.string.to_decimal", "filament.op.string.to_rational", "filament.op.string.to_float64", "filament.op.string.to_float32"], &[]),
+    quantity_conversion => sourced!("quantity-conversion", &["filament.op.quantity.convert", "filament.op.text.to_quantity", "filament.op.string.to_quantity"], &[]),
+    quantity_scale_division => sourced!("quantity-scale-division", &["filament.op.quantity.scale_div"], &[]),
+    copied_braking => sourced!("braking", &["filament.op.rational.gt", "filament.op.rational.le", "filament.op.temporal.always", "filament.op.temporal.clause", "filament.op.temporal.holds"], &[("hybrid", "hybrid_mode"), ("hybrid", "hybrid_model"), ("hybrid", "hybrid_transition"), ("temporal", "formula"), ("temporal", "temporal_clause")]),
+    copied_attempt_result => sourced!("attempt-result", &["filament.op.protocol.control"], &[("protocol", "control"), ("protocol", "obligation"), ("protocol", "protocol_clause"), ("protocol", "role"), ("state", "frame"), ("state", "operation_anchor")]),
+    copied_r_exists_empty => sourced!("r-exists-empty", &["filament.op.collection.exists", "filament.op.collection.sequence", "filament.op.integer.gt"], &[("expression", "quantify")]),
+    copied_native_equality => sourced!("native-equality", &["filament.op.bytes.eq", "filament.op.json_object.eq", "filament.op.timestamp.eq", "filament.op.uuid.eq"], &[]),
+    copied_source_object_workload => sourced!("source-object-workload", &[], &[("probabilistic", "random_parameter"), ("probabilistic", "reward"), ("probabilistic", "workload")]),
+    copied_operators => sourced!("operators", &["filament.op.temporal.eventually", "filament.op.temporal.not", "filament.op.temporal.until"], &[]),
+    copied_quant_range_fact => sourced!("quant-range-fact", &["filament.op.collection.forall", "filament.op.integer.le"], &[]),
+    copied_r_bag_eq => sourced!("r-bag-eq", &["filament.op.collection.bag", "filament.op.structural.ne"], &[]),
+    copied_float_ordering => sourced!("float-ordering", &["filament.op.ieee.numeric_equal", "filament.op.ieee.total_order"], &[]),
+    copied_exchange => sourced!("exchange", &[], &[("protocol", "channel"), ("protocol", "queue")]),
+    copied_some => sourced!("some", &[], &[("value", "option_value")]),
+    copied_coll_set_ok => sourced!("coll-set-ok", &["filament.op.collection.set"], &[]),
+    copied_coll_oset_ok => sourced!("coll-oset-ok", &["filament.op.collection.ordered_set"], &[]),
+    copied_coll_removeone => sourced!("coll-removeone", &["filament.op.collection.remove_one"], &[]),
+    copied_fn_recursion_ok => sourced!("fn-recursion-ok", &[], &[("function", "recursive_function")]),
+    copied_coll_dropfirst => sourced!("coll-dropfirst", &["filament.op.collection.sequence.drop_first"], &[]),
+    copied_tup_ok => sourced!("tup-ok", &[], &[("value", "tuple_value")]),
+    copied_coll_filter_ok => sourced!("coll-filter-ok", &["filament.op.collection.filter"], &[]),
+    copied_rec_ok => sourced!("rec-ok", &[], &[("value", "record_value")]),
+    copied_conv_coll_ok => sourced!("conv-coll-ok", &["filament.op.collection.convert"], &[]),
+    copied_fn_predicate_ok => sourced!("fn-predicate-ok", &[], &[("function", "predicate")]),
+    copied_agg_sum_named => sourced!("agg-sum-named", &["filament.op.collection.sum.integer"], &[]),
+    copied_union_recursive_seq => sourced!("union-recursive-seq", &[], &[("value", "union_value")]),
+    copied_agg_count_ok => sourced!("agg-count-ok", &["filament.op.collection.count"], &[]),
+    copied_coll_reduce_named => sourced!("coll-reduce-named", &["filament.op.collection.reduce"], &[]),
+    copied_coll_fold_ok => sourced!("coll-fold-ok", &["filament.op.collection.fold"], &[]),
+    copied_to_rational => sourced!("to_rational", &["filament.op.ieee.to_rational"], &[]),
+    copied_coll_flatmap_typed => sourced!("coll-flatmap-typed", &["filament.op.collection.flat_map"], &[]),
+    source_object => sourced!("source-object", &[], &[("model", "object_type"), ("composite_type", "reference")]),
 }
 
 fn catalog_identities() -> BTreeSet<String> {
@@ -162,24 +224,26 @@ fn catalog_identities() -> BTreeSet<String> {
         .collect()
 }
 
-fn compile_and_read(case: &Case) -> Value {
+/// Compiles and reads a source through the public front end and the strict
+/// reader; every refusal is returned, never raised.
+fn try_compile_and_read(name: &str, source: &str) -> Result<Value, String> {
     let limits = SpineLimits::default();
     let cancel = Cancel::new();
-    let identity = SourceIdentity::new("catalog-source", case.name);
+    let identity = SourceIdentity::new("catalog-source", name);
     let parsed = spine::parse(
         &ParseRequest {
             source: &identity,
-            path: case.name,
-            bytes: case.source.as_bytes(),
+            path: name,
+            bytes: source.as_bytes(),
         },
         limits.source,
         &cancel,
     )
-    .unwrap_or_else(|error| panic!("{} parses: {error:?}", case.name))
+    .map_err(|error| format!("{name} parses: {error:?}"))?
     .into_value();
     let inputs = PackageInput::default();
     let models = spine::select(&parsed, &inputs, limits.model, &cancel)
-        .unwrap_or_else(|error| panic!("{} selects its models: {error:?}", case.name))
+        .map_err(|error| format!("{name} selects its models: {error:?}"))?
         .into_value();
     let checked = spine::check(
         &parsed,
@@ -189,12 +253,7 @@ fn compile_and_read(case: &Case) -> Value {
         limits,
         &cancel,
     )
-    .unwrap_or_else(|error| {
-        panic!(
-            "{} checks through the public source path: {error:?}",
-            case.name
-        )
-    })
+    .map_err(|error| format!("{name} checks through the public source path: {error:?}"))?
     .into_value();
     let read = fsl_package::read_evaluation_package(
         checked.package(),
@@ -203,13 +262,16 @@ fn compile_and_read(case: &Case) -> Value {
         V2ReadLimits::bounded(16_777_216),
         EmitLimits::new(16_777_216),
     )
-    .unwrap_or_else(|error| panic!("{} emitted package is admitted: {error:?}", case.name));
-    assert!(
-        read.emission().omitted().is_empty(),
-        "{} has no omitted source rows",
-        case.name
-    );
-    serde_json::from_slice(read.emission().package().bytes()).expect("admitted package JSON")
+    .map_err(|error| format!("{name} emitted package is admitted: {error:?}"))?;
+    if !read.emission().omitted().is_empty() {
+        return Err(format!("{name} has omitted source rows"));
+    }
+    serde_json::from_slice(read.emission().package().bytes())
+        .map_err(|error| format!("{name} admitted package JSON: {error}"))
+}
+
+fn compile_and_read(case: &Case) -> Value {
+    try_compile_and_read(case.name, case.source).unwrap_or_else(|error| panic!("{error}"))
 }
 
 fn operation_identities(value: &Value, found: &mut BTreeSet<String>) {
@@ -233,6 +295,35 @@ fn operation_identities(value: &Value, found: &mut BTreeSet<String>) {
     }
 }
 
+fn graph_nodes(package: &Value) -> &Vec<Value> {
+    package["semantic_graph"]["nodes"]
+        .as_array()
+        .expect("emitted graph nodes")
+}
+
+/// Every operation identity an emitted package applies, in any node body.
+fn emitted_operations(package: &Value) -> BTreeSet<String> {
+    let mut operations = BTreeSet::new();
+    for node in graph_nodes(package) {
+        operation_identities(&node["body"], &mut operations);
+    }
+    operations
+}
+
+/// Every `tag/form` pair an emitted package holds as a node.
+fn emitted_forms(package: &Value) -> BTreeSet<String> {
+    graph_nodes(package)
+        .iter()
+        .map(|node| {
+            format!(
+                "{}/{}",
+                node["node_tag"].as_str().expect("node tag"),
+                node["semantic_form"].as_str().expect("node form")
+            )
+        })
+        .collect()
+}
+
 #[derive(Debug, PartialEq, Eq)]
 enum ProducerMismatch {
     UnpublishedOperation {
@@ -254,20 +345,7 @@ fn check_producers(
     catalog: &BTreeSet<String>,
     package: &Value,
 ) -> Result<(), ProducerMismatch> {
-    let nodes = package["semantic_graph"]["nodes"]
-        .as_array()
-        .expect("emitted graph nodes");
-    let mut operations = BTreeSet::new();
-    for node in nodes {
-        if node["node_tag"] == "expression" && node["body"]["term"] == "application" {
-            operation_identities(&node["body"], &mut operations);
-        }
-    }
-    assert!(
-        !operations.is_empty(),
-        "{} emits application operations",
-        case.name
-    );
+    let operations = emitted_operations(package);
     for identity in &operations {
         if !catalog.contains(identity) {
             return Err(ProducerMismatch::UnpublishedOperation {
@@ -284,14 +362,13 @@ fn check_producers(
             });
         }
     }
+    let forms = emitted_forms(package);
     for (tag, form) in case.forms {
-        if !nodes
-            .iter()
-            .any(|node| node["node_tag"] == *tag && node["semantic_form"] == *form)
-        {
+        let wanted = format!("{tag}/{form}");
+        if !forms.contains(&wanted) {
             return Err(ProducerMismatch::MissingForm {
                 case: case.name,
-                form: format!("{tag}/{form}"),
+                form: wanted,
             });
         }
     }
@@ -303,37 +380,233 @@ fn assert_producers(case: &Case, catalog: &BTreeSet<String>, package: &Value) {
         .unwrap_or_else(|mismatch| panic!("source producer mismatch: {mismatch:?}"));
 }
 
-fn unrepresented_operations(catalog: &BTreeSet<String>) -> BTreeSet<String> {
-    let represented: BTreeSet<_> = CASES
+/// How a listed probe source is judged producible.
+enum Detect {
+    /// The emitted package applies this catalog operation.
+    Operation(&'static str),
+    /// The emitted package carries at least one `operation_bodies` row.
+    OperationBodies,
+    /// The source is admitted by the strict reader at all.
+    Admitted,
+}
+
+/// A checked-in source that must not yet produce what its entry names.
+struct Probe {
+    source: &'static str,
+    detect: Detect,
+}
+
+/// One thing the language cannot yet produce, with the open tickets that
+/// own it. Keys are ticket keys only; no hashes.
+struct Unproduced {
+    /// A catalog operation identity, or a short name of a feature.
+    id: &'static str,
+    keys: &'static [&'static str],
+    probe: Probe,
+}
+
+macro_rules! probe_source {
+    ($name:literal) => {
+        include_str!(concat!("../../cases/catalog-source/", $name, ".native"))
+    };
+}
+
+macro_rules! float_composite_equality {
+    ($id:literal, $declarations:literal, $ty:literal) => {
+        Unproduced {
+            id: $id,
+            keys: &["IR-1320", "STD-654"],
+            probe: Probe {
+                source: concat!(
+                    "language \"ix:native\" edition \"1-draft\";\n",
+                    "profile v = \"filament.value.complete/v1\";\n",
+                    $declarations,
+                    "\n",
+                    "function equal using v(a: ",
+                    $ty,
+                    ",b: ",
+                    $ty,
+                    "): Boolean pure { a=b }\n",
+                ),
+                detect: Detect::Operation("filament.op.structural.eq"),
+            },
+        }
+    };
+}
+
+/// The unproduced list. A catalog operation listed here needs no source
+/// case; an entry whose probe becomes producible fails
+/// `listed_entries_are_still_unproduced`; an entry without a key fails
+/// `listed_entries_carry_ticket_keys`.
+const UNPRODUCED: &[Unproduced] = &[
+    Unproduced {
+        id: "filament.op.collection.index",
+        keys: &["IR-1491"],
+        probe: Probe {
+            source: include_str!("../../cases/index-accepted.native"),
+            detect: Detect::Operation("filament.op.collection.index"),
+        },
+    },
+    Unproduced {
+        id: "filament.op.collection.seq",
+        keys: &["IR-1492"],
+        probe: Probe {
+            source: probe_source!("probe-sequence-population-call"),
+            detect: Detect::Operation("filament.op.collection.seq"),
+        },
+    },
+    Unproduced {
+        id: "filament.op.collection.only",
+        keys: &["IR-1492"],
+        probe: Probe {
+            source: probe_source!("probe-sequence-population-call"),
+            detect: Detect::Operation("filament.op.collection.only"),
+        },
+    },
+    Unproduced {
+        id: "filament.op.reference.eq",
+        keys: &["QSL-1880"],
+        probe: Probe {
+            source: include_str!("../../cases/type-operators/reference-equality-accepted.native"),
+            detect: Detect::Operation("filament.op.reference.eq"),
+        },
+    },
+    Unproduced {
+        id: "operation-bodies",
+        keys: &["QSL-1899"],
+        probe: Probe {
+            source: probe_source!("probe-operation-body"),
+            detect: Detect::OperationBodies,
+        },
+    },
+    Unproduced {
+        id: "filament.op.model.reaches_field",
+        keys: &["QSL-1904"],
+        probe: Probe {
+            source: probe_source!("probe-reaches-field"),
+            detect: Detect::Operation("filament.op.model.reaches_field"),
+        },
+    },
+    Unproduced {
+        id: "source-declared-object-navigation",
+        keys: &["QSL-1880"],
+        probe: Probe {
+            source: probe_source!("probe-object-navigation"),
+            detect: Detect::Admitted,
+        },
+    },
+    Unproduced {
+        id: "filament.op.reference.ne",
+        keys: &["QSL-1880"],
+        probe: Probe {
+            source: probe_source!("probe-reference-inequality"),
+            detect: Detect::Operation("filament.op.reference.ne"),
+        },
+    },
+    Unproduced {
+        id: "filament.op.model.dispatch_call",
+        keys: &["QSL-1880"],
+        probe: Probe {
+            source: probe_source!("probe-operation-call"),
+            detect: Detect::Operation("filament.op.model.dispatch_call"),
+        },
+    },
+    float_composite_equality!(
+        "float-record-equality",
+        "type F = Float64[nearest-even]; record R { n: F; }",
+        "R"
+    ),
+    float_composite_equality!(
+        "float-tuple-equality",
+        "type F = Float64[nearest-even]; tuple T(F,F);",
+        "T"
+    ),
+    float_composite_equality!(
+        "float-union-equality",
+        "type F = Float64[nearest-even]; union U { A(F),B }",
+        "U"
+    ),
+    float_composite_equality!(
+        "float-option-equality",
+        "type F = Float64[nearest-even];",
+        "Option<F>"
+    ),
+    float_composite_equality!(
+        "float-sequence-equality",
+        "type F = Float64[nearest-even];",
+        "Sequence<F>[0,3]"
+    ),
+];
+
+fn is_ticket_key(key: &str) -> bool {
+    let Some((team, number)) = key.split_once('-') else {
+        return false;
+    };
+    !team.is_empty()
+        && team.bytes().all(|byte| byte.is_ascii_uppercase())
+        && !number.is_empty()
+        && number.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+fn probe_is_producible(probe: &Probe) -> bool {
+    let Ok(package) = try_compile_and_read("probe", probe.source) else {
+        return false;
+    };
+    match probe.detect {
+        Detect::Operation(identity) => emitted_operations(&package).contains(identity),
+        Detect::OperationBodies => package["operation_bodies"]
+            .as_array()
+            .is_some_and(|rows| !rows.is_empty()),
+        Detect::Admitted => true,
+    }
+}
+
+/// Every operation each checked-in case emits, found by compiling it.
+fn represented_operations() -> BTreeSet<String> {
+    CASES
         .iter()
-        .flat_map(|case| case.operations.iter().copied())
-        .collect();
+        .flat_map(|case| emitted_operations(&compile_and_read(case)))
+        .collect()
+}
+
+/// Every node form each checked-in case emits, found by compiling it.
+fn represented_forms() -> BTreeSet<String> {
+    CASES
+        .iter()
+        .flat_map(|case| emitted_forms(&compile_and_read(case)))
+        .collect()
+}
+
+fn listed_ids() -> BTreeSet<String> {
+    UNPRODUCED.iter().map(|entry| entry.id.to_owned()).collect()
+}
+
+/// The catalog operations that no case emits and no list entry owns. This is
+/// the logic of `every_catalog_operation_has_a_source`; the negative test
+/// calls it too.
+fn operations_without_source(catalog: &BTreeSet<String>) -> BTreeSet<String> {
+    let represented = represented_operations();
+    let listed = listed_ids();
     catalog
         .iter()
-        .filter(|identity| !represented.contains(identity.as_str()))
+        .filter(|identity| !represented.contains(*identity) && !listed.contains(*identity))
         .cloned()
         .collect()
 }
 
-/// This control checks the runner's catalog dispatch, not language coverage.
-#[test]
-#[trace("FR-350")]
-fn an_added_catalog_entry_is_reported_by_its_identity() {
-    let mut catalog = catalog_identities();
-    let original_gaps = unrepresented_operations(&catalog);
-    let added = "filament.op.conformance.nonexistent".to_owned();
-    assert!(catalog.insert(added.clone()), "the negative entry is new");
-    let new_gaps = unrepresented_operations(&catalog);
-    assert_eq!(
-        new_gaps
-            .difference(&original_gaps)
-            .cloned()
-            .collect::<Vec<_>>(),
-        vec![added]
-    );
+/// The FR-322 node forms (the strict reader's closed vocabulary) that no case
+/// emits and no list entry owns.
+fn forms_without_source() -> BTreeSet<String> {
+    let represented = represented_forms();
+    let listed = listed_ids();
+    filament_contract_model::CheckedNodeKind::all()
+        .into_iter()
+        .map(|kind| format!("{}/{}", kind.tag().as_wire(), kind.form_wire()))
+        .filter(|form| !represented.contains(form) && !listed.contains(form))
+        .collect()
 }
 
-/// An altered expected operation is rejected after compiling real source.
+/// A wrong expected operation is rejected after compiling real source.
 #[test]
 #[trace("FR-350", "FSpec-FR-322")]
 fn a_wrong_expected_operation_names_the_source_case_and_identity() {
@@ -353,53 +626,148 @@ fn a_wrong_expected_operation_names_the_source_case_and_identity() {
     );
 }
 
-/// Full source qualification remains strict while additional adapters are authored.
+/// The assertion of `every_catalog_operation_has_a_source`, over any catalog.
+fn assert_catalog_has_sources(catalog: &BTreeSet<String>) {
+    let gaps = operations_without_source(catalog);
+    assert!(
+        gaps.is_empty(),
+        "catalog operations with neither a source case nor an unproduced entry: {gaps:?}"
+    );
+}
+
+/// Every catalog operation is emitted by a checked-in source case or is owned
+/// by an unproduced entry with a ticket key.
 #[test]
-#[ignore = "QSL-2051: source adapters for the remaining catalog operations and node families are not complete"]
+#[trace("FR-350", "FSpec-FR-322")]
+fn every_catalog_operation_has_a_source() {
+    assert_catalog_has_sources(&catalog_identities());
+}
+
+/// The same, with every case compiled, admitted by the strict reader and
+/// holding exactly the operations and forms it declares.
+#[test]
+#[trace("FR-350", "FSpec-FR-322")]
 fn every_catalog_operation_has_a_source_and_is_admitted() {
     let catalog = catalog_identities();
     for case in CASES {
         let package = compile_and_read(case);
         assert_producers(case, &catalog, &package);
     }
+    let gaps = operations_without_source(&catalog);
     assert!(
-        unrepresented_operations(&catalog).is_empty(),
-        "catalog operations without source adapters: {:?}",
-        unrepresented_operations(&catalog)
+        gaps.is_empty(),
+        "catalog operations without a source case or unproduced entry: {gaps:?}"
     );
 }
 
 #[test]
-#[ignore = "IR-1491: emitted sequence indexing is refused OperationMemberMismatch at body/operation/member"]
-fn sequence_index_is_emitted_and_admitted() {
-    let case = Case {
-        name: "sequence-index",
-        source: include_str!("../../cases/index-accepted.native"),
-        operations: &["filament.op.collection.index"],
-        forms: &[("composite_type", "sequence"), ("expression", "query")],
-    };
-    let package = compile_and_read(&case);
-    assert_producers(&case, &catalog_identities(), &package);
+#[trace("FR-350", "FSpec-FR-322")]
+fn every_node_form_has_a_source() {
+    let gaps = forms_without_source();
+    assert!(
+        gaps.is_empty(),
+        "FR-322 node forms with neither a source case nor an unproduced entry: {gaps:?}"
+    );
 }
 
-macro_rules! pending_float_equality {
-    ($($test:ident => $case:expr),+ $(,)?) => {
-        $(
-            #[test]
-            #[ignore = "IR-1320 (STD-654): composite IEEE leaves refuse OperatorIneligible at operation/leaves"]
-            fn $test() {
-                let case = $case;
-                let package = compile_and_read(&case);
-                assert_producers(&case, &catalog_identities(), &package);
-            }
-        )+
-    };
+#[test]
+#[trace("FR-350", "FSpec-FR-322")]
+fn emitted_packages_are_admitted() {
+    for case in CASES {
+        try_compile_and_read(case.name, case.source)
+            .unwrap_or_else(|error| panic!("the strict reader refuses a case: {error}"));
+    }
 }
 
-pending_float_equality! {
-    float_record_equality => structural_equality!("float-record-equality", "type F = Float64[nearest-even]; record R { n: F; }", "R"),
-    float_tuple_equality => structural_equality!("float-tuple-equality", "type F = Float64[nearest-even]; tuple T(F,F);", "T"),
-    float_union_equality => structural_equality!("float-union-equality", "type F = Float64[nearest-even]; union U { A(F),B }", "U"),
-    float_option_equality => structural_equality!("float-option-equality", "type F = Float64[nearest-even];", "Option<F>"),
-    float_sequence_equality => structural_equality!("float-sequence-equality", "type F = Float64[nearest-even];", "Sequence<F>[0,3]"),
+/// A fake catalog entry in a test copy of the catalog fails the real check,
+/// and the failure names the entry.
+#[test]
+#[trace("FR-350", "FSpec-FR-322")]
+fn a_fake_catalog_entry_makes_the_catalog_check_fail_naming_it() {
+    let mut catalog = catalog_identities();
+    let fake = "filament.op.conformance.nonexistent".to_owned();
+    assert!(catalog.insert(fake.clone()), "the fake entry is new");
+    let panic = std::panic::catch_unwind(|| assert_catalog_has_sources(&catalog))
+        .expect_err("the check of every_catalog_operation_has_a_source fails");
+    let message = panic.downcast_ref::<String>().cloned().unwrap_or_default();
+    assert!(
+        message.contains(&fake),
+        "the failure names the entry: {message}"
+    );
+}
+
+/// A listed entry whose probe source is now emitted and admitted is no longer
+/// unproduced: the entry must leave the list and a case must take its place.
+#[test]
+#[trace("FR-350", "FSpec-FR-322")]
+fn listed_entries_are_still_unproduced() {
+    let produced: Vec<_> = UNPRODUCED
+        .iter()
+        .filter(|entry| probe_is_producible(&entry.probe))
+        .map(|entry| entry.id)
+        .collect();
+    assert!(
+        produced.is_empty(),
+        "listed entries are now producible; remove them and add source cases: {produced:?}"
+    );
+}
+
+/// No checked-in case emits a listed operation, so a listed operation that
+/// some other case now produces is reported rather than hidden.
+#[test]
+#[trace("FR-350", "FSpec-FR-322")]
+fn no_case_emits_a_listed_operation() {
+    let represented = represented_operations();
+    let overlap: Vec<_> = UNPRODUCED
+        .iter()
+        .filter(|entry| represented.contains(entry.id))
+        .map(|entry| entry.id)
+        .collect();
+    assert!(
+        overlap.is_empty(),
+        "listed operations that a case emits: {overlap:?}"
+    );
+}
+
+#[test]
+#[trace("FR-350", "FSpec-FR-322")]
+fn listed_entries_carry_ticket_keys() {
+    let keyless: Vec<_> = UNPRODUCED
+        .iter()
+        .filter(|entry| entry.keys.is_empty() || !entry.keys.iter().all(|key| is_ticket_key(key)))
+        .map(|entry| entry.id)
+        .collect();
+    assert!(
+        keyless.is_empty(),
+        "listed entries without a well-formed ticket key: {keyless:?}"
+    );
+}
+
+/// The control for the key check: an entry without a key is rejected.
+#[test]
+#[trace("FR-350")]
+fn an_entry_without_a_key_or_with_a_hash_is_rejected() {
+    assert!(is_ticket_key("IR-1491"));
+    assert!(!is_ticket_key(""));
+    assert!(!is_ticket_key("IR-"));
+    assert!(!is_ticket_key("cd0c8ef67e5d"));
+    assert!(!is_ticket_key("ir-1491"));
+}
+
+/// The five owners of the ticket are all listed with their keys.
+#[test]
+#[trace("FR-350")]
+fn the_named_unproduced_owners_are_listed_with_their_keys() {
+    let keyed = |id: &str| {
+        UNPRODUCED
+            .iter()
+            .find(|entry| entry.id == id)
+            .unwrap_or_else(|| panic!("{id} is listed"))
+            .keys
+    };
+    assert_eq!(keyed("filament.op.collection.index"), ["IR-1491"]);
+    assert_eq!(keyed("filament.op.collection.seq"), ["IR-1492"]);
+    assert_eq!(keyed("operation-bodies"), ["QSL-1899"]);
+    assert_eq!(keyed("filament.op.model.reaches_field"), ["QSL-1904"]);
+    assert_eq!(keyed("source-declared-object-navigation"), ["QSL-1880"]);
 }
