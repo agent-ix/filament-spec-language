@@ -695,7 +695,7 @@ protocol Places using p over (call: Reference<C::ConfigVersion>) on each (opened
                 let [location] = locations.as_slice() else {
                     panic!("each retained operand has one actual location: {operand}");
                 };
-                assert_eq!(location, shared, "the direct operands share one location");
+                assert_eq!(location, *shared, "the direct operands share one location");
                 let operation = application_form(operand);
                 let expected_kind = match operation.as_str() {
                     "query" => "query",
