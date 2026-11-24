@@ -42,6 +42,10 @@ mod protocol_replay_mode;
 mod protocol_roles;
 mod protocol_step_view;
 mod protocol_system;
+#[expect(
+    dead_code,
+    reason = "some shared reduction fixture helpers are used by sibling test binaries"
+)]
 #[path = "reduction_world.rs"]
 mod reduction_world;
 #[path = "../../../tests/support/refinement_cas.rs"]

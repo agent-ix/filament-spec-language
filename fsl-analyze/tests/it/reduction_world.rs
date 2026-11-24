@@ -1,8 +1,4 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-#![allow(
-    dead_code,
-    reason = "shared reduction fixture APIs are consumed by separate integration binaries"
-)]
 //! The subjects of ADR-021's worked examples for the reduction tests
 //! (`crate::reduction`): a `test/sym` domain package with object type
 //! `Counter` (`v: Int[0, max]`, optionally `link: Counter?`), operation
