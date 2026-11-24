@@ -44,3 +44,21 @@ Plan completion: not assessed
 - `FR-1042-AC-16` (examined, `spec/functional/FR-1042-certify-value-bounds-with-lower-and-upper-certificates.md`) — Over AC-1's chain, `lower` `s` `7/16` for the claim `probability >= rational(2,5)` is accepted when checked as the claim side; its `upper` counterpart `s` `9/16` is accepted when checked with the claim-side flag unset. The `lower` checked as claim side for `>= rational(1,2)` rejects `ThresholdMissed`, and the `upper` offered as claim side of the `AtLeast` claim rejects `Malformed` at `kind`.
 - `FR-1042-AC-17` (examined, `spec/functional/FR-1042-certify-value-bounds-with-lower-and-upper-certificates.md`) — Over AC-3's `W`, the minimum-probability `upper` bound `s` `1/4` with policy `wait` is accepted for `probability <= rational(1,4)`, while policy `go` rejects `InequalityFails`; the maximum-probability `lower` bound `7/16`, rank 1 and policy `wait` rejects `RankBroken`, while policy `go` is accepted. When no policy is supplied the checker retains its first satisfying action in canonical full-product-action order.
 - `TC-3212` (examined, `spec/test-cases/TC-3212-build-value-bounds-capabilities-in-conformance-order.md`) — 1. Check AC-1's lower and upper documents with the claim-side flag both set and unset, including the threshold miss and wrong-kind cases of AC-16. 2. Check AC-3's hinted and unhinted policies, including the rejected nonsatisfying hint of AC-17.
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-002 | low | Amended FR-1042-AC-17 calls for offering the Minimum upper document at 1/4 against the same Every AtMost 3/5 claim that accepted the Maximum upper. The refusal assertion changes the source threshold to 1/4 first, leaving the specified same-claim comparison uncovered. | tools/fsl-probability-check/tests/it/value_bounds.rs:371 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | At b8b2b596 the parser requires a vector on presence. The executable checker test asserts a null policy rejects as malformed at the policy member. |
+| FND-002 | still-open | Reuse the unmodified 3/5 source claim for the mismatch assertion. The Minimum document's offered upper value and wait hint stay at 1/4 and wait. |
+| FND-002 | fixed | At e4edb05b the test retains the original Every AtMost 3/5 claim and submits the Minimum upper document at 1/4 with wait. It asserts objective mismatch. |
+
+The original verdict and AC-17 quotation above describe the reviewed head e81b140e. At b8b2b596, the final test accepts the Maximum upper at 3/5 in claim role and the Minimum upper at 1/4 with wait in counterpart role. The literal canonical action and the timed deadline wrong-kind assertion are present. The coder reported the locked workspace check passed for all targets and features. The remaining gap concerns the source threshold in the negative assertion.
+
+**Final disposition at e4edb05b: PASS.** All findings are resolved. The coder reported the focused AC-17 regression passed (1/1).
