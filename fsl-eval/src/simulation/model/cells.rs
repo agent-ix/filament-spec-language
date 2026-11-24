@@ -44,7 +44,7 @@ impl ModelSimState {
     /// This state with `cell` holding `value`; an absent object is left
     /// absent, and `None` leaves the field absent.
     pub(crate) fn set_cell(&mut self, cell: &Cell, value: Option<Value>) {
-        self.canonical_key.take();
+        std::sync::Arc::make_mut(&mut self.canonical_key).take();
         let Some(object) = self
             .state
             .populations

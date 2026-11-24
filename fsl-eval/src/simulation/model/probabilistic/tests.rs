@@ -1307,8 +1307,12 @@ fn model_state_key_memo_tracks_clones_and_cell_mutation() {
     let world = World::new(&world::link());
     let system = world.system();
     let state = initial(&system);
-    let original = system.state_key(&state).expect("key").0;
     let cloned = state.clone();
+    assert!(std::sync::Arc::ptr_eq(
+        &state.canonical_key,
+        &cloned.canonical_key
+    ));
+    let original = system.state_key(&state).expect("key").0;
     assert_eq!(system.state_key(&cloned).expect("cloned key").0, original);
 
     let (population, objects) = state
@@ -1327,6 +1331,10 @@ fn model_state_key_memo_tracks_clones_and_cell_mutation() {
     };
     let mut changed = cloned;
     changed.set_cell(&cell, None);
+    assert!(!std::sync::Arc::ptr_eq(
+        &state.canonical_key,
+        &changed.canonical_key
+    ));
     let changed_key = system.state_key(&changed).expect("changed key").0;
     assert_ne!(changed_key, original);
     assert_eq!(system.state_key(&state).expect("original key").0, original);

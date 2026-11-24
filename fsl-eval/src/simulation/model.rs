@@ -263,7 +263,8 @@ pub enum ModelStateProvenance {
 pub struct ModelSimState {
     state: ModelState,
     provenance: ModelStateProvenance,
-    canonical_key: std::sync::OnceLock<std::sync::Arc<crate::simulation::StateKey>>,
+    canonical_key:
+        std::sync::Arc<std::sync::OnceLock<std::sync::Arc<crate::simulation::StateKey>>>,
 }
 
 impl ModelSimState {
@@ -274,7 +275,7 @@ impl ModelSimState {
                 anchor,
                 effect: None,
             },
-            canonical_key: std::sync::OnceLock::new(),
+            canonical_key: std::sync::Arc::new(std::sync::OnceLock::new()),
         }
     }
 
@@ -291,7 +292,7 @@ impl ModelSimState {
         Self {
             state,
             provenance,
-            canonical_key: std::sync::OnceLock::new(),
+            canonical_key: std::sync::Arc::new(std::sync::OnceLock::new()),
         }
     }
 
@@ -308,7 +309,7 @@ impl ModelSimState {
         Self {
             state,
             provenance,
-            canonical_key: std::sync::OnceLock::new(),
+            canonical_key: std::sync::Arc::new(std::sync::OnceLock::new()),
         }
     }
 
