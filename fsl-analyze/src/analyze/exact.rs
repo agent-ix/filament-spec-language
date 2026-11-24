@@ -1443,7 +1443,86 @@ fn run(
             Err(_) => return broken(),
         };
         fair_policy = Some(fair.policy);
-        (fair.values, Vec::new())
+        let scalar_too_wide = fair.values.iter().any(|value| match value {
+            ExtRational::Finite(value) => {
+                value
+                    .numerator()
+                    .magnitude_bits()
+                    .saturating_add(value.denominator().magnitude_bits())
+                    .saturating_add(1)
+                    > limits.max_rational_bits
+            }
+            ExtRational::PlusInfinity => false,
+        });
+        if scalar_too_wide {
+            let Bound::AtLeast(threshold) = bound else {
+                return rational_bits_limit(&limits, subject);
+            };
+            if objective != UnboundedObjective::Min {
+                return rational_bits_limit(&limits, subject);
+            }
+            match crate::exact_probabilistic::decide_fair_reachability_threshold(
+                &product, &target, threshold, &limits,
+            ) {
+                Ok(crate::exact_probabilistic::UnboundedOutcome::Bounds {
+                    lower,
+                    upper,
+                    precision_bits,
+                    sweeps,
+                    ..
+                }) => {
+                    let values = lower
+                        .iter()
+                        .map(|end| ExtRational::Finite(end.rational()))
+                        .collect();
+                    interval = Some(Interval {
+                        lower,
+                        upper,
+                        precision_bits,
+                        method: fsl_replay::BoundsMethod::IntervalIteration {
+                            precision_bits,
+                            sweeps,
+                        },
+                    });
+                    (values, Vec::new())
+                }
+                Ok(crate::exact_probabilistic::UnboundedOutcome::Exact(result)) => {
+                    (result.values, Vec::new())
+                }
+                Ok(crate::exact_probabilistic::UnboundedOutcome::PrecisionBudget {
+                    lower,
+                    upper,
+                }) => return precision_budget(lower.rational(), upper.rational(), subject),
+                Ok(crate::exact_probabilistic::UnboundedOutcome::Stopped(
+                    fsl_replay::ExactProbLimit::MaxPolicyIterations,
+                )) => {
+                    return settled(
+                        &ExactProbBuildIssue::Limit {
+                            limit: ModelCheckLimit::ExactProbMaxPolicyIterations,
+                            value: limits.max_policy_iterations,
+                        },
+                        subject,
+                    )
+                }
+                Ok(crate::exact_probabilistic::UnboundedOutcome::Stopped(
+                    fsl_replay::ExactProbLimit::MaxPrecisionBits,
+                )) => {
+                    return settled(
+                        &ExactProbBuildIssue::Limit {
+                            limit: ModelCheckLimit::ExactProbMaxPrecisionBits,
+                            value: u64::from(limits.max_precision_bits),
+                        },
+                        subject,
+                    )
+                }
+                Ok(crate::exact_probabilistic::UnboundedOutcome::Stopped(_)) => {
+                    return rational_bits_limit(&limits, subject)
+                }
+                Err(error) => return unbounded_failure(error, &limits, subject),
+            }
+        } else {
+            (fair.values, Vec::new())
+        }
     } else if bounded_formula.is_some() {
         let outcome = if bounded_fair {
             crate::exact_probabilistic::decide_fair_bounded_event(&product, bound, &limits)
@@ -1535,20 +1614,7 @@ fn run(
                 let threshold = match bound {
                     Bound::AtLeast(threshold) | Bound::AtMost(threshold) => threshold,
                 };
-                let interval_result = if fair_eventual {
-                    match (objective, bound) {
-                        (UnboundedObjective::Min, Bound::AtLeast(threshold)) => {
-                            crate::exact_probabilistic::decide_fair_reachability_threshold(
-                                &product, &target, threshold, &limits,
-                            )
-                        }
-                        // The fair interval helper establishes the fair minimum
-                        // through its complement event; it does not certify a
-                        // fair maximum or an AtMost minimum claim.
-                        _ => Err(UnboundedError::MaxRationalBits),
-                    }
-                } else {
-                    match &claim.form {
+                let interval_result = match &claim.form {
                     ProbForm::Reach {
                         target: ReachTarget::Until(..),
                         ..
@@ -1634,8 +1700,7 @@ fn run(
                     _ => crate::exact_probabilistic::decide_reachability_threshold(
                         solve_product, &target, objective, threshold, &limits,
                     ),
-                    }
-                };
+                    };
                 match interval_result {
                     Ok(crate::exact_probabilistic::UnboundedOutcome::Exact(solved)) => solved,
                     Ok(crate::exact_probabilistic::UnboundedOutcome::Bounds {
