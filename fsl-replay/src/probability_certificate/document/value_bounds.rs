@@ -26,6 +26,7 @@ fn is_wrappable_base(profile: &str) -> bool {
             | CYCLIC_REWARD_PROFILE
             | CYCLIC_MDP_REWARD_PROFILE
             | measure::PROFILE
+            | "filament.probability-objective/fair-mdp-eventual/v1"
     )
 }
 
@@ -70,6 +71,9 @@ fn policy_hints(bytes: &[u8]) -> Result<Vec<PolicyHint>, ProbabilityDocumentErro
             choice: row.choice.get().to_owned(),
         })
         .collect())
+}
+fn is_fair_base(profile: &str) -> bool {
+    profile == "filament.probability-objective/fair-mdp-eventual/v1"
 }
 
 fn object(value: &Value) -> Result<&serde_json::Map<String, Value>, ProbabilityDocumentError> {
@@ -174,16 +178,32 @@ pub(super) fn unwrap(
                 return Ok(None);
             }
             let base = objective["base"].clone();
+            let fair = base
+                .get("profile")
+                .and_then(Value::as_str)
+                .is_some_and(is_fair_base);
             root.insert("objective".into(), base);
             if root.remove("policy").is_some() {
                 policy = Some(policy_hints(bytes)?);
             }
+            if fair && side == SubsystemBoundKind::Lower {
+                if root.contains_key("ranking") || policy.is_some() {
+                    return Err(ProbabilityDocumentError::MalformedMember("ranking"));
+                }
+                root.insert("ranking".into(), json!([]));
+            }
             match side {
                 SubsystemBoundKind::Upper => {
-                    if root.contains_key("ranking") && !cyclic_mdp_reward && !cyclic_reward {
+                    if fair {
+                        // The fair-MDP checker validates the rank against its
+                        // independently reconstructed zero component for
+                        // either interval endpoint.
+                    } else if root.contains_key("ranking")
+                        && !cyclic_mdp_reward
+                        && !cyclic_reward
+                    {
                         return Err(ProbabilityDocumentError::MalformedMember("ranking"));
-                    }
-                    if !root.contains_key("ranking") {
+                    } else if !root.contains_key("ranking") {
                         root.insert("ranking".into(), json!([]));
                     }
                 }
@@ -251,11 +271,22 @@ pub(super) fn wrap(
         let base = root
             .remove("objective")
             .ok_or(ProbabilityDocumentError::Malformed)?;
+        let fair = base
+            .get("profile")
+            .and_then(Value::as_str)
+            .is_some_and(is_fair_base);
         root.insert(
             "objective".into(),
             json!({"profile": measure::bounds::PROFILE, "base": base}),
         );
-        if side == SubsystemBoundKind::Upper && !cyclic_mdp_reward && !cyclic_reward {
+        if fair && side == SubsystemBoundKind::Lower {
+            root.remove("ranking");
+            root.remove("policy");
+        } else if side == SubsystemBoundKind::Upper
+            && !fair
+            && !cyclic_mdp_reward
+            && !cyclic_reward
+        {
             root.remove("ranking");
         }
     }

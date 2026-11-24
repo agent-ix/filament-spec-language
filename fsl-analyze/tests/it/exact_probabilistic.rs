@@ -16,6 +16,7 @@ use fsl_analyze::exact_probabilistic::{
 };
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::Limits;
+use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::UndefinedCause;
 use fsl_replay::{ModelCheckLimit, ModelCheckLimits};
 use ix_trace_rs::trace;
@@ -906,7 +907,7 @@ fn deliver_backward_induction_matches_the_published_scheduler_vectors() {
 
 /// FR-200-AC-4 (TC-635): bounded decisions are unchanged by fairness, while
 /// the checked fairness set accompanies the output.
-#[trace("TC-635", "FR-200-AC-4")]
+#[trace("TC-635", "FR-200-AC-4", "FR-411-AC-11")]
 #[test]
 fn fair_deliver_keeps_the_24_over_25_minimum_and_records_weak_fairness() {
     let world = World::new(&prob_world::link(DELIVER));
@@ -1011,6 +1012,75 @@ fn fair_availability_uses_long_run_limit_and_randomized_refutation() {
     assert!(names[0].contains("repair_fast"));
     assert!(names[1].contains("repair_slow"));
     assert_eq!(result.fairness, product.fairness);
+
+    let records = fsl_analyze::analyze::analyze_items(
+        &fsl_analyze::analyze::Engines::fsl().expect("FSL engines"),
+        vec![fsl_analyze::analyze::exact_probabilistic_item(
+            fsl_foundation::RequestIndex::new(0),
+            world.request("AvailFair", ModelCheckLimits::default()),
+        )],
+        &Cancel::new(),
+    );
+    let record = &records[0];
+    let terminal = record.terminal().unwrap_or_else(|| {
+        panic!(
+            "fair long-run result did not settle: {:?}",
+            record.settlement
+        )
+    });
+    assert_eq!(
+        terminal.value(),
+        &fsl_replay::TerminalValue::Refuted,
+        "terminal: {terminal:?}"
+    );
+    let witness = record
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("fair long-run refutation has randomized witness evidence");
+    let randomized = witness
+        .evidence()
+        .scheduler
+        .iter()
+        .find_map(|(_, choice)| match choice {
+            fsl_replay::ProbabilisticSchedulerChoice::Randomized(distribution)
+                if distribution.len() == 2
+                    && distribution.iter().all(|(_, p)| p == &ratio(1, 2)) =>
+            {
+                Some(distribution)
+            }
+            _ => None,
+        })
+        .expect("the witness randomizes two alternatives equally");
+    let names = randomized
+        .iter()
+        .map(|(choice, _)| {
+            let bytes = choice.to_bytes().expect("scheduled choice encodes");
+            String::from_utf8_lossy(&bytes).into_owned()
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        names.iter().any(|name| name.contains("repair_fast")),
+        "{names:?}"
+    );
+    assert!(
+        names.iter().any(|name| name.contains("repair_slow")),
+        "{names:?}"
+    );
+    let subsystem = witness
+        .evidence()
+        .subsystem
+        .as_ref()
+        .expect("the exact induced long-run chain is certified");
+    let certificate = fsl_replay::read_long_run_probability_certificate(
+        subsystem.as_bytes(),
+        crate::long_run_certificate::limits(),
+        &Cancel::new(),
+    )
+    .expect("the independent checker accepted the induced-chain document");
+    assert!(certificate
+        .values
+        .iter()
+        .all(|row| row.value == ratio(1400, 1401)));
 }
 
 /// FR-198-AC-2 under FR-200: a zero-reward wait MEC collapses while retaining
@@ -1845,6 +1915,630 @@ fn fair_coin_has_no_nonterminal_fair_end_component() {
     assert!(operations[flip_index].operation.contains("flip"));
 }
 
+/// FSpec FR-411-AC-10 and FR-412-AC-7: EN-5 emits a fair-MDP certificate
+/// for the fair Coin process and its independent checker accepts value one.
+#[trace("FR-411-AC-10", "FR-412-AC-7")]
+#[test]
+fn fair_coin_analysis_emits_independently_checked_value_one() {
+    use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+    use fsl_foundation::RequestIndex;
+    use fsl_replay::TerminalValue;
+
+    let world = World::new(&prob_world::process(REACH));
+    let records = analyze_items(
+        &Engines::fsl().expect("FSL engines"),
+        vec![exact_probabilistic_item(
+            RequestIndex::new(0),
+            world.request("FairTerminates", ModelCheckLimits::default()),
+        )],
+        &Cancel::new(),
+    );
+    let record = records.into_iter().next().expect("one analyzed claim");
+    let terminal = record
+        .terminal()
+        .unwrap_or_else(|| panic!("fair claim did not settle: {:?}", record.settlement));
+    assert!(matches!(terminal.value(), TerminalValue::Proved { .. }));
+    let bytes = terminal
+        .exact_certificate_document()
+        .expect("independently checked exact certificate");
+    let certificate = fsl_replay::read_probability_proof_document(
+        bytes,
+        fsl_replay::ProbabilityDocumentLimits::for_exact(
+            &ExactProbLimits::default(),
+            fsl_replay::AccountingLimits::default().0,
+        ),
+        &Cancel::new(),
+    )
+    .expect("strict fair-MDP certificate");
+    assert!(certificate.is_fair_mdp());
+    assert_eq!(certificate.document().values.len(), 2);
+    assert!(certificate
+        .document()
+        .values
+        .iter()
+        .all(|entry| entry.value == ratio(1, 1)));
+}
+
+/// FR-1041-AC-1/2/4: W has `wait` at s and a fair coin `go` to terminal g/f;
+/// the minimum and maximum are both 1/2, while malformed Bellman, rank and
+/// fairness records are rejected at their specified locations.
+#[trace("TC-3150", "FR-1041-AC-1", "FR-1041-AC-2", "FR-1041-AC-4")]
+#[test]
+fn fair_eventual_w_exact_minimum_maximum_and_forgery_vectors() {
+    use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+    use fsl_eval::simulation::model::ModelSystem;
+    use fsl_foundation::RequestIndex;
+    use fsl_replay::{
+        ExactProbabilityCertificateCheck, ProbabilityCertificateLocus, ProbabilityCertificateRule,
+        ProbabilityDocumentError, ProofBasis, TerminalValue,
+    };
+
+    const CLAIMS: &str = "probabilistic FairMin using inf on M over (w: M::W) \
+         under every scheduler fair strong W::go on origin \
+         { probability >= rational(1,2) [ eventually holds(w.g) ] }\n\
+         probabilistic FairMax using inf on M over (w: M::W) \
+         under every scheduler fair strong W::go on origin \
+         { probability <= rational(1,2) [ eventually holds(w.g) ] }\n\
+         probabilistic WeakFairMin using inf on M over (w: M::W) \
+         under every scheduler fair weak W::go on origin \
+         { probability >= rational(1,2) [ eventually holds(w.g) ] }\n\
+         probabilistic AboveMax using inf on M over (w: M::W) \
+         under every scheduler fair strong W::go on origin \
+         { probability <= rational(2,5) [ eventually holds(w.g) ] }\n\
+         probabilistic NoFairMin using inf on M over (w: M::W) under every scheduler on origin \
+         { probability >= rational(1,2) [ eventually holds(w.g) ] }";
+    let world = World::new(&prob_world::fair_bounds_w(CLAIMS));
+    let records = analyze_items(
+        &Engines::fsl().expect("EN-5 is admitted"),
+        ["FairMin", "FairMax", "WeakFairMin", "AboveMax", "NoFairMin"]
+            .into_iter()
+            .enumerate()
+            .map(|(index, name)| {
+                exact_probabilistic_item(
+                    RequestIndex::new(index as u32),
+                    world.request(name, ModelCheckLimits::default()),
+                )
+            })
+            .collect(),
+        &Cancel::new(),
+    );
+    let min = records[0].terminal().expect("AC-1 minimum settles");
+    let TerminalValue::Proved {
+        basis: ProofBasis::ExactValue { value, .. },
+        ..
+    } = min.value()
+    else {
+        panic!("the fair minimum is exact: {:#?}", records[0]);
+    };
+    assert_eq!(value.value(), &ratio(1, 2));
+    let TerminalValue::Proved {
+        basis: ProofBasis::ExactValue { value, .. },
+        ..
+    } = records[1].terminal().expect("AC-4 maximum settles").value()
+    else {
+        panic!("the fair maximum is exact: {:#?}", records[1]);
+    };
+    assert_eq!(value.value(), &ratio(1, 2));
+    assert_eq!(
+        records[3]
+            .terminal()
+            .expect("the lower maximum bound settles")
+            .value(),
+        &TerminalValue::Refuted
+    );
+    assert_eq!(
+        records[4]
+            .terminal()
+            .expect("the fairness-empty minimum settles")
+            .value(),
+        &TerminalValue::Refuted
+    );
+    let TerminalValue::Proved {
+        basis: ProofBasis::ExactValue { value, .. },
+        ..
+    } = records[2]
+        .terminal()
+        .expect("weak fair minimum settles")
+        .value()
+    else {
+        panic!("the weak fair minimum is exact: {:#?}", records[2]);
+    };
+    assert_eq!(value.value(), &ratio(1, 2));
+
+    let limits = fsl_replay::ProbabilityDocumentLimits::for_exact(
+        &ExactProbLimits::default(),
+        fsl_replay::AccountingLimits::default().0,
+    );
+    let system = ModelSystem::new(world.subject().simulation).expect("checked W model");
+    let identity =
+        fsl_replay::probabilistic_claim_identity(world.claim("FairMin")).expect("AC-1 identity");
+    let check = |bytes: &[u8]| {
+        fsl_replay::check_probability_certificate_document(
+            &system,
+            system.input().probabilistic.claims(),
+            &identity,
+            bytes,
+            limits,
+            &Cancel::new(),
+        )
+    };
+    let min_bytes = records[0]
+        .terminal()
+        .unwrap()
+        .exact_certificate_document()
+        .expect("AC-1 fair-minimum document");
+    let min_check = check(min_bytes).expect("the strict reader checks AC-1 document");
+    assert!(matches!(
+        min_check,
+        ExactProbabilityCertificateCheck::Accepted(_)
+    ));
+    let max_identity =
+        fsl_replay::probabilistic_claim_identity(world.claim("FairMax")).expect("AC-4 identity");
+    let max_bytes = records[1]
+        .terminal()
+        .unwrap()
+        .exact_certificate_document()
+        .expect("AC-4 fair-maximum document");
+    assert!(matches!(
+        fsl_replay::check_probability_certificate_document(
+            &system,
+            system.input().probabilistic.claims(),
+            &max_identity,
+            max_bytes,
+            limits,
+            &Cancel::new(),
+        ),
+        Ok(ExactProbabilityCertificateCheck::Accepted(_))
+    ));
+    let weak_bytes = records[2]
+        .terminal()
+        .unwrap()
+        .exact_certificate_document()
+        .expect("AC-1 weak-fair document");
+    let weak_doc: serde_json::Value = serde_json::from_slice(weak_bytes).unwrap();
+    let strong_doc: serde_json::Value = serde_json::from_slice(min_bytes).unwrap();
+    assert_ne!(
+        strong_doc["objective"]["fairness"],
+        weak_doc["objective"]["fairness"]
+    );
+    let weak_identity = fsl_replay::probabilistic_claim_identity(world.claim("WeakFairMin"))
+        .expect("weak fairness identity");
+    assert!(matches!(
+        fsl_replay::check_probability_certificate_document(
+            &system,
+            system.input().probabilistic.claims(),
+            &weak_identity,
+            weak_bytes,
+            limits,
+            &Cancel::new(),
+        ),
+        Ok(ExactProbabilityCertificateCheck::Accepted(_))
+    ));
+    let parsed = fsl_replay::read_probability_proof_document(min_bytes, limits, &Cancel::new())
+        .expect("strict AC-1 document read");
+    let document = parsed.document();
+    assert_eq!(document.values.len(), 3);
+    let mut values = document
+        .values
+        .iter()
+        .map(|row| row.value.clone())
+        .collect::<Vec<_>>();
+    values.sort();
+    assert_eq!(values, vec![ratio(0, 1), ratio(1, 2), ratio(1, 1)]);
+    let mut ranks = document
+        .ranking
+        .iter()
+        .map(|(_, rank)| *rank)
+        .collect::<Vec<_>>();
+    ranks.sort();
+    assert_eq!(ranks, vec![0, 0, 1]);
+
+    let base: serde_json::Value =
+        serde_json::from_slice(min_bytes).expect("canonical AC-1 document JSON");
+    let values = base["values"].as_array().unwrap();
+    let state_key = |row: &serde_json::Value| {
+        use base64::Engine;
+        fsl_replay::ProbabilityProductKey::from_canonical_bytes(
+            base64::engine::general_purpose::URL_SAFE_NO_PAD
+                .decode(row["state"].as_str().unwrap())
+                .unwrap(),
+        )
+    };
+    let s = values
+        .iter()
+        .find(|row| row["value"] == serde_json::json!({"numerator":"1","denominator":"2"}))
+        .expect("s carries the literal 1/2 value");
+    let s_key = state_key(s);
+    let f = values
+        .iter()
+        .find(|row| row["value"] == serde_json::json!({"numerator":"0","denominator":"1"}))
+        .expect("f carries the literal zero value");
+    let f_key = state_key(f);
+    let reject_at = |bytes: &[u8], rule, key: fsl_replay::ProbabilityProductKey| match check(bytes)
+        .expect("a well-shaped forged value is rejected by the checker")
+    {
+        ExactProbabilityCertificateCheck::Rejected(rejection) => {
+            assert_eq!(rejection.rule, rule);
+            assert_eq!(rejection.at, ProbabilityCertificateLocus::ProductState(key));
+        }
+        other => panic!("forged AC-2 values must be rejected: {other:?}"),
+    };
+    for numerator in ["0", "1"] {
+        let mut forged = base.clone();
+        let row = forged["values"]
+            .as_array_mut()
+            .unwrap()
+            .iter_mut()
+            .find(|row| row["state"] == s["state"])
+            .unwrap();
+        row["value"] = if numerator == "0" {
+            serde_json::json!({"numerator":"0","denominator":"1"})
+        } else {
+            serde_json::json!({"numerator":"1","denominator":"4"})
+        };
+        reject_at(
+            &serde_json::to_vec(&forged).unwrap(),
+            ProbabilityCertificateRule::RankBroken,
+            s_key.clone(),
+        );
+    }
+    let mut forged_f = base.clone();
+    let row = forged_f["values"]
+        .as_array_mut()
+        .unwrap()
+        .iter_mut()
+        .find(|row| row["state"] == f["state"])
+        .unwrap();
+    row["value"] = serde_json::json!({"numerator":"1","denominator":"2"});
+    reject_at(
+        &serde_json::to_vec(&forged_f).unwrap(),
+        ProbabilityCertificateRule::InequalityFails,
+        f_key,
+    );
+
+    let mut without_fairness = base.clone();
+    without_fairness["objective"]["fairness"] = serde_json::json!([]);
+    assert!(matches!(
+        check(&serde_json::to_vec(&without_fairness).unwrap()),
+        Err(ProbabilityDocumentError::ObjectiveMismatch)
+    ));
+    let mut changed = serde_json::from_slice::<serde_json::Value>(min_bytes).unwrap();
+    changed["objective"]["fairness"][0]["target"]["declaration"]["package"] =
+        serde_json::json!("test/foreign-model");
+    assert!(matches!(
+        check(&serde_json::to_vec(&changed).unwrap()),
+        Err(ProbabilityDocumentError::ObjectiveMismatch)
+    ));
+    let mut duplicate = serde_json::from_slice::<serde_json::Value>(min_bytes).unwrap();
+    let row = duplicate["objective"]["fairness"][0].clone();
+    duplicate["objective"]["fairness"]
+        .as_array_mut()
+        .unwrap()
+        .push(row);
+    let malformed = check(&serde_json::to_vec(&duplicate).unwrap())
+        .expect("duplicate fairness rows are a checked malformed rejection");
+    assert!(matches!(
+        malformed,
+        ExactProbabilityCertificateCheck::Rejected(ref rejection)
+            if rejection.rule == ProbabilityCertificateRule::Malformed
+                && rejection.at == ProbabilityCertificateLocus::Member("objective")
+    ));
+}
+
+/// FSL FR-1042-AC-22 / FSpec FR-412-AC-13: EN-5 encloses the exact fair
+/// minimum 1/2 under a one-bit rational budget and the independent reader
+/// accepts both emitted value-bound documents.
+#[trace("TC-3212", "FR-1042-AC-22", "FR-412-AC-13")]
+#[test]
+fn fair_eventual_value_bounds_are_independently_checked() {
+    use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+    use fsl_eval::simulation::model::ModelSystem;
+    use fsl_foundation::RequestIndex;
+    use fsl_replay::{ExactProbabilityCertificateCheck, ProofBasis, TerminalValue};
+
+    const CLAIMS: &str = "probabilistic FairBound using inf on M over (w: M::W) \
+         under every scheduler fair strong W::go on origin \
+         { probability >= rational(2,5) [ eventually holds(w.g) ] }";
+    let world = World::new(&prob_world::fair_bounds_w(CLAIMS));
+    assert!(matches!(
+        world.claim("FairBound").form,
+        fsl_semantics::check::ProbForm::Reach {
+            target: fsl_semantics::check::ReachTarget::Eventually(_),
+            ..
+        }
+    ));
+    let mut request = world.request("FairBound", ModelCheckLimits::default());
+    request.limits.max_rational_bits = 1;
+    request.limits.max_precision_bits = 16;
+    let limits = request.limits.clone();
+    let record = analyze_items(
+        &Engines::fsl().expect("EN-5 is admitted"),
+        vec![exact_probabilistic_item(RequestIndex::new(0), request)],
+        &Cancel::new(),
+    )
+    .remove(0);
+    let terminal = record
+        .terminal()
+        .unwrap_or_else(|| panic!("the fair claim settles: {record:#?}"));
+    let TerminalValue::Proved {
+        basis: ProofBasis::ValueBounds { lower, upper, .. },
+        ..
+    } = terminal.value()
+    else {
+        panic!("the fair value is enclosed by checked bounds: {record:#?}");
+    };
+    assert!(lower.value() <= &ratio(1, 2) && &ratio(1, 2) <= upper.value());
+    assert!(lower.value() >= &ratio(2, 5));
+
+    let system = ModelSystem::new(world.subject().simulation).expect("checked fair model");
+    let identity =
+        fsl_replay::probabilistic_claim_identity(world.claim("FairBound")).expect("claim identity");
+    let doc_limits =
+        fsl_replay::ProbabilityDocumentLimits::for_interval(&limits, prob_world::UNLIMITED);
+    let check = |bytes: &[u8]| {
+        fsl_replay::check_probability_certificate_document(
+            &system,
+            system.input().probabilistic.claims(),
+            &identity,
+            bytes,
+            doc_limits,
+            &Cancel::new(),
+        )
+    };
+    for bytes in [
+        terminal
+            .exact_certificate_document()
+            .expect("lower document"),
+        terminal
+            .exact_counterpart_document()
+            .expect("upper document"),
+    ] {
+        assert!(matches!(
+            check(bytes),
+            Ok(ExactProbabilityCertificateCheck::Accepted(_))
+        ));
+    }
+    let mut forged: serde_json::Value = serde_json::from_slice(
+        terminal
+            .exact_certificate_document()
+            .expect("lower document"),
+    )
+    .expect("canonical lower JSON");
+    let rows = forged["values"].as_array_mut().expect("base values");
+    let old = rows[0]["value"].clone();
+    rows[0]["value"]["numerator"] = serde_json::json!("1");
+    rows[0]["value"]["denominator"] = serde_json::json!("3");
+    assert_ne!(rows[0]["value"], old);
+    assert!(matches!(
+        check(&serde_json::to_vec(&forged).unwrap()),
+        Ok(ExactProbabilityCertificateCheck::Rejected(_))
+    ));
+}
+
+/// FSL FR-1042-AC-4 / FSpec FR-412-AC-20: the upper fair bound's `go` hint
+/// selects a policy action with rank progress; a `wait` hint is rejected, and
+/// omitting the hint lets the checker find the satisfying action itself.
+#[trace("TC-3212", "FR-1042-AC-4", "FR-412-AC-20")]
+#[test]
+fn fair_eventual_upper_policy_hint_is_optional_but_independently_checked() {
+    use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+    use fsl_eval::simulation::{model::ModelSystem, TransitionSystem};
+    use fsl_foundation::RequestIndex;
+    use fsl_replay::{
+        ExactProbabilityCertificateCheck, ProbabilityCertificateRule, ProofBasis, Schedule,
+        TerminalValue,
+    };
+
+    const CLAIMS: &str = "probabilistic FairBound using inf on M over (w: M::W) \
+         under every scheduler fair strong W::go on origin \
+         { probability >= rational(2,5) [ eventually holds(w.g) ] }";
+    let world = World::new(&prob_world::fair_bounds_w(CLAIMS));
+    let mut request = world.request("FairBound", ModelCheckLimits::default());
+    request.limits.max_rational_bits = 1;
+    request.limits.max_precision_bits = 16;
+    let limits = request.limits.clone();
+    let record = analyze_items(
+        &Engines::fsl().expect("EN-5 is admitted"),
+        vec![exact_probabilistic_item(RequestIndex::new(0), request)],
+        &Cancel::new(),
+    )
+    .remove(0);
+    let TerminalValue::Proved {
+        basis: ProofBasis::ValueBounds { upper, .. },
+        ..
+    } = record.terminal().expect("the interval settles").value()
+    else {
+        panic!("the fair exact value is enclosed: {record:#?}");
+    };
+    assert!(upper.value() >= &ratio(1, 2));
+    let upper_bytes = record
+        .terminal()
+        .unwrap()
+        .exact_counterpart_document()
+        .expect("upper value-bound document");
+    let lower_bytes = record
+        .terminal()
+        .unwrap()
+        .exact_certificate_document()
+        .expect("lower value-bound document");
+    let system = ModelSystem::new(world.subject().simulation).expect("checked fair model");
+    let identity =
+        fsl_replay::probabilistic_claim_identity(world.claim("FairBound")).expect("claim identity");
+    let doc_limits =
+        fsl_replay::ProbabilityDocumentLimits::for_interval(&limits, prob_world::UNLIMITED);
+    let check = |bytes: &[u8]| {
+        fsl_replay::check_probability_certificate_document(
+            &system,
+            system.input().probabilistic.claims(),
+            &identity,
+            bytes,
+            doc_limits,
+            &Cancel::new(),
+        )
+    };
+    let initial = system
+        .initial()
+        .into_iter()
+        .next()
+        .expect("one literal initial w state");
+    let actions = system
+        .actions(&initial)
+        .expect("initial actions expand")
+        .expect("initial actions are decided");
+    let schedule = |name: &str| {
+        let action = actions
+            .iter()
+            .find(|action| action.identity.operation.ends_with(name))
+            .unwrap_or_else(|| panic!("the literal {name} action is enabled"));
+        Schedule::of(&system, &action.identity).expect("scheduled identity is canonical")
+    };
+    let go = serde_json::from_slice::<serde_json::Value>(schedule("::go").as_bytes())
+        .expect("go schedule is canonical JSON");
+    let wait = serde_json::from_slice::<serde_json::Value>(schedule("::wait").as_bytes())
+        .expect("wait schedule is canonical JSON");
+    let mut upper: serde_json::Value =
+        serde_json::from_slice(upper_bytes).expect("upper value-bound JSON is canonical");
+    let ranking = upper["ranking"].as_array().expect("upper ranking rows");
+    let root = ranking
+        .iter()
+        .find(|row| row["rank"] == serde_json::json!(1))
+        .expect("s has the literal progressing rank 1")["state"]
+        .clone();
+    let mut lower: serde_json::Value =
+        serde_json::from_slice(lower_bytes).expect("lower value-bound JSON is canonical");
+    let set_root_value = |document: &mut serde_json::Value| {
+        let rows = document["values"]
+            .as_array_mut()
+            .expect("literal value rows");
+        let row = rows
+            .iter_mut()
+            .find(|row| row["state"] == root)
+            .expect("the same initial product state is named in the values");
+        row["value"] = serde_json::json!({"numerator": "1", "denominator": "2"});
+    };
+    set_root_value(&mut lower);
+    set_root_value(&mut upper);
+    for row in upper["values"].as_array().unwrap() {
+        let expected = if row["state"] == root {
+            serde_json::json!({"numerator": "1", "denominator": "2"})
+        } else if upper["targets"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|target| target == &row["state"])
+        {
+            serde_json::json!({"numerator": "1", "denominator": "1"})
+        } else {
+            serde_json::json!({"numerator": "0", "denominator": "1"})
+        };
+        assert_eq!(row["value"], expected);
+    }
+    assert_eq!(upper["ranking"].as_array().unwrap().len(), 3);
+    for row in upper["ranking"].as_array().unwrap() {
+        assert_eq!(row["rank"], if row["state"] == root { 1 } else { 0 });
+    }
+    assert!(lower["ranking"].as_array().unwrap().is_empty());
+    assert!(lower.get("policy").is_none());
+    let lower_replay =
+        check(&serde_json::to_vec(&lower).unwrap()).expect("literal lower bound is checked");
+    assert!(matches!(
+        lower_replay,
+        ExactProbabilityCertificateCheck::Accepted(_)
+    ));
+    let upper_replay =
+        check(&serde_json::to_vec(&upper).unwrap()).expect("literal upper bound is checked");
+    assert!(matches!(
+        upper_replay,
+        ExactProbabilityCertificateCheck::Accepted(_)
+    ));
+    upper["policy"] = serde_json::json!([{"state": root, "choice": go}]);
+    assert!(matches!(
+        check(&serde_json::to_vec(&upper).unwrap()),
+        Ok(ExactProbabilityCertificateCheck::Accepted(_))
+    ));
+    upper["policy"][0]["choice"] = wait;
+    let refused = check(&serde_json::to_vec(&upper).unwrap())
+        .expect("a canonical but non-progressing policy is a checked rejection");
+    assert!(matches!(
+        refused,
+        ExactProbabilityCertificateCheck::Rejected(ref rejection)
+            if rejection.rule == ProbabilityCertificateRule::RankBroken
+    ));
+}
+
+/// FR-412-AC-7 and FR-1041-AC-1/5: a forged value-one certificate with a
+/// locally valid Bellman equation and progress rank must still be rejected
+/// when an independently reconstructed fair end component can avoid target.
+#[trace("FR-412-AC-7")]
+#[test]
+fn fair_mdp_checker_rejects_a_fair_non_target_end_component() {
+    use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+    use fsl_foundation::RequestIndex;
+    use fsl_replay::{
+        check_probability_certificate_document, probability_proof_document,
+        write_probability_proof_document, ExactProbabilityCertificateCheck,
+    };
+
+    let claims = format!(
+        "{REACH}\
+         probabilistic FairWait using inf on M over (p: M::Proc) \
+         under every scheduler fair strong Proc::wait on origin \
+         {{ probability >= 0.99 [ eventually holds(p.done) ] }}\n"
+    );
+    let world = World::new(&prob_world::process(&claims));
+    let valid = analyze_items(
+        &Engines::fsl().expect("FSL engines"),
+        vec![exact_probabilistic_item(
+            RequestIndex::new(0),
+            world.request("FairTerminates", ModelCheckLimits::default()),
+        )],
+        &Cancel::new(),
+    );
+    let genuine = valid[0]
+        .terminal()
+        .expect("the fair Coin proof settles")
+        .exact_certificate()
+        .expect("the independent checker accepted the fair Coin certificate")
+        .clone();
+    let system = fsl_eval::simulation::model::ModelSystem::new(world.subject().simulation)
+        .expect("the checked model is admitted");
+    let item = fsl_replay::probabilistic_claim_identity(world.claim("FairWait"))
+        .expect("the fair-loop claim identity is canonical");
+    let limits = fsl_replay::ProbabilityDocumentLimits::for_exact(
+        &ExactProbLimits::default(),
+        fsl_replay::AccountingLimits::default().0,
+    );
+    let forged = probability_proof_document(
+        &system,
+        world.package.graph().probabilistic_model().claims(),
+        &item,
+        &genuine,
+        limits,
+        &Cancel::new(),
+    )
+    .expect("the claim-shaped value-one candidate has valid local equations and ranks");
+    assert!(forged.is_fair_mdp());
+    assert!(forged
+        .document()
+        .values
+        .iter()
+        .all(|entry| entry.value == ratio(1, 1)));
+    let bytes = write_probability_proof_document(&forged, limits, &Cancel::new())
+        .expect("the forged fair-MDP document is well-formed");
+    let checked = check_probability_certificate_document(
+        &system,
+        world.package.graph().probabilistic_model().claims(),
+        &item,
+        &bytes,
+        limits,
+        &Cancel::new(),
+    );
+    assert!(
+        matches!(checked, Ok(ExactProbabilityCertificateCheck::Rejected(_))),
+        "a fair wait self-loop is a non-target fair end component: {checked:?}"
+    );
+}
+
 /// A terminal stutter-only component is fair when it remains in the
 /// non-target graph, despite having no scheduled identities.
 #[trace("TC-635", "FR-200-AC-5")]
@@ -1986,8 +2680,9 @@ fn fair_expected_reward_minimum_excludes_an_unfair_free_bottom_class() {
     );
 }
 
-/// FR-200-AC-2 (TC-635): a strong-fair scheduler can reach the stuck state,
-/// where `stall` is the only action and the fairness constraint is disabled.
+/// FR-200-AC-2 and FR-1041-AC-3: a strong-fair scheduler can reach the stuck
+/// state, where `stall` is the only action and the fairness constraint is
+/// disabled; the cyclic refutation is emitted and independently replayed.
 #[trace("TC-635", "FR-200-AC-2")]
 #[test]
 fn coin2_stall_is_a_fair_end_component_and_witness() {
@@ -2030,6 +2725,90 @@ fn coin2_stall_is_a_fair_end_component_and_witness() {
     assert_eq!(
         result.values[start(&product).index()],
         fsl_analyze::exact_probabilistic::ExtRational::Finite(ratio(0, 1))
+    );
+    let analyzed = fsl_analyze::analyze::analyze_items(
+        &fsl_analyze::analyze::Engines::fsl().expect("FSL engines"),
+        vec![fsl_analyze::analyze::exact_probabilistic_item(
+            fsl_foundation::RequestIndex::new(0),
+            world.request("StuckFair", ModelCheckLimits::default()),
+        )],
+        &Cancel::new(),
+    );
+    let record = analyzed.first().expect("one fair refutation");
+    let terminal = record.terminal().unwrap_or_else(|| {
+        panic!(
+            "cyclic fair refutation did not settle: {:?}",
+            record.settlement
+        )
+    });
+    assert_eq!(terminal.value(), &fsl_replay::TerminalValue::Refuted);
+    match &world.claim("StuckFair").form {
+        fsl_semantics::check::ProbForm::Reach {
+            bound: fsl_semantics::check::Bound::AtLeast(value),
+            target: fsl_semantics::check::ReachTarget::Eventually(_),
+        } => assert_eq!(value, &ratio(99, 100)),
+        other => panic!("unexpected FR-1041 claim shape: {other:?}"),
+    }
+    let accepted = record
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("the independent fair replay accepted a counterexample")
+        .evidence();
+    assert!(
+        accepted.paths.is_empty(),
+        "the witness uses the cyclic subsystem"
+    );
+    let system = fsl_eval::simulation::model::ModelSystem::new(world.subject().simulation)
+        .expect("coin2 model system");
+    let initial = &system.initial()[0];
+    let identity = system
+        .actions(initial)
+        .expect("initial actions")
+        .expect("resolved actions")
+        .into_iter()
+        .find(|action| action.identity.operation.contains("stall"))
+        .expect("stall is enabled")
+        .identity;
+    let stall = fsl_replay::Schedule::of(&system, &identity).expect("canonical stall schedule");
+    assert!(accepted.scheduler.iter().any(|(key, choice)| {
+        key == &accepted.initial_key
+            && matches!(choice, fsl_replay::ProbabilisticSchedulerChoice::Deterministic(action) if action == &fsl_replay::ProductAction::Identity(stall.clone()))
+    }));
+
+    let wait = system
+        .actions(initial)
+        .expect("initial actions")
+        .expect("resolved actions")
+        .into_iter()
+        .find(|action| action.identity.operation.contains("wait"))
+        .expect("wait is enabled");
+    let unfair_item = fsl_analyze::analyze::exact_probabilistic_item_witness_tampered(
+        fsl_foundation::RequestIndex::new(0),
+        world.request("StuckFair", ModelCheckLimits::default()),
+        move |witness| {
+            let schedule = fsl_replay::Schedule::of(&system, &wait.identity).unwrap();
+            let row = witness
+                .scheduler
+                .iter_mut()
+                .find(|(key, _)| key == &witness.initial_key)
+                .expect("initial scheduler row");
+            row.1 = fsl_replay::ProbabilisticSchedulerChoice::Deterministic(
+                fsl_replay::ProductAction::Identity(schedule),
+            );
+        },
+    );
+    let unfair = fsl_analyze::analyze::analyze_items(
+        &fsl_analyze::analyze::Engines::fsl().expect("FSL engines"),
+        vec![unfair_item],
+        &Cancel::new(),
+    )
+    .remove(0);
+    assert!(
+        !matches!(
+            unfair.terminal().map(|terminal| terminal.value()),
+            Some(fsl_replay::TerminalValue::Refuted)
+        ),
+        "the strong-fairness checker rejects a wait-only cycle"
     );
     let live = start(&product);
     let selected = match result.policy[live.index()].as_ref().expect("live choice") {
@@ -2120,6 +2899,252 @@ fn coin2_stall_is_a_fair_end_component_and_witness() {
     assert!(
         minimum.policy.is_some(),
         "the result carries a fair scheduler"
+    );
+}
+
+/// FR-1041-AC-3 (TC-2110 step 3): a fair minimum uses the exact values
+/// s=0/u=0/g=1/f=0. The refutation witness chooses `drift` into u's fair
+/// loop, while replay rejects a forged wait-only cycle at s.
+#[trace("TC-2110", "FR-1041-AC-3", "FR-411-AC-10", "FR-412-AC-13")]
+#[test]
+fn fair_minimum_replays_drift_into_a_zero_value_fair_component() {
+    use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+    use fsl_foundation::RequestIndex;
+    use fsl_replay::{ProbabilisticSchedulerChoice, TerminalValue};
+
+    const CLAIMS: &str = "probabilistic DriftRefuted using inf on M over (w: M::W) \
+         under every scheduler fair strong W::go on origin \
+         { probability >= rational(1,4) [ eventually holds(w.g) ] }";
+    let world = World::new(&prob_world::fair_drift(CLAIMS));
+
+    let refuted = analyze_items(
+        &Engines::fsl().expect("FSL engines"),
+        vec![exact_probabilistic_item(
+            RequestIndex::new(0),
+            world.request("DriftRefuted", ModelCheckLimits::default()),
+        )],
+        &Cancel::new(),
+    )
+    .remove(0);
+    assert_eq!(
+        refuted
+            .terminal()
+            .expect("the AC-3 threshold settles")
+            .value(),
+        &TerminalValue::Refuted
+    );
+    match &world.claim("DriftRefuted").form {
+        fsl_semantics::check::ProbForm::Reach {
+            bound: fsl_semantics::check::Bound::AtLeast(value),
+            target: fsl_semantics::check::ReachTarget::Eventually(_),
+        } => assert_eq!(value, &ratio(1, 4)),
+        other => panic!("unexpected AC-3 checked form: {other:?}"),
+    }
+    let witness = refuted
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("strict replay accepted the fair counterexample")
+        .evidence();
+    assert!(witness.paths.is_empty());
+    let system = fsl_eval::simulation::model::ModelSystem::new(world.subject().simulation)
+        .expect("checked W model");
+    let initial = &system.initial()[0];
+    let actions = system
+        .actions(initial)
+        .expect("initial actions")
+        .expect("resolved initial actions");
+    let schedule = |name: &str| {
+        let identity = actions
+            .iter()
+            .find(|action| action.identity.operation.contains(name))
+            .unwrap_or_else(|| panic!("{name} is enabled at s"));
+        fsl_replay::Schedule::of(&system, &identity.identity).expect("canonical schedule")
+    };
+    let drift = schedule("drift");
+    let wait = schedule("wait");
+    assert!(witness.scheduler.iter().any(|(key, choice)| {
+        key == &witness.initial_key
+            && matches!(choice, ProbabilisticSchedulerChoice::Deterministic(action) if action == &fsl_replay::ProductAction::Identity(drift.clone()))
+    }), "the replayed scheduler takes drift from s into u");
+
+    let binding = fsl_replay::claim_binding(&system, world.claim("DriftRefuted"))
+        .expect("claim binding")
+        .expect("the W receiver is bound");
+    let key_for = |state: &fsl_eval::simulation::model::ModelSimState| {
+        let bytes = system.state_key(state).expect("canonical W state").0;
+        fsl_replay::ProbabilityProductKey::for_model_state(Some(&binding.reference), &bytes)
+            .expect("complete fair-minimum key")
+    };
+    let post_for = |name: &str| {
+        let action = actions
+            .iter()
+            .find(|action| action.identity.operation.contains(name))
+            .unwrap_or_else(|| panic!("{name} is enabled at s"));
+        let [draw] = action.draws.as_slice() else {
+            panic!("{name} has one admitted draw");
+        };
+        let [(_, post)] = draw.successors.as_slice() else {
+            panic!("{name} has one admitted successor");
+        };
+        post
+    };
+    let s = key_for(initial);
+    let u_state = post_for("drift");
+    let u = key_for(u_state);
+    let g = key_for(post_for("go"));
+    let f = key_for(post_for("fail"));
+    let loop_identity = system
+        .actions(u_state)
+        .expect("u actions")
+        .expect("resolved u actions")
+        .into_iter()
+        .find(|action| action.identity.operation.contains("loop"))
+        .expect("u has its loop")
+        .identity;
+    let loop_schedule =
+        fsl_replay::Schedule::of(&system, &loop_identity).expect("canonical u-loop schedule");
+    assert!(witness.scheduler.iter().any(|(key, choice)| {
+        key == &u
+            && matches!(choice, ProbabilisticSchedulerChoice::Deterministic(action) if action == &fsl_replay::ProductAction::Identity(loop_schedule.clone()))
+    }), "replay reconstructs the u loop after drift");
+    let mut exact_values = vec![
+        fsl_replay::ExactProbabilityValue {
+            state: s.clone(),
+            value: ratio(0, 1),
+        },
+        fsl_replay::ExactProbabilityValue {
+            state: u.clone(),
+            value: ratio(0, 1),
+        },
+        fsl_replay::ExactProbabilityValue {
+            state: g.clone(),
+            value: ratio(1, 1),
+        },
+        fsl_replay::ExactProbabilityValue {
+            state: f.clone(),
+            value: ratio(0, 1),
+        },
+    ];
+    exact_values.sort_by(|left, right| left.state.cmp(&right.state));
+    let exact = fsl_replay::ExactProbabilityCertificate {
+        values: exact_values,
+    };
+    let limits = fsl_replay::ProbabilityDocumentLimits::for_exact(
+        &ExactProbLimits::default(),
+        fsl_replay::AccountingLimits::default().0,
+    );
+    let item = fsl_replay::probabilistic_claim_identity(world.claim("DriftRefuted"))
+        .expect("canonical FR-1041 identity");
+    let proof = fsl_replay::probability_proof_document(
+        &system,
+        system.input().probabilistic.claims(),
+        &item,
+        &exact,
+        limits,
+        &Cancel::new(),
+    )
+    .expect("the fair-MDP builder accepts the literal exact values");
+    assert!(proof.is_fair_mdp());
+    let bytes = fsl_replay::write_probability_proof_document(&proof, limits, &Cancel::new())
+        .expect("canonical exact fair-MDP certificate");
+    let certificate = fsl_replay::read_probability_proof_document(&bytes, limits, &Cancel::new())
+        .expect("independent reader accepts the fair-MDP certificate");
+    assert!(
+        matches!(
+            fsl_replay::check_probability_certificate_document(
+                &system,
+                system.input().probabilistic.claims(),
+                &item,
+                &bytes,
+                limits,
+                &Cancel::new(),
+            )
+            .expect("independent fair-MDP value/rank checker"),
+            fsl_replay::ExactProbabilityCertificateCheck::Rejected(ref rejection)
+                if rejection.rule == fsl_replay::ProbabilityCertificateRule::ThresholdMissed
+        ),
+        "the exact rows and fair ranks pass before the asserted 1/4 bound is compared"
+    );
+    let checked_values = &certificate.document().values;
+    let value = |key: &fsl_replay::ProbabilityProductKey| {
+        &checked_values
+            .iter()
+            .find(|entry| &entry.state == key)
+            .expect("the checker documents this complete state")
+            .value
+    };
+    assert_eq!(value(&s), &ratio(0, 1));
+    assert_eq!(value(&u), &ratio(0, 1));
+    assert_eq!(value(&g), &ratio(1, 1));
+    assert_eq!(value(&f), &ratio(0, 1));
+    let rank = |key: &fsl_replay::ProbabilityProductKey| {
+        certificate
+            .document()
+            .ranking
+            .iter()
+            .find(|(state, _)| state == key)
+            .map(|(_, rank)| *rank)
+            .expect("rank for each fair-minimum state")
+    };
+    assert_eq!(rank(&s), 1);
+    assert_eq!(rank(&u), 0);
+    assert_eq!(rank(&g), 0);
+    assert_eq!(rank(&f), 0);
+    let mut forged_rank = proof.clone();
+    forged_rank
+        .document_mut()
+        .ranking
+        .iter_mut()
+        .find(|(key, _)| key == &s)
+        .expect("the producer supplies s rank")
+        .1 = 0;
+    let forged_rank_bytes =
+        fsl_replay::write_probability_proof_document(&forged_rank, limits, &Cancel::new())
+            .expect("the forged rank is syntactically admitted");
+    assert!(
+        matches!(
+            fsl_replay::check_probability_certificate_document(
+                &system,
+                system.input().probabilistic.claims(),
+                &item,
+                &forged_rank_bytes,
+                limits,
+                &Cancel::new(),
+            )
+            .expect("forged fair-rank check"),
+            fsl_replay::ExactProbabilityCertificateCheck::Rejected(ref rejection)
+                if rejection.rule == fsl_replay::ProbabilityCertificateRule::RankBroken
+                    && rejection.at == fsl_replay::ProbabilityCertificateLocus::ProductState(s.clone())
+        ),
+        "s is zero-valued but is not itself in the independently reconstructed U"
+    );
+
+    let forged_wait = fsl_analyze::analyze::exact_probabilistic_item_witness_tampered(
+        RequestIndex::new(0),
+        world.request("DriftRefuted", ModelCheckLimits::default()),
+        move |witness| {
+            let row = witness
+                .scheduler
+                .iter_mut()
+                .find(|(key, _)| key == &witness.initial_key)
+                .expect("initial action row");
+            row.1 = ProbabilisticSchedulerChoice::Deterministic(
+                fsl_replay::ProductAction::Identity(wait.clone()),
+            );
+        },
+    );
+    let forged = analyze_items(
+        &Engines::fsl().expect("FSL engines"),
+        vec![forged_wait],
+        &Cancel::new(),
+    )
+    .remove(0);
+    assert!(
+        !matches!(
+            forged.terminal().map(|terminal| terminal.value()),
+            Some(TerminalValue::Refuted)
+        ),
+        "the independent fairness checker rejects the wait-only cycle"
     );
 }
 

@@ -47,6 +47,14 @@ pub use long_run::{
     LongRunProbabilityPhase, check_long_run_probability_certificate_observing,
     check_long_run_probability_certificate_with_identity,
 };
+pub use long_run::{
+    long_run_probability_certificate_document, read_long_run_probability_certificate,
+    read_weighted_long_run_probability_certificate,
+    weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
+    write_weighted_long_run_probability_certificate, LongRunOptimization, LongRunPolicyChoice,
+    LongRunPolicyRow, LongRunProbabilityComponent, LongRunProbabilityDocument,
+    WeightedLongRunProbabilityDocument,
+};
 pub use refutation::SubsystemBoundKind;
 mod timed;
 pub use timed::digital_key_clocks;
@@ -71,6 +79,7 @@ const CYCLIC_MDP_STATE_PROFILE: &str =
 const CYCLIC_MDP_REWARD_PROFILE: &str =
     "filament.probability-objective/cyclic-mdp-expected-reward/v1";
 const BOUNDED_FAIR_PROFILE: &str = "filament.probability-objective/bounded-fair-eventual/v1";
+const FAIR_MDP_PROFILE: &str = "filament.probability-objective/fair-mdp-eventual/v1";
 const TIMED_PROFILE: &str = "filament.probability-objective/timed-product/v1";
 const MAX_COUNT: u64 = 9_007_199_254_740_991;
 
@@ -165,6 +174,8 @@ pub struct ProbabilityCertificateDocument {
     /// Progress ranks for every reachable state. Cyclic reward requires progress
     /// for every non-target state, including states whose reward value is zero.
     pub ranking: Vec<(ProbabilityProductKey, u64)>,
+    /// Optional fair-MDP or value-bounds action hints, as canonical choice bytes.
+    pub policy: Option<Vec<(ProbabilityProductKey, Vec<u8>)>>,
 }
 
 /// The checked timed route emitted in a timed-product certificate.
@@ -544,12 +555,20 @@ struct WireRank {
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct WirePolicy {
+    state: String,
+    choice: Box<serde_json::value::RawValue>,
+}
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct WireDocument {
     identity: WireIdentity,
     objective: WireObjective,
     kind: String,
     values: Vec<WireValue>,
     ranking: Vec<WireRank>,
+    #[serde(default)]
+    policy: Option<Vec<WirePolicy>>,
 }
 
 fn poll(cancel: &Cancel) -> Result<(), ProbabilityDocumentError> {
@@ -565,6 +584,7 @@ enum ProfileDispatch {
     CyclicMdp,
     CyclicMdpReward,
     BoundedFair,
+    FairMdp,
     OnEach,
 }
 
@@ -613,6 +633,7 @@ fn profile_dispatch(
             Some(quire_canonical::Node::String(BOUNDED_FAIR_PROFILE)) => {
                 ProfileDispatch::BoundedFair
             }
+            Some(quire_canonical::Node::String(FAIR_MDP_PROFILE)) => ProfileDispatch::FairMdp,
             _ => ProfileDispatch::Exact,
         },
     )
@@ -905,7 +926,7 @@ fn read_document_profile(
     let root = parsed.root();
     let objective = root.get("objective");
     let outside_profile = matches!(root.get("kind").map(|node| node.node()), Some(quire_canonical::Node::String(kind)) if kind != "exact" && kind != "upper")
-        || matches!(objective.and_then(|node| node.get("profile")).map(|node| node.node()), Some(quire_canonical::Node::String(profile)) if if cyclic_mdp { !matches!(profile, CYCLIC_MDP_PROFILE | CYCLIC_MDP_REWARD_PROFILE | CYCLIC_MDP_STATE_PROFILE) } else { !(allow_fair && profile == BOUNDED_FAIR_PROFILE) && profile != PROFILE && profile != STATE_PROFILE && profile != REWARD_PROFILE && profile != CYCLIC_PROFILE && profile != CYCLIC_REWARD_PROFILE && profile != CYCLIC_STATE_PROFILE && profile != TIMED_PROFILE })
+        || matches!(objective.and_then(|node| node.get("profile")).map(|node| node.node()), Some(quire_canonical::Node::String(profile)) if if cyclic_mdp { !matches!(profile, CYCLIC_MDP_PROFILE | CYCLIC_MDP_REWARD_PROFILE | CYCLIC_MDP_STATE_PROFILE) } else { !(allow_fair && matches!(profile, BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE)) && profile != PROFILE && profile != STATE_PROFILE && profile != REWARD_PROFILE && profile != CYCLIC_PROFILE && profile != CYCLIC_REWARD_PROFILE && profile != CYCLIC_STATE_PROFILE && profile != TIMED_PROFILE })
         || matches!(objective.and_then(|node| node.get("event")).map(|node| node.node()), Some(quire_canonical::Node::String(event)) if !matches!(event, "until" | "always"))
         || matches!(objective.and_then(|node| node.get("optimization")).map(|node| node.node()), Some(quire_canonical::Node::String(operator)) if !matches!(operator, "minimum" | "maximum" | "workload" | "workload-minimum" | "workload-maximum"))
         || match objective
@@ -919,7 +940,9 @@ fn read_document_profile(
                             objective
                                 .and_then(|node| node.get("profile"))
                                 .map(|node| node.node()),
-                            Some(quire_canonical::Node::String(BOUNDED_FAIR_PROFILE))
+                            Some(quire_canonical::Node::String(
+                                BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE
+                            ))
                         ))
             }
             _ => false,
@@ -963,13 +986,15 @@ fn read_document_profile(
             u64::try_from(rows).unwrap_or(u64::MAX),
         ));
     }
-    let bounded_fair = matches!(
+    let fair_profile = matches!(
         objective
             .and_then(|node| node.get("profile"))
             .map(|node| node.node()),
-        Some(quire_canonical::Node::String(BOUNDED_FAIR_PROFILE))
+        Some(quire_canonical::Node::String(
+            BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE
+        ))
     );
-    if bounded_fair {
+    if fair_profile {
         let mut admission =
             ProbabilityKeyAdmission::new(meter, storage, limits.storage_bytes, cancel);
         filament_exact::IntegerDecimalBudget::work(
@@ -1001,7 +1026,7 @@ fn read_document_profile(
     drop(parsed);
     let wire: WireDocument =
         serde_json::from_slice(bytes).map_err(|_| ProbabilityDocumentError::Malformed)?;
-    if !bounded_fair && canonical(&wire, limits.bytes)? != bytes {
+    if !fair_profile && canonical(&wire, limits.bytes)? != bytes {
         return Err(ProbabilityDocumentError::Noncanonical);
     }
     // FR-877: an elapsed-quantile `>=` claim is certified by an `upper` document.
@@ -1028,13 +1053,24 @@ fn read_document_profile(
                     | CYCLIC_REWARD_PROFILE
                     | CYCLIC_STATE_PROFILE
                     | TIMED_PROFILE
-            ) && !(allow_fair && wire.objective.profile == BOUNDED_FAIR_PROFILE)
+            ) && !(allow_fair
+                && matches!(
+                    wire.objective.profile.as_str(),
+                    BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE
+                ))
         }
-        || !wire.objective.fairness.is_empty() && wire.objective.profile != BOUNDED_FAIR_PROFILE
+        || !wire.objective.fairness.is_empty()
+            && !matches!(
+                wire.objective.profile.as_str(),
+                BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE
+            )
     {
         return Err(ProbabilityDocumentError::Unsupported);
     }
-    if wire.objective.profile == BOUNDED_FAIR_PROFILE {
+    if matches!(
+        wire.objective.profile.as_str(),
+        BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE
+    ) {
         let destination = fairness.ok_or(ProbabilityDocumentError::Unsupported)?;
         *destination = fairness::read(&wire.objective.fairness, limits, cancel, meter, storage)?;
         if destination.is_empty() || wire.objective.optimization == "workload" {
@@ -1157,6 +1193,24 @@ fn read_document_profile(
             error
         }
     })?;
+    let policy_present = wire.policy.is_some();
+    let mut policy = Vec::new();
+    for row in wire.policy.unwrap_or_default() {
+        poll(cancel)?;
+        let state = decode_key(&row.state, limits)?;
+        let choice = row.choice.get().as_bytes().to_vec();
+        let parsed = quire_canonical::read_bounded(&choice, limits.bytes, limits.storage_bytes)
+            .map_err(|_| ProbabilityDocumentError::MalformedMember("policy"))?;
+        let canonical =
+            quire_canonical::to_vec(&parsed, quire_canonical::Limits::new(limits.bytes))
+                .map_err(|_| ProbabilityDocumentError::MalformedMember("policy"))?;
+        if canonical != choice {
+            return Err(ProbabilityDocumentError::Noncanonical);
+        }
+        policy.push((state, choice));
+    }
+    ordered(policy.iter().map(|(state, _)| state.clone()))
+        .map_err(|_| ProbabilityDocumentError::MalformedMember("policy"))?;
     poll(cancel)?;
     Ok(ProbabilityCertificateDocument {
         cyclic_dtmc: matches!(
@@ -1172,6 +1226,7 @@ fn read_document_profile(
         timed,
         values,
         ranking,
+        policy: policy_present.then_some(policy),
     })
 }
 
@@ -1227,6 +1282,7 @@ type SubjectGraph = (
     Option<ProbabilityStateEvent>,
     Vec<ProbabilityProductKey>,
     Option<super::reward::RewardGraph>,
+    Option<super::cyclic::CapturedStates>,
 );
 
 #[allow(clippy::too_many_arguments)]
@@ -1289,6 +1345,7 @@ fn subject_graph_with_identity(
     let mut failures = Vec::new();
     let mut reward = None;
     let mut violated = None;
+    let mut captured = None;
     let (bound, enumerated) = match &claim.form {
         ProbForm::ExpectedReward {
             bound,
@@ -1392,20 +1449,40 @@ fn subject_graph_with_identity(
             bound,
             target: ReachTarget::Eventually(predicate),
         } => (bound, {
-            super::cyclic::enumerate_graph(
-                system,
-                Some(predicate),
-                reference,
-                workload,
-                limits,
-                cancel,
-                identity,
-                meter,
-                storage,
-                true,
-                true,
-            )
-            .map(|graph| (graph, None))
+            if allow_fair {
+                let states = super::cyclic::CapturedStates::default();
+                let graph = super::cyclic::enumerate_graph_capturing(
+                    system,
+                    Some(predicate),
+                    reference,
+                    workload,
+                    limits,
+                    cancel,
+                    identity,
+                    meter,
+                    storage,
+                    true,
+                    true,
+                    Some(&states),
+                )?;
+                captured = Some(states);
+                Ok((graph, None))
+            } else {
+                super::cyclic::enumerate_graph(
+                    system,
+                    Some(predicate),
+                    reference,
+                    workload,
+                    limits,
+                    cancel,
+                    identity,
+                    meter,
+                    storage,
+                    true,
+                    true,
+                )
+                .map(|graph| (graph, None))
+            }
         }),
         ProbForm::Probability {
             bound,
@@ -1488,6 +1565,7 @@ fn subject_graph_with_identity(
         state_event,
         failures,
         reward,
+        captured,
     ))
 }
 
@@ -1718,7 +1796,7 @@ fn construct_document(
         }
         _ => false,
     };
-    let (graph, optimization, _, bounded_ranks, event, failures, reward) = if cyclic_dtmc {
+    let (graph, optimization, _, bounded_ranks, event, failures, reward, _) = if cyclic_dtmc {
         subject_graph_with_identity(
             system,
             claims,
@@ -1812,6 +1890,7 @@ fn construct_document(
         timed: None,
         values,
         ranking: ranks.into_iter().collect(),
+        policy: None,
     })
 }
 
@@ -2049,6 +2128,16 @@ fn check_document_bytes(
                 system, claims, item, bytes, offer, limits, cancel, control,
             );
         }
+        ProfileDispatch::FairMdp => {
+            if let Some(side) = bound_side {
+                return mdp::check_with_value_bound_control(
+                    system, claims, item, bytes, side, limits, cancel, control,
+                );
+            }
+            return mdp::check_with_reward_control(
+                system, claims, item, bytes, limits, cancel, control,
+            );
+        }
         ProfileDispatch::Exact | ProfileDispatch::BoundedFair => {}
     }
     let mut meter = filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone());
@@ -2096,7 +2185,7 @@ fn check_document_bytes(
         }
     }
     fair_control.phase(fairness::BoundedFairProbabilityPhase::Graph)?;
-    let (graph, objective, bound, bounded_ranks, event, failures, reward) =
+    let (graph, objective, bound, bounded_ranks, event, failures, reward, _captured) =
         subject_graph_with_identity(
             system,
             claims,
@@ -2702,6 +2791,7 @@ mod tests {
                 value: rational(1),
             }],
             ranking: vec![(key, 0)],
+            policy: None,
         }
     }
     pub(super) fn model_bytes(index: usize) -> &'static [u8] {
@@ -2904,6 +2994,7 @@ mod tests {
         let target = fixture_key(1);
         let graph = CheckerGraph {
             initial: root.clone(),
+            actions_by_state: None,
             states: BTreeMap::from([
                 (
                     root.clone(),

@@ -1061,10 +1061,7 @@ fn enumerate_model_graph_with_distributions<P: StatePredicate>(
     distributions: &mut impl FnMut(
         &ModelSimState,
         &mut dyn FnMut(crate::ExactProbBuildIssue),
-    ) -> Result<
-        Vec<Vec<(Rational, ModelSimState)>>,
-        ExactProbabilityGraphError,
-    >,
+    ) -> Result<Vec<ModelDistribution>, ExactProbabilityGraphError>,
     visit: &mut impl FnMut(
         &ProbabilityProductKey,
         &ModelSimState,
@@ -1109,10 +1106,7 @@ fn enumerate_model_graph_visiting<P: StatePredicate>(
     distributions: &mut impl FnMut(
         &ModelSimState,
         &mut dyn FnMut(crate::ExactProbBuildIssue),
-    ) -> Result<
-        Vec<Vec<(Rational, ModelSimState)>>,
-        ExactProbabilityGraphError,
-    >,
+    ) -> Result<Vec<ModelDistribution>, ExactProbabilityGraphError>,
     visit_phase: ModelVisitPhase,
     visit: &mut impl FnMut(
         &ProbabilityProductKey,
@@ -1147,6 +1141,7 @@ fn enumerate_model_graph_visiting<P: StatePredicate>(
     reserve(bytes)?;
     let mut pending = VecDeque::from([(root.clone(), first)]);
     let mut states = BTreeMap::new();
+    let mut actions_by_state = BTreeMap::new();
     let mut seen = BTreeSet::from([root.clone()]);
     let mut edge_count = 0usize;
     while let Some((key, state)) = pending.pop_front() {
@@ -1185,8 +1180,8 @@ fn enumerate_model_graph_visiting<P: StatePredicate>(
         if visit_phase == ModelVisitPhase::AfterTarget {
             visit(&key, &state, terminal)?;
         }
-        let choices = if terminal.is_some() && stop_at_target {
-            Vec::new()
+        let (choices, action_hints) = if terminal.is_some() && stop_at_target {
+            (Vec::new(), Vec::new())
         } else {
             let distributions = distributions(&state, failure)?;
             if distributions.is_empty() {
@@ -1207,7 +1202,8 @@ fn enumerate_model_graph_visiting<P: StatePredicate>(
                     .ok_or(ExactProbabilityGraphError::TooManyEdges)?,
             )?;
             let mut choices = Vec::with_capacity(distributions.len());
-            for distribution in distributions {
+            let mut action_hints = Vec::with_capacity(distributions.len());
+            for (action_hint, distribution) in distributions {
                 poll_cancel(cancel)?;
                 let mut choice = Vec::new();
                 for (probability, successor) in distribution {
@@ -1255,16 +1251,33 @@ fn enumerate_model_graph_visiting<P: StatePredicate>(
                     }
                 }
                 choices.push(choice);
+                action_hints.push(action_hint);
             }
-            choices
+            (choices, action_hints)
         };
         reserve(std::mem::size_of::<(ProbabilityProductKey, CheckerState)>())?;
-        states.insert(key, CheckerState { terminal, choices });
+        states.insert(key.clone(), CheckerState { terminal, choices });
+        if !action_hints.is_empty() {
+            let action_bytes = action_hints.iter().fold(0usize, |total, action| {
+                total
+                    .saturating_add(std::mem::size_of::<Option<crate::Schedule>>())
+                    .saturating_add(action.as_ref().map_or(0, |action| action.as_bytes().len()))
+            });
+            let action_bytes = action_bytes
+                .saturating_add(std::mem::size_of::<(
+                    ProbabilityProductKey,
+                    Vec<Option<crate::Schedule>>,
+                )>())
+                .saturating_add(key.as_bytes().len());
+            reserve(action_bytes)?;
+            actions_by_state.insert(key, action_hints);
+        }
     }
     Ok(CheckerGraph {
         initial: root,
         states,
         scheduler_actions: Default::default(),
+        actions_by_state: Some(actions_by_state),
     })
 }
 
@@ -1287,7 +1300,7 @@ fn model_distributions(
     workload: Option<&Workload>,
     cancel: &Cancel,
     failure: &mut impl FnMut(crate::ExactProbBuildIssue),
-) -> Result<Vec<Vec<(Rational, ModelSimState)>>, ExactProbabilityGraphError> {
+) -> Result<Vec<ModelDistribution>, ExactProbabilityGraphError> {
     model_distributions_observing(
         system,
         state,
@@ -1306,7 +1319,7 @@ fn model_distributions_observing(
     cancel: &Cancel,
     #[cfg(feature = "test-support")] observe: &mut dyn FnMut(ProbabilityWitnessSemanticPhase),
     failure: &mut dyn FnMut(crate::ExactProbBuildIssue),
-) -> Result<Vec<Vec<(Rational, ModelSimState)>>, ExactProbabilityGraphError> {
+) -> Result<Vec<ModelDistribution>, ExactProbabilityGraphError> {
     let mut expansion = |stop| {
         if let Err(error) = poll_cancel(cancel) {
             return error;
@@ -1346,7 +1359,7 @@ fn model_distributions_observing(
         failure(crate::ExactProbBuildIssue::UndecidedSuccessor);
         ExactProbabilityGraphError::ExpansionRefused
     })?;
-    action_distributions(actions, cancel)
+    action_distributions(system, actions, cancel)
 }
 
 fn model_distributions_with_budget(
@@ -1356,7 +1369,7 @@ fn model_distributions_with_budget(
     identity: fsl_foundation::IdentityLimits,
     admission: &mut ProbabilityKeyAdmission<'_>,
     cancel: &Cancel,
-) -> Result<Vec<Vec<(Rational, ModelSimState)>>, ProbabilityDocumentError> {
+) -> Result<Vec<ModelDistribution>, ProbabilityDocumentError> {
     if let Some(workload) = workload {
         let steps = system
             .weighted_steps_with_budget(state, workload, identity, admission, cancel)
@@ -1381,12 +1394,12 @@ fn model_distributions_with_budget(
                 crate::ExactProbBuildIssue::UndecidedSuccessor,
             ))
         })?;
-    action_distributions(actions, cancel).map_err(Into::into)
+    action_distributions(system, actions, cancel).map_err(Into::into)
 }
 
 fn workload_distribution(
     steps: Vec<fsl_eval::simulation::model::WeightedStep>,
-) -> Result<Vec<Vec<(Rational, ModelSimState)>>, ExactProbabilityGraphError> {
+) -> Result<Vec<ModelDistribution>, ExactProbabilityGraphError> {
     if steps.iter().any(|step| {
         matches!(
             step.transition,
@@ -1399,16 +1412,20 @@ fn workload_distribution(
             Err(ExactProbabilityGraphError::UnsupportedDraw)
         };
     }
-    Ok(vec![steps
-        .into_iter()
-        .map(|step| (step.probability, step.post))
-        .collect()])
+    Ok(vec![(
+        None,
+        steps
+            .into_iter()
+            .map(|step| (step.probability, step.post))
+            .collect(),
+    )])
 }
 
 fn action_distributions(
+    system: &ModelSystem<'_>,
     actions: Vec<fsl_eval::simulation::model::Action>,
     cancel: &Cancel,
-) -> Result<Vec<Vec<(Rational, ModelSimState)>>, ExactProbabilityGraphError> {
+) -> Result<Vec<ModelDistribution>, ExactProbabilityGraphError> {
     let mut distributions = Vec::with_capacity(actions.len());
     for action in actions {
         poll_cancel(cancel)?;
@@ -1428,7 +1445,9 @@ fn action_distributions(
                 .ok_or(ExactProbabilityGraphError::UnsupportedDraw)?;
             distribution.push((draw.probability, successor));
         }
-        distributions.push(distribution);
+        let schedule = crate::Schedule::of(system, &action.identity)
+            .map_err(|_| ExactProbabilityGraphError::ExpansionRefused)?;
+        distributions.push((Some(schedule), distribution));
     }
     Ok(distributions)
 }
@@ -1600,15 +1619,17 @@ pub fn claim_binding(
     let filament_exact::ValueType::Reference(object) = &over.value_type else {
         return Err(ExactProbabilityGraphError::UnsupportedBinding);
     };
-    let mut instances = system.instances(&over.value_type).map_err(|error| match error {
-        fsl_eval::simulation::NotSimulated::RequiresBound(_) => {
-            ExactProbabilityGraphError::RequiresBound
-        }
-        fsl_eval::simulation::NotSimulated::Extent(fsl_semantics::family::ClassifyFailure::Limit(
-            _,
-        )) => ExactProbabilityGraphError::ExtentLimit,
-        _ => ExactProbabilityGraphError::ExpansionRefused,
-    })?;
+    let mut instances = system
+        .instances(&over.value_type)
+        .map_err(|error| match error {
+            fsl_eval::simulation::NotSimulated::RequiresBound(_) => {
+                ExactProbabilityGraphError::RequiresBound
+            }
+            fsl_eval::simulation::NotSimulated::Extent(
+                fsl_semantics::family::ClassifyFailure::Limit(_),
+            ) => ExactProbabilityGraphError::ExtentLimit,
+            _ => ExactProbabilityGraphError::ExpansionRefused,
+        })?;
     let (Some(instance), None) = (instances.pop(), instances.pop()) else {
         return Err(ExactProbabilityGraphError::UnsupportedBinding);
     };
@@ -1641,6 +1662,7 @@ struct ProbabilityEdge {
 
 /// One action's probabilistic successors.
 type ProbabilityChoice = Vec<ProbabilityEdge>;
+type ModelDistribution = (Option<crate::Schedule>, Vec<(Rational, ModelSimState)>);
 
 /// One checker-enumerated state. This type is private so an eventual replay
 /// facade owns graph construction instead of trusting solver data.
@@ -1658,6 +1680,7 @@ struct CheckerGraph {
     /// Canonical action aliases for choices at timed mixed given/free races.
     /// Other checker graphs leave this empty.
     scheduler_actions: BTreeMap<ProbabilityProductKey, Vec<Vec<crate::ProductAction>>>,
+    actions_by_state: Option<BTreeMap<ProbabilityProductKey, Vec<Option<crate::Schedule>>>>,
 }
 
 /// Which pass of [`bottom_components`] a charged step belongs to.
@@ -2851,6 +2874,7 @@ mod tests {
             initial,
             states,
             scheduler_actions: Default::default(),
+            actions_by_state: None,
         }
     }
 
@@ -2888,6 +2912,7 @@ mod tests {
             initial,
             states,
             scheduler_actions: Default::default(),
+            actions_by_state: None,
         }
     }
 
@@ -2977,6 +3002,7 @@ mod tests {
             initial,
             states,
             scheduler_actions: Default::default(),
+            actions_by_state: None,
         };
         let certificate = ExactProbabilityCertificate {
             values: vec![
@@ -3060,6 +3086,7 @@ mod tests {
         .expect("clocked timed key is valid");
         let graph = |state: ProbabilityProductKey| CheckerGraph {
             initial: state.clone(),
+            actions_by_state: None,
             states: BTreeMap::from([(
                 state.clone(),
                 CheckerState {
@@ -3319,6 +3346,7 @@ mod tests {
             initial,
             states,
             scheduler_actions: Default::default(),
+            actions_by_state: None,
         };
         let forged = ExactProbabilityCertificate {
             values: vec![
@@ -3503,7 +3531,13 @@ mod tests {
                 choices.push(vec![edge(3, 1, 1)]);
             }
             let mut states = BTreeMap::new();
-            states.insert(key(0), CheckerState { terminal: None, choices });
+            states.insert(
+                key(0),
+                CheckerState {
+                    terminal: None,
+                    choices,
+                },
+            );
             for target in 1..=3 {
                 states.insert(key(target), terminal());
             }
@@ -3511,6 +3545,7 @@ mod tests {
                 initial: key(0),
                 states,
                 scheduler_actions: Default::default(),
+                actions_by_state: None,
             }
         };
         let rewards: BTreeMap<_, _> = BTreeMap::from([
@@ -3556,7 +3591,10 @@ mod tests {
         match check(&graph(false), rational(0), &[0]) {
             ExactProbabilityCertificateCheck::Rejected(rejection) => {
                 assert_eq!(rejection.rule, ProbabilityCertificateRule::InequalityFails);
-                assert_eq!(rejection.at, ProbabilityCertificateLocus::ProductState(key(0)));
+                assert_eq!(
+                    rejection.at,
+                    ProbabilityCertificateLocus::ProductState(key(0))
+                );
             }
             other => panic!("expected a rejection, got {other:?}"),
         }

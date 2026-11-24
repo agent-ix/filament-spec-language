@@ -1371,6 +1371,7 @@ fn external_always_probability_certificate_remains_unsupported() {
             value: ratio(1, 1),
         }],
         ranking: vec![(key, 0)],
+        policy: None,
     };
     let limits = fsl_replay::ProbabilityDocumentLimits {
         bytes: 1 << 20,
