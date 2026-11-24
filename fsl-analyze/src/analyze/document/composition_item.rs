@@ -933,19 +933,19 @@ fn unavailable(index: RequestIndex, name: &str, failure: &Unavailable) -> Box<Re
             CatalogCode::new(Code::RuntimeInvariant.as_str(), "host-allocation-failed"),
         )
         .with_diagnostic_detail(serde_json::Map::from_iter([
-                (
-                    "stage".to_owned(),
-                    serde_json::Value::String(format!("{:?}", failure.stage)),
-                ),
-                (
-                    "requested".to_owned(),
-                    serde_json::Value::String(failure.requested.to_string()),
-                ),
-                (
-                    "consumed".to_owned(),
-                    serde_json::Value::String(failure.consumed.to_string()),
-                ),
-            ])),
+            (
+                "stage".to_owned(),
+                serde_json::Value::String(format!("{:?}", failure.stage)),
+            ),
+            (
+                "requested".to_owned(),
+                serde_json::Value::String(failure.requested.to_string()),
+            ),
+            (
+                "consumed".to_owned(),
+                serde_json::Value::String(failure.consumed.to_string()),
+            ),
+        ])),
         Unavailable::Emission(GraphUnavailable::EmitRefused(refusal)) => {
             TerminalRecord::disposition_declined(
                 index,
