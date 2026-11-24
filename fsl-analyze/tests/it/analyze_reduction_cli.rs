@@ -189,7 +189,7 @@ fn constraint_request_key_truth_and_invalid_selections_are_typed() {
     );
     let valid = analyze(&package_path).item(0);
     assert_eq!(label(&valid), "inconclusive", "{valid}");
-    assert!(valid["record"].to_string().contains("constraint-reached"), "{valid}");
+    assert_eq!(valid["record"]["cause"]["kind"], "constraint-reached", "{valid}");
     assert_eq!(valid["exploration"]["states"], "57", "{valid}");
     assert_eq!(valid["exploration"]["transitions"], "384", "{valid}");
     assert_eq!(valid["request"]["reductions"]["constraint"], "Low", "{valid}");
