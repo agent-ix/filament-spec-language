@@ -7321,9 +7321,9 @@ mod tests {
         assert_eq!(decisions.iter().flatten().count(), 1, "{decisions:?}");
         assert!(decisions.contains(&Some(true)));
     }
-    /// FR-265: whether a connective records a decision is read from its
-    /// origin, not from where it sits. Every node of this body has one
-    /// location, so an authored connective shares its left operand's.
+    /// Whether a connective records a decision is read from its origin, not
+    /// from where it sits. Every node of this body has one location, so an
+    /// authored connective shares its left operand's.
     #[trace("TC-1091", "FR-397-AC-12")]
     #[test]
     fn a_connective_records_a_decision_by_its_origin_not_its_location() {
