@@ -691,7 +691,7 @@ fn a_single_existential_clause_admits_no_match_and_the_event_profile_classifies(
 /// clauses over one model name that subject once. These aliases are the
 /// checked input from which the request supplies one subject and deadlock
 /// item per distinct model.
-#[trace("TC-598", "FR-173-AC-4")]
+#[trace("TC-598")]
 #[test]
 fn a_clause_names_one_subject_alias_per_distinct_model() {
     let aliases = |checked: &CheckedHyperClause| -> Vec<String> {
@@ -709,7 +709,7 @@ fn a_clause_names_one_subject_alias_per_distinct_model() {
 /// FR-173-AC-5 (S3): an unsupported HP-4 form is classified as `Other` while
 /// its supported universal sibling keeps the `Universal` form in the same
 /// package, in declaration order.
-#[trace("TC-598", "FR-173-AC-5")]
+#[trace("TC-598")]
 #[test]
 fn an_other_hyper_clause_keeps_its_supported_universal_sibling() {
     let unsupported = "hyper Unsupported using inf over behaviours (v: V::ConfigVersion) \

@@ -534,6 +534,32 @@ fn function_bodies_keep_their_rules_and_population_operators_check() {
     check(&document, &post).expect("order-independent population operators check");
 }
 
+/// FR-150-AC-7: reference equality with a typed reference literal is admitted
+/// in a function body, even when the selected population is symmetric.
+#[trace("TC-566", "FR-150-AC-7")]
+#[test]
+fn a_function_body_can_compare_a_reference_parameter_to_a_literal() {
+    let document = annotated(&with_peers(&document()));
+    let function = "function isA using v(p: Reference<Config::ConfigVersion>): Boolean pure { \
+                    p = Config::ConfigVersion#\"a\" }\n";
+    check(&document, function).expect("literal equality in a function checks");
+}
+
+/// FR-150-AC-8: the precondition form rejects the literal at its own span
+/// and preserves the symmetric population as the typed cause's locus.
+#[trace("TC-566", "FR-150-AC-8")]
+#[test]
+fn an_operation_precondition_cannot_compare_self_to_a_reference_literal() {
+    let document = annotated(&document());
+    let literal = "Config::ConfigVersion#\"a\"";
+    let body = format!(
+        "pre Literal using v on Config::ConfigVersion::attemptUpdate {{ self = {literal} }}\n"
+    );
+    let payload = identity_refusal(&document, &body, literal);
+    assert_eq!(payload.node, IdentityNode::ReferenceLiteral);
+    assert_eq!(payload.population.node, POPULATION);
+}
+
 /// Ordered conversions of symmetric references refuse at the conversion;
 /// unordered bag conversion is accepted, while choosing an element after
 /// that conversion refuses at the fold. The same sequence conversion remains
