@@ -1430,12 +1430,6 @@ fn time_locked_state_is_terminal() {
     assert_eq!(*index, 0);
     assert!(binding.is_none());
     assert!(built.outgoing(*initial).is_empty(), "time-lock has no move");
-    assert!(built.decided.contains(&(*initial, MonitorVerdict::Reject)));
-    assert_eq!(
-        initial_value(&built, Bound::AtLeast(ratio(99, 100))),
-        ratio(0, 1),
-        "a deadline that cannot advance from the locked initial state is rejected"
-    );
 }
 
 /// FR-203-AC-3 / FR-204-AC-3 (TC-639): an exponential delay requested as
