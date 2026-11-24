@@ -6624,6 +6624,7 @@ impl<'a> Lowering<'a> {
             Vec::new()
         };
         let mut enum_member_facts = Vec::new();
+        let mut enum_members_seen = HashSet::new();
         if data.schedule() == filament_semantic_value::declaration::EqualitySchedule::Enum {
             for child in node.children() {
                 let ValueType::Enum(shape) = child.value_type() else {
@@ -6688,10 +6689,7 @@ impl<'a> Lowering<'a> {
                                 KeyFault::MissingEnumMember(variant.owner().clone()),
                             ));
                         };
-                    if enum_member_facts
-                        .iter()
-                        .any(|(_, _, existing, _, _, _)| *existing == member_key)
-                    {
+                    if !enum_members_seen.insert(member_key.clone()) {
                         continue;
                     }
                     enum_member_facts.push((

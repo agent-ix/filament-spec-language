@@ -4486,24 +4486,31 @@ impl<'a> Typer<'a> {
         }
         let mut unit_type_facts = Vec::new();
         let mut operand_type_facts = Vec::new();
-        for (operand_position, operand) in [(0, &left), (1, &right)] {
-            let mut typed_roles = vec![(
-                &operand.source_type,
-                super::ir::EqualityUnitOperandRole::Source,
-            )];
-            if operand.conversion_target.is_some() {
-                typed_roles.push((
-                    &operand.node.value_type,
-                    super::ir::EqualityUnitOperandRole::ConversionTarget,
-                ));
-            }
+        for (operand_position, source_type, conversion_target, node_type) in [
+            (
+                0,
+                left.source_type,
+                left.conversion_target,
+                &left.node.value_type,
+            ),
+            (
+                1,
+                right.source_type,
+                right.conversion_target,
+                &right.node.value_type,
+            ),
+        ] {
+            let typed_roles =
+                std::iter::once((source_type, super::ir::EqualityUnitOperandRole::Source)).chain(
+                    conversion_target.map(|_| {
+                        (
+                            node_type.clone(),
+                            super::ir::EqualityUnitOperandRole::ConversionTarget,
+                        )
+                    }),
+                );
             for (value_type, role) in typed_roles {
-                operand_type_facts.push(super::ir::EqualityOperandTypeFact {
-                    operand_position,
-                    role,
-                    value_type: value_type.clone(),
-                });
-                let unit_id = match value_type {
+                let unit_id = match &value_type {
                     ValueType::Quantity(unit) => Some(unit.clone()),
                     ValueType::BoundedQuantity(quantity) => Some(quantity.unit().clone()),
                     ValueType::CarriedQuantity(quantity) => Some(quantity.unit().clone()),
@@ -4525,13 +4532,20 @@ impl<'a> Typer<'a> {
                         value_type: value_type.clone(),
                     });
                 }
+                operand_type_facts.push(super::ir::EqualityOperandTypeFact {
+                    operand_position,
+                    role,
+                    value_type,
+                });
             }
         }
+        let authored_operands = [left.authored, right.authored];
+        let compared_operands = [left.stored, right.stored];
         let producer = EqualityProducerData {
             operator,
             schedule: checked.schedule(),
-            authored_operands: [left.authored.clone(), right.authored.clone()],
-            compared_operands: [left.stored.clone(), right.stored.clone()],
+            authored_operands,
+            compared_operands,
             operand_type_facts,
             units,
             unit_type_facts,
