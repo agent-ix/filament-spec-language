@@ -5,6 +5,8 @@ type: TC
 relationships:
   - target: ix://agent-ix/filament-spec-language/FR-940
     type: verifies
+  - target: ix://agent-ix/filament-spec-language/FR-200
+    type: verifies
   - target: ix://agent-ix/filament-spec-language/FR-230
     type: references
   - target: ix://agent-ix/filament-spec-language/FR-945
@@ -17,7 +19,7 @@ relationships:
 Verify that analysis from source decides every item family over its compiled
 package, that a selected package reaches the source-checked evaluators through
 their package forms with equal records, and that the package route settles every item
-family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6, FR-940-AC-18, FR-940-AC-21, FR-940-AC-22, FR-940-AC-28 and FR-940-AC-29 to FR-940-AC-32: a source run whose compiled package the strict reader refuses on read-back settles as the reader's typed refusal, and a refused replay package read settles only the replaying item `inconclusive` `replay_refused`.
+family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6, FR-940-AC-18, FR-940-AC-21, FR-940-AC-22, FR-940-AC-28 to FR-940-AC-32, FR-940-AC-40 to FR-940-AC-44 and FR-200-AC-8 to FR-200-AC-10: fair eventual claims with strong and per-instance constraints retain their source/package outcomes; a source run whose compiled package the strict reader refuses on read-back settles as the reader's typed refusal, and a refused replay package read settles only the replaying item `inconclusive` `replay_refused`.
 
 ## Test Procedure
 
@@ -71,12 +73,26 @@ family as the source route does. Scope: FR-940-AC-4 to FR-940-AC-6, FR-940-AC-18
     package run-call routes with `Circle(true)` and with `Empty`. Compare the
     argument values, Boolean results and semantic charge logs. Bind the test
     `#[trace("TC-2958", "FR-940-AC-32")]`.
+12. Over the `Link` unit, model and `LINK_START` snapshot, submit the
+    every-scheduler eventual claim `TooLikely` with
+    `probability >= rational(99, 100) [eventually holds(m.delivered)]` for
+    each of `fair weak M::Msg::send_a`, `fair strong M::Msg::send_a`,
+    `fair weak each M::Msg::send_a` and `fair strong each M::Msg::send_a`.
+    For every form, analyze the same item from the source request and from its
+    checked-package handoff. Compare the complete outcome documents and process
+    exits. Repeat the weak-whole form with
+    `probability <= rational(98, 100) [eventually holds(m.delivered)]`.
+    Bind weak whole `>= 99/100` to `FR-940-AC-40`, strong whole to
+    `FR-200-AC-8` and `FR-940-AC-41`, weak each to `FR-200-AC-9` and
+    `FR-940-AC-42`, strong each to `FR-200-AC-10` and `FR-940-AC-43`,
+    and weak whole `<= 98/100` to `FR-940-AC-44`.
 
 Tests: `fsl-analyze/tests/it/analyze_package_selection.rs` (steps 1 to 3 and 8 to 10),
 `fsl-analyze/tests/it/hyper_wire.rs` (step 4) and
 `fsl-analyze/tests/it/package_refusal_route.rs` (steps 5 and 6), and the
 named `operation_contract_package_route_matches_source` case for step 7.
-`fsl-analyze/tests/it/analyze_package_value.rs` covers step 11.
+`fsl-analyze/tests/it/analyze_package_value.rs` covers step 11;
+`fsl-analyze/tests/it/package_probabilistic_refutation.rs` covers step 12.
 
 ## Expected Results
 
@@ -111,3 +127,6 @@ named `operation_contract_package_route_matches_source` case for step 7.
 - Step 11: both routes return `true` for `Circle(true)` and `false` for
   `Empty`, with equal argument values, results and charge logs. The package
   run-call does not refuse or settle `unsupported` for the union parameter.
+- Step 12: all source/package pairs have equal complete outcome documents and
+  exit codes. Each `>= 99/100` claim and the weak-whole `<= 98/100` claim is
+  `refuted`, exit `10`; the reverse-bound weak-whole package replay reproduces.
