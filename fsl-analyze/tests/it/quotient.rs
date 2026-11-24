@@ -834,9 +834,9 @@ fn concretisation_charges_exact_transition_and_work_budgets() {
 
     let world = Flags::new(Subject::Token, "", EVENTUALLY_FIRED);
     let unrestricted = world.run(symmetric());
+    let counterexample_len = violation(&unrestricted).len();
     let unrestricted = unrestricted.expect("the reduced run checks");
-    let counterexample = violation(&unrestricted);
-    assert_eq!(counterexample.len(), 2);
+    assert_eq!(counterexample_len, 2);
     let ModelCheckOutcome::Violated { stats, .. } = &unrestricted else {
         panic!("the reduced token run refutes: {unrestricted:?}");
     };
