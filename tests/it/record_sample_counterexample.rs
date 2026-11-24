@@ -26,8 +26,10 @@ fn unit() -> String {
 
 fn model_unit() -> String {
     "language \"ix:native\" edition \"1-draft\";\n\
+     profile g = \"filament.model.complete/v1\";\n\
      profile i = \"filament.temporal.infinite-trace/v1\";\n\
      model Config = \"example/config-version\";\n\
+     post Stable using g on Config::ConfigVersion::attemptUpdate { false }\n\
      temporal Never using i over (c: Config::ConfigVersion) clock \"model-steps\" on origin \
      { always holds(c.versionNumber <= 1) }\n"
         .to_owned()
