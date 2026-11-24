@@ -1642,7 +1642,7 @@ fn tla(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<Extra> {
         out.push(define(
             input.first,
             Some("F_float64_nan_bits".to_owned()),
-            "F_float64_nan_bits(bits) ==\n  Len(bits) = 16\n  /\\ \\A i \\in 1..16 : SubSeq(bits, i, i) \\in F_float64_hex_digits\n  /\\ SubSeq(bits, 1, 1) \\in {\"7\", \"f\"}\n  /\\ SubSeq(bits, 2, 3) = \"ff\"\n  /\\ SubSeq(bits, 4, 4) \\in {\"8\", \"9\", \"a\", \"b\", \"c\", \"d\", \"e\", \"f\"}\n  /\\ (SubSeq(bits, 4, 4) \\in {\"9\", \"a\", \"b\", \"c\", \"d\", \"e\", \"f\"} \\/ \\E i \\in 5..16 : SubSeq(bits, i, i) # \"0\")".to_owned(),
+            "F_float64_nan_bits(bits) ==\n  Len(bits) = 16\n  /\\ \\A i \\in 1..16 : SubSeq(bits, i, i) \\in F_float64_hex_digits\n  /\\ SubSeq(bits, 1, 1) \\in {\"7\", \"f\"}\n  /\\ SubSeq(bits, 2, 3) = \"ff\"\n  /\\ \\E i \\in 4..16 : SubSeq(bits, i, i) # \"0\"".to_owned(),
             None,
         ));
         out.push(define(
@@ -1934,7 +1934,7 @@ fn lean(input: &Input<'_>, out: &mut Vec<Definition>) -> Lower<()> {
         out.push(define(
             input.first,
             Some("F_float64_nan_bits".to_owned()),
-            "def F_float64_nan_bits (bits : String) : Prop :=\n  match bits.toList with\n  | [sign, e1, e2, e3, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12] =>\n      F_float64_hex_lower sign /\\ sign ∈ \"7f\".toList /\\ e1 = 'f' /\\ e2 = 'f' /\\ e3 ∈ \"89abcdef\".toList /\\\n      F_float64_hex_lower f1 /\\ F_float64_hex_lower f2 /\\ F_float64_hex_lower f3 /\\ F_float64_hex_lower f4 /\\\n      F_float64_hex_lower f5 /\\ F_float64_hex_lower f6 /\\ F_float64_hex_lower f7 /\\ F_float64_hex_lower f8 /\\\n      F_float64_hex_lower f9 /\\ F_float64_hex_lower f10 /\\ F_float64_hex_lower f11 /\\ F_float64_hex_lower f12 /\\\n      (e3 ≠ '8' \\/ f1 ≠ '0' \\/ f2 ≠ '0' \\/ f3 ≠ '0' \\/ f4 ≠ '0' \\/ f5 ≠ '0' \\/ f6 ≠ '0' \\/ f7 ≠ '0' \\/ f8 ≠ '0' \\/ f9 ≠ '0' \\/ f10 ≠ '0' \\/ f11 ≠ '0' \\/ f12 ≠ '0')\n  | _ => False".to_owned(),
+            "def F_float64_nan_bits (bits : String) : Prop :=\n  match bits.toList with\n  | [sign, e1, e2, e3, f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12] =>\n      F_float64_hex_lower sign /\\ sign ∈ \"7f\".toList /\\ e1 = 'f' /\\ e2 = 'f' /\\ F_float64_hex_lower e3 /\\\n      F_float64_hex_lower f1 /\\ F_float64_hex_lower f2 /\\ F_float64_hex_lower f3 /\\ F_float64_hex_lower f4 /\\\n      F_float64_hex_lower f5 /\\ F_float64_hex_lower f6 /\\ F_float64_hex_lower f7 /\\ F_float64_hex_lower f8 /\\\n      F_float64_hex_lower f9 /\\ F_float64_hex_lower f10 /\\ F_float64_hex_lower f11 /\\ F_float64_hex_lower f12 /\\\n      (e3 ≠ '0' \\/ f1 ≠ '0' \\/ f2 ≠ '0' \\/ f3 ≠ '0' \\/ f4 ≠ '0' \\/ f5 ≠ '0' \\/ f6 ≠ '0' \\/ f7 ≠ '0' \\/ f8 ≠ '0' \\/ f9 ≠ '0' \\/ f10 ≠ '0' \\/ f11 ≠ '0' \\/ f12 ≠ '0')\n  | _ => False".to_owned(),
             None,
         ));
         out.push(define(
@@ -2565,6 +2565,7 @@ mod float64_nan_tests {
     #[trace("FSpec-FR-812-AC-8")]
     fn nan_bit_strings_are_exact_canonical_ieee_encodings() {
         assert!(float64_nan_bits_are_canonical("7ff8000000000000"));
+        assert!(float64_nan_bits_are_canonical("7ff0000000000001"));
         assert!(float64_nan_bits_are_canonical("fff8000000000001"));
         for rejected in [
             "7ff800000000000",  // short

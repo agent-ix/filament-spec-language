@@ -464,6 +464,7 @@ fn a_float_model_field_exports_its_exact_bits() {
     assert!(target.contains("Len(bits) = 16"));
     assert!(target.contains("SubSeq(bits, 1, 1) \\in {\"7\", \"f\"}"));
     assert!(target.contains("SubSeq(bits, 2, 3) = \"ff\""));
+    assert!(target.contains("\\E i \\in 4..16 : SubSeq(bits, i, i) # \"0\""));
     assert!(!target.contains("[tag : {\"nan\"}, bits : STRING]"));
     assert!(
         !target.contains("[num |->"),
@@ -502,6 +503,8 @@ fn a_float_model_field_exports_its_exact_bits() {
         target.contains("F_float64_hex_lower f12"),
         "all payload characters are lowercase hex: {target}"
     );
+    assert!(target.contains("F_float64_hex_lower e3"));
+    assert!(target.contains("e3 ≠ '0'"));
     assert!(
         target.contains("def F_float64_eq"),
         "Float64 equality: {target}"
