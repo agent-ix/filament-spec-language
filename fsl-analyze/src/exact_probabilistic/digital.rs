@@ -24,15 +24,16 @@ use filament_exact::{
 };
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::model::{
-    same_rewards, Action, ClockValuation, GuardedStep, ModelSimState, ModelSystem, NotMarkov,
-    PlaceConstraint, PredicateReading, ScheduledIdentity, TimedStop, TimedSystem,
-};
+use fsl_eval::probabilistic::TimedOperatorState;
 use fsl_eval::simulation::StateKey;
+use fsl_eval::simulation::model::{
+    Action, ClockValuation, GuardedStep, ModelSimState, ModelSystem, NotMarkov, PlaceConstraint,
+    PredicateReading, ScheduledIdentity, TimedStop, TimedSystem, same_rewards,
+};
 use fsl_replay::{
-    digital_probability_product_key, region_probability_product_key, DigitalClockKey,
-    DigitalDeadlineKey, DigitalProductKeyInput, DigitalTail, ModelCheckLimit,
+    DigitalClockKey, DigitalDeadlineKey, DigitalProductKeyInput, DigitalTail, ModelCheckLimit,
     ProbabilityProductKey, RegionClockKey, RegionDeadlineKey, RegionKeyKind, RegionProductKeyInput,
+    digital_probability_product_key, region_probability_product_key,
 };
 use fsl_semantics::check::{
     BinaryTemporal, BoundedMeasure, CheckedInterval, CheckedPredicate, CheckedProbabilisticClaim,
@@ -42,9 +43,9 @@ use fsl_semantics::check::{
 use num_bigint::BigInt;
 use num_integer::Integer as _;
 use num_traits::{One, ToPrimitive, Zero};
-use serde_json::{json, Value as JsonValue};
+use serde_json::{Value as JsonValue, json};
 
-use super::unbounded::{maximal_end_components_from, same_action, Choice, Graph};
+use super::unbounded::{Choice, Graph, maximal_end_components_from, same_action};
 use super::{
     DeadlineKind, DeadlinePhase, ExactProbLimits, FreeDelayRow, MeasurePhase, MonitorState,
     MonitorVerdict, PathStep, Pending, ProbBuild, ProbEdge, ProbKey, ProbProduct, ProbStateId,
@@ -164,8 +165,20 @@ enum Form<'c> {
     /// `eventually[0, D] holds(P)` or `holds(A) until[0, D] holds(B)`.
     Deadline {
         kind: DeadlineKind,
+        /// The closed lower end of the time window.
+        lower: Rational,
         /// `D` in the model's time unit.
         bound: Rational,
+        reads: Vec<(UndefinedRead, &'c CheckedPredicate)>,
+    },
+    /// One punctual nested Always occurrence under a bounded Eventually.
+    NestedDeadline {
+        outer_occurrence: u64,
+        outer_lower: Rational,
+        outer_upper: Rational,
+        inner_occurrence: u64,
+        inner_lower: Rational,
+        inner_upper: Rational,
         reads: Vec<(UndefinedRead, &'c CheckedPredicate)>,
     },
     /// Expected elapsed time until a checked state predicate holds.
@@ -228,11 +241,51 @@ impl<'c> Form<'c> {
                         operator: UnaryTemporal::Eventually,
                         interval: Some(CheckedInterval::Timed(interval)),
                         operand,
-                    } => (
-                        DeadlineKind::Eventually,
-                        interval,
-                        vec![holds(*operand).ok_or_else(|| shape_at(&[root_at, operand.index()]))?],
-                    ),
+                    } => match nodes.get(operand.index()) {
+                        Some(FormulaNode::Holds { .. }) => (
+                            DeadlineKind::Eventually,
+                            interval,
+                            vec![
+                                holds(*operand)
+                                    .ok_or_else(|| shape_at(&[root_at, operand.index()]))?,
+                            ],
+                        ),
+                        Some(FormulaNode::Unary {
+                            operator: UnaryTemporal::Always,
+                            interval: Some(CheckedInterval::Timed(inner)),
+                            operand: atom,
+                        }) => {
+                            let Some((id, predicate)) = holds(*atom) else {
+                                return Err(shape_at(&[root_at, operand.index(), atom.index()]));
+                            };
+                            let Some(inner_upper) = inner.upper() else {
+                                return Err(shape_at(&[root_at, operand.index()]));
+                            };
+                            if inner.lower() != inner_upper
+                                || !interval.lower_closed()
+                                || !interval.upper_closed()
+                                || !inner.lower_closed()
+                                || !inner.upper_closed()
+                            {
+                                return Err(shape_at(&[root_at]));
+                            }
+                            return Ok(Self::NestedDeadline {
+                                outer_occurrence: u64::try_from(root_at)
+                                    .map_err(|_| shape_at(&[root_at]))?,
+                                outer_lower: interval.lower().clone(),
+                                outer_upper: interval
+                                    .upper()
+                                    .ok_or_else(|| shape_at(&[root_at]))?
+                                    .clone(),
+                                inner_occurrence: u64::try_from(operand.index())
+                                    .map_err(|_| shape_at(&[root_at, operand.index()]))?,
+                                inner_lower: inner.lower().clone(),
+                                inner_upper: inner_upper.clone(),
+                                reads: vec![(UndefinedRead::Atom(id), predicate)],
+                            });
+                        }
+                        _ => return Err(shape_at(&[root_at, operand.index()])),
+                    },
                     FormulaNode::Unary {
                         operator: UnaryTemporal::Always,
                         interval: Some(CheckedInterval::Timed(interval)),
@@ -257,7 +310,7 @@ impl<'c> Form<'c> {
                     ),
                     _ => return Err(shape_at(&[root_at])),
                 };
-                if !(interval.lower().is_zero() && interval.lower_closed()) {
+                if !interval.lower_closed() || !interval.upper_closed() {
                     return Err(shape_at(&[root_at]));
                 }
                 // A deadline needs an upper bound; `[0, *)` checks as no interval.
@@ -266,6 +319,7 @@ impl<'c> Form<'c> {
                 };
                 Ok(Self::Deadline {
                     kind,
+                    lower: interval.lower().clone(),
                     bound: bound.clone(),
                     reads: atoms
                         .into_iter()
@@ -307,6 +361,7 @@ impl<'c> Form<'c> {
     fn reads(&self) -> &[(UndefinedRead, &'c CheckedPredicate)] {
         match self {
             Self::Deadline { reads, .. }
+            | Self::NestedDeadline { reads, .. }
             | Self::MeanTime { reads, .. }
             | Self::Elapsed { reads, .. }
             | Self::Labels(reads) => reads,
@@ -425,16 +480,31 @@ fn scale_of(
             note(reset.value());
         }
     }
-    if let Form::Deadline { bound, .. } = form {
-        note(bound);
-    } else if let Form::MeanTime { bound, .. } = form {
-        note(bound);
-    } else if let Form::Elapsed {
-        threshold, window, ..
-    } = form
-    {
-        note(threshold);
-        note(window);
+    match form {
+        Form::Deadline { lower, bound, .. } => {
+            note(lower);
+            note(bound);
+        }
+        Form::NestedDeadline {
+            outer_lower,
+            outer_upper,
+            inner_lower,
+            inner_upper,
+            ..
+        } => {
+            note(outer_lower);
+            note(outer_upper);
+            note(inner_lower);
+            note(inner_upper);
+        }
+        Form::MeanTime { bound, .. } => note(bound),
+        Form::Elapsed {
+            threshold, window, ..
+        } => {
+            note(threshold);
+            note(window);
+        }
+        Form::Labels(_) => {}
     }
     for delay in system.input().probabilistic.delays() {
         if let DelayDistribution::Discrete(values) = delay.distribution() {
@@ -460,7 +530,7 @@ fn scale_of(
             .len()
             .checked_add(usize::from(matches!(
                 form,
-                Form::Deadline { .. } | Form::Elapsed { .. }
+                Form::Deadline { .. } | Form::NestedDeadline { .. } | Form::Elapsed { .. }
             )))
             .and_then(|count| count.checked_add(1))
             .and_then(|count| u64::try_from(count).ok())
@@ -732,9 +802,8 @@ fn each_ordering(
         }
     }
     // FR-187: the draw weights are fsl-eval's, shared with `weighted_steps`.
-    let effective = fsl_eval::simulation::model::draw_weights(
-        operations.iter().map(|(_, weight, _)| *weight),
-    );
+    let effective =
+        fsl_eval::simulation::model::draw_weights(operations.iter().map(|(_, weight, _)| *weight));
     let total = effective
         .iter()
         .flatten()
@@ -867,8 +936,20 @@ impl<'c> Builder<'_, '_, 'c> {
     fn deadline_bound(&self) -> Step<Option<u64>> {
         match &self.form {
             Form::Deadline { bound, .. } => self.bound_units(bound).map(Some),
+            Form::NestedDeadline {
+                outer_upper,
+                inner_upper,
+                ..
+            } => self.bound_units(&outer_upper.add(inner_upper)).map(Some),
             Form::Elapsed { window, .. } => self.bound_units(window).map(Some),
             Form::MeanTime { .. } | Form::Labels(_) => Ok(None),
+        }
+    }
+
+    fn deadline_lower(&self) -> Step<Option<u64>> {
+        match &self.form {
+            Form::Deadline { lower, .. } => self.bound_units(lower).map(Some),
+            _ => Ok(None),
         }
     }
 
@@ -1138,6 +1219,27 @@ impl<'c> Builder<'_, '_, 'c> {
                     DeadlinePhase::Reject => "reject",
                 }
             ]),
+            MonitorState::TimedFormula { root, nested } => {
+                let encode = |operator: TimedOperatorState| {
+                    json!([
+                        operator.occurrence.to_string(),
+                        match operator.kind {
+                            DeadlineKind::Eventually => "eventually",
+                            DeadlineKind::Always => "always",
+                            DeadlineKind::Until => "until",
+                        },
+                        operator.lower.to_string(),
+                        operator.upper.to_string(),
+                        operator.elapsed.to_string(),
+                        match operator.phase {
+                            DeadlinePhase::Pending => "pending",
+                            DeadlinePhase::Accept => "accept",
+                            DeadlinePhase::Reject => "reject",
+                        }
+                    ])
+                };
+                json!(["timed-formula", encode(root), nested.map(encode)])
+            }
             MonitorState::Measure { phase, .. } => json!([
                 "measure",
                 null,
@@ -1297,15 +1399,25 @@ impl<'c> Builder<'_, '_, 'c> {
     // -- the deadline event --------------------------------------------------
 
     /// The event's phase after reading one letter.
-    fn read_letter(kind: DeadlineKind, phase: DeadlinePhase, truths: &[bool]) -> DeadlinePhase {
+    fn read_letter(
+        kind: DeadlineKind,
+        phase: DeadlinePhase,
+        truths: &[bool],
+        elapsed: u64,
+        lower: u64,
+    ) -> DeadlinePhase {
         if phase != DeadlinePhase::Pending {
             return phase;
         }
         match (kind, truths) {
-            (DeadlineKind::Eventually, [target]) if *target => DeadlinePhase::Accept,
-            (DeadlineKind::Always, [target]) if !*target => DeadlinePhase::Reject,
+            (DeadlineKind::Eventually, [target]) if elapsed >= lower && *target => {
+                DeadlinePhase::Accept
+            }
+            (DeadlineKind::Always, [target]) if elapsed >= lower && !*target => {
+                DeadlinePhase::Reject
+            }
             (DeadlineKind::Until, [from, until]) => {
-                if *until {
+                if elapsed >= lower && *until {
                     DeadlinePhase::Accept
                 } else if !*from {
                     DeadlinePhase::Reject
@@ -1317,7 +1429,7 @@ impl<'c> Builder<'_, '_, 'c> {
         }
     }
 
-    fn deadline_start(&self, truths: &[bool], state: &mut DState) -> Option<MonitorState> {
+    fn deadline_start(&self, truths: &[bool], state: &mut DState) -> Step<Option<MonitorState>> {
         match &self.form {
             Form::Elapsed { .. } => {
                 let mut phase = MeasurePhase::Inactive;
@@ -1329,16 +1441,51 @@ impl<'c> Builder<'_, '_, 'c> {
                         MeasurePhase::Active
                     };
                 }
-                Some(MonitorState::Measure {
+                Ok(Some(MonitorState::Measure {
                     remaining: 0,
                     phase,
-                })
+                }))
             }
-            Form::Deadline { kind, .. } => Some(MonitorState::Deadline {
-                kind: *kind,
-                phase: Self::read_letter(*kind, DeadlinePhase::Pending, truths),
-            }),
-            Form::MeanTime { .. } | Form::Labels(_) => None,
+            Form::Deadline { kind, .. } => {
+                let lower = self.deadline_lower()?.unwrap_or(0);
+                Ok(Some(MonitorState::Deadline {
+                    kind: *kind,
+                    phase: Self::read_letter(
+                        *kind,
+                        DeadlinePhase::Pending,
+                        truths,
+                        state.deadline.unwrap_or(0),
+                        lower,
+                    ),
+                }))
+            }
+            Form::NestedDeadline {
+                outer_occurrence,
+                outer_lower,
+                outer_upper,
+                inner_occurrence,
+                inner_lower,
+                inner_upper,
+                ..
+            } => Ok(Some(MonitorState::TimedFormula {
+                root: TimedOperatorState {
+                    occurrence: *outer_occurrence,
+                    kind: DeadlineKind::Eventually,
+                    lower: self.bound_units(outer_lower)?,
+                    upper: self.bound_units(outer_upper)?,
+                    elapsed: 0,
+                    phase: DeadlinePhase::Pending,
+                },
+                nested: Some(TimedOperatorState {
+                    occurrence: *inner_occurrence,
+                    kind: DeadlineKind::Always,
+                    lower: self.bound_units(inner_lower)?,
+                    upper: self.bound_units(inner_upper)?,
+                    elapsed: 0,
+                    phase: DeadlinePhase::Pending,
+                }),
+            })),
+            Form::MeanTime { .. } | Form::Labels(_) => Ok(None),
         }
     }
 
@@ -1383,11 +1530,54 @@ impl<'c> Builder<'_, '_, 'c> {
                 phase,
             }));
         }
+        if let Some(MonitorState::TimedFormula {
+            mut root,
+            mut nested,
+        }) = source
+        {
+            let Some(mut child) = nested else {
+                return Err(fault("nested-timed-formula-retains-inner-occurrence").into());
+            };
+            let lower = root
+                .lower
+                .checked_add(child.lower)
+                .ok_or_else(|| fault("nested-window-lower-fits-u64"))?;
+            let upper = root
+                .upper
+                .checked_add(child.upper)
+                .ok_or_else(|| fault("nested-window-upper-fits-u64"))?;
+            let elapsed = reached.deadline.unwrap_or(root.elapsed);
+            let truth = letters
+                .last()
+                .and_then(|truths| truths.first())
+                .copied()
+                .unwrap_or(false);
+            if root.phase == DeadlinePhase::Pending && (lower..=upper).contains(&elapsed) {
+                child.elapsed = elapsed.saturating_sub(root.lower);
+                child.phase = if truth {
+                    root.phase = DeadlinePhase::Accept;
+                    DeadlinePhase::Accept
+                } else {
+                    DeadlinePhase::Reject
+                };
+            } else {
+                child.elapsed = elapsed.saturating_sub(root.lower).min(child.upper);
+                child.phase = DeadlinePhase::Pending;
+            }
+            if root.phase == DeadlinePhase::Pending && elapsed > upper {
+                root.phase = DeadlinePhase::Reject;
+            }
+            root.elapsed = elapsed;
+            nested = Some(child);
+            return Ok(Some(MonitorState::TimedFormula { root, nested }));
+        }
         let Some(MonitorState::Deadline { kind, phase }) = source else {
             return Ok(None);
         };
         let bound = self.deadline_bound()?;
         let mut phase = phase;
+        let lower = self.deadline_lower()?.unwrap_or(0);
+        let elapsed = reached.deadline.unwrap_or(0);
         if phase == DeadlinePhase::Pending {
             if let (Some(t), Some(bound)) = (reached.deadline, bound) {
                 if t > bound {
@@ -1399,7 +1589,7 @@ impl<'c> Builder<'_, '_, 'c> {
             }
         }
         for truths in letters {
-            phase = Self::read_letter(kind, phase, truths);
+            phase = Self::read_letter(kind, phase, truths, elapsed, lower);
         }
         Ok(Some(MonitorState::Deadline { kind, phase }))
     }
@@ -1431,6 +1621,10 @@ impl<'c> Builder<'_, '_, 'c> {
                                 kind: *kind,
                                 phase: DeadlinePhase::Pending,
                             }),
+                            Form::NestedDeadline { .. } => {
+                                let mut state = state.clone();
+                                self.deadline_start(&[], &mut state)?
+                            }
                             Form::Elapsed { .. } => Some(MonitorState::Measure {
                                 remaining: 0,
                                 phase: MeasurePhase::Inactive,
@@ -1442,7 +1636,7 @@ impl<'c> Builder<'_, '_, 'c> {
                     }
                 };
                 let mut state = state.clone();
-                let monitor = self.deadline_start(&truths, &mut state);
+                let monitor = self.deadline_start(&truths, &mut state)?;
                 let key = self.key_of(&state, binding, monitor, None)?;
                 self.admit_state(&key)?;
                 super::observe_target_construction();
@@ -1627,6 +1821,9 @@ impl<'c> Builder<'_, '_, 'c> {
                 Err(_) => return Err(fault("a-pure-delay-reads-what-the-parent-read").into()),
             },
         };
+        if letters.is_empty() {
+            letters.push(truths.clone());
+        }
         let source = self.nodes[at].key.monitor;
         let monitor = self.control_after(source, &mut reached, &letters)?;
         let key = self.key_of(&reached, binding, monitor, None)?;
@@ -2003,13 +2200,26 @@ impl<'c> Builder<'_, '_, 'c> {
             // Inspect the monitor before allocating a terminal target. A
             // nonterminal delay is only the start of the tied chain.
             let mut probe = start.clone();
-            let monitor = self.control_after(self.nodes[at].key.monitor, &mut probe, &[])?;
+            let source_truths = self.nodes[at].truths.clone();
+            let monitor = self.control_after(
+                self.nodes[at].key.monitor,
+                &mut probe,
+                std::slice::from_ref(&source_truths),
+            )?;
             if matches!(
                 monitor,
-                Some(MonitorState::Deadline {
-                    phase: DeadlinePhase::Accept | DeadlinePhase::Reject,
-                    ..
-                })
+                Some(
+                    MonitorState::Deadline {
+                        phase: DeadlinePhase::Accept | DeadlinePhase::Reject,
+                        ..
+                    } | MonitorState::TimedFormula {
+                        root: TimedOperatorState {
+                            phase: DeadlinePhase::Accept | DeadlinePhase::Reject,
+                            ..
+                        },
+                        ..
+                    }
+                )
             ) {
                 let terminal =
                     self.arrive(at, start.clone(), &[], Some(&delayed), planned, |_| false)?;
@@ -2885,6 +3095,11 @@ impl<'c> Builder<'_, '_, 'c> {
             .enumerate()
             .filter_map(|(index, node)| match node.key.monitor {
                 Some(MonitorState::Deadline { phase, .. }) => match phase {
+                    DeadlinePhase::Accept => Some((ProbStateId(index), MonitorVerdict::Accept)),
+                    DeadlinePhase::Reject => Some((ProbStateId(index), MonitorVerdict::Reject)),
+                    DeadlinePhase::Pending => None,
+                },
+                Some(MonitorState::TimedFormula { root, .. }) => match root.phase {
                     DeadlinePhase::Accept => Some((ProbStateId(index), MonitorVerdict::Accept)),
                     DeadlinePhase::Reject => Some((ProbStateId(index), MonitorVerdict::Reject)),
                     DeadlinePhase::Pending => None,

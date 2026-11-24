@@ -104,44 +104,44 @@ pub(crate) fn observe_path_search() {
     });
 }
 
-pub use build::build_product;
 #[cfg(not(feature = "test-support"))]
 pub(crate) use build::BudgetedProductError;
+pub use build::build_product;
+#[cfg(feature = "test-support")]
+pub use build::{BudgetedProductError, build_product_with_key_budget};
 pub(crate) use build::{
     automaton_refusal, build_retaining_monitor, build_retaining_monitor_with_budget,
 };
-#[cfg(feature = "test-support")]
-pub use build::{build_product_with_key_budget, BudgetedProductError};
-pub(crate) use digital::model_constraints;
 pub(crate) use digital::ELAPSED_REWARD;
+pub(crate) use digital::model_constraints;
 pub(crate) use fair::bottom_components;
 pub use fair::{
-    decide_fair_bounded_event, decide_fair_expected_reward, decide_fair_long_run_mdp,
-    decide_fair_reachability, deterministic_policy_is_fair, maximal_fair_end_components,
     ActionChoice, FairBoundedResult, FairEndComponent, FairExpectedRewardResult, FairLongRunResult,
     FairProductError, FairRandomizedWitness, FairUnboundedResult, SchedulerChoice,
+    decide_fair_bounded_event, decide_fair_expected_reward, decide_fair_long_run_mdp,
+    decide_fair_reachability, deterministic_policy_is_fair, maximal_fair_end_components,
 };
 pub use finite_horizon::{
-    backward_induction, decide_bounded_event, Dyadic, FhError, FhObjective, FhResult,
+    Dyadic, FhError, FhObjective, FhResult, backward_induction, decide_bounded_event,
 };
-pub(crate) use finite_horizon::{decide_measure_exact, QualifiedFhError};
+pub(crate) use finite_horizon::{QualifiedFhError, decide_measure_exact};
 pub use fsl_replay::FreeDelayRow;
 pub use rows::free_delays_choice;
 pub use settle::settle_product_refusal;
 pub use unbounded::{
-    avoiding_policy, decide_always, decide_expected_reward, decide_long_run_mdp,
-    decide_long_run_workload, decide_reachability, decide_reachability_threshold, decide_until,
-    decide_until_threshold, ComponentValue, ExtRational, GainBias, LongRunResult, UnboundedError,
-    UnboundedObjective, UnboundedOutcome, UnboundedResult,
+    ComponentValue, ExtRational, GainBias, LongRunResult, UnboundedError, UnboundedObjective,
+    UnboundedOutcome, UnboundedResult, avoiding_policy, decide_always, decide_expected_reward,
+    decide_long_run_mdp, decide_long_run_workload, decide_reachability,
+    decide_reachability_threshold, decide_until, decide_until_threshold,
 };
 pub(crate) use witness::ProducedRandomizedWitness;
 pub use witness::{
-    action_steps, entry_choice, induced_chain, policy_action, produce_witness, witness_scheduler,
     EntryChoice, ProducedPath, ProducedStep, ProducedWitness, WitnessError, WitnessScope,
+    action_steps, entry_choice, induced_chain, policy_action, produce_witness, witness_scheduler,
 };
 pub(crate) use witness::{
-    choice_index, produce_quantile_witness, produce_randomized_witness, produce_witness_stopping,
-    WitnessWork,
+    WitnessWork, choice_index, produce_quantile_witness, produce_randomized_witness,
+    produce_witness_stopping,
 };
 
 pub(crate) fn timed_region_route(
@@ -163,13 +163,13 @@ use filament_exact::{CancelCause, Rational, Value};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::automaton::AutomatonError;
 use fsl_eval::model_subject::{ModelInstance, ModelSubject};
+use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::model::{ClauseOutcome, ScheduledIdentity};
 use fsl_eval::simulation::model::{NotMarkov, UndecidedSuccessor};
-use fsl_eval::simulation::StateKey;
 use fsl_eval::simulation::{ExpansionStop, NotSimulated};
 use fsl_eval::temporal::UndefinedCause;
-use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::Span;
+use fsl_foundation::source::provenance::OccurrenceKey;
 pub use fsl_replay::ExactProbLimits;
 use fsl_replay::{ModelCheckLimit, ProbabilityProductKey};
 use fsl_semantics::check::{CheckedProbabilisticClaim, FormulaNodeId};
@@ -335,6 +335,25 @@ fn encode_cycle_monitor(identity: &mut String, monitor: Option<MonitorState>) {
                 DeadlinePhase::Accept => "accept;",
                 DeadlinePhase::Reject => "reject;",
             });
+        }
+        Some(MonitorState::TimedFormula { root, nested }) => {
+            identity.push_str("monitor=timed-formula;");
+            for operator in [Some(root), nested].into_iter().flatten() {
+                cycle_identity_number(identity, operator.occurrence);
+                identity.push_str(match operator.kind {
+                    DeadlineKind::Eventually => "eventually;",
+                    DeadlineKind::Always => "always;",
+                    DeadlineKind::Until => "until;",
+                });
+                cycle_identity_number(identity, operator.lower);
+                cycle_identity_number(identity, operator.upper);
+                cycle_identity_number(identity, operator.elapsed);
+                identity.push_str(match operator.phase {
+                    DeadlinePhase::Pending => "pending;",
+                    DeadlinePhase::Accept => "accept;",
+                    DeadlinePhase::Reject => "reject;",
+                });
+            }
         }
     }
 }
