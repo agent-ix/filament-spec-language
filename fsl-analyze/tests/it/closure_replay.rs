@@ -63,7 +63,7 @@ fn walk(fixture: &Fixture, moves: &[(&str, i64)]) -> (Vec<ModelStep>, StateKey) 
         let text = system
             .operations()
             .into_iter()
-            .find(|(_, name, _)| name.as_str() == *operation)
+            .find(|(_, name, _)| name == *operation)
             .map(|(_, _, text)| text)
             .expect("the operation is declared");
         let (transition, next) = system
