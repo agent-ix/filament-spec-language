@@ -117,6 +117,7 @@ fn run(
 ) -> Outcome {
     check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: world.subject(UNLIMITED),
             item: ModelCheckItem::Clause {
@@ -215,7 +216,7 @@ fn the_example_unit_has_a_fifteen_state_product_per_instance() {
 /// an empty stem and a loop of three steps of one receiver, which keeps the
 /// bound object's version at 0 while the other cycles `0, 1, 2`. Both
 /// bindings give length 3, so it is bound to `a`, the first.
-#[trace("TC-521")]
+#[trace("TC-521", "FR-126-AC-1")]
 #[test]
 fn without_granularity_the_loop_is_three_steps_of_the_other_object() {
     let world = config(false, WHOLE);
@@ -255,7 +256,7 @@ fn without_granularity_the_loop_is_three_steps_of_the_other_object() {
 /// step 1): every transition is a self-loop, so under `fair weak each` the
 /// loop must take both `upd(a)` and `upd(b)`: `(0,0) -upd(a)-> (0,0)
 /// -upd(b)-> (0,0)`, with an empty stem.
-#[trace("TC-521")]
+#[trace("TC-521", "FR-126-AC-1")]
 #[test]
 fn over_the_shipped_unit_each_needs_both_updates_in_the_loop() {
     let world = config(true, EACH);
@@ -431,10 +432,10 @@ fn the_example_requests_give_the_same_answer_twice() {
 /// spec's base variant, and in the `Restless` variant, where `fail` has no
 /// precondition and can repeat, it is violated by a lasso on which `healthy`
 /// never holds at three consecutive positions. Only the `Restless` row is
-/// verified here; the base variant's `Holds` is `component_certificate`'s.
-#[trace("TC-521")]
+/// verified here.
+#[trace("TC-521", "FR-126-AC-4")]
 #[test]
-fn a_restless_system_has_a_lasso_that_never_recovers_for_three_positions() {
+fn health_recovers_stably_but_restless_health_has_a_nonrecovering_lasso() {
     const FORMULA: &str =
         "always (holds(not s.healthy) implies eventually always[0,2] holds(s.healthy))";
     let contract = |fail_pre: &str| {
@@ -446,16 +447,55 @@ fn a_restless_system_has_a_lasso_that_never_recovers_for_three_positions() {
              terminal Halt using v on H any;\n"
         )
     };
-    let restless = contract("");
+    let base = contract(
+        "pre CanFail using v on H::Health::fail { self.failures = 0 }\n",
+    );
     let domain = health();
-    let text = unit(
+    let base_text = unit(
         &domain,
+        "H",
+        &format!("{base}{}", clause("s: H::Health", "", FORMULA)),
+    );
+    let base_world = World::new(
+        domain,
+        &base_text,
+        &[(
+            "s",
+            serde_json::json!({"healthy": {"boolean": true},
+                "failures": {"integer": "0"}}),
+        )],
+    );
+    let base_outcome = run(
+        &base_world,
+        &Atoms::new(
+            &base_world,
+            vec![
+                Box::new(|state, object| !base_world.boolean(state, object, "healthy")),
+                Box::new(|state, object| base_world.boolean(state, object, "healthy")),
+            ],
+        ),
+        None,
+        ModelCheckLimits::default(),
+        &Cancel::new(),
+    );
+    let ModelCheckOutcome::Holds {
+        stats,
+        certificate: fsl_replay::ProofCertificate::Component(_),
+    } = base_outcome.expect("the recovery-stability claim is checked")
+    else {
+        panic!("expected exhaustive recovery stability, got {base_outcome:?}");
+    };
+    assert!(stats.product_states > 0);
+
+    let restless = contract("");
+    let restless_text = unit(
+        &health(),
         "H",
         &format!("{restless}{}", clause("s: H::Health", "", FORMULA)),
     );
     let world = World::new(
-        domain,
-        &text,
+        health(),
+        &restless_text,
         &[(
             "s",
             serde_json::json!({"healthy": {"boolean": true},

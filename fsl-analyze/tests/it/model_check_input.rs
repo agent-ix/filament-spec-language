@@ -899,6 +899,7 @@ fn the_model_checker_decides_a_package_form_clause_as_its_source_form() {
     ) -> Result<String, String> {
         check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: fsl_eval::model_subject::ModelSubject {
                     simulation: simulation.clone(),
@@ -980,6 +981,7 @@ fn the_model_checker_decides_deadlock_freedom_over_the_package_route_as_over_sou
         let run = |simulation: fsl_eval::simulation::model::ModelSimulationRequest<'_>| {
             check_model(
                 ModelCheckRequest {
+                    workers: 1,
                     temporal_clock_selections: &[],
                     subject: fsl_eval::model_subject::ModelSubject {
                         simulation,

@@ -1259,6 +1259,7 @@ pub(super) fn model_refusal(refusal: &ModelCheckRefusal) -> Refusal {
         // A request defect: an operation or subject count the request names
         // wrongly, or the race-freedom item over a model subject.
         ModelCheckRefusal::RaceOverModel
+        | ModelCheckRefusal::Workers
         | ModelCheckRefusal::LoopProofOverModel
         | ModelCheckRefusal::InvariantOverProtocol
         | ModelCheckRefusal::Liveness(LivenessRefusal::UnknownOperation { .. })

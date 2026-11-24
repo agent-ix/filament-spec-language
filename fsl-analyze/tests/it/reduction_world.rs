@@ -482,6 +482,7 @@ impl World {
         };
         check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: {
                     let mut subject = self.subject();

@@ -328,6 +328,7 @@ fn model_work(outcome: &ModelCheckOutcome, atoms: u64) -> Result<(Work, u64), Ax
 fn check_item(world: &World, item: ModelCheckItem<'_>) -> Result<ModelCheckOutcome, AxisError> {
     check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: world.subject(),
             item,

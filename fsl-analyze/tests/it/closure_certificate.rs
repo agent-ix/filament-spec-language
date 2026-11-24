@@ -217,6 +217,7 @@ impl World {
     fn run_in(&self, package: &CheckedPackage, item: ModelCheckItem<'_>) -> ModelCheckOutcome {
         check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: subject(
                     package,
@@ -254,6 +255,7 @@ impl Invariant {
     ) -> fsl_analyze::analyze::ModelItem<'w> {
         fsl_analyze::analyze::ModelItem {
             request: ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: subject(
                     &self.package,
@@ -722,6 +724,7 @@ fn a_request_whose_clause_root_does_not_resolve_settles_failed() {
     }
     let refused = check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: request.subject,
             item: foreign,
@@ -1050,6 +1053,7 @@ fn a_loop_proof_item_is_refused_over_a_model_subject() {
     ] {
         let refused = check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: subject(
                     &world.package,

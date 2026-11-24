@@ -216,6 +216,7 @@ fn a_guarded_on_each_prefix_replays_through_production_letters() {
         )));
     let outcome = check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &fixture.temporal_clock_selections,
             subject: subject(
                 &fixture.package,
@@ -891,6 +892,7 @@ fn a_clause_with_a_capture_replays_through_the_production_letters() {
     let letters = system.clause_letters(node).expect("the clause has letters");
     let outcome = fsl_analyze::model_check::check_model(
         fsl_analyze::model_check::ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &fixture.temporal_clock_selections,
             subject: subject(
                 &fixture.package,

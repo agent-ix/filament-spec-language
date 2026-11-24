@@ -273,6 +273,7 @@ impl Case {
     ) {
         let outcome = check_protocol(
             ProtocolCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &self.temporal_clock_selections,
                 subject: self.subject_within(selection, max_candidates, absent),
                 item: ModelCheckItem::DeadlockFreedom,
@@ -339,6 +340,7 @@ impl Case {
     ) -> ModelCheckOutcome<ProtocolTransition> {
         check_protocol(
             ProtocolCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &self.temporal_clock_selections,
                 subject: self.subject(selection),
                 item,
@@ -799,6 +801,7 @@ fn unset_bounds_default_to_four_and_stay_out_of_the_obligation() {
         let temporal_clock_selections =
             crate::fill::tcb_01_event_position_selection(case.checked());
         let request = ProtocolCheckRequest {
+            workers: 1,
             temporal_clock_selections: &temporal_clock_selections,
             subject: case.subject(&tso),
             item: ModelCheckItem::DeadlockFreedom,

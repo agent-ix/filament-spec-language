@@ -144,6 +144,7 @@ pub fn deadlock_model_item<'a>(
     let (binding, form, claim) = (binding.clone(), form.clone(), claim.clone());
     let replay_binding = binding.clone();
     let request = ModelCheckRequest {
+        workers: 1,
         temporal_clock_selections: &[],
         subject: subject(&binding),
         item: ModelCheckItem::DeadlockFreedom,
@@ -260,6 +261,7 @@ impl<'a> PackageDeadlockSubject<'a> {
             proof_bounds: self.form.proof_bounds.clone(),
         };
         let request = ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: subject(),
             item: ModelCheckItem::DeadlockFreedom,

@@ -71,6 +71,7 @@ pub(super) fn invariant_item<'a>(
         clause: fsl_replay::InvariantClause::of(clause),
     };
     let request = ModelCheckRequest {
+        workers: 1,
         temporal_clock_selections: &[],
         subject: subject(binding),
         item,
@@ -213,6 +214,7 @@ impl<'a> PackageInvariantSubject<'a> {
             proof_bounds: self.form.proof_bounds.clone(),
         };
         let request = ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: subject(),
             item: ModelCheckItem::Invariant { clause },

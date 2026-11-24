@@ -211,6 +211,7 @@ impl Chatter {
     fn check(&self) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal> {
         check_protocol(
             ProtocolCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: self.subject(),
                 item: self.item(),
@@ -1022,6 +1023,7 @@ fn liveness_over_an_ra_parallel_is_decided_under_visibility_fairness() {
     .expect("the selection resolves");
     let outcome = check_protocol(
         ProtocolCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject,
             item: chatter.item(),

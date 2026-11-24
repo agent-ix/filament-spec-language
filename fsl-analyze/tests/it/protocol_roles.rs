@@ -184,6 +184,7 @@ impl World {
         );
         check_protocol(
             ProtocolCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &temporal_clock_selections,
                 subject,
                 item,
@@ -228,6 +229,7 @@ impl World {
     fn deadlock(&self) -> ModelCheckOutcome<ProtocolTransition> {
         check_protocol(
             ProtocolCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: self.subject(),
                 item: ModelCheckItem::DeadlockFreedom,
@@ -1691,6 +1693,7 @@ fn requests_differing_only_in_max_live_instances_share_one_obligation_identity()
     let letters = CellV { holds: |v| v <= 3 };
     let temporal_clock_selections = crate::fill::tcb_01_event_position_selection(&world.checked);
     let request = |max_live_instances| ProtocolCheckRequest {
+        workers: 1,
         temporal_clock_selections: &temporal_clock_selections,
         subject: world.subject(),
         item: world.claim(&letters),
@@ -1805,6 +1808,7 @@ fn a_protocol_derived_items_max_live_instances_reaches_the_run_and_the_check() {
             crate::fill::tcb_01_event_position_selection(&world.checked);
         let item = ProtocolItem {
             request: ProtocolCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &temporal_clock_selections,
                 subject: world.subject(),
                 item: ModelCheckItem::DeadlockFreedom,

@@ -589,6 +589,7 @@ temporal Projection using inf over (c: M::Call) clock \"model-steps\" on origin 
         let letters = system.clause_letters(node).expect("actual model letters");
         let outcome = check_model(
             ModelCheckRequest {
+                workers: 1,
                 subject: ModelSubject {
                     simulation: world.request(),
                     proof_bounds: Vec::new(),

@@ -123,6 +123,7 @@ impl Case {
     pub(crate) fn model_item(&self) -> fsl_analyze::analyze::ModelItem<'_> {
         fsl_analyze::analyze::ModelItem {
             request: ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: subject(
                     &self.checked,
@@ -190,6 +191,7 @@ fn case_in_mode(body: &str, values: &[i64], mode: CheckMode) -> Case {
         .collect();
     let outcome = check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: subject(&checked, &documents, initial.clone(), &["c"], UNLIMITED),
             item: ModelCheckItem::DeadlockFreedom,
@@ -1122,6 +1124,7 @@ fn an_invariant_counterexample_replays_by_the_invariant_rule() {
         .expect("the invariant is checked");
     let outcome = check_model(
         ModelCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: subject(
                 &case.checked,

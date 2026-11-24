@@ -162,8 +162,19 @@ impl Case {
 
     /// EN-1's deadlock-freedom outcome over `protocol`.
     pub(crate) fn deadlock(&self, protocol: &str) -> ModelCheckOutcome<ProtocolTransition> {
+        self.deadlock_with_workers(protocol, 1)
+    }
+
+    /// EN-1's deadlock-freedom outcome over `protocol` with the requested
+    /// worker count.
+    pub(crate) fn deadlock_with_workers(
+        &self,
+        protocol: &str,
+        workers: usize,
+    ) -> ModelCheckOutcome<ProtocolTransition> {
         check_protocol(
             ProtocolCheckRequest {
+                workers,
                 temporal_clock_selections: &[],
                 subject: self.subject(protocol),
                 item: ModelCheckItem::DeadlockFreedom,
@@ -177,6 +188,35 @@ impl Case {
             &Cancel::new(),
         )
         .expect("the protocol subject checks")
+    }
+
+    /// EN-1's temporal-clause outcome over `protocol` with the requested
+    /// worker count.
+    fn temporal_with_workers(
+        &self,
+        protocol: &str,
+        clause: &fsl_semantics::check::CheckedTemporalClause,
+        workers: usize,
+    ) -> ModelCheckOutcome<ProtocolTransition> {
+        check_protocol(
+            ProtocolCheckRequest {
+                workers,
+                temporal_clock_selections: &[],
+                subject: self.subject(protocol),
+                item: ModelCheckItem::Clause {
+                    clause,
+                    letters: &NO_ATOMS,
+                },
+                max_depth: None,
+                max_store_buffer: None,
+                max_messages: None,
+                max_live_instances: None,
+                limits: ModelCheckLimits::default(),
+                ignore_memory_constraints: false,
+            },
+            &Cancel::new(),
+        )
+        .expect("the protocol temporal clause checks")
     }
 
     /// FR-217's replay of `payload` against this case's unit and documents.
@@ -1366,6 +1406,7 @@ fn a_protocol_deadlock_is_spelled_with_its_blocked_list_through_analyze() {
     };
     let item = ProtocolItem {
         request: ProtocolCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: case.subject("Fill"),
             item: ModelCheckItem::DeadlockFreedom,
@@ -1461,6 +1502,7 @@ fn a_protocol_replay_allocation_keeps_the_actual_item_resource_evidence() {
     let calls = std::cell::Cell::new(0);
     let item = ProtocolItem {
         request: ProtocolCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: case.subject("Fill"),
             item: ModelCheckItem::DeadlockFreedom,
@@ -1720,6 +1762,7 @@ fn a_protocol_model_check_is_deterministic() {
     );
     let refusal = check_protocol(
         ProtocolCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: counted.subject("P"),
             item: ModelCheckItem::DeadlockFreedom,
@@ -1769,6 +1812,47 @@ fn a_protocol_model_check_is_deterministic() {
         ModelCheckOutcome::Holds { stats, .. } if stats.product_states == 10
     ));
     assert_eq!(holds, repaired.deadlock("Fill"));
+}
+
+/// FR-126-AC-20 exercises both protocol checker dispatches with more than
+/// one worker, including the liveness coordinator's raw-successor prefetch.
+#[trace("TC-1417", "FR-126-AC-20")]
+#[test]
+fn protocol_worker_modes_preserve_safety_and_liveness_results() {
+    let safety = Case::new(&fill_unit("self.v <= 1", ""), &[0]);
+    let mut expected_safety = None;
+    for workers in [1, 2, 4, 64] {
+        let outcome = safety.deadlock_with_workers("Fill", workers);
+        if let Some(expected) = &expected_safety {
+            assert_eq!(&outcome, expected, "workers={workers}");
+        } else {
+            expected_safety = Some(outcome);
+        }
+    }
+
+    let body = format!(
+        "{}{}",
+        fill_unit("self.v <= 1", ""),
+        crate::counter::clause_text("WorkerClaim", "", "always true")
+    );
+    let liveness = Case::new(&body, &[0]);
+    let clause = liveness
+        .checked
+        .graph()
+        .temporal_clauses()
+        .first()
+        .expect("the protocol liveness claim is checked")
+        .clause()
+        .clone();
+    let mut expected_liveness = None;
+    for workers in [1, 2, 4, 64] {
+        let outcome = liveness.temporal_with_workers("Fill", &clause, workers);
+        if let Some(expected) = &expected_liveness {
+            assert_eq!(&outcome, expected, "workers={workers}");
+        } else {
+            expected_liveness = Some(outcome);
+        }
+    }
 }
 
 /// The unit with `declarations` before the protocol `P` whose run is an
@@ -1833,6 +1917,7 @@ fn a_finite_field_record_binder_steps_in_domain_order() {
     let wide = event_unit("record Wide { n: Int[0, 1]; t: Integer; }", "Wide");
     let refusal = check_protocol(
         ProtocolCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: wide.subject("P"),
             item: ModelCheckItem::DeadlockFreedom,
@@ -1981,6 +2066,7 @@ fn an_unbound_symbolic_capacity_requires_a_bound() {
     let refusal = |case: &Case| {
         check_protocol(
             ProtocolCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: case.subject("P"),
                 item: ModelCheckItem::DeadlockFreedom,
@@ -2053,6 +2139,7 @@ fn a_capacity_binding_defect_refuses_before_root_classification() {
     let refused = |case: &Case| {
         let refusal = check_protocol(
             ProtocolCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: case.subject("P"),
                 item: ModelCheckItem::DeadlockFreedom,
@@ -2142,6 +2229,7 @@ fn analyzed(
     };
     let item = ProtocolItem {
         request: ProtocolCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: case.subject("P"),
             item: ModelCheckItem::DeadlockFreedom,
@@ -2944,6 +3032,7 @@ fn a_replay_over_an_unbounded_protocol_subject_refuses_requires_bound() {
     );
     let refusal = check_protocol(
         ProtocolCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: unbounded.subject("Fill"),
             item: ModelCheckItem::DeadlockFreedom,
