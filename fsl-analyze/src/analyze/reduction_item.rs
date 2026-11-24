@@ -11,7 +11,7 @@
 use filament_checked::key::DeclarationKey;
 use fsl_eval::simulation::model::{ModelSystem, PopulationUniverse};
 use fsl_route::reductions::{Reductions, SymmetryDeclaration};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 /// Why a `reductions` member is refused (FR-623 "Refusals").
 #[derive(Clone, Debug, Eq, PartialEq, thiserror::Error)]
@@ -19,7 +19,7 @@ pub(super) enum ReductionIssue {
     /// A `constraint` that names no constraint clause:
     /// `invalid_runtime_input`/`invalid-value`, naming the name.
     #[error("{0} names no constraint clause")]
-    UnknownConstraint(String),
+    UnknownConstraint(Value),
     /// A malformed selection: `declined` with `invalid-input`.
     #[error("invalid reductions selection: {0}")]
     Malformed(String),
@@ -77,7 +77,9 @@ pub(super) fn admit(
         Some(Value::String(name)) if system.has_constraint(name) => {
             reductions.constraint = Some(name.clone());
         }
-        Some(Value::String(name)) => return Err(ReductionIssue::UnknownConstraint(name.clone())),
+        Some(Value::String(name)) => {
+            return Err(ReductionIssue::UnknownConstraint(json!(name)));
+        }
         Some(_) => return Err(issue("constraint is not a name")),
     }
     Ok(reductions)
@@ -171,7 +173,10 @@ fn population_named(key: &DeclarationKey, name: &str) -> bool {
 }
 
 /// FSpec FR-382's wire form of `reductions`, for the request echo.
-pub(super) fn wire(reductions: &Reductions) -> Value {
+pub(super) fn wire(
+    reductions: &Reductions,
+    constraint: Option<&filament_exact::NodeKey>,
+) -> Result<Value, serde_json::Error> {
     let mut member = Map::new();
     if !reductions.symmetry.is_empty() {
         member.insert(
@@ -191,8 +196,15 @@ pub(super) fn wire(reductions: &Reductions) -> Value {
     if reductions.partial_order {
         member.insert("partial_order".to_owned(), json!(true));
     }
-    if let Some(constraint) = &reductions.constraint {
-        member.insert("constraint".to_owned(), json!(constraint));
+    if reductions.constraint.is_some() {
+        use serde::ser::Error as _;
+        let key = constraint.ok_or_else(|| {
+            serde_json::Error::custom("a selected state constraint has no checked node key")
+        })?;
+        member.insert(
+            "constraint".to_owned(),
+            fsl_foundation::node_wire::node_key_to_json(key).map_err(serde_json::Error::custom)?,
+        );
     }
-    Value::Object(member)
+    Ok(Value::Object(member))
 }
