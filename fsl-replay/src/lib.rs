@@ -473,8 +473,7 @@ pub use probability_certificate::{
 pub use probability_certificate::{
     admit_expected_reward_certificate_subject, check_claim_exact_reachability,
     check_probability_certificate_document, check_probability_certificate_document_as,
-    check_probability_certificate_package,
-    check_probability_certificate_source, claim_binding,
+    check_probability_certificate_package, check_probability_certificate_source, claim_binding,
     conditional_measure_probability_certificate, cyclic_mdp_probability_certificate_document,
     cyclic_mdp_reward_probability_certificate_document, digital_key_clocks,
     digital_probability_product_key, long_run_probability_certificate_document,

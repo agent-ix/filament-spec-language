@@ -651,11 +651,14 @@ fn run_timed(
                     }
                     None => write_probability_certificate(&document, limits, cancel)?,
                 };
-                check_probability_certificate_document(
+                fsl_replay::check_probability_certificate_document_as(
                     &system,
                     source_package.graph().probabilistic_model().claims(),
                     &identity,
                     &bytes,
+                    side.map_or(fsl_replay::CertificateRole::Claim, |side| {
+                        interval_role(side, bound)
+                    }),
                     limits,
                     cancel,
                 )
@@ -704,12 +707,7 @@ fn run_timed(
                     tamper(&mut certificate);
                 }
                 let (checked, optimization) = verify(&certificate, Some(side), interval_limits);
-                let claim_side = matches!(
-                    (side, bound),
-                    (fsl_replay::SubsystemBoundKind::Lower, Bound::AtLeast(_))
-                        | (fsl_replay::SubsystemBoundKind::Upper, Bound::AtMost(_))
-                );
-                if claim_side {
+                if interval_role(side, bound) == fsl_replay::CertificateRole::Claim {
                     extremum = extremum_of(optimization);
                 }
                 documents.push(checked.map(|check| (certificate, check)));
@@ -1996,11 +1994,12 @@ fn settle_interval(
             certificate.values = document.document().values.clone();
             let bytes =
                 fsl_replay::write_value_bounds_proof_document(&document, side, limits, cancel)?;
-            let check = check_probability_certificate_document(
+            let check = fsl_replay::check_probability_certificate_document_as(
                 subject_of.system,
                 subject_of.claims,
                 subject_of.item,
                 &bytes,
+                interval_role(side, subject_of.bound),
                 limits,
                 cancel,
             )?;
@@ -2022,6 +2021,25 @@ fn settle_interval(
         interval.precision_bits,
         subject,
     )
+}
+
+/// FR-1042: a value-bounds document of `side` is the claim side of `bound`
+/// when it bounds the value from the side the claim compares it: `lower` for
+/// `AtLeast`, `upper` for `AtMost`; otherwise it is the counterpart.
+fn interval_role(
+    side: fsl_replay::SubsystemBoundKind,
+    bound: &Bound,
+) -> fsl_replay::CertificateRole {
+    match (side, bound) {
+        (fsl_replay::SubsystemBoundKind::Lower, Bound::AtLeast(_))
+        | (fsl_replay::SubsystemBoundKind::Upper, Bound::AtMost(_)) => {
+            fsl_replay::CertificateRole::Claim
+        }
+        (fsl_replay::SubsystemBoundKind::Lower, Bound::AtMost(_))
+        | (fsl_replay::SubsystemBoundKind::Upper, Bound::AtLeast(_)) => {
+            fsl_replay::CertificateRole::Counterpart
+        }
+    }
 }
 
 /// A stop of an interval document names the setting that raises its bound

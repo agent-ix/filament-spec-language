@@ -1956,6 +1956,16 @@ struct Offer<'a> {
 }
 
 impl Offer<'_> {
+    /// An exact document checked as the claim side.
+    #[cfg(feature = "test-support")]
+    fn exact() -> Self {
+        Self {
+            side: None,
+            role: CertificateRole::Claim,
+            policy: None,
+        }
+    }
+
     fn relation(self) -> ValueRelation {
         ValueRelation::of(self.side, self.role)
     }
@@ -1987,7 +1997,15 @@ fn check_document_bytes(
             return measure::check(system, claims, item, bytes, limits, cancel);
         }
         ProfileDispatch::Timed => {
-            return timed::check(system, claims, item, bytes, offer.relation(), limits, cancel)
+            return timed::check(
+                system,
+                claims,
+                item,
+                bytes,
+                offer.relation(),
+                limits,
+                cancel,
+            )
         }
         ProfileDispatch::OnEach => {
             return instances::check(system, claims, item, bytes, limits, cancel)

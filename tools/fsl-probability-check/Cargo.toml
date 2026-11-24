@@ -26,6 +26,7 @@ fsl-analyze = { path = "../../fsl-analyze", features = ["test-support"] }
 fsl-command = { path = "../../fsl-command" }
 fsl-route = { path = "../../fsl-route" }
 fsl-replay = { path = "../../fsl-replay", features = ["test-support"] }
+quire-canonical = { workspace = true }
 
 [lints.rust]
 unsafe_code = "forbid"

@@ -274,6 +274,7 @@ fn proof_source_request(
         "initial": [{"authority":"test", "identity":"s0"}],
         "universes": [{"population":{"package":"test/link", "node":"ix://test/link/msgs"}, "keys":["m"]}],
         "certificate": String::from_utf8(certificate).unwrap(),
+        "claim_side": true,
         "limits": {"bytes":1_000_000,"storage_bytes":8_000_000, "states":100, "edges":1000, "scalar_bits":128, "expansion":100_000, "stages":{}},
     })
 }

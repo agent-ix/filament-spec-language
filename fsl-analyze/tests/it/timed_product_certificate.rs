@@ -1651,16 +1651,26 @@ fn a_timed_deadline_past_the_rational_budget_proves_with_value_bounds() {
     )
     .expect("an identity");
     let system = world.system();
-    for bytes in [
-        terminal.exact_certificate_document(),
-        terminal.exact_counterpart_document(),
+    for (bytes, role) in [
+        (
+            terminal.exact_certificate_document(),
+            fsl_replay::CertificateRole::Claim,
+        ),
+        (
+            terminal.exact_counterpart_document(),
+            fsl_replay::CertificateRole::Counterpart,
+        ),
     ] {
-        let checked = check_probability_certificate_document(
+        let checked = fsl_replay::check_probability_certificate_document_as(
             &system,
             world.package.graph().probabilistic_model().claims(),
             &identity,
             bytes.expect("the record carries the document"),
-            fsl_replay::ProbabilityDocumentLimits::for_interval(&request_limits, limits().accounting),
+            role,
+            fsl_replay::ProbabilityDocumentLimits::for_interval(
+                &request_limits,
+                limits().accounting,
+            ),
             &Cancel::new(),
         );
         assert!(

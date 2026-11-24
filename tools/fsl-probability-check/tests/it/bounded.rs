@@ -303,18 +303,22 @@ fn requests_with_mode(
         return (Vec::new(), record.settlement);
     }
     let item = fsl_replay::probabilistic_claim_identity(claim).unwrap();
-    let wire = |bytes: &[u8]| json!({
-        "source": {"authority":identity.authority, "identity":identity.identity, "content":source},
-        "package_name":"bounded-fixture",
-        "item":{"node_id":fsl_foundation::node_wire::node_key_to_json(item.node()).unwrap(), "model":item.model().map(|model|model.as_str()), "ordinal":item.ordinal()},
-        "byte_provision":[["test","bounded-certificate-source",source.as_bytes()]],
-        "documents":[domain,snapshot],
-        "initial":[{"authority":"test","identity":"s0"}],
-        "universes":[{"population":{"package":universe_package,"node":universe_node},"keys":universe_keys}],
-        "certificate":String::from_utf8(bytes.to_vec()).unwrap(),
-        "limits":{"bytes":1_000_000,"storage_bytes":8_000_000,"states":100,"edges":1000,"scalar_bits":128,"expansion":100_000,"stages":{}},
-    });
-    let requests = documents.into_iter().map(wire).collect();
+    let wire = |(position, bytes): (usize, &[u8])| {
+        json!({
+            "source": {"authority":identity.authority, "identity":identity.identity, "content":source},
+            "package_name":"bounded-fixture",
+            "item":{"node_id":fsl_foundation::node_wire::node_key_to_json(item.node()).unwrap(), "model":item.model().map(|model|model.as_str()), "ordinal":item.ordinal()},
+            "byte_provision":[["test","bounded-certificate-source",source.as_bytes()]],
+            "documents":[domain,snapshot],
+            "initial":[{"authority":"test","identity":"s0"}],
+            "universes":[{"population":{"package":universe_package,"node":universe_node},"keys":universe_keys}],
+            "certificate":String::from_utf8(bytes.to_vec()).unwrap(),
+            "claim_side":position == 0,
+            "limits":{"bytes":1_000_000,"storage_bytes":8_000_000,"states":100,"edges":1000,"scalar_bits":128,"expansion":100_000,"stages":{}},
+        })
+    };
+    // The claim-side document comes first; a value-bounds proof's counterpart follows.
+    let requests = documents.into_iter().enumerate().map(wire).collect();
     (requests, record.settlement)
 }
 
