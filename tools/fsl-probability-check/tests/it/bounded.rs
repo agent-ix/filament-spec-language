@@ -392,7 +392,7 @@ fn fraction_mean_documents_are_accepted_by_the_separate_checker() {
 fn shifted_quantile_documents_are_accepted_by_the_separate_checker() {
     let mut source = model_source()
         .replace("{ true: 1, false: 9 }", "{ true: 1, false: 1 }")
-        .replace("{ true: 1, false: 4 }", "{ true: 1, false: 3 }");
+        .replace("{ true: 1, false: 4 }", "{ true: 3, false: 1 }");
     source.push_str("\nprobabilistic Likely using inf on M over (m: M::Msg) under every scheduler on origin { quantile 0.4 of (steps from holds(true) until holds(m.delivered) within 4) <= 2 }\n");
     let limits = ExactProbLimits {
         max_rational_bits: 1,
@@ -417,7 +417,7 @@ fn shifted_quantile_documents_are_accepted_by_the_separate_checker() {
                 ..
             },
         certification: fsl_replay::Certification::Certified,
-    } = record.value()
+    } = record.as_ref().value()
     else {
         panic!(
             "quantile settles with complete certified bounds: {:?}",
@@ -425,11 +425,13 @@ fn shifted_quantile_documents_are_accepted_by_the_separate_checker() {
         );
     };
     let exact = Rational::new(Integer::from(3_i64), Integer::from(80_i64)).unwrap();
-    assert!(lower_end.value() >= &Rational::from(0));
+    assert!(
+        lower_end.value() >= &Rational::new(Integer::from(0_i64), Integer::from(1_i64)).unwrap()
+    );
     assert!(lower_end.value() <= &exact && &exact <= upper_end.value());
     assert!(lower_end.value() <= upper_end.value());
     let [lower, upper] = requests.as_slice() else {
-        panic!("quantile interval emits lower and upper documents: {settlement:?}");
+        panic!("quantile interval emits exactly two lower and upper documents");
     };
     assert_eq!(document(lower)["kind"], "lower");
     assert_eq!(document(upper)["kind"], "upper");
@@ -461,7 +463,7 @@ fn shifted_quantile_documents_are_accepted_by_the_separate_checker() {
         assert_eq!(
             doc["objective"]["base"]["measure"],
             json!({"kind":"steps", "window":4, "reward":null, "unit":null,
-                "comparison":"le", "threshold":2,
+                "comparison":"le", "threshold":{"numerator":"2", "denominator":"1"},
                 "level":{"numerator":"2", "denominator":"5"}})
         );
         assert_eq!(doc["objective"]["base"]["optimization"], "minimum");

@@ -1287,8 +1287,21 @@ pub fn write_value_bounds_measure_certificate(
             .map(|row| row.state.clone())
             .collect::<std::collections::BTreeSet<_>>();
         document.ranking.retain(|(state, _)| states.contains(state));
+    } else {
+        document.ranking.clear();
     }
-    let exact = write_measure_probability_certificate(&document, limits, cancel)?;
+    // Interval endpoints may round just outside a shifted payoff's exact range
+    // (for example, below -2/5). Their Bellman inequalities establish the
+    // outward bound, so validate the canonical base shape without applying the
+    // exact-document range check here.
+    let exact = measure::encode(&document, limits, cancel)?;
+    measure::decode_measure_probability_certificate(
+        &exact,
+        limits,
+        cancel,
+        &mut filament_exact::Meter::new(limits.accounting).with_cancel(cancel.clone()),
+        &mut 0,
+    )?;
     value_bounds::wrap(&exact, side, limits)
 }
 
@@ -2151,18 +2164,8 @@ fn check_document_bytes(
     }
     match dispatch {
         ProfileDispatch::Measure => {
-            let partial_lower = bound_side == Some(SubsystemBoundKind::Lower)
-                && offer.role == CertificateRole::Claim;
             return measure::check(
-                system,
-                claims,
-                item,
-                bytes,
-                partial_lower,
-                bound_side.filter(|_| !partial_lower),
-                offer.role,
-                limits,
-                cancel,
+                system, claims, item, bytes, false, bound_side, offer.role, limits, cancel,
             );
         }
         ProfileDispatch::Timed => {
