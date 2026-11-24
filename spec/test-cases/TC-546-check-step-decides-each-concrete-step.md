@@ -74,6 +74,6 @@ Every call passes the concrete `ModelSystem` and the abstract system (FR-141).
 
 ## Step 12
 
-12. Over a row set built directly in a unit test, ask the row-choice function for a declared type no row conforms to, for a type both of two unrelated rows (`Queue`, `Cell`) conform to, and for nested rows (`Queue`, `SubQueue`) in each source order; over the `twin` models check a node field declared with a type neither row conforms to and one declared with a supertype of both (FR-141-AC-17).
+12. Over a row set built directly in a unit test, ask the row-choice function for a declared type no row conforms to, for a type both of two unrelated rows (`Queue`, `Cell`) conform to, and for nested rows (`Queue`, `SubQueue`) in each source order; over the `twin` models check a node field declared with a type neither row conforms to and one declared with a type both unrelated rows conform to (FR-141-AC-17).
 
 Expected: `Fault` for the first two; the `SubQueue` row for the third in either order; S3 refuses the two node fields `ill_typed`/`type-mismatch` with no step decision.

@@ -17,11 +17,11 @@ reader admits the same bytes. Scope: FR-110-AC-16.
 
 ## Test Procedure
 
-1. Emit the package of FR-110-AC-14's unit. Run it through a replay request, a
+1. Emit the package of a unit that divides with `div` under the floor law selection. Run it through a replay request, a
    run request over the package and an analyze request over the package, each
-   with the unit's catalog: unchanged, then with the law row `fr-142` changed
-   to `fr-242`.
-2. Change the law row's authority; replace the extension row's identity with
+   with the unit's catalog: unchanged, then with the law row `filament.value.integer-division.floor/v1` changed
+   to `filament.value.integer-division.ceiling/v1`.
+2. Change the law row's authority; in FR-110-AC-14's package replace the extension row's identity with
    one no entry holds; write a layer identity in a law row's position; change
    two rows.
 3. Read each altered package with the strict reader alone.

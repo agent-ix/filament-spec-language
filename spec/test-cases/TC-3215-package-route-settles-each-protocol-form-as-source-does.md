@@ -44,5 +44,5 @@ compare the item records, counterexamples, replays and process exit.
 - Steps 1 to 6: equal item records, verdicts, counterexamples and replays on
   both routes; no item `unsupported`; refusals and item outcomes as the
   criteria state.
-- Step 7: equal quorum results; `invalid_package`/`invalid-value` for the three
-  count defects before any engine runs; the predicate join `unsupported`.
+- Step 7: equal quorum results; `invalid_package`/`invalid-value` for the two range defects and the reader refusal for the absent count, all
+  before any engine runs; the predicate join `unsupported`.

@@ -13,7 +13,7 @@ relationships:
 Verify that an operation-contract item is selected from its admitted typed
 requirement row, executed and replayed from admitted package forms, equal to
 the source route, independent of source files, and never `unsupported`. Scope:
-FR-940-AC-33.
+FR-940-AC-33 to FR-940-AC-38.
 
 ## Test Procedure
 
