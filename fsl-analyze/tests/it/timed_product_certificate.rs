@@ -6,7 +6,7 @@
 
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine as _;
-use filament_exact::{Cancel, Integer, Rational};
+use filament_exact::{Cancel, Integer, Rational, Value};
 use fsl_analyze::analyze::{
     analyze_items, exact_probabilistic_item, exact_probabilistic_item_tampered, AnalyzeRecord,
     DispositionKind, Engines, Settlement,
@@ -511,6 +511,64 @@ fn every_scheduler_discrete_delay_refutes() {
         .mass()
         .clone();
     assert_eq!(mass, ratio(871, 160_000));
+}
+
+/// FSpec FR-421-AC-2 / TC-374: two losses at 2 ms and 4 ms form the one
+/// replayed counterexample path. After the second send resets `x` at the
+/// 4 ms horizon, the next send's `x >= 1 ms` guard cannot be met in-window.
+#[trace("FSpec-TC-374", "FSpec-FR-421-AC-2")]
+#[test]
+fn deadline_at_995_refutes_with_two_losses_at_the_horizon() {
+    let world = retx(
+        GUARD,
+        true,
+        "",
+        &deadline("Deadline", "under every scheduler", ">= 0.995"),
+    );
+    let record = settle(&world, "Deadline");
+    assert!(is_refuted(&record), "{record:#?}");
+    let counterexample = record
+        .probabilistic_counterexample
+        .as_ref()
+        .expect("the refutation has reproduced path evidence");
+    assert_eq!(counterexample.mass(), &ratio(1, 100));
+    let evidence = counterexample.evidence();
+    assert_eq!(evidence.paths.len(), 1);
+    let path = &evidence.paths[0];
+    let mut elapsed = ratio(0, 1);
+    let mut loss_times = Vec::new();
+    for step in &path.steps {
+        elapsed = elapsed.add(&step.elapsed);
+        if step
+            .transition
+            .as_ref()
+            .is_some_and(|transition| transition.operation().contains("Msg/send"))
+        {
+            let draw = step.draw.as_ref().expect("send carries its loss draw");
+            assert!(matches!(draw.as_slice(), [Value::Boolean(true)]));
+            loss_times.push(elapsed.clone());
+        }
+    }
+    assert_eq!(loss_times, [ratio(2, 1), ratio(4, 1)]);
+    assert!(path.steps.last().is_some_and(|step| {
+        step.transition
+            .as_ref()
+            .is_some_and(|transition| transition.operation().contains("Msg/send"))
+    }));
+    let (_, counterexamples) =
+        fsl_analyze::analyze::split_records(vec![record], &world.package);
+    let wire = counterexamples[0]
+        .wire
+        .as_ref()
+        .expect("the timed witness has an FR-413 spelling");
+    assert_eq!(
+        wire["bound"],
+        json!({
+            "type": "probability",
+            "comparison": "greater-or-equal",
+            "threshold": {"numerator": "199", "denominator": "200"}
+        })
+    );
 }
 
 /// FR-923-AC-1: a refutation is evidence only when the checker's own replay of
