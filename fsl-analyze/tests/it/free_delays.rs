@@ -1016,9 +1016,8 @@ fn timed_detour_refutation_replays_its_free_delay_scheduler() {
     let witness = record
         .probabilistic_counterexample
         .as_ref()
-        .expect("the independently replayed refutation carries its witness");
+        .unwrap_or_else(|| panic!("expected replayed Detour witness: {record:#?}"));
     assert_eq!(witness.mass(), &ratio(3, 4));
-    let expected = [row(&[("A", 1)], &[("B", 2)]), row(&[("A", 3)], &[("B", 1)])];
     assert!(
         witness
             .evidence()
