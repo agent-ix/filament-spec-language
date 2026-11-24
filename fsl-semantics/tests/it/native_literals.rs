@@ -524,6 +524,108 @@ fn text_literals_share_one_node_and_compare_by_the_profile_equality() {
     assert_ne!(first.admitted(), Some(&literal.key()), "the parameter");
 }
 
+/// FR-091-AC-78 / FR-093-AC-78, TC-1231: `length` and `concat` resolve as
+/// native calls, retain source argument order, and lower without extra laws.
+#[trace(
+    "FR-091-AC-78",
+    "FR-093-AC-78",
+    "TC-1231",
+    "FSpec-FR-322-AC-103",
+    "FSpec-TC-280"
+)]
+#[test]
+fn bytes_length_and_concat_lower_to_native_operations() {
+    let graph = check(
+        "function len using v(a: Bytes): Integer pure { length(a) }\n\
+         function cat using v(a: Bytes, b: Bytes): Bytes pure { concat(a, b) }",
+    )
+    .expect("both native calls check");
+    let all = nodes(&graph);
+    let operations: Vec<_> = all
+        .iter()
+        .filter_map(|node| match node.body() {
+            BodyTerm::Application(term)
+                if matches!(
+                    term.operation.identity(),
+                    "filament.op.bytes.length" | "filament.op.bytes.concat"
+                ) =>
+            {
+                Some(term)
+            }
+            _ => None,
+        })
+        .collect();
+    assert_eq!(operations.len(), 2);
+    for operation in &operations {
+        assert!(operation.operation.laws().is_empty());
+        assert_eq!(operation.operation.mode(), None);
+    }
+    let length = operations
+        .iter()
+        .find(|term| term.operation.identity() == "filament.op.bytes.length")
+        .expect("length operation");
+    assert_eq!(length.arguments.len(), 1);
+    let concat = operations
+        .iter()
+        .find(|term| term.operation.identity() == "filament.op.bytes.concat")
+        .expect("concat operation");
+    assert_eq!(concat.arguments.len(), 2);
+    let targets = concat
+        .arguments
+        .iter()
+        .map(|argument| match argument {
+            MemberTerm::Leaf(LeafTerm::Reference { target }) => target.admitted().cloned(),
+            other => panic!("argument is a reference: {other:?}"),
+        })
+        .collect::<Vec<_>>();
+    assert!(targets.iter().all(Option::is_some));
+    assert_ne!(
+        targets[0], targets[1],
+        "left then right parameter references"
+    );
+}
+
+/// FR-091-AC-78: native operation names share ordinary declaration ambiguity
+/// behavior and reject malformed argument lists and non-Bytes operands.
+#[trace("FR-091-AC-78", "TC-1231")]
+#[test]
+fn bytes_operations_refuse_ambiguity_and_invalid_shapes() {
+    let ambiguous = refused(
+        "function length using v(a: Bytes): Bytes pure { a }\n\
+         function use using v(a: Bytes): Integer pure { length(a) }",
+    );
+    assert!(
+        matches!(ambiguous.cause.as_ref(), CheckCause::AmbiguousName { name, .. } if name == "length")
+    );
+    let ambiguous_concat = refused(
+        "function concat using v(a: Bytes, b: Bytes): Bytes pure { a }\n\
+         function use using v(a: Bytes, b: Bytes): Bytes pure { concat(a, b) }",
+    );
+    assert!(
+        matches!(ambiguous_concat.cause.as_ref(), CheckCause::AmbiguousName { name, .. } if name == "concat")
+    );
+    let qualified = refused("function f using v(a: Bytes): Integer pure { M::length(a) }");
+    assert!(matches!(
+        qualified.cause.as_ref(),
+        CheckCause::MissingQualifiedName(_)
+    ));
+    for source in [
+        "function f using v(a: Bytes): Integer pure { length() }",
+        "function f using v(a: String): Integer pure { length(a) }",
+        "function f using v(a: Bytes): Bytes pure { concat(a) }",
+        "function f using v(a: Bytes, b: String): Bytes pure { concat(a, b) }",
+    ] {
+        let refusal = refused(source);
+        assert!(
+            matches!(
+                refusal.cause.as_ref(),
+                CheckCause::IllTyped(IllTypedCause::TypeMismatch)
+            ),
+            "{refusal:?}"
+        );
+    }
+}
+
 /// QSL-1461, FR-056-AC-52 / TC-1052: the retained sequence determines the
 /// Text bound refusal and its typed cause carries the declared profile data.
 #[trace("FR-056-AC-52", "TC-1052")]

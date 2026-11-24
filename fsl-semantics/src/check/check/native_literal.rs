@@ -159,7 +159,11 @@ impl Typer<'_> {
     /// Refuse `ambiguous_declaration`/`ambiguous-name` when the unit also
     /// declares a function or a type form named `name`: the native
     /// constructor is a second candidate with no span.
-    fn single_candidate(&self, name: &str, location: &Location) -> Result<(), CheckRefusal> {
+    pub(super) fn single_candidate(
+        &self,
+        name: &str,
+        location: &Location,
+    ) -> Result<(), CheckRefusal> {
         if let Some(index) = self.signatures().position(name) {
             return Err(CheckRefusal {
                 location: location.clone(),

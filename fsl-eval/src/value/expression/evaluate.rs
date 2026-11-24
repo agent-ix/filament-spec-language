@@ -4284,6 +4284,26 @@ impl<'a, 'm, N: NodeSource<'a>> Machine<'a, 'm, N> {
                     retain_scalar(Value::Integer(size_of(operand)?), self.meter)?
                 }
             }
+            NodeKind::BytesLength(_) => {
+                let Value::Bytes(bytes) = self.pop()? else {
+                    return Err(invariant("bytes-length-operand-kind"));
+                };
+                retain_scalar(
+                    Value::Integer(filament_eval::bytes::length(&bytes)),
+                    self.meter,
+                )?
+            }
+            NodeKind::BytesConcat(_, _) => {
+                let Value::Bytes(right) = self.pop()? else {
+                    return Err(invariant("bytes-concat-right-kind"));
+                };
+                let Value::Bytes(left) = self.pop()? else {
+                    return Err(invariant("bytes-concat-left-kind"));
+                };
+                let bytes = filament_eval::bytes::concat(&left, &right)
+                    .map_err(|_| invariant("bytes-concat-failed"))?;
+                retain_scalar(Value::Bytes(bytes), self.meter)?
+            }
             NodeKind::Contains(_, _) => {
                 let item = self.pop()?;
                 match self.pop()? {

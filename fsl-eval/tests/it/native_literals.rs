@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! `String`, `UUID` and `Timestamp` literals evaluated from source text
-//! (FR-056-AC-40, TC-1052 step 4).
+//! Native scalar literals and Bytes calls evaluated from source text
+//! (FR-056-AC-40, TC-1231).
 
 use filament_eval::FamilyOutcome;
 use filament_exact::{
@@ -52,6 +52,10 @@ const FUNCTIONS: &str = "\
     function isE using v(t: Text[0, 8; binary-utf8]): Boolean pure { t = Text(\"é\") }\n\
     function isEscapedE using v(t: Text[0, 8; binary-utf8]): Boolean pure { t = Text(\"\\u00e9\") }\n\
     function ends using v(): Boolean pure { Timestamp(-170141183460469231731687303715884105728) = Timestamp(170141183460469231731687303715884105727) }\n";
+
+const BYTES_FUNCTIONS: &str = "\
+    function len using v(a: Bytes): Integer pure { length(a) }\n\
+    function cat using v(a: Bytes, b: Bytes): Bytes pure { concat(a, b) }\n";
 
 struct Fixture {
     package: CheckedPackage,
@@ -123,6 +127,42 @@ fn uuid(text: &str) -> Value {
 
 fn timestamp(text: &str) -> Value {
     Value::Timestamp(Timestamp::from_canonical_text(text).expect("canonical Timestamp"))
+}
+
+#[trace("TC-1231", "FR-091-AC-78", "FR-093-AC-78", "FSpec-FR-322-AC-103", "FSpec-TC-280")]
+#[test]
+fn checked_bytes_length_and_concat_evaluate_in_source_order() {
+    let fixture = fixture_of(BYTES_FUNCTIONS);
+    let length = fixture
+        .package
+        .call(
+            &QualifiedName::unqualified("len").unwrap(),
+            vec![Value::Bytes(vec![0xde, 0xad, 0xbe, 0xef])],
+            &ObjectEnvironment::default(),
+            &mut Meter::new(UNLIMITED),
+        )
+        .expect("length executes");
+    match length.outcome {
+        FamilyOutcome::Evaluated(Outcome::Completed(Value::Integer(value))) => {
+            assert_eq!(value, 4_i64.into());
+        }
+        other => panic!("a completed integer, not {other:?}"),
+    }
+    let concatenated = fixture
+        .package
+        .call(
+            &QualifiedName::unqualified("cat").unwrap(),
+            vec![Value::Bytes(vec![0x00]), Value::Bytes(vec![0xff, 0x01])],
+            &ObjectEnvironment::default(),
+            &mut Meter::new(UNLIMITED),
+        )
+        .expect("concat executes");
+    match concatenated.outcome {
+        FamilyOutcome::Evaluated(Outcome::Completed(Value::Bytes(value))) => {
+            assert_eq!(value, [0x00, 0xff, 0x01]);
+        }
+        other => panic!("a completed Bytes value, not {other:?}"),
+    }
 }
 
 /// FR-056-AC-40: a String parameter compares to `"abc"` by the exact scalar
