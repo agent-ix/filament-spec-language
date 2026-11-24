@@ -17,29 +17,29 @@ use std::collections::BTreeMap;
 use filament_checked::key::DeclarationKey;
 use filament_exact::{Cancel, Identifier, Meter, NodeKey, ScalarLimits, Value};
 use filament_semantic_value::checking::CheckingLimits;
-use fsl_analyze::model_check::{ModelCheckRefusal, ModelCheckRequest, check_model};
+use fsl_analyze::model_check::{check_model, ModelCheckRefusal, ModelCheckRequest};
 use fsl_eval::automaton::translate;
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters, ModelSubject};
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelSimState, ModelSimulationRequest, ModelSystem, PopulationUniverse,
 };
+use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::{AtomReading, UndefinedCause};
-use fsl_foundation::SourceIdentity;
 use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_foundation::SourceIdentity;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    CertificateRequest, EnvelopeSource, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome,
-    ModelTraceSettlement, ModelTraceSubject, QualifiedName, ReplayLimits, ReplayRequestWire,
-    ReplaySource, StateEnvironment, TemporalCounterexample, Witness, WitnessEnvelope,
-    WitnessPacket, replay_model_trace_with_temporal_selections, settle_model_check,
+    replay_model_trace_with_temporal_selections, settle_model_check, CertificateRequest,
+    EnvelopeSource, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ModelTraceSettlement,
+    ModelTraceSubject, QualifiedName, ReplayLimits, ReplayRequestWire, ReplaySource,
+    StateEnvironment, TemporalCounterexample, Witness, WitnessEnvelope, WitnessPacket,
 };
 use fsl_route::reductions::Reductions;
 use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId, PackageDeclarations};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
-use serde_json::{Value as Json, json};
+use serde_json::{json, Value as Json};
 
 use crate::counter::UNLIMITED;
 
@@ -340,8 +340,7 @@ impl World {
     /// snapshot, whose three counters are all zero.
     pub(crate) fn run_state_clause(&self, name: &str) -> fsl_replay::spine::ClauseRunReport {
         use fsl_replay::spine::{
-            run_clause, ClauseRunRequest, ClauseRunSelection, ClauseRunSource,
-            SpineLimits,
+            run_clause, ClauseRunRequest, ClauseRunSelection, ClauseRunSource, SpineLimits,
         };
         use fsl_semantics::model::observation::{
             AnchorKind, ClauseSelection, ClauseSelectionInput, SelectedAnchor, SelectedObject,
@@ -498,6 +497,72 @@ impl World {
             },
             &Cancel::new(),
         )
+    }
+
+    /// Runs and settles one clause through EN-1's analyze adapter with the
+    /// supplied constraint selection and depth horizon.
+    pub(crate) fn analyze_clause(
+        &self,
+        clause_index: usize,
+        atoms: Vec<Atom>,
+        reductions: Reductions,
+        max_depth: Option<usize>,
+    ) -> fsl_analyze::analyze::AnalyzeRecord {
+        let letters = Letters::new(self, clause_index, atoms);
+        let clause = &self.clauses[clause_index];
+        let request_item = ModelCheckItem::Clause {
+            clause,
+            letters: &letters,
+        };
+        let certificate_item = ModelCheckItem::Clause {
+            clause,
+            letters: &letters,
+        };
+        let request = ModelCheckRequest {
+            workers: 1,
+            temporal_clock_selections: &[],
+            subject: self.subject(),
+            item: request_item,
+            max_depth,
+            limits: ModelCheckLimits::default(),
+            reductions,
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
+        };
+        let certificate = CertificateRequest {
+            temporal_clock_selections: &[],
+            subject: self.subject(),
+            item: certificate_item,
+            smt_encoding: fsl_replay::SmtEncodingLimits::default(),
+        };
+        let unit = self.replay_unit();
+        let trace_subject = self.trace_subject();
+        let identity = clause_identity(&self.package, clause_index);
+        let model_item = fsl_analyze::analyze::ModelItem {
+            request,
+            stutter_closure: false,
+            certificate,
+            replay: Box::new(|counterexample| {
+                replay_unit_result(
+                    &unit,
+                    &trace_subject,
+                    counterexample.clone(),
+                    Some(identity),
+                    &letters,
+                )
+            }),
+        };
+        let analyze_item =
+            fsl_analyze::analyze::model_item(fsl_foundation::RequestIndex::new(0), model_item)
+                .expect("the clause creates an analyze item");
+        let mut engines = fsl_analyze::analyze::Engines::default();
+        engines
+            .with(fsl_analyze::analyze::Engine::model_check().expect("EN-1 is registered"))
+            .expect("the engine id is unique");
+        let mut records =
+            fsl_analyze::analyze::analyze_items(&engines, vec![analyze_item], &Cancel::new());
+        assert_eq!(records.len(), 1);
+        records.remove(0)
     }
 
     /// The model state at each position of `counterexample`, read by
