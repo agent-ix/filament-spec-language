@@ -2596,6 +2596,7 @@ fn interval_failure(
     limits: &crate::exact_probabilistic::ExactProbLimits,
     subject: SubjectLimits<'_>,
 ) -> EngineReport {
+    eprintln!("interval document error: {error:?}");
     let scalar_stop = matches!(
         &error,
         ProbabilityDocumentError::Limit {
