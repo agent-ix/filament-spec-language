@@ -29,7 +29,7 @@ fn checked(source_text: &str) -> CheckedPackage {
     assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
     let unit = fsl_forms::build_unit(&parsed).expect("S2 builds the source");
     let model_packages = fsl_semantics::model::intake::package_input([include_bytes!(
-        "fixtures/verification-plan-model.semantic-ir.json"
+        "../fixtures/verification-plan-model.semantic-ir.json"
     )
     .as_slice()])
     .expect("the selected model package is admitted");

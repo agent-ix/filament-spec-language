@@ -37,7 +37,7 @@ use ix_trace_rs::trace;
 use serde_json::{json, Value};
 
 const PACKAGE: &str = "example/config-version";
-const EXAMPLE: &str = include_str!("../../examples/config-version/model.semantic-ir.json");
+const EXAMPLE: &str = include_str!("../../../examples/config-version/model.semantic-ir.json");
 
 /// `owner.name(params): Integer`, redefining `redefines.name` when given.
 fn query(owner: &str, name: &str, params: &[&str], redefines: Option<&str>) -> Value {
