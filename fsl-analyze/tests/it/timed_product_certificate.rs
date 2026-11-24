@@ -480,6 +480,52 @@ fn strict_mean_time_is_certified_over_boundary_regions() {
     assert!(accepted(&world, "MeanTime", &doc));
 }
 
+/// FR-204-AC-24: an unreachable target has infinite elapsed time, so every
+/// threshold is proved without manufacturing a finite exact value.
+#[trace("TC-639", "FR-204-AC-24")]
+#[test]
+fn workload_mean_time_proves_infinite_lower_bound_without_exact_value() {
+    let claims = "probabilistic MeanTime using inf on M over (c: M::Call) under One on origin { expected elapsed until holds(false) >= 3 ms }\n";
+    let world = retx(
+        GUARD,
+        true,
+        "workload One on M { weight Call::send = 1; }\n",
+        claims,
+    );
+    let record = settle(&world, "MeanTime");
+    assert!(
+        matches!(
+            record.terminal().map(|terminal| terminal.value()),
+            Some(TerminalValue::Proved {
+                basis: ProofBasis::Exhaustive,
+                ..
+            })
+        ),
+        "{record:#?}"
+    );
+    assert!(record.exact_probabilistic.is_none());
+}
+
+/// FR-204-AC-25: every admitted scheduler has the same unreachable target.
+#[trace("TC-639", "FR-204-AC-25")]
+#[test]
+fn every_scheduler_mean_time_proves_infinite_lower_bound_without_exact_value() {
+    let claims = "probabilistic MeanTime using inf on M over (c: M::Call) under every scheduler on origin { expected elapsed until holds(false) >= 3 ms }\n";
+    let world = retx(GUARD, true, "", claims);
+    let record = settle(&world, "MeanTime");
+    assert!(
+        matches!(
+            record.terminal().map(|terminal| terminal.value()),
+            Some(TerminalValue::Proved {
+                basis: ProofBasis::Exhaustive,
+                ..
+            })
+        ),
+        "{record:#?}"
+    );
+    assert!(record.exact_probabilistic.is_none());
+}
+
 // --- FR-923 (TC-2492) -------------------------------------------------------
 
 /// A `discrete` delay over every scheduler leaves no choice: minimum and

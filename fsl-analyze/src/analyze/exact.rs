@@ -93,6 +93,9 @@ pub(crate) type SpelledWitness = (Box<ReproducedProbabilityWitness>, Probability
 pub(crate) enum ExactReport {
     /// Only independently reproduced path evidence can settle refuted.
     Refuted(Box<ReproducedProbabilityWitness>, Box<ProbabilityWire>),
+    /// A closed finite product establishes an unbounded expected-time bound
+    /// without a finite exact value or a checker certificate.
+    ProvedExhaustively,
     /// The `on each` claim has no instance to read (FR-875).
     NoInstance,
     /// A semantic replay disagreed with the produced path evidence.
@@ -165,6 +168,10 @@ impl ExactReport {
         Option<SpelledWitness>,
     ) {
         let (record, evidence) = match self {
+            Self::ProvedExhaustively => (
+                TerminalRecord::proved_by_exhaustive_engine(index, backend),
+                None,
+            ),
             Self::Refuted(reproduced, wire) => {
                 return (
                     TerminalRecord::refuted_by_probability_witness(
@@ -978,7 +985,11 @@ fn run_timed_mean(
     let ProbForm::MeanTime { bound, .. } = &claim.form else {
         return not_yet();
     };
-    if !matches!(claim.scheduler, ProbScheduler::Every) || !claim.fairness.is_empty() {
+    if !matches!(
+        claim.scheduler,
+        ProbScheduler::Every | ProbScheduler::Workload(_)
+    ) || !claim.fairness.is_empty()
+    {
         return not_yet();
     }
     let simulation = request.subject.simulation.clone();
@@ -1075,12 +1086,17 @@ fn run_timed_mean(
             return broken();
         }
     };
-    if solved
-        .values
-        .iter()
-        .any(|value| matches!(value, ExtRational::PlusInfinity))
-    {
-        return document_failure(ProbabilityDocumentError::MixedInfiniteCoverage, subject);
+    if matches!(
+        solved.values.get(start.index()),
+        Some(ExtRational::PlusInfinity)
+    ) {
+        if matches!(bound, Bound::AtLeast(_)) {
+            return EngineReport::Exact(Box::new(ExactReport::ProvedExhaustively));
+        }
+        return not_yet();
+    }
+    if matches!(claim.scheduler, ProbScheduler::Workload(_)) {
+        return not_yet();
     }
     let Some(ExtRational::Finite(value)) = solved.values.get(start.index()) else {
         return not_yet();
