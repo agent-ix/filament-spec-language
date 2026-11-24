@@ -30,6 +30,18 @@ the meter log every charge.
 The evaluator-kernel target also runs its Rust report tool before and after
 Criterion so it can identify and summarize only estimates from that invocation.
 
+### Widening redefinitions in model assembly
+
+`make bench-model BENCH_ARGS='model/widening_redefinitions'` runs two rows at
+1,000, 4,000 and 16,000 object types. Each generated package has one field per
+type; the root field refers to the deepest package type and every direct
+specialization widens that field to a reference to the root. `normalize/N`
+times FR-150 normalization of that package. `assemble/N` times
+`PackageDeclarations::assemble_units` with the parsed unit and selected model
+prepared outside the timed region. The smallest-shape test and each benchmark
+setup assert that every package type and field assembles and that widening
+fields settle to the root field's package type.
+
 ### Evaluator kernels
 
 `make bench-evaluator_kernel` runs the `evaluator/kernel` group. It measures

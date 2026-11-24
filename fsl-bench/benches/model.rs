@@ -38,6 +38,7 @@ use criterion::{
     criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, SamplingMode, Throughput,
 };
 use filament_exact::Meter;
+use fsl_bench::check;
 use fsl_bench::model::{
     self, admit_offer, admit_population, admit_unchanged_invocation, admitted, chain_type, intake,
     offer, parse_document, population_document, query_all_instances_of_root, read,
@@ -66,6 +67,7 @@ const QUERY_DEPTHS: [usize; 4] = [1, 8, 32, 120];
 /// The `allInstances` member sweep: depth and member counts.
 const MEMBER_DEPTH: usize = 8;
 const MEMBER_COUNTS: [usize; 3] = [250, 1_000, 4_000];
+const WIDENING_REDEFINITION_TYPES: [usize; 3] = [1_000, 4_000, 16_000];
 
 fn shape(types: usize) -> ModelShape {
     ModelShape {
@@ -236,12 +238,58 @@ fn conformance_members(c: &mut Criterion) {
     group.finish();
 }
 
+fn widening_redefinitions(c: &mut Criterion) {
+    let mut group = c.benchmark_group("model/widening_redefinitions");
+    group.sample_size(10);
+    group.measurement_time(Duration::from_secs(3));
+    for types in WIDENING_REDEFINITION_TYPES {
+        let document = model::widening_redefinitions_document(types);
+        let domain_package = Arc::new(
+            intake(&offer(document)).expect("the widening-redefinition package passes intake"),
+        );
+        let _normalized = view(&domain_package);
+        assert_eq!(
+            domain_package.records.len(),
+            types * 2,
+            "{types} package types each contribute one field record"
+        );
+        let fixture = check::widening_assembly_fixture(types);
+        let assembled = check::assemble_widening_model(fixture.clone())
+            .expect("the widening-redefinition model assembles");
+        check::assert_widening_assembly_shape(&assembled, types);
+
+        group.bench_with_input(
+            BenchmarkId::new("normalize", types),
+            &domain_package,
+            |b, package| b.iter(|| black_box(view(black_box(package)))),
+        );
+        group.bench_with_input(
+            BenchmarkId::new("assemble", types),
+            &fixture,
+            |b, fixture| {
+                b.iter_batched(
+                    || fixture.clone(),
+                    |fixture| {
+                        black_box(
+                            check::assemble_widening_model(fixture)
+                                .expect("the widening-redefinition model assembles"),
+                        )
+                    },
+                    BatchSize::LargeInput,
+                );
+            },
+        );
+    }
+    group.finish();
+}
+
 criterion_group!(
     benches,
     intake_stages,
     normalization_and_admission,
     cold_admission,
     conformance_depth,
-    conformance_members
+    conformance_members,
+    widening_redefinitions
 );
 criterion_main!(benches);

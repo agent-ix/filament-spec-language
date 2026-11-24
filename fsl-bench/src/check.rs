@@ -17,12 +17,117 @@ use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_forms::{BinaryOperator, BuiltinType, Expression, FunctionDeclaration, TypeForm};
 use fsl_foundation::source::provenance::RawSourceRef;
 use fsl_package::CheckedPackage;
+use fsl_semantics::check::{AssemblyLimits, AssemblyRefusal};
 use fsl_semantics::check::{CheckRefusal, CheckedGraph, EnumBinding, PackageDeclarations};
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
+use fsl_semantics::model::intake::{admit_units_with_cancel, package_input, SelectedModels};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::value::enumeration::{
     AdmittedEnumDeclaration, EnumDeclarationPreimage, EnumMemberPreimage,
 };
 use fsl_semantics::value::{NodeOwner, OwnerSelection, OwnerSubject};
+
+/// One pre-admitted source unit and model selection for measuring type
+/// assembly independently of source parsing and model intake.
+#[derive(Clone)]
+pub struct WideningAssemblyFixture {
+    source: fsl_foundation::source::provenance::RawSourceRef,
+    unit: fsl_forms::ParsedUnit,
+    models: SelectedModels,
+}
+
+/// Build the package selection and unit used by the widening-redefinition
+/// assembly benchmark. Fixture construction is outside its timed region.
+///
+/// # Panics
+///
+/// Panics if the generated package cannot be admitted or the benchmark unit
+/// cannot be parsed and selected.
+pub fn widening_assembly_fixture(types: usize) -> WideningAssemblyFixture {
+    let bytes = crate::model::widening_redefinitions_document(types);
+    let packages = package_input([bytes.as_slice()]).expect("the benchmark package reads");
+    let text = b"language \"ix:native\" edition \"1-draft\";\nmodel Bench = \"bench/model\";\n";
+    let parsed = fsl_cst::parse(
+        fsl_foundation::SourceIdentity::new("agent-ix", "fsl-bench"),
+        "widening.native",
+        text,
+        fsl_cst::Limits::default(),
+    )
+    .expect("the benchmark unit reads");
+    assert!(parsed.is_admissible(), "{:?}", parsed.diagnostics());
+    let unit = fsl_forms::build_unit(&parsed).expect("the benchmark unit builds");
+    let selections = [unit.selections().models.as_slice()];
+    let models = admit_units_with_cancel(
+        &selections,
+        &packages,
+        ModelNormalizationLimits::default(),
+        &filament_exact::Cancel::new(),
+    )
+    .expect("the benchmark model admits");
+    WideningAssemblyFixture {
+        source: parsed.source().reference().clone(),
+        unit,
+        models,
+    }
+}
+
+/// Assemble one prepared widening-redefinition fixture. The benchmark
+/// clones this fixture in its Criterion setup closure, outside timing.
+pub fn assemble_widening_model(
+    fixture: WideningAssemblyFixture,
+) -> Result<PackageDeclarations, AssemblyRefusal> {
+    PackageDeclarations::assemble_units(
+        "fsl-bench".to_owned(),
+        vec![(fixture.source, fixture.unit)],
+        fixture.models,
+        Vec::new(),
+        AssemblyLimits::default(),
+        &filament_exact::Cancel::new(),
+    )
+}
+
+/// Assert that every generated package type and package-typed field survives
+/// assembly, and that widening fields settle to the root's package type.
+///
+/// # Panics
+///
+/// Panics if the assembled environment omits a generated type or field, or
+/// if a widened field does not settle to the root field's package type.
+pub fn assert_widening_assembly_shape(package: &PackageDeclarations, types: usize) {
+    let mut object_types = package
+        .types
+        .object_types()
+        .filter(|object_type| object_type.name().starts_with("Bench::W"));
+    let declared: Vec<_> = object_types.by_ref().collect();
+    assert_eq!(
+        declared.len(),
+        types,
+        "every generated package type assembles"
+    );
+    let deepest_name = format!("Bench::W{}", types - 1);
+    let deepest = declared
+        .iter()
+        .find(|object_type| object_type.name() == deepest_name)
+        .expect("the deepest package type assembles");
+    let expected = ValueType::Reference(deepest.key().clone());
+    for object_type in declared {
+        let [field] = object_type.attributes() else {
+            panic!("{} has one field", object_type.name());
+        };
+        assert_eq!(
+            field.name(),
+            "target",
+            "{} retains its field",
+            object_type.name()
+        );
+        assert_eq!(
+            field.value_type(),
+            &expected,
+            "{}'s widening field settles to the root target type",
+            object_type.name()
+        );
+    }
+}
 
 /// A kernel limit set no evaluation in this crate runs out of.
 pub const SCALAR_UNLIMITED: ScalarLimits = ScalarLimits {
@@ -305,6 +410,33 @@ pub fn admit_object_types(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[ix_trace_rs::trace("NFR-141-AC-16")]
+    #[test]
+    fn package_typed_widening_redefinitions_assemble_to_the_root_field_type() {
+        let types = 4;
+        let document = crate::model::widening_redefinitions_document(types);
+        let document: serde_json::Value =
+            serde_json::from_slice(&document).expect("the benchmark generator emits JSON");
+        let declarations = document["types"].as_array().expect("type declarations");
+        assert_eq!(declarations.len(), types);
+        let root_field = crate::model::node("W0/target");
+        let deepest = crate::model::node("W3");
+        assert_eq!(declarations[0]["fields"][0]["typeRef"], deepest);
+        for declaration in declarations.iter().skip(1) {
+            assert_eq!(declaration["supertypes"][0], crate::model::node("W0"));
+            assert_eq!(
+                declaration["fields"][0]["typeRef"],
+                crate::model::node("W0")
+            );
+            assert_eq!(declaration["fields"][0]["redefines"], root_field);
+        }
+
+        let fixture = widening_assembly_fixture(types);
+        let package = assemble_widening_model(fixture)
+            .expect("the package's widening fields admit through type assembly");
+        assert_widening_assembly_shape(&package, types);
+    }
 
     #[test]
     fn smallest_packages_check_and_evaluate() {
