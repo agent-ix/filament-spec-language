@@ -406,3 +406,98 @@ impl ModelSystem<'_> {
         Ok((self.permute(state, &permutation)?, permutation))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use filament_checked::key::DeclarationKey;
+    use ix_trace_rs::trace;
+    use serde_json::json;
+
+    use crate::simulation::sampled::world::{Model, World};
+    use crate::simulation::{Permutation, SymmetryClass, SymmetryGroup, TransitionSystem};
+
+    fn fixture() -> (World, SymmetryGroup) {
+        let package = "test/symmetry";
+        let model = Model {
+            package,
+            object: "Counter",
+            population: "counters",
+            key: "a",
+            integers: vec![("Level", 0, 1)],
+            fields: vec![("value", format!("ix://{package}/Level"))],
+            operations: Vec::new(),
+            body: String::new(),
+            initial: json!({"value": {"integer": "0"}}),
+        };
+        let population = DeclarationKey {
+            package: package.to_owned(),
+            node: format!("ix://{package}/counters"),
+        };
+        let world = World::new(&model).with_universe_keys(&["a", "b"]);
+        let group = SymmetryGroup {
+            classes: vec![SymmetryClass {
+                population,
+                keys: vec!["a".to_owned(), "b".to_owned()],
+            }],
+        };
+        (world, group)
+    }
+
+    /// FR-152-AC-2: the evaluator canonicaliser maps permuted states to one
+    /// representative of the same symmetry orbit.
+    #[trace("TC-1583", "FR-152-AC-2")]
+    #[test]
+    fn canonicalise_is_permutation_invariant() {
+        let (world, group) = fixture();
+        let system = world.system();
+        let state = system.initial().into_iter().next().expect("initial state");
+        let permuted = system
+            .permute(
+                &state,
+                &Permutation::of(
+                    &group.classes[0].population,
+                    [("a", "b"), ("b", "a")]
+                        .into_iter()
+                        .map(|(from, to)| (from.to_owned(), to.to_owned())),
+                ),
+            )
+            .expect("permutation applies");
+        let canonical = system
+            .canonicalise(&state, &group)
+            .expect("state canonicalises")
+            .0;
+        let canonical_permuted = system
+            .canonicalise(&permuted, &group)
+            .expect("permuted state canonicalises")
+            .0;
+        assert_eq!(
+            system.state_key(&canonical).expect("canonical key").0,
+            system
+                .state_key(&canonical_permuted)
+                .expect("permuted canonical key")
+                .0,
+        );
+    }
+
+    /// FR-152-AC-4: canonicalising an evaluator state twice preserves its
+    /// canonical key.
+    #[trace("TC-1583", "FR-152-AC-4")]
+    #[test]
+    fn canonicalise_is_idempotent() {
+        let (world, group) = fixture();
+        let system = world.system();
+        let state = system.initial().into_iter().next().expect("initial state");
+        let once = system
+            .canonicalise(&state, &group)
+            .expect("state canonicalises")
+            .0;
+        let twice = system
+            .canonicalise(&once, &group)
+            .expect("canonical state canonicalises")
+            .0;
+        assert_eq!(
+            system.state_key(&once).expect("canonical key").0,
+            system.state_key(&twice).expect("twice canonical key").0,
+        );
+    }
+}
