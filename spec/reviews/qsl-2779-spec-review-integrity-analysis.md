@@ -51,3 +51,23 @@ Clean:
 - FR-930 text, FR-930-AC-5, FR-930-AC-6 (examined, clean)
 - FR-1040 runtime-value text, FR-1040-AC-10..12 (examined)
 - TC-1326, TC-2600, TC-3030, TC-3084, TC-3172 additions (examined)
+
+## New findings (disposition pass 1)
+
+| ID | Severity | Summary | Refs |
+| --- | --- | --- | --- |
+| FND-009 | medium | The FSpec fix round adds `taken` `{type: "failing"}` and `positions[].candidate_blocks` (FR-418, FR-418-AC-22, FR-740-AC-6), but FSL FR-244 and FR-245 are not amended. FR-244 writes `taken` `None` for "the failing edge into the entry", and its `positions` carry no clock blocks. FR-245 rejects `StepFails` for any failing step whose target is not a locked entry. FSpec now rejects `null` for an undelayed failing edge and accepts `failing`. The native emitter and checker spec therefore disagree with the FSpec wire on both items. | FR-244:78,159; FR-245:83-84,121; FSpec FR-418-AC-22; FSpec FR-740-AC-6 |
+| FND-010 | low | TC-546 now says the tagged test "is replaced" by `a_protocol_node_row_lifts_by_the_declared_field_type` and `a_protocol_node_row_faults_when_no_object_row_conforms`. Neither exists on main (0 matches in refinement_protocol.rs), and the old `Fault` test is still tagged FR-141-AC-15. This states a code change as done in a spec PR. Phrase it as the expected tests, and track the code change on a ticket so the contradicting test does not stay tagged. | TC-546; fsl-analyze/tests/it/refinement_protocol.rs:2233 |
+
+## Dispositions
+
+| FND | outcome | reason |
+| --- | --- | --- |
+| FND-001 | fixed | At d9cb3b64, TC-546 step 10's expected result is the pass by declared field type, and `Fault` is limited to a declared type no row conforms to, which agrees with the amended FR-141-AC-15. The old test on main is tracked as FND-010. |
+| FND-002 | fixed | TC-546 scope is now FR-141-AC-11 to FR-141-AC-16, with step 11 for AC-16. |
+| FND-003 | fixed | FR-202-AC-46 accepts ranked `lower` certificates over the cyclic chain per AC-41/42, and refuses only a fair-minimum (FR-1041) ranking part over a cyclic graph, as `inconclusive`/`certificate-rejected`/`malformed` at `{"member": "ranking"}`. This is identical to FSpec FR-412-AC-28 at 373286f6. |
+| FND-004 | fixed | The `eventually` case is now `probability >= 1/2` with value 0. |
+| FND-005 | fixed | FR-852-AC-7 says `Late` is the item for `c.phase = 3`, the `TimedOut` state of FSpec FR-712-AC-5. |
+| FND-006 | fixed | FR-1040-AC-10 states that `eq` over a clock reference and an object reference refuses `ill_typed`/`operator-ineligible` at check time. |
+| FND-007 | fixed | Both rows now map to the one operation `enq`, with target types `FastQueue` and `SlowQueue`. |
+| FND-008 | fixed | The closing summary paragraph now follows the runtime-value bullet, and the wire form cites FSpec FR-181. |

@@ -12,7 +12,7 @@ relationships:
 
 Verify the reachability, Büchi and divergence parts of zone certificates and their canonical bytes.
 
-Scope: FR-244-AC-1 to FR-244-AC-3, FR-244-AC-4, FR-244-AC-5, FR-244-AC-6.
+Scope: FR-244-AC-1 to FR-244-AC-3, FR-244-AC-4, FR-244-AC-5, FR-244-AC-6 and FR-244-AC-8.
 
 ## Test Procedure
 
@@ -24,6 +24,7 @@ Fixtures: ADR-026 §11's `Rpc` unit with `T = 3 ms` and `T = 4 ms`, universe `{c
 4. Prove `always holds(c.phase = A)` over `Lock` and read its certificate.
 5. Prove the safety half of FR-430-AC-1's `TReq` refinement and of FR-430-AC-6's `dead` refinement on the zone search and read their refinement-form certificates, twice (FR-244-AC-5).
 6. Prove the safety half of FR-245-AC-9's `Init3` refinement twice and read `initials` and the initial nodes (FR-244-AC-6).
+7. Prove a timed refinement whose failing step enters a time-locked entry node, and one over a timed abstract model with two candidates of one abstract state with different clock blocks; read each edge's `taken` and each position's `candidate_blocks` (FR-244-AC-8).
 
 Tag the tests `#[trace("TC-699", "FR-244-AC-n")]`.
 
@@ -35,3 +36,4 @@ Tag the tests `#[trace("TC-699", "FR-244-AC-n")]`.
 - Step 4: `Holds`, with `(B, x <= 1)` listed as a `locked` node whose edges reach no quiescent node and no positive-delay cycle.
 - Step 5: a refinement-form certificate (`refinement` present, positions indexed, discrete edges only, `admitted` path, the refinement item's identity), the `undo` post-state a `locked` node with no position; byte-equal across two runs.
 - Step 6: three initial nodes in `initials`; index 1 a `locked` node with the reserved index and no position; byte-equal across two runs.
+- Step 7: the failing edge into the entry has `Taken::Failing` and every edge inside the locked region `None`; the two candidates are two entries with their blocks sorted by (state key, block key).
