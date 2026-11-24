@@ -7,7 +7,7 @@
 //! Each document wraps the base objective of an exact proof the analyzer
 //! emits for the same model, with the values the criterion names.
 
-use super::bounded::{document, replace_source_and_rebind, request_with, run};
+use super::bounded::{document, mutate, replace_source_and_rebind, request_with, run};
 use fsl_analyze::exact_probabilistic::ExactProbLimits;
 use ix_trace_rs::trace;
 use serde_json::{json, Value};
