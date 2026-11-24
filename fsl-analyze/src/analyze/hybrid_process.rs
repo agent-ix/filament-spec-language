@@ -13,16 +13,16 @@ use filament_semantic_value::catalog::CatalogCode;
 use filament_semantic_value::fairness::FairnessKind;
 use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::{BackendId, RequestIndex};
-use fsl_replay::planner::{read_result_entry, EntryOrigin};
+use fsl_replay::planner::{EntryOrigin, read_result_entry};
 use fsl_replay::{
-    read_plugin_certification, HybridAnswer, HybridEntryRefusal, HybridProcessDependency,
-    HybridProcessItem, HybridProcessPackageContext, HybridProcessRequest, HybridProcessStage,
-    SolverBudget, TerminalValue, ToolFailure,
+    HybridAnswer, HybridEntryRefusal, HybridProcessDependency, HybridProcessItem,
+    HybridProcessPackageContext, HybridProcessRequest, HybridProcessStage, SolverBudget,
+    TerminalValue, ToolFailure, read_plugin_certification,
 };
 use fsl_route::BackendDescriptor;
 use fsl_semantics::check::wire_id::WireGraph;
 use fsl_semantics::check::{Capability, CheckedGraph, CheckedHybridClaim};
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use super::hybrid_item::HybridReport;
 use super::{BackendTool, EngineReport, HybridExchangeError, Refusal};
@@ -122,7 +122,7 @@ pub(super) fn answer(
             let mut detail = Map::new();
             detail.insert("invariant".to_owned(), "hybrid-claim-model".into());
             detail.insert("model".to_owned(), model.get().into());
-            Err(EngineReport::Refused(Refusal::FailedWithDetail(
+            Err(EngineReport::Refused(Refusal::failed_with_detail(
                 CatalogCode::new("runtime_invariant", "established-invariant-broken"),
                 detail,
             )))
@@ -311,7 +311,7 @@ fn invalid(code: &'static str, cause: &'static str, pointer: Option<&str>) -> En
     if let Some(pointer) = pointer {
         detail.insert("pointer".to_owned(), pointer.into());
     }
-    EngineReport::Refused(Refusal::FailedWithDetail(
+    EngineReport::Refused(Refusal::failed_with_detail(
         CatalogCode::new(code, cause),
         detail,
     ))

@@ -6,22 +6,22 @@
 
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::model_subject::ModelInstance;
-use fsl_eval::simulation::model::{ClauseOutcome, ModelSystem, DEFAULT_MAX_CLOCKS};
+use fsl_eval::simulation::model::{ClauseOutcome, DEFAULT_MAX_CLOCKS, ModelSystem};
 use fsl_eval::simulation::protocol::{CapacityRefusal, ProtocolRefusal, ProtocolTransition};
-use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
+use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::CheckedPackage;
-use fsl_replay::statistical::{settle_statistical, settle_statistical_refusal, SubjectLimits};
+use fsl_replay::statistical::{SubjectLimits, settle_statistical, settle_statistical_refusal};
 use fsl_replay::{
-    check_zone_certificate, settle_hyper_form, CertificateCheckLimits, CertificateRequest,
-    DeclineCode, ModelTraceRefusal, ModelTraceReplayResult, ProofRefusalCause,
-    RefinementTraceSettlement, ReplayRefusal, SubjectRefusal, TemporalCounterexample,
-    TerminalValue, UnavailabilityCause, ZoneCertificateRequest,
+    CertificateCheckLimits, CertificateRequest, DeclineCode, ModelTraceRefusal,
+    ModelTraceReplayResult, ProofRefusalCause, RefinementTraceSettlement, ReplayRefusal,
+    SubjectRefusal, TemporalCounterexample, TerminalValue, UnavailabilityCause,
+    ZoneCertificateRequest, check_zone_certificate, settle_hyper_form,
 };
 use fsl_replay::{ModelCheckItem, ModelCheckLimits, ProtocolCertificateRequest, SubjectIdentity};
+use fsl_route::Mode;
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::request::{DerivedLimit, DerivedLimits, ItemKind, RequestItem, RequirementItem};
-use fsl_route::Mode;
 use fsl_semantics::check::{
     Capability, CheckedTemporalClause, DeclarationFamily, HyperForm, TerminalKeys, TerminalMismatch,
 };
@@ -33,15 +33,15 @@ use filament_exact::{Cancel, ObjectReference, ValueType};
 use super::{AnalyzeItem, EngineReport, Refusal};
 use crate::claim_family::{claim_family, kind_family};
 use crate::model_check::{
-    check_model_with_stutter_closure, check_protocol_constrained, manifest as en1, HyperRefusal,
-    LivenessRefusal, ModelCheckRefusal, ModelCheckRequest, ProtocolCheckRequest,
+    HyperRefusal, LivenessRefusal, ModelCheckRefusal, ModelCheckRequest, ProtocolCheckRequest,
+    check_model_with_stutter_closure, check_protocol_constrained, manifest as en1,
 };
-use crate::statistical::{check_statistical, manifest as en4, StatisticalRequest};
+use crate::statistical::{StatisticalRequest, check_statistical, manifest as en4};
 use crate::zone_check::{
-    certificate_item, check_timed_model, check_timed_refinement, manifest as en6,
-    settle_timed_refinement, settle_zone_check, TimedLivenessHalf, TimedRefinementOutcome,
-    TimedRefinementRefusal, TimedRefinementRequest, TimedSafetyOutcome, ZoneCheckItem,
-    ZoneCheckLimits, ZoneCheckRefusal, ZoneCheckRequest, ZoneItem,
+    TimedLivenessHalf, TimedRefinementOutcome, TimedRefinementRefusal, TimedRefinementRequest,
+    TimedSafetyOutcome, ZoneCheckItem, ZoneCheckLimits, ZoneCheckRefusal, ZoneCheckRequest,
+    ZoneItem, certificate_item, check_timed_model, check_timed_refinement, manifest as en6,
+    settle_timed_refinement, settle_zone_check,
 };
 
 /// The FR-396/FR-399 negotiation seam for a routed hyper item. HP-4 calls
@@ -359,12 +359,14 @@ pub(super) fn settle_protocol_item(
                 .and_then(|_| {
                     fsl_eval::simulation::protocol::over_reference(simulation, &protocol, &over)
                 })
-                .map(|over| fsl_replay::ProtocolWire {
-                    protocol,
-                    over,
-                    roles,
-                    capacities,
-                    max_live_instances: on_each.then_some(max_live_instances),
+                .map(|over| {
+                    Box::new(fsl_replay::ProtocolWire {
+                        protocol,
+                        over,
+                        roles,
+                        capacities,
+                        max_live_instances: on_each.then_some(max_live_instances),
+                    })
                 });
             EngineReport::Protocol(Box::new(record), subject)
         }
@@ -551,7 +553,9 @@ pub enum DerivedItemMismatch {
     /// A derived item's run handed to [`model_item`], [`protocol_item`] or
     /// [`zone_item`], which settle it with no join to its request item: a
     /// derived item settles only through its derived adapter (FR-411).
-    #[error("request item {index:?}'s run is a derived item's; it settles only through its derived adapter")]
+    #[error(
+        "request item {index:?}'s run is a derived item's; it settles only through its derived adapter"
+    )]
     DerivedRun {
         /// The request item's index.
         index: RequestIndex,
@@ -560,7 +564,9 @@ pub enum DerivedItemMismatch {
     /// `model_root` anchor equal to the derived request item's claim, the
     /// node of its obligation identity (FSpec FR-368, ADR-013 O-09): the
     /// run answers another subject's item.
-    #[error("stale_dependency/content-mismatch: no model_root of the run's package anchors request item {index:?} at {occurrence}")]
+    #[error(
+        "stale_dependency/content-mismatch: no model_root of the run's package anchors request item {index:?} at {occurrence}"
+    )]
     OtherAnchor {
         /// The request item's index.
         index: RequestIndex,
@@ -825,7 +831,7 @@ pub fn derived_protocol_item<'a, S>(
         ItemKind::LoopInvariant => |run| matches!(run, ModelCheckItem::LoopInvariant { .. }),
         ItemKind::LoopTermination => |run| matches!(run, ModelCheckItem::LoopTermination { .. }),
         ItemKind::Formula | ItemKind::TimeLockFreedom | ItemKind::Refinement => {
-            return Err(DerivedItemMismatch::NotDerived { index })
+            return Err(DerivedItemMismatch::NotDerived { index });
         }
     };
     let models = match (&obligation.kind, kind) {
@@ -1111,7 +1117,7 @@ pub(crate) fn admission(failure: &AdmissionFailure) -> Refusal {
                 .iter()
                 .map(|(name, value)| ((*name).to_owned(), serde_json::json!(value)))
                 .collect();
-            Refusal::DeclinedWithDetail(cause, decline, record.catalog, detail)
+            Refusal::declined_with_detail(cause, decline, record.catalog, detail)
         }
     };
     match failure {
@@ -1155,14 +1161,14 @@ pub(super) fn package_projection_refusal(
                 None => serde_json::json!({"type": "package"}),
             };
             detail.insert("locus".to_owned(), locus);
-            Refusal::UnsupportedWithDetail(CatalogCode::new(code, cause), detail)
+            Refusal::unsupported_with_detail(CatalogCode::new(code, cause), detail)
         }
         Err(failure) => {
             detail.insert(
                 "selection".to_owned(),
                 serde_json::json!(format!("{failure:?}")),
             );
-            Refusal::FailedWithDetail(BROKEN, detail)
+            Refusal::failed_with_detail(BROKEN, detail)
         }
     }
 }
@@ -1345,7 +1351,7 @@ pub(super) fn statistical_refusal(
 fn named_decline(code: CatalogCode, member: &str, name: String) -> Refusal {
     let mut detail = serde_json::Map::new();
     detail.insert(member.to_owned(), serde_json::json!(name));
-    Refusal::DeclinedWithDetail(
+    Refusal::declined_with_detail(
         ProofRefusalCause::InvalidInput,
         DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
         code,

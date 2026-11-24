@@ -58,9 +58,9 @@ mod timed_item;
 pub(crate) use request::analyze_bound;
 
 pub use request::{
-    analyze, ClaimItem, ClaimRefusal, CompositionItem, FiniteHyperItem, HybridItem, ItemForm,
-    ItemOptions, NegotiatedItem, ProbabilisticItem, ProbabilisticLimits, ProvisionRefusal,
-    SourceProvision, TemporalItem,
+    ClaimItem, ClaimRefusal, CompositionItem, FiniteHyperItem, HybridItem, ItemForm, ItemOptions,
+    NegotiatedItem, ProbabilisticItem, ProbabilisticLimits, ProvisionRefusal, SourceProvision,
+    TemporalItem, analyze,
 };
 
 use filament_exact::{Cancel, ObjectReference, ScalarLimits};
@@ -90,21 +90,21 @@ use fsl_semantics::model::observation::{
 
 pub use crate::contract_check::contract_item;
 pub use crate::value_check::value_item;
-pub(crate) use clause_item::{replay_protocol_over, ProtocolReplayInputs, ReplayShape};
 pub use clause_item::{
-    ClauseItemRefusal, ClauseLimits, ClauseSubject, PackageClauseSubject, CLAUSE_TRANSCRIPT,
+    CLAUSE_TRANSCRIPT, ClauseItemRefusal, ClauseLimits, ClauseSubject, PackageClauseSubject,
 };
-pub use derived_item::{deadlock_model_item, PackageDeadlockSubject};
-pub(crate) use derived_item::{derived_target, NoLetters};
-pub use exact::{exact_probabilistic_item, ExactProbabilityEvidence};
+pub(crate) use clause_item::{ProtocolReplayInputs, ReplayShape, replay_protocol_over};
+pub(crate) use derived_item::{NoLetters, derived_target};
+pub use derived_item::{PackageDeadlockSubject, deadlock_model_item};
+pub use exact::{ExactProbabilityEvidence, exact_probabilistic_item};
 #[cfg(feature = "test-support")]
 pub use exact::{exact_probabilistic_item_tampered, exact_probabilistic_item_witness_tampered};
 pub use invariant_item::{PackageInvariantSubject, PackageItemInputs};
 pub(crate) use items::admission;
 pub use items::{
-    derived_model_item, derived_protocol_item, derived_zone_item, hyper_form_item, model_item,
-    protocol_item, statistical_item, timed_refinement_item, zone_item, DerivedItemMismatch,
-    ModelItem, ProtocolItem, ProtocolReplayFn, RefinementReplayFn, TimedItem, TimedRefinementItem,
+    DerivedItemMismatch, ModelItem, ProtocolItem, ProtocolReplayFn, RefinementReplayFn, TimedItem,
+    TimedRefinementItem, derived_model_item, derived_protocol_item, derived_zone_item,
+    hyper_form_item, model_item, protocol_item, statistical_item, timed_refinement_item, zone_item,
 };
 pub use simulation_item::{SimulationItem, SimulationMode, SimulationSelection};
 pub use state_graph_item::PackageStateGraphSubject;
@@ -1157,7 +1157,7 @@ impl ItemDetail {
 pub enum AnalyzeRefusal {
     /// FR-1046 canonical receipt admission refused the selected document.
     #[error(transparent)]
-    EffectDecision(document::effect_decision::ReceiptRefusal),
+    EffectDecision(Box<document::effect_decision::ReceiptRefusal>),
     /// A document reader or encoder failed before subject binding.
     #[error("the analyze document could not be admitted: {0}")]
     Document(AdmissionFailure),
@@ -1397,16 +1397,18 @@ impl AnalyzeRefusal {
                 let catalog = refusal.catalog_code();
                 let category = category_of(&catalog).unwrap_or(Category::Refusal);
                 OutcomeDocument::new(Operation::Analyze, Some(OutcomeStage::S4), category)
-                    .with_diagnostics(vec![OutcomeDiagnostic::new(
-                        Some(catalog.cause()),
-                        catalog.code(),
-                        None,
-                        refusal.to_string(),
-                    )
-                    .with_selection(
-                        (catalog == CatalogCode::new("missing_import", "missing-selection"))
-                            .then_some(fsl_replay::outcome::hint::MissingSelection::Source),
-                    )])
+                    .with_diagnostics(vec![
+                        OutcomeDiagnostic::new(
+                            Some(catalog.cause()),
+                            catalog.code(),
+                            None,
+                            refusal.to_string(),
+                        )
+                        .with_selection(
+                            (catalog == CatalogCode::new("missing_import", "missing-selection"))
+                                .then_some(fsl_replay::outcome::hint::MissingSelection::Source),
+                        ),
+                    ])
             }
         }
     }
@@ -1436,13 +1438,10 @@ pub(crate) fn refusal_document(
         }
         AdmissionFailure::Fault(fault) => (fault.catalog_code(), fault.category(), None),
     };
-    OutcomeDocument::new(operation, None, category).with_diagnostics(vec![OutcomeDiagnostic::new(
-        Some(catalog.cause()),
-        catalog.code(),
-        None,
-        message,
-    )
-    .with_details(details)])
+    OutcomeDocument::new(operation, None, category).with_diagnostics(vec![
+        OutcomeDiagnostic::new(Some(catalog.cause()), catalog.code(), None, message)
+            .with_details(details),
+    ])
 }
 
 impl AnalyzeOutcome {
@@ -1850,7 +1849,7 @@ impl Payload {
     /// `family`).
     #[must_use]
     pub fn detail(&self) -> serde_json::Map<String, serde_json::Value> {
-        use serde_json::{json, Value};
+        use serde_json::{Value, json};
         let entries: Vec<(&str, Value)> = match self {
             Self::None => Vec::new(),
             Self::Kind(kind) => vec![("kind", json!(kind.to_wire()))],
@@ -1988,7 +1987,7 @@ pub(crate) enum EngineReport {
     /// `settle_protocol_check`.
     Protocol(
         Box<ModelCheckRecord<ProtocolTransition>>,
-        Option<fsl_replay::ProtocolWire>,
+        Option<Box<fsl_replay::ProtocolWire>>,
     ),
     /// EN-4's record, settled by FR-192's map.
     Statistical(Box<StatisticalRecord>),
@@ -2046,7 +2045,7 @@ pub(crate) enum Refusal {
         ProofRefusalCause,
         DeclineCode,
         CatalogCode,
-        serde_json::Map<String, serde_json::Value>,
+        Box<serde_json::Map<String, serde_json::Value>>,
     ),
     /// An unbounded extent: `unsupported` with `unbounded-extent`.
     RequiresBound,
@@ -2071,20 +2070,51 @@ pub(crate) enum Refusal {
     /// `unsupported` with the refusal's own diagnostic.
     Unsupported(CatalogCode),
     /// `unsupported` with structured details naming the unavailable package fact.
-    UnsupportedWithDetail(CatalogCode, serde_json::Map<String, serde_json::Value>),
+    UnsupportedWithDetail(CatalogCode, Box<serde_json::Map<String, serde_json::Value>>),
     /// `failed` with the refusal's diagnostic.
     Failed(CatalogCode),
     /// `failed` with the refusal's diagnostic and its detail (FR-750
     /// "Replay refusals": the invariant a checked package broke).
-    FailedWithDetail(CatalogCode, serde_json::Map<String, serde_json::Value>),
+    FailedWithDetail(CatalogCode, Box<serde_json::Map<String, serde_json::Value>>),
     /// FR-750: `unsupported`, `unsupported_construct`/`expression-form`, the
     /// detail of a hybrid provider's construct outside its class, which the
     /// record completes with the backend.
-    UnsupportedConstruct(serde_json::Map<String, serde_json::Value>),
+    UnsupportedConstruct(Box<serde_json::Map<String, serde_json::Value>>),
     /// `unsupported` `unsupported-requested-capability`: the package of a
     /// provider item could not be emitted, so no request was sent (FSpec
     /// FR-331-AC-33).
     NotEmitted,
+}
+
+impl Refusal {
+    pub(crate) fn declined_with_detail(
+        cause: ProofRefusalCause,
+        decline: DeclineCode,
+        code: CatalogCode,
+        detail: serde_json::Map<String, serde_json::Value>,
+    ) -> Self {
+        Self::DeclinedWithDetail(cause, decline, code, Box::new(detail))
+    }
+
+    pub(crate) fn unsupported_with_detail(
+        code: CatalogCode,
+        detail: serde_json::Map<String, serde_json::Value>,
+    ) -> Self {
+        Self::UnsupportedWithDetail(code, Box::new(detail))
+    }
+
+    pub(crate) fn failed_with_detail(
+        code: CatalogCode,
+        detail: serde_json::Map<String, serde_json::Value>,
+    ) -> Self {
+        Self::FailedWithDetail(code, Box::new(detail))
+    }
+
+    pub(crate) fn unsupported_construct(
+        detail: serde_json::Map<String, serde_json::Value>,
+    ) -> Self {
+        Self::UnsupportedConstruct(Box::new(detail))
+    }
 }
 
 /// The work an engine runs for one item.
@@ -3079,7 +3109,7 @@ fn run(
         Disposition::RequiresBound => return disposed(DispositionKind::RequiresBound, diagnostic),
         Disposition::Unsupported => return disposed(DispositionKind::Unsupported, diagnostic),
         Disposition::InvalidRequest => {
-            return disposed(DispositionKind::InvalidRequest, diagnostic)
+            return disposed(DispositionKind::InvalidRequest, diagnostic);
         }
     };
     let backend = candidate.id().clone();
@@ -3320,7 +3350,7 @@ fn settle(
             );
             AnalyzeRecord {
                 protocol_check: Some(protocol),
-                protocol_subject: subject,
+                protocol_subject: subject.map(|subject| *subject),
                 ..AnalyzeRecord::of(index, settlement)
             }
         }
@@ -3590,7 +3620,7 @@ fn settle(
             record(
                 terminal(
                     TerminalRecord::declined_with(index, backend, cause, code, diagnostic)
-                        .with_diagnostic_detail(detail),
+                        .with_diagnostic_detail(*detail),
                 ),
                 None,
             )
@@ -3609,7 +3639,7 @@ fn settle(
         ),
         EngineReport::Refused(Refusal::FailedWithDetail(code, detail)) => record(
             terminal(
-                TerminalRecord::failed_with(index, backend, code).with_diagnostic_detail(detail),
+                TerminalRecord::failed_with(index, backend, code).with_diagnostic_detail(*detail),
             ),
             None,
         ),
@@ -3619,7 +3649,7 @@ fn settle(
             detail.insert("backend".to_owned(), backend.as_str().into());
             record(
                 terminal(TerminalRecord::hybrid_unsupported_construct(
-                    index, backend, detail,
+                    index, backend, *detail,
                 )),
                 None,
             )
@@ -3640,7 +3670,7 @@ fn settle(
                     index,
                     Some(backend),
                     code,
-                    detail,
+                    *detail,
                 )),
                 None,
             )
@@ -3967,8 +3997,10 @@ mod tests {
                 panic!("inapplicable pair has its typed family diagnostic");
             };
             assert_eq!(*request_index, record.request_index);
-            assert!(!capability
-                .applies_to_declaration(family.expect("this matrix row has a known family")));
+            assert!(
+                !capability
+                    .applies_to_declaration(family.expect("this matrix row has a known family"))
+            );
             assert_eq!(code.cause(), "inapplicable-kind");
         }
     }
@@ -4269,24 +4301,33 @@ mod tests {
             en7.advertises().collect::<Vec<_>>(),
             [(Capability::Schedulability, Mode::Unbounded)]
         );
-        assert!(registrations
-            .iter()
-            .all(|descriptor| descriptor.origin() == ProviderOrigin::Linked));
-        assert!(en1
-            .advertises()
-            .any(|(kind, _)| kind == Capability::TemporalSatisfaction));
-        assert!(en4
-            .advertises()
-            .any(|(kind, _)| kind == Capability::ProbabilisticSatisfaction));
-        assert!(en5
-            .advertises()
-            .any(|(kind, _)| kind == Capability::ProbabilisticSatisfaction));
-        assert!(value
-            .advertises()
-            .any(|(kind, _)| kind == Capability::ValueValidity));
-        assert!(contract
-            .advertises()
-            .any(|(kind, _)| kind == Capability::OperationContract));
+        assert!(
+            registrations
+                .iter()
+                .all(|descriptor| descriptor.origin() == ProviderOrigin::Linked)
+        );
+        assert!(
+            en1.advertises()
+                .any(|(kind, _)| kind == Capability::TemporalSatisfaction)
+        );
+        assert!(
+            en4.advertises()
+                .any(|(kind, _)| kind == Capability::ProbabilisticSatisfaction)
+        );
+        assert!(
+            en5.advertises()
+                .any(|(kind, _)| kind == Capability::ProbabilisticSatisfaction)
+        );
+        assert!(
+            value
+                .advertises()
+                .any(|(kind, _)| kind == Capability::ValueValidity)
+        );
+        assert!(
+            contract
+                .advertises()
+                .any(|(kind, _)| kind == Capability::OperationContract)
+        );
         let mut kinds: Vec<_> = protocol.advertises().map(|(kind, _)| kind).collect();
         kinds.sort_by_key(|kind| kind.to_wire());
         assert_eq!(
@@ -4664,7 +4705,7 @@ mod tests {
         let item = refusing(|| {
             let mut detail = serde_json::Map::new();
             detail.insert("fact".to_owned(), "package-fact".into());
-            Refusal::UnsupportedWithDetail(
+            Refusal::unsupported_with_detail(
                 CatalogCode::new("unsupported_construct", "not-yet-implemented"),
                 detail,
             )
@@ -4689,7 +4730,7 @@ mod tests {
         let item = refusing(|| {
             let mut detail = serde_json::Map::new();
             detail.insert("backend".to_owned(), "provider-x".into());
-            Refusal::UnsupportedWithDetail(
+            Refusal::unsupported_with_detail(
                 CatalogCode::new("unsupported_construct", "not-yet-implemented"),
                 detail,
             )
@@ -4937,7 +4978,7 @@ fn proof_value(
 #[cfg(test)]
 mod proof_value_tests {
     use super::task_product_item::{ProofVerdict, TaskProof};
-    use super::{proof_value, TerminalValue};
+    use super::{TerminalValue, proof_value};
     use crate::zone_check::{TaskProductSearchOutcome, TaskProductSearchStop};
     use filament_exact::CancelCause;
     use fsl_replay::{

@@ -19,8 +19,8 @@ use fsl_eval::simulation::model::{
     ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem, PendingClauseForm,
     TimedState, TimedSystem,
 };
-use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_foundation::RequestIndex;
+use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::{CheckedPackage, ObligationIdentity};
 use fsl_replay::{
     CertificateCheckLimits, CertificateChecker, CertificateRule, CertifiedItem, GraphEvidence,
@@ -30,12 +30,12 @@ use fsl_replay::{
     StateGraphPropertyForm, StateGraphRecord, TerminalValue, TrapClosure, WitnessPath,
     ZoneCertificateRequest, ZoneCertificateVerdict,
 };
+use fsl_route::StateGraphFormKind;
 use fsl_route::deadlock::{ItemObligation, ObligationKind};
 use fsl_route::reductions::ObligationReductions;
-use fsl_route::StateGraphFormKind;
 use fsl_semantics::check::{Capability, CheckedStateGraphClaim, DeclarationFamily, StateGraphForm};
 
-use super::items::{model_refusal, INVALID_VALUE};
+use super::items::{INVALID_VALUE, model_refusal};
 use super::timed_item::subject_refusal;
 use super::{
     AnalyzeItem, AnalyzeLimits, EngineReport, GraphReport, Refusal, SourceProvision,
@@ -43,11 +43,11 @@ use super::{
 };
 use crate::model_check::manifest as en1;
 use crate::model_check::{
-    check_and_settle_state_graph, StateGraphItem, StateGraphPipelineRefusal, StateGraphRequest,
+    StateGraphItem, StateGraphPipelineRefusal, StateGraphRequest, check_and_settle_state_graph,
 };
 use crate::zone_check::{
-    certificate_item, decide_timed_state_graph, explore_timed_state_graph, TimedStateGraphDecision,
-    ZoneCheckLimit, ZoneCheckRefusal, ZoneStop,
+    TimedStateGraphDecision, ZoneCheckLimit, ZoneCheckRefusal, ZoneStop, certificate_item,
+    decide_timed_state_graph, explore_timed_state_graph,
 };
 
 /// The property form of a checked claim.
@@ -978,7 +978,7 @@ fn digital_closed_refusal(timed: &TimedSystem<'_, '_>) -> Option<Refusal> {
         "strict_constraint".to_owned(),
         serde_json::json!({"start": span.start, "end": span.end}),
     );
-    Some(Refusal::DeclinedWithDetail(
+    Some(Refusal::declined_with_detail(
         fsl_replay::ProofRefusalCause::InvalidInput,
         fsl_replay::DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
         filament_semantic_value::catalog::CatalogCode::new(

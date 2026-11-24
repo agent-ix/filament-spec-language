@@ -4,8 +4,8 @@
 use filament_exact::{Meter, Value};
 use filament_semantic_value::catalog::CatalogCode;
 use fsl_eval::hyper::{
-    evaluate_finite_hyper, FiniteHyperOutcome, FinitePopulationError, FiniteQuantifier,
-    FiniteTrace, FiniteTraceClosure, FiniteTracePopulation, FiniteTupleOutcome,
+    FiniteHyperOutcome, FinitePopulationError, FiniteQuantifier, FiniteTrace, FiniteTraceClosure,
+    FiniteTracePopulation, FiniteTupleOutcome, evaluate_finite_hyper,
 };
 use fsl_eval::value::CheckedPackageEvaluation;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
@@ -373,7 +373,7 @@ fn invalid_population(trace: Option<&str>) -> EngineReport {
         Some(trace) => {
             let mut detail = serde_json::Map::new();
             detail.insert("trace".to_owned(), serde_json::json!(trace));
-            Refusal::DeclinedWithDetail(cause, decline, invalid_population_code(), detail)
+            Refusal::declined_with_detail(cause, decline, invalid_population_code(), detail)
         }
         None => Refusal::Declined(cause, decline, invalid_population_code()),
     })

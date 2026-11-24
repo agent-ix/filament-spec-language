@@ -14,31 +14,30 @@ use fsl_eval::model_subject::{ModelInstance, ModelLetters, ProtocolSubject};
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelCheckInput, ModelSimulationRequest, ModelSystem,
 };
-use fsl_eval::simulation::protocol::{classify_accesses, ProtocolTransition, ResolvedMemory};
-use fsl_foundation::source::provenance::OccurrenceKey;
+use fsl_eval::simulation::protocol::{ProtocolTransition, ResolvedMemory, classify_accesses};
 use fsl_foundation::RequestIndex;
+use fsl_foundation::source::provenance::OccurrenceKey;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
-    replay_protocol_trace_with_temporal_selections, DeclineCode, ModelCheckItem,
-    ModelTraceReplayResult, ModelTraceSubject, ProofRefusalCause, ProtocolCertificateRequest,
-    ProtocolTraceSubject, ReplayRefusal, ReplayTargetMembers, RequestTargetWire,
-    TemporalCounterexample,
+    DeclineCode, ModelCheckItem, ModelTraceReplayResult, ModelTraceSubject, ProofRefusalCause,
+    ProtocolCertificateRequest, ProtocolTraceSubject, ReplayRefusal, ReplayTargetMembers,
+    RequestTargetWire, TemporalCounterexample, replay_protocol_trace_with_temporal_selections,
 };
-use fsl_route::request::ItemKind;
 use fsl_route::Mode;
+use fsl_route::request::ItemKind;
 use fsl_semantics::check::{Capability, TemporalClauseNode};
 
-use super::clause_item::{clause_name, replay_wire, ReplayInputs, ReplayShape, CLAUSE_TRANSCRIPT};
-use super::derived_item::{derived_target, NoLetters};
-use super::items::{admission, settle_protocol_item, ProtocolItem, BROKEN};
+use super::clause_item::{CLAUSE_TRANSCRIPT, ReplayInputs, ReplayShape, clause_name, replay_wire};
+use super::derived_item::{NoLetters, derived_target};
+use super::items::{BROKEN, ProtocolItem, admission, settle_protocol_item};
 use super::request::ProtocolBinding;
 use super::{
     AnalyzeItem, AnalyzeLimits, EngineReport, Refusal, SourceProvision, SubjectBinding,
     TemporalItem,
 };
 use crate::claim_family::claim_family;
-use crate::model_check::{manifest as en1, ProtocolCheckRequest};
-use crate::protocol_analysis::{protocol_subject, SubjectBindings, SubjectPackage, SubjectRefusal};
+use crate::model_check::{ProtocolCheckRequest, manifest as en1};
+use crate::protocol_analysis::{SubjectBindings, SubjectPackage, SubjectRefusal, protocol_subject};
 
 /// The witness transcript of a derived `race-freedom` counterexample: it
 /// carries no values, the payload being the racing prefix (FR-128).
@@ -227,7 +226,7 @@ pub(super) fn protocol_clause_item<'a>(
                 let Some((population, key)) = protocol.over.clone() else {
                     let mut detail = serde_json::Map::new();
                     detail.insert("member".to_owned(), serde_json::json!("over"));
-                    return EngineReport::Refused(Refusal::DeclinedWithDetail(
+                    return EngineReport::Refused(Refusal::declined_with_detail(
                         ProofRefusalCause::InvalidInput,
                         DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
                         CatalogCode::new("invalid_runtime_input", "missing-member"),
@@ -237,7 +236,7 @@ pub(super) fn protocol_clause_item<'a>(
                 if !form.reductions.symmetry.is_empty() || form.reductions.partial_order {
                     let mut detail = serde_json::Map::new();
                     detail.insert("member".to_owned(), serde_json::json!("reductions"));
-                    return EngineReport::Refused(Refusal::DeclinedWithDetail(
+                    return EngineReport::Refused(Refusal::declined_with_detail(
                         ProofRefusalCause::InvalidInput,
                         DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
                         CatalogCode::new("invalid_runtime_input", "invalid-value"),
@@ -253,7 +252,7 @@ pub(super) fn protocol_clause_item<'a>(
                         SubjectRefusal::UnknownProtocol(name) => {
                             let mut detail = serde_json::Map::new();
                             detail.insert("protocol".to_owned(), serde_json::json!(name));
-                            Refusal::DeclinedWithDetail(
+                            Refusal::declined_with_detail(
                                 ProofRefusalCause::InvalidInput,
                                 DeclineCode::Fsl(fsl_foundation::Code::InvalidRuntimeInput),
                                 CatalogCode::new("invalid_runtime_input", "invalid-value"),

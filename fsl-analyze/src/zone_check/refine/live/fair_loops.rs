@@ -27,10 +27,10 @@ use fsl_replay::{AbstractClass, TemporalCounterexample};
 
 use super::{Decided, FairScope, Live};
 use crate::model_check::fair_summary::{
+    CandidateEnables, CandidateRelation, FairLabel, FairMark, WalkSummary,
     candidate_steps_relation, candidate_stutter_relation, compose_candidate_relations,
     compose_fair_labels, concrete_label_is_fair, idempotent_has_fair_candidate,
-    insert_relation_label, insert_walk_summary, neutral_label, CandidateEnables, CandidateRelation,
-    FairLabel, FairMark, WalkSummary,
+    insert_relation_label, insert_walk_summary, neutral_label,
 };
 use crate::model_check::fair_walk::FairModel;
 use crate::zone_check::refine::Product;
@@ -50,7 +50,7 @@ pub(super) struct ComponentView<'a> {
 /// What the search decided for one component.
 pub(super) enum Refuted {
     /// A closed walk with no fair candidate run, concretised.
-    By(TemporalCounterexample),
+    By(Box<TemporalCounterexample>),
     /// Such walks exist and every one examined fails to concretise; walks
     /// under a prefix whose summary a retained one subsumes are not tried,
     /// so the half is undecided.
@@ -248,7 +248,7 @@ impl Product<'_, '_> {
             .first()
             .ok_or(ZoneCheckRefusal::Fault("hidden-component-has-a-class"))?;
         Ok(match self.lasso(run, live, class, named, entry, cycle)? {
-            Some(found) => Refuted::By(found),
+            Some(found) => Refuted::By(Box::new(found)),
             None => Refuted::NotConcretised,
         })
     }
@@ -294,7 +294,9 @@ fn arc_relation(
             classes,
         )
         .map_err(ZoneCheckRefusal::Fault),
-        Some(Taken::Stutter | Taken::Failing) | None => Ok(candidate_stutter_relation(source, target, classes)),
+        Some(Taken::Stutter | Taken::Failing) | None => {
+            Ok(candidate_stutter_relation(source, target, classes))
+        }
         Some(Taken::Abstract(_)) => Err(ZoneCheckRefusal::Fault(
             "hidden-model-edge-retains-candidate-steps",
         )),

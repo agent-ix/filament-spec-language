@@ -17,40 +17,39 @@ mod subsystem;
 mod undefined;
 
 use filament_exact::{Cancel, ObjectReference, Rational};
-use fsl_eval::simulation::model::ModelSystem;
 use fsl_eval::simulation::TransitionSystem;
+use fsl_eval::simulation::model::ModelSystem;
 use fsl_foundation::{BackendId, RequestIndex};
 use fsl_replay::statistical::SubjectLimits;
+use fsl_replay::{CertificateLocus, CertificateRule};
 use fsl_replay::{
-    check_probability_certificate_document, claim_binding, probability_proof_document,
-    write_probability_certificate, write_probability_proof_document, ExactBinding,
-    ExactProbBuildIssue, ExactProbBuildRecord, ExactProbabilityCertificate,
+    ExactBinding, ExactProbBuildIssue, ExactProbBuildRecord, ExactProbabilityCertificate,
     ExactProbabilityCertificateCheck, ExactProbabilityGraphError, ExactProbabilityValue, Extremum,
     ModelCheckLimit, ProbabilityBoundSide, ProbabilityCertificateDocument,
     ProbabilityDocumentError, ProbabilityDocumentLimits, ProbabilityObjective,
     ProbabilityProductKey, TerminalRecord, TimedProbabilityForm, TimedProbabilityObjective,
-    TimedProbabilityRoute,
+    TimedProbabilityRoute, check_probability_certificate_document, claim_binding,
+    probability_proof_document, write_probability_certificate, write_probability_proof_document,
 };
+use fsl_replay::{InconclusiveCause, ProbabilityCertificateLocus, ProbabilityCertificateRule};
 use fsl_replay::{
-    replay_probabilistic_witness, replay_probabilistic_witness_from_package,
     ProbabilisticCounterexample, ProbabilityWitnessError, ProbabilityWitnessPath,
     ProbabilityWitnessReplay, ProbabilityWitnessStep, ReproducedProbabilityWitness,
+    replay_probabilistic_witness, replay_probabilistic_witness_from_package,
 };
-use fsl_replay::{CertificateLocus, CertificateRule};
-use fsl_replay::{InconclusiveCause, ProbabilityCertificateLocus, ProbabilityCertificateRule};
 use fsl_route::Mode;
 use fsl_semantics::check::{
     Bound, Capability, DeclarationFamily, Event, ProbForm, ProbScheduler, ReachTarget,
 };
 
-use super::items::{admission, BROKEN, NOT_YET};
+use super::items::{BROKEN, NOT_YET, admission};
 use super::timed_item::subject_refusal;
 use super::{AnalyzeItem, EngineReport, Refusal};
 use crate::exact_probabilistic::{
-    build_retaining_monitor, decide_always, decide_bounded_event, decide_expected_reward,
-    decide_reachability, decide_until, manifest as en5, settle_product_refusal, ExtRational,
-    FhError, FhResult, ProbBuild, ProbProduct, ProductRefusal, ProductRequest, UnboundedError,
-    UnboundedObjective,
+    ExtRational, FhError, FhResult, ProbBuild, ProbProduct, ProductRefusal, ProductRequest,
+    UnboundedError, UnboundedObjective, build_retaining_monitor, decide_always,
+    decide_bounded_event, decide_expected_reward, decide_reachability, decide_until,
+    manifest as en5, settle_product_refusal,
 };
 
 /// The certificate EN-5 produced and the core's checker accepted for a
@@ -105,7 +104,7 @@ pub(crate) enum ExactReport {
         /// The accepted document on the claim's side.
         claim: ExactProbabilityCertificateCheck,
         /// The accepted document of the other kind.
-        counterpart: ExactProbabilityCertificateCheck,
+        counterpart: Box<ExactProbabilityCertificateCheck>,
         /// How the interval was produced.
         method: fsl_replay::BoundsMethod,
         /// The scheduler extremum the interval bounds, absent for a workload.
@@ -209,7 +208,7 @@ impl ExactReport {
                 index,
                 backend.clone(),
                 &claim,
-                &counterpart,
+                counterpart.as_ref(),
                 method,
                 extremum,
                 binding,
@@ -1270,7 +1269,7 @@ fn run(
         .then(|| candidate::CandidateBudget::new(document_limits, cancel));
     let built = if let Some(budget) = candidate_budget.as_mut() {
         use crate::exact_probabilistic::{
-            build_retaining_monitor_with_budget, BudgetedProductError,
+            BudgetedProductError, build_retaining_monitor_with_budget,
         };
         let identity = budget.identity;
         let mut admission = budget.admission();
@@ -1318,7 +1317,7 @@ fn run(
                 cancel,
                 subject,
                 tamper_witness,
-            )
+            );
         }
     };
     if let Some(error) = reward_subject_undefined {
@@ -1360,7 +1359,7 @@ fn run(
         ) {
             Ok(fair) => fair,
             Err(crate::exact_probabilistic::FairProductError::Product(error)) => {
-                return unbounded_failure(error, &limits, subject)
+                return unbounded_failure(error, &limits, subject);
             }
             Err(_) => return broken(),
         };
@@ -2113,7 +2112,7 @@ fn finish_interval(
     });
     Ok(EngineReport::Exact(Box::new(ExactReport::ProvedBounds {
         claim: claim_check,
-        counterpart: counterpart_check,
+        counterpart: Box::new(counterpart_check),
         method: fsl_replay::BoundsMethod::BackwardInduction { precision_bits },
         extremum,
         binding,
@@ -2437,7 +2436,7 @@ fn replay_refutation(
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
     use crate::exact_probabilistic::{
-        produce_witness, FormulaState, MonitorState, MonitorVerdict, ProductAction, WitnessScope,
+        FormulaState, MonitorState, MonitorVerdict, ProductAction, WitnessScope, produce_witness,
     };
     let mut producer_meter =
         filament_exact::Meter::new(system.meter_limits()).with_cancel(cancel.clone());
@@ -3503,7 +3502,7 @@ fn replay_timed_refutation(
     subject: SubjectLimits<'_>,
     tamper: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
 ) -> EngineReport {
-    use crate::exact_probabilistic::{produce_witness, WitnessScope};
+    use crate::exact_probabilistic::{WitnessScope, produce_witness};
     use fsl_eval::probabilistic::{DeadlinePhase, MonitorState};
     let forbidden = match bound {
         Bound::AtMost(_) => DeadlinePhase::Accept,
