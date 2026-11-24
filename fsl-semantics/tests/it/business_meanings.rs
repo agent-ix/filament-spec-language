@@ -6,7 +6,7 @@
 
 use filament_checked::key::DeclarationKey;
 use fsl_foundation::IntakeLimits;
-use fsl_semantics::model::accounting::{ChargePoint, ModelNormalizationLimits};
+use fsl_semantics::model::accounting::{ModelNormalizationLimits, NormalizationChargePoint};
 use fsl_semantics::model::domain_package::{DomainPackage, DomainPackageRecord};
 use fsl_semantics::model::intake::{admit, meaning, package_input, read_domain_package};
 use fsl_semantics::model::normalize::{normalize_with_meter, EffectiveView, NormalizeOutcome};
@@ -143,7 +143,7 @@ fn normalized(package: &DomainPackage, declarations: usize) -> EffectiveView {
         meter
             .admitted_charges()
             .iter()
-            .filter(|point| **point == ChargePoint::NormalizeRecord)
+            .filter(|point| **point == NormalizationChargePoint::NormalizeRecord)
             .count(),
         declarations,
         "one normalize.record charge per original declaration",

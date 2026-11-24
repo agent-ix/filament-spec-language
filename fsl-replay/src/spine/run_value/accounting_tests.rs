@@ -8,7 +8,7 @@ use fsl_eval::execution::{
     execute, ExecuteLimits, ExecuteRequest, ExecuteSelection, PrepareLimits, SuppliedBackends,
 };
 use fsl_package::ReferenceCatalog;
-use fsl_semantics::model::accounting::{ChargePoint, LimitKind};
+use fsl_semantics::model::accounting::{NormalizationChargePoint, NormalizationLimitKind};
 use fsl_semantics::model::intake::{package_input, PackageInput};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::observation::{admit_current_snapshot, DocumentRef, ObservationLimits};
@@ -92,8 +92,10 @@ fn canonical_run_conversion_and_execution_share_one_limit() {
     let fixture = fixture(None);
     let models = fixture.compiled.models.selected_models();
     let cancel = Cancel::new();
-    let mut catalog_budget =
-        super::NormalizationReferenceBudget::source(models, ChargePoint::ReferenceCatalog);
+    let mut catalog_budget = super::NormalizationReferenceBudget::source(
+        models,
+        NormalizationChargePoint::ReferenceCatalog,
+    );
     let catalog =
         ReferenceCatalog::from_checked_call(&fixture.compiled.package, models, &mut catalog_budget)
             .unwrap();
@@ -198,21 +200,26 @@ fn canonical_run_catalog_preserves_normalization_work_denial() {
         .compiled
         .models
         .selected_models()
-        .consumed(LimitKind::WorkUnits);
+        .consumed(NormalizationLimitKind::WorkUnits);
     let fixture = fixture(Some(consumed));
     let models = fixture.compiled.models.selected_models();
-    let mut budget =
-        super::NormalizationReferenceBudget::source(models, ChargePoint::ReferenceCatalog);
+    let mut budget = super::NormalizationReferenceBudget::source(
+        models,
+        NormalizationChargePoint::ReferenceCatalog,
+    );
     ReferenceCatalog::from_checked_call(&fixture.compiled.package, models, &mut budget)
         .expect_err("catalog cannot replace the original normalization allowance");
     let denial = budget
         .stopped
         .take()
         .expect("original typed normalization denial");
-    assert_eq!(denial.limit_kind, LimitKind::WorkUnits);
+    assert_eq!(denial.limit_kind, NormalizationLimitKind::WorkUnits);
     assert_eq!(denial.limit, consumed);
     assert_eq!(denial.consumed, consumed);
-    assert_eq!(denial.charge_point, ChargePoint::ReferenceCatalog);
+    assert_eq!(
+        denial.charge_point,
+        NormalizationChargePoint::ReferenceCatalog
+    );
     assert!(denial.next_charge > 0);
 }
 
@@ -313,8 +320,10 @@ fn review_fix_canonical_staging_admits_conversion_before_allocation() {
 fn review_fix_codec_depth_policy_has_no_implicit_ceiling() {
     let fixture = fixture(None);
     let models = fixture.compiled.models.selected_models();
-    let mut owner =
-        super::NormalizationReferenceBudget::source(models, ChargePoint::ReferenceCatalog);
+    let mut owner = super::NormalizationReferenceBudget::source(
+        models,
+        NormalizationChargePoint::ReferenceCatalog,
+    );
     let catalog =
         ReferenceCatalog::from_checked_call(&fixture.compiled.package, models, &mut owner).unwrap();
     let codec = ReferenceCodec::for_checked_call(

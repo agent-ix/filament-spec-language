@@ -6,7 +6,7 @@
 use filament_checked::key::DeclarationKey;
 use filament_semantic_value::checking::CheckMode;
 use fsl_foundation::diagnostic::Code;
-use fsl_semantics::model::accounting::{Meter, ModelNormalizationLimits};
+use fsl_semantics::model::accounting::{ModelNormalizationLimits, NormalizationMeter};
 use fsl_semantics::model::conformance::{
     check_field_redefinition, check_operation_redefinition, check_subsetting,
     resolve_redefinition_target, AxisFailure, ConformanceCheckOutcome, ConformanceOutcome,
@@ -202,7 +202,7 @@ fn fixture_h_base() -> Vec<DomainPackageRecord> {
 #[trace("FR-151-AC-4", "FR-151-AC-11", "FSpec-TC-196")]
 #[test]
 fn operation_axes_charge_the_selected_type_facts_and_complete_effect_comparisons() {
-    use fsl_semantics::model::accounting::LimitKind;
+    use fsl_semantics::model::accounting::NormalizationLimitKind;
 
     for (row, expected_work, expected_failures) in [(2, 10, 0), (3, 8, 5), (4, 8, 1), (9, 10, 0)] {
         let mut records = fixture_h_base();
@@ -260,7 +260,7 @@ fn operation_axes_charge_the_selected_type_facts_and_complete_effect_comparisons
             NormalizeOutcome::Completed(view) => view,
             other => panic!("structural normalization must admit R{row}: {other:?}"),
         };
-        let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+        let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
         let result = check_operation_redefinition(
             view.model_index(),
             &DeclarationKey::fixture("model.B.op"),
@@ -276,7 +276,7 @@ fn operation_axes_charge_the_selected_type_facts_and_complete_effect_comparisons
         };
         assert_eq!(failures, expected_failures, "R{row} independent failures");
         assert_eq!(
-            meter.consumed(LimitKind::WorkUnits),
+            meter.consumed(NormalizationLimitKind::WorkUnits),
             expected_work,
             "R{row} work pricing"
         );
@@ -286,7 +286,9 @@ fn operation_axes_charge_the_selected_type_facts_and_complete_effect_comparisons
 #[trace("FR-082-AC-3", "FSpec-TC-196")]
 #[test]
 fn ancestor_availability_is_per_walk_and_preserves_the_exact_denied_edge_record() {
-    use fsl_semantics::model::accounting::{ChargePoint, LimitKind, NormalizationIncomplete};
+    use fsl_semantics::model::accounting::{
+        NormalizationChargePoint, NormalizationIncomplete, NormalizationLimitKind,
+    };
 
     for branching in [false, true] {
         let mut records = vec![
@@ -334,15 +336,15 @@ fn ancestor_availability_is_per_walk_and_preserves_the_exact_denied_edge_record(
                 assert_eq!(
                     normalized,
                     NormalizeOutcome::Incomplete(NormalizationIncomplete {
-                        limit_kind: LimitKind::AncestorSteps,
+                        limit_kind: NormalizationLimitKind::AncestorSteps,
                         limit,
                         consumed: limit,
                         next_charge: 1,
-                        charge_point: ChargePoint::ModelAncestorEdge,
+                        charge_point: NormalizationChargePoint::ModelAncestorEdge,
                     })
                 );
             }
-            let mut meter = Meter::new(ModelNormalizationLimits {
+            let mut meter = NormalizationMeter::new(ModelNormalizationLimits {
                 ancestor_steps: limit,
                 ..ModelNormalizationLimits::UNLIMITED
             });
@@ -357,20 +359,20 @@ fn ancestor_availability_is_per_walk_and_preserves_the_exact_denied_edge_record(
                     result,
                     ConformanceCheckOutcome::Completed(ConformanceOutcome::Compatible)
                 );
-                assert_eq!(meter.consumed(LimitKind::WorkUnits), work + 1);
+                assert_eq!(meter.consumed(NormalizationLimitKind::WorkUnits), work + 1);
             } else {
                 assert_eq!(
                     result,
                     ConformanceCheckOutcome::Incomplete(NormalizationIncomplete {
-                        limit_kind: LimitKind::AncestorSteps,
+                        limit_kind: NormalizationLimitKind::AncestorSteps,
                         limit,
                         consumed: limit,
                         next_charge: 1,
-                        charge_point: ChargePoint::ModelAncestorEdge,
+                        charge_point: NormalizationChargePoint::ModelAncestorEdge,
                     })
                 );
                 assert_eq!(
-                    meter.consumed(LimitKind::WorkUnits),
+                    meter.consumed(NormalizationLimitKind::WorkUnits),
                     work,
                     "admitted owning axis is retained before the denied edge"
                 );
@@ -382,7 +384,9 @@ fn ancestor_availability_is_per_walk_and_preserves_the_exact_denied_edge_record(
 #[trace("FR-082-AC-3", "FSpec-TC-196")]
 #[test]
 fn an_unavailable_owning_axis_wins_before_an_unavailable_ancestor_edge() {
-    use fsl_semantics::model::accounting::{ChargePoint, LimitKind, NormalizationIncomplete};
+    use fsl_semantics::model::accounting::{
+        NormalizationChargePoint, NormalizationIncomplete, NormalizationLimitKind,
+    };
     let package = DomainPackage::new(
         DomainPackageRef::fixture("test/ancestor-precedence"),
         vec![
@@ -401,7 +405,7 @@ fn an_unavailable_owning_axis_wins_before_an_unavailable_ancestor_edge() {
     );
     let index = ModelIndex::build(package);
     for work_units in [0, 2] {
-        let mut meter = Meter::new(ModelNormalizationLimits {
+        let mut meter = NormalizationMeter::new(ModelNormalizationLimits {
             ancestor_steps: 0,
             work_units,
             ..ModelNormalizationLimits::UNLIMITED
@@ -414,23 +418,26 @@ fn an_unavailable_owning_axis_wins_before_an_unavailable_ancestor_edge() {
         );
         let expected = if work_units == 0 {
             NormalizationIncomplete {
-                limit_kind: LimitKind::WorkUnits,
+                limit_kind: NormalizationLimitKind::WorkUnits,
                 limit: 0,
                 consumed: 0,
                 next_charge: 2,
-                charge_point: ChargePoint::ConformanceAxis,
+                charge_point: NormalizationChargePoint::ConformanceAxis,
             }
         } else {
             NormalizationIncomplete {
-                limit_kind: LimitKind::AncestorSteps,
+                limit_kind: NormalizationLimitKind::AncestorSteps,
                 limit: 0,
                 consumed: 0,
                 next_charge: 1,
-                charge_point: ChargePoint::ModelAncestorEdge,
+                charge_point: NormalizationChargePoint::ModelAncestorEdge,
             }
         };
         assert_eq!(result, ConformanceCheckOutcome::Incomplete(expected));
-        assert_eq!(meter.consumed(LimitKind::WorkUnits), work_units);
+        assert_eq!(
+            meter.consumed(NormalizationLimitKind::WorkUnits),
+            work_units
+        );
     }
 }
 
@@ -479,7 +486,7 @@ fn operation_parameter_presence_is_contravariant_under_redefinition() {
         "model.B.op",
         filament_exact::Presence::Optional,
     );
-    let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
     assert!(matches!(
         check_operation_redefinition(
             &ModelIndex::build(package),
@@ -496,7 +503,7 @@ fn operation_parameter_presence_is_contravariant_under_redefinition() {
         "model.A.op",
         filament_exact::Presence::Optional,
     );
-    let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
     let ConformanceCheckOutcome::Completed(ConformanceOutcome::Refused(failures)) =
         check_operation_redefinition(
             &ModelIndex::build(package),
@@ -580,7 +587,7 @@ fn r01_a_compatible_field_redefinition_yields_one_effective_member_with_complete
     let redefining_key = DeclarationKey::fixture("model.B.n");
     let redefined_key = DeclarationKey::fixture("model.A.n");
 
-    let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
     match check_field_redefinition(
         &ModelIndex::build(domain_package.clone()),
         &redefining_key,
@@ -721,7 +728,7 @@ fn r02_a_compatible_operation_redefinition_admits_every_axis() {
     )]);
     let redefining_key = DeclarationKey::fixture("model.B.op");
     let redefined_key = DeclarationKey::fixture("model.A.op");
-    let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
     match check_operation_redefinition(
         &ModelIndex::build(domain_package.clone()),
         &redefining_key,
@@ -748,7 +755,7 @@ fn r03_an_incompatible_operation_redefinition_reports_every_failing_axis() {
     )]);
     let redefining_key = DeclarationKey::fixture("model.B.op");
     let redefined_key = DeclarationKey::fixture("model.A.op");
-    let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
     match check_operation_redefinition(
         &ModelIndex::build(domain_package.clone()),
         &redefining_key,
@@ -809,7 +816,7 @@ fn r03_an_incompatible_operation_redefinition_reports_every_failing_axis() {
 fn r02_r03_r04_charge_the_spec_number_of_conformance_axes() {
     let axes_charged = |redefinition: DomainPackageRecord| {
         let domain_package = bundle_h(vec![redefinition]);
-        let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+        let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
         let _ = check_operation_redefinition(
             &ModelIndex::build(domain_package),
             &DeclarationKey::fixture("model.B.op"),
@@ -868,7 +875,7 @@ fn r04_an_arity_mismatch_refuses_without_checking_parameter_axes() {
     )]);
     let redefining_key = DeclarationKey::fixture("model.B.op");
     let redefined_key = DeclarationKey::fixture("model.A.op");
-    let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
     match check_operation_redefinition(
         &ModelIndex::build(domain_package.clone()),
         &redefining_key,
@@ -909,7 +916,7 @@ fn r05_field_multiplicity_narrowing_refuses_and_the_boundary_admits() {
         DomainPackageRef::fixture("bundle.r05a"),
         records(mult(1, Some(3)), mult(0, Some(5))),
     );
-    let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
     match check_field_redefinition(
         &ModelIndex::build(narrowing.clone()),
         &redefining_key,
@@ -933,7 +940,7 @@ fn r05_field_multiplicity_narrowing_refuses_and_the_boundary_admits() {
         DomainPackageRef::fixture("bundle.r05b"),
         records(mult(0, Some(5)), mult(1, Some(3))),
     );
-    let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
     match check_field_redefinition(
         &ModelIndex::build(widening.clone()),
         &redefining_key,
@@ -972,7 +979,7 @@ fn r06_subsetting_type_and_multiplicity_axes() {
 
     // (i) same type, wider multiplicity: multiplicity-narrowing.
     let domain_package = bundle_of("model.A", mult(0, Some(9)));
-    let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
     match check_subsetting(
         &ModelIndex::build(domain_package.clone()),
         &subsetting_key,
@@ -994,7 +1001,7 @@ fn r06_subsetting_type_and_multiplicity_axes() {
 
     // (ii) unrelated type: subsetting-type.
     let domain_package = bundle_of("model.C", mult(0, Some(5)));
-    let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
     match check_subsetting(
         &ModelIndex::build(domain_package.clone()),
         &subsetting_key,
@@ -1016,7 +1023,7 @@ fn r06_subsetting_type_and_multiplicity_axes() {
 
     // (iii) conforming subtype, narrower multiplicity: admitted.
     let domain_package = bundle_of("model.B", mult(0, Some(3)));
-    let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
     match check_subsetting(
         &ModelIndex::build(domain_package.clone()),
         &subsetting_key,
@@ -1379,7 +1386,7 @@ fn r09_operation_redefinition_effect_axis_reaches_through_a_two_hop_field_redefi
     );
     let redefining_key = DeclarationKey::fixture("model.C.op");
     let redefined_key = DeclarationKey::fixture("model.A.op");
-    let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
     assert_eq!(
         check_operation_redefinition(
             &ModelIndex::build(domain_package.clone()),
@@ -1453,7 +1460,7 @@ fn r10_operation_redefinition_effect_axis_refuses_a_write_at_a_package_the_grant
     );
     let redefining_key = DeclarationKey::fixture("model.B.op");
     let redefined_key = DeclarationKey::fixture("model.A.op");
-    let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
     assert_eq!(
         check_operation_redefinition(
             &ModelIndex::build(domain_package.clone()),
@@ -1525,7 +1532,7 @@ fn r11_operation_redefinition_effect_axis_refuses_a_chain_that_never_reaches_the
     );
     let redefining_key = DeclarationKey::fixture("model.C.op");
     let redefined_key = DeclarationKey::fixture("model.A.op");
-    let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
     assert_eq!(
         check_operation_redefinition(
             &ModelIndex::build(domain_package.clone()),
@@ -1607,7 +1614,7 @@ fn r12_operation_redefinition_effect_axis_refuses_and_terminates_on_a_redefiniti
     );
     let redefining_key = DeclarationKey::fixture("model.C.op");
     let redefined_key = DeclarationKey::fixture("model.A.op");
-    let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
     assert_eq!(
         check_operation_redefinition(
             &ModelIndex::build(domain_package.clone()),
@@ -1732,7 +1739,7 @@ fn ancestor_chain_package(depth: u64) -> DomainPackage {
 }
 
 fn check_chain(depth: u64, limits: ModelNormalizationLimits) -> ConformanceCheckOutcome {
-    let mut meter = Meter::new(limits);
+    let mut meter = NormalizationMeter::new(limits);
     check_field_redefinition(
         &ModelIndex::build(ancestor_chain_package(depth)),
         &DeclarationKey::fixture("model.chain.redefining"),
@@ -1798,11 +1805,11 @@ fn an_ancestor_chain_at_the_configured_bound_is_admitted_and_one_longer_refuses(
             assert_eq!(
                 incomplete,
                 fsl_semantics::model::accounting::NormalizationIncomplete {
-                    limit_kind: fsl_semantics::model::accounting::LimitKind::AncestorSteps,
+                    limit_kind: fsl_semantics::model::accounting::NormalizationLimitKind::AncestorSteps,
                     limit: BOUND,
                     consumed: BOUND,
                     next_charge: 1,
-                    charge_point: fsl_semantics::model::accounting::ChargePoint::ModelAncestorEdge,
+                    charge_point: fsl_semantics::model::accounting::NormalizationChargePoint::ModelAncestorEdge,
                 }
             );
         }
@@ -1833,11 +1840,12 @@ fn c08_a_zero_ancestor_steps_limit_denies_the_first_followed_edge() {
     assert_eq!(
         incomplete,
         fsl_semantics::model::accounting::NormalizationIncomplete {
-            limit_kind: fsl_semantics::model::accounting::LimitKind::AncestorSteps,
+            limit_kind: fsl_semantics::model::accounting::NormalizationLimitKind::AncestorSteps,
             limit: 0,
             consumed: 0,
             next_charge: 1,
-            charge_point: fsl_semantics::model::accounting::ChargePoint::ModelAncestorEdge,
+            charge_point:
+                fsl_semantics::model::accounting::NormalizationChargePoint::ModelAncestorEdge,
         }
     );
     let cause = fsl_semantics::check::CheckCause::ModelIncomplete(incomplete);
@@ -1867,7 +1875,7 @@ fn c09_an_unavailable_axis_work_charge_wins_before_a_simultaneous_edge_denial() 
         ConformanceCheckOutcome::Incomplete(incomplete) => {
             assert_eq!(
                 incomplete.limit_kind,
-                fsl_semantics::model::accounting::LimitKind::WorkUnits
+                fsl_semantics::model::accounting::NormalizationLimitKind::WorkUnits
             );
             assert_eq!(incomplete.limit, 0);
             assert_eq!(incomplete.consumed, 0);
@@ -1876,7 +1884,7 @@ fn c09_an_unavailable_axis_work_charge_wins_before_a_simultaneous_edge_denial() 
             assert!(incomplete.next_charge >= 1);
             assert_eq!(
                 incomplete.charge_point,
-                fsl_semantics::model::accounting::ChargePoint::ConformanceAxis
+                fsl_semantics::model::accounting::NormalizationChargePoint::ConformanceAxis
             );
         }
         other => panic!("expected Incomplete(work_units) at conformance.axis, got {other:?}"),
@@ -1929,11 +1937,11 @@ fn normalization_admits_an_ancestor_path_at_the_bound_and_refuses_one_longer() {
             assert_eq!(
                 incomplete,
                 fsl_semantics::model::accounting::NormalizationIncomplete {
-                    limit_kind: fsl_semantics::model::accounting::LimitKind::AncestorSteps,
+                    limit_kind: fsl_semantics::model::accounting::NormalizationLimitKind::AncestorSteps,
                     limit: BOUND,
                     consumed: BOUND,
                     next_charge: 1,
-                    charge_point: fsl_semantics::model::accounting::ChargePoint::ModelAncestorEdge,
+                    charge_point: fsl_semantics::model::accounting::NormalizationChargePoint::ModelAncestorEdge,
                 }
             );
         }

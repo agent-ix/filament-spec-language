@@ -18,7 +18,9 @@ use fsl_foundation::diagnostic::Code;
 use fsl_semantics::check::{
     checked_dispatch_operation, DispatchBridgeRefusal, DispatchRoot, OperationClauses,
 };
-use fsl_semantics::model::accounting::{ChargePoint, LimitKind, Meter, ModelNormalizationLimits};
+use fsl_semantics::model::accounting::{
+    ModelNormalizationLimits, NormalizationChargePoint, NormalizationLimitKind, NormalizationMeter,
+};
 use fsl_semantics::model::dispatch::{
     link_dispatch, DispatchLinkOutcome, GeneralizationClosure, LinkCheckOutcome,
 };
@@ -85,8 +87,8 @@ fn effective_view(
     }
 }
 
-fn unlimited_meter() -> fsl_semantics::model::accounting::Meter {
-    fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits::UNLIMITED)
+fn unlimited_meter() -> fsl_semantics::model::accounting::NormalizationMeter {
+    fsl_semantics::model::accounting::NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED)
 }
 
 /// D01: `A.size`/`B.size` (`B.size` redefines `A.size`) each have a body.
@@ -139,15 +141,15 @@ fn d01_a_closed_diamond_links_every_subtype_to_its_unique_undominated_candidate(
     let admitted = meter.admitted_charges();
     let candidate_count = admitted
         .iter()
-        .filter(|c| **c == ChargePoint::DispatchCandidate)
+        .filter(|c| **c == NormalizationChargePoint::DispatchCandidate)
         .count();
     let subtype_count = admitted
         .iter()
-        .filter(|c| **c == ChargePoint::DispatchSubtype)
+        .filter(|c| **c == NormalizationChargePoint::DispatchSubtype)
         .count();
     let dominance_count = admitted
         .iter()
-        .filter(|c| **c == ChargePoint::DispatchDominance)
+        .filter(|c| **c == NormalizationChargePoint::DispatchDominance)
         .count();
     assert_eq!(candidate_count, 8);
     assert_eq!(subtype_count, 4);
@@ -213,15 +215,15 @@ fn an_abstract_subtype_is_never_linked_as_a_dispatch_target() {
     let admitted = meter.admitted_charges();
     let candidate_count = admitted
         .iter()
-        .filter(|c| **c == ChargePoint::DispatchCandidate)
+        .filter(|c| **c == NormalizationChargePoint::DispatchCandidate)
         .count();
     let subtype_count = admitted
         .iter()
-        .filter(|c| **c == ChargePoint::DispatchSubtype)
+        .filter(|c| **c == NormalizationChargePoint::DispatchSubtype)
         .count();
     let dominance_count = admitted
         .iter()
-        .filter(|c| **c == ChargePoint::DispatchDominance)
+        .filter(|c| **c == NormalizationChargePoint::DispatchDominance)
         .count();
     assert_eq!(candidate_count, 6);
     assert_eq!(subtype_count, 3);
@@ -245,10 +247,11 @@ fn d01_the_eighth_dispatch_candidate_charge_is_incomplete_at_the_named_limit() {
     let domain_package = DomainPackage::new(DomainPackageRef::fixture("bundle.g"), records);
     let view = effective_view(&domain_package);
 
-    let mut meter = fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits {
-        dispatch_candidates: 7,
-        ..ModelNormalizationLimits::UNLIMITED
-    });
+    let mut meter =
+        fsl_semantics::model::accounting::NormalizationMeter::new(ModelNormalizationLimits {
+            dispatch_candidates: 7,
+            ..ModelNormalizationLimits::UNLIMITED
+        });
     let outcome = link_dispatch(
         &view,
         &DeclarationKey::fixture("model.A.size"),
@@ -259,7 +262,10 @@ fn d01_the_eighth_dispatch_candidate_charge_is_incomplete_at_the_named_limit() {
     let LinkCheckOutcome::Incomplete(incomplete) = outcome else {
         panic!("expected an incomplete outcome, got {outcome:?}");
     };
-    assert_eq!(incomplete.limit_kind, LimitKind::DispatchCandidates);
+    assert_eq!(
+        incomplete.limit_kind,
+        NormalizationLimitKind::DispatchCandidates
+    );
     assert_eq!(
         incomplete.denial().setting(),
         fsl_foundation::Setting::ModelDispatchCandidates
@@ -267,7 +273,10 @@ fn d01_the_eighth_dispatch_candidate_charge_is_incomplete_at_the_named_limit() {
     assert_eq!(incomplete.limit, 7);
     assert_eq!(incomplete.consumed, 7);
     assert_eq!(incomplete.next_charge, 8);
-    assert_eq!(incomplete.charge_point, ChargePoint::DispatchCandidate);
+    assert_eq!(
+        incomplete.charge_point,
+        NormalizationChargePoint::DispatchCandidate
+    );
 }
 
 /// D01's `dispatch_candidates` boundary, the other half of FR-151-AC-8: the
@@ -287,10 +296,11 @@ fn d01_the_eighth_dispatch_candidate_charge_completes_at_the_exact_limit() {
     let domain_package = DomainPackage::new(DomainPackageRef::fixture("bundle.g"), records);
     let view = effective_view(&domain_package);
 
-    let mut meter = fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits {
-        dispatch_candidates: 8,
-        ..ModelNormalizationLimits::UNLIMITED
-    });
+    let mut meter =
+        fsl_semantics::model::accounting::NormalizationMeter::new(ModelNormalizationLimits {
+            dispatch_candidates: 8,
+            ..ModelNormalizationLimits::UNLIMITED
+        });
     let outcome = link_dispatch(
         &view,
         &DeclarationKey::fixture("model.A.size"),
@@ -441,12 +451,12 @@ fn d03_no_candidate_with_a_body_refuses_every_subtype_as_no_applicable() {
     assert!(refusals.iter().all(|r| r.candidates.is_empty()));
     assert!(!meter
         .admitted_charges()
-        .contains(&ChargePoint::DispatchCandidate));
+        .contains(&NormalizationChargePoint::DispatchCandidate));
     assert_eq!(
         meter
             .admitted_charges()
             .iter()
-            .filter(|c| **c == ChargePoint::DispatchSubtype)
+            .filter(|c| **c == NormalizationChargePoint::DispatchSubtype)
             .count(),
         4
     );
@@ -625,7 +635,7 @@ fn link_chain(
         &effective_view(domain_package),
         &DeclarationKey::fixture("ix://test/orders/A/op0"),
         GeneralizationClosure::Closed,
-        &mut Meter::new(limits),
+        &mut NormalizationMeter::new(limits),
     )
 }
 
@@ -701,7 +711,7 @@ fn a_dispatch_family_with_more_than_128_redefinition_steps_passes_the_checked_br
             b"",
         ),
         crate::TEST_PACKAGE_NAME.to_owned(),
-        &mut Meter::new(ModelNormalizationLimits::UNLIMITED),
+        &mut NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED),
         fsl_foundation::IdentityLimits::default(),
     )
     .unwrap_or_else(|refusal| panic!("expected a checked dispatch family, got {refusal:?}"));
@@ -778,7 +788,7 @@ fn the_checked_bridge_counts_every_walk_against_one_family_steps() {
                 b"",
             ),
             crate::TEST_PACKAGE_NAME.to_owned(),
-            &mut Meter::new(ModelNormalizationLimits {
+            &mut NormalizationMeter::new(ModelNormalizationLimits {
                 family_steps,
                 ..ModelNormalizationLimits::UNLIMITED
             }),

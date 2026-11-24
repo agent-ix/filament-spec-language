@@ -39,7 +39,7 @@ use super::ir::{DispatchCandidate, DispatchTable};
 use super::lowering::ModelClause;
 use super::refusal::{DispatchLinkCause, DispatchSubtypeFailure};
 use super::{CheckCause, CheckRefusal, PackageDeclarations};
-use crate::model::accounting::{Meter, ModelNormalizationLimits};
+use crate::model::accounting::{ModelNormalizationLimits, NormalizationMeter};
 use crate::model::dispatch::{DispatchLinkOutcome, GeneralizationClosure, LinkCheckOutcome};
 use crate::model::domain_package::DomainPackageRecord;
 use crate::model::intake::member_identity_name;
@@ -150,7 +150,7 @@ impl PackageDeclarations {
         limits: ModelNormalizationLimits,
     ) -> Result<PendingLinks, Vec<CheckRefusal>> {
         let called = self.called_members();
-        let mut meter = Meter::new(limits);
+        let mut meter = NormalizationMeter::new(limits);
         let mut pending = PendingLinks::default();
         let mut linked = Vec::new();
         let mut clauses: BTreeMap<String, Option<OperationClauses>> = BTreeMap::new();

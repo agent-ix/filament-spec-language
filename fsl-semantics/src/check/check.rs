@@ -377,7 +377,7 @@ pub struct PackageDeclarations {
     /// conformance stage continues.
     pub model_inputs: Option<(
         Vec<crate::model::intake::SelectedModel>,
-        crate::model::accounting::Meter,
+        crate::model::accounting::NormalizationMeter,
     )>,
     /// Exact identity rows minted by model intake, kept alongside this
     /// package's checked declarations for IR projection after admission.

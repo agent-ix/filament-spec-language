@@ -23,7 +23,7 @@ use fsl_semantics::check::{
     OperationClauses, PackageDeclarations,
 };
 use fsl_semantics::family::FamilyKind;
-use fsl_semantics::model::accounting::{Meter as ModelMeter, ModelNormalizationLimits};
+use fsl_semantics::model::accounting::{ModelNormalizationLimits, NormalizationMeter};
 use fsl_semantics::model::dispatch::GeneralizationClosure;
 use fsl_semantics::model::domain_package::{DomainPackage, DomainPackageRecord, DomainPackageRef};
 use fsl_semantics::model::intake::SelectedModel;
@@ -209,7 +209,7 @@ fn declarations_over(
         &clauses,
         declarations.source.clone(),
         "fixture".to_owned(),
-        &mut ModelMeter::new(ModelNormalizationLimits::default()),
+        &mut NormalizationMeter::new(ModelNormalizationLimits::default()),
         fsl_foundation::IdentityLimits::default(),
     )
     .expect("main's dispatch bridge links the declared query");

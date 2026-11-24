@@ -435,11 +435,12 @@ impl ModelIndex {
             for general in &self.records.generals[current.0] {
                 if consumed == limit {
                     return Err(crate::model::accounting::NormalizationIncomplete {
-                        limit_kind: crate::model::accounting::LimitKind::AncestorSteps,
+                        limit_kind: crate::model::accounting::NormalizationLimitKind::AncestorSteps,
                         limit,
                         consumed,
                         next_charge: 1,
-                        charge_point: crate::model::accounting::ChargePoint::ModelAncestorEdge,
+                        charge_point:
+                            crate::model::accounting::NormalizationChargePoint::ModelAncestorEdge,
                     });
                 }
                 consumed += 1;

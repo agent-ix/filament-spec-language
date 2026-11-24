@@ -1619,7 +1619,7 @@ fn source_model(
     declared_types: &BTreeSet<String>,
     foreign: &[(&str, &DomainPackage)],
     identity: String,
-    meter: &mut crate::model::accounting::Meter,
+    meter: &mut crate::model::accounting::NormalizationMeter,
     errors: &mut Vec<AssemblyError>,
 ) -> Option<(
     fsl_foundation::selection::ModelSelection,

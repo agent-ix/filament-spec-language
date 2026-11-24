@@ -23,7 +23,9 @@
 
 use std::collections::HashMap;
 
-use crate::model::accounting::{Charge, ChargePoint, Meter, NormalizationIncomplete};
+use crate::model::accounting::{
+    Charge, NormalizationChargePoint, NormalizationIncomplete, NormalizationMeter,
+};
 use crate::model::admitted::AdmittedPackage;
 use crate::model::domain_package::{DomainPackageRecord, DomainPackageRef};
 use crate::model::key::EffectiveId;
@@ -96,7 +98,7 @@ pub fn resolve_systems(
     aliases: &[ModelAlias<'_>],
     required: Kind,
     name: &str,
-    meter: &mut Meter,
+    meter: &mut NormalizationMeter,
 ) -> Result<ResolvedSystemsElement, ResolveFailure> {
     let mut segments = name.split("::");
     let alias = segments.next().unwrap_or_default();
@@ -122,7 +124,7 @@ pub fn resolve_systems(
     for segment in segments {
         position += 1;
         meter
-            .charge(Charge::new(ChargePoint::SystemsResolve))
+            .charge(Charge::new(NormalizationChargePoint::SystemsResolve))
             .map_err(ResolveFailure::Incomplete)?;
         if construct.is_some() {
             return Err(unresolved(
@@ -172,7 +174,7 @@ fn admit_construct(
     admitted: &AdmittedPackage,
     view: &EffectiveView,
     resolved: &ResolvedElement,
-    meter: &mut Meter,
+    meter: &mut NormalizationMeter,
 ) -> Result<(), ResolveFailure> {
     match resolved.kind {
         Kind::Connection => {

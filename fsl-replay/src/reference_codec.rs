@@ -470,7 +470,7 @@ impl Scope<'_, '_> {
         if let Some(owner) = self.normalization_owner {
             owner
                 .charge_reference_work(
-                    fsl_semantics::model::accounting::ChargePoint::ReferenceResult,
+                    fsl_semantics::model::accounting::NormalizationChargePoint::ReferenceResult,
                     units,
                 )
                 .map_err(|cause| ReferenceCodecError::Normalization {
@@ -1723,7 +1723,7 @@ impl<'a> Admission<'a> {
         if let Some(owner) = self.normalization_owner {
             owner
                 .charge_reference_work(
-                    fsl_semantics::model::accounting::ChargePoint::ReferenceResult,
+                    fsl_semantics::model::accounting::NormalizationChargePoint::ReferenceResult,
                     units,
                 )
                 .map_err(|cause| {
@@ -2551,9 +2551,7 @@ mod tests {
             },
             key: object_key.to_owned(),
         };
-        let bind = |environment: &ObjectEnvironment,
-                    views: &[EffectiveView],
-                    population: &str| {
+        let bind = |environment: &ObjectEnvironment, views: &[EffectiveView], population: &str| {
             let key = DeclarationKey {
                 package: type_key.package.clone(),
                 node: population.to_owned(),

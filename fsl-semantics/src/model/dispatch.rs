@@ -42,7 +42,10 @@
 
 use std::collections::HashSet;
 
-use crate::model::accounting::{Charge, ChargePoint, LimitKind, Meter, NormalizationIncomplete};
+use crate::model::accounting::{
+    Charge, NormalizationChargePoint, NormalizationIncomplete, NormalizationLimitKind,
+    NormalizationMeter,
+};
 use crate::model::index::ModelIndex;
 use crate::model::normalize::{EffectiveView, ModelRefusal, ModelRefusalCause};
 use filament_checked::key::DeclarationKey;
@@ -270,7 +273,7 @@ pub fn link_dispatch(
     view: &EffectiveView,
     original: &DeclarationKey,
     closure: GeneralizationClosure,
-    meter: &mut Meter,
+    meter: &mut NormalizationMeter,
 ) -> LinkCheckOutcome {
     let mut steps = FamilySteps::new(original, meter.limits().family_steps);
     link_dispatch_counted(view, original, closure, meter, &mut steps)
@@ -283,7 +286,7 @@ pub(crate) fn link_dispatch_counted(
     view: &EffectiveView,
     original: &DeclarationKey,
     closure: GeneralizationClosure,
-    meter: &mut Meter,
+    meter: &mut NormalizationMeter,
     steps: &mut FamilySteps<'_>,
 ) -> LinkCheckOutcome {
     if matches!(closure, GeneralizationClosure::Open) {
@@ -345,7 +348,9 @@ pub(crate) fn link_dispatch_counted(
     let mut refusals: Vec<SubtypeRefusal> = Vec::new();
 
     for subtype in &subtypes {
-        if let Err(incomplete) = meter.charge(Charge::new(ChargePoint::DispatchSubtype)) {
+        if let Err(incomplete) =
+            meter.charge(Charge::new(NormalizationChargePoint::DispatchSubtype))
+        {
             return LinkCheckOutcome::Incomplete(incomplete);
         }
 
@@ -353,8 +358,10 @@ pub(crate) fn link_dispatch_counted(
         for candidate in &candidates {
             candidate_charges += 1;
             if let Err(incomplete) = meter.charge(
-                Charge::new(ChargePoint::DispatchCandidate)
-                    .size(LimitKind::DispatchCandidates, candidate_charges),
+                Charge::new(NormalizationChargePoint::DispatchCandidate).size(
+                    NormalizationLimitKind::DispatchCandidates,
+                    candidate_charges,
+                ),
             ) {
                 return LinkCheckOutcome::Incomplete(incomplete);
             }
@@ -396,7 +403,9 @@ pub(crate) fn link_dispatch_counted(
             continue;
         }
 
-        if let Err(incomplete) = meter.charge(Charge::new(ChargePoint::DispatchDominance)) {
+        if let Err(incomplete) =
+            meter.charge(Charge::new(NormalizationChargePoint::DispatchDominance))
+        {
             return LinkCheckOutcome::Incomplete(incomplete);
         }
         let mut dominance_pairs: Vec<DominancePair> = Vec::new();

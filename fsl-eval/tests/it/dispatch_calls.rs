@@ -1250,8 +1250,9 @@ fn ab_bridge_declarations(
     let a_type = view_type(&view, "ix://test/orders/A");
     let b_type = view_type(&view, "ix://test/orders/B");
     let clauses = ab_bridge_clauses(a_type.clone(), pa, pb);
-    let mut meter =
-        fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = fsl_semantics::model::accounting::NormalizationMeter::new(
+        ModelNormalizationLimits::UNLIMITED,
+    );
     let root_key = if receiver_type == b_type {
         DeclarationKey::fixture("ix://test/orders/B/size")
     } else {
@@ -1884,8 +1885,9 @@ fn d06_bridge_ancestor_let_binder_colliding_with_descendant_parameter_does_not_c
 
     let domain_package = bridge_bundle();
     let view = bridge_view(&domain_package);
-    let mut meter =
-        fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = fsl_semantics::model::accounting::NormalizationMeter::new(
+        ModelNormalizationLimits::UNLIMITED,
+    );
     let root = DispatchRoot {
         // #204 round 1, M5: rooted at `b`, not the family's original `a` --
         // `B`'s own effective member for "size" is `B.size`, and this test
@@ -2152,8 +2154,9 @@ fn bridge_links_a_real_family_and_evaluates_through_the_built_table() {
     let a_type = view_type(&view, "ix://test/orders/A");
     let b_type = view_type(&view, "ix://test/orders/B");
     let clauses = bridge_clauses(a_type.clone());
-    let mut meter =
-        fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = fsl_semantics::model::accounting::NormalizationMeter::new(
+        ModelNormalizationLimits::UNLIMITED,
+    );
 
     let root = DispatchRoot {
         key: DeclarationKey::fixture("ix://test/orders/A/size"),
@@ -2246,8 +2249,9 @@ fn bridge_environment_admits_a_subtype_argument_at_a_supertype_parameter() {
             .expect("bridge_clauses declares every operation")
             .push(("other".to_owned(), ValueType::Reference(a_type.clone())));
     }
-    let mut meter =
-        fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = fsl_semantics::model::accounting::NormalizationMeter::new(
+        ModelNormalizationLimits::UNLIMITED,
+    );
     let declarations = checked_dispatch_operation(
         &view,
         fsl_semantics::check::model_type_environment("fixture", &view).unwrap(),
@@ -2343,8 +2347,9 @@ fn bridge_links_an_object_type_specializing_a_process() {
     clauses
         .own_body
         .insert(operation.clone(), Expression::integer(Integer::from(1_i64)));
-    let mut meter =
-        fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = fsl_semantics::model::accounting::NormalizationMeter::new(
+        ModelNormalizationLimits::UNLIMITED,
+    );
     let declarations = checked_dispatch_operation(
         &view,
         fsl_semantics::check::model_type_environment("fixture", &view).unwrap(),
@@ -2441,8 +2446,9 @@ fn d01_runtime_dispatches_d_and_c_receivers_and_observes_the_work_limit() {
         view_type(&view, "ix://test/orders/D"),
     );
     let clauses = bridge_clauses(a_type.clone());
-    let mut normalization_meter =
-        fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut normalization_meter = fsl_semantics::model::accounting::NormalizationMeter::new(
+        ModelNormalizationLimits::UNLIMITED,
+    );
     let mut declarations_a = checked_dispatch_operation(
         &view,
         fsl_semantics::check::model_type_environment("fixture", &view).unwrap(),
@@ -2749,8 +2755,9 @@ fn bridge_exposes_dispatch_through_an_inherited_static_type_that_never_redefines
     let a_type = view_type(&view, "ix://test/orders/A");
     let c_type = view_type(&view, "ix://test/orders/C");
     let clauses = inherited_only_clauses(a_type.clone());
-    let mut meter =
-        fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = fsl_semantics::model::accounting::NormalizationMeter::new(
+        ModelNormalizationLimits::UNLIMITED,
+    );
 
     let root = DispatchRoot {
         key: DeclarationKey::fixture("ix://test/orders/A/size"),
@@ -2846,8 +2853,9 @@ fn not_a_query_refusal(domain_package: &DomainPackage) -> DispatchBridgeRefusal 
     let view = bridge_view(domain_package);
     let a_type = view_type(&view, "ix://test/orders/A");
     let clauses = inherited_only_clauses(a_type);
-    let mut meter =
-        fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = fsl_semantics::model::accounting::NormalizationMeter::new(
+        ModelNormalizationLimits::UNLIMITED,
+    );
     let root = DispatchRoot {
         key: DeclarationKey::fixture("ix://test/orders/A/size"),
         closure: GeneralizationClosure::Closed,
@@ -3049,8 +3057,9 @@ fn checked_dispatch_operation_checks_root_key_first_not_record_order() {
             .own_body
             .insert(operation.clone(), Expression::integer(1_i64));
     }
-    let mut meter =
-        fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = fsl_semantics::model::accounting::NormalizationMeter::new(
+        ModelNormalizationLimits::UNLIMITED,
+    );
     let root = DispatchRoot {
         key: a.clone(),
         closure: GeneralizationClosure::Closed,
@@ -3170,8 +3179,9 @@ fn money_bridge(root_at_b: bool) -> MoneyBridge {
         key: if root_at_b { b } else { a },
         closure: GeneralizationClosure::Closed,
     };
-    let mut meter =
-        fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits::UNLIMITED);
+    let mut meter = fsl_semantics::model::accounting::NormalizationMeter::new(
+        ModelNormalizationLimits::UNLIMITED,
+    );
     let types = TypeEnvironment::new(
         composites,
         [

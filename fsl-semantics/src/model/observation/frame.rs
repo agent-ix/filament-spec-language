@@ -30,7 +30,8 @@ use super::{
     SnapshotValue, INSUFFICIENT_NEXT_CHARGE,
 };
 use crate::model::accounting::{
-    Charge, ChargePoint, Meter, ModelNormalizationLimits, NormalizationIncomplete,
+    Charge, ModelNormalizationLimits, NormalizationChargePoint, NormalizationIncomplete,
+    NormalizationMeter,
 };
 use crate::model::domain_package::OperationEffect;
 use crate::model::normalize::{ModelRefusal, ModelRefusalCause};
@@ -317,7 +318,7 @@ fn run<'a>(
     };
 
     let record_keys = record_keys(context.views);
-    let mut meter = Meter::new(context.limits);
+    let mut meter = NormalizationMeter::new(context.limits);
     let mut created = Vec::new();
     let mut deleted = Vec::new();
     for name in order {
@@ -346,8 +347,8 @@ fn run<'a>(
             },
             &mut |charge| {
                 let point = match charge {
-                    FrameCharge::Write => ChargePoint::FrameWrite,
-                    FrameCharge::RedefinesLink => ChargePoint::FrameRedefinesLink,
+                    FrameCharge::Write => NormalizationChargePoint::FrameWrite,
+                    FrameCharge::RedefinesLink => NormalizationChargePoint::FrameRedefinesLink,
                 };
                 meter.charge(Charge::new(point))
             },
@@ -477,7 +478,7 @@ pub(super) fn enforce_contexts<'a>(
         receiver: Some(RECEIVER),
         arguments: &[],
     };
-    let mut meter = Meter::new(context.limits);
+    let mut meter = NormalizationMeter::new(context.limits);
     match decide_frame(
         &frame,
         &[pre_object],
@@ -489,8 +490,8 @@ pub(super) fn enforce_contexts<'a>(
         },
         &mut |charge| {
             let point = match charge {
-                FrameCharge::Write => ChargePoint::FrameWrite,
-                FrameCharge::RedefinesLink => ChargePoint::FrameRedefinesLink,
+                FrameCharge::Write => NormalizationChargePoint::FrameWrite,
+                FrameCharge::RedefinesLink => NormalizationChargePoint::FrameRedefinesLink,
             };
             meter.charge(Charge::new(point))
         },

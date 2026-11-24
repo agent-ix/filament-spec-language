@@ -616,13 +616,13 @@ impl StateModel {
                 let actual = owner.view().model_selection();
                 let mut work = |units| {
                     owner.charge_reference_work(
-                        crate::model::accounting::ChargePoint::ReferenceCatalog,
+                        crate::model::accounting::NormalizationChargePoint::ReferenceCatalog,
                         units,
                     )
                 };
                 owner
                     .charge_reference_work(
-                        crate::model::accounting::ChargePoint::ReferenceCatalog,
+                        crate::model::accounting::NormalizationChargePoint::ReferenceCatalog,
                         1,
                     )
                     .map_err(|incomplete| RetainedModelFailure::Normalization {
@@ -1218,7 +1218,7 @@ impl StateModel {
 #[cfg(test)]
 mod retained_owner_tests {
     use super::*;
-    use crate::model::accounting::{ChargePoint, LimitKind};
+    use crate::model::accounting::{NormalizationChargePoint, NormalizationLimitKind};
     use crate::model::domain_package::DomainPackageRef;
     use crate::model::intake::package_input;
     use crate::model::observation::admit_current_snapshot_with_provenance;
@@ -1290,7 +1290,7 @@ mod retained_owner_tests {
         ];
         let records = models[1].view().domain_package().records.as_ptr();
         let exact_rows = models[1].exact_declaration_rows().as_ptr();
-        let before = models[1].consumed(LimitKind::WorkUnits);
+        let before = models[1].consumed(NormalizationLimitKind::WorkUnits);
         let mut budget = NativeJoinBudget::new(u64::MAX, u64::MAX);
         let owners = StateModel::retain_normalized_models(models, &mut budget).unwrap();
         let types = Arc::new(crate::check::model_type_environment("M", owners[0].view()).unwrap());
@@ -1339,14 +1339,20 @@ mod retained_owner_tests {
         let second_key = second.views[0].declaration_key_borrowed(effective).unwrap();
         assert_eq!(first_key, key);
         assert!(std::ptr::eq(first_key, second_key));
-        assert!(owners[1].consumed(LimitKind::WorkUnits) > before);
-        let consumed = owners[1].consumed(LimitKind::WorkUnits);
-        let other_consumed = owners[0].consumed(LimitKind::WorkUnits);
+        assert!(owners[1].consumed(NormalizationLimitKind::WorkUnits) > before);
+        let consumed = owners[1].consumed(NormalizationLimitKind::WorkUnits);
+        let other_consumed = owners[0].consumed(NormalizationLimitKind::WorkUnits);
         owners[1]
-            .charge_reference_work(ChargePoint::ReferenceResult, 7)
+            .charge_reference_work(NormalizationChargePoint::ReferenceResult, 7)
             .unwrap();
-        assert_eq!(owners[1].consumed(LimitKind::WorkUnits), consumed + 7);
-        assert_eq!(owners[0].consumed(LimitKind::WorkUnits), other_consumed);
+        assert_eq!(
+            owners[1].consumed(NormalizationLimitKind::WorkUnits),
+            consumed + 7
+        );
+        assert_eq!(
+            owners[0].consumed(NormalizationLimitKind::WorkUnits),
+            other_consumed
+        );
         assert!(std::ptr::eq(&*first.views[0], &*second.views[0]));
     }
 
@@ -1460,7 +1466,7 @@ mod retained_owner_tests {
             "test/model",
             ModelNormalizationLimits::default(),
         )]);
-        let consumed = owners[0].consumed(LimitKind::WorkUnits);
+        let consumed = owners[0].consumed(NormalizationLimitKind::WorkUnits);
         let result = StateModel::from_normalized_models(
             &[selection("test/model")],
             TypeEnvironment::default(),
@@ -1478,7 +1484,10 @@ mod retained_owner_tests {
         assert_eq!(retained_denied, denied);
         assert_eq!(retained_locus, locus);
         assert_eq!(retained_bound, configured_bound);
-        assert_eq!(owners[0].consumed(LimitKind::WorkUnits), consumed);
+        assert_eq!(
+            owners[0].consumed(NormalizationLimitKind::WorkUnits),
+            consumed
+        );
         let mut work_short = NativeJoinBudget::new(0, u64::MAX);
         let result = StateModel::from_normalized_models(
             &[selection("test/model")],
@@ -1498,14 +1507,17 @@ mod retained_owner_tests {
         assert_eq!(denied.amount, 1);
         assert_eq!(configured_bound, 0);
         assert_eq!(work_short.consumed().storage, 0);
-        assert_eq!(owners[0].consumed(LimitKind::WorkUnits), consumed);
+        assert_eq!(
+            owners[0].consumed(NormalizationLimitKind::WorkUnits),
+            consumed
+        );
     }
 
     #[trace("FR-940-AC-10")]
     #[test]
     fn retained_owner_reference_denial_keeps_the_original_limit_and_consumption() {
-        let baseline =
-            owner("test/model", ModelNormalizationLimits::default()).consumed(LimitKind::WorkUnits);
+        let baseline = owner("test/model", ModelNormalizationLimits::default())
+            .consumed(NormalizationLimitKind::WorkUnits);
         let original = ModelNormalizationLimits::default().with_work_units(baseline + 26);
         let mut budget = NativeJoinBudget::new(u64::MAX, u64::MAX);
         let owners =
@@ -1537,9 +1549,12 @@ mod retained_owner_tests {
         assert_eq!(incomplete.limit, original.work_units);
         assert_eq!(incomplete.consumed, original.work_units);
         assert_eq!(incomplete.next_charge, 1);
-        assert_eq!(incomplete.charge_point, ChargePoint::ReferenceCatalog);
         assert_eq!(
-            owners[0].consumed(LimitKind::WorkUnits),
+            incomplete.charge_point,
+            NormalizationChargePoint::ReferenceCatalog
+        );
+        assert_eq!(
+            owners[0].consumed(NormalizationLimitKind::WorkUnits),
             original.work_units
         );
     }

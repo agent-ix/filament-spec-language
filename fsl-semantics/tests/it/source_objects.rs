@@ -2440,7 +2440,9 @@ fn resolved_source_member_spellings_keep_aliases_without_changing_identity() {
         source.view.model_index(),
         child,
         base,
-        &mut fsl_semantics::model::accounting::Meter::new(ModelNormalizationLimits::UNLIMITED),
+        &mut fsl_semantics::model::accounting::NormalizationMeter::new(
+            ModelNormalizationLimits::UNLIMITED,
+        ),
     );
     let ConformanceCheckOutcome::Completed(ConformanceOutcome::Refused(failures)) = result else {
         panic!("distinct Decimal parameter refuses: {result:?}")

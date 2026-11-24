@@ -16,7 +16,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::model::accounting::{Meter, NormalizationIncomplete};
+use crate::model::accounting::{NormalizationIncomplete, NormalizationMeter};
 use crate::model::domain_package::{
     DomainPackage, DomainPackageRecord, DomainPackageRef, OriginalDeclaration,
 };
@@ -195,7 +195,10 @@ impl AdmittedPackage {
     /// node of the package (`unknown-owner`), or when the kind mapping
     /// reports any refusal. All refusals are reported; none of the package is
     /// admitted.
-    pub fn admit(package: DomainPackage, meter: &mut Meter) -> Result<Self, AdmitFailure> {
+    pub fn admit(
+        package: DomainPackage,
+        meter: &mut NormalizationMeter,
+    ) -> Result<Self, AdmitFailure> {
         let identity = package.model_selection.identity.clone();
         let mut refusals = Vec::new();
         let mut nodes = BTreeMap::new();
@@ -506,7 +509,7 @@ mod tests {
     fn admit(records: Vec<DomainPackageRecord>) -> Result<AdmittedPackage, AdmitFailure> {
         AdmittedPackage::admit(
             DomainPackage::new(DomainPackageRef::fixture("n01"), records),
-            &mut Meter::new(ModelNormalizationLimits::default()),
+            &mut NormalizationMeter::new(ModelNormalizationLimits::default()),
         )
     }
 
@@ -782,7 +785,7 @@ mod tests {
         );
         let Err(AdmitFailure::Refused(refusals)) = AdmittedPackage::admit(
             package,
-            &mut Meter::new(ModelNormalizationLimits::default()),
+            &mut NormalizationMeter::new(ModelNormalizationLimits::default()),
         ) else {
             panic!("the foreign key refuses")
         };

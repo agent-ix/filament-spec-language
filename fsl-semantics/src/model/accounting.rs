@@ -2,7 +2,7 @@
 //! `ModelNormalizationLimitsV1`: exact `u64` limits, named ordered charge
 //! points and the exact incomplete record for FR-150 normalization.
 //!
-//! Mirrors `crate::value::accounting`'s `Meter`/`ChargePoint`/`NormalizationIncomplete`
+//! Mirrors kernel accounting's `Meter`/`ChargePoint`/`Incomplete`
 //! shape (same atomic-first-denial semantics), over this rung's own,
 //! independent counter set — `ScalarLimitsV1` is A03's complete-value meter
 //! and is not reused here, per `value-accounting.md`: "These counters are
@@ -33,7 +33,7 @@ pub struct ModelNormalizationLimits {
     /// each walk starts a fresh count. A target or ancestor `n` edges up a
     /// chain is reached at `ancestor_steps == n`. Applies to normalization
     /// and to every conformance, dispatch-applicability, dominance and
-    /// systems-flow check that owns a `Meter`. Reaching it refuses
+    /// systems-flow check that owns a `NormalizationMeter`. Reaching it refuses
     /// `ModelRefusalCause::AncestorSteps` naming this bound.
     pub ancestor_steps: u64,
     /// Ceiling on the `redefines` edges one dispatch-family link follows,
@@ -141,7 +141,7 @@ impl ModelNormalizationLimits {
     }
 }
 
-impl LimitKind {
+impl NormalizationLimitKind {
     /// The setting that raises this counter (FR-255).
     pub const fn setting(self) -> fsl_foundation::Setting {
         use fsl_foundation::Setting;
@@ -200,7 +200,7 @@ impl fsl_foundation::SettingLimits for ModelNormalizationLimits {
 
 /// One counter of [`ModelNormalizationLimits`].
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum LimitKind {
+pub enum NormalizationLimitKind {
     /// `declaration_records`.
     DeclarationRecords,
     /// `derivation_facts`.
@@ -215,7 +215,7 @@ pub enum LimitKind {
     AncestorSteps,
 }
 
-impl LimitKind {
+impl NormalizationLimitKind {
     /// Every counter, in `ModelNormalizationLimitsV1` field order.
     pub const ALL: [Self; 5] = [
         Self::DeclarationRecords,
@@ -285,7 +285,7 @@ impl LimitKind {
 /// `frame.redefines-link` (`crate::model::population::decide_frame`), one
 /// `work_units` unit each.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
-pub enum ChargePoint {
+pub enum NormalizationChargePoint {
     /// Reference catalog row inspection and identity joins.
     ReferenceCatalog,
     /// Canonical reference result construction and encoding.
@@ -326,7 +326,7 @@ pub enum ChargePoint {
     FrameRedefinesLink,
 }
 
-impl ChargePoint {
+impl NormalizationChargePoint {
     /// Every named point this rung charges, in first-use order.
     pub const ALL: [Self; 19] = [
         Self::ReferenceCatalog,
@@ -381,7 +381,7 @@ impl ChargePoint {
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct NormalizationIncomplete {
     /// First unavailable counter in `ModelNormalizationLimitsV1` field order.
-    pub limit_kind: LimitKind,
+    pub limit_kind: NormalizationLimitKind,
     /// That counter's configured limit.
     pub limit: u64,
     /// That counter's consumed value before the denied charge.
@@ -389,7 +389,7 @@ pub struct NormalizationIncomplete {
     /// The denied amount.
     pub next_charge: u64,
     /// The named point whose charge was denied.
-    pub charge_point: ChargePoint,
+    pub charge_point: NormalizationChargePoint,
 }
 
 impl NormalizationIncomplete {
@@ -424,13 +424,13 @@ pub const MODEL_NORMALIZATION_OWNER: fsl_foundation::diagnostic::BudgetOwner =
 /// one sized counter, since no model charge point sizes more than one.
 /// Fixed-size, so building and admitting a charge allocates nothing.
 pub(super) struct Charge {
-    point: ChargePoint,
-    size: Option<(LimitKind, u64)>,
+    point: NormalizationChargePoint,
+    size: Option<(NormalizationLimitKind, u64)>,
     work_units: u64,
 }
 
 impl Charge {
-    pub(super) fn new(point: ChargePoint) -> Self {
+    pub(super) fn new(point: NormalizationChargePoint) -> Self {
         Self {
             point,
             size: None,
@@ -439,7 +439,7 @@ impl Charge {
     }
 
     /// The one counter this charge sizes, and the amount.
-    pub(super) fn size(mut self, kind: LimitKind, amount: u64) -> Self {
+    pub(super) fn size(mut self, kind: NormalizationLimitKind, amount: u64) -> Self {
         self.size = Some((kind, amount));
         self
     }
@@ -460,17 +460,17 @@ impl Charge {
 /// itself grow with that work; the const assertion below holds that in every
 /// production build. The meter also shares the caller's
 /// [`Cancel`] handle, which is a reference count and not per-charge state.
-/// The ordered charge log (`Meter::admitted_charges`) exists only under
+/// The ordered charge log (`NormalizationMeter::admitted_charges`) exists only under
 /// the `test-support` feature, which only a dev-dependency may enable.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Meter {
+pub struct NormalizationMeter {
     counters: Counters,
     cancel: Option<Cancel>,
     #[cfg(feature = "test-support")]
-    admitted: Vec<ChargePoint>,
+    admitted: Vec<NormalizationChargePoint>,
 }
 
-/// The fixed-size state a [`Meter`] charges against.
+/// The fixed-size state a [`NormalizationMeter`] charges against.
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Counters {
     limits: ModelNormalizationLimits,
@@ -483,7 +483,7 @@ struct Counters {
 // build rather than a test.
 const _: () = assert!(!std::mem::needs_drop::<Counters>());
 
-impl Meter {
+impl NormalizationMeter {
     /// A fresh meter with nothing consumed.
     pub fn new(limits: ModelNormalizationLimits) -> Self {
         Self {
@@ -513,7 +513,7 @@ impl Meter {
 
     /// Consumed value of one retained counter. `AncestorSteps` belongs to
     /// a walk, so the operation meter retains no consumption for it.
-    pub fn consumed(&self, kind: LimitKind) -> u64 {
+    pub fn consumed(&self, kind: NormalizationLimitKind) -> u64 {
         kind.index()
             .map_or(0, |index| self.counters.consumed[index])
     }
@@ -526,15 +526,15 @@ impl Meter {
     /// Every admitted charge point in admission order. Test-only: a
     /// production meter keeps [`Self::admission_count`], not a log.
     #[cfg(feature = "test-support")]
-    pub fn admitted_charges(&self) -> &[ChargePoint] {
+    pub fn admitted_charges(&self) -> &[NormalizationChargePoint] {
         &self.admitted
     }
 
     fn incomplete(
         &self,
-        kind: LimitKind,
+        kind: NormalizationLimitKind,
         next: u64,
-        point: ChargePoint,
+        point: NormalizationChargePoint,
     ) -> NormalizationIncomplete {
         NormalizationIncomplete {
             limit_kind: kind,
@@ -552,7 +552,11 @@ impl Meter {
     pub(super) fn charge(&mut self, charge: Charge) -> Result<(), NormalizationIncomplete> {
         let point = charge.point;
         if self.cancel.as_ref().is_some_and(Cancel::poll) {
-            return Err(self.incomplete(LimitKind::WorkUnits, charge.work_units, point));
+            return Err(self.incomplete(
+                NormalizationLimitKind::WorkUnits,
+                charge.work_units,
+                point,
+            ));
         }
         let sized = match charge.size {
             None => None,
@@ -571,11 +575,17 @@ impl Meter {
             }
         };
         let work_total = match self
-            .consumed(LimitKind::WorkUnits)
+            .consumed(NormalizationLimitKind::WorkUnits)
             .checked_add(charge.work_units)
         {
             Some(total) if total <= self.counters.limits.work_units => total,
-            _ => return Err(self.incomplete(LimitKind::WorkUnits, charge.work_units, point)),
+            _ => {
+                return Err(self.incomplete(
+                    NormalizationLimitKind::WorkUnits,
+                    charge.work_units,
+                    point,
+                ))
+            }
         };
         if let Some((kind, value)) = sized {
             if let Some(index) = kind.index() {
@@ -596,7 +606,7 @@ mod tests {
 
     use super::*;
 
-    /// A production `Meter` and `Charge` have no drop glue, so
+    /// A production `NormalizationMeter` and `Charge` have no drop glue, so
     /// they own no `Vec`, `Box` or `String`: the meter holds no per-charge
     /// state however many charges it admits, and its admission count still
     /// counts every one. Built only without `test-support` (`cargo test -p
@@ -608,20 +618,23 @@ mod tests {
     fn a_production_meter_owns_no_heap_memory_and_counts_every_charge() {
         assert!(!std::mem::needs_drop::<Counters>());
         assert!(!std::mem::needs_drop::<Charge>());
-        let mut meter = Meter::new(ModelNormalizationLimits::UNLIMITED);
+        let mut meter = NormalizationMeter::new(ModelNormalizationLimits::UNLIMITED);
         let mut admitted = 0_u64;
         for target in [1_u64, 1_000, 100_000] {
             while admitted < target {
                 admitted += 1;
                 meter
                     .charge(
-                        Charge::new(ChargePoint::NormalizeFact)
-                            .size(LimitKind::DerivationFacts, admitted),
+                        Charge::new(NormalizationChargePoint::NormalizeFact)
+                            .size(NormalizationLimitKind::DerivationFacts, admitted),
                     )
                     .expect("an unlimited meter admits every charge");
             }
             assert_eq!(meter.admission_count(), target);
-            assert_eq!(meter.consumed(LimitKind::DerivationFacts), target);
+            assert_eq!(
+                meter.consumed(NormalizationLimitKind::DerivationFacts),
+                target
+            );
         }
     }
 
@@ -630,34 +643,37 @@ mod tests {
     #[trace("TC-434", "NFR-012")]
     #[test]
     fn a_denied_charge_changes_nothing() {
-        let mut meter = Meter::new(ModelNormalizationLimits {
+        let mut meter = NormalizationMeter::new(ModelNormalizationLimits {
             effective_declarations: 10,
             ..ModelNormalizationLimits::UNLIMITED
         });
         meter
             .charge(
-                Charge::new(ChargePoint::NormalizeDeclaration)
-                    .size(LimitKind::EffectiveDeclarations, 6),
+                Charge::new(NormalizationChargePoint::NormalizeDeclaration)
+                    .size(NormalizationLimitKind::EffectiveDeclarations, 6),
             )
             .expect("6 of 10 declarations is admitted");
         let denied = meter
             .charge(
-                Charge::new(ChargePoint::NormalizeDeclaration)
-                    .size(LimitKind::EffectiveDeclarations, 11),
+                Charge::new(NormalizationChargePoint::NormalizeDeclaration)
+                    .size(NormalizationLimitKind::EffectiveDeclarations, 11),
             )
             .expect_err("11 of 10 declarations is denied");
         assert_eq!(
             denied,
             NormalizationIncomplete {
-                limit_kind: LimitKind::EffectiveDeclarations,
+                limit_kind: NormalizationLimitKind::EffectiveDeclarations,
                 limit: 10,
                 consumed: 6,
                 next_charge: 11,
-                charge_point: ChargePoint::NormalizeDeclaration,
+                charge_point: NormalizationChargePoint::NormalizeDeclaration,
             }
         );
-        assert_eq!(meter.consumed(LimitKind::EffectiveDeclarations), 6);
-        assert_eq!(meter.consumed(LimitKind::WorkUnits), 1);
+        assert_eq!(
+            meter.consumed(NormalizationLimitKind::EffectiveDeclarations),
+            6
+        );
+        assert_eq!(meter.consumed(NormalizationLimitKind::WorkUnits), 1);
         assert_eq!(meter.admission_count(), 1);
     }
 }
