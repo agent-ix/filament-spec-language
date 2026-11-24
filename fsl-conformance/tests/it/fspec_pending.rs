@@ -36,13 +36,13 @@ pub(crate) const PENDING: &[Pending] = &[
         runner: "state-core",
         case: "typing/absent-parent-implication",
         ticket: "QSL-3027",
-        pin: r#"expected Completed(true), actual Other("EvaluateFault(InternalFault { stage: \"witness\", invariant: \"decision-path-node-recorded\", kernel_cause: None, named: [] })")"#,
+        pin: r#"expected Completed(true), actual Other("EvaluateFault/InternalFault stage=witness invariant=decision-path-node-recorded")"#,
     },
     Pending {
         runner: "state-core",
         case: "typing/present-parent-violation",
         ticket: "QSL-3027",
-        pin: r#"expected Completed(false), actual Other("EvaluateFault(InternalFault { stage: \"witness\", invariant: \"decision-path-node-recorded\", kernel_cause: None, named: [] })")"#,
+        pin: r#"expected Completed(false), actual Other("EvaluateFault/InternalFault stage=witness invariant=decision-path-node-recorded")"#,
     },
     // G2
     Pending {

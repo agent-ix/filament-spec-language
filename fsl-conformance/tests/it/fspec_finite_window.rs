@@ -648,7 +648,7 @@ fn settle_counter(case: &Counter) -> Settled {
     let _context = (case.row, case.w, &case.note);
     let report = match run(&scenario) {
         Ok(report) => report,
-        Err(error) => return Settled::Mismatch(error),
+        Err(error) => return Settled::Error(error),
     };
     let actual = verdict_word(&report.disposition);
     let wanted = match &case.reason {
@@ -688,7 +688,7 @@ fn settle_covered(case: &Covered) -> Settled {
     };
     let report = match run(&scenario) {
         Ok(report) => report,
-        Err(error) => return Settled::Mismatch(error),
+        Err(error) => return Settled::Error(error),
     };
     let covered = matches!(
         report.disposition,
@@ -730,7 +730,7 @@ fn settle_admit(case: &Admit) -> Settled {
     };
     let report = match run(&scenario) {
         Ok(report) => report,
-        Err(error) => return Settled::Mismatch(error),
+        Err(error) => return Settled::Error(error),
     };
     let refused = matches!(
         report.disposition,
@@ -800,7 +800,7 @@ fn settle_order(case: &Order, all: &[Order]) -> Settled {
     let _context = (case.row, &case.note);
     let report = match run(&order_scenario(case, &case.positions, None)) {
         Ok(report) => report,
-        Err(error) => return Settled::Mismatch(error),
+        Err(error) => return Settled::Error(error),
     };
     match case.expected.as_str() {
         "refuse" => {
@@ -833,7 +833,7 @@ fn settle_order(case: &Order, all: &[Order]) -> Settled {
         };
         let twin_report = match run(&order_scenario(twin, &twin.positions, None)) {
             Ok(report) => report,
-            Err(error) => return Settled::Mismatch(error),
+            Err(error) => return Settled::Error(error),
         };
         if format!("{:?}", twin_report.disposition) != format!("{:?}", report.disposition) {
             return Settled::Mismatch(format!(
@@ -852,7 +852,7 @@ fn settle_order(case: &Order, all: &[Order]) -> Settled {
             };
             let probe = match run(&order_scenario(case, &case.positions, Some(listed))) {
                 Ok(report) => report,
-                Err(error) => return Settled::Mismatch(error),
+                Err(error) => return Settled::Error(error),
             };
             let support: Vec<u64> = match &probe.disposition {
                 ClauseDisposition::Temporal(TemporalVerdict::Indeterminate {
@@ -940,7 +940,7 @@ fn settle_tick_cover(case: &Value) -> (String, Settled, bool) {
                             Settled::Mismatch(format!("{id}: expected {word}, source run {actual}"))
                         }
                     }
-                    Err(error) => Settled::Mismatch(error),
+                    Err(error) => Settled::Error(error),
                 }
             } else {
                 Settled::Matched
@@ -970,6 +970,15 @@ fn settle_tick_cover(case: &Value) -> (String, Settled, bool) {
     (id, settled, via_source)
 }
 
+/// A window vector: a run error is a runner error, never an answer; an
+/// unequal result is a mismatch.
+fn settle_window(case: &Window) -> Settled {
+    match run_window(case) {
+        Ok(report) => settled(compare(case, &report)),
+        Err(error) => Settled::Error(error),
+    }
+}
+
 /// Every case of the file and what running it produced.
 fn run_all(fixtures: &Fixtures) -> Vec<(String, Settled)> {
     let mut cases = Vec::new();
@@ -977,10 +986,7 @@ fn run_all(fixtures: &Fixtures) -> Vec<(String, Settled)> {
         // The fixture's row and prose locate the independent expectation;
         // neither is used to manufacture the compiler's result.
         let _context = (case.row, &case.note, &case.listing_twin);
-        cases.push((
-            case.id.clone(),
-            settled(run_window(case).and_then(|report| compare(case, &report))),
-        ));
+        cases.push((case.id.clone(), settle_window(case)));
     }
     for case in &fixtures.orders {
         cases.push((case.id.clone(), settle_order(case, &fixtures.orders)));
@@ -1092,6 +1098,40 @@ fn conformance_fspec_finite_window_source_windows() {
         "qualification: {window_matched} of {} finite-window windows matched, {} keyed to open tickets",
         fixtures.total,
         tally.keyed.len()
+    );
+}
+
+/// Provenance: QSL-2048. A runner error in the finite-window runner is
+/// `Settled::Error`, which no registry key can pin: the run fails.
+#[trace("FR-350-AC-21")]
+#[test]
+fn a_finite_window_runner_error_is_an_error_and_cannot_be_keyed() {
+    let case: Window = serde_json::from_value(json!({
+        "id": "FWV-X", "row": 1, "op": "sometimes", "a": 0, "b": 1, "activate": "origin",
+        "positions": [[0, "T"]], "w": 1, "complete": 1, "scope": "closed",
+        "expected": {"outcome": "true"},
+    }))
+    .expect("a window");
+    let settled = settle_window(&case);
+    let Settled::Error(text) = &settled else {
+        panic!("a runner error was not Settled::Error: {settled:?}");
+    };
+    assert!(text.contains("no source operator adapter"), "{text}");
+    static KEYED: &[crate::fspec_pending::Pending] = &[crate::fspec_pending::Pending {
+        runner: RUNNER,
+        case: "FWV-X",
+        ticket: "QSL-3027",
+        pin: "FWV-X: no source operator adapter for sometimes",
+    }];
+    let tally = fspec_standard::settle(RUNNER, vec![("FWV-X".to_owned(), settled)], KEYED);
+    assert!(tally.keyed.is_empty());
+    assert!(
+        tally
+            .failures
+            .iter()
+            .any(|text| text.contains("runner error")),
+        "{:?}",
+        tally.failures
     );
 }
 

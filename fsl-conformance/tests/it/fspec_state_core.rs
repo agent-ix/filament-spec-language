@@ -106,7 +106,14 @@ fn code_of(failure: &AdmissionFailure) -> (bool, String) {
     match failure {
         AdmissionFailure::Refused(record) => (false, record.catalog.code().to_owned()),
         AdmissionFailure::Incomplete(record) => (true, record.catalog.code().to_owned()),
-        AdmissionFailure::Fault(fault) => (false, format!("fault:{fault:?}")),
+        AdmissionFailure::Fault(fault) => (
+            false,
+            format!(
+                "InternalFault stage={} invariant={}",
+                fault.stage(),
+                fault.invariant()
+            ),
+        ),
     }
 }
 
@@ -127,6 +134,12 @@ fn observe(disposition: &ClauseDisposition) -> Observed {
         ClauseDisposition::Evaluate(CallOutcome::Incomplete(_)) => {
             Observed::Incomplete("resource_exhausted".to_owned())
         }
+        // A fault is pinned by its stable stage and invariant, not by Debug text.
+        ClauseDisposition::EvaluateFault(fault) => Observed::Other(format!(
+            "EvaluateFault/InternalFault stage={} invariant={}",
+            fault.stage(),
+            fault.invariant()
+        )),
         other => match other.truth() {
             Some(value) => Observed::Completed(value),
             None => Observed::Other(format!("{other:?}")),
@@ -546,7 +559,11 @@ fn check_unit(unit: &str, model: Option<String>) -> Result<Observed, String> {
 fn refusal_of(failure: spine::FrontEndFailure) -> Observed {
     match spine::refusal_or_fault(failure) {
         Ok(refusal) => Observed::Refused(refusal.code().as_str().to_owned()),
-        Err(fault) => Observed::Other(format!("fault {fault:?}")),
+        Err(fault) => Observed::Other(format!(
+            "InternalFault stage={} invariant={}",
+            fault.stage(),
+            fault.invariant()
+        )),
     }
 }
 
