@@ -10,7 +10,7 @@ use fsl_foundation::SourceIdentity;
 use ix_trace_rs::trace;
 
 use crate::temporal_trace::{
-    counter, counters, finite, fixture, lasso, outcome, violated, EVENT, INFINITE,
+    EVENT, INFINITE, counter, counters, finite, fixture, lasso, outcome, violated,
 };
 
 /// The closed `Counter` trace with `c.level` 1, 1, 1 under event-position
@@ -235,14 +235,14 @@ mod operator_laws {
     //! their own letters and are not covered here.
     use filament_exact::Meter;
     use fsl_eval::temporal::{
-        evaluate, evaluate_at, AtomReading, CaptureReading, LetterStop, TemporalLetters,
-        TemporalOutcome, TemporalPosition, TemporalRefusal, TemporalTrace,
+        AtomReading, CaptureReading, LetterStop, TemporalLetters, TemporalOutcome,
+        TemporalPosition, TemporalRefusal, TemporalTrace, evaluate, evaluate_at,
     };
     use fsl_proptest_policy as prop;
     use fsl_semantics::check::{FormulaNode, FormulaNodeId, SCALAR_LIMITS_UNLIMITED};
     use proptest::prelude::*;
 
-    use crate::temporal_trace::{fixture, Fixture, EVENT, INFINITE};
+    use crate::temporal_trace::{EVENT, Fixture, INFINITE, fixture};
 
     const OVER: &str = "c: Counter";
 
@@ -753,7 +753,11 @@ mod operator_laws {
                     truth,
                     sat(f, &lasso, position as i64),
                     "prefix verdict {:?} of {} at {} on {:?} is contradicted by the continuation {:?}",
-                    got, real(f), position, run.valuations, extension
+                    got,
+                    real(f),
+                    position,
+                    run.valuations,
+                    extension
                 );
             } else {
                 prop_assert_eq!(
@@ -988,7 +992,7 @@ mod operator_laws {
             prop::config(256),
             &(inputs(), 0u8..8),
             |((run, x, _, i), cut)| {
-                let high = i.high.map_or(i.low + 3, |h| h);
+                let high = i.high.unwrap_or(i.low + 3);
                 if high <= i.low {
                     return Ok(());
                 }

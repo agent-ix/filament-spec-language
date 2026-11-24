@@ -13,8 +13,8 @@ use fsl_semantics::model::clock_reference::identity::{
 };
 use fsl_semantics::model::clock_reference::{encode_identity, is_clock_type};
 
-use super::domain::{clock_reference_paths, ClockSelectorMaxima, Domain};
 use super::ModelSystem;
+use super::domain::{ClockSelectorMaxima, Domain, clock_reference_paths};
 
 /// Why a `Reference<Clock>` domain cannot be enumerated. None of these is an
 /// empty domain: a caller never ranges a hidden field or parameter over fewer
@@ -312,12 +312,73 @@ fn charge_seed(work: &mut u128, limit: u64) -> Result<(), ClockDomainRefusal> {
     Ok(())
 }
 
+/// The selector range of each collection entry on `path`, in path order.
+fn selector_ranges(
+    path: &[PathEntry],
+    node: &NodeKey,
+    selectors: Option<&ClockSelectorMaxima>,
+) -> Result<Vec<(Decimal, u64)>, ClockDomainRefusal> {
+    let derived = selectors.and_then(|maxima| maxima.get(node));
+    let mut slot = 0_usize;
+    let mut ranges = Vec::new();
+    for (position, entry) in path.iter().enumerate() {
+        let PathEntry::Collection { shape, .. } = entry else {
+            continue;
+        };
+        let maximum = match derived.and_then(|maxima| maxima.get(slot)).copied() {
+            Some(maximum) => maximum,
+            None => match &shape.maximum {
+                Some(declared) => declared.as_str().parse::<u64>().map_err(|_| {
+                    ClockDomainRefusal::UnparseableMaximum {
+                        clock: node.clone(),
+                        maximum: declared.as_str().to_owned(),
+                    }
+                })?,
+                None => {
+                    return Err(ClockDomainRefusal::UnboundedSlot {
+                        clock: node.clone(),
+                        slot,
+                    });
+                }
+            },
+        };
+        slot += 1;
+        let position =
+            u64::try_from(position).map_err(|_| ClockDomainRefusal::UnparseableMaximum {
+                clock: node.clone(),
+                maximum: position.to_string(),
+            })?;
+        ranges.push((Decimal::from(position), maximum));
+    }
+    Ok(ranges)
+}
+
+/// Every selector tuple below the given maxima, the first slot most
+/// significant, ascending.
+fn product(ranges: &[(Decimal, u64)]) -> Vec<Vec<SlotIndex>> {
+    let mut tuples = vec![Vec::new()];
+    for (position, maximum) in ranges {
+        let mut next = Vec::new();
+        for prefix in &tuples {
+            for index in 0..*maximum {
+                let mut tuple: Vec<SlotIndex> = prefix.clone();
+                tuple.push(SlotIndex {
+                    path_position: position.clone(),
+                    index: Decimal::from(index),
+                });
+                next.push(tuple);
+            }
+        }
+        tuples = next;
+    }
+    tuples
+}
 #[cfg(test)]
 mod tests {
-    use filament_exact::{from_admitted_map, MapType, OptionValue, Value, ValueType};
+    use filament_exact::{MapType, OptionValue, Value, ValueType, from_admitted_map};
     use ix_trace_rs::trace;
 
-    use super::{collect_clock_references, ClockDomainRefusal};
+    use super::{ClockDomainRefusal, collect_clock_references};
 
     /// Repeated seed references are still charged during traversal, so a
     /// duplicate-heavy input cannot evade the candidate work bound.
@@ -384,66 +445,4 @@ mod tests {
         assert_eq!(references.len(), 1);
         assert_eq!(references[0].object().as_str(), value.text());
     }
-}
-
-/// The selector range of each collection entry on `path`, in path order.
-fn selector_ranges(
-    path: &[PathEntry],
-    node: &NodeKey,
-    selectors: Option<&ClockSelectorMaxima>,
-) -> Result<Vec<(Decimal, u64)>, ClockDomainRefusal> {
-    let derived = selectors.and_then(|maxima| maxima.get(node));
-    let mut slot = 0_usize;
-    let mut ranges = Vec::new();
-    for (position, entry) in path.iter().enumerate() {
-        let PathEntry::Collection { shape, .. } = entry else {
-            continue;
-        };
-        let maximum = match derived.and_then(|maxima| maxima.get(slot)).copied() {
-            Some(maximum) => maximum,
-            None => match &shape.maximum {
-                Some(declared) => declared.as_str().parse::<u64>().map_err(|_| {
-                    ClockDomainRefusal::UnparseableMaximum {
-                        clock: node.clone(),
-                        maximum: declared.as_str().to_owned(),
-                    }
-                })?,
-                None => {
-                    return Err(ClockDomainRefusal::UnboundedSlot {
-                        clock: node.clone(),
-                        slot,
-                    });
-                }
-            },
-        };
-        slot += 1;
-        let position =
-            u64::try_from(position).map_err(|_| ClockDomainRefusal::UnparseableMaximum {
-                clock: node.clone(),
-                maximum: position.to_string(),
-            })?;
-        ranges.push((Decimal::from(position), maximum));
-    }
-    Ok(ranges)
-}
-
-/// Every selector tuple below the given maxima, the first slot most
-/// significant, ascending.
-fn product(ranges: &[(Decimal, u64)]) -> Vec<Vec<SlotIndex>> {
-    let mut tuples = vec![Vec::new()];
-    for (position, maximum) in ranges {
-        let mut next = Vec::new();
-        for prefix in &tuples {
-            for index in 0..*maximum {
-                let mut tuple: Vec<SlotIndex> = prefix.clone();
-                tuple.push(SlotIndex {
-                    path_position: position.clone(),
-                    index: Decimal::from(index),
-                });
-                next.push(tuple);
-            }
-        }
-        tuples = next;
-    }
-    tuples
 }

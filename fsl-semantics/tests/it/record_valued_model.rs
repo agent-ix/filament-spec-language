@@ -39,10 +39,9 @@ use crate::tc235_k2 as base;
     clippy::duplicate_mod,
     reason = "a test binary may load the variant fixture directly"
 )]
-#[allow(dead_code, reason = "this fixture uses part of the shared builders")]
 mod variants;
 
-use base::{PACKAGE, id};
+use base::id;
 
 const INTEGER: &str = "ix://filament/native/Integer";
 
@@ -139,7 +138,7 @@ fn read(
     let bytes = serde_json::to_vec(document).expect("the fixture serializes");
     let offered = package_input([bytes.as_slice()]).unwrap();
     let selection = DomainPackageRef {
-        identity: PACKAGE.to_owned(),
+        identity: variants::PACKAGE.to_owned(),
     };
     let (_selection, admitted) = admit(
         selection.identity.as_str(),
@@ -178,9 +177,10 @@ fn assembled(document: &Value) -> PackageDeclarations {
     let source = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile v = \"filament.model.complete/v1\";\n\
-         model Config = {PACKAGE:?};\n\
+         model Config = {package:?};\n\
          function keep using v(): Boolean pure {{ true }}\n\
-         function previous using v(account: Reference<Config::Account>): Option<Config::Address> pure {{ deref(account).previous }}\n"
+         function previous using v(account: Reference<Config::Account>): Option<Config::Address> pure {{ deref(account).previous }}\n",
+        package = variants::PACKAGE,
     );
     let parsed = fsl_cst::parse(
         SourceIdentity::new("test", "record-valued"),
@@ -489,9 +489,10 @@ fn plain() -> Value {
 
 fn snapshot_text(label: &str, observation: &str, address: &str) -> String {
     format!(
-        r#"{{"format":"filament.state.snapshot/v1","identity":{{"authority":"test","identity":"{label}"}},"observation":"{observation}","model":{{"identity":"{PACKAGE}"}},"populations":[{{"population":"{population}","complete":true,"objects":[{{"key":"a1","type":"{account}","fields":{{"number":{{"integer":"1"}},"address":{address},"previous":{{"absent":{{}}}},"history":{{"sequence":[]}}}}}}]}}]}}"#,
+        r#"{{"format":"filament.state.snapshot/v1","identity":{{"authority":"test","identity":"{label}"}},"observation":"{observation}","model":{{"identity":"{package}"}},"populations":[{{"population":"{population}","complete":true,"objects":[{{"key":"a1","type":"{account}","fields":{{"number":{{"integer":"1"}},"address":{address},"previous":{{"absent":{{}}}},"history":{{"sequence":[]}}}}}}]}}]}}"#,
         population = id("accounts"),
         account = id("Account"),
+        package = variants::PACKAGE,
     )
 }
 
@@ -584,7 +585,7 @@ impl World {
         let invocation = serde_json::to_vec(&json!({
             "format": "filament.state.invocation/v1",
             "identity": identity(&call),
-            "model": {"identity": PACKAGE},
+            "model": {"identity": variants::PACKAGE},
             "context": id("Account"),
             "operation": operation,
             "self": {"population": id("accounts"), "key": "a1"},

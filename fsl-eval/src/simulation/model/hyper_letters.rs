@@ -22,12 +22,12 @@ use filament_semantic_value::catalog::InternalFault;
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{CheckedHyperClause, FormulaNode, FormulaNodeId};
 
-use super::contracts::{verdict, Verdict};
+use super::ModelEvaluator;
+use super::contracts::{Verdict, verdict};
 use super::letters::{LettersRefusal, Observed};
 use super::reference_bindings::{ReferenceBindings, ReferenceLiteralKey};
 use super::walk::{rows_of, stop};
-use super::ModelEvaluator;
-use super::{state_document, ClauseOutcome, ModelSimState, ModelSystem, BROKEN};
+use super::{BROKEN, ClauseOutcome, ModelSimState, ModelSystem, state_document};
 use crate::hyper::{HyperLetters, HyperSlot, ParameterBinding};
 use crate::model_subject::{AtomStop, ModelInstance};
 use crate::simulation::StateKey;
@@ -105,7 +105,7 @@ impl<'s, 'a> CheckedHyperLetters<'s, 'a> {
                 if system.model.type_key(object_type.clone()).is_none() {
                     continue;
                 }
-                let current = format!("{:?}", bindings.get(&object_type, &identity));
+                let current = format!("{:?}", bindings.get(object_type, identity));
                 if let Some((first_component, first_binding)) = &first_declaring {
                     if *first_binding != current {
                         let identity = identity

@@ -16,15 +16,14 @@ use fsl_package::{BarePackage, BareSupply, CheckedPackage, EmitLimits, V2ReadLim
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::object_environment::ObjectEnvironment;
 use fsl_semantics::model::observation::{
-    admit_observations, AdmissionFailure, AnchorKind, ClauseFacts, ClauseSelection,
-    ClauseSelectionInput, DocumentRef, ObservationLimits, Provisions, SelectedAnchor,
-    SelectedObject,
+    AdmissionFailure, AnchorKind, ClauseFacts, ClauseSelection, ClauseSelectionInput, DocumentRef,
+    ObservationLimits, Provisions, SelectedAnchor, SelectedObject, admit_observations,
 };
 use fsl_semantics::model::state::StateModel;
 use ix_trace_rs::trace;
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
-use crate::ring_queue::{self, clock_refinement, key, node, Checked, CLOCKS, QUEUE};
+use crate::ring_queue::{self, CLOCKS, Checked, QUEUE, clock_refinement, key, node};
 
 const LIMITS: ScalarLimits = ScalarLimits {
     integer_bits: 1 << 20,
@@ -1785,7 +1784,7 @@ fn invalid_clock_selectors_refuse_invalid_value_on_source() {
             let snapshots = snapshot_with(&base, field, &target, true);
             assert_eq!(
                 refused_with(&model, &snapshots, what),
-                source_record(invalid.clone(), field, &target),
+                source_record(invalid, field, &target),
                 "{what} in {field}"
             );
         }
@@ -1898,7 +1897,7 @@ fn an_unlisted_clock_owner_is_dangling_when_complete_and_tolerated_when_incomple
                 &snapshot_with(&base, field, &unlisted, true),
                 "complete",
             ),
-            source_record(dangling.clone(), field, &unlisted),
+            source_record(dangling, field, &unlisted),
             "an unlisted owner is dangling in a complete population ({field})"
         );
         let admitted = observe(
@@ -1973,7 +1972,7 @@ fn a_removed_clock_place_is_dangling_at_the_nested_locus_on_source() {
     for field in ["r", "maybe", "refs"] {
         assert_eq!(
             refused_with(&model, &snapshot_with(&valid, field, &old_x, true), "old x"),
-            source_record(dangling.clone(), field, &old_x),
+            source_record(dangling, field, &old_x),
             "old x in {field}"
         );
     }
