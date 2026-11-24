@@ -898,7 +898,21 @@ impl<'a> Forms<'a> {
             .composites()
             .find(|candidate| declaration_name(candidate) == named)
             .map(filament_semantic_value::declaration::CompositeDeclaration::key)
-            .filter(|own| self.types.composite_conforms(own.clone(), declared.clone()))
+            .filter(|own| {
+                // Composite conformance excludes unions even reflexively;
+                // exact identity still admits a value of its declared union.
+                let exact_union = own == declared
+                    && self
+                        .types
+                        .composite(own.clone())
+                        .is_some_and(|declaration| {
+                            matches!(
+                                declaration.shape(),
+                                filament_semantic_value::declaration::CompositeShape::Union(_)
+                            )
+                        });
+                exact_union || self.types.composite_conforms(own.clone(), declared.clone())
+            })
             .ok_or_else(|| wrong_kind_at2(path, tag, "type"))?;
         Ok(own)
     }

@@ -2128,6 +2128,31 @@ impl<'r, 'a: 'r> ClaimReads<'r, 'a> {
                 }));
             }
         };
+        if let Some(parameter) = target.parameters().iter().find(|parameter| {
+            matches!(
+                parameter.domain(),
+                fsl_replay::value_check::ParameterDomain::Union(_)
+            )
+        }) {
+            let nodes = &self.package.package().resolved_graph().nodes;
+            let node = nodes
+                .iter()
+                .find(|node| {
+                    self.package.node_key(&node.node_id).as_ref() == Some(&parameter.node())
+                })
+                .and_then(|parameter| {
+                    nodes
+                        .iter()
+                        .find(|ty| ty.node_id == parameter.semantic_type)
+                })
+                .map(|ty| ty.node_id.clone());
+            return Err(PackageRunError::Pending(PendingPackageFamily {
+                request_index: None,
+                note: None,
+                family: PendingFamily::ModelForm(UnreadModelForm::Variant),
+                node,
+            }));
+        }
         // Enum values use the admitted world's complete member identities.
         if !target.parameters().iter().all(|parameter| {
             matches!(

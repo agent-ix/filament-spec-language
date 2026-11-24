@@ -476,8 +476,14 @@ impl Forms<'_> {
             .composites()
             .find(|candidate| declaration_form(&candidate.key()).is_ok_and(|form| &form == name))
             .filter(|candidate| {
-                self.types
-                    .composite_conforms(candidate.key(), declared.clone())
+                // Union declarations do not participate in composite
+                // generalization, but a value of the exact declared union
+                // type remains a valid argument of that type.
+                (candidate.key() == *declared
+                    && matches!(candidate.shape(), CompositeShape::Union(_)))
+                    || self
+                        .types
+                        .composite_conforms(candidate.key(), declared.clone())
             })
             .ok_or_else(|| wrong_kind_at(path, "name"))?;
         let legacy_name = declaration_name(declaration);
