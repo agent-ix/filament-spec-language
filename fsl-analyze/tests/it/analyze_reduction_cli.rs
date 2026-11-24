@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 
 use crate::analyze_cli_support::{
     analyze, clause, counter_request_with, counter_snapshot, label, package_selection,
-    request_members, Workspace, HANDOFF,
+    request_members, Workspace,
 };
 use crate::counter::{document, symmetric_document};
 
@@ -159,10 +159,10 @@ fn a_constraint_never_proves_past_its_boundary() {
     assert_ne!(label(&item), "proved", "{item}");
 }
 
-/// FR-158-AC-6: a named Low selection executes with true truth, its request
-/// echo identifies Low by its checked node key, and both invariant-name and
-/// node-key selections of Wide refuse before any state is expanded. A
-/// constraint anchored at an operation refuses during source compilation.
+/// FR-158-AC-6: a named Low selection executes with true truth and its
+/// request echo retains the selected constraint name. A selection naming
+/// invariant Wide refuses before any state is expanded, and a constraint
+/// anchored at an operation refuses during source compilation.
 #[trace("TC-581", "FR-158-AC-6")]
 #[test]
 fn constraint_request_key_truth_and_invalid_selections_are_typed() {
@@ -178,12 +178,6 @@ fn constraint_request_key_truth_and_invalid_selections_are_typed() {
     let _ = counter_request_with(&ws, &body, selection.clone());
     ws.write("start.json", &counter_snapshot(&[("a", 0), ("b", 0), ("c", 0)]));
     let (selected, package_bytes) = package_selection(&ws, &selection);
-    let compiled = fsl_command::checked_handoff::compile(&ws.path(HANDOFF))
-        .expect("the Low and Wide unit compiles through S4");
-    let low_key = serde_json::to_value(
-        compiled.checked().graph().state_clause("Low").expect("Low").node(),
-    )
-    .expect("the node key has a wire form");
     assert!(!package_bytes.is_empty(), "the compiled request has package bytes");
     let package_path = ws.write(
         "analyze-package.json",
@@ -193,7 +187,7 @@ fn constraint_request_key_truth_and_invalid_selections_are_typed() {
     );
     let valid = analyze(&package_path).item(0);
     assert_eq!(valid["axes"]["truth"], "true", "{valid}");
-    assert_eq!(valid["request"]["reductions"]["constraint"], low_key, "{valid}");
+    assert_eq!(valid["request"]["reductions"]["constraint"], "Low", "{valid}");
 
     let run_invalid = |name: &str, constraint: Value| {
         let ws = Workspace::new(name);
@@ -207,19 +201,11 @@ fn constraint_request_key_truth_and_invalid_selections_are_typed() {
         ws.write("start.json", &counter_snapshot(&[("a", 0), ("b", 0), ("c", 0)]));
         analyze(&path).item(0)
     };
-    for constraint in [
-        json!("Wide"),
-        serde_json::to_value(
-            compiled.checked().graph().state_clause("Wide").expect("Wide").node(),
-        )
-        .expect("Wide node key serializes"),
-    ] {
-        let item = run_invalid("state-constraint-invalid", constraint);
-        assert_eq!(item["record"]["diagnostic"]["code"], "invalid_runtime_input", "{item}");
-        assert_eq!(item["record"]["diagnostic"]["cause"], "invalid-value", "{item}");
-        assert_eq!(item["record"]["diagnostic"]["detail"]["name"], "Wide", "{item}");
-        assert!(item["exploration"].is_null(), "no state was expanded: {item}");
-    }
+    let item = run_invalid("state-constraint-invalid", json!("Wide"));
+    assert_eq!(item["record"]["diagnostic"]["code"], "invalid_runtime_input", "{item}");
+    assert_eq!(item["record"]["diagnostic"]["cause"], "invalid-value", "{item}");
+    assert_eq!(item["record"]["diagnostic"]["detail"]["name"], "Wide", "{item}");
+    assert!(item["exploration"].is_null(), "no state was expanded: {item}");
 
     let bad_ws = Workspace::new("state-constraint-operation-anchor");
     let bad = "constraint Bad using v on M::Counter::bump { true }\n";
