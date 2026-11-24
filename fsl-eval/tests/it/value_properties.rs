@@ -1686,13 +1686,16 @@ struct AggregateCase {
 
 impl AggregateCase {
     fn minimum(&self) -> u64 {
-        0
+        u64::from(
+            self.kind == CollKind::Sequence
+                && matches!(self.aggregate, Aggregate::Min | Aggregate::Max),
+        )
     }
 }
 
 fn aggregate_source(kind: CollKind, aggregate: Aggregate) -> String {
     let nonempty = matches!(aggregate, Aggregate::Min | Aggregate::Max);
-    let minimum = 0;
+    let minimum = u8::from(nonempty && kind == CollKind::Sequence);
     let parameters = format!("xs: {}<Int[-9, 9]>[{minimum}, 6]", kind.name());
     let (result, body) = match aggregate {
         Aggregate::Sum(k) => ("A", format!("sum<A>(x in xs: x + ({k}))")),
