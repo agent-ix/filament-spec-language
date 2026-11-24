@@ -110,7 +110,7 @@ fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenanc
                 .map(String::as_str)
                 .collect::<Vec<_>>();
             extraction_members.sort_unstable();
-            let expected_members: &[&str] = if case == Case::Violating {
+            let expected_members: &[&str] = if matches!(&case, Case::Violating) {
                 &[
                     "binding",
                     "body",
@@ -171,14 +171,16 @@ fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenanc
                 },
             ];
             for mutant in malformed {
-                let error = fsl_replay::spine::read_native_run_result(
+                let error = match fsl_replay::spine::read_native_run_result(
                     &serde_json::to_vec(&mutant).expect("edited result serializes"),
-                )
-                .expect_err("malformed extraction refuses");
+                ) {
+                    Err(error) => error,
+                    Ok(_) => panic!("malformed extraction must refuse"),
+                };
                 assert!(error.to_string().contains("extraction"), "{error}");
             }
 
-            if case == Case::Violating {
+            if matches!(&case, Case::Violating) {
                 assert!(extraction["original_regions"].is_array());
                 assert_eq!(
                     extraction["original_regions"].as_array().map(Vec::len),
