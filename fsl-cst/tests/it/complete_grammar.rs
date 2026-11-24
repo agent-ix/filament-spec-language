@@ -572,7 +572,7 @@ fn corpus() -> Vec<(&'static str, String)> {
     ]
 }
 
-#[trace("FSpec-TC-180", "FSpec-FR-339-AC-2", "FR-003-AC-14", "NFR-141-AC-8")]
+#[trace("FSpec-TC-180", "FSpec-FR-339-AC-2", "FR-003-AC-14")]
 #[test]
 fn every_named_production_has_positive_vectors_and_exact_boundaries() {
     assert_eq!(Production::all(), ACCEPTED_PRODUCTIONS);
@@ -1117,7 +1117,7 @@ fn a_rational_literal_takes_signed_constants_and_never_a_runtime_expression() {
 
 /// FR-003-AC-14: every corpus unit formats idempotently, with an equal
 /// significant token sequence and an equal production tree.
-#[trace("TC-2784", "FR-003-AC-14")]
+#[trace("TC-2784", "FR-003-AC-14", "NFR-141-AC-8")]
 #[test]
 fn every_corpus_unit_formats_idempotently_with_its_tokens_and_tree() {
     let shape = |parsed: &ParsedSource| {

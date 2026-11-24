@@ -42,7 +42,7 @@ fn long_expected_sets_use_a_short_category_phrase() {
     );
 }
 
-#[trace("TC-2198", "FR-762-AC-2")]
+#[trace("TC-2198", "FR-762-AC-2", "NFR-141-AC-8")]
 #[test]
 fn population_peek_spelling_and_its_candidates_are_hidden() {
     let output = messages(&format!(
@@ -60,7 +60,7 @@ fn population_peek_spelling_and_its_candidates_are_hidden() {
     }
 }
 
-#[trace("TC-2198", "FR-762-AC-3")]
+#[trace("TC-2198", "FR-762-AC-3", "NFR-141-AC-8")]
 #[test]
 fn expression_start_does_not_advertise_decimal_literal() {
     let output = messages(&format!(
@@ -80,7 +80,7 @@ fn expression_start_does_not_advertise_decimal_literal() {
     );
 }
 
-#[trace("TC-2198", "FR-397-AC-11")]
+#[trace("TC-2198", "FR-397-AC-11", "FR-762-AC-4", "NFR-141-AC-8")]
 #[test]
 fn uppercase_hex_reports_the_lowercase_digit_rule() {
     let output = messages(&format!(
@@ -98,7 +98,7 @@ fn uppercase_hex_reports_the_lowercase_digit_rule() {
     );
 }
 
-#[trace("TC-2198", "FR-762-AC-5")]
+#[trace("TC-2198", "FR-762-AC-5", "NFR-141-AC-8")]
 #[test]
 fn reserved_identifier_diagnostic_names_the_reserved_word() {
     for word in ["first", "bounded"] {
@@ -112,7 +112,7 @@ fn reserved_identifier_diagnostic_names_the_reserved_word() {
     }
 }
 
-#[trace("TC-2198", "FR-762-AC-6")]
+#[trace("TC-2198", "FR-762-AC-6", "NFR-141-AC-8")]
 #[test]
 fn missing_semicolon_still_reports_the_single_expected_alternative() {
     let output = messages(&format!("{HEADER}record R {{ datum: Integer }}\n"));
