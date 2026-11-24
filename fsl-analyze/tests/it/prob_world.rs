@@ -27,7 +27,7 @@ use fsl_semantics::check::{
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 /// The native Boolean type reference.
 pub(crate) const BOOLEAN: &str = "ix://filament/native/Boolean";
@@ -981,6 +981,44 @@ pub(crate) fn process(extra: &str) -> Model {
              workload Even on M {{ weight Proc::flip = 1; weight Proc::wait = 1; }}\n{extra}"
         ),
         initial: json!({"done": {"boolean": false}}),
+    }
+}
+
+/// One fair `go` attempt succeeds with probability one half, then disables
+/// itself. A failed draw can stutter through `wait` outside the target; strong
+/// fairness is vacuous once `go` is disabled.
+pub(crate) fn one_shot(extra: &str) -> Model {
+    Model {
+        package: "test/one-shot",
+        object: "Once",
+        population: "onces",
+        key: "o",
+        integers: vec![],
+        fields: vec![
+            ("attempted", BOOLEAN.to_owned()),
+            ("done", BOOLEAN.to_owned()),
+        ],
+        operations: vec![Operation {
+            name: "go",
+            parameters: vec![("success", BOOLEAN.to_owned())],
+            modifies: vec!["attempted", "done"],
+            deletes: false,
+        }, Operation {
+            name: "wait",
+            parameters: vec![],
+            modifies: vec!["attempted", "done"],
+            deletes: false,
+        }],
+        body: format!(
+            "pre Live_go using v on M::Once::go {{ not self.attempted }}\n\
+             post Went using v on M::Once::go {{ self.attempted = true and self.done = success }}\n\
+             pre Live_wait using v on M::Once::wait {{ self.attempted and not self.done }}\n\
+             post Waited using v on M::Once::wait {{ self.attempted = pre(self.attempted) and self.done = pre(self.done) }}\n\
+             random Once::go(success) ~ {{ true: 1, false: 1 }};\n\
+             terminal Done using v on M when {{ self.done }};\n\
+             {extra}"
+        ),
+        initial: json!({"attempted": {"boolean": false}, "done": {"boolean": false}}),
     }
 }
 

@@ -27,6 +27,7 @@ fn is_wrappable_base(profile: &str) -> bool {
             | CYCLIC_MDP_REWARD_PROFILE
             | measure::PROFILE
             | "filament.probability-objective/fair-mdp-eventual/v1"
+            | CYCLIC_MDP_FAIR_PROFILE
     )
 }
 

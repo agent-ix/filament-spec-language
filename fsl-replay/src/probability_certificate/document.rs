@@ -15,6 +15,7 @@ pub use measure::{
     measure_probability_product_key, read_measure_probability_certificate,
     vacuous_measure_probability_certificate_document, write_measure_probability_certificate,
 };
+mod fair_cyclic;
 mod fairness;
 pub(super) mod instances;
 #[cfg(feature = "test-support")]
@@ -30,6 +31,7 @@ pub use mdp::{
 pub use mdp::{
     ProbabilityProofDocument, cyclic_mdp_probability_certificate_document,
     cyclic_mdp_reward_probability_certificate_document, probability_proof_document,
+    fair_cyclic_probability_proof_document,
     read_probability_proof_document, write_probability_proof_document,
     write_value_bounds_proof_document,
 };
@@ -73,6 +75,7 @@ const CYCLIC_MDP_REWARD_PROFILE: &str =
     "filament.probability-objective/cyclic-mdp-expected-reward/v1";
 const BOUNDED_FAIR_PROFILE: &str = "filament.probability-objective/bounded-fair-eventual/v1";
 const FAIR_MDP_PROFILE: &str = "filament.probability-objective/fair-mdp-eventual/v1";
+const CYCLIC_MDP_FAIR_PROFILE: &str = "filament.probability-objective/cyclic-mdp-fair-eventual/v1";
 const TIMED_PROFILE: &str = "filament.probability-objective/timed-product/v1";
 const MAX_COUNT: u64 = 9_007_199_254_740_991;
 
@@ -575,6 +578,7 @@ enum ProfileDispatch {
     Timed,
     LongRun,
     CyclicMdp,
+    CyclicMdpFair,
     CyclicMdpReward,
     BoundedFair,
     FairMdp,
@@ -622,6 +626,9 @@ fn profile_dispatch(
             }
             Some(quire_canonical::Node::String(CYCLIC_MDP_REWARD_PROFILE)) => {
                 ProfileDispatch::CyclicMdpReward
+            }
+            Some(quire_canonical::Node::String(CYCLIC_MDP_FAIR_PROFILE)) => {
+                ProfileDispatch::CyclicMdpFair
             }
             Some(quire_canonical::Node::String(BOUNDED_FAIR_PROFILE)) => {
                 ProfileDispatch::BoundedFair
@@ -933,6 +940,7 @@ fn read_document_profile(
     let objective = root.get("objective");
     let outside_profile = matches!(root.get("kind").map(|node| node.node()), Some(quire_canonical::Node::String(kind)) if kind != "exact" && kind != "upper")
         || matches!(objective.and_then(|node| node.get("profile")).map(|node| node.node()), Some(quire_canonical::Node::String(profile)) if if cyclic_mdp { !matches!(profile, CYCLIC_MDP_PROFILE | CYCLIC_MDP_REWARD_PROFILE | CYCLIC_MDP_STATE_PROFILE) } else { !(allow_fair && matches!(profile, BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE)) && profile != PROFILE && profile != STATE_PROFILE && profile != REWARD_PROFILE && profile != CYCLIC_PROFILE && profile != CYCLIC_REWARD_PROFILE && profile != CYCLIC_STATE_PROFILE && profile != TIMED_PROFILE })
+        || matches!(objective.and_then(|node| node.get("profile")).map(|node| node.node()), Some(quire_canonical::Node::String(profile)) if if cyclic_mdp { !matches!(profile, CYCLIC_MDP_PROFILE | CYCLIC_MDP_REWARD_PROFILE | CYCLIC_MDP_STATE_PROFILE) && !(allow_fair && profile == CYCLIC_MDP_FAIR_PROFILE) } else { !(allow_fair && matches!(profile, BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE)) && profile != PROFILE && profile != STATE_PROFILE && profile != REWARD_PROFILE && profile != CYCLIC_PROFILE && profile != CYCLIC_REWARD_PROFILE && profile != CYCLIC_STATE_PROFILE && profile != TIMED_PROFILE })
         || matches!(objective.and_then(|node| node.get("event")).map(|node| node.node()), Some(quire_canonical::Node::String(event)) if !matches!(event, "until" | "always"))
         || matches!(objective.and_then(|node| node.get("optimization")).map(|node| node.node()), Some(quire_canonical::Node::String(operator)) if !matches!(operator, "minimum" | "maximum" | "workload" | "workload-minimum" | "workload-maximum"))
         || match objective
@@ -947,7 +955,7 @@ fn read_document_profile(
                                 .and_then(|node| node.get("profile"))
                                 .map(|node| node.node()),
                             Some(quire_canonical::Node::String(
-                                BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE
+                                BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE | CYCLIC_MDP_FAIR_PROFILE
                             ))
                         ))
             }
@@ -997,7 +1005,7 @@ fn read_document_profile(
             .and_then(|node| node.get("profile"))
             .map(|node| node.node()),
         Some(quire_canonical::Node::String(
-            BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE
+            BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE | CYCLIC_MDP_FAIR_PROFILE
         ))
     );
     if fair_profile {
@@ -1048,7 +1056,7 @@ fn read_document_profile(
             !matches!(
                 wire.objective.profile.as_str(),
                 CYCLIC_MDP_PROFILE | CYCLIC_MDP_REWARD_PROFILE | CYCLIC_MDP_STATE_PROFILE
-            )
+            ) && !(allow_fair && wire.objective.profile == CYCLIC_MDP_FAIR_PROFILE)
         } else {
             !matches!(
                 wire.objective.profile.as_str(),
@@ -1068,14 +1076,14 @@ fn read_document_profile(
         || !wire.objective.fairness.is_empty()
             && !matches!(
                 wire.objective.profile.as_str(),
-                BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE
+                BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE | CYCLIC_MDP_FAIR_PROFILE
             )
     {
         return Err(ProbabilityDocumentError::Unsupported);
     }
     if matches!(
         wire.objective.profile.as_str(),
-        BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE
+        BOUNDED_FAIR_PROFILE | FAIR_MDP_PROFILE | CYCLIC_MDP_FAIR_PROFILE
     ) {
         let destination = fairness.ok_or(ProbabilityDocumentError::Unsupported)?;
         *destination = fairness::read(&wire.objective.fairness, limits, cancel, meter, storage)?;
@@ -2098,7 +2106,9 @@ fn check_document_bytes(
     if offer.policy.is_some()
         && !matches!(
             dispatch,
-            ProfileDispatch::CyclicMdp | ProfileDispatch::FairMdp
+            ProfileDispatch::CyclicMdp
+                | ProfileDispatch::FairMdp
+                | ProfileDispatch::CyclicMdpFair
         )
     {
         return document_admission_error(ProbabilityDocumentError::MalformedMember("policy"));
@@ -2137,7 +2147,9 @@ fn check_document_bytes(
         ProfileDispatch::LongRun => {
             return long_run::check(system, claims, item, bytes, limits, cancel);
         }
-        ProfileDispatch::CyclicMdp | ProfileDispatch::CyclicMdpReward => {
+        ProfileDispatch::CyclicMdp
+        | ProfileDispatch::CyclicMdpReward
+        | ProfileDispatch::CyclicMdpFair => {
             return mdp::check_with_reward_control(
                 system, claims, item, bytes, offer, limits, cancel, control,
             );
