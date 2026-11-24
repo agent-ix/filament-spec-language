@@ -15,7 +15,7 @@ use filament_exact::{EffectiveId, ObjectReference, UniverseId};
 use filament_semantic_value::declaration::TypeEnvironment;
 use filament_semantic_value::relationship_extent::{
     EndSide, NavigationRelationship, PopulationEntry, PopulationEnumerator, RelationshipEnd,
-    RelationshipExtent,
+    RelationshipExtent, RelationshipInstance, RelationshipPositions,
 };
 use fsl_foundation::diagnostic::Code;
 
@@ -42,6 +42,7 @@ pub(super) type RawEnd = SelectedObject;
 pub(super) struct RawInstance {
     source: RawEnd,
     target: RawEnd,
+    positions: RelationshipPositions,
 }
 
 /// One entry of a snapshot's `relationships` member that has the three
@@ -92,16 +93,18 @@ impl EntryMember {
 enum InstanceMember {
     Source,
     Target,
+    Positions,
 }
 
 impl InstanceMember {
-    const ALL: [Self; 2] = [Self::Source, Self::Target];
+    const ALL: [Self; 3] = [Self::Source, Self::Target, Self::Positions];
 
     #[ix_trace_rs::string_edge]
     fn read(name: &str) -> Option<Self> {
         match name {
             "source" => Some(Self::Source),
             "target" => Some(Self::Target),
+            "positions" => Some(Self::Positions),
             _ => None,
         }
     }
@@ -110,6 +113,7 @@ impl InstanceMember {
         match self {
             Self::Source => "source",
             Self::Target => "target",
+            Self::Positions => "positions",
         }
     }
 }
@@ -262,7 +266,39 @@ fn read_instance(value: Json<'_>) -> Result<RawInstance, AdmissionRecord> {
     Ok(RawInstance {
         source: end(InstanceMember::Source)?,
         target: end(InstanceMember::Target)?,
+        positions: read_positions(instance.member(InstanceMember::Positions.name()))?,
     })
+}
+
+fn read_positions(value: Option<Json<'_>>) -> Result<RelationshipPositions, AdmissionRecord> {
+    let Some(value) = value else {
+        return Ok(RelationshipPositions::default());
+    };
+    let Some(object) = value.as_object() else {
+        return Err(defect("wrong-value-kind", "positions"));
+    };
+    let mut positions = RelationshipPositions::default();
+    for (name, value) in object.iter() {
+        match name {
+            "source" | "target" => {
+                let text = value
+                    .as_str()
+                    .ok_or_else(|| defect("wrong-value-kind", "positions"))?;
+                let position = text
+                    .parse::<u64>()
+                    .ok()
+                    .filter(|parsed| parsed.to_string() == text)
+                    .ok_or_else(|| defect("invalid-value", "positions"))?;
+                if name == "source" {
+                    positions.source = Some(position);
+                } else {
+                    positions.target = Some(position);
+                }
+            }
+            _ => return Err(admission_record(Code::InvalidRuntimeInput, "unknown-member").with("member", name)),
+        }
+    }
+    Ok(positions)
 }
 
 fn read_end(value: Json<'_>) -> Result<RawEnd, AdmissionRecord> {
@@ -346,6 +382,8 @@ pub(super) fn model_facts(
                          object_type: EffectiveId| RelationshipEnd {
                             object_type,
                             unique: end.multiplicity.is_none_or(|bound| bound.unique),
+                            ordered: end.multiplicity.is_some_and(|bound| bound.ordered),
+                            multi_valued: end.multiplicity.is_some_and(|bound| bound.upper.is_none_or(|upper| upper > 1)),
                         };
                     navigation.push(NavigationRelationship {
                         key: relationship.key.clone(),
@@ -484,6 +522,7 @@ pub(super) struct CheckedEnd {
 pub(super) struct CheckedInstance {
     source: CheckedEnd,
     target: CheckedEnd,
+    positions: RelationshipPositions,
 }
 
 /// One entry that passed checks 6.6 to 6.9.
@@ -599,7 +638,7 @@ pub(super) fn check_entries(
                     index,
                 )));
             }
-            instances.push(CheckedInstance { source, target });
+            instances.push(CheckedInstance { source, target, positions: instance.positions });
         }
         admitted.push(CheckedExtent {
             relationship: declared.key.clone(),
@@ -773,7 +812,11 @@ pub(super) fn supplied_extents(
             else {
                 return Err(fault("instance-end-unresolved-after-checks-7-and-8"));
             };
-            instances.push((source.clone(), target.clone()));
+            instances.push(RelationshipInstance {
+                source: source.clone(),
+                target: target.clone(),
+                positions: instance.positions,
+            });
         }
         supplied.push(RelationshipExtent {
             relationship: extent.relationship.clone(),

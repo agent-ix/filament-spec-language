@@ -3134,7 +3134,8 @@ pub(crate) fn observe_protocol_state(
     // `observe_state` has already admitted these typed extents. Their
     // reference endpoints resolve through the same current-state holders.
     for extent in &state.extents {
-        for (source, target) in &extent.instances {
+        for instance in &extent.instances {
+            let (source, target) = (&instance.source, &instance.target);
             let source = holders
                 .get(source)
                 .ok_or_else(|| fault("closed-state-relationship-end-has-a-population"))?;

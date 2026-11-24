@@ -99,6 +99,8 @@ impl Orders {
         RelationshipEnd {
             object_type: self.id(type_name),
             unique,
+            ordered: false,
+            multi_valued: false,
         }
     }
 
@@ -169,7 +171,16 @@ fn extent(
     RelationshipExtent {
         relationship,
         complete,
-        instances,
+            instances: instances
+                .into_iter()
+                .map(|(source, target)| {
+                    filament_semantic_value::relationship_extent::RelationshipInstance {
+                        source,
+                        target,
+                        positions: Default::default(),
+                    }
+                })
+                .collect(),
     }
 }
 
