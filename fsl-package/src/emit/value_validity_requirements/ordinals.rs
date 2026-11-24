@@ -78,6 +78,39 @@ pub(super) fn renumber(
         }
         at += 1;
     }
+    // A node whose uses all lie in one owner, or one that no kept owner
+    // uses, keeps the checker's numbering: its uses are met in the order the
+    // walk visits them. Only a node used from more than one place, or one
+    // that an omitted owner also uses, can need another numbering, so a
+    // package with none is not walked.
+    {
+        let mut first = HashMap::<NodeKey, (Use, bool)>::new();
+        let mut needed = false;
+        for (key, origin, location) in graph.occurrences() {
+            if !crate::wire_form::is_expression_role(origin.role().as_str()) {
+                continue;
+            }
+            let used = match &location.origin {
+                ExpressionOwner::Body { function, .. } => Use::Body(function.clone()),
+                ExpressionOwner::Measure { function, .. } => Use::Measure(function.clone()),
+                _ => Use::Other,
+            };
+            match first.entry(key) {
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert((used, false));
+                }
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    if entry.get().0 != used {
+                        entry.get_mut().1 = true;
+                        needed = true;
+                    }
+                }
+            }
+        }
+        if !needed {
+            return Ok(Renumbering::default());
+        }
+    }
     let mut keys = ids.key_reader();
     let mut node_keys = Vec::with_capacity(nodes.len());
     for node in nodes.iter() {
