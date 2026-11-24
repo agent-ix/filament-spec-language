@@ -60,7 +60,8 @@ impl Target {
 }
 
 const CHECKS: &[Check] = &[
-    Check { package: "fsl-conformance", target: Target::Test, selection: "fspec_finite_window::conformance_fspec_finite_window_source_windows", summaries: &[&["conformance: ", " finite-window source windows matched"]], summary_mode: SummaryMode::Exact },
+    Check { package: "fsl-conformance", target: Target::Test, selection: "fspec_finite_window::conformance_fspec_finite_window_source_windows", summaries: &[&["conformance: ", " finite-window source windows matched"], &["conformance: ", " tick-cover vectors matched, ", " through source and ", " by the evaluator comparison only"]], summary_mode: SummaryMode::Exact },
+    Check { package: "fsl-conformance", target: Target::Test, selection: "fspec_state_core::conformance_fspec_state_core_source_cases", summaries: &[&["conformance: ", " state-core source cases matched"]], summary_mode: SummaryMode::Exact },
     Check { package: "fsl-package", target: Target::Lib, selection: "checked_v2::tests::conformance_c14_source_map_lookup_over_fspec_positive_fixtures", summaries: &[&["conformance: ", " source-map entries over ", " positive fixtures"]], summary_mode: SummaryMode::Exact },
     Check { package: "fsl-package", target: Target::Lib, selection: "checked_v2::tests::conformance_i2_read_over_fspec_checked_package_v2_fixtures", summaries: &[&["conformance: ", " positive fixtures through FSL's full I2 read"], &["conformance: ", " adverse mutations refused"]], summary_mode: SummaryMode::Prefix },
     Check { package: "fsl-package", target: Target::Lib, selection: "checked_v2::tests::conformance_fr340_frame_mutations_match_fspec_vectors", summaries: &[&["conformance: ", " frame-body mutation vectors matched"]], summary_mode: SummaryMode::Exact },

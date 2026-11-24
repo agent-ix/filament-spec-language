@@ -1,29 +1,37 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
-//! Source-to-verdict execution of the standard's finite-window examples.
-//! The window group is executable; the other fixture groups are explicitly
-//! outside this adapter and cannot qualify as a complete corpus.
+//! Source-to-verdict execution of the standard's finite-window vectors
+//! (QSL-2048): every entry of `finite-window-vectors.json` (window, order,
+//! counter, covered, admit) and the tick-cover vectors it points at is
+//! compiled from FSL source and run, and its outcome is compared with the
+//! fixture. A case the compiler does not answer as the fixture says fails
+//! unless the checked-in registry keys it to a ticket.
 
 use std::collections::BTreeSet;
 
 use filament_exact::{Cancel, ScalarLimits};
+use fsl_eval::temporal::{ClockCover, Containment};
 use fsl_foundation::{Source, SourceIdentity};
 use fsl_package::{ClockConfiguration, TemporalClockSelection};
 use fsl_replay::spine::{
     self, ClauseDisposition, DependencyInput, PackageAuthentication, PackageTemporalRequest,
     ParseRequest, ProgressAssertion, ProgressClosure, ProgressCompleteness, SpineLimits,
-    StateClauseExecutionPoints, TemporalIndeterminateReason, TemporalVerdict, TimestampedCover,
-    TimestampedMissingValuation, TimestampedObservation, TimestampedWindow, TraceBinding,
-    TraceInput,
+    StateClauseExecutionPoints, TemporalIndeterminateReason, TemporalTraceRefusal, TemporalVerdict,
+    TimestampedCover, TimestampedMissingValuation, TimestampedObservation, TimestampedOrderKey,
+    TimestampedWindow, TraceBinding, TraceInput,
 };
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::PackageInput;
-use fsl_semantics::model::observation::{DocumentProvision, ObservationLimits};
+use fsl_semantics::model::observation::{AdmissionFailure, DocumentProvision, ObservationLimits};
 use ix_trace_rs::trace;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::fspec_standard::{self, Settled};
+
+const RUNNER: &str = "finite-window";
 const PROFILE: &str = "filament.temporal.timestamped-event.finite-window/v1";
 const FIXTURE: &str = "proposals/finite-window/finite-window-vectors.json";
+const TICK_COVER: &str = "proposals/checked-package-v2/tick-cover-vectors.json";
 const ACCOUNTING: ScalarLimits = ScalarLimits {
     integer_bits: 1 << 20,
     decimal_digits: 1 << 20,
@@ -71,37 +79,93 @@ struct Window {
     expected: Expected,
 }
 
+type OrderKey = Option<(String, i64)>;
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Order {
+    id: String,
+    row: u64,
+    op: String,
+    positions: Vec<(u64, OrderKey)>,
+    expected: String,
+    refused_at: Option<u64>,
+    same_order_as: Option<String>,
+    canonical_order: Option<Vec<OrderKey>>,
+    note: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Counter {
+    id: String,
+    row: u64,
+    w: u64,
+    complete: u64,
+    cover: String,
+    uncertainty: Option<u64>,
+    bound: u64,
+    request_tick: u64,
+    ack_tick: u64,
+    expected: String,
+    reason: Option<String>,
+    note: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Covered {
+    id: String,
+    w: u64,
+    stamp: u64,
+    expected: bool,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Admit {
+    id: String,
+    row: u64,
+    stamps: Vec<u64>,
+    expected: String,
+    note: Option<String>,
+}
+
 struct Fixtures {
     windows: Vec<Window>,
-    remaining: Vec<String>,
+    orders: Vec<Order>,
+    counters: Vec<Counter>,
+    covered: Vec<Covered>,
+    admits: Vec<Admit>,
+    tick_cover: Vec<Value>,
+    /// Every entry id of the groups above, to count against the file.
     total: usize,
 }
 
 impl Fixtures {
-    fn require_complete(&self) -> Result<(), String> {
-        if self.remaining.is_empty() {
-            Ok(())
-        } else {
-            Err(format!(
-                "finite-window qualification incomplete: no source adapter for {}",
-                self.remaining.join(", ")
-            ))
-        }
+    fn executed(&self) -> usize {
+        self.windows.len()
+            + self.orders.len()
+            + self.counters.len()
+            + self.covered.len()
+            + self.admits.len()
     }
 }
 
-fn fixtures(bytes: Option<&[u8]>) -> Result<Fixtures, String> {
-    let bytes =
-        bytes.ok_or_else(|| format!("the pinned FSpec package does not publish {FIXTURE}"))?;
+fn group<T: serde::de::DeserializeOwned>(document: &Value, name: &str) -> Result<Vec<T>, String> {
+    serde_json::from_value(document[name].clone())
+        .map_err(|error| format!("{FIXTURE}/{name}: {error}"))
+}
+
+fn fixtures_from(bytes: Option<&[u8]>, tick_cover: Option<&[u8]>) -> Result<Fixtures, String> {
+    let bytes = bytes.ok_or_else(|| format!("no {FIXTURE} to read"))?;
     let document: Value = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
-    let windows: Vec<Window> = serde_json::from_value(document["window"].clone())
-        .map_err(|error| format!("{FIXTURE}/window: {error}"))?;
+    let windows: Vec<Window> = group(&document, "window")?;
     if windows.is_empty() {
         return Err("finite-window fixture has no window cases".to_owned());
     }
     let mut ids = BTreeSet::new();
-    let mut remaining = Vec::new();
-    for (group, entries) in document.as_object().ok_or("fixture must be an object")? {
+    for (_, entries) in document.as_object().ok_or("fixture must be an object")? {
         if let Some(entries) = entries.as_array() {
             for entry in entries {
                 let id = entry["id"]
@@ -110,17 +174,81 @@ fn fixtures(bytes: Option<&[u8]>) -> Result<Fixtures, String> {
                 if !ids.insert(id.to_owned()) {
                     return Err(format!("duplicate finite-window case {id}"));
                 }
-                if group != "window" {
-                    remaining.push(format!("{id} ({group})"));
-                }
             }
         }
     }
-    Ok(Fixtures {
+    let tick_cover = match tick_cover {
+        Some(bytes) => {
+            let document: Value =
+                serde_json::from_slice(bytes).map_err(|error| format!("{TICK_COVER}: {error}"))?;
+            let cases: Vec<Value> = serde_json::from_value(document["cases"].clone())
+                .map_err(|error| format!("{TICK_COVER}/cases: {error}"))?;
+            cases
+        }
+        None => return Err(format!("no {TICK_COVER} to read")),
+    };
+    let named = &document["tick_cover_vectors"]["ids"];
+    let named: Vec<&str> = named
+        .as_array()
+        .ok_or("tick_cover_vectors names no ids")?
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    let have: Vec<&str> = tick_cover
+        .iter()
+        .filter_map(|case| case["id"].as_str())
+        .collect();
+    if named != have {
+        return Err(format!(
+            "the fixture names tick-cover vectors {named:?}, the tick-cover file holds {have:?}"
+        ));
+    }
+    let fixtures = Fixtures {
         windows,
-        remaining,
+        orders: group(&document, "order")?,
+        counters: group(&document, "counter")?,
+        covered: group(&document, "covered")?,
+        admits: group(&document, "admit")?,
+        tick_cover,
         total: ids.len(),
-    })
+    };
+    if fixtures.executed() != fixtures.total {
+        return Err(format!(
+            "the fixture lists {} entries and this runner reads {}: a group has no reader",
+            fixtures.total,
+            fixtures.executed()
+        ));
+    }
+    Ok(fixtures)
+}
+
+fn load() -> Result<Fixtures, String> {
+    let main = fspec_standard::read(FIXTURE)?;
+    let ticks = fspec_standard::read(TICK_COVER)?;
+    fixtures_from(Some(&main), Some(&ticks))
+}
+
+/// One observation of a source scenario.
+struct Reading {
+    stamp: u64,
+    p: bool,
+    q: bool,
+    key: Option<TimestampedOrderKey>,
+    p_missing: bool,
+}
+
+/// A clause over `Reading` and the trace it is run against.
+struct Scenario {
+    id: String,
+    activation: String,
+    body: String,
+    readings: Vec<Reading>,
+    watermark: u64,
+    complete: Option<u64>,
+    scope: ProgressClosure,
+    execution: ProgressClosure,
+    authoritative_origin: bool,
+    cover: Option<TimestampedCover>,
 }
 
 struct Compiled {
@@ -130,31 +258,16 @@ struct Compiled {
     selections: Vec<TemporalClockSelection>,
 }
 
-fn compile(case: &Window) -> Result<Compiled, String> {
-    let operator = match case.op.as_str() {
-        "always" => "always",
-        "eventually" => "eventually",
-        "once" => "once",
-        other => {
-            return Err(format!(
-                "{}: no source operator adapter for {other}",
-                case.id
-            ))
-        }
-    };
-    let activation = match case.activate.as_str() {
-        "origin" => "origin",
-        "each" => "each (q: Reading)",
-        other => return Err(format!("{}: no activation adapter for {other}", case.id)),
-    };
+fn compile(scenario: &Scenario) -> Result<Compiled, String> {
+    let id = &scenario.id;
     let text = format!(
         "language \"ix:native\" edition \"1-draft\";\n\
          profile t = \"{PROFILE}\";\n\
-         record Reading {{ p: Boolean; serial: Integer; }}\n\
-         temporal Window using t over (r: Reading) clock \"events\" on {activation} {{ {operator}[{},{}] holds(r.p) }}\n",
-        case.a, case.b
+         record Reading {{ p: Boolean; q: Boolean; serial: Integer; }}\n\
+         temporal Window using t over (r: Reading) clock \"events\" on {} {{ {} }}\n",
+        scenario.activation, scenario.body
     );
-    let identity = SourceIdentity::new("fspec", &case.id);
+    let identity = SourceIdentity::new("fspec", id);
     let cancel = Cancel::new();
     let limits = SpineLimits::default();
     let parsed = spine::parse(
@@ -166,7 +279,7 @@ fn compile(case: &Window) -> Result<Compiled, String> {
         limits.source,
         &cancel,
     )
-    .map_err(|error| format!("{}: parse: {error:?}", case.id))?
+    .map_err(|error| format!("{id}: parse: {error:?}"))?
     .into_value();
     let cst = fsl_cst::parse(
         identity,
@@ -174,9 +287,8 @@ fn compile(case: &Window) -> Result<Compiled, String> {
         text.as_bytes(),
         fsl_cst::Limits::default(),
     )
-    .map_err(|error| format!("{}: CST: {error:?}", case.id))?;
-    let forms =
-        fsl_forms::build_unit(&cst).map_err(|error| format!("{}: forms: {error:?}", case.id))?;
+    .map_err(|error| format!("{id}: CST: {error:?}"))?;
+    let forms = fsl_forms::build_unit(&cst).map_err(|error| format!("{id}: forms: {error:?}"))?;
     let selections = forms
         .forms()
         .iter()
@@ -192,13 +304,13 @@ fn compile(case: &Window) -> Result<Compiled, String> {
         })
         .collect::<Vec<_>>();
     let packages = fsl_semantics::model::intake::package_input(std::iter::empty::<&[u8]>())
-        .map_err(|error| format!("{}: packages: {error:?}", case.id))?;
+        .map_err(|error| format!("{id}: packages: {error:?}"))?;
     let models = spine::select(&parsed, &packages, limits.model, &cancel)
-        .map_err(|error| format!("{}: select: {error:?}", case.id))?
+        .map_err(|error| format!("{id}: select: {error:?}"))?
         .into_value();
     let unit = spine::check_with_temporal_selections_and_execution_points(
         &parsed,
-        case.id.clone(),
+        id.clone(),
         &StateClauseExecutionPoints::new(),
         &selections,
         &models,
@@ -206,7 +318,7 @@ fn compile(case: &Window) -> Result<Compiled, String> {
         limits,
         &cancel,
     )
-    .map_err(|error| format!("{}: check: {error:?}", case.id))?
+    .map_err(|error| format!("{id}: check: {error:?}"))?
     .into_value();
     let mut sources = vec![unit.source().clone()];
     sources.extend(unit.libraries().iter().cloned());
@@ -226,8 +338,9 @@ fn closure(value: &str) -> Result<ProgressClosure, String> {
     }
 }
 
-fn run(case: &Window) -> Result<spine::ClauseRunReport, String> {
-    let compiled = compile(case)?;
+fn run(scenario: &Scenario) -> Result<spine::ClauseRunReport, String> {
+    let id = &scenario.id;
+    let compiled = compile(scenario)?;
     let cancel = Cancel::new();
     let authentication = spine::authenticate_emission(
         compiled.unit.package(),
@@ -236,41 +349,39 @@ fn run(case: &Window) -> Result<spine::ClauseRunReport, String> {
         &SpineLimits::default(),
         &cancel,
     )
-    .map_err(|error| format!("{}: compile/authenticate: {error:?}", case.id))?;
+    .map_err(|error| format!("{id}: compile/authenticate: {error:?}"))?;
     let mut observations = Vec::new();
     let mut missing = Vec::new();
-    for (index, (stamp, atom)) in case.positions.iter().enumerate() {
-        let p = match atom.as_str() {
-            "T" => true,
-            "F" => false,
-            "absent" => {
-                missing.push(TimestampedMissingValuation {
-                    position: u64::try_from(index).map_err(|error| error.to_string())?,
-                    atom: 1,
-                });
-                false
-            }
-            other => return Err(format!("{}: unknown atom valuation {other}", case.id)),
-        };
-        let sample =
-            json!({"p": {"boolean": p}, "serial": {"integer": index.to_string()}}).to_string();
+    for (index, reading) in scenario.readings.iter().enumerate() {
+        if reading.p_missing {
+            missing.push(TimestampedMissingValuation {
+                position: u64::try_from(index).map_err(|error| error.to_string())?,
+                atom: 1,
+            });
+        }
+        let sample = json!({
+            "p": {"boolean": reading.p},
+            "q": {"boolean": reading.q},
+            "serial": {"integer": index.to_string()},
+        })
+        .to_string();
         observations.push(TimestampedObservation {
             document: spine::sample_position(&sample),
-            stamp: *stamp,
-            order_key: None,
+            stamp: reading.stamp,
+            order_key: reading.key.clone(),
         });
     }
     let trace = TraceInput::Timestamped {
         observations,
         progress: ProgressAssertion {
-            watermark: case.w,
-            completeness: case
+            watermark: scenario.watermark,
+            completeness: scenario
                 .complete
                 .map_or(ProgressCompleteness::Incomplete, |through| {
                     ProgressCompleteness::Complete { through }
                 }),
-            scope: closure(&case.scope)?,
-            execution: closure(case.execution.as_deref().unwrap_or("closed"))?,
+            scope: scenario.scope,
+            execution: scenario.execution,
         },
         window: Box::new(TimestampedWindow {
             binding: Some(TraceBinding {
@@ -280,14 +391,8 @@ fn run(case: &Window) -> Result<spine::ClauseRunReport, String> {
                     timestamp_unit: "ms".into(),
                 },
             }),
-            authoritative_origin: match case.lower.as_deref() {
-                None | Some("AuthoritativeOrigin") => true,
-                Some("HistoryCutoff") => false,
-                Some(other) => return Err(format!("{}: unknown lower boundary {other}", case.id)),
-            },
-            cover: case
-                .uncertainty
-                .map(|uncertainty| TimestampedCover::Counter { uncertainty }),
+            authoritative_origin: scenario.authoritative_origin,
+            cover: scenario.cover.clone(),
             missing_valuations: missing,
             late: Default::default(),
         }),
@@ -307,6 +412,63 @@ fn run(case: &Window) -> Result<spine::ClauseRunReport, String> {
         authentication: Some(PackageAuthentication::temporal(&authentication)),
         cancel: &cancel,
     }))
+}
+
+fn window_scenario(case: &Window) -> Result<Scenario, String> {
+    let operator = match case.op.as_str() {
+        "always" => "always",
+        "eventually" => "eventually",
+        "once" => "once",
+        other => {
+            return Err(format!(
+                "{}: no source operator adapter for {other}",
+                case.id
+            ))
+        }
+    };
+    let activation = match case.activate.as_str() {
+        "origin" => "origin",
+        "each" => "each (q: Reading)",
+        other => return Err(format!("{}: no activation adapter for {other}", case.id)),
+    };
+    let mut readings = Vec::new();
+    for (stamp, atom) in &case.positions {
+        let (p, p_missing) = match atom.as_str() {
+            "T" => (true, false),
+            "F" => (false, false),
+            "absent" => (false, true),
+            other => return Err(format!("{}: unknown atom valuation {other}", case.id)),
+        };
+        readings.push(Reading {
+            stamp: *stamp,
+            p,
+            q: false,
+            key: None,
+            p_missing,
+        });
+    }
+    Ok(Scenario {
+        id: case.id.clone(),
+        activation: activation.to_owned(),
+        body: format!("{operator}[{},{}] holds(r.p)", case.a, case.b),
+        readings,
+        watermark: case.w,
+        complete: case.complete,
+        scope: closure(&case.scope)?,
+        execution: closure(case.execution.as_deref().unwrap_or("closed"))?,
+        authoritative_origin: match case.lower.as_deref() {
+            None | Some("AuthoritativeOrigin") => true,
+            Some("HistoryCutoff") => false,
+            Some(other) => return Err(format!("{}: unknown lower boundary {other}", case.id)),
+        },
+        cover: case
+            .uncertainty
+            .map(|uncertainty| TimestampedCover::Counter { uncertainty }),
+    })
+}
+
+fn run_window(case: &Window) -> Result<spine::ClauseRunReport, String> {
+    run(&window_scenario(case)?)
 }
 
 fn compare(case: &Window, report: &spine::ClauseRunReport) -> Result<(), String> {
@@ -404,46 +566,597 @@ fn compare(case: &Window, report: &spine::ClauseRunReport) -> Result<(), String>
     Ok(())
 }
 
-fn standard() -> Fixtures {
-    fixtures(filament_specification::published_file(FIXTURE))
-        .unwrap_or_else(|error| panic!("{error}"))
+fn settled(result: Result<(), String>) -> Settled {
+    match result {
+        Ok(()) => Settled::Matched,
+        Err(error) => Settled::Mismatch(error),
+    }
 }
 
-/// Provenance: QSL-2048. Each result comes from parsed, checked, emitted FSL.
-#[trace("FR-350-AC-20", "FR-350-AC-21", "FR-501-AC-4")]
-#[test]
-fn conformance_fspec_finite_window_source_windows() {
-    let fixtures = standard();
-    if std::env::var_os("FSPEC_FULL_QUALIFICATION").is_some() {
-        fixtures
-            .require_complete()
-            .unwrap_or_else(|error| panic!("{error}"));
+/// The verdict word of a counter, covered or admit run, in the fixture's
+/// spelling.
+fn verdict_word(disposition: &ClauseDisposition) -> String {
+    match disposition {
+        ClauseDisposition::Temporal(TemporalVerdict::Holds) => "true".to_owned(),
+        ClauseDisposition::Temporal(TemporalVerdict::Violated { .. }) => "false".to_owned(),
+        ClauseDisposition::Temporal(TemporalVerdict::PendingWindow { .. }) => "pending".to_owned(),
+        ClauseDisposition::Temporal(TemporalVerdict::Indeterminate { reason, .. }) => {
+            format!("indeterminate/{reason:?}")
+        }
+        other => format!("{other:?}"),
     }
-    let mut errors = Vec::new();
+}
+
+fn reading(stamp: u64, p: bool, q: bool) -> Reading {
+    Reading {
+        stamp,
+        p,
+        q,
+        key: None,
+        p_missing: false,
+    }
+}
+
+/// FR-501 rows 20 and 36: a request at tick 0 and an acknowledgement at
+/// `ack_tick`, with a bound of `bound` ticks, under the fixture's cover.
+fn counter_scenario(
+    id: &str,
+    bound: u64,
+    request: u64,
+    ack: u64,
+    through: u64,
+    cover: Option<TimestampedCover>,
+) -> Scenario {
+    Scenario {
+        id: id.to_owned(),
+        activation: "origin".to_owned(),
+        body: format!("holds(r.p) implies eventually[0,{bound}] holds(r.q)"),
+        readings: if request == ack {
+            vec![reading(request, true, true)]
+        } else {
+            vec![reading(request, true, false), reading(ack, false, true)]
+        },
+        watermark: through,
+        complete: Some(through),
+        scope: ProgressClosure::Closed,
+        execution: ProgressClosure::Closed,
+        authoritative_origin: true,
+        cover,
+    }
+}
+
+fn settle_counter(case: &Counter) -> Settled {
+    let cover = match (case.cover.as_str(), case.uncertainty) {
+        ("counter", Some(uncertainty)) => Some(TimestampedCover::Counter { uncertainty }),
+        ("exact", None) => Some(TimestampedCover::Exact),
+        ("omitted", None) => None,
+        (other, uncertainty) => {
+            return Settled::Unsupported(format!(
+                "{}: no cover adapter for {other} with uncertainty {uncertainty:?}",
+                case.id
+            ))
+        }
+    };
+    let scenario = counter_scenario(
+        &case.id,
+        case.bound,
+        case.request_tick,
+        case.ack_tick,
+        case.complete,
+        cover,
+    );
+    let _context = (case.row, case.w, &case.note);
+    let report = match run(&scenario) {
+        Ok(report) => report,
+        Err(error) => return Settled::Error(error),
+    };
+    let actual = verdict_word(&report.disposition);
+    let wanted = match &case.reason {
+        Some(reason) => format!("{}/{reason}", case.expected),
+        None => case.expected.clone(),
+    };
+    if actual == wanted {
+        Settled::Matched
+    } else {
+        Settled::Mismatch(format!(
+            "{}: expected {wanted:?}, actual {actual:?}",
+            case.id
+        ))
+    }
+}
+
+/// FR-094-AC-11: a progress watermark `W` covers an instant stamped `W` and
+/// not one stamped `W + 1`. The clause `always[0,stamp] holds(r.p)` over
+/// readings that all satisfy `p` holds exactly when the watermark, which
+/// the completeness assertion matches, covers the last instant.
+fn settle_covered(case: &Covered) -> Settled {
+    let mut readings = vec![reading(case.stamp, true, false)];
+    if case.stamp > 0 {
+        readings.insert(0, reading(0, true, false));
+    }
+    let scenario = Scenario {
+        id: case.id.clone(),
+        activation: "origin".to_owned(),
+        body: format!("always[0,{}] holds(r.p)", case.stamp),
+        readings,
+        watermark: case.w,
+        complete: Some(case.w),
+        scope: ProgressClosure::Closed,
+        execution: ProgressClosure::Closed,
+        authoritative_origin: true,
+        cover: None,
+    };
+    let report = match run(&scenario) {
+        Ok(report) => report,
+        Err(error) => return Settled::Error(error),
+    };
+    let covered = matches!(
+        report.disposition,
+        ClauseDisposition::Temporal(TemporalVerdict::Holds)
+    );
+    if covered == case.expected {
+        Settled::Matched
+    } else {
+        Settled::Mismatch(format!(
+            "{}: expected covered {}, actual {covered} ({})",
+            case.id,
+            case.expected,
+            verdict_word(&report.disposition)
+        ))
+    }
+}
+
+/// FR-501 row 31: a trace with no instants is refused; one whose stamps are
+/// listed out of order is read in canonical order.
+fn settle_admit(case: &Admit) -> Settled {
+    let _context = (case.row, &case.note);
+    let readings: Vec<Reading> = case
+        .stamps
+        .iter()
+        .map(|stamp| reading(*stamp, false, false))
+        .collect();
+    let top = case.stamps.iter().copied().max().unwrap_or(0);
+    let scenario = Scenario {
+        id: case.id.clone(),
+        activation: "origin".to_owned(),
+        body: "eventually[0,5] holds(r.p)".to_owned(),
+        readings,
+        watermark: top,
+        complete: Some(top),
+        scope: ProgressClosure::Closed,
+        execution: ProgressClosure::Closed,
+        authoritative_origin: true,
+        cover: None,
+    };
+    let report = match run(&scenario) {
+        Ok(report) => report,
+        Err(error) => return Settled::Error(error),
+    };
+    let refused = matches!(
+        report.disposition,
+        ClauseDisposition::TemporalRefusal(TemporalTraceRefusal::EmptyTrace)
+            | ClauseDisposition::Admit(AdmissionFailure::Refused(_))
+    );
+    let evaluated = matches!(report.disposition, ClauseDisposition::Temporal(_));
+    match (case.expected.as_str(), refused, evaluated) {
+        ("refuse", true, _) | ("evaluate", _, true) => Settled::Matched,
+        (wanted, _, _) => Settled::Mismatch(format!(
+            "{}: expected {wanted}, actual {:?}",
+            case.id, report.disposition
+        )),
+    }
+}
+
+fn order_scenario(case: &Order, positions: &[(u64, OrderKey)], witness: Option<usize>) -> Scenario {
+    let (activation, body) = match case.op.as_str() {
+        "until" | "release" => ("origin", format!("holds(r.p) {}[0,1] holds(r.q)", case.op)),
+        "since" | "triggered" => (
+            "each (q: Reading)",
+            format!("holds(r.p) {}[0,1] holds(r.q)", case.op),
+        ),
+        other => ("origin", format!("{other}[0,5] holds(r.p)")),
+    };
+    let (activation, body) = if witness.is_some() {
+        ("origin", "eventually[0,5] holds(r.p)".to_owned())
+    } else {
+        (activation, body)
+    };
+    let top = positions.iter().map(|(stamp, _)| *stamp).max().unwrap_or(0);
+    let top = if witness.is_some() { top + 6 } else { top };
+    Scenario {
+        id: case.id.clone(),
+        activation: activation.to_owned(),
+        body,
+        readings: positions
+            .iter()
+            .enumerate()
+            .map(|(index, (stamp, key))| Reading {
+                stamp: *stamp,
+                p: false,
+                q: false,
+                key: key.as_ref().map(|(authority, key)| TimestampedOrderKey {
+                    authority: authority.clone(),
+                    key: *key,
+                }),
+                p_missing: witness == Some(index),
+            })
+            .collect(),
+        watermark: top,
+        complete: Some(top),
+        scope: ProgressClosure::Closed,
+        execution: ProgressClosure::Closed,
+        authoritative_origin: true,
+        cover: None,
+    }
+}
+
+/// FR-501 rows 17, 18, 32, 35 and 40: an order-sensitive operator needs one
+/// usable order among observations of one instant; an insensitive one does
+/// not. `same_order_as` names a twin whose result must be identical, and
+/// `canonical_order` the reading order the evaluator must use, which a
+/// missing valuation placed at each listed position makes visible in the
+/// position the indeterminate verdict reports.
+fn settle_order(case: &Order, all: &[Order]) -> Settled {
+    let _context = (case.row, &case.note);
+    let report = match run(&order_scenario(case, &case.positions, None)) {
+        Ok(report) => report,
+        Err(error) => return Settled::Error(error),
+    };
+    match case.expected.as_str() {
+        "refuse" => {
+            let wanted = case.refused_at;
+            match &report.disposition {
+                ClauseDisposition::TemporalRefusal(
+                    TemporalTraceRefusal::SameStampOrderUnavailable { position },
+                ) if Some(*position) == wanted => {}
+                other => {
+                    return Settled::Mismatch(format!(
+                        "{}: expected a refusal at {wanted:?}, actual {other:?}",
+                        case.id
+                    ))
+                }
+            }
+        }
+        "evaluate" => {
+            if !matches!(report.disposition, ClauseDisposition::Temporal(_)) {
+                return Settled::Mismatch(format!(
+                    "{}: expected an evaluation, actual {:?}",
+                    case.id, report.disposition
+                ));
+            }
+        }
+        other => return Settled::Unsupported(format!("{}: unknown expectation {other}", case.id)),
+    }
+    if let Some(twin) = &case.same_order_as {
+        let Some(twin) = all.iter().find(|candidate| &candidate.id == twin) else {
+            return Settled::Unsupported(format!("{}: twin {twin} is not in the file", case.id));
+        };
+        let twin_report = match run(&order_scenario(twin, &twin.positions, None)) {
+            Ok(report) => report,
+            Err(error) => return Settled::Error(error),
+        };
+        if format!("{:?}", twin_report.disposition) != format!("{:?}", report.disposition) {
+            return Settled::Mismatch(format!(
+                "{}: same order as {} but {:?} against {:?}",
+                case.id, twin.id, report.disposition, twin_report.disposition
+            ));
+        }
+    }
+    if let Some(canonical) = &case.canonical_order {
+        for (listed, key) in case.positions.iter().map(|(_, key)| key).enumerate() {
+            let Some(rank) = canonical.iter().position(|candidate| candidate == key) else {
+                return Settled::Unsupported(format!(
+                    "{}: canonical order omits listed position {listed}",
+                    case.id
+                ));
+            };
+            let probe = match run(&order_scenario(case, &case.positions, Some(listed))) {
+                Ok(report) => report,
+                Err(error) => return Settled::Error(error),
+            };
+            let support: Vec<u64> = match &probe.disposition {
+                ClauseDisposition::Temporal(TemporalVerdict::Indeterminate {
+                    reason: TemporalIndeterminateReason::MissingValuation { position, .. },
+                    ..
+                }) => vec![*position],
+                other => {
+                    return Settled::Mismatch(format!(
+                        "{}: expected a missing valuation, actual {other:?}",
+                        case.id
+                    ))
+                }
+            };
+            let wanted = u64::try_from(rank).unwrap_or(u64::MAX);
+            if support != [wanted] {
+                return Settled::Mismatch(format!(
+                    "{}: the reading listed at {listed} should be canonical position {wanted}, reported position {support:?}",
+                    case.id
+                ));
+            }
+        }
+    }
+    Settled::Matched
+}
+
+/// The TCV vectors: `within_bound` through source where the bound is a
+/// non-negative tick count and the request and acknowledgement are distinct
+/// readings (one instant carries one reading), the comparison functions
+/// otherwise.
+fn settle_tick_cover(case: &Value) -> (String, Settled, bool) {
+    let id = case["id"].as_str().unwrap_or("TCV-?").to_owned();
+    let uncertainty = case["uncertainty"].as_u64().unwrap_or(0);
+    let cover = ClockCover::Counter { uncertainty };
+    let mut via_source = false;
+    let settled = match case["kind"].as_str() {
+        Some("within_bound") => {
+            let (Some(bound), Some(request), Some(ack)) = (
+                case["bound"].as_i64(),
+                case["request_tick"].as_u64(),
+                case["ack_tick"].as_u64(),
+            ) else {
+                return (
+                    id,
+                    Settled::Unsupported("within_bound fields".to_owned()),
+                    false,
+                );
+            };
+            let word = match case["expected"].as_str() {
+                Some(word) => word.to_owned(),
+                None => {
+                    return (
+                        id,
+                        Settled::Unsupported("no expected word".to_owned()),
+                        false,
+                    )
+                }
+            };
+            let function = match cover.within_bound(bound, request, ack) {
+                Containment::True => "true",
+                Containment::False => "false",
+                Containment::Indeterminate => "indeterminate",
+            };
+            if function != word {
+                Settled::Mismatch(format!("{id}: expected {word}, evaluator {function}"))
+            } else if let (Ok(bound), true) = (u64::try_from(bound), request != ack) {
+                let through = ack.max(request + bound) + 1 + uncertainty;
+                let scenario = counter_scenario(
+                    &id,
+                    bound,
+                    request,
+                    ack,
+                    through,
+                    Some(TimestampedCover::Counter { uncertainty }),
+                );
+                match run(&scenario) {
+                    Ok(report) => {
+                        let actual = verdict_word(&report.disposition);
+                        let source_word = actual
+                            .split_once('/')
+                            .map_or(actual.as_str(), |(head, _)| head);
+                        if source_word == word {
+                            via_source = true;
+                            Settled::Matched
+                        } else {
+                            Settled::Mismatch(format!("{id}: expected {word}, source run {actual}"))
+                        }
+                    }
+                    Err(error) => Settled::Error(error),
+                }
+            } else {
+                Settled::Matched
+            }
+        }
+        Some("definitely_before") => {
+            let (Some(a), Some(b), Some(expected)) = (
+                case["a_tick"].as_u64(),
+                case["b_tick"].as_u64(),
+                case["expected"].as_bool(),
+            ) else {
+                return (
+                    id,
+                    Settled::Unsupported("definitely_before fields".to_owned()),
+                    false,
+                );
+            };
+            let actual = cover.definitely_before(a, b);
+            if actual == expected {
+                Settled::Matched
+            } else {
+                Settled::Mismatch(format!("{id}: expected {expected}, actual {actual}"))
+            }
+        }
+        other => Settled::Unsupported(format!("{id}: no adapter for kind {other:?}")),
+    };
+    (id, settled, via_source)
+}
+
+/// A window vector: a run error is a runner error, never an answer; an
+/// unequal result is a mismatch.
+fn settle_window(case: &Window) -> Settled {
+    match run_window(case) {
+        Ok(report) => settled(compare(case, &report)),
+        Err(error) => Settled::Error(error),
+    }
+}
+
+/// Every case of the file and what running it produced.
+fn run_all(fixtures: &Fixtures) -> Vec<(String, Settled)> {
+    let mut cases = Vec::new();
     for case in &fixtures.windows {
         // The fixture's row and prose locate the independent expectation;
         // neither is used to manufacture the compiler's result.
         let _context = (case.row, &case.note, &case.listing_twin);
-        match run(case).and_then(|report| compare(case, &report)) {
-            Ok(()) => println!("passed: {}", case.id),
-            Err(error) => errors.push(error),
-        }
+        cases.push((case.id.clone(), settle_window(case)));
     }
+    for case in &fixtures.orders {
+        cases.push((case.id.clone(), settle_order(case, &fixtures.orders)));
+    }
+    for case in &fixtures.counters {
+        cases.push((case.id.clone(), settle_counter(case)));
+    }
+    for case in &fixtures.covered {
+        cases.push((case.id.clone(), settle_covered(case)));
+    }
+    for case in &fixtures.admits {
+        cases.push((case.id.clone(), settle_admit(case)));
+    }
+    cases
+}
+
+/// The TCV vectors: each id, what it settled to, and whether a compiled
+/// source run took part in the judgment (otherwise only the evaluator's
+/// comparison functions did).
+fn run_tick_cover(fixtures: &Fixtures) -> Vec<(String, Settled, bool)> {
+    fixtures.tick_cover.iter().map(settle_tick_cover).collect()
+}
+
+fn standard() -> Fixtures {
+    load().unwrap_or_else(|error| panic!("{error}"))
+}
+
+/// FR-350-AC-21: with `FSPEC_FULL_QUALIFICATION` set, a fixture case that
+/// lacks a source adapter (settles unsupported) fails the run, keyed or not.
+fn full_qualification_gap(
+    requested: bool,
+    cases: &[(String, Settled)],
+    tick_cover: &[(String, Settled, bool)],
+) -> Option<String> {
+    if !requested {
+        return None;
+    }
+    let lacking: Vec<&str> = cases
+        .iter()
+        .map(|(id, settled)| (id, settled))
+        .chain(tick_cover.iter().map(|(id, settled, _)| (id, settled)))
+        .filter(|(_, settled)| matches!(settled, Settled::Unsupported(_)))
+        .map(|(id, _)| id.as_str())
+        .collect();
+    (!lacking.is_empty()).then(|| {
+        format!(
+            "FSPEC_FULL_QUALIFICATION is set and {} fixture cases lack a source adapter: {}",
+            lacking.len(),
+            lacking.join(", ")
+        )
+    })
+}
+
+/// Provenance: QSL-2048. Every vector comes from parsed, checked, emitted
+/// FSL; a vector that does not match must carry a ticket key. The tick-cover
+/// vectors are reported on their own line: only some of them run through
+/// compiled source, the rest are judged by the evaluator's comparison
+/// functions alone and are not source windows.
+#[trace("FR-350-AC-20", "FR-350-AC-21", "FR-501-AC-4")]
+#[test]
+fn conformance_fspec_finite_window_source_windows() {
+    let fixtures = standard();
+    let windows = run_all(&fixtures);
+    let tick_cover = run_tick_cover(&fixtures);
     assert_eq!(
-        fixtures.windows.len() + fixtures.remaining.len(),
-        fixtures.total
+        windows.len(),
+        fixtures.total,
+        "executed and listed windows differ"
     );
-    for pending in &fixtures.remaining {
-        println!("pending: {pending}: source adapter not implemented");
+    assert_eq!(tick_cover.len(), fixtures.tick_cover.len());
+    if let Some(error) = full_qualification_gap(
+        std::env::var_os("FSPEC_FULL_QUALIFICATION").is_some(),
+        &windows,
+        &tick_cover,
+    ) {
+        panic!("{error}");
     }
-    assert!(errors.is_empty(), "{}", errors.join("\n"));
+    let source_checked: BTreeSet<String> = tick_cover
+        .iter()
+        .filter(|(_, _, via_source)| *via_source)
+        .map(|(id, _, _)| id.clone())
+        .collect();
+    let mut cases = windows;
+    cases.extend(tick_cover.into_iter().map(|(id, settled, _)| (id, settled)));
+    let tally = fspec_standard::settle(RUNNER, cases, fspec_standard::registry());
+    for id in &tally.matched {
+        println!("passed: {id}");
+    }
+    if let Err(error) = fspec_standard::report(RUNNER, &tally) {
+        panic!("{error}");
+    }
+    let tick_matched: Vec<&String> = tally
+        .matched
+        .iter()
+        .filter(|id| id.starts_with("TCV-"))
+        .collect();
+    let through_source = tick_matched
+        .iter()
+        .filter(|id| source_checked.contains(**id))
+        .count();
+    let window_matched = tally.matched.len() - tick_matched.len();
+    println!("conformance: {window_matched} finite-window source windows matched");
     println!(
-        "conformance: {} finite-window source windows matched",
-        fixtures.windows.len()
+        "conformance: {} tick-cover vectors matched, {through_source} through source and {} by the evaluator comparison only",
+        tick_matched.len(),
+        tick_matched.len() - through_source
     );
-    if let Err(error) = fixtures.require_complete() {
-        println!("qualification: {error}");
-    }
+    println!(
+        "qualification: {window_matched} of {} finite-window windows matched, {} keyed to open tickets",
+        fixtures.total,
+        tally.keyed.len()
+    );
+}
+
+/// Provenance: QSL-2048. A runner error in the finite-window runner is
+/// `Settled::Error`, which no registry key can pin: the run fails.
+#[trace("FR-350-AC-21")]
+#[test]
+fn a_finite_window_runner_error_is_an_error_and_cannot_be_keyed() {
+    let case: Window = serde_json::from_value(json!({
+        "id": "FWV-X", "row": 1, "op": "sometimes", "a": 0, "b": 1, "activate": "origin",
+        "positions": [[0, "T"]], "w": 1, "complete": 1, "scope": "closed",
+        "expected": {"outcome": "true"},
+    }))
+    .expect("a window");
+    let settled = settle_window(&case);
+    let Settled::Error(text) = &settled else {
+        panic!("a runner error was not Settled::Error: {settled:?}");
+    };
+    assert!(text.contains("no source operator adapter"), "{text}");
+    static KEYED: &[crate::fspec_pending::Pending] = &[crate::fspec_pending::Pending {
+        runner: RUNNER,
+        case: "FWV-X",
+        ticket: "QSL-3027",
+        pin: "FWV-X: no source operator adapter for sometimes",
+    }];
+    let tally = fspec_standard::settle(RUNNER, vec![("FWV-X".to_owned(), settled)], KEYED);
+    assert!(tally.keyed.is_empty());
+    assert!(
+        tally
+            .failures
+            .iter()
+            .any(|text| text.contains("runner error")),
+        "{:?}",
+        tally.failures
+    );
+}
+
+/// Provenance: QSL-2048. FSPEC_FULL_QUALIFICATION fails the run while any
+/// fixture case lacks a source adapter, and passes when every case has one.
+#[trace("FR-350-AC-21")]
+#[test]
+fn full_qualification_fails_while_any_case_lacks_an_adapter() {
+    let none: Vec<(String, Settled)> = vec![("A".to_owned(), Settled::Matched)];
+    let lacking = vec![
+        ("A".to_owned(), Settled::Matched),
+        (
+            "B".to_owned(),
+            Settled::Unsupported("no adapter".to_owned()),
+        ),
+    ];
+    assert_eq!(full_qualification_gap(false, &lacking, &[]), None);
+    assert_eq!(full_qualification_gap(true, &none, &[]), None);
+    let error = full_qualification_gap(true, &lacking, &[]).expect("a lacking case fails");
+    assert!(
+        error.contains("FSPEC_FULL_QUALIFICATION") && error.contains('B'),
+        "{error}"
+    );
+    let tick = vec![("T".to_owned(), Settled::Unsupported("x".to_owned()), false)];
+    assert!(full_qualification_gap(true, &none, &tick).is_some());
 }
 
 /// Provenance: QSL-2048. Evidence atoms refer to compiled holds nodes, and
@@ -460,12 +1173,13 @@ fn source_evidence_and_counter_cover_examples_match_the_standard() {
             .iter()
             .find(|case| case.id == id)
             .expect("the named standard case exists");
-        let report = run(case).unwrap_or_else(|error| panic!("{error}"));
+        let report = run_window(case).unwrap_or_else(|error| panic!("{error}"));
         compare(case, &report).unwrap_or_else(|error| panic!("{error}"));
     }
 }
 
-/// Provenance: QSL-2048. An altered expectation must fail against a real run.
+/// Provenance: QSL-2048. An altered expectation must fail against a real
+/// run, in every group of the file.
 #[trace("FR-350-AC-20")]
 #[test]
 fn an_altered_finite_window_expectation_reports_expected_and_actual() {
@@ -475,7 +1189,7 @@ fn an_altered_finite_window_expectation_reports_expected_and_actual() {
         .iter_mut()
         .find(|case| case.id == "FWV-01")
         .expect("FWV-01");
-    let actual = run(case).expect("the source compiles and runs");
+    let actual = run_window(case).expect("the source compiles and runs");
     compare(case, &actual).expect("the unaltered independent expectation matches");
     case.expected.outcome = "true".to_owned();
     let error = compare(case, &actual).expect_err("an altered oracle fails");
@@ -483,20 +1197,68 @@ fn an_altered_finite_window_expectation_reports_expected_and_actual() {
         error.contains("FWV-01: outcome: expected \"true\", actual \"false\""),
         "{error}"
     );
+    let altered = Counter {
+        expected: "false".to_owned(),
+        ..fixtures.counters.remove(0)
+    };
+    assert!(
+        matches!(settle_counter(&altered), Settled::Mismatch(_)),
+        "an altered counter expectation is a mismatch"
+    );
+    let altered = Covered {
+        expected: !fixtures.covered[0].expected,
+        ..fixtures.covered.remove(0)
+    };
+    assert!(matches!(settle_covered(&altered), Settled::Mismatch(_)));
+    let altered = Admit {
+        expected: "refuse".to_owned(),
+        ..fixtures.admits.remove(1)
+    };
+    assert!(matches!(settle_admit(&altered), Settled::Mismatch(_)));
+    let all = fixtures.orders;
+    let mut altered_order = all
+        .iter()
+        .find(|case| case.id == "FWV-35")
+        .map(|case| Order {
+            id: case.id.clone(),
+            row: case.row,
+            op: case.op.clone(),
+            positions: case.positions.clone(),
+            expected: "refuse".to_owned(),
+            refused_at: Some(2),
+            same_order_as: None,
+            canonical_order: None,
+            note: None,
+        })
+        .expect("FWV-35");
+    assert!(matches!(
+        settle_order(&altered_order, &all),
+        Settled::Mismatch(_)
+    ));
+    altered_order.expected = "evaluate".to_owned();
+    assert_eq!(settle_order(&altered_order, &all), Settled::Matched);
 }
 
-/// Provenance: QSL-2048. An absent published corpus cannot become a zero-case pass.
+/// Provenance: QSL-2048. An absent standard cannot become a zero-case pass.
 #[trace("FR-350-AC-20")]
 #[test]
-fn a_missing_published_fixture_is_an_error_before_any_case_runs() {
-    let error = fixtures(None)
-        .err()
-        .expect("the published fixture is required");
-    assert_eq!(
-        error,
-        format!("the pinned FSpec package does not publish {FIXTURE}")
+fn a_missing_standard_is_an_error_before_any_case_runs() {
+    let missing = std::path::Path::new("/nonexistent/fspec-dir-for-the-self-test");
+    let error = fspec_standard::read_from(Some(missing.as_os_str()), FIXTURE)
+        .expect_err("a missing FSPEC_DIR fails");
+    assert!(
+        error.contains("FSPEC_DIR=") && error.contains("is not a directory"),
+        "{error}"
     );
-    let error = fixtures(Some(br#"{"window":[]}"#))
+    let empty = tempfile::tempdir().expect("a temporary directory");
+    let error = fspec_standard::read_from(Some(empty.path().as_os_str()), FIXTURE)
+        .expect_err("a directory without the fixture fails");
+    assert!(error.contains("does not hold"), "{error}");
+    let error = fixtures_from(None, None)
+        .err()
+        .expect("no bytes is an error");
+    assert!(error.contains("no proposals/finite-window"), "{error}");
+    let error = fixtures_from(Some(br#"{"window":[]}"#), Some(b"{}"))
         .err()
         .expect("an empty corpus fails");
     assert_eq!(error, "finite-window fixture has no window cases");

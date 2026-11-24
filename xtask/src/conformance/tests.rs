@@ -62,6 +62,44 @@ fn run_case(workspace: &Path, mode: &str, fail_at: usize) -> Result<String, Erro
 }
 
 #[cfg(unix)]
+#[ix_trace_rs::trace("FR-350-AC-21", "FR-350-AC-22")]
+#[test]
+fn both_source_fixture_runners_are_required_conformance_selections() {
+    for (selection, summary) in [
+        (
+            "fspec_finite_window::conformance_fspec_finite_window_source_windows",
+            "conformance: 77 finite-window source windows matched\nconformance: 15 tick-cover vectors matched, 8 through source and 7 by the evaluator comparison only",
+        ),
+        (
+            "fspec_state_core::conformance_fspec_state_core_source_cases",
+            "conformance: 28 state-core source cases matched",
+        ),
+    ] {
+        let check = CHECKS
+            .iter()
+            .find(|check| check.selection == selection)
+            .unwrap_or_else(|| panic!("{selection} is required"));
+        assert_eq!(check.package, "fsl-conformance");
+        assert!(matches!(check.target, super::Target::Test));
+        let output = std::process::Output {
+            status: std::os::unix::process::ExitStatusExt::from_raw(0),
+            stdout: format!("test result: ok. 1 passed; 0 failed; 0 ignored;\n{summary}\n")
+                .into_bytes(),
+            stderr: Vec::new(),
+        };
+        super::check_output(check, &output).expect("the summary line is accepted");
+        let missing = std::process::Output {
+            stdout: b"test result: ok. 1 passed; 0 failed; 0 ignored;\n".to_vec(),
+            ..output
+        };
+        assert!(matches!(
+            super::check_output(check, &missing),
+            Err(Error::ConformanceCheck { .. })
+        ));
+    }
+}
+
+#[cfg(unix)]
 #[ix_trace_rs::trace("FR-350-AC-21")]
 #[test]
 fn the_finite_window_source_runner_is_a_required_conformance_selection() {
@@ -75,10 +113,21 @@ fn the_finite_window_source_runner_is_a_required_conformance_selection() {
     assert!(matches!(check.target, super::Target::Test));
     let output = std::process::Output {
         status: std::os::unix::process::ExitStatusExt::from_raw(0),
-        stdout: b"test result: ok. 1 passed; 0 failed; 0 ignored;\nconformance: 46 finite-window source windows matched\n".to_vec(),
+        stdout: b"test result: ok. 1 passed; 0 failed; 0 ignored;\nconformance: 77 finite-window source windows matched\nconformance: 15 tick-cover vectors matched, 8 through source and 7 by the evaluator comparison only\n".to_vec(),
         stderr: Vec::new(),
     };
     super::check_output(check, &output).expect("source window evidence is required");
+    let windows_only = std::process::Output {
+        stdout: b"test result: ok. 1 passed; 0 failed; 0 ignored;\nconformance: 77 finite-window source windows matched\n".to_vec(),
+        ..output.clone()
+    };
+    assert!(
+        matches!(
+            super::check_output(check, &windows_only),
+            Err(Error::ConformanceCheck { .. })
+        ),
+        "the tick-cover line is required"
+    );
     let missing = std::process::Output {
         stdout: b"test result: ok. 1 passed; 0 failed; 0 ignored;\n".to_vec(),
         ..output
