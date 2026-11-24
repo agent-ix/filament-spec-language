@@ -270,6 +270,7 @@ enum Frame<'e, 'r> {
     Connective(Box<ConnectiveFrame<'e>>),
     Peer(Box<PeerFrame<'e, 'r>>),
     Unary(Box<UnaryFrame<'r>>),
+    BytesConcat(Box<BytesConcatFrame<'e>>),
     /// `e.f`: the field name and the form's location.
     Field(&'e str, Option<Span>, Location),
     /// `operand[index]` after its source expression is typed.
@@ -412,6 +413,11 @@ struct ConnectiveFrame<'e> {
     pair: Pair<'e, Node>,
 }
 
+struct BytesConcatFrame<'e> {
+    location: Location,
+    pair: Pair<'e, Node>,
+}
+
 /// An arithmetic, ordering or equality operator: the non-contextual
 /// operand is typed first, so a literal can take its peer's type.
 struct PeerFrame<'e, 'r> {
@@ -514,6 +520,7 @@ enum Unary<'r> {
     Flatten,
     DropFirst,
     Size(Option<ValueType>),
+    BytesLength,
     Convert(ValueType),
     AllInstances(ValueType),
 }
@@ -2095,6 +2102,33 @@ impl<'a> Typer<'a> {
                 return Ok(Step::Descend(Goal::Infer(source, None, source_location)));
             }
             ExprNode::Call { name, arguments } => {
+                if name.segments.len() == 1 && name.name == "length" {
+                    self.single_candidate(&name.name, &location)?;
+                    let [argument] = arguments.as_slice() else {
+                        return Err(mismatch(&location));
+                    };
+                    return Ok(Self::unary(
+                        Unary::BytesLength,
+                        Goal::Infer(expression.at(*argument), None, location.child(0)),
+                        location,
+                        frames,
+                    ));
+                }
+                if name.segments.len() == 1 && name.name == "concat" {
+                    self.single_candidate(&name.name, &location)?;
+                    let [left, right] = arguments.as_slice() else {
+                        return Err(mismatch(&location));
+                    };
+                    frames.push(Frame::BytesConcat(Box::new(BytesConcatFrame {
+                        location: location.clone(),
+                        pair: Pair::First(expression.at(*right), location.child(1)),
+                    })));
+                    return Ok(Step::Descend(Goal::Infer(
+                        expression.at(*left),
+                        None,
+                        location.child(0),
+                    )));
+                }
                 if self.min_max_fold_step && (name.name == "min" || name.name == "max") {
                     let [first, second] = arguments.as_slice() else {
                         return Err(mismatch(&location));
@@ -3345,6 +3379,28 @@ impl<'a> Typer<'a> {
             Frame::Connective(frame) => Ok(self.accept_connective(frame, typed, frames)),
             Frame::Peer(frame) => self.accept_peer(frame, typed, frames),
             Frame::Unary(frame) => self.accept_unary(*frame, typed).map(Step::Typed),
+            Frame::BytesConcat(frame) => match frame.pair {
+                Pair::First(right, right_location) => {
+                    if typed.value_type != ValueType::Bytes {
+                        return Err(mismatch(&frame.location.child(0)));
+                    }
+                    frames.push(Frame::BytesConcat(Box::new(BytesConcatFrame {
+                        location: frame.location,
+                        pair: Pair::Second(typed),
+                    })));
+                    Ok(Step::Descend(Goal::Infer(right, None, right_location)))
+                }
+                Pair::Second(left) => {
+                    if typed.value_type != ValueType::Bytes {
+                        return Err(mismatch(&frame.location.child(1)));
+                    }
+                    Ok(Step::Typed(node(
+                        NodeKind::BytesConcat(self.push(left), self.push(typed)),
+                        ValueType::Bytes,
+                        &frame.location,
+                    )))
+                }
+            },
             // FR-104: in a state clause, a field read through a reference
             // (`self.f`, `s.f`) is the `Attribute` node `deref(r).f` gives.
             // FR-363: `r.name` over a relationship end of a reference is a
@@ -4270,6 +4326,16 @@ impl<'a> Typer<'a> {
                     Some(ValueType::Integer) | None => Ok(sized),
                     Some(_) => Err(mismatch(&location)),
                 }
+            }
+            Unary::BytesLength => {
+                if operand.value_type != ValueType::Bytes {
+                    return Err(mismatch(&location));
+                }
+                Ok(node(
+                    NodeKind::BytesLength(self.push(operand)),
+                    ValueType::Integer,
+                    &location,
+                ))
             }
             Unary::Convert(target) => self.convert(&target, operand, &location),
             Unary::AllInstances(target) => self.all_instances(&target, operand, &location),

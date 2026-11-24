@@ -5942,6 +5942,14 @@ impl<'a> Lowering<'a> {
                     )
                 }
             },
+            NodeKind::BytesLength(operand) => (
+                Keyed::Application(Operator::Unary, plain("filament.op.bytes.length")),
+                Operands::One(operand),
+            ),
+            NodeKind::BytesConcat(left, right) => (
+                Keyed::Application(Operator::Binary, plain("filament.op.bytes.concat")),
+                Operands::Two(left, right),
+            ),
             NodeKind::Contains(collection, item) => {
                 let leaves = match node.at(*collection).value_type() {
                     ValueType::Collection(collection_type) => self.leaves(

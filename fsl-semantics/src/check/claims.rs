@@ -554,7 +554,10 @@ fn is_scalar_application(node: CheckedNode<'_>) -> bool {
         | NodeKind::NamedPopulation { .. }
         | NodeKind::Seq { .. }
         | NodeKind::Case { .. } => false,
-        NodeKind::TupleProject { .. } | NodeKind::Index { .. } => false,
+        NodeKind::TupleProject { .. }
+        | NodeKind::Index { .. }
+        | NodeKind::BytesLength(_)
+        | NodeKind::BytesConcat(..) => false,
         #[cfg(seam_probe)]
         NodeKind::__SeamProbe => unreachable!("never constructed outside the probe build"),
     }
