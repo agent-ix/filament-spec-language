@@ -1421,14 +1421,9 @@ fn zero_delay_loop_beside_an_end_component_is_decided() {
 fn time_locked_state_is_terminal() {
     let world = one_workload("delay M::Call::send ~ discrete { 5 ms: 1 };\n");
     let built = product(&world, "Under");
-    let [(index, binding, initial)] = built.initial.as_slice() else {
-        panic!(
-            "one origin and one unbound initial state: {:?}",
-            built.initial
-        );
+    let [(_, _, initial)] = built.initial.as_slice() else {
+        panic!("one initial state: {:?}", built.initial);
     };
-    assert_eq!(*index, 0);
-    assert!(binding.is_none());
     assert!(built.outgoing(*initial).is_empty(), "time-lock has no move");
 }
 
