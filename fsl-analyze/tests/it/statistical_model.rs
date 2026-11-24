@@ -1149,7 +1149,7 @@ fn a_draw_above_the_range_is_unsupported() {
 /// a claim under every scheduler, one with no confidence parameters and an
 /// expected-reward form are each refused with its cause before the subject
 /// is read.
-#[trace("TC-627")]
+#[trace("TC-627", "FR-192-AC-4")]
 #[test]
 fn exact_only_claims_are_refused_before_any_sample() {
     let claims = "probabilistic Every using ev on M over (s: M::Server) under every scheduler \
@@ -1160,23 +1160,57 @@ fn exact_only_claims_are_refused_before_any_sample() {
          probabilistic Expected using inf on M over (s: M::Server) under Steady on origin \
          { expected accumulate duration until holds(s.phase = 2) <= 5 }";
     let world = World::new(&prob_world::service(claims));
-    for (claim, refusal) in [
+    for (claim, refusal_expected) in [
         ("Every", StatisticalRefusal::EveryScheduler),
         ("Bare", StatisticalRefusal::MissingConfidence),
         ("Expected", StatisticalRefusal::ExactOnlyForm),
     ] {
-        assert_eq!(
-            run(
-                &world,
-                claim,
-                StatisticalMethod::Okamoto,
-                StatisticalLimits::default(),
-                DEFAULT_MAX_WITNESSES
-            ),
-            Err(refusal),
-            "{claim}"
-        );
+        let refusal = run(
+            &world,
+            claim,
+            StatisticalMethod::Okamoto,
+            StatisticalLimits::default(),
+            DEFAULT_MAX_WITNESSES,
+        )
+        .expect_err("the gate refuses before a sample");
+        assert_eq!(refusal, refusal_expected);
+        let record = settle_statistical_refusal(&refusal)
+            .expect("a gate refusal has a terminal settlement");
+        let TerminalValue::Unsupported(cause) = record.value else {
+            panic!("an exact-only gate refusal settles unsupported: {record:?}");
+        };
+        assert_eq!(cause.as_str(), match claim {
+            "Every" => "every-scheduler",
+            "Bare" => "missing-confidence",
+            "Expected" => "exact-only-form",
+            _ => unreachable!("listed claim"),
+        });
     }
+}
+
+/// FR-189-AC-11 and FR-192-AC-1: a subject with no initial-state/binding
+/// pair is refused before sampling and settles as inconclusive
+/// `no-initial-state`, never as a measured acceptance.
+#[trace("TC-627", "FR-189-AC-11", "FR-192-AC-1")]
+#[test]
+fn a_subject_without_an_initial_binding_pair_is_inconclusive() {
+    let model = prob_world::service(&p95("P95", 5));
+    let world = World::with_initials(&model, &[]);
+    let refusal = run(
+        &world,
+        "P95",
+        StatisticalMethod::Okamoto,
+        StatisticalLimits::default(),
+        DEFAULT_MAX_WITNESSES,
+    )
+    .expect_err("there is no test to sample");
+    assert_eq!(refusal, StatisticalRefusal::NoTest);
+    let record = settle_statistical_refusal(&refusal).expect("NoTest settles");
+    assert_eq!(
+        record.value,
+        TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::NoInitialState)
+    );
+    assert_eq!(record.measured(), None);
 }
 
 /// FR-189 "Methods" and FR-190: over `Service` a mean of a fraction is
