@@ -124,17 +124,10 @@ fn counter_group() -> SymmetryGroup {
     }
 }
 
-/// A symmetric initial set with six differently valued counters, kept under
-/// the same each-fairness clause as the quotient integration cases.
-fn canonical_each_world() -> World {
-    let starts = [
-        start([0, 1, 2]),
-        start([0, 2, 1]),
-        start([1, 0, 2]),
-        start([1, 2, 0]),
-        start([2, 0, 1]),
-        start([2, 1, 0]),
-    ];
+/// A subject with the each-fairness clause used by the quotient integration
+/// cases and the supplied initial counter states.
+fn canonical_each_world(starts: &[[i64; 3]]) -> World {
+    let starts: Vec<_> = starts.iter().copied().map(start).collect();
     World::new(
         Shape {
             symmetric: true,
@@ -151,8 +144,16 @@ fn canonical_each_world() -> World {
     )
 }
 
-/// States reachable in the each-fairness subject, deduplicated by their
-/// canonical state key.
+fn canonical_each_proof(starts: &[[i64; 3]], reductions: Reductions) -> u64 {
+    let world = canonical_each_world(starts);
+    match run(&world, |v| Some(v == 2), reductions) {
+        Ok(
+            ModelCheckOutcome::HoldsReduced { stats, .. } | ModelCheckOutcome::Holds { stats, .. },
+        ) => stats.product_states,
+        other => panic!("expected an each-fairness symmetry quotient proof: {other:?}"),
+    }
+}
+
 fn reachable(system: &fsl_eval::simulation::model::ModelSystem<'_>) -> Vec<ModelSimState> {
     let key = |state: &ModelSimState| system.state_key(state).expect("state encodes").0;
     let mut seen = std::collections::BTreeSet::new();
@@ -169,12 +170,21 @@ fn reachable(system: &fsl_eval::simulation::model::ModelSystem<'_>) -> Vec<Model
     states
 }
 
-/// FR-152-AC-2 / FR-623-AC-1: a key permutation of a state in the
-/// `each`-fairness subject has the same canonical quotient representative.
+/// FR-152-AC-2 / FR-623-AC-1: running the real analyze quotient for the
+/// each-fairness clause gives the same explored quotient for every key
+/// permutation of the initial state.
 #[trace("TC-570", "FR-152-AC-2", "FR-623-AC-1")]
 #[test]
 fn canonicalise_is_permutation_invariant_on_each_fairness_quotient() {
-    let world = canonical_each_world();
+    let all_starts = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+    let world = canonical_each_world(&all_starts);
     let system = world.system();
     let group = counter_group();
     let shuffles = [
@@ -216,30 +226,71 @@ fn canonicalise_is_permutation_invariant_on_each_fairness_quotient() {
             );
         }
     }
+    let reduced = canonical_each_proof(&all_starts, symmetric());
+    let unreduced = canonical_each_proof(&all_starts, Reductions::default());
+    assert!(
+        reduced < unreduced,
+        "quotient {reduced} should be smaller than {unreduced}"
+    );
 }
 
-/// FR-152-AC-4 / FR-623-AC-1: quotient canonicalisation is idempotent on
-/// each state of the `each`-fairness subject.
+/// FR-152-AC-4 / FR-623-AC-1: canonicalizing an initial state twice gives the
+/// same actual analyze quotient under the each-fairness clause.
 #[trace("TC-570", "FR-152-AC-4", "FR-623-AC-1")]
 #[test]
 fn canonicalise_is_idempotent_on_each_fairness_quotient() {
-    let world = canonical_each_world();
+    let all_starts = [
+        [0, 1, 2],
+        [0, 2, 1],
+        [1, 0, 2],
+        [1, 2, 0],
+        [2, 0, 1],
+        [2, 1, 0],
+    ];
+    let world = canonical_each_world(&all_starts);
     let system = world.system();
     let group = counter_group();
     for state in reachable(&system) {
         let once = system
             .canonicalise(&state, &group)
-            .expect("state canonicalises")
+            .expect("canonicalises")
             .0;
         let twice = system
             .canonicalise(&once, &group)
-            .expect("canonical state canonicalises")
+            .expect("canonicalises twice")
             .0;
         assert_eq!(
             system.state_key(&once).expect("canonical key").0,
             system.state_key(&twice).expect("twice canonical key").0,
         );
     }
+    let state = system.initial().into_iter().next().expect("initial state");
+    let once = system
+        .canonicalise(&state, &group)
+        .expect("canonicalises")
+        .0;
+    let twice = system
+        .canonicalise(&once, &group)
+        .expect("canonicalises twice")
+        .0;
+    let values = |state: &ModelSimState| [value(state, "a"), value(state, "b"), value(state, "c")];
+    assert_eq!(values(&once), values(&twice));
+    let once_values = values(&once);
+    let twice_values = values(&twice);
+    let permutations = |values: [i64; 3]| {
+        [
+            [values[0], values[1], values[2]],
+            [values[0], values[2], values[1]],
+            [values[1], values[0], values[2]],
+            [values[1], values[2], values[0]],
+            [values[2], values[0], values[1]],
+            [values[2], values[1], values[0]],
+        ]
+    };
+    assert_eq!(
+        canonical_each_proof(&permutations(once_values), symmetric()),
+        canonical_each_proof(&permutations(twice_values), symmetric()),
+    );
 }
 
 const PROOF: &str = "fair weak each M::Counter::bump; always eventually holds(x.v = 2)";
