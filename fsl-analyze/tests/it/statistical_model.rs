@@ -35,6 +35,7 @@ use fsl_semantics::check::{Event, ProbForm, ProbScheduler};
 use ix_trace_rs::trace;
 use serde_json::json;
 
+use crate::analyze_cli_support::{analyze as analyze_source, request_over, Workspace};
 use crate::prob_world::{self, World};
 
 fn ratio(numerator: i64, denominator: i64) -> Rational {
@@ -424,7 +425,7 @@ fn serial_binding_tests_share_the_probability_work_allowance() {
 /// `BehaviourSampler` seam: the stopped trace prefix and its default-limit
 /// rerun have identical sample values; changing only the seed changes a
 /// value while retaining the same checked statistical claim.
-#[trace("TC-626")]
+#[trace("TC-626", "FR-191-AC-3")]
 #[test]
 fn sampled_seven_reproduces_a_stopped_prefix_and_seed_eight_changes_it() {
     let claim = sampled_p95();
@@ -540,10 +541,30 @@ fn sampled_seven_reproduces_a_stopped_prefix_and_seed_eight_changes_it() {
     // no obligation-identity field exists at this seam to compare by seed.
 }
 
+/// FR-191-AC-3: the source route writes one obligation identity for the same
+/// checked P95 claim regardless of its seed, while retaining the selected
+/// seed in each run's provenance.
+#[trace("TC-626", "FR-191-AC-3")]
+#[test]
+fn source_seed_changes_leave_the_p95_obligation_identity_unchanged() {
+    let first = source_p95_item("fr191-ac3-seed-seven", &["s"], "sprt", 7);
+    let repeated = source_p95_item("fr191-ac3-repeat-seven", &["s"], "sprt", 7);
+    let reseeded = source_p95_item("fr191-ac3-seed-eight", &["s"], "sprt", 8);
+
+    assert_eq!(first["record"]["result"], "measured", "{first}");
+    assert_eq!(repeated["record"]["result"], "measured", "{repeated}");
+    assert_eq!(reseeded["record"]["result"], "measured", "{reseeded}");
+    assert!(first["identity"].is_object(), "{first}");
+    assert_eq!(first["identity"], repeated["identity"]);
+    assert_eq!(first["identity"], reseeded["identity"]);
+    assert_eq!(first["verdict"]["provenance"]["seed"], "7");
+    assert_eq!(reseeded["verdict"]["provenance"]["seed"], "8");
+}
+
 /// FR-191-AC-4's provenance fields through `check_sampled`: each logical test
 /// retains its initial-state index, concrete binding and interleaved trace
 /// range, and the selected method is recorded in the result basis.
-#[trace("TC-626")]
+#[trace("TC-626", "FR-191-AC-4")]
 #[test]
 fn sampled_two_test_provenance_keeps_bindings_and_method() {
     let claim = sampled_p95();
@@ -624,6 +645,54 @@ fn sampled_two_test_provenance_keeps_bindings_and_method() {
     // Obligation identity is not returned by SampledRequest or
     // StatisticalOutcome, so the method/identity clause has no comparison
     // surface at this API boundary.
+}
+
+/// FR-191-AC-4: the source route records both bindings and their interleaved
+/// trace ranges; changing the method changes the recorded method, not the
+/// claim's certificate identity.
+#[trace("TC-626", "FR-191-AC-4")]
+#[test]
+fn source_two_test_p95_provenance_keeps_identity_across_methods() {
+    let okamoto = source_p95_item("fr191-ac4-okamoto", &["a", "b"], "okamoto", 7);
+    let sprt = source_p95_item("fr191-ac4-sprt", &["a", "b"], "sprt", 7);
+
+    assert_eq!(okamoto["record"]["result"], "measured", "{okamoto}");
+    assert_eq!(sprt["record"]["result"], "measured", "{sprt}");
+    assert!(okamoto["identity"].is_object(), "{okamoto}");
+    assert_eq!(okamoto["identity"], sprt["identity"]);
+    assert_eq!(okamoto["verdict"]["basis"]["method"]["type"], "okamoto");
+    assert_eq!(sprt["verdict"]["basis"]["method"]["type"], "sprt");
+
+    let tests = okamoto["verdict"]["provenance"]["tests"]
+        .as_array()
+        .expect("the source verdict records test provenance");
+    assert_eq!(tests.len(), 2, "{okamoto}");
+    for (index, key) in ["a", "b"].into_iter().enumerate() {
+        let test = &tests[index];
+        assert_eq!(
+            test["index"],
+            u64::try_from(index).expect("two tests"),
+            "{test}"
+        );
+        assert_eq!(test["initial_state"], 0, "{test}");
+        assert_eq!(test["binding"]["reference"]["key"], key, "{test}");
+        assert_eq!(test["first_trace_index"], index.to_string(), "{test}");
+        let first = test["first_trace_index"]
+            .as_str()
+            .expect("the decimal trace start")
+            .parse::<u64>()
+            .expect("a trace index");
+        let last = test["last_trace_index"]
+            .as_str()
+            .expect("the decimal trace end")
+            .parse::<u64>()
+            .expect("a trace index");
+        let draws = okamoto["verdict"]["tests"][index]["draws"]
+            .as_u64()
+            .expect("the test's draw count");
+        assert!(draws > 0, "{test}");
+        assert_eq!(last - first, 2 * (draws - 1), "{test}");
+    }
 }
 
 fn run_timed_method(
@@ -779,6 +848,50 @@ fn service() -> World {
         p95("Two", 2),
         p95("Zero", 0)
     )))
+}
+
+/// Runs the actual EN-4 source route over the service model with one binding
+/// test for each live server key, returning the emitted P95 item.
+fn source_p95_item(name: &str, keys: &[&str], method: &str, seed: u64) -> serde_json::Value {
+    let model = prob_world::service(&p95("P95", 5));
+    let (unit, package) = model.unit_and_document();
+    let snapshot = json!({
+        "format": "filament.state.snapshot/v1",
+        "identity": {"authority": "test", "identity": name},
+        "observation": "current",
+        "model": {"identity": model.package},
+        "anchor": {"kind": "initialization", "name": "start"},
+        "populations": [{
+            "population": model.ident(model.population),
+            "complete": true,
+            "objects": keys.iter().map(|key| json!({
+                "key": key,
+                "type": model.ident(model.object),
+                "fields": model.initial.clone(),
+            })).collect::<Vec<_>>(),
+        }],
+    });
+    let workspace = Workspace::new(name);
+    let request = request_over(
+        &workspace,
+        &unit,
+        &package,
+        &[snapshot.to_string().into_bytes()],
+        json!({"items": [{"claim": "P95", "probabilistic": {
+            "evidence": "statistical",
+            "method": {"type": method},
+            "seed": seed.to_string(),
+        }}]}),
+    );
+    let document = analyze_source(&request).document();
+    let [item] = document["items"]
+        .as_array()
+        .expect("the source analysis writes its item")
+        .as_slice()
+    else {
+        panic!("one P95 item is returned: {document}");
+    };
+    item.clone()
 }
 
 /// Checks FR-189-AC-1 (TC-624 step 1): `P95` with Okamoto runs one test of
