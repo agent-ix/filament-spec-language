@@ -419,9 +419,10 @@ fn bounded_monitor_failure(
     use fsl_eval::automaton::QualifiedBoundedError;
     match error {
         QualifiedBoundedError::Translation(_) => not_yet(),
-        QualifiedBoundedError::Automaton(error) => {
-            build_refusal(crate::exact_probabilistic::automaton_refusal(error), subject)
-        }
+        QualifiedBoundedError::Automaton(error) => build_refusal(
+            crate::exact_probabilistic::automaton_refusal(error),
+            subject,
+        ),
         QualifiedBoundedError::Key(_) => broken(),
     }
 }
@@ -429,7 +430,10 @@ fn bounded_monitor_failure(
 /// Dyadic refinement reached its maximum precision with the threshold still inside
 /// `[lower, upper]`.
 fn precision_budget(lower: Rational, upper: Rational, subject: SubjectLimits<'_>) -> EngineReport {
-    settled(&ExactProbBuildIssue::PrecisionBudget { lower, upper }, subject)
+    settled(
+        &ExactProbBuildIssue::PrecisionBudget { lower, upper },
+        subject,
+    )
 }
 
 fn settled(issue: &ExactProbBuildIssue, subject: SubjectLimits<'_>) -> EngineReport {
@@ -3751,8 +3755,8 @@ fn timed_step_for(
     TimedStepFailure,
 > {
     use fsl_eval::simulation::model::{TimedState, TimedSystem};
-    let valuation = fsl_replay::digital_key_clocks(system, claim, previous)
-        .ok_or(TimedStepFailure::Unbuilt)?;
+    let valuation =
+        fsl_replay::digital_key_clocks(system, claim, previous).ok_or(TimedStepFailure::Unbuilt)?;
     let timed = TimedSystem::new(system, claim.subject.alias.as_str())
         .map_err(TimedStepFailure::Subject)?;
     // A tie among the zero-time operations of one instant: the product never
