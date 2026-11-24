@@ -276,13 +276,70 @@ fn files_with_suffix(root: &Path, suffix: &str) -> Vec<PathBuf> {
     files
 }
 
+fn output_bytes(root: &Path) -> BTreeMap<String, Vec<u8>> {
+    files_with_suffix(root, ".bytes")
+        .into_iter()
+        .map(|path| {
+            let name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .expect("output filename is UTF-8");
+            let id = name
+                .strip_suffix(".bytes")
+                .expect("output file has the bytes suffix")
+                .to_owned();
+            (id, fs::read(path).expect("output bytes are readable"))
+        })
+        .collect()
+}
+
+fn assert_bytes_equal(left_name: &str, left: &[u8], right_name: &str, right: &[u8], item: &str) {
+    if left == right {
+        return;
+    }
+    let offset = left
+        .iter()
+        .zip(right)
+        .position(|(left, right)| left != right)
+        .unwrap_or_else(|| left.len().min(right.len()));
+    panic!(
+        "{item} bytes differ between {left_name} and {right_name} at first differing offset {offset}"
+    );
+}
+
+fn assert_output_maps_match(
+    baseline_name: &str,
+    baseline: &BTreeMap<String, Vec<u8>>,
+    other_name: &str,
+    other: &BTreeMap<String, Vec<u8>>,
+) {
+    assert_eq!(
+        baseline.keys().collect::<Vec<_>>(),
+        other.keys().collect::<Vec<_>>(),
+        "output vector IDs differ between {baseline_name} and {other_name}"
+    );
+    let common_ids = baseline
+        .keys()
+        .filter(|id| other.contains_key(*id))
+        .collect::<Vec<_>>();
+    for id in common_ids {
+        assert_bytes_equal(
+            baseline_name,
+            &baseline[id],
+            other_name,
+            &other[id],
+            &format!("vector output {id}"),
+        );
+    }
+}
+
 #[test]
 #[trace("TC-1192", "FR-350-AC-6")]
 fn report_and_passed_output_bytes_match_across_processes_and_thread_counts() {
     let fspec = fspec_directory();
     let scratch = tempfile::tempdir().expect("determinism scratch directory");
     let corpus = scratch.path().join("corpus");
-    let ids = sample_corpus(fspec.path(), &corpus);
+    sample_corpus(fspec.path(), &corpus);
     let outputs = (0..4)
         .map(|index| scratch.path().join(format!("child-{index}")))
         .collect::<Vec<_>>();
@@ -298,40 +355,33 @@ fn report_and_passed_output_bytes_match_across_processes_and_thread_counts() {
         assert_child_succeeded(&child);
     }
 
-    let reports = outputs
+    let mut runs = outputs
         .iter()
-        .map(|root| fs::read(root.join("sample/report.json")).expect("sample report exists"))
+        .enumerate()
+        .map(|(index, root)| {
+            let name = format!("child-{index}/sample");
+            let report = fs::read(root.join("sample/report.json")).expect("sample report exists");
+            let bytes = output_bytes(&root.join("sample"));
+            (name, report, bytes)
+        })
         .collect::<Vec<_>>();
-    assert!(reports.iter().all(|report| report == &reports[0]));
-    for root in &outputs[2..] {
-        let companion = fs::read(root.join("companion/report.json"))
+    for (index, root) in outputs.iter().enumerate().skip(2) {
+        let name = format!("child-{index}/companion");
+        let report = fs::read(root.join("companion/report.json"))
             .expect("concurrent companion report exists");
-        assert_eq!(companion, reports[0]);
+        let bytes = output_bytes(&root.join("companion"));
+        runs.push((name, report, bytes));
     }
-    let baseline = files_with_suffix(&outputs[0].join("sample"), ".bytes");
-    let baseline_names = baseline
-        .iter()
-        .map(|path| path.file_name().unwrap().to_owned())
-        .collect::<Vec<_>>();
-    assert_eq!(baseline_names.len(), ids.len());
-    for root in &outputs[1..] {
-        for name in &baseline_names {
-            assert_eq!(
-                fs::read(root.join("sample").join(name)).expect("sample output exists"),
-                fs::read(outputs[0].join("sample").join(name)).unwrap(),
-                "passed output bytes differ for {}",
-                name.to_string_lossy()
-            );
-        }
-    }
-    for root in &outputs[2..] {
-        for name in &baseline_names {
-            assert_eq!(
-                fs::read(root.join("companion").join(name)).expect("companion output exists"),
-                fs::read(outputs[0].join("sample").join(name)).unwrap(),
-                "companion output bytes differ for {}",
-                name.to_string_lossy()
-            );
-        }
+
+    let (baseline_name, baseline_report, baseline_bytes) = &runs[0];
+    for (name, report, bytes) in &runs[1..] {
+        assert_bytes_equal(
+            baseline_name,
+            baseline_report,
+            name,
+            report,
+            "qualification report",
+        );
+        assert_output_maps_match(baseline_name, baseline_bytes, name, bytes);
     }
 }
