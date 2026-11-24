@@ -221,7 +221,7 @@ fn exact_probability_manifest_and_statistical_refusal_settlement_are_exact() {
     use fsl_analyze::exact_probabilistic::manifest;
     use fsl_analyze::statistical::manifest as statistical_manifest;
     use fsl_foundation::bound::DomainKind;
-    use fsl_replay::statistical::{settle_statistical_refusal, StatisticalRefusal};
+    use fsl_replay::statistical::{StatisticalRefusal, settle_statistical_refusal};
     use fsl_replay::{StatisticalRequestRefusal, TerminalValue, UnavailabilityCause};
     use fsl_route::{EvidenceKind, Mode, ProviderOrigin};
 
@@ -2857,7 +2857,7 @@ fn exact_unbounded_keys_keep_none_and_budget_stops_have_no_product() {
 #[trace("TC-631", "FR-196-AC-17")]
 #[test]
 fn bounded_event_position_formulas_use_formula_keys_and_exact_extrema() {
-    use fsl_analyze::analyze::{analyze_items, exact_probabilistic_item, Engines};
+    use fsl_analyze::analyze::{Engines, analyze_items, exact_probabilistic_item};
     use fsl_foundation::RequestIndex;
     use fsl_replay::{ModelCheckLimits, ProofBasis, TerminalValue};
 
@@ -2897,7 +2897,10 @@ fn bounded_event_position_formulas_use_formula_keys_and_exact_extrema() {
         .expect("the undelivered half-probability branch returns to the same model state");
     assert_eq!(loss.probability, ratio(1, 2));
     let one_loss = &product.states[loss.to.index()];
-    assert_ne!(initial, one_loss, "remaining horizon is part of the full key");
+    assert_ne!(
+        initial, one_loss,
+        "remaining horizon is part of the full key"
+    );
     assert_ne!(initial.monitor, one_loss.monitor);
     assert!(matches!(
         one_loss.monitor,
@@ -2967,7 +2970,10 @@ fn bounded_event_position_formulas_use_formula_keys_and_exact_extrema() {
             ..
         } = terminal.value()
         else {
-            panic!("{name} is proved with an exact formula value: {:?}", terminal.value());
+            panic!(
+                "{name} is proved with an exact formula value: {:?}",
+                terminal.value()
+            );
         };
         value.value().clone()
     };
