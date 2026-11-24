@@ -11,6 +11,7 @@ use tempfile::TempDir;
 
 const COUNTER: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction digits using v(x: Int[0,9], y: Int[0,9]): Integer pure { x * 10 + y }\n";
 const FALSE: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction negative using v(x: Int[0,9]): Boolean pure { x < 0 }\n";
+const UNIT_MISMATCH: &str = "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\ndimension Time;\ndimension Length;\nunit s: Time = rational(1, 1);\nunit m: Length = rational(1, 1);\nfunction mismatched using v(): Boolean pure { 5 m = 5 s }\n";
 
 struct Fixture {
     _temp: TempDir,
@@ -97,6 +98,55 @@ impl Fixture {
 
 fn report(execution: &xtask::qualification::Execution) -> Value {
     serde_json::from_str(&execution.outcome.stdout).unwrap()
+}
+
+#[test]
+#[trace("TC-875", "FR-350-AC-2")]
+fn refusal_vectors_compare_the_expected_and_actual_code_and_cause() {
+    let expected_unit_mismatch =
+        json!({"disposition":"refusal", "code":"ill_typed", "cause":"unit-mismatch"});
+    let mut fixture = Fixture::new(
+        "language",
+        "compile",
+        UNIT_MISMATCH,
+        expected_unit_mismatch.clone(),
+    );
+
+    let matched = fixture.execute(&[]);
+    assert_eq!(matched.outcome.code, 0, "{}", matched.outcome.stdout);
+    assert_eq!(report(&matched)["capabilities"][0]["outcome"], "passed");
+
+    fixture.value["vectors"][0]["expected"] =
+        json!({"disposition":"refusal", "code":"ill_typed", "cause":"type-mismatch"});
+    let wrong_refusal = fixture.execute(&[]);
+    let failed = report(&wrong_refusal);
+    assert_eq!(wrong_refusal.outcome.code, 1, "{failed}");
+    let row = &failed["capabilities"][0]["vectors"][0];
+    assert_eq!(row["outcome"], "failed");
+    assert_eq!(row["expected"]["code"], "ill_typed");
+    assert_eq!(row["expected"]["cause"], "type-mismatch");
+    assert_eq!(row["actual"]["code"], "ill_typed");
+    assert_eq!(row["actual"]["cause"], "unit-mismatch");
+
+    let admitted_source =
+        "language \"ix:native\" edition \"1-draft\";\nprofile v = \"filament.value.complete/v1\";\nfunction accepted using v(): Boolean pure { true }\n";
+    let admitted = Fixture::new(
+        "language",
+        "compile",
+        admitted_source,
+        expected_unit_mismatch,
+    )
+    .execute(&[]);
+    let failed = report(&admitted);
+    assert_eq!(admitted.outcome.code, 1, "{failed}");
+    let row = &failed["capabilities"][0]["vectors"][0];
+    assert_eq!(row["expected"]["code"], "ill_typed");
+    assert_eq!(row["expected"]["cause"], "unit-mismatch");
+    assert!(row["actual"]["code"].is_null(), "source compiled: {row}");
+    assert_eq!(
+        row["actual"]["contract_version"],
+        "filament.checked-package/v2"
+    );
 }
 
 #[test]
@@ -489,6 +539,60 @@ fn replay_vectors_decode_and_execute_without_a_source_file_kind() {
         *fixture.expected_output.as_ref().unwrap()
     );
     assert_eq!(result.outputs, fixture.execute(&[]).outputs);
+}
+
+#[test]
+#[trace("TC-1325", "FR-350-AC-13")]
+fn replay_request_maps_a_closed_object_environment_and_rejects_extra_identity_members() {
+    let fixture = replay_fixture();
+    let request_path = fixture.corpus.join("inputs/request.json");
+    let mut request: Value = serde_json::from_slice(&fs::read(&request_path).unwrap()).unwrap();
+    let object_environment = json!({
+        "identity": {
+            "authority": "agent-ix",
+            "identity": "ix://fixture/environment"
+        }
+    });
+    request["object_environment"] = object_environment.clone();
+    fs::write(&request_path, serde_json::to_vec(&request).unwrap()).unwrap();
+
+    let decoded = fsl_command::replay_request::read(
+        &fs::read(&request_path).unwrap(),
+        fsl_replay::ReplayLimits::default().input_bytes,
+        |path, pointer| {
+            assert_eq!(pointer, "/byte_provision/0/bytes_path");
+            assert_eq!(path, "inputs/bytes.native");
+            Ok::<_, fsl_command::replay_request::RequestDefect>(
+                fs::read(fixture.corpus.join(path)).unwrap(),
+            )
+        },
+        Vec::new(),
+    )
+    .expect("the valid closed identity maps to a replay request");
+    assert_eq!(
+        decoded
+            .object_environment()
+            .expect("the object environment is retained")
+            .to_value(),
+        object_environment
+    );
+
+    request["object_environment"]["identity"]["revision"] = json!("r1");
+    fs::write(&request_path, serde_json::to_vec(&request).unwrap()).unwrap();
+    let rejected = fixture.execute(&[]);
+    let rejected_report = report(&rejected);
+    assert_eq!(rejected.outcome.code, 1, "{rejected_report}");
+    let rejected_row = &rejected_report["capabilities"][0]["vectors"][0];
+    assert_eq!(rejected_row["outcome"], "tool-failure");
+    assert_eq!(rejected_row["actual"]["cause"], "corpus-decode");
+    assert!(
+        rejected_row["actual"]["pointer"]
+            .as_str()
+            .is_some_and(
+                |pointer| pointer.contains("object_environment") && pointer.contains("revision")
+            ),
+        "the extra member is attributed to the closed identity: {rejected_row}"
+    );
 }
 
 #[test]
