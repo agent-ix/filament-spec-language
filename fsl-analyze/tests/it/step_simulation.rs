@@ -35,7 +35,15 @@ fn holding() -> Vec<StepRecordResult> {
         .collect()
 }
 
-#[trace("TC-551")]
+#[trace(
+    "TC-551",
+    "FR-314-AC-11",
+    "FR-314-AC-12",
+    "FR-314-AC-13",
+    "FR-314-AC-14",
+    "FR-314-AC-15",
+    "FR-314-AC-16"
+)]
 #[test]
 fn a_verified_certificate_settles_every_record_certified() {
     let world = World::new(&cas_refines_counter());
@@ -99,6 +107,35 @@ fn a_verified_certificate_settles_every_record_certified() {
                 request_index: RequestIndex::new(3)
             })
         );
+    });
+}
+
+/// FR-314-AC-17: an assembled certificate keeps an empty Base proof as
+/// supplied, the checker rejects that proof as `NotRefutation`, and the
+/// corresponding initial record settles with its exact certificate locus.
+#[trace("FR-314-AC-17")]
+#[test]
+fn an_empty_base_proof_settles_the_initial_record_inconclusive() {
+    use fsl_replay::{CertificateLocus, CertificateRule, InconclusiveCause, QueryPart};
+
+    let world = World::new(&cas_refines_counter());
+    with_request(&world, |request| {
+        let mut empty_base = certificate(request, 7);
+        empty_base.base.proof.clear();
+        let settled = settle(request, holding(), Some(empty_base), Vec::new())
+            .expect("the empty proof rejection settles");
+        let rejected = TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+            rule: CertificateRule::NotRefutation,
+            at: CertificateLocus::Query {
+                part: QueryPart::Base,
+            },
+        });
+        assert_eq!(settled.records[0].value(), &rejected);
+        for record in &settled.records[1..] {
+            assert_eq!(record.value(), &proved(Certification::Uncertified));
+        }
+        assert_eq!(settled.safety.value, rejected);
+        assert_eq!(settled.safety.basis, SettlementBasis::Unsettled);
     });
 }
 

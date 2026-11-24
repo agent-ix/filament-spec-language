@@ -243,23 +243,32 @@ fn handoff(parts: &[HandoffPart]) -> Vec<u8> {
         .to_le_bytes()
         .to_vec();
     for (row, query, proof) in parts {
-        match row {
-            None => bytes.push(0),
-            Some(row) => {
-                bytes.push(1);
-                bytes.extend_from_slice(&row.to_le_bytes());
-            }
-        }
-        for field in [query, proof] {
-            bytes.extend_from_slice(
-                &u64::try_from(field.len())
-                    .expect("fixture bytes")
-                    .to_le_bytes(),
-            );
-            bytes.extend_from_slice(field);
-        }
+        append_handoff_part(&mut bytes, *row, Some(query), Some(proof));
     }
     bytes
+}
+
+fn append_handoff_part(
+    bytes: &mut Vec<u8>,
+    row: Option<u64>,
+    query: Option<&[u8]>,
+    proof: Option<&[u8]>,
+) {
+    match row {
+        None => bytes.push(0),
+        Some(row) => {
+            bytes.push(1);
+            bytes.extend_from_slice(&row.to_le_bytes());
+        }
+    }
+    for field in [query, proof].into_iter().flatten() {
+        bytes.extend_from_slice(
+            &u64::try_from(field.len())
+                .expect("fixture bytes")
+                .to_le_bytes(),
+        );
+        bytes.extend_from_slice(field);
+    }
 }
 
 fn public_parts(request: &RefinementQueryRequest<'_>) -> Vec<HandoffPart> {
@@ -284,6 +293,7 @@ fn public_parts(request: &RefinementQueryRequest<'_>) -> Vec<HandoffPart> {
 
 #[trace(
     "TC-1275",
+    "FR-314-AC-10",
     "FR-492-AC-8",
     "FR-492-AC-10",
     "FR-492-AC-12",
@@ -343,7 +353,16 @@ fn public_handoff_preserves_selected_rows_and_delegates_the_native_checker() {
     });
 }
 
-#[trace("TC-1275", "FR-492-AC-9")]
+#[trace(
+    "TC-1275",
+    "FR-314-AC-11",
+    "FR-314-AC-12",
+    "FR-314-AC-13",
+    "FR-314-AC-14",
+    "FR-314-AC-15",
+    "FR-314-AC-16",
+    "FR-492-AC-9"
+)]
 #[test]
 fn public_handoff_refuses_invalid_framing_and_selected_record_shapes() {
     use filament_exact::Cancel;
@@ -370,9 +389,27 @@ fn public_handoff_refuses_invalid_framing_and_selected_record_shapes() {
         let mut duplicate_base = original.clone();
         duplicate_base[4] = original[0].clone();
         assert_error(handoff(&duplicate_base), Error::Shape);
+        let mut duplicate_step = original.clone();
+        duplicate_step[5] = original[4].clone();
+        assert_error(handoff(&duplicate_step), Error::Shape);
         let mut parts = original.clone();
         parts[4].0 = Some(7);
         assert_error(handoff(&parts), Error::Shape);
+
+        let mut prefix = u64::try_from(original.len())
+            .expect("fixture count")
+            .to_le_bytes()
+            .to_vec();
+        for part in original.iter().filter(|(row, _, _)| *row != Some(3)) {
+            append_handoff_part(&mut prefix, part.0, Some(&part.1), Some(&part.2));
+        }
+        let mut absent_query = prefix.clone();
+        append_handoff_part(&mut absent_query, Some(3), None, None);
+        assert_error(absent_query, Error::Malformed);
+        let mut absent_proof = prefix;
+        append_handoff_part(&mut absent_proof, Some(3), Some(b"row-three-query"), None);
+        assert_error(absent_proof, Error::Malformed);
+
         assert_error(handoff(&original[..1]), Error::Shape);
         let honest = handoff(&original);
         for end in 0..honest.len() {
@@ -394,7 +431,7 @@ fn public_handoff_refuses_invalid_framing_and_selected_record_shapes() {
     });
 }
 
-#[trace("TC-1275", "FR-492-AC-10")]
+#[trace("TC-1275", "FR-314-AC-17", "FR-492-AC-10")]
 #[test]
 fn public_assembly_keeps_bad_proofs_present_for_the_native_checker() {
     use filament_exact::Cancel;
