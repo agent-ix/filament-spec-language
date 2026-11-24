@@ -317,16 +317,23 @@ fn decimal_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
                 .collect::<Vec<_>>();
             assert!(!result_types.is_empty(), "{} has result types", vector.id);
 
-            let operands = pairs(vector.inputs);
-            assert!(operands.len() >= 2, "{} has two operands", vector.id);
-            let operation = vector.inputs.to_ascii_lowercase();
-            let operator = if operation.contains("multiply") {
-                "*"
-            } else if operation.contains("divide") {
-                "/"
+            let (operation, operator) = if vector.inputs.contains("multiply") {
+                ("multiply", "*")
+            } else if vector.inputs.contains("divide") {
+                ("divide", "/")
             } else {
                 panic!("{} has no recognized decimal operation", vector.id);
             };
+            let operands_text = vector
+                .inputs
+                .split_once(operation)
+                .expect("recognized operation phrase")
+                .1
+                .split_once(" into ")
+                .expect("operation operands end before result type")
+                .0;
+            let operands = pairs(operands_text);
+            assert_eq!(operands.len(), 2, "{} has exactly two operands", vector.id);
             let expression = format!(
                 "{} {operator} {}",
                 decimal(&operands[0]),
