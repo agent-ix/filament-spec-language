@@ -335,6 +335,7 @@ pub(super) fn statistical_on_each(
 }
 
 fn not_yet() -> EngineReport {
+    eprintln!("unsupported path: {}", std::backtrace::Backtrace::force_capture());
     EngineReport::Refused(Refusal::Unsupported(NOT_YET))
 }
 
