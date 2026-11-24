@@ -1397,7 +1397,7 @@ fn decide_step(
                         .collect(),
                     Err(verdict) => return verdict,
                 };
-            for candidate in &pre.abstract_states {
+            for (pre_candidate, candidate) in pre.abstract_states.iter().enumerate() {
                 let expansion = match abstract_system.expand_state(candidate) {
                     Ok(expansion) => expansion,
                     Err(stop) => return stop_verdict(abstract_system, stop),
@@ -1420,6 +1420,7 @@ fn decide_step(
                                     return fault("candidate-state-encodes");
                                 };
                                 candidate_steps.push(CandidateStep {
+                                    pre_candidate,
                                     pre_state: pre_key,
                                     transition: Some(transition.clone()),
                                     post_state: post_key,
@@ -1525,11 +1526,13 @@ fn candidate_stutters(
 ) -> Result<Vec<CandidateStep>, StepVerdict> {
     candidates
         .iter()
-        .map(|candidate| {
+        .enumerate()
+        .map(|(pre_candidate, candidate)| {
             let (key, _) = abstract_system
                 .state_key_of(candidate)
                 .map_err(|_| fault("candidate-state-encodes"))?;
             Ok(CandidateStep {
+                pre_candidate,
                 pre_state: key.clone(),
                 transition: None,
                 post_state: key,
@@ -2222,7 +2225,7 @@ fn judge_operation(
     let mut rejected = Vec::new();
     let mut undecided = false;
     let mut order = 0_usize;
-    for before in pre_states {
+    for (pre_candidate, before) in pre_states.iter().enumerate() {
         for post in &completions {
             let judged = match abstract_system.judge_application(&AbstractApplication {
                 pre: before,
@@ -2252,6 +2255,7 @@ fn judge_operation(
                                 return fault("candidate-state-encodes");
                             };
                             candidate_steps.push(CandidateStep {
+                                pre_candidate,
                                 pre_state: pre_key,
                                 transition: Some(found.transition.clone()),
                                 post_state: post_key,

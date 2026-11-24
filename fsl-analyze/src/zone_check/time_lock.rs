@@ -398,6 +398,7 @@ impl Run<'_, '_, '_> {
             after: None,
             auxiliary_carries: Vec::new(),
             auxiliary_resets: Vec::new(),
+            auxiliary_advances: Vec::new(),
             piece: None,
             silent: false,
             fixed: None,

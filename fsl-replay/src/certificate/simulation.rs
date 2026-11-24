@@ -71,6 +71,9 @@ pub struct CertifiedPosition {
     /// The abstract states it stands for, as canonical keys, in the order
     /// [`check_step`] gives them.
     pub abstract_states: Vec<StateKey>,
+    /// The timed abstract clock-block keys, one per candidate and in the
+    /// same order; absent for an untimed abstract model.
+    pub candidate_blocks: Option<Vec<StateKey>>,
 }
 
 /// Whether the listed position `listed` is `position`: its concrete

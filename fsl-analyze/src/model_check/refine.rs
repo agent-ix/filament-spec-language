@@ -2382,6 +2382,7 @@ impl Run<'_, '_> {
                 concrete,
                 history,
                 abstract_states,
+                candidate_blocks: None,
             });
         }
         Ok(SimulationCertificate {

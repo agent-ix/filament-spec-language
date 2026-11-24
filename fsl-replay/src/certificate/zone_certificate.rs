@@ -1395,8 +1395,23 @@ struct Expected {
     alive: Vec<Vec<u8>>,
 }
 
-/// The clock carries and resets of a row.
-type ClockUpdates = (Vec<(usize, usize)>, Vec<(usize, Rational)>);
+fn project_blocks(
+    zone: &Zone,
+    concrete_clocks: usize,
+    abstract_clocks: usize,
+    blocks: &[usize],
+    horizon: bool,
+) -> Result<Zone, ZoneError> {
+    let mut coordinates: Vec<usize> = (0..=concrete_clocks).collect();
+    for &block in blocks {
+        let start = concrete_clocks + block * abstract_clocks + 1;
+        coordinates.extend(start..start + abstract_clocks);
+    }
+    if horizon {
+        coordinates.push(zone.dim() - 1);
+    }
+    zone.reindex(&coordinates)
+}
 
 /// One piece of a zone split by the truth pattern of candidate invariants:
 /// the indices of the candidates whose invariant holds, and the constraints
@@ -1659,6 +1674,41 @@ impl<O> Checker<'_, '_, O> {
             + usize::from(z)
     }
 
+    fn dim_for_candidate_blocks(&self, blocks: usize) -> usize {
+        let Some(auxiliary) = self.auxiliary_timed else {
+            return self.dim();
+        };
+        self.dim()
+            .saturating_sub(auxiliary.places().len())
+            .saturating_add(auxiliary.places().len().saturating_mul(blocks))
+    }
+
+    fn cover_for_zone(&self, dim: usize) -> Step<LuBounds, O> {
+        let Some(auxiliary) = self.auxiliary_timed else {
+            return Ok(self.cover.clone());
+        };
+        let clocks = dim.saturating_sub(1);
+        let concrete = self.timed.places().len();
+        let abstract_clocks = auxiliary.places().len();
+        let base = self.dim().saturating_sub(abstract_clocks).saturating_sub(1);
+        let blocks = clocks
+            .saturating_sub(base)
+            .checked_div(abstract_clocks)
+            .unwrap_or(0);
+        let mut lower = self.cover.lower[..concrete].to_vec();
+        let mut upper = self.cover.upper[..concrete].to_vec();
+        for _ in 0..blocks {
+            lower.extend_from_slice(&self.cover.lower[concrete..concrete + abstract_clocks]);
+            upper.extend_from_slice(&self.cover.upper[concrete..concrete + abstract_clocks]);
+        }
+        lower.extend_from_slice(&self.cover.lower[concrete + abstract_clocks..]);
+        upper.extend_from_slice(&self.cover.upper[concrete + abstract_clocks..]);
+        if lower.len() != clocks {
+            return Err(fault(CheckerFault::ZoneShape));
+        }
+        Ok(LuBounds { lower, upper })
+    }
+
     /// The horizon clock's index in a zone.
     fn horizon_clock(&self) -> usize {
         self.timed.places().len() + 1
@@ -1750,6 +1800,32 @@ impl<O> Checker<'_, '_, O> {
                 if refined.part.positions.is_empty() {
                     return malformed(CertificateMember::Positions);
                 }
+                for position in &refined.part.positions {
+                    match (self.auxiliary_timed, &position.candidate_blocks) {
+                        (Some(_), Some(blocks))
+                            if blocks.len() == position.abstract_states.len()
+                                && position
+                                    .abstract_states
+                                    .iter()
+                                    .zip(blocks)
+                                    .zip(
+                                        position
+                                            .abstract_states
+                                            .iter()
+                                            .skip(1)
+                                            .zip(blocks.iter().skip(1)),
+                                    )
+                                    .all(
+                                        |((left_state, left_block), (right_state, right_block))| {
+                                            (left_state, left_block) <= (right_state, right_block)
+                                        },
+                                    ) => {}
+                        (Some(_), _) | (None, Some(_)) => {
+                            return malformed(CertificateMember::Positions);
+                        }
+                        (None, None) => {}
+                    }
+                }
                 if refined.part.taken.len() != certificate.edges.len() {
                     return malformed(CertificateMember::Edges);
                 }
@@ -1788,7 +1864,27 @@ impl<O> Checker<'_, '_, O> {
         let windowed = self.window.is_some();
         let live = self.live.as_ref();
         let node_ok = |node: &CertNode| {
-            node.zone.dim() == self.dim()
+            let dimension_ok = match (positions, self.refined.as_ref()) {
+                (Some(reserved), Some(refined)) if node.automaton_state < reserved => refined
+                    .part
+                    .positions
+                    .get(node.automaton_state)
+                    .is_some_and(|position| {
+                        node.zone.dim()
+                            == self.dim_for_candidate_blocks(position.abstract_states.len())
+                    }),
+                (Some(reserved), Some(_)) if node.automaton_state == reserved => {
+                    let base = self.auxiliary_timed.map_or(self.dim(), |timed| {
+                        self.dim().saturating_sub(timed.places().len())
+                    });
+                    let extra = node.zone.dim().saturating_sub(base);
+                    self.auxiliary_timed.is_none_or(|timed| {
+                        timed.places().is_empty() || extra % timed.places().len() == 0
+                    })
+                }
+                _ => node.zone.dim() == self.dim(),
+            };
+            dimension_ok
                 && match positions {
                     // Each node's position, or the locked region's index.
                     Some(reserved) => node.automaton_state <= reserved,
@@ -1943,13 +2039,38 @@ impl<O> Checker<'_, '_, O> {
         )
     }
 
+    /// Advance dense concrete and run clocks while an abstract tick source
+    /// keeps its own clock block stationary between mapped tick steps.
+    fn up_zone(&self, zone: &mut Zone) -> Step<(), O> {
+        let Some(auxiliary) = self
+            .auxiliary_timed
+            .filter(|auxiliary| auxiliary.tick_period().is_some())
+        else {
+            zone.up();
+            return Ok(());
+        };
+        let abstract_start = self.timed.places().len() + 1;
+        let base = self.dim().saturating_sub(auxiliary.places().len());
+        let blocks = zone
+            .dim()
+            .saturating_sub(base)
+            .checked_div(auxiliary.places().len())
+            .unwrap_or(0);
+        let abstract_end = abstract_start + blocks * auxiliary.places().len();
+        let clocks: Vec<_> = (1..zone.dim())
+            .filter(|clock| *clock < abstract_start || *clock >= abstract_end)
+            .collect();
+        zone.up_clocks(&clocks)?;
+        Ok(())
+    }
+
     /// `zone` within `state`'s invariants, time let elapse unless it is
     /// urgent, and within them again.
     fn settle(&self, state: &ModelSimState, zone: &mut Zone) -> Step<(), O> {
         let invariants = self.invariants(state)?;
         self.constrain(zone, &invariants)?;
         if !zone.is_empty() && self.elapses(state)? {
-            zone.up();
+            self.up_zone(zone)?;
             self.constrain(zone, &invariants)?;
         }
         Ok(())
@@ -2046,7 +2167,7 @@ impl<O> Checker<'_, '_, O> {
             for &node in &certificate.initials {
                 let listed = &certificate.nodes[node];
                 if listed.state_key == state_key
-                    && zone.alu_covered_by(&listed.zone, &self.cover)?
+                    && zone.alu_covered_by(&listed.zone, &self.cover_for_zone(zone.dim())?)?
                     && self.binds(listed.automaton_state, q)
                 {
                     covered = Some(node);
@@ -2087,11 +2208,6 @@ impl<O> Checker<'_, '_, O> {
             self.poll()?;
             let state = start.discrete().clone();
             let state_key = self.state_key(&state)?;
-            let mut zone = Zone::zero(self.dim());
-            self.settle(&state, &mut zone)?;
-            if zone.is_empty() {
-                continue;
-            }
             let verdict = check_initial(
                 refinement,
                 self.timed.system(),
@@ -2099,6 +2215,15 @@ impl<O> Checker<'_, '_, O> {
                 index,
                 state.state(),
             );
+            let block_count = match &verdict {
+                StepVerdict::Passes { post, .. } => post.abstract_states.len(),
+                _ => 0,
+            };
+            let mut zone = Zone::zero(self.dim_for_candidate_blocks(block_count));
+            self.settle(&state, &mut zone)?;
+            if zone.is_empty() {
+                continue;
+            }
             let mut expected: Option<RefinementPosition> = None;
             let settled = zone.clone();
             let mut dead = false;
@@ -2110,7 +2235,19 @@ impl<O> Checker<'_, '_, O> {
                 let mut pruned = (**post).clone();
                 let alive = self.alive_at_zero(&pruned.abstract_states)?;
                 if !alive.is_empty() {
-                    pruned.abstract_states = alive;
+                    pruned.abstract_states = alive
+                        .iter()
+                        .map(|&candidate| pruned.abstract_states[candidate].clone())
+                        .collect();
+                    if alive.len() != post.abstract_states.len() {
+                        zone = project_blocks(
+                            &zone,
+                            self.timed.places().len(),
+                            self.auxiliary_timed.map_or(0, |timed| timed.places().len()),
+                            &alive,
+                            self.window.is_some(),
+                        )?;
+                    }
                 }
                 self.auxiliary_invariants(&pruned, &mut zone)?;
                 // No alive candidate holds anywhere on the initial zone: a
@@ -2129,7 +2266,7 @@ impl<O> Checker<'_, '_, O> {
                 Some(&node) => {
                     let entry = &certificate.nodes[node];
                     (entry.state_key == state_key
-                        && zone.alu_covered_by(&entry.zone, &self.cover)?)
+                        && zone.alu_covered_by(&entry.zone, &self.cover_for_zone(zone.dim())?)?)
                     .then_some(node)
                 }
                 None => None,
@@ -2176,8 +2313,8 @@ impl<O> Checker<'_, '_, O> {
         // Every alive candidate's invariant holds (FR-899 "Timed subjects");
         // a candidate whose own invariant stops holding leaves the alive set
         // by a death edge, so the cut is exact only together with those.
-        for candidate in &position.abstract_states {
-            let invariants = self.candidate_invariants(candidate)?;
+        for (block, candidate) in position.abstract_states.iter().enumerate() {
+            let invariants = self.candidate_invariants_at(candidate, block)?;
             self.constrain(zone, &invariants)?;
         }
         Ok(())
@@ -2185,11 +2322,15 @@ impl<O> Checker<'_, '_, O> {
 
     /// The time invariants of one abstract candidate, sorted, over the
     /// product's clocks (the abstract places follow the concrete ones).
-    fn candidate_invariants(&self, candidate: &ModelState) -> Step<Vec<PlaceConstraint>, O> {
+    fn candidate_invariants_at(
+        &self,
+        candidate: &ModelState,
+        block: usize,
+    ) -> Step<Vec<PlaceConstraint>, O> {
         let Some(timed) = self.auxiliary_timed else {
             return Ok(Vec::new());
         };
-        let offset = self.timed.places().len();
+        let offset = self.timed.places().len() + block * timed.places().len();
         let state = timed
             .system()
             .pre_state(candidate.clone(), timed.system().declared_anchor());
@@ -2208,14 +2349,20 @@ impl<O> Checker<'_, '_, O> {
     }
 
     /// The candidates whose own time invariant holds at the zero valuation.
-    fn alive_at_zero(&self, candidates: &[ModelState]) -> Step<Vec<ModelState>, O> {
+    fn alive_at_zero(&self, candidates: &[ModelState]) -> Step<Vec<usize>, O> {
         let mut alive = Vec::with_capacity(candidates.len());
-        for candidate in candidates {
-            let invariants = self.candidate_invariants(candidate)?;
-            let mut point = Zone::zero(self.dim());
+        for (block, candidate) in candidates.iter().enumerate() {
+            let invariants = self.candidate_invariants_at(candidate, block)?;
+            let extra = self.auxiliary_timed.map_or(0, |timed| {
+                timed
+                    .places()
+                    .len()
+                    .saturating_mul(candidates.len().saturating_sub(1))
+            });
+            let mut point = Zone::zero(self.dim() + extra);
             self.constrain(&mut point, &invariants)?;
             if !point.is_empty() {
-                alive.push(candidate.clone());
+                alive.push(block);
             }
         }
         Ok(alive)
@@ -2317,8 +2464,8 @@ impl<O> Checker<'_, '_, O> {
     /// [`Self::pattern_pieces`] of `zone` over `candidates`.
     fn entry_pieces(&self, zone: Zone, candidates: &[ModelState]) -> Step<Vec<PatternPiece>, O> {
         let mut invariants = Vec::with_capacity(candidates.len());
-        for candidate in candidates {
-            invariants.push(self.candidate_invariants(candidate)?);
+        for (block, candidate) in candidates.iter().enumerate() {
+            invariants.push(self.candidate_invariants_at(candidate, block)?);
         }
         self.pattern_pieces(zone, &invariants)
     }
@@ -2380,29 +2527,26 @@ impl<O> Checker<'_, '_, O> {
         let StepVerdict::Passes { post, taken } = verdict else {
             return unchanged(zone);
         };
-        let offset = self.timed.places().len();
         // The rows: a guarded step or a stutter, and the key of the post
         // candidate each leads to (`None` when the verdict names none).
-        let mut rows: Vec<(Option<GuardedStep>, Option<Vec<u8>>)> = Vec::new();
+        let mut rows: Vec<(usize, Option<GuardedStep>, Option<Vec<u8>>)> = Vec::new();
         match *taken {
             Taken::Abstract(transitions) => {
-                let mut matched = None;
-                'candidates: for candidate in &pre.abstract_states {
+                for (block, candidate) in pre.abstract_states.iter().enumerate() {
                     let state = timed
                         .system()
                         .pre_state(candidate.clone(), timed.system().declared_anchor());
-                    for step in timed.guarded_steps(&state).or_else(undecided)? {
-                        if transitions.contains(step.transition()) {
-                            matched = Some(step);
-                            break 'candidates;
-                        }
+                    if let Some(step) = timed
+                        .guarded_steps(&state)
+                        .or_else(undecided)?
+                        .into_iter()
+                        .find(|step| transitions.contains(step.transition()))
+                    {
+                        rows.push((block, Some(step), None));
                     }
                 }
-                match matched {
-                    Some(step) => rows.push((Some(step), None)),
-                    // The operation has no guarded step: the producer's
-                    // `mapped-operation` failure.
-                    None => return locks(zone),
+                if rows.is_empty() {
+                    return locks(zone);
                 }
             }
             Taken::CandidateSteps(steps) => {
@@ -2410,40 +2554,38 @@ impl<O> Checker<'_, '_, O> {
                     return locks(zone);
                 }
                 for row in &steps {
-                    let Some(transition) = &row.transition else {
-                        rows.push((None, Some(row.post_state.clone())));
-                        continue;
-                    };
-                    let mut found = None;
-                    for candidate in &pre.abstract_states {
-                        let key = abstract_system
-                            .state_key_of(candidate)
-                            .map(|(bytes, _)| bytes)
-                            .or_else(undecided)?;
-                        if key != row.pre_state {
-                            continue;
-                        }
-                        let state = timed
-                            .system()
-                            .pre_state(candidate.clone(), timed.system().declared_anchor());
-                        found = timed
-                            .guarded_steps(&state)
-                            .or_else(undecided)?
-                            .into_iter()
-                            .find(|step| step.transition() == transition);
-                        break;
-                    }
-                    let Some(step) = found else {
+                    let Some(candidate) = pre.abstract_states.get(row.pre_candidate) else {
                         return reject(CertificateRule::PostDiffers, at_node(node));
                     };
-                    rows.push((Some(step), Some(row.post_state.clone())));
+                    let block = row.pre_candidate;
+                    let key = abstract_system
+                        .state_key_of(candidate)
+                        .map(|(bytes, _)| bytes)
+                        .or_else(undecided)?;
+                    if key != row.pre_state {
+                        return reject(CertificateRule::PostDiffers, at_node(node));
+                    }
+                    let state = timed
+                        .system()
+                        .pre_state(candidate.clone(), timed.system().declared_anchor());
+                    let possible = timed.guarded_steps(&state).or_else(undecided)?;
+                    let step = match &row.transition {
+                        Some(transition) => possible
+                            .into_iter()
+                            .find(|step| step.transition() == transition),
+                        None => None,
+                    };
+                    if row.transition.is_some() && step.is_none() {
+                        return reject(CertificateRule::PostDiffers, at_node(node));
+                    }
+                    rows.push((block, step, Some(row.post_state.clone())));
                 }
             }
             Taken::Stutter | Taken::Protocol(_) | Taken::ProtocolTraces(_) | Taken::Failing => {}
         }
         // Split the zone by the truth pattern of the rows' guards.
         let mut patterns: Vec<(Zone, Vec<bool>)> = vec![(zone, Vec::new())];
-        for (step, _) in &rows {
+        for (block, step, _) in &rows {
             let mut next = Vec::new();
             match step {
                 None => {
@@ -2453,6 +2595,7 @@ impl<O> Checker<'_, '_, O> {
                     }
                 }
                 Some(step) => {
+                    let offset = self.timed.places().len() + block * timed.places().len();
                     let covers: Vec<Vec<PlaceConstraint>> = step
                         .parts()
                         .iter()
@@ -2498,7 +2641,7 @@ impl<O> Checker<'_, '_, O> {
         }
         let mut pieces = Vec::new();
         for (piece, mask) in patterns {
-            let holding: Vec<&(Option<GuardedStep>, Option<Vec<u8>>)> = rows
+            let holding: Vec<&(usize, Option<GuardedStep>, Option<Vec<u8>>)> = rows
                 .iter()
                 .zip(&mask)
                 .filter_map(|(row, held)| (*held).then_some(row))
@@ -2514,50 +2657,54 @@ impl<O> Checker<'_, '_, O> {
                 });
                 continue;
             }
-            let mut agreed: Option<ClockUpdates> = None;
-            for (step, _) in &holding {
-                let updates = step.as_ref().map_or((Vec::new(), Vec::new()), |step| {
-                    (step.carries().to_vec(), step.resets().to_vec())
-                });
-                match &agreed {
-                    None => agreed = Some(updates),
-                    Some(first) if *first == updates => {}
-                    Some(_) => return reject(CertificateRule::PostDiffers, at_node(node)),
+            let mut ordered_holding = holding;
+            ordered_holding
+                .sort_by(|left, right| left.2.cmp(&right.2).then_with(|| left.0.cmp(&right.0)));
+            let mut piece = project_blocks(
+                &piece,
+                self.timed.places().len(),
+                timed.places().len(),
+                &ordered_holding.iter().map(|row| row.0).collect::<Vec<_>>(),
+                self.window.is_some(),
+            )?;
+            for (output, (_, step, _)) in ordered_holding.iter().enumerate() {
+                let Some(step) = step else { continue };
+                let offset = self.timed.places().len() + output * timed.places().len();
+                let period = timed.tick_of(step.operation());
+                if period > Rational::from_integer(Integer::zero()) {
+                    let amount = self.scaled(&period)?;
+                    let clocks: Vec<_> = (0..timed.places().len())
+                        .map(|place| offset + place + 1)
+                        .collect();
+                    piece.translate_clocks(&clocks, &amount)?;
                 }
-            }
-            let mut piece = piece;
-            if let Some((carries, resets)) = &agreed {
-                let carries: Vec<_> = carries
+                let carries: Vec<_> = step
+                    .carries()
                     .iter()
                     .map(|(to, from)| (offset + to + 1, offset + from + 1))
                     .collect();
-                let resets: Vec<_> = resets
+                let resets: Vec<_> = step
+                    .resets()
                     .iter()
                     .map(|(place, value)| Ok((offset + place + 1, self.scaled(value)?)))
                     .collect::<Step<Vec<_>, O>>()?;
                 piece.assign_clocks(&carries, &resets)?;
             }
-            // The post candidates of the holding rows.
-            let keys = if rows.iter().all(|(_, post)| post.is_some()) && !rows.is_empty() {
-                let wanted: BTreeSet<Vec<u8>> = holding
-                    .iter()
-                    .filter_map(|(_, post)| post.clone())
-                    .collect();
-                Some(wanted)
-            } else {
-                None
-            };
-            let mut candidates = Vec::with_capacity(post.abstract_states.len());
-            for candidate in &post.abstract_states {
-                if let Some(wanted) = &keys {
-                    let key = abstract_system
-                        .state_key_of(candidate)
-                        .map(|(bytes, _)| bytes)
-                        .or_else(undecided)?;
-                    if !wanted.contains(&key) {
-                        continue;
-                    }
+            // The post candidates of the holding rows, retaining two rows
+            // that reach the same abstract state as separate clock blocks.
+            let mut candidates = Vec::with_capacity(ordered_holding.len());
+            for (index, (_, _, wanted)) in ordered_holding.iter().enumerate() {
+                let candidate = if let Some(wanted) = wanted {
+                    post.abstract_states.iter().find(|candidate| {
+                        abstract_system
+                            .state_key_of(candidate)
+                            .is_ok_and(|(key, _)| key == *wanted)
+                    })
+                } else {
+                    post.abstract_states
+                        .get(index.min(post.abstract_states.len().saturating_sub(1)))
                 }
+                .ok_or_else(|| fault(CheckerFault::ZoneShape))?;
                 candidates.push(candidate.clone());
             }
             for part in self.entry_pieces(piece, &candidates)? {
@@ -2571,7 +2718,13 @@ impl<O> Checker<'_, '_, O> {
                     });
                     continue;
                 }
-                let zone = part.zone;
+                let zone = project_blocks(
+                    &part.zone,
+                    self.timed.places().len(),
+                    timed.places().len(),
+                    &part.alive,
+                    self.window.is_some(),
+                )?;
                 let survivors: Vec<ModelState> = part
                     .alive
                     .iter()
@@ -2617,13 +2770,13 @@ impl<O> Checker<'_, '_, O> {
             return Ok(());
         }
         let mut invariants = Vec::with_capacity(count);
-        for candidate in &position.abstract_states {
-            invariants.push(self.candidate_invariants(candidate)?);
+        for (block, candidate) in position.abstract_states.iter().enumerate() {
+            invariants.push(self.candidate_invariants_at(candidate, block)?);
         }
         let concrete = self.invariants(state)?;
         let state_key = self.state_key(state)?;
         let mut base = zone.clone();
-        base.up();
+        self.up_zone(&mut base)?;
         self.constrain(&mut base, &concrete)?;
         if base.is_empty() {
             return Ok(());
@@ -2633,6 +2786,23 @@ impl<O> Checker<'_, '_, O> {
                 continue;
             }
             let dying: Vec<usize> = (0..count).filter(|at| !piece.alive.contains(at)).collect();
+            let zone = if piece.alive.is_empty() {
+                project_blocks(
+                    &piece.zone,
+                    self.timed.places().len(),
+                    self.auxiliary_timed.map_or(0, |timed| timed.places().len()),
+                    &[],
+                    self.window.is_some(),
+                )?
+            } else {
+                project_blocks(
+                    &piece.zone,
+                    self.timed.places().len(),
+                    self.auxiliary_timed.map_or(0, |timed| timed.places().len()),
+                    &piece.alive,
+                    self.window.is_some(),
+                )?
+            };
             let mut successor = Successor {
                 step: None,
                 part: Some(0),
@@ -2640,7 +2810,7 @@ impl<O> Checker<'_, '_, O> {
                 frees: false,
                 state_key: state_key.clone(),
                 q,
-                zone: piece.zone,
+                zone,
                 silent: Some(SilentMove::Dies { candidates: dying }),
                 mark: None,
                 cell: None,
@@ -2809,6 +2979,39 @@ impl<O> Checker<'_, '_, O> {
         let Some(listed) = part.positions.get(at) else {
             return Ok(false);
         };
+        match self.auxiliary_timed {
+            Some(_) => {
+                let expected: Vec<_> = (0..listed.abstract_states.len())
+                    .map(|index| {
+                        fsl_eval::simulation::StateKey::from_canonical_bytes(
+                            format!("[\"candidate-block\",{index}]").into_bytes(),
+                        )
+                    })
+                    .collect();
+                if listed.candidate_blocks.as_ref() != Some(&expected) {
+                    return Ok(false);
+                }
+                if listed
+                    .abstract_states
+                    .iter()
+                    .zip(&expected)
+                    .zip(
+                        listed
+                            .abstract_states
+                            .iter()
+                            .skip(1)
+                            .zip(expected.iter().skip(1)),
+                    )
+                    .any(|((left_state, left_block), (right_state, right_block))| {
+                        (left_state, left_block) > (right_state, right_block)
+                    })
+                {
+                    return Ok(false);
+                }
+            }
+            None if listed.candidate_blocks.is_some() => return Ok(false),
+            None => {}
+        }
         position_matches(self.timed.system(), abstract_system, listed, position).or_else(undecided)
     }
 
@@ -2873,7 +3076,7 @@ impl<O> Checker<'_, '_, O> {
                     let listed = &certificate.nodes[node];
                     if listed.state_key == state_key
                         && listed.product == Some(mark)
-                        && zone.alu_covered_by(&listed.zone, &self.cover)?
+                        && zone.alu_covered_by(&listed.zone, &self.cover_for_zone(zone.dim())?)?
                         && cell.includes(&listed.zone)?
                         && self.binds(listed.automaton_state, q)
                     {
@@ -2953,7 +3156,10 @@ impl<O> Checker<'_, '_, O> {
                             && successor.state_key == target.state_key
                             && successor.silent == edge.silent
                             && successor.mark == target.product
-                            && successor.zone.alu_covered_by(&target.zone, &self.cover)?
+                            && successor.zone.alu_covered_by(
+                                &target.zone,
+                                &self.cover_for_zone(successor.zone.dim())?,
+                            )?
                             && match &successor.cell {
                                 Some(cell) => cell.includes(&target.zone)?,
                                 None => true,

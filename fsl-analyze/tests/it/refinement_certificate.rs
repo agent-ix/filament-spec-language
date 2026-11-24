@@ -361,6 +361,7 @@ fn a_malformed_certificate_is_rejected() {
         concrete: certificate.positions[0].concrete.clone(),
         history: Vec::new(),
         abstract_states: Vec::new(),
+        candidate_blocks: None,
     });
     stray.successors.push(Vec::new());
     assert_eq!(
@@ -410,6 +411,7 @@ fn listed(world: &World) -> SimulationCertificate {
                 fsl_eval::simulation::StateKey::from_canonical_bytes(bytes)
             })
             .collect(),
+        candidate_blocks: None,
     };
     let mut index: BTreeMap<fsl_eval::simulation::StateKey, u64> = BTreeMap::new();
     let mut states = Vec::new();

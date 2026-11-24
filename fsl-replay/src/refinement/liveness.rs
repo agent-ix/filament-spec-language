@@ -14,7 +14,7 @@ use filament_semantic_value::catalog::InternalFault;
 use filament_semantic_value::fairness::{FairnessConstraint, FairnessGranularity};
 use filament_semantic_value::model_transition::ModelTransition;
 use fsl_eval::fairness::{
-    analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Vertex,
+    analyze, Analysis, Constraint, EdgeLabel, FairnessError, Graph, Identity, Strength, Vertex,
 };
 use fsl_eval::simulation::model::ModelSystem;
 
@@ -76,20 +76,57 @@ pub fn candidate_lasso_has_fair_run(
     constraints: &[Constraint],
     cancel: &Cancel,
 ) -> Result<bool, CandidateLivenessError> {
+    candidate_lasso_has_fair_run_inner(positions, steps, None, constraints, cancel)
+}
+
+/// Check a fair candidate run that also traverses at least one marked edge
+/// infinitely often.
+pub fn candidate_lasso_has_fair_run_with_recurring_edge(
+    positions: &[Vec<CandidateFairState>],
+    steps: &[Vec<CandidateFairStep>],
+    recurring: &[Vec<bool>],
+    constraints: &[Constraint],
+    cancel: &Cancel,
+) -> Result<bool, CandidateLivenessError> {
+    candidate_lasso_has_fair_run_inner(positions, steps, Some(recurring), constraints, cancel)
+}
+
+fn candidate_lasso_has_fair_run_inner(
+    positions: &[Vec<CandidateFairState>],
+    steps: &[Vec<CandidateFairStep>],
+    recurring: Option<&[Vec<bool>]>,
+    constraints: &[Constraint],
+    cancel: &Cancel,
+) -> Result<bool, CandidateLivenessError> {
     if positions.is_empty() || positions.len() != steps.len() {
         return Err(CandidateLivenessError::InvalidGraph);
     }
+    if recurring.is_some_and(|edges| {
+        edges.len() != steps.len()
+            || edges
+                .iter()
+                .zip(steps)
+                .any(|(marked, rows)| marked.len() != rows.len())
+    }) {
+        return Err(CandidateLivenessError::InvalidGraph);
+    }
+    let recurring_identity = Identity::new(u64::MAX);
     let mut graph = Graph::new();
     let mut vertices = BTreeMap::<(usize, Vec<u8>), Vertex>::new();
     for (position, candidates) in positions.iter().enumerate() {
         for candidate in candidates {
-            let vertex = graph.add_vertex(candidate.enabled.iter().copied());
+            let enabled = candidate
+                .enabled
+                .iter()
+                .copied()
+                .chain(recurring.is_some().then_some(recurring_identity));
+            let vertex = graph.add_vertex(enabled);
             vertices.insert((position, candidate.key.clone()), vertex);
         }
     }
     for (position, rows) in steps.iter().enumerate() {
         let next_position = (position + 1) % positions.len();
-        for row in rows {
+        for (row_index, row) in rows.iter().enumerate() {
             let from = vertices
                 .get(&(position, row.pre_state.clone()))
                 .copied()
@@ -113,9 +150,32 @@ pub fn candidate_lasso_has_fair_run(
                 source = middle;
                 leaving = label(hop.transition);
             }
-            graph
-                .add_edge(source, to, leaving)
-                .map_err(|_| CandidateLivenessError::InvalidGraph)?;
+            let is_recurring = recurring
+                .and_then(|edges| edges.get(position))
+                .and_then(|edges| edges.get(row_index))
+                .copied()
+                .unwrap_or(false);
+            if recurring.is_some() {
+                let middle = graph.add_vertex([recurring_identity]);
+                graph
+                    .add_edge(source, middle, leaving)
+                    .map_err(|_| CandidateLivenessError::InvalidGraph)?;
+                graph
+                    .add_edge(
+                        middle,
+                        to,
+                        if is_recurring {
+                            EdgeLabel::Transition(recurring_identity)
+                        } else {
+                            EdgeLabel::Stutter
+                        },
+                    )
+                    .map_err(|_| CandidateLivenessError::InvalidGraph)?;
+            } else {
+                graph
+                    .add_edge(source, to, leaving)
+                    .map_err(|_| CandidateLivenessError::InvalidGraph)?;
+            }
         }
     }
     let initial = vertices
@@ -129,7 +189,11 @@ pub fn candidate_lasso_has_fair_run(
         }
         queue.extend(graph.edges_from(vertex).iter().map(|edge| edge.target));
     }
-    let analyses = analyze(&graph, &reachable, constraints, cancel)
+    let mut constraints = constraints.to_vec();
+    if recurring.is_some() {
+        constraints.push(Constraint::new(Strength::Strong, [recurring_identity]));
+    }
+    let analyses = analyze(&graph, &reachable, &constraints, cancel)
         .map_err(CandidateLivenessError::Fairness)?;
     Ok(Analysis::first_fair_in(&analyses).is_some())
 }
@@ -239,7 +303,8 @@ pub fn abstract_classes(
 #[cfg(test)]
 mod candidate_tests {
     use super::{
-        candidate_lasso_has_fair_run, CandidateFairHop, CandidateFairState, CandidateFairStep,
+        candidate_lasso_has_fair_run, candidate_lasso_has_fair_run_with_recurring_edge,
+        CandidateFairHop, CandidateFairState, CandidateFairStep,
     };
     use filament_exact::Cancel;
     use fsl_eval::fairness::{Constraint, Identity};
@@ -273,6 +338,41 @@ mod candidate_tests {
                 transition: taken,
             }],
         }]]
+    }
+
+    #[trace("FSpec-FR-740-AC-5")]
+    #[test]
+    fn timed_candidate_liveness_requires_a_recurring_abstract_tick_edge() {
+        let positions = vec![vec![state(b"c", &[])]];
+        let steps = vec![vec![step(b"c", None, b"c")]];
+        let constraints: Vec<Constraint> = Vec::new();
+        let cancel = Cancel::new();
+        assert!(!candidate_lasso_has_fair_run_with_recurring_edge(
+            &positions,
+            &steps,
+            &[vec![false]],
+            &constraints,
+            &cancel,
+        )
+        .expect("candidate graph checks"));
+        assert!(candidate_lasso_has_fair_run_with_recurring_edge(
+            &positions,
+            &steps,
+            &[vec![true]],
+            &constraints,
+            &cancel,
+        )
+        .expect("candidate graph checks"));
+        let tick = Identity::new(7);
+        let interior = through(&[], Some(tick));
+        assert!(candidate_lasso_has_fair_run_with_recurring_edge(
+            &positions,
+            &interior,
+            &[vec![true]],
+            &constraints,
+            &cancel,
+        )
+        .expect("an interior hop can witness the recurring edge"));
     }
 
     #[test]

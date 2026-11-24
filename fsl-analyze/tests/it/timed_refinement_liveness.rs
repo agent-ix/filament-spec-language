@@ -1160,15 +1160,11 @@ fn a_timed_hidden_candidate_guard_that_disables_the_class_holds() {
     );
 }
 
-/// FR-899 "Timed subjects" over a tick source: the liveness half of a timed
-/// abstract side has no instants between positions to read, so it is
-/// refused with its own typed refusal while the holding safety half is still
-/// reported. FR-430 routes a `time tick` subject to the explicit-state
-/// engine, where enabledness at each position's clock valuation is exact:
-/// that route is QSL-2243's remaining item (v), not built here.
-#[trace("TC-2536", "FR-899")]
+/// A concrete tick source never advances the dense abstract clock; the
+/// liveness half is still decided from the concrete lasso and candidate run.
+#[trace("TC-2536", "FSpec-FR-740-AC-5", "FR-899")]
 #[test]
-fn a_timed_abstract_side_under_a_tick_source_refuses_its_liveness_half() {
+fn a_dense_abstract_side_under_a_concrete_tick_source_decides_its_liveness_half() {
     let abstract_model = renamed_package(&document(&["y"], &[("send", &["inflight"])]), "test/req");
     let concrete = document(&[], &[("send", &["inflight"]), ("tick", &[])]);
     let body = refinement("self.inflight")
@@ -1200,12 +1196,7 @@ fn a_timed_abstract_side_under_a_tick_source_refuses_its_liveness_half() {
         outcome.safety
     );
     assert!(
-        matches!(
-            outcome.liveness,
-            Some(TimedLivenessHalf::Refused(
-                fsl_analyze::zone_check::ZoneCheckRefusal::TimedAbstractLivenessTickSource
-            ))
-        ),
+        matches!(outcome.liveness, Some(TimedLivenessHalf::Checked(_))),
         "{:?}",
         outcome.liveness
     );

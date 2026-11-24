@@ -9,6 +9,42 @@ use ix_trace_rs::trace;
 use super::reference::{self, RawZone, RefBound};
 use super::{Integer, Zone, ZoneError};
 
+#[test]
+fn reindex_preserves_relations_and_can_split_a_clock_block() {
+    let mut zone = Zone::zero(3);
+    zone.up();
+    zone.constrain(1, 0, &Integer::from(4), false)
+        .expect("x is a clock");
+    zone.constrain(2, 1, &Integer::from(-2), false)
+        .expect("y is a clock");
+
+    let split = zone.reindex(&[0, 1, 2, 1]).expect("all clocks exist");
+    assert_eq!(split.dim(), 4);
+    assert_eq!(
+        split.bound(3, 1).expect("in range"),
+        Some((Integer::from(0), false))
+    );
+    assert_eq!(
+        split.bound(1, 3).expect("in range"),
+        Some((Integer::from(0), false))
+    );
+    assert_eq!(
+        split.bound(2, 1).expect("in range"),
+        Some((Integer::from(-2), false))
+    );
+
+    let appended = zone.append_zero_clocks(2);
+    assert_eq!(appended.dim(), 5);
+    assert_eq!(
+        appended.bound(3, 0).expect("in range"),
+        Some((Integer::from(0), false))
+    );
+    assert_eq!(
+        appended.bound(4, 0).expect("in range"),
+        Some((Integer::from(0), false))
+    );
+}
+
 /// A small seeded generator (xorshift64*), so every run checks the same
 /// zones.
 struct Seeded(u64);

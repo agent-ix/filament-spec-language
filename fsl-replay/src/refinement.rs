@@ -32,7 +32,8 @@ pub use failure::{
 };
 pub use history::{initial_history, step_history, HistoryValues};
 pub use liveness::{
-    abstract_classes, candidate_lasso_has_fair_run, AbstractClass, CandidateFairHop,
+    abstract_classes, candidate_lasso_has_fair_run,
+    candidate_lasso_has_fair_run_with_recurring_edge, AbstractClass, CandidateFairHop,
     CandidateFairState, CandidateFairStep, CandidateLivenessError,
 };
 pub use map::{

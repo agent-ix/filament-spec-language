@@ -34,9 +34,10 @@ use fsl_eval::fairness::{
 use fsl_eval::simulation::ExpansionLimit;
 use fsl_eval::simulation::model::{ModelFinding, ModelSimState, PlaceConstraint};
 use fsl_replay::{
-    AbstractClass, CandidateFairState, CandidateFairStep, ConcreteStep, CounterexampleKind, Lasso,
+    abstract_classes, candidate_lasso_has_fair_run,
+    candidate_lasso_has_fair_run_with_recurring_edge, check_step, AbstractClass,
+    CandidateFairState, CandidateFairStep, ConcreteStep, CounterexampleKind, Lasso,
     ModelCheckLimit, ReachedLimit, RefinementFailure, Taken, TemporalCounterexample, Undetermined,
-    abstract_classes, candidate_lasso_has_fair_run, check_step,
 };
 use num_bigint::BigInt;
 
@@ -134,8 +135,6 @@ struct Live {
     passed: BTreeMap<Vec<u8>, Vec<usize>>,
     cells: Cells,
     dim: usize,
-    /// The aM bounds vertices are identified under.
-    bounds: Vec<Option<BigInt>>,
     judged: BTreeMap<JudgedKey, Option<(usize, Taken)>>,
     /// What each position's abstract candidates enable over the abstract
     /// clocks, by position; empty with an untimed abstract side.
@@ -215,15 +214,6 @@ impl Product<'_, '_> {
         // The liveness product stores the same concrete + auxiliary clock
         // valuation as EN-6, followed by its divergence clock.
         let dim = run.dim() + usize::from(dense);
-        let mut bounds: Vec<Option<BigInt>> = run
-            .lower
-            .iter()
-            .zip(&run.upper)
-            .map(|(lower, upper)| lower.clone().max(upper.clone()))
-            .collect();
-        if dense {
-            bounds.push(Some(run.scale.clone()));
-        }
         Ok(Live {
             nodes: Vec::new(),
             arcs: Vec::new(),
@@ -232,7 +222,6 @@ impl Product<'_, '_> {
             passed: BTreeMap::new(),
             cells: Cells::new(constrained),
             dim,
-            bounds,
             judged: BTreeMap::new(),
             views: BTreeMap::new(),
         })
@@ -408,14 +397,23 @@ impl Product<'_, '_> {
                 index,
                 state.state(),
             );
-            let q = match self.judge(verdict, run)? {
-                Judgement::Passes(q, _) => self.alive_at_zero(run, q)?,
+            let mut q = match self.judge(verdict, run)? {
+                Judgement::Passes(q, _) => q,
                 // A failing initial state is time-locked, since the safety
                 // half holds: no behaviour from it diverges.
                 Judgement::Fails(_) => continue,
                 Judgement::Ends(ends) => return Ok(Some(ends)),
             };
-            let mut zero = Dbm::zero(live.dim);
+            let block_count = self
+                .positions
+                .get(q)
+                .ok_or(ZoneCheckRefusal::Fault("live-initial-position"))?
+                .abstract_states
+                .len();
+            let mut zero = Dbm::zero(
+                run.dim_with_auxiliary_blocks(block_count) + live.dim.saturating_sub(run.dim()),
+            );
+            q = self.alive_at_zero(run, q, &mut zero)?;
             self.auxiliary_invariants(run, q, &mut zero)?;
             let extra = self.abstract_view(run, live, q)?.atoms;
             for (cell, piece) in run.split(&mut live.cells, &state, &extra, &zero)? {
@@ -580,7 +578,13 @@ impl Product<'_, '_> {
             // holds is time-locked, no behaviour.
             let invariants = run.timed(run.timed.invariants(&node.state))?;
             let mut later = node.zone.clone();
-            later.up();
+            let blocks = self
+                .positions
+                .get(node.q)
+                .ok_or(ZoneCheckRefusal::Fault("auxiliary-position"))?
+                .abstract_states
+                .len();
+            run.up_zone_with_blocks(&mut later, blocks)?;
             constrain_at(&mut later, &invariants, &scale)?;
             let extra = self.abstract_view(run, live, node.q)?.atoms;
             for (cell, piece) in run.split(&mut live.cells, &node.state, &extra, &later)? {
@@ -749,8 +753,8 @@ impl Product<'_, '_> {
             .abstract_states;
         let count = candidates.len();
         let mut invariants = Vec::with_capacity(count);
-        for candidate in candidates {
-            invariants.push(Self::candidate_invariants(run, timed, candidate)?);
+        for (block, candidate) in candidates.iter().enumerate() {
+            invariants.push(Self::candidate_invariants_at(run, timed, block, candidate)?);
         }
         let mut leads = Vec::new();
         for piece in Self::pattern_pieces(run, zone, &invariants)? {
@@ -893,7 +897,6 @@ impl Product<'_, '_> {
         let Some(timed) = run.auxiliary_timed else {
             return Ok(view);
         };
-        let offset = run.timed.places().len();
         let mut constrained = BTreeSet::new();
         for constraint in self.refinement.abstract_operation_fairness() {
             let operation = constraint.operation();
@@ -908,7 +911,7 @@ impl Product<'_, '_> {
             .get(q)
             .ok_or(ZoneCheckRefusal::Fault("abstract-view-position"))?;
         let mut atoms = BTreeSet::new();
-        for candidate in &position.abstract_states {
+        for (block, candidate) in position.abstract_states.iter().enumerate() {
             run.poll()?;
             let key = self
                 .abstract_system
@@ -918,6 +921,7 @@ impl Product<'_, '_> {
             let state = timed
                 .system()
                 .pre_state(candidate.clone(), timed.system().declared_anchor());
+            let offset = run.timed.places().len() + block * timed.places().len();
             for step in run.timed(timed.guarded_steps(&state))? {
                 let parts: Vec<Vec<PlaceConstraint>> = run
                     .enabling_parts_in(timed, &step)?
@@ -939,8 +943,8 @@ impl Product<'_, '_> {
         // The constants of the alive candidates' invariants are cell atoms
         // too, so the alive set is uniform on each cell, a death happens at a
         // cell boundary and no cell runs past an alive invariant.
-        for candidate in &position.abstract_states {
-            for constraint in Self::candidate_invariants(run, timed, candidate)? {
+        for (block, candidate) in position.abstract_states.iter().enumerate() {
+            for constraint in Self::candidate_invariants_at(run, timed, block, candidate)? {
                 atoms.insert((
                     constraint.place() + 1,
                     scaled(constraint.bound(), &run.scale),
@@ -1209,7 +1213,43 @@ impl Product<'_, '_> {
                 ),
             }
         }
-        match candidate_lasso_has_fair_run(&fair_positions, &fair_steps, &constraints, run.cancel) {
+        let reverse: BTreeMap<_, _> = numbered
+            .iter()
+            .map(|(transition, identity)| (*identity, transition))
+            .collect();
+        let recurring = run
+            .auxiliary_timed
+            .filter(|timed| timed.tick_period().is_some())
+            .map(|timed| {
+                fair_steps
+                    .iter()
+                    .map(|rows| {
+                        rows.iter()
+                            .map(|row| {
+                                row.transition
+                                    .and_then(|identity| reverse.get(&identity))
+                                    .is_some_and(|transition| {
+                                        timed.tick_of(transition.operation())
+                                            > Rational::from_integer(Integer::zero())
+                                    })
+                            })
+                            .collect::<Vec<_>>()
+                    })
+                    .collect::<Vec<_>>()
+            });
+        let fair = match recurring {
+            Some(recurring) => candidate_lasso_has_fair_run_with_recurring_edge(
+                &fair_positions,
+                &fair_steps,
+                &recurring,
+                &constraints,
+                run.cancel,
+            ),
+            None => {
+                candidate_lasso_has_fair_run(&fair_positions, &fair_steps, &constraints, run.cancel)
+            }
+        };
+        match fair {
             Ok(fair) => Ok(Ok(fair)),
             Err(error) => Err(fairness(
                 run,
@@ -1551,8 +1591,9 @@ fn add_node(
     if let Some(stored) = live.passed.get(&key) {
         for &candidate in stored {
             let held = &live.nodes[candidate].zone;
-            let same = node.zone.alu_covered_by(held, &live.bounds, &live.bounds)?
-                && held.alu_covered_by(&node.zone, &live.bounds, &live.bounds)?;
+            let bounds = bounds_for_zone(run, &node.zone)?;
+            let same = node.zone.alu_covered_by(held, &bounds, &bounds)?
+                && held.alu_covered_by(&node.zone, &bounds, &bounds)?;
             if same {
                 if let Some(arc) = arc {
                     add_arc(
@@ -1580,6 +1621,21 @@ fn add_node(
         live.parent[index] = Some(live.arcs.len() - 1);
     }
     Ok(Some(index))
+}
+
+fn bounds_for_zone(run: &Run<'_, '_, '_>, zone: &Dbm) -> Result<Vec<Option<BigInt>>, Halt> {
+    let dense = run.timed.tick_period().is_none();
+    let model_dim = zone.dim().saturating_sub(usize::from(dense));
+    let (lower, upper) = run.bounds_for(model_dim)?;
+    let mut bounds: Vec<_> = lower
+        .into_iter()
+        .zip(upper)
+        .map(|(lower, upper)| lower.max(upper))
+        .collect();
+    if dense {
+        bounds.push(Some(run.scale.clone()));
+    }
+    Ok(bounds)
 }
 
 fn add_arc(run: &mut Run<'_, '_, '_>, live: &mut Live, arc: Arc) -> Result<(), Halt> {
@@ -1667,6 +1723,10 @@ fn stage(run: &mut Run<'_, '_, '_>, live: &mut Live, arc: usize) -> Result<Stage
                     .auxiliary_transform
                     .as_ref()
                     .map_or_else(Vec::new, |transform| transform.resets.clone()),
+                auxiliary_advances: arc
+                    .auxiliary_transform
+                    .as_ref()
+                    .map_or_else(Vec::new, |transform| transform.advances.clone()),
                 piece: run.cell_zone(&mut live.cells, &post, &target_atoms, &target.cell)?,
                 step: Some((step, part)),
                 position: Vec::new(),
@@ -1686,6 +1746,7 @@ fn stage(run: &mut Run<'_, '_, '_>, live: &mut Live, arc: usize) -> Result<Stage
                 after: None,
                 auxiliary_carries: Vec::new(),
                 auxiliary_resets: Vec::new(),
+                auxiliary_advances: Vec::new(),
                 piece: dying_piece(run, cell, &arc.cut)?,
                 step: None,
                 position: Vec::new(),
