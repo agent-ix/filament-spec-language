@@ -2760,8 +2760,8 @@ fn a_budget_equal_to_the_product_size_completes() {
 #[trace("TC-631")]
 #[test]
 fn exact_unbounded_keys_keep_none_and_budget_stops_have_no_product() {
-    let world = World::new(&prob_world::no_fault(NO_FAULT));
-    let product = built(&world, "NoFault");
+    let world = World::new(&prob_world::process(REACH));
+    let product = built(&world, "Terminates");
     let initial = &product.states[start(&product).index()];
     assert_eq!(initial.monitor, None);
     assert_eq!(initial.accumulator, None);
@@ -2773,7 +2773,7 @@ fn exact_unbounded_keys_keep_none_and_budget_stops_have_no_product() {
         },
         ..ModelCheckLimits::default()
     };
-    let result = build_product(world.request("NoFault", limits), &Cancel::new());
+    let result = build_product(world.request("Terminates", limits), &Cancel::new());
     assert!(
         matches!(
             result,
