@@ -194,7 +194,8 @@ pub use certificate::simulation::{
     UndeterminedStep,
 };
 pub use certificate::smt::{
-    check_refinement_smt_proof, ProofFormat, RefinementSmtCertificate, RefutedQuery, SmtProofCheck,
+    check_refinement_smt_proof, check_smt_proof, ProofFormat, RefinementSmtCertificate,
+    RefutedQuery, SmtProofCertificate, SmtProofCheck,
 };
 pub use certificate::state_graph::{
     check_state_graph, StateGraphCertificate, StateGraphCertificateRequest,

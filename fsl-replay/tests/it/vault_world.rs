@@ -678,13 +678,16 @@ mod tp4 {
     use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
     use fsl_eval::simulation::model::ModelSimState;
     use fsl_eval::simulation::model::ModelSystem;
+    use fsl_eval::smt::{encode_smt_query, SmtItem, SmtQueryKind};
     use fsl_eval::temporal::AtomReading;
     use fsl_foundation::source::provenance::OccurrenceKey;
     use fsl_replay::ClauseIdentity;
     use fsl_replay::{
-        check_components, CertificateLocus, CertificateRequest, CertificateRule,
-        ClosureCertificate, ComponentCertificate, ModelCheckItem, ModelCheckLimits,
-        TemporalCertificateCheck,
+        check_components, check_smt_proof, settle_model_check, CertificateCheckLimits,
+        CertificateLocus, CertificateRequest, CertificateRule, ClosureCertificate,
+        ComponentCertificate, ModelCheckItem, ModelCheckLimits, ModelCheckOutcome, ProofBasis,
+        ProofCertificate, ProofFormat, RefutedQuery, RunStats, SmtProofCertificate,
+        TemporalCertificateCheck, TerminalValue,
     };
     use fsl_semantics::check::footprint::{FootprintRefusal, SymbolicLocation};
     use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId};
@@ -728,6 +731,557 @@ mod tp4 {
     }
 
     static LETTERS: TrueLetters = TrueLetters;
+
+    fn temporal_request<'a>(world: &'a World) -> CertificateRequest<'a> {
+        CertificateRequest {
+            subject: world.subject(),
+            temporal_clock_selections: &[],
+            item: ModelCheckItem::Clause {
+                clause: world
+                    .temporal_clause
+                    .as_ref()
+                    .expect("the TP-2 clause checks"),
+                letters: &LETTERS,
+            },
+            smt_encoding: Default::default(),
+        }
+    }
+
+    fn tp2_request<'a>(world: &'a World) -> CertificateRequest<'a> {
+        temporal_request(world)
+    }
+
+    fn tp2_world() -> World {
+        let temporal = "temporal Bounded using ep over (v: V::Vault) clock \"model-steps\" on origin { always[0,3] holds(v.l = v.l) }";
+        World::new(&["v"], false, &format!("{FORALL_EXISTS}\n{temporal}"))
+    }
+
+    fn infinite_world() -> World {
+        let temporal = "temporal Invariant using inf over (v: V::Vault) clock \"model-steps\" on origin { always holds(v.l = v.l) }";
+        World::new(&["v"], false, &format!("{FORALL_EXISTS}\n{temporal}"))
+    }
+
+    fn tautology_refutation(query: &[u8], positions: &[u64]) -> Vec<u8> {
+        let script = String::from_utf8(query.to_vec()).expect("SMT script is UTF-8");
+        let assertion = script
+            .lines()
+            .filter_map(|line| line.strip_prefix("(assert ")?.strip_suffix(')'))
+            .last()
+            .expect("query has a final assertion");
+        let mut proof = format!("(assume a0 {assertion})");
+        let mut ids = Vec::with_capacity(positions.len() + 1);
+        let negated_equalities = positions
+            .iter()
+            .map(|position| format!("(not (= s{position}.v.l s{position}.v.l))"))
+            .collect::<Vec<_>>();
+        if assertion.starts_with("(or ") {
+            proof.push_str(&format!(
+                "(step split (cl {}) :rule or :premises (a0))",
+                negated_equalities.join(" ")
+            ));
+            ids.push("split".to_owned());
+        } else {
+            ids.push("a0".to_owned());
+        }
+        for position in positions {
+            let equality = format!("(= s{position}.v.l s{position}.v.l)");
+            assert!(script.contains(&equality), "query contains {equality}");
+            let id = format!("r{position}");
+            proof.push_str(&format!("(step {id} (cl {equality}) :rule eq_reflexive)"));
+            ids.push(id);
+        }
+        proof.push_str(&format!(
+            "(step empty (cl) :rule resolution :premises ({}))",
+            ids.join(" ")
+        ));
+        proof.into_bytes()
+    }
+
+    fn bounded_always_refutation(query: &[u8], positions: &[u64]) -> Vec<u8> {
+        let script = String::from_utf8(query.to_vec()).expect("SMT script is UTF-8");
+        let assertions = script
+            .lines()
+            .filter_map(|line| line.strip_prefix("(assert ")?.strip_suffix(')'))
+            .collect::<Vec<_>>();
+        let final_assertion = assertions.last().expect("query has a final assertion");
+        let disjuncts = split_or_terms(final_assertion);
+        let initial = assertions
+            .iter()
+            .find(|assertion| **assertion == "(not h0)")
+            .expect("bounded always query negates the initial history flag");
+        let mut proof = format!("(assume initial {initial})");
+        let mut negative_flags = vec!["initial".to_owned()];
+        for position in 1..=positions.last().copied().unwrap_or(0) {
+            let previous = position - 1;
+            let transition = assertions
+                .iter()
+                .find(|assertion| {
+                    assertion.starts_with(&format!("(and (= h{position} h{previous})"))
+                })
+                .expect("query has a history transition assertion");
+            let equality = format!("flag-eq-{position}");
+            let equivalent = format!("flag-not-{position}");
+            let negative = format!("negative-{position}");
+            proof.push_str(&format!(
+                "(assume transition-{position} {transition})\
+                 (step {equality} (cl (= h{position} h{previous})) :rule and :premises (transition-{position}) :args (0))\
+                 (step {equivalent} (cl h{previous} (not h{position})) :rule equiv2 :premises ({equality}))\
+                 (step {negative} (cl (not h{position})) :rule resolution :premises ({equivalent} {}))",
+                negative_flags.last().expect("initial flag is false")
+            ));
+            negative_flags.push(negative);
+        }
+        let mut resolution_premises = vec!["split".to_owned()];
+        resolution_premises.extend(negative_flags);
+        for position in positions {
+            let equality = format!("(= s{position}.v.l s{position}.v.l)");
+            assert!(script.contains(&equality), "query contains {equality}");
+            let id = format!("value-{position}");
+            proof.push_str(&format!("(step {id} (cl {equality}) :rule eq_reflexive)"));
+            resolution_premises.push(id);
+        }
+        proof.push_str(&format!("(assume final {final_assertion})"));
+        proof.push_str(&format!(
+            "(step split (cl {}) :rule or :premises (final))",
+            disjuncts.join(" ")
+        ));
+        proof.push_str(&format!(
+            "(step empty (cl) :rule resolution :premises ({}))",
+            resolution_premises.join(" ")
+        ));
+        proof.into_bytes()
+    }
+
+    fn split_or_terms(term: &str) -> Vec<String> {
+        let Some(body) = term
+            .strip_prefix("(or ")
+            .and_then(|term| term.strip_suffix(')'))
+        else {
+            panic!("expected final assertion to be a disjunction: {term}");
+        };
+        let (mut terms, mut depth, mut start) = (Vec::new(), 0_i32, 0_usize);
+        for (index, character) in body.char_indices() {
+            match character {
+                '(' => depth += 1,
+                ')' => depth -= 1,
+                ' ' if depth == 0 => {
+                    terms.push(body[start..index].to_owned());
+                    start = index + 1;
+                }
+                _ => {}
+            }
+        }
+        terms.push(body[start..].to_owned());
+        terms
+    }
+
+    /// FR-314-AC-1: checked base and step refutations rebuild through FR-315
+    /// and settle the inductive TP-1 temporal claim certified.
+    #[ix_trace_rs::trace("TC-893", "FR-314-AC-1")]
+    #[test]
+    fn an_inductive_temporal_smt_certificate_settles_certified() {
+        let world = infinite_world();
+        let request = temporal_request(&world);
+        let clause = match request.item {
+            ModelCheckItem::Clause { clause, .. } => clause,
+            _ => unreachable!("fixture is a clause"),
+        };
+        let base_query = encode_smt_query(
+            &request.subject,
+            SmtItem::Clause(clause),
+            SmtQueryKind::InductionBase { depth: 1 },
+            &request.smt_encoding,
+        )
+        .expect("default encoding admits the induction base");
+        let step_query = encode_smt_query(
+            &request.subject,
+            SmtItem::Clause(clause),
+            SmtQueryKind::InductionStep { depth: 1 },
+            &request.smt_encoding,
+        )
+        .expect("default encoding admits the induction step");
+        let certificate = SmtProofCertificate::Inductive {
+            format: ProofFormat::Alethe,
+            base: RefutedQuery {
+                proof: tautology_refutation(&base_query, &[0, 1]),
+                query: base_query,
+            },
+            step: RefutedQuery {
+                proof: tautology_refutation(&step_query, &[1]),
+                query: step_query,
+            },
+        };
+        assert_eq!(
+            check_smt_proof(
+                &request,
+                &ProofBasis::Inductive { depth: 1 },
+                &certificate,
+                &CertificateCheckLimits::default(),
+                &Cancel::new(),
+            ),
+            Ok(fsl_replay::SmtProofCheck::Verified)
+        );
+        let outcome = ModelCheckOutcome::Holds {
+            certificate: ProofCertificate::Smt {
+                basis: ProofBasis::Inductive { depth: 1 },
+                certificate,
+                limits: CertificateCheckLimits::default(),
+            },
+            stats: RunStats::default(),
+        };
+        let record = settle_model_check(
+            &outcome,
+            &ModelCheckLimits::default(),
+            &request,
+            &Cancel::new(),
+            |_| unreachable!("a holding outcome does not replay a counterexample"),
+        );
+        assert_eq!(
+            record.value,
+            TerminalValue::Proved {
+                basis: ProofBasis::Inductive { depth: 1 },
+                certification: fsl_replay::Certification::Certified,
+            }
+        );
+
+        let bounded_world = tp2_world();
+        let bounded_request = tp2_request(&bounded_world);
+        let bounded_clause = match bounded_request.item {
+            ModelCheckItem::Clause { clause, .. } => clause,
+            _ => unreachable!("fixture is a clause"),
+        };
+        let bounded_query = encode_smt_query(
+            &bounded_request.subject,
+            SmtItem::Clause(bounded_clause),
+            SmtQueryKind::Unrolling { depth: 3 },
+            &bounded_request.smt_encoding,
+        )
+        .expect("depth 3 reaches the TP-2 horizon");
+        let bounded_certificate = SmtProofCertificate::BoundedComplete {
+            format: ProofFormat::Alethe,
+            unrolling: RefutedQuery {
+                proof: bounded_always_refutation(&bounded_query, &[0, 1, 2, 3]),
+                query: bounded_query,
+            },
+        };
+        assert_eq!(
+            check_smt_proof(
+                &bounded_request,
+                &ProofBasis::BoundedComplete { depth: 3 },
+                &bounded_certificate,
+                &CertificateCheckLimits::default(),
+                &Cancel::new(),
+            ),
+            Ok(fsl_replay::SmtProofCheck::Verified)
+        );
+        let bounded_outcome = ModelCheckOutcome::Holds {
+            certificate: ProofCertificate::Smt {
+                basis: ProofBasis::BoundedComplete { depth: 3 },
+                certificate: bounded_certificate,
+                limits: CertificateCheckLimits::default(),
+            },
+            stats: RunStats::default(),
+        };
+        let bounded_record = settle_model_check(
+            &bounded_outcome,
+            &ModelCheckLimits::default(),
+            &bounded_request,
+            &Cancel::new(),
+            |_| unreachable!("a holding outcome does not replay a counterexample"),
+        );
+        assert_eq!(
+            bounded_record.value,
+            TerminalValue::Proved {
+                basis: ProofBasis::BoundedComplete { depth: 3 },
+                certification: fsl_replay::Certification::Certified,
+            }
+        );
+    }
+
+    /// FR-314-AC-8: bounded-complete evidence below the TP-2 horizon is
+    /// rejected before the carried query or proof is inspected.
+    #[ix_trace_rs::trace("TC-893", "FR-314-AC-8")]
+    #[test]
+    fn bounded_smt_certificate_must_reach_the_tp2_horizon() {
+        let world = tp2_world();
+        let request = tp2_request(&world);
+        let certificate = SmtProofCertificate::BoundedComplete {
+            format: ProofFormat::Alethe,
+            unrolling: RefutedQuery {
+                query: vec![],
+                proof: vec![],
+            },
+        };
+        assert_eq!(
+            check_smt_proof(
+                &request,
+                &ProofBasis::BoundedComplete { depth: 2 },
+                &certificate,
+                &CertificateCheckLimits::default(),
+                &Cancel::new(),
+            ),
+            Err(fsl_replay::CertificateRejection {
+                rule: CertificateRule::ShapeMismatch,
+                at: CertificateLocus::Query {
+                    part: fsl_replay::QueryPart::Unrolling
+                },
+            })
+        );
+    }
+
+    /// FR-314-AC-6: a carried temporal query is compared with FR-315's
+    /// canonical query and reports the exact rejected locus.
+    #[ix_trace_rs::trace("TC-1199", "FR-314-AC-6")]
+    #[test]
+    fn temporal_smt_certificate_rejects_a_query_mismatch() {
+        let world = tp2_world();
+        let request = tp2_request(&world);
+        let certificate = SmtProofCertificate::BoundedComplete {
+            format: ProofFormat::Alethe,
+            unrolling: RefutedQuery {
+                query: b"(check-sat)\\n".to_vec(),
+                proof: vec![],
+            },
+        };
+        assert_eq!(
+            check_smt_proof(
+                &request,
+                &ProofBasis::BoundedComplete { depth: 3 },
+                &certificate,
+                &CertificateCheckLimits::default(),
+                &Cancel::new(),
+            ),
+            Err(fsl_replay::CertificateRejection {
+                rule: CertificateRule::QueryMismatch,
+                at: CertificateLocus::Query {
+                    part: fsl_replay::QueryPart::Unrolling
+                },
+            })
+        );
+    }
+
+    /// FR-314-AC-5: the rebuilt query bytes are charged against the
+    /// certificate-check budget before query comparison or proof reading.
+    #[ix_trace_rs::trace("TC-1165", "FR-314-AC-5")]
+    #[test]
+    fn temporal_smt_certificate_stops_at_the_query_byte_limit() {
+        let world = tp2_world();
+        let request = tp2_request(&world);
+        let certificate = SmtProofCertificate::BoundedComplete {
+            format: ProofFormat::Alethe,
+            unrolling: RefutedQuery {
+                query: vec![],
+                proof: vec![],
+            },
+        };
+        let limits = CertificateCheckLimits {
+            max_certificate_bytes: 0,
+            ..CertificateCheckLimits::default()
+        };
+        assert!(matches!(
+            check_smt_proof(
+                &request,
+                &ProofBasis::BoundedComplete { depth: 3 },
+                &certificate,
+                &limits,
+                &Cancel::new(),
+            ),
+            Ok(fsl_replay::SmtProofCheck::Stopped(
+                fsl_replay::IncompleteCause::LimitReached {
+                    limit: fsl_replay::ModelCheckLimit::CertificateMaxBytes,
+                    value: 0,
+                    ..
+                }
+            ))
+        ));
+    }
+
+    /// FR-314-AC-7: the request's recorded encoding limits determine the
+    /// rebuilt query; a query encoded under different limits is rejected.
+    #[ix_trace_rs::trace("TC-1250", "FR-314-AC-7")]
+    #[test]
+    fn temporal_smt_certificate_rebuilds_with_recorded_encoding_limits() {
+        let world = tp2_world();
+        let mut request = tp2_request(&world);
+        let clause = match request.item {
+            ModelCheckItem::Clause { clause, .. } => clause,
+            _ => unreachable!("fixture is a clause"),
+        };
+        let query = encode_smt_query(
+            &request.subject,
+            SmtItem::Clause(clause),
+            SmtQueryKind::Unrolling { depth: 3 },
+            &request.smt_encoding,
+        )
+        .expect("default encoding admits the query");
+        request.smt_encoding.max_constants = 0;
+        let certificate = SmtProofCertificate::BoundedComplete {
+            format: ProofFormat::Alethe,
+            unrolling: RefutedQuery {
+                query,
+                proof: vec![],
+            },
+        };
+        assert!(matches!(
+            check_smt_proof(
+                &request,
+                &ProofBasis::BoundedComplete { depth: 3 },
+                &certificate,
+                &CertificateCheckLimits::default(),
+                &Cancel::new(),
+            ),
+            Err(fsl_replay::CertificateRejection {
+                rule: CertificateRule::QueryMismatch,
+                at: CertificateLocus::Query {
+                    part: fsl_replay::QueryPart::Unrolling
+                },
+            })
+        ));
+    }
+
+    /// FR-314-AC-3: proof locations use flattened command order and do not
+    /// depend on Alethe command IDs.
+    #[ix_trace_rs::trace("TC-893", "FR-314-AC-3")]
+    #[test]
+    fn temporal_smt_certificate_names_the_first_invalid_flattened_command() {
+        let world = tp2_world();
+        let request = tp2_request(&world);
+        let clause = match request.item {
+            ModelCheckItem::Clause { clause, .. } => clause,
+            _ => unreachable!("fixture is a clause"),
+        };
+        let query = encode_smt_query(
+            &request.subject,
+            SmtItem::Clause(clause),
+            SmtQueryKind::Unrolling { depth: 3 },
+            &request.smt_encoding,
+        )
+        .expect("default encoding admits the query");
+        let assertion = String::from_utf8(query.clone()).expect("query is UTF-8");
+        let assertion = assertion
+            .lines()
+            .find_map(|line| line.strip_prefix("(assert ")?.strip_suffix(')'))
+            .expect("query carries an assertion");
+        let proof = format!(
+            "(assume a0 {assertion})\n\
+             (anchor :step t2)\n\
+             (assume t2.a0 {assertion})\n\
+             (step t2.t1 (cl) :rule resolution :premises (t2.t2))\n\
+             (step t2.t2 (cl {assertion}) :rule hole)\n\
+             (step t2 (cl (not {assertion})) :rule subproof :discharge (t2.a0))"
+        );
+        let certificate = SmtProofCertificate::BoundedComplete {
+            format: ProofFormat::Alethe,
+            unrolling: RefutedQuery {
+                query,
+                proof: proof.into_bytes(),
+            },
+        };
+        assert_eq!(
+            check_smt_proof(
+                &request,
+                &ProofBasis::BoundedComplete { depth: 3 },
+                &certificate,
+                &CertificateCheckLimits::default(),
+                &Cancel::new(),
+            ),
+            Err(fsl_replay::CertificateRejection {
+                rule: CertificateRule::ProofStepInvalid,
+                at: CertificateLocus::ProofStep {
+                    part: fsl_replay::QueryPart::Unrolling,
+                    index: 3,
+                },
+            })
+        );
+    }
+
+    /// FR-314-AC-6: a rejected temporal proof settles inconclusive rather
+    /// than certifying the engine's claim.
+    #[ix_trace_rs::trace("TC-1199", "FR-314-AC-6")]
+    #[test]
+    fn temporal_smt_rejection_settles_inconclusive() {
+        let world = tp2_world();
+        let request = tp2_request(&world);
+        let certificate = ProofCertificate::Smt {
+            basis: ProofBasis::BoundedComplete { depth: 3 },
+            certificate: SmtProofCertificate::BoundedComplete {
+                format: ProofFormat::Alethe,
+                unrolling: RefutedQuery {
+                    query: b"(check-sat)\\n".to_vec(),
+                    proof: vec![],
+                },
+            },
+            limits: CertificateCheckLimits::default(),
+        };
+        let outcome = ModelCheckOutcome::Holds {
+            certificate,
+            stats: RunStats::default(),
+        };
+        let record = settle_model_check(
+            &outcome,
+            &ModelCheckLimits::default(),
+            &request,
+            &Cancel::new(),
+            |_| unreachable!("a holding outcome does not replay a counterexample"),
+        );
+        assert_eq!(
+            record.value,
+            TerminalValue::Inconclusive(fsl_replay::InconclusiveCause::CertificateRejected {
+                rule: CertificateRule::QueryMismatch,
+                at: CertificateLocus::Query {
+                    part: fsl_replay::QueryPart::Unrolling,
+                },
+            })
+        );
+    }
+
+    /// FR-314-AC-6: an unchecked Alethe rule keeps the engine result proved
+    /// but marks it uncertified.
+    #[ix_trace_rs::trace("TC-1199", "FR-314-AC-6")]
+    #[test]
+    fn temporal_smt_unverifiable_proof_settles_uncertified() {
+        let world = tp2_world();
+        let request = tp2_request(&world);
+        let clause = match request.item {
+            ModelCheckItem::Clause { clause, .. } => clause,
+            _ => unreachable!("fixture is a clause"),
+        };
+        let query = encode_smt_query(
+            &request.subject,
+            SmtItem::Clause(clause),
+            SmtQueryKind::Unrolling { depth: 3 },
+            &request.smt_encoding,
+        )
+        .expect("default encoding admits the query");
+        let outcome = ModelCheckOutcome::Holds {
+            certificate: ProofCertificate::Smt {
+                basis: ProofBasis::BoundedComplete { depth: 3 },
+                certificate: SmtProofCertificate::BoundedComplete {
+                    format: ProofFormat::Alethe,
+                    unrolling: RefutedQuery {
+                        query,
+                        proof: b"(step t0 (cl) :rule hole)".to_vec(),
+                    },
+                },
+                limits: CertificateCheckLimits::default(),
+            },
+            stats: RunStats::default(),
+        };
+        let record = settle_model_check(
+            &outcome,
+            &ModelCheckLimits::default(),
+            &request,
+            &Cancel::new(),
+            |_| unreachable!("a holding outcome does not replay a counterexample"),
+        );
+        assert_eq!(
+            record.value,
+            TerminalValue::Proved {
+                basis: ProofBasis::BoundedComplete { depth: 3 },
+                certification: fsl_replay::Certification::Uncertified,
+            }
+        );
+    }
 
     /// A TP-4 liveness clause whose reached automaton states carry several
     /// distinct keys: the past operand's retained history differs between

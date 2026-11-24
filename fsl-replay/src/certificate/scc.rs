@@ -95,13 +95,24 @@ impl ComponentCertificate {
     }
 }
 
-/// A proof certificate carried by an EN-1 holding outcome (FR-126).
+/// A closure, component or SMT proof certificate carried by an EN-1 holding
+/// outcome (FR-126).
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ProofCertificate {
     /// A closure certificate for an item checked by FR-338.
     Closure(ClosureCertificate),
     /// A component certificate for a liveness item checked by FR-339.
     Component(ComponentCertificate),
+    /// An SMT proof certificate for a bounded-complete or inductive result
+    /// (FR-314).
+    Smt {
+        /// The basis established by the engine.
+        basis: crate::proof_result::ProofBasis,
+        /// The solver's refutations of FR-315's queries.
+        certificate: super::smt::SmtProofCertificate,
+        /// The checker limits supplied for this certificate.
+        limits: super::zone_certificate::CertificateCheckLimits,
+    },
 }
 
 /// FR-339's component witness.

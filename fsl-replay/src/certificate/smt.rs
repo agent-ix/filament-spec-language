@@ -31,15 +31,20 @@ use std::cell::Cell;
 use filament_exact::Cancel;
 use filament_semantic_value::catalog::InternalFault;
 use fsl_eval::smt::{
-    encode_refinement_query, RefinementCertificateRequest, RefinementQueryKind, SmtEncodingRefusal,
+    encode_refinement_query, encode_smt_query, RefinementCertificateRequest, RefinementQueryKind,
+    SmtEncodingRefusal, SmtItem, SmtQueryKind,
 };
+use fsl_semantics::check::{Activation, TemporalProfile};
 
 use super::alethe::{read_proof, read_query, Proof, ProofOutcome, Query, Reading};
 use super::closure::CertificateRejection;
 use super::zone_certificate::CertificateCheckLimits;
 use super::{CertificateLocus, CertificateRule, QueryPart};
+use crate::certificate::closure::CertificateRequest;
+use crate::model_check::item::ModelCheckItem;
 use crate::model_check::limits::ModelCheckLimit;
 use crate::proof_result::IncompleteCause;
+use crate::proof_result::ProofBasis;
 
 /// The proof format of an SMT proof certificate.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -68,6 +73,27 @@ pub struct RefinementSmtCertificate {
     pub base: RefutedQuery,
     /// One part per step row.
     pub steps: Vec<RefutedQuery>,
+}
+
+/// A temporal model check's bounded-complete or inductive proof (FR-314).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum SmtProofCertificate {
+    /// One refutation of the bounded unrolling query.
+    BoundedComplete {
+        /// The proof format.
+        format: ProofFormat,
+        /// The bounded unrolling query and its refutation.
+        unrolling: RefutedQuery,
+    },
+    /// Refutations of the induction base and step queries.
+    Inductive {
+        /// The proof format.
+        format: ProofFormat,
+        /// The induction base query and its refutation.
+        base: RefutedQuery,
+        /// The induction step query and its refutation.
+        step: RefutedQuery,
+    },
 }
 
 /// What an SMT proof check that rejects nothing returns (FR-314).
@@ -214,6 +240,160 @@ pub fn check_refinement_smt_proof(
     }
 }
 
+/// Check a temporal model-check certificate against FR-315's rebuilt query.
+/// The request is re-used from FR-338 so the subject, item and encoding
+/// limits have one canonical representation.
+pub fn check_smt_proof(
+    request: &CertificateRequest<'_>,
+    basis: &ProofBasis,
+    certificate: &SmtProofCertificate,
+    limits: &CertificateCheckLimits,
+    cancel: &Cancel,
+) -> Result<SmtProofCheck, CertificateRejection> {
+    let budget = Budget {
+        limits: *limits,
+        bytes: Cell::new(0),
+        edges: Cell::new(0),
+        cancel,
+    };
+    match check_temporal(request, basis, certificate, &budget) {
+        Ok(check) => Ok(check),
+        Err(Halt::Check(check)) => Ok(check),
+        Err(Halt::Rejected(rejection)) => Err(rejection),
+    }
+}
+
+fn check_temporal(
+    request: &CertificateRequest<'_>,
+    basis: &ProofBasis,
+    certificate: &SmtProofCertificate,
+    budget: &Budget<'_>,
+) -> Result<SmtProofCheck, Halt> {
+    let (format, carried): (ProofFormat, Vec<(QueryPart, SmtQueryKind, &RefutedQuery)>) =
+        match (basis, certificate) {
+            (
+                ProofBasis::BoundedComplete { depth },
+                SmtProofCertificate::BoundedComplete { format, unrolling },
+            ) => {
+                let temporal = match request.item {
+                    ModelCheckItem::Clause { clause, .. } => clause,
+                    _ => {
+                        return Err(reject(
+                            CertificateRule::ShapeMismatch,
+                            CertificateLocus::Query {
+                                part: QueryPart::Unrolling,
+                            },
+                        ));
+                    }
+                };
+                let horizon =
+                    fsl_eval::automaton::bounded_shape(temporal).map(|(_, upper, _)| upper);
+                if temporal.profile() != TemporalProfile::EventPositionFalseExtension
+                    || !matches!(temporal.activation(), Activation::Origin)
+                    || horizon.is_none_or(|horizon| *depth < horizon)
+                {
+                    return Err(reject(
+                        CertificateRule::ShapeMismatch,
+                        CertificateLocus::Query {
+                            part: QueryPart::Unrolling,
+                        },
+                    ));
+                }
+                (
+                    *format,
+                    vec![(
+                        QueryPart::Unrolling,
+                        SmtQueryKind::Unrolling { depth: *depth },
+                        unrolling,
+                    )],
+                )
+            }
+            (
+                ProofBasis::Inductive { depth },
+                SmtProofCertificate::Inductive { format, base, step },
+            ) => (
+                *format,
+                vec![
+                    (
+                        QueryPart::Base,
+                        SmtQueryKind::InductionBase { depth: *depth },
+                        base,
+                    ),
+                    (
+                        QueryPart::Step { row: None },
+                        SmtQueryKind::InductionStep { depth: *depth },
+                        step,
+                    ),
+                ],
+            ),
+            (ProofBasis::BoundedComplete { .. }, _) => {
+                return Err(reject(
+                    CertificateRule::ShapeMismatch,
+                    CertificateLocus::Query {
+                        part: QueryPart::Unrolling,
+                    },
+                ));
+            }
+            (ProofBasis::Inductive { .. }, _) => {
+                return Err(reject(
+                    CertificateRule::ShapeMismatch,
+                    CertificateLocus::Query {
+                        part: QueryPart::Base,
+                    },
+                ));
+            }
+            _ => {
+                return Err(reject(
+                    CertificateRule::ShapeMismatch,
+                    CertificateLocus::Query {
+                        part: QueryPart::Unrolling,
+                    },
+                ));
+            }
+        };
+    let ProofFormat::Alethe = format;
+    let item = match request.item {
+        ModelCheckItem::Clause { clause, .. } => SmtItem::Clause(clause),
+        ModelCheckItem::DeadlockFreedom => SmtItem::DeadlockFreedom,
+        _ => {
+            return Err(reject(
+                CertificateRule::ShapeMismatch,
+                CertificateLocus::Query { part: carried[0].0 },
+            ));
+        }
+    };
+    let mut parts = Vec::with_capacity(carried.len());
+    for (part, kind, carried) in carried {
+        let expected = match encode_smt_query(&request.subject, item, kind, &request.smt_encoding) {
+            Ok(expected) => expected,
+            Err(SmtEncodingRefusal::Refused(_)) => {
+                return Err(reject(
+                    CertificateRule::QueryMismatch,
+                    CertificateLocus::Query { part },
+                ));
+            }
+            Err(SmtEncodingRefusal::Fault(fault)) => {
+                return Err(Halt::Check(SmtProofCheck::Fault(fault)));
+            }
+        };
+        budget.bytes(expected.len())?;
+        budget.bytes(carried.query.len())?;
+        if expected != carried.query {
+            return Err(reject(
+                CertificateRule::QueryMismatch,
+                CertificateLocus::Query { part },
+            ));
+        }
+        let query = read_query(&expected).ok_or_else(|| fault("a printed query reads back"))?;
+        parts.push(Part {
+            part,
+            carried,
+            query: Some(query),
+        });
+    }
+    check_proofs(&parts, budget)
+}
+
 fn check(
     request: &RefinementCertificateRequest<'_>,
     certificate: &RefinementSmtCertificate,
@@ -278,9 +458,13 @@ fn check(
             query,
         });
     }
+    check_proofs(&parts, budget)
+}
+
+fn check_proofs(parts: &[Part<'_>], budget: &Budget<'_>) -> Result<SmtProofCheck, Halt> {
     // Rule 3: the proofs, rule by rule across the parts.
     let mut proofs: Vec<(QueryPart, &Query, Proof)> = Vec::new();
-    for part in &parts {
+    for part in parts {
         let Some(query) = &part.query else { continue };
         budget.bytes(part.carried.proof.len())?;
         let mut stop = None;
@@ -330,7 +514,7 @@ fn check(
             Err(()) => {
                 return Err(
                     stop.unwrap_or_else(|| fault("a stopped polynomial check names its stop"))
-                )
+                );
             }
         };
         if let Some(index) = invalid {
@@ -350,7 +534,7 @@ fn check(
     }
     // Rule 4: the first unchecked command or refused part.
     let mut checked = proofs.iter();
-    for part in &parts {
+    for part in parts {
         if part.query.is_none() {
             return Ok(SmtProofCheck::Unencodable { part: part.part });
         }
@@ -370,7 +554,7 @@ fn check(
             Err(()) => {
                 return Err(
                     stop.unwrap_or_else(|| fault("a stopped polynomial check names its stop"))
-                )
+                );
             }
         };
         if let ProofOutcome::Unverifiable { step } = outcome {
