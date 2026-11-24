@@ -2494,6 +2494,8 @@ pub(crate) struct Typer<'a> {
     limits: CheckingLimits,
     nodes: &'a mut u64,
     integer_division_work: u64,
+    /// Whether the current expression is a Set/Bag fold step (FR-701).
+    min_max_fold_step: bool,
     /// Let slots whose bound integer value lowers at Integer despite a
     /// bounded checked type. Slots are unique throughout this typing pass.
     integer_lowered_locals: BTreeSet<Slot>,
@@ -3232,6 +3234,7 @@ impl<'a> Typer<'a> {
             limits,
             nodes,
             integer_division_work: 0,
+            min_max_fold_step: false,
             integer_lowered_locals: BTreeSet::new(),
             cancel: None,
             locals: Vec::new(),
@@ -6831,15 +6834,55 @@ impl Typer<'_> {
     }
 }
 
-/// Whether a well-typed step is in the FR-145 set-and-bag catalog: `acc OP t`
-/// or `t OP acc`, `acc` not in `t`, `t` of type `A`, and `+` or `*` on
-/// `Integer` or `and` or `or` on `Boolean`.
+/// Whether a well-typed step is in the FR-145 set-and-bag catalog: arithmetic
+/// and Boolean operators, or scalar min/max over an ordered accumulator.
 fn catalogued_step(
     body: &BodyBuilder,
     step: &Node,
     accumulator: Slot,
     value_type: &ValueType,
 ) -> bool {
+    if let NodeKind::If {
+        condition,
+        then,
+        otherwise,
+    } = &step.kind
+    {
+        let (Some(condition), Some(then), Some(otherwise)) =
+            (body.get(*condition), body.get(*then), body.get(*otherwise))
+        else {
+            return false;
+        };
+        let NodeKind::Order(OrderingOperator::Less, _, left, right) = condition.kind else {
+            return false;
+        };
+        let (Some(left_node), Some(right_node)) = (body.get(left), body.get(right)) else {
+            return false;
+        };
+        let is_accumulator =
+            |operand: &Node| matches!(operand.kind, NodeKind::Local(slot) if slot == accumulator);
+        let other_node = if is_accumulator(left_node) {
+            right_node
+        } else if is_accumulator(right_node) {
+            left_node
+        } else {
+            return false;
+        };
+        let NodeKind::Local(other_slot) = other_node.kind else {
+            return false;
+        };
+        let branch_is_accumulator = |operand: &Node| is_accumulator(operand);
+        let branch_is_other =
+            |operand: &Node| matches!(operand.kind, NodeKind::Local(slot) if slot == other_slot);
+        if !value_type.kind().is_ordered()
+            || other_node.value_type != *value_type
+            || !((branch_is_accumulator(then) && branch_is_other(otherwise))
+                || (branch_is_other(then) && branch_is_accumulator(otherwise)))
+        {
+            return false;
+        }
+        return true;
+    }
     let (left, right) = match (&step.kind, value_type) {
         (
             NodeKind::Arithmetic(Arithmetic::Add | Arithmetic::Multiply, left, right),

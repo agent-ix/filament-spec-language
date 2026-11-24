@@ -1687,13 +1687,12 @@ struct AggregateCase {
 impl AggregateCase {
     /// `min` and `max` are `reduce`, which needs a nonempty collection.
     fn minimum(&self) -> u64 {
-        u64::from(matches!(self.aggregate, Aggregate::Min | Aggregate::Max))
+        0
     }
 }
 
 fn aggregate_source(kind: CollKind, aggregate: Aggregate) -> String {
-    let nonempty = matches!(aggregate, Aggregate::Min | Aggregate::Max);
-    let minimum = u8::from(nonempty);
+    let minimum = 0;
     let parameters = format!("xs: {}<Int[-9, 9]>[{minimum}, 6]", kind.name());
     let (result, body) = match aggregate {
         Aggregate::Sum(k) => ("A", format!("sum<A>(x in xs: x + ({k}))")),
@@ -1701,11 +1700,19 @@ fn aggregate_source(kind: CollKind, aggregate: Aggregate) -> String {
         Aggregate::Count(k) => ("A", format!("count<A>(x in xs: x < ({k}))")),
         Aggregate::Min => (
             "A",
-            "reduce<A>(m, x in xs: if x < m then x else m)".to_owned(),
+            if kind == CollKind::Sequence {
+                "fold<A>(m, x in xs: if x < m then x else m, identity: 9)".to_owned()
+            } else {
+                "fold<A>(m, x in xs: min(m, x), identity: 9)".to_owned()
+            },
         ),
         Aggregate::Max => (
             "A",
-            "reduce<A>(m, x in xs: if m < x then x else m)".to_owned(),
+            if kind == CollKind::Sequence {
+                "fold<A>(m, x in xs: if m < x then x else m, identity: -9)".to_owned()
+            } else {
+                "fold<A>(m, x in xs: max(m, x), identity: -9)".to_owned()
+            },
         ),
         Aggregate::Exists(k) => ("Boolean", format!("exists(x in xs: x < ({k}))")),
         Aggregate::Forall(k) => ("Boolean", format!("forall(x in xs: x < ({k}))")),
@@ -1753,13 +1760,6 @@ fn aggregate_cases() -> BoxedStrategy<AggregateCase> {
         0usize..6,
     )
         .prop_map(|(kind, aggregate, unique, bag, rotation)| {
-            // `reduce` over a `Set` or `Bag` is refused by the checker
-            // (`operator-ineligible`), so `min` and `max` are Sequence-only.
-            let kind = if matches!(aggregate, Aggregate::Min | Aggregate::Max) {
-                CollKind::Sequence
-            } else {
-                kind
-            };
             AggregateCase {
                 kind,
                 aggregate,
@@ -2039,6 +2039,24 @@ fn p5_aggregates_equal_the_reference_fold_in_any_order() {
                     Ok(expected.clone()),
                     "order {:?}\n{}",
                     order,
+                    source
+                );
+            }
+            if matches!(case.aggregate, Aggregate::Min | Aggregate::Max) {
+                let identity = if matches!(case.aggregate, Aggregate::Min) {
+                    "9"
+                } else {
+                    "-9"
+                };
+                let empty = [Arg::Coll {
+                    kind: case.kind,
+                    minimum: 0,
+                    items: Vec::new(),
+                }];
+                proptest::prop_assert_eq!(
+                    evaluate(&package, &empty),
+                    Ok(identity.to_owned()),
+                    "empty fold\n{}",
                     source
                 );
             }
