@@ -3339,7 +3339,7 @@ fn derived_items_for_selections(
             subject: &(),
             package: graph,
         },
-        &selections,
+        selections,
     );
     let occurrences: Vec<OccurrenceKey> = authored
         .iter()
@@ -3371,7 +3371,7 @@ fn derived_items_for_selections(
                 package: graph,
             },
             &requirements,
-            &selections,
+            selections,
         );
     }
     let written = request.derived(

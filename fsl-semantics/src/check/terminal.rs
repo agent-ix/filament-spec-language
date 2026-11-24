@@ -60,7 +60,7 @@ pub enum TerminalClauseKind {
     /// `terminal when { P }`: a terminal state satisfying `P` is intended.
     When {
         /// The predicate as S2 built it.
-        predicate: ExpressionForm,
+        predicate: Box<ExpressionForm>,
         /// The model's state object, when the predicate reads `self`.
         context: Option<EffectiveId>,
         /// The population the object type ranges over.

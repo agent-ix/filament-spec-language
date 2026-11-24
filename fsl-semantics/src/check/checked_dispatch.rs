@@ -1331,14 +1331,14 @@ pub fn checked_dispatch_selected_operation(
     source: fsl_foundation::source::provenance::RawSourceRef,
     identity: fsl_foundation::IdentityLimits,
 ) -> Result<PackageDeclarations, DispatchBridgeRefusal> {
-    let (
+    let crate::model::intake::SelectedModelsParts {
         entries,
         versions,
         mut meter,
         exact_declarations,
         exact_fields,
         tuple_declarations,
-    ) = selected.into_parts();
+    } = selected.into_parts();
     let Some(ordinal) = entries
         .iter()
         .position(|entry| entry.view.model_selection().identity == root.key.package)
