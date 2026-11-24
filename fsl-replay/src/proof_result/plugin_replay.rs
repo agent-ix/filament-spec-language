@@ -139,10 +139,13 @@ impl PluginReplayContext {
             .bounds()
             .into_iter()
             .filter(|(setting, _)| {
+                // A request carries neither of these two nor the analysis item
+                // engine rows replay never executes: decode refuses them
+                // (FR-255 "Lifecycle caller-limit coverage").
                 !matches!(
                     setting,
                     Setting::ReplayInputBytes | Setting::FormatOutputBytes
-                )
+                ) && !setting.is_item_engine_setting()
             })
             .map(|(setting, bound)| (setting.name().to_owned(), bound))
             .collect();

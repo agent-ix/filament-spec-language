@@ -456,7 +456,10 @@ mod tests {
                 name,
                 "s1.tokens" | "library.definitions" | "replay.input_bytes" | "format.output_bytes"
             ) {
-                assert_eq!(wire.stage_limits.get(name), Some(&bound), "{name}");
+                // Replay never runs an analysis item engine, so a request
+                // omits its rows (FR-255 "Lifecycle caller-limit coverage").
+                let expected = (!setting.is_item_engine_setting()).then_some(&bound);
+                assert_eq!(wire.stage_limits.get(name), expected, "{name}");
             }
         }
         let replayed = crate::replay(wire, ReplayLimits::default());

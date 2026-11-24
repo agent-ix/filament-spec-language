@@ -1096,7 +1096,10 @@ fn tc_774_limits_flow_into_the_request_and_refusals_are_ordered() {
         ) {
             continue;
         }
-        assert_eq!(wire.stage_limits.get(name), Some(&bound), "{name}");
+        // Replay never runs an analysis item engine, so a request omits its
+        // rows (FR-255 "Lifecycle caller-limit coverage").
+        let expected = (!setting.is_item_engine_setting()).then_some(&bound);
+        assert_eq!(wire.stage_limits.get(name), expected, "{name}");
     }
 
     // The occurrence checks come before the bound check: a non-replayable
