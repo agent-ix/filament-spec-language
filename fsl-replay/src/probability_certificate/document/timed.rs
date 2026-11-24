@@ -4507,19 +4507,19 @@ fn price_paths(
         for (key, targets) in &used {
             let state = graph.states.get(key).ok_or(Error::Refused)?;
             let mut best: Option<(usize, usize)> = None;
+            let mut coverage = Vec::with_capacity(state.choices.len());
             for (position, choice) in state.choices.iter().enumerate() {
                 let covered = targets
                     .iter()
                     .filter(|target| covers(choice, target))
                     .count();
+                coverage.push(covered);
                 if best.is_none_or(|(_, most)| covered > most) {
                     best = Some((position, covered));
                 }
             }
             let (index, covered) = best.ok_or(Error::Refused)?;
-            eprintln!(
-                "timed witness debug: state {key:?}, targets {targets:?}, selected {index} covers {covered}"
-            );
+            eprintln!("timed witness debug: targets={} choices={} coverage={coverage:?}, selected {index} covers {covered}", targets.len(), state.choices.len());
             chosen.insert(key.clone(), index);
         }
         let priced = |weight: &dyn Fn(&ProbabilityProductKey, bool) -> Rational| {
