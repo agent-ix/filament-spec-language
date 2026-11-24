@@ -355,6 +355,154 @@ fn the_checker_rejects_altered_rank_certificates() {
     assert_eq!(checked(&certificate, &limits), stopped);
 }
 
+/// FR-169-AC-14 (TC-1197): each malformed closure, rank or count shape is
+/// rejected at its typed state or entry locus before the certificate can
+/// prove the item.
+#[trace("TC-1197", "FR-169-AC-14")]
+#[test]
+fn malformed_state_graph_certificate_members_have_typed_loci() {
+    let world = config_world(REACHES_TWO, &[(0, 0)]);
+    let (over, certificate) = reaches_two(&world);
+    let check_reaches = |candidate: &StateGraphCertificate| {
+        check(
+            &world,
+            AB,
+            "ReachesTwo",
+            over.clone(),
+            candidate,
+            &ModelCheckLimits::default(),
+        )
+    };
+
+    let mut swapped = certificate.clone();
+    swapped.closure.swap(0, 1);
+    assert_eq!(
+        check_reaches(&swapped),
+        rejected(CertificateRule::Malformed, certificate.closure[0].clone())
+    );
+
+    let mut duplicate = certificate.clone();
+    duplicate.closure[1] = duplicate.closure[0].clone();
+    assert_eq!(
+        check_reaches(&duplicate),
+        rejected(CertificateRule::Malformed, certificate.closure[0].clone())
+    );
+
+    let mut invalid_key = certificate.clone();
+    invalid_key.closure[0] = StateKey::from_canonical_bytes(b"not-a-state-key".to_vec());
+    assert_eq!(
+        check_reaches(&invalid_key),
+        rejected(CertificateRule::Malformed, invalid_key.closure[0].clone())
+    );
+
+    let mut out_of_range_rank = certificate.clone();
+    let closure_len = u64::try_from(certificate.closure.len()).expect("closure length");
+    out_of_range_rank.ranks.push((closure_len, 0));
+    assert_eq!(
+        check_reaches(&out_of_range_rank),
+        TemporalCertificateCheck::Rejected(CertificateRejection {
+            rule: CertificateRule::Malformed,
+            at: CertificateLocus::Entry { index: closure_len },
+        })
+    );
+
+    let mut descending = certificate.clone();
+    descending.ranks.reverse();
+    let second = usize::try_from(descending.ranks[1].0).expect("rank index");
+    assert_eq!(
+        check_reaches(&descending),
+        rejected(CertificateRule::Malformed, certificate.closure[second].clone())
+    );
+
+    let world = job_world(true, false);
+    let result = run(world.request(&["j"], vec![world.item("InOneWay")], no_samples()));
+    let instance = &result.items[0][0];
+    let StateGraphOutcome::Holds { certificate } = &instance.outcome else {
+        panic!("the sequenced count claim holds: {:?}", instance.outcome);
+    };
+    let count_index = usize::try_from(certificate.counts[0].0).expect("count index");
+    let state = certificate.closure[count_index].clone();
+    let mut bad_count = certificate.clone();
+    bad_count.counts[0].1 = 3;
+    assert_eq!(
+        check(
+            &world,
+            &["j"],
+            "InOneWay",
+            instance.over.clone(),
+            &bad_count,
+            &ModelCheckLimits::default()
+        ),
+        rejected(CertificateRule::Malformed, state)
+    );
+}
+
+/// FR-169-AC-15 (TC-644): certificates reject the other proof form's list,
+/// while the engine's certificates with that list empty remain accepted.
+#[trace("TC-644", "FR-169-AC-15")]
+#[test]
+fn certificates_reject_the_other_forms_list_and_accept_an_empty_one() {
+    let world = config_world(REACHES_TWO, &[(0, 0)]);
+    let (over, certificate) = reaches_two(&world);
+    let mut wrong_counts = certificate.clone();
+    wrong_counts.counts.push((0, 1, 0));
+    assert_eq!(
+        check(&world, AB, "ReachesTwo", over.clone(), &wrong_counts, &ModelCheckLimits::default()),
+        rejected(CertificateRule::Malformed, certificate.closure[0].clone())
+    );
+    let mut missing_count_entry = certificate.clone();
+    missing_count_entry.counts.push((9, 1, 0));
+    assert_eq!(
+        check(
+            &world,
+            AB,
+            "ReachesTwo",
+            over,
+            &missing_count_entry,
+            &ModelCheckLimits::default()
+        ),
+        TemporalCertificateCheck::Rejected(CertificateRejection {
+            rule: CertificateRule::Malformed,
+            at: CertificateLocus::Entry { index: 9 },
+        })
+    );
+    assert_eq!(
+        check(&world, AB, "ReachesTwo", None, &certificate, &ModelCheckLimits::default()),
+        TemporalCertificateCheck::Accepted
+    );
+
+    let world = job_world(true, false);
+    let result = run(world.request(&["j"], vec![world.item("InOneWay")], no_samples()));
+    let instance = &result.items[0][0];
+    let StateGraphOutcome::Holds { certificate } = &instance.outcome else {
+        panic!("the sequenced count claim holds: {:?}", instance.outcome);
+    };
+    let mut wrong_ranks = certificate.clone();
+    wrong_ranks.ranks.push((0, 0));
+    assert_eq!(
+        check(
+            &world,
+            &["j"],
+            "InOneWay",
+            instance.over.clone(),
+            &wrong_ranks,
+            &ModelCheckLimits::default()
+        ),
+        rejected(CertificateRule::Malformed, certificate.closure[0].clone())
+    );
+    assert_eq!(
+        check(
+            &world,
+            &["j"],
+            "InOneWay",
+            instance.over.clone(),
+            certificate,
+            &ModelCheckLimits::default()
+        ),
+        TemporalCertificateCheck::Accepted
+    );
+}
+
 /// FR-169-AC-10 (check half): a hand-built certificate for FR-168-AC-5's
 /// `Divides` over §7.1's 9 states, ranked as if the target held at `va = 1`,
 /// is rejected `PredicateUndefined` at the first, in certificate order, of

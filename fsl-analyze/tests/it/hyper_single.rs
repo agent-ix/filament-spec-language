@@ -30,8 +30,11 @@ use fsl_eval::temporal::{
     TemporalPosition, TupleLetters, UndefinedCause,
 };
 use fsl_replay::{
-    ExistentialInstanceOutcome, ExistentialOutcome, IncompleteCause, LassoWitness, ModelCheckLimit,
-    ModelCheckLimits, ModelLasso, ModelPath, OpenCause, ReachedLimit, RunEnd, WitnessSource,
+    Certification, ExistentialInstanceOutcome, ExistentialOutcome, IncompleteCause,
+    InconclusiveCause, LassoWitness, ModelCheckLimit, ModelCheckLimits, ModelLasso, ModelPath,
+    OpenCause, ProductClosure, ProductClosureClause, ProductClosureRequest, ProofBasis,
+    ReachedLimit, ResultLabel, RunEnd, SettlementBasis, StateGraphMethod, TerminalValue,
+    WitnessSource,
 };
 use fsl_semantics::check::{FormulaNodeId, HyperForm};
 use ix_trace_rs::trace;
@@ -43,6 +46,33 @@ use crate::counter::UNLIMITED;
 use crate::hyper_world::{
     high, input_of, instance, low, non_interference, Seams, Vault, World, STARTS,
 };
+
+/// Settle one checked HP-5 instance through FR-169, including its independent
+/// product closure check and lasso replay.
+fn settle_instance(
+    world: &World,
+    instance: &ExistentialInstanceOutcome,
+    limits: ModelCheckLimits,
+) -> fsl_replay::ExistentialRecord {
+    let subjects = [world.subject()];
+    let request = ProductClosureRequest {
+        package: &world.package,
+        clause: ProductClosureClause::Hyper(&world.clause),
+        subjects: &subjects,
+        meter: UNLIMITED,
+    };
+    fsl_replay::settle_existential(
+        &request,
+        instance,
+        &StateGraphMethod {
+            limits,
+            max_depth: None,
+            seed: 0,
+        },
+        &Cancel::new(),
+    )
+    .expect("the HP-5 instance settles")
+}
 
 /// A start whose first vault has output 1 already.
 const MIXED: [(i64, i64); 2] = [(0, 1), (1, 0)];
@@ -465,6 +495,94 @@ fn sampled_witnesses_name_their_walk_by_seed_and_trace_index() {
         assert!(is_witness(&world, &witness.lasso, Fairness::None));
         assert_eq!(result.sampled[initial].as_ref(), Some(witness));
     }
+}
+
+/// FR-169-AC-13 (TC-1198): `settle_existential` independently checks the
+/// product-closure certificate and replays each lasso before proving HP-5.
+#[trace("TC-1198", "FR-169-AC-13")]
+#[test]
+fn hp5_witnesses_settle_through_the_product_certificate_and_replay() {
+    let world = World::new(Vault::Secure, false, &STARTS, &clause("", SETTLES));
+    let limits = unsampled();
+    let run = world
+        .run_single(limits, None, &Cancel::new())
+        .expect("the run is not refused");
+    assert_eq!(run.instances.len(), 1);
+    let instance = &run.instances[0];
+    let sources = match &instance.outcome {
+        ExistentialOutcome::Witnessed { lassos } => {
+            assert_eq!(lassos.len(), 2);
+            lassos.iter().map(|witness| witness.source.clone()).collect::<Vec<_>>()
+        }
+        other => panic!("witnessed: {other:?}"),
+    };
+    assert_eq!(sources, [WitnessSource::Explored, WitnessSource::Explored]);
+    let settled = settle_instance(&world, instance, limits);
+    assert_eq!(settled.record.label, ResultLabel::Proved);
+    assert_eq!(settled.record.basis, SettlementBasis::DecisiveWitness);
+    assert_eq!(
+        settled.record.value,
+        TerminalValue::Proved {
+            basis: ProofBasis::Witness { sources },
+            certification: Certification::Certified,
+        }
+    );
+    assert!(settled.evidence.is_some());
+
+    let mut missing_successor = instance.clone();
+    let certificate = missing_successor.certificate.as_mut().expect("certificate");
+    let ProductClosure::Product(members) = &mut certificate.closure else {
+        panic!("an HP-5 product closure");
+    };
+    members.pop().expect("remove one closure member");
+    let rejected = settle_instance(&world, &missing_successor, limits);
+    assert_eq!(rejected.record.label, ResultLabel::Inconclusive);
+    assert!(matches!(
+        rejected.record.value,
+        TerminalValue::Inconclusive(InconclusiveCause::CertificateRejected {
+            rule: fsl_replay::CertificateRule::SuccessorMissing,
+            at: fsl_replay::CertificateLocus::HyperProductState(_),
+        })
+    ));
+    assert!(rejected.evidence.is_none());
+
+    let mut budget = limits;
+    budget.limits.max_states = 1;
+    let stopped = settle_instance(&world, instance, budget);
+    assert_eq!(stopped.record.label, ResultLabel::Incomplete);
+    assert!(matches!(
+        stopped.record.value,
+        TerminalValue::Incomplete(IncompleteCause::LimitReached {
+            limit: ModelCheckLimit::MaxStates,
+            value: 1,
+            ..
+        })
+    ));
+
+    let mut loop_removed = instance.clone();
+    let ExistentialOutcome::Witnessed { lassos } = &mut loop_removed.outcome else {
+        unreachable!("the engine outcome was witnessed")
+    };
+    lassos[0].lasso.steps.pop().expect("one loop step");
+    let refused = settle_instance(&world, &loop_removed, limits);
+    assert!(matches!(
+        refused.record.value,
+        TerminalValue::Inconclusive(InconclusiveCause::ReplayRefused(_))
+    ));
+
+    let trap_world = World::new(
+        Vault::Secure,
+        false,
+        &STARTS,
+        &clause("", "eventually holds(v.l @ b != v.l @ b)"),
+    );
+    let trap_run = trap_world
+        .run_single(limits, None, &Cancel::new())
+        .expect("the trap run is not refused");
+    let trapped = settle_instance(&trap_world, &trap_run.instances[0], limits);
+    assert_eq!(trapped.record.value, TerminalValue::Refuted);
+    assert_eq!(trapped.record.basis, SettlementBasis::ClosedScope);
+    assert!(trapped.evidence.is_some());
 }
 
 /// The request's seed names phase 0's walks: another seed draws other walks,
