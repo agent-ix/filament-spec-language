@@ -2511,7 +2511,7 @@ const NEGOTIATED: &str = "probabilistic Seeded using ev on M over (p: M::Proc) u
 /// `EveryScheduler` for `FairTerminates`, `ExactOnlyForm` for an
 /// expected-reward claim under a workload, `MissingConfidence` for a bounded
 /// event with no confidence parameters; a statistical claim passes.
-#[trace("TC-630")]
+#[trace("TC-630", "FR-195-AC-4")]
 #[test]
 fn statistical_evidence_is_refused_for_a_claim_only_exact_evidence_decides() {
     use fsl_analyze::statistical::require_statistical;

@@ -349,6 +349,26 @@ mod tests {
         Rational::new(Integer::from(numerator), Integer::from(denominator)).expect("ratio")
     }
 
+    #[trace("TC-630", "FR-195-AC-5")]
+    #[test]
+    fn exact_only_statistical_refusals_settle_with_their_named_causes() {
+        for (refusal, name) in [
+            (StatisticalRefusal::EveryScheduler, "every-scheduler"),
+            (StatisticalRefusal::ExactOnlyForm, "exact-only-form"),
+            (StatisticalRefusal::MissingConfidence, "missing-confidence"),
+        ] {
+            let record = settle_statistical_refusal(&refusal).expect("terminal refusal");
+            assert_eq!(record.category(), Category::Unsupported);
+            let TerminalValue::Unsupported(cause) = &record.value else {
+                panic!("expected unsupported settlement: {record:?}");
+            };
+            assert_eq!(cause.as_str(), "unsupported-requested-capability");
+            assert_eq!(cause.code(), Some("unsupported_projection"));
+            let json = wire(record);
+            assert_eq!(json["cause"]["refusal"], name);
+        }
+    }
+
     fn basis() -> StatisticalBasis {
         let hundredth = ratio(1, 100);
         StatisticalBasis {

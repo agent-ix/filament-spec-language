@@ -699,11 +699,11 @@ fn checked_weight_units_and_equivalent_expressions_are_not_display_aliases() {
 /// FR-199-AC-4 (TC-2177): a component whose every cycle has weight 0 takes
 /// its unweighted fraction, `1800/1801` for the availability model, and its
 /// certificate passes the independent check.
-#[trace("TC-2177", "FR-199-AC-4")]
+#[trace("TC-2177", "FR-199-AC-4", "FR-199-AC-5")]
 #[test]
 fn zero_weight_certificate_checks() {
     let world = availability_with_claims(
-        claim("Zero", "s.phase = 0", ">= rational(1800,1801)"),
+        claim("Zero", "s.phase = 0", ">= rational(1,2)"),
         "reward duration on Server::tick = 0;\nreward duration on Server::repair = 0;\n",
     );
     let bytes = produce(&world, "Zero");
@@ -716,6 +716,33 @@ fn zero_weight_certificate_checks() {
         .all(|component| component.value == ratio(1800, 1801)));
     assert!(matches!(
         check(&world, "Zero", &bytes, &Cancel::new(), limits()),
+        Ok(ExactProbabilityCertificateCheck::Accepted(_))
+    ));
+
+    // A positive-weight proof rebound to the zero-weight claim must still
+    // fail: the checker derives component weights from the checked rewards,
+    // rather than trusting a producer's classification.
+    let positive = availability_with_claims(
+        claim("Zero", "s.phase = 0", ">= rational(1,2)"),
+        "reward duration on Server::tick = 1;\nreward duration on Server::repair = 3;\n",
+    );
+    let positive_bytes = produce(&positive, "Zero");
+    let mut positive_document = read_weighted_long_run_probability_certificate(
+        &positive_bytes,
+        limits(),
+        &Cancel::new(),
+    )
+    .unwrap();
+    positive_document.certificate.identity =
+        fsl_replay::probabilistic_claim_identity(world.claim("Zero")).unwrap();
+    let rebound_bytes = write_weighted_long_run_probability_certificate(
+        &positive_document,
+        limits(),
+        &Cancel::new(),
+    )
+    .unwrap();
+    assert!(!matches!(
+        check(&world, "Zero", &rebound_bytes, &Cancel::new(), limits()),
         Ok(ExactProbabilityCertificateCheck::Accepted(_))
     ));
 }
