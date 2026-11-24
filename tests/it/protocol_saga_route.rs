@@ -89,6 +89,15 @@ const SAGAS: &[(&str, Row)] = &[
         ]),
     ),
     (
+        "symbolic-capacity-saga",
+        Row::Analyzed(&[
+            "unsupported:symbolic-queue-capacity",
+            "unsupported:symbolic-queue-capacity",
+            "unsupported:symbolic-queue-capacity",
+            "unsupported:unbounded-extent",
+        ]),
+    ),
+    (
         "roles-replicated",
         Row::Analyzed(&[
             "unsupported:dynamic-role-population",
@@ -355,6 +364,31 @@ fn saga_protocols_return_their_recorded_analysis() {
         }
     }
     assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+#[test]
+/// G-111: retain a typed refusal result for each unsupported subset.
+#[trace("FR-636-AC-5", "FR-570-AC-1")]
+fn unsupported_subsets_return_typed_refusals() {
+    let directory = tempfile::tempdir().unwrap();
+    for (stem, cause) in [
+        ("roles-replicated", "dynamic-role-population"),
+        ("declaration-on-each", "activation-on-each"),
+        ("symbolic-capacity-saga", "symbolic-queue-capacity"),
+        ("staged-saga-compensation", "compensation"),
+    ] {
+        let (_, roles) = protocol_and_roles(stem);
+        let actual =
+            analysis(directory.path(), stem).unwrap_or_else(|error| panic!("{stem}: {error}"));
+        let realizability = actual
+            .get(roles.len())
+            .unwrap_or_else(|| panic!("{stem}: missing realizability result in {actual:?}"));
+        assert_eq!(
+            realizability,
+            &format!("unsupported:{cause}"),
+            "{stem}: realizability must expose the typed refusal cause"
+        );
+    }
 }
 
 #[test]

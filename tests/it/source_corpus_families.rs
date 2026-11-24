@@ -213,7 +213,17 @@ pub(super) const PROTOCOL_FAMILIES: &[Family] = &[
 pub(super) const OPERATION_FLIPS: &[(&str, &str)] =
     &[("prof-inv-slash", "QSL-2041:state-core-slash-form")];
 
-pub(super) const PROTOCOL_FLIPS: &[(&str, &str)] = &[(
-    "staged-saga-deadlock-free",
-    "QSL-2043:deadlock-unbounded-extent",
-)];
+pub(super) const PROTOCOL_FLIPS: &[(&str, &str)] = &[
+    ("p-two-protocols-one-name", "G-114"),
+    ("p-channel-bounded-scalar", "QSL-1137"),
+    ("p-fifo-value-key", "QSL-1997 / G-129"),
+    ("p-role-on-model", "QSL-1136"),
+    ("p-protocol-reference", "G-119"),
+    ("p-over-scalar", "G-120"),
+    ("p-terminal-reads-over-on-each", "G-121"),
+    ("p-repeat-post-test-body-binder", "G-122"),
+    (
+        "staged-saga-deadlock-free",
+        "QSL-2043:deadlock-unbounded-extent",
+    ),
+];
