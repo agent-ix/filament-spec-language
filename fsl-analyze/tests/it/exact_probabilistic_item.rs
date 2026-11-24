@@ -1529,10 +1529,7 @@ fn a_bounded_claim_past_the_rational_budget_proves_with_value_bounds() {
 #[trace("FR-1042-AC-22")]
 #[test]
 fn fair_cyclic_low_rational_budget_proves_with_value_bounds() {
-    const CLAIM: &str =
-        "probabilistic FairHalf using inf on M over (o: M::Once) \\
-         under every scheduler fair strong Once::go on origin \\
-         { probability >= 0.4 [ eventually holds(o.done) ] }";
+    const CLAIM: &str = "probabilistic FairHalf using inf on M over (o: M::Once) under every scheduler fair strong Once::go on origin { probability >= 0.4 [ eventually holds(o.done) ] }";
     let world = World::new(&prob_world::one_shot(CLAIM));
     let mut request = world.request("FairHalf", ModelCheckLimits::default());
     request.limits.max_rational_bits = 1;
@@ -1573,10 +1570,7 @@ fn fair_cyclic_low_rational_budget_proves_with_value_bounds() {
 #[trace("FR-1042-AC-22")]
 #[test]
 fn fair_cyclic_rejects_a_flipped_lower_bellman_direction() {
-    const CLAIM: &str =
-        "probabilistic FairHalf using inf on M over (o: M::Once) \\
-         under every scheduler fair strong Once::go on origin \\
-         { probability >= 0.4 [ eventually holds(o.done) ] }";
+    const CLAIM: &str = "probabilistic FairHalf using inf on M over (o: M::Once) under every scheduler fair strong Once::go on origin { probability >= 0.4 [ eventually holds(o.done) ] }";
     let world = World::new(&prob_world::one_shot(CLAIM));
     let mut request = world.request("FairHalf", ModelCheckLimits::default());
     request.limits.max_rational_bits = 1;
