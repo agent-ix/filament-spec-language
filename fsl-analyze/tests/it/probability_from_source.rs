@@ -1228,13 +1228,7 @@ fn native_probability_items_preserve_caller_accounting_limits() {
     }
 }
 
-#[trace(
-    "TC-2066",
-    "FR-120-AC-35",
-    "FR-191-AC-8",
-    "FR-192-AC-1",
-    "FR-203-AC-13"
-)]
+#[trace("TC-2066", "FR-120-AC-35", "FR-192-AC-1", "FR-203-AC-13")]
 #[test]
 fn native_probability_items_share_work_across_expansions_and_start_fresh_per_item() {
     use fsl_eval::simulation::TransitionSystem;
@@ -1389,6 +1383,7 @@ fn native_probability_reward_admission_preserves_accounting_stop() {
         subject.simulation.meter.work_units = bound;
         let raw_statistical = check_statistical(
             StatisticalRequest {
+                workers: 1,
                 subject,
                 claim: world.claim("Delivered"),
                 method: StatisticalMethod::Okamoto,
@@ -1498,6 +1493,7 @@ fn native_probability_reward_admission_cancellation_keeps_its_cause() {
             statistical_item(
                 RequestIndex::new(0),
                 StatisticalRequest {
+                    workers: 1,
                     subject: world.subject(),
                     claim: world.claim("Delivered"),
                     method: StatisticalMethod::Okamoto,
@@ -2317,6 +2313,7 @@ fn on_each_statistical_cancellation_keeps_its_cause() {
     let item = statistical_item(
         RequestIndex::new(0),
         StatisticalRequest {
+            workers: 1,
             subject: world.subject(),
             claim: world.claim("Sampled"),
             method: StatisticalMethod::Okamoto,
@@ -2357,6 +2354,7 @@ fn on_each_statistical_evidence_builds_no_product() {
     let item = statistical_item(
         RequestIndex::new(0),
         StatisticalRequest {
+            workers: 1,
             subject: world.subject(),
             claim: world.claim("Sampled"),
             method: StatisticalMethod::Okamoto,

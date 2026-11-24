@@ -38,6 +38,7 @@ fn decide(
 ) -> StatisticalVerdict {
     let outcome = check_statistical(
         StatisticalRequest {
+            workers: 1,
             subject: world.subject(),
             claim: world.claim(claim),
             method,
@@ -555,6 +556,7 @@ fn the_provider_entry_serves_a_package_s4_refuses_to_emit() {
             vec![RoutedItem {
                 index: RequestIndex::new(0),
                 request: StatisticalRequest {
+                    workers: 1,
                     subject: world.subject(),
                     claim: world.claim("Two"),
                     method: StatisticalMethod::Okamoto,
@@ -603,6 +605,7 @@ fn routed<'a>(
     fsl_analyze::statistical::provider::RoutedItem {
         index: fsl_foundation::RequestIndex::new(index),
         request: StatisticalRequest {
+            workers: 1,
             subject: world.subject(),
             claim: world.claim("Two"),
             method,
