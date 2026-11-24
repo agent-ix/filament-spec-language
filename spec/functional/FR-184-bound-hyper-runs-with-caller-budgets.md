@@ -107,6 +107,7 @@ pub enum ModelCheckLimit {
 | FR-184-AC-3 | FR-179-AC-1's `Det` with `max_relation_tuples` 63 stops `Stopped(ResourceExhausted, MaxRelationTuples)` with value 63 and count 64; with 64 it completes `Holds`. | Test (TC-609) |
 | FR-184-AC-4 | FR-179-AC-1's engine run with `max_relation_tuples` 64 evaluates its 64 tuples and the resulting certificate's independent check under the same setting evaluates its own 64 tuples and accepts. Rechecking it starts from zero and accepts again. Checking that certificate under 63 stops with value 63 and count 64 before the 64th body evaluation and identifies the complete labelled tuple 64 as the first unpaid tuple; the record names `model_check.max_relation_tuples`, retains the existing limit-cause shape and carries no counterexample. | Test |
 
+| FR-184-AC-5 | A hyper run stopped by `max_states`, `max_transitions`, `max_automaton_states` or the evaluation meter reports that limit, carries no count and no counterexample, and retains the configured/default values and provenance for `max_witness_set` and `max_relation_tuples` in its terminal record. `max_depth` remains the method parameter for V-5: exceeding it does not produce V-7 `Stopped(ResourceExhausted, ...)`. | Test (TC-609) |
 ## Dependencies
 
 - ADR-023 §4 HC-10; ADR-014 B-5 as amended by ADR-018; ADR-018 IV-6.

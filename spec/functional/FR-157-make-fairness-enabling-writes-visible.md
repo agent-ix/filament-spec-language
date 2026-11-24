@@ -101,6 +101,7 @@ write.
 | FR-157-AC-5 | ADR-021 §7.6's `Gate` with `go()`'s pre `not self.done` and post `self.done and pre(self.c) and pre(self.d)`, under `fair weak go` with partial-order reduction: `go(g)`'s enabling footprint still holds `Field{g, c}` and `Field{g, d}`, so `arm` and `arm2` are visible; the ample set at `(F,F,F,F)` is `{toggle}`, and the run returns `Violated` with the loop `toggle, toggle` (8 model states in the model-level reduced search), as the unreduced run does. | Test (TC-617) |
 | FR-157-AC-6 | `Gate` with an operation `spawn()` framed `creates Gate`, under `fair weak whole go`: `spawn` writes `AnyMembership{gates}`, which affects `Membership{gates, g}` in `go(g)`'s enabling footprint, so `spawn` is visible. | Test (TC-617) |
 
+| FR-157-AC-7 | With a non-empty fairness set and a `whole` class over population `gates`, a `creates Gate` transition and a `deletes Gate` transition each write `Membership{gates, object}` in the class member's enabling footprint and are visible when outside that class. With an empty fairness set neither transition gains visibility from this rule. A reduced search over a fixture where deleting the member changes enabledness returns the same verdict as the unreduced search. | Test (TC-617) |
 ## Dependencies
 
 - ADR-021 POR-10, POR-11, PT-2 (fairness rows), §3 "Strong fairness under

@@ -151,6 +151,7 @@ count.
 | FR-145-AC-6 | Replaying a hand-built payload (a recorded `AbstractStepRejected` over `HeavyEnq`'s `put(1)` step, since `HeavyEnq` under B produces no counterexample) under the meter B settles V-7: execution `resource-incomplete`, `Incomplete(LimitReached{EvaluationMeter, B, setting})`, never `inconclusive`/`ReplayParity`. | Test (TC-550) |
 | FR-145-AC-7 | FR-148's strengthened-assumption paired lasso reproduces `ProtocolAssumptionNotEstablished{reason: strengthened}` only when both paths close in the paired product, every specification assumption holds and the named implementation assumption fails; replay keeps the item inconclusive. A `relation-undetermined` result with no violating paired lasso reproduces only when the exact identities, finite paired prefixes and `ContractUndetermined` fairness-predicate locus agree. A changed identity, path, reason or locus settles `inconclusive`, `ReplayParity`. | Test (TC-553) |
 
+| FR-145-AC-8 | A replayed `Undefined` result reproduces only when its recorded position, row, locus and cause all equal the evaluator's first matching undefined result; changing any one of those fields settles `inconclusive` with `ReplayParity`. | Test |
 ## Dependencies
 
 - ADR-020 §6 RC-1 to RC-3; ADR-018 §5 CX-3; ADR-015; ADR-027 PX-1 and

@@ -139,6 +139,7 @@ the concrete subject with failure `Divergence{constraint}` or
 | FR-143-AC-6 | `Pair` with `ensure fair strong whole Spec::Pair::flipB`, `flipB` having the precondition `self.a = 0` on both models and `assume fair weak each Impl::Pair::flipA`, returns safety `Holds{Exhaustive}` and liveness `Checked(Violated)` by FR-899's strong rule, the lasso looping `flipA, flipA` through `a = 0`; the same refinement with `ensure fair weak whole Spec::Pair::flipB` returns `Checked(HoldsReduced{reductions: []})`. The strong variant whose safety half is violated has liveness `None`. | Test (TC-548) |
 | FR-143-AC-7 | A second-phase internal fault, injected into a refinement whose safety half holds, makes `check_refinement` return a refusal carrying the fault and no `RefinementOutcome`; the item settles `failed` (FR-144). | Test (TC-548) |
 
+| FR-143-AC-8 | Given a retained product graph with two violating fairness classes, the checker considers classes in `F_A` source order then canonical identity order, decomposes each enabled and untaken subgraph in discovery order, and returns the first violating SCC in that sequence with FR-126's canonical lasso into it. Reordering the input enumeration without changing those declared/canonical/discovery orders preserves the selected constraint, SCC and lasso. | Test (TC-548) |
 ## Dependencies
 
 - ADR-020 §2 RS-7, RS-10, RS-12, RS-13, §3 CO-2, §4 AX-5, AX-6, §5 RE-1, §6 RC-1
