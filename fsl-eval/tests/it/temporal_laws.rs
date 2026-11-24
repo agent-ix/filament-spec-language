@@ -219,7 +219,6 @@ fn weak_until_refuses_naming_its_derived_form_and_next_stays_an_identifier() {
     assert_eq!(parse_diagnostics("always[0,1] holds(c.next = 1)"), []);
 }
 
-/// QSL-2060: the operator laws on random traces and formulas.
 mod operator_laws {
     // SPDX-License-Identifier: AGPL-3.0-or-later
     //! QSL-2060: the temporal operator laws on random finite traces and lassos.
