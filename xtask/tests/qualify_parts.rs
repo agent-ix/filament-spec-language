@@ -247,18 +247,24 @@ fn every_staging_row_names_its_owner_and_deletion_condition() {
         .expect("the acceptance criteria follow the staging table");
     let rows = table
         .lines()
-        .filter(|line| line.starts_with("| `"))
+        .filter_map(|line| {
+            let row = line.trim().strip_prefix('|')?.strip_suffix('|')?;
+            let fields = row.split('|').map(str::trim).collect::<Vec<_>>();
+            let separator = fields.iter().all(|field| {
+                !field.is_empty()
+                    && field
+                        .chars()
+                        .all(|character| matches!(character, '-' | ':'))
+            });
+            (fields.len() == 3 && fields[0] != "Legacy file or group" && !separator)
+                .then_some(fields)
+        })
         .collect::<Vec<_>>();
     assert_eq!(rows.len(), 7, "the table's seven legacy groups are covered");
-    for row in rows {
-        let fields = row.split('|').map(str::trim).collect::<Vec<_>>();
-        assert_eq!(fields.len(), 5, "the staging row has three cells: {row}");
-        assert!(!fields[1].is_empty(), "the legacy file is named: {row}");
-        assert!(
-            !fields[2].is_empty(),
-            "the deletion condition is named: {row}"
-        );
-        assert!(!fields[3].is_empty(), "the owner is named: {row}");
+    for fields in rows {
+        assert!(!fields[0].is_empty(), "the legacy file is named");
+        assert!(!fields[1].is_empty(), "the deletion condition is named");
+        assert!(!fields[2].is_empty(), "the owner is named");
     }
 }
 
