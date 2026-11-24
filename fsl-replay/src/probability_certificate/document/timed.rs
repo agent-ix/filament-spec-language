@@ -4619,29 +4619,36 @@ fn price_paths(
             .choices
             .iter()
             .any(|choice| targets.iter().all(|target| covers(choice, target)));
-        let mut best: Option<(usize, Rational)> = None;
+        let mut best: Option<(usize, usize)> = None;
         for (index, choice) in state.choices.iter().enumerate() {
             if chosen.get(key).is_some_and(|required| *required != index) {
                 continue;
             }
-            if has_complete_choice && !targets.iter().all(|target| covers(choice, target)) {
+            let covered = targets
+                .iter()
+                .filter(|target| covers(choice, target))
+                .count();
+            if has_complete_choice && covered != targets.len() {
                 continue;
             }
-            let mut total = zero();
-            for edge in choice.iter().filter(|edge| edge.probability > zero()) {
-                if let Some(Some(value)) = child_values.get(&edge.target) {
-                    total = total.add(&edge.probability.mul(value));
-                    check_bits(&total)?;
-                }
-            }
-            if best.as_ref().is_none_or(|(_, value)| total > *value) {
-                best = Some((index, total));
+            if best.is_none_or(|(_, most)| covered > most) {
+                best = Some((index, covered));
             }
         }
         on_path.remove(key);
-        let Some((index, value)) = best else {
+        let Some((index, _)) = best else {
             return Ok(None);
         };
+        let mut value = zero();
+        for edge in state.choices[index]
+            .iter()
+            .filter(|edge| edge.probability > zero())
+        {
+            if let Some(Some(child)) = child_values.get(&edge.target) {
+                value = value.add(&edge.probability.mul(child));
+                check_bits(&value)?;
+            }
+        }
         chosen.insert(key.clone(), index);
         memo.insert(key.clone(), value.clone());
         Ok(Some(value))
