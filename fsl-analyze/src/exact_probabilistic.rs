@@ -119,11 +119,13 @@ pub(crate) use digital::ELAPSED_REWARD;
 pub(crate) use fair::bottom_components;
 pub use fair::{
     decide_fair_bounded_event, decide_fair_expected_reward, decide_fair_long_run_mdp,
-    decide_fair_reachability, deterministic_policy_is_fair, maximal_fair_end_components,
-    ActionChoice, FairBoundedResult, FairEndComponent, FairExpectedRewardResult, FairLongRunResult,
-    FairProductError, FairRandomizedWitness, FairUnboundedResult, SchedulerChoice,
+    decide_fair_reachability, deterministic_policy_is_fair, induced_fair_randomized_chain,
+    maximal_fair_end_components, ActionChoice, FairBoundedResult, FairEndComponent,
+    FairExpectedRewardResult, FairLongRunResult, FairProductError, FairRandomizedWitness,
+    FairUnboundedResult, SchedulerChoice,
 };
 pub use fair_interval::decide_fair_reachability_threshold;
+pub(crate) use finite_horizon::round as round_probability;
 pub use finite_horizon::{
     backward_induction, decide_bounded_event, Dyadic, FhError, FhObjective, FhResult,
 };

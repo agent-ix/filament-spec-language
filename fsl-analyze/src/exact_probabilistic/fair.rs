@@ -99,6 +99,8 @@ pub struct FairLongRunResult {
     /// state with actions. It is a refutation witness only when its induced
     /// chain is fair (FR-412 "Long-run certificate wire shape and witnesses").
     pub deterministic: Vec<Option<usize>>,
+    /// Per-component policies whose gain-bias pairs attest each fair MEC.
+    pub component_policy: Vec<Option<usize>>,
     /// The checked fairness set recorded with the result.
     pub fairness: Vec<FairnessConstraint>,
 }
@@ -527,7 +529,17 @@ pub fn decide_fair_long_run_mdp(
         if !terminal {
             continue;
         }
-        let (rho, policy, _, _) = optimize_mec_fraction(
+        // A fair MEC can already contain a terminal-stutter state. Its
+        // certificate is emitted above, so do not emit the same product
+        // states again as a second, ordinary terminal MEC.
+        if component.iter().all(|state| {
+            fair_components
+                .iter()
+                .any(|fair| fair.states.contains(&ProbStateId(*state)))
+        }) {
+            continue;
+        }
+        let (rho, policy, bias, _) = optimize_mec_fraction(
             &graph,
             component,
             predicate,
@@ -540,6 +552,19 @@ pub fn decide_fair_long_run_mdp(
             fixed[*state] = Some(rho.clone());
             selected_policy[*state] = policy[*state];
         }
+        components.push(ComponentValue {
+            states: component.iter().copied().map(ProbStateId).collect(),
+            rho: rho.clone(),
+        });
+        gain_bias.push(GainBias {
+            gain: rho,
+            bias: component
+                .iter()
+                .copied()
+                .enumerate()
+                .map(|(local, state)| (ProbStateId(state), bias[local].clone()))
+                .collect(),
+        });
     }
     if fixed.iter().all(Option::is_none) {
         return Err(FairProductError::InvalidForm);
@@ -583,7 +608,7 @@ pub fn decide_fair_long_run_mdp(
     let original_policy =
         expand_collapsed_policy(&graph, &deterministic_policy, &state_map, &collapsed)?;
     let mut deterministic_policy = original_policy;
-    for (state, selected) in selected_policy.into_iter().enumerate() {
+    for (state, selected) in selected_policy.iter().copied().enumerate() {
         if fixed[state].is_some() {
             deterministic_policy[state] = selected;
         }
@@ -633,6 +658,7 @@ pub fn decide_fair_long_run_mdp(
         policy: witness.as_ref().map(|witness| witness.policy.clone()),
         witness,
         deterministic: base.policy.clone().unwrap_or_default(),
+        component_policy: selected_policy,
         fairness: product.fairness.clone(),
     })
 }
@@ -1145,6 +1171,15 @@ fn induced_chain(
         fairness_operations: Vec::new(),
         fairness: Vec::new(),
     })
+}
+
+/// Build the DTMC induced by a fair randomized stationary scheduler.
+pub fn induced_fair_randomized_chain(
+    product: &ProbProduct,
+    policy: &[Option<SchedulerChoice>],
+) -> Result<ProbProduct, FairProductError> {
+    let graph = Graph::new(product)?;
+    induced_chain(product, &graph, policy).map_err(FairProductError::from)
 }
 
 fn bound_refuted(

@@ -61,12 +61,30 @@ pub(super) fn replay(
                 ..
             }
         ))
+        && !matches!(
+            claim.form,
+            ProbForm::Probability {
+                event: fsl_semantics::check::Event::Formula { .. },
+                ..
+            }
+        )
         || !witness.paths.is_empty()
     {
         return Err(ProbabilityWitnessError::Refused);
     }
     // Only the long-run profile reads a fairness set (FR-412-AC-27).
-    if (!claim.fairness.is_empty() && !long_run_claim)
+    if (!claim.fairness.is_empty()
+        && !long_run_claim
+        && !matches!(
+            &claim.form,
+            ProbForm::Reach {
+                target: ReachTarget::Eventually(_),
+                ..
+            } | ProbForm::Probability {
+                event: fsl_semantics::check::Event::Formula { .. },
+                ..
+            }
+        ))
         || !matches!(
             TimedSystem::new(system, &claim.subject.alias),
             Err(TimedSubjectRefusal::NoTimedModel { .. })
@@ -103,11 +121,16 @@ pub(super) fn replay(
             at: ProbabilityCertificateLocus::Member("policy"),
         })
     };
-    let rows = match deterministic_scheduler_rows(&witness.scheduler) {
-        Err(ProbabilityWitnessError::Refused) if long_run_claim && !workload => {
-            return Err(policy_malformed());
+    let randomized_long_run = long_run_claim && !workload && !claim.fairness.is_empty();
+    let rows = if randomized_long_run {
+        Vec::new()
+    } else {
+        match deterministic_scheduler_rows(&witness.scheduler) {
+            Err(ProbabilityWitnessError::Refused) if long_run_claim && !workload => {
+                return Err(policy_malformed())
+            }
+            other => other?,
         }
-        other => other?,
     };
     // A workload counterexample has no scheduler. An every-scheduler one
     // carries FR-200's deterministic memoryless scheduler, whose coverage of
@@ -128,12 +151,38 @@ pub(super) fn replay(
         other => bounded::document_error(other),
     };
     if long_run_claim {
+        let long_run_rows = if randomized_long_run {
+            witness
+                .scheduler
+                .iter()
+                .map(|(key, choice)| {
+                    let choice = match choice {
+                        ProbabilisticSchedulerChoice::Deterministic(action) => {
+                            crate::LongRunPolicyChoice::Deterministic(action.clone())
+                        }
+                        ProbabilisticSchedulerChoice::Randomized(distribution) => {
+                            crate::LongRunPolicyChoice::Randomized(distribution.clone())
+                        }
+                    };
+                    (key.clone(), choice)
+                })
+                .collect::<Vec<_>>()
+        } else {
+            rows.iter()
+                .map(|(key, action)| {
+                    (
+                        key.clone(),
+                        crate::LongRunPolicyChoice::Deterministic(action.clone()),
+                    )
+                })
+                .collect()
+        };
         match long_run::check_refutation(
             system,
             claims,
             &witness.item,
             subsystem.as_bytes(),
-            &rows,
+            &long_run_rows,
             document_limits,
             cancel,
         )

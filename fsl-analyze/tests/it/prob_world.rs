@@ -1031,6 +1031,86 @@ pub(crate) fn process_coin2(extra: &str) -> Model {
     }
 }
 
+/// FR-1041/FR-412 fair-minimum witness model: `drift` reaches `u`, where the
+/// only action loops and `go` is disabled; `wait` instead exposes an unfair
+/// live cycle at `s`.
+pub(crate) fn fair_bounds_w(extra: &str) -> Model {
+    Model {
+        package: "test/fair-bounds-w",
+        object: "W",
+        population: "ws",
+        key: "w",
+        integers: vec![],
+        fields: vec![
+            ("s", BOOLEAN.to_owned()),
+            ("g", BOOLEAN.to_owned()),
+            ("f", BOOLEAN.to_owned()),
+        ],
+        operations: vec![
+            Operation { name: "wait", parameters: vec![], modifies: vec!["s"], deletes: false },
+            Operation { name: "go", parameters: vec![("success", BOOLEAN.to_owned())], modifies: vec!["s", "g", "f"], deletes: false },
+        ],
+        body: format!(concat!(
+            "pre WaitAtS using v on M::W::wait {{ self.s }}\n",
+            "post Waited using v on M::W::wait {{ self.s = true }}\n",
+            "pre GoAtS using v on M::W::go {{ self.s }}\n",
+            "post Went using v on M::W::go {{ self.s = false and self.g = success and self.f = not success }}\n",
+            "random W::go(success) ~ {{ true: 1, false: 1 }};\n",
+            "terminal Stop using v on M when {{ self.g or self.f }};\n",
+            "workload Equal on M {{ weight W::wait = 1; weight W::go = 1; }}\n",
+            "{}"
+        ), extra),
+        initial: json!({"s": {"boolean": true}, "g": {"boolean": false}, "f": {"boolean": false}}),
+    }
+}
+
+/// FR-1041/FR-412 fair-minimum witness model: `drift` reaches `u`, where the
+/// only action loops and `go` is disabled; `wait` instead exposes an unfair
+/// live cycle at `s`.
+pub(crate) fn fair_drift(extra: &str) -> Model {
+    Model {
+        package: "test/fair-drift",
+        object: "W",
+        population: "ws",
+        key: "w",
+        integers: vec![],
+        fields: vec![
+            ("s", BOOLEAN.to_owned()),
+            ("u", BOOLEAN.to_owned()),
+            ("g", BOOLEAN.to_owned()),
+            ("f", BOOLEAN.to_owned()),
+        ],
+        operations: vec![
+            Operation { name: "wait", parameters: vec![], modifies: vec!["s"], deletes: false },
+            Operation { name: "go", parameters: vec![], modifies: vec!["s", "g"], deletes: false },
+            Operation { name: "drift", parameters: vec![], modifies: vec!["s", "u"], deletes: false },
+            Operation { name: "loop", parameters: vec![], modifies: vec!["u"], deletes: false },
+            Operation { name: "fail", parameters: vec![], modifies: vec!["s", "f"], deletes: false },
+        ],
+        body: format!(
+            "pre WaitAtS using v on M::W::wait {{ self.s }}\n\
+             post Waited using v on M::W::wait {{ self.s = true }}\n\
+             pre GoAtS using v on M::W::go {{ self.s }}\n\
+             post Good using v on M::W::go {{ self.s = false and self.g = true }}\n\
+             pre DriftAtS using v on M::W::drift {{ self.s }}\n\
+             post Drifted using v on M::W::drift {{ self.s = false and self.u = true }}\n\
+             pre LoopAtU using v on M::W::loop {{ self.u }}\n\
+             post Looped using v on M::W::loop {{ self.u = true }}\n\
+             pre FailAtS using v on M::W::fail {{ self.s }}\n\
+             post Failed using v on M::W::fail {{ self.s = false and self.f = true }}\n\
+             terminal Good using v on M when {{ self.g }};\n\
+             workload Equal on M {{ weight W::wait = 1; weight W::go = 1; weight W::drift = 1; weight W::loop = 1; weight W::fail = 1; }}\n\
+             {extra}"
+        ),
+        initial: json!({
+            "s": {"boolean": true},
+            "u": {"boolean": false},
+            "g": {"boolean": false},
+            "f": {"boolean": false},
+        }),
+    }
+}
+
 /// Availability process used by FR-199/FR-200: `tick` occasionally takes the
 /// system down, and fast/slow repairs return it to `up` with different odds.
 pub(crate) fn avail2(extra: &str) -> Model {

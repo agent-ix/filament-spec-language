@@ -1465,7 +1465,7 @@ fn validate_probability_mass(
     Ok(())
 }
 
-fn round(value: &Rational, bits: u32, upward: bool) -> Result<Dyadic, FhError> {
+pub(crate) fn round(value: &Rational, bits: u32, upward: bool) -> Result<Dyadic, FhError> {
     let scale = BigInt::from(1_u8) << bits;
     let numerator = value.numerator().as_big() * &scale;
     let denominator = value.denominator().as_big();

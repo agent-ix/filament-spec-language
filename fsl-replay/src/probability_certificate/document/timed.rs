@@ -1027,6 +1027,7 @@ fn enumerate_region_mean_time(
             initial: first_key,
             states,
             scheduler_actions: Default::default(),
+            actions_by_state: None,
         },
         costs,
     ))
@@ -1872,6 +1873,7 @@ fn enumerate_digital_deadline(
         initial: first_key,
         states,
         scheduler_actions,
+        actions_by_state: None,
     })
 }
 
@@ -2150,6 +2152,7 @@ fn enumerate_region_deadline(
         initial: first_key,
         states,
         scheduler_actions: Default::default(),
+        actions_by_state: None,
     })
 }
 
@@ -4846,6 +4849,7 @@ mod witness_pricing_tests {
     fn graph(states: Vec<GraphState<'_>>) -> CheckerGraph {
         CheckerGraph {
             initial: key("I"),
+            actions_by_state: None,
             states: states
                 .into_iter()
                 .map(|(name, terminal, choices)| (key(name), CheckerState { terminal, choices }))

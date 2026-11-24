@@ -21,9 +21,9 @@ use fsl_semantics::model::population::PopulationAdmissionLimits;
 use crate::bounds::ReplayLimits;
 use crate::certificate::zone_certificate::CertificateCheckLimits;
 use crate::model_check::limits::{ExactProbLimits, ModelCheckLimits};
+use crate::spine::{default_accounting, SpineLimits, DEFAULT_WORK_UNITS};
 use crate::statistical::{StatisticalLimits, TimedSampling};
 use crate::SmtEncodingLimits;
-use crate::spine::{default_accounting, SpineLimits, DEFAULT_WORK_UNITS};
 
 /// The call's accounting limits (`filament.value.accounting/v1`): each of the
 /// ten counters is an [`AccountingSetting`] named `accounting.<counter>` (FR-255's
@@ -164,7 +164,8 @@ impl SettingLimits for RenderLimits {
 
 /// FR-255 "Engine limit setting names" defaults of the `plan_search.*` rows
 /// (FR-1011).
-const PLAN_SEARCH_DEFAULTS: [u64; 5] = [10_000_000, 100_000_000, 16_777_216, 100_000_000, 1_048_576];
+const PLAN_SEARCH_DEFAULTS: [u64; 5] =
+    [10_000_000, 100_000_000, 16_777_216, 100_000_000, 1_048_576];
 
 /// The default of `certificate_check.max_rank` (FR-255): the closed
 /// profile's Count representability ceiling.
@@ -346,7 +347,10 @@ impl SettingLimits for EngineLimits {
             (Setting::SmtMaxSolverTime, self.smt[1]),
             (Setting::PlanSearchMaxStates, self.plan_search[0]),
             (Setting::PlanSearchMaxWork, self.plan_search[1]),
-            (Setting::PlanSearchMaxCertificateEntries, self.plan_search[2]),
+            (
+                Setting::PlanSearchMaxCertificateEntries,
+                self.plan_search[2],
+            ),
             (Setting::PlanSearchMaxCheckWork, self.plan_search[3]),
             (Setting::PlanSearchMaxStateKeyBytes, self.plan_search[4]),
         ];

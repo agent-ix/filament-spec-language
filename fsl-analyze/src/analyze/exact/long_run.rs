@@ -8,9 +8,10 @@ use crate::exact_probabilistic::{
     BudgetedProductError, LongRunResult, ProductKind,
 };
 use fsl_replay::{
-    long_run_probability_certificate_document, weighted_long_run_probability_certificate_document,
-    write_long_run_probability_certificate, write_weighted_long_run_probability_certificate,
-    LongRunProbabilityComponent, ProbabilityDocumentIoLimits,
+    long_run_probability_certificate_document, read_long_run_probability_certificate,
+    weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
+    write_weighted_long_run_probability_certificate, LongRunProbabilityComponent,
+    ProbabilityDocumentIoLimits,
 };
 
 pub(super) fn run(
@@ -386,7 +387,7 @@ fn every_scheduler(
 ) -> EngineReport {
     use crate::exact_probabilistic::{
         decide_fair_long_run_mdp, decide_long_run_mdp, deterministic_policy_is_fair, induced_chain,
-        policy_action, FairProductError, ProbStateId, ProductAction,
+        policy_action, FairProductError, LongRunResult, ProbStateId, ProductAction,
     };
     let EveryScheduler {
         system,
@@ -413,18 +414,34 @@ fn every_scheduler(
         UnboundedError::MissingReward => not_yet(),
         other => unbounded_failure(other, limits, subject),
     };
-    let (values, policy, solution) = if claim.fairness.is_empty() {
+    let (values, policy, solution, fair_witness) = if claim.fairness.is_empty() {
         match decide_long_run_mdp(product, predicate, None, objective, limits) {
             Ok(solution) => (
                 solution.values.clone(),
                 solution.policy.clone(),
                 Some(solution),
+                None,
             ),
             Err(error) => return stopped(error),
         }
     } else {
         match decide_fair_long_run_mdp(product, predicate, None, bound, limits) {
-            Ok(solution) => (solution.values, Some(solution.deterministic), None),
+            Ok(solution) => {
+                let fair_witness = solution.witness.clone();
+                let component_solution = LongRunResult {
+                    components: solution.components.clone(),
+                    values: solution.values.clone(),
+                    policy: Some(solution.deterministic.clone()),
+                    component_policy: Some(solution.component_policy.clone()),
+                    gain_bias: solution.gain_bias.clone(),
+                };
+                (
+                    solution.values,
+                    Some(solution.deterministic),
+                    Some(component_solution),
+                    fair_witness,
+                )
+            }
             Err(FairProductError::Product(error)) => return stopped(error),
             Err(_) => return not_yet(),
         }
@@ -443,11 +460,8 @@ fn every_scheduler(
         Bound::AtMost(threshold) => value <= threshold,
     };
     if holds {
-        // FR-412-AC-26: the per-component policy certificate. Under a fairness
-        // set the holds side needs FR-1041's progress ranking, which no
-        // long-run member carries, so it stays unsupported.
-        // Each component's rows are the policy of its own gain-bias pair, which
-        // may differ from the scheduler when the optimum leaves a component.
+        // FR-412-AC-26 and FR-1041: each fair end component carries its own
+        // independently checked gain-bias pair and staying policy.
         let Some(solution) = solution else {
             return not_yet();
         };
@@ -463,7 +477,7 @@ fn every_scheduler(
             product,
             binding,
             &solution,
-            Some((system, &policy)),
+            Some((system, ComponentPolicy::Deterministic(&policy))),
             candidate,
         ) {
             Ok(components) => components,
@@ -497,6 +511,24 @@ fn every_scheduler(
         return broken();
     };
     if !claim.fairness.is_empty() {
+        if let Some(fair_witness) = fair_witness.as_ref() {
+            return fair_randomized_refutation(
+                system,
+                claim,
+                claims,
+                item,
+                product,
+                predicate,
+                binding,
+                fair_witness,
+                document_limits,
+                limits,
+                cancel,
+                subject,
+                candidate,
+                tamper_witness,
+            );
+        }
         // A deterministic witness counts only when its induced chain is fair;
         // the fair extremum need not be attained by one (FR-411).
         match deterministic_policy_is_fair(product, &policy, *initial) {
@@ -588,7 +620,7 @@ fn every_scheduler(
         product,
         binding,
         &evidence,
-        Some((system, &policy)),
+        Some((system, ComponentPolicy::Deterministic(&policy))),
         candidate,
     ) {
         Ok(components) => components,
@@ -669,6 +701,186 @@ fn every_scheduler(
     if let Some(tamper) = tamper_witness {
         tamper(&mut witness);
     }
+    let replayed = replay_witness(system, item, &witness, limits, cancel);
+    finish_replay(replayed, claim, system, &witness, &spelled, limits, subject)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn fair_randomized_refutation(
+    system: &ModelSystem<'_>,
+    claim: &fsl_semantics::check::CheckedProbabilisticClaim,
+    claims: &[fsl_semantics::check::CheckedProbabilisticClaim],
+    item: &fsl_package::ObligationIdentity,
+    product: &ProbProduct,
+    predicate: &[bool],
+    binding: Option<&ObjectReference>,
+    fair_witness: &crate::exact_probabilistic::FairRandomizedWitness,
+    document_limits: ProbabilityDocumentLimits,
+    limits: &crate::exact_probabilistic::ExactProbLimits,
+    cancel: &Cancel,
+    subject: SubjectLimits<'_>,
+    budget: &mut CandidateBudget<'_>,
+    tamper_witness: Option<&dyn Fn(&mut ProbabilisticCounterexample)>,
+) -> EngineReport {
+    use crate::exact_probabilistic::{
+        decide_long_run_workload, induced_fair_randomized_chain, policy_action, ActionChoice,
+        ProductAction as AnalyzerAction,
+    };
+    let chain = match induced_fair_randomized_chain(product, &fair_witness.policy) {
+        Ok(chain) => chain,
+        Err(_) => return broken(),
+    };
+    let solution = match decide_long_run_workload(&chain, predicate, None, limits) {
+        Ok(solution) => solution,
+        Err(error) => return unbounded_failure(error, limits, subject),
+    };
+    let certificate = match super::candidate::values(&chain, binding, &solution.values, budget) {
+        Ok(certificate) => certificate,
+        Err(error) => return document_failure(error, subject),
+    };
+    let components = match components(
+        product,
+        binding,
+        &solution,
+        Some((system, ComponentPolicy::Randomized(&fair_witness.policy))),
+        budget,
+    ) {
+        Ok(components) => components,
+        Err(error) => return document_failure(error, subject),
+    };
+    let bytes = long_run_probability_certificate_document(
+        system,
+        claims,
+        item,
+        certificate.values,
+        components,
+        document_limits,
+        cancel,
+    )
+    .and_then(|document| {
+        write_long_run_probability_certificate(&document, document_limits, cancel)
+    });
+    let bytes = match bytes {
+        Ok(bytes) => bytes,
+        Err(error) => return document_failure(error, subject),
+    };
+    let subsystem = match read_long_run_probability_certificate(&bytes, document_limits, cancel)
+        .and_then(|document| {
+            fsl_replay::ProbabilitySubsystemCertificate::from_long_run(
+                &document,
+                document_limits,
+                cancel,
+            )
+        }) {
+        Ok(subsystem) => subsystem,
+        Err(error) => return document_failure(error, subject),
+    };
+    let mut reached = vec![false; chain.states.len()];
+    let mut pending = Vec::new();
+    let [(_, _, initial)] = chain.initial.as_slice() else {
+        return not_yet();
+    };
+    reached[initial.index()] = true;
+    pending.push(*initial);
+    while let Some(state) = pending.pop() {
+        for edge in chain.outgoing(state) {
+            if !edge.probability.is_zero() && !reached[edge.to.index()] {
+                reached[edge.to.index()] = true;
+                pending.push(edge.to);
+            }
+        }
+    }
+    let key = |state: crate::exact_probabilistic::ProbStateId, budget: &mut CandidateBudget<'_>| {
+        budget.key(binding, &product.states[state.index()].model)
+    };
+    let mut scheduler = Vec::new();
+    let mut spelled = Vec::new();
+    for state in product.ids() {
+        if !reached[state.index()] {
+            continue;
+        }
+        let Some(choice) = fair_witness
+            .policy
+            .get(state.index())
+            .and_then(Option::as_ref)
+        else {
+            continue;
+        };
+        let alternatives = match choice {
+            crate::exact_probabilistic::SchedulerChoice::Deterministic(ActionChoice(index)) => {
+                let mut selected = vec![None; product.states.len()];
+                selected[state.index()] = Some(*index);
+                let Some(AnalyzerAction::Identity(identity)) =
+                    policy_action(product, state, &selected)
+                else {
+                    return broken();
+                };
+                vec![(
+                    AnalyzerAction::Identity(identity),
+                    filament_exact::Rational::from_integer(filament_exact::Integer::from(1_i64)),
+                )]
+            }
+            crate::exact_probabilistic::SchedulerChoice::Randomized(distribution) => {
+                let mut alternatives = Vec::with_capacity(distribution.len());
+                for (ActionChoice(index), probability) in distribution {
+                    let mut selected = vec![None; product.states.len()];
+                    selected[state.index()] = Some(*index);
+                    let resolved = policy_action(product, state, &selected);
+                    let Some(AnalyzerAction::Identity(identity)) = resolved else {
+                        return broken();
+                    };
+                    alternatives.push((AnalyzerAction::Identity(identity), probability.clone()));
+                }
+                alternatives
+            }
+        };
+        let mut distribution = Vec::with_capacity(alternatives.len());
+        let state_key = match key(state, budget) {
+            Ok(key) => key,
+            Err(error) => return document_failure(error, subject),
+        };
+        let spelled_key =
+            fsl_eval::simulation::StateKey::from_canonical_bytes(state_key.as_bytes().to_vec());
+        for (action, probability) in alternatives {
+            let AnalyzerAction::Identity(identity) = action else {
+                return not_yet();
+            };
+            let schedule = match fsl_replay::Schedule::of(system, &identity) {
+                Ok(schedule) => schedule,
+                Err(_) => return not_yet(),
+            };
+            spelled.push((spelled_key.clone(), identity));
+            distribution.push((fsl_replay::ProductAction::Identity(schedule), probability));
+        }
+        let choice = if distribution.len() == 1 {
+            fsl_replay::ProbabilisticSchedulerChoice::Deterministic(distribution.remove(0).0)
+        } else {
+            fsl_replay::ProbabilisticSchedulerChoice::Randomized(distribution)
+        };
+        scheduler.push((state_key, choice));
+    }
+    scheduler.sort_by(|left, right| left.0.cmp(&right.0));
+    let initial_model = system.initial();
+    let [first] = initial_model.as_slice() else {
+        return not_yet();
+    };
+    let initial_key = match key(*initial, budget) {
+        Ok(key) => key,
+        Err(error) => return document_failure(error, subject),
+    };
+    let mut witness = ProbabilisticCounterexample {
+        item: item.clone(),
+        binding: binding.cloned(),
+        instance: None,
+        initial: first.clone(),
+        initial_key,
+        scheduler,
+        paths: Vec::new(),
+        subsystem: Some(Box::new(subsystem)),
+    };
+    if let Some(tamper) = tamper_witness {
+        tamper(&mut witness);
+    }
     finish_replay(
         replay_witness(system, item, &witness, limits, cancel),
         claim,
@@ -729,13 +941,18 @@ fn admit_weights(
     Ok(())
 }
 
+enum ComponentPolicy<'a> {
+    Deterministic(&'a [Option<usize>]),
+    Randomized(&'a [Option<crate::exact_probabilistic::SchedulerChoice>]),
+}
+
 fn components(
     product: &ProbProduct,
     binding: Option<&ObjectReference>,
     solution: &LongRunResult,
     // Under every scheduler: the system and the policy each component's rows
     // name the actions of.
-    policy: Option<(&ModelSystem<'_>, &[Option<usize>])>,
+    policy: Option<(&ModelSystem<'_>, ComponentPolicy<'_>)>,
     budget: &mut CandidateBudget<'_>,
 ) -> Result<Vec<LongRunProbabilityComponent>, ProbabilityDocumentError> {
     use crate::exact_probabilistic::{policy_action, ProductAction};
@@ -803,7 +1020,7 @@ fn components(
         }
         let policy = match policy {
             None => None,
-            Some((system, selected)) => {
+            Some((system, ComponentPolicy::Deterministic(selected))) => {
                 let mut rows = Vec::with_capacity(component.states.len());
                 for state in &component.states {
                     let choice = match policy_action(product, *state, selected) {
@@ -824,7 +1041,85 @@ fn components(
                         .ok_or(ProbabilityDocumentError::Malformed)?;
                     rows.push(fsl_replay::LongRunPolicyRow {
                         state: budget.key(binding, &model.model)?,
-                        choice,
+                        choice: fsl_replay::LongRunPolicyChoice::Deterministic(choice),
+                    });
+                }
+                sort(
+                    &mut rows,
+                    |row| &row.state,
+                    &mut budget.meter,
+                    budget.cancel,
+                )?;
+                Some(rows)
+            }
+            Some((system, ComponentPolicy::Randomized(selected))) => {
+                let mut rows = Vec::with_capacity(component.states.len());
+                for state in &component.states {
+                    let choices = match selected.get(state.index()).and_then(Option::as_ref) {
+                        Some(crate::exact_probabilistic::SchedulerChoice::Deterministic(
+                            crate::exact_probabilistic::ActionChoice(index),
+                        )) => {
+                            let mut selected = vec![None; product.states.len()];
+                            selected[state.index()] = Some(*index);
+                            let action = crate::exact_probabilistic::policy_action(
+                                product, *state, &selected,
+                            )
+                            .ok_or(ProbabilityDocumentError::Malformed)?;
+                            let action = match action {
+                                ProductAction::Identity(identity) => {
+                                    fsl_replay::ProductAction::Identity(
+                                        fsl_replay::Schedule::of(system, &identity)
+                                            .map_err(|_| ProbabilityDocumentError::Unsupported)?,
+                                    )
+                                }
+                                ProductAction::TerminalStutter => {
+                                    fsl_replay::ProductAction::TerminalStutter
+                                }
+                                _ => return Err(ProbabilityDocumentError::Unsupported),
+                            };
+                            fsl_replay::LongRunPolicyChoice::Deterministic(action)
+                        }
+                        Some(crate::exact_probabilistic::SchedulerChoice::Randomized(
+                            distribution,
+                        )) => {
+                            let mut rows = Vec::with_capacity(distribution.len());
+                            for (crate::exact_probabilistic::ActionChoice(index), probability) in
+                                distribution
+                            {
+                                let mut selected = vec![None; product.states.len()];
+                                selected[state.index()] = Some(*index);
+                                let action = crate::exact_probabilistic::policy_action(
+                                    product, *state, &selected,
+                                )
+                                .ok_or(ProbabilityDocumentError::Malformed)?;
+                                let action = match action {
+                                    ProductAction::Identity(identity) => {
+                                        fsl_replay::ProductAction::Identity(
+                                            fsl_replay::Schedule::of(system, &identity).map_err(
+                                                |_| ProbabilityDocumentError::Unsupported,
+                                            )?,
+                                        )
+                                    }
+                                    ProductAction::TerminalStutter => {
+                                        fsl_replay::ProductAction::TerminalStutter
+                                    }
+                                    _ => return Err(ProbabilityDocumentError::Unsupported),
+                                };
+                                rows.push((action, probability.clone()));
+                            }
+                            fsl_replay::LongRunPolicyChoice::Randomized(rows)
+                        }
+                        None => fsl_replay::LongRunPolicyChoice::Deterministic(
+                            fsl_replay::ProductAction::TerminalStutter,
+                        ),
+                    };
+                    let model = product
+                        .states
+                        .get(state.index())
+                        .ok_or(ProbabilityDocumentError::Malformed)?;
+                    rows.push(fsl_replay::LongRunPolicyRow {
+                        state: budget.key(binding, &model.model)?,
+                        choice: choices,
                     });
                 }
                 sort(

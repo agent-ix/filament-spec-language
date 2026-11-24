@@ -133,6 +133,59 @@ fn availability_proofs_preserve_original_transitions_and_gain_bias() {
     }
 }
 
+/// FSpec FR-412-AC-29/30: fair long-run outcomes carry
+/// independently checked gain-bias and randomized recurrent evidence.
+#[trace("FSpec-FR-412-AC-29", "FSpec-FR-412-AC-30")]
+#[test]
+fn fair_long_run_holds_with_an_independently_checked_component_document() {
+    let claim = "probabilistic FairLongRun using inf on M over (p: M::Proc) \
+        under every scheduler fair strong Proc::flip on origin \
+        { long_run_fraction holds(p.done) >= rational(99,100) }\n";
+    let world = World::new(&prob_world::process(claim));
+    let records = analyze_items(
+        &Engines::fsl().expect("FSL engines"),
+        vec![exact_probabilistic_item(
+            RequestIndex::new(0),
+            world.request("FairLongRun", ModelCheckLimits::default()),
+        )],
+        &Cancel::new(),
+    );
+    let terminal = records[0].terminal().unwrap_or_else(|| {
+        panic!(
+            "fair long-run claim did not settle: {:?}",
+            records[0].settlement
+        )
+    });
+    assert!(
+        matches!(terminal.value(), fsl_replay::TerminalValue::Proved { .. }),
+        "terminal: {terminal:?}"
+    );
+    let bytes = terminal
+        .exact_certificate_document()
+        .expect("the fair long-run proof retains its checked document");
+    let document = read_long_run_probability_certificate(bytes, limits(), &Cancel::new())
+        .expect("strict long-run certificate");
+    assert_eq!(document.values.len(), 2);
+    assert!(document.values.iter().all(|row| row.value == ratio(1, 1)));
+    assert!(!document.components.is_empty());
+    assert!(document
+        .components
+        .iter()
+        .all(|component| component.value == ratio(1, 1)));
+    assert!(matches!(
+        check(&world, "FairLongRun", bytes, &Cancel::new(), limits()).unwrap(),
+        ExactProbabilityCertificateCheck::Accepted(_)
+    ));
+    let mut duplicate: serde_json::Value = serde_json::from_slice(bytes).unwrap();
+    let components = duplicate["components"].as_array_mut().unwrap();
+    components.push(components[0].clone());
+    let forged = serde_json::to_vec(&duplicate).unwrap();
+    assert!(matches!(
+        check(&world, "FairLongRun", &forged, &Cancel::new(), limits()).unwrap(),
+        ExactProbabilityCertificateCheck::Rejected(_)
+    ));
+}
+
 /// FR-199-AC-4 (TC-2177): when every transition has zero reward weight, the
 /// engine uses the exact unweighted recurrent fraction and certifies it.
 #[trace("TC-2177", "FR-199-AC-4")]
@@ -940,7 +993,10 @@ fn forged(
                     .collect(),
                 policy: Some(
                     rows.into_iter()
-                        .map(|(state, _, choice)| fsl_replay::LongRunPolicyRow { state, choice })
+                        .map(|(state, _, choice)| fsl_replay::LongRunPolicyRow {
+                            state,
+                            choice: fsl_replay::LongRunPolicyChoice::Deterministic(choice),
+                        })
                         .collect(),
                 ),
             }
