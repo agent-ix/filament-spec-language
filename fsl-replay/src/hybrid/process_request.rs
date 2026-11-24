@@ -188,6 +188,15 @@ pub enum HybridProcessRequestRefusal {
     /// The request carried a non-canonical or invalid v2 package.
     #[error("the request package was not admitted as checked-package/v2")]
     PackageRefused,
+    /// The host refused an allocation the reader had admitted; this is a
+    /// tool failure, not a package refusal.
+    #[error(
+        "host allocation failed during {:?}: requested {} bytes after {} bytes were admitted",
+        .0.stage,
+        .0.requested,
+        .0.consumed
+    )]
+    HostAllocationFailed(filament_contract_model::CheckedPackageHostAllocationFailed),
     /// The context supplied conflicting evidence for one package identity.
     #[error("the process package context contains conflicting evidence")]
     PackageEvidenceConflict,
@@ -573,14 +582,62 @@ fn admit_package(
     bytes: &[u8],
     context: &HybridProcessPackageContext,
 ) -> Result<Box<CheckedPackageV2>, HybridProcessRequestRefusal> {
-    match read_checked_package(bytes, context.limits, &context.evidence) {
+    map_dispatch_result(read_checked_package(
+        bytes,
+        context.limits,
+        &context.evidence,
+    ))
+}
+
+fn map_dispatch_result(
+    result: CheckedPackageDispatchResult,
+) -> Result<Box<CheckedPackageV2>, HybridProcessRequestRefusal> {
+    match result {
         CheckedPackageDispatchResult::AdmittedV2(package) => Ok(package),
+        CheckedPackageDispatchResult::HostAllocationFailed(failure) => {
+            Err(HybridProcessRequestRefusal::HostAllocationFailed(failure))
+        }
         CheckedPackageDispatchResult::Refused(_)
         | CheckedPackageDispatchResult::Incomplete(_)
-        | CheckedPackageDispatchResult::CatalogUnavailable(_)
-        | CheckedPackageDispatchResult::HostAllocationFailed(_) => {
+        | CheckedPackageDispatchResult::CatalogUnavailable(_) => {
             Err(HybridProcessRequestRefusal::PackageRefused)
         }
+    }
+}
+
+#[cfg(test)]
+mod host_allocation_tests {
+    use super::{map_dispatch_result, HybridProcessRequestRefusal};
+    use filament_contract_model::{
+        CheckedPackageDispatchResult, CheckedPackageHostAllocationFailed, NativeJoinLocus,
+        NativeJoinLocusSource, PackageReadStage,
+    };
+    use ix_trace_rs::trace;
+
+    /// FSpec FR-330-AC-17 and FSL FR-096-AC-24: hybrid package reads preserve
+    /// host allocation as a host error with stage and requested size.
+    #[trace("FSpec-FR-330-AC-17", "FR-096-AC-24")]
+    #[test]
+    fn hybrid_reader_host_allocation_is_not_a_package_refusal() {
+        let failure = CheckedPackageHostAllocationFailed {
+            stage: PackageReadStage::Envelope,
+            locus: NativeJoinLocus {
+                source: NativeJoinLocusSource::PackageRead(PackageReadStage::Envelope, 0),
+                form: "package_bytes",
+            },
+            requested: 32,
+            consumed: 64,
+        };
+        let result =
+            map_dispatch_result(CheckedPackageDispatchResult::HostAllocationFailed(failure));
+
+        let Err(HybridProcessRequestRefusal::HostAllocationFailed(found)) = result else {
+            panic!("reader allocation failure must remain a host failure");
+        };
+        assert_eq!(found, failure);
+        let message = HybridProcessRequestRefusal::HostAllocationFailed(found).to_string();
+        assert!(message.contains("Envelope"));
+        assert!(message.contains("32 bytes"));
     }
 }
 

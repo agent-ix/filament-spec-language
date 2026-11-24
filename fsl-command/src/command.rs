@@ -35,8 +35,8 @@ pub use analyze::{
 };
 pub use flow::{analyze_flow_report, FlowAnalyzeError};
 pub use limits::{
-    CommandLimits, LimitedOperation, MonitorPreparationLimits, OperationMismatch,
-    PreparationBound, PreparationRefusal, SettingUnavailable,
+    CommandLimits, LimitedOperation, MonitorPreparationLimits, OperationMismatch, PreparationBound,
+    PreparationRefusal, SettingUnavailable,
 };
 pub use monitor::{monitor, MonitorEvent, MonitorProviders, MonitorSummary};
 pub use output::NativeResult;
@@ -2623,10 +2623,25 @@ pub fn inspect_handoff_with_operand(
     directory: &Path,
     operand: &str,
 ) -> fsl_replay::OutcomeDocument {
+    inspect_handoff_result(
+        crate::checked_handoff::verify(directory),
+        directory,
+        operand,
+    )
+}
+
+fn inspect_handoff_result(
+    result: std::result::Result<
+        Box<filament_contract_model::CheckedPackageV2>,
+        crate::checked_handoff::Error,
+    >,
+    directory: &Path,
+    operand: &str,
+) -> fsl_replay::OutcomeDocument {
     use filament_semantic_value::catalog::Category;
     use fsl_replay::{Operation, OutcomeDiagnostic, OutcomeDocument, OutcomeLocus};
 
-    match crate::checked_handoff::verify(directory) {
+    match result {
         Ok(_) => OutcomeDocument::new(Operation::Inspect, None, Category::Success),
         Err(error) => {
             let (member, pointer) = inspect_handoff_position(directory, &error);
@@ -2635,15 +2650,26 @@ pub fn inspect_handoff_with_operand(
                 member,
                 pointer,
             });
-            OutcomeDocument::new(Operation::Inspect, None, Category::Refusal).with_diagnostics(
-                vec![OutcomeDiagnostic::new(
-                    None,
-                    error.code_name(),
-                    locus,
-                    error.to_string(),
-                )],
-            )
+            let category = inspect_handoff_category(&error);
+            OutcomeDocument::new(Operation::Inspect, None, category).with_diagnostics(vec![
+                OutcomeDiagnostic::new(None, error.code_name(), locus, error.to_string()),
+            ])
         }
+    }
+}
+
+fn inspect_handoff_category(
+    error: &crate::checked_handoff::Error,
+) -> filament_semantic_value::catalog::Category {
+    use filament_semantic_value::catalog::Category;
+
+    if matches!(
+        error,
+        crate::checked_handoff::Error::ReaderHostAllocationFailed(_)
+    ) {
+        Category::InternalFailure
+    } else {
+        Category::Refusal
     }
 }
 
@@ -2664,9 +2690,7 @@ fn inspect_handoff_position(
         ),
         Error::ReaderIncomplete(_)
         | Error::ReaderCatalogUnavailable(_)
-        | Error::ReaderHostAllocationFailed(_) => {
-            (Some("checked-package.json".to_owned()), None)
-        }
+        | Error::ReaderHostAllocationFailed(_) => (Some("checked-package.json".to_owned()), None),
         Error::Read { path, .. } => {
             let path = Path::new(path);
             if path == directory {
@@ -3725,12 +3749,8 @@ fn complete_sources(
             let emitted = result.map_err(failure)?.into_value();
             if let Some(selection) = request_call_site(request.call_site.as_ref(), sources.len())? {
                 let program_identity = package_name(sources[0].source().identity());
-                fsl_replay::locate_in_checked(
-                    &checked,
-                    &program_identity,
-                    &selection,
-                )
-                .map_err(RunCause::CallSite)?;
+                fsl_replay::locate_in_checked(&checked, &program_identity, &selection)
+                    .map_err(RunCause::CallSite)?;
             }
             let package_bytes = emitted.package().bytes().to_vec();
             let handoff_temporal_selections = if request.handoff.is_some() {
@@ -5564,6 +5584,7 @@ mod tests {
                         cause: Some("invalid-value".to_owned()),
                         pointer: Some("/claim_names/2".to_owned()),
                         identity: None,
+                        host_allocation_failure: None,
                     },
                 ),
             )),
@@ -5700,5 +5721,45 @@ mod tests {
         ] {
             assert!(read(malformed).is_err(), "{malformed} must refuse");
         }
+    }
+}
+
+#[cfg(test)]
+mod host_allocation_tests {
+    use super::inspect_handoff_result;
+    use crate::checked_handoff;
+    use filament_contract_model::{
+        CheckedPackageDispatchResult, CheckedPackageHostAllocationFailed, NativeJoinLocus,
+        NativeJoinLocusSource, PackageReadStage,
+    };
+    use filament_semantic_value::catalog::Category;
+    use ix_trace_rs::trace;
+    use std::path::Path;
+
+    /// FSpec FR-330-AC-17 and FSL FR-096-AC-24: an injected reader host
+    /// allocation failure reaches the inspect command as an internal tool
+    /// failure with stage and requested size.
+    #[trace("FSpec-FR-330-AC-17", "FR-096-AC-24")]
+    #[test]
+    fn inspect_preserves_an_injected_package_reader_host_allocation_failure() {
+        let failure = CheckedPackageHostAllocationFailed {
+            stage: PackageReadStage::Envelope,
+            locus: NativeJoinLocus {
+                source: NativeJoinLocusSource::PackageRead(PackageReadStage::Envelope, 0),
+                form: "package_bytes",
+            },
+            requested: 32,
+            consumed: 64,
+        };
+        let error =
+            checked_handoff::admit(CheckedPackageDispatchResult::HostAllocationFailed(failure))
+                .expect_err("injected reader failure must be surfaced");
+        let outcome = inspect_handoff_result(Err(error), Path::new("handoff"), "handoff");
+
+        assert_eq!(outcome.category(), Category::InternalFailure);
+        let diagnostic = &outcome.diagnostics()[0];
+        assert_eq!(diagnostic.code(), "runtime_invariant");
+        assert!(diagnostic.message().contains("Envelope"));
+        assert!(diagnostic.message().contains("32 bytes"));
     }
 }

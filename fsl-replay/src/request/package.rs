@@ -94,8 +94,8 @@ impl ReplayPackage {
             CheckedPackageDispatchResult::CatalogUnavailable(error) => {
                 Err(ReplayPackageAdmissionRefusal::CatalogUnavailable(error))
             }
-            CheckedPackageDispatchResult::HostAllocationFailed(_) => {
-                Err(ReplayPackageAdmissionRefusal::HostAllocationFailed)
+            CheckedPackageDispatchResult::HostAllocationFailed(failure) => {
+                Err(ReplayPackageAdmissionRefusal::HostAllocationFailed(failure))
             }
         }
     }
@@ -491,8 +491,13 @@ pub enum ReplayPackageAdmissionRefusal {
     CatalogUnavailable(filament_contract_model::CatalogReadError),
     /// The host refused an allocation the read had admitted: a tool fault, not a
     /// judgement of the package.
-    #[error("replay package read: the host refused an allocation")]
-    HostAllocationFailed,
+    #[error(
+        "host allocation failed during {:?}: requested {} bytes after {} bytes were admitted",
+        .0.stage,
+        .0.requested,
+        .0.consumed
+    )]
+    HostAllocationFailed(filament_contract_model::CheckedPackageHostAllocationFailed),
 }
 
 impl ReplayPackageAdmissionRefusal {
@@ -525,7 +530,7 @@ impl ReplayPackageAdmissionRefusal {
                 fsl_foundation::Code::RuntimeInvariant
             }
             Self::Incomplete(_) => fsl_foundation::Code::StageLimitExceeded,
-            Self::HostAllocationFailed => fsl_foundation::Code::ResourceExhausted,
+            Self::HostAllocationFailed(_) => fsl_foundation::Code::RuntimeInvariant,
         }
     }
 
@@ -537,7 +542,7 @@ impl ReplayPackageAdmissionRefusal {
             Self::Catalog { .. }
             | Self::CatalogUnavailable(_)
             | Self::Incomplete(_)
-            | Self::HostAllocationFailed => None,
+            | Self::HostAllocationFailed(_) => None,
         }
     }
 
@@ -549,7 +554,7 @@ impl ReplayPackageAdmissionRefusal {
                 refusal.loci.first().and_then(|locus| locus.path.as_ref())
             }
             Self::Incomplete(limit) => limit.path.as_ref(),
-            Self::CatalogUnavailable(_) | Self::HostAllocationFailed => None,
+            Self::CatalogUnavailable(_) | Self::HostAllocationFailed(_) => None,
         };
         package_pointer(path.map(|path| path.as_str()))
     }
@@ -640,14 +645,35 @@ mod host_allocation_tests {
     use super::ReplayPackageAdmissionRefusal;
     use ix_trace_rs::trace;
 
-    /// FR-825: a host allocation failure is a tool fault mapped to
-    /// `resource_exhausted`, with no native cause and the package pointer.
-    #[trace("FR-825", "TC-3084")]
+    /// FR-096-AC-24: a host allocation failure is an internal tool fault,
+    /// with its stage and requested size and no package pointer.
+    #[trace("FR-096-AC-24")]
     #[test]
-    fn a_host_allocation_failure_is_resource_exhausted_without_a_cause() {
-        let refusal = ReplayPackageAdmissionRefusal::HostAllocationFailed;
-        assert_eq!(refusal.code(), fsl_foundation::Code::ResourceExhausted);
+    fn a_host_allocation_failure_is_internal_and_unattributed_to_the_package() {
+        let refusal = ReplayPackageAdmissionRefusal::HostAllocationFailed(
+            filament_contract_model::CheckedPackageHostAllocationFailed {
+                stage: filament_contract_model::PackageReadStage::Envelope,
+                locus: filament_contract_model::NativeJoinLocus {
+                    source: filament_contract_model::NativeJoinLocusSource::PackageRead(
+                        filament_contract_model::PackageReadStage::Envelope,
+                        0,
+                    ),
+                    form: "package_bytes",
+                },
+                requested: 32,
+                consumed: 64,
+            },
+        );
+        assert_eq!(refusal.code(), fsl_foundation::Code::RuntimeInvariant);
         assert_eq!(refusal.cause(), None);
         assert_eq!(refusal.pointer(), "/package");
+        let message = refusal.to_string();
+        assert!(message.contains("Envelope"));
+        assert!(message.contains("32 bytes"));
+        assert_eq!(
+            crate::ReplayRefusal::Package(refusal).pointer(),
+            None,
+            "host faults do not claim an artifact locus"
+        );
     }
 }

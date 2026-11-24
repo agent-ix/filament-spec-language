@@ -426,6 +426,9 @@ impl CompositionFront for Context<'_> {
             Err(crate::provider::NotAdmitted::Refused(refusal)) => {
                 Err(Unavailable::Refused(refusal))
             }
+            Err(crate::provider::NotAdmitted::HostAllocationFailed(failure)) => {
+                Err(Unavailable::HostAllocationFailed(failure))
+            }
             Err(crate::provider::NotAdmitted::Other(refusal)) => Err(Unavailable::Emission(
                 GraphUnavailable::of_not_admitted(refusal),
             )),
@@ -891,6 +894,8 @@ fn premise_item<F: CompositionFront>(
 pub(super) enum Unavailable {
     /// The strict reader refused the package the run emitted for it.
     Refused(fsl_package::PackageAdmissionRefusal),
+    /// The host refused memory the reader had already admitted.
+    HostAllocationFailed(filament_contract_model::CheckedPackageHostAllocationFailed),
     /// The package emitted no complete admitted bytes, or they hold no
     /// readable graph.
     Emission(GraphUnavailable),
@@ -923,6 +928,27 @@ fn unavailable(index: RequestIndex, name: &str, failure: &Unavailable) -> Box<Re
             // its catalog cause.
             CatalogCode::new(refusal.code.as_str(), refusal.catalog_cause()),
         ),
+        Unavailable::HostAllocationFailed(failure) => TerminalRecord::disposition_failed(
+            index,
+            CatalogCode::new(
+                Code::RuntimeInvariant.as_str(),
+                "established-invariant-broken",
+            ),
+        )
+        .with_diagnostic_detail(serde_json::Map::from_iter([
+            (
+                "stage".to_owned(),
+                serde_json::Value::String(format!("{:?}", failure.stage)),
+            ),
+            (
+                "requested".to_owned(),
+                serde_json::Value::String(failure.requested.to_string()),
+            ),
+            (
+                "consumed".to_owned(),
+                serde_json::Value::String(failure.consumed.to_string()),
+            ),
+        ])),
         Unavailable::Emission(GraphUnavailable::EmitRefused(refusal)) => {
             TerminalRecord::disposition_declined(
                 index,
@@ -1108,6 +1134,7 @@ mod tests {
             cause: cause.map(str::to_owned),
             pointer: None,
             identity: None,
+            host_allocation_failure: None,
         }
     }
 

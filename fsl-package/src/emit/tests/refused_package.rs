@@ -52,6 +52,7 @@ fn a_refusal_spells_the_readers_cause_or_its_codes_default() {
         cause: cause.map(str::to_owned),
         pointer: Some("/claim_names/2".to_owned()),
         identity: None,
+        host_allocation_failure: None,
     };
     assert_eq!(
         refusal(Code::InvalidPackage, Some("missing-member")).catalog_cause(),
