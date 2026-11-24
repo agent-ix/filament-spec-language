@@ -200,7 +200,6 @@ fn run_order(positions: [Option<serde_json::Value>; 3]) -> ClauseDisposition {
 #[trace("TC-1902", "FR-364-AC-15")]
 #[trace("FSpec-TC-1400", "FSpec-FR-152-AC-13")]
 #[test]
-#[ignore = "QSL-2958: positions need an FR-364 spec fix and filament-semantic-value support; admission refuses `positions` as unknown-member"]
 fn an_ordered_end_navigates_in_ascending_position() {
     let disposition = run_order([target(7), target(2), target(5)]);
     assert!(
@@ -221,16 +220,21 @@ fn an_ordered_end_navigates_in_ascending_position() {
 #[trace("TC-1902", "FR-364-AC-15")]
 #[trace("FSpec-TC-1400", "FSpec-FR-152-AC-13")]
 #[test]
-#[ignore = "QSL-2958: positions need an FR-364 spec fix and filament-semantic-value support; the malformed-position refusals are unreachable until then"]
 fn malformed_positions_refuse_at_admission() {
-    for positions in [
-        [target(7), None, target(5)],
-        [
-            target(7),
-            Some(json!({"target": "2", "source": "0"})),
-            target(5),
-        ],
-        [target(2), target(2), target(5)],
+    for (positions, pointer) in [
+        ([target(7), None, target(5)], "/relationships/0/instances/1"),
+        (
+            [
+                target(7),
+                Some(json!({"target": "2", "source": "0"})),
+                target(5),
+            ],
+            "/relationships/0/instances/1/positions/source",
+        ),
+        (
+            [target(2), target(2), target(5)],
+            "/relationships/0/instances/1/positions/target",
+        ),
     ] {
         let disposition = run_order(positions);
         assert_eq!(
@@ -246,5 +250,63 @@ fn malformed_positions_refuse_at_admission() {
         };
         assert_eq!(record.catalog.code(), "invalid_runtime_input", "{record:?}");
         assert_eq!(record.catalog.cause(), "invalid-value", "{record:?}");
+        assert_eq!(
+            record.fields.get("document_pointer").map(String::as_str),
+            Some(pointer)
+        );
+    }
+}
+
+/// TC-1902 / FR-364-AC-15: positions have a closed object and canonical U64
+/// string wire shape, with errors at their exact snapshot member.
+#[trace("TC-1902", "FR-364-AC-15")]
+#[test]
+fn malformed_position_wire_shapes_refuse_at_their_member() {
+    for (position, code, cause, pointer) in [
+        (
+            json!(1),
+            "invalid_runtime_input",
+            "wrong-value-kind",
+            "/relationships/0/instances/1/positions",
+        ),
+        (
+            json!({"target": 2}),
+            "invalid_runtime_input",
+            "wrong-value-kind",
+            "/relationships/0/instances/1/positions/target",
+        ),
+        (
+            json!({"target": "02"}),
+            "invalid_runtime_input",
+            "invalid-value",
+            "/relationships/0/instances/1/positions/target",
+        ),
+        (
+            json!({"target": "18446744073709551616"}),
+            "invalid_runtime_input",
+            "invalid-value",
+            "/relationships/0/instances/1/positions/target",
+        ),
+        (
+            json!({"other": "1"}),
+            "invalid_runtime_input",
+            "unknown-member",
+            "/relationships/0/instances/1/positions/other",
+        ),
+    ] {
+        let disposition = run_order([target(7), Some(position), target(5)]);
+        let ClauseDisposition::Admit(fsl_semantics::model::observation::AdmissionFailure::Refused(
+            record,
+        )) = &disposition
+        else {
+            panic!("an admission refusal: {disposition:?}");
+        };
+        assert_eq!(record.catalog.code(), code, "{record:?}");
+        assert_eq!(record.catalog.cause(), cause, "{record:?}");
+        assert_eq!(
+            record.fields.get("document_pointer").map(String::as_str),
+            Some(pointer),
+            "{record:?}"
+        );
     }
 }

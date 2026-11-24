@@ -180,10 +180,14 @@ fn a_selection_on_a_navigation_is_located_at_the_referenced_object() {
         source: ExtentEnd {
             object_type: id("Pump"),
             unique: true,
+            ordered: false,
+            multi_valued: false,
         },
         target: ExtentEnd {
             object_type: id("Tank"),
             unique: true,
+            ordered: false,
+            multi_valued: false,
         },
     }];
     let rows = vec![PopulationEntry::try_new(key("Q"), [id("Pump"), id("Tank")], true).unwrap()];
@@ -193,7 +197,13 @@ fn a_selection_on_a_navigation_is_located_at_the_referenced_object() {
         vec![RelationshipExtent {
             relationship: housing(),
             complete: true,
-            instances: vec![(p1.clone(), t1.clone())],
+            instances: vec![
+                filament_semantic_value::relationship_extent::RelationshipInstance {
+                    source: p1.clone(),
+                    target: t1.clone(),
+                    positions: Default::default(),
+                },
+            ],
         }],
         &mut Rows(rows.into_iter()),
         1,

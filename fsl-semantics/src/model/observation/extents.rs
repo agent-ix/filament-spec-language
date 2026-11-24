@@ -265,7 +265,10 @@ fn extent_refusal(
             admission_record(Code::InvalidRuntimeInput, "invalid-value")
                 .with("relationship", relationship.node)
                 .with("end", end_name(side))
-                .with("document_pointer", format!("/relationships/{extent_index}/instances/{instance_index}")),
+                .with(
+                    "document_pointer",
+                    format!("/relationships/{extent_index}/instances/{instance_index}"),
+                ),
         ),
         ExtentRefusal::UnexpectedPosition {
             relationship,
@@ -283,7 +286,13 @@ fn extent_refusal(
             admission_record(Code::InvalidRuntimeInput, "invalid-value")
                 .with("relationship", relationship.node)
                 .with("end", end_name(side))
-                .with("document_pointer", format!("/relationships/{extent_index}/instances/{instance_index}/positions/{}", end_name(side))),
+                .with(
+                    "document_pointer",
+                    format!(
+                        "/relationships/{extent_index}/instances/{instance_index}/positions/{}",
+                        end_name(side)
+                    ),
+                ),
         ),
         ExtentRefusal::Allocation(_) | ExtentRefusal::Capacity(_) => fault("extent-store-storage"),
     }

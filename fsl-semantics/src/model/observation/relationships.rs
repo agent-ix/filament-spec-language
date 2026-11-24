@@ -275,27 +275,36 @@ fn read_positions(value: Option<Json<'_>>) -> Result<RelationshipPositions, Admi
         return Ok(RelationshipPositions::default());
     };
     let Some(object) = value.as_object() else {
-        return Err(defect("wrong-value-kind", "positions"));
+        return Err(defect("wrong-value-kind", "positions").with("member", "positions"));
     };
     let mut positions = RelationshipPositions::default();
     for (name, value) in object.iter() {
         match name {
             "source" | "target" => {
-                let text = value
-                    .as_str()
-                    .ok_or_else(|| defect("wrong-value-kind", "positions"))?;
+                let text = value.as_str().ok_or_else(|| {
+                    defect("wrong-value-kind", "positions")
+                        .with("member", format!("positions.{name}"))
+                })?;
                 let position = text
                     .parse::<u64>()
                     .ok()
                     .filter(|parsed| parsed.to_string() == text)
-                    .ok_or_else(|| defect("invalid-value", "positions"))?;
+                    .ok_or_else(|| {
+                        defect("invalid-value", "positions")
+                            .with("member", format!("positions.{name}"))
+                    })?;
                 if name == "source" {
                     positions.source = Some(position);
                 } else {
                     positions.target = Some(position);
                 }
             }
-            _ => return Err(admission_record(Code::InvalidRuntimeInput, "unknown-member").with("member", name)),
+            _ => {
+                return Err(
+                    admission_record(Code::InvalidRuntimeInput, "unknown-member")
+                        .with("member", format!("positions.{name}")),
+                )
+            }
         }
     }
     Ok(positions)
@@ -383,7 +392,9 @@ pub(super) fn model_facts(
                             object_type,
                             unique: end.multiplicity.is_none_or(|bound| bound.unique),
                             ordered: end.multiplicity.is_some_and(|bound| bound.ordered),
-                            multi_valued: end.multiplicity.is_some_and(|bound| bound.upper.is_none_or(|upper| upper > 1)),
+                            multi_valued: end
+                                .multiplicity
+                                .is_some_and(|bound| bound.upper.is_none_or(|upper| upper > 1)),
                         };
                     navigation.push(NavigationRelationship {
                         key: relationship.key.clone(),
@@ -560,9 +571,27 @@ pub(super) fn check_entries(
         .iter()
         .map(|population| population.key.node.as_str())
         .collect();
-    for entry in entries {
+    for (entry_index, entry) in entries.iter().enumerate() {
         // 6.6: the entry's shape.
-        let raw = entry.0.as_ref().map_err(|record| refuse(record.clone()))?;
+        let raw = entry.0.as_ref().map_err(|record| {
+            let mut record = record.clone();
+            if let Some(member) = record.fields.get("member").map(String::as_str) {
+                let suffix = if member == "positions" {
+                    "/positions".to_owned()
+                } else if let Some(position_member) = member.strip_prefix("positions.") {
+                    format!("/positions/{position_member}")
+                } else {
+                    String::new()
+                };
+                if !suffix.is_empty() {
+                    record = record.with(
+                        "document_pointer",
+                        format!("/relationships/{entry_index}{suffix}"),
+                    );
+                }
+            }
+            refuse(record)
+        })?;
         // 6.7: a navigation relationship of the package, listed once.
         let Some(declared) = facts.relationship(&raw.relationship) else {
             return Err(refuse(
@@ -584,11 +613,23 @@ pub(super) fn check_entries(
         let mut seen: BTreeSet<[&str; 4]> = BTreeSet::new();
         for (index, instance) in raw.instances.iter().enumerate() {
             let instance = instance.as_ref().map_err(|defect| {
+                let member = defect.fields.get("member").map(String::as_str);
+                let suffix = match member {
+                    Some("positions") => "/positions".to_owned(),
+                    Some(member) if member.starts_with("positions.") => {
+                        format!("/{}", member.replace('.', "/"))
+                    }
+                    _ => String::new(),
+                };
                 refuse(
                     defect
                         .clone()
                         .with("relationship", raw.relationship.clone())
-                        .with("instance", index.to_string()),
+                        .with("instance", index.to_string())
+                        .with(
+                            "document_pointer",
+                            format!("/relationships/{entry_index}/instances/{index}{suffix}"),
+                        ),
                 )
             })?;
             // 6.8: the ends name populations of the package, and a listed
@@ -638,7 +679,60 @@ pub(super) fn check_entries(
                     index,
                 )));
             }
-            instances.push(CheckedInstance { source, target, positions: instance.positions });
+            // FR-364 condition 5: validate the positions belonging to this
+            // instance before admitting the next one.
+            for (side, end, position) in [
+                (EndSide::Source, &declared.source, instance.positions.source),
+                (EndSide::Target, &declared.target, instance.positions.target),
+            ] {
+                let required = end.ordered && end.multi_valued;
+                let member_pointer = format!(
+                    "/relationships/{entry_index}/instances/{index}/positions/{}",
+                    end_name(side)
+                );
+                let record = |pointer: String| {
+                    admission_record(Code::InvalidRuntimeInput, "invalid-value")
+                        .with("relationship", raw.relationship.clone())
+                        .with("end", end_name(side))
+                        .with("document_pointer", pointer)
+                };
+                match (required, position) {
+                    (true, None) => {
+                        return Err(refuse(record(format!(
+                            "/relationships/{entry_index}/instances/{index}"
+                        ))));
+                    }
+                    (false, Some(_)) => return Err(refuse(record(member_pointer))),
+                    (true, Some(position)) => {
+                        let repeated = instances.iter().any(|prior| {
+                            let same_group = match side {
+                                EndSide::Source => {
+                                    prior.target.population == instance.target.population
+                                        && prior.target.key == instance.target.key
+                                }
+                                EndSide::Target => {
+                                    prior.source.population == instance.source.population
+                                        && prior.source.key == instance.source.key
+                                }
+                            };
+                            let same_position = match side {
+                                EndSide::Source => prior.positions.source == Some(position),
+                                EndSide::Target => prior.positions.target == Some(position),
+                            };
+                            same_group && same_position
+                        });
+                        if repeated {
+                            return Err(refuse(record(member_pointer)));
+                        }
+                    }
+                    (false, None) => {}
+                }
+            }
+            instances.push(CheckedInstance {
+                source,
+                target,
+                positions: instance.positions,
+            });
         }
         admitted.push(CheckedExtent {
             relationship: declared.key.clone(),

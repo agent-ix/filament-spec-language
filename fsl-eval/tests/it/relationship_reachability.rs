@@ -337,7 +337,16 @@ impl Orders {
         RelationshipExtent {
             relationship,
             complete,
-            instances,
+            instances: instances
+                .into_iter()
+                .map(|(source, target)| {
+                    filament_semantic_value::relationship_extent::RelationshipInstance {
+                        source,
+                        target,
+                        positions: Default::default(),
+                    }
+                })
+                .collect(),
         }
     }
 
@@ -366,6 +375,8 @@ impl Orders {
         let end = |unique| RelationshipEnd {
             object_type: self.id("Order"),
             unique,
+            ordered: false,
+            multi_valued: false,
         };
         let navigation = vec![
             NavigationRelationship {

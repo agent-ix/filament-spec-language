@@ -12,7 +12,8 @@ use filament_semantic_value::declaration::TypeEnvironment;
 use filament_semantic_value::object_closure::ObjectClosure;
 use filament_semantic_value::relationship_extent::{
     ExtentState, ManifestState, NavigationRelationship, PopulationEntry, PopulationEnumerator,
-    RelationshipEnd, RelationshipExtent, Resolution, StopReason,
+    RelationshipEnd, RelationshipExtent, RelationshipInstance, RelationshipPositions, Resolution,
+    StopReason,
 };
 use fsl_foundation::diagnostic::Code;
 use fsl_foundation::source::provenance::RawSourceRef;
@@ -171,16 +172,16 @@ fn extent(
     RelationshipExtent {
         relationship,
         complete,
-            instances: instances
-                .into_iter()
-                .map(|(source, target)| {
-                    filament_semantic_value::relationship_extent::RelationshipInstance {
-                        source,
-                        target,
-                        positions: Default::default(),
-                    }
-                })
-                .collect(),
+        instances: instances
+            .into_iter()
+            .map(|(source, target)| {
+                filament_semantic_value::relationship_extent::RelationshipInstance {
+                    source,
+                    target,
+                    positions: Default::default(),
+                }
+            })
+            .collect(),
     }
 }
 
@@ -247,8 +248,136 @@ fn admit(
     )
 }
 
+fn admit_positions(
+    orders: &Orders,
+    multi_valued: bool,
+    instances: Vec<RelationshipInstance>,
+) -> Result<RelationshipExtents, AdmissionFailure> {
+    let mut navigation = orders.navigation((true, false));
+    let target = &mut navigation[0].target;
+    target.ordered = true;
+    target.multi_valued = multi_valued;
+    target.unique = false;
+    let mut rows = Rows::new(vec![orders.row("Q", &["Sys", "Pump", "Tank"], true)]);
+    RelationshipExtents::admit(
+        orders.types(),
+        navigation,
+        vec![RelationshipExtent {
+            relationship: composition(),
+            complete: true,
+            instances,
+        }],
+        &mut rows,
+        1,
+    )
+}
+
+fn positioned(
+    source: &ObjectReference,
+    target: &ObjectReference,
+    position: Option<u64>,
+) -> RelationshipInstance {
+    RelationshipInstance {
+        source: source.clone(),
+        target: target.clone(),
+        positions: RelationshipPositions {
+            source: None,
+            target: position,
+        },
+    }
+}
+
 fn keys(references: Vec<&ObjectReference>) -> Vec<ObjectReference> {
     references.into_iter().cloned().collect()
+}
+
+/// TC-1902 / FR-364-AC-16: model-layer admission requires positions only for
+/// ordered multi-valued ends, scopes uniqueness to the opposite-end group,
+/// and reads an ordered group by numeric position.
+#[trace("TC-1902", "FR-364-AC-16")]
+#[test]
+fn ordered_model_extents_read_and_admit_positions_by_opposite_end_group() {
+    let orders = Orders::new();
+    let (s1, s2, p1, p2, p3, p4) = (
+        orders.at("Sys", "s1"),
+        orders.at("Sys", "s2"),
+        orders.at("Pump", "p1"),
+        orders.at("Pump", "p2"),
+        orders.at("Pump", "p3"),
+        orders.at("Pump", "p4"),
+    );
+    let extents = admit_positions(
+        &orders,
+        true,
+        vec![
+            positioned(&s1, &p1, Some(7)),
+            positioned(&s1, &p2, Some(2)),
+            positioned(&s1, &p3, Some(5)),
+            positioned(&s2, &p4, Some(2)),
+        ],
+    )
+    .expect("positions may repeat in distinct source groups");
+    assert_eq!(
+        keys(extents.targets(&composition(), &s1).collect()),
+        vec![p2.clone(), p3, p1.clone()]
+    );
+    assert_eq!(
+        keys(extents.targets(&composition(), &s2).collect()),
+        vec![p4]
+    );
+
+    let duplicate = refused(
+        admit_positions(
+            &orders,
+            true,
+            vec![positioned(&s1, &p1, Some(2)), positioned(&s1, &p2, Some(2))],
+        )
+        .expect_err("positions in one source group are unique"),
+    );
+    assert_eq!(duplicate.catalog.code(), "invalid_runtime_input");
+    assert_eq!(duplicate.catalog.cause(), "invalid-value");
+    assert_eq!(
+        duplicate.fields.get("end").map(String::as_str),
+        Some("target")
+    );
+
+    let missing = refused(
+        admit_positions(&orders, true, vec![positioned(&s1, &p1, None)])
+            .expect_err("an ordered multi-valued end requires a position"),
+    );
+    assert_eq!(missing.catalog.cause(), "invalid-value");
+    assert_eq!(
+        missing.fields.get("end").map(String::as_str),
+        Some("target")
+    );
+
+    let unexpected_source = RelationshipInstance {
+        source: s1.clone(),
+        target: p1.clone(),
+        positions: RelationshipPositions {
+            source: Some(0),
+            target: Some(1),
+        },
+    };
+    let unexpected = refused(
+        admit_positions(&orders, true, vec![unexpected_source])
+            .expect_err("an unordered source end cannot carry a position"),
+    );
+    assert_eq!(unexpected.catalog.cause(), "invalid-value");
+    assert_eq!(
+        unexpected.fields.get("end").map(String::as_str),
+        Some("source")
+    );
+
+    let single_value = refused(
+        admit_positions(&orders, false, vec![positioned(&s1, &p1, Some(1))])
+            .expect_err("an ordered single-valued end needs no position"),
+    );
+    assert_eq!(single_value.catalog.cause(), "invalid-value");
+    assert_eq!(
+        single_value.fields.get("end").map(String::as_str),
+        Some("target")
+    );
 }
 
 /// TC-1033 step 1: the same extents built in either order give the same
@@ -282,7 +411,11 @@ fn extents_read_in_reference_key_order_whatever_the_build_order() {
             extent(
                 held.relationship.clone(),
                 held.complete,
-                held.instances.iter().rev().cloned().collect(),
+                held.instances
+                    .iter()
+                    .rev()
+                    .map(|instance| (instance.source.clone(), instance.target.clone()))
+                    .collect(),
             )
         })
         .collect();

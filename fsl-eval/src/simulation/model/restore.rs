@@ -8,6 +8,7 @@ use filament_exact::{
     UnionMember, UnionValue, Value, ValueType,
 };
 use filament_semantic_value::declaration::CompositeShape;
+use filament_semantic_value::relationship_extent::{RelationshipInstance, RelationshipPositions};
 use fsl_foundation::IdentityLimits;
 use fsl_semantics::model::state::{ModelState, StateObject};
 use quire_canonical::{Node, NodeRef};
@@ -59,6 +60,17 @@ fn member<'a>(node: NodeRef<'a>, name: &str) -> Result<NodeRef<'a>, ModelRestore
         .into_iter()
         .find_map(|(key, value)| (key == name).then_some(value))
         .ok_or_else(bad)
+}
+fn optional_member<'a>(
+    node: NodeRef<'a>,
+    name: &str,
+) -> Result<Option<NodeRef<'a>>, ModelRestoreError> {
+    let Node::Object(members) = node.node() else {
+        return Err(bad());
+    };
+    Ok(members
+        .into_iter()
+        .find_map(|(key, value)| (key == name).then_some(value)))
 }
 fn text(node: NodeRef<'_>) -> Result<&str, ModelRestoreError> {
     match node.node() {
@@ -685,7 +697,33 @@ impl Restore<'_, '_, '_> {
                     for instance in self.array(member(extent, "instances")?)? {
                         let source = self.reference(member(instance, "source")?)?;
                         let target = self.reference(member(instance, "target")?)?;
-                        self.push(&mut instances, (source, target))?;
+                        let mut positions = RelationshipPositions::default();
+                        if let Some(raw_positions) = optional_member(instance, "positions")? {
+                            for (name, value) in self.map(raw_positions)? {
+                                tagged(name, "text")?;
+                                let name = text(member(name, "value")?)?;
+                                tagged(value, "text")?;
+                                let raw = text(member(value, "value")?)?;
+                                let position = raw
+                                    .parse::<u64>()
+                                    .ok()
+                                    .filter(|parsed| parsed.to_string() == raw)
+                                    .ok_or_else(bad)?;
+                                match name {
+                                    "source" => positions.source = Some(position),
+                                    "target" => positions.target = Some(position),
+                                    _ => return Err(bad()),
+                                }
+                            }
+                        }
+                        self.push(
+                            &mut instances,
+                            RelationshipInstance {
+                                source,
+                                target,
+                                positions,
+                            },
+                        )?;
                     }
                     self.push(
                         &mut extents,
