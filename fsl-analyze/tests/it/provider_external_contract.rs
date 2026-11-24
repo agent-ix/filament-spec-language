@@ -299,6 +299,70 @@ fn external_unbounded_counterexamples_are_called_and_replayed_by_both_entries() 
     }
 }
 
+/// Process-provider assignments settle only after the native replay agrees.
+/// This exercises the reproduced and parity cases; the external-provider
+/// fixture cannot express AC-2's missing named-function-parameter refusal.
+#[trace("TC-1337", "FR-288-AC-4")]
+#[test]
+fn process_counterexamples_require_replay_agreement_before_terminal_settlement() {
+    let reproduced = Fixture::new(UNBOUNDED);
+    let (replay_engines, _) = engines(
+        ProviderVerdict::Refuted {
+            counterexample: large_division_assignment(),
+        },
+        false,
+        ProviderOrigin::Process,
+        false,
+    );
+    let (outcome, _) = both_entries(
+        &reproduced,
+        &replay_engines,
+        ExtentClassification::Unbounded {
+            finite_bound_available: false,
+        },
+        false,
+    );
+    let descriptor_id = replay_engines
+        .registrations()
+        .find(|descriptor| descriptor.id().as_str() == EXTERNAL)
+        .expect("the routed process provider has one registered descriptor")
+        .id()
+        .clone();
+    assert_eq!(outcome.records[0].value(), &TerminalValue::Refuted);
+    let replayed = assignment_counterexample(&outcome.counterexamples);
+    assert_eq!(outcome.counterexamples[0].backend, descriptor_id);
+    assert_eq!(outcome.records[0].backend(), Some(&descriptor_id));
+    assert_division_assignment(replayed.reproduced.assignment());
+
+    let parity = Fixture::new(UNBOUNDED);
+    let (engines, _) = engines(
+        ProviderVerdict::Refuted {
+            counterexample: vec![
+                Value::Integer(Integer::from(7_i64)),
+                Value::Integer(Integer::from(2_i64)),
+            ],
+        },
+        false,
+        ProviderOrigin::Process,
+        false,
+    );
+    let (outcome, _) = both_entries(
+        &parity,
+        &engines,
+        ExtentClassification::Unbounded {
+            finite_bound_available: false,
+        },
+        false,
+    );
+    assert!(matches!(
+        outcome.records[0].value(),
+        TerminalValue::Inconclusive(InconclusiveCause::ReplayParity(
+            fsl_replay::DisagreementCause::Verdicts { .. }
+        ))
+    ));
+    assert!(outcome.counterexamples.is_empty());
+}
+
 #[trace("TC-1337", "FR-281-AC-15", "TC-761", "FR-280-AC-2")]
 #[test]
 fn a_bounded_external_candidate_keeps_its_unknown_verdict_instead_of_a_native_result() {

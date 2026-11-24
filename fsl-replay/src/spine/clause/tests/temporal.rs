@@ -4765,7 +4765,7 @@ fn valid_temporal_reports_have_no_witness_item_member() {
 /// element `false`, no quantifier, no index and the empty path at the
 /// observation's root. Neither carries a witness, a held run carries no
 /// `decisive`, and FR-267's written record holds none.
-#[trace("TC-840", "FR-330-AC-12")]
+#[trace("TC-840", "FR-330-AC-12", "FR-267-AC-19")]
 #[test]
 fn a_temporal_violation_carries_its_decisive_information() {
     use crate::{ValuePathStep, ValuePathSubject};
@@ -4849,6 +4849,64 @@ fn a_temporal_violation_carries_its_decisive_information() {
     let written = crate::spine::write_clause_run_result(&forall).expect("the record writes");
     let written = String::from_utf8(written).expect("UTF-8");
     assert!(!written.contains("decisive\""), "{written}");
+
+    let value: serde_json::Value = serde_json::from_str(&written).expect("JSON");
+    assert_eq!(value["disposition"]["temporal"]["kind"], "violated");
+    assert_eq!(value["disposition"]["temporal"]["position"], 2);
+    assert_eq!(
+        value["disposition"]["temporal"]["counterexample"]["trace_position"],
+        2
+    );
+    assert!(value["disposition"]["temporal"].get("decisive").is_none());
+    let crate::spine::NativeRunResult::Clause(record) =
+        crate::spine::read_native_run_result(written.as_bytes()).expect("the result reads")
+    else {
+        panic!("a clause result");
+    };
+    let Some(crate::spine::TemporalRecord::Violated { position, .. }) = record.temporal() else {
+        panic!("a violated temporal result");
+    };
+    assert_eq!(*position, 2);
+    assert_eq!(
+        record
+            .temporal()
+            .and_then(crate::spine::TemporalRecord::verdict),
+        Some(outcome(&forall).clone())
+    );
+    let Some(crate::spine::TemporalRecord::Violated { counterexample, .. }) = record.temporal()
+    else {
+        unreachable!("the temporal result was checked above");
+    };
+    assert_eq!(counterexample.trace_position(), 2);
+    let crate::ClauseRunCounterexample::Observed(expected) = forall
+        .counterexample
+        .as_ref()
+        .expect("the report counterexample")
+    else {
+        panic!("the observed trace counterexample");
+    };
+    assert_eq!(
+        counterexample.loop_documents().collect::<Vec<_>>(),
+        expected
+            .prefix
+            .iter()
+            .map(|step| (
+                step.document.authority.as_str(),
+                step.document.identity.as_str()
+            ))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(record.basis(), "closed-scope");
+
+    let mut injected = value;
+    injected["disposition"]["temporal"]["decisive"] = serde_json::json!({});
+    let error = match crate::spine::read_native_run_result(
+        &serde_json::to_vec(&injected).expect("JSON bytes"),
+    ) {
+        Err(error) => error,
+        Ok(_) => panic!("decisive is not a temporal member"),
+    };
+    assert!(error.to_string().contains("decisive"), "{error}");
 }
 
 /// The decisive record of an atom no quantifier decides: element `false`,

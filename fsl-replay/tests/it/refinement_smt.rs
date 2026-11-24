@@ -164,7 +164,7 @@ fn refinement_queries_encode_the_initial_and_step_obligations() {
 /// FR-314-AC-4 (TC-893): `CasRefinesCounter`'s refinement certificate is
 /// verified, and each of AC-4's tamperings is rejected, unverifiable or
 /// unencodable at its part.
-#[trace("TC-893", "FR-314-AC-4")]
+#[trace("TC-893", "FR-314-AC-4", "FR-314-AC-9")]
 #[test]
 fn refinement_certificates_check_part_by_part() {
     let world = World::new(&cas_refines_counter());
@@ -174,6 +174,11 @@ fn refinement_certificates_check_part_by_part() {
 
         let mut short = valid.clone();
         short.steps.pop();
+        short.steps[0].proof = with_command(
+            &valid.steps[0].proof,
+            3,
+            "(step t9 (cl) :rule hole :premises (a1 t0))",
+        );
         assert_eq!(
             check(request, &short),
             rejected(
@@ -183,6 +188,11 @@ fn refinement_certificates_check_part_by_part() {
         );
         let mut long = valid.clone();
         long.steps.push(valid.steps[0].clone());
+        long.steps[0].proof = with_command(
+            &valid.steps[0].proof,
+            3,
+            "(step t9 (cl) :rule hole :premises (a1 t0))",
+        );
         assert_eq!(
             check(request, &long),
             rejected(
@@ -616,7 +626,7 @@ fn values(settled: &StepRecordsSettlement) -> Vec<TerminalValue> {
 /// FR-314 verifies the refinement's certificate, `Uncertified` with no
 /// certificate, and every record of `CasRefinesCounterAdd`, whose `_` row
 /// FR-315 refuses to encode, `Uncertified`.
-#[trace("TC-551", "FR-146-AC-4")]
+#[trace("TC-551", "FR-146-AC-4", "FR-314-AC-9")]
 #[test]
 fn step_records_are_certified_only_by_a_verified_certificate() {
     let holds = vec![StepRecordVerdict::Holds; 8];
@@ -947,7 +957,7 @@ fn a_stopped_or_faulted_check_settles_incomplete_or_failed() {
 /// rejects the base part `QueryMismatch` at `Base`, so the `Initial` record
 /// is `CertificateRejected{QueryMismatch, Base}`, every other record
 /// `Uncertified`, and the safety half `CertificateRejected`.
-#[trace("TC-551", "FR-146-AC-4")]
+#[trace("TC-551", "FR-146-AC-4", "FR-314-AC-9")]
 #[test]
 fn a_refused_initial_query_rejects_the_initial_record() {
     let world = World::new(&mutated(
@@ -959,7 +969,14 @@ fn a_refused_initial_query_rejects_the_initial_record() {
         let certificate = RefinementSmtCertificate {
             format: ProofFormat::Alethe,
             base: part(String::new(), String::new()),
-            steps: (0..7).map(|_| part(String::new(), String::new())).collect(),
+            steps: (0..7)
+                .map(|row| {
+                    part(
+                        format!("ignored step query {row}"),
+                        "(not a proof)".to_owned(),
+                    )
+                })
+                .collect(),
         };
         let checked = certify_step_records(
             request,

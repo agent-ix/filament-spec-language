@@ -103,6 +103,15 @@ fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenanc
             assert_eq!(document["disposition"]["category"], category, "{document}");
             assert_eq!(document["disposition"]["truth"], truth, "{document}");
             let extraction = &document["extraction"];
+            let mut extraction_members = extraction
+                .as_object()
+                .expect("extraction is an object")
+                .keys()
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            extraction_members.sort_unstable();
+            let expected_members = ["binding", "body", "map", "original", "outcome"];
+            assert_eq!(extraction_members, expected_members);
             assert_eq!(
                 extraction["original"]["identity"],
                 "ix://agent-ix/native-workflow/original"
@@ -113,6 +122,15 @@ fn extracted_parent_order_executes_both_truth_values_and_retains_quire_provenanc
             assert_eq!(extraction["outcome"], upstream);
             assert!(!expected_segments.is_empty());
             assert_eq!(extraction["map"]["segments"], json!(expected_segments));
+
+            let read = fsl_replay::spine::read_native_run_result(
+                &serde_json::to_vec(document).expect("the command result serializes"),
+            )
+            .expect("the extracted native result reads");
+            let fsl_replay::spine::NativeRunResult::Clause(read) = read else {
+                panic!("a clause result");
+            };
+            assert_eq!(read.extraction(), Some(extraction));
         }
     }
 }
