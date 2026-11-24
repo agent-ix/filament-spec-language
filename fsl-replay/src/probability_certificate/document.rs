@@ -36,9 +36,10 @@ pub use mdp::{
 pub(super) mod long_run;
 pub(super) mod refutation;
 pub use long_run::{
-    LongRunOptimization, LongRunPolicyRow, LongRunProbabilityComponent, LongRunProbabilityDocument,
-    WeightedLongRunProbabilityDocument, long_run_probability_certificate_document,
-    read_long_run_probability_certificate, read_weighted_long_run_probability_certificate,
+    LongRunOptimization, LongRunPolicyChoice, LongRunPolicyRow, LongRunProbabilityComponent,
+    LongRunProbabilityDocument, WeightedLongRunProbabilityDocument,
+    long_run_probability_certificate_document, read_long_run_probability_certificate,
+    read_weighted_long_run_probability_certificate,
     weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
     write_weighted_long_run_probability_certificate,
 };
@@ -46,14 +47,6 @@ pub use long_run::{
 pub use long_run::{
     LongRunProbabilityPhase, check_long_run_probability_certificate_observing,
     check_long_run_probability_certificate_with_identity,
-};
-pub use long_run::{
-    long_run_probability_certificate_document, read_long_run_probability_certificate,
-    read_weighted_long_run_probability_certificate,
-    weighted_long_run_probability_certificate_document, write_long_run_probability_certificate,
-    write_weighted_long_run_probability_certificate, LongRunOptimization, LongRunPolicyChoice,
-    LongRunPolicyRow, LongRunProbabilityComponent, LongRunProbabilityDocument,
-    WeightedLongRunProbabilityDocument,
 };
 pub use refutation::SubsystemBoundKind;
 mod timed;
