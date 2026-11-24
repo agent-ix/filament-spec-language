@@ -439,6 +439,8 @@ pub enum UsageCause {
     UnavailableSetting,
     /// The value is not a non-negative decimal integer that fits a bound.
     NotAnInteger,
+    /// A worker count is zero; worker settings require a positive integer.
+    InvalidWorkerValue,
     /// The setting was given more than once.
     Repeated,
 }
