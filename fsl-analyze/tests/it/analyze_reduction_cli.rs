@@ -146,7 +146,7 @@ fn an_unsound_symmetry_is_refused_not_ignored() {
 fn a_constraint_never_proves_past_its_boundary() {
     let ws = Workspace::new("red-constraint");
     let body = format!(
-        "invariant Low using v on M::Counter at current {{ self.value <= 1 }}\n{}",
+        "constraint Low using v on M::Counter at current {{ self.value <= 1 }}\n{}",
         clause("Holds", "", "always holds(c.value <= 3)")
     );
     let run = analyze(&request(
