@@ -1534,6 +1534,10 @@ fn run(
                 lower,
                 upper,
                 precision_bits: precision,
+                method: fsl_replay::BoundsMethod::IntervalIteration {
+                    precision_bits: precision,
+                    sweeps: 0,
+                },
             });
         }
         fair_policy = Some(fair.policy);
@@ -1887,7 +1891,7 @@ fn run(
                     upper,
                     binding: binding.as_ref(),
                     extremum,
-                    precision_bits: interval.precision_bits,
+                    method: interval.method,
                 },
                 subject,
             ) {
