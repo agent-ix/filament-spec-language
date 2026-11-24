@@ -28,9 +28,11 @@
 mod build;
 mod digital;
 mod fair;
+mod fair_interval;
 mod finite_horizon;
 pub mod manifest;
 pub(crate) mod plan;
+mod reward_interval;
 mod rows;
 mod settle;
 mod unbounded;
@@ -121,11 +123,13 @@ pub use fair::{
     ActionChoice, FairBoundedResult, FairEndComponent, FairExpectedRewardResult, FairLongRunResult,
     FairProductError, FairRandomizedWitness, FairUnboundedResult, SchedulerChoice,
 };
+pub use fair_interval::decide_fair_reachability_threshold;
 pub use finite_horizon::{
     backward_induction, decide_bounded_event, Dyadic, FhError, FhObjective, FhResult,
 };
 pub(crate) use finite_horizon::{decide_measure_exact, QualifiedFhError};
 pub use fsl_replay::FreeDelayRow;
+pub use reward_interval::{decide_expected_reward_threshold, ExpectedRewardOutcome};
 pub use rows::free_delays_choice;
 pub use settle::settle_product_refusal;
 pub use unbounded::{
