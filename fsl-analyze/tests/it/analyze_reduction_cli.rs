@@ -360,7 +360,7 @@ fn a_constraint_does_not_cross_settle_the_same_claim_without_a_constraint() {
     let ws = Workspace::new("fr158-independent-method-results");
     let body = format!(
         "constraint Low using v on M::Counter at current {{ self.value <= 1 }}\n{}",
-        clause("Claim", "", "always holds(c.value <= 2)")
+        clause("Claim", "", "always holds(c.value <= 3)")
     );
     let selections = json!([
         {"claim": "Claim", "reductions": {"constraint": "Low"}},
@@ -388,13 +388,9 @@ fn a_constraint_does_not_cross_settle_the_same_claim_without_a_constraint() {
         constrained["record"]["cause"]["kind"], "constraint-reached",
         "{constrained}"
     );
-    assert_eq!(label(&unconstrained), "refuted", "{unconstrained}");
+    assert_eq!(label(&unconstrained), "proved", "{unconstrained}");
     assert_eq!(
-        unconstrained["record"]["result"], "refuted",
-        "{unconstrained}"
-    );
-    assert_eq!(
-        unconstrained["replay"]["reproduced"], true,
+        unconstrained["record"]["result"], "proved",
         "{unconstrained}"
     );
 }

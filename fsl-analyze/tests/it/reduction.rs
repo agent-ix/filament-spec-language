@@ -192,7 +192,14 @@ fn a_source_constraint_is_typed_and_selectable_by_name() {
 #[trace("TC-581", "FR-158-AC-6")]
 #[test]
 fn a_clause_run_of_low_reports_true_at_the_zero_snapshot() {
-    let world = count(&[infinite("always holds(x.v <= 3)")]);
+    let world = World::new(
+        shape(false, 3),
+        "constraint Low using v on M::Counter at current { self.v <= 1 }\n\
+         invariant Wide using v on M::Counter at current { self.v <= 3 }\n",
+        &[],
+        &[start([0, 0, 0])],
+        &KEYS,
+    );
     let report = world.run_state_clause("Low");
     assert!(matches!(
         report.disposition,
@@ -201,7 +208,7 @@ fn a_clause_run_of_low_reports_true_at_the_zero_snapshot() {
                 fsl_replay::spine::CallValue::Boolean(true)
             )
         )
-    ));
+    ), "{report:?}");
 }
 
 fn keys(keys: &[&str]) -> Vec<String> {
