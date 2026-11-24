@@ -6853,10 +6853,10 @@ fn catalogued_step(
         else {
             return false;
         };
-        let NodeKind::Order(OrderingOperator::Less, _, left, right) = condition.kind else {
+        let NodeKind::Order(OrderingOperator::Less, _, left, right) = &condition.kind else {
             return false;
         };
-        let (Some(left_node), Some(right_node)) = (body.get(left), body.get(right)) else {
+        let (Some(left_node), Some(right_node)) = (body.get(*left), body.get(*right)) else {
             return false;
         };
         let is_accumulator =
@@ -6868,14 +6868,13 @@ fn catalogued_step(
         } else {
             return false;
         };
-        let NodeKind::Local(other_slot) = other_node.kind else {
+        let NodeKind::Local(other_slot) = &other_node.kind else {
             return false;
         };
         let branch_is_accumulator = |operand: &Node| is_accumulator(operand);
         let branch_is_other =
-            |operand: &Node| matches!(operand.kind, NodeKind::Local(slot) if slot == other_slot);
-        if !value_type.kind().is_ordered()
-            || other_node.value_type != *value_type
+            |operand: &Node| matches!(operand.kind, NodeKind::Local(slot) if slot == *other_slot);
+        if other_node.value_type != *value_type
             || !((branch_is_accumulator(then) && branch_is_other(otherwise))
                 || (branch_is_other(then) && branch_is_accumulator(otherwise)))
         {

@@ -1685,13 +1685,13 @@ struct AggregateCase {
 }
 
 impl AggregateCase {
-    /// `min` and `max` are `reduce`, which needs a nonempty collection.
     fn minimum(&self) -> u64 {
         0
     }
 }
 
 fn aggregate_source(kind: CollKind, aggregate: Aggregate) -> String {
+    let nonempty = matches!(aggregate, Aggregate::Min | Aggregate::Max);
     let minimum = 0;
     let parameters = format!("xs: {}<Int[-9, 9]>[{minimum}, 6]", kind.name());
     let (result, body) = match aggregate {
@@ -1701,7 +1701,7 @@ fn aggregate_source(kind: CollKind, aggregate: Aggregate) -> String {
         Aggregate::Min => (
             "A",
             if kind == CollKind::Sequence {
-                "fold<A>(m, x in xs: if x < m then x else m, identity: 9)".to_owned()
+                "reduce<A>(m, x in xs: if x < m then x else m)".to_owned()
             } else {
                 "fold<A>(m, x in xs: min(m, x), identity: 9)".to_owned()
             },
@@ -1709,7 +1709,7 @@ fn aggregate_source(kind: CollKind, aggregate: Aggregate) -> String {
         Aggregate::Max => (
             "A",
             if kind == CollKind::Sequence {
-                "fold<A>(m, x in xs: if m < x then x else m, identity: -9)".to_owned()
+                "reduce<A>(m, x in xs: if m < x then x else m)".to_owned()
             } else {
                 "fold<A>(m, x in xs: max(m, x), identity: -9)".to_owned()
             },
@@ -1723,6 +1723,22 @@ fn aggregate_source(kind: CollKind, aggregate: Aggregate) -> String {
         "type A = Integer;\n"
     };
     unit(None, alias, &parameters, result, &body)
+}
+
+fn aggregate_reduce_source(kind: CollKind, aggregate: Aggregate) -> String {
+    let parameters = format!("xs: {}<Int[-9, 9]>[0, 6]", kind.name());
+    let body = match aggregate {
+        Aggregate::Min => "reduce<A>(m, x in xs: min(m, x))",
+        Aggregate::Max => "reduce<A>(m, x in xs: max(m, x))",
+        _ => unreachable!("only min/max have a reduction property"),
+    };
+    unit(
+        None,
+        "type A = Int[-9, 9];\n",
+        &parameters,
+        "A",
+        body,
+    )
 }
 
 /// The fold of `items` (the reference), independent of the order given.
@@ -2013,10 +2029,11 @@ fn p4_refusals_agree_with_the_reference() {
 
 // ---------------------------------------------------------------- P5
 
+#[trace("TC-1907", "FR-701-AC-3")]
 #[test]
-fn p5_aggregates_equal_the_reference_fold_in_any_order() {
+fn p5_min_max_aggregates_equal_the_reference_fold_in_any_order() {
     prop::run(
-        "p5_aggregates_equal_the_reference_fold_in_any_order",
+        "p5_min_max_aggregates_equal_the_reference_fold_in_any_order",
         prop::config(1000),
         &aggregate_cases(),
         |case| {
@@ -2028,7 +2045,7 @@ fn p5_aggregates_equal_the_reference_fold_in_any_order() {
             reversed.reverse();
             let mut rotated = case.items.clone();
             rotated.rotate_left(case.rotation % case.items.len());
-            for order in [case.items.clone(), reversed, rotated] {
+            for order in [case.items.clone(), reversed.clone(), rotated.clone()] {
                 let args = [Arg::Coll {
                     kind: case.kind,
                     minimum: case.minimum(),
@@ -2042,7 +2059,9 @@ fn p5_aggregates_equal_the_reference_fold_in_any_order() {
                     source
                 );
             }
-            if matches!(case.aggregate, Aggregate::Min | Aggregate::Max) {
+            if matches!(case.aggregate, Aggregate::Min | Aggregate::Max)
+                && case.kind != CollKind::Sequence
+            {
                 let identity = if matches!(case.aggregate, Aggregate::Min) {
                     "9"
                 } else {
@@ -2058,6 +2077,46 @@ fn p5_aggregates_equal_the_reference_fold_in_any_order() {
                     Ok(identity.to_owned()),
                     "empty fold\n{}",
                     source
+                );
+
+                let reduce_source = aggregate_reduce_source(case.kind, case.aggregate);
+                let reduce_package = try_compile(&reduce_source, CheckMode::Linked)
+                    .map_err(|e| TestCaseError::fail(format!("{e}\n{reduce_source}")))?;
+                for order in [case.items.clone(), reversed, rotated] {
+                    let args = [Arg::Coll {
+                        kind: case.kind,
+                        minimum: 0,
+                        items: order.clone(),
+                    }];
+                    proptest::prop_assert_eq!(
+                        evaluate(&reduce_package, &args),
+                        Ok(expected.clone()),
+                        "reduce order {:?}\n{}",
+                        order,
+                        reduce_source
+                    );
+                }
+
+                let empty = [Arg::Coll {
+                    kind: case.kind,
+                    minimum: 0,
+                    items: Vec::new(),
+                }];
+                let reduction = reduce_package
+                    .call(
+                        &QualifiedName::unqualified("f").expect("identifier"),
+                        empty.iter().map(Arg::value).collect(),
+                        &ObjectEnvironment::default(),
+                        &mut Meter::new(UNLIMITED),
+                    )
+                    .expect("the empty reduction returns an outcome");
+                let FamilyOutcome::Evaluated(outcome) = reduction.outcome else {
+                    return Err(TestCaseError::fail("empty reduction has no kernel outcome"));
+                };
+                proptest::prop_assert!(
+                    matches!(outcome, Outcome::Undefined(Undefined::EmptyReduction)),
+                    "empty reduce returned {outcome:?}\n{}",
+                    reduce_source
                 );
             }
             Ok(())
