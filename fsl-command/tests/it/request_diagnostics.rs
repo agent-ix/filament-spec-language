@@ -332,18 +332,6 @@ fn the_format_is_refused_before_a_present_export_member() {
     );
 }
 
-fn entry_name(entry: Entry) -> &'static str {
-    match entry {
-        Entry::Run => "run",
-        Entry::RunReader => "run-reader",
-        Entry::Monitor => "monitor",
-        Entry::Compile => "compile",
-        Entry::Analyze => "analyze",
-        Entry::Export(ExportSelection::Ordinary) => "export",
-        Entry::Export(ExportSelection::Evidence) => "evidence",
-    }
-}
-
 /// FR-1047 Behavior: an unknown or repeated member is refused for that
 /// defect, ahead of any missing member.
 #[test]
