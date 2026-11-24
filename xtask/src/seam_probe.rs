@@ -746,7 +746,9 @@ fn forms_s2_report(workspace_root: &Path) -> Result<String> {
         .iter()
         .filter(|arm| {
             production(arm).is_some_and(|path| {
-                path.segments.len() == 2 && path.segments[0].ident == "state_model"
+                path.segments
+                    .iter()
+                    .any(|segment| segment.ident == "state_model")
             })
         })
         .collect();
@@ -914,7 +916,7 @@ mod state_model_tests {
 
     #[trace("TC-791", "FR-300-AC-3")]
     #[test]
-    fn a_state_model_arm_in_the_s2_dispatch_is_rejected() {
+    fn a_qualified_state_model_arm_in_the_s2_dispatch_is_rejected() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let scratch = tempfile::tempdir().unwrap();
         for file in [
@@ -931,7 +933,7 @@ mod state_model_tests {
         let source = fs::read_to_string(&file).unwrap();
         let changed = source.replace(
             "LeadingTokenKind::Body => protocol_clause::operation_body(construct),",
-            "LeadingTokenKind::Body => state_model::declaration(construct),",
+            "LeadingTokenKind::Body => crate::state_model::declaration(construct),",
         );
         assert_ne!(changed, source, "the real Body arm was found");
         fs::write(file, changed).unwrap();
