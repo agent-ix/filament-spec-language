@@ -1350,15 +1350,17 @@ fn a_witness_row_naming_b_alone_refuses() {
         .probabilistic_model()
         .claim("Max")
         .expect("the claim checks");
-    let request = || fsl_analyze::exact_probabilistic::ProductRequest {
-        subject: ModelSubject {
-            simulation: world.request(),
-            proof_bounds: Vec::new(),
+    let item = exact_probabilistic_item(
+        fsl_foundation::RequestIndex::new(0),
+        fsl_analyze::exact_probabilistic::ProductRequest {
+            subject: ModelSubject {
+                simulation: world.request(),
+                proof_bounds: Vec::new(),
+            },
+            claim,
+            limits: ExactProbLimits::default(),
         },
-        claim,
-        limits: ExactProbLimits::default(),
-    };
-    let item = exact_probabilistic_item(fsl_foundation::RequestIndex::new(0), request());
+    );
     let admitted = analyze_items(&engines, vec![item], &Cancel::new()).remove(0);
     let evidence = admitted
         .probabilistic_counterexample
@@ -1377,7 +1379,14 @@ fn a_witness_row_naming_b_alone_refuses() {
     let c = schedule(&world, &built, "C");
     let item = fsl_analyze::analyze::exact_probabilistic_item_witness_tampered(
         fsl_foundation::RequestIndex::new(0),
-        request(),
+        fsl_analyze::exact_probabilistic::ProductRequest {
+            subject: ModelSubject {
+                simulation: world.request(),
+                proof_bounds: Vec::new(),
+            },
+            claim,
+            limits: ExactProbLimits::default(),
+        },
         move |witness| {
             let Some((_, ProbabilisticSchedulerChoice::Deterministic(
                 ReplayProductAction::FreeDelays(rows),
