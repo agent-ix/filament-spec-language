@@ -288,7 +288,7 @@ pub use identity::{
     DeclaredDomain, DefinitionSourceRef, EmptyQualifiedName, ProfileSelection, QualifiedName,
     TracePosition,
 };
-pub use limits::{AccountingLimits, CallerLimits, EngineLimits, RenderLimits};
+pub use limits::{AccountingLimits, CallerLimits, EngineLimits, RenderLimits, WorkerCounts};
 pub use model_check::counterexample::{
     undefined_finding, ClaimPredicate, ClauseRunCounterexample, ClosureStutter, CounterexampleKind,
     Lasso, LoopProofCounterexample, LoopProofFailure, LoopProofObligation, MappingSite,
@@ -379,6 +379,7 @@ pub use model_check::settle::{
 pub use model_check::smt_query::{
     encode_smt_query, Refusal, SmtEncodingLimits, SmtEncodingRefusal, SmtQueryKind,
 };
+pub use fsl_eval::smt::SmtRunLimits;
 pub use model_check::state_graph::{
     GraphEvidence, GraphEvidenceEnvelope, GraphUndefined, GraphWitness, LassoWitness, ModelLasso,
     ModelPath, OpenCause, RunEnd, StateGraphInstanceOutcome, StateGraphOutcome,
