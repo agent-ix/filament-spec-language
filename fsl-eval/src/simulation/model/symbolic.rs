@@ -413,15 +413,15 @@ impl<'a> ModelSystem<'a> {
             }
             let result = match application.declaration.result() {
                 None => ResultValues::None,
-                Some(result_type) => ResultValues::Declared(
-                    match self.domain_with_clocks(result_type, references) {
+                Some(result_type) => {
+                    ResultValues::Declared(match self.domain_with_clocks(result_type, references) {
                         Some(domain) => ordered(domain, true)?,
                         None => match self.map_size_with_clocks(result_type, references) {
                             Some(size) if size > MAX_DOMAIN => ParameterValues::TooMany(size),
                             _ => ParameterValues::Unbounded,
                         },
-                    },
-                ),
+                    })
+                }
             };
             let applicable =
                 |group: &[ClauseInfo]| -> Result<Vec<&'a CheckedStateClause>, SmtEncodingRefusal> {

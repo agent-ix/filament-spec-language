@@ -149,20 +149,23 @@ mod stack_charge_tests {
         use super::syntax::BinderQuery;
         use super::{DeclarationForm, ExprNode};
 
-        let (unit, _) = build(
-            "function f using v(s: Boolean): Boolean pure { only(item in (s): item) }",
-        );
+        let (unit, _) =
+            build("function f using v(s: Boolean): Boolean pure { only(item in (s): item) }");
         let DeclarationForm::Function(function) = unit.forms()[0].form() else {
             panic!("a function form");
         };
-        assert!(matches!(
-            function.body.root_node(),
-            ExprNode::Query {
-                query: BinderQuery::Only,
-                binder,
-                ..
-            } if binder == "item"
-        ), "parsed Only expression: {:?}", function.body.root_node());
+        assert!(
+            matches!(
+                function.body.root_node(),
+                ExprNode::Query {
+                    query: BinderQuery::Only,
+                    binder,
+                    ..
+                } if binder == "item"
+            ),
+            "parsed Only expression: {:?}",
+            function.body.root_node()
+        );
     }
 
     const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\

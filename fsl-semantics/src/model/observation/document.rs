@@ -5204,7 +5204,9 @@ mod tests {
         let universe = filament_exact::UniverseId::new(
             filament_exact::NodeKey::new(
                 "fixture",
-                vec![filament_exact::PathSegment::Text("clock-universe".to_owned())],
+                vec![filament_exact::PathSegment::Text(
+                    "clock-universe".to_owned(),
+                )],
                 1,
             )
             .expect("universe node key"),
@@ -5219,16 +5221,18 @@ mod tests {
             None,
         );
         let path = vec![PathStep::Field("members".to_owned())];
-        let record = form_collection_value(
-            &set,
-            vec![reference.clone(), reference],
-            &path,
-        )
-        .expect_err("a duplicated typed clock-place member refuses");
+        let record = form_collection_value(&set, vec![reference.clone(), reference], &path)
+            .expect_err("a duplicated typed clock-place member refuses");
         assert_eq!(record.catalog.code(), Code::InvalidRuntimeInput.as_str());
         assert_eq!(record.catalog.cause(), "duplicate-member");
-        assert_eq!(record.fields.get("earlier-index").map(String::as_str), Some("0"));
-        assert_eq!(record.path, vec![PathStep::Field("members".to_owned()), PathStep::Index(1)]);
+        assert_eq!(
+            record.fields.get("earlier-index").map(String::as_str),
+            Some("0")
+        );
+        assert_eq!(
+            record.path,
+            vec![PathStep::Field("members".to_owned()), PathStep::Index(1)]
+        );
     }
 
     fn empty_population(population: &str, complete: bool) -> RawPopulation {

@@ -296,11 +296,8 @@ fn collect_clock_references(
         Value::Reference(reference) if is_clock_type(reference.object_type()) => {
             charge_seed(work, limit)?;
             references.push(
-                ClockPlaceReference::new(
-                    reference.universe().clone(),
-                    reference.object().as_str(),
-                )
-                .map_err(|_| ClockDomainRefusal::InvalidAdmittedSeed)?,
+                ClockPlaceReference::new(reference.universe().clone(), reference.object().as_str())
+                    .map_err(|_| ClockDomainRefusal::InvalidAdmittedSeed)?,
             );
         }
         Value::Option(option) => {

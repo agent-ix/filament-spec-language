@@ -1472,10 +1472,10 @@ mod tests {
         assert_eq!(set_of(vec![y.clone(), x.clone()]), expected);
         assert_eq!(set_of(vec![x, y]), expected);
 
-        let (Value::ClockReference(x), Value::ClockReference(y)) =
-            (crate::test_clock_reference::clock_reference_of("x"),
-             crate::test_clock_reference::clock_reference_of("y"))
-        else {
+        let (Value::ClockReference(x), Value::ClockReference(y)) = (
+            crate::test_clock_reference::clock_reference_of("x"),
+            crate::test_clock_reference::clock_reference_of("y"),
+        ) else {
             panic!("clock references");
         };
         let map_of = |entries| {
@@ -1493,7 +1493,10 @@ mod tests {
             (Value::ClockReference(y.clone()), Value::Boolean(true)),
             (Value::ClockReference(x.clone()), Value::Boolean(false)),
         ]);
-        assert_eq!(xy, yx, "map key order is independent of supplied entry order");
+        assert_eq!(
+            xy, yx,
+            "map key order is independent of supplied entry order"
+        );
 
         let state_key = |value: &Enc| {
             crate::simulation::key::canonical_state_key(
@@ -1503,8 +1506,14 @@ mod tests {
             .expect("a typed clock reference has a state key")
         };
         assert_eq!(state_key(&xy), state_key(&yx));
-        let set_xy = set_of(vec![Value::ClockReference(x.clone()), Value::ClockReference(y.clone())]);
-        let set_yx = set_of(vec![Value::ClockReference(y.clone()), Value::ClockReference(x.clone())]);
+        let set_xy = set_of(vec![
+            Value::ClockReference(x.clone()),
+            Value::ClockReference(y.clone()),
+        ]);
+        let set_yx = set_of(vec![
+            Value::ClockReference(y.clone()),
+            Value::ClockReference(x.clone()),
+        ]);
         assert_eq!(state_key(&set_xy), state_key(&set_yx));
         assert_ne!(
             state_key(&encode(&Value::ClockReference(x))),

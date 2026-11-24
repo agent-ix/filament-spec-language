@@ -250,7 +250,7 @@ impl Space {
                             orders,
                             visiting,
                         )
-                            .map(|space| (optional, space))
+                        .map(|space| (optional, space))
                     })
                     .collect::<Option<Vec<_>>>()?;
                 visiting.pop();
@@ -265,14 +265,10 @@ impl Space {
                     order,
                 })
             }
-            other => Domain::of_with_clock_references(
-                other,
-                objects,
-                clock_references,
-                types,
-                orders,
-            )
-            .map(Self::Plain),
+            other => {
+                Domain::of_with_clock_references(other, objects, clock_references, types, orders)
+                    .map(Self::Plain)
+            }
         }
     }
 
@@ -596,17 +592,15 @@ impl Domain {
             // most significant, and a model-variant union whose payload
             // positions all have one; a clock component is a place, not a
             // component of the checked value.
-            ValueType::Enum(_) | ValueType::Composite(_) => {
-                Space::of_with_clock_references(
-                    value_type,
-                    objects,
-                    clock_references,
-                    types,
-                    orders,
-                    &mut Vec::new(),
-                )
-                    .map(|space| Self::Space(Box::new(space)))
-            }
+            ValueType::Enum(_) | ValueType::Composite(_) => Space::of_with_clock_references(
+                value_type,
+                objects,
+                clock_references,
+                types,
+                orders,
+                &mut Vec::new(),
+            )
+            .map(|space| Self::Space(Box::new(space))),
             // FR-106 "Clock-reference domains": the candidates are the declared
             // clock-place identities of the admitted owners, supplied among
             // `objects` by the model system, never derived from an owner.
@@ -704,13 +698,9 @@ impl Domain {
             ValueType::Integer => Some(Self::SizeInteger {
                 bits: max_value_bits?,
             }),
-            _ => Self::of_with_clock_references(
-                value_type,
-                objects,
-                clock_references,
-                types,
-                orders,
-            ),
+            _ => {
+                Self::of_with_clock_references(value_type, objects, clock_references, types, orders)
+            }
         }
     }
 
@@ -760,14 +750,10 @@ impl Domain {
                 types,
                 orders,
             ),
-            other => Self::of_with_clock_references(
-                other,
-                objects,
-                clock_references,
-                types,
-                orders,
-            )
-            .map(|domain| domain.len()),
+            other => {
+                Self::of_with_clock_references(other, objects, clock_references, types, orders)
+                    .map(|domain| domain.len())
+            }
         };
         let (keys, values) = (size(map.key())?, size(map.values())?);
         Some(entries_size(keys, values, bound.minimum(), bound.maximum()))

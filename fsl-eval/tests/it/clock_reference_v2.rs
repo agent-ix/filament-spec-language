@@ -113,20 +113,10 @@ fn fixture_with(remove_x: bool, q_slots: QSlots) -> Checked {
         .and_then(Json::as_array_mut)
         .expect("Queue fields");
     queue_fields.extend([
-        ring_queue::single(
-            QUEUE,
-            "Queue",
-            "set_count",
-            "ix://filament/native/Integer",
-        ),
+        ring_queue::single(QUEUE, "Queue", "set_count", "ix://filament/native/Integer"),
         ring_queue::single(QUEUE, "Queue", "set_exists", "ix://filament/native/Boolean"),
         ring_queue::single(QUEUE, "Queue", "set_all", "ix://filament/native/Boolean"),
-        ring_queue::single(
-            QUEUE,
-            "Queue",
-            "set_only",
-            &node(QUEUE, "ClockRef"),
-        ),
+        ring_queue::single(QUEUE, "Queue", "set_only", &node(QUEUE, "ClockRef")),
     ]);
     let mut calls = add_reference(ring_queue::clock_calls(), CLOCKS, "Call", "r");
     let call = calls["types"]
@@ -247,7 +237,13 @@ fn clock_set_fixture() -> Checked {
         .and_then(Json::as_array_mut)
         .expect("Queue fields")
         .extend([
-            ring_queue::field(QUEUE, "Queue", "clock_set", &node(QUEUE, "ClockRef"), (0, 3, false)),
+            ring_queue::field(
+                QUEUE,
+                "Queue",
+                "clock_set",
+                &node(QUEUE, "ClockRef"),
+                (0, 3, false),
+            ),
             ring_queue::single(QUEUE, "Queue", "set_count", "ix://filament/native/Integer"),
             ring_queue::single(QUEUE, "Queue", "set_exists", "ix://filament/native/Boolean"),
             ring_queue::single(QUEUE, "Queue", "set_all", "ix://filament/native/Boolean"),
@@ -1917,7 +1913,11 @@ fn clock_reference_set_aggregators_use_the_canonical_member_order() {
             .unwrap_or_else(|| {
                 panic!(
                     "aggregate row {name} not found among {:?}",
-                    queue.fields.iter().map(|row| &row.field).collect::<Vec<_>>()
+                    queue
+                        .fields
+                        .iter()
+                        .map(|row| &row.field)
+                        .collect::<Vec<_>>()
                 )
             })
             .expression;
@@ -1949,11 +1949,15 @@ fn clock_reference_set_aggregators_use_the_canonical_member_order() {
         };
         let refs = set.elements();
         let count = row_value(state, "set_count");
-        assert!(matches!(
-            count,
-            FamilyOutcome::Evaluated(Outcome::Completed(Value::Integer(ref value)))
-                if value == &Integer::from(refs.len() as i64)
-        ), "count over {} Set members: {count:?}", refs.len());
+        assert!(
+            matches!(
+                count,
+                FamilyOutcome::Evaluated(Outcome::Completed(Value::Integer(ref value)))
+                    if value == &Integer::from(refs.len() as i64)
+            ),
+            "count over {} Set members: {count:?}",
+            refs.len()
+        );
         assert!(matches!(
             row_value(state, "set_exists"),
             FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(value)))
