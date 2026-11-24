@@ -54,8 +54,8 @@ use fsl_eval::simulation::{
 use fsl_replay::{
     abstract_classes, candidate_lasso_has_fair_run, check_initial, check_protocol_initial,
     check_protocol_state_relations, check_protocol_step, check_step,
-    open_protocol_systems, open_protocol_systems_with_initial_limit, open_systems,
-    open_systems_with_initial_limit, AbstractClass, AbstractProtocolSystem, CandidateFairState,
+    open_protocol_systems_with_initial_limit, open_systems_with_initial_limit, AbstractClass,
+    AbstractProtocolSystem, CandidateFairState,
     CandidateFairStep, CandidateLivenessError, CertifiedEdge, CertifiedPosition, ConcreteStep,
     CounterexampleKind, IncompleteCause, Lasso, LivenessHalf, ModelCheckLimit, ModelCheckLimits,
     ModelCheckOutcome, ModelStep, ProtocolRelationError, ProtocolStateRelation,
