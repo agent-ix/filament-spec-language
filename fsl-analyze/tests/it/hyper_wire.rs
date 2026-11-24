@@ -254,6 +254,43 @@ fn analyze_hyper_outside_the_admitted_forms_is_a_typed_refusal() {
     );
 }
 
+/// FR-173-AC-5 (TC-598): negotiation removes the EN-1 target from an HP-4
+/// item while preserving the supported Universal sibling's candidate.
+#[trace("TC-598", "FR-173-AC-5")]
+#[test]
+fn hp4_negotiation_has_no_route_target_and_keeps_its_universal_sibling() {
+    let declaration = "hyper Other using inf over behaviours (v: V::Vault) \
+        exists trace b of V forall trace a of V { always holds(v.h @ a = v.h @ b) }\n\
+        hyper Universal using inf over behaviours (v: V::Vault) \
+        forall trace a of V { always holds(v.h @ a = v.h @ a) }";
+    let (unit, model, snapshots) =
+        request_files_over_starts(Vault::Secure, false, &STARTS, declaration);
+    let ws = Workspace::new("hyper-wire-hp4-sibling");
+    let run = analyze(&request_over(
+        &ws,
+        &unit,
+        &model,
+        &snapshots,
+        json!({"items": [{"claim": "Other"}, {"claim": "Universal"}]}),
+    ));
+    let unsupported = run.item(0);
+    assert_eq!(label(&unsupported), "unsupported", "{}", run.document());
+    assert_eq!(
+        unsupported["record"]["diagnostic"]["cause"],
+        "unsupported-requested-capability"
+    );
+    assert_eq!(unsupported["request"]["candidates"]["backends"], json!([]));
+    assert!(unsupported["counterexample"].is_null());
+
+    let supported = run.item(1);
+    assert_eq!(label(&supported), "proved", "{}", run.document());
+    assert_eq!(
+        supported["request"]["candidates"]["backends"],
+        json!([fsl_route::tie::EN1])
+    );
+    assert_eq!(supported["certificate"]["accepted"], true);
+}
+
 /// FR-179 through `native-analyze/1`: a step relation over reachable
 /// transitions is checked by enumerating the tuples of its executions. Over
 /// the vault's `reset`, `h` is unchanged, so two resets from equal `h` agree
