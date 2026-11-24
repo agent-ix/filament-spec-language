@@ -295,6 +295,7 @@ enum Arg {
     CollRat {
         kind: CollKind,
         minimum: u64,
+        maximum: u64,
         items: Vec<(i128, i128)>,
     },
 }
@@ -346,7 +347,12 @@ fn rational_domain() -> RationalDomain {
     RationalDomain::new(int_interval(0, 4), int_interval(1, 2)).expect("bounded rational domain")
 }
 
-fn rational_collection_value(kind: CollKind, minimum: u64, items: &[(i128, i128)]) -> Value {
+fn rational_collection_value(
+    kind: CollKind,
+    minimum: u64,
+    maximum: u64,
+    items: &[(i128, i128)],
+) -> Value {
     let kind = match kind {
         CollKind::Sequence => CollectionKind::Sequence,
         CollKind::Set => CollectionKind::Set,
@@ -355,7 +361,7 @@ fn rational_collection_value(kind: CollKind, minimum: u64, items: &[(i128, i128)
     let ty = CollectionType::new(
         kind,
         ValueType::Rational(rational_domain()),
-        Some(CardinalityBound::new(minimum, 6).expect("bound")),
+        Some(CardinalityBound::new(minimum, maximum).expect("bound")),
     );
     let members = items
         .iter()
@@ -408,8 +414,9 @@ impl Arg {
             Arg::CollRat {
                 kind,
                 minimum,
+                maximum,
                 items,
-            } => rational_collection_value(*kind, *minimum, items),
+            } => rational_collection_value(*kind, *minimum, *maximum, items),
         }
     }
 }
@@ -2174,6 +2181,7 @@ fn bounded_rational_bag_min_max_reductions_are_permutation_invariant() {
             let args = [Arg::CollRat {
                 kind: CollKind::Bag,
                 minimum: 1,
+                maximum: 3,
                 items: order.clone(),
             }];
             assert_eq!(evaluate(&package, &args), Ok(expected.to_owned()), "{source}");
