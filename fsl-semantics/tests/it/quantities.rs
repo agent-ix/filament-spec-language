@@ -1018,10 +1018,13 @@ fn a_normalized_derived_dimension_keeps_its_declared_conversion_boundary() {
         panic!("direct conversion across distinct dimension nodes must refuse");
     };
     assert_eq!(refusals.len(), 1, "{refusals:?}");
-    assert!(matches!(
-        refusals[0].cause,
-        fsl_semantics::check::CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
-    ), "{refusals:?}");
+    assert!(
+        matches!(
+            refusals[0].cause,
+            fsl_semantics::check::CheckCause::IllTyped(filament_exact::IllTypedCause::TypeMismatch)
+        ),
+        "{refusals:?}"
+    );
 
     let fixture = fixture();
     let length = fixture.graph.dimension(fixture.length).unwrap();

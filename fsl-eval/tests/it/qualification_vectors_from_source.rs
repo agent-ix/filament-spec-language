@@ -5,18 +5,18 @@
 
 use filament_eval::FamilyOutcome;
 use filament_exact::{
-    ChargePoint, Decimal, DecimalRepresentation, IeeeComparison, IeeeValue, Incomplete, Integer,
-    LimitKind, Meter, Outcome, Quantity, Rational, Refusal, ScalarLimits, TextPayload, TextProfile,
-    TextType, UnitDomain, Value, admit_text, compare_ieee,
+    admit_text, compare_ieee, ChargePoint, Decimal, DecimalRepresentation, IeeeComparison,
+    IeeeValue, Incomplete, Integer, LimitKind, Meter, Outcome, Quantity, Rational, Refusal,
+    ScalarLimits, TextPayload, TextProfile, TextType, UnitDomain, Value,
 };
 use filament_semantic_value::checking::{CheckMode, CheckingLimits};
 use filament_semantic_value::loss::ValueLoss;
-use filament_specification::{QUALIFICATION_VECTORS, QualificationVector, TestCase};
+use filament_specification::{QualificationVector, TestCase, QUALIFICATION_VECTORS};
 use fsl_eval::value::{CheckedPackageEvaluation, QualifiedName};
 use fsl_package::CheckedPackage;
 use fsl_semantics::check::{CheckedGraph, PackageDeclarations};
 use fsl_semantics::model::object_environment::ObjectEnvironment;
-use fsl_semantics::value::{DefinitionRole, admit_ieee_profile};
+use fsl_semantics::value::{admit_ieee_profile, DefinitionRole};
 use ix_trace_rs::trace;
 
 const UNLIMITED: ScalarLimits = ScalarLimits {
@@ -853,11 +853,9 @@ fn text_cases(vector: &QualificationVector) -> Option<Vec<SourceCase>> {
             let inputs = quoted(vector.inputs);
             let left = quote(&unicode_scalars(vector.inputs)[0].to_string());
             let right = quote(inputs[0]);
-            assert!(
-                vector
-                    .expected
-                    .starts_with("equal under compatibility profiles; unequal under `nfc`")
-            );
+            assert!(vector
+                .expected
+                .starts_with("equal under compatibility profiles; unequal under `nfc`"));
             inputs[1..]
                 .iter()
                 .map(|profile| text_comparison(profile, &left, &right, "=", *profile != "nfc"))
