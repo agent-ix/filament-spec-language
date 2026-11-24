@@ -759,6 +759,8 @@ fn guarded_proof(world: &World) -> (ComponentCertificate, RunStats) {
                 item: request.item,
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             &Cancel::new(),

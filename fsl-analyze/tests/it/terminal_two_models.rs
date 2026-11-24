@@ -1253,6 +1253,8 @@ fn an_uncovered_identitys_invariant_is_refused_and_its_snapshot_admitted() {
             },
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
             reductions: Default::default(),
         },
         &Cancel::new(),

@@ -600,6 +600,8 @@ temporal Projection using inf over (c: M::Call) clock \"model-steps\" on origin 
                 },
                 max_depth: None,
                 limits: ModelCheckLimits::default(),
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             &Cancel::new(),

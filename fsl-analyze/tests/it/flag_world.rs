@@ -28,13 +28,13 @@ use std::collections::BTreeMap;
 
 use filament_checked::key::DeclarationKey;
 use filament_exact::{Cancel, Meter, Value};
-use fsl_analyze::model_check::{check_model, ModelCheckRefusal, ModelCheckRequest};
+use fsl_analyze::model_check::{ModelCheckRefusal, ModelCheckRequest, check_model};
 use fsl_eval::automaton::translate;
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters, ModelSubject};
+use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::simulation::model::{
     ExpansionLimits, ModelSimState, ModelSimulationRequest, ModelSystem, PopulationUniverse,
 };
-use fsl_eval::simulation::TransitionSystem;
 use fsl_eval::temporal::AtomReading;
 use fsl_package::CheckedPackage;
 use fsl_replay::{
@@ -46,11 +46,11 @@ use fsl_semantics::check::{CheckedTemporalClause, FormulaNodeId};
 use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 use crate::counter::UNLIMITED;
-use crate::reduction_world::{clause_identity, replay_unit, ReplayUnit};
-use crate::units::{checked, clause, unit, Domain};
+use crate::reduction_world::{ReplayUnit, clause_identity, replay_unit};
+use crate::units::{Domain, checked, clause, unit};
 
 /// The keys of the subject's population.
 pub(crate) const KEYS: [&str; 2] = ["a", "b"];
@@ -130,15 +130,16 @@ impl Subject {
     /// group (ADR-021 SYM-4), so its image under `(a b)` follows it.
     fn starts(self) -> Vec<Vec<(&'static str, Json)>> {
         match self {
-            Self::Toggle => vec![KEYS
-                .iter()
-                .map(|key| {
-                    (
-                        *key,
-                        json!({"on": {"boolean": false}, "fired": {"boolean": false}}),
-                    )
-                })
-                .collect()],
+            Self::Toggle => vec![
+                KEYS.iter()
+                    .map(|key| {
+                        (
+                            *key,
+                            json!({"on": {"boolean": false}, "fired": {"boolean": false}}),
+                        )
+                    })
+                    .collect(),
+            ],
             Self::Token => ["b", "a"]
                 .into_iter()
                 .map(|holder| {
@@ -439,6 +440,8 @@ impl World {
                 },
                 max_depth: None,
                 limits,
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions,
             },
             &Cancel::new(),

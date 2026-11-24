@@ -133,9 +133,9 @@ use fsl_package::{ModelIdentity, ObligationIdentity};
 
 pub use admitted::{
     compile_admitted, compile_admitted_with_temporal_selections, AdmittedCompilation,
-    AdmittedComposite, AdmittedCompositeForm, AdmittedContext, AdmittedDimension, AdmittedEnum,
-    AdmittedEnumCase, AdmittedLookupRefusal, AdmittedRefusal, AdmittedResource,
-    AdmittedUnionMember, AdmittedUnit,
+    AdmittedComposite, AdmittedCompositeForm, AdmittedContext, AdmittedDimension,
+    AdmittedDimensionEquivalence, AdmittedEnum, AdmittedEnumCase, AdmittedLookupRefusal,
+    AdmittedRefusal, AdmittedResource, AdmittedUnionMember, AdmittedUnit,
 };
 pub use application::{
     acquire_checked_closure, acquire_checked_closure_with_integer_division,
@@ -149,7 +149,9 @@ pub use bounds::{BoundExceeded, ReplayLimits, DEFAULT_REPLAY_INPUT_BYTES};
 pub use build_inventory::{
     build_inventory, Advertisement, Application, BuildInventory, Consumer, Family, Profile,
 };
-pub use call_replay_context::{run_with_replay_context, CallReplayContext, RunWithReplayContext};
+pub use call_replay_context::{
+    run_with_replay_context, CallReplayContext, PackageId, RunWithReplayContext,
+};
 pub use call_requirements::{
     call_requirements_for, run_with_requirements, run_with_requirements_reading,
     run_with_requirements_reading_and_profile_catalog,
@@ -331,6 +333,13 @@ pub use model_check::hyper_smt_outcome::{HyperSmtOutcome, HyperSmtResult, SmtMet
 pub use model_check::hyper_smt_query::{
     encode_hyper_query, HyperProductIdentity, HyperQuery, HyperQueryRequest,
 };
+/// The SMT replay API for HP-2 products, kept together as the replay module's
+/// narrow downstream surface (FR-315).
+pub mod replay {
+    pub use crate::{
+        encode_hyper_query, HyperProductIdentity, HyperQuery, HyperQueryRequest, SubjectIdentity,
+    };
+}
 pub use model_check::identity::{
     node_occurrence, ClauseIdentity, ClauseRootRefusal, HyperIdentity, StateGraphIdentity,
 };
@@ -567,7 +576,9 @@ pub use fsl_foundation::source::provenance::{OccurrenceKey, SourceRegion};
 // T-12-governed constructor (ADR-011 §3 FB-05), so no rule is broken; CG
 // needs exactly these to build the requests `call_site` and `replay`
 // (FR-098) and `replay_frame` (FR-116) read.
-pub use filament_exact::{Identifier, NodeKey, Origin, Role, ScalarLimits, Value};
+pub use filament_eval::ExecutionBackendChoice;
+pub use filament_exact::{Identifier, NodeKey, Origin, PathSegment, Role, ScalarLimits, Value};
+pub use filament_semantic_value::supplied_stop::SuppliedLimits;
 pub use fsl_foundation::SourceIdentity;
 // FR-395: the types of `run`'s signature and result that the root did not
 // export, so a consumer calls `run_with_requirements` and reads its result

@@ -607,6 +607,26 @@ pub fn protocol_constraints<E>(
         if member.granularity() == FairnessGranularity::Whole {
             classes.insert(ProtocolClass::Whole, Vec::new());
         }
+        if member.granularity() == FairnessGranularity::Each {
+            if let ProtocolTarget::MemoryStep {
+                parallel, branch, ..
+            } = member.target()
+            {
+                for transition in transitions {
+                    let Some(thread) = transition.thread() else {
+                        continue;
+                    };
+                    if thread.steps.last().is_some_and(|step| {
+                        step.node() == Some(parallel.as_str())
+                            && step.branch() == Some(branch.as_str())
+                    }) {
+                        classes
+                            .entry(ProtocolClass::Thread(thread.clone()))
+                            .or_default();
+                    }
+                }
+            }
+        }
         for transition in transitions {
             if let Some(class) = member.class_of(transition) {
                 classes

@@ -141,6 +141,47 @@ pub struct ModelCheckRequest<'a> {
     pub limits: ModelCheckLimits,
     /// The reductions the request selects (FR-159).
     pub reductions: Reductions,
+    /// FR-315's limits for encoding this item's SMT queries.
+    pub smt_encoding: fsl_replay::SmtEncodingLimits,
+    /// FR-315's limits for running this item's SMT queries.
+    pub smt_run: fsl_replay::SmtRunLimits,
+}
+
+/// The identity contribution of one EN-1 request's SMT limits.
+///
+/// Encoding bounds and solver-step bounds change the work a request can
+/// complete, so they are identity-bearing. Solver wall-clock time is
+/// nondeterministic and is deliberately omitted.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct ModelCheckRequestIdentity {
+    /// The caller's query-encoding bounds.
+    pub smt_encoding: fsl_replay::SmtEncodingLimits,
+    /// The deterministic solver-step bound.
+    pub max_solver_steps: u64,
+}
+
+impl<'a> ModelCheckRequest<'a> {
+    /// The identity-bearing SMT limits of this request (FR-315, FR-331).
+    pub fn identity(&self) -> ModelCheckRequestIdentity {
+        ModelCheckRequestIdentity {
+            smt_encoding: self.smt_encoding,
+            max_solver_steps: self.smt_run.max_solver_steps,
+        }
+    }
+
+    /// The closure-certificate request for this run, carrying its exact
+    /// encoding limits forward to FR-338's checker.
+    pub fn certificate_request(&self) -> fsl_replay::CertificateRequest<'a> {
+        fsl_replay::CertificateRequest {
+            subject: ModelSubject {
+                simulation: self.subject.simulation.clone(),
+                proof_bounds: self.subject.proof_bounds.clone(),
+            },
+            temporal_clock_selections: self.temporal_clock_selections,
+            item: self.item,
+            smt_encoding: self.smt_encoding,
+        }
+    }
 }
 
 /// The model system `request` runs over. The derived deadlock-freedom item

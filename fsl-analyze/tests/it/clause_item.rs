@@ -418,6 +418,8 @@ fn a_package_of_two_source_units_replays_from_its_complete_provision() {
             },
             max_depth: None,
             limits: fsl_replay::ModelCheckLimits::default(),
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
             reductions: Default::default(),
         },
         &Cancel::new(),

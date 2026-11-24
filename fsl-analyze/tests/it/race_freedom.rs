@@ -710,6 +710,8 @@ fn the_race_freedom_item_over_a_model_subject_is_refused() {
             item: ModelCheckItem::RaceFreedom,
             max_depth: None,
             limits: ModelCheckLimits::default(),
+            smt_encoding: Default::default(),
+            smt_run: Default::default(),
             reductions: Default::default(),
         },
         &Cancel::new(),

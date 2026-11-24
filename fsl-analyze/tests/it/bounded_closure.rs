@@ -173,6 +173,8 @@ impl Bounded {
                 item: self.item(),
                 max_depth,
                 limits,
+                smt_encoding: Default::default(),
+                smt_run: Default::default(),
                 reductions: Default::default(),
             },
             &Cancel::new(),

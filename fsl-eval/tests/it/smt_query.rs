@@ -13,8 +13,8 @@ use filament_semantic_value::fairness::PropertyForm;
 use fsl_eval::model_subject::ModelSubject;
 use fsl_eval::simulation::model::{ExpansionLimits, ModelSimulationRequest, PopulationUniverse};
 use fsl_eval::smt::{
-    encode_smt_query, Measure, MonitorTable, Refusal, SmtEncodingLimits, SmtEncodingRefusal,
-    SmtItem, SmtQueryKind,
+    Measure, MonitorTable, Refusal, SmtEncodingLimits, SmtEncodingRefusal, SmtItem, SmtQueryKind,
+    encode_smt_query,
 };
 use fsl_foundation::SourceIdentity;
 use fsl_package::CheckedPackage;
@@ -23,7 +23,7 @@ use fsl_semantics::model::accounting::ModelNormalizationLimits;
 use fsl_semantics::model::intake::{admit_unit, meaning, package_input};
 use fsl_semantics::model::observation::{DocumentRef, ObservationLimits};
 use ix_trace_rs::trace;
-use serde_json::{json, Value as Json};
+use serde_json::{Value as Json, json};
 
 const PACKAGE: &str = "test/smt";
 const INFINITE: &str = "filament.temporal.infinite-trace/v1";
@@ -187,13 +187,33 @@ fn world(
     formulas: &[&str],
     start: &[(&str, Json)],
 ) -> World {
+    world_with_activation(
+        (object, variable),
+        document,
+        contracts,
+        profile,
+        "on origin",
+        formulas,
+        start,
+    )
+}
+
+fn world_with_activation(
+    (object, variable): (&str, &str),
+    document: &[u8],
+    contracts: &str,
+    profile: &str,
+    activation: &str,
+    formulas: &[&str],
+    start: &[(&str, Json)],
+) -> World {
     let packages = package_input([document]).unwrap();
     let clauses: String = formulas
         .iter()
         .enumerate()
         .map(|(index, formula)| {
             format!(
-                "temporal C{index} using t over ({variable}: M::{object}) clock \"model-steps\" on origin {{ {formula} }}\n"
+                "temporal C{index} using t over ({variable}: M::{object}) clock \"model-steps\" {activation} {{ {formula} }}\n"
             )
         })
         .collect();
@@ -370,7 +390,7 @@ impl World {
 
 /// FR-315-AC-44: temporal query encoding reads caller-supplied limits,
 /// including zero, exact and one-short boundaries.
-#[trace("TC-1250", "FR-315-AC-44")]
+#[trace("TC-1250", "FR-315-AC-40", "FR-315-AC-44")]
 #[test]
 fn encoding_limits_apply_at_zero_exact_and_one_short_values() {
     let world = counter(BOUNDED, &["always[0,3] holds(c.value <= 3)"]);
@@ -433,18 +453,23 @@ fn encoding_limits_apply_at_zero_exact_and_one_short_values() {
 
     let script_bytes = u64::try_from(default.len()).expect("script length fits u64");
     limits = SmtEncodingLimits {
-        max_script_bytes: 0,
+        max_script_bytes: 1,
         ..SmtEncodingLimits::default()
     };
     assert!(matches!(
         world.query_with_limits(0, kind, &limits),
         Err(SmtEncodingRefusal::Refused(Refusal::TooLarge {
             measure: Measure::ScriptBytes,
-            value: 1,
-            limit: 0,
+            value,
+            limit: 1,
             setting: "smt_encoding.max_script_bytes",
-        }))
+        })) if value > 1
     ));
+    assert_eq!(
+        world.query_with_limits(0, kind, &limits),
+        world.query_with_limits(0, kind, &limits),
+        "the one-byte refusal is deterministic"
+    );
     limits.max_script_bytes = script_bytes;
     assert_eq!(
         world.query_with_limits(0, kind, &limits),
@@ -462,7 +487,7 @@ fn encoding_limits_apply_at_zero_exact_and_one_short_values() {
 }
 
 /// FR-315-AC-44: monitor atom and state caps are supplied by the same request.
-#[trace("TC-1250", "FR-315-AC-44")]
+#[trace("TC-1250", "FR-315-AC-40", "FR-315-AC-44")]
 #[test]
 fn monitor_encoding_limits_accept_exact_and_reject_zero_or_one_short() {
     let world = counter(
@@ -509,6 +534,58 @@ fn monitor_encoding_limits_accept_exact_and_reject_zero_or_one_short() {
             ..
         })) if limit == exact_states - 1
     ));
+    limits.max_monitor_states = 1;
+    let too_small = world.query_with_limits(0, kind, &limits);
+    assert!(matches!(
+        &too_small,
+        Err(SmtEncodingRefusal::Refused(Refusal::TooLarge {
+            measure: Measure::MonitorStates,
+            value,
+            limit: 1,
+            setting: "smt_encoding.max_monitor_states",
+        })) if *value > 1
+    ));
+    assert_eq!(
+        too_small,
+        world.query_with_limits(0, kind, &limits),
+        "the one-state refusal is deterministic"
+    );
+}
+
+#[test]
+fn monitor_alphabet_width_overflow_is_a_typed_size_refusal() {
+    let atoms = (0..63)
+        .map(|value| format!("holds(c.value = {value})"))
+        .collect::<Vec<_>>();
+    let body = format!("always ({})", atoms.join(" and "));
+    let formulas = [body.as_str()];
+    let world = world_with_activation(
+        ("Counter", "c"),
+        &document(
+            "Counter",
+            vec![field("Counter", "value", &ident("Level"), "required")],
+            vec![operation("Counter", "inc", &["value"])],
+        ),
+        COUNTER_CONTRACT,
+        INFINITE,
+        "on each (q: M::Counter) when (c.value >= 0)",
+        &formulas,
+        &[("c", json!({"value": {"integer": "0"}}))],
+    );
+    let limits = SmtEncodingLimits {
+        max_monitor_atoms: 64,
+        ..SmtEncodingLimits::default()
+    };
+
+    assert!(matches!(
+        world.query_with_limits(0, SmtQueryKind::Unrolling { depth: 1 }, &limits),
+        Err(SmtEncodingRefusal::Refused(Refusal::TooLarge {
+            measure: Measure::MonitorAtoms,
+            value: 64,
+            limit: 63,
+            setting: "smt_encoding.max_monitor_atoms",
+        }))
+    ));
 }
 
 /// `Counter`: `value: Int[0, 3]`, operation `inc` modifying it, guarded by
@@ -518,6 +595,311 @@ const COUNTER_CONTRACT: &str = "pre CanInc using v on M::Counter::inc { self.val
 
 fn counter(profile: &str, formulas: &[&str]) -> World {
     counter_with(COUNTER_CONTRACT, profile, formulas)
+}
+
+#[trace("TC-1201", "FR-315-AC-33")]
+#[test]
+fn bounded_on_each_queries_use_the_finite_monitor_and_end_letter() {
+    let document = document(
+        "Counter",
+        vec![field("Counter", "value", &ident("Level"), "required")],
+        vec![operation("Counter", "inc", &["value"])],
+    );
+    let contract = "pre CanInc using v on M::Counter::inc { self.value < 3 }\n\
+        post Inc using v on M::Counter::inc { self.value = pre(self.value) + 1 }\n";
+    let world = world_with_activation(
+        ("Counter", "c"),
+        &document,
+        contract,
+        BOUNDED,
+        "on each (q: M::Counter)",
+        &["eventually[0,1] holds(c.value = 3)"],
+        &[("c", json!({"value": {"integer": "0"}}))],
+    );
+    let script = world
+        .query(0, SmtQueryKind::Unrolling { depth: 2 })
+        .expect("encodes");
+    assert_eq!(
+        declared(&script),
+        [
+            "s0.c.value Int)",
+            "m0.0 Int)",
+            "h0 Bool)",
+            "s1.c.value Int)",
+            "m1.0 Int)",
+            "h1 Bool)",
+            "s2.c.value Int)",
+            "m2.0 Int)",
+            "h2 Bool)",
+        ]
+    );
+    has(&script, "(assert (= s0.c.value 0))");
+    has(&script, "(assert (not h0))");
+    let all = assertions(&script);
+    let shown: Vec<String> = all.iter().map(show).collect();
+    for position in 0..=2 {
+        assert!(shown.contains(&format!(
+            "(and (<= 0 s{position}.c.value) (<= s{position}.c.value 3))"
+        )));
+        assert!(shown.contains(&format!("(and (<= 0 m{position}.0) (<= m{position}.0 2))")));
+    }
+    assert!(shown.iter().any(|assertion| {
+        assertion.starts_with("(and (= h1 (or h0 (not ")
+            && assertion.contains("(or h1 (and (< s0.c.value 3)")
+            && !assertion.contains("(= s1.c.value s0.c.value)")
+    }));
+    assert!(shown.iter().any(|assertion| {
+        assertion.starts_with("(and (= h2 (or h1 (not ")
+            && assertion.contains("(or h2 (and (< s1.c.value 3)")
+            && !assertion.contains("(= s2.c.value s1.c.value)")
+    }));
+    assert!(shown.contains(&"(=> (not (= s0.c.value 3)) (= m0.0 1))".to_owned()));
+    assert!(shown.contains(&"(=> (= s0.c.value 3) (= m0.0 0))".to_owned()));
+    assert!(shown.contains(&"(=> h0 (= m0.0 0))".to_owned()));
+    let negated = operands(all.last().expect("negated property"), "or");
+    assert_eq!(negated.len(), 6, "{negated:?}");
+    for position in 0..=2 {
+        assert_eq!(negated[position * 2], format!("(= m{position}.0 2)"));
+        let postcondition_failure = &negated[position * 2 + 1];
+        assert!(postcondition_failure.contains(&format!("(not h{position})")));
+        assert!(postcondition_failure.contains(&format!("(+ s{position}.c.value 1)")));
+    }
+    assert_eq!(
+        script,
+        world
+            .query(0, SmtQueryKind::Unrolling { depth: 2 })
+            .expect("encodes identically")
+    );
+    world
+        .query(0, SmtQueryKind::InductionBase { depth: 1 })
+        .expect("encodes the induction base");
+    let step = world
+        .query(0, SmtQueryKind::InductionStep { depth: 1 })
+        .expect("encodes the induction step");
+    let step_assertions: Vec<String> = assertions(&step).iter().map(show).collect();
+    assert!(!step.contains("(= s0.c.value 0)"), "{step}");
+    assert!(!step_assertions.contains(&"(not h0)".to_owned()), "{step}");
+    let step_implication_targets: Vec<String> = assertions(&step)
+        .iter()
+        .filter_map(implication_target)
+        .collect();
+    assert!(
+        !step_implication_targets
+            .iter()
+            .any(|target| target.starts_with("(= m0.0 "))
+    );
+    assert!(step_assertions.contains(
+        &"(not (and (= h1 h0) (or h1 (= s1.c.value s0.c.value)) (= m1.0 m0.0)))".to_owned()
+    ));
+}
+
+#[trace("TC-1201", "FR-315-AC-36")]
+#[test]
+fn guarded_infinite_and_bounded_items_preserve_monitor_and_guard_failures() {
+    let document = document(
+        "Counter",
+        vec![field("Counter", "value", &ident("Level"), "required")],
+        vec![operation("Counter", "inc", &["value"])],
+    );
+    let contract = "pre CanInc using v on M::Counter::inc { self.value < 3 }\n\
+        post Inc using v on M::Counter::inc { self.value = pre(self.value) + 1 }\n";
+    let infinite = world_with_activation(
+        ("Counter", "c"),
+        &document,
+        contract,
+        INFINITE,
+        "on each (q: M::Counter) when (c.value >= 3)",
+        &["always holds(c.value <= 1)"],
+        &[("c", json!({"value": {"integer": "0"}}))],
+    );
+    let script = infinite
+        .query(0, SmtQueryKind::Unrolling { depth: 1 })
+        .expect("guarded infinite item encodes");
+    assert_eq!(
+        declared(&script),
+        [
+            "s0.c.value Int)",
+            "m0.0 Int)",
+            "s1.c.value Int)",
+            "m1.0 Int)",
+        ]
+    );
+    assert!(!script.contains("h0"), "{script}");
+    let infinite_assertions: Vec<String> = assertions(&script).iter().map(show).collect();
+    for expected in [
+        "(=> (and (not (>= s0.c.value 3)) (not (<= s0.c.value 1))) (= m0.0 0))",
+        "(=> (and (>= s0.c.value 3) (not (<= s0.c.value 1))) (= m0.0 1))",
+        "(=> (and (not (>= s0.c.value 3)) (<= s0.c.value 1)) (= m0.0 0))",
+        "(=> (and (>= s0.c.value 3) (<= s0.c.value 1)) (= m0.0 2))",
+    ] {
+        assert!(
+            infinite_assertions.contains(&expected.to_owned()),
+            "{expected}\n{script}"
+        );
+    }
+    assert!(infinite_assertions.iter().any(|assertion| {
+        assertion.starts_with("(or ") && assertion.contains("(= s1.c.value s0.c.value)")
+    }));
+    for letters in [
+        "(not (>= s1.c.value 3)) (not (<= s1.c.value 1))",
+        "(>= s1.c.value 3) (not (<= s1.c.value 1))",
+        "(not (>= s1.c.value 3)) (<= s1.c.value 1)",
+        "(>= s1.c.value 3) (<= s1.c.value 1)",
+    ] {
+        let expected = format!("(=> (and (= m0.0 1) (and {letters})) (= m1.0 1))");
+        assert!(
+            infinite_assertions.contains(&expected),
+            "{expected}\n{script}"
+        );
+    }
+
+    let bounded = world_with_activation(
+        ("Counter", "c"),
+        &document,
+        contract,
+        BOUNDED,
+        "on each (q: M::Counter) when (c.value + 2 = c.value)",
+        &["eventually[0,3] holds(c.value = 3)"],
+        &[("c", json!({"value": {"integer": "0"}}))],
+    );
+    let script = bounded
+        .query(0, SmtQueryKind::Unrolling { depth: 2 })
+        .expect("guarded bounded item encodes");
+    let bounded_declarations = declared(&script);
+    assert_eq!(
+        bounded_declarations,
+        [
+            "s0.c.value Int)",
+            "m0.0 Int)",
+            "h0 Bool)",
+            "s1.c.value Int)",
+            "m1.0 Int)",
+            "h1 Bool)",
+            "s2.c.value Int)",
+            "m2.0 Int)",
+            "h2 Bool)",
+        ]
+    );
+    let bounded_assertions = assertions(&script);
+    let negated = operands(bounded_assertions.last().expect("negated property"), "or");
+    assert_eq!(negated.len(), 9, "{negated:?}");
+    for position in 0..=2 {
+        assert_eq!(negated[position * 3], format!("(= m{position}.0 4)"));
+        assert_eq!(
+            negated[position * 3 + 1],
+            format!(
+                "(and (not h{position}) (not (and (<= 0 (+ s{position}.c.value 2)) (<= (+ s{position}.c.value 2) 3))))"
+            )
+        );
+        let postcondition_failure = &negated[position * 3 + 2];
+        assert!(postcondition_failure.starts_with(&format!(
+            "(and (not h{position}) (and (< s{position}.c.value 3)"
+        )));
+        assert!(postcondition_failure.contains(&format!("(+ s{position}.c.value 1)")));
+        assert!(!postcondition_failure.contains(&format!("(not (= s{position}.c.value 3))")));
+    }
+}
+
+#[trace("TC-1201", "FR-315-AC-38")]
+#[test]
+fn monitor_queries_encode_one_monitor_per_over_binding() {
+    let document = document(
+        "Counter",
+        vec![field("Counter", "value", &ident("Level"), "required")],
+        vec![operation("Counter", "inc", &["value"])],
+    );
+    let contract = "pre CanInc using v on M::Counter::inc { self.value < 3 }\n\
+        post Inc using v on M::Counter::inc { self.value = pre(self.value) + 1 }\n";
+    let world = world(
+        ("Counter", "x"),
+        &document,
+        contract,
+        INFINITE,
+        &["always (holds(x.value = 1) implies eventually[0,1] holds(x.value = 2))"],
+        &[
+            ("c", json!({"value": {"integer": "0"}})),
+            ("d", json!({"value": {"integer": "0"}})),
+        ],
+    );
+    let script = world
+        .query_with(&["c", "d"], 0, SmtQueryKind::Unrolling { depth: 2 })
+        .expect("the multi-instance monitor item encodes");
+    assert_eq!(
+        declared(&script),
+        [
+            "s0.c.value Int)",
+            "s0.d.value Int)",
+            "m0.0 Int)",
+            "m0.1 Int)",
+            "s1.c.value Int)",
+            "s1.d.value Int)",
+            "m1.0 Int)",
+            "m1.1 Int)",
+            "s2.c.value Int)",
+            "s2.d.value Int)",
+            "m2.0 Int)",
+            "m2.1 Int)",
+        ]
+    );
+    let all = assertions(&script);
+    let shown: Vec<String> = all.iter().map(show).collect();
+    for (index, object) in ["c", "d"].iter().enumerate() {
+        let first_position: Vec<&String> = shown
+            .iter()
+            .filter(|assertion| {
+                let term = parse(assertion).remove(0);
+                implication_target(&term)
+                    .is_some_and(|target| target.starts_with(&format!("(= m0.{index} ")))
+            })
+            .collect();
+        assert_eq!(first_position.len(), 4, "{first_position:?}");
+        for assertion in first_position {
+            assert!(
+                assertion.contains(&format!("s0.{object}.value")),
+                "{assertion}"
+            );
+            let other = if *object == "c" { "d" } else { "c" };
+            assert!(
+                !assertion.contains(&format!("s0.{other}.value")),
+                "{assertion}"
+            );
+        }
+        for position in 1..=2 {
+            let transitions: Vec<&String> = shown
+                .iter()
+                .filter(|assertion| {
+                    let term = parse(assertion).remove(0);
+                    implication_target(&term).is_some_and(|target| {
+                        target.starts_with(&format!("(= m{position}.{index} "))
+                    })
+                })
+                .collect();
+            assert_eq!(transitions.len(), 12, "{transitions:?}");
+            assert!(transitions.iter().all(|assertion| {
+                assertion.contains(&format!("s{position}.{object}.value"))
+                    && !assertion.contains(&format!(
+                        "s{position}.{}.value",
+                        if *object == "c" { "d" } else { "c" }
+                    ))
+            }));
+        }
+    }
+    let negated = operands(all.last().expect("negated property"), "or");
+    assert_eq!(negated.len(), 12, "{negated:?}");
+    for position in 0..=2 {
+        let base = usize::try_from(position).expect("position fits usize") * 4;
+        assert_eq!(negated[base], format!("(= m{position}.0 2)"));
+        assert_eq!(negated[base + 1], format!("(= m{position}.1 2)"));
+        assert!(negated[base + 2].contains(&format!("s{position}.c.value")));
+        assert!(negated[base + 3].contains(&format!("s{position}.d.value")));
+    }
+    let step = world
+        .query_with(&["c", "d"], 0, SmtQueryKind::InductionStep { depth: 1 })
+        .expect("the multi-instance induction step encodes");
+    let step_assertions: Vec<String> = assertions(&step).iter().map(show).collect();
+    assert!(step_assertions.contains(
+        &"(not (and (= s1.c.value s0.c.value) (= s1.d.value s0.d.value) (= m1.0 m0.0) (= m1.1 m0.1)))".to_owned()
+    ));
 }
 
 fn counter_with(contracts: &str, profile: &str, formulas: &[&str]) -> World {
@@ -1216,7 +1598,9 @@ fn terminal_when_smt_reads_constants_once_and_refuses_population_outside_its_fra
         assert_eq!(satisfiable(&script), deadlocked, "{predicate}");
     }
     let world = counter_with(
-        &format!("{COUNTER_CONTRACT}terminal Done using v on M when {{ exists(c in M::objects : c.value = 3) }};\n"),
+        &format!(
+            "{COUNTER_CONTRACT}terminal Done using v on M when {{ exists(c in M::objects : c.value = 3) }};\n"
+        ),
         INFINITE,
         &[],
     );
@@ -1233,8 +1617,7 @@ fn terminal_when_smt_reads_constants_once_and_refuses_population_outside_its_fra
 // The `Tally` subject of FR-315-AC-4 and the scripts read as text.
 // ---------------------------------------------------------------------------
 
-const TALLY_CONTRACT: &str =
-    "pre G using v on M::Tally::bump { self.tally < 3 and self.next = self.tally + 1 }\n\
+const TALLY_CONTRACT: &str = "pre G using v on M::Tally::bump { self.tally < 3 and self.next = self.tally + 1 }\n\
      post B using v on M::Tally::bump { self.tally - pre(self.tally) = 1 }\n\
      post C using v on M::Tally::bump { self.tally < 3 and self.next = self.tally + 1 }\n";
 
@@ -1286,6 +1669,15 @@ fn operands(term: &Sexp, head: &str) -> Vec<String> {
             items[1..].iter().map(show).collect()
         }
         other => vec![show(other)],
+    }
+}
+
+fn implication_target(term: &Sexp) -> Option<String> {
+    match term {
+        Sexp::List(items) if matches!(items.first(), Some(Sexp::Atom(head)) if head == "=>") => {
+            items.get(2).map(show)
+        }
+        _ => None,
     }
 }
 
@@ -1752,7 +2144,7 @@ fn the_monitor_implications_follow_the_step_assertions() {
 }
 
 /// FR-315-AC-21: the refusals, with their codes.
-#[trace("TC-900", "FR-315-AC-21")]
+#[trace("TC-900", "FR-315-AC-21", "FR-315-AC-40")]
 #[test]
 fn each_refusal_has_its_code() {
     let code = |result: Result<String, SmtEncodingRefusal>| match result {
@@ -1768,9 +2160,16 @@ fn each_refusal_has_its_code() {
         ],
     );
     let kind = SmtQueryKind::Unrolling { depth: 1 };
-    assert_eq!(code(counter_world.query(0, kind)), "item-form");
-    assert_eq!(code(counter_world.query(1, kind)), "out-of-fragment");
-    match counter_world.query(2, SmtQueryKind::Unrolling { depth: 1 << 20 }) {
+    let item_form = counter_world.query(0, kind);
+    assert_eq!(item_form, counter_world.query(0, kind));
+    assert_eq!(code(item_form), "item-form");
+    let out_of_fragment = counter_world.query(1, kind);
+    assert_eq!(out_of_fragment, counter_world.query(1, kind));
+    assert_eq!(code(out_of_fragment), "out-of-fragment");
+    let large_depth = SmtQueryKind::Unrolling { depth: 1 << 20 };
+    let large_depth_refusal = counter_world.query(2, large_depth);
+    assert_eq!(large_depth_refusal, counter_world.query(2, large_depth));
+    match large_depth_refusal {
         Err(SmtEncodingRefusal::Refused(Refusal::TooLarge {
             measure,
             value,
@@ -1791,16 +2190,27 @@ fn each_refusal_has_its_code() {
         BOUNDED,
         &["always[0,3] eventually[0,1] holds(c.value >= 1)"],
     );
-    assert_eq!(code(nested.query(0, kind)), "item-form");
+    let nested_item_form = nested.query(0, kind);
+    assert_eq!(nested_item_form, nested.query(0, kind));
+    assert_eq!(code(nested_item_form), "item-form");
     let subject = counter_world.without_initial_state(&["c"]);
+    let no_initial = encode_smt_query(
+        &subject,
+        SmtItem::Clause(&counter_world.clauses[2]),
+        kind,
+        &SmtEncodingLimits::default(),
+    );
     assert_eq!(
+        no_initial,
         encode_smt_query(
             &subject,
             SmtItem::Clause(&counter_world.clauses[2]),
             kind,
             &SmtEncodingLimits::default(),
         )
-        .map_err(|refusal| refusal.code()),
+    );
+    assert_eq!(
+        no_initial.map_err(|refusal| refusal.code()),
         Err(Some("no-initial-state"))
     );
     let none = world(
@@ -1815,7 +2225,9 @@ fn each_refusal_has_its_code() {
         &["always holds(c.value <= 3)"],
         &[],
     );
-    assert_eq!(code(none.query_with(&[], 0, kind)), "no-instance");
+    let no_instance = none.query_with(&[], 0, kind);
+    assert_eq!(no_instance, none.query_with(&[], 0, kind));
+    assert_eq!(code(no_instance), "no-instance");
     let spawning = world(
         ("Counter", "c"),
         &document(
@@ -1828,7 +2240,9 @@ fn each_refusal_has_its_code() {
         &["always holds(c.value <= 3)"],
         &[("c", json!({"value": {"integer": "0"}}))],
     );
-    match spawning.query(0, kind) {
+    let spawning_refusal = spawning.query(0, kind);
+    assert_eq!(spawning_refusal, spawning.query(0, kind));
+    match spawning_refusal {
         Err(SmtEncodingRefusal::Refused(Refusal::ObjectLifecycle(locus))) => {
             assert!(format!("{locus:?}").contains("spawn"), "{locus:?}");
         }
@@ -1853,32 +2267,15 @@ fn each_refusal_has_its_code() {
         &["always holds(c.value <= 3)"],
         &[("c", json!({"value": {"integer": "0"}}))],
     );
-    match unbounded.query(0, kind) {
+    let parameter_refusal = unbounded.query(0, kind);
+    assert_eq!(parameter_refusal, unbounded.query(0, kind));
+    match parameter_refusal {
         Err(SmtEncodingRefusal::Refused(Refusal::ParameterDomain {
             operation,
             parameter,
         })) => assert_eq!((operation.as_str(), parameter.as_str()), ("setTo", "n")),
         other => panic!("expected parameter-domain, got {other:?}"),
     }
-    let several = world(
-        ("Counter", "c"),
-        &document(
-            "Counter",
-            vec![field("Counter", "value", &ident("Level"), "required")],
-            vec![operation("Counter", "inc", &["value"])],
-        ),
-        COUNTER_CONTRACT,
-        INFINITE,
-        &["always (holds(c.value = 3) implies always holds(c.value = 3))"],
-        &[
-            ("c", json!({"value": {"integer": "0"}})),
-            ("d", json!({"value": {"integer": "0"}})),
-        ],
-    );
-    assert_eq!(
-        code(several.query_with(&["c", "d"], 0, kind)),
-        "several-instances"
-    );
 }
 
 /// FND-005: a step case whose pairwise distinctness alone passes the byte
@@ -1928,7 +2325,10 @@ fn a_later_result_fails_only_where_the_earlier_ones_are_rejected() {
         ),
         INFINITE,
         &["always holds(t.tally < 3)"],
-        &[("t", json!({"tally": {"integer": "0"}, "next": {"integer": "1"}}))],
+        &[(
+            "t",
+            json!({"tally": {"integer": "0"}, "next": {"integer": "1"}}),
+        )],
     );
     let script = world
         .query(0, SmtQueryKind::Unrolling { depth: 1 })
