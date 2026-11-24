@@ -7,25 +7,6 @@ use fsl_eval::simulation::Limits;
 
 use crate::statistical::StatisticalLimit;
 
-/// FR-315's per-query solver resource bounds. Wall-clock time is a runtime
-/// bound; only the deterministic solver-step bound belongs in request identity.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct SmtRunLimits {
-    /// Maximum deterministic solver resource steps for each query.
-    pub max_solver_steps: u64,
-    /// Maximum whole seconds for each solver query.
-    pub max_solver_time: u64,
-}
-
-impl Default for SmtRunLimits {
-    fn default() -> Self {
-        Self {
-            max_solver_steps: 100_000_000,
-            max_solver_time: 60,
-        }
-    }
-}
-
 /// FR-126's published default for `max_automaton_states`: 2^20.
 pub const DEFAULT_MAX_AUTOMATON_STATES: u64 = 1_048_576;
 

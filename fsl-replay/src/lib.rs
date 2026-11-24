@@ -346,7 +346,6 @@ pub use model_check::identity::{
 pub use model_check::item::{
     Instance, InvariantClause, ItemRefusal, LivenessTranslation, ModelCheckItem, Translation,
 };
-pub use model_check::limits::SmtRunLimits;
 pub use model_check::limits::{
     meter_bound, ExactProbLimit, ExactProbLimits, ModelCheckLimit, ModelCheckLimits, ReachedLimit,
     DEFAULT_EXACT_PROB_MAX_ITERATIONS, DEFAULT_EXACT_PROB_MAX_POLICY_ITERATIONS,
