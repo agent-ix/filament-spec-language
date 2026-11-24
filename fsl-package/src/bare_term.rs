@@ -27,7 +27,7 @@ use filament_semantic_value::fairness::{
 use crate::bare::BarePackage;
 use crate::bare_slot::BareSelectionFailure;
 use crate::checked_v2::wire_graph;
-use crate::checked_views::{temporal_subject, Activation, FormulaOperation};
+use crate::checked_views::{Activation, FormulaOperation, temporal_subject};
 use crate::native_row::{self, NativeRowError};
 use crate::protocol_selection::SlotSelectionFailure;
 use crate::protocol_view::{group_member, text};
@@ -179,6 +179,21 @@ struct FormParts<'a, 'p> {
     capture_names: &'a [String],
     formula: &'a [crate::checked_views::FormulaNodeUse<'p>],
     profile: &'p filament_contract_model::CheckedSelection,
+}
+
+type FormAtomSpan<'a, W, E> = dyn for<'p, 'entry> FnMut(
+        usize,
+        &'entry crate::checked_views::FormulaNodeUse<'p>,
+        &mut W,
+    ) -> Result<fsl_foundation::Span, E>
+    + 'a;
+
+struct FormResolution<'n, 'a, W: FormWork> {
+    lookup: &'a dyn Fn(&CheckedNodeId) -> Option<&'n CheckedSemanticNodeV2>,
+    intervals: bool,
+    malformed: &'a dyn Fn() -> BareClauseRefusal,
+    atom_span: &'a mut FormAtomSpan<'a, W, W::Error>,
+    work: &'a mut W,
 }
 
 trait FairnessWork {
@@ -350,10 +365,10 @@ impl<'p> BarePackage<'p> {
                     Ok(node) => node,
                     Err(StructuralKeyMaterializationError::Wire(error)) => return Err(error.into()),
                     Err(StructuralKeyMaterializationError::Allocation(error)) => {
-                        return Err(error.into())
+                        return Err(error.into());
                     }
                     Err(StructuralKeyMaterializationError::Budget { denied, .. }) => {
-                        return Err(NativeRowError::exhausted(denied, work.budget).into())
+                        return Err(NativeRowError::exhausted(denied, work.budget).into());
                     }
                 };
                 // Identifier owns a separate copy from FairnessOperation.
@@ -961,8 +976,11 @@ impl BarePackage<'_> {
                 StateClauseKind::Precondition => Observation::Pre,
                 StateClauseKind::Postcondition => Observation::Post,
             };
-            let [CheckedTerm::Aggregate { members, .. }, CheckedTerm::Reference { target: anchor }, _] =
-                arguments.as_slice()
+            let [
+                CheckedTerm::Aggregate { members, .. },
+                CheckedTerm::Reference { target: anchor },
+                _,
+            ] = arguments.as_slice()
             else {
                 return Err(malformed());
             };
@@ -1111,8 +1129,11 @@ impl<'p> BarePackage<'p> {
             StateClauseKind::Precondition => Observation::Pre,
             StateClauseKind::Postcondition => Observation::Post,
         };
-        let [CheckedTerm::Aggregate { members, .. }, _anchor, CheckedTerm::Reference { target: body }] =
-            arguments.as_slice()
+        let [
+            CheckedTerm::Aggregate { members, .. },
+            _anchor,
+            CheckedTerm::Reference { target: body },
+        ] = arguments.as_slice()
         else {
             return Err(malformed());
         };
@@ -1349,41 +1370,48 @@ impl<'p> BarePackage<'p> {
                     formula: &body.formula,
                     profile: body.profile,
                 },
-                |id| bodies.node(id),
-                true,
-                &|| BareClauseRefusal::from(fault("clause-form-shape-is-admitted")),
-                &mut |_position, atom, work: &mut MeteredForm<'_>| {
-                    let mut found = None;
-                    let mut multiple = false;
-                    for entry in self.package().source_map() {
-                        work.visit()?;
-                        if entry.node_id != *atom.node
-                            || entry.role
-                                != filament_contract_model::CheckedOccurrenceRole::Expression
-                        {
-                            continue;
-                        }
-                        for region in &entry.regions {
-                            work.visit()?;
-                            if region.source == row.declaration_region.source
-                                && region.start >= row.declaration_region.start
-                                && region.end <= row.declaration_region.end
+                FormResolution {
+                    lookup: &|id: &CheckedNodeId| bodies.node(id),
+                    intervals: true,
+                    malformed: &|| BareClauseRefusal::from(fault("clause-form-shape-is-admitted")),
+                    atom_span:
+                        &mut |_position: usize,
+                              atom: &crate::checked_views::FormulaNodeUse<'_>,
+                              work: &mut MeteredForm<'_>| {
+                            let mut found = None;
+                            let mut multiple = false;
+                            for entry in self.package().source_map() {
+                                work.visit()?;
+                                if entry.node_id != *atom.node
+                                || entry.role
+                                    != filament_contract_model::CheckedOccurrenceRole::Expression
                             {
-                                if found.is_some() {
-                                    multiple = true;
-                                } else {
-                                    found = Some(region_span(region));
+                                continue;
+                            }
+                                for region in &entry.regions {
+                                    work.visit()?;
+                                    if region.source == row.declaration_region.source
+                                        && region.start >= row.declaration_region.start
+                                        && region.end <= row.declaration_region.end
+                                    {
+                                        if found.is_some() {
+                                            multiple = true;
+                                        } else {
+                                            found = Some(region_span(region));
+                                        }
+                                    }
                                 }
                             }
-                        }
-                    }
-                    match (found, multiple) {
-                        (Some(span), false) => Ok(span),
-                        (Some(_), true) => Ok(region_span(&row.declaration_region)),
-                        (None, _) => Err(crate::checked_views::ViewRefusal::LeafHasNoSource.into()),
-                    }
+                            match (found, multiple) {
+                                (Some(span), false) => Ok(span),
+                                (Some(_), true) => Ok(region_span(&row.declaration_region)),
+                                (None, _) => {
+                                    Err(crate::checked_views::ViewRefusal::LeafHasNoSource.into())
+                                }
+                            }
+                        },
+                    work: &mut work,
                 },
-                &mut work,
             )?);
         }
         Ok(forms)
@@ -1414,7 +1442,7 @@ impl<'p> BarePackage<'p> {
         Vec<crate::occurrence_source::OccurrenceSource>,
         crate::occurrence_source::OccurrenceSourceRefusal,
     > {
-        use crate::occurrence_source::{occurrence_source, OccurrenceSourceRefusal};
+        use crate::occurrence_source::{OccurrenceSourceRefusal, occurrence_source};
         use filament_contract_model::{CheckedOccurrence, CheckedOccurrenceRole};
         let package = self.package();
         let node = self
@@ -1504,22 +1532,26 @@ impl<'p> BarePackage<'p> {
                 formula: view.formula_graph(),
                 profile: view.profile(),
             },
-            |id| nodes.get(id).copied(),
-            intervals,
-            &|| BareClauseRefusal::from(malformed()),
-            &mut |position, _entry, _work| {
-                let sources = self
-                    .temporal_atom_sources(claim, position)
-                    .map_err(|_| malformed())?;
-                match sources.as_slice() {
-                    [only] => Ok(fsl_foundation::Span {
-                        start: usize::try_from(only.region.start()).map_err(|_| malformed())?,
-                        end: usize::try_from(only.region.end()).map_err(|_| malformed())?,
-                    }),
-                    _ => Ok(region_span(&row.declaration_region)),
-                }
+            FormResolution {
+                lookup: &|id: &CheckedNodeId| nodes.get(id).copied(),
+                intervals,
+                malformed: &|| BareClauseRefusal::from(malformed()),
+                atom_span: &mut |position: usize,
+                                 _entry: &crate::checked_views::FormulaNodeUse<'_>,
+                                 _work: &mut UnmeteredFairness| {
+                    let sources = self
+                        .temporal_atom_sources(claim, position)
+                        .map_err(|_| malformed())?;
+                    match sources.as_slice() {
+                        [only] => Ok(fsl_foundation::Span {
+                            start: usize::try_from(only.region.start()).map_err(|_| malformed())?,
+                            end: usize::try_from(only.region.end()).map_err(|_| malformed())?,
+                        }),
+                        _ => Ok(region_span(&row.declaration_region)),
+                    }
+                },
+                work: &mut UnmeteredFairness,
             },
-            &mut UnmeteredFairness,
         )
     }
 
@@ -1529,16 +1561,16 @@ impl<'p> BarePackage<'p> {
         row: &filament_contract_model::TemporalClauseName,
         node: &'n CheckedSemanticNodeV2,
         parts: FormParts<'_, '_>,
-        lookup: impl Fn(&CheckedNodeId) -> Option<&'n CheckedSemanticNodeV2>,
-        intervals: bool,
-        malformed: &impl Fn() -> BareClauseRefusal,
-        atom_span: &mut impl FnMut(
-            usize,
-            &crate::checked_views::FormulaNodeUse<'_>,
-            &mut W,
-        ) -> Result<fsl_foundation::Span, W::Error>,
-        work: &mut W,
+        resolution: FormResolution<'n, '_, W>,
     ) -> Result<fsl_semantics::check::PackageClauseForm, W::Error> {
+        let FormResolution {
+            lookup,
+            intervals,
+            malformed,
+            atom_span,
+            work,
+            ..
+        } = resolution;
         use fsl_semantics::check::{BinaryTemporal, PackageFormulaNode, UnaryTemporal};
         let package = self.package();
         work.text(row.name.as_ref())?;
@@ -1785,7 +1817,7 @@ impl BarePackage<'_> {
     /// atom reads these names when no identity row selects the declaration
     /// (FR-931 "The lowering input"). Charges nothing.
     pub fn declared_composites(&self) -> Vec<DeclaredComposite> {
-        use crate::wire_form::{has_form, WireForm, WireTag};
+        use crate::wire_form::{WireForm, WireTag, has_form};
         use filament_contract_model::CheckedBindingNameKind;
 
         let names = |node: &CheckedSemanticNodeV2| -> Vec<String> {

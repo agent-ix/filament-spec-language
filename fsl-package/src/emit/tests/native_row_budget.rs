@@ -301,10 +301,11 @@ fn adapters_preserve_an_earlier_owner_denial_and_maps_never_lose_their_keys() {
 
     let map_package = mixed_collection_package();
     let maps = emit_package(&map_package, whole_unit).expect("real source map emission");
-    assert!(maps
-        .selected_source_collection_rows()
-        .iter()
-        .any(|row| row.key_node.is_some()));
+    assert!(
+        maps.selected_source_collection_rows()
+            .iter()
+            .any(|row| row.key_node.is_some())
+    );
     let (supported_index, supported) = maps
         .selected_source_collection_rows()
         .iter()
@@ -866,8 +867,7 @@ fn shared_value_validity_application_uses_each_occurrence_region() {
     const COUNT: usize = 2_000;
     const HEADER: &str = "language \"ix:native\" edition \"1-draft\";\n\
                       profile v = \"filament.value.complete/v1\";\n";
-    let expressions = std::iter::repeat("x + 1 = 0")
-        .take(COUNT)
+    let expressions = std::iter::repeat_n("x + 1 = 0", COUNT)
         .collect::<Vec<_>>()
         .join(" and ");
     let declarations =

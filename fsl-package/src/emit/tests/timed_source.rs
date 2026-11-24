@@ -4,7 +4,7 @@
 
 use super::admission_corpus::config_version_unit;
 use super::*;
-use crate::checked_v2::{read_checked_package_v2, CheckedTimedModel};
+use crate::checked_v2::{CheckedTimedModel, read_checked_package_v2};
 use filament_contract_model::CheckedPackageEvidence;
 use filament_semantic_value::checking::CheckMode;
 
@@ -102,9 +102,11 @@ fn a_checked_time_source_emits_and_reads_back_its_resolved_nodes() {
     let wire = wire(&emission);
     let unit_structural_node = serde_json::to_value(&unit_row.structural_node)
         .expect("the selected unit row has a wire structural id");
-    assert!(nodes(&wire)
-        .iter()
-        .any(|node| node["node_id"] == unit_structural_node));
+    assert!(
+        nodes(&wire)
+            .iter()
+            .any(|node| node["node_id"] == unit_structural_node)
+    );
     assert!(
         nodes(&wire)
             .iter()
@@ -732,8 +734,8 @@ fn the_timed_model_writer_carries_value_validity_rows_through_a_rename() {
             .expect("one time source")
     };
     assert_ne!(
-        source_id(&*reread),
-        source_id(&*base),
+        source_id(&reread),
+        source_id(&base),
         "the timed nodes are renamed"
     );
     assert_eq!(reread.requirement_items(), base.requirement_items());
