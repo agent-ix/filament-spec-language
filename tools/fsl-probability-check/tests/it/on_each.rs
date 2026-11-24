@@ -295,8 +295,8 @@ fn a_part_with_a_missing_repeated_misordered_or_extra_row_is_malformed_at_its_me
         row
     };
     for part in ["numerator", "denominator"] {
-        type Fault = Box<dyn Fn(&str, &mut Vec<Value>)>;
-        let faults: [(&str, Fault); 4] = [
+        type Fault<'a> = Box<dyn Fn(&str, &mut Vec<Value>) + 'a>;
+        let faults: [(&str, Fault<'_>); 4] = [
             (
                 "missing",
                 Box::new(|_, rows| {
