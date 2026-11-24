@@ -722,7 +722,7 @@ fn cas_key(node_name: &str) -> DeclarationKey {
 /// FR-135-AC-1 (TC-540 step 1): the local-model case of `CasRefinesCounter`
 /// checks to one population row, one object row with `value = self.value`
 /// and no hidden field.
-#[trace("TC-540", "FR-135-AC-1")]
+#[trace("TC-540", "FR-135-AC-1", "FR-135-AC-12")]
 #[test]
 fn the_counter_refinement_checks_to_one_population_and_one_object_row() {
     let graph = checked_counter(&cas_refines_counter());
@@ -746,6 +746,10 @@ fn the_counter_refinement_checks_to_one_population_and_one_object_row() {
             .find(|selection| selection.identity == CAS)
             .expect("selected concrete package")
     );
+    assert_eq!(refinement.abstract_model_selection().identity, SPEC);
+    assert_eq!(refinement.concrete_model_selection().identity, CAS);
+    assert_ne!(refinement.abstract_model_selection().identity, "Spec");
+    assert_ne!(refinement.concrete_model_selection().identity, "Impl");
 
     let [population] = refinement.populations() else {
         panic!("one population row: {:?}", refinement.populations());
@@ -1240,6 +1244,29 @@ fn an_abstract_field_with_no_row_is_hidden() {
     };
     assert!(object.fields.is_empty());
     assert_eq!(object.hidden, [spec_key("Counter/value")]);
+}
+
+/// FR-135-AC-4 (TC-540 step 4): changing the checked field mapping changes
+/// the refinement's V2 node identity, even though its source name is stable.
+#[trace("TC-540", "FR-135-AC-4")]
+#[test]
+fn changing_a_field_mapping_changes_the_refinement_node_identity() {
+    let base = cas_refines_counter();
+    let direct = checked_counter(&base);
+    let changed = checked_counter(&mutated(
+        &base,
+        "value = self.value;",
+        "value = self.tmpA;",
+    ));
+    let direct_node = only_refinement(&direct)
+        .requirement_occurrence()
+        .expect("the checked refinement has a V2 occurrence")
+        .node();
+    let changed_node = only_refinement(&changed)
+        .requirement_occurrence()
+        .expect("the checked refinement has a V2 occurrence")
+        .node();
+    assert_ne!(direct_node, changed_node);
 }
 
 /// FR-136-AC-1 (TC-541 step 1): `CasRefinesCounter` checks seven step rows,
