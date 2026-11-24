@@ -16,8 +16,8 @@ use fsl_replay::{
 };
 
 use super::{
-    broken, checked_report, document_failure, finish_replay, graph_failure, settled, EngineReport,
-    ExactReport, ProductRequest, Refusal,
+    broken, build_refusal, checked_report, document_failure, finish_replay, graph_failure, settled,
+    EngineReport, ExactReport, ProductRefusal, ProductRequest, Refusal,
 };
 
 pub(super) fn run(
@@ -43,8 +43,9 @@ pub(super) fn run(
     if let Some(cause) = cancel.tripped() {
         return settled(&ExactProbBuildIssue::Cancelled(cause), subject);
     }
-    let Ok(system) = admitted else {
-        return broken();
+    let system = match admitted {
+        Ok(system) => system,
+        Err(failure) => return build_refusal(ProductRefusal::Admission(failure), subject),
     };
     let claims = probabilistic.claims();
     let outcome = match on_each_outcome(
@@ -119,26 +120,52 @@ pub(in crate::analyze) fn statistical(
     let simulation = subject.simulation;
     let probabilistic = simulation.input.probabilistic;
     let meter = simulation.meter;
-    let limits = crate::exact_probabilistic::ExactProbLimits::default();
     let subject_limits = SubjectLimits {
         expansion: simulation.expansion,
         meter: &meter,
     };
     let item = match fsl_replay::probabilistic_claim_identity(claim) {
         Ok(item) => item,
-        Err(error) => return graph_failure(error, &limits, subject_limits),
+        Err(error) => return instance_failure(error.into(), subject_limits),
     };
     let admitted = ModelSystem::new_with_cancel(simulation, cancel);
     if let Some(cause) = cancel.tripped() {
         return settled(&ExactProbBuildIssue::Cancelled(cause), subject_limits);
     }
-    let Ok(system) = admitted else {
-        return broken();
+    let system = match admitted {
+        Ok(system) => system,
+        Err(failure) => {
+            return build_refusal(ProductRefusal::Admission(failure), subject_limits);
+        }
     };
     match on_each_has_instance(&system, probabilistic.claims(), &item, cancel) {
         Ok(false) => EngineReport::Exact(Box::new(ExactReport::NoInstance)),
         Ok(true) => super::not_yet(),
-        Err(error) => failure(error, &limits, subject_limits),
+        Err(error) => instance_failure(error, subject_limits),
+    }
+}
+
+/// How reading a statistical item's instance set fails. A statistical
+/// request carries no exact product limits, and the read builds no product
+/// graph, so a state or edge limit cannot be reached: one reported here is a
+/// broken invariant, never a limit the request did not set.
+fn instance_failure(
+    error: fsl_replay::ProbabilityDocumentError,
+    subject: SubjectLimits<'_>,
+) -> EngineReport {
+    use fsl_replay::{ExactProbabilityGraphError as Graph, ProbabilityDocumentError as Document};
+    match error {
+        Document::Graph(Graph::Cancelled(cause)) => {
+            settled(&ExactProbBuildIssue::Cancelled(cause), subject)
+        }
+        Document::Graph(Graph::RequiresBound) => EngineReport::Refused(Refusal::RequiresBound),
+        Document::Graph(Graph::ExtentLimit) => EngineReport::Refused(Refusal::Incomplete(
+            fsl_replay::IncompleteCause::ResourceExhausted,
+        )),
+        Document::Graph(Graph::UnsupportedBinding | Graph::ExpansionRefused)
+        | Document::Unsupported => super::not_yet(),
+        Document::Graph(_) => broken(),
+        error => document_failure(error, subject),
     }
 }
 
