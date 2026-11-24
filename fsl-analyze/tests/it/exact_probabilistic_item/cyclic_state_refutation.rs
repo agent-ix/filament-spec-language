@@ -3,7 +3,7 @@
 //! are refuted through the event-avoidance subsystem certificate, on either
 //! bound side, and never by a path-set search.
 use super::*;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use fsl_analyze::exact_probabilistic::{
     product_construction_counts, reset_product_construction_counts,
 };
@@ -11,7 +11,7 @@ use fsl_replay::{
     ProbabilisticCounterexample, ProbabilisticSchedulerChoice, ProbabilityWitnessError,
     ProbabilityWitnessReplay, ProductAction,
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 fn limits() -> fsl_replay::ProbabilityDocumentLimits {
     fsl_replay::ProbabilityDocumentLimits {
@@ -304,7 +304,14 @@ fn health(predicate: &str, claims: &str) -> World {
     ))
 }
 
-#[trace("TC-3162", "FR-202-AC-36", "FR-202-AC-21")]
+#[trace(
+    "TC-3162",
+    "FR-202-AC-36",
+    "FR-202-AC-21",
+    "FSpec-TC-433",
+    "FSpec-FR-412-AC-25",
+    "FSpec-FR-413-AC-18"
+)]
 #[test]
 fn a_cyclic_workload_always_is_refuted_by_its_rejecting_union_without_a_path_search() {
     let world = health("x.phase = 0", "");
@@ -404,7 +411,13 @@ fn branch(claims: &str) -> World {
     ))
 }
 
-#[trace("TC-3163", "FR-202-AC-37")]
+#[trace(
+    "TC-3163",
+    "FR-202-AC-37",
+    "FSpec-TC-433",
+    "FSpec-FR-412-AC-25",
+    "FSpec-FR-413-AC-18"
+)]
 #[test]
 fn cyclic_always_is_refuted_on_either_side_and_never_at_equality() {
     let always = |name: &str, bound: &str| {
@@ -459,7 +472,7 @@ fn cyclic_always_is_refuted_on_either_side_and_never_at_equality() {
 
 /// Every scheduler: `ok` (0) keeps P with `stay` to itself or `leave` to
 /// `down` (1); `down` breaks P and returns.
-#[trace("TC-3164", "FR-202-AC-38")]
+#[trace("TC-3164", "FR-202-AC-38", "FSpec-FR-412-AC-25", "FSpec-FR-413-AC-18")]
 #[test]
 fn cyclic_always_over_every_scheduler_carries_its_witness_scheduler() {
     let always = |name: &str, bound: &str| {
@@ -561,7 +574,13 @@ fn cyclic_always_over_every_scheduler_carries_its_witness_scheduler() {
     expect_rows(&kept, vec![(ok, q(1, 1), 0)]);
 }
 
-#[trace("TC-3165", "FR-202-AC-39")]
+#[trace(
+    "TC-3165",
+    "FR-202-AC-39",
+    "FSpec-TC-433",
+    "FSpec-FR-412-AC-25",
+    "FSpec-FR-413-AC-18"
+)]
 #[test]
 fn cyclic_until_is_refuted_through_its_classified_components() {
     // Two A-and-not-B states alternate: no decided state, so the component
@@ -626,7 +645,13 @@ fn cyclic_until_is_refuted_through_its_classified_components() {
     }
 }
 
-#[trace("TC-3171", "FR-202-AC-41")]
+#[trace(
+    "TC-3171",
+    "FR-202-AC-41",
+    "FSpec-TC-433",
+    "FSpec-FR-412-AC-25",
+    "FSpec-FR-413-AC-18"
+)]
 #[test]
 fn a_cyclic_eventually_at_most_is_refuted_through_its_accepting_union() {
     // `s` (0) misses E and moves to `s` or `e` (1) with 1/2 each; `e`
@@ -690,7 +715,14 @@ fn alternating(claims: &str) -> World {
     ))
 }
 
-#[trace("TC-3172", "FR-202-AC-42", "FR-202-AC-21")]
+#[trace(
+    "TC-3172",
+    "FR-202-AC-42",
+    "FR-202-AC-21",
+    "FSpec-TC-433",
+    "FSpec-FR-412-AC-25",
+    "FSpec-FR-413-AC-18"
+)]
 #[test]
 fn initial_decided_cyclic_subjects_are_refuted_not_unsupported() {
     // Until: the initial `b` (phase 0) satisfies B and not A; `s` (phase 1)
