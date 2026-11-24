@@ -75,6 +75,18 @@ The clause's emitted node: a `clock_guard` part, a `time_invariant` or an
   predicate and the binder is in its `binders`, as FR-230-AC-55 states.
 - **Urgency.** An `urgency` node has no `binders`, so every quantifier of its
   predicate SHALL be written in the predicate expression.
+- **A presence quantifier beside a constraint with a slot term.** A part may
+  hold a constraint whose slot term makes its `binders` quantify the part and,
+  in its predicate, a presence quantifier over the same or another collection.
+  The emitter keeps the two scopes apart: the part's `binders` hold exactly the
+  slot parameters of its constraints, the quantifier binds its own
+  `parameter` inside the predicate, and a name shared by the two is two
+  `parameter` nodes, neither a member of the other's scope. The same holds
+  in a time invariant's predicate beside its bounds, and in an `urgency` of
+  kind `when`, which has no `binders`, where the quantifier is scoped by its
+  application alone. Over an empty collection a presence `forall` is true and
+  an `exists` false while the slot-bound constraint holds over no live slot
+  (FSpec FR-760-AC-4, FR-760-AC-5).
 
 ## Acceptance Criteria
 
@@ -84,6 +96,8 @@ The clause's emitted node: a `clock_guard` part, a `time_invariant` or an
 | FR-930-AC-2 | `time invariant HasElement when { forall(e in self.q: present(e)) } { self.x <= 9 ms }` emits one `time_invariant` with no `binders` binding, its predicate the `forall` application of AC-1 and its one bound `x le 9/1`; `urgent HasElement when { forall(e in self.q: present(e)) };` emits one `urgency` whose predicate is that application. I2 admits both. | Test (TC-2600) |
 | FR-930-AC-3 | `pre Any using v on Config::ConfigVersion::attemptUpdate { self.x >= 1 ms and exists(e in self.q: present(e)) }` emits one guard part whose predicate is the `filament.op.collection.exists` application, never one part per slot; `forall(e in self.q: present(e) implies e >= 1 ms)` emits parts whose `binders` hold the binder and whose predicates hold the `presence_read` at it (FR-230-AC-55). | Test (TC-2600) |
 | FR-930-AC-4 | Over the emitted package of AC-1, a copy whose guard part also carries `binders` naming the quantifier's parameter is refused by I2 `invalid_package`/`timed-node-reference` at that binder target, because no constraint of the part has it as a slot term (FSpec FR-322-AC-295). | Test (TC-2600) |
+| FR-930-AC-5 | `pre Mixed using v on Config::ConfigVersion::attemptUpdate { self.q[i] >= 1 ms and forall(e in self.q: present(e)) }` emits one `clock_guard` whose `binders` hold the slot parameter `i` only and whose predicate is the `forall` application binding its own `e`; the same unit written with the quantifier's parameter also named `i` emits two distinct `parameter` nodes and the same package shape; `time invariant Mixed when { exists(e in self.q: present(e)) } { self.q[i] <= 9 ms }` and `urgent Mixed when { forall(e in self.q: present(e)) };` emit the invariant with `binders` for `i` only and the urgency with none. | Test (TC-2600) |
+| FR-930-AC-6 | Over AC-5's package, a copy whose guard `binders` also name the quantifier's parameter, or whose quantifier reuses the part's `i` parameter node, refuses `invalid_package`/`timed-node-reference` at the offending binding; over an empty `q` the presence `forall` evaluates true and `exists` false and the slot-bound constraint is checked at no slot. | Test (TC-2600) |
 
 ## Dependencies
 

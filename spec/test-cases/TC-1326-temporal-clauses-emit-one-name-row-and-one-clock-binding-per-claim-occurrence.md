@@ -14,7 +14,7 @@ relationships:
 
 Verify that the emitter writes `temporal_clause_names` and `temporal_bindings` per `claim` occurrence of a shared clause node, sorted, and refuses an inconsistent clock selection.
 
-Scope: FR-337-AC-16 to FR-337-AC-23, FR-337-AC-25 to FR-337-AC-28.
+Scope: FR-337-AC-16 to FR-337-AC-23, FR-337-AC-25 to FR-337-AC-28 and FR-337-AC-30.
 
 ## Test Procedure
 
@@ -35,3 +35,5 @@ Tag the tests `#[trace("TC-1326", "FR-337-AC-16", "FR-337-AC-17", "FR-337-AC-18"
 - Step 4: each refuses the compile and produces no package.
 - Step 5: one `timed_model` root and `time_source` joined to the clause's model and no `temporal_bindings` member; the unit without a `time` declaration refuses at S3; each supplied selection refuses `invalid_package`/`timed-node-reference` at the clause span; the supplied row refuses the same code and cause at `/temporal_bindings/0`.
 - Step 6: two `TemporalClauseRef` values equal to the two name rows; `profile_selections` and `temporal_bindings` equal to the lock's and package's; reversal changes `clause` and no `declaration`.
+
+FR-337-AC-30: read an explicit `plant-ms` selection back as a whole package with no clock declaration, then append a row for an unwritten role and a row of the wrong kind; the first is admitted with one state-graph identity from source plus selection and from the package alone, the others refuse `unused-clock-selection` and `clock-kind-mismatch`.

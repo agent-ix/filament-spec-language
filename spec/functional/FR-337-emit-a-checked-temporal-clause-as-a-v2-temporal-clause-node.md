@@ -517,6 +517,17 @@ writes them from the checked graph at the same point as the nodes
   as in the paragraph above; the reader refuses a `temporal_bindings` row
   supplied for a Timed clause `invalid_package`/`timed-node-reference` at
   that row.
+- **Read-back of an explicit clock selection.** A clock selection the
+  caller supplied is carried only in the rows it produced
+  (`temporal_bindings`, `profile_selections`), never as a declaration, so
+  whole-package read-back SHALL admit a selected role and configuration with
+  no matching clock declaration and hand the row to the temporal formula
+  reader of its clause. It SHALL NOT refuse the selection as a clock with no
+  configured declaration. A row for a role no clause writes refuses
+  `unused-clock-selection`, and a row whose kind its clause's profile does
+  not determine refuses `clock-kind-mismatch`, as at emission. The identity of
+  an item that reads the binding is equal when computed from source plus
+  selection and from the package alone.
 - The emitter SHALL sort both arrays by (`declaration` NodeId, `occurrence`),
   so the order is a function of the checked graph and not of declaration
   order.
@@ -569,6 +580,7 @@ FR-488 and FR-447.
 | FR-337-AC-27 | A clock selection of any kind supplied for a Timed clause is refused as a surplus selection at the clause's span, `invalid_package`/`timed-node-reference`, and no package is written. | Test (TC-1326) |
 | FR-337-AC-28 | A `temporal_bindings` row supplied for a Timed clause in an otherwise emitted package refuses in the reader `invalid_package`/`timed-node-reference` at `/temporal_bindings/0`; the package without the row is admitted. | Test (TC-1326) |
 | FR-337-AC-29 | A unit compiled as package `acme/orders` with `model M = "acme/rpc"` (base dimension `Time`, units `s` and `ms`), whose timestamped-event clause has `count over past[0 M::s, 300000 M::ms] >= 1` under a clock in `ix://acme/rpc/unit/ms`, emits both bounds typed by the node `{package: "acme/rpc", path: ["scalar_type", "unit", "ix://acme/rpc/unit/ms"], ordinal: 0}`, which carries the `ModelOwner` of `acme/rpc`; the package holds exactly one node with that path, and the clause node's `node_id.package` is `acme/orders`. | Test (TC-1267) |
+| FR-337-AC-30 | A unit with a timestamped-event clause on role `plant-ms` and an explicit selection naming it emits a package that whole-package read-back admits with no clock declaration for `plant-ms`; the temporal formula reader receives that clause's row with its role and unit, and a state-graph item over it has one identity from source plus selection and from the package alone. A row appended for an unwritten role refuses `unused-clock-selection`, and a row whose kind is fixed-sample for a timestamped-event clause refuses `clock-kind-mismatch`, neither as a clock with no configured declaration. | Test (TC-1326) |
 
 ### Aggregate formula emission
 

@@ -154,6 +154,19 @@ step row, or a history update.
   several conform and none is the most specific, `map_state` SHALL return
   `MappingFailure::Fault`: S3 types the field against the lifted declared
   type and admits no such row.
+- **Most specific row, within one population and across populations.** When
+  two admitted object rows of one concrete type map to abstract types of one
+  population where one is a subtype of the other (`Queue` and `SubQueue` into
+  `queues`), the reference lifts to the row of the most specific abstract type,
+  and a population's admission test (`admits`) selects that row, not the first
+  row in source order. ADR-020 RM-3's "most specific" applies to rows from
+  one population and, by this rule, to rows from two populations alike: the
+  row whose abstract type is most specific over all admitted rows of the
+  concrete type that conforms to the declared type is the one used. Rows whose
+  abstract types are unrelated by subtyping (`Queue` and `Cell`) are not ranked
+  against each other: the declared type of the field chooses between them, and
+  a declared type to which both conform with neither more specific is the
+  `Fault` above. Source order never decides.
 - If a reference points at an object whose most-specific type no object row
   names, then `map_state` SHALL return `MappingFailure::Undetermined` naming
   the row being evaluated and the object that holds the reference, with
@@ -240,6 +253,7 @@ step row, or a history update.
 | FR-140-AC-16 | Over `RingIsQueue` with the abstract `Queue` declaring `chain: Sequence<Reference<Queue>>[0, 2]`, the concrete `Ring` declaring `chain: Sequence<Reference<Ring>>[0, 2]`, and the row `chain = self.chain`, a ring `a` holding `chain` = `[b, a]` maps to the `Queue` `a` whose `chain` is the `Queue` references `[b, a]` in that order, and the same field typed `Option<Reference<_>>`, `Sequence<Option<Reference<_>>>` or `Map<Reference<_>, Reference<_>>` lifts its `some` payloads, keeps `none`, and lifts each map key and value with the entries in order, a key collision after lifting being a fault (the option and map clauses are checked by the unit tests of `lift_nested`, because no validated package declares a map type); a ring whose `chain` holds a reference to an object of a `SubRing` that no object row names returns `MappingFailure::Undetermined` naming the `chain` row and the holding ring, with cause `EvalFailure::UnmappedType(SubRing)`. | Test (TC-1086) |
 | FR-140-AC-17 | Over a refinement whose object rows `Q::Queue from C::Call` and `Q::Cell from C::Call` both name the concrete `Call`, a reference to a `Call` in a field declared `Reference<Cell>` lifts to the `Cell` reference with the same key, in a field declared `Reference<Queue>` to the `Queue` reference, and with a declared type that names neither, and conforms to both, a `MappingFailure::Fault`; a declared type that is a supertype of exactly one of the two types picks that one, and of both picks the more specific. The mapped state holds a `Queue` `r` in `queues` and a `Cell` `r` in `cells` in either row order. The real two-row world is the ring world's `twin` variant (`Queue` and `Cell` from `Ring`, `twin: Reference<Cell>`); the conformance cases are checked on the row choice. | Test (TC-1086) |
 | FR-140-AC-15 | Fixture `TwoPopulations`: a refinement with two populations `P` and `Q` whose first named declarations (the abstract populations) have node-key order opposite to their `DeclarationKey` byte order, each with a row that evaluates undefined at the state. `map_state` returns the `MappingFailure::Undefined` naming the row and object of the population first in node-key order, and a state with only the other population undefined returns that one. | Test (TC-545) |
+| FR-140-AC-18 | With the abstract `queues` population admitting `Queue` and its subtype `SubQueue`, both object rows naming the concrete `Call`, a reference to a `Call` lifts to the `SubQueue` reference whichever row is written first, and swapping the two rows changes no mapped state key and no verdict; rows `Queue` and `Cell` (unrelated types) are never ranked against each other and a field declared with a type to which both conform, neither more specific, is a `MappingFailure::Fault`. | Test (TC-1086) |
 
 ## Dependencies
 

@@ -16,7 +16,7 @@ Verify that the zone certificate of a state-graph item over a timed subject
 certifies the reachable timed graph without an `admitted` witness, that the
 core checker accepts it over a Zeno-only graph, and that every certificate
 whose claim depends on time divergence still requires the witness. Scope:
-FR-244-AC-7 and FR-245-AC-11.
+FR-244-AC-7, FR-245-AC-11 and FR-852-AC-7.
 
 ## Test Procedure
 
@@ -40,3 +40,5 @@ FR-244-AC-7 and FR-245-AC-11.
 - Step 4: `Rejected` `Malformed` at `CertificateMember("admitted")`.
 
 Test: `fsl-analyze/tests/it/timed_state_graph.rs`.
+
+FR-852-AC-7: analyze `possible Replied` and `possible Late` over the Zeno-only subject through `en-6`; `Replied` is `proved` with a zone certificate without `admitted`, `Late` is `refuted`, and neither is refused by candidate selection.

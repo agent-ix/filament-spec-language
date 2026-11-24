@@ -16,7 +16,7 @@ Verify that `ref(p)` and `present(p)` over clock places check at S3 and lower
 at S4 to FSpec FR-829's place-reference application and FSpec FR-322's
 presence read, per instance under a population binder and through an object
 reference, and that the remaining wrong forms refuse with typed causes.
-Scope: FR-1040-AC-1 to FR-1040-AC-9.
+Scope: FR-1040-AC-1 to FR-1040-AC-12.
 Step 7 also verifies FR-230-AC-43's exact encoding vector and
 FR-230-AC-49's tagged nested-collection indices.
 Step 8 verifies FR-230-AC-71's kernel value form on both routes.
@@ -157,3 +157,5 @@ Implementation status: the existing tests listed above do not establish
 step 7 or FR-1040-AC-9. Those STEP2 acceptance obligations remain unmet;
 the same applies to TC-464's raw admission controls until implementation
 and acceptance proof.
+
+FR-1040-AC-10 to FR-1040-AC-12: evaluate `ref` values across states and universes, supply sets and maps in two entry orders with a repeated place id, and round-trip references through the state key and wire form; equality, canonical order, duplicate and dangling refusals and the round trip are as the criteria state.
