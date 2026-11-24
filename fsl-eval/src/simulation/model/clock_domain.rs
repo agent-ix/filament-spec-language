@@ -13,8 +13,8 @@ use fsl_semantics::model::clock_reference::identity::{
 };
 use fsl_semantics::model::clock_reference::{encode_identity, is_clock_type};
 
+use super::domain::{clock_reference_paths, ClockSelectorMaxima, Domain};
 use super::ModelSystem;
-use super::domain::{ClockSelectorMaxima, Domain, clock_reference_paths};
 
 /// Why a `Reference<Clock>` domain cannot be enumerated. None of these is an
 /// empty domain: a caller never ranges a hidden field or parameter over fewer
@@ -281,8 +281,7 @@ fn collect_clock_references(
             }
         }
         Value::Map(map) => {
-            for (key, value) in map.entries() {
-                collect_clock_references(key, references, work, limit)?;
+            for (_, value) in map.entries() {
                 collect_clock_references(value, references, work, limit)?;
             }
         }
@@ -315,10 +314,10 @@ fn charge_seed(work: &mut u128, limit: u64) -> Result<(), ClockDomainRefusal> {
 
 #[cfg(test)]
 mod tests {
-    use filament_exact::{OptionValue, Value, ValueType};
+    use filament_exact::{from_admitted_map, MapType, OptionValue, Value, ValueType};
     use ix_trace_rs::trace;
 
-    use super::{ClockDomainRefusal, collect_clock_references};
+    use super::{collect_clock_references, ClockDomainRefusal};
 
     /// Repeated seed references are still charged during traversal, so a
     /// duplicate-heavy input cannot evade the candidate work bound.
@@ -345,6 +344,45 @@ mod tests {
             Err(ClockDomainRefusal::TooMany { limit: 1 })
         );
         assert_eq!(work, 2);
+    }
+
+    /// FR-106-AC-80 excludes clock references held only as map keys while
+    /// retaining references held as map values.
+    #[trace("FR-106-AC-80", "TC-3084")]
+    #[test]
+    fn clock_reference_seed_traversal_ignores_map_keys() {
+        let Value::ClockReference(key) = crate::test_clock_reference::clock_reference_of("key")
+        else {
+            panic!("a clock-reference key fixture");
+        };
+        let Value::ClockReference(value) = crate::test_clock_reference::clock_reference_of("value")
+        else {
+            panic!("a clock-reference value fixture");
+        };
+        let key_only = from_admitted_map(
+            MapType::new(ValueType::ClockReference, ValueType::Boolean, None)
+                .expect("clock references and booleans are map types"),
+            vec![(Value::ClockReference(key), Value::Boolean(false))],
+        )
+        .expect("the map key and value match their declared types");
+        let mut references = Vec::new();
+        let mut work = 0;
+        collect_clock_references(&key_only, &mut references, &mut work, 1)
+            .expect("the clock reference map key is ignored");
+        assert!(references.is_empty());
+
+        let value_only = from_admitted_map(
+            MapType::new(ValueType::Boolean, ValueType::ClockReference, None)
+                .expect("booleans and clock references are map types"),
+            vec![(Value::Boolean(false), Value::ClockReference(value.clone()))],
+        )
+        .expect("the map value matches its declared type");
+        let mut references = Vec::new();
+        work = 0;
+        collect_clock_references(&value_only, &mut references, &mut work, 1)
+            .expect("the map value seed fits the bound");
+        assert_eq!(references.len(), 1);
+        assert_eq!(references[0].object().as_str(), value.text());
     }
 }
 
