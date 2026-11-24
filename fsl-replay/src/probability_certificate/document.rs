@@ -1189,6 +1189,28 @@ pub fn write_value_bounds_certificate(
     value_bounds::wrap(&exact, side, limits)
 }
 
+/// FR-1042: write a finite-horizon measure document as one side of a
+/// value-bounds proof. A lower partial document may list only its explored
+/// product states; its ranking is restricted to those same keys.
+pub fn write_value_bounds_measure_certificate(
+    document: &MeasureProbabilityDocument,
+    side: SubsystemBoundKind,
+    limits: ProbabilityDocumentLimits,
+    cancel: &Cancel,
+) -> Result<Vec<u8>, ProbabilityDocumentError> {
+    let mut document = document.clone();
+    if side == SubsystemBoundKind::Lower {
+        let states = document
+            .values
+            .iter()
+            .map(|row| row.state.clone())
+            .collect::<std::collections::BTreeSet<_>>();
+        document.ranking.retain(|(state, _)| states.contains(state));
+    }
+    let exact = write_measure_probability_certificate(&document, limits, cancel)?;
+    value_bounds::wrap(&exact, side, limits)
+}
+
 /// Write the single RFC 8785 representation admitted by the profile reader.
 pub fn write_probability_certificate(
     document: &ProbabilityCertificateDocument,
@@ -1991,10 +2013,12 @@ fn check_document_bytes(
     }
     match dispatch {
         ProfileDispatch::Measure => {
-            if bound_side.is_some() {
+            let partial_lower = bound_side == Some(SubsystemBoundKind::Lower)
+                && offer.role == CertificateRole::Claim;
+            if bound_side.is_some() && !partial_lower {
                 return Err(ProbabilityDocumentError::Unsupported);
             }
-            return measure::check(system, claims, item, bytes, limits, cancel);
+            return measure::check(system, claims, item, bytes, partial_lower, limits, cancel);
         }
         ProfileDispatch::Timed => {
             return timed::check(
@@ -2096,7 +2120,11 @@ fn check_document_bytes(
     } else {
         bounded_ranks.is_some()
     };
-    if bound_side.is_some() && (!bound_base || reward.is_some() || !fairness_records.is_empty()) {
+    if bound_side.is_some()
+        && (!bound_base
+            || reward.is_some() && bound_side != Some(SubsystemBoundKind::Lower)
+            || !fairness_records.is_empty())
+    {
         return Err(ProbabilityDocumentError::Unsupported);
     }
     let relation = offer.relation();
@@ -2108,14 +2136,27 @@ fn check_document_bytes(
     let certificate = ExactProbabilityCertificate {
         values: document.values,
     };
-    let values = match certificate_values(&graph, &certificate, cancel)? {
-        CertificateValues::Complete(values) => values,
+    let (values, named, partial) = match certificate_values(
+        &graph,
+        &certificate,
+        cancel,
+        bound_side == Some(SubsystemBoundKind::Lower),
+    )? {
+        CertificateValues::Complete(values) => {
+            let named = values.keys().cloned().collect::<BTreeSet<_>>();
+            (values, named, false)
+        }
+        CertificateValues::Partial { values, named } => (values, named, true),
         CertificateValues::Rejected(rejection) => {
             return Ok(ExactProbabilityCertificateCheck::Rejected(rejection));
         }
     };
     let ranked = bound_side != Some(SubsystemBoundKind::Upper);
-    for (key, state) in graph.states.iter().filter(|_| ranked) {
+    for (key, state) in graph
+        .states
+        .iter()
+        .filter(|(key, _)| ranked && named.contains(*key))
+    {
         if !ranks.contains_key(key) {
             return Ok(
                 if bounded_ranks.is_none()
@@ -2130,7 +2171,7 @@ fn check_document_bytes(
             );
         }
     }
-    if ranked && ranks.len() != graph.states.len() {
+    if ranked && !partial && ranks.len() != graph.states.len() {
         return Ok(malformed_ranking());
     }
     if let Some(expected) = bounded_ranks
@@ -2155,8 +2196,15 @@ fn check_document_bytes(
         Some(SubsystemBoundKind::Lower) => document.cyclic_dtmc,
         Some(SubsystemBoundKind::Upper) => false,
     };
-    for (key, state) in graph.states.iter().filter(|_| progress_checked) {
+    for (key, state) in graph
+        .states
+        .iter()
+        .filter(|(key, _)| progress_checked && (!partial || named.contains(*key)))
+    {
         poll(cancel)?;
+        if partial && values.get(key).is_some_and(|value| *value == rational(0)) {
+            continue;
+        }
         if document.cyclic_dtmc && reward.is_some() {
             control.phase(super::reward::RewardProbabilityPhase::Progress)?;
             let rank = ranks.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
@@ -2212,6 +2260,7 @@ fn check_document_bytes(
         objective,
         &bound,
         relation,
+        &named,
         reward.as_ref(),
         limits,
         cancel,
@@ -2353,6 +2402,7 @@ fn check_document_equalities(
     objective: ProbabilityObjective,
     bound: &Bound,
     relation: ValueRelation,
+    named: &BTreeSet<ProbabilityProductKey>,
     reward: Option<&super::reward::RewardGraph>,
     limits: ProbabilityDocumentLimits,
     cancel: &Cancel,
@@ -2361,6 +2411,9 @@ fn check_document_equalities(
 ) -> Result<ExactProbabilityCertificateCheck, ProbabilityDocumentError> {
     for (key, state) in &graph.states {
         poll(cancel)?;
+        if !named.contains(key) {
+            continue;
+        }
         let value = values.get(key).ok_or(ProbabilityDocumentError::Malformed)?;
         let expected = match state.terminal {
             Some(true) => rational(i64::from(reward.is_none())),
@@ -2880,6 +2933,7 @@ mod tests {
                 ProbabilityObjective::Minimum,
                 &Bound::AtLeast(rational(1)),
                 ValueRelation::Exact,
+                &BTreeSet::from([root.clone(), target.clone()]),
                 None,
                 limits,
                 &cancel,

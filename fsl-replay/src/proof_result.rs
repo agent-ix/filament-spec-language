@@ -1922,15 +1922,11 @@ impl TerminalRecord {
         extremum: Option<Extremum>,
         binding: Option<ExactBinding>,
     ) -> Option<Self> {
-        use crate::{
-            ExactProbabilityCertificateCheck::Accepted, ProbabilityBoundSide, SubsystemBoundKind,
-        };
+        use crate::{ExactProbabilityCertificateCheck::Accepted, SubsystemBoundKind};
         let Accepted(claim) = claim else {
             return None;
         };
-        if claim.bound()? != SubsystemBoundKind::Lower
-            || claim.side() != ProbabilityBoundSide::AtLeast
-        {
+        if claim.bound()? != SubsystemBoundKind::Lower {
             return None;
         }
         if let ExactBound::Finite(upper) = &upper {

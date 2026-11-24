@@ -18,7 +18,10 @@ use super::*;
 /// backward induction rounds into an interval, and unbounded eventual
 /// reachability over a cyclic chain or MDP.
 fn is_wrappable_base(profile: &str) -> bool {
-    matches!(profile, PROFILE | CYCLIC_PROFILE | CYCLIC_MDP_PROFILE)
+    matches!(
+        profile,
+        PROFILE | CYCLIC_PROFILE | CYCLIC_MDP_PROFILE | CYCLIC_REWARD_PROFILE | measure::PROFILE
+    )
 }
 
 /// One unchecked `policy` row of a bound document: a complete product key and

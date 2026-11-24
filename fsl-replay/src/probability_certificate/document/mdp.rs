@@ -655,7 +655,7 @@ fn rows(
             return Err(ProbabilityDocumentError::Malformed);
         }
     }
-    Ok(certificate_values(graph, certificate, cx.cancel)?)
+    Ok(certificate_values(graph, certificate, cx.cancel, false)?)
 }
 
 fn sums(
@@ -991,6 +991,9 @@ fn construct(
     };
     let values = match rows(&graph, certificate, cx)? {
         CertificateValues::Complete(values) => values,
+        CertificateValues::Partial { .. } => {
+            return Err(ProbabilityDocumentError::MalformedMember("values"))
+        }
         CertificateValues::Rejected(_) => {
             return Err(ProbabilityDocumentError::MalformedMember("values"))
         }
@@ -1149,6 +1152,9 @@ fn check_with_context(
             &mut cx,
         )? {
             CertificateValues::Complete(values) => values,
+            CertificateValues::Partial { .. } => {
+                return Err(ProbabilityDocumentError::MalformedMember("values"))
+            }
             CertificateValues::Rejected(rejection) => {
                 return Ok(ExactProbabilityCertificateCheck::Rejected(rejection))
             }
@@ -1214,6 +1220,9 @@ fn check_with_context(
         &mut cx,
     )? {
         CertificateValues::Complete(values) => values,
+        CertificateValues::Partial { .. } => {
+            return Err(ProbabilityDocumentError::MalformedMember("values"))
+        }
         CertificateValues::Rejected(rejection) => {
             return Ok(ExactProbabilityCertificateCheck::Rejected(rejection))
         }

@@ -70,8 +70,16 @@ pub(super) fn run(
         Ok(selected) => selected,
         Err(error) => return document_failure(error, subject),
     };
-    let (mut product, _) = match build_retaining_monitor(request, cancel) {
-        Ok((ProbBuild::Built(product), monitor)) => (product, monitor),
+    let (mut product, lower_product) = match build_retaining_monitor(request, cancel) {
+        Ok((ProbBuild::Built(product), _)) => (product, None),
+        Ok((ProbBuild::Partial { product, lower_product }, _)) => {
+            if matches!(claim.form, ProbForm::MeanOfFraction { .. })
+                && matches!(claim.scheduler, ProbScheduler::Workload(_))
+            {
+                return not_yet();
+            }
+            (product, Some(lower_product))
+        }
         Ok((ProbBuild::Undefined(path), monitor)) => {
             return undefined::run(
                 simulation,
@@ -149,9 +157,22 @@ pub(super) fn run(
         ProbabilityObjective::Maximum => FhObjective::Max,
         _ => FhObjective::Min,
     };
+    let mut lower_terminal = terminal.clone();
+    if lower_product.is_some() {
+        let least = if kind == MeasurePayoffKind::Shifted {
+            match &claim.form {
+                ProbForm::Quantile { q, .. } => q.neg(),
+                _ => return not_yet(),
+            }
+        } else {
+            Rational::from_integer(0_i64.into())
+        };
+        lower_terminal.push(Some(least));
+    }
+    let solve_product = lower_product.as_ref().unwrap_or(&product);
     let (values, policy) = match decide_measure_exact(
-        &product,
-        &terminal,
+        solve_product,
+        &lower_terminal,
         objective,
         limits.max_rational_bits,
         &mut meter,
@@ -162,6 +183,11 @@ pub(super) fn run(
         Ok(_) => return broken(),
         Err(error) => return document_failure(induction_failure(error, cancel), subject),
     };
+    let values = values
+        .into_iter()
+        .take(product.states.len())
+        .collect::<Vec<_>>();
+    let policy = policy.into_iter().take(product.states.len()).collect::<Vec<_>>();
     for state in &mut product.states {
         let Some(control) = state.monitor else {
             return broken();
@@ -236,6 +262,80 @@ pub(super) fn run(
     };
     if let Some(tamper) = tamper {
         tamper(&mut certificate);
+    }
+    if lower_product.is_some() {
+        if !matches!(claim.form, ProbForm::Quantile { .. } | ProbForm::MeanOfFraction { .. }) {
+            return not_yet();
+        }
+        let checked = (|| {
+            let document = measure_probability_certificate_document(
+                &system,
+                claims,
+                &item,
+                &certificate,
+                kind,
+                document_limits,
+                cancel,
+            )?;
+            let bytes = fsl_replay::write_value_bounds_measure_certificate(
+                &document,
+                fsl_replay::SubsystemBoundKind::Lower,
+                document_limits,
+                cancel,
+            )?;
+            fsl_replay::check_probability_certificate_document_as(
+                &system,
+                claims,
+                &item,
+                &bytes,
+                fsl_replay::CertificateRole::Claim,
+                document_limits,
+                cancel,
+            )
+        })();
+        let check = match checked {
+            Ok(check) => check,
+            Err(error) => return document_failure(error, subject),
+        };
+        let ExactProbabilityCertificateCheck::Accepted(accepted) = &check else {
+            return checked_report(Ok(check), certificate, binding, None, subject);
+        };
+        let upper = if kind == MeasurePayoffKind::Shifted {
+            let ProbForm::Quantile { q, .. } = &claim.form else {
+                return broken();
+            };
+            fsl_replay::ExactBound::Finite(fsl_replay::ExactRational::new(
+                Rational::from_integer(1_i64.into()).sub(q),
+            ))
+        } else {
+            fsl_replay::ExactBound::Finite(fsl_replay::ExactRational::new(
+                Rational::from_integer(1_i64.into()),
+            ))
+        };
+        let evidence = Box::new(ExactProbabilityEvidence {
+            certificate,
+            value: accepted.value().clone(),
+            side: accepted.side(),
+        });
+        let binding = binding.map(|bound| ExactBinding {
+            population: bound.instance.population.node,
+            key: bound.instance.key,
+        });
+        let extremum = match optimization {
+            ProbabilityObjective::Maximum => Some(Extremum::Max),
+            ProbabilityObjective::Minimum => Some(Extremum::Min),
+            _ => None,
+        };
+        return EngineReport::Exact(Box::new(ExactReport::ProvedPartialBounds {
+            claim: check,
+            upper,
+            method: fsl_replay::BoundsMethod::BackwardInduction {
+                precision_bits: 0,
+            },
+            extremum,
+            binding,
+            evidence,
+        }));
     }
     let checked = (|| {
         let numerator = measure_probability_certificate_document(

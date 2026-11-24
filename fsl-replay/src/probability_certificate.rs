@@ -1926,8 +1926,11 @@ fn check_reachability_values(
     if relation.misplaced(bound) {
         return Ok(misplaced_kind());
     }
-    let values = match certificate_values(graph, certificate, cancel)? {
+    let values = match certificate_values(graph, certificate, cancel, false)? {
         CertificateValues::Complete(values) => values,
+        CertificateValues::Partial { .. } => {
+            return Err(ExactProbabilityGraphError::ExpansionRefused)
+        }
         CertificateValues::Rejected(rejection) => {
             return Ok(ExactProbabilityCertificateCheck::Rejected(rejection));
         }
@@ -2166,8 +2169,11 @@ fn check_exact_terminal_rewards(
     cancel: &Cancel,
 ) -> Result<ExactProbabilityCertificateCheck, ExactProbabilityGraphError> {
     poll_cancel(cancel)?;
-    let values = match certificate_values(graph, certificate, cancel)? {
+    let values = match certificate_values(graph, certificate, cancel, false)? {
         CertificateValues::Complete(values) => values,
+        CertificateValues::Partial { .. } => {
+            return Err(ExactProbabilityGraphError::ExpansionRefused)
+        }
         CertificateValues::Rejected(rejection) => {
             return Ok(ExactProbabilityCertificateCheck::Rejected(rejection));
         }
@@ -2333,6 +2339,10 @@ fn choice_values(
 
 enum CertificateValues {
     Complete(BTreeMap<ProbabilityProductKey, Rational>),
+    Partial {
+        values: BTreeMap<ProbabilityProductKey, Rational>,
+        named: BTreeSet<ProbabilityProductKey>,
+    },
     Rejected(ProbabilityCertificateRejection),
 }
 
@@ -2340,6 +2350,7 @@ fn certificate_values(
     graph: &CheckerGraph,
     certificate: &ExactProbabilityCertificate,
     cancel: &Cancel,
+    allow_partial_lower: bool,
 ) -> Result<CertificateValues, ExactProbabilityGraphError> {
     let mut values = BTreeMap::new();
     let mut previous = None;
@@ -2366,6 +2377,21 @@ fn certificate_values(
                 },
             ));
         }
+    }
+    if values.len() != graph.states.len() && allow_partial_lower {
+        if !values.contains_key(&graph.initial) {
+            return Ok(CertificateValues::Rejected(
+                ProbabilityCertificateRejection {
+                    rule: ProbabilityCertificateRule::Malformed,
+                    at: ProbabilityCertificateLocus::Member("values"),
+                },
+            ));
+        }
+        let named = values.keys().cloned().collect::<BTreeSet<_>>();
+        for key in graph.states.keys() {
+            values.entry(key.clone()).or_insert_with(|| Rational::from_integer(0_i64.into()));
+        }
+        return Ok(CertificateValues::Partial { values, named });
     }
     if values.len() != graph.states.len() {
         poll_cancel(cancel)?;

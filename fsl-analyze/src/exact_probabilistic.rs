@@ -637,6 +637,15 @@ pub struct UndefinedPath {
 pub enum ProbBuild {
     /// The product.
     Built(ProbProduct),
+    /// The explored product prefix and its lower-completion for computation
+    /// when `max_states` stopped admission.
+    Partial {
+        /// The product used to construct the partial certificate document.
+        product: ProbProduct,
+        /// A solver-only product that sends omitted successor mass to the
+        /// objective's least continuation value.
+        lower_product: ProbProduct,
+    },
     /// The first product state, in breadth-first order, at which the claim
     /// reads an undefined value.
     Undefined(UndefinedPath),

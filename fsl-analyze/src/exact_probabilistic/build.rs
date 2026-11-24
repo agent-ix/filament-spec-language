@@ -251,6 +251,8 @@ fn build_configured(
             })
             .collect(),
         fairness: claim.fairness.clone(),
+        partial: false,
+        omitted: Vec::new(),
     };
     builder.run()
 }
@@ -302,7 +304,11 @@ pub(crate) fn automaton_refusal(error: AutomatonError) -> ProductRefusal {
 
 #[cfg(test)]
 mod tests {
-    use super::{plan_refusal, PlanFault, ProductRefusal};
+    use super::{lower_completion, plan_refusal, PlanFault, Planned, ProductRefusal, Target};
+    use crate::exact_probabilistic::{
+        ProbEdge, ProbKey, ProbProduct, ProbStateId, ProductAction, ProductKind,
+    };
+    use filament_exact::{Integer, Rational};
 
     /// FR-204-AC-4 (TC-639): the exact planner keeps the timed form refusal's source span.
     #[ix_trace_rs::trace("TC-639", "FR-204-AC-4")]
@@ -332,6 +338,66 @@ mod tests {
             panic!("a timed form shape refusal");
         };
         assert_eq!(claim, Some(key));
+    }
+
+    #[test]
+    fn partial_completion_preserves_omitted_successor_mass() {
+        let key = |model| ProbKey {
+            binding: None,
+            model: vec![model],
+            monitor: None,
+            accumulator: None,
+            pending: None,
+            certificate_state: None,
+        };
+        let half = Rational::new(Integer::one(), Integer::from(2_i64)).unwrap();
+        let product = ProbProduct {
+            states: vec![key(0), key(1)],
+            kind: ProductKind::Dtmc,
+            edges: vec![ProbEdge {
+                from: ProbStateId(0),
+                choice: ProductAction::TerminalStutter,
+                action: None,
+                draw: None,
+                to: ProbStateId(1),
+                probability: half.clone(),
+                elapsed: Rational::from_integer(Integer::zero()),
+                rewards: Vec::new(),
+            }],
+            initial: vec![(0, None, ProbStateId(0))],
+            decided: Vec::new(),
+            labels: vec![vec![false], vec![true]],
+            fairness_operations: Vec::new(),
+            fairness: Vec::new(),
+        };
+        let omitted = Planned {
+            choice: ProductAction::TerminalStutter,
+            action: None,
+            draw: None,
+            target: Target {
+                key: key(2),
+                model: Vec::new(),
+                truths: Vec::new(),
+                resolution: None,
+                retained: false,
+            },
+            probability: half,
+            rewards: Vec::new(),
+            step: None,
+        };
+        let completed = lower_completion(&product, vec![(0, omitted)]);
+        let source_mass = completed
+            .edges
+            .iter()
+            .filter(|edge| edge.from == ProbStateId(0))
+            .fold(Rational::from_integer(Integer::zero()), |mass, edge| {
+                mass.add(&edge.probability)
+            });
+        assert_eq!(source_mass, Rational::from_integer(Integer::one()));
+        assert_eq!(completed.states.len(), 3);
+        assert_eq!(completed.labels[2], vec![false]);
+        assert_eq!(completed.edges[1].to, ProbStateId(2));
+        assert_eq!(completed.edges[2].to, ProbStateId(2));
     }
 }
 
@@ -386,6 +452,7 @@ struct Target {
     truths: Vec<bool>,
     /// Set for an intermediate state.
     resolution: Option<Resolution>,
+    retained: bool,
 }
 
 /// Only the control and key needed to decide target admission.
@@ -448,6 +515,8 @@ struct Builder<'r, 'c, 'p, 'k> {
     queue: VecDeque<usize>,
     fairness_operations: Vec<FairnessOperationIdentity>,
     fairness: Vec<filament_semantic_value::fairness::FairnessConstraint>,
+    partial: bool,
+    omitted: Vec<(usize, Planned)>,
 }
 
 /// A predicate that has no value at a model state.
@@ -458,14 +527,82 @@ struct Hit {
     model: Vec<u8>,
 }
 
+/// Complete a solver-only copy with an absorbing least-value state. Each
+/// omitted edge keeps its original probability and action, so rows are never
+/// renormalized and each omitted successor contributes exactly its original
+/// mass at the least continuation value.
+fn lower_completion(product: &ProbProduct, omitted: Vec<(usize, Planned)>) -> ProbProduct {
+    let mut completed = product.clone();
+    if omitted.is_empty() {
+        return completed;
+    }
+    let sink = completed.states.len();
+    let mut key = completed.states[0].clone();
+    key.model.extend_from_slice(b"partial-lower-sink");
+    key.pending = None;
+    key.certificate_state = None;
+    key.monitor = match key.monitor {
+        Some(MonitorState::Formula(_)) => Some(MonitorState::Formula(FormulaState::Decided(
+            super::MonitorVerdict::Reject,
+        ))),
+        Some(MonitorState::Measure { .. }) => Some(MonitorState::Measure {
+            remaining: 0,
+            phase: fsl_eval::probabilistic::MeasurePhase::Complete,
+        }),
+        monitor => monitor,
+    };
+    completed.states.push(key);
+    if !completed.labels.is_empty() {
+        let width = completed.labels.first().map_or(0, Vec::len);
+        completed.labels.push(vec![false; width]);
+    }
+    completed
+        .decided
+        .push((ProbStateId(sink), super::MonitorVerdict::Reject));
+    for (from, edge) in omitted {
+        completed.edges.push(ProbEdge {
+            from: ProbStateId(from),
+            choice: edge.choice,
+            action: edge.action,
+            draw: edge.draw,
+            to: ProbStateId(sink),
+            probability: edge.probability,
+            elapsed: Rational::from_integer(Integer::from(0_i64)),
+            rewards: edge.rewards,
+        });
+    }
+    completed.edges.push(ProbEdge {
+        from: ProbStateId(sink),
+        choice: ProductAction::TerminalStutter,
+        action: None,
+        draw: None,
+        to: ProbStateId(sink),
+        probability: Rational::from_integer(Integer::one()),
+        elapsed: Rational::from_integer(Integer::from(0_i64)),
+        rewards: Vec::new(),
+    });
+    completed
+}
+
 impl Builder<'_, '_, '_, '_> {
     fn run(
         mut self,
     ) -> Result<(ProbBuild, Option<Monitor<PropertyAutomaton>>), BudgetedProductError> {
         match self.explore() {
             Ok(initial) => {
+                let partial = self.partial;
+                let omitted = std::mem::take(&mut self.omitted);
                 let (product, monitor) = self.finish(initial);
-                Ok((ProbBuild::Built(product), monitor))
+                let build = if partial {
+                    let lower_product = lower_completion(&product, omitted);
+                    ProbBuild::Partial {
+                        product,
+                        lower_product,
+                    }
+                } else {
+                    ProbBuild::Built(product)
+                };
+                Ok((build, monitor))
             }
             Err(Halt::Refusal(refusal)) => Err(BudgetedProductError::Product(refusal)),
             Err(Halt::Key(error)) => Err(BudgetedProductError::Key(error)),
@@ -513,6 +650,7 @@ impl Builder<'_, '_, '_, '_> {
                     model: state.clone(),
                     truths,
                     resolution: None,
+                    retained: true,
                 };
                 let id = self.intern(target, None, None, at)?;
                 starts.push((at, self.bindings[binding].0.clone(), ProbStateId(id)));
@@ -731,14 +869,27 @@ impl Builder<'_, '_, '_, '_> {
 
     fn target(&mut self, arrival: Arrival, model: &ModelSimState, pending: usize) -> Step<Target> {
         self.admit_edge(pending)?;
-        self.admit_state(&arrival.key)?;
+        let retained = self.admit_partial_state(&arrival.key)?;
         super::observe_target_construction();
         Ok(Target {
             key: arrival.key,
             model: model.clone(),
             truths: arrival.truths,
             resolution: None,
+            retained,
         })
+    }
+
+    fn admit_partial_state(&mut self, key: &ProbKey) -> Step<bool> {
+        if self.index.contains_key(key) || self.pending_keys.contains(key) {
+            return Ok(true);
+        }
+        if self.nodes.len().saturating_add(self.pending_keys.len()) >= self.max_states {
+            self.partial = true;
+            return Ok(false);
+        }
+        self.pending_keys.insert(key.clone());
+        Ok(true)
     }
 
     /// The state of `target`, numbered at its first discovery. A state with
@@ -958,6 +1109,11 @@ impl Builder<'_, '_, '_, '_> {
             }
         };
         for edge in planned {
+            if !edge.target.retained {
+                self.partial = true;
+                self.omitted.push((at, edge));
+                continue;
+            }
             if self.edges.len() >= self.max_transitions {
                 return Err(Self::stopped(
                     ModelCheckLimit::ExactProbMaxTransitions,
@@ -1182,7 +1338,7 @@ impl Builder<'_, '_, '_, '_> {
                     // predicates read as the source's; the monitor and the
                     // accumulator advance at the resolution, once.
                     self.admit_edge(planned.len())?;
-                    self.admit_state(&key)?;
+                    let retained = self.admit_partial_state(&key)?;
                     super::observe_target_construction();
                     let target = Target {
                         key,
@@ -1192,6 +1348,7 @@ impl Builder<'_, '_, '_, '_> {
                             successors: successors.into_iter().map(|(_, post)| post).collect(),
                             rewards: draw.rewards.clone(),
                         }),
+                        retained,
                     };
                     super::observe_edge_construction();
                     planned.push(Planned {

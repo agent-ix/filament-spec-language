@@ -73,6 +73,42 @@ fn accepted(request: &Value, n: &str, d: &str) {
     assert_eq!(output["value"], json!({"numerator": n, "denominator": d}));
 }
 
+#[trace("FSpec-FR-1042-AC-11")]
+#[test]
+fn partial_reward_lower_certificate_uses_infinite_upper_bound() {
+    let mut limits = ExactProbLimits::default();
+    limits.model.limits.max_states = 1;
+    let source = claim(
+        &two_step(),
+        "Even",
+        ">=",
+        "rational(0,1)",
+        "m.delivered",
+    );
+    let (request, settlement) = request_with(&source, SNAPSHOT, limits, DOMAIN);
+    let request = request.unwrap_or_else(|| {
+        panic!("the explored reward prefix proves the zero lower bound: {settlement:?}")
+    });
+    let doc = document(&request);
+    assert_eq!(doc["kind"], "lower");
+    let (code, output) = run(&request);
+    assert_eq!(code, 0, "{output}");
+    let fsl_analyze::analyze::Settlement::Terminal(record) = settlement else {
+        panic!("partial reward proof settles: {settlement:?}");
+    };
+    assert!(matches!(
+        record.value(),
+        fsl_replay::TerminalValue::Proved {
+            basis: fsl_replay::ProofBasis::ValueBounds {
+                upper: fsl_replay::ExactBound::Infinity,
+                exploration: fsl_replay::BoundsExploration::Partial,
+                ..
+            },
+            ..
+        }
+    ));
+}
+
 #[trace("TC-636", "FR-201-AC-22", "FR-282-AC-17")]
 #[test]
 fn reward_core_keys_costs_and_rows_share_the_exact_working_storage_boundary() {

@@ -534,6 +534,43 @@ fn reachability_threshold(
         }
         match reachability(product, target, blocked, objective, limits) {
             Ok(result) => {
+                let lower = result
+                    .values
+                    .iter()
+                    .map(|value| match value {
+                        ExtRational::Finite(value) => round_dyadic(value, precision, false),
+                        ExtRational::PlusInfinity => round_dyadic(&one(), precision, false),
+                    })
+                    .collect::<Vec<_>>();
+                let upper = result
+                    .values
+                    .iter()
+                    .map(|value| match value {
+                        ExtRational::Finite(value) => round_dyadic(value, precision, true),
+                        ExtRational::PlusInfinity => round_dyadic(&one(), precision, true),
+                    })
+                    .collect::<Vec<_>>();
+                let initial = product
+                    .initial
+                    .first()
+                    .map(|(_, _, state)| state.index())
+                    .unwrap_or(0);
+                let separates =
+                    lower
+                        .get(initial)
+                        .zip(upper.get(initial))
+                        .is_some_and(|(lower, upper)| {
+                            lower.rational() >= *threshold || upper.rational() <= *threshold
+                        });
+                if separates {
+                    return Ok(UnboundedOutcome::Bounds {
+                        lower,
+                        upper,
+                        precision_bits: precision,
+                        sweeps,
+                        policy: result.policy,
+                    });
+                }
                 return Ok(UnboundedOutcome::Exact(result));
             }
             Err(UnboundedError::MaxPolicyIterations) => {
