@@ -344,6 +344,7 @@ pub(super) fn protocol_clause_item<'a>(
                 settle_protocol_item(
                     ProtocolItem {
                         request: ProtocolCheckRequest {
+                            workers: 1,
                             temporal_clock_selections: &[],
                             subject: run_subject,
                             item: item(),

@@ -106,6 +106,7 @@ fn a_guard_over_an_entry_binder_is_pre_test_and_skips_the_body() {
     let fixture = Fixture::entry_guard();
     let outcome = check_protocol(
         ProtocolCheckRequest {
+            workers: 1,
             temporal_clock_selections: &[],
             subject: fixture.subject(),
             item: fixture.item(),

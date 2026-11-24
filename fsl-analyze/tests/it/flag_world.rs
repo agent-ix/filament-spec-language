@@ -432,6 +432,7 @@ impl World {
         subject.simulation.meter = meter;
         check_model(
             ModelCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject,
                 item: ModelCheckItem::Clause {

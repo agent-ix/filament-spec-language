@@ -208,7 +208,10 @@ pub fn retain<S: TransitionSystem>(
     identity: IdentityLimits,
     max_depth: Option<usize>,
     poll: impl FnMut() -> bool,
-) -> RetainResult<S> {
+) -> RetainResult<S>
+where
+    S::State: Clone,
+{
     retain_reduced(
         system,
         &SymmetryGroup::default(),
@@ -258,7 +261,10 @@ pub fn retain_reduced<S: TransitionSystem>(
     identity: IdentityLimits,
     max_depth: Option<usize>,
     poll: impl FnMut() -> bool,
-) -> RetainResult<S> {
+) -> RetainResult<S>
+where
+    S::State: Clone,
+{
     retain_reduced_with_key(
         system,
         group,
@@ -268,6 +274,8 @@ pub fn retain_reduced<S: TransitionSystem>(
             identity,
             max_depth,
         },
+        1,
+        |_, _, _| {},
         poll,
         |state| encode(&system.key(state), identity),
     )
@@ -280,9 +288,14 @@ pub(super) fn retain_reduced_with_key<S: TransitionSystem>(
     group: &SymmetryGroup,
     ample: Option<&dyn Ample<S>>,
     config: RetainConfig,
+    workers: usize,
+    mut prefetch: impl FnMut(&S, &[S::State], usize),
     mut poll: impl FnMut() -> bool,
     key: impl Fn(&S::State) -> Result<Vec<u8>, quire_canonical::Error>,
-) -> RetainResult<S> {
+) -> RetainResult<S>
+where
+    S::State: Clone,
+{
     let RetainConfig {
         limits,
         identity,
@@ -350,6 +363,22 @@ pub(super) fn retain_reduced_with_key<S: TransitionSystem>(
                 frontier: graph.frontier(source, &queue),
                 cause: CatalogCode::new("cancelled", "caller-cancelled"),
             };
+        }
+        if workers > 1 {
+            let batch_capacity = workers.min(queue.len().saturating_add(1));
+            let mut batch = Vec::with_capacity(batch_capacity);
+            batch.push(graph.states[source.0].state.clone());
+            batch.extend(
+                queue
+                    .iter()
+                    .take(workers.saturating_sub(1))
+                    .filter_map(|id| {
+                        let state = &graph.states[id.0];
+                        (!max_depth.is_some_and(|horizon| state.depth >= horizon))
+                            .then(|| state.state.clone())
+                    }),
+            );
+            prefetch(system, &batch, workers);
         }
         let expansion = match system.successors(&graph.states[source.0].state) {
             Ok(expansion) => expansion,
@@ -442,4 +471,70 @@ pub(super) fn retain_reduced_with_key<S: TransitionSystem>(
         graph.states[source.0].expanded = true;
     };
     Ok(GraphExploration { graph, outcome })
+}
+
+#[cfg(test)]
+mod worker_capacity_tests {
+    use super::*;
+    use fsl_eval::simulation::Expansion;
+    use ix_trace_rs::trace;
+
+    struct OneState;
+
+    impl TransitionSystem for OneState {
+        type State = u8;
+        type TransitionId = u8;
+        type Key = u8;
+        type Finding = ();
+
+        fn initial(&self) -> Vec<Self::State> {
+            vec![0]
+        }
+
+        fn key(&self, state: &Self::State) -> Self::Key {
+            *state
+        }
+
+        fn successors(
+            &self,
+            _state: &Self::State,
+        ) -> Result<Expansion<Self::TransitionId, Self::State, Self::Finding>, ExpansionStop>
+        {
+            Ok(Expansion {
+                successors: Vec::new(),
+                findings: Vec::new(),
+            })
+        }
+    }
+
+    /// A valid maximal worker count is bounded by the available frontier.
+    #[trace("TC-1417", "FR-126-AC-20")]
+    #[test]
+    fn usize_max_workers_on_a_one_state_frontier_exhausts_without_panicking() {
+        let exploration = retain_reduced_with_key(
+            &OneState,
+            &SymmetryGroup::default(),
+            None,
+            RetainConfig {
+                limits: Limits::default(),
+                identity: IdentityLimits::default(),
+                max_depth: None,
+            },
+            usize::MAX,
+            |_, _, _| {},
+            || false,
+            |state| encode(state, IdentityLimits::default()),
+        )
+        .expect("the one-state graph has encodable identities");
+
+        assert_eq!(exploration.graph.states().len(), 1);
+        assert!(matches!(
+            exploration.outcome,
+            Outcome::Exhaustive(Stats {
+                states: 1,
+                transitions: 0,
+                depth: 0,
+            })
+        ));
+    }
 }

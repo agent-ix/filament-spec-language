@@ -396,6 +396,7 @@ fn protocol_request<'a>(
     ignore_memory_constraints: bool,
 ) -> ProtocolCheckRequest<'a> {
     ProtocolCheckRequest {
+        workers: 1,
         temporal_clock_selections: &[],
         subject: documents.subject(package, selection),
         item: item(package),

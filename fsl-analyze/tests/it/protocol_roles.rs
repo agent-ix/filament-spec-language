@@ -174,6 +174,17 @@ impl World {
         max_depth: Option<usize>,
         max_live_instances: Option<u64>,
     ) -> ModelCheckOutcome<ProtocolTransition> {
+        self.check_with_workers(item, max_depth, max_live_instances, 1)
+    }
+
+    /// [`Self::check`] with the requested bounded expansion worker count.
+    fn check_with_workers(
+        &self,
+        item: ModelCheckItem<'_>,
+        max_depth: Option<usize>,
+        max_live_instances: Option<u64>,
+        workers: usize,
+    ) -> ModelCheckOutcome<ProtocolTransition> {
         let subject = self.subject();
         let temporal_clock_selections = crate::fill::tcb_01_event_position_selection(
             subject
@@ -184,6 +195,7 @@ impl World {
         );
         check_protocol(
             ProtocolCheckRequest {
+                workers,
                 temporal_clock_selections: &temporal_clock_selections,
                 subject,
                 item,
@@ -228,6 +240,7 @@ impl World {
     fn deadlock(&self) -> ModelCheckOutcome<ProtocolTransition> {
         check_protocol(
             ProtocolCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: self.subject(),
                 item: ModelCheckItem::DeadlockFreedom,
@@ -1159,6 +1172,35 @@ impl ModelLetters for CellV {
     }
 }
 
+/// FR-126-AC-20: protocol temporal checks return the same literal result as
+/// the coordinator's worker count changes, including the liveness path.
+#[trace("TC-1417", "FR-126-AC-20")]
+#[test]
+fn protocol_liveness_worker_modes_preserve_the_result() {
+    let run = format!(
+        "sequence Main {{ {} }}",
+        crate::protocol_system::touch("Work")
+    );
+    let body = unit(ORIGIN, "", "", &run)
+        + "temporal WorkerClaim using t0 over (k: M::Cell) clock \"model-steps\" on origin { always true }\n";
+    let world = World::new(&body, &["c"], &[0]);
+    let letters = CellV { holds: |_| true };
+    let item = world.claim(&letters);
+    let mut expected = None;
+    for workers in [1, 2, 4, 64] {
+        let outcome = world.check_with_workers(item, None, None, workers);
+        assert!(
+            matches!(outcome, ModelCheckOutcome::Holds { .. }),
+            "workers={workers}: {outcome:?}"
+        );
+        if let Some(expected) = &expected {
+            assert_eq!(&outcome, expected, "workers={workers}");
+        } else {
+            expected = Some(outcome);
+        }
+    }
+}
+
 /// `activation on each` over the four trigger values of `M::Level`, with the
 /// guard `when`.
 fn each_when(when: &str) -> String {
@@ -1691,6 +1733,7 @@ fn requests_differing_only_in_max_live_instances_share_one_obligation_identity()
     let letters = CellV { holds: |v| v <= 3 };
     let temporal_clock_selections = crate::fill::tcb_01_event_position_selection(&world.checked);
     let request = |max_live_instances| ProtocolCheckRequest {
+        workers: 1,
         temporal_clock_selections: &temporal_clock_selections,
         subject: world.subject(),
         item: world.claim(&letters),
@@ -1805,6 +1848,7 @@ fn a_protocol_derived_items_max_live_instances_reaches_the_run_and_the_check() {
             crate::fill::tcb_01_event_position_selection(&world.checked);
         let item = ProtocolItem {
             request: ProtocolCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &temporal_clock_selections,
                 subject: world.subject(),
                 item: ModelCheckItem::DeadlockFreedom,

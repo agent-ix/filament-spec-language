@@ -57,6 +57,7 @@ fn hyper_encoding_size_refusal_keeps_the_default_product_identity() {
 fn model_check_request_smt_limits_have_the_specified_identity_effects() {
     let world = World::new(&["v"], false, &non_interference("", ""));
     let request = |smt_encoding, smt_run| ModelCheckRequest {
+        workers: 1,
         subject: world.subject(),
         temporal_clock_selections: &[],
         item: fsl_replay::ModelCheckItem::DeadlockFreedom,

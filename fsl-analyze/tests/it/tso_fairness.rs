@@ -158,6 +158,7 @@ impl Unit {
     ) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal> {
         check_protocol_constrained(
             ProtocolCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: self.subject(selection),
                 item: self.item(),
@@ -181,6 +182,7 @@ impl Unit {
     ) -> Result<ModelCheckOutcome<ProtocolTransition>, ModelCheckRefusal> {
         check_protocol(
             ProtocolCheckRequest {
+                workers: 1,
                 temporal_clock_selections: &[],
                 subject: self.subject(selection),
                 item: self.item(),

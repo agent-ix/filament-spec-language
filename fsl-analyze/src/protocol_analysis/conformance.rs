@@ -993,6 +993,7 @@ fn every_behavior_result(
         .collect();
     let item = fsl_replay::ModelCheckItem::DeadlockFreedom;
     let request = crate::model_check::ProtocolCheckRequest {
+        workers: 1,
         subject,
         temporal_clock_selections: &[],
         item,
