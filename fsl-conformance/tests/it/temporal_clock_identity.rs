@@ -21,7 +21,6 @@ const MODEL_SOURCE: &[u8] = br#"language "ix:native" edition "1-draft";
 domain "acme/rpc";
 dimension Time;
 unit s : Time = rational(1, 1);
-event Tick { timestamp: Timestamp; occurs timestamp; }
 object Counter identity (id) { id: Int[0,3]; }
 population counters: Counter;
 "#;
@@ -30,7 +29,8 @@ const SOURCE: &[u8] = br#"language "ix:native" edition "1-draft";
 profile v = "filament.model.complete/v1";
 profile t = "filament.temporal.timestamped-event.finite-window/v1";
 model M = "acme/rpc";
-temporal Window using t over (e: M::Tick) clock "plant-ms" on origin {
+event Tick { timestamp: Timestamp; occurs timestamp; }
+temporal Window using t over (e: Tick) clock "plant-ms" on origin {
   always[0,1] holds(true)
 }
 possible CounterClaim using v over (c: M::Counter) { true }
@@ -255,7 +255,7 @@ fn timestamped_role_readback_identity_and_selection_refusals_are_exact() {
         wrong_selection.is_empty(),
         "fixed-sample is not a timestamp selection"
     );
-    let wrong_result = check_with_execution_points_and_source_inputs(
+    let wrong_checked = check_with_execution_points_and_source_inputs(
         &wrong_parsed,
         "acme/orders".to_owned(),
         &BTreeMap::new(),
@@ -268,13 +268,15 @@ fn timestamped_role_readback_identity_and_selection_refusals_are_exact() {
         &DependencyInput::default(),
         SpineLimits::default(),
         &Cancel::new(),
-    );
-    let wrong_refusal = wrong_result.expect_err("fixed-sample cannot serve timestamped-event");
-    let failure = wrong_refusal
-        .into_refused()
-        .expect("the typed clock refusal is not a limit");
-    let CompileRefusal::Emit(EmitRefusal::ClockSelection(refusal), Some(locus)) = *failure else {
-        panic!("typed wrong-kind refusal with declaration locus: {failure:?}");
+    )
+    .expect("the source unit checks before clock-selection emission")
+    .into_value();
+    let wrong_refusal = wrong_kind
+        .package_selections(&wrong_checked, &[&wrong_parsed])
+        .expect_err("fixed-sample cannot serve timestamped-event");
+    let CompileRefusal::Emit(EmitRefusal::ClockSelection(refusal), Some(locus)) = *wrong_refusal
+    else {
+        panic!("typed wrong-kind refusal with declaration locus: {wrong_refusal:?}");
     };
     assert_eq!(refusal.cause, ClockSelectionCause::ClockKindMismatch);
     assert_eq!(refusal.clock, "plant-ms");

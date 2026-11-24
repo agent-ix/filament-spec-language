@@ -263,7 +263,7 @@ fn a_state_graph_replay_allocation_stops_before_the_next_real_instance() {
 /// independently selected typed clock row.
 #[test]
 fn state_graph_identity_readback_uses_the_explicit_temporal_selection() {
-    let world = crate::graph_world::temporal_config_world();
+    let world = crate::graph_world::temporal_config_world_ordered();
     let claim = world.claim("ReachesTwo");
     let mut selections = crate::fill::tcb_01_event_position_selection(&world.package);
     let hyper = &world.package.graph().hyper_clauses()[0];
