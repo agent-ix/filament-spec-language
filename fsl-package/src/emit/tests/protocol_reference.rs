@@ -456,7 +456,7 @@ fn a_reference_emits_the_target_node_and_one_carrier_the_reader_admits() {
 
 /// FR-218-AC-8: a repeated reference shares its target and carrier, adding a
 /// second expression occurrence in source order without changing the body.
-#[trace("FR-218-AC-8", "TC-1021", "FSpec-FR-322-AC-66")]
+#[trace("FR-218-AC-8", "FR-092-AC-17", "TC-1021", "FSpec-FR-322-AC-66")]
 #[test]
 fn repeated_references_share_one_carrier_and_retain_both_occurrences() {
     let text = selecting(&format!(
@@ -533,6 +533,59 @@ fn repeated_references_share_one_carrier_and_retain_both_occurrences() {
     assert_ne!(
         source_rows[0]["regions"][0]["start"], source_rows[1]["regions"][0]["start"],
         "the two source-map rows point to distinct occurrences"
+    );
+}
+
+/// FR-092-AC-17: changing only the referenced protocol changes the
+/// structural carrier identity and its target dependency.
+#[trace("FR-092-AC-17", "TC-1021")]
+#[test]
+fn protocol_reference_identity_includes_its_bound_target() {
+    let source = format!(
+        "function refersFill using v(): Boolean pure {{ protocol Fill }}\n\
+         function refersOther using v(): Boolean pure {{ protocol Other }}\n{}{}",
+        protocol("Fill"),
+        protocol("Other")
+    );
+    let (_, wire, read) = emit_model_unit(&selecting(&source), None);
+    assert!(matches!(read, Read::Verified { .. }), "{read:?}");
+    let clauses: Vec<&Value> = nodes(&wire)
+        .iter()
+        .filter(|node| node["node_tag"] == "protocol" && node["semantic_form"] == "protocol_clause")
+        .collect();
+    let clause = |name: &str| {
+        clauses
+            .iter()
+            .copied()
+            .find(|node| node["declaration"]["qualified_name"] == json!([name]))
+            .expect("the named protocol clause")
+    };
+    let fill_clause = clause("Fill");
+    let other_clause = clause("Other");
+    let carriers: Vec<&Value> = nodes(&wire)
+        .iter()
+        .filter(|node| {
+            node["node_tag"] == "protocol" && node["semantic_form"] == "protocol_reference"
+        })
+        .collect();
+    let carrier = |target: &Value| {
+        carriers
+            .iter()
+            .copied()
+            .find(|node| node["dependencies"] == json!([target["node_id"]]))
+            .expect("the reference to the named target")
+    };
+    let fill_carrier = carrier(fill_clause);
+    let other_carrier = carrier(other_clause);
+    assert_ne!(fill_clause["node_id"], other_clause["node_id"]);
+    assert_ne!(fill_carrier["node_id"], other_carrier["node_id"]);
+    assert_eq!(
+        fill_carrier["dependencies"],
+        json!([fill_clause["node_id"]])
+    );
+    assert_eq!(
+        other_carrier["dependencies"],
+        json!([other_clause["node_id"]])
     );
 }
 

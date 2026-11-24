@@ -980,6 +980,22 @@ fn the_model_matches_have_no_catch_all_arm() {
 // TC-418: clause functions.
 // ---------------------------------------------------------------------
 
+/// FR-094-AC-16: all declared clause kinds lower to their exact wire text.
+#[trace("FR-094-AC-16")]
+#[test]
+fn declared_clause_kind_spellings_are_closed_and_exact() {
+    assert_eq!(
+        super::clause_spelling(DeclaredClauseKind::Invariant),
+        "invariant"
+    );
+    assert_eq!(
+        super::clause_spelling(DeclaredClauseKind::Precondition),
+        "precondition"
+    );
+    assert_eq!(super::clause_spelling(DeclaredClauseKind::Body), "body");
+    assert_eq!(super::clause_spelling(DeclaredClauseKind::Reward), "reward");
+}
+
 /// FR-094: a check selects one package for each domain package identity. A
 /// selection is the identity alone (FR-321), so two aliases that admit the
 /// same `acme/orders` package share one selection and check, while a

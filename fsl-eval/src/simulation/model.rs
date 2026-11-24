@@ -1554,6 +1554,39 @@ impl<'a> ModelSystem<'a> {
             initial.push(ModelSimState::anchored(state, anchor));
         }
 
+        // FR-125 gives an object key one type across the subject's initial
+        // states and every population that admits the bounded universe. Do
+        // this before reference bindings or any instance is formed: otherwise
+        // the same key could denote different objects depending on which
+        // population or initial snapshot supplied the row.
+        let mut admitted_types = BTreeMap::<String, DeclarationKey>::new();
+        for state in &initial {
+            for (population, objects) in &state.state.populations {
+                if !universes.contains_key(population) {
+                    continue;
+                }
+                for (key, object) in objects {
+                    match admitted_types.get(key) {
+                        Some(first_type) if first_type != &object.type_identity => {
+                            return Err(refused(
+                                Code::InvalidRuntimeInput,
+                                "conflicting-identity",
+                                &[
+                                    ("key", key.clone()),
+                                    ("first_type", first_type.node.clone()),
+                                    ("second_type", object.type_identity.node.clone()),
+                                ],
+                            ));
+                        }
+                        Some(_) => {}
+                        None => {
+                            admitted_types.insert(key.clone(), object.type_identity.clone());
+                        }
+                    }
+                }
+            }
+        }
+
         let reference_bindings = if let Some(package) = input.source_package() {
             ReferenceBindings::bind(
                 package.graph(),
@@ -2498,19 +2531,28 @@ impl<'a> ModelSystem<'a> {
             .collect();
         crate::simulation::not_simulated::check_requires_bound(&roots, self.types, u64::MAX)?;
         admitting.sort_by(|left, right| left.0.cmp(&right.0));
-        Ok(admitting
-            .into_iter()
-            .flat_map(|(_, population)| {
-                self.universes
-                    .get(population)
-                    .into_iter()
-                    .flatten()
-                    .map(|key| ModelInstance {
+        let mut seen_instance_keys = BTreeSet::new();
+        let mut instances = Vec::new();
+        for (_, population) in admitting {
+            for key in self.universes.get(population).into_iter().flatten() {
+                let admitted = self.initial.iter().any(|state| {
+                    state
+                        .state
+                        .populations
+                        .get(population)
+                        .and_then(|objects| objects.get(key))
+                        .and_then(|object| self.model.type_identity(&object.type_identity))
+                        .is_some_and(|actual| self.types.conforms(actual, parameter.clone()))
+                });
+                if admitted && seen_instance_keys.insert(key.clone()) {
+                    instances.push(ModelInstance {
                         population: population.clone(),
                         key: key.clone(),
-                    })
-            })
-            .collect())
+                    });
+                }
+            }
+        }
+        Ok(instances)
     }
 
     /// List policy instances in the existing deterministic order, charging

@@ -1465,6 +1465,7 @@ pub(super) fn type_named_body(
         parent_projections: BTreeMap::new(),
         kind: StateClauseKind::Invariant,
         operation: None,
+        authored_operation: None,
         self_slot: NO_SLOT,
         result_slot: None,
     });

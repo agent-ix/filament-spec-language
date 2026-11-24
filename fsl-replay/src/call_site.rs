@@ -19,6 +19,7 @@
 //! It builds no [`crate::execute::replay`] call and no
 //! [`crate::spine::Call`]; it names a call site, it does not make one.
 
+use filament_contract_model::PackageId;
 use filament_exact::{Cancel, Identifier, NodeKey, ValueType};
 use filament_semantic_value::catalog::InternalFault;
 use fsl_foundation::bound::DomainKey;
@@ -191,6 +192,8 @@ mod sealed {
 /// [`FieldSite`], a [`PopulationSite`] or an [`ImportedFunctionSite`].
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CallSite<S> {
+    /// FSpec FR-322 package identity for the compiled package.
+    pub package_id: PackageId,
     /// The compiled package's `filament.checked-package/v2` bytes, exactly as
     /// the S4 emitter wrote them.
     pub package: Vec<u8>,
@@ -294,6 +297,8 @@ pub struct ImportedFunctionSite {
     /// The declaring library: the `package` of the `dependency_reference`
     /// term every call of the function in the unit lowers to.
     pub library: LibraryName,
+    /// Identity of the declaring checked package.
+    pub package_id: PackageId,
     /// The library's `filament.checked-package/v2` bytes exactly as the S4
     /// emitter wrote them in the unit's compile.
     pub package: Vec<u8>,
@@ -678,6 +683,12 @@ pub fn call_site<'a, S: CallSiteSelection>(
             "package-name-is-a-library-name",
         )))
     })?;
+    let package_id = PackageId::new(package_name.clone()).map_err(|_| {
+        Box::new(CallSiteRefusal::Fault(InternalFault::new(
+            "call-site",
+            "package-name-is-a-package-id",
+        )))
+    })?;
     let cancel = Cancel::new();
     let refusal = |failure| match spine::refusal_or_fault(failure) {
         Ok(refusal) => Box::new(CallSiteRefusal::from(*refusal)),
@@ -736,6 +747,7 @@ pub fn call_site<'a, S: CallSiteSelection>(
     .into_value();
     let site = locate_in_checked(&checked, &package_name, selection)?;
     Ok(CallSite {
+        package_id,
         package: emitted.package().bytes().to_vec(),
         site,
     })
@@ -902,8 +914,15 @@ impl sealed::Locate for ImportedFunctionName {
                 "direct-import-has-emitted-bytes",
             )))
         })?;
+        let package_id = PackageId::new(emitted.name().to_owned()).map_err(|_| {
+            Box::new(CallSiteRefusal::Fault(InternalFault::new(
+                "call-site",
+                "emitted-library-name-is-a-package-id",
+            )))
+        })?;
         Ok(ImportedFunctionSite {
             library: self.library.clone(),
+            package_id,
             package: emitted.bytes().to_vec(),
             function: function_site(library, &callable)?,
         })

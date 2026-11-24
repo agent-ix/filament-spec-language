@@ -3,7 +3,7 @@
 //! implementation behind [`crate::model::state::StateModel`].
 
 use super::{admission_record, AdmissionRecordExt};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use filament_exact::{FieldValue, ObjectReference, Presence};
 use filament_semantic_value::declaration::{EffectiveAttribute, TypeEnvironment};
@@ -241,8 +241,15 @@ pub(crate) fn observe_state(
         })
         .cloned()
         .collect();
+    let mut closure_objects = Vec::new();
+    let mut closure_references = BTreeSet::new();
+    for (reference, attributes) in objects {
+        if closure_references.insert(reference.clone()) {
+            closure_objects.push((reference, attributes));
+        }
+    }
     let closure =
-        ObjectClosure::new(types, objects, &tolerated).map_err(map_environment_refusal)?;
+        ObjectClosure::new(types, closure_objects, &tolerated).map_err(map_environment_refusal)?;
     let extents = admit_supplied_extents(
         types,
         model_facts(views, types)?,

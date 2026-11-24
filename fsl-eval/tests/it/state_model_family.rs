@@ -277,11 +277,15 @@ pub(crate) fn simulation_package_over(
 }
 
 fn graph(body: &str, guard: bool) -> (CheckedGraph, EffectiveView) {
+    graph_with_mode(body, guard, CheckMode::Linked)
+}
+
+fn graph_with_mode(body: &str, guard: bool, mode: CheckMode) -> (CheckedGraph, EffectiveView) {
     let (declarations, view, _) = declarations(body, guard);
     (
         declarations
             .check(
-                CheckMode::Linked,
+                mode,
                 CheckingLimits::default(),
                 &fsl_eval::value::S6aRewardEvaluator,
             )
@@ -710,46 +714,435 @@ fn source_state_clause_retains_false_selected_precondition_as_model_undefined() 
     }
 }
 
-fn observations(graph: &CheckedGraph, view: &EffectiveView) -> AdmittedObservations {
+/// FR-107-AC-19/-20: an undefined precondition remains in the returned
+/// results while later preconditions are evaluated; postconditions are
+/// skipped unless every precondition completes true.
+#[trace("TC-1039", "FR-107-AC-19", "FR-107-AC-20")]
+#[test]
+fn clause_sets_report_undecided_preconditions_and_skip_postconditions() {
+    use fsl_eval::value::ClauseSetOutcome;
     use fsl_semantics::model::observation::{
-        admit_observations, ClauseFacts, ClauseSelection, ClauseSelectionInput, ObservationLimits,
-        OperationFacts, Provisions, SelectedObject,
+        document_reference, ClauseSelectionInput, SelectedObject,
     };
+
+    let clauses = "pre F using v on M::A::ready { self.ready() }\n\
+        pre G using v on M::A::ready { true }\n\
+        pre E using v on M::A::ready { false }\n\
+        post H using v on M::A::ready { true }\n";
+    let (checked, view) = graph(clauses, false);
     let model = view.model_selection();
-    let bytes = serde_json::to_vec(&serde_json::json!({
-        "format": "filament.state.snapshot/v1",
-        "identity": {
-            "authority": "test", "identity": "sm1-snapshot"
-        },
-        "observation": "pre",
-        "model": {
-            "identity": model.identity
-        },
-        "populations": [{
-            "population": POPULATION, "complete": true,
-            "objects": [{
-                "key": "present", "type": A,
-                "fields": {
-                    "flag": {"boolean": true},
-                    "next": {"reference": {"population": POPULATION, "key": "present"}}
-                }
-            }]
-        }]
+    let pre = DocumentRef {
+        authority: "test".to_owned(),
+        identity: "set-pre".to_owned(),
+    };
+    let post = DocumentRef {
+        authority: "test".to_owned(),
+        identity: "set-post".to_owned(),
+    };
+    let pre_bytes = snapshot_bytes(&view, &pre.identity, "pre");
+    let post_bytes = snapshot_bytes(&view, &post.identity, "post");
+    let snapshots = BTreeMap::from([
+        (
+            document_reference(&pre_bytes).expect("pre snapshot names itself"),
+            pre_bytes,
+        ),
+        (
+            document_reference(&post_bytes).expect("post snapshot names itself"),
+            post_bytes,
+        ),
+    ]);
+    let invocation_bytes = serde_json::to_vec(&serde_json::json!({
+        "format": "filament.state.invocation/v1",
+        "identity": {"authority": "test", "identity": "set-call"},
+        "model": {"identity": model.identity},
+        "context": A,
+        "operation": "ready",
+        "self": {"population": POPULATION, "key": "present"},
+        "pre": {"identity": {"authority": "test", "identity": pre.identity}},
+        "post": {"identity": {"authority": "test", "identity": post.identity}},
+        "parameters": {},
+        "result": {"boolean": true},
+        "created": [],
+        "deleted": [],
     }))
-    .unwrap();
+    .expect("invocation serializes");
+    let invocation = document_reference(&invocation_bytes).expect("invocation names itself");
+    let invocations = BTreeMap::from([(invocation.clone(), invocation_bytes)]);
+    let selected = Some(SelectedObject {
+        population: POPULATION.to_owned(),
+        key: "present".to_owned(),
+    });
+    let admit = |graph: &CheckedGraph, name: &str, postcondition: bool| {
+        observations_for(
+            graph,
+            name,
+            if postcondition {
+                ClauseSelectionInput::Invocation {
+                    invocation: invocation.clone(),
+                }
+            } else {
+                ClauseSelectionInput::PreCall {
+                    snapshot: pre.clone(),
+                    self_object: selected.clone(),
+                    parameters: BTreeMap::new(),
+                }
+            },
+            &snapshots,
+            &invocations,
+        )
+    };
+    let f = admit(&checked, "F", false);
+    let g = admit(&checked, "G", false);
+    let e = admit(&checked, "E", false);
+    let h = admit(&checked, "H", true);
+    let package = CheckedPackage::link(checked);
+    let f_name = QualifiedName::unqualified("F").unwrap();
+    let g_name = QualifiedName::unqualified("G").unwrap();
+    let h_name = QualifiedName::unqualified("H").unwrap();
+    let e_name = QualifiedName::unqualified("E").unwrap();
+
+    let single = package
+        .evaluate_clause_set(
+            &[(f_name.clone(), &f)],
+            fsl_semantics::check::SCALAR_LIMITS_UNLIMITED,
+        )
+        .expect("one admitted precondition evaluates");
+    assert_eq!(single.outcome, ClauseSetOutcome::Undecided);
+    assert_eq!(single.results.len(), 1);
+    assert_eq!(single.results[0].name.to_string(), "F");
+    assert!(matches!(
+        &single.results[0].evaluation.evaluation.outcome,
+        FamilyOutcome::FamilyEvaluated(FamilyResult::Undefined(cause))
+            if cause.undefined_record().reason.as_str() == "precondition-false"
+    ));
+
+    let together = package
+        .evaluate_clause_set(
+            &[(g_name.clone(), &g), (f_name.clone(), &f)],
+            fsl_semantics::check::SCALAR_LIMITS_UNLIMITED,
+        )
+        .expect("the two admitted preconditions evaluate");
+    assert_eq!(
+        together
+            .results
+            .iter()
+            .map(|entry| entry.name.to_string())
+            .collect::<Vec<_>>(),
+        ["F", "G"]
+    );
+    assert!(matches!(
+        &together.results[0].evaluation.evaluation.outcome,
+        FamilyOutcome::FamilyEvaluated(FamilyResult::Undefined(cause))
+            if cause.undefined_record().reason.as_str() == "precondition-false"
+    ));
+    assert!(matches!(
+        &together.results[1].evaluation.evaluation.outcome,
+        FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true)))
+    ));
+    assert_eq!(together.outcome, ClauseSetOutcome::Undecided);
+
+    let post_skipped = package
+        .evaluate_clause_set(
+            &[(h_name, &h), (f_name.clone(), &f)],
+            fsl_semantics::check::SCALAR_LIMITS_UNLIMITED,
+        )
+        .expect("admitted precondition and postcondition evaluate");
+    assert_eq!(post_skipped.results.len(), 1);
+    assert_eq!(post_skipped.results[0].name.to_string(), "F");
+    assert_eq!(post_skipped.outcome, ClauseSetOutcome::Undecided);
+
+    let false_stops = package
+        .evaluate_clause_set(
+            &[(e_name, &e), (g_name.clone(), &g)],
+            fsl_semantics::check::SCALAR_LIMITS_UNLIMITED,
+        )
+        .expect("the false precondition is admitted");
+    assert_eq!(false_stops.outcome, ClauseSetOutcome::False);
+    assert_eq!(false_stops.results.len(), 1);
+    assert_eq!(false_stops.results[0].name.to_string(), "E");
+    assert!(matches!(
+        &false_stops.results[0].evaluation.evaluation.outcome,
+        FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(false)))
+    ));
+
+    let incomplete_stops = package
+        .evaluate_clause_set(
+            &[(f_name.clone(), &f), (g_name, &g)],
+            filament_exact::ScalarLimits {
+                work_units: 0,
+                ..fsl_semantics::check::SCALAR_LIMITS_UNLIMITED
+            },
+        )
+        .expect("the exhausted precondition is admitted");
+    assert_eq!(incomplete_stops.outcome, ClauseSetOutcome::Incomplete);
+    assert_eq!(incomplete_stops.results.len(), 1);
+    assert_eq!(incomplete_stops.results[0].name.to_string(), "F");
+    assert!(matches!(
+        &incomplete_stops.results[0].evaluation.evaluation.outcome,
+        FamilyOutcome::Evaluated(Outcome::Incomplete(_))
+    ));
+
+    let (true_graph, true_view) = graph(clauses, true);
+    let true_pre = DocumentRef {
+        authority: "test".to_owned(),
+        identity: "set-true-pre".to_owned(),
+    };
+    let true_bytes = snapshot_bytes(&true_view, &true_pre.identity, "pre");
+    let true_snapshots = BTreeMap::from([(
+        document_reference(&true_bytes).expect("true pre snapshot names itself"),
+        true_bytes,
+    )]);
+    let true_observations = observations_for(
+        &true_graph,
+        "F",
+        ClauseSelectionInput::PreCall {
+            snapshot: true_pre,
+            self_object: selected,
+            parameters: BTreeMap::new(),
+        },
+        &true_snapshots,
+        &BTreeMap::new(),
+    );
+    let true_package = CheckedPackage::link(true_graph);
+    let true_result = true_package
+        .evaluate_clause_set(
+            &[(f_name, &true_observations)],
+            fsl_semantics::check::SCALAR_LIMITS_UNLIMITED,
+        )
+        .expect("the true effective precondition evaluates");
+    assert_eq!(true_result.outcome, ClauseSetOutcome::True);
+    assert!(matches!(
+        &true_result.results[0].evaluation.evaluation.outcome,
+        FamilyOutcome::Evaluated(Outcome::Completed(Value::Boolean(true)))
+    ));
+}
+
+/// FR-107-AC-18: public clause-set evaluation combines literal true/false
+/// entries, kernel undefined/refused entries, and an incomplete entry by the
+/// specified precedence.
+#[trace("TC-1039", "FR-107-AC-18")]
+#[test]
+fn clause_set_combines_kernel_undefined_refused_and_incomplete_verdicts() {
+    use fsl_eval::value::ClauseSetOutcome;
+    use fsl_semantics::model::observation::{document_reference, ClauseSelectionInput};
+
+    let body = "\
+        function kernelUndefined using v(): Boolean pure { 1 mod 0 = 0 }\n\
+        function kernelRefused using v(): Boolean pure { convert<Integer>(convert<Int[0, 1]>(2)) = 1 }\n\
+        function kernelExpensive using v(): Boolean pure { 1 + 1 + 1 + 1 + 1 + 1 = 6 }\n\
+        post T using v on M::A::ready { true }\n\
+        post T2 using v on M::A::ready { true }\n\
+        post F using v on M::A::ready { false }\n\
+        post U using v on M::A::ready { kernelUndefined() }\n\
+        post U2 using v on M::A::ready { kernelUndefined() }\n\
+        post R using v on M::A::ready { kernelRefused() }\n\
+        post R2 using v on M::A::ready { kernelRefused() }\n\
+        post ZIncomplete using v on M::A::ready { kernelExpensive() }\n";
+    let (checked, view) = graph_with_mode(body, true, CheckMode::Kernel);
+    let pre = DocumentRef {
+        authority: "test".to_owned(),
+        identity: "set-kernel-pre".to_owned(),
+    };
+    let post = DocumentRef {
+        authority: "test".to_owned(),
+        identity: "set-kernel-post".to_owned(),
+    };
+    let pre_bytes = snapshot_bytes(&view, &pre.identity, "pre");
+    let post_bytes = snapshot_bytes(&view, &post.identity, "post");
+    let snapshots = BTreeMap::from([
+        (
+            document_reference(&pre_bytes).expect("pre snapshot names itself"),
+            pre_bytes,
+        ),
+        (
+            document_reference(&post_bytes).expect("post snapshot names itself"),
+            post_bytes,
+        ),
+    ]);
+    let invocation_bytes = serde_json::to_vec(&serde_json::json!({
+        "format": "filament.state.invocation/v1",
+        "identity": {"authority": "test", "identity": "set-kernel-invocation"},
+        "model": {"identity": view.model_selection().identity},
+        "context": A,
+        "operation": "ready",
+        "self": {"population": POPULATION, "key": "present"},
+        "pre": {"identity": {"authority": "test", "identity": pre.identity}},
+        "post": {"identity": {"authority": "test", "identity": post.identity}},
+        "parameters": {},
+        "result": {"boolean": true},
+        "created": [],
+        "deleted": [],
+    }))
+    .expect("invocation serializes");
+    let invocation = document_reference(&invocation_bytes).expect("invocation names itself");
+    let invocations = BTreeMap::from([(invocation.clone(), invocation_bytes)]);
+    let mut observations = BTreeMap::new();
+    for name in ["T", "T2", "F", "U", "U2", "R", "R2", "ZIncomplete"] {
+        observations.insert(
+            name,
+            observations_for(
+                &checked,
+                name,
+                ClauseSelectionInput::Invocation {
+                    invocation: invocation.clone(),
+                },
+                &snapshots,
+                &invocations,
+            ),
+        );
+    }
+    let package = CheckedPackage::link(checked);
+    let evaluate = |names: &[&str], limits: filament_exact::ScalarLimits| {
+        let entries: Vec<_> = names
+            .iter()
+            .map(|name| {
+                (
+                    QualifiedName::unqualified(*name).expect("clause name is an identifier"),
+                    observations.get(name).expect("admitted observation"),
+                )
+            })
+            .collect();
+        package
+            .evaluate_clause_set(&entries, limits)
+            .expect("the admitted clause set evaluates")
+    };
+    let unlimited = fsl_semantics::check::SCALAR_LIMITS_UNLIMITED;
+
+    assert_eq!(evaluate(&[], unlimited).outcome, ClauseSetOutcome::True);
+    assert_eq!(
+        evaluate(&["T", "T2"], unlimited).outcome,
+        ClauseSetOutcome::True
+    );
+    assert_eq!(
+        evaluate(&["T", "F"], unlimited).outcome,
+        ClauseSetOutcome::False
+    );
+    for x in ["U", "R"] {
+        let one = evaluate(&[x], unlimited);
+        assert_eq!(one.outcome, ClauseSetOutcome::Undecided, "{x}");
+        assert_eq!(one.results.len(), 1, "{x}");
+        match x {
+            "U" => assert!(matches!(
+                one.results[0].evaluation.evaluation.outcome,
+                FamilyOutcome::Evaluated(Outcome::Undefined(_))
+            )),
+            "R" => assert!(matches!(
+                one.results[0].evaluation.evaluation.outcome,
+                FamilyOutcome::Evaluated(Outcome::Refused(_))
+            )),
+            _ => unreachable!(),
+        }
+        assert_eq!(
+            evaluate(&["T", x], unlimited).outcome,
+            ClauseSetOutcome::Undecided,
+            "true and {x}"
+        );
+        assert_eq!(
+            evaluate(&["F", x], unlimited).outcome,
+            ClauseSetOutcome::False,
+            "false and {x}"
+        );
+        assert_eq!(
+            evaluate(&[x, if x == "U" { "U2" } else { "R2" }], unlimited).outcome,
+            ClauseSetOutcome::Undecided,
+            "two {x} entries"
+        );
+    }
+    assert_eq!(
+        evaluate(&["U", "R"], unlimited).outcome,
+        ClauseSetOutcome::Undecided
+    );
+
+    let tight = filament_exact::ScalarLimits {
+        work_units: 4,
+        ..unlimited
+    };
+    for name in ["T", "F", "U", "R"] {
+        let combination = evaluate(&[name, "ZIncomplete"], tight);
+        assert_eq!(
+            combination.outcome,
+            ClauseSetOutcome::Incomplete,
+            "{name} and incomplete"
+        );
+        assert_eq!(
+            combination
+                .results
+                .last()
+                .map(|entry| entry.name.to_string()),
+            Some("ZIncomplete".to_owned())
+        );
+        assert!(matches!(
+            combination
+                .results
+                .last()
+                .unwrap()
+                .evaluation
+                .evaluation
+                .outcome,
+            FamilyOutcome::Evaluated(Outcome::Incomplete(_))
+        ));
+    }
+}
+
+fn observations(graph: &CheckedGraph, view: &EffectiveView) -> AdmittedObservations {
+    use fsl_semantics::model::observation::ClauseSelectionInput;
     let snapshot = DocumentRef {
         authority: "test".to_owned(),
         identity: "sm1-snapshot".to_owned(),
     };
+    let bytes = snapshot_bytes(view, &snapshot.identity, "pre");
     let snapshots = BTreeMap::from([(
         fsl_semantics::model::observation::document_reference(&bytes)
             .expect("a document names itself"),
         bytes,
     )]);
-    let invocations = BTreeMap::new();
+    observations_for(
+        graph,
+        "F",
+        ClauseSelectionInput::PreCall {
+            snapshot,
+            self_object: Some(fsl_semantics::model::observation::SelectedObject {
+                population: POPULATION.to_owned(),
+                key: "present".to_owned(),
+            }),
+            parameters: BTreeMap::new(),
+        },
+        &snapshots,
+        &BTreeMap::new(),
+    )
+}
+
+fn snapshot_bytes(view: &EffectiveView, identity: &str, observation: &str) -> Vec<u8> {
+    let model = view.model_selection();
+    serde_json::to_vec(&serde_json::json!({
+        "format": "filament.state.snapshot/v1",
+        "identity": {"authority": "test", "identity": identity},
+        "observation": observation,
+        "model": {"identity": model.identity},
+        "populations": [{"population": POPULATION, "complete": true,
+            "objects": [{"key": "present", "type": A,
+                "fields": {"flag": {"boolean": true},
+                    "next": {"reference": {"population": POPULATION, "key": "present"}}}}]}]
+    }))
+    .expect("the snapshot serializes")
+}
+
+fn observations_for(
+    graph: &CheckedGraph,
+    name: &str,
+    input: fsl_semantics::model::observation::ClauseSelectionInput,
+    snapshots: &fsl_semantics::model::observation::DocumentProvision,
+    invocations: &fsl_semantics::model::observation::DocumentProvision,
+) -> AdmittedObservations {
+    use fsl_semantics::model::observation::{
+        admit_observations, ClauseFacts, ClauseSelection, ObservationLimits, OperationFacts,
+        Provisions,
+    };
     let model_bytes = model_document();
     let packages = fsl_semantics::model::intake::package_input([model_bytes.as_slice()]).unwrap();
-    let clause = graph.state_clause("F").unwrap();
+    let clause = graph
+        .state_clause(name)
+        .unwrap_or_else(|| panic!("the graph declares {name}"));
     let facts = ClauseFacts {
         identity: clause.identity(),
         kind: clause.kind(),
@@ -762,15 +1155,8 @@ fn observations(graph: &CheckedGraph, view: &EffectiveView) -> AdmittedObservati
         named_populations: clause.named_reads(),
     };
     let selection = ClauseSelection {
-        name: "F".to_owned(),
-        input: ClauseSelectionInput::PreCall {
-            snapshot,
-            self_object: Some(SelectedObject {
-                population: POPULATION.to_owned(),
-                key: "present".to_owned(),
-            }),
-            parameters: BTreeMap::new(),
-        },
+        name: name.to_owned(),
+        input,
     };
     admit_observations(
         graph.model_selections(),
@@ -785,7 +1171,7 @@ fn observations(graph: &CheckedGraph, view: &EffectiveView) -> AdmittedObservati
         &selection,
         ObservationLimits::default(),
     )
-    .expect("snapshot admission completes before the semantic assertions")
+    .unwrap_or_else(|failure| panic!("{name}: snapshot admission: {failure:?}"))
 }
 
 #[trace("FR-300-AC-2")]

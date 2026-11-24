@@ -183,6 +183,7 @@ pub(crate) fn check_terminal<'a>(
             .clone()
             .map(|context| ("self", ValueType::Reference(context))),
         operation: None,
+        authored_operation: None,
         context_population: population.clone(),
         frame_population: None,
         binders: &[],

@@ -15,7 +15,10 @@
 //! `c = a` and loops on `b`. AC-10 to AC-15 verify canonical-first binding
 //! evaluation, including cases where later bindings have shallower findings.
 
-use filament_exact::{Cancel, CancelCause, Incomplete, Meter, ScalarLimits};
+use filament_checked::key::DeclarationKey;
+use filament_exact::{
+    Cancel, CancelCause, Incomplete, Meter, ObjectId, ObjectReference, ScalarLimits,
+};
 use filament_semantic_value::checking::CheckMode;
 use fsl_analyze::model_check::{check_model, ModelCheckRefusal, ModelCheckRequest};
 use fsl_eval::model_subject::{AtomStop, ModelInstance, ModelLetters};
@@ -27,6 +30,8 @@ use fsl_replay::{
     ModelCheckOutcome, ReachedLimit, TemporalCounterexample, UndefinedLocus,
 };
 use fsl_semantics::check::FormulaNodeId;
+use fsl_semantics::model::accounting::ModelNormalizationLimits;
+use fsl_semantics::model::observation::declared_type_universe_for;
 use ix_trace_rs::trace;
 
 use crate::counter::{document, UNLIMITED, ZERO};
@@ -344,20 +349,76 @@ fn the_horizon_and_every_limit_stop_the_example_run_naming_what_stopped_it() {
     );
 }
 
-/// FR-126-AC-7's determinism, over AC-1's two requests (the `Holds` request
-/// still ends in the certificate refusal, so equal means the same refusal
-/// with the same counts): two runs of each give equal outcomes and
-/// byte-equal counterexamples.
-#[trace("TC-521")]
+/// FR-126-AC-7's determinism, over AC-1's two requests: run each request
+/// twice, compare the actual outcomes, and compare the canonical wire bytes
+/// of the no-granularity request's counterexample.
+#[trace("TC-521", "FR-126-AC-7")]
 #[test]
 fn the_example_requests_give_the_same_answer_twice() {
     let each = config(false, EACH);
     let whole = config(false, WHOLE);
-    let refusal = |world: &World| format!("{:?}", decide(world));
-    assert_eq!(refusal(&each), refusal(&each));
-    let first = decide(&whole);
-    let second = decide(&whole);
-    assert_eq!(violated(&first), violated(&second));
+    let each_first = decide(&each);
+    let each_second = decide(&each);
+    assert_eq!(
+        format!("{each_first:?}").as_bytes(),
+        format!("{each_second:?}").as_bytes()
+    );
+    assert_eq!(explored(&each_first).product_states, 30);
+
+    let whole_first = decide(&whole);
+    let whole_second = decide(&whole);
+    assert_eq!(
+        format!("{whole_first:?}").as_bytes(),
+        format!("{whole_second:?}").as_bytes()
+    );
+    let first_counterexample = violated(&whole_first);
+    let second_counterexample = violated(&whole_second);
+    assert_eq!(first_counterexample.len(), 3);
+    assert_eq!(
+        first_counterexample
+            .over_binding
+            .as_ref()
+            .expect("AC-1 binds the first canonical instance")
+            .key,
+        "a"
+    );
+    assert_eq!(receiver(&first_counterexample.prefix[0]), 'b');
+    assert_eq!(
+        first_counterexample
+            .prefix
+            .iter()
+            .map(receiver)
+            .collect::<Vec<_>>(),
+        ['b', 'b', 'b']
+    );
+    let config_version = DeclarationKey {
+        package: whole.domain.package.to_owned(),
+        node: format!("ix://{}/ConfigVersion", whole.domain.package),
+    };
+    let (effective_type, universe) = declared_type_universe_for(
+        whole.package.graph().model_selections(),
+        &whole.packages,
+        ModelNormalizationLimits::default(),
+        &config_version,
+    )
+    .expect("the model reference resolves")
+    .expect("ConfigVersion is selected");
+    let bound_reference = ObjectReference::new(
+        universe,
+        effective_type,
+        ObjectId::new("a").expect("the expected bound key is valid"),
+    );
+    let first_bytes = fsl_foundation::canonical_json::encode(
+        &fsl_replay::temporal_wire(first_counterexample, Some(&bound_reference), None)
+            .expect("the canonical counterexample wire form"),
+    )
+    .expect("canonical counterexample bytes");
+    let second_bytes = fsl_foundation::canonical_json::encode(
+        &fsl_replay::temporal_wire(second_counterexample, Some(&bound_reference), None)
+            .expect("the second canonical counterexample wire form"),
+    )
+    .expect("second canonical counterexample bytes");
+    assert_eq!(first_bytes, second_bytes);
 }
 
 /// FR-126-AC-4's `Restless` row: over `Health` (object `s`; `healthy: Bool`,
@@ -539,7 +600,11 @@ fn the_first_binding_wins_even_when_a_later_binding_has_a_shorter_lasso() {
     let lasso = counterexample.lasso.as_ref().expect("a lasso");
     assert_eq!((lasso.entry, lasso.terminal_stutter), (1, false));
     assert_eq!(
-        counterexample.prefix.iter().map(receiver).collect::<Vec<_>>(),
+        counterexample
+            .prefix
+            .iter()
+            .map(receiver)
+            .collect::<Vec<_>>(),
         ['a', 'b', 'b', 'b']
     );
     let versions: Vec<(i64, i64)> = positions(&world, counterexample)
@@ -804,13 +869,7 @@ fn a_later_binding_is_not_evaluated_or_cancelled_after_the_first_refutes() {
             None
         }),
     };
-    let outcome = run(
-        &world,
-        &metered,
-        None,
-        ModelCheckLimits::default(),
-        &cancel,
-    );
+    let outcome = run(&world, &metered, None, ModelCheckLimits::default(), &cancel);
     let counterexample = violated(&outcome);
     assert_eq!(bound(counterexample), "a");
     assert_eq!(undefined_at(counterexample).0, 2);

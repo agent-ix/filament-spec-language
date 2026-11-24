@@ -71,6 +71,7 @@ impl OperationClauseDeclaration {
                 filament_exact::ValueType::Reference(self.context.clone()),
             )),
             operation: Some(&self.operation),
+            authored_operation: None,
             context_population: None,
             frame_population: None,
             binders: &[],

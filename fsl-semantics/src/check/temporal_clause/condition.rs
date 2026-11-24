@@ -572,6 +572,7 @@ fn type_condition(
             parent_projections: BTreeMap::new(),
             kind: StateClauseKind::Invariant,
             operation: None,
+            authored_operation: None,
             self_slot: NO_SLOT,
             result_slot: None,
         });

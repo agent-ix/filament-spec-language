@@ -1184,6 +1184,7 @@ impl Pass<'_, '_> {
             parent_projections: BTreeMap::new(),
             kind: StateClauseKind::Invariant,
             operation: None,
+            authored_operation: None,
             self_slot: NO_SLOT,
             result_slot: None,
         });
@@ -2227,6 +2228,7 @@ impl Pass<'_, '_> {
             parent_projections: BTreeMap::new(),
             kind: StateClauseKind::Invariant,
             operation: None,
+            authored_operation: None,
             self_slot: NO_SLOT,
             result_slot: None,
         });

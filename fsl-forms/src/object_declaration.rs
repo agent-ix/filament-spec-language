@@ -149,13 +149,13 @@ fn operation(cst: &LosslessCst, node: &CstNode) -> Result<ObjectOperationForm, F
         None => None,
     };
     let mut parameters = Vec::new();
-    for parameter in nodes_of(&operation_items, Production::Parameter) {
+    for parameter in nodes_of(&operation_items, Production::OperationParameter) {
         let parameter_items = self::items(cst, parameter);
         let declared = only(&parameter_items, Production::ParameterType, parameter)?;
         let declared_items = self::items(cst, declared);
         let reference = only(&declared_items, Production::TypeReference, declared)?;
         parameters.push(ParameterForm {
-            name: declared_name(&parameter_items, parameter)?,
+            name: parameter_name(&parameter_items, parameter)?,
             value_type: type_form(cst, reference)?,
         });
     }
@@ -175,6 +175,21 @@ fn operation(cst: &LosslessCst, node: &CstNode) -> Result<ObjectOperationForm, F
         frame,
         span: node.span(),
     })
+}
+
+/// A source operation parameter can use the reserved member name `by`.
+fn parameter_name(items: &[Item<'_>], node: &CstNode) -> Result<DeclaredName, FormsRefusal> {
+    let token = tokens_of(items, TokenKind::Identifier)
+        .first()
+        .copied()
+        .or_else(|| {
+            items.iter().find_map(|item| match item {
+                Item::Token(token) if token.spelling() == b"by" => Some(*token),
+                Item::Token(_) | Item::Node(_) => None,
+            })
+        })
+        .ok_or_else(|| unexpected(node))?;
+    token_name(token, node)
 }
 
 /// The entries of one `modifies`, `creates` or `deletes` clause.

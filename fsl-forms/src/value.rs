@@ -1442,6 +1442,7 @@ impl<'c> Mapping<'c> {
             | Production::FunctionDeclaration
             | Production::Predicate
             | Production::Parameter
+            | Production::OperationParameter
             | Production::StateClause
             | Production::OperationBody
             | Production::PopulationBound
@@ -2345,6 +2346,7 @@ impl<'c> Mapping<'c> {
             | Production::FunctionDeclaration
             | Production::Predicate
             | Production::Parameter
+            | Production::OperationParameter
             | Production::StateClause
             | Production::OperationBody
             | Production::PopulationBound

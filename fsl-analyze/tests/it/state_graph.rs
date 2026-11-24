@@ -2158,7 +2158,7 @@ fn bound(result: &StateGraphRun, index: usize) -> Vec<Option<ObjectReference>> {
 /// once, yields `a`, `b` over `{a, b}` and `a` over a subject whose universe
 /// is `{a}`, without being re-checked; a subject with an empty universe gives
 /// it no instance.
-#[trace("TC-520")]
+#[trace("TC-520", "FR-125-AC-7")]
 #[test]
 fn a_state_graph_claim_is_instanced_over_the_subjects_universe() {
     let claims = format!("{REACHES_TWO}{REACHES_THREE}possible Anything using v {{ true }}\n");

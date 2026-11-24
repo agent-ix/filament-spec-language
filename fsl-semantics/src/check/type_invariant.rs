@@ -84,6 +84,7 @@ impl TypeInvariantDeclaration {
             context: Some(self.context.clone()),
             receiver: Some(("self", self.self_type.clone())),
             operation: None,
+            authored_operation: None,
             context_population: None,
             frame_population: None,
             binders: &[],
